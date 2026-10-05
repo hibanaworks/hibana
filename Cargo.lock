@@ -127,16 +127,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "hibana-repo-tests"
+name = "hibana-ci-tests"
 version = "0.0.0"
-dependencies = [
- "futures",
- "hibana",
- "libc",
- "static_assertions",
- "tokio",
- "trybuild",
-]
 
 [[package]]
 name = "indexmap"

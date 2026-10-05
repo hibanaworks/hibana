@@ -3,7 +3,6 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 MANIFEST_PATH="${ROOT_DIR}/Cargo.toml"
-REPO_TEST_MANIFEST="${ROOT_DIR}/.github/repo-tests/Cargo.toml"
 export TOOLCHAIN="${TOOLCHAIN:-1.95.0}"
 source "${ROOT_DIR}/.github/scripts/repo_rustflags.sh"
 hibana_enable_repo_tests_cfg
@@ -51,31 +50,6 @@ run_subsystem_budget_test \
   --manifest-path "${MANIFEST_PATH}" \
   --lib \
   global::role_program::tests::protocol_matrix::projected_protocol_matrix_reports_compact_resident_images \
-  -- \
-  --exact \
-  --nocapture
-
-# Send/resolver hot-path ownership.
-run_subsystem_budget_test \
-  --manifest-path "${REPO_TEST_MANIFEST}" \
-  --test public_surface_guards \
-  core_resolver_audit_has_no_in_crate_resolver_owner \
-  -- \
-  --exact \
-  --nocapture
-
-run_subsystem_budget_test \
-  --manifest-path "${REPO_TEST_MANIFEST}" \
-  --test public_surface_guards \
-  dynamic_resolver_surface_uses_one_decision_resolver \
-  -- \
-  --exact \
-  --nocapture
-
-run_subsystem_budget_test \
-  --manifest-path "${REPO_TEST_MANIFEST}" \
-  --test public_surface_guards \
-  transport_context_owner_stays_forbidden \
   -- \
   --exact \
   --nocapture

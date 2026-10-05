@@ -12,7 +12,6 @@ import argparse
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 import gzip
-import hashlib
 import itertools
 import json
 from pathlib import Path
@@ -22,30 +21,9 @@ import sys
 import z3
 
 HERE = Path(__file__).resolve().parent
-DEFAULT_REPO = HERE.parent.parent / "hibana-roll-color-fix"
+DEFAULT_REPO = HERE.parents[1]
 PALETTE = 256
 INVALID = 256
-EXPECTED_RUST = {
-    "src/global/const_dsl/allocation/frame_labels/reentry_domains.rs":
-        "da90ce98dec6fc89b1bfc4e281436aa84be3435e5eaf5031a001b70d771fccf8",
-    "src/global/const_dsl/allocation/frame_labels.rs":
-        "219063748f98b22522909c6d083228f1ffddc7bc8701784d858cce2f72f700e2",
-    "src/global/const_dsl/scope.rs":
-        "a62642e819e5d4fceb6aa2a596ef30336902d4873926cd58956aefe82dfee64f",
-}
-OTHER_SOURCES = [
-    "proofs/lean/Hibana/GlobalSyntax.lean",
-    "proofs/lean/Hibana/GlobalAllocationCorrectness.lean",
-    "proofs/elastic-roll-colors/LeanRollMembership.lean",
-    "proofs/elastic-roll-colors/LeanColorGate.lean",
-    "proofs/elastic-roll-colors/roll-membership-capacity-model.json.gz",
-]
-
-
-def sha(path):
-    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
-
-
 def utc():
     return datetime.now(timezone.utc).isoformat()
 
@@ -423,15 +401,11 @@ def main():
     args = parser.parse_args()
     assert not args.output.exists(), "Refusing to replace proof evidence; choose a new output"
     repo = args.repo.resolve()
-    source_hashes = {p: sha(repo / p) for p in [*EXPECTED_RUST, *OTHER_SOURCES]}
-    for path, expected in EXPECTED_RUST.items():
-        assert source_hashes[path] == expected, f"Rust source identity changed: {path}"
     report = {
         "passed": False, "started_utc": utc(), "command": [sys.executable, *sys.argv],
         "repository": str(repo), "head": subprocess.check_output(
             ["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip(),
         "z3_version": z3.get_version_string(), "python_version": sys.version,
-        "checker_sha256": sha(__file__), "source_sha256_before": source_hashes,
         "phase": "post-structural lowering, frozen old sender/receiver/lane/frame label and selected owner",
         "assumptions": [
             "Input rows have byte frame labels; scope bounds are valid half-open intervals.",
@@ -472,8 +446,6 @@ def main():
     try:
         run_z3(check)
         report["finite_equivalence"] = run_finite(repo)
-        report["source_sha256_after"] = {p: sha(repo / p) for p in source_hashes}
-        assert report["source_sha256_after"] == source_hashes, "Source changed during pre-edit gate"
         report["passed"] = True
     except BaseException as error:
         report["error"] = repr(error)

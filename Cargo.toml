@@ -1,5 +1,5 @@
 [workspace]
-members = [".", ".github/repo-tests"]
+members = [".", ".github/ci-tests"]
 resolver = "3"
 
 [package]
@@ -25,15 +25,6 @@ include       = [
     "/examples/**",
     "/src/**",
     "/tests/**",
-    "!/tests/docs_surface.rs",
-    "!/tests/local_only_hygiene.rs",
-    "!/tests/no_default_rodata.rs",
-    "!/tests/public_surface_guards.rs",
-    "!/tests/root_surface.rs",
-    "!/tests/runtime_surface.rs",
-    "!/tests/semantic_surface.rs",
-    "!/tests/semantic_surface/**",
-    "!/tests/transport_resolver_signal_surface.rs",
     "!/src/**/tests.rs",
     "!/src/**/tests/**",
     "!/src/**/*_tests.rs",
@@ -206,3 +197,7 @@ path = "tests/projection_diagnostic.rs"
 [[test]]
 name = "explicit_resource_join"
 path = "tests/explicit_resource_join.rs"
+
+[[test]]
+name = "runtime_contract"
+path = "tests/runtime_contract.rs"

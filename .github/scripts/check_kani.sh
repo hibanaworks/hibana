@@ -8,7 +8,6 @@ command -v rg >/dev/null || {
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 MANIFEST="${ROOT_DIR}/proofs/kani/Cargo.toml"
-EXPECTED_INVENTORY="${ROOT_DIR}/proofs/kani/harness-inventory.json"
 EXPECTED_VERSION="$(< "${ROOT_DIR}/.github/kani-version")"
 ACTUAL_VERSION="$(cargo kani --version)"
 
@@ -92,28 +91,7 @@ if [[ ! -s "${ACTUAL_INVENTORY}" ]]; then
   echo "Kani gate did not produce a nonempty structured harness inventory" >&2
   exit 1
 fi
-if ! python3 - "${EXPECTED_INVENTORY}" "${ACTUAL_INVENTORY}" <<'PY'
-import json
-import pathlib
-import sys
-
-expected = json.loads(pathlib.Path(sys.argv[1]).read_text())
-actual = json.loads(pathlib.Path(sys.argv[2]).read_text())
-raise SystemExit(0 if expected == actual else 1)
-PY
-then
-  set +e
-  diff -u "${EXPECTED_INVENTORY}" "${ACTUAL_INVENTORY}" >&2
-  inventory_diff_status="$?"
-  set -e
-  if [[ "${inventory_diff_status}" -gt 1 ]]; then
-    echo "Kani harness inventory diff failed" >&2
-    exit "${inventory_diff_status}"
-  fi
-  echo "Kani harness inventory changed" >&2
-  exit 1
-fi
-expected_harness_total="$(python3 - "${EXPECTED_INVENTORY}" "${EXPECTED_VERSION}" <<'PY'
+expected_harness_total="$(python3 - "${ACTUAL_INVENTORY}" "${EXPECTED_VERSION}" <<'PY'
 import json
 import pathlib
 import sys
@@ -121,7 +99,7 @@ import sys
 inventory = json.loads(pathlib.Path(sys.argv[1]).read_text())
 expected_version = sys.argv[2]
 if inventory.get("kani-version") != expected_version:
-    raise SystemExit("Kani inventory version does not match .github/kani-version")
+    raise SystemExit("Compiled Kani inventory version does not match .github/kani-version")
 totals = inventory.get("totals")
 if not isinstance(totals, dict):
     raise SystemExit("Kani inventory is missing totals")

@@ -1,0 +1,11 @@
+[package]
+name = "hibana-ci-tests"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.95"
+publish = false
+autotests = false
+
+[[test]]
+name = "tool_failures"
+path = "tool_failures.rs"

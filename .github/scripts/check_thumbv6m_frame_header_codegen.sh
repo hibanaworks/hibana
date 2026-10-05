@@ -6,7 +6,7 @@ cd "${ROOT_DIR}"
 
 TOOLCHAIN="${TOOLCHAIN:-stable}"
 TARGET="thumbv6m-none-eabi"
-WORK_DIR="${ROOT_DIR}/target/thumbv6m-frame-header-codegen"
+WORK_DIR="${CARGO_TARGET_DIR:-${ROOT_DIR}/target}/thumbv6m-frame-header-codegen"
 HARNESS_DIR="${WORK_DIR}/harness"
 TARGET_DIR="${WORK_DIR}/target"
 

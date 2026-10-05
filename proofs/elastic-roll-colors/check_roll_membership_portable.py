@@ -1,44 +1,30 @@
 #!/usr/bin/env python3
 """Portable replay of the exact recorded 31 queries and finite graph checks.
 
-Source hashes in the model are historical inputs, not a fresh source-refinement
-proof. Supply --quic-source to separately verify those source files today.
+Historical inputs remain model fixtures, not a fresh Rust refinement proof.
 """
 from pathlib import Path
 import argparse
 import gzip
-import hashlib
 import json
 import re
 import z3
 
 HERE = Path(__file__).resolve().parent
 parser = argparse.ArgumentParser(description=__doc__)
-parser.add_argument('--quic-source', type=Path, help='Optional checkout matching historical QUIC input hashes')
 parser.add_argument('--output', type=Path, help='Write a NEW replay JSON here; never overwrite historical evidence')
 args = parser.parse_args()
 checks = []
 recorded = json.loads((HERE / 'roll-membership-z3.json').read_text())
-manifest = json.loads((HERE / 'preserved-artifacts.json').read_text())
 inventory = HERE / 'evidence/run-inventory.log'
 raw = gzip.decompress((HERE / 'roll-membership-capacity-model.json.gz').read_bytes())
-assert hashlib.sha256(raw).hexdigest() == manifest['files']['roll-membership-capacity-model.json.gz']['uncompressed_sha256']
-assert hashlib.sha256(inventory.read_bytes()).hexdigest() == recorded['evidence_sha256']['artifacts/current-offer-source-diagnostic/run-inventory.log']
 data = json.loads(raw)
-source_status = 'recorded identity only; live QUIC source check not requested'
-if args.quic_source:
-    for rel, expected in data['source_hashes'].items():
-        assert hashlib.sha256((args.quic_source / rel).read_bytes()).hexdigest() == expected, rel
-    source_status = 'live QUIC source hashes match recorded finite-model inputs'
-print('SOURCE CORRESPONDENCE: ' + source_status)
-
 def save(passed):
     if args.output:
         target = args.output.resolve()
         assert not target.exists(), 'Replay output must be a new file'
         target.write_text(json.dumps({
             'passed': passed, 'z3_version': z3.get_version_string(),
-            'source_correspondence': source_status,
             'claim_limit': recorded['claim_limit'], 'checks': checks,
         }, indent=2) + '\n')
 

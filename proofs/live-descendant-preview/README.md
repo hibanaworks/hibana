@@ -25,12 +25,11 @@ repository's existing test/runtime hygiene rule. The fixture now records actual
 wake calls through a test-only mutex counter. Every pending poll still requires
 at least one actual wake; the poll bound and all publication assertions remain
 unchanged. Production source, descriptors, resource budgets and proof models are
-unchanged. The source inventory includes the revised fixture, and its debug,
-release/LTO and strict Clippy checks are replayed before publication.
+unchanged. Debug, release/LTO and strict Clippy checks exercise the actual fixture.
 
 Run `bash proofs/live-descendant-preview/check.sh [evidence-directory]` with
 Lean 4.30.0 and Z3, then both debug and release `rolled_publication_exit` tests.
-The checker audits the exact source inventory, hashes, eight theorem axiom
+The checker audits eight theorem axiom
 closures, and four UNSAT results plus one historical SAT result. The Rust test
 also covers starting with CRYPTO, ACK, PTO, or the boundary and parking the
 receiver before a changed arm. Physical UDP, performance and Docker are separate

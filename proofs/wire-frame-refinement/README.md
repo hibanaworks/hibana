@@ -27,18 +27,17 @@ With Lean 4.30.0 and Python `z3-solver` installed, from the repository root:
 python proofs/wire-frame-refinement/check_all.py --lean /path/to/lean
 ```
 
-The runner verifies preserved historical artifacts and the selected production
-source hashes, builds the actual Lean library, and audits all 54 named Lean
-theorems. It runs the unchanged original 40-query Z3 generator, the eight option
-match equivalence checks, and 29 external-specific Z3 obligations/controls.
-Each finite correspondence layer checks 38,840 bounded cases; the external layer
-adds ten fixtures, eleven historical models, five raw-marker controls and two
-rejected source-placement mutants. The existing final-form invocation is kept.
+The runner builds the actual Lean library and audits all 54 named theorem
+axiom closures. It executes the 40-query Z3 model, eight option-match checks,
+and 29 external-specific Z3 obligations and controls. Each finite model layer
+checks 38,840 bounded cases; the external layer adds ten fixtures, eleven
+historical models and five malformed-marker controls.
 
-The portable external checker changes only checkout identity/path handling:
-exact source bytes remain pinned, the actual Git HEAD is recorded separately
-from the qualified source commit, and the former source is read from a preserved
-snapshot. All model/query function bodies remain byte-identical to qualification.
+Lean definitional equality binds the live Lean allocator and its source
+placement. Rust behavior is checked by executable regressions. CI does not
+freeze source paths, text, hashes or historical checker bytes. The Python
+algorithms remain mathematical transcriptions with the explicit premises
+below; they do not prove current Rust by comparing source text.
 
 ## Scope and history
 

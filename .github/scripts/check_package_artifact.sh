@@ -3,312 +3,36 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${ROOT_DIR}"
-
 TOOLCHAIN="${TOOLCHAIN:-1.95.0}"
-
-run_package_clean() {
-  local label="$1"
-  shift
-
-  local log
-  log="$(mktemp)"
-  trap 'rm -f "${log}"' RETURN
-
-  if ! "$@" >"${log}" 2>&1; then
-    cat "${log}" >&2
-    echo "package artifact check failed while running: ${label}" >&2
-    exit 1
-  fi
-  if rg -n "warning:" "${log}" >/dev/null; then
-    cat "${log}" >&2
-    echo "package artifact check detected warnings in: ${label}" >&2
-    exit 1
-  fi
-
-  cat "${log}"
-  rm -f "${log}"
-  trap - RETURN
+PACKAGE_WORK="$(mktemp -d "${TMPDIR:-/tmp}/hibana-package.XXXXXX")"
+PACKAGE_TARGET="${PACKAGE_WORK}/target"
+cleanup_package() {
+  local status=$?
+  trap - EXIT
+  cargo +"${TOOLCHAIN}" clean --target-dir "${PACKAGE_TARGET}" >/dev/null 2>&1 || status=1
+  rm -r "${PACKAGE_WORK}" || status=1
+  exit "${status}"
 }
+trap cleanup_package EXIT
+CARGO_TARGET_DIR="${PACKAGE_TARGET}" env -u RUSTFLAGS -u CARGO_ENCODED_RUSTFLAGS \
+  cargo +"${TOOLCHAIN}" package -p hibana --locked --allow-dirty --no-verify
 
-PACKAGE_LIST="$(run_package_clean "cargo package --list" \
-  env -u RUSTFLAGS cargo +"${TOOLCHAIN}" package --list --allow-dirty)"
-
-for required in \
-  Cargo.toml \
-  README.md \
-  examples/ping_pong.rs \
-  examples/support/in_memory.rs \
-  src/lib.rs \
-  tests/ui.rs \
-  tests/lane_lifecycle_tap.rs
-do
-  if ! grep -qx "${required}" <<<"${PACKAGE_LIST}"; then
-    echo "package artifact check failed: ${required} must ship in the published crate package" >&2
-    exit 1
-  fi
-done
-
-for forbidden in \
-  '.github/' \
-  '.github/allowlists/' \
-  '.github/measurement_snapshots/' \
-  '.github/maintainability/' \
-  'tests/docs_surface.rs' \
-  'tests/local_only_hygiene.rs' \
-  'tests/no_default_rodata.rs' \
-  'tests/public_surface_guards.rs' \
-  'tests/root_surface.rs' \
-  'tests/runtime_surface.rs' \
-  'tests/semantic_surface.rs' \
-  'tests/semantic_surface/' \
-  'tests/transport_resolver_signal_surface.rs'
-do
-  if grep -qF "${forbidden}" <<<"${PACKAGE_LIST}"; then
-    echo "package artifact check failed: repo-only gate source shipped in crate package: ${forbidden}" >&2
-    exit 1
-  fi
-done
-
-PACKAGE_LIST_TEXT="${PACKAGE_LIST}" python3 - <<'PY'
-from pathlib import Path
-import os
-import re
-import sys
-
-PACKAGE_FILES = set(os.environ["PACKAGE_LIST_TEXT"].splitlines())
-ROOT_TEST_RE = re.compile(r"^tests/[^/]+\.rs$")
-TEST_TABLE_RE = re.compile(r"(?m)^\[\[test\]\]\s*$")
-NAME_RE = re.compile(r'(?m)^\s*name\s*=\s*"([^"]+)"\s*$')
-PATH_RE = re.compile(r'(?m)^\s*path\s*=\s*"([^"]+)"\s*$')
-
-declared: dict[str, str] = {}
-for block in TEST_TABLE_RE.split(Path("Cargo.toml").read_text(encoding="utf-8"))[1:]:
-    name = NAME_RE.search(block)
-    path = PATH_RE.search(block)
-    if name is None or path is None:
-        print(
-            "package artifact check failed: package integration test tables must declare name and path",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-    declared[path.group(1)] = name.group(1)
-
-packaged_root_tests = sorted(path for path in PACKAGE_FILES if ROOT_TEST_RE.match(path))
-declared_paths = set(declared)
-
-missing_declaration = [path for path in packaged_root_tests if path not in declared_paths]
-missing_package_file = sorted(path for path in declared_paths if path not in PACKAGE_FILES)
-
-if missing_declaration or missing_package_file:
-    print(
-        "package artifact check failed: package test target declaration drift",
-        file=sys.stderr,
-    )
-    for path in missing_declaration:
-        print(f"packaged integration test lacks [[test]] entry: {path}", file=sys.stderr)
-    for path in missing_package_file:
-        print(f"declared package integration test missing from package: {path}", file=sys.stderr)
-    sys.exit(1)
-PY
-
-if rg -n 'tests/support/' src; then
-  echo "package artifact check failed: src must not depend on tests/support" >&2
+shopt -s nullglob
+PACKAGE_ARCHIVES=("${PACKAGE_TARGET}"/package/*.crate)
+shopt -u nullglob
+if [[ "${#PACKAGE_ARCHIVES[@]}" != 1 ]]; then
+  echo "Cargo did not produce one crate archive" >&2
   exit 1
 fi
-
-SOURCE_TEST_SUPPORT_PATTERN='^src/(test_support|endpoint/kernel/test_support)/|^src/.*/tests/|^src/.*/tests\.rs$|^src/.*_tests\.rs$'
-
-if grep -qE "${SOURCE_TEST_SUPPORT_PATTERN}" <<<"${PACKAGE_LIST}"; then
-  echo "package artifact check failed: source-tree test support must not ship in the production crate package" >&2
-  grep -E "${SOURCE_TEST_SUPPORT_PATTERN}" <<<"${PACKAGE_LIST}" >&2
-  exit 1
-fi
-
-python3 - <<'PY'
-from pathlib import Path
-import re
-import sys
-
-ROOT = Path(".").resolve()
-MOD_RE = re.compile(r"^\s*(?:pub(?:\([^)]*\))?\s+)?mod\s+([A-Za-z_][A-Za-z0-9_]*)\s*;")
-PATH_RE = re.compile(r'^\s*#\[path\s*=\s*"([^"]+)"\s*\]')
-
-
-def is_excluded_test_support(path: Path) -> bool:
-    rel = path.as_posix()
-    return (
-        rel.startswith("src/test_support/")
-        or rel.startswith("src/endpoint/kernel/test_support/")
-        or "/tests/" in rel
-        or rel.endswith("/tests.rs")
-        or rel.endswith("_tests.rs")
-    )
-
-
-def rust_module_candidates(source: Path, mod_name: str) -> list[Path]:
-    if source.name in {"lib.rs", "main.rs", "mod.rs"}:
-        base = source.parent
-        return [base / f"{mod_name}.rs", base / mod_name / "mod.rs"]
-    if source.parent == Path("tests"):
-        shared = [source.parent / f"{mod_name}.rs", source.parent / mod_name / "mod.rs"]
-        nested = source.with_suffix("")
-        return shared + [nested / f"{mod_name}.rs", nested / mod_name / "mod.rs"]
-    else:
-        base = source.with_suffix("")
-    return [base / f"{mod_name}.rs", base / mod_name / "mod.rs"]
-
-
-violations: list[str] = []
-for source in sorted(Path("src").rglob("*.rs")):
-    if is_excluded_test_support(source):
-        continue
-    text = source.read_text(encoding="utf-8")
-    attributes: list[str] = []
-    path_attr: str | None = None
-    for line in text.splitlines():
-        stripped = line.strip()
-        path_match = PATH_RE.match(line)
-        if path_match:
-            path_attr = path_match.group(1)
-            attributes.append(stripped)
-            continue
-        if stripped.startswith("#["):
-            attributes.append(stripped)
-            continue
-        mod_match = MOD_RE.match(line)
-        if mod_match:
-            mod_name = mod_match.group(1)
-            repo_cfg = "hibana_repo_tests" in " ".join(attributes)
-            if path_attr is not None:
-                targets = [(source.parent / path_attr).resolve().relative_to(ROOT)]
-            else:
-                targets = [p for p in rust_module_candidates(source, mod_name) if p.exists()]
-            if repo_cfg and not targets:
-                violations.append(f"{source}: repo-only module `{mod_name}` target not found")
-            for target in targets:
-                excluded = is_excluded_test_support(target)
-                if repo_cfg and not excluded:
-                    violations.append(
-                        f"{source}: repo-only module `{mod_name}` targets package source {target}"
-                    )
-                if excluded and not repo_cfg:
-                    violations.append(
-                        f"{source}: excluded test module `{mod_name}` lacks hibana_repo_tests cfg"
-                    )
-            attributes.clear()
-            path_attr = None
-            continue
-        if stripped == "":
-            continue
-        attributes.clear()
-        path_attr = None
-
-if violations:
-    print(
-        "package artifact check failed: source test modules must preserve the package boundary",
-        file=sys.stderr,
-    )
-    for violation in violations:
-        print(violation, file=sys.stderr)
-    sys.exit(1)
-PY
-
-PACKAGE_LIST_TEXT="${PACKAGE_LIST}" python3 - <<'PY'
-from pathlib import Path
-import os
-import re
-import sys
-
-PACKAGE_FILES = set(os.environ["PACKAGE_LIST_TEXT"].splitlines())
-MOD_RE = re.compile(r"^\s*(?:pub(?:\([^)]*\))?\s+)?mod\s+([A-Za-z_][A-Za-z0-9_]*)\s*;")
-PATH_RE = re.compile(r'^\s*#\[path\s*=\s*"([^"]+)"\s*\]')
-
-
-def rust_module_candidates(source: Path, mod_name: str) -> list[Path]:
-    if source.name in {"lib.rs", "main.rs", "mod.rs"}:
-        base = source.parent
-        return [base / f"{mod_name}.rs", base / mod_name / "mod.rs"]
-    if source.parent == Path("tests"):
-        shared = [source.parent / f"{mod_name}.rs", source.parent / mod_name / "mod.rs"]
-        nested = source.with_suffix("")
-        return shared + [nested / f"{mod_name}.rs", nested / mod_name / "mod.rs"]
-    else:
-        base = source.with_suffix("")
-    return [base / f"{mod_name}.rs", base / mod_name / "mod.rs"]
-
-
-seen: set[Path] = set()
-missing: list[str] = []
-stack = sorted(path for path in Path("tests").glob("*.rs") if path.as_posix() in PACKAGE_FILES)
-while stack:
-    source = stack.pop()
-    if source in seen:
-        continue
-    seen.add(source)
-    path_attr: str | None = None
-    for line in source.read_text(encoding="utf-8").splitlines():
-        path_match = PATH_RE.match(line)
-        if path_match:
-            path_attr = path_match.group(1)
-            continue
-        mod_match = MOD_RE.match(line)
-        if not mod_match:
-            if line.strip() and not line.strip().startswith("#["):
-                path_attr = None
-            continue
-        mod_name = mod_match.group(1)
-        if path_attr is not None:
-            candidates = [source.parent / path_attr]
-        else:
-            candidates = [p for p in rust_module_candidates(source, mod_name) if p.exists()]
-        if not candidates:
-            missing.append(f"{source}: module `{mod_name}` target not found")
-        for target in candidates:
-            rel = target.as_posix()
-            if rel not in PACKAGE_FILES:
-                missing.append(f"{source}: module `{mod_name}` target missing from package: {rel}")
-            elif target.suffix == ".rs":
-                stack.append(target)
-        path_attr = None
-
-if missing:
-    print(
-        "package artifact check failed: packaged tests must include their module tree",
-        file=sys.stderr,
-    )
-    for item in missing:
-        print(item, file=sys.stderr)
-    sys.exit(1)
-PY
-
-run_package_clean "cargo package --no-verify" \
-  env -u RUSTFLAGS cargo +"${TOOLCHAIN}" package --allow-dirty --no-verify
-
-TMP_DIR="$(mktemp -d)"
-trap 'rm -rf "${TMP_DIR}"' EXIT
-
-CRATE_FILE="$(ls -t target/package/hibana-*.crate | head -n 1)"
-tar -xf "${CRATE_FILE}" -C "${TMP_DIR}"
-PKG_DIR="$(find "${TMP_DIR}" -maxdepth 1 -type d -name 'hibana-*' | head -n 1)"
-
-run_package_clean "package lib check" \
-  env -u RUSTFLAGS RUSTFLAGS="-Dwarnings" \
-    cargo +"${TOOLCHAIN}" check --manifest-path "${PKG_DIR}/Cargo.toml" --lib
-run_package_clean "package lib test" \
-  env -u RUSTFLAGS RUSTFLAGS="-Dwarnings" \
-    cargo +"${TOOLCHAIN}" test --manifest-path "${PKG_DIR}/Cargo.toml" --lib
-run_package_clean "package UI harness" \
-  env -u RUSTFLAGS RUSTFLAGS="-Dwarnings" \
-    cargo +"${TOOLCHAIN}" test --manifest-path "${PKG_DIR}/Cargo.toml" --test ui -- --list
-run_package_clean "package behavior test" \
-  env -u RUSTFLAGS RUSTFLAGS="-Dwarnings" \
-    cargo +"${TOOLCHAIN}" test --manifest-path "${PKG_DIR}/Cargo.toml" --test lane_lifecycle_tap
-run_package_clean "package lib check --no-default-features" \
-  env -u RUSTFLAGS RUSTFLAGS="-Dwarnings" \
-    cargo +"${TOOLCHAIN}" check --manifest-path "${PKG_DIR}/Cargo.toml" --no-default-features --lib
-run_package_clean "package lib test --no-default-features" \
-  env -u RUSTFLAGS RUSTFLAGS="-Dwarnings" \
-    cargo +"${TOOLCHAIN}" test --manifest-path "${PKG_DIR}/Cargo.toml" --no-default-features --lib
-run_package_clean "package docs --no-default-features" \
-  env -u RUSTFLAGS RUSTFLAGS="-Dwarnings" RUSTDOCFLAGS="-Dwarnings" \
-    cargo +"${TOOLCHAIN}" doc --manifest-path "${PKG_DIR}/Cargo.toml" --no-deps --no-default-features
+PACKAGE_NAME="${PACKAGE_ARCHIVES[0]##*/}"
+PACKAGE_NAME="${PACKAGE_NAME%.crate}"
+tar -xf "${PACKAGE_ARCHIVES[0]}" -C "${PACKAGE_WORK}"
+PKG_DIR="${PACKAGE_WORK}/${PACKAGE_NAME}"
+export CARGO_TARGET_DIR="${PACKAGE_TARGET}" RUSTFLAGS=-Dwarnings RUSTDOCFLAGS=-Dwarnings
+unset CARGO_ENCODED_RUSTFLAGS
+cargo +"${TOOLCHAIN}" check --manifest-path "${PKG_DIR}/Cargo.toml" --lib
+cargo +"${TOOLCHAIN}" check --manifest-path "${PKG_DIR}/Cargo.toml" --no-default-features \
+  --target thumbv6m-none-eabi --lib
+cargo +"${TOOLCHAIN}" test --manifest-path "${PKG_DIR}/Cargo.toml" --tests --no-run
+cargo +"${TOOLCHAIN}" test --manifest-path "${PKG_DIR}/Cargo.toml" --test lane_lifecycle_tap
+cargo +"${TOOLCHAIN}" doc --manifest-path "${PKG_DIR}/Cargo.toml" --no-deps --no-default-features

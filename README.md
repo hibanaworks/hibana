@@ -781,7 +781,11 @@ bash ./.github/scripts/run_final_form_gates.sh
 
 It executes the runnable example, Rust tests, `no_std` target checks, rustdoc,
 package checks, Miri, Lean, the Unix carrier conformance suite, and resource
-measurements. Kani/CBMC is a separate required CI job and can be run locally
+measurements. Rust tests exercise protocol behavior and compile-time ownership;
+resource gates measure compiled artifacts and operation stack use. Package
+checks compile the extracted crate and its test modules. CI leaves internal
+names, file layout and documentation wording to code review. Kani/CBMC is a
+separate required CI job and can be run locally
 after installing the version recorded in `.github/kani-version`:
 
 ```bash

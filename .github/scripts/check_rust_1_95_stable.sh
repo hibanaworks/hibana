@@ -3,27 +3,13 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${ROOT_DIR}"
-
 source "${ROOT_DIR}/.github/scripts/repo_rustflags.sh"
+source "${ROOT_DIR}/.github/scripts/configure_ui_diagnostics.sh"
 hibana_enable_repo_tests_cfg
-
-if ! rg -n '^rust-version\s*=\s*"1\.95"' Cargo.toml >/dev/null; then
-  echo "Rust 1.95 stable gate violation: Cargo.toml must set rust-version = \"1.95\"" >&2
-  exit 1
-fi
-
-TOOLCHAIN=1.95.0 ./.github/scripts/ensure_rust_toolchain.sh thumbv6m-none-eabi
-
-if ! rustup component list --toolchain 1.95.0 --installed \
-  | grep -Fxq 'rust-src'; then
-  echo "Rust 1.95 stable gate requires rust-src for reproducible UI diagnostics" >&2
-  exit 1
-fi
-
+hibana_pin_ui_diagnostic_width
+trap hibana_restore_ui_diagnostic_width EXIT
+TOOLCHAIN=1.95.0 bash ./.github/scripts/ensure_rust_toolchain.sh thumbv6m-none-eabi
 cargo +1.95.0 check --no-default-features --lib -p hibana
 cargo +1.95.0 check --target thumbv6m-none-eabi --no-default-features --lib -p hibana
-cargo +1.95.0 test -p hibana --lib
-cargo +1.95.0 test --manifest-path "${ROOT_DIR}/.github/repo-tests/Cargo.toml" --test semantic_surface
-cargo +1.95.0 test -p hibana --test dynamic_route_scope_resolver
-
+cargo +1.95.0 test --workspace
 echo "Rust 1.95 stable check passed"

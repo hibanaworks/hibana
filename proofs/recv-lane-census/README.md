@@ -29,7 +29,8 @@ the unchanged Rust label/schema/origin/event_enabled predicate at the start of
 one poll. `Census.smt2` checks the exact u8 lane and eight-u32-word insertion,
 noninterference, eligibility and zero initialization with five UNSAT obligations
 and a SAT witness for omitted eligibility. `check.sh` audits exact theorem axioms
-and solver output. The source bridge is recorded in `sources.sha256`.
+and solver output. The implementation and model are versioned together in Git; CI checks the
+compiled proof axioms and solver results, without freezing source paths or hashes.
 
 These are scoped refinement obligations. They do not prove Rust decoding,
 unsafe pointer correctness, physical I/O, timing bounds or unconditional network

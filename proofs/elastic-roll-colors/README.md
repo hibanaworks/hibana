@@ -20,64 +20,33 @@ From this repository, run:
 python proofs/elastic-roll-colors/check_all.py --lean /path/to/lean
 ```
 
-`LEAN=/path/to/lean` is also supported. The runner verifies checksums and exact
-pre-edit records, builds seven required Hibana Lean modules from checked-in
-source in a fresh temporary directory, and checks all four color/trace Lean
-files plus `NoRollFastPath.lean`. It then replays all 31 recorded Z3 checks,
-the no-roll abstraction, and the qualified compiler-cost, passive-child-window,
-and projection-conflict-reuse proofs in the sibling directories. It does not
-reuse historical `.olean` caches or run Rust builds.
-The original proof scripts that emit result files run only from temporary copies.
+`LEAN=/path/to/lean` is also supported. The runner builds seven required
+Hibana Lean modules from the current checkout in a fresh temporary directory,
+then checks the four color/trace proofs and `NoRollFastPath.lean`. It replays
+all 31 Z3 queries, graph reconstruction assertions and negative controls,
+the no-roll model, and the compiler-cost, passive-child-window and
+projection-conflict-reuse proofs in sibling directories. It does not reuse
+historical `.olean` caches or run Rust builds. Scripts that emit result files
+run only from temporary copies.
 
-For only the color/no-roll proof layer, add `--skip-compiler-cost`. For only the
-31-query Z3 replay, run:
+For only the color/no-roll proof layer, add `--skip-compiler-cost`. For only
+the 31-query Z3 replay, run:
 
 ```sh
 python proofs/elastic-roll-colors/check_roll_membership_portable.py
 ```
 
-The portable check function and complete query-generating core are byte-for-byte
-identical to `historical/check_roll_membership_gate.py`; `query-equivalence.json`
-records their hashes and the runner checks this identity. It verifies every
-original graph-reconstruction assertion, every SAT premise and negative control,
-and the exact ordered 31 names and expected/actual outcomes. The two capacity
-JSON inputs are losslessly gzipped, with compressed and uncompressed checksums
-in `preserved-artifacts.json`. Replay reconstructs from the accepted membership
-model. The earlier lexical-lifetime model remains archived as superseded evidence.
-
-Source correspondence is a separate check. By default, the runner validates
-recorded evidence bytes, the exact allocator implementation/regression snapshot,
-and Lean dependency source identity. It does not claim
-access to a fresh QUIC source tree. Add `--quic-source /path/to/hibana-quic` to
-compare the seven historical external source input hashes with a local checkout.
-`source-correspondence-final.json` remains an unchanged historical report,
-including its explicit cache provenance limits. Fresh Lean dependency compilation
-here does not retroactively change the provenance of the original recorded run.
-
-The current CI fixture correspondence is recorded in
-`../route-path-refinement/fixture-correspondence.json`. Three original fixture
-sources are preserved byte-for-byte. The checker permits only the recorded
-oracle relocation/import names and removal of the 4 MiB thread stack wrapper;
-all other Rust tokens, including every assertion, must match. The three qualified
-production sources keep their original exact hashes. The large boundary test
-runs on the ordinary test thread without a stack override. These fixture repairs
-do not alter or broaden the original semantic proof claims.
-
-`test-hygiene-followup.json` separately preserves the original `reentry_colors.rs`
-fixture and permits exactly one byte-level transformation: removal of
-`drop(pending)` on a `Pin<&mut Future>`, which has no destructor. The owned future
-still leaves the same enclosing scope. All other fixture bytes and assertions
-must match; historical manifests validate the preserved original, while current
-replay validates the transformed source. Production allocator hashes are unchanged.
-
-The final-form CI gate replays this package with Lean 4.30.0 and z3-solver 4.16.0.
-Historical logs retain their original solver versions. Hash identity is a source
-correspondence check, not a replacement for the conditional refinement premises.
+CI does not freeze Rust paths, fixture spelling, source hashes or historical
+checker bytes. Historical manifests and snapshots remain provenance records.
+They do not establish semantic refinement. Current Rust behavior is checked
+by executable regressions; the models retain the conditional claim boundary
+stated above. The final-form gate uses Lean 4.30.0 and z3-solver 4.16.0;
+historical logs retain their original versions.
 
 `check_no_roll.py` is a fresh abstraction matching the two recorded no-roll Z3
 outcomes; the original no-roll query script was not retained. Its exact Lean
 source and original pre-edit record/logs are preserved. Total, read-only scratch
-initialization is the assumption; the rewrite does not remove source validation.
+initialization remains the model assumption.
 
 ## Chronology and scope
 
@@ -95,17 +64,11 @@ initialization is the assumption; the rewrite does not remove source validation.
   seven-file compiler-cost qualification manifest, verified against preserved
   source snapshots. Four current files still match directly; the three test
   files map through `../compiler-participant-mask/test-hygiene-followup.json`.
-  `../core-followup/check_sources.py` checks both sets of hashes and verifies the
-  exact naming/stack-wrapper changes, preserving the original boundary assertions
-- `../projection-diagnostics/source-correspondence.json`: separately checked
-  diagnostic-only additions to `const_dsl.rs` and `lowering/seal.rs`. The shared
-  identity checker requires both source hashes and the exact recorded textual
-  addition; every other production byte must match the original qualification.
-  The original manifests remain unchanged. New diagnostic semantics are checked
-  by their own Rust differential tests and scoped Lean/Z3 models.
-- `../passive-child-window/` and `../projection-conflict-reuse/`: original
-  separately qualified artifacts, preserved byte-for-byte with fresh current
-  source identity checks. Their original absolute paths and results are historical
+  These records are historical provenance and are not CI source-identity gates.
+- `../projection-diagnostics/source-correspondence.json`: historical diagnostic additions; current semantics are checked by Rust differential tests and Lean/Z3 models.
+- `../passive-child-window/` and `../projection-conflict-reuse/`: separately
+  qualified artifacts and fresh mathematical proof replay. Their original
+  absolute paths and recorded results are historical
 - `../core-followup/`: current integration validation and the original wrapper,
   README, and package manifest archived before this followup
 
@@ -121,10 +84,10 @@ binding and immutable fixture token map, while retaining the local passive-child
 and conflict-reuse proof checks. The current oracle uses the external path
 `tests/verification_oracles/participant_validation.rs`, registered in the owner
 partition. Both pre-integration wrappers and correspondence records are archived
-and checked through `../core-followup/integration-preserved.json`. The current
+in `../core-followup/integration-preserved.json`. The historical
 combined source manifest describes this integration; the previous manifest and
 its validation remain historical evidence. No new measurement or runtime result
-is inferred from these source checks.
+is inferred from these provenance records.
 
 ## Runtime regressions and compiler validation
 

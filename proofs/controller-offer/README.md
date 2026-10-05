@@ -36,14 +36,14 @@ and the reproduced label selection. All 13 theorems are kernel checked with only
 nine negated guard obligations as UNSAT and retains two SAT witnesses of the
 old priority and arm-membership shortcuts.
 
-These are source-linked mathematical models, not a universal refinement proof
+These are mathematical models, not a universal refinement proof
 of the Rust executor. Descriptor decoding, affine preview restoration, terminal
 rejection and atomic event publication are checked by the permanent runtime
 regressions and the existing refinement gates. Physical I/O, scheduling fairness
 and audio/display synchronization are outside these supplemental proofs.
 
 Run `bash proofs/controller-offer/check.sh [evidence-directory]`. The runner checks
-the exact source inventory and SHA-256 identities, pins Lean 4.30.0, audits every
+Lean 4.30.0, audits every
 printed axiom closure and rejects Z3 errors, unknown results or count drift. It
 is part of the final-form CI gate. The Rust regressions are registered as
 `nested_resolver_self_continuations`; they exercise the real projected kernel
