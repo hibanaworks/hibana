@@ -2,6 +2,25 @@ use super::super::super::{EventCursor, RelocatableResidentLaneStep, ScopeId};
 use super::RollLaneAdmission;
 
 impl EventCursor {
+    /// A completed ancestor is retained when this event enters only a child
+    /// visit. Completion alone never permits erasing a required prefix.
+    pub(crate) fn route_reentry_head_allows_index(
+        &self,
+        scope: ScopeId,
+        idx: usize,
+        lane: u8,
+        selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
+    ) -> bool {
+        self.route_scope_reentry(scope)
+            && self.roll_scope_lane_allows_index(
+                scope,
+                idx,
+                lane,
+                RollLaneAdmission::Head,
+                selected_arm_for_scope,
+            )
+    }
+
     #[inline(never)]
     pub(crate) fn roll_body_reentry_scope_for_step(
         &self,

@@ -15,7 +15,7 @@ if [[ "$FAILED" -ne 0 ]]; then
   exit 1
 fi
 (cd "$ROOT/proofs/lean" && lake +"$TOOLCHAIN" build Hibana.GlobalSemantics) > "$EVIDENCE/build.log" 2>&1
-for proof in TraceValidity PhaseOwnership NestedReentry EligibleIngress ReentryAdmission ResetAlignment SendContinuation SendEntry; do
+for proof in TraceValidity PhaseOwnership NestedReentry EligibleIngress ReentryAdmission ResetAlignment SendContinuation SendEntry NestedVisit; do
   LEAN_PATH="$ROOT/proofs/lean/.lake/build/lib/lean" \
     lean +"$TOOLCHAIN" "$PROOFS/$proof.lean" > "$EVIDENCE/$proof.log" 2>&1
 done
@@ -39,4 +39,10 @@ awk '
   { if ($0 != expected[NR]) failed=1 }
   END { if (failed || NR != 5) exit 1 }
 ' "$EVIDENCE/send-entry-z3.log"
-printf 'Rolled-route proofs passed: Lean 4.30.0, 8 files; Z3 14 UNSAT obligations, 22 SAT premises/witnesses. Logs: %s\n' "$EVIDENCE"
+z3 "$PROOFS/NestedVisit.smt2" > "$EVIDENCE/nested-visit-z3.log"
+awk '
+  BEGIN { split("sat unsat sat unsat sat unsat sat unsat", expected, " ") }
+  { if ($0 != expected[NR]) failed=1 }
+  END { if (failed || NR != 8) exit 1 }
+' "$EVIDENCE/nested-visit-z3.log"
+printf 'Rolled-route proofs passed: Lean 4.30.0, 9 files; Z3 18 UNSAT obligations, 26 SAT premises/witnesses. Logs: %s\n' "$EVIDENCE"

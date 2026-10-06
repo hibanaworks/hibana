@@ -1,5 +1,52 @@
 # Rolled-route ownership regressions
 
+## Nested visit reset repair, 2026-10-06
+
+The Module touch-input contract reproduced a distinct defect on `12383a07`:
+Connected/ConnectedReceived followed by one completed Sample/Retained visit and
+the inner Failed receive made FailureRetained fail with PhaseInvariant. The same
+ordinary test carrier accepted an initial failure without a preceding sample.
+The earlier intrinsic entry-selection repair remains in place. This defect was
+in commit application: the completed containing route was reset when only its
+inner rolled route entered a new visit, erasing the actual connection prefix.
+
+The prepared fresh suffix now requires the descriptor's lane-head admission.
+Retained ancestors must keep their selected arm, and each fresh descendant must
+belong to the prepared containing arm. Commit application consumes that prepared
+suffix instead of treating every completed ancestor as a new visit. Existing
+event/dependency/conflict checks and preflight-before-publication remain intact.
+No public API, stored field, transport byte, fixed capacity or dependency is added.
+
+`NestedVisit.lean` was checked before the production edits: five quantified head,
+reset-bound and retained-arm obligations plus seven canonical GlobalSemantics
+histories. Its twelve theorems use only the existing kernel and propext; no new
+trusted declaration or native decision is introduced. `NestedVisit.smt2` checks
+four negated obligations as UNSAT with four SAT premises. The existing runner
+now includes nine Lean files, eighteen UNSAT obligations and twenty-six SAT
+premises/witnesses. These are source-linked abstractions and canonical histories,
+not a universal refinement proof of arbitrary Rust or physical devices.
+
+Three permanent Rust regressions cover 0/1/3 retained samples, enclosing reentry,
+an unretained sample's forbidden arm switch and duplicate failure ACK rejection.
+A fourth case covers a parallel right lane reentering first; a selected parallel
+sibling uses direct recv. All four passed strict-provenance Miri (three cases in
+252.47 seconds and the additional parallel case in 74.46 seconds), and are included
+in the existing Miri gate without increasing its timeout. The complete workspace
+passed 727 tests with twelve explicit ignored cases; the added parallel case and
+its strict Clippy check also passed. Workspace/all-target Clippy, Pico no-default
+build, the full 709 static/506 generated Lean inventory, 182 parallel and 36 causal
+correspondences, and atomic-failure/public-operation audits passed.
+
+The unchanged resource gate passed: thumb rlib sections total 97,476 bytes,
+sample peak stack 2,655 bytes and modeled maximum sample SRAM 5,322 bytes. These
+are sample/object-section measurements, not linked StackChan flash or a universal
+stack proof. Evidence: `/tmp/hibana-nested-visit-final-evidence.U8YY7l/`,
+`/tmp/hibana-nested-visit-miri-evidence.k8YyzJ/`,
+`/tmp/hibana-nested-par-miri-evidence.VxOw9c/` and
+`/tmp/hibana-nested-par-clippy-evidence.m3W3cC/`. Disposable Rust products were
+cleaned after each group. Remote CI and matched device-bundle qualification are
+required before deploying this core to the resident body.
+
 ## Intrinsic entry selection repair, 2026-10-06
 
 The StackChan touch sampling contract reproduced another entry-selection defect

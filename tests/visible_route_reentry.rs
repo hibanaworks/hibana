@@ -13,6 +13,282 @@ use hibana::runtime::{SessionKitStorage, ids::SessionId};
 use runtime_support::with_runtime_workspace;
 use tls_ref_support::with_resident_tls_ref;
 
+fn nested_input_roll_program<const ROLE: u8>() -> RoleProgram<ROLE> {
+    project(
+        &g::route(
+            g::seq(
+                g::send::<0, 1, Msg<128, ()>>(),
+                g::seq(
+                    g::send::<1, 0, Msg<129, ()>>(),
+                    g::route(
+                        g::seq(
+                            g::send::<0, 1, Msg<110, [u8; 7]>>(),
+                            g::send::<1, 0, Msg<111, [u8; 7]>>(),
+                        ),
+                        g::seq(
+                            g::send::<0, 1, Msg<130, u16>>(),
+                            g::send::<1, 0, Msg<131, u16>>(),
+                        ),
+                    )
+                    .roll(),
+                ),
+            ),
+            g::seq(
+                g::send::<0, 1, Msg<134, u16>>(),
+                g::send::<1, 0, Msg<135, u16>>(),
+            ),
+        )
+        .roll(),
+    )
+}
+
+#[test]
+fn nested_input_roll_accepts_failure_ack_after_retained_samples() {
+    for samples in [0, 1, 3] {
+        with_visible_reentry_workspace(
+            1210 + samples,
+            nested_input_roll_program::<0>(),
+            nested_input_roll_program::<1>(),
+            |source, receiver| {
+                futures::executor::block_on(async {
+                    source.send::<Msg<128, ()>>(&()).await.unwrap();
+                    receiver
+                        .offer()
+                        .await
+                        .unwrap()
+                        .recv::<Msg<128, ()>>()
+                        .await
+                        .unwrap();
+                    receiver.send::<Msg<129, ()>>(&()).await.unwrap();
+                    source.recv::<Msg<129, ()>>().await.unwrap();
+                    for index in 0..samples {
+                        let frame = [index as u8; 7];
+                        source.send::<Msg<110, [u8; 7]>>(&frame).await.unwrap();
+                        assert_eq!(
+                            receiver
+                                .offer()
+                                .await
+                                .unwrap()
+                                .recv::<Msg<110, [u8; 7]>>()
+                                .await
+                                .unwrap(),
+                            frame
+                        );
+                        receiver.send::<Msg<111, [u8; 7]>>(&frame).await.unwrap();
+                        assert_eq!(source.recv::<Msg<111, [u8; 7]>>().await.unwrap(), frame);
+                    }
+                    source.send::<Msg<130, u16>>(&1).await.unwrap();
+                    assert_eq!(
+                        receiver
+                            .offer()
+                            .await
+                            .unwrap()
+                            .recv::<Msg<130, u16>>()
+                            .await
+                            .unwrap(),
+                        1
+                    );
+                    receiver.send::<Msg<131, u16>>(&1).await.unwrap();
+                    assert_eq!(
+                        source.recv::<Msg<131, u16>>().await.unwrap(),
+                        1,
+                        "{samples} actual samples before failure"
+                    );
+                    // Reenter the enclosing visit after its actual completion.
+                    // Neither the old connection nor the old failure may grant
+                    // authority to this new visit's acknowledgement.
+                    source.send::<Msg<134, u16>>(&2).await.unwrap();
+                    assert_eq!(
+                        receiver
+                            .offer()
+                            .await
+                            .unwrap()
+                            .recv::<Msg<134, u16>>()
+                            .await
+                            .unwrap(),
+                        2
+                    );
+                    receiver.send::<Msg<135, u16>>(&2).await.unwrap();
+                    assert_eq!(source.recv::<Msg<135, u16>>().await.unwrap(), 2);
+                    source.send::<Msg<128, ()>>(&()).await.unwrap();
+                    receiver
+                        .offer()
+                        .await
+                        .unwrap()
+                        .recv::<Msg<128, ()>>()
+                        .await
+                        .unwrap();
+                    receiver.send::<Msg<129, ()>>(&()).await.unwrap();
+                    source.recv::<Msg<129, ()>>().await.unwrap();
+                    source.send::<Msg<130, u16>>(&3).await.unwrap();
+                    assert_eq!(
+                        receiver
+                            .offer()
+                            .await
+                            .unwrap()
+                            .recv::<Msg<130, u16>>()
+                            .await
+                            .unwrap(),
+                        3
+                    );
+                    receiver.send::<Msg<131, u16>>(&3).await.unwrap();
+                    assert_eq!(source.recv::<Msg<131, u16>>().await.unwrap(), 3);
+                })
+            },
+        );
+    }
+}
+
+#[test]
+fn nested_input_roll_rejects_switch_before_retention() {
+    with_visible_reentry_workspace(
+        1218,
+        nested_input_roll_program::<0>(),
+        nested_input_roll_program::<1>(),
+        |source, receiver| {
+            futures::executor::block_on(async {
+                source.send::<Msg<128, ()>>(&()).await.unwrap();
+                receiver
+                    .offer()
+                    .await
+                    .unwrap()
+                    .recv::<Msg<128, ()>>()
+                    .await
+                    .unwrap();
+                receiver.send::<Msg<129, ()>>(&()).await.unwrap();
+                source.recv::<Msg<129, ()>>().await.unwrap();
+                source.send::<Msg<110, [u8; 7]>>(&[1; 7]).await.unwrap();
+                receiver
+                    .offer()
+                    .await
+                    .unwrap()
+                    .recv::<Msg<110, [u8; 7]>>()
+                    .await
+                    .unwrap();
+                assert!(source.send::<Msg<130, u16>>(&1).await.is_err());
+            })
+        },
+    );
+}
+
+#[test]
+fn nested_input_roll_rejects_duplicate_failure_ack() {
+    with_visible_reentry_workspace(
+        1219,
+        nested_input_roll_program::<0>(),
+        nested_input_roll_program::<1>(),
+        |source, receiver| {
+            futures::executor::block_on(async {
+                source.send::<Msg<128, ()>>(&()).await.unwrap();
+                receiver
+                    .offer()
+                    .await
+                    .unwrap()
+                    .recv::<Msg<128, ()>>()
+                    .await
+                    .unwrap();
+                receiver.send::<Msg<129, ()>>(&()).await.unwrap();
+                source.recv::<Msg<129, ()>>().await.unwrap();
+                source.send::<Msg<130, u16>>(&1).await.unwrap();
+                receiver
+                    .offer()
+                    .await
+                    .unwrap()
+                    .recv::<Msg<130, u16>>()
+                    .await
+                    .unwrap();
+                receiver.send::<Msg<131, u16>>(&1).await.unwrap();
+                source.recv::<Msg<131, u16>>().await.unwrap();
+                assert!(receiver.send::<Msg<131, u16>>(&1).await.is_err());
+            })
+        },
+    );
+}
+
+#[test]
+fn nested_input_roll_preserves_prefix_when_parallel_right_lane_reenters_first() {
+    fn program<const ROLE: u8>() -> RoleProgram<ROLE> {
+        project(
+            &g::route(
+                g::seq(
+                    g::send::<0, 1, Msg<128, ()>>(),
+                    g::seq(
+                        g::send::<1, 0, Msg<129, ()>>(),
+                        g::route(
+                            g::par(
+                                g::seq(
+                                    g::send::<0, 1, Msg<110, u16>>(),
+                                    g::send::<1, 0, Msg<111, u16>>(),
+                                ),
+                                g::seq(
+                                    g::send::<0, 1, Msg<112, u16>>(),
+                                    g::send::<1, 0, Msg<113, u16>>(),
+                                ),
+                            ),
+                            g::seq(
+                                g::send::<0, 1, Msg<130, u16>>(),
+                                g::send::<1, 0, Msg<131, u16>>(),
+                            ),
+                        )
+                        .roll(),
+                    ),
+                ),
+                g::seq(
+                    g::send::<0, 1, Msg<134, u16>>(),
+                    g::send::<1, 0, Msg<135, u16>>(),
+                ),
+            )
+            .roll(),
+        )
+    }
+    with_visible_reentry_workspace(1220, program::<0>(), program::<1>(), |source, receiver| {
+        futures::executor::block_on(async {
+            source.send::<Msg<128, ()>>(&()).await.unwrap();
+            receiver
+                .offer()
+                .await
+                .unwrap()
+                .recv::<Msg<128, ()>>()
+                .await
+                .unwrap();
+            receiver.send::<Msg<129, ()>>(&()).await.unwrap();
+            source.recv::<Msg<129, ()>>().await.unwrap();
+            source.send::<Msg<110, u16>>(&1).await.unwrap();
+            receiver
+                .offer()
+                .await
+                .unwrap()
+                .recv::<Msg<110, u16>>()
+                .await
+                .unwrap();
+            receiver.send::<Msg<111, u16>>(&1).await.unwrap();
+            source.recv::<Msg<111, u16>>().await.unwrap();
+            source.send::<Msg<112, u16>>(&1).await.unwrap();
+            receiver.recv::<Msg<112, u16>>().await.unwrap();
+            receiver.send::<Msg<113, u16>>(&1).await.unwrap();
+            source.recv::<Msg<113, u16>>().await.unwrap();
+            source.send::<Msg<112, u16>>(&2).await.unwrap();
+            receiver.recv::<Msg<112, u16>>().await.unwrap();
+            receiver.send::<Msg<113, u16>>(&2).await.unwrap();
+            source.recv::<Msg<113, u16>>().await.unwrap();
+            source.send::<Msg<110, u16>>(&2).await.unwrap();
+            receiver.recv::<Msg<110, u16>>().await.unwrap();
+            receiver.send::<Msg<111, u16>>(&2).await.unwrap();
+            source.recv::<Msg<111, u16>>().await.unwrap();
+            source.send::<Msg<130, u16>>(&3).await.unwrap();
+            receiver
+                .offer()
+                .await
+                .unwrap()
+                .recv::<Msg<130, u16>>()
+                .await
+                .unwrap();
+            receiver.send::<Msg<131, u16>>(&3).await.unwrap();
+            source.recv::<Msg<131, u16>>().await.unwrap();
+        })
+    });
+}
+
 type TestKitStorage = SessionKitStorage<'static, TestTransport>;
 
 const TOP_BODY_REQ: u8 = 151;

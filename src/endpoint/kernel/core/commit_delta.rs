@@ -63,6 +63,12 @@ impl PreparedCommitDelta {
         self.cursor_after
     }
 
+    pub(in crate::endpoint::kernel::core) const fn route_is_fresh(&self, index: usize) -> bool {
+        self.fresh_route_start != Self::NO_FRESH_ROUTE
+            && index >= self.fresh_route_start as usize
+            && index < self.selected_routes.len()
+    }
+
     #[inline(always)]
     pub(in crate::endpoint::kernel::core) fn take_selected_routes(
         &mut self,
@@ -262,6 +268,14 @@ where
         delta: &CommitDelta,
     ) -> Result<Option<usize>, CursorInvariantError> {
         let routes = delta.selected_routes();
+        let entry_idx = match delta.event() {
+            Some(event) => self
+                .cursor
+                .node_index_for_relocatable_step(event.progress_step())
+                .ok_or(CursorInvariantError::INVARIANT)?,
+            None => state_index_to_usize(delta.cursor_after()),
+        };
+        let lane = delta.selected_route_lane();
         let mut start = None;
         let mut idx = 0usize;
         while idx < routes.len() {
@@ -274,13 +288,45 @@ where
                 Some(selected) => {
                     self.cursor.route_scope_reentry(scope)
                         && self.reentrant_selected_arm_complete(scope, selected)
+                        && {
+                            let mut preview = |candidate| {
+                                let mut row_idx = 0;
+                                while row_idx < routes.len() {
+                                    let row =
+                                        crate::invariant_some(routes.get(&self.cursor, row_idx));
+                                    if row.scope() == candidate {
+                                        return Some(row.selected_arm());
+                                    }
+                                    row_idx += 1;
+                                }
+                                self.selected_arm_for_scope(candidate)
+                            };
+                            self.cursor.route_reentry_head_allows_index(
+                                scope,
+                                entry_idx,
+                                lane.ok_or(CursorInvariantError::INVARIANT)?,
+                                &mut preview,
+                            )
+                        }
                 }
             };
-            if fresh {
-                if start.is_none() {
-                    start = Some(idx);
+            if let Some(root_idx) = start {
+                // A fresh containing visit also owns its descriptor-proven
+                // descendants, even when their previous selection was live.
+                let root = routes
+                    .get(&self.cursor, root_idx)
+                    .ok_or(CursorInvariantError::INVARIANT)?;
+                if self
+                    .cursor
+                    .route_scope_conflict_arm_for_scope(scope, root.scope())
+                    != Some(root.selected_arm())
+                {
+                    return Err(CursorInvariantError::INVARIANT);
                 }
-            } else if start.is_some() {
+            } else if fresh {
+                start = Some(idx);
+            } else if self.selected_arm_for_scope(scope) != Some(row.selected_arm()) {
+                // A retained ancestor cannot change its arm or lose its prefix.
                 return Err(CursorInvariantError::INVARIANT);
             }
             idx += 1;

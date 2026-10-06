@@ -29,7 +29,10 @@ where
             let Some(lane) = route_lane else {
                 crate::invariant();
             };
-            self.apply_prepared_selected_route_commit_row(row, lane);
+            let completed_iteration_arm = self.selected_arm_for_scope(row.scope()).filter(|&arm| {
+                delta.route_is_fresh(idx) && self.reentrant_selected_arm_complete(row.scope(), arm)
+            });
+            self.apply_prepared_selected_route_commit_row(row, lane, completed_iteration_arm);
             idx += 1;
         }
         self.apply_prepared_cursor_index(state_index_to_usize(delta.cursor_after()));
@@ -137,7 +140,12 @@ where
         }
     }
 
-    fn apply_prepared_selected_route_commit_row(&mut self, row: SelectedRouteCommitRow, lane: u8) {
+    fn apply_prepared_selected_route_commit_row(
+        &mut self,
+        row: SelectedRouteCommitRow,
+        lane: u8,
+        completed_iteration_arm: Option<u8>,
+    ) {
         let lane_idx = lane as usize;
         let scope = row.scope();
         let Some(scope_slot) = self.cursor.route_scope_slot(scope) else {
@@ -147,12 +155,6 @@ where
             ReentryMark::Reentrant
         } else {
             ReentryMark::SinglePass
-        };
-        let completed_iteration_arm = if reentry.is_reentrant() {
-            self.selected_arm_for_scope(scope)
-                .filter(|&arm| self.reentrant_selected_arm_complete(scope, arm))
-        } else {
-            None
         };
         if let Some(completed_arm) = completed_iteration_arm {
             let cursor = &self.cursor;

@@ -357,6 +357,12 @@ run_miri_test \
   -p hibana \
   --test nested_resolver_self_continuations
 
+MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \
+  nested-input-visit-ownership \
+  -p hibana \
+  --test visible_route_reentry \
+  nested_input_roll_
+
 run_miri_test \
   program-image-storage-validation \
   -p hibana \
