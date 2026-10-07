@@ -201,3 +201,7 @@ path = "tests/explicit_resource_join.rs"
 [[test]]
 name = "runtime_contract"
 path = "tests/runtime_contract.rs"
+
+[[test]]
+name = "parallel_offer_delayed_ingress"
+path = "tests/parallel_offer_delayed_ingress.rs"

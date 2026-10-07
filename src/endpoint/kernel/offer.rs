@@ -277,7 +277,27 @@ where
                 crate::invariant();
             };
             match self.poll_collect_offer_evidence(&mut state.pending_recv, stage, cx) {
-                Poll::Pending => return Poll::Pending,
+                Poll::Pending => {
+                    // No selected-scope frame is owned yet. Keep independent
+                    // active receive lanes armed while this scope is waiting.
+                    match self.poll_any_active_offer_transport_frame(&mut state.pending_recv, cx) {
+                        Poll::Ready(Ok(Some(frame))) => {
+                            let mut ingress = OfferStagedIngress::empty();
+                            ingress.stage_transport(frame);
+                            let visited = frontier_visited.take();
+                            state.execution = OfferExecution::Selecting {
+                                frontier_visited: visited,
+                            };
+                            state.carry_ingress(ingress);
+                            return Poll::Ready(Ok(None));
+                        }
+                        Poll::Ready(Err(error)) => {
+                            state.discard_terminal();
+                            return Poll::Ready(Err(error));
+                        }
+                        Poll::Ready(Ok(None)) | Poll::Pending => return Poll::Pending,
+                    }
+                }
                 Poll::Ready(Err(err)) => {
                     stage.discard_terminal();
                     return Poll::Ready(Err(err));
