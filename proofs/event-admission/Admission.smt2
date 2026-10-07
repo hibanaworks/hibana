@@ -6,12 +6,14 @@
 (declare-const label (_ BitVec 8))
 (declare-const origin (_ BitVec 1))
 (declare-const scope (_ BitVec 16))
+(declare-const arm_present Bool)
 (declare-const arm (_ BitVec 8))
 (declare-const lane (_ BitVec 8))
 (declare-const requested_eff (_ BitVec 16))
 (declare-const requested_label (_ BitVec 8))
 (declare-const requested_origin (_ BitVec 1))
 (declare-const requested_scope (_ BitVec 16))
+(declare-const requested_arm_present Bool)
 (declare-const requested_arm (_ BitVec 8))
 (declare-const requested_lane (_ BitVec 8))
 (declare-const next (_ BitVec 16))
@@ -44,7 +46,8 @@
     (= progress_checked progress)))
 (define-fun other_key_matches () Bool
   (and (= requested_eff eff) (= requested_label label) (= requested_origin origin)
-    (= requested_scope scope) (= requested_arm arm)))
+    (= requested_scope scope) (= requested_arm_present arm_present)
+    (or (not arm_present) (= requested_arm arm))))
 (define-fun key_matches () Bool (and other_key_matches (= requested_lane lane)))
 (define-fun old_static () Bool
   (and present lane_valid other_key_matches (= requested_lane lane_copy)
@@ -105,6 +108,19 @@
 (pop)
 
 (push)
+(assert (= requested_eff eff))
+(assert (= requested_label label))
+(assert (= requested_origin origin))
+(assert (= requested_scope scope))
+(assert (= requested_lane lane))
+(assert (= requested_arm arm))
+(assert (distinct requested_arm_present arm_present))
+(assert (admitted (new_observation seed)))
+; None and Some with the same payload bits remain distinct identities.
+(check-sat)
+(pop)
+
+(push)
 (assert (not present))
 (assert (distinct (new_observation seed) (rejected seed)))
 ; A missing descriptor row cannot call any live check or modify observation.
@@ -144,5 +160,14 @@
 (assert (distinct next_first next_checked))
 (assert (not (admitted (old_observation seed))))
 ; Without immutability, removing repeated checks is UNSOUND: real SAT witness.
+(check-sat)
+(pop)
+
+(push)
+(assert new_static)
+(assert (not arm_present))
+(assert (distinct requested_arm arm))
+(assert (admitted (new_observation seed)))
+; None ignores unused payload bits, exactly like typed Option equality.
 (check-sat)
 (pop)

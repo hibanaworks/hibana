@@ -12,6 +12,6 @@ cat > "$proof_evidence/lean.expected" <<'EOF'
 EOF
 diff -u "$proof_evidence/lean.expected" "$proof_evidence/lean.log"
 z3 "$proof_dir/Admission.smt2" > "$proof_evidence/z3.log"
-printf 'sat\nunsat\nunsat\nunsat\nunsat\nunsat\nsat\nsat\n' > "$proof_evidence/z3.expected"
+printf 'sat\nunsat\nunsat\nunsat\nunsat\nunsat\nunsat\nsat\nsat\nsat\n' > "$proof_evidence/z3.expected"
 diff -u "$proof_evidence/z3.expected" "$proof_evidence/z3.log"
-printf 'Immutable event admission: Lean 4 theorems; Z3 5 UNSAT, 3 SAT premises/witnesses. Evidence: %s\n' "$proof_evidence"
+printf 'Immutable event admission: Lean 4 theorems; Z3 6 UNSAT, 4 SAT premises/witnesses. Evidence: %s\n' "$proof_evidence"
