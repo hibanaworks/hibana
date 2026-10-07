@@ -62,6 +62,8 @@ jobs:
         run: bash proofs/recv-lane-census/check.sh
       - name: Check completion bitmap traversal with Lean and Z3
         run: bash proofs/pending-events/check.sh
+      - name: Check immutable event admission with Lean and Z3
+        run: bash proofs/event-admission/check.sh
       - name: Check parallel offer ingress handoff with Lean and Z3
         run: bash proofs/parallel-offer-ingress/check.sh
       - name: Check immutable resolver lookup and dispatch subtree

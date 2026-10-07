@@ -4,14 +4,13 @@
 //! zero-allocation authority over compiled role-local rows; projection checks
 //! compare this image against an independent oracle in tests.
 
-use crate::eff::{EffIndex, EventOrigin};
 use crate::global::{
     compiled::images::CompiledProgramRef,
     const_dsl::{ReentryMark, ScopeId, ScopeKind},
     role_program::{LaneSetView, PackedLaneRange, RoleImageRef},
     typestate::{
-        LocalAction, LocalDependency, LocalNode, PackedEventConflict, PassiveArmChildFact,
-        RouteScopeRows, StateIndex,
+        EventCommitMeta, LocalAction, LocalDependency, LocalNode, PackedEventConflict,
+        PassiveArmChildFact, RouteScopeRows, StateIndex,
     },
 };
 
@@ -301,17 +300,13 @@ impl LocalEventProgram {
             return None;
         }
         let node = self.checked_node(idx)?;
-        let lane = match node.action() {
-            LocalAction::Send { lane, .. }
-            | LocalAction::Recv { lane, .. }
-            | LocalAction::Local { lane, .. } => lane,
-            LocalAction::Terminate => return None,
-        };
+        if node.action().is_terminal() {
+            return None;
+        }
         let dependency = self.rows().dependency_for_index(idx);
         let conflict = self.rows().event_conflict_for_index(idx);
         Some(LocalEventRow {
             node,
-            lane,
             dependency,
             conflict,
         })
@@ -359,12 +354,16 @@ impl LocalEventRowSet {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct LocalEventRow {
     node: LocalNode,
-    lane: u8,
     dependency: Option<LocalDependency>,
     conflict: PackedEventConflict,
 }
 
 impl LocalEventRow {
+    #[inline(always)]
+    pub(crate) const fn next(self) -> StateIndex {
+        self.node.next()
+    }
+
     #[inline(always)]
     pub(crate) const fn dependency(self) -> Option<LocalDependency> {
         self.dependency
@@ -375,16 +374,8 @@ impl LocalEventRow {
         self.conflict
     }
 
-    pub(crate) fn matches_commit(
-        self,
-        eff_index: EffIndex,
-        label: u8,
-        origin: EventOrigin,
-        scope: ScopeId,
-        route_arm: Option<u8>,
-        lane: u8,
-    ) -> bool {
-        if self.lane != lane || self.node.scope() != scope || self.node.route_arm() != route_arm {
+    pub(crate) fn matches_commit(self, event: EventCommitMeta) -> bool {
+        if self.node.scope() != event.scope || self.node.route_arm() != event.route_arm {
             return false;
         }
         match self.node.action() {
@@ -392,20 +383,28 @@ impl LocalEventRow {
                 eff_index: row_eff,
                 label: row_label,
                 origin: row_origin,
+                lane: row_lane,
                 ..
             }
             | LocalAction::Recv {
                 eff_index: row_eff,
                 label: row_label,
                 origin: row_origin,
+                lane: row_lane,
                 ..
             }
             | LocalAction::Local {
                 eff_index: row_eff,
                 label: row_label,
                 origin: row_origin,
+                lane: row_lane,
                 ..
-            } => row_eff == eff_index && row_label == label && row_origin == origin,
+            } => {
+                row_eff == event.eff_index
+                    && row_label == event.label
+                    && row_origin == event.origin
+                    && row_lane == event.lane
+            }
             LocalAction::Terminate => false,
         }
     }

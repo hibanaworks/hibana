@@ -141,6 +141,12 @@ run_miri_test \
   global::event_program_cursor_tests::production_cursor_pipelines_rolled_send_before_remote_receive
 
 run_miri_test \
+  immutable-event-admission \
+  -p hibana \
+  --lib \
+  global::event_program_cursor_tests::event_admission_
+
+run_miri_test \
   endpoint-waiter-owner \
   -p hibana \
   --lib \

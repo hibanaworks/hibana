@@ -1319,6 +1319,127 @@ struct ProductionCursorTrace {
     _completed_words: Vec<u32>,
 }
 
+#[test]
+fn event_admission_rejects_each_identity_mismatch_without_changing_progress() {
+    use crate::{
+        eff::{EffIndex, EventOrigin},
+        global::typestate::EventCommitMeta,
+    };
+    let trace = ProductionCursorTrace::new::<0>(&crate::g::send::<0, 1, crate::g::Msg<1, ()>>());
+    let correct = EventCommitMeta::from(trace.cursor().try_send_meta_at(0).unwrap());
+    let snapshot = || {
+        (
+            // The state is initialized by ProductionCursorTrace::new and only
+            // immutably borrowed during each admission call.
+            std::format!("{:?}", unsafe { trace._state_storage.assume_init_ref() }),
+            trace._lane_cursors.clone(),
+            trace._current_labels.clone(),
+            trace._completed_words.clone(),
+        )
+    };
+    let before = snapshot();
+    for wrong in [
+        EventCommitMeta {
+            eff_index: EffIndex::from_dense_ordinal(1),
+            ..correct
+        },
+        EventCommitMeta {
+            label: 2,
+            ..correct
+        },
+        EventCommitMeta {
+            origin: EventOrigin::Session,
+            ..correct
+        },
+        EventCommitMeta {
+            scope: ScopeId::route(0),
+            ..correct
+        },
+        EventCommitMeta {
+            route_arm: Some(0),
+            ..correct
+        },
+        EventCommitMeta { lane: 1, ..correct },
+    ] {
+        assert!(
+            trace
+                .cursor()
+                .event_enabled(0, wrong, &mut |_, _| {
+                    panic!("identity rejection must precede route callbacks")
+                })
+                .is_err()
+        );
+        assert_eq!(snapshot(), before);
+    }
+    for absent in [1, usize::MAX] {
+        assert!(
+            trace
+                .cursor()
+                .event_enabled(absent, correct, &mut |_, _| None)
+                .is_err()
+        );
+        assert_eq!(snapshot(), before);
+    }
+    let accepted = trace
+        .cursor()
+        .event_enabled(0, correct, &mut |_, _| None)
+        .unwrap();
+    assert_eq!(state_index_to_usize(accepted.cursor_after()), 1);
+    assert_eq!(
+        accepted.progress_step(),
+        trace
+            .cursor()
+            .relocatable_resident_lane_step_at_index(0, 0)
+            .unwrap()
+    );
+    assert_eq!(snapshot(), before, "admission must not commit an event");
+}
+
+#[test]
+fn event_admission_rechecks_dependency_after_an_actual_predecessor_commit() {
+    use crate::global::typestate::EventCommitMeta;
+    let mut trace = ProductionCursorTrace::new::<0>(&crate::g::seq(
+        crate::g::send::<0, 1, crate::g::Msg<1, ()>>(),
+        crate::g::send::<0, 1, crate::g::Msg<2, ()>>(),
+    ));
+    let suffix = EventCommitMeta::from(trace.cursor().try_send_meta_at(1).unwrap());
+    let before = (
+        trace.cursor().index(),
+        trace._lane_cursors.clone(),
+        trace._current_labels.clone(),
+        trace._completed_words.clone(),
+    );
+    assert!(
+        trace
+            .cursor()
+            .event_enabled(1, suffix, &mut |_, _| None)
+            .is_err()
+    );
+    assert_eq!(
+        (
+            trace.cursor().index(),
+            trace._lane_cursors.clone(),
+            trace._current_labels.clone(),
+            trace._completed_words.clone(),
+        ),
+        before
+    );
+    trace.commit_label(1);
+    let accepted = trace
+        .cursor()
+        .event_enabled(1, suffix, &mut |_, _| None)
+        .unwrap();
+    assert_eq!(state_index_to_usize(accepted.cursor_after()), 2);
+    assert_eq!(
+        accepted.progress_step(),
+        trace
+            .cursor()
+            .relocatable_resident_lane_step_at_index(1, 0)
+            .unwrap()
+    );
+    assert_eq!(trace.enabled_labels(), vec![2]);
+}
+
 impl ProductionCursorTrace {
     fn new<const ROLE: u8>(program: &impl Projectable) -> Box<Self> {
         let projected: crate::runtime::program::RoleProgram<ROLE> =
