@@ -135,3 +135,78 @@ fn direct_lane_heads_match_ordinal_oracle_for_routes_and_roll() {
     compare_lane_heads(&role1);
     compare_lane_heads(&role2);
 }
+
+#[test]
+fn pending_prefix_preserves_rejection_for_every_completion_and_route_choice() {
+    let global = g::seq(
+        g::par(
+            g::seq(
+                g::send::<0, 1, Msg<21, u8>>(),
+                g::route(
+                    g::send::<0, 1, Msg<22, u8>>(),
+                    g::send::<0, 1, Msg<23, u8>>(),
+                ),
+            ),
+            g::seq(
+                g::send::<0, 2, Msg<24, u8>>(),
+                g::send::<2, 0, Msg<25, u8>>(),
+            ),
+        )
+        .roll(),
+        g::send::<0, 1, Msg<26, u8>>(),
+    );
+    let program: RoleProgram<0> = project(&global);
+    let descriptor = RoleDescriptorRef::from_resident(program.role_image_ref());
+    let rows = descriptor.local_event_rows();
+    let len = rows.local_step_count();
+    assert!(
+        len < 12,
+        "fixture exhaustively enumerates completion subsets"
+    );
+    let mut state = MaybeUninit::<EventCursorState>::uninit();
+    let mut cursor = MaybeUninit::<EventCursor>::uninit();
+    let mut heads = [0u16; 256];
+    let mut labels = [0u16; 256];
+    let mut done = std::vec![0u32; len.div_ceil(32)];
+    // As in the lane-head differential fixture: disjoint unpublished storage
+    // outlives every cursor access, including deliberate completion resets.
+    unsafe {
+        EventCursor::init_from_compiled(
+            cursor.as_mut_ptr(),
+            state.as_mut_ptr(),
+            heads.as_mut_ptr(),
+            labels.as_mut_ptr(),
+            done.as_mut_ptr(),
+            descriptor,
+        );
+    }
+    let cursor = unsafe { cursor.assume_init_mut() };
+    for completion in 0..1u32 << len {
+        cursor.completed_event_words_mut()[0] = completion;
+        for choice in [None, Some(0), Some(1)] {
+            for step in 0..len {
+                let target = RelocatableResidentLaneStep(ResidentLaneStep {
+                    step_idx: step as u16,
+                    lane: rows.local_step_lane(step).unwrap(),
+                });
+                let preview = cursor.machine().event_conflict_for_index(step);
+                // Independent per-step specification, including completions
+                // cleared on reentry and unchosen route arms in another lane.
+                let expected = (0..step).all(|previous| {
+                    completion & (1 << previous) != 0
+                        || rows.local_step_lane(previous) != Some(target.0.lane)
+                        || !cursor.event_conflict_row_allows_with_preview(
+                            cursor.machine().event_conflict_for_index(previous),
+                            preview,
+                            &mut |_| choice,
+                        )
+                });
+                assert_eq!(
+                    cursor.event_lane_head_allows(target, preview, &mut |_| choice),
+                    expected,
+                    "completion={completion:08x} choice={choice:?} step={step}"
+                );
+            }
+        }
+    }
+}

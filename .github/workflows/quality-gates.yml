@@ -60,6 +60,8 @@ jobs:
         run: bash proofs/explicit-resource-join/check.sh
       - name: Check receive lane census with Lean and Z3
         run: bash proofs/recv-lane-census/check.sh
+      - name: Check completion bitmap traversal with Lean and Z3
+        run: bash proofs/pending-events/check.sh
       - name: Check immutable resolver lookup and dispatch subtree
         run: |
           ELAN_TOOLCHAIN=leanprover/lean4:v4.30.0 lean proofs/route-index/SortedRouteIndex.lean

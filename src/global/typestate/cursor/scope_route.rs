@@ -10,8 +10,8 @@ pub(crate) use event_progress::EventArmView;
 use super::super::facts::{LocalConflict, PackedEventConflict, PassiveArmChildFact};
 use super::{
     CursorInvariantError, DynamicRouteResolver, EffIndex, EventCursor, LaneSetView, LocalAction,
-    LocalDependency, RecvMeta, RelocatableResidentLaneStep, ResidentLaneStep,
-    RouteOfferCursorState, ScopeId, SendMeta, StateIndex, state_index_to_usize,
+    LocalDependency, RecvMeta, RelocatableResidentLaneStep, RouteOfferCursorState, ScopeId,
+    SendMeta, StateIndex, state_index_to_usize,
 };
 use crate::global::role_program::PackedLaneRange;
 
@@ -49,28 +49,20 @@ impl EventCursor {
         selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
     ) -> bool {
         let target = progress_step.0;
-        let mut step_idx = 0usize;
-        while step_idx < target.step_idx as usize {
-            if self.machine().event_program().local_step_lane(step_idx) == Some(target.lane) {
-                let candidate = RelocatableResidentLaneStep(ResidentLaneStep {
-                    step_idx: step_idx as u16,
-                    lane: target.lane,
-                });
-                if !self.relocatable_step_done(candidate)
-                    && let Some(pending_idx) = self
-                        .machine()
-                        .state_for_step_index(step_idx)
-                        .map(state_index_to_usize)
-                    && self.event_conflict_row_allows_with_preview(
-                        self.machine().event_conflict_for_index(pending_idx),
-                        preview_conflict,
-                        selected_arm_for_scope,
-                    )
-                {
-                    return false;
-                }
+        for step_idx in self.pending_event_steps(0..usize::from(target.step_idx)) {
+            if self.machine().event_program().local_step_lane(step_idx) == Some(target.lane)
+                && let Some(pending_idx) = self
+                    .machine()
+                    .state_for_step_index(step_idx)
+                    .map(state_index_to_usize)
+                && self.event_conflict_row_allows_with_preview(
+                    self.machine().event_conflict_for_index(pending_idx),
+                    preview_conflict,
+                    selected_arm_for_scope,
+                )
+            {
+                return false;
             }
-            step_idx += 1;
         }
         true
     }

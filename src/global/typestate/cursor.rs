@@ -24,6 +24,7 @@ mod first_recv_dispatch;
 mod kani;
 mod lane_progress;
 mod navigation;
+mod pending_events;
 mod scope_route;
 pub(crate) use scope_route::EventArmView;
 
