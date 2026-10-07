@@ -30,6 +30,63 @@ The QUIC consumer also needed to pin its role futures at its existing executor
 join boundary to avoid transient copies exceeding libtest's default stack.
 The connected tests then passed without enlarging the stack.
 
-No new Lean theorem or full remote CI result is claimed for this candidate.
 The minimal regression bounds executor polls and never substitutes sleeps,
 capacity increases or a fixed response for real endpoint progress.
+
+## Focused verification
+
+The original runtime repair cbc42c9d228f58d9ce548d2e41f7b32c595b9a4c passed
+the full remote quality-gates run 37584970627. The additional evidence below
+qualifies its collecting guard and handoff; it changes no runtime code or API.
+
+`Ingress.lean` checks 14 kernel theorems for opaque frame values. Acquired
+ingress makes collecting non-pending; independent transport is inspected only
+with empty ingress and pending selected evidence. A real independent frame
+enters Selecting intact with the unchanged frontier-visit context. Absence
+remains waiting and either error remains terminal. The finite active-lane scan
+returns only an observed frame and preserves priority of an earlier error.
+Its historical witness exhibits selected-only waiting despite a ready sibling.
+The axiom inventory contains only propext where needed; no sorry or native
+decision axiom is accepted by the kernel-output check.
+
+`Ingress.smt2` checks the same collection guards over unbounded opaque frame
+values: 8 counterexample obligations are UNSAT, and 2 ownership/delayed-arrival
+premises are SAT. `check.sh` audits actual Lean output and the ordered Z3
+results; it does not lint source paths or implementation spellings.
+
+Source correspondence:
+
+| Model | Runtime boundary |
+| --- | --- |
+| collect | poll_collect_offer_evidence, including the existing nonempty-ingress guard |
+| advance waiting | poll_offer_collecting's Pending arm |
+| selecting frame/context | stage_transport, frontier_visited.take, carry_ingress |
+| resolving/error | existing selected-evidence and terminal error arms |
+| scan | poll_any_active_offer_transport_frame in active descriptor-lane order |
+
+The production-endpoint regression now exercises six distinct payloads through
+delayed rolled arrivals, abandons and re-enters every first offer preview, checks
+exact payload and ACK equality, then requires the actual End/Done/Closed/Retired
+join. This connects frame preservation and cancellation to real endpoint code.
+
+Focused local checks on 2026-10-07:
+- Lean 4.30.0: all 14 theorems and the exact output axiom inventory passed;
+  Z3: ordered 2 SAT and 8 UNSAT results passed
+  (/tmp/hibana-parallel-ingress-proof.PoJwmb).
+- The strengthened production-endpoint test passed
+  (/tmp/hibana-parallel-ingress-test.1D3gJb).
+- Workspace all-target strict Clippy passed
+  (/tmp/hibana-parallel-ingress-clippy.t7Pzoc).
+- The same test passed nightly-2026-05-28 Miri with strict provenance,
+  including each cancelled preview (/tmp/hibana-parallel-ingress-miri.hbzZIW).
+  Its target was removed after checking; clean-final.log records removal.
+
+The workflow executes the new kernel/SMT checks. A successful run of the earlier
+runtime-repair commit is not evidence of this later proof/check revision's CI.
+
+These mathematical guards are not a formal refinement of all Rust execution.
+Descriptor decoding/active-lane enumeration, transport fairness, wake delivery,
+affine lease implementation and final branch validation remain Rust/model-check
+and existing proof boundaries. Selecting a carried frame does not itself grant
+offer completion or admission of an invalid frame. Runtime layout, capacities,
+wire representation and partial-publication rejection remain unchanged.

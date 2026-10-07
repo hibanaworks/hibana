@@ -62,6 +62,8 @@ jobs:
         run: bash proofs/recv-lane-census/check.sh
       - name: Check completion bitmap traversal with Lean and Z3
         run: bash proofs/pending-events/check.sh
+      - name: Check parallel offer ingress handoff with Lean and Z3
+        run: bash proofs/parallel-offer-ingress/check.sh
       - name: Check immutable resolver lookup and dispatch subtree
         run: |
           ELAN_TOOLCHAIN=leanprover/lean4:v4.30.0 lean proofs/route-index/SortedRouteIndex.lean

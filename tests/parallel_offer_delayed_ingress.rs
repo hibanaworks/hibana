@@ -30,6 +30,7 @@ type NoReclaim = g::Msg<195, u64>;
 type Stored = g::Msg<194, u64>;
 type Done = g::Msg<196, ()>;
 type Closed = g::Msg<197, ()>;
+const PAYLOADS: [u64; 6] = [17, u64::MAX, 0, 0x0102_0304_0506_0708, 31, 99];
 #[test]
 fn offer_observes_delayed_receive_in_parallel_with_local_send_route() {
     let packets = g::seq(
@@ -115,40 +116,45 @@ fn offer_observes_delayed_receive_in_parallel_with_local_send_route() {
             .await
             .map_err(|e| format!("{e:?}"))?;
         println!("sink plain received");
-        loop {
+        for expected in PAYLOADS {
+            // Abandon the first preview; the owned frame must survive one
+            // cancellation before its subsequent committed receive.
+            let preview = c.offer().await.map_err(|e| format!("{e:?}"))?;
+            assert_eq!(preview.label(), 6);
+            drop(preview);
             let o = c.offer().await.map_err(|e| format!("{e:?}"))?;
-            match o.label() {
-                6 => {
-                    let v = o.recv::<Data>().await.map_err(|e| format!("{e:?}"))?;
-                    println!("sink data received");
-                    c.send::<Ack>(&v).await.map_err(|e| format!("{e:?}"))?;
-                }
-                9 => {
-                    o.recv::<End>().await.map_err(|e| format!("{e:?}"))?;
-                    c.send::<Done>(&()).await.map_err(|e| format!("{e:?}"))?;
-                    c.recv::<Closed>().await.map_err(|e| format!("{e:?}"))?;
-                    c.send::<Retired>(&()).await.map_err(|e| format!("{e:?}"))?;
-                    break;
-                }
-                _ => panic!("label"),
-            }
+            assert_eq!(o.label(), 6);
+            let v = o.recv::<Data>().await.map_err(|e| format!("{e:?}"))?;
+            assert_eq!(v, expected);
+            c.send::<Ack>(&v).await.map_err(|e| format!("{e:?}"))?;
         }
+        c.offer()
+            .await
+            .map_err(|e| format!("{e:?}"))?
+            .recv::<End>()
+            .await
+            .map_err(|e| format!("{e:?}"))?;
+        c.send::<Done>(&()).await.map_err(|e| format!("{e:?}"))?;
+        c.recv::<Closed>().await.map_err(|e| format!("{e:?}"))?;
+        c.send::<Retired>(&()).await.map_err(|e| format!("{e:?}"))?;
         Ok::<_, String>(())
     };
     let receive = async {
-        for _ in 0..5 {
-            // This test peer delays the physical arrival by one executor turn.
-            // Unlike the offer path, the finite delay must schedule itself.
-            std::future::poll_fn(|cx| {
-                cx.waker().wake_by_ref();
-                Poll::Ready(())
-            })
-            .await;
-            futures::pending!();
+        for value in PAYLOADS {
+            for _ in 0..5 {
+                // This test peer delays the physical arrival by one executor turn.
+                // Unlike the offer path, the finite delay must schedule itself.
+                std::future::poll_fn(|cx| {
+                    cx.waker().wake_by_ref();
+                    Poll::Ready(())
+                })
+                .await;
+                futures::pending!();
+            }
+            b.send::<Data>(&value).await.map_err(|e| format!("{e:?}"))?;
+            let ack = b.recv::<Ack>().await.map_err(|e| format!("{e:?}"))?;
+            assert_eq!(ack, value);
         }
-        b.send::<Data>(&0).await.map_err(|e| format!("{e:?}"))?;
-        println!("receive data sent");
-        b.recv::<Ack>().await.map_err(|e| format!("{e:?}"))?;
         b.send::<End>(&()).await.map_err(|e| format!("{e:?}"))?;
         b.recv::<Retired>().await.map_err(|e| format!("{e:?}"))?;
         Ok::<_, String>(())
