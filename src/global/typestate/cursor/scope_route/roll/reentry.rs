@@ -42,14 +42,18 @@ impl EventCursor {
         ) {
             return None;
         }
-        self.roll_scope_lane_allows_index(
-            scope,
-            idx,
-            lane,
-            RollLaneAdmission::Head,
-            selected_arm_for_scope,
-        )
-        .then_some(scope)
+        // Completion uses the committed visit above. Head admission uses the
+        // candidate's conflict so an old alternative cannot block the new head.
+        let preview_conflict = self.machine().event_conflict_for_index(idx);
+        let mut preview = |candidate| {
+            self.selected_arm_for_reentry_preview_conflict(
+                candidate,
+                preview_conflict,
+                selected_arm_for_scope,
+            )
+        };
+        self.roll_scope_lane_allows_index(scope, idx, lane, RollLaneAdmission::Head, &mut preview)
+            .then_some(scope)
     }
 
     #[inline(never)]

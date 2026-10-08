@@ -1,5 +1,47 @@
 # Rolled-route ownership regressions
 
+## Shared suffix and completed body admission repair, 2026-10-08
+
+The ordinary test carrier reproduces two defects on `8302a07b` using
+`par(roll(seq(route(queryA, queryB), route(record, empty))), parallel releases)`.
+Changing the query source from A to B after another lane progresses rejects
+the shared record reply. A completed record can also be sent again, or changed
+to the previously unchosen empty reply, without receiving a fresh query.
+Both failures are reproduced before the repair in `tests/shared_query_tail_reentry.rs`.
+
+Body completion is still checked against committed selections. Its reset-head
+check now uses the candidate conflict through the existing preview-choice rule.
+This prevents an old alternative from blocking the new head. A completed body
+always uses head admission rather than progress from an old parked suffix;
+even an unchosen suffix with a clear completion bit must pass that admission.
+The existing event, dependency, conflict, resolver and atomic commit checks stay
+in force. No public API, stored field, capacity, dependency or wire byte is added.
+
+The regressions check the original history, all 256 four-visit query/reply
+histories with dropped offers, interleaved releases and independent stop, and
+duplicate or opposite replies without a fresh receive. `SharedSuffix.lean`
+adds fourteen kernel-checked theorems: committed/candidate choice, required
+prefix/head admission, reset bounds and seven canonical GlobalSemantics histories.
+`SharedSuffix.smt2` checks six negated obligations as UNSAT, with six SAT premise
+checks and three positive/historical witnesses. The supplemental runner checks
+ten Lean files, 24 UNSAT obligations and 35 SAT premises/witnesses. These are
+source-linked admission models and canonical histories, not a universal Rust
+refinement or hardware proof.
+
+Local qualification passed 737 workspace tests (12 explicit ignored cases),
+strict workspace/all-target Clippy, the canonical 709 static/506 generated Lean
+gate with its exporters and atomic-failure/public-operation audits, and the
+supplemental Lean/Z3 runner. The two minimal regressions also passed strict
+provenance Miri (71.46 and 52.70 seconds) and join the existing Miri CI runner.
+The 256-history matrix remains an ordinary Rust test to avoid multiplying
+interpreter cost. The existing runtime operation-count and cold compile-pressure
+gates passed. Pico thumbv6m rlib sections total 97,270 bytes; the measured sample
+maximum stack is 2,655 bytes and modeled sample maximum SRAM is 5,322 bytes,
+within the unchanged budgets. The core also builds without default features
+for thumbv8m.main-none-eabi. These are sample/object-section measurements, not
+whole StackChan flash or a universal stack bound. Logs are retained at
+`/tmp/dots-proximity-evidence.k8fteQ/`; hardware deployment is a separate gate.
+
 ## Nested visit reset repair, 2026-10-06
 
 The Module touch-input contract reproduced a distinct defect on `12383a07`:

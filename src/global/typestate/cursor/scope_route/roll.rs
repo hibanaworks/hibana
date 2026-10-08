@@ -167,7 +167,7 @@ impl EventCursor {
     }
 
     #[inline(never)]
-    fn complete_roll_body_scope_for_index(
+    pub(super) fn complete_roll_body_scope_for_index(
         &self,
         idx: usize,
         selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
@@ -357,7 +357,13 @@ impl EventCursor {
             return false;
         };
         let mut selected_arm_for_scope = |scope| arm_for_scope(scope, super::EventArmView::Preview);
-        if self.event_is_before_lane_cursor(idx, lane) {
+        // A completed body admits a new visit only at its head. A lane parked
+        // on an old suffix is not evidence of progress in that new visit.
+        if matches!(
+            scope.kind(),
+            Some(crate::global::const_dsl::ScopeKind::Roll)
+        ) || self.event_is_before_lane_cursor(idx, lane)
+        {
             return self.roll_scope_lane_allows_index(
                 scope,
                 idx,

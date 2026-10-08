@@ -75,7 +75,15 @@ impl EventCursor {
         // events do; a previous visit's prefix cannot authorize a past suffix.
         if !self.relocatable_step_done(progress_step) && !self.event_progress_passed(progress_step)
         {
-            return Ok(());
+            // An unchosen suffix can lie ahead of a rewound lane head. Its
+            // clear bit is not a fresh visit when the enclosing body is done.
+            let mut committed = |scope| arm_for_scope(scope, EventArmView::Committed);
+            if self
+                .complete_roll_body_scope_for_index(idx, &mut committed)
+                .is_none()
+            {
+                return Ok(());
+            }
         }
         if !self.has_reentry_scopes()
             || !self.roll_reentry_event_allows_index(idx, event.lane, arm_for_scope)

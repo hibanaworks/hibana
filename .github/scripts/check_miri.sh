@@ -369,6 +369,18 @@ MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_t
   --test visible_route_reentry \
   nested_input_roll_
 
+MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \
+  shared-query-tail-reentry \
+  -p hibana \
+  --test shared_query_tail_reentry \
+  switching_query_source_after_parallel_release_keeps_the_shared_reply_live
+
+MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \
+  completed-body-suffix-rejection \
+  -p hibana \
+  --test shared_query_tail_reentry \
+  a_completed_reply_cannot_be_reused_without_receiving_a_fresh_query
+
 run_miri_test \
   program-image-storage-validation \
   -p hibana \

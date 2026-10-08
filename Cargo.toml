@@ -172,6 +172,10 @@ name = "send_route_authority"
 path = "tests/send_route_authority.rs"
 
 [[test]]
+name = "shared_query_tail_reentry"
+path = "tests/shared_query_tail_reentry.rs"
+
+[[test]]
 name = "security_report_regressions"
 path = "tests/security_report_regressions.rs"
 
