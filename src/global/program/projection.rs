@@ -8,7 +8,7 @@ pub(crate) mod seal {
 /// A sealed, zero-sized Hibana choreography that can be composed and projected.
 ///
 /// Return `impl Projectable` to let Rust infer the choreography's step-list type.
-/// The same value can be passed to `g::seq`, `g::route`, `g::par`, or `project`.
+/// The same value can be passed to `g::seq`, `g::route`, `g::par`, `g::diagnose`, or `project`.
 /// Composition retains the underlying step-list and the existing projection
 /// checks; it does not allocate, erase messages, or introduce a runtime layer.
 ///
@@ -144,5 +144,19 @@ mod tests {
             )
             .resolve::<17>(),
         );
+    }
+
+    #[test]
+    fn opaque_diagnostics_preserve_acceptance_and_rejection() {
+        assert_eq!(g::diagnose(&exchange()), None);
+        fn invalid() -> impl Projectable {
+            g::route(request(), reply())
+        }
+        let expected = g::diagnose(&g::route(
+            g::send::<0, 1, g::Msg<1, u32>>(),
+            g::send::<1, 0, g::Msg<2, u32>>(),
+        ));
+        assert!(expected.is_some());
+        assert_eq!(g::diagnose(&invalid()), expected);
     }
 }

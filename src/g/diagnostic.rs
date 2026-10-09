@@ -1,5 +1,6 @@
 //! Read-only source diagnostics. These values are not projection evidence.
-use super::{Program, ProgramProjection, ProgramShape, ProgramSourceError};
+use super::{ProgramProjection, ProgramShape, ProgramSourceError};
+use crate::global::program::Projectable;
 
 /// The obligation that prevented projection.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -163,27 +164,26 @@ impl core::fmt::Display for ProjectionDiagnostic {
 /// validate payload algorithms, physical I/O, or application progress. Malformed
 /// source-domain invariants can still panic during lowering. The function uses
 /// the same acceptance gate as projection, with bounded, allocation-free data.
-#[allow(private_bounds)]
-pub fn diagnose<Steps: ProgramShape>(program: &Program<Steps>) -> Option<ProjectionDiagnostic> {
+pub fn diagnose<P: Projectable>(program: &P) -> Option<ProjectionDiagnostic> {
     let _ = program;
     const {
-        let rows = Steps::SOURCE_ROW_COUNT;
+        let rows = P::Steps::SOURCE_ROW_COUNT;
         if rows <= 8 {
-            diagnostic_for::<Steps, 8>()
+            diagnostic_for::<P::Steps, 8>()
         } else if rows <= 32 {
-            diagnostic_for::<Steps, 32>()
+            diagnostic_for::<P::Steps, 32>()
         } else if rows <= 128 {
-            diagnostic_for::<Steps, 128>()
+            diagnostic_for::<P::Steps, 128>()
         } else if rows <= 512 {
-            diagnostic_for::<Steps, 512>()
+            diagnostic_for::<P::Steps, 512>()
         } else if rows <= 2048 {
-            diagnostic_for::<Steps, 2048>()
+            diagnostic_for::<P::Steps, 2048>()
         } else if rows <= 8192 {
-            diagnostic_for::<Steps, 8192>()
+            diagnostic_for::<P::Steps, 8192>()
         } else if rows <= 32768 {
-            diagnostic_for::<Steps, 32768>()
+            diagnostic_for::<P::Steps, 32768>()
         } else if rows <= 65535 {
-            diagnostic_for::<Steps, 65535>()
+            diagnostic_for::<P::Steps, 65535>()
         } else {
             panic!("choreography source exceeds compact descriptor domain")
         }
