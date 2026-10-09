@@ -7,13 +7,13 @@ use crate::{
 };
 
 #[derive(Clone, Copy)]
-pub(crate) enum SourceRouteResolver {
+pub enum SourceRouteResolver {
     Intrinsic,
     Dynamic(u16),
 }
 
 #[derive(Clone, Copy)]
-pub(crate) enum ProgramSourceNode {
+pub enum ProgramSourceNode {
     Send(EffAtom),
     Seq {
         left: &'static Self,
@@ -31,7 +31,9 @@ pub(crate) enum ProgramSourceNode {
     Roll(&'static Self),
 }
 
-pub(crate) trait ProgramShape {
+// Public within this private module so the sealed composition contract can name
+// its associated step-list without exposing the source builders as an API.
+pub trait ProgramShape {
     const SOURCE_NODE: ProgramSourceNode;
     const EVENT_COUNT: usize;
     const SCOPE_MARKER_COUNT: usize;

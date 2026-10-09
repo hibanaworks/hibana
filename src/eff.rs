@@ -65,7 +65,7 @@ impl EventOrigin {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct EffAtom {
+pub struct EffAtom {
     pub(crate) from: u8,
     pub(crate) to: u8,
     pub(crate) label: u8,

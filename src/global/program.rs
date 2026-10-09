@@ -15,6 +15,8 @@ impl<Steps> projection::seal::Sealed for Program<Steps>
 where
     Steps: crate::g::ProgramShape,
 {
+    type Steps = Steps;
+
     #[inline(always)]
     fn project<const ROLE: u8>(&self) -> crate::global::role_program::RoleProgram<ROLE> {
         crate::g::project(self)
@@ -26,7 +28,7 @@ pub(crate) fn project_unnamed<const ROLE: u8, P>(
     program: &P,
 ) -> crate::global::role_program::RoleProgram<ROLE>
 where
-    P: projection::seal::Sealed + ?Sized,
+    P: projection::seal::Sealed,
 {
     <P as projection::seal::Sealed>::project(program)
 }

@@ -137,6 +137,30 @@ not enter the endpoint, descriptor header, or Pico runtime state.
 
 ## Protocol Language
 
+A named choreography can return `impl Projectable`, letting Rust infer its
+step-list from the expression. These values compose through the same `g`
+operators before projection; no second type-level declaration is required.
+
+```rust
+use hibana::{g, runtime::program::{Projectable, project}};
+
+fn exchange() -> impl Projectable {
+    g::seq(
+        g::send::<0, 1, g::Msg<1, u32>>(),
+        g::send::<1, 0, g::Msg<2, u32>>(),
+    )
+}
+
+let conversation = g::seq(exchange(), exchange());
+let client = project::<0, _>(&conversation);
+let server = project::<1, _>(&conversation);
+```
+
+`Projectable` is sealed: only Hibana choreography constructors establish it.
+The unprojected value remains zero-sized, and composition preserves the concrete
+step-list and projection checks. Runtime endpoints and owned resources are not
+made copyable by this choreography interface.
+
 | Form | Meaning |
 | --- | --- |
 | `g::send::<FROM, TO, g::Msg<LABEL, PAYLOAD>>()` | One visible asynchronous message |

@@ -67,9 +67,15 @@ pub(crate) enum ProgramSourceError {
 /// On stable Rust, do not hoist `Program<_>` into `const` or `static` items.
 /// Compose programs through a local `let` choreography term and immediately
 /// project them through `project(&program)`.
-#[derive(Clone, Copy)]
 pub struct Program<Steps> {
     steps: PhantomData<Steps>,
+}
+
+impl<Steps> Copy for Program<Steps> {}
+impl<Steps> Clone for Program<Steps> {
+    fn clone(&self) -> Self {
+        *self
+    }
 }
 
 impl<Steps> Program<Steps> {
@@ -112,10 +118,13 @@ impl<Steps> Program<Steps> {
 }
 
 /// Sequentially compose two protocol fragments.
-pub const fn seq<LeftSteps, RightSteps>(
-    left: Program<LeftSteps>,
-    right: Program<RightSteps>,
-) -> Program<Seq<LeftSteps, RightSteps>> {
+pub const fn seq<
+    Left: crate::global::program::Projectable,
+    Right: crate::global::program::Projectable,
+>(
+    left: Left,
+    right: Right,
+) -> Program<Seq<Left::Steps, Right::Steps>> {
     let _ = (left, right);
     Program::new()
 }
@@ -126,19 +135,25 @@ pub const fn seq<LeftSteps, RightSteps>(
 /// evidence; their arms must agree on the first-visible controller. Resolved
 /// routes use [`ResolverRef::decide`](crate::runtime::resolver::ResolverRef::decide) as
 /// branch authority instead.
-pub const fn route<LeftSteps, RightSteps>(
-    left: Program<LeftSteps>,
-    right: Program<RightSteps>,
-) -> Program<Route<LeftSteps, RightSteps>> {
+pub const fn route<
+    Left: crate::global::program::Projectable,
+    Right: crate::global::program::Projectable,
+>(
+    left: Left,
+    right: Right,
+) -> Program<Route<Left::Steps, Right::Steps>> {
     let _ = (left, right);
     Program::new()
 }
 
 /// Construct a binary parallel composition.
-pub const fn par<LeftSteps, RightSteps>(
-    left: Program<LeftSteps>,
-    right: Program<RightSteps>,
-) -> Program<Par<LeftSteps, RightSteps>> {
+pub const fn par<
+    Left: crate::global::program::Projectable,
+    Right: crate::global::program::Projectable,
+>(
+    left: Left,
+    right: Right,
+) -> Program<Par<Left::Steps, Right::Steps>> {
     let _ = (left, right);
     Program::new()
 }

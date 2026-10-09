@@ -35,7 +35,7 @@ impl<const ROLE: u8> RoleProgramView<ROLE> for RoleProgram<ROLE> {
 /// Project a typed program into the local view for `ROLE`.
 pub fn project<const ROLE: u8, P>(program: &P) -> RoleProgram<ROLE>
 where
-    P: crate::global::program::Projectable + ?Sized,
+    P: crate::global::program::Projectable,
 {
     crate::global::program::project_unnamed(program)
 }
