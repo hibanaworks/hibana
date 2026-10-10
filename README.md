@@ -152,8 +152,8 @@ fn exchange() -> impl Projectable {
 }
 
 let conversation = g::seq(exchange(), exchange());
-let client = project::<0, _>(&conversation);
-let server = project::<1, _>(&conversation);
+let client = project::<0>(&conversation);
+let server = project::<1>(&conversation);
 ```
 
 `Projectable` is sealed: only Hibana choreography constructors establish it.

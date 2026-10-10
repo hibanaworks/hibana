@@ -72,8 +72,8 @@ fn exact_frames_cross_two_independent_runtimes_in_fifo_order() {
         g::send::<0, 1, Msg<1, u32>>(),
         g::send::<0, 1, Msg<2, u32>>(),
     );
-    let origin_program = project::<0, _>(&program);
-    let target_program = project::<1, _>(&program);
+    let origin_program = project::<0>(&program);
+    let target_program = project::<1>(&program);
     let (left, right) = UnixDatagramCarrier::pair(0, 1).expect("Unix socket pair");
 
     let mut left_slab = vec![0_u8; SLAB_BYTES];
@@ -114,8 +114,8 @@ fn logical_close_wakes_a_remote_receive_after_accepted_frames_drain() {
         g::send::<0, 1, Msg<3, u32>>(),
         g::send::<0, 1, Msg<5, u32>>(),
     );
-    let origin_program = project::<0, _>(&program);
-    let target_program = project::<1, _>(&program);
+    let origin_program = project::<0>(&program);
+    let target_program = project::<1>(&program);
     let (left, right) = UnixDatagramCarrier::pair(0, 1).expect("Unix socket pair");
 
     let mut left_slab = vec![0_u8; SLAB_BYTES];
@@ -173,8 +173,8 @@ fn logical_close_wakes_a_remote_receive_after_accepted_frames_drain() {
 #[test]
 fn a_fresh_socket_generation_cannot_observe_an_old_session_frame() {
     let program = g::send::<0, 1, Msg<4, u32>>();
-    let origin_program = project::<0, _>(&program);
-    let target_program = project::<1, _>(&program);
+    let origin_program = project::<0>(&program);
+    let target_program = project::<1>(&program);
     let session = SessionId::new(9003);
 
     {

@@ -18,8 +18,8 @@ pub(crate) mod seal {
 /// fn reply() -> impl Projectable { g::send::<1, 0, g::Msg<2, u32>>() }
 /// fn exchange() -> impl Projectable { g::seq(request(), reply()) }
 /// let conversation = g::seq(exchange(), exchange());
-/// let client = project::<0, _>(&conversation);
-/// let server = project::<1, _>(&conversation);
+/// let client = project::<0>(&conversation);
+/// let server = project::<1>(&conversation);
 /// ```
 ///
 /// Only Hibana's constructors can establish this contract. An external type
@@ -63,12 +63,12 @@ mod tests {
         assert_eq!(core::mem::size_of_val(&a), 0);
         assert_eq!(core::mem::size_of_val(&b), 0);
         assert!(core::ptr::eq(
-            project::<0, _>(&a).role_image_ref(),
-            project::<0, _>(&b).role_image_ref()
+            project::<0>(&a).role_image_ref(),
+            project::<0>(&b).role_image_ref()
         ));
         assert!(core::ptr::eq(
-            project::<1, _>(&a).role_image_ref(),
-            project::<1, _>(&b).role_image_ref()
+            project::<1>(&a).role_image_ref(),
+            project::<1>(&b).role_image_ref()
         ));
     }
 
@@ -125,12 +125,12 @@ mod tests {
         );
         same_images(opaque, explicit);
         assert!(core::ptr::eq(
-            project::<2, _>(&opaque).role_image_ref(),
-            project::<2, _>(&explicit).role_image_ref()
+            project::<2>(&opaque).role_image_ref(),
+            project::<2>(&explicit).role_image_ref()
         ));
         assert!(core::ptr::eq(
-            project::<3, _>(&opaque).role_image_ref(),
-            project::<3, _>(&explicit).role_image_ref()
+            project::<3>(&opaque).role_image_ref(),
+            project::<3>(&explicit).role_image_ref()
         ));
     }
 
