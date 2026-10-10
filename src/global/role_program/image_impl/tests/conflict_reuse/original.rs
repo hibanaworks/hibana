@@ -243,7 +243,11 @@ impl<const N: usize> RoleImageBytes<N> {
                     out.write_route_arm_row(
                         columns.route_arms,
                         arm_row_index,
-                        crate::global::role_program::PackedRouteArmRow::new(local_row, child_slot, lane_step_row),
+                        crate::global::role_program::PackedRouteArmRow::new(
+                            local_row,
+                            child_slot,
+                            lane_step_row,
+                        ),
                     );
                     let commit_range = PackedLaneRange::new(route_commit_row, commit_len);
                     out.w32(

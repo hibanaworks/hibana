@@ -246,7 +246,6 @@ const fn lane_bitmap_row_is_minimal_active_subset<const N: usize>(
     true
 }
 
-
 const fn arm_bitmap_matches_lane_steps<const N: usize>(
     bytes: &[u8; N],
     columns: RoleImageColumns,

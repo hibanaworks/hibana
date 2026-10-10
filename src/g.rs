@@ -195,13 +195,43 @@ where
         )
     };
 
+    // Separate constant queries bound compiler work per proof obligation.
+    // The verdict below retains the same ordered rejection priority.
+    const RECEIVE_CAUSAL: bool =
+        crate::global::const_dsl::validate_receive_lane_causality(Self::SOURCE_EFF_LIST);
+    const PARALLEL_SELECTORS: bool =
+        crate::global::const_dsl::validate_parallel_endpoint_selectors(Self::SOURCE_EFF_LIST);
+    const REENTRY_SELECTORS: bool =
+        crate::global::const_dsl::validate_roll_reentry_endpoint_selectors(Self::SOURCE_EFF_LIST);
+    const PASSIVE_ERROR: Option<ProgramSourceError> =
+        crate::global::compiled::lowering::validate_passive_child_projection_guarantees(
+            Self::SOURCE_EFF_LIST.scope_markers(),
+        );
+    const ROUTE_ERROR: Option<ProgramSourceError> =
+        crate::global::compiled::lowering::validate_route_projection_guarantees(
+            &Self::IMAGE,
+            Self::SOURCE_EFF_LIST,
+        );
+
     const VALIDATION: () = {
         let source = Self::SOURCE_EFF_LIST;
         Self::IMAGE.validate_projection_program();
-        if let Some(error) =
-            crate::global::compiled::lowering::projection_error_all_roles(&Self::IMAGE, source)
-        {
-            let diagnostic = match Self::DIAGNOSTIC {
+        let error = if !Self::RECEIVE_CAUSAL {
+            Some(ProgramSourceError::ReceiveLaneCausalityConflict)
+        } else if !Self::PARALLEL_SELECTORS {
+            Some(ProgramSourceError::ParallelAmbiguousEndpointSelector)
+        } else if !Self::REENTRY_SELECTORS {
+            Some(ProgramSourceError::ReentryAmbiguousEndpointSelector)
+        } else if let Some(error) = Self::PASSIVE_ERROR {
+            Some(error)
+        } else {
+            Self::ROUTE_ERROR
+        };
+        if let Some(error) = error {
+            let diagnostic = match crate::global::compiled::lowering::projection_diagnostic(
+                &Self::IMAGE,
+                source,
+            ) {
                 Some(diagnostic) => diagnostic,
                 None => ProjectionDiagnostic::from_error(error),
             };

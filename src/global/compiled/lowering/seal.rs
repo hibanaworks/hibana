@@ -18,6 +18,7 @@ use crate::{
 #[cfg(kani)]
 mod kani;
 mod passive_child;
+pub(crate) use passive_child::validate_passive_child_projection_guarantees;
 #[cfg(all(test, hibana_repo_tests))]
 mod tests;
 
@@ -116,7 +117,7 @@ const fn participating_roles<const E: usize>(
 
 // Global route authority and selector facts do not depend on a projected role.
 // Validate them once per scope, then check every role's observer obligation.
-const fn validate_route_projection_guarantees<const E: usize>(
+pub(crate) const fn validate_route_projection_guarantees<const E: usize>(
     summary: &CompiledProgramImage,
     eff_list: &EffList<E>,
 ) -> Option<ProgramSourceError> {

@@ -6,7 +6,7 @@ use crate::{
     },
 };
 
-pub(super) const fn validate_passive_child_projection_guarantees(
+pub(crate) const fn validate_passive_child_projection_guarantees(
     scope_markers: ScopeMarkerView<'_>,
 ) -> Option<ProgramSourceError> {
     let mut route_slot = 0usize;

@@ -303,12 +303,10 @@ pub(super) const fn local_event_row_for_eff<const E: usize>(
         Some(LocalConflict::RouteArm {
             scope: route_scope,
             arm,
-        }) => {
-            match first_recv_eff_for_route_arm(eff_list, route_scope, arm, role) {
-                Some(first) if first == eff_idx => RouteChoiceMark::Determinant,
-                Some(_) | None => RouteChoiceMark::Ordinary,
-            }
-        }
+        }) => match first_recv_eff_for_route_arm(eff_list, route_scope, arm, role) {
+            Some(first) if first == eff_idx => RouteChoiceMark::Determinant,
+            Some(_) | None => RouteChoiceMark::Ordinary,
+        },
         Some(LocalConflict::Unconditional | LocalConflict::SharedRoute) | None => {
             RouteChoiceMark::Ordinary
         }

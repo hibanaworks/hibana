@@ -79,6 +79,14 @@ const fn observer_path_decision(
 pub(crate) const fn validate_parallel_endpoint_selectors<const E: usize>(
     eff_list: &EffList<E>,
 ) -> bool {
+    // Decode each event once, rather than decoding both sides of every pair.
+    let mut outbound = [0u64; E];
+    let mut event = 0;
+    while event < eff_list.len() {
+        outbound[event] = EndpointSelector::outbound(eff_list.atom_at(event)).0;
+        event += 1;
+    }
+    let sorted = sorted_selector_events(&outbound, eff_list.len());
     let markers = eff_list.scope_markers();
     let mut idx = 0usize;
     while idx < markers.len() {
@@ -92,7 +100,9 @@ pub(crate) const fn validate_parallel_endpoint_selectors<const E: usize>(
                 return false;
             };
             if parallel_endpoint_selector_conflicts(
-                eff_list,
+                &outbound,
+                &sorted,
+                eff_list.len(),
                 left_start,
                 left_end,
                 right_start,
@@ -139,40 +149,115 @@ pub(crate) const fn validate_roll_reentry_endpoint_selectors<const E: usize>(
     true
 }
 
+// A bounded heap sort groups equal public send contracts once for all scopes.
+// Event indices remain exact, so no hashing or collision assumption is used.
+const fn sorted_selector_events<const E: usize>(keys: &[u64; E], len: usize) -> [usize; E] {
+    let mut order = [0usize; E];
+    let mut i = 0;
+    while i < len {
+        order[i] = i;
+        i += 1;
+    }
+    let mut root = len / 2;
+    while root > 0 {
+        root -= 1;
+        sift_selector_heap(keys, &mut order, root, len);
+    }
+    let mut end = len;
+    while end > 1 {
+        end -= 1;
+        let last = order[end];
+        order[end] = order[0];
+        order[0] = last;
+        sift_selector_heap(keys, &mut order, 0, end);
+    }
+    order
+}
+
+const fn sift_selector_heap<const E: usize>(
+    keys: &[u64; E],
+    order: &mut [usize; E],
+    mut root: usize,
+    end: usize,
+) {
+    loop {
+        let mut child = root * 2 + 1;
+        if child >= end {
+            return;
+        }
+        if child + 1 < end && keys[order[child]] < keys[order[child + 1]] {
+            child += 1;
+        }
+        if keys[order[root]] >= keys[order[child]] {
+            return;
+        }
+        let old = order[root];
+        order[root] = order[child];
+        order[child] = old;
+        root = child;
+    }
+}
+
 const fn parallel_endpoint_selector_conflicts<const E: usize>(
-    eff_list: &EffList<E>,
+    outbound: &[u64; E],
+    sorted: &[usize; E],
+    len: usize,
     left_start: usize,
     left_end: usize,
     right_start: usize,
     right_end: usize,
 ) -> bool {
-    let mut idx = left_start;
-    while idx < left_end && idx < eff_list.len() {
-        let atom = eff_list.atom_at(idx);
-        if range_contains_endpoint_selector(
-            eff_list,
-            right_start,
-            right_end,
-            EndpointSelector::outbound(atom),
-        ) {
-            return true;
+    // Identical inbound evidence can only occur in the ranges' intersection.
+    let first = if left_start > right_start {
+        left_start
+    } else {
+        right_start
+    };
+    if first < left_end
+        && first < right_end
+        && first < len
+        && first < crate::eff::meta::COMPACT_EVENT_IDENTITY_CAPACITY
+    {
+        return true;
+    }
+    let mut left = left_start;
+    while left < left_end && left < len {
+        let key = outbound[left];
+        let mut low = 0;
+        let mut high = len;
+        while low < high {
+            let mid = low + (high - low) / 2;
+            if outbound[sorted[mid]] < key {
+                low = mid + 1;
+            } else {
+                high = mid;
+            }
         }
-        if let Some(selector) = inbound_selector_at(idx)
-            && range_contains_endpoint_selector(eff_list, right_start, right_end, selector)
-        {
-            return true;
+        while low < len && outbound[sorted[low]] == key {
+            let event = sorted[low];
+            if event >= right_start && event < right_end {
+                return true;
+            }
+            low += 1;
         }
-        idx += 1;
+        left += 1;
     }
     false
 }
 
+#[cfg(test)]
 const fn range_contains_endpoint_selector<const E: usize>(
     eff_list: &EffList<E>,
     start: usize,
     end: usize,
     target: EndpointSelector,
 ) -> bool {
+    // Inbound evidence is the unique event index, so membership is exact
+    // without scanning unrelated events or comparing their payloads.
+    if target.is_inbound_evidence() {
+        let index = (target.0 & ((1u64 << EndpointSelector::KIND_SHIFT) - 1)) as usize;
+        return index >= start && index < end && index < eff_list.len();
+    }
     let mut idx = start;
     while idx < end && idx < eff_list.len() {
         if atom_matches_selector(idx, eff_list.atom_at(idx), target) {
@@ -291,6 +376,14 @@ const fn first_visible_endpoint_matches<const E: usize>(
     if start >= end || start >= eff_list.len() {
         return false;
     }
+    // Every recursive branch remains inside this event range. A distinct
+    // inbound event cannot match any endpoint in it.
+    if target.is_inbound_evidence() {
+        let index = (target.0 & ((1u64 << EndpointSelector::KIND_SHIFT) - 1)) as usize;
+        if index < start || index >= end {
+            return false;
+        }
+    }
     if let Some(route_enter) = route_enter_at(markers, start, end, marker_floor) {
         let [(arm0_start, arm0_end), (arm1_start, arm1_end)] =
             route_arm_ranges_from_first_enter(markers, route_enter);
@@ -398,3 +491,95 @@ const fn atom_matches_selector(
 
 #[cfg(kani)]
 mod kani;
+
+#[cfg(test)]
+mod pruning_tests {
+    use super::*;
+
+    #[test]
+    fn cached_parallel_selectors_match_pairwise_reference() {
+        let mut events = EffList::<16>::new_partitioned(8, 0, 0);
+        let mut outbound = [0u64; 16];
+        for (i, key) in outbound.iter_mut().enumerate().take(8) {
+            let atom = eff::EffAtom {
+                from: (i % 2) as u8,
+                to: ((i + 1) % 2) as u8,
+                label: (i % 3) as u8,
+                payload_schema: 0,
+                origin: eff::EventOrigin::User,
+                lane: 0,
+            };
+            events.push_event_mut(atom);
+            *key = EndpointSelector::outbound(atom).0;
+        }
+        for left_start in 0..10 {
+            for left_end in 0..10 {
+                for right_start in 0..10 {
+                    for right_end in 0..10 {
+                        let expected = (left_start..left_end.min(events.len())).any(|left| {
+                            (right_start..right_end.min(events.len())).any(|right| {
+                                EndpointSelector::outbound(events.atom_at(left))
+                                    .same(EndpointSelector::outbound(events.atom_at(right)))
+                                    || inbound_selector_at(left)
+                                        .unwrap()
+                                        .same(inbound_selector_at(right).unwrap())
+                            })
+                        });
+                        assert_eq!(
+                            parallel_endpoint_selector_conflicts(
+                                &outbound,
+                                &sorted_selector_events(&outbound, events.len()),
+                                events.len(),
+                                left_start,
+                                left_end,
+                                right_start,
+                                right_end
+                            ),
+                            expected
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn inbound_range_membership_matches_event_scan() {
+        let mut events = EffList::<16>::new_partitioned(8, 0, 0);
+        for label in 0..8 {
+            events.push_event_mut(eff::EffAtom {
+                from: 0,
+                to: 1,
+                label,
+                payload_schema: 0,
+                origin: eff::EventOrigin::User,
+                lane: 0,
+            });
+        }
+        for index in 0..12 {
+            let target = EndpointSelector::inbound_evidence(index).unwrap();
+            for start in 0..12 {
+                for end in 0..12 {
+                    let expected = (start..end.min(events.len()))
+                        .any(|i| atom_matches_selector(i, events.atom_at(i), target));
+                    assert_eq!(
+                        range_contains_endpoint_selector(&events, start, end, target),
+                        expected
+                    );
+                    let first = start < end && start < events.len() && start == index;
+                    assert_eq!(
+                        first_visible_endpoint_matches(
+                            events.scope_markers(),
+                            &events,
+                            start,
+                            end,
+                            target,
+                            0
+                        ),
+                        first
+                    );
+                }
+            }
+        }
+    }
+}
