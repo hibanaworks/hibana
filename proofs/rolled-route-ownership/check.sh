@@ -3,8 +3,7 @@ set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 PROOFS="$ROOT/proofs/rolled-route-ownership"
-TOOLCHAIN=leanprover/lean4:v4.30.0
-export ELAN_TOOLCHAIN="$TOOLCHAIN"
+export ELAN_TOOLCHAIN=leanprover/lean4:v4.30.0
 EVIDENCE=${1:-$(mktemp -d /tmp/hibana-rolled-route-proofs.XXXXXX)}
 mkdir -p "$EVIDENCE"
 source "$ROOT/.github/scripts/lib/proof_audit.sh"
@@ -21,7 +20,7 @@ for proof in TraceValidity PhaseOwnership NestedReentry EligibleIngress ReentryA
     lean "$PROOFS/$proof.lean" > "$EVIDENCE/$proof.log" 2>&1
 done
 z3 "$PROOFS/Admission.smt2" > "$EVIDENCE/z3.log"
-bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" smt-counts "$EVIDENCE/z3.log" 16 10
+bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" smt-admission "$EVIDENCE/z3.log"
 z3 "$PROOFS/SendContinuation.smt2" > "$EVIDENCE/send-continuation-z3.log"
 bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" smt-counts "$EVIDENCE/send-continuation-z3.log" 3 2
 z3 "$PROOFS/SendEntry.smt2" > "$EVIDENCE/send-entry-z3.log"
