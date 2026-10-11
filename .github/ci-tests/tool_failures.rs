@@ -297,3 +297,95 @@ fn pressure_guard_rejects_successful_corrupt_tables_and_checks_exit_race() {
     }
     fs::remove_dir_all(directory).unwrap();
 }
+
+#[test]
+fn standalone_proof_logs_preserve_failed_tool_status_and_diagnostics() {
+    use std::{fs, os::unix::fs::PermissionsExt};
+    let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let root = std::env::temp_dir().join(format!("hibana-proof-logging-{}", std::process::id()));
+    fs::create_dir_all(root.join("bin")).unwrap();
+    fs::create_dir_all(root.join(".github/scripts/lib")).unwrap();
+    // Use the real Rust validator, avoiding a compiler or mutable shared cache.
+    fs::copy(
+        env!("CARGO_BIN_EXE_supplemental-proofs"),
+        root.join("validator"),
+    )
+    .unwrap();
+    fs::write(
+        root.join(".github/scripts/lib/supplemental_proofs_tool.sh"),
+        "#!/bin/bash\nexec \"$PROOF_TEST_ROOT/validator\" \"$@\"\n",
+    )
+    .unwrap();
+    let lean = root.join("bin/lean");
+    fs::write(&lean, "#!/bin/bash\nif [[ $1 == --version ]]; then echo 'Lean (version 4.30.0, test)'; exit 0; fi\nif [[ $PROOF_TEST_EXIT == solver ]]; then cat \"$PROOF_TEST_ROOT/lean-success\"; exit 0; fi\nprintf 'proof stdout diagnostic\\n'\nprintf 'proof stderr diagnostic\\n' >&2\nexit \"$PROOF_TEST_EXIT\"\n").unwrap();
+    fs::set_permissions(&lean, fs::Permissions::from_mode(0o755)).unwrap();
+    for family in [
+        "recv-lane-census",
+        "pending-events",
+        "event-admission",
+        "parallel-offer-ingress",
+    ] {
+        let relative = format!("proofs/{family}/check.sh");
+        fs::create_dir_all(root.join(format!("proofs/{family}"))).unwrap();
+        fs::copy(repo.join(&relative), root.join(&relative)).unwrap();
+        let evidence = root.join(format!("evidence-{family}"));
+        let run = |code: &str| {
+            Command::new("bash")
+                .arg(&relative)
+                .arg(&evidence)
+                .current_dir(&root)
+                .env(
+                    "PATH",
+                    format!(
+                        "{}:{}",
+                        root.join("bin").display(),
+                        std::env::var("PATH").unwrap()
+                    ),
+                )
+                .env("PROOF_TEST_ROOT", &root)
+                .env("PROOF_TEST_EXIT", code)
+                .output()
+                .unwrap()
+        };
+        let output = run("17");
+        assert_eq!(output.status.code(), Some(17), "{family}");
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        let log = fs::read_to_string(evidence.join("lean.log")).unwrap();
+        for diagnostic in ["proof stdout diagnostic", "proof stderr diagnostic"] {
+            assert!(stdout.contains(diagnostic), "{family}: {stdout}");
+            assert!(log.contains(diagnostic), "{family}: {log}");
+        }
+        let tee = root.join("bin/tee");
+        fs::write(&tee, "#!/bin/bash\ncat >/dev/null\nexit 19\n").unwrap();
+        fs::set_permissions(&tee, fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(
+            run("0").status.code(),
+            Some(19),
+            "{family}: failed tee must reject"
+        );
+        fs::remove_file(tee).unwrap();
+        let source = fs::read_to_string(repo.join(&relative)).unwrap();
+        let lean_success = if let Some((_, rest)) = source.split_once("<<'EOF'\n") {
+            rest.split_once("\nEOF").unwrap().0.to_owned() + "\n"
+        } else if family == "parallel-offer-ingress" {
+            (0..14)
+                .map(|i| format!("'Fixture{i}' depends on axioms: [propext]\n"))
+                .collect()
+        } else {
+            String::new()
+        };
+        fs::write(root.join("lean-success"), lean_success).unwrap();
+        let z3 = root.join("bin/z3");
+        fs::write(&z3, "#!/bin/bash\nprintf 'solver stdout diagnostic\\n'\nprintf 'solver stderr diagnostic\\n' >&2\nexit 23\n").unwrap();
+        fs::set_permissions(&z3, fs::Permissions::from_mode(0o755)).unwrap();
+        let output = run("solver");
+        assert_eq!(output.status.code(), Some(23), "{family}");
+        assert!(String::from_utf8_lossy(&output.stdout).contains("solver stdout diagnostic"));
+        assert!(String::from_utf8_lossy(&output.stderr).contains("solver stderr diagnostic"));
+        assert!(fs::read_to_string(evidence.join("z3.log"))
+            .unwrap()
+            .contains("solver stdout diagnostic"));
+        fs::remove_file(z3).unwrap();
+    }
+    fs::remove_dir_all(root).unwrap();
+}

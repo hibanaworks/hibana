@@ -5,9 +5,9 @@ cd "$(dirname "$0")/../.."
 ingress_evidence=${1:-$(mktemp -d /tmp/hibana-parallel-ingress-proof.XXXXXX)}
 mkdir -p "$ingress_evidence"
 lean --version | bash "$(cd "$(dirname "$0")/../.." && pwd)/.github/scripts/lib/supplemental_proofs_tool.sh" version
-lean proofs/parallel-offer-ingress/Ingress.lean > "$ingress_evidence/lean.log" 2>&1
+lean proofs/parallel-offer-ingress/Ingress.lean 2>&1 | tee "$ingress_evidence/lean.log"
 # Inspect the actual kernel axiom inventory, not source spellings or paths.
 bash .github/scripts/lib/supplemental_proofs_tool.sh lean "$ingress_evidence/lean.log" 14
-z3 proofs/parallel-offer-ingress/Ingress.smt2 > "$ingress_evidence/z3.log"
+z3 proofs/parallel-offer-ingress/Ingress.smt2 | tee "$ingress_evidence/z3.log"
 bash .github/scripts/lib/supplemental_proofs_tool.sh smt-sequence "$ingress_evidence/z3.log" sat sat unsat unsat unsat unsat unsat unsat unsat unsat
 printf 'Parallel-offer ingress: Lean 14 theorems; Z3 8 UNSAT obligations, 2 SAT premises. Evidence: %s\n' "$ingress_evidence"
