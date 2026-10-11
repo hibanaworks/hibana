@@ -3,6 +3,17 @@
 (declare-const lane (_ BitVec 8))
 (declare-const query (_ BitVec 8))
 (declare-const eligible Bool)
+; The index is exactly three bits, so these eight constraints characterize
+; the all-zero array without a solver-specific constant-array constructor.
+(define-fun emptyWords () Bool
+  (and (= (select words #b000) #x00000000)
+       (= (select words #b001) #x00000000)
+       (= (select words #b010) #x00000000)
+       (= (select words #b011) #x00000000)
+       (= (select words #b100) #x00000000)
+       (= (select words #b101) #x00000000)
+       (= (select words #b110) #x00000000)
+       (= (select words #b111) #x00000000)))
 (define-fun word ((x (_ BitVec 8))) (_ BitVec 3) ((_ extract 7 5) x))
 (define-fun bit ((x (_ BitVec 8))) (_ BitVec 32)
   (bvshl #x00000001 ((_ zero_extend 27) ((_ extract 4 0) x))))
@@ -43,7 +54,7 @@
 
 ; A fresh all-zero census has no member without an eligible occurrence.
 (push)
-(assert (= words ((as const (Array (_ BitVec 3) (_ BitVec 32))) #x00000000)))
+(assert emptyWords)
 (assert (has next query))
 (assert (not (and eligible (= lane query))))
 (check-sat)
@@ -51,7 +62,7 @@
 
 ; Removing eligibility creates a concrete spurious member: negative witness.
 (push)
-(assert (= words ((as const (Array (_ BitVec 3) (_ BitVec 32))) #x00000000)))
+(assert emptyWords)
 (assert (not eligible))
 (assert (has (store words (word lane) (bit lane)) lane))
 (check-sat)
