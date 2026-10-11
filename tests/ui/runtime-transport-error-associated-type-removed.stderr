@@ -1,0 +1,5 @@
+error[E0437]: type `Error` is not a member of trait `Transport`
+  --> tests/ui/runtime-transport-error-associated-type-removed.rs:10:5
+   |
+10 |     type Error = CarrierError;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^ not a member of trait `Transport`

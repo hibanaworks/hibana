@@ -1,0 +1,36 @@
+error: constant evaluation is taking a long time
+  --> /workspace/scratch/0915e8fbff81/hibana-route-path-measurement/baseline/src/global/const_dsl/event_relations.rs:29:22
+   |
+29 |         let marker = markers.at(marker_idx);
+   |                      ^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: this lint makes sure the compiler doesn't get stuck due to infinite loops in const eval.
+           If your compilation actually takes a long time, you can safely allow the lint
+help: the constant being evaluated
+  --> /workspace/scratch/0915e8fbff81/hibana-participant-mask/proofs/route-path-refinement/compile_cost_benchmark.rs:20:1
+   |
+20 | const SOURCE: EffList<{ROUTES*6}> = source();
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = note: `#[deny(long_running_const_eval)]` on by default
+
+warning: struct `RoutePathClasses` is never constructed
+  --> /workspace/scratch/0915e8fbff81/hibana-route-path-measurement/baseline/src/global/const_dsl/event_relations.rs:51:19
+   |
+51 | pub(super) struct RoutePathClasses<const E: usize> {
+   |                   ^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: associated items `new` and `share_path` are never used
+   --> /workspace/scratch/0915e8fbff81/hibana-route-path-measurement/baseline/src/global/const_dsl/event_relations.rs:58:25
+    |
+ 57 | impl<const E: usize> RoutePathClasses<E> {
+    | ---------------------------------------- associated items in this implementation
+ 58 |     pub(super) const fn new(markers: ScopeMarkerView<'_>, start: usize, end: usize) -> Self {
+    |                         ^^^
+...
+123 |     pub(super) const fn share_path(
+    |                         ^^^^^^^^^^
+
+error: aborting due to 1 previous error; 2 warnings emitted
+

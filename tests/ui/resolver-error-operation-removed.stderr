@@ -1,0 +1,5 @@
+error[E0599]: no method named `operation` found for struct `ResolverError` in the current scope
+ --> tests/ui/resolver-error-operation-removed.rs:2:19
+  |
+2 |     let _ = error.operation();
+  |                   ^^^^^^^^^ method not found in `ResolverError`

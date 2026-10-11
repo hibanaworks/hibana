@@ -1,0 +1,25 @@
+{
+  "stage": "projection-differential",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "hibana",
+    "--lib",
+    "emitted_projection_bytes_and_errors_match_original_corpus",
+    "--",
+    "--nocapture",
+    "--test-threads=1"
+  ],
+  "elapsed_seconds": 21.162,
+  "returncode": 0,
+  "stop_reason": null,
+  "peak_sampled_process_group_rss_kib": 585180,
+  "rss_limit_kib": 2621440,
+  "timeout_seconds": 270,
+  "sample_count": 210,
+  "unique_target_dir": "/workspace/scratch/0915e8fbff81/hibana-projection-conflict-reuse-target",
+  "cwd": "/workspace/scratch/0915e8fbff81/hibana-projection-conflict-reuse",
+  "compiler_limit_overrides": false,
+  "repo_test_cfg": true
+}

@@ -1,0 +1,65 @@
+{
+  "schema": 1,
+  "description": "Measured stack, modeled runtime SRAM, and thumbv6m flash values must satisfy the local fixed-snapshot gate: each runtime shape metric, including localside-only stack and resident prefix/tap storage, must be <= budget, aggregate max_stack/SRAM/flash must not grow, at least one aggregate must decrease, and the modeled runtime SRAM envelope must keep at least 64 bytes of headroom.",
+  "toolchain": "1.95.0",
+  "flash_measurement": {
+    "target": "thumbv6m-none-eabi",
+    "profile": "release",
+    "features": "no-default-features",
+    "artifact": "libhibana.rlib",
+    "flash_total_formula": ".text + .rodata + .data"
+  },
+  "runtime_measurement": {
+    "publication_host": "aarch64-unknown-linux-gnu",
+    "profile": "release",
+    "features": "default-empty",
+    "test_filter": "large_choreography_runtime_peak_metrics",
+    "test_args": "--ignored --nocapture --test-threads=1"
+  },
+  "budget": {
+    "thumbv6m_none_eabi_no_std_release_lib": {
+      "sections": {
+        ".text": 154624,
+        ".rodata": 15341,
+        ".data": 0,
+        ".bss": 0,
+        "flash_total": 169965
+      }
+    },
+    "runtime_shapes": {
+      "route_heavy": {
+        "session_kit_storage_bytes": 32,
+        "resident_prefix_bytes": 952,
+        "tap_ring_bytes": 512,
+        "sidecar_scratch_high_water_bytes": 995,
+        "live_endpoint_bytes": 3216,
+        "peak_live_slab_bytes": 4211,
+        "localside_peak_stack_bytes": 3663,
+        "peak_stack_bytes": 3663,
+        "modeled_runtime_sram_bytes": 8922
+      },
+      "linear_heavy": {
+        "session_kit_storage_bytes": 32,
+        "resident_prefix_bytes": 952,
+        "tap_ring_bytes": 512,
+        "sidecar_scratch_high_water_bytes": 443,
+        "live_endpoint_bytes": 2784,
+        "peak_live_slab_bytes": 3227,
+        "localside_peak_stack_bytes": 2383,
+        "peak_stack_bytes": 2383,
+        "modeled_runtime_sram_bytes": 6658
+      },
+      "fanout_heavy": {
+        "session_kit_storage_bytes": 32,
+        "resident_prefix_bytes": 952,
+        "tap_ring_bytes": 512,
+        "sidecar_scratch_high_water_bytes": 995,
+        "live_endpoint_bytes": 3328,
+        "peak_live_slab_bytes": 4323,
+        "localside_peak_stack_bytes": 3583,
+        "peak_stack_bytes": 3583,
+        "modeled_runtime_sram_bytes": 8954
+      }
+    }
+  }
+}

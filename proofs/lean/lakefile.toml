@@ -1,0 +1,6 @@
+name = "hibana_proofs"
+version = "0.1.0"
+defaultTargets = ["Hibana"]
+
+[[lean_lib]]
+name = "Hibana"

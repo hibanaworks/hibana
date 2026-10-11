@@ -1,0 +1,20 @@
+import Hibana.MainTheorems
+
+set_option pp.universes true
+set_option pp.explicit true
+
+#check @Hibana.exact_descriptor_certificate_sound
+#check @Hibana.static_projectability_checker_sound
+#check @Hibana.verified_protocol_certificate_establishes_all_role_refinement
+#check @Hibana.verified_protocol_establishes_execution_guarantees
+#check @Hibana.assumption_indexed_epoch_erased_byte_exact_end_to_end_refinement
+#check @Hibana.prepared_kernel_commit_refines_exact_lean_effect
+#check @Hibana.public_operation_table_certificate_sound
+#check @Hibana.production_kernel_artifact_sound
+#check @Hibana.accepted_production_kernel_artifact_combines_with_external_kernel_refinement
+#check @Hibana.assumption_indexed_static_cross_tool_production_refinement
+#check @Hibana.elastic_erasure_refinement_holds
+#check @Hibana.carrier_profile_hierarchy_is_strict
+#check @Hibana.static_deployment_certificate_sound
+#check @Hibana.end_to_end_fair_run_schedules_recurrently_enabled_operation
+#check @Hibana.verified_protocol_roll_reentry_has_fifo_or_causal_order

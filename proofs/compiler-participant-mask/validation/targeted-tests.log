@@ -1,0 +1,58 @@
+2026-10-02T23:12:39+00:00
+   Compiling proc-macro2 v1.0.103
+   Compiling quote v1.0.41
+   Compiling unicode-ident v1.0.20
+   Compiling syn v2.0.108
+   Compiling serde_core v1.0.228
+   Compiling memchr v2.7.6
+   Compiling libc v0.2.177
+   Compiling futures-core v0.3.31
+   Compiling pin-project-lite v0.2.16
+   Compiling futures-sink v0.3.31
+   Compiling futures-channel v0.3.31
+   Compiling futures-macro v0.3.31
+   Compiling futures-task v0.3.31
+   Compiling serde v1.0.228
+   Compiling slab v0.4.11
+   Compiling serde_json v1.0.145
+   Compiling target-triple v0.1.4
+   Compiling futures-io v0.3.31
+   Compiling winnow v0.7.13
+   Compiling pin-utils v0.1.0
+   Compiling futures-util v0.3.31
+   Compiling toml_parser v1.0.4
+   Compiling serde_spanned v1.0.3
+   Compiling toml_datetime v0.7.3
+   Compiling ryu v1.0.20
+   Compiling toml_writer v1.0.4
+   Compiling itoa v1.0.15
+   Compiling toml v0.9.8
+   Compiling futures-executor v0.3.31
+   Compiling socket2 v0.6.2
+   Compiling mio v1.1.0
+   Compiling tokio-macros v2.6.0
+   Compiling serde_derive v1.0.228
+   Compiling glob v0.3.3
+   Compiling termcolor v1.4.1
+   Compiling bytes v1.11.1
+   Compiling tokio v1.48.0
+   Compiling trybuild v1.0.112
+   Compiling futures v0.3.31
+   Compiling static_assertions v1.1.0
+   Compiling hibana v0.9.6 (/workspace/scratch/0915e8fbff81/hibana-participant-mask)
+    Finished `test` profile [unoptimized] target(s) in 39.80s
+     Running unittests src/lib.rs (/workspace/scratch/0915e8fbff81/hibana-participant-mask-target/debug/deps/hibana-e6007ee29d313775)
+
+running 8 tests
+test global::compiled::lowering::seal::tests::participant_mask::participant_mask_covers_receiver_only_255_and_sparse_holes ... ok
+test global::compiled::lowering::seal::tests::participant_mask::participant_mask_preserves_nested_route_and_earlier_stage_errors ... ok
+test global::compiled::lowering::seal::tests::projection_derives_one_row_for_one_route ... ok
+test global::compiled::lowering::seal::tests::scope_first_route_validation_does_not_skip_later_observers ... ok
+test global::compiled::lowering::seal::tests::participant_mask::participant_mask_preserves_self_sends_duplicates_and_controller_errors ... ok
+test global::compiled::lowering::seal::tests::participant_mask::participant_mask_dense_all_256_roles_and_byte_boundaries ... ok
+test global::compiled::lowering::seal::tests::projection_derives_exact_route_capacity_beyond_256_rows ... ok
+test global::compiled::lowering::seal::tests::participant_mask::participant_mask_differential_generated_valid_and_malformed_graphs ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 456 filtered out; finished in 0.08s
+
+2026-10-02T23:13:19+00:00

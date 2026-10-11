@@ -1,0 +1,5 @@
+'Hibana.WireFrameSourceBridge.generated_role0_labels_match' depends on axioms: [propext]
+'Hibana.WireFrameSourceBridge.generated_role1_labels_match' depends on axioms: [propext]
+'Hibana.WireFrameSourceBridge.structural_baseline_mismatch_is_real' depends on axioms: [propext]
+'Hibana.WireFrameSourceBridge.source_emitted_nested_domains' does not depend on any axioms
+'Hibana.WireFrameSourceBridge.source_owners_are_inner_inner_outer' does not depend on any axioms

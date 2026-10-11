@@ -1,0 +1,23 @@
+{
+  "stage": "full-core-unit-tests",
+  "command": [
+    "cargo",
+    "test",
+    "--locked",
+    "--offline",
+    "-p",
+    "hibana",
+    "--lib"
+  ],
+  "elapsed_seconds": 0.505,
+  "returncode": 0,
+  "stop_reason": null,
+  "peak_sampled_process_group_rss_kib": 44356,
+  "rss_limit_kib": 2621440,
+  "timeout_seconds": 270,
+  "sample_count": 5,
+  "unique_target_dir": "/workspace/scratch/0915e8fbff81/hibana-passive-child-window-target",
+  "cwd": "/workspace/scratch/0915e8fbff81/hibana-passive-child-window",
+  "compiler_limit_overrides": false,
+  "repo_test_cfg": true
+}

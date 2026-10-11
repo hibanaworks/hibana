@@ -1,0 +1,182 @@
+{
+  "format": 1,
+  "note": "Exact byte copies and lossless gzip of historical artifacts. Originals were not changed. Failure and superseded evidence remain labeled by filename and README.",
+  "files": {
+    "historical/LeanColorGate-recheck.log": {
+      "original": "artifacts/current-offer-source-diagnostic/proofs/LeanColorGate-recheck.log",
+      "sha256": "40a07145d144f0e95d4262f6a5264f8c1333e671207065282f597d3e5e7d3a28"
+    },
+    "LeanColorGate.lean": {
+      "original": "artifacts/current-offer-source-diagnostic/proofs/LeanColorGate.lean",
+      "sha256": "e7baee40b3dbeeafabe04f342c5315b857cd07c50e5ed5be6cda4d61d9fb64a6"
+    },
+    "LeanColorGate.log": {
+      "original": "artifacts/current-offer-source-diagnostic/proofs/LeanColorGate.log",
+      "sha256": "40a07145d144f0e95d4262f6a5264f8c1333e671207065282f597d3e5e7d3a28"
+    },
+    "historical/LeanMinimalTrace-recheck.log": {
+      "original": "artifacts/current-offer-source-diagnostic/proofs/LeanMinimalTrace-recheck.log",
+      "sha256": "96e6c2420c0fea0c8616eb1eff6ad99d5739a90d603544b9e267069beb679cc4"
+    },
+    "LeanMinimalTrace.lean": {
+      "original": "artifacts/current-offer-source-diagnostic/proofs/LeanMinimalTrace.lean",
+      "sha256": "ec6eb31234eab800d65ac7d159f42792738f343d16c341f487de0b296489cc15"
+    },
+    "LeanMinimalTrace.log": {
+      "original": "artifacts/current-offer-source-diagnostic/proofs/LeanMinimalTrace.log",
+      "sha256": "96e6c2420c0fea0c8616eb1eff6ad99d5739a90d603544b9e267069beb679cc4"
+    },
+    "LeanNestedReverse.lean": {
+      "original": "artifacts/current-offer-source-diagnostic/proofs/LeanNestedReverse.lean",
+      "sha256": "42f2492b696fa302cd91bc94f71ac6bd2dda93079169646db9b4714e4c1e25c7"
+    },
+    "LeanNestedReverse.log": {
+      "original": "artifacts/current-offer-source-diagnostic/proofs/LeanNestedReverse.log",
+      "sha256": "ac03a3f474e273311c1cc7cfeddf9bd6a57660acb51d303474962868f7492c11"
+    },
+    "historical/LeanRollMembership-first-failure.log": {
+      "original": "artifacts/current-offer-source-diagnostic/proofs/LeanRollMembership-first-failure.log",
+      "sha256": "35de8fa11b92b007889a40ffb90793d67e73674dd1c09d1b9e6b2f2fdc4a7120"
+    },
+    "historical/LeanRollMembership-second-failure.log": {
+      "original": "artifacts/current-offer-source-diagnostic/proofs/LeanRollMembership-second-failure.log",
+      "sha256": "99e1d025c4c106f1014d971a29e075ca690fa01e19586b63dac5cf310ddd8f85"
+    },
+    "historical/LeanRollMembership-third-failure.log": {
+      "original": "artifacts/current-offer-source-diagnostic/proofs/LeanRollMembership-third-failure.log",
+      "sha256": "019eb737e40a8f31d378f3fa8f088e88f36ce3837fc44d004675e84531613a6e"
+    },
+    "LeanRollMembership.lean": {
+      "original": "artifacts/current-offer-source-diagnostic/proofs/LeanRollMembership.lean",
+      "sha256": "1d47101d899ae0fbe98ebd62770bcad8cd01c32f2494f3defee29a11d3d7fda6"
+    },
+    "LeanRollMembership.log": {
+      "original": "artifacts/current-offer-source-diagnostic/proofs/LeanRollMembership.log",
+      "sha256": "8d0f719a1eedea840256377f38900efc7e4a3ca7b0a7e4e9464fd5df70d1446d"
+    },
+    "historical/LeanSourceLink.log": {
+      "original": "artifacts/current-offer-source-diagnostic/proofs/LeanSourceLink.log",
+      "sha256": "4b884c3a9ee7e4ce9739ea77d542f5c9b71cd1d3aa2a4cfb5f4d836da670f2d4"
+    },
+    "historical/SOURCE_BRIDGE.md": {
+      "original": "artifacts/current-offer-source-diagnostic/proofs/SOURCE_BRIDGE.md",
+      "sha256": "37c6024ced02912281cbbb60f15429b912dc45609093d7b815e41a59defdc967"
+    },
+    "historical/check_roll_membership_gate.py": {
+      "original": "artifacts/current-offer-source-diagnostic/proofs/check_roll_membership_gate.py",
+      "sha256": "9063a35b240f67e2f368e5f0c92e9b67148e3a7feeb9422705706e86d43f78b7"
+    },
+    "historical/check_source_bridge.py": {
+      "original": "artifacts/current-offer-source-diagnostic/proofs/check_source_bridge.py",
+      "sha256": "3a48cb6a82a8c3bd79e3f60606eee2b5d86b233747a11b6a0a3d92fff0b3a469"
+    },
+    "color-capacity-model.json.gz": {
+      "original": "artifacts/current-offer-source-diagnostic/proofs/color-capacity-model.json",
+      "sha256": "cae665d3e498621c31ed6ab60cf207e21efe14632e54b3cebd20396ca8cda19c",
+      "uncompressed_sha256": "0b9ef823b791566ba85fe4044acc5d1076c588da8eea3865286f0d2215ac05ff",
+      "uncompressed_bytes": 9334187
+    },
+    "historical/color-capacity-model.log": {
+      "original": "artifacts/current-offer-source-diagnostic/proofs/color-capacity-model.log",
+      "sha256": "ef3de04765f8fde81a6d855dcbaf92fc487178624c29a7b9897de6880c84fa3d"
+    },
+    "historical/color_capacity_model.py": {
+      "original": "artifacts/current-offer-source-diagnostic/proofs/color_capacity_model.py",
+      "sha256": "1ee472c4a066b0a20b62116a36caf22dc5253c566ab800bab6b309145730d5e2"
+    },
+    "roll-membership-capacity-model.json.gz": {
+      "original": "artifacts/current-offer-source-diagnostic/proofs/roll-membership-capacity-model.json",
+      "sha256": "e27e3818431fc37e750026a88334cc525df7c37a4c8504c67540b726a74dac81",
+      "uncompressed_sha256": "40b4c9317adb173ad1016ad10d436a64e3b1b2fc29579e1ef48d3d588dd469e6",
+      "uncompressed_bytes": 9609340
+    },
+    "historical/roll-membership-capacity-model.log": {
+      "original": "artifacts/current-offer-source-diagnostic/proofs/roll-membership-capacity-model.log",
+      "sha256": "5b8bf104396bd30d688522417a364441a43488e6eed228dca0ddf0d57da9f62a"
+    },
+    "roll-membership-z3.json": {
+      "original": "artifacts/current-offer-source-diagnostic/proofs/roll-membership-z3.json",
+      "sha256": "0025dbccef7841ef9af2e0603594a29e341a1dff409a90984a6a75e9a0691776"
+    },
+    "roll-membership-z3.log": {
+      "original": "artifacts/current-offer-source-diagnostic/proofs/roll-membership-z3.log",
+      "sha256": "54bf664ecec5418670b2b4389fe7eb373383816ef7110b5706bb2cbbf1080e5a"
+    },
+    "historical/roll_membership_capacity_model.py": {
+      "original": "artifacts/current-offer-source-diagnostic/proofs/roll_membership_capacity_model.py",
+      "sha256": "af664bcb59a603bccd304ea13bda2c7439fd39e7add0cdc5c467e48b3afe4cf7"
+    },
+    "source-correspondence-final.json": {
+      "original": "artifacts/current-offer-source-diagnostic/proofs/source-correspondence-final.json",
+      "sha256": "f9761fab04cd03ff5cad635a8cc7dc7c75b91268474316aaf32f13a25bc6441b"
+    },
+    "historical/source-correspondence-final.log": {
+      "original": "artifacts/current-offer-source-diagnostic/proofs/source-correspondence-final.log",
+      "sha256": "822c7b243649748127d66178bac45d485ee9b892c616f5a07c87ecdab018f595"
+    },
+    "historical/source-correspondence-first-failure.log": {
+      "original": "artifacts/current-offer-source-diagnostic/proofs/source-correspondence-first-failure.log",
+      "sha256": "ed1550092bc6702bfe61379516f4366cfe3addfa55b720e8880c6f7ed03ff094"
+    },
+    "pre-edit-proof-gate.json": {
+      "original": "artifacts/elastic-roll-color-fix/pre-edit-proof-gate.json",
+      "sha256": "802ada0cc1cb04f0ecd142b72a5a6f5364b95222ffd936e30d372d5302a63b10"
+    },
+    "no-roll-pre-edit.json": {
+      "original": "artifacts/elastic-roll-color-fix/no-roll-pre-edit.json",
+      "sha256": "1c51c1739a6ad72532dda48ac08b184ffcf3f58e4b9b70aa5504404d42c61a6b"
+    },
+    "NoRollFastPath.lean": {
+      "original": "artifacts/elastic-roll-color-fix/NoRollFastPath.lean",
+      "sha256": "d703c60bea5c9492618ee84ff75faf4d2ba0b029a1ff14f16a54c25cac62d4ce"
+    },
+    "no-roll-lean.log": {
+      "original": "artifacts/elastic-roll-color-fix/no-roll-lean.log",
+      "sha256": "3a59241b5754ce0f9c565819d1fff1527a7c3f77021fb5d86760c3fc0503666f"
+    },
+    "no-roll-z3.log": {
+      "original": "artifacts/elastic-roll-color-fix/no-roll-z3.log",
+      "sha256": "5598802dfaaf43115b402fb3828ab9d8672b6cf4e75524b5a3676b07786b8b8c"
+    },
+    "evidence/run.log": {
+      "original": "artifacts/current-offer-source-diagnostic/run.log",
+      "sha256": "ab86bb0997e1b2fa78dcf45d341e77b7674134cdafd6138cc3f238b9dba8049f"
+    },
+    "evidence/run-inventory.log": {
+      "original": "artifacts/current-offer-source-diagnostic/run-inventory.log",
+      "sha256": "e8be527d7ce867cf840dc1930bedaaf401db48ac6d283205d9c5db5ceae590ba"
+    },
+    "evidence/security-before-expanded.log": {
+      "original": "artifacts/elastic-roll-color-fix/security-before-expanded.log",
+      "sha256": "116222a27c51a91713601a4bb4cd51e6f1a358efa29f0ddc3d5b682af844c4da"
+    },
+    "evidence/security-before.log": {
+      "original": "artifacts/elastic-roll-color-fix/security-before.log",
+      "sha256": "5cc2efcd0b49e93cfa4d7470c29a78960f697353b9fcb5d55138a06e4d98a63c"
+    },
+    "evidence/security-after.log": {
+      "original": "artifacts/elastic-roll-color-fix/security-after.log",
+      "sha256": "d2388221067a9deed6e4b5b5413b769557e9e46a6baf0ebfee41ffb8700d7846"
+    },
+    "evidence/security-and-domain-tests.log": {
+      "original": "artifacts/elastic-roll-color-fix/security-and-domain-tests.log",
+      "sha256": "5f47033a720b484653e2d881332a9c10c95f883c8469078de663923a88bbb79d"
+    },
+    "evidence/combined-workspace-reviewed.log": {
+      "original": "artifacts/elastic-roll-color-fix/combined-workspace-reviewed.log",
+      "sha256": "950882471459bb8ec174807d828dc7bb4fe4fd952ed29d621c10ee3d0981ecb8"
+    },
+    "evidence/combined-workspace-tools.log": {
+      "original": "artifacts/elastic-roll-color-fix/combined-workspace-tools.log",
+      "sha256": "91a5d4aba5ef0d6fd61f8ed647b577538339ba6997e14f691ca7e6aeadd0f6cc"
+    },
+    "evidence/combined-internal-tests.log": {
+      "original": "artifacts/elastic-roll-color-fix/combined-internal-tests.log",
+      "sha256": "54b1dbf74af50149ec4b12084cc43a0dbd50736283f76b6fa55ac62fdb466711"
+    },
+    "evidence/representation-assertion-change.patch": {
+      "original": "artifacts/elastic-roll-color-fix/representation-assertion-change.patch",
+      "sha256": "90cb10f1b22afcd8d53173b88ee2236ce2ddfd807c276934fdeab46a0440b20d"
+    }
+  }
+}

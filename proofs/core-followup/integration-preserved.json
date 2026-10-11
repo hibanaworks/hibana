@@ -1,0 +1,18 @@
+{
+  "integration_heads": [
+    "a1598cd905250564d1bc10d40d8892934c8feced",
+    "d906c2c460519ac64ae3e1e0e58e6eb6dcfa6033"
+  ],
+  "scope": "Immutable pre-integration wrappers and correspondence records; previous proof premises and measurements are not reissued.",
+  "files": {
+    "proofs/core-followup/historical/external-d906/proofs/elastic-roll-colors/README.md": "dbff847a1f8a8411efbd2176d148e5ce9fdf007defc6bf266642fd7d00fabb79",
+    "proofs/core-followup/historical/external-d906/proofs/elastic-roll-colors/check_all.py": "efad97d69c3505676e0539f010c6e28b0e9272ae1afd7365fd0582005b967794",
+    "proofs/core-followup/historical/pre-d906-integration/proofs/compiler-participant-mask/test-hygiene-followup.json": "d1f36884d9b2940b1fdeab15ab9dbe9e640ea17c7fc022e0327673baf39a7e2a",
+    "proofs/core-followup/historical/pre-d906-integration/proofs/core-followup/check_sources.py": "81e45cb0e7f853b54b701d31c71e9d7b30a69980d633b79d1626fdff36beb714",
+    "proofs/core-followup/historical/pre-d906-integration/proofs/core-followup/current-source-manifest.json": "77bc31396509a6b369eead1d716da0d158dda408caae78d300264da364444d96",
+    "proofs/core-followup/historical/pre-d906-integration/proofs/elastic-roll-colors/README.md": "55750182b3610f5275f95c780edb4bb94f7958fc0bf595218d6a4943a7dd6498",
+    "proofs/core-followup/historical/pre-d906-integration/proofs/elastic-roll-colors/check_all.py": "b3a4f05a328f2f948f25f05aa528c0acf1b882920c825abcb9154e4fbb9ecbb7",
+    "proofs/core-followup/historical/pre-d906-integration/proofs/elastic-roll-colors/package-manifest.json": "3056a7d9059f992d18d8720bc3252c7db9a7f250111950b57424578c7589ee1f",
+    "proofs/core-followup/historical/pre-d906-integration/src/global/compiled/lowering/seal/tests/participant_reference.rs": "187816b9c493069455724f789f5608951d64fbbee530497e3d66fd69d02e89ca"
+  }
+}

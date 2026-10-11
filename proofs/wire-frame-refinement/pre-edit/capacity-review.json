@@ -1,0 +1,10 @@
+{
+  "created_utc": "2026-10-03T03:23:23.885377+00:00",
+  "note": "Additional review clarification, no candidate or production definition changes",
+  "files": {
+    "pre-edit-gate.json": "0c1179822693f65bc1767f0036540089f279414105b615b229151b045334c691",
+    "CapacityScope.lean": "401870d97ca36364fe78f9ce21020b1773934bfa5a530e538cdb5f15e2015e29",
+    "CAPACITY-SCOPE.md": "ef097d067accf3bf29299b49d33d29446d5ce8591e4bc527df52a28ce7370d73",
+    "capacity-scope.log": "a1d3ed7c70a3cdfbcabcaabf82c3bbf1405ae72dc72c0943c82a12ba0ecbfafc"
+  }
+}

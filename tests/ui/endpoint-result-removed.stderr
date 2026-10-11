@@ -1,0 +1,5 @@
+error[E0425]: cannot find type `EndpointResult` in crate `hibana`
+ --> tests/ui/endpoint-result-removed.rs:1:37
+  |
+1 | fn takes_endpoint_result(_: hibana::EndpointResult<()>) {}
+  |                                     ^^^^^^^^^^^^^^ not found in `hibana`

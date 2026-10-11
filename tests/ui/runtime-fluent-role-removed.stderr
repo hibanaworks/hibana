@@ -1,0 +1,5 @@
+error[E0599]: no method named `role` found for reference `&RendezvousKit<'_, '_, T>` in the current scope
+ --> tests/ui/runtime-fluent-role-removed.rs:9:16
+  |
+9 |     let _ = rv.role(program);
+  |                ^^^^ method not found in `&RendezvousKit<'_, '_, T>`

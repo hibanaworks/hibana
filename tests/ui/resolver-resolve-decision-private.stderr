@@ -1,0 +1,5 @@
+error[E0599]: no method named `resolve_decision` found for struct `ResolverRef<'cfg, RESOLVER_ID>` in the current scope
+  --> tests/ui/resolver-resolve-decision-private.rs:11:22
+   |
+11 |     let _ = resolver.resolve_decision();
+   |                      ^^^^^^^^^^^^^^^^ method not found in `ResolverRef<'_, 7>`

@@ -1,0 +1,68 @@
+{
+  "checked_utc": "2026-10-03T03:38:22.112359+00:00",
+  "base_commit": "10acc216ec74ec5bfa9600a6783de2e8f7909cdc",
+  "status": "all requested proof gates passed",
+  "production_source_sha256": {
+    "proofs/lean/Hibana/DescriptorImage.lean": "ab912462316416e0a7d3dd1d553d44161ccefce1c3246d8e2ff1ab55092d90e5",
+    ".github/scripts/run_final_form_gates.sh": "ff2c937452883ba7b18d7082e163ecdbad62044e9316053c317ca3ffa3c8b539",
+    "proofs/wire-frame-refinement/WireFrameRefinement.lean": "6351c200ee73534062b9f03b86038a5a09911f53890dfca95618727c4147f96d",
+    "proofs/wire-frame-refinement/WireSourceBridge.lean": "09a0adffc6fd08057f61cc32397c49a5bebef8ddc1d0f5ab973a3f5d2ca19231",
+    "proofs/wire-frame-refinement/source-manifest.json": "c930fab9bdb431113cc00eb0e441ad5bcdd2d6d76e8e88b0fd6fe5a0e73c74e8",
+    "proofs/wire-frame-refinement/check_correspondence.py": "334b47f2bc5f0fac25e439a07fe584f3bff8c213c6b0036486ad46b0dbd8c4bb",
+    "proofs/wire-frame-refinement/README.md": "425cc300927b5da63bd8c48c6b420baf43c8f21e266ee2dc05a5e3e3b31a1085",
+    "proofs/wire-frame-refinement/check_all.py": "f014542df36112ff4561b39cb7dce962763c050c72aebba4554ec8d5a8474c71"
+  },
+  "unchanged_source_sha256": {
+    ".github/scripts/check_lean_proofs.sh": "3df6eca9695b02de2a740a78421e34566825eb60c1ecc138007babffc8040ebd",
+    ".github/scripts/check_generated_lean_axioms.py": "d598d9efe7138f6fe6c7ba6e5d60f786eaf34d0b063d3f2b4646951cc1b96528",
+    ".github/scripts/check_lean_theorem_inventory.py": "87d01eb5b3d4f1b1970a2d1e091eccd14774430d64b2bc65bb5b98669fd25849",
+    "proofs/lean/Hibana/GlobalSyntax.lean": "4ffee9eb9d987bfd11a20388d611c5008e0b991067bff30f0d7b756de3c25338",
+    "proofs/lean/Hibana/GlobalAllocationCorrectness.lean": "75f50fecf9d344916d60eb1bd75541c4f373b3660ec64aee084a016c76007678",
+    "proofs/lean/Hibana/DescriptorRefinement.lean": "c75a4f3ed8cb70d9a6be8f93f023038694d5e90bc7b061c84302481bc39af3a4",
+    "src/global/const_dsl/allocation/frame_labels/reentry_domains.rs": "da90ce98dec6fc89b1bfc4e281436aa84be3435e5eaf5031a001b70d771fccf8",
+    "src/g/source.rs": "79279da8bd3904350757cc01ac039c6d6fc88bacbbcc2e61bb19abe40ab26aae",
+    "proofs/lean/runtime-generated-claim-surface.txt": "da6fc7c40e55afc30ad03a186e2de6e68371e83f65bf27ecc1d7d58bd2261e8e",
+    "proofs/lean/parallel-generated-claim-surface.txt": "672d1376f668f3db55af728fb675a91878a6e2d42213a681bf318c02ee4286e3",
+    "proofs/lean/example-claim-surface.txt": "78de9dbe81cb4ccf38ad6253d2f105c3732377d3d4ef45e12a6f408aeee120f0",
+    "proofs/lean/all-claim-surface.txt": "517ed7e31fb28495073f57284341ec05c5199162e11d1a732cc943335014b943",
+    "proofs/lean/generated-claim-surface.txt": "393259b398296c821d26bd3578c01426613e54c4e3c9065dc33498420e3daba4",
+    "proofs/lean/claim-surface.txt": "767ba40cccbeb5f91638bfaa943e74a9c4b416ff789e6c019a9ed021f8997331",
+    "proofs/lean/public-operation-generated-claim-surface.txt": "4f43f2fe3128fd8a948598d3c95022a3e1ff766b55e4b8c285aacdc0fb29458d",
+    "proofs/lean/causal-generated-claim-surface.txt": "fed1bcbad445cad73988ba838c52dc8450449578060648ee57cddd3f08b26f03"
+  },
+  "generated_source_sha256": {
+    "PublicOperationGenerated.lean": "96e92497cf56bc1da0ba24a038643435450648644cd8e8754f8b182ab26a5fd3",
+    "CausalGenerated.lean": "bfa05e31694b32a9f641914bfe2ece19af33c13a4b191465a23d5ae5dcf5251d",
+    "Generated.lean": "e6c2fa7b24ced5fe6ce17a70868e69d117f1f78aca481c9f183cb9fe0d380af7",
+    "ParallelGenerated.lean": "1f8cb9d5ef04bac356baed38d18d37f7cd081041e97f6c32345181500da0b80b",
+    "RuntimeGenerated.lean": "7af8c9394a76e739f01ca0055125d49c88bafae4057dd31f53879f78dcfb7e62"
+  },
+  "logs_sha256": {
+    "full-lean-gate.status": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+    "existing-proof-replay.log": "d5495f8447dfd6d5475fea8db71c9f7bb844748144377c097eea0c5047445722",
+    "runner-first-failure.log": "50c845d08fac4e873b821106a717b0598dc21c7aa6be4625d325c1eea949d393",
+    "wire-frame-replay.log": "6c16aea06be016c7d6c6fb6f79d2042b493ddd21ba0e81411f42915eb052ed0b",
+    "column-diagnostic.log": "c4cca88ef4ea3be70d712af3be3c92bc16638cf011a80d0f863b4934e4052495",
+    "full-lean-gate.log": "3bbe7eecfc8b504cdbc8c6a2caca0253d97b69b98c14fa630862c353ce1c6f07"
+  },
+  "full_lean_counts": {
+    "static_theorems": 709,
+    "generated_theorems": 506,
+    "kernel": 466,
+    "native": 40,
+    "exact_descriptors": 22,
+    "parallel_correspondence": 182,
+    "causal_correspondence": 36,
+    "runtime": 16,
+    "public_operation": 2
+  },
+  "regression_counts": {
+    "lean_theorems": 40,
+    "z3_obligations_and_controls": 40,
+    "finite_small_input_equivalence_cases": 38840,
+    "named_fixtures": 9,
+    "historical_models": 11,
+    "unchanged_column_predicates": 70
+  },
+  "scope": "Positive correspondence is for successfully lowered Rust sources. Capacity admission rejection is role-local under retained-invalid-row membership. Runtime Covers/SameClassUnique remains explicit. No universal Rust-to-Lean or global arbitrary-certificate capacity theorem."
+}

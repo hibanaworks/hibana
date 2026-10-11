@@ -1,0 +1,46 @@
+{
+  "qualification": "proof-only external final-source wire allocator",
+  "external_repository": "/workspace/scratch/0915e8fbff81/hibana-external-send-followup",
+  "external_head": "731f910a2c8e30844598cd056ab077522333d83c",
+  "source_sha256": {
+    "src/global/const_dsl/allocation/frame_labels/reentry_domains.rs": "da90ce98dec6fc89b1bfc4e281436aa84be3435e5eaf5031a001b70d771fccf8",
+    "src/global/const_dsl/allocation/frame_labels.rs": "219063748f98b22522909c6d083228f1ffddc7bc8701784d858cce2f72f700e2",
+    "src/global/const_dsl/scope.rs": "a62642e819e5d4fceb6aa2a596ef30336902d4873926cd58956aefe82dfee64f",
+    "src/g/source.rs": "79279da8bd3904350757cc01ac039c6d6fc88bacbbcc2e61bb19abe40ab26aae",
+    "proofs/lean/Hibana/DescriptorImage.lean": "bfc5e91f0125654456dac7ddc2bf5eea4c1628f3f859905207da66824e76e10e",
+    "proofs/lean/Hibana/DescriptorRefinement.lean": "a36d949014f29273f937261a28596c7af5f9e28f2f4ab44cbd6e7116b07c1f6c",
+    "proofs/lean/Hibana/Syntax.lean": "4604c81cbbcffbbbe5113a81c1e2272333e57dc9e535555f14b05160a23ce419",
+    "proofs/lean/Hibana/GlobalSyntax.lean": "4ffee9eb9d987bfd11a20388d611c5008e0b991067bff30f0d7b756de3c25338"
+  },
+  "external_tracked_diff_at_finish": "",
+  "external_allocator_declaration_sha256": {
+    "elasticFrameOwner": "5378dc1c4b868c28e7581ba5ed864df794e6cab15adc7d1dc43d64a8c6568128",
+    "firstElasticFrameColor": "2b995b8da6c98e25b7806faf8fcd102156e76c5c35b13ca30b5c2e343f606635",
+    "separateElasticFrameDomainsFrom": "c8a21014f816127df39aaa20bea31f5cff47e219f3bedfe1683138f9087e3f4f",
+    "separateElasticFrameDomains": "465fecc2d7448a53c02eafc364390f0fc6748eef012240358c45fda91776181d",
+    "canonicalProgramSource": "41e861840c9d87306d44bdb95737edd1b511fe9f1fa996b332d404f01fb8f9fd",
+    "Choreo.canonicalFrameLabel": "1bdedd4a5e6cef8bae373f2ebb02ec2136eb2c3bc1185f0e95f3b000560c54d0",
+    "Choreo.canonicalRoleFrameLabels": "df1aca57f79e3bb7e701f47021cc84bc0ef589fdfaa10dde67008235741a3836",
+    "readByte?": "38c1d667dce138ee6000995a05b85b6a017e6407fddefcacfad433821c18c6c4",
+    "RustDescriptorImage.eventFrameLabel?": "89542a43e5bef684867805fca56456f43ec9972750d8cf7ddbce06b70e46d21c",
+    "RustDescriptorImage.decodeEventFrameLabels?": "67f4958f5e87fe2c2cbf8f701ae39bf00afa194e2bcc73a09072388c7279458d"
+  },
+  "refinement_frame_label_binding_theorem_sha256": "df6a38c5079d977fa014bd2a18291125c047d96c9c40cd939743df0aa7c0c642",
+  "authoritative_external_result": "external-specific-result-v3.json",
+  "retained_historical_replay": "prior-40-query-replay.json",
+  "evidence_sha256": {
+    "check_external_allocator.py": "77cf4fc82a93cc7614ac6af2fd8f7d2276e6e62586c4b5a5a9ec9313bd5b4686",
+    "development-attempts/check_external_allocator-attempt-1.py": "a6e9588b4ab88920dad519fb4c5db702897e6035a3a9d9a55d39a8cb62b2e1a5",
+    "development-attempts/check_external_allocator-attempt-2.py": "83e4b9f1b5723e170373f9bac3bf49df1a535b2bf74ea9cb32f4968a709f741a",
+    "development-attempts/external-specific-result-v2.json": "e56a50298423f6bc604c30ccd397be2ef0f206c00c21202dce9b1199e2796db3",
+    "development-attempts/external-specific-result.json": "7e93de38ad3e55fe1622658a836b827b48ea9f88b026697a3111e8a9b2ce7a84",
+    "development-attempts/external-specific-run-v2.log": "4678ee90e8ea5e76feb53234a3898c2b28552efa1611012cf9c33bb2057e8671",
+    "development-attempts/external-specific-run.log": "c8e0a8da27424f8e57038b4b7e90e125d1a7a4a5032e470e413a5b6ee2927765",
+    "external-specific-result-v3.json": "420724465839385a685389126307d5496e8b52bcf838173ea65388a7484419dc",
+    "external-specific-run-v3.log": "dee50f3f703cf3f95d47aa4ff48e3310e956fea0a8bb4f76a71545aeec451890",
+    "prior-40-query-replay.json": "087202b4cc729d6005b3eaab7dad4c8af40f2c014c740ef99e6a89e24fa397ee",
+    "prior-40-query-replay.log": "e948335eb6e336fa221cac79650f3e8460bd1743ef892f71126b694eec56c2d2"
+  },
+  "relocation_note": "The initial prior-40 replay output was created under the external checkout artifacts directory; those evidence files were moved byte-for-byte to this artifact root, and the temporary checkout directory was removed. Recorded command paths describe that original execution.",
+  "development_attempts": "First attempt stopped on declaration-name regex handling of readByte?; second passed all Z3 and bounded cases but stopped on historical Par spelling; both source versions, logs and failed result records preserved separately. Final attempt passes after only proof-checker corrections."
+}

@@ -1,0 +1,23 @@
+PASS exact in-place categories/remap/equality/bounds n=0: unsat (0.000191s)
+PASS exact in-place categories/remap/equality/bounds n=1: unsat (0.001857s)
+PASS nonvacuous all-distinct classes n=1: sat (0.000528s)
+PASS exact in-place categories/remap/equality/bounds n=2: unsat (0.007533s)
+PASS nonvacuous all-distinct classes n=2: sat (0.000958s)
+PASS exact in-place categories/remap/equality/bounds n=3: unsat (0.033484s)
+PASS nonvacuous all-distinct classes n=3: sat (0.001374s)
+PASS exact in-place categories/remap/equality/bounds n=4: unsat (0.312515s)
+PASS nonvacuous all-distinct classes n=4: sat (0.002233s)
+PASS all compact counts and remap indices fit u16/padding capacity: unsat (0.001050s)
+PASS u16 sentinel never aliases a stored class ID: unsat (0.007657s)
+PASS pair refinement preserves exactly old-class plus current membership: unsat (0.001134s)
+PASS uniform feature omission leaves equality unchanged: unsat (0.000784s)
+PASS counterexample forgetting old class merges distinct paths: sat (0.000673s)
+  witness: old_a=0, old_b=1, feature_a=0, feature_b=0
+PASS counterexample resetting next ID between categories: sat (0.000688s)
+  witness: old_a=0, old_b=0, feature_a=0, feature_b=1
+PASS counterexample retaining remap entries across different categories: sat (0.000663s)
+  witness: old_a=0, old_b=0, feature_a=1, feature_b=2
+PASS interval-uniform skip preserves every pair membership: unsat (0.001732s)
+PASS counterexample equal outside endpoints do not imply uniform interval: sat (0.000750s)
+  witness: route_start=2, route_split=3, route_end=4, body_start=0, body_end=5, x=0, y=2
+ALL ROUTE-PATH REFINEMENT Z3 CHECKS PASSED: 18 claims/witnesses

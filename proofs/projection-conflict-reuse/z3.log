@@ -1,0 +1,4 @@
+PASS exact packed conflict/serialization and earliest-error equality: UNSAT
+PASS changed-source negative control: SAT
+PASS moved-dependency negative control: SAT
+Z3 5.1.0

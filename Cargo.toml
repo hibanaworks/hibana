@@ -1,0 +1,211 @@
+[workspace]
+members = [".", ".github/ci-tests"]
+resolver = "3"
+
+[package]
+name          = "hibana"
+version       = "0.9.6"
+edition       = "2024"
+rust-version  = "1.95"
+autotests     = false
+description   = "Choreography-derived runtime enforcement kernel for no_std Rust multiparty protocols"
+license       = "MIT OR Apache-2.0"
+repository    = "https://github.com/hibanaworks/hibana"
+homepage      = "https://github.com/hibanaworks/hibana"
+documentation = "https://docs.rs/hibana"
+readme        = "README.md"
+keywords      = ["mpst", "session-types", "no-std", "no-alloc", "choreography"]
+categories    = ["asynchronous", "concurrency", "embedded", "network-programming"]
+include       = [
+    "/Cargo.toml",
+    "/README.md",
+    "/LICENSE-APACHE",
+    "/LICENSE-MIT",
+    "/hibana-header.svg",
+    "/examples/**",
+    "/src/**",
+    "/tests/**",
+    "!/src/**/tests.rs",
+    "!/src/**/tests/**",
+    "!/src/**/*_tests.rs",
+    "!/src/**/kani.rs",
+    "!/src/test_support/**",
+    "!/src/endpoint/kernel/test_support/**",
+]
+
+[features]
+default = []
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(hibana_repo_tests)', 'cfg(kani)'] }
+
+[package.metadata.docs.rs]
+all-features = false
+no-default-features = true
+features = []
+rustdoc-args = ["--cfg", "docsrs"]
+
+[dependencies]
+# No external dependencies - hibana core remains self-contained
+
+[dev-dependencies]
+futures = "0.3"
+libc = "0.2"
+static_assertions = "1.1"
+trybuild = "1.0"
+tokio = { version = "1", features = ["macros", "rt", "sync", "time", "net", "io-util"] }
+
+[[test]]
+name = "affine_progression"
+path = "tests/affine_progression.rs"
+
+[[test]]
+name = "callsite_regression"
+path = "tests/callsite_regression.rs"
+
+[[test]]
+name = "cursor_send_recv_codec_demux"
+path = "tests/cursor_send_recv_codec_demux.rs"
+
+[[test]]
+name = "cursor_send_recv_direct_recv"
+path = "tests/cursor_send_recv_direct_recv.rs"
+
+[[test]]
+name = "cursor_send_recv_send_recv"
+path = "tests/cursor_send_recv_send_recv.rs"
+
+[[test]]
+name = "cursor_send_recv_session_drop_wake"
+path = "tests/cursor_send_recv_session_drop_wake.rs"
+
+[[test]]
+name = "cursor_send_recv_session_fault_cancel"
+path = "tests/cursor_send_recv_session_fault_cancel.rs"
+
+[[test]]
+name = "cursor_send_recv_session_forget_recv"
+path = "tests/cursor_send_recv_session_forget_recv.rs"
+
+[[test]]
+name = "cursor_send_recv_session_forget_send"
+path = "tests/cursor_send_recv_session_forget_send.rs"
+
+[[test]]
+name = "cursor_send_recv_session_progress"
+path = "tests/cursor_send_recv_session_progress.rs"
+
+[[test]]
+name = "deep_scope_runtime"
+path = "tests/deep_scope_runtime.rs"
+
+[[test]]
+name = "dynamic_route_scope_resolver"
+path = "tests/dynamic_route_scope_resolver.rs"
+
+[[test]]
+name = "huge_choreography_runtime"
+path = "tests/huge_choreography_runtime.rs"
+
+[[test]]
+name = "lane_lifecycle_tap"
+path = "tests/lane_lifecycle_tap.rs"
+
+[[test]]
+name = "local_action"
+path = "tests/local_action.rs"
+
+[[test]]
+name = "nested_resolver_self_continuations"
+path = "tests/nested_resolver_self_continuations.rs"
+
+[[test]]
+name = "miri_runtime_owner"
+path = "tests/miri_runtime_owner.rs"
+
+[[test]]
+name = "nested_route_runtime"
+path = "tests/nested_route_runtime.rs"
+
+[[test]]
+name = "offer_branch_recv_evidence"
+path = "tests/offer_branch_recv_evidence.rs"
+
+[[test]]
+name = "parallel_route_alternating"
+path = "tests/parallel_route_alternating.rs"
+
+[[test]]
+name = "parallel_route_nesting"
+path = "tests/parallel_route_nesting.rs"
+
+[[test]]
+name = "program_capacity_regression"
+path = "tests/program_capacity_regression.rs"
+
+[[test]]
+name = "route_branch_send"
+path = "tests/route_branch_send.rs"
+
+[[test]]
+name = "route_multiphase_progress_arm"
+path = "tests/route_multiphase_progress_arm.rs"
+
+[[test]]
+name = "route_multiphase_progress_inner"
+path = "tests/route_multiphase_progress_inner.rs"
+
+[[test]]
+name = "route_with_internal_parallel"
+path = "tests/route_with_internal_parallel.rs"
+
+[[test]]
+name = "rolled_publication_exit"
+path = "tests/rolled_publication_exit.rs"
+
+[[test]]
+name = "rolled_resolver_reentry"
+path = "tests/rolled_resolver_reentry.rs"
+
+[[test]]
+name = "send_route_authority"
+path = "tests/send_route_authority.rs"
+
+[[test]]
+name = "shared_query_tail_reentry"
+path = "tests/shared_query_tail_reentry.rs"
+
+[[test]]
+name = "security_report_regressions"
+path = "tests/security_report_regressions.rs"
+
+[[test]]
+name = "tap_resolver_audit"
+path = "tests/tap_resolver_audit.rs"
+
+[[test]]
+name = "ui"
+path = "tests/ui.rs"
+
+[[test]]
+name = "visible_route_reentry"
+path = "tests/visible_route_reentry.rs"
+
+[badges]
+maintenance = { status = "actively-developed" }
+
+[[test]]
+name = "projection_diagnostic"
+path = "tests/projection_diagnostic.rs"
+
+[[test]]
+name = "explicit_resource_join"
+path = "tests/explicit_resource_join.rs"
+
+[[test]]
+name = "runtime_contract"
+path = "tests/runtime_contract.rs"
+
+[[test]]
+name = "parallel_offer_delayed_ingress"
+path = "tests/parallel_offer_delayed_ingress.rs"

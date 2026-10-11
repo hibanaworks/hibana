@@ -1,0 +1,5 @@
+error[E0432]: unresolved import `hibana::runtime::transport::IngressEvidence`
+ --> tests/ui/runtime-ingress-evidence-private.rs:1:5
+  |
+1 | use hibana::runtime::transport::IngressEvidence;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ no `IngressEvidence` in `runtime::buckets::transport`

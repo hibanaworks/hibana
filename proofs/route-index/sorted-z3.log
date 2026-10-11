@@ -1,0 +1,55 @@
+midpoint and strict width decrease: unsat
+right step excludes no match: unsat
+left step excludes no match: unsat
+equality branch has exact match: unsat
+adjacent sorted induction transitivity: unsat
+arbitrary-u16 table length 0: unsat
+arbitrary-u16 table length 1: unsat
+arbitrary-u16 table length 2: unsat
+arbitrary-u16 table length 3: unsat
+arbitrary-u16 table length 4: unsat
+arbitrary-u16 table length 5: unsat
+arbitrary-u16 table length 6: unsat
+arbitrary-u16 table length 7: unsat
+arbitrary-u16 table length 8: unsat
+arbitrary-u16 table length 9: unsat
+arbitrary-u16 table length 10: unsat
+arbitrary-u16 table length 11: unsat
+arbitrary-u16 table length 12: unsat
+arbitrary-u16 table length 13: unsat
+arbitrary-u16 table length 14: unsat
+arbitrary-u16 table length 15: unsat
+arbitrary-u16 table length 16: unsat
+arbitrary-u16 table length 17: unsat
+arbitrary-u16 table length 18: unsat
+arbitrary-u16 table length 19: unsat
+arbitrary-u16 table length 20: unsat
+arbitrary-u16 table length 21: unsat
+arbitrary-u16 table length 22: unsat
+arbitrary-u16 table length 23: unsat
+arbitrary-u16 table length 24: unsat
+arbitrary-u16 table length 25: unsat
+arbitrary-u16 table length 26: unsat
+arbitrary-u16 table length 27: unsat
+arbitrary-u16 table length 28: unsat
+arbitrary-u16 table length 29: unsat
+arbitrary-u16 table length 30: unsat
+arbitrary-u16 table length 31: unsat
+arbitrary-u16 table length 32: unsat
+arbitrary-u16 table length 33: unsat
+arbitrary-u16 table length 34: unsat
+arbitrary-u16 table length 42: unsat
+arbitrary-u16 table length 64: unsat
+arbitrary-u16 table length 79: unsat
+shifted hit: sat
+gapped hit: sat
+gap absent: sat
+wrong kind: sat
+absent sentinel: sat
+empty: sat
+duplicate queried: sat
+duplicate unrelated: sat
+invalid row: sat
+permutation fallback: sat
+unguarded-binary mutant: sat
+PASS: binary search equivalence, inductive conditions, and nonvacuity

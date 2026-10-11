@@ -1,0 +1,73 @@
+name: quality-gates
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  kani:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install pinned Kani and CBMC
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ripgrep
+          KANI_VERSION="$(< .github/kani-version)"
+          cargo install --locked kani-verifier --version "${KANI_VERSION}"
+          cargo kani setup
+      - name: Run Kani proofs
+        run: bash ./.github/scripts/check_kani.sh
+
+  final-form:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Install host tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ripgrep z3
+          rustup toolchain install 1.95.0 --profile minimal --component clippy --component rust-src
+          MIRI_TOOLCHAIN="$(< .github/miri-toolchain)"
+          rustup toolchain install "${MIRI_TOOLCHAIN}" --profile minimal --component miri --component rust-src
+          ELAN_VERSION="4.2.3"
+          ELAN_ARCHIVE="elan-aarch64-unknown-linux-gnu.tar.gz"
+          ELAN_SHA256="cb69af0803b04157bc30201c29c12fca882bb3ad8b43476b8d2d3064810bc3ac"
+          ELAN_TMP="$(mktemp -d)"
+          ELAN_PATH="${ELAN_TMP}/${ELAN_ARCHIVE}"
+          curl --proto '=https' --tlsv1.2 -sSfL \
+            "https://github.com/leanprover/elan/releases/download/v${ELAN_VERSION}/${ELAN_ARCHIVE}" \
+            -o "${ELAN_PATH}"
+          echo "${ELAN_SHA256}  ${ELAN_PATH}" | sha256sum --check -
+          tar -xzf "${ELAN_PATH}" -C "${ELAN_TMP}"
+          "${ELAN_TMP}/elan-init" -y --default-toolchain none
+          rm -rf "${ELAN_TMP}"
+          echo "${HOME}/.elan/bin" >> "${GITHUB_PATH}"
+      - name: Run final-form gates
+        run: bash ./.github/scripts/run_final_form_gates.sh
+      - name: Check rolled-route ownership with Lean and Z3
+        run: bash proofs/rolled-route-ownership/check.sh
+      - name: Check projection diagnostic models with Lean and Z3
+        run: |
+          ELAN_TOOLCHAIN=leanprover/lean4:v4.30.0 lean proofs/projection-diagnostics/Diagnostics.lean
+          bash .github/scripts/check_smt2.sh proofs/projection-diagnostics/Diagnostics.smt2
+      - name: Check explicit resource join integration with Lean and Z3
+        run: bash proofs/explicit-resource-join/check.sh
+      - name: Check receive lane census with Lean and Z3
+        run: bash proofs/recv-lane-census/check.sh
+      - name: Check completion bitmap traversal with Lean and Z3
+        run: bash proofs/pending-events/check.sh
+      - name: Check immutable event admission with Lean and Z3
+        run: bash proofs/event-admission/check.sh
+      - name: Check parallel offer ingress handoff with Lean and Z3
+        run: bash proofs/parallel-offer-ingress/check.sh
+      - name: Check immutable resolver lookup and dispatch subtree
+        run: |
+          ELAN_TOOLCHAIN=leanprover/lean4:v4.30.0 lean proofs/route-index/SortedRouteIndex.lean
+          bash .github/scripts/check_smt2.sh proofs/resolver-index/Lookup.smt2
+          ELAN_TOOLCHAIN=leanprover/lean4:v4.30.0 lean proofs/dispatch-subtree/Dispatch.lean
+          bash proofs/dispatch-subtree/check.sh
+          ELAN_TOOLCHAIN=leanprover/lean4:v4.30.0 lean proofs/route-column-access/Bounds.lean
+          bash .github/scripts/check_smt2.sh proofs/route-column-access/Bounds.smt2

@@ -1,0 +1,23 @@
+{
+  "baseline": "a6339772d4bf2c905f491e0284d3bef36e79bb6f",
+  "production_sha256": {
+    "src/global/const_dsl/event_relations.rs": "09a9d8a435bebb128b78eaf20a8858bb5680570c1cd7b96c056c9bbc40a67456",
+    "src/global/const_dsl/allocation/frame_labels/roll.rs": "414cbf2b5511d008695469e7fc672e3c05f0c5172ea7780caa29d10d4a9a9dc8"
+  },
+  "test_sha256": {
+    "src/global/const_dsl/event_relations/tests.rs": "29c0dde108785a7fbbcccf9f96e9c724f512da594a9518ffd14c24d6431125ea"
+  },
+  "checked_utc": "2026-10-02T23:56:23.058770+00:00",
+  "library_tests": {
+    "passed": 460,
+    "existing_ignored": 8
+  },
+  "integration_tests": {
+    "passed": 83,
+    "binaries": 7
+  },
+  "thumbv6m_no_std_library_check": "passed",
+  "hygiene": "passed",
+  "limits_increased": false,
+  "full_tls_measured": false
+}

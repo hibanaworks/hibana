@@ -1,0 +1,7 @@
+'Hibana.RoutePathRefinement.Loop.initial_count' depends on axioms: [propext]
+'Hibana.RoutePathRefinement.Loop.processed_bound' depends on axioms: [propext, Quot.sound]
+'Hibana.RoutePathRefinement.Loop.event_step' depends on axioms: [propext, Quot.sound]
+'Hibana.RoutePathRefinement.Loop.matching_has_credit' depends on axioms: [propext, Quot.sound]
+'Hibana.RoutePathRefinement.Loop.category_reset' depends on axioms: [propext]
+'Hibana.RoutePathRefinement.Loop.final_count' depends on axioms: [propext]
+'Hibana.RoutePathRefinement.Loop.fresh_id_safe' depends on axioms: [propext, Classical.choice, Quot.sound]

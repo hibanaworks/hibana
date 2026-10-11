@@ -1,0 +1,406 @@
+import Hibana.Syntax
+
+namespace Hibana
+
+/-- The compact byte representation used at Rust route-authority boundaries. -/
+def decodeRouteArm? : Nat -> Option RouteArm
+  | 0 => some .left
+  | 1 => some .right
+  | _ + 2 => none
+
+def encodeRouteArm : RouteArm -> Nat
+  | .left => 0
+  | .right => 1
+
+/-- Structural identity of the sealed Rust `CompiledProgramRef`: one program
+fact, canonical atom/resolver/participant/scope-marker counts, and the exact
+resident blob. -/
+structure ProgramImageIdentity where
+  roleCount : Nat
+  atomCount : Nat
+  routeResolverCount : Nat
+  routeParticipantCount : Nat
+  scopeMarkerCount : Nat
+  blob : List Nat
+  deriving DecidableEq
+
+/-- One session generation has one rendezvous owner and one exact structural
+program image, regardless of how many role endpoints are attached. -/
+structure SessionBinding where
+  rendezvous : Nat
+  program : ProgramImageIdentity
+  deriving DecidableEq
+
+def bindSession?
+    (existing : Option SessionBinding)
+    (rendezvous : Nat)
+    (program : ProgramImageIdentity) : Option SessionBinding :=
+  match existing with
+  | none => some { rendezvous, program }
+  | some bound =>
+      if bound.rendezvous = rendezvous ∧ bound.program = program then
+        some bound
+      else
+        none
+
+theorem first_session_attach_binds_exactly
+    (rendezvous : Nat) (program : ProgramImageIdentity) :
+    bindSession? none rendezvous program = some { rendezvous, program } := by
+  rfl
+
+theorem exact_session_reattach_preserves_binding (binding : SessionBinding) :
+    bindSession? (some binding) binding.rendezvous binding.program = some binding := by
+  simp [bindSession?]
+
+theorem mixed_program_session_attach_rejected
+    (binding : SessionBinding) (program : ProgramImageIdentity)
+    (mismatch : binding.program ≠ program) :
+    bindSession? (some binding) binding.rendezvous program = none := by
+  simp [bindSession?, mismatch]
+
+theorem cross_rendezvous_session_attach_rejected
+    (binding : SessionBinding) (rendezvous : Nat)
+    (mismatch : binding.rendezvous ≠ rendezvous) :
+    bindSession? (some binding) rendezvous binding.program = none := by
+  simp [bindSession?, mismatch]
+
+theorem accepted_session_reattach_is_exact
+    {binding next : SessionBinding} {rendezvous : Nat} {program : ProgramImageIdentity}
+    (accepted : bindSession? (some binding) rendezvous program = some next) :
+    next = binding ∧ binding.rendezvous = rendezvous ∧ binding.program = program := by
+  unfold bindSession? at accepted
+  by_cases exact : binding.rendezvous = rendezvous ∧ binding.program = program
+  · simp [exact] at accepted
+    exact ⟨accepted.symm, exact⟩
+  · simp [exact] at accepted
+
+/-- A descriptor resolver site belongs to one structural resident image. -/
+structure DynamicResolverSiteIdentity where
+  program : ProgramImageIdentity
+  scope : Nat
+  resolverId : Nat
+  deriving DecidableEq
+
+def DynamicResolverSiteIdentity.siteKey
+    (identity : DynamicResolverSiteIdentity) :
+      (ProgramImageIdentity × Nat) × Nat :=
+  ((identity.program, identity.scope), identity.resolverId)
+
+def DynamicResolverSiteIdentity.registrationKey
+    (identity : DynamicResolverSiteIdentity) : ProgramImageIdentity × Nat :=
+  (identity.program, identity.resolverId)
+
+theorem dynamic_resolver_site_key_injective
+    {left right : DynamicResolverSiteIdentity}
+    (same : left.siteKey = right.siteKey) :
+    left = right := by
+  cases left with
+  | mk leftProgram leftScope leftResolver =>
+      cases right with
+      | mk rightProgram rightScope rightResolver =>
+          have pairEq : (leftProgram, leftScope) = (rightProgram, rightScope) :=
+            congrArg Prod.fst same
+          have resolverEq : leftResolver = rightResolver :=
+            congrArg Prod.snd same
+          have programEq : leftProgram = rightProgram := congrArg Prod.fst pairEq
+          have scopeEq : leftScope = rightScope := congrArg Prod.snd pairEq
+          cases programEq
+          cases scopeEq
+          cases resolverEq
+          rfl
+
+theorem resolver_registration_key_is_program_and_id
+    (left right : DynamicResolverSiteIdentity) :
+    left.registrationKey = right.registrationKey ↔
+      left.program = right.program ∧ left.resolverId = right.resolverId := by
+  constructor
+  · intro same
+    exact ⟨congrArg Prod.fst same, congrArg Prod.snd same⟩
+  · rintro ⟨programEq, resolverEq⟩
+    exact Prod.ext programEq resolverEq
+
+theorem distinct_program_images_have_distinct_registration_keys
+    (left right : DynamicResolverSiteIdentity)
+    (programDistinct : left.program ≠ right.program) :
+    left.registrationKey ≠ right.registrationKey := by
+  intro same
+  exact programDistinct ((resolver_registration_key_is_program_and_id left right).mp same).1
+
+theorem scope_topology_difference_has_distinct_registration_keys
+    (left right : DynamicResolverSiteIdentity)
+    (topologyDistinct :
+      left.program.scopeMarkerCount ≠ right.program.scopeMarkerCount ∨
+      left.program.blob ≠ right.program.blob) :
+    left.registrationKey ≠ right.registrationKey := by
+  apply distinct_program_images_have_distinct_registration_keys left right
+  intro programEq
+  cases topologyDistinct with
+  | inl countDistinct =>
+      exact countDistinct (congrArg ProgramImageIdentity.scopeMarkerCount programEq)
+  | inr blobDistinct =>
+      exact blobDistinct (congrArg ProgramImageIdentity.blob programEq)
+
+theorem route_arm_decode_encode_round_trip (arm : RouteArm) :
+    decodeRouteArm? (encodeRouteArm arm) = some arm := by
+  cases arm <;> rfl
+
+theorem route_arm_decode_accepts_only_binary
+    {raw : Nat} {arm : RouteArm}
+    (decoded : decodeRouteArm? raw = some arm) :
+    raw = 0 \/ raw = 1 := by
+  cases raw with
+  | zero => exact Or.inl rfl
+  | succ raw =>
+      cases raw with
+      | zero => exact Or.inr rfl
+      | succ raw => simp [decodeRouteArm?] at decoded
+
+theorem invalid_route_arm_decode_rejected
+    {raw : Nat}
+    (invalid : 2 <= raw) :
+    decodeRouteArm? raw = none := by
+  cases raw with
+  | zero => simp at invalid
+  | succ raw =>
+      cases raw with
+      | zero => simp at invalid
+      | succ raw => rfl
+
+/-- Descriptor nodes reserve byte 255 for absence; every other non-binary byte
+is invalid rather than another spelling of absence. -/
+def decodeOptionalRouteArm? (raw : Nat) : Option (Option RouteArm) :=
+  if raw = 255 then some none else Option.map some (decodeRouteArm? raw)
+
+theorem optional_route_arm_decode_encode_round_trip (arm : RouteArm) :
+    decodeOptionalRouteArm? (encodeRouteArm arm) = some (some arm) := by
+  cases arm <;> rfl
+
+theorem optional_route_arm_absence_is_exact
+    {raw : Nat}
+    (decoded : decodeOptionalRouteArm? raw = some none) :
+    raw = 255 := by
+  by_cases sentinel : raw = 255
+  · exact sentinel
+  · simp [decodeOptionalRouteArm?, sentinel] at decoded
+
+theorem invalid_optional_route_arm_rejected
+    {raw : Nat}
+    (lower : 2 <= raw)
+    (upper : raw < 255) :
+    decodeOptionalRouteArm? raw = none := by
+  simp [decodeOptionalRouteArm?, Nat.ne_of_lt upper,
+    invalid_route_arm_decode_rejected lower]
+
+theorem selected_optional_route_arm_is_binary
+    {raw : Nat} {arm : RouteArm}
+    (decoded : decodeOptionalRouteArm? raw = some (some arm)) :
+    raw = 0 \/ raw = 1 := by
+  by_cases sentinel : raw = 255
+  · subst raw
+    simp [decodeOptionalRouteArm?] at decoded
+  · simp [decodeOptionalRouteArm?, sentinel] at decoded
+    exact route_arm_decode_accepts_only_binary decoded
+
+structure RouteAuthorityPublication where
+  selected : Option RouteArm
+  deriving DecidableEq
+
+/-- Validation precedes publication; an invalid compact arm has no successor. -/
+def publishRawRouteArm?
+    (state : RouteAuthorityPublication)
+    (raw : Nat) : Option RouteAuthorityPublication :=
+  match decodeRouteArm? raw with
+  | none => none
+  | some arm => some { state with selected := some arm }
+
+theorem invalid_route_arm_has_no_publication
+    {state : RouteAuthorityPublication} {raw : Nat}
+    (invalid : 2 <= raw) :
+    publishRawRouteArm? state raw = none := by
+  simp [publishRawRouteArm?, invalid_route_arm_decode_rejected invalid]
+
+theorem valid_route_arm_publication_is_exact
+    {state : RouteAuthorityPublication} {raw : Nat} {arm : RouteArm}
+    (decoded : decodeRouteArm? raw = some arm) :
+    publishRawRouteArm? state raw = some { state with selected := some arm } := by
+  simp [publishRawRouteArm?, decoded]
+
+/-- The outer option validates the two-bit encoding; the inner option records
+whether exactly one arm is ready. -/
+def decodeSingleReadyArmMask? : Nat -> Option (Option RouteArm)
+  | 0 => some none
+  | 1 => some (some .left)
+  | 2 => some (some .right)
+  | _ + 3 => none
+
+theorem invalid_ready_arm_mask_rejected
+    {mask : Nat}
+    (invalid : 3 <= mask) :
+    decodeSingleReadyArmMask? mask = none := by
+  cases mask with
+  | zero => simp at invalid
+  | succ mask =>
+      cases mask with
+      | zero => simp at invalid
+      | succ mask =>
+          cases mask with
+          | zero => simp at invalid
+          | succ mask => rfl
+
+theorem unambiguous_ready_arm_mask_is_accepted
+    {mask : Nat}
+    (valid : mask <= 2) :
+    (decodeSingleReadyArmMask? mask).isSome = true := by
+  cases mask with
+  | zero => rfl
+  | succ mask =>
+      cases mask with
+      | zero => rfl
+      | succ mask =>
+          cases mask with
+          | zero => rfl
+          | succ mask => simp at valid
+
+theorem conflicting_ready_arm_mask_rejected :
+    decodeSingleReadyArmMask? 3 = none := by
+  rfl
+
+/-- Runtime scope evidence admits one arm or enters a sticky conflict state.
+The authority source is deliberately absent: only the exact selected arm is
+resident, while resolver and frame provenance remain operation-local. -/
+inductive ScopeReadyEvidence where
+  | empty
+  | selected (arm : RouteArm)
+  | conflicted
+  deriving DecidableEq
+
+def recordScopeReadyArm
+    (state : ScopeReadyEvidence)
+    (arm : RouteArm) : ScopeReadyEvidence :=
+  match state with
+  | .empty => .selected arm
+  | .selected existing =>
+      if existing = arm then .selected existing else .conflicted
+  | .conflicted => .conflicted
+
+def selectedScopeReadyArm? : ScopeReadyEvidence -> Option RouteArm
+  | .selected arm => some arm
+  | .empty | .conflicted => none
+
+def recordScopeReadyArmAgainst
+    (selected : Option RouteArm)
+    (state : ScopeReadyEvidence)
+    (incoming : RouteArm) : ScopeReadyEvidence :=
+  match selected with
+  | some active =>
+      if active = incoming then recordScopeReadyArm state incoming else .conflicted
+  | none => recordScopeReadyArm state incoming
+
+def scopeReadySelectionCoherent
+    (selected : RouteArm)
+    (state : ScopeReadyEvidence) : Bool :=
+  match state with
+  | .empty => true
+  | .selected ready => decide (selected = ready)
+  | .conflicted => false
+
+def consumeScopeReadyArm
+    (state : ScopeReadyEvidence)
+    (arm : RouteArm) : ScopeReadyEvidence :=
+  match state with
+  | .selected ready => if ready = arm then .empty else state
+  | .empty | .conflicted => state
+
+def clearScopeReadyEvidence (_state : ScopeReadyEvidence) : ScopeReadyEvidence :=
+  .empty
+
+theorem first_ready_arm_record_is_exact (arm : RouteArm) :
+    recordScopeReadyArm .empty arm = .selected arm := by
+  rfl
+
+theorem matching_ready_arm_record_is_idempotent (arm : RouteArm) :
+    recordScopeReadyArm (.selected arm) arm = .selected arm := by
+  cases arm <;> rfl
+
+theorem distinct_ready_arm_record_conflicts
+    (existing incoming : RouteArm)
+    (different : existing ≠ incoming) :
+    recordScopeReadyArm (.selected existing) incoming = .conflicted := by
+  simp [recordScopeReadyArm, different]
+
+theorem ready_arm_conflict_is_sticky (arm : RouteArm) :
+    recordScopeReadyArm .conflicted arm = .conflicted := by
+  rfl
+
+theorem conflicted_ready_evidence_has_no_authority :
+    selectedScopeReadyArm? .conflicted = none := by
+  rfl
+
+theorem matching_live_selection_records_exact_ready_arm (arm : RouteArm) :
+    recordScopeReadyArmAgainst (some arm) .empty arm = .selected arm := by
+  cases arm <;> rfl
+
+theorem conflicting_live_selection_and_ready_arm_is_rejected
+    (selected incoming : RouteArm)
+    (different : selected ≠ incoming) :
+    recordScopeReadyArmAgainst (some selected) .empty incoming = .conflicted := by
+  simp [recordScopeReadyArmAgainst, different]
+
+theorem matching_live_selection_and_ready_evidence_is_coherent (arm : RouteArm) :
+    scopeReadySelectionCoherent arm (.selected arm) = true := by
+  cases arm <;> rfl
+
+theorem conflicting_live_selection_and_ready_evidence_is_incoherent
+    (selected ready : RouteArm)
+    (different : selected ≠ ready) :
+    scopeReadySelectionCoherent selected (.selected ready) = false := by
+  simp [scopeReadySelectionCoherent, different]
+
+theorem conflicted_ready_evidence_rejects_every_selection (arm : RouteArm) :
+    scopeReadySelectionCoherent arm .conflicted = false := by
+  rfl
+
+theorem empty_ready_evidence_consumption_is_empty (arm : RouteArm) :
+    consumeScopeReadyArm .empty arm = .empty := by
+  rfl
+
+theorem matching_ready_evidence_consumption_is_exact (arm : RouteArm) :
+    consumeScopeReadyArm (.selected arm) arm = .empty := by
+  cases arm <;> rfl
+
+theorem distinct_ready_evidence_consumption_preserves_selection
+    (ready consumed : RouteArm)
+    (different : ready ≠ consumed) :
+    consumeScopeReadyArm (.selected ready) consumed = .selected ready := by
+  simp [consumeScopeReadyArm, different]
+
+theorem conflicted_ready_evidence_consumption_is_sticky (arm : RouteArm) :
+    consumeScopeReadyArm .conflicted arm = .conflicted := by
+  rfl
+
+theorem ready_evidence_clear_is_exact (state : ScopeReadyEvidence) :
+    clearScopeReadyEvidence state = .empty := by
+  rfl
+
+theorem selected_ready_arm_mask_is_exact
+    {mask : Nat} {arm : RouteArm}
+    (decoded : decodeSingleReadyArmMask? mask = some (some arm)) :
+    (mask = 1 /\ arm = .left) \/ (mask = 2 /\ arm = .right) := by
+  cases mask with
+  | zero => simp [decodeSingleReadyArmMask?] at decoded
+  | succ mask =>
+      cases mask with
+      | zero =>
+          simp [decodeSingleReadyArmMask?] at decoded
+          exact Or.inl ⟨rfl, decoded.symm⟩
+      | succ mask =>
+          cases mask with
+          | zero =>
+              simp [decodeSingleReadyArmMask?] at decoded
+              exact Or.inr ⟨rfl, decoded.symm⟩
+          | succ mask =>
+              cases mask with
+              | zero => simp [decodeSingleReadyArmMask?] at decoded
+              | succ mask => simp [decodeSingleReadyArmMask?] at decoded
+
+end Hibana

@@ -1,0 +1,52 @@
+small-0-baseline 0 3.052713 2.978268 0.068968 271364
+small-0-candidate 0 1.447730 1.372920 0.069584 269716
+small-1-candidate 0 1.453152 1.391858 0.052423 269812
+small-1-baseline 0 3.034715 2.887439 0.143423 271368
+small-2-baseline 0 3.179034 3.010616 0.164621 271368
+small-2-candidate 0 1.525277 1.435671 0.086889 269680
+medium-0-baseline 1 9.919168 9.614015 0.298038 478648
+medium-0-candidate 0 1.514599 1.459932 0.052078 269512
+medium-1-candidate 0 1.567339 1.474378 0.089849 269480
+medium-2-candidate 0 1.581499 1.504974 0.071284 269500
+large-0-baseline 1 9.588335 9.311927 0.271665 478740
+large-0-candidate 0 1.915613 1.860918 0.052048 269828
+large-1-candidate 0 1.898613 1.799519 0.095422 269672
+large-2-candidate 0 1.963562 1.869081 0.090509 269768
+{
+  "small": {
+    "baseline": {
+      "passed": true,
+      "median_wall_seconds": 3.052957919993787,
+      "median_max_rss_kib": 271368
+    },
+    "candidate": {
+      "passed": true,
+      "median_wall_seconds": 1.4533645149931544,
+      "median_max_rss_kib": 269716
+    }
+  },
+  "medium": {
+    "baseline": {
+      "passed": false,
+      "median_wall_seconds": 9.919432206006604,
+      "median_max_rss_kib": 478648
+    },
+    "candidate": {
+      "passed": true,
+      "median_wall_seconds": 1.5675573340122355,
+      "median_max_rss_kib": 269500
+    }
+  },
+  "large": {
+    "baseline": {
+      "passed": false,
+      "median_wall_seconds": 9.588539239994134,
+      "median_max_rss_kib": 478740
+    },
+    "candidate": {
+      "passed": true,
+      "median_wall_seconds": 1.9157967179926345,
+      "median_max_rss_kib": 269768
+    }
+  }
+}

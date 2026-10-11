@@ -1,0 +1,39 @@
+{
+  "gate": "PASS before production edit",
+  "completed_utc": "2026-10-03T00:32:22.754817+00:00",
+  "base_commit": "ff6d167ed23f2f566d16affdeedd3b2ca8569cc2",
+  "candidate": "/workspace/scratch/0915e8fbff81/hibana-passive-child-window",
+  "production_edit_applied": false,
+  "pre_edit_source_hashes": {
+    "src/global/const_dsl/scope_ranges/route.rs": "c933570706919c2e866285da498100b81d205f077ceda7061152870c4d1c16a3",
+    "src/global/const_dsl/source_arena.rs": "89bed3911d62488a96c9edab41668e74c1f90d04d9a6bf93becdf7a5f3b58333",
+    "src/global/const_dsl/eff_list.rs": "19ec1efeab3953aaed72c9c155c1f9713d5fe7047357ea431369f883264e1f63",
+    "src/global/const_dsl/scope_ranges/nesting.rs": "88e1d4b3f090d12054008d15c1d9fbd1c10b42949f85add635198abbf95d972e",
+    "src/g/source.rs": "79279da8bd3904350757cc01ac039c6d6fc88bacbbcc2e61bb19abe40ab26aae"
+  },
+  "proof_hashes": {
+    "PassiveChildWindow.lean": "6b8d498af78143545f1f9c9968e29bb05bf80be6f98fc58ab2227247f6cf477a",
+    "check_window.py": "a7970bc8262d03bffc54e1fb6fe7505b6dd7fe4a78b29e15df482c8bd68ae9b8",
+    "SOURCE_BRIDGE.md": "9229c16c98d124500cb9b7a106b1be39b606959e49c81f2898960e5bef5eb2a1"
+  },
+  "proof_runs": [
+    {
+      "name": "lean",
+      "command": [
+        "/workspace/scratch/0915e8fbff81/tools/lean/lean-4.30.0-linux/bin/lean",
+        "/workspace/scratch/0915e8fbff81/artifacts/passive-child-window/PassiveChildWindow.lean"
+      ],
+      "returncode": 0,
+      "log_sha256": "570d4fe6679d3e7c1a243215ac5810a5653d0532b3ebdcf11cb11daa229fb724"
+    },
+    {
+      "name": "z3",
+      "command": [
+        "/tmp/hibana-quic-proof-venv/bin/python",
+        "/workspace/scratch/0915e8fbff81/artifacts/passive-child-window/check_window.py"
+      ],
+      "returncode": 0,
+      "log_sha256": "1142b57502c3ccc429c03d4cfe6a15fe77d2ffafae35454c44da9e92e992051f"
+    }
+  ]
+}

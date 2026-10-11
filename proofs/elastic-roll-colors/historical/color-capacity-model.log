@@ -1,0 +1,11 @@
+tls {'Seq': 192, 'Send': 333, 'Roll': 5, 'Route': 140} edges 27458 new_edges 889 max_colors 150
+key_rx {'Seq': 12, 'Send': 21, 'Roll': 1, 'Route': 8} edges 91 new_edges 3 max_colors 9
+key_tx {'Seq': 12, 'Send': 21, 'Roll': 1, 'Route': 8} edges 91 new_edges 3 max_colors 9
+recovery {'Seq': 42, 'Send': 77, 'Roll': 2, 'Route': 34} edges 1423 new_edges 3 max_colors 35
+stream {'Seq': 95, 'Send': 191, 'Roll': 10, 'Route': 95} edges 9233 new_edges 84 max_colors 83
+path {'Seq': 70, 'Send': 122, 'Roll': 4, 'Route': 51} edges 3634 new_edges 3 max_colors 54
+early {'Seq': 44, 'Send': 65, 'Roll': 3, 'Route': 20} edges 1036 new_edges 27 max_colors 32
+minimal {'Seq': 6, 'Send': 10, 'Roll': 2, 'Route': 3} edges 19 new_edges 3 max_colors 5
+tls_key_par {'Par': 1, 'Seq': 204, 'Send': 354, 'Roll': 6, 'Route': 148} edges 27549 new_edges 892 max_colors 150
+connection_base {'Par': 5, 'Seq': 423, 'Send': 765, 'Roll': 23, 'Route': 336} edges 41930 new_edges 985 max_colors 150
+connection_early {'Par': 6, 'Seq': 467, 'Send': 830, 'Roll': 26, 'Route': 356} edges 42966 new_edges 1012 max_colors 150

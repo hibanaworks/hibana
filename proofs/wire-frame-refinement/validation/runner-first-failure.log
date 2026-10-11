@@ -1,0 +1,12 @@
+PASS preserved pre-edit proofs and exact current allocator source bridge
+Lean (version 4.30.0, x86_64-unknown-linux-gnu, commit d024af099ca4bf2c86f649261ebf59565dc8c622, Release)
+Build completed successfully (56 jobs).
+input file '/workspace/scratch/0915e8fbff81/hibana-roll-color-fix/proofs/wire-frame-refinement/WireFrameRefinement.lean' must be contained in root directory (/workspace/scratch/0915e8fbff81/hibana-roll-color-fix/proofs/lean/)
+Traceback (most recent call last):
+  File "/workspace/scratch/0915e8fbff81/hibana-roll-color-fix/proofs/wire-frame-refinement/check_all.py", line 65, in <module>
+    output = run([lean, '-o', str(build / (module + '.olean')),
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/scratch/0915e8fbff81/hibana-roll-color-fix/proofs/wire-frame-refinement/check_all.py", line 32, in run
+    assert completed.returncode == 0, (command, completed.returncode)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: (['/workspace/scratch/0915e8fbff81/tools/lean/lean-4.30.0-linux/bin/lean', '-o', '/tmp/hibana-wire-frame-proof-y625opb4/WireFrameRefinement.olean', '/workspace/scratch/0915e8fbff81/hibana-roll-color-fix/proofs/wire-frame-refinement/WireFrameRefinement.lean'], 1)

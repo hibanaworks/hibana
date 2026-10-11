@@ -1,0 +1,141 @@
+{
+  "scope": "Identical frozen whole-TLS owner fixture with only proven immutable lookup stages1+2+3; not full owner cutover or external interop",
+  "source_base": "3aef31ba015c75ea824b8b41f5603b03f5dd336b",
+  "binary_sha256": "b87b7f1930d98c25cb36ebaedded7c715f5989ce1475b8d3f8cc343ed8917f23",
+  "original_user_cpu_seconds": 58.824337,
+  "stage1_user_cpu_seconds": 55.44428,
+  "stage2_user_cpu_seconds": 9.427799,
+  "stage3_user_cpu_seconds": 5.106626,
+  "reduction_from_original": 0.9131885498343993,
+  "reduction_from_stage2": 0.4583437767394065,
+  "exact_payload": true,
+  "both_closed": true,
+  "cost_slots_combined": {
+    "0": {
+      "count": 14228,
+      "pending": 1,
+      "poll_or_span_ns": 2022587701
+    },
+    "1": {
+      "count": 19830,
+      "pending": 5603,
+      "poll_or_span_ns": 1332663743
+    },
+    "2": {
+      "count": 27630,
+      "pending": 18156,
+      "poll_or_span_ns": 1408019637
+    },
+    "3": {
+      "count": 4741,
+      "pending": 0,
+      "poll_or_span_ns": 6921222
+    },
+    "4": {
+      "count": 4743,
+      "pending": 0,
+      "poll_or_span_ns": 1195878
+    },
+    "5": {
+      "count": 18968,
+      "pending": 0,
+      "poll_or_span_ns": 4260702
+    },
+    "6": {
+      "count": 1112,
+      "pending": 0,
+      "poll_or_span_ns": 131720
+    },
+    "7": {
+      "count": 19024,
+      "pending": 19022,
+      "poll_or_span_ns": 1845288815
+    },
+    "8": {
+      "count": 19026,
+      "pending": 19024,
+      "poll_or_span_ns": 2950163937
+    },
+    "9": {
+      "count": 23121,
+      "pending": 18380,
+      "poll_or_span_ns": 9059654
+    },
+    "10": {
+      "count": 4,
+      "pending": 0,
+      "poll_or_span_ns": 482
+    },
+    "16": {
+      "count": 4,
+      "pending": 0,
+      "poll_or_span_ns": 9462544
+    },
+    "17": {
+      "count": 1114,
+      "pending": 0,
+      "poll_or_span_ns": 1008766163
+    },
+    "23": {
+      "count": 4,
+      "pending": 0,
+      "poll_or_span_ns": 14261282
+    },
+    "24": {
+      "count": 551,
+      "pending": 0,
+      "poll_or_span_ns": 535280714
+    },
+    "25": {
+      "count": 5,
+      "pending": 0,
+      "poll_or_span_ns": 4639778
+    },
+    "26": {
+      "count": 552,
+      "pending": 0,
+      "poll_or_span_ns": 519437379
+    },
+    "27": {
+      "count": 1112,
+      "pending": 0,
+      "poll_or_span_ns": 1213344957
+    },
+    "28": {
+      "count": 2,
+      "pending": 0,
+      "poll_or_span_ns": 2270525
+    },
+    "29": {
+      "count": 274,
+      "pending": 0,
+      "poll_or_span_ns": 305285795
+    },
+    "30": {
+      "count": 1115,
+      "pending": 0,
+      "poll_or_span_ns": 1305625040
+    },
+    "32": {
+      "count": 2,
+      "pending": 0,
+      "poll_or_span_ns": 3648003
+    },
+    "33": {
+      "count": 2,
+      "pending": 0,
+      "poll_or_span_ns": 3496574
+    },
+    "34": {
+      "count": 2,
+      "pending": 0,
+      "poll_or_span_ns": 3921800
+    },
+    "35": {
+      "count": 2,
+      "pending": 0,
+      "poll_or_span_ns": 2348663
+    }
+  },
+  "overlap_note": "Slots7/8 actor timings overlap individual send/recv/offer timings; do not sum all slots"
+}

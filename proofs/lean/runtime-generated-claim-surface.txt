@@ -1,0 +1,24 @@
+generatedAbortedAllocationAccepted : generatedAbortedAllocation.check = true
+generatedAbortedAllocationPreservesState : generatedAbortedAllocation.PreservesState
+generatedCompactingAbortAccepted : generatedCompactingAbort.check = true
+generatedCompactingAbortPreservesAuthorityAndCapacity : generatedCompactingAbort.PreservesAuthorityAndCapacity
+generatedGrowthAllocationFailureAccepted : generatedGrowthAllocationFailure.check = true
+generatedGrowthAllocationFailurePreservesState : generatedGrowthAllocationFailure.PreservesState
+generatedInitialAllocationFailureAccepted : generatedInitialAllocationFailure.check = true
+generatedInitialAllocationFailurePreservesState : generatedInitialAllocationFailure.PreservesState
+generatedMaximumLeaseGenerationExhausted : Hibana.nextLeaseGeneration? 4294967295 = none
+generatedNextLeaseGenerationMaximumAccepted : Hibana.nextLeaseGeneration? 4294967294 = some 4294967295
+generatedPoisonTailAccepted : Hibana.checkSessionGenerationTrace
+    (Hibana.SessionGenerationState.poisoned Hibana.SessionFault.transportClosed) generatedPoisonTail =
+  true
+generatedPoisonTailRetires : Hibana.runSessionGenerationTrace
+    (Hibana.SessionGenerationState.poisoned Hibana.SessionFault.transportClosed) generatedPoisonTail =
+  some Hibana.SessionGenerationState.retired
+generatedPoisonTailTrace : Hibana.SessionGenerationTrace
+  (Hibana.SessionGenerationState.poisoned Hibana.SessionFault.transportClosed) generatedPoisonTail
+  Hibana.SessionGenerationState.retired
+generatedPoisonedAttachRejected : Hibana.applySessionGenerationAction
+    (Hibana.SessionGenerationState.poisoned Hibana.SessionFault.transportClosed) Hibana.SessionGenerationAction.attach =
+  none
+generatedSlabLayoutAccepted : generatedSlabLayout.check = true
+generatedSlabLayoutWellFormed : generatedSlabLayout.WellFormed

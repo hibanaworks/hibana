@@ -1,0 +1,55 @@
+//! Offer scope selection value types.
+
+use super::OfferEntryPosition;
+use crate::global::const_dsl::ScopeId;
+use crate::global::typestate::{StateIndex, state_index_to_usize};
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+pub(in crate::endpoint::kernel) enum FrameEvidenceResolution {
+    Unresolved,
+    Resolved,
+}
+
+impl FrameEvidenceResolution {
+    #[inline]
+    pub(in crate::endpoint::kernel) const fn unresolved() -> Self {
+        Self::Unresolved
+    }
+
+    #[inline]
+    pub(in crate::endpoint::kernel) const fn resolved() -> Self {
+        Self::Resolved
+    }
+
+    #[inline]
+    pub(in crate::endpoint::kernel) const fn is_resolved(self) -> bool {
+        matches!(self, Self::Resolved)
+    }
+
+    #[inline]
+    pub(in crate::endpoint::kernel) fn record(&mut self, observed: Self) {
+        if observed.is_resolved() {
+            *self = Self::Resolved;
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(in crate::endpoint::kernel) struct OfferScopeSelection {
+    pub(in crate::endpoint::kernel) scope_id: ScopeId,
+    pub(in crate::endpoint::kernel) frontier_parallel_root: Option<ScopeId>,
+    pub(in crate::endpoint::kernel) offer_lane: u8,
+    pub(in crate::endpoint::kernel) entry_position: OfferEntryPosition,
+    pub(in crate::endpoint::kernel) observed_target: StateIndex,
+}
+
+impl OfferScopeSelection {
+    #[inline]
+    pub(in crate::endpoint::kernel) const fn observed_target_index(self) -> Option<usize> {
+        if self.observed_target.is_absent() {
+            None
+        } else {
+            Some(state_index_to_usize(self.observed_target))
+        }
+    }
+}

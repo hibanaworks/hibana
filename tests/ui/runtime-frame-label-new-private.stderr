@@ -1,0 +1,10 @@
+error[E0624]: associated function `new` is private
+ --> tests/ui/runtime-frame-label-new-private.rs:4:25
+  |
+4 |     let _ = FrameLabel::new(0);
+  |                         ^^^ private associated function
+  |
+ ::: src/transport/labels.rs
+  |
+  |     pub(crate) const fn new(raw: u8) -> Self {
+  |     ---------------------------------------- private associated function defined here

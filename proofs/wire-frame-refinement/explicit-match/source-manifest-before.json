@@ -1,0 +1,31 @@
+{
+  "created_utc": "2026-10-03T03:27:51.962976+00:00",
+  "production_edit_after_gate_and_independent_review": true,
+  "preserved": {
+    "pre-edit/pre-edit-gate.json": "0c1179822693f65bc1767f0036540089f279414105b615b229151b045334c691",
+    "pre-edit/ProposedDescriptorImage.lean": "ab912462316416e0a7d3dd1d553d44161ccefce1c3246d8e2ff1ab55092d90e5",
+    "pre-edit/lean.log": "f50c966468d090bc8b802ba3bc6fda70dd4d6bc9eb6d79ff03b6bc31857a2de7",
+    "pre-edit/proposed.patch": "3d3324b28e281b42bf42178ed928e30fc4daab6058b6e06e14b0edd4644f9fe0",
+    "pre-edit/capacity-review.json": "dee13903294c5d6df52fc82e4822f61556552378ed24df83c284093ca59f8ab8",
+    "pre-edit/Candidate.lean": "dbd599d93f877a74e074c822f063c3017d5444c2512e159475ed2e30047fae7a",
+    "pre-edit/candidate-all-axioms.log": "158ee21209a23c22f0fc7671f60324d1ce54de411255522ac7fa1ba83783bdda",
+    "pre-edit/CAPACITY-SCOPE.md": "ef097d067accf3bf29299b49d33d29446d5ce8591e4bc527df52a28ce7370d73",
+    "pre-edit/proposed-compile.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "pre-edit/check_correspondence.py": "334b47f2bc5f0fac25e439a07fe584f3bff8c213c6b0036486ad46b0dbd8c4bb",
+    "pre-edit/result.json": "3215bf456850c08b884126fb88ce5f840862d0d7d0296f9309525b2eb4df5323",
+    "pre-edit/CapacityScope.lean": "401870d97ca36364fe78f9ce21020b1773934bfa5a530e538cdb5f15e2015e29",
+    "pre-edit/SourceBridge.lean": "3f633dc518041fb018b5d1c1c4e6f8dfc8fd2c870f8e11ab2626db98d47b2e54",
+    "pre-edit/CandidateAxiomAudit.lean": "05db48a4e10c0b1f1f625bcc37f7a40c34ca6525c5db46468d77383971167e45",
+    "pre-edit/source-bridge.log": "9620746cc0e0cdc24d8b8429692d8ca7d0be68f6fc97d292e6b613898e734e24",
+    "pre-edit/capacity-scope.log": "a1d3ed7c70a3cdfbcabcaabf82c3bbf1405ae72dc72c0943c82a12ba0ecbfafc",
+    "pre-edit/run.log": "e948335eb6e336fa221cac79650f3e8460bd1743ef892f71126b694eec56c2d2"
+  },
+  "unchanged_sources": {
+    "proofs/lean/Hibana/GlobalSyntax.lean": "4ffee9eb9d987bfd11a20388d611c5008e0b991067bff30f0d7b756de3c25338",
+    "proofs/lean/Hibana/GlobalAllocationCorrectness.lean": "75f50fecf9d344916d60eb1bd75541c4f373b3660ec64aee084a016c76007678",
+    "proofs/lean/Hibana/DescriptorRefinement.lean": "c75a4f3ed8cb70d9a6be8f93f023038694d5e90bc7b061c84302481bc39af3a4",
+    "src/global/const_dsl/allocation/frame_labels/reentry_domains.rs": "da90ce98dec6fc89b1bfc4e281436aa84be3435e5eaf5031a001b70d771fccf8"
+  },
+  "production_descriptor_sha256": "ab912462316416e0a7d3dd1d553d44161ccefce1c3246d8e2ff1ab55092d90e5",
+  "claim_limits": "Valid successfully lowered Rust sources; exhaustion admission is role-local under retained-invalid-row premise. Concrete runtime Covers/SameClassUnique remains explicit."
+}

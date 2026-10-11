@@ -1,0 +1,591 @@
+use super::LANE_DOMAIN_SIZE;
+use super::lane_set::lane_word_count;
+pub(crate) const PACKED_LANE_RANGE_EMPTY: u32 = u32::MAX;
+pub(crate) const ROLE_IMAGE_EVENT_STRIDE: usize = 10;
+pub(crate) const ROLE_IMAGE_LANE_STRIDE: usize = 1;
+pub(crate) const ROLE_IMAGE_DEPENDENCY_STRIDE: usize = 8;
+pub(crate) const ROLE_IMAGE_CONFLICT_STRIDE: usize = 2;
+pub(crate) const ROLE_IMAGE_U16_STRIDE: usize = 2;
+pub(crate) const ROLE_IMAGE_ROUTE_SCOPE_STRIDE: usize = 2;
+pub(crate) const ROLE_IMAGE_ROUTE_ARM_STRIDE: usize = 8;
+pub(crate) const ROLE_IMAGE_LANE_RANGE_STRIDE: usize = 4;
+pub(crate) const ROLE_IMAGE_ROUTE_ARM_LANE_STEP_STRIDE: usize = 5;
+pub(crate) const ROLE_IMAGE_ROLL_SCOPE_STRIDE: usize = 6;
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct PackedLaneRange(u32);
+
+impl PackedLaneRange {
+    pub(crate) const EMPTY: Self = Self(PACKED_LANE_RANGE_EMPTY);
+
+    #[inline(always)]
+    pub(crate) const fn try_new(start: usize, len: usize) -> Option<Self> {
+        if start > u16::MAX as usize || len > u16::MAX as usize {
+            return None;
+        }
+        if len > u16::MAX as usize - start {
+            return None;
+        }
+        Some(Self(((start as u32) << 16) | len as u32))
+    }
+
+    #[inline(always)]
+    pub(crate) const fn new(start: usize, len: usize) -> Self {
+        match Self::try_new(start, len) {
+            Some(range) => range,
+            None => panic!("lane range descriptor outside compact domain"),
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) const fn from_raw(raw: u32) -> Self {
+        Self(raw)
+    }
+
+    #[inline(always)]
+    pub(crate) const fn raw(self) -> u32 {
+        self.0
+    }
+
+    #[inline(always)]
+    pub(crate) const fn is_empty(self) -> bool {
+        self.0 == PACKED_LANE_RANGE_EMPTY
+    }
+
+    #[inline(always)]
+    pub(crate) const fn is_zero_len(self) -> bool {
+        (self.0 & 0xffff) == 0
+    }
+
+    #[inline(always)]
+    pub(crate) const fn is_absent_or_zero_len(self) -> bool {
+        self.is_empty() || self.is_zero_len()
+    }
+
+    #[inline(always)]
+    pub(crate) const fn is_canonical_optional_range(self) -> bool {
+        !self.is_empty() && (!self.is_zero_len() || self.start() == 0)
+    }
+
+    #[inline(always)]
+    pub(crate) const fn start(self) -> usize {
+        (self.0 >> 16) as usize
+    }
+
+    pub(crate) const fn len(self) -> usize {
+        (self.0 & 0xffff) as usize
+    }
+
+    #[inline(always)]
+    pub(crate) const fn end(self) -> usize {
+        self.start() + self.len()
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct RouteArmLaneStepRow {
+    lane: u8,
+    first_step: u16,
+    last_step: u16,
+}
+
+impl RouteArmLaneStepRow {
+    #[inline(always)]
+    pub(crate) const fn new(lane: u8, first_step: usize, last_step: usize) -> Self {
+        if first_step > u16::MAX as usize || last_step > u16::MAX as usize {
+            panic!("route arm lane step row overflow");
+        }
+        if first_step > last_step {
+            panic!("route arm lane step row order");
+        }
+        Self {
+            lane,
+            first_step: first_step as u16,
+            last_step: last_step as u16,
+        }
+    }
+
+    #[inline(always)]
+    pub(super) const fn from_packed_parts(lane: u8, first_step: u16, last_step: u16) -> Self {
+        Self {
+            lane,
+            first_step,
+            last_step,
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) const fn lane(self) -> u8 {
+        self.lane
+    }
+
+    #[inline(always)]
+    pub(crate) const fn first_step(self) -> u16 {
+        self.first_step
+    }
+
+    #[inline(always)]
+    pub(crate) const fn last_step(self) -> u16 {
+        self.last_step
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct PackedRouteArmRow {
+    event_row: PackedLaneRange,
+    lane_step_len_and_child_slot: u32,
+}
+
+impl PackedRouteArmRow {
+    const LANE_STEP_LENGTH_SHIFT: u32 = 16;
+    const CHILD_SLOT_MASK: u32 = u16::MAX as u32;
+    const BYTE_MASK: u32 = u8::MAX as u32;
+    const RESERVED_MASK: u32 = (u8::MAX as u32) << 24;
+    const CHILD_ABSENT_SLOT: u32 = u16::MAX as u32;
+
+    pub(crate) const fn new(
+        event_row: PackedLaneRange,
+        child_slot: Option<usize>,
+        lane_step_row: PackedLaneRange,
+    ) -> Self {
+        if !event_row.is_canonical_optional_range() {
+            panic!("route arm projection row event range overflow");
+        }
+        if lane_step_row.is_empty()
+            || lane_step_row.len() > LANE_DOMAIN_SIZE
+            || (event_row.is_zero_len() != lane_step_row.is_zero_len())
+        {
+            panic!("route arm lane step row range overflow");
+        }
+        let child = match child_slot {
+            Some(slot) => {
+                if slot >= u16::MAX as usize {
+                    panic!("passive route child slot overflow");
+                }
+                slot as u32
+            }
+            None => Self::CHILD_ABSENT_SLOT,
+        };
+        let encoded_lane_step_len = if lane_step_row.is_zero_len() {
+            0
+        } else {
+            (lane_step_row.len() - 1) as u32
+        };
+        Self {
+            event_row,
+            lane_step_len_and_child_slot: (encoded_lane_step_len << Self::LANE_STEP_LENGTH_SHIFT)
+                | child,
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) const fn from_packed_parts(
+        event_row_raw: u32,
+        lane_step_len_and_child_slot: u32,
+    ) -> Self {
+        if (lane_step_len_and_child_slot & Self::RESERVED_MASK) != 0 {
+            crate::invariant();
+        }
+        let event_row = PackedLaneRange::from_raw(event_row_raw);
+        if !event_row.is_canonical_optional_range() {
+            crate::invariant();
+        }
+        Self {
+            event_row,
+            lane_step_len_and_child_slot,
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) const fn event_row_raw(self) -> u32 {
+        self.event_row.raw()
+    }
+
+    #[inline(always)]
+    pub(crate) const fn lane_step_len_and_child_slot_raw(self) -> u32 {
+        self.lane_step_len_and_child_slot
+    }
+
+    #[inline(always)]
+    pub(crate) const fn is_empty(self) -> bool {
+        self.event_row.is_empty()
+    }
+
+    #[inline(always)]
+    pub(crate) const fn event_row(self) -> PackedLaneRange {
+        if self.is_empty() {
+            PackedLaneRange::EMPTY
+        } else {
+            self.event_row
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) const fn lane_step_len(self) -> usize {
+        if self.is_empty() {
+            0
+        } else {
+            let encoded_len = (self.lane_step_len_and_child_slot >> Self::LANE_STEP_LENGTH_SHIFT)
+                & Self::BYTE_MASK;
+            if self.event_row.is_zero_len() {
+                if encoded_len != 0 {
+                    crate::invariant();
+                }
+                0
+            } else {
+                encoded_len as usize + 1
+            }
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) const fn child_slot(self) -> Option<u16> {
+        if self.is_empty() {
+            None
+        } else {
+            let slot = self.lane_step_len_and_child_slot & Self::CHILD_SLOT_MASK;
+            if slot == Self::CHILD_ABSENT_SLOT {
+                None
+            } else {
+                Some(slot as u16)
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct PackedRollScopeRow {
+    scope: u16,
+    event_row: PackedLaneRange,
+}
+
+impl PackedRollScopeRow {
+    #[inline(always)]
+    pub(crate) const fn new(
+        scope: crate::global::const_dsl::ScopeId,
+        row: PackedLaneRange,
+    ) -> Self {
+        if scope.is_none()
+            || !matches!(
+                scope.kind(),
+                Some(crate::global::const_dsl::ScopeKind::Roll)
+            )
+            || row.is_absent_or_zero_len()
+        {
+            panic!("roll scope row overflow");
+        }
+        Self {
+            scope: scope.local_ordinal(),
+            event_row: row,
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) const fn from_packed_parts(scope: u16, event_row_raw: u32) -> Self {
+        Self {
+            scope,
+            event_row: PackedLaneRange::from_raw(event_row_raw),
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) const fn scope_raw(self) -> u16 {
+        self.scope
+    }
+
+    #[inline(always)]
+    pub(crate) const fn event_row_raw(self) -> u32 {
+        self.event_row.raw()
+    }
+
+    #[inline(always)]
+    pub(crate) const fn is_empty(self) -> bool {
+        self.scope == u16::MAX
+    }
+
+    #[inline(always)]
+    pub(crate) const fn scope(self) -> crate::global::const_dsl::ScopeId {
+        if self.is_empty() {
+            crate::invariant();
+        }
+        crate::global::const_dsl::ScopeId::roll_scope(self.scope)
+    }
+
+    #[inline(always)]
+    pub(crate) const fn event_row(self) -> PackedLaneRange {
+        if self.is_empty() {
+            PackedLaneRange::EMPTY
+        } else if self.event_row.is_empty() {
+            crate::invariant();
+        } else {
+            self.event_row
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct PackedLocalEventRow {
+    pub(crate) eff_index: u16,
+    pub(crate) dependency_row: u16,
+    pub(crate) conflict_row: u16,
+    pub(crate) scope: crate::global::const_dsl::ScopeId,
+    pub(crate) frame_label: u8,
+    pub(crate) flags: u8,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct BlobPtr {
+    base: *const u8,
+}
+
+// SAFETY: immutable static storage, with bounds checked by the sealed directory.
+unsafe impl Sync for BlobPtr {}
+
+impl BlobPtr {
+    #[inline(always)]
+    pub(in crate::global) const fn from_array<const N: usize>(
+        bytes: &'static [u8; N],
+        len: usize,
+    ) -> Self {
+        if len > N {
+            panic!("resident blob pointer");
+        }
+        Self {
+            base: bytes.as_ptr(),
+        }
+    }
+
+    #[inline(always)]
+    pub(in crate::global) const fn as_ptr(self) -> *const u8 {
+        self.base
+    }
+
+    #[inline(always)]
+    pub(in crate::global) const fn byte_at(self, offset: usize) -> u8 {
+        // SAFETY: callers check the sealed column-derived byte bound.
+        unsafe { *self.base.add(offset) }
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ColumnRange {
+    pub(crate) offset: u16,
+    pub(crate) len: u16,
+}
+
+impl ColumnRange {
+    #[inline(always)]
+    pub(crate) const fn new(offset: usize, len: usize, stride: usize) -> Self {
+        if offset > u16::MAX as usize || len > u16::MAX as usize {
+            panic!("role image packed column descriptor overflow");
+        }
+        if stride == 0 {
+            panic!("role image packed column stride must be nonzero");
+        }
+        let byte_len = match len.checked_mul(stride) {
+            Some(byte_len) => byte_len,
+            None => panic!("role image packed column byte range overflow"),
+        };
+        if byte_len > (u16::MAX as usize - offset) {
+            panic!("role image packed column byte range overflow");
+        }
+        Self {
+            offset: offset as u16,
+            len: len as u16,
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) const fn byte_len(self, stride: usize) -> usize {
+        self.len as usize * stride
+    }
+
+    #[inline(always)]
+    pub(crate) const fn end_offset(self, stride: usize) -> usize {
+        self.offset as usize + self.byte_len(stride)
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct RoleImageColumns {
+    pub(crate) events: ColumnRange,
+    pub(crate) lanes: ColumnRange,
+    pub(crate) dependencies: ColumnRange,
+    pub(crate) conflicts: ColumnRange,
+    pub(crate) route_scopes: ColumnRange,
+    pub(crate) route_scope_conflicts: ColumnRange,
+    pub(crate) route_arms: ColumnRange,
+    pub(crate) resident_boundaries: ColumnRange,
+    pub(crate) lane_bits: ColumnRange,
+    pub(crate) route_arm_lane_rows: ColumnRange,
+    pub(crate) route_offer_lane_rows: ColumnRange,
+    pub(crate) route_arm_lane_step_rows: ColumnRange,
+    pub(crate) route_commit_ranges: ColumnRange,
+    pub(crate) route_commit_rows: ColumnRange,
+    pub(crate) roll_scopes: ColumnRange,
+}
+
+impl RoleImageColumns {
+    #[inline(always)]
+    pub(crate) const fn blob_len(&self) -> usize {
+        self.roll_scopes.end_offset(ROLE_IMAGE_ROLL_SCOPE_STRIDE)
+    }
+
+    // The terminal column already owns the packed image's complete extent.
+    // Validate all earlier spans once before publishing its immutable pointer.
+    pub(crate) const fn validate_blob_bound(&self) {
+        let columns = [
+            (self.events, ROLE_IMAGE_EVENT_STRIDE),
+            (self.lanes, ROLE_IMAGE_LANE_STRIDE),
+            (self.dependencies, ROLE_IMAGE_DEPENDENCY_STRIDE),
+            (self.conflicts, ROLE_IMAGE_CONFLICT_STRIDE),
+            (self.route_scopes, ROLE_IMAGE_ROUTE_SCOPE_STRIDE),
+            (self.route_scope_conflicts, ROLE_IMAGE_CONFLICT_STRIDE),
+            (self.route_arms, ROLE_IMAGE_ROUTE_ARM_STRIDE),
+            (self.resident_boundaries, ROLE_IMAGE_U16_STRIDE),
+            (self.lane_bits, ROLE_IMAGE_LANE_STRIDE),
+            (self.route_arm_lane_rows, ROLE_IMAGE_LANE_RANGE_STRIDE),
+            (self.route_offer_lane_rows, ROLE_IMAGE_LANE_RANGE_STRIDE),
+            (
+                self.route_arm_lane_step_rows,
+                ROLE_IMAGE_ROUTE_ARM_LANE_STEP_STRIDE,
+            ),
+            (self.route_commit_ranges, ROLE_IMAGE_LANE_RANGE_STRIDE),
+            (self.route_commit_rows, ROLE_IMAGE_CONFLICT_STRIDE),
+        ];
+        let bound = self.blob_len();
+        let mut index = 0;
+        while index < columns.len() {
+            let (column, stride) = columns[index];
+            if column.end_offset(stride) > bound {
+                panic!("role descriptor column exceeds terminal bound");
+            }
+            index += 1;
+        }
+    }
+}
+
+pub(crate) struct RoleImageBytes<const N: usize> {
+    pub(super) bytes: [u8; N],
+}
+
+pub(crate) struct RoleImagePlan {
+    pub(super) columns: RoleImageColumns,
+}
+
+pub(crate) struct RoleImageBuild<const N: usize> {
+    pub(super) bytes: RoleImageBytes<N>,
+    pub(super) columns: RoleImageColumns,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct RoleLaneImage<'a> {
+    pub(crate) columns: &'a RoleImageColumns,
+    pub(crate) blob: BlobPtr,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct RuntimeRoleFacts {
+    pub(crate) words: [u16; 6],
+}
+
+pub(crate) mod private {
+    pub trait RoleProgramViewSeal {}
+}
+
+pub(crate) trait RoleProgramView<const ROLE: u8>: private::RoleProgramViewSeal {
+    fn role_image_ref(&self) -> &'static crate::global::role_program::RoleImageRef;
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct RuntimeRoleFootprint {
+    pub(crate) max_route_commit_count: usize,
+    pub(crate) route_arm_state_capacity: usize,
+    pub(crate) local_step_count: usize,
+    pub(crate) route_scope_count: usize,
+    pub(crate) active_lane_count: usize,
+    pub(crate) endpoint_lane_slot_count: usize,
+    pub(crate) logical_lane_count: usize,
+}
+
+#[inline(always)]
+pub(crate) const fn frontier_visit_byte_count(position_count: usize) -> usize {
+    position_count.div_ceil(u8::BITS as usize)
+}
+
+#[inline(always)]
+pub(crate) const fn compact_local_step_count(local_step_count: usize) -> u16 {
+    if local_step_count > u16::MAX as usize {
+        crate::invariant();
+    }
+    local_step_count as u16
+}
+
+#[inline(always)]
+pub(crate) const fn local_cursor_position_count(local_step_count: usize) -> usize {
+    compact_local_step_count(local_step_count) as usize + 1
+}
+
+impl RuntimeRoleFootprint {
+    #[inline(always)]
+    pub(crate) const fn lane_word_count(self) -> usize {
+        lane_word_count(self.logical_lane_count)
+    }
+
+    #[inline(always)]
+    pub(crate) const fn scope_evidence_count(self) -> usize {
+        self.route_scope_count
+    }
+
+    #[inline(always)]
+    pub(crate) const fn frontier_entry_count(self) -> usize {
+        self.active_lane_count
+    }
+
+    #[inline(always)]
+    pub(crate) const fn frontier_visit_position_count(self) -> usize {
+        // Offer traversal can visit ordinary parallel/unscoped positions too.
+        // Its scratch domain follows local cursor positions, including the
+        // terminal position, independently of retained route descriptor rows.
+        if self.local_step_count == 0 {
+            0
+        } else {
+            local_cursor_position_count(self.local_step_count)
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) const fn frontier_visit_byte_count(self) -> usize {
+        frontier_visit_byte_count(self.frontier_visit_position_count())
+    }
+}
+
+#[cfg(all(test, hibana_repo_tests))]
+mod frontier_visit_footprint_tests {
+    use super::RuntimeRoleFootprint;
+
+    #[test]
+    fn visit_scratch_depends_on_local_positions_not_route_rows() {
+        for local_step_count in [0, 1, 7, 8, u16::MAX as usize] {
+            for route_scope_count in [0, 3] {
+                let footprint = RuntimeRoleFootprint {
+                    max_route_commit_count: 0,
+                    route_arm_state_capacity: 0,
+                    local_step_count,
+                    route_scope_count,
+                    active_lane_count: usize::from(local_step_count != 0),
+                    endpoint_lane_slot_count: 1,
+                    logical_lane_count: 1,
+                };
+                let positions = if local_step_count == 0 {
+                    0
+                } else {
+                    local_step_count + 1
+                };
+                assert_eq!(footprint.frontier_visit_position_count(), positions);
+                assert_eq!(footprint.frontier_visit_byte_count(), positions.div_ceil(8));
+            }
+        }
+    }
+}

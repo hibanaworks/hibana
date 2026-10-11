@@ -1,0 +1,318 @@
+PASS immutable pre-edit records, compressed inputs, and byte-identical 31-query core
+PASS exact elastic allocator implementation and regression source identity
+PASS exact Lean dependency source identity
+PASS exact compiler-cost artifacts and qualified seven-source manifest
+PASS fixture source correspondence; all assertions and production bytes preserved
+PASS immutable local and external pre-integration correspondence records
+PASS original seven-source qualification and exact test-hygiene-only mapping
+PASS original distributable manifest with archived wrapper and README
+PASS preserved passive-child-window pre-edit evidence and exact current candidate sources
+PASS frozen emitter and all three original row helper bodies; baseline hashes match pre-edit gate
+PASS preserved projection-conflict-reuse pre-edit evidence and exact current candidate sources
+PASS combined source identity: ff09b0223cf7d0f6b467a18416ca25ba1371a3fbc7e93ea8732ed76f5326a02d
+PASS exact compiler-cost artifacts, historical source identity, and current followup mapping
+Lean (version 4.30.0, x86_64-unknown-linux-gnu, commit d024af099ca4bf2c86f649261ebf59565dc8c622, Release)
+'ReentryColorGate.chosen_is_bounded_and_fits' depends on axioms: [propext, Quot.sound]
+'ReentryColorGate.exhaustion_is_exact' depends on axioms: [propext, Quot.sound]
+'ReentryColorGate.extend_preserves_valid' depends on axioms: [propext]
+'ReentryColorGate.greedy_preserves_valid' depends on axioms: [propext, Quot.sound]
+'ReentryColorGate.greedy_preserves_vertex_inventory' depends on axioms: [propext]
+'ReentryColorGate.augmented_valid_preserves_old_edges' depends on axioms: [propext]
+'ReentryColorGate.augmented_valid_separates_new_edges' depends on axioms: [propext]
+'ReentryColorGate.same_wire_key_has_unique_eligible_occurrence' does not depend on any axioms
+'ReentryColorGate.final_graph_has_no_self_edges' depends on axioms: [propext, Quot.sound]
+'ReentryColorGate.final_graph_retains_prior_inequality' depends on axioms: [propext, Quot.sound]
+'ReentryColorGate.final_graph_contains_reentry_edge' depends on axioms: [propext, Quot.sound]
+'ReentryColorGate.complete_allocation_sound' depends on axioms: [propext, Quot.sound]
+'ReentryColorGate.safe_reuse_for_noninterfering_occurrences' does not depend on any axioms
+'ReentryColorGate.saturated_prefix_exhausts' depends on axioms: [propext, Quot.sound]
+'ReentryColorGate.byte_palette_exhaustion_is_reported' depends on axioms: [propext, Quot.sound]
+'ReentryColorGate.final_byte_color_is_available' does not depend on any axioms
+'ReentryColorGate.old_shared_colors_violate_required_edge' does not depend on any axioms
+'ReentryColorGate.greedy_separates_diagnostic_pair' does not depend on any axioms
+'ReentryColorGate.ordered_prefix_color_reuse_survives_reentry_separation' does not depend on any axioms
+[(true, true, true), (true, false, true), (false, true, true), (false, false, true)]
+'StreamMinimalDirect.direct_trace_is_legal_for_all_four_roll_variants' depends on axioms: [propext]
+'StreamMinimalDirect.bootstrap_roll_still_requires_one_body_visit' depends on axioms: [propext]
+'StreamMinimalDirect.ready_receipt_cannot_be_skipped' depends on axioms: [propext]
+'StreamMinimalDirect.ready_receipt_prefix_is_legal' depends on axioms: [propext]
+'StreamMinimalDirect.current_open_is_legal' depends on axioms: [propext]
+'StreamMinimalDirect.prior_bootstrap_inspect_can_reenter' depends on axioms: [propext]
+'StreamMinimalDirect.prior_reentry_preserves_current_open' depends on axioms: [propext]
+'StreamMinimalDirect.inspect_cannot_consume_queued_open' depends on axioms: [propext]
+'StreamMinimalDirect.explicit_old_reset_still_cannot_consume_queued_open_as_inspect' depends on axioms: [propext]
+'StreamMinimalDirect.active_roll_cannot_reset_without_a_body_visit' depends on axioms: [propext]
+'ReentryRollMembership.membership_graph_has_no_self_edges' depends on axioms: [propext, Quot.sound]
+'ReentryRollMembership.membership_graph_retains_prior_inequality' depends on axioms: [propext, Quot.sound]
+'ReentryRollMembership.membership_graph_separates_distinct_roll_classes' depends on axioms: [propext, Quot.sound]
+'ReentryRollMembership.exact_remaining_obligation_implies_covers' depends on axioms: [propext, Quot.sound]
+'ReentryRollMembership.innermost_identity_iff_full_membership' depends on axioms: [propext]
+'ReentryRollMembership.membership_graph_is_symmetric' depends on axioms: [propext, Classical.choice, Quot.sound]
+[[1], [0, 1]]
+'AuditNestedReverse.initial_visit' depends on axioms: [propext]
+'AuditNestedReverse.inner_head_can_repeat' depends on axioms: [propext]
+'AuditNestedReverse.outer_prefix_can_repeat' depends on axioms: [propext]
+'AuditNestedReverse.outer_reset_blocks_inner_without_prefix' depends on axioms: [propext]
+'AuditNestedReverse.outer_reset_invalidates_inner_completion' depends on axioms: [propext]
+'AuditNestedReverse.fresh_prefix_then_inner_is_legal' depends on axioms: [propext]
+'NoRollFastPath.exact' does not depend on any axioms
+SOURCE CORRESPONDENCE: recorded identity only; live QUIC source check not requested
+observed_old_wire_collision: sat (expected sat)
+exact_Inspect52_Open55_collision: sat (expected sat)
+disabled_completed_prefix_is_not_a_witness: unsat (expected unsat)
+different_logical_labels_do_not_prevent_wire_collision: sat (expected sat)
+old_Inspect_wire_key_accepts_queued_Open_key: sat (expected sat)
+coverage_and_validity_premises_are_satisfiable: sat (expected sat)
+same_wire_distinct_eligible_occurrences_under_coverage: unsat (expected unsat)
+remove_coverage_restores_collision_negative_control: sat (expected sat)
+preserve_baseline_inequality: unsat (expected unsat)
+different_membership_separation: unsat (expected unsat)
+remove_membership_edge_restores_observed_collision: sat (expected sat)
+same_membership_same_baseline_can_reuse_color: sat (expected sat)
+different_domains_can_reuse_color: sat (expected sat)
+last_byte_color_255_is_available: sat (expected sat)
+all_256_colors_blocked_reports_failure: unsat (expected unsat)
+truncated_255_palette_wrongly_exhausts_negative_control: unsat (expected unsat)
+greedy_exhaustion_does_not_imply_uncolorability: sat (expected sat)
+same_colorable_graph_bad_greedy_prefix_exhausts: unsat (expected unsat)
+tls_concrete_coloring_all_edges: sat (expected sat)
+key_rx_concrete_coloring_all_edges: sat (expected sat)
+key_tx_concrete_coloring_all_edges: sat (expected sat)
+recovery_concrete_coloring_all_edges: sat (expected sat)
+stream_concrete_coloring_all_edges: sat (expected sat)
+path_concrete_coloring_all_edges: sat (expected sat)
+early_concrete_coloring_all_edges: sat (expected sat)
+minimal_concrete_coloring_all_edges: sat (expected sat)
+exact_pair_with_new_graph_cannot_collide: unsat (expected unsat)
+new_Inspect_wire_key_cannot_accept_queued_Open_key: unsat (expected unsat)
+tls_key_par_concrete_coloring_all_edges: sat (expected sat)
+connection_base_concrete_coloring_all_edges: sat (expected sat)
+connection_early_concrete_coloring_all_edges: sat (expected sat)
+PASS exact 31-query replay; universal Rust Covers/SameClassUnique remains unproved
+equivalence: unsat
+nonvacuous no-roll source preserved: sat
+'Hibana.ParticipantMask.collect_exact' depends on axioms: [propext]
+'Hibana.ParticipantMask.absence_search_none' depends on axioms: [propext]
+'Hibana.ParticipantMask.observer_validation_exact' depends on axioms: [propext, Quot.sound]
+'Hibana.ParticipantMask.pipeline_exact' depends on axioms: [propext, Quot.sound]
+'Hibana.ParticipantMask.role_count_bounds' depends on axioms: [propext, Classical.choice, Quot.sound]
+'Hibana.ParticipantMask.participant_below_bound' depends on axioms: [propext, Classical.choice, Quot.sound]
+'Hibana.ParticipantMask.byte_index_bounds' depends on axioms: [propext, Classical.choice, Quot.sound]
+PASS byte insertion is exact over every role and every existing mask: unsat (0.002552s)
+PASS duplicate and self-send insertion is idempotent: unsat (0.000067s)
+PASS byte and bit positions cover complete role domain: unsat (0.002655s)
+PASS role255 uses final byte bit7 and never wraps: unsat (0.000161s)
+PASS exact nonempty-or-empty mask completeness n=0: unsat (0.000063s)
+PASS exact nonempty-or-empty mask completeness n=1: unsat (0.002601s)
+PASS nonvacuous duplicate/self/255 source n=1: sat (0.000398s)
+PASS exact nonempty-or-empty mask completeness n=2: unsat (0.059050s)
+PASS nonvacuous duplicate/self/255 source n=2: sat (0.000701s)
+PASS exact nonempty-or-empty mask completeness n=4: unsat (0.216401s)
+PASS nonvacuous duplicate/self/255 source n=4: sat (0.000535s)
+PASS exact nonempty-or-empty mask completeness n=8: unsat (1.458826s)
+PASS nonvacuous duplicate/self/255 source n=8: sat (0.000542s)
+PASS exact nonempty-or-empty mask completeness n=16: unsat (10.673715s)
+PASS nonvacuous duplicate/self/255 source n=16: sat (0.001100s)
+PASS absence forces both bounded selector searches None n=1: unsat (0.012565s)
+PASS absent observer merge accepts n=1: unsat (0.013948s)
+PASS absence forces both bounded selector searches None n=2: unsat (0.033492s)
+PASS absent observer merge accepts n=2: unsat (0.030826s)
+PASS absence forces both bounded selector searches None n=4: unsat (0.117648s)
+PASS absent observer merge accepts n=4: unsat (0.116777s)
+PASS absence forces both bounded selector searches None n=8: unsat (0.507597s)
+PASS absent observer merge accepts n=8: unsat (0.528391s)
+PASS absence forces both bounded selector searches None n=16: unsat (4.462024s)
+PASS absent observer merge accepts n=16: unsat (4.815830s)
+PASS ascending first-role and exact-error preservation n=0: unsat (0.000074s)
+PASS ascending first-role and exact-error preservation n=1: unsat (0.001761s)
+PASS nonvacuous late rejection n=1: sat (0.000719s)
+PASS ascending first-role and exact-error preservation n=2: unsat (0.001446s)
+PASS nonvacuous late rejection n=2: sat (0.000723s)
+PASS ascending first-role and exact-error preservation n=26: unsat (0.009532s)
+PASS nonvacuous late rejection n=26: sat (0.000996s)
+PASS ascending first-role and exact-error preservation n=256: unsat (0.672597s)
+PASS nonvacuous late rejection n=256: sat (0.003740s)
+PASS arbitrary earlier invalid-stage errors retain priority and exact value: unsat (0.000770s)
+PASS nonvacuous earlier-stage error priority stage=0: sat (0.000696s)
+PASS nonvacuous earlier-stage error priority stage=1: sat (0.000778s)
+PASS nonvacuous earlier-stage error priority stage=2: sat (0.000699s)
+PASS nonvacuous earlier-stage error priority stage=3: sat (0.000728s)
+PASS nonvacuous earlier-stage error priority stage=4: sat (0.000752s)
+PASS nonvacuous earlier-stage error priority stage=5: sat (0.000731s)
+PASS counterexample sender-only mask wrongly omits receiver1 and255: sat (0.001514s)
+PASS counterexample arbitrary wrong omission changes first error: sat (0.000091s)
+PASS positive sparse route with distinct inbound evidence and role255: sat (0.000100s)
+ALL PARTICIPANT MASK Z3 CHECKS PASSED: 44 claims/witnesses
+'Hibana.RoutePathRefinement.refinement_exact' depends on axioms: [propext, Classical.choice, Quot.sound]
+'Hibana.RoutePathRefinement.class_equality_iff_original' depends on axioms: [propext, Classical.choice, Quot.sound]
+'Hibana.RoutePathRefinement.classes_bound' depends on axioms: [propext, Quot.sound]
+'Hibana.RoutePathRefinement.stored_id_avoids_u16_sentinel' depends on axioms: [propext, Quot.sound]
+'Hibana.RoutePathRefinement.uniform_same_membership' depends on axioms: [propext, Classical.choice, Quot.sound]
+'Hibana.RoutePathRefinement.routes_exact' depends on axioms: [propext, Classical.choice, Quot.sound]
+'Hibana.RoutePathRefinement.Loop.initial_count' depends on axioms: [propext]
+'Hibana.RoutePathRefinement.Loop.processed_bound' depends on axioms: [propext, Quot.sound]
+'Hibana.RoutePathRefinement.Loop.event_step' depends on axioms: [propext, Quot.sound]
+'Hibana.RoutePathRefinement.Loop.matching_has_credit' depends on axioms: [propext, Quot.sound]
+'Hibana.RoutePathRefinement.Loop.category_reset' depends on axioms: [propext]
+'Hibana.RoutePathRefinement.Loop.final_count' depends on axioms: [propext]
+'Hibana.RoutePathRefinement.Loop.fresh_id_safe' depends on axioms: [propext, Classical.choice, Quot.sound]
+initial invariant 0: unsat (0.000s)
+initial invariant 1: unsat (0.002s)
+initial invariant 2: unsat (0.001s)
+initial invariant 3: unsat (0.000s)
+initial invariant 4: unsat (0.000s)
+matching event still contains its original old ID: unsat (0.003s)
+conditional remap index is in old-class bounds: unsat (0.002s)
+new IDs monotone and allocation count is at most processed slots: unsat (0.003s)
+fresh stored ID excludes sentinel, increment fits u16: unsat (0.002s)
+event step preserves invariant 0: unsat (0.003s)
+event step preserves invariant 1: unsat (0.004s)
+event step preserves invariant 2: unsat (0.006s)
+event step preserves invariant 3: unsat (0.004s)
+event step preserves invariant 4: unsat (0.004s)
+non-sentinel remap entries are injective: unsat (0.003s)
+category reset preserves invariant 0: unsat (0.002s)
+category reset preserves invariant 1: unsat (0.002s)
+category reset preserves invariant 2: unsat (0.003s)
+category reset preserves invariant 3: unsat (0.001s)
+category reset preserves invariant 4: unsat (0.000s)
+all events processed after categories zero one two: unsat (0.002s)
+final exact equality of old-class and membership pairs: unsat (0.003s)
+final IDs compactly bounded and sentinel excluded: unsat (0.002s)
+nonempty domain allocates at least one ID: unsat (0.003s)
+scratch addresses and byte size fit 32-bit usize: unsat (0.001s)
+ALL 25 UNBOUNDED LOOP VCS PROVED
+PASS exact in-place categories/remap/equality/bounds n=0: unsat (0.000215s)
+PASS exact in-place categories/remap/equality/bounds n=1: unsat (0.001927s)
+PASS nonvacuous all-distinct classes n=1: sat (0.001120s)
+PASS exact in-place categories/remap/equality/bounds n=2: unsat (0.007509s)
+PASS nonvacuous all-distinct classes n=2: sat (0.001167s)
+PASS exact in-place categories/remap/equality/bounds n=3: unsat (0.037969s)
+PASS nonvacuous all-distinct classes n=3: sat (0.001699s)
+PASS exact in-place categories/remap/equality/bounds n=4: unsat (0.330048s)
+PASS nonvacuous all-distinct classes n=4: sat (0.002473s)
+PASS all compact counts and remap indices fit u16/padding capacity: unsat (0.001184s)
+PASS u16 sentinel never aliases a stored class ID: unsat (0.008521s)
+PASS pair refinement preserves exactly old-class plus current membership: unsat (0.001194s)
+PASS uniform feature omission leaves equality unchanged: unsat (0.000641s)
+PASS counterexample forgetting old class merges distinct paths: sat (0.000651s)
+  witness: old_a=0, old_b=1, feature_a=0, feature_b=0
+PASS counterexample resetting next ID between categories: sat (0.000693s)
+  witness: old_a=0, old_b=0, feature_a=0, feature_b=1
+PASS counterexample retaining remap entries across different categories: sat (0.000685s)
+  witness: old_a=0, old_b=0, feature_a=1, feature_b=2
+PASS interval-uniform skip preserves every pair membership: unsat (0.001870s)
+PASS counterexample equal outside endpoints do not imply uniform interval: sat (0.002523s)
+  witness: route_start=2, route_split=3, route_end=4, body_start=0, body_end=5, x=0, y=2
+ALL ROUTE-PATH REFINEMENT Z3 CHECKS PASSED: 18 claims/witnesses
+/workspace/scratch/0915e8fbff81/hibana-latest-proof-integration/proofs/passive-child-window/PassiveChildWindow.lean:60:34: warning: unused variable `hin`
+
+Note: This linter can be disabled with `set_option linter.unusedVariables false`
+'Hibana.PassiveChildWindow.initial_search_lower_bound' depends on axioms: [propext, Classical.choice, Quot.sound]
+'Hibana.PassiveChildWindow.no_equal_marker_skipped' depends on axioms: [propext, Quot.sound]
+'Hibana.PassiveChildWindow.first_greater_ends_equal_group' depends on axioms: [propext, Quot.sound]
+'Hibana.PassiveChildWindow.stable_window_exact' depends on axioms: [propext, Quot.sound]
+{
+  "status": "PASS",
+  "checks": [
+    {
+      "name": "unbounded midpoint bounds",
+      "result": "unsat"
+    },
+    {
+      "name": "unbounded right interval strictly shrinks",
+      "result": "unsat"
+    },
+    {
+      "name": "unbounded left interval strictly shrinks",
+      "result": "unsat"
+    },
+    {
+      "name": "unbounded right search preserves smaller prefix",
+      "result": "unsat"
+    },
+    {
+      "name": "unbounded left search preserves greater-or-equal suffix",
+      "result": "unsat"
+    },
+    {
+      "name": "unbounded no equal row before lower bound",
+      "result": "unsat"
+    },
+    {
+      "name": "unbounded stop excludes all later matches",
+      "result": "unsat"
+    },
+    {
+      "name": "ordered fold exact length 0",
+      "result": "unsat"
+    },
+    {
+      "name": "ordered fold exact length 1",
+      "result": "unsat"
+    },
+    {
+      "name": "ordered fold exact length 2",
+      "result": "unsat"
+    },
+    {
+      "name": "ordered fold exact length 3",
+      "result": "unsat"
+    },
+    {
+      "name": "ordered fold exact length 4",
+      "result": "unsat"
+    },
+    {
+      "name": "ordered fold exact length 5",
+      "result": "unsat"
+    },
+    {
+      "name": "ordered fold exact length 6",
+      "result": "unsat"
+    },
+    {
+      "name": "ordered fold exact length 7",
+      "result": "unsat"
+    },
+    {
+      "name": "ordered fold exact length 8",
+      "result": "unsat"
+    },
+    {
+      "name": "ordered fold exact length 9",
+      "result": "unsat"
+    },
+    {
+      "name": "ordered fold exact length 10",
+      "result": "unsat"
+    },
+    {
+      "name": "ordered fold exact length 11",
+      "result": "unsat"
+    },
+    {
+      "name": "ordered fold exact length 12",
+      "result": "unsat"
+    },
+    {
+      "name": "negative control: unsorted input can change result",
+      "result": "sat"
+    },
+    {
+      "name": "negative control: keeping only one tie changes result",
+      "result": "sat"
+    },
+    {
+      "name": "negative control: reordering equal offsets changes result",
+      "result": "sat"
+    }
+  ]
+}
+'ConflictReuse.reuse_exact' depends on axioms: [propext]
+'ConflictReuse.whole_pipeline_exact' depends on axioms: [propext]
+PASS exact packed conflict/serialization and earliest-error equality: UNSAT
+PASS changed-source negative control: SAT
+PASS moved-dependency negative control: SAT
+Z3 5.1.0
+PASS portable proof replay; Covers/SameClassUnique is conditional, not a universal Rust theorem

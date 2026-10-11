@@ -1,0 +1,15 @@
+[package]
+name = "hibana-unix-carrier-proof"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.95"
+publish = false
+
+[workspace]
+
+[dependencies]
+hibana = { path = "../.." }
+
+[lints.clippy]
+all = "deny"
+pedantic = "deny"

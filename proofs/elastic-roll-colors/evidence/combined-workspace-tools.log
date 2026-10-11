@@ -1,0 +1,798 @@
+    Finished `test` profile [unoptimized] target(s) in 0.05s
+     Running unittests src/lib.rs (/workspace/scratch/0915e8fbff81/hibana-roll-color-target/debug/deps/hibana-7e68c48780fd7977)
+
+running 54 tests
+test eff::tests::eff_index_display_is_dense ... ok
+test eff::tests::eff_index_from_dense_ordinal_is_dense ... ok
+test eff::tests::eff_index_rejects_reserved_descriptor_sentinel - should panic ... ok
+test endpoint::kernel::authority::tests::conflicting_ready_mask_fails_closed - should panic ... ok
+test endpoint::kernel::authority::tests::invalid_mixed_ready_mask_fails_closed - should panic ... ok
+test endpoint::kernel::authority::tests::invalid_raw_route_arm_fails_closed - should panic ... ok
+test endpoint::kernel::authority::tests::invalid_single_bit_ready_mask_fails_closed - should panic ... ok
+test endpoint::kernel::authority::tests::raw_route_arm_and_ready_mask_decode_exact_binary_authority ... ok
+test endpoint::kernel::authority::tests::route_arm_token_carries_arm_and_authority_together ... ok
+test endpoint::kernel::core::runtime_types::size_tests::pending_send_commit_proof_stays_compact ... ok
+test endpoint::kernel::lane_port::tests::erased_encoder_rejects_length_beyond_scratch ... ok
+test endpoint::kernel::lane_slots::tests::lane_slot_array_accepts_full_u8_lane_domain ... ok
+test endpoint::kernel::layout::tests::endpoint_arena_does_not_contain_route_scope_lane_cache ... ok
+test endpoint::kernel::layout::tests::endpoint_arena_layout_records_stay_compact ... ok
+test endpoint::kernel::layout::tests::frontier_storage_separates_active_keys_from_visited_cursor_positions ... ok
+test endpoint::kernel::layout::tests::route_commit_row_set_builder_no_longer_allocates_row_storage ... ok
+test endpoint::kernel::layout::tests::route_history_tracks_descriptor_relations_not_lane_depth_product ... ok
+test endpoint::kernel::offer::first_recv_dispatch::tests::first_recv_dispatch_preserves_exact_binary_mask ... ok
+test endpoint::kernel::offer::first_recv_dispatch::tests::first_recv_dispatch_rejects_out_of_domain_bits - should panic ... ok
+test endpoint::send::tests::send_future_layout_is_message_independent ... ok
+test endpoint::send::tests::send_future_stays_within_size_budget ... ok
+test global::compiled::images::program::tests::compiled_program_counts_remain_plain_derived_counts ... ok
+test global::compiled::images::program::tests::compiled_program_marks_route_decision_semantics ... ok
+test global::const_dsl::scope::tests::absent_scope_has_no_local_ordinal - should panic ... ok
+test global::const_dsl::scope::tests::scope_id_decoder_accepts_exact_compact_domain ... ok
+test global::const_dsl::scope::tests::scope_id_is_u16_sentinel_identity ... ok
+test global::const_dsl::scope_ranges::nesting::tests::crossing_scope_ranges_fail_closed - should panic ... ok
+test global::const_dsl::scope_ranges::nesting::tests::equal_projected_ranges_follow_source_preorder_nesting ... ok
+test global::typestate::facts::dependency::tests::local_dependency_rejects_absent_scope - should panic ... ok
+test global::typestate::facts::dependency::tests::local_dependency_rejects_out_of_domain_parallel_scope - should panic ... ok
+test global::typestate::facts::dependency::tests::local_dependency_rejects_out_of_domain_route_conflict - should panic ... ok
+test global::typestate::facts::dependency::tests::packed_dependency_accepts_full_u16_step_ranges ... ok
+test global::typestate::facts::dependency::tests::packed_dependency_rejects_partial_absence_and_empty_ranges ... ok
+test global::typestate::facts::dependency::tests::packed_dependency_round_trips_every_conflict_kind ... ok
+test observe::event::tests::resident_tap_record_erases_and_reconstructs_timestamp ... ok
+test observe::event::tests::tap_event_debug_uses_semantic_fields_only ... ok
+test observe::event::tests::tap_event_is_exactly_sixteen_bytes ... ok
+test observe::event::tests::tap_event_record_bytes_are_exactly_sixteen_bytes ... ok
+test observe::event::tests::transport_fault_evidence_carries_lane_and_reason ... ok
+test observe::event::tests::transport_mismatch_evidence_carries_expected_lane_and_reason ... ok
+test observe::events::tests::route_site_evidence_uses_scope_local_ordinal ... ok
+test observe::events::tests::route_site_rejects_non_route_scope - should panic ... ok
+test observe::events::tests::route_site_rejects_out_of_domain_scope - should panic ... ok
+test rendezvous::core::endpoint_waiter::tests::drop_rejects_a_registered_wake_owner ... ok
+test rendezvous::core::endpoint_waiter::tests::replacement_moves_displaced_owner_out_of_the_lease_record ... ok
+test rendezvous::port::tests::frontier_scratch_offset_aligns_absolute_address_not_offset_only ... ok
+test runtime_core::resources::tests::resources_defer_lane_domain_until_projected_descriptor ... ok
+test session::cluster::error::tests::test_error_display ... ok
+test session::types::tests::rendezvous_id_zero_is_rejected - should panic ... ok
+test transport::wire::tests::borrowed_byte_slice_remains_variable_length ... ok
+test transport::wire::tests::builtin_payload_schemas_are_pairwise_distinct ... ok
+test transport::wire::tests::fixed_array_schema_identity_is_exact_at_its_domain_boundary ... ok
+test transport::wire::tests::fixed_array_schema_identity_rejects_the_first_colliding_width - should panic ... ok
+test transport::wire::tests::fixed_payload_decoders_reject_trailing_bytes ... ok
+
+test result: ok. 54 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/affine_progression.rs (/workspace/scratch/0915e8fbff81/hibana-roll-color-target/debug/deps/affine_progression-a81c101a6c520f16)
+
+running 4 tests
+test drop_unpolled_send_future_keeps_endpoint_on_same_send_step ... ok
+test dropping_pending_send_future_keeps_endpoint_on_same_send_step ... ok
+test forgotten_started_send_future_leaves_send_fail_closed ... ok
+test interleaved_pending_sends_reencode_from_their_own_payloads ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/callsite_regression.rs (/workspace/scratch/0915e8fbff81/hibana-roll-color-target/debug/deps/callsite_regression-549cf09d8ce387e6)
+
+running 5 tests
+test attach_and_resolver_errors_keep_debug_boundaries ... ok
+test endpoint_errors_keep_debug_boundaries ... ok
+test payload_schema_mismatch_cannot_publish_send_or_consume_recv ... ok
+test payload_schema_tracks_selected_route_when_labels_match ... ok
+test runtime_registers_multiple_rendezvous_from_resident_resources ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/cursor_send_recv_codec_demux.rs (/workspace/scratch/0915e8fbff81/hibana-roll-color-target/debug/deps/cursor_send_recv_codec_demux-1c4ed63ddc0b4aa5)
+
+running 2 tests
+test codec_demux::cursor_send_and_recv_high_logical_label_roundtrip ... ok
+test codec_demux::recv_codec_error_poisons_before_same_generation_continuation ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/cursor_send_recv_direct_recv.rs (/workspace/scratch/0915e8fbff81/hibana-roll-color-target/debug/deps/cursor_send_recv_direct_recv-2a873258cbb4136c)
+
+running 11 tests
+test direct_recv::cursor_recv_can_return_borrowed_frame_views ... ok
+test direct_recv::direct_recv_accepts_single_deterministic_transport_frame ... ok
+test direct_recv::direct_recv_deadline_emits_transport_fault_tap ... ok
+test direct_recv::direct_recv_lane_source_target_label_mismatch_fails_closed ... ok
+test direct_recv::direct_recv_same_label_deterministic_frames_commit_by_lane_evidence ... ok
+test direct_recv::direct_recv_session_mismatch_fails_closed_and_poisons_generation ... ok
+test direct_recv::mismatch_tap_is_emitted_before_terminal_error ... ok
+test direct_recv::rolled_raw_observations_commit_only_enabled_occurrences ... ok
+test direct_recv::transport_poll_recv_returns_framed_payload ... ok
+test direct_recv::zero_length_transport_frame_recv_u8_fails_with_codec_truncated ... ok
+test direct_recv::zero_length_transport_frame_recv_unit_commits ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/cursor_send_recv_send_recv.rs (/workspace/scratch/0915e8fbff81/hibana-roll-color-target/debug/deps/cursor_send_recv_send_recv-746586dc32e4ee90)
+
+running 12 tests
+test send_recv::completed_recv_future_repoll_is_fail_fast_and_does_not_advance_again ... ok
+test send_recv::completed_send_future_repoll_is_fail_fast_and_does_not_advance_again ... ok
+test send_recv::cursor_send_and_recv_roundtrip ... ok
+test send_recv::direct_recv_same_label_parallel_frames_commit_by_observed_evidence ... ok
+test send_recv::direct_send_capacity_emits_transport_fault_tap ... ok
+test send_recv::intrinsic_route_passive_same_label_recv_commits_by_frame_evidence ... ok
+test send_recv::live_endpoint_send_recv_survives_endpoint_lease_table_growth ... ok
+test send_recv::live_endpoint_send_survives_failed_later_attach_abort ... ok
+test send_recv::rolled_same_label_recv_requires_causal_exit_handoff ... ok
+test send_recv::same_lane_session_waiters_are_isolated ... ok
+test send_recv::send_preview_error_reports_debug_boundary_and_poison_session ... ok
+test send_recv::session_template_instances_interleave_and_fault_independently ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/cursor_send_recv_session_drop_wake.rs (/workspace/scratch/0915e8fbff81/hibana-roll-color-target/debug/deps/cursor_send_recv_session_drop_wake-aa4255b9a3094024)
+
+running 2 tests
+test session_drop_wake::dropping_live_endpoint_poison_wakes_waiting_peer ... ok
+test session_drop_wake::endpoint_waiter_isolated_from_unrelated_session_compaction ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/cursor_send_recv_session_fault_cancel.rs (/workspace/scratch/0915e8fbff81/hibana-roll-color-target/debug/deps/cursor_send_recv_session_fault_cancel-91db3cf1bce99109)
+
+running 1 test
+test session_fault_cancel::send_session_fault_cancels_pending_transport_state_once ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/cursor_send_recv_session_forget_recv.rs (/workspace/scratch/0915e8fbff81/hibana-roll-color-target/debug/deps/cursor_send_recv_session_forget_recv-4cb05abff0a7bc72)
+
+running 1 test
+test session_forget_recv::forgotten_recv_future_leaves_endpoint_fail_closed ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/cursor_send_recv_session_forget_send.rs (/workspace/scratch/0915e8fbff81/hibana-roll-color-target/debug/deps/cursor_send_recv_session_forget_send-3fc5bdaac38e2f09)
+
+running 1 test
+test session_forget_send::forgotten_unpolled_send_future_does_not_publish_runtime_progress ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/cursor_send_recv_session_progress.rs (/workspace/scratch/0915e8fbff81/hibana-roll-color-target/debug/deps/cursor_send_recv_session_progress-69d50171379c6d49)
+
+running 1 test
+test session_progress::sequential_noncontiguous_lane_steps_progress_in_order ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/deep_scope_runtime.rs (/workspace/scratch/0915e8fbff81/hibana-roll-color-target/debug/deps/deep_scope_runtime-832c8aa1e56c664d)
+
+running 1 test
+test active_scope_depth_above_128_enters_public_sessionkit_path ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/dynamic_route_scope_resolver.rs (/workspace/scratch/0915e8fbff81/hibana-roll-color-target/debug/deps/dynamic_route_scope_resolver-803831edb9155a6c)
+
+running 16 tests
+test dropped_resolved_send_future_does_not_publish_runtime_evidence ... ok
+test dynamic_resolution_seals_runtime_local_membership_before_evaluation ... ok
+test left_decision_materializes_nested_parallel_arm_once ... ok
+test maximum_resolver_id_runs_end_to_end ... ok
+test nested_left_route_evaluates_outer_and_inner_resolvers_by_scope ... ok
+test nested_outer_right_does_not_evaluate_inner_resolver ... ok
+test nested_send_after_selected_prefix_audits_only_new_inner_decision ... ok
+test resolved_route_send_calls_resolver_once_per_progress ... ok
+test resolver_reject_does_not_encode_or_stage_send_payload ... ok
+test right_decision_rejects_nested_parallel_left_arm ... ok
+test same_atoms_and_resolver_rows_with_distinct_topology_keep_distinct_authority ... ok
+test same_label_resolved_outbound_left_uses_left_schema ... ok
+test same_label_resolved_outbound_right_uses_right_schema ... ok
+test same_scope_and_resolver_id_in_distinct_programs_keep_distinct_authority ... ok
+test same_scope_sites_with_distinct_resolver_ids_keep_distinct_authority ... ok
+test stateful_send_resolver_is_not_evaluated_twice ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/huge_choreography_runtime.rs (/workspace/scratch/0915e8fbff81/hibana-roll-color-target/debug/deps/huge_choreography_runtime-9ec70e4b6e60d21d)
+
+running 7 tests
+test high_lane_route_runs_to_completion_on_actual_localside ... ok
+test huge_choreography_shape_matrix_runs_to_completion_on_actual_localside ... ok
+test huge_program_shape_matrix_projects_both_roles ... ok
+test huge_programs_stay_on_direct_program_values ... ok
+test lane_255_runs_to_completion_on_public_sessionkit_path ... ok
+test over_256_globally_parallel_events_reuse_lanes_across_disjoint_roles ... ok
+test over_256_ordered_inbound_occurrences_reuse_frame_labels_and_run ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.52s
+
+     Running tests/lane_lifecycle_tap.rs (/workspace/scratch/0915e8fbff81/hibana-roll-color-target/debug/deps/lane_lifecycle_tap-a5e48dfebceb3293)
+
+running 10 tests
+test distinct_session_or_role_endpoint_leases_can_coexist ... ok
+test dropped_endpoint_lease_allows_same_session_role_to_reenter ... ok
+test duplicate_live_session_role_endpoint_lease_fails_without_runtime_evidence ... ok
+test lane_lifecycle_emits_acquire_and_release_taps ... ok
+test lane_lifecycle_keeps_full_session_id_in_evidence ... ok
+test new_tap_port_reads_all_runtime_events_before_wrap ... ok
+test new_tap_port_reads_byte_budgeted_runtime_window_after_wrap ... ok
+test poisoned_session_reenter_rejects_before_lane_lease_construction ... ok
+test same_role_sessions_are_limited_by_endpoint_leases_not_role_domain ... ok
+test same_session_role_on_different_rendezvous_is_mismatch ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/local_action.rs (/workspace/scratch/0915e8fbff81/hibana-roll-color-target/debug/deps/local_action-c05bbe5467a2e2c1)
+
+running 4 tests
+test local_action_flow_executes ... ok
+test local_action_rejects_nonempty_encoder_claiming_unit_schema ... ok
+test local_route_recv_accepts_only_empty_payload ... ok
+test local_route_recv_rejects_non_empty_payload ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/miri_runtime_owner.rs (/workspace/scratch/0915e8fbff81/hibana-roll-color-target/debug/deps/miri_runtime_owner-94fc4fcc51be3d51)
+
+running 28 tests
+test callback_reentry::payload_encoding_callback_reentry_cannot_commit_after_peer_drop ... ok
+test callback_reentry::payload_validation_callback_reentry_cannot_commit_after_peer_drop ... ok
+test callback_reentry::resolver_callback_reentrant_attach_is_rejected_before_endpoint_image_read ... ok
+test callback_reentry::resolver_callback_reentry_cannot_materialize_branch_after_peer_drop ... ok
+test callback_reentry::resolver_callback_reentry_cannot_prepare_send_after_peer_drop ... ok
+test callback_reentry::transport_cancel_callback_reentry_consumes_cleanup_authority_once ... ok
+test callback_reentry::transport_open_reentry_cannot_publish_endpoint_into_poisoned_session ... ok
+test callback_reentry::transport_recv_callback_reentry_cannot_commit_frame_after_peer_drop ... ok
+test callback_reentry::transport_send_callback_reentry_cannot_commit_after_peer_drop ... ok
+test displaced_waker_drop_reenters_only_after_endpoint_borrow_ends ... ok
+test endpoint_drop_wakes_every_published_peer_waiter ... ok
+test endpoint_waiter_survives_unrelated_growth_and_wakes_only_its_session ... ok
+test failed_peer_attach_abort_keeps_existing_endpoint_live ... ok
+test failed_resolver_growth_preserves_existing_registration_and_dispatch ... ok
+test fatal_codec_error_retires_transport_handles_before_endpoint_drop ... ok
+test payload_schema_mismatch_poison_session_without_publishing ... ok
+test payload_schema_mismatch_precedes_receive_transport_poll ... ok
+test pending_sends_do_not_borrow_shared_scratch_across_polls ... ok
+test public_runtime_owner_stays_alias_clean_across_multiple_attaches ... ok
+test receive_receipt_resolves_valid_borrowed_frame ... ok
+test reentrant_wake_reloads_lease_root_after_peer_drop_compaction ... ok
+test reentrant_waker_clone_fault_is_observed_before_endpoint_borrow ... ok
+test resolver_registration_keeps_distinct_program_image_identity ... ok
+test resolver_replacement_survives_sidecar_relocation_and_typed_dispatch ... ok
+test session_generation_cannot_split_across_rendezvous_owners ... ok
+test session_generation_rejects_mixed_program_images_before_mutation ... ok
+test transport_callback_reentry_uses_lease_waiter_outside_endpoint_storage ... ok
+test transport_handle_drop_cannot_reenter_partial_endpoint_drop ... ok
+
+test result: ok. 28 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/nested_route_runtime.rs (/workspace/scratch/0915e8fbff81/hibana-roll-color-target/debug/deps/nested_route_runtime-a4774326c674a0c7)
+
+running 3 tests
+test forgotten_started_offer_future_leaves_endpoint_fail_closed ... ok
+test localside_branch_recv_sizes_stay_compact ... ok
+test nested_branch_commit_stack ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/offer_branch_recv_evidence.rs (/workspace/scratch/0915e8fbff81/hibana-roll-color-target/debug/deps/offer_branch_recv_evidence-61e3521b9c076048)
+
+running 11 tests
+test branch_recv_transport_consumes_frame_once ... ok
+test completed_offer_future_repoll_is_fail_fast_and_does_not_advance_again ... ok
+test completed_route_recv_future_repoll_is_fail_fast_and_does_not_advance_again ... ok
+test drop_public_preview_branch_preserves_offer_progression ... ok
+test forgotten_route_branch_leaves_endpoint_fail_closed ... ok
+test forgotten_route_recv_future_leaves_endpoint_fail_closed ... ok
+test live_endpoint_branch_recv_survives_endpoint_lease_table_growth ... ok
+test offer_headerless_demux_frame_fails_closed_not_pending ... ok
+test offer_materialized_label_mismatch_fails_closed ... ok
+test offer_requires_framed_receive_evidence_for_branch_demux ... ok
+test schema_mismatch_in_public_route_recv_poisons_same_generation ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/parallel_route_alternating.rs (/workspace/scratch/0915e8fbff81/hibana-roll-color-target/debug/deps/parallel_route_alternating-f6c56eabf5d9a47d)
+
+running 3 tests
+test alternating_route_parallel_join_uses_only_selected_arms ... ok
+test completed_same_lane_prefix_does_not_hide_fresh_sibling_offer ... ok
+test fresh_sibling_still_requires_its_installation_prefix ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/parallel_route_nesting.rs (/workspace/scratch/0915e8fbff81/hibana-roll-color-target/debug/deps/parallel_route_nesting-d8f5c74d6de5efb5)
+
+running 8 tests
+test independent_rolled_admission_send_is_enabled_while_abi_input_is_quiet ... ok
+test nested_parallel_join_commits_post_after_sibling_first_completion ... ok
+test nested_parallel_join_requires_every_dependency_before_post ... ok
+test outer_left_selection_kills_nested_right_route_and_parallel_body ... ok
+test route_inside_parallel_lane_cannot_release_join_before_sibling_lane ... ok
+test route_selected_left_keeps_entire_nested_parallel_path_live ... ok
+test unselected_route_arm_parallel_events_are_dead_and_not_join_obligations ... ok
+test unselected_route_arm_parallel_events_do_not_block_parallel_join ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/program_capacity_regression.rs (/workspace/scratch/0915e8fbff81/hibana-roll-color-target/debug/deps/program_capacity_regression-7c55b587bb2026e2)
+
+running 1 test
+test public_route_program_capacity_exceeds_segment_marker_shortcut ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/rolled_resolver_reentry.rs (/workspace/scratch/0915e8fbff81/hibana-roll-color-target/debug/deps/rolled_resolver_reentry-ac56ed27c155476b)
+
+running 13 tests
+test rolled_deep_left_spine_passive_offer_reenters_across_all_depths ... ok
+test rolled_deep_right_spine_passive_offer_reenters_across_all_depths ... ok
+test rolled_mirrored_nested_resolved_route_reenters_asymmetric_paths ... ok
+test rolled_mirrored_nested_resolved_route_reenters_passive_offer_asymmetric_paths ... ok
+test rolled_nested_resolved_route_reenters_asymmetric_paths ... ok
+test rolled_nested_resolved_route_reenters_passive_offer_asymmetric_paths ... ok
+test rolled_parallel_resolved_routes_reenter_after_both_lanes_settle ... ok
+test rolled_resolved_route_par_seq_route_roll_mixed_corpus_reenters_by_scope ... ok
+test rolled_resolved_route_par_seq_route_roll_mixed_right_corpus_reenters_by_scope ... ok
+test rolled_resolved_route_preserves_buffered_decision_order ... ok
+test rolled_resolved_route_reenters_left_right_left_rows ... ok
+test rolled_resolved_route_reenters_passive_offer_left_right_left ... ok
+test rolled_resolved_same_label_reenters_with_selected_schema ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+     Running tests/route_branch_send.rs (/workspace/scratch/0915e8fbff81/hibana-roll-color-target/debug/deps/route_branch_send-2ccae1678b2afa00)
+
+running 6 tests
+test branch_first_step_operation_mismatch_is_fail_closed ... ok
+test dropped_branch_send_future_restores_offer_preview ... ok
+test full_u8_role_domain_route_roll_runs_without_role_domain_storage ... ok
+test rolled_route_does_not_wait_for_roles_absent_from_local_runtime ... ok
+test rolled_route_pipelines_next_decision_before_receiver_observes ... ok
+test send_start_route_completes_without_dropping_branch_preview ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/route_multiphase_progress_arm.rs (/workspace/scratch/0915e8fbff81/hibana-roll-color-target/debug/deps/route_multiphase_progress_arm-1fafa9255f22ed6f)
+
+running 1 test
+test route_arm_future_phase_blocks_post_route_send ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/route_multiphase_progress_inner.rs (/workspace/scratch/0915e8fbff81/hibana-roll-color-target/debug/deps/route_multiphase_progress_inner-fd4dd18e8f9ffded)
+
+running 1 test
+test inner_route_completion_does_not_exit_outer_route_early ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/route_with_internal_parallel.rs (/workspace/scratch/0915e8fbff81/hibana-roll-color-target/debug/deps/route_with_internal_parallel-5797fcb087169d06)
+
+running 1 test
+test selected_route_arm_materializes_lanes_inside_parallel_body ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/security_report_regressions.rs (/workspace/scratch/0915e8fbff81/hibana-roll-color-target/debug/deps/security_report_regressions-c25d02f3784cb717)
+
+running 14 tests
+test a_conforming_controller_cannot_send_opposite_arms_to_two_peers ... ok
+test fabricated_carrier_provenance_is_not_a_byzantine_agreement_guarantee ... ok
+test parallel_arms_remain_independent_after_the_sequential_input ... ok
+test reentry_colors::completed_elastic_roll_and_current_route_have_unambiguous_wire_identity ... ok
+test reentry_colors::elastic_continuation_offer_preserves_pending_and_dropped_preview ... ok
+test reentry_colors::genuine_old_elastic_reentry_preserves_the_current_continuation ... ok
+test reentry_colors::queued_current_packet_cannot_be_consumed_as_an_old_logical_type ... ok
+test rolled_routes::nested_three_result_route_reenters_after_a_fresh_request ... ok
+test rolled_routes::phase_packet_cannot_reenter_a_previous_unchosen_suffix ... ok
+test rolled_routes::rolled_adjacent_offer_cannot_skip_the_first_route ... ok
+test rolled_routes::rolled_adjacent_offer_rejects_wrong_source_lane_or_frame_color ... ok
+test rolled_routes::rolled_adjacent_offers_accept_each_sibling_arm_without_an_extra_ack ... ok
+test sequential_receive_cannot_select_the_later_lane_first ... ok
+test sequential_send_cannot_select_the_later_lane_first ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running tests/send_route_authority.rs (/workspace/scratch/0915e8fbff81/hibana-roll-color-target/debug/deps/send_route_authority-94c15aefba02041d)
+
+running 2 tests
+test dropping_pending_resolved_send_future_does_not_publish_success_evidence ... ok
+test five_nested_resolved_send_uses_route_rows_without_fixed_proof_cap ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/tap_resolver_audit.rs (/workspace/scratch/0915e8fbff81/hibana-roll-color-target/debug/deps/tap_resolver_audit-4908f4652352efcb)
+
+running 5 tests
+test dynamic_resolver_reject_is_ready_error_with_one_audit ... ok
+test dynamic_resolver_success_emits_one_reversible_audit ... ok
+test endpoint_events_do_not_emit_resolver_audit_and_retain_latest_twenty_one ... ok
+test nested_route_runtime_emits_distinct_route_selection_sites ... ok
+test reused_resolver_id_keeps_route_site_in_audit ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/ui.rs (/workspace/scratch/0915e8fbff81/hibana-roll-color-target/debug/deps/ui-5361a65ad3ba034d)
+
+running 1 test
+test g_compile_fails ...    Compiling hibana-tests v0.0.0 (/workspace/scratch/0915e8fbff81/hibana-roll-color-target/tests/trybuild/hibana)
+    Finished `dev` profile [unoptimized] target(s) in 0.08s
+
+
+test tests/ui/g-efflist-deref.rs [should fail to compile] ... ok
+test tests/ui/g-resolver-data-send.rs [should fail to compile] ... ok
+test tests/ui/g-self-send-non-unit.rs [should fail to compile] ... ok
+test tests/ui/g-roleprogram-witness-mismatch.rs [should fail to compile] ... ok
+test tests/ui/g-receive-lane-multiple-senders.rs [should fail to compile] ... ok
+test tests/ui/g-receive-lane-parallel-false-causality.rs [should fail to compile] ... ok
+test tests/ui/g-receive-lane-route-false-causality.rs [should fail to compile] ... ok
+test tests/ui/g-roll-reentry-false-causality.rs [should fail to compile] ... ok
+test tests/ui/g-roll-route-cross-iteration-causality.rs [should fail to compile] ... ok
+test tests/ui/g-roll-same-label-distinct-inbound-evidence.rs [should fail to compile] ... ok
+test tests/ui/g-par-ambiguous-endpoint-op.rs [should fail to compile] ... ok
+test tests/ui/g-roll-ambiguous-reentry-exit-outbound.rs [should fail to compile] ... ok
+test tests/ui/g-route-passive-first-visible-ambiguous.rs [should fail to compile] ... ok
+test tests/ui/g-route-one-sided-observer.rs [should fail to compile] ... ok
+test tests/ui/g-route-passive-outbound-without-evidence.rs [should fail to compile] ... ok
+test tests/ui/g-route-roll-one-sided-observer.rs [should fail to compile] ... ok
+test tests/ui/g-route-controller-mismatch.rs [should fail to compile] ... ok
+test tests/ui/g-route-resolved-cross-arm-distinct-senders.rs [should fail to compile] ... ok
+test tests/ui/g-route-roll-before-resolve.rs [should fail to compile] ... ok
+test tests/ui/g-route-unprojectable.rs [should fail to compile] ... ok
+test tests/ui/g-typed-route-duplicate-label-project.rs [should fail to compile] ... ok
+test tests/ui/g-message-without-wire-contract.rs [should fail to compile] ... ok
+test tests/ui-pass/g-par-many.rs [should pass] ... ok
+test tests/ui-pass/g-par-same-role-auto-lanes.rs [should pass] ... ok
+test tests/ui-pass/g-par-same-label-distinct-local-endpoints.rs [should pass] ... ok
+test tests/ui-pass/g-par-same-label-distinct-outbound-schema.rs [should pass] ... ok
+test tests/ui-pass/g-par-same-label-distinct-inbound-evidence.rs [should pass] ... ok
+test tests/ui-pass/g-par-same-label-distinct-inbound-same-endpoint.rs [should pass] ... ok
+test tests/ui-pass/g-session-template-instances.rs [should pass] ... ok
+test tests/ui-pass/g-receive-lane-causal-handoff.rs [should pass] ... ok
+test tests/ui-pass/g-roll-reentry-causal-handoff.rs [should pass] ... ok
+test tests/ui-pass/g-roll-route-cross-iteration-handoff.rs [should pass] ... ok
+test tests/ui-pass/g-route-first-visible-passive-dispatch.rs [should pass] ... ok
+test tests/ui-pass/g-route-intrinsic-passive-same-label-frame-evidence.rs [should pass] ... ok
+test tests/ui-pass/g-route-merged.rs [should pass] ... ok
+test tests/ui-pass/g-route-resolver-scope-nested-par.rs [should pass] ... ok
+test tests/ui-pass/g-route-resolved-cross-arm-same-label.rs [should pass] ... ok
+test tests/ui-pass/g-route-resolved-cross-arm-same-endpoint-op.rs [should pass] ... ok
+test tests/ui-pass/g-route-resolved-cross-arm-overlap-after-left-par.rs [should pass] ... ok
+test tests/ui-pass/g-route-resolved-intra-arm-distinct-inbound-evidence.rs [should pass] ... ok
+test tests/ui-pass/g-route-resolved-nested-roll-same-endpoint-op.rs [should pass] ... ok
+test tests/ui-pass/g-route-static-basic.rs [should pass] ... ok
+test tests/ui-pass/g-route-static-prefix-local.rs [should pass] ... ok
+test tests/ui-pass/g-route-static-prefix-send.rs [should pass] ... ok
+test tests/ui-pass/local_let_program_inference.rs [should pass] ... ok
+test tests/ui-pass/local_let_prefix_facade_composition.rs [should pass] ... ok
+test tests/ui-pass/local_project_without_public_steps.rs [should pass] ... ok
+test tests/ui-pass/role_program_lifetime_free.rs [should pass] ... ok
+test tests/ui-pass/readme-route-example.rs [should pass] ... ok
+test tests/ui-pass/runtime-transport-recv-frame.rs [should pass] ... ok
+test tests/ui-pass/endpoint_transport_erased.rs [should pass] ... ok
+test tests/ui-pass/g-generic-role-ids.rs [should pass] ... ok
+test tests/ui-pass/g-full-role-domain.rs [should pass] ... ok
+test tests/ui-pass/resolver-state-unit.rs [should pass] ... ok
+test tests/ui-pass/resolver-wrapper-decide.rs [should pass] ... ok
+test tests/ui/runtime-storage-removed.rs [should fail to compile] ... ok
+test tests/ui/runtime-config-removed.rs [should fail to compile] ... ok
+test tests/ui/runtime-eff-index-removed.rs [should fail to compile] ... ok
+test tests/ui/runtime-session-id-field-private.rs [should fail to compile] ... ok
+test tests/ui/runtime-ingress-evidence-private.rs [should fail to compile] ... ok
+test tests/ui/runtime-received-frame-evidence-private.rs [should fail to compile] ... ok
+test tests/ui/runtime-decision-arm-index-private.rs [should fail to compile] ... ok
+test tests/ui/runtime-tap-event-fields-private.rs [should fail to compile] ... ok
+test tests/ui/runtime-tap-derived-helpers-private.rs [should fail to compile] ... ok
+test tests/ui/runtime-frame-header-peer-role-removed.rs [should fail to compile] ... ok
+test tests/ui/runtime-frame-label-new-private.rs [should fail to compile] ... ok
+test tests/ui/runtime-transport-error-associated-type-removed.rs [should fail to compile] ... ok
+test tests/ui/runtime-transport-custom-error-return-removed.rs [should fail to compile] ... ok
+test tests/ui/runtime-outgoing-peer-removed.rs [should fail to compile] ... ok
+test tests/ui/runtime-session-kit-storage-max-rv-removed.rs [should fail to compile] ... ok
+test tests/ui/runtime-fluent-session-removed.rs [should fail to compile] ... ok
+test tests/ui/runtime-fluent-role-removed.rs [should fail to compile] ... ok
+test tests/ui/runtime-fluent-witness-types-removed.rs [should fail to compile] ... ok
+test tests/ui/public_step_name_import.rs [should fail to compile] ... ok
+test tests/ui/public_compile_link_boundary.rs [should fail to compile] ... ok
+test tests/ui/public_fragment_boundary.rs [should fail to compile] ... ok
+test tests/ui/port-open-constructor.rs [should fail to compile] ... ok
+test tests/ui/route-branch-decode-removed.rs [should fail to compile] ... ok
+test tests/ui/route-recv-borrow-endpoint-alias.rs [should fail to compile] ... ok
+test tests/ui/recv-borrow-endpoint-alias.rs [should fail to compile] ... ok
+test tests/ui/route-branch-double-recv.rs [should fail to compile] ... ok
+test tests/ui/send-future-endpoint-alias.rs [should fail to compile] ... ok
+test tests/ui/endpoint-result-removed.rs [should fail to compile] ... ok
+test tests/ui/endpoint-error-operation-removed.rs [should fail to compile] ... ok
+test tests/ui/attach-error-operation-removed.rs [should fail to compile] ... ok
+test tests/ui/resolver-error-operation-removed.rs [should fail to compile] ... ok
+test tests/ui/resolver-decision-fn-removed.rs [should fail to compile] ... ok
+test tests/ui/resolver-decision-resolution-removed.rs [should fail to compile] ... ok
+test tests/ui/resolver-evaluate-removed.rs [should fail to compile] ... ok
+test tests/ui/resolver-resolve-decision-private.rs [should fail to compile] ... ok
+
+
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.83s
+
+     Running tests/visible_route_reentry.rs (/workspace/scratch/0915e8fbff81/hibana-roll-color-target/debug/deps/visible_route_reentry-991022dc0f27e289)
+
+running 37 tests
+test completed_long_route_arm_reenters_without_visit_capacity_abort ... ok
+test nested_roll_scopes_reenter_inner_until_outer_scope_completes ... ok
+test nested_rolled_route_reenters_before_outer_body_continues ... ok
+test rolled_balanced_route_repeated_label_seq_arm_keeps_continuation ... ok
+test rolled_left_route_left_route_par_seq_route_roll_mixed_reentry_keeps_single_authority ... ok
+test rolled_left_spine_offer_enters_rightmost_arm ... ok
+test rolled_left_spine_offer_reenters_deep_left_arm_once ... ok
+test rolled_left_spine_offer_reenters_inner_right_arm ... ok
+test rolled_left_spine_offer_reenters_repeated_deep_leftmost_arm ... ok
+test rolled_left_spine_reenters_repeated_deep_leftmost_arm ... ok
+test rolled_nested_left_route_repeated_label_seq_arm_keeps_continuation ... ok
+test rolled_nested_right_route_repeated_label_seq_arm_keeps_continuation ... ok
+test rolled_nested_right_route_seq_arm_keeps_send_authority_for_continuation ... ok
+test rolled_nested_route_reenters_to_sibling_nested_arm ... ok
+test rolled_par_left_route_roll_arm_reenters_before_parallel_sibling_settles ... ok
+test rolled_par_reenters_only_after_both_lanes_settle ... ok
+test rolled_par_right_route_roll_arm_reenters_before_parallel_sibling_settles ... ok
+test rolled_right_spine_offer_reenters_repeated_deep_rightmost_arm ... ok
+test rolled_right_spine_offer_reenters_through_left_chain ... ok
+test rolled_right_spine_reenters_repeated_deep_rightmost_arm ... ok
+test rolled_right_spine_rejects_deep_response_without_reentered_request ... ok
+test rolled_route_left_par_roll_arm_exits_after_parallel_settles_without_probe ... ok
+test rolled_route_left_par_roll_arm_reenters_only_after_parallel_settles ... ok
+test rolled_route_left_repeated_label_seq_arm_keeps_continuation ... ok
+test rolled_route_left_seq_arm_keeps_send_authority_for_continuation ... ok
+test rolled_route_left_seq_roll_arm_reenters_inner_before_tail ... ok
+test rolled_route_reenters_from_completed_outer_arm_to_deep_nested_arm ... ok
+test rolled_route_reenters_from_left_arm_to_nested_right_arm ... ok
+test rolled_route_right_par_roll_arm_reenters_only_after_parallel_settles ... ok
+test rolled_route_right_seq_arm_keeps_send_authority_for_continuation ... ok
+test rolled_route_right_seq_roll_arm_reenters_inner_before_tail ... ok
+test rolled_route_route_par_seq_route_roll_mixed_reentry_keeps_single_authority ... ok
+test rolled_seq_reenters_by_repeated_head_without_loop_control ... ok
+test rolled_seq_route_roll_head_reenters_before_seq_tail_and_outer_exit ... ok
+test wasi_shape_rolled_route_seq_arm_keeps_send_authority_for_continuation ... ok
+test wasi_shape_rolled_route_seq_arm_survives_prior_sibling_arms ... ok
+test wasi_shape_rolled_route_seq_arm_survives_prompt_read_after_open_selector ... ok
+
+test result: ok. 37 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.30s
+
+     Running ../../tests/docs_surface.rs (/workspace/scratch/0915e8fbff81/hibana-roll-color-target/debug/deps/docs_surface-58c50ea61a8c159e)
+
+running 16 tests
+test canonical_docs_are_readme_and_crate_docs_only ... ok
+test core_repo_keeps_cross_repo_harness_outside_tree ... ok
+test crate_root_docs_do_not_regrow_internal_buckets ... ok
+test crate_root_docs_keep_descriptor_first_control_story ... ok
+test docs_do_not_regrow_forbidden_attach_api ... ok
+test docs_route_protocol_invisible_liveness_to_transport_errors ... ok
+test lean_verification_guide_stays_public_and_repository_scoped ... ok
+test onboarding_links_one_gated_runnable_example_without_copying_it ... ok
+test projection_constructor_stays_on_canonical_call_shape ... ok
+test protocol_docs_keep_route_choice_and_receive_evidence_out_of_control_vocabulary ... ok
+test public_docs_do_not_expose_internal_storage_vocabulary ... ok
+test quality_gates_do_not_directly_execute_non_executable_scripts ... ok
+test readme_covers_role_protocol_and_integration_without_a_second_guide ... ok
+test readme_keeps_ingress_demux_under_transport ... ok
+test readme_stays_self_contained_and_hibana_scoped ... ok
+test transport_docs_do_not_reference_private_runtime_storage ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+     Running ../../tests/local_only_hygiene.rs (/workspace/scratch/0915e8fbff81/hibana-roll-color-target/debug/deps/local_only_hygiene-8fe2c1203a806ee1)
+
+running 3 tests
+test huge_runtime_helpers_do_not_use_generic_sync_cells ... ok
+test local_cell_helper_stays_forbidden ... ok
+test tests_do_not_define_static_local_cell_state ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running ../../tests/no_default_rodata.rs (/workspace/scratch/0915e8fbff81/hibana-roll-color-target/debug/deps/no_default_rodata-83762654b66acb68)
+
+running 1 test
+test no_default_no_source_path_rodata ...      Locking 1 package to latest Rust 1.95.0 compatible version
+   Compiling hibana v0.9.6 (/workspace/scratch/0915e8fbff81/hibana-roll-color-fix)
+   Compiling hibana-no-default-rodata-probe v0.0.0 (/workspace/scratch/0915e8fbff81/hibana-roll-color-fix/target/no-default-rodata-probe)
+    Finished `release` profile [optimized] target(s) in 3.65s
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.68s
+
+     Running ../../tests/public_surface_guards.rs (/workspace/scratch/0915e8fbff81/hibana-roll-color-target/debug/deps/public_surface_guards-fa14213d945d7307)
+
+running 18 tests
+test assoc_sidecar_replacement_publishes_before_retirement ... ok
+test core_ingress_binding_surface_stays_forbidden ... ok
+test core_repo_checks_do_not_assume_sibling_checkout_layout ... ok
+test core_resolver_audit_has_no_in_crate_resolver_owner ... ok
+test core_resource_kind_catalogue_keeps_mgmt_and_resolver_lifecycle_internal_only ... ok
+test core_source_tree_no_longer_keeps_mgmt_or_epf_owners ... ok
+test dynamic_resolver_surface_uses_one_decision_resolver ... ok
+test localside_transport_seal ... ok
+test message_and_wire_codec_boundaries_stay_separated ... ok
+test public_header_surface_minimal ... ok
+test resolver_sidecar_replacement_publishes_before_retirement ... ok
+test route_branch_public_methods_stay_minimal ... ok
+test runtime_entry_uses_direct_slab_without_public_config_wrapper ... ok
+test runtime_resolver_surface_is_decision_input_owner ... ok
+test runtime_surface_hides_tap_storage_resource ... ok
+test sidecar_owner_single_authority ... ok
+test tap_surface_has_one_public_entry_and_internal_event_construction ... ok
+test transport_context_owner_stays_forbidden ... ok
+
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running ../../tests/root_surface.rs (/workspace/scratch/0915e8fbff81/hibana-roll-color-target/debug/deps/root_surface-15842547cb6f4c2c)
+
+running 2 tests
+test public_api_gate_tracks_g_and_runtime_surfaces ... ok
+test root_visible_surface_stays_minimal ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running ../../tests/runtime_surface.rs (/workspace/scratch/0915e8fbff81/hibana-roll-color-target/debug/deps/runtime_surface-4b3a90a085641c84)
+
+running 15 tests
+test crate_package_artifact_is_a_first_class_gate ... ok
+test docs_and_tests_do_not_teach_session_kit_new ... ok
+test eff_index_stays_internal_descriptor_id ... ok
+test frame_label_has_single_runtime_owner ... ok
+test projection_surface_still_builds ... ok
+test resolver_state_can_host_external_resolver_owner ... ok
+test role_program_handle_is_compact_image_backed ... ok
+test runtime_allowlist_tracks_core_boundary ... ok
+test runtime_and_lib_drop_incrate_mgmt_and_epf_modules ... ok
+test runtime_facade_projects_before_enter ... ok
+test runtime_root_exposes_only_core_buckets ... ok
+test session_kit_construction_is_in_place_only ... ok
+test single_slab_config_is_runtime_resource_authority ... ok
+test test_transport_support_constructs_explicitly ... ok
+test witness_sizes_stay_small ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running ../../tests/semantic_surface.rs (/workspace/scratch/0915e8fbff81/hibana-roll-color-target/debug/deps/semantic_surface-809938035de64b40)
+
+running 124 tests
+test descriptor_measurement::compact_bucket_overflow_paths_stay_fail_closed ... ok
+test descriptor_measurement::compiled_image_sources_stay_split_below_one_thousand_lines ... ok
+test descriptor_measurement::descriptor_projection_has_no_resource_or_tap_count_axes ... ok
+test descriptor_measurement::event_identity_and_descriptor_byte_capacities_have_separate_authorities ... ok
+test descriptor_measurement::failure_cancellation_surface_has_only_domain_evidence ... ok
+test descriptor_measurement::program_atom_lookup_uses_dense_identity_without_a_duplicate_key_column ... ok
+test descriptor_measurement::projectable_bound_and_lane_domain_stay_embedded_exact ... ok
+test descriptor_measurement::resident_descriptor_attach_has_no_lowering_materialization_path ... ok
+test descriptor_measurement::resident_descriptor_metadata_stays_columnar ... ok
+test descriptor_measurement::source_events_have_one_direct_atom_representation ... ok
+test end_to_end_refinement::end_to_end_refinement_stays_proof_indexed_and_runtime_erased ... ok
+test end_to_end_refinement::every_public_endpoint_operation_is_owned_by_the_checked_phase_inventory ... ok
+test endpoint_active_leases::public_endpoint_operations_are_drop_independent_active_leases ... ok
+test kani_proof_gate::kani_gate_verifies_production_rust_without_entering_the_package_surface ... ok
+test lean_ci_gate::lean_ci_gate_audits_every_exported_theorem_and_runs_pinned_artifacts ... ok
+test lean_ci_gate::lean_source_audits_reject_tool_failures_before_running_proofs ... ok
+test lean_identity_gate::lean_program_identity_retains_every_exact_rust_image_field ... ok
+test lean_proof_gate::lean_proof_gate_is_pinned_fail_closed_and_runtime_free ... ok
+test lease_owner::intrusive_rendezvous_registry_replaces_fixed_array_map ... ok
+test lease_owner::unpublished_endpoint_failures_abort_without_consuming_generation ... ok
+test measurement_gates::compile_pressure_process_table_bypasses_exec_environment_limits ... ok
+test measurement_gates::measurement_gates_prevent_recurrent_size_and_stack_regressions ... ok
+test source_residue::branch_recv_failure_completion_is_terminal_without_branch_restore ... ok
+test source_residue::endpoint_dependency_guard_uses_local_dependency_facts ... ok
+test source_residue::forbidden_route_apply_and_settlement_files_stay_forbidden ... ok
+test source_residue::production_sources_do_not_retain_route_apply_or_resident_settlement_paths ... ok
+test source_residue::public_repository_tests_name_registered_rendezvous_witnesses ... ok
+test source_residue::route_reentry_mutation_has_single_production_authority ... ok
+test source_residue::route_selection_keeps_descriptor_facts_without_endpoint_cleanup_shortcut ... ok
+test source_residue::send_recv_branch_recv_publish_paths_are_commit_delta_apply_only ... ok
+test source_residue_commit::active_offer_entries_are_owner_derived_without_frontier_fallback ... ok
+test source_residue_commit::branch_recv_progress_plan_no_longer_carries_route_cleanup_inputs ... ok
+test source_residue_commit::compact_state_and_route_reference_identities_fail_closed ... ok
+test source_residue_commit::descriptor_counts_are_not_reexpanded_by_runtime_fallbacks ... ok
+test source_residue_commit::inbound_projection_identity_uses_the_compact_event_domain ... ok
+test source_residue_commit::lean_role_metadata_matches_production_capacity_semantics ... ok
+test source_residue_commit::offer_and_frontier_do_not_call_resident_settlement_primitives ... ok
+test source_residue_commit::offer_frontier_capacities_follow_their_distinct_descriptor_domains ... ok
+test source_residue_commit::production_sources_do_not_contain_route_apply_or_settlement_vocabularies ... ok
+test source_residue_commit::ready_reentry_alignment_requires_an_exact_selectable_witness ... ok
+test source_residue_commit::recvless_parent_route_arm_selection_stays_forbidden ... ok
+test source_residue_commit::route_commit_apply_and_progress_files_stay_forbidden ... ok
+test source_residue_commit::route_history_and_traversal_are_descriptor_derived ... ok
+test source_residue_commit::route_history_publishes_shared_refs_after_sparse_commit ... ok
+test source_residue_commit::send_recv_branch_recv_publish_paths_apply_prepared_deltas_only ... ok
+test source_residue_errors::dynamic_resolver_resolution_does_not_encode_authority_as_reject_reason ... ok
+test source_residue_errors::endpoint_session_context_does_not_keep_optional_cluster_or_resolver_layer ... ok
+test source_residue_errors::rendezvous_resident_state_does_not_keep_measurement_only_frontier_words ... ok
+test source_residue_errors::session_errors_do_not_retain_forbidden_variants ... ok
+test source_residue_hygiene::cached_recv_meta_index_overflow_fails_closed ... ok
+test source_residue_hygiene::compact_route_arm_authority_fails_closed_before_commit ... ok
+test source_residue_hygiene::endpoint_hot_paths_do_not_emit_resolver_audit_replay ... ok
+test source_residue_hygiene::lane_searches_do_not_encode_absence_as_a_preferred_lane_sentinel ... ok
+test source_residue_hygiene::offer_lane_lookup_distinguishes_empty_membership_from_missing_scope ... ok
+test source_residue_hygiene::package_artifact_ships_self_contained_tests_and_excludes_repo_gates ... ok
+test source_residue_hygiene::package_gate_must_not_hide_dead_code ... ok
+test source_residue_hygiene::production_has_no_source_location_diagnostic_plumbing ... ok
+test source_residue_hygiene::production_sources_do_not_keep_fallible_success_wrappers ... ok
+test source_residue_hygiene::production_sources_do_not_reintroduce_implicit_initializers ... ok
+test source_residue_hygiene::production_sources_do_not_retain_test_only_effect_or_offer_helpers ... ok
+test source_residue_hygiene::production_sources_keep_absence_codes_named_by_meaning ... ok
+test source_residue_hygiene::public_failure_evidence_has_no_stringly_accessors ... ok
+test source_residue_hygiene::resident_descriptor_columns_reject_in_range_sentinels ... ok
+test source_residue_hygiene::resident_route_arm_descriptors_reject_invalid_compact_values ... ok
+test source_residue_hygiene::resolver_audit_emit_stays_infallible ... ok
+test source_residue_hygiene::resolver_registration_has_only_stateful_entry ... ok
+test source_residue_hygiene::role_projection_does_not_hide_exact_count_dispatch ... ok
+test source_residue_hygiene::route_arm_lane_projection_has_one_linear_fact_authority ... ok
+test source_residue_hygiene::route_arm_selection_uses_only_endpoint_or_in_band_authority ... ok
+test source_residue_hygiene::route_branch_surface_has_no_decode_entrypoint ... ok
+test source_residue_hygiene::runtime_production_path_has_no_string_panic_alternate_paths ... ok
+test source_residue_hygiene::source_text_does_not_regrow_old_private_boundary_vocabulary ... ok
+test source_residue_hygiene::source_tree_does_not_retain_impossible_test_only_helpers ... ok
+test source_residue_hygiene::sparse_role_route_rows_never_define_the_route_slot_boundary ... ok
+test source_residue_hygiene::tap_ring_storage_shape_is_a_single_type_sized_wrap_safe_ring ... ok
+test source_residue_hygiene::wire_codec_errors_do_not_carry_static_text ... ok
+test source_residue_pico_hygiene::final_form_static_gates_run_without_budget_or_regex_false_failure ... ok
+test source_residue_pico_hygiene::frame_header_has_no_u64_storage ... ok
+test source_residue_pico_hygiene::g_project_does_not_enumerate_role_projection_constructors ... ok
+test source_residue_pico_hygiene::inbound_frame_identity_is_scalar_and_label_masks_are_absent ... ok
+test source_residue_pico_hygiene::kernel_quarantine_extracts_poll_public_recv_by_braces ... ok
+test source_residue_pico_hygiene::long_running_const_eval_allow_stays_capacity_regression_only ... ok
+test source_residue_pico_hygiene::packed_endpoint_handle_does_not_pack_rendezvous_or_slot ... ok
+test source_residue_pico_hygiene::port_derives_endpoint_lease_count_from_the_live_root ... ok
+test source_residue_pico_hygiene::production_does_not_reintroduce_fixed_rendezvous_capacity ... ok
+test source_residue_pico_hygiene::production_evidence_source_under_file_budget ... ok
+test source_residue_pico_hygiene::production_sources_do_not_reintroduce_static_hygiene_residue ... ok
+test source_residue_pico_hygiene::public_runtime_surface_does_not_accept_max_rv_budget_parameter ... ok
+test source_residue_pico_hygiene::receive_hot_path_uses_descriptor_queries_and_complete_keys_without_mask_scratch ... ok
+test source_residue_pico_hygiene::rendezvous_scratch_borrows_are_scoped_and_offer_progress_is_endpoint_resident ... ok
+test source_residue_pico_hygiene::resolver_surface_hygiene_uses_explicit_guard_scope ... ok
+test source_residue_pico_hygiene::role_descriptor_rows_do_not_use_u64_hot_path_storage_or_helpers ... ok
+test source_residue_pico_hygiene::runtime_public_api_has_no_frame_header_u64_raw ... ok
+test source_residue_pico_hygiene::source_residue_forbidden_literals_are_checked_without_split_hiding ... ok
+test source_residue_pico_hygiene::tap_event_is_opaque_sixteen_byte_record ... ok
+test source_residue_pico_hygiene::tap_ring_bytes_stay_at_quarter_kib ... ok
+test source_residue_pico_hygiene::transport_docs_do_not_teach_u64_header ... ok
+test source_residue_recv_evidence::direct_recv_commits_only_through_observed_evidence_plan ... ok
+test source_residue_recv_evidence::offer_admission_requires_one_enabled_descriptor_with_full_identity ... ok
+test source_residue_route_arm_lane::compact_bucket_backing_stays_byte_only_and_program_ref_shared ... ok
+test source_residue_route_arm_lane::route_arm_lane_first_last_use_resident_columns ... ok
+test source_residue_runtime_surface::endpoint_lease_capacity_uses_the_last_representable_slot_id ... ok
+test source_residue_runtime_surface::endpoint_lease_slot_is_session_role_authority ... ok
+test source_residue_runtime_surface::endpoint_selector_validation_stays_private_seal_scan_without_stored_summaries ... ok
+test source_residue_runtime_surface::frame_header_lane_is_not_misnamed_as_carrier_identity ... ok
+test source_residue_runtime_surface::production_and_gates_do_not_reintroduce_std_feature_branches ... ok
+test source_residue_runtime_surface::production_large_functions_do_not_force_inline_always ... ok
+test source_residue_runtime_surface::production_sources_do_not_reintroduce_transport_fragmentation_axis ... ok
+test source_residue_runtime_surface::projection_ownership_does_not_scale_with_the_role_domain ... ok
+test source_residue_runtime_surface::public_surface_scanner_covers_trait_associated_items_and_type_shape ... ok
+test source_residue_runtime_surface::route_controller_discovery_has_one_production_authority ... ok
+test source_residue_runtime_surface::route_resolver_authority_is_complete_identity_keyed ... ok
+test source_residue_runtime_surface::route_site_tap_evidence_uses_local_ordinal_site ... ok
+test source_residue_runtime_surface::scope_id_is_single_u16_identity_without_compact_shadow ... ok
+test source_residue_runtime_surface::tap_reader_surface_stays_minimal ... ok
+test source_residue_runtime_surface::transport_surface_has_no_custom_error_axis ... ok
+test source_residue_support::public_surface_and_gates_do_not_retain_forbidden_role_token_api ... ok
+test source_residue_support::repo_test_support_modules_are_not_orphaned ... ok
+test source_residue_support::test_transport_state_has_one_safe_shared_owner ... ok
+test source_residue_unsafe_contract::dynamic_resolver_seals_local_membership_before_external_evaluation ... ok
+test source_residue_unsafe_contract::external_callback_reentry_revalidates_published_endpoint_generation ... ok
+test source_residue_unsafe_contract::route_choice_has_one_in_band_authority_without_shared_runtime_state ... ok
+test source_residue_unsafe_contract::unsafe_contract_gate_covers_receive_frame_receipt_owner ... ok
+test transport_contract::transport_contract_separates_local_protocol_safety_from_affine_delivery ... ok
+
+test result: ok. 124 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.92s
+
+     Running ../../tests/transport_resolver_signal_surface.rs (/workspace/scratch/0915e8fbff81/hibana-roll-color-target/debug/deps/transport_resolver_signal_surface-da6398c58aae32c3)
+
+running 1 test
+test transport_resolver_signal_surface_stays_minimal ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+   Doc-tests hibana
+
+running 3 tests
+test src/g.rs - g (line 7) ... ignored
+test src/lib.rs - (line 55) ... ignored
+test src/lib.rs - (line 73) ... ignored
+
+test result: ok. 0 passed; 0 failed; 3 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+all doctests ran in 0.09s; merged doctests compilation took 0.09s

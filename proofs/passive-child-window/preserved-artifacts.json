@@ -1,0 +1,20 @@
+{
+  "format": 1,
+  "source": "hibana-passive-child-window/proofs/passive-child-window",
+  "scope": "Original qualification artifacts copied byte-for-byte. Absolute paths and results remain historical evidence. Fresh current-tree validation is in ../core-followup.",
+  "files": {
+    "PassiveChildWindow.lean": "6b8d498af78143545f1f9c9968e29bb05bf80be6f98fc58ab2227247f6cf477a",
+    "RESULTS.md": "2decf136cbe06d9ce97b04f120d40d16ccd34910f26f9a8909970e08f5f0453c",
+    "SOURCE_BRIDGE.md": "9229c16c98d124500cb9b7a106b1be39b606959e49c81f2898960e5bef5eb2a1",
+    "candidate-manifest.json": "2224cd19ac4a2d4a4bd9e780d794595347401584e3f77fb098a11f527c23996b",
+    "check_window.py": "a7970bc8262d03bffc54e1fb6fe7505b6dd7fe4a78b29e15df482c8bd68ae9b8",
+    "full-core-unit-tests.json": "4b7efdaa61918e97f5db35ae7585fc41537923090362582dec4ce4905c6e83f5",
+    "full-core-unit-tests.log": "a108eb47eb083bf0aa9e4d0f8d85ff61bbfd120e54b75fa09e3e833ffc41b885",
+    "lean.log": "570d4fe6679d3e7c1a243215ac5810a5653d0532b3ebdcf11cb11daa229fb724",
+    "passive-child-window.patch": "aff87c8eb48ea1920ca4cc714a1d3051e163715162ba95915fb8b63793e02634",
+    "pre-edit-gate.json": "d8919efd81f415cda8f5303ccda1e65e55143dd168001bd4d568de671ce0a809",
+    "scope-differential-tests.json": "b5de10a904895b2e73ae4f5bab7c6ed67fb5c3f7b1ab04b67085d8781eed1084",
+    "scope-differential-tests.log": "602fd3aa27bb50835236b3e17290e9904f7ff7adf77654253bdfb392398cae95",
+    "z3.log": "1142b57502c3ccc429c03d4cfe6a15fe77d2ffafae35454c44da9e92e992051f"
+  }
+}

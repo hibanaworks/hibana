@@ -1,0 +1,358 @@
+//! Receive-path helpers for deterministic recv.
+
+use core::task::Poll;
+
+use super::{
+    core::{
+        CommitDelta, CursorEndpoint, PreparedCommitDelta,
+        prepare_event_selected_route_commit_rows_from_resident_route_commit_range,
+    },
+    lane_port,
+    recv_commit_plan::{EndpointRxEventPlan, RecvCommitPlan},
+};
+use crate::{
+    endpoint::{RecvError, RecvResult},
+    global::role_program::LANE_SET_VIEW_WORDS,
+    global::typestate::{
+        CursorInvariantError, DeterministicInboundKey, EventArmView, EventCommitMeta,
+        InboundFrameKey, PackedEventConflict, state_index_to_usize,
+    },
+    runtime_core::UniqueMatchFailure,
+    transport::{
+        Transport,
+        wire::{CodecError, Payload},
+    },
+};
+
+mod contract;
+mod evidence;
+mod matching;
+
+pub(crate) use evidence::MatchedRecvFrame;
+use evidence::RecvDescriptor;
+
+pub(crate) struct RecvState {
+    pending_recv: lane_port::PendingRecv,
+}
+
+impl RecvState {
+    #[inline]
+    pub(crate) const fn new() -> Self {
+        Self {
+            pending_recv: lane_port::PendingRecv::new(),
+        }
+    }
+}
+
+impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
+where
+    T: Transport + 'r,
+{
+    pub(in crate::endpoint::kernel) fn selected_arm_for_recv_event(
+        &self,
+        preview_conflict: PackedEventConflict,
+        scope: crate::global::const_dsl::ScopeId,
+        view: EventArmView,
+    ) -> Option<u8> {
+        if matches!(view, EventArmView::Committed) {
+            return self.selected_arm_for_scope(scope);
+        }
+        let mut selected_arm = |candidate| self.selected_arm_for_scope(candidate);
+        self.cursor.selected_arm_for_reentry_preview_conflict(
+            scope,
+            preview_conflict,
+            &mut selected_arm,
+        )
+    }
+
+    fn poll_recv_preamble_for_label(
+        &mut self,
+        target_label: u8,
+        target_schema: u32,
+        pending_recv: &mut lane_port::PendingRecv,
+        cx: &mut core::task::Context<'_>,
+    ) -> Poll<RecvResult<lane_port::PreambleFrame<'r>>> {
+        let lane_limit = self.cursor.logical_lane_count();
+        let mut words = [0; LANE_SET_VIEW_WORDS];
+        let lanes = self.live_recv_lanes(target_label, target_schema, &mut words)?;
+        let mut start = 0usize;
+        while let Some(lane_idx) = lanes.next_set_from(start, lane_limit) {
+            let lane_wire = self.port_for_lane(lane_idx).lane().as_wire();
+            match self.poll_received_transport_frame_for_lane(pending_recv, lane_idx, lane_wire, cx)
+            {
+                Poll::Pending => {}
+                Poll::Ready(Ok(frame)) => return Poll::Ready(Ok(frame)),
+                Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
+            }
+            start = lane_idx + 1;
+        }
+        Poll::Pending
+    }
+
+    fn accept_framed_recv_frame(
+        &mut self,
+        target_label: u8,
+        target_schema: u32,
+        frame: lane_port::PreambleFrame<'r>,
+    ) -> RecvResult<MatchedRecvFrame<'r>> {
+        let observed = InboundFrameKey::new(
+            frame.observed_source_role(),
+            frame.lane_wire(),
+            frame.observed_frame_label_raw(),
+        );
+        match self.unique_recv_candidate(target_label, target_schema, observed)? {
+            Ok(candidate) => {
+                let desc = candidate.desc;
+                let frame = self.accept_materialized_transport_frame(
+                    desc.meta.lane as usize,
+                    desc.meta.lane,
+                    desc.meta.peer,
+                    desc.meta.frame_label,
+                    frame,
+                )?;
+                Ok(MatchedRecvFrame { desc, frame })
+            }
+            Err(UniqueMatchFailure::None) => {
+                let mismatch = self.framed_recv_mismatch_for_unmatched_candidate(
+                    target_label,
+                    target_schema,
+                    &frame,
+                );
+                self.emit_materialization_mismatch_observation(
+                    frame.lane_idx(),
+                    frame.lane_wire(),
+                    mismatch,
+                );
+                frame.discard_uncommitted();
+                Err(RecvError::PhaseInvariant)
+            }
+            Err(UniqueMatchFailure::Ambiguous) => {
+                frame.discard_uncommitted();
+                Err(RecvError::PhaseInvariant)
+            }
+        }
+    }
+
+    fn accept_deterministic_recv_frame(
+        &mut self,
+        target_label: u8,
+        target_schema: u32,
+        frame: lane_port::PreambleFrame<'r>,
+    ) -> RecvResult<MatchedRecvFrame<'r>> {
+        let lane_wire = frame.lane_wire();
+        let key = DeterministicInboundKey::new(lane_wire, target_label, target_schema);
+        match self.unique_deterministic_recv_candidate(key)? {
+            Ok(candidate) => {
+                let desc = candidate.desc;
+                let frame = self.accept_materialized_transport_frame(
+                    desc.meta.lane as usize,
+                    desc.meta.lane,
+                    desc.meta.peer,
+                    desc.meta.frame_label,
+                    frame,
+                )?;
+                Ok(MatchedRecvFrame { desc, frame })
+            }
+            Err(UniqueMatchFailure::None) => {
+                self.emit_materialization_mismatch_observation(
+                    frame.lane_idx(),
+                    lane_wire,
+                    lane_port::FrameMismatch::headerless_preamble(self.sid.raw(), lane_wire, ROLE),
+                );
+                frame.discard_uncommitted();
+                Err(RecvError::PhaseInvariant)
+            }
+            Err(UniqueMatchFailure::Ambiguous) => {
+                frame.discard_uncommitted();
+                Err(RecvError::PhaseInvariant)
+            }
+        }
+    }
+
+    fn accept_recv_frame(
+        &mut self,
+        target_label: u8,
+        target_schema: u32,
+        frame: lane_port::PreambleFrame<'r>,
+    ) -> RecvResult<MatchedRecvFrame<'r>> {
+        if frame.is_deterministic() {
+            self.accept_deterministic_recv_frame(target_label, target_schema, frame)
+        } else {
+            self.accept_framed_recv_frame(target_label, target_schema, frame)
+        }
+    }
+
+    fn poll_recv_frame_source(
+        &mut self,
+        target_label: u8,
+        target_schema: u32,
+        pending_recv: &mut lane_port::PendingRecv,
+        cx: &mut core::task::Context<'_>,
+    ) -> Poll<RecvResult<MatchedRecvFrame<'r>>> {
+        let frame = match self.poll_recv_preamble_for_label(
+            target_label,
+            target_schema,
+            pending_recv,
+            cx,
+        ) {
+            Poll::Pending => return Poll::Pending,
+            Poll::Ready(Ok(frame)) => frame,
+            Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
+        };
+        Poll::Ready(self.accept_recv_frame(target_label, target_schema, frame))
+    }
+
+    fn build_recv_commit_plan(
+        &mut self,
+        logical_label: u8,
+        payload_schema: u32,
+        matched: MatchedRecvFrame<'r>,
+    ) -> RecvResult<RecvCommitPlan<'r>> {
+        let MatchedRecvFrame { desc, frame } = matched;
+        let delta =
+            match self.prepare_recv_commit_delta(logical_label, payload_schema, desc, &frame) {
+                Ok(delta) => delta,
+                Err(err) => {
+                    frame.discard_uncommitted();
+                    return Err(err);
+                }
+            };
+        Ok(RecvCommitPlan::direct(
+            EndpointRxEventPlan::direct(desc.meta.lane, desc.meta.label),
+            delta,
+            frame,
+        ))
+    }
+
+    fn prepare_recv_commit_delta(
+        &mut self,
+        logical_label: u8,
+        payload_schema: u32,
+        desc: RecvDescriptor,
+        frame: &lane_port::ReceivedFrame<'_>,
+    ) -> RecvResult<PreparedCommitDelta> {
+        let meta = desc.meta;
+        if meta.label != logical_label {
+            return Err(RecvError::LabelMismatch {
+                expected: logical_label,
+                actual: meta.label,
+            });
+        }
+        if meta.payload_schema != payload_schema {
+            return Err(RecvError::SchemaMismatch {
+                expected: meta.payload_schema,
+                actual: payload_schema,
+            });
+        }
+        if meta.origin.is_session() {
+            return Err(RecvError::PhaseInvariant);
+        }
+        if frame.frame_label_raw() != meta.frame_label || frame.lane_wire() != meta.lane {
+            return Err(RecvError::PhaseInvariant);
+        }
+        let cursor_index = state_index_to_usize(desc.cursor_index);
+        let preview_conflict = self.cursor.event_conflict_for_index(cursor_index);
+        let mut selected_arm =
+            |scope, view| self.selected_arm_for_recv_event(preview_conflict, scope, view);
+        let enabled = match self.cursor.event_enabled(
+            cursor_index,
+            EventCommitMeta::from(meta),
+            &mut selected_arm,
+        ) {
+            Ok(enabled) => enabled,
+            Err(CursorInvariantError::INVARIANT) => {
+                return Err(RecvError::PhaseInvariant);
+            }
+        };
+        let route_rows = if meta.route_arm.is_some() {
+            let route_rows = {
+                let Self {
+                    cursor,
+                    decision_state,
+                    route_commit_rows,
+                    ..
+                } = &mut *self;
+                let mut rows = route_commit_rows.begin();
+                prepare_event_selected_route_commit_rows_from_resident_route_commit_range(
+                    decision_state,
+                    cursor,
+                    meta.lane,
+                    cursor_index,
+                    &mut rows,
+                )?;
+                rows.finish_for_lane(meta.lane)?
+            };
+            if route_rows.is_empty() {
+                return Err(RecvError::PhaseInvariant);
+            }
+            route_rows
+        } else {
+            super::SelectedRouteCommitRowsRef::EMPTY
+        };
+        let delta = CommitDelta::from_recv_meta(
+            meta,
+            route_rows,
+            enabled.cursor_after(),
+            enabled.progress_step(),
+        )
+        .with_lane_relocation(self.cursor.recv_reentry_cursor_step(meta, |scope| {
+            let mut row_idx = 0usize;
+            while row_idx < route_rows.len() {
+                if let Some(row) = route_rows.get(&self.cursor, row_idx)
+                    && row.scope() == scope
+                {
+                    return Some(row.selected_arm());
+                }
+                row_idx += 1;
+            }
+            self.selected_arm_for_recv_event(preview_conflict, scope, EventArmView::Preview)
+        }));
+        let delta = match self.prepare_enabled_event_commit_delta(delta, enabled) {
+            Ok(delta) => delta,
+            Err(CursorInvariantError::INVARIANT) => {
+                return Err(RecvError::PhaseInvariant);
+            }
+        };
+
+        Ok(delta)
+    }
+
+    fn finish_recv_frame(
+        &mut self,
+        logical_label: u8,
+        payload_schema: u32,
+        frame: MatchedRecvFrame<'r>,
+        validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
+    ) -> RecvResult<Payload<'r>> {
+        let plan = self.build_recv_commit_plan(logical_label, payload_schema, frame)?;
+        self.publish_recv_commit_plan(plan, validate)
+    }
+}
+
+impl<'r, const ROLE: u8, T> super::core::RecvKernelEndpoint<'r> for CursorEndpoint<'r, ROLE, T>
+where
+    T: Transport + 'r,
+{
+    #[inline]
+    fn poll_recv_kernel_frame_source(
+        &mut self,
+        logical_label: u8,
+        payload_schema: u32,
+        state: &mut RecvState,
+        cx: &mut core::task::Context<'_>,
+    ) -> Poll<RecvResult<MatchedRecvFrame<'r>>> {
+        let pending_recv = &mut state.pending_recv;
+        self.poll_recv_frame_source(logical_label, payload_schema, pending_recv, cx)
+    }
+
+    #[inline]
+    fn finish_recv_kernel_frame(
+        &mut self,
+        logical_label: u8,
+        payload_schema: u32,
+        frame: MatchedRecvFrame<'r>,
+        validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
+    ) -> RecvResult<Payload<'r>> {
+        self.finish_recv_frame(logical_label, payload_schema, frame, validate)
+    }
+}

@@ -1,0 +1,50 @@
+   Compiling hibana v0.9.6 (/workspace/scratch/0915e8fbff81/hibana-arm-row-index)
+    Finished `release` profile [optimized] target(s) in 3.84s
+=== parent-index n=100 ===
+tiny_mask n=100 setup_us=22 elapsed_us=5376 us_per_request=53.763 polls=405 wakes=404
+key_mask n=100 setup_us=7 elapsed_us=21844 us_per_request=218.449 polls=405 wakes=503
+tls_mask n=100 setup_us=10 elapsed_us=156399 us_per_request=1563.992 polls=405 wakes=505
+tls_crypto n=100 setup_us=10 elapsed_us=100372 us_per_request=1003.721 polls=405 wakes=504
+tls_early n=100 setup_us=9 elapsed_us=167125 us_per_request=1671.256 polls=405 wakes=406
+=== arm-row-index n=100 ===
+tiny_mask n=100 setup_us=30 elapsed_us=5294 us_per_request=52.942 polls=405 wakes=404
+key_mask n=100 setup_us=7 elapsed_us=22305 us_per_request=223.056 polls=405 wakes=503
+tls_mask n=100 setup_us=10 elapsed_us=122149 us_per_request=1221.498 polls=405 wakes=505
+tls_crypto n=100 setup_us=9 elapsed_us=73334 us_per_request=733.347 polls=405 wakes=504
+tls_early n=100 setup_us=9 elapsed_us=149868 us_per_request=1498.687 polls=405 wakes=406
+=== parent-index n=300 ===
+tiny_mask n=300 setup_us=33 elapsed_us=17147 us_per_request=57.158 polls=1205 wakes=1204
+key_mask n=300 setup_us=9 elapsed_us=73623 us_per_request=245.412 polls=1205 wakes=1503
+tls_mask n=300 setup_us=12 elapsed_us=483356 us_per_request=1611.190 polls=1205 wakes=1505
+tls_crypto n=300 setup_us=11 elapsed_us=293160 us_per_request=977.203 polls=1205 wakes=1504
+tls_early n=300 setup_us=11 elapsed_us=525224 us_per_request=1750.749 polls=1205 wakes=1206
+=== arm-row-index n=300 ===
+tiny_mask n=300 setup_us=28 elapsed_us=15281 us_per_request=50.938 polls=1205 wakes=1204
+key_mask n=300 setup_us=8 elapsed_us=62739 us_per_request=209.132 polls=1205 wakes=1503
+tls_mask n=300 setup_us=11 elapsed_us=361913 us_per_request=1206.377 polls=1205 wakes=1505
+tls_crypto n=300 setup_us=10 elapsed_us=220958 us_per_request=736.528 polls=1205 wakes=1504
+tls_early n=300 setup_us=10 elapsed_us=428552 us_per_request=1428.510 polls=1205 wakes=1206
+=== parent-index n=300 ===
+tiny_mask n=300 setup_us=34 elapsed_us=17394 us_per_request=57.981 polls=1205 wakes=1204
+key_mask n=300 setup_us=12 elapsed_us=68921 us_per_request=229.739 polls=1205 wakes=1503
+tls_mask n=300 setup_us=46 elapsed_us=475874 us_per_request=1586.248 polls=1205 wakes=1505
+tls_crypto n=300 setup_us=10 elapsed_us=290754 us_per_request=969.181 polls=1205 wakes=1504
+tls_early n=300 setup_us=10 elapsed_us=488707 us_per_request=1629.024 polls=1205 wakes=1206
+=== arm-row-index n=300 ===
+tiny_mask n=300 setup_us=31 elapsed_us=14618 us_per_request=48.729 polls=1205 wakes=1204
+key_mask n=300 setup_us=8 elapsed_us=57391 us_per_request=191.303 polls=1205 wakes=1503
+tls_mask n=300 setup_us=10 elapsed_us=366973 us_per_request=1223.246 polls=1205 wakes=1505
+tls_crypto n=300 setup_us=10 elapsed_us=217081 us_per_request=723.605 polls=1205 wakes=1504
+tls_early n=300 setup_us=9 elapsed_us=420986 us_per_request=1403.288 polls=1205 wakes=1206
+=== parent-index n=300 ===
+tiny_mask n=300 setup_us=33 elapsed_us=15503 us_per_request=51.677 polls=1205 wakes=1204
+key_mask n=300 setup_us=8 elapsed_us=61554 us_per_request=205.181 polls=1205 wakes=1503
+tls_mask n=300 setup_us=12 elapsed_us=446854 us_per_request=1489.514 polls=1205 wakes=1505
+tls_crypto n=300 setup_us=10 elapsed_us=287068 us_per_request=956.895 polls=1205 wakes=1504
+tls_early n=300 setup_us=10 elapsed_us=485495 us_per_request=1618.318 polls=1205 wakes=1206
+=== arm-row-index n=300 ===
+tiny_mask n=300 setup_us=32 elapsed_us=15592 us_per_request=51.974 polls=1205 wakes=1204
+key_mask n=300 setup_us=9 elapsed_us=57056 us_per_request=190.189 polls=1205 wakes=1503
+tls_mask n=300 setup_us=11 elapsed_us=376850 us_per_request=1256.168 polls=1205 wakes=1505
+tls_crypto n=300 setup_us=10 elapsed_us=223199 us_per_request=743.998 polls=1205 wakes=1504
+tls_early n=300 setup_us=10 elapsed_us=435857 us_per_request=1452.857 polls=1205 wakes=1206

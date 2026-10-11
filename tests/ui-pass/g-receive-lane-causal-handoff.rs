@@ -1,0 +1,15 @@
+use hibana::{g, runtime};
+
+fn main() {
+    let protocol = g::seq(
+        g::send::<0, 2, g::Msg<1, ()>>(),
+        g::seq(
+            g::send::<2, 1, g::Msg<2, ()>>(),
+            g::send::<1, 2, g::Msg<3, ()>>(),
+        ),
+    );
+    let role0: runtime::program::RoleProgram<0> = runtime::program::project(&protocol);
+    let role1: runtime::program::RoleProgram<1> = runtime::program::project(&protocol);
+    let role2: runtime::program::RoleProgram<2> = runtime::program::project(&protocol);
+    core::hint::black_box((role0, role1, role2));
+}

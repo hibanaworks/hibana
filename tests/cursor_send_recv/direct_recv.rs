@@ -1,0 +1,681 @@
+use super::*;
+
+#[derive(Clone, Copy)]
+struct DeadlineRecvTransport {
+    error: hibana::runtime::transport::TransportError,
+}
+
+struct DeadlineRx {
+    session_id: SessionId,
+    lane: u8,
+    role: u8,
+}
+
+impl Transport for DeadlineRecvTransport {
+    type Tx<'a>
+        = ()
+    where
+        Self: 'a;
+    type Rx<'a>
+        = DeadlineRx
+    where
+        Self: 'a;
+
+    fn open<'a>(
+        &'a self,
+        port: hibana::runtime::transport::PortOpen,
+    ) -> (Self::Tx<'a>, Self::Rx<'a>) {
+        (
+            (),
+            DeadlineRx {
+                session_id: port.session_id(),
+                lane: port.lane(),
+                role: port.local_role(),
+            },
+        )
+    }
+
+    fn poll_send<'a, 'f>(
+        &self,
+        _tx: &'a mut Self::Tx<'a>,
+        _outgoing: hibana::runtime::transport::Outgoing<'f>,
+        _context: &mut Context<'_>,
+    ) -> Poll<Result<(), TransportError>>
+    where
+        'a: 'f,
+    {
+        Poll::Ready(Ok(()))
+    }
+
+    fn poll_recv<'a>(
+        &'a self,
+        rx: &'a mut Self::Rx<'a>,
+        context: &mut Context<'_>,
+    ) -> Poll<Result<ReceivedFrame<'a>, TransportError>> {
+        core::hint::black_box(context.waker());
+        core::hint::black_box((rx.session_id.raw(), rx.lane, rx.role));
+        Poll::Ready(Err(self.error))
+    }
+
+    fn cancel_send<'a>(&self, tx: &'a mut Self::Tx<'a>) {
+        core::hint::black_box(tx);
+    }
+
+    fn requeue<'a>(&self, rx: &mut Self::Rx<'a>) -> Result<(), TransportError> {
+        core::hint::black_box(rx);
+        Ok(())
+    }
+}
+
+type DeadlineKitStorage = SessionKitStorage<'static, DeadlineRecvTransport>;
+
+#[derive(Clone, Copy)]
+struct MalformedRecvTransport {
+    header: hibana::runtime::transport::FrameHeader,
+}
+
+struct MalformedRx {
+    delivered: bool,
+}
+
+impl Transport for MalformedRecvTransport {
+    type Tx<'a>
+        = ()
+    where
+        Self: 'a;
+    type Rx<'a>
+        = MalformedRx
+    where
+        Self: 'a;
+
+    fn open<'a>(
+        &'a self,
+        port: hibana::runtime::transport::PortOpen,
+    ) -> (Self::Tx<'a>, Self::Rx<'a>) {
+        core::hint::black_box(port);
+        ((), MalformedRx { delivered: false })
+    }
+
+    fn poll_send<'a, 'f>(
+        &self,
+        _tx: &'a mut Self::Tx<'a>,
+        _outgoing: hibana::runtime::transport::Outgoing<'f>,
+        _context: &mut Context<'_>,
+    ) -> Poll<Result<(), TransportError>>
+    where
+        'a: 'f,
+    {
+        Poll::Ready(Ok(()))
+    }
+
+    fn poll_recv<'a>(
+        &'a self,
+        rx: &'a mut Self::Rx<'a>,
+        context: &mut Context<'_>,
+    ) -> Poll<Result<ReceivedFrame<'a>, TransportError>> {
+        core::hint::black_box(context.waker());
+        if rx.delivered {
+            return Poll::Pending;
+        }
+        rx.delivered = true;
+        Poll::Ready(Ok(ReceivedFrame::framed(
+            self.header,
+            Payload::new(b"bad!"),
+        )))
+    }
+
+    fn cancel_send<'a>(&self, tx: &'a mut Self::Tx<'a>) {
+        core::hint::black_box(tx);
+    }
+
+    fn requeue<'a>(&self, rx: &mut Self::Rx<'a>) -> Result<(), TransportError> {
+        core::hint::black_box(rx);
+        Ok(())
+    }
+}
+
+type MalformedKitStorage = SessionKitStorage<'static, MalformedRecvTransport>;
+type DeterministicKitStorage = SessionKitStorage<'static, DeterministicRecvTransport>;
+
+#[derive(Clone)]
+struct DeterministicRecvTransport {
+    inner: TestTransport,
+}
+
+impl DeterministicRecvTransport {
+    fn new() -> Self {
+        Self {
+            inner: TestTransport::new(),
+        }
+    }
+
+    fn queue_is_empty(&self) -> bool {
+        self.inner.queue_is_empty()
+    }
+}
+
+impl Transport for DeterministicRecvTransport {
+    type Tx<'a>
+        = <TestTransport as Transport>::Tx<'a>
+    where
+        Self: 'a;
+    type Rx<'a>
+        = <TestTransport as Transport>::Rx<'a>
+    where
+        Self: 'a;
+
+    fn open<'a>(
+        &'a self,
+        port: hibana::runtime::transport::PortOpen,
+    ) -> (Self::Tx<'a>, Self::Rx<'a>) {
+        self.inner.open(port)
+    }
+
+    fn poll_send<'a, 'f>(
+        &self,
+        tx: &'a mut Self::Tx<'a>,
+        outgoing: hibana::runtime::transport::Outgoing<'f>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Result<(), TransportError>>
+    where
+        'a: 'f,
+    {
+        self.inner.poll_send(tx, outgoing, cx)
+    }
+
+    fn poll_recv<'a>(
+        &'a self,
+        rx: &'a mut Self::Rx<'a>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Result<ReceivedFrame<'a>, TransportError>> {
+        match self.inner.poll_recv(rx, cx) {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(Ok(frame)) => {
+                Poll::Ready(Ok(ReceivedFrame::deterministic(frame.payload())))
+            }
+            Poll::Ready(Err(error)) => Poll::Ready(Err(error)),
+        }
+    }
+
+    fn cancel_send<'a>(&self, tx: &'a mut Self::Tx<'a>) {
+        self.inner.cancel_send(tx);
+    }
+
+    fn requeue<'a>(&self, rx: &mut Self::Rx<'a>) -> Result<(), TransportError> {
+        self.inner.requeue(rx)
+    }
+}
+
+std::thread_local! {
+    static DEADLINE_SESSION_SLOT: UnsafeCell<DeadlineKitStorage> = const {
+        UnsafeCell::new(SessionKitStorage::uninit())
+    };
+    static MALFORMED_SESSION_SLOT: UnsafeCell<MalformedKitStorage> = const {
+        UnsafeCell::new(SessionKitStorage::uninit())
+    };
+    static DETERMINISTIC_SESSION_SLOT: UnsafeCell<DeterministicKitStorage> = const {
+        UnsafeCell::new(SessionKitStorage::uninit())
+    };
+}
+
+fn malformed_header(
+    session_id: SessionId,
+    lane: u8,
+    source_role: u8,
+    target_role: u8,
+    frame_label: u8,
+) -> hibana::runtime::transport::FrameHeader {
+    let session = session_id.raw().to_be_bytes();
+    hibana::runtime::transport::FrameHeader::from_bytes([
+        session[0],
+        session[1],
+        session[2],
+        session[3],
+        lane,
+        source_role,
+        target_role,
+        frame_label,
+    ])
+}
+
+fn assert_malformed_direct_recv_fails_closed(
+    sid: SessionId,
+    header: hibana::runtime::transport::FrameHeader,
+    expected_reason: u8,
+) {
+    with_runtime_workspace(|slab| {
+        let mismatch = with_resident_tls_ref(&MALFORMED_SESSION_SLOT, |cluster| {
+            let program = g::send::<0, 1, Msg<1, FramePayload>>();
+            let target_program: RoleProgram<1> = project(&program);
+            let rv = cluster
+                .rendezvous(slab, MalformedRecvTransport { header })
+                .expect("register rendezvous");
+            let mut tap = rv.tap();
+
+            let mut target_endpoint = rv.enter(sid, &target_program).expect("target endpoint");
+
+            let error = futures::executor::block_on(target_endpoint.recv::<Msg<1, FramePayload>>())
+                .expect_err("descriptor mismatch must fail closed");
+            let rendered = format!("{error:?}");
+            assert!(
+                rendered.contains("PhaseInvariant"),
+                "descriptor mismatch must report terminal invariant evidence: {rendered}"
+            );
+
+            let mismatch = tap
+                .find(|event| event.id() == hibana::runtime::tap::TRANSPORT_MISMATCH)
+                .expect("descriptor mismatch must emit transport mismatch evidence");
+            assert_eq!(mismatch.evidence().reason(), expected_reason);
+            assert_eq!(mismatch.arg0(), sid.raw());
+            assert!(
+                !tap.any(|event| event.id() == hibana::runtime::tap::TRANSPORT_FRAME),
+                "rejected mismatch must not also emit accepted frame evidence"
+            );
+
+            let poisoned =
+                futures::executor::block_on(target_endpoint.recv::<Msg<1, FramePayload>>())
+                    .expect_err("same generation must be poisoned after mismatch");
+            let rendered = format!("{poisoned:?}");
+            assert!(
+                rendered.contains("SessionFault") && rendered.contains("ProgressInvariantViolated"),
+                "mismatch must poison same generation: {rendered}"
+            );
+
+            let poisoned_offer = match futures::executor::block_on(target_endpoint.offer()) {
+                Ok(branch) => {
+                    drop(branch);
+                    panic!("faulted endpoint must not publish a route branch");
+                }
+                Err(error) => error,
+            };
+            let rendered = format!("{poisoned_offer:?}");
+            assert!(
+                rendered.contains("SessionFault") && rendered.contains("ProgressInvariantViolated"),
+                "faulted offer initialization must preserve the session fault: {rendered}"
+            );
+            mismatch
+        });
+        assert_eq!(mismatch.evidence().reason(), expected_reason);
+    });
+}
+
+#[test]
+fn direct_recv_accepts_single_deterministic_transport_frame() {
+    with_runtime_workspace(|slab| {
+        let transport = DeterministicRecvTransport::new();
+        with_resident_tls_ref(&DETERMINISTIC_SESSION_SLOT, |cluster| {
+            let program = g::send::<0, 1, Msg<90, u32>>();
+            let origin_program: RoleProgram<0> = project(&program);
+            let target_program: RoleProgram<1> = project(&program);
+            let rv = cluster
+                .rendezvous(slab, transport.clone())
+                .expect("register rendezvous");
+            let mut tap = rv.tap();
+            let sid = SessionId::new(90);
+            let mut origin = rv.enter(sid, &origin_program).expect("origin endpoint");
+            let mut target = rv.enter(sid, &target_program).expect("target endpoint");
+
+            futures::executor::block_on(async {
+                origin
+                    .send::<Msg<90, u32>>(&1234)
+                    .await
+                    .expect("send deterministic payload");
+                let value = target
+                    .recv::<Msg<90, u32>>()
+                    .await
+                    .expect("direct recv accepts deterministic transport frame");
+                assert_eq!(value, 1234);
+            });
+
+            let events: Vec<_> = tap.by_ref().collect();
+            assert_eq!(
+                events
+                    .iter()
+                    .filter(|event| event.id() == hibana::runtime::tap::ENDPOINT_RECV)
+                    .count(),
+                1,
+                "deterministic direct recv must emit exactly one endpoint recv event: {events:?}"
+            );
+            assert!(
+                events
+                    .iter()
+                    .all(|event| event.id() != hibana::runtime::tap::TRANSPORT_FRAME),
+                "headerless deterministic recv must not emit framed transport observation: {events:?}"
+            );
+            assert!(transport.queue_is_empty());
+        });
+    });
+}
+
+#[test]
+fn direct_recv_same_label_deterministic_frames_commit_by_lane_evidence() {
+    with_runtime_workspace(|slab| {
+        let transport = DeterministicRecvTransport::new();
+        with_resident_tls_ref(&DETERMINISTIC_SESSION_SLOT, |cluster| {
+            let program = g::par(
+                g::send::<1, 0, Msg<91, u32>>(),
+                g::send::<2, 0, Msg<91, u32>>(),
+            );
+            let target_program: RoleProgram<0> = project(&program);
+            let left_source_program: RoleProgram<1> = project(&program);
+            let right_source_program: RoleProgram<2> = project(&program);
+            let rv = cluster
+                .rendezvous(slab, transport.clone())
+                .expect("register rendezvous");
+
+            let sid = SessionId::new(91);
+            let mut target = rv.enter(sid, &target_program).expect("target endpoint");
+            let mut left_source = rv
+                .enter(sid, &left_source_program)
+                .expect("left source endpoint");
+            let mut right_source = rv
+                .enter(sid, &right_source_program)
+                .expect("right source endpoint");
+
+            futures::executor::block_on(async {
+                right_source
+                    .send::<Msg<91, u32>>(&202)
+                    .await
+                    .expect("right lane sends first");
+                let first = target
+                    .recv::<Msg<91, u32>>()
+                    .await
+                    .expect("headerless recv commits observed right lane first");
+                assert_eq!(first, 202);
+
+                left_source
+                    .send::<Msg<91, u32>>(&101)
+                    .await
+                    .expect("left lane sends second");
+                let second = target
+                    .recv::<Msg<91, u32>>()
+                    .await
+                    .expect("headerless recv commits remaining left lane");
+                assert_eq!(second, 101);
+            });
+            assert!(transport.queue_is_empty());
+        });
+    });
+}
+
+#[test]
+fn cursor_recv_can_return_borrowed_frame_views() {
+    with_runtime_workspace(|slab| {
+        let transport = TestTransport::new();
+        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+            let borrowed_program = g::send::<0, 1, Msg<2, FramePayload>>();
+            let borrowed_origin_program: RoleProgram<0> = project(&borrowed_program);
+            let borrowed_target_program: RoleProgram<1> = project(&borrowed_program);
+            let rv = cluster
+                .rendezvous(slab, transport.clone())
+                .expect("register rendezvous");
+
+            let sid = SessionId::new(2);
+            let mut origin_endpoint = rv
+                .enter(sid, &borrowed_origin_program)
+                .expect("origin endpoint");
+            let mut target_endpoint = rv
+                .enter(sid, &borrowed_target_program)
+                .expect("target endpoint");
+
+            let () = futures::executor::block_on(
+                origin_endpoint.send::<Msg<2, FramePayload>>(&FramePayload(*b"hiba")),
+            )
+            .expect("send succeeds");
+            let payload =
+                futures::executor::block_on(target_endpoint.recv::<Msg<2, FramePayload>>())
+                    .expect("recv succeeds");
+            assert_eq!(payload.as_bytes(), b"hiba");
+            assert!(transport.queue_is_empty());
+        });
+    });
+}
+
+#[test]
+fn zero_length_transport_frame_recv_unit_commits() {
+    with_runtime_workspace(|slab| {
+        let transport = TestTransport::new();
+        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+            let program = g::send::<0, 1, Msg<30, ()>>();
+            let target_program: RoleProgram<1> = project(&program);
+            let sid = SessionId::new(30);
+            let mut tx = TestTx {
+                session_id: sid,
+                local_role: 0,
+                pending_role: None,
+                pending_frame: None,
+            };
+            transport.stage_send_with_session(&mut tx, sid, 1, 0, 0, &[]);
+            assert!(matches!(
+                transport.poll_send_staged(&mut tx),
+                Poll::Ready(Ok(()))
+            ));
+            let rv = cluster
+                .rendezvous(slab, transport.clone())
+                .expect("register rendezvous");
+            let mut target_endpoint = rv.enter(sid, &target_program).expect("target endpoint");
+
+            let () = futures::executor::block_on(target_endpoint.recv::<Msg<30, ()>>())
+                .expect("unit payload accepts canonical empty frame");
+            assert!(transport.queue_is_empty());
+        });
+    });
+}
+
+#[test]
+fn rolled_raw_observations_commit_only_enabled_occurrences() {
+    with_runtime_workspace(|slab| {
+        let transport = TestTransport::new();
+        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+            let program = g::send::<0, 1, Msg<32, u32>>().roll();
+            let target_program: RoleProgram<1> = project(&program);
+            let sid = SessionId::new(32);
+            let mut tx = TestTx {
+                session_id: sid,
+                local_role: 0,
+                pending_role: None,
+                pending_frame: None,
+            };
+            for value in [10u32, 20u32] {
+                transport.stage_send_with_session(&mut tx, sid, 1, 0, 0, &value.to_be_bytes());
+                assert!(matches!(
+                    transport.poll_send_staged(&mut tx),
+                    Poll::Ready(Ok(()))
+                ));
+            }
+            let rv = cluster
+                .rendezvous(slab, transport.clone())
+                .expect("register rendezvous");
+            let mut target_endpoint = rv.enter(sid, &target_program).expect("target endpoint");
+
+            let first = futures::executor::block_on(target_endpoint.recv::<Msg<32, u32>>())
+                .expect("first observation commits the initial occurrence");
+            let second = futures::executor::block_on(target_endpoint.recv::<Msg<32, u32>>())
+                .expect("second observation commits only after roll reentry");
+            assert_eq!((first, second), (10, 20));
+            assert!(transport.queue_is_empty());
+        });
+    });
+}
+
+#[test]
+fn zero_length_transport_frame_recv_u8_fails_with_codec_truncated() {
+    with_runtime_workspace(|slab| {
+        let transport = TestTransport::new();
+        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+            let program = g::send::<0, 1, Msg<31, u8>>();
+            let target_program: RoleProgram<1> = project(&program);
+            let sid = SessionId::new(31);
+            let mut tx = TestTx {
+                session_id: sid,
+                local_role: 0,
+                pending_role: None,
+                pending_frame: None,
+            };
+            transport.stage_send_with_session(&mut tx, sid, 1, 0, 0, &[]);
+            assert!(matches!(
+                transport.poll_send_staged(&mut tx),
+                Poll::Ready(Ok(()))
+            ));
+            let rv = cluster
+                .rendezvous(slab, transport.clone())
+                .expect("register rendezvous");
+            let mut target_endpoint = rv.enter(sid, &target_program).expect("target endpoint");
+
+            let error = futures::executor::block_on(target_endpoint.recv::<Msg<31, u8>>())
+                .expect_err("u8 payload must reject canonical empty frame");
+            let rendered = format!("{error:?}");
+            assert!(
+                rendered.contains("Codec") && rendered.contains("Truncated"),
+                "zero-length u8 recv must fail through payload validation: {rendered}"
+            );
+            assert!(
+                !rendered.contains("PhaseInvariant"),
+                "zero-length u8 recv must not be classified as a phase invariant: {rendered}"
+            );
+        });
+    });
+}
+
+#[test]
+fn direct_recv_deadline_emits_transport_fault_tap() {
+    with_runtime_workspace(|slab| {
+        let fault = with_resident_tls_ref(&DEADLINE_SESSION_SLOT, |cluster| {
+            let program = g::send::<0, 1, Msg<1, FramePayload>>();
+            let target_program: RoleProgram<1> = project(&program);
+            let rv = cluster
+                .rendezvous(
+                    slab,
+                    DeadlineRecvTransport {
+                        error: hibana::runtime::transport::TransportError::Deadline,
+                    },
+                )
+                .expect("register rendezvous");
+            let mut tap = rv.tap();
+
+            let sid = SessionId::new(73);
+            let mut target_endpoint = rv.enter(sid, &target_program).expect("target endpoint");
+            let error = futures::executor::block_on(target_endpoint.recv::<Msg<1, FramePayload>>())
+                .expect_err("deadline recv must surface transport error");
+            let rendered = format!("{error:?}");
+            assert!(
+                rendered.contains("Deadline") || rendered.contains("Transport(D)"),
+                "recv error must preserve deadline transport cause: {rendered}"
+            );
+            tap.find(|event| event.id() == hibana::runtime::tap::TRANSPORT_FAULT)
+                .expect("deadline must emit transport fault evidence")
+        });
+        assert_eq!(
+            fault.evidence().reason(),
+            hibana::runtime::tap::TRANSPORT_FAULT_DEADLINE
+        );
+        assert_eq!(fault.arg0(), 73);
+        assert_eq!(fault.arg1(), 0);
+    });
+}
+
+#[test]
+fn transport_poll_recv_returns_framed_payload() {
+    let transport = TestTransport::new();
+    let sid = SessionId::new(94);
+    let mut tx = TestTx {
+        session_id: sid,
+        local_role: 0,
+        pending_role: None,
+        pending_frame: None,
+    };
+    transport.stage_send_with_session(&mut tx, sid, 1, 0, 6, b"peek");
+    assert!(matches!(
+        transport.poll_send_staged(&mut tx),
+        Poll::Ready(Ok(()))
+    ));
+
+    let mut rx = transport.open_rx(sid, 1, 0);
+    let waker = futures::task::noop_waker_ref();
+    let mut context = Context::from_waker(waker);
+    let received = match Transport::poll_recv(&transport, &mut rx, &mut context) {
+        Poll::Ready(Ok(received)) => received,
+        Poll::Ready(Err(err)) => panic!("staged frame must poll successfully: {err:?}"),
+        Poll::Pending => panic!("staged frame must be ready"),
+    };
+    assert_eq!(received.payload().as_bytes(), b"peek");
+}
+
+#[test]
+fn direct_recv_session_mismatch_fails_closed_and_poisons_generation() {
+    let sid = SessionId::new(71);
+    let bad_sid = SessionId::new(72);
+    assert_malformed_direct_recv_fails_closed(
+        sid,
+        malformed_header(bad_sid, 0, 0, 1, 0),
+        hibana::runtime::tap::TRANSPORT_MISMATCH_SESSION,
+    );
+}
+
+#[test]
+fn direct_recv_lane_source_target_label_mismatch_fails_closed() {
+    let cases = [
+        (
+            SessionId::new(81),
+            malformed_header(SessionId::new(81), 1, 0, 1, 0),
+            hibana::runtime::tap::TRANSPORT_MISMATCH_LANE,
+        ),
+        (
+            SessionId::new(82),
+            malformed_header(SessionId::new(82), 0, 2, 1, 0),
+            hibana::runtime::tap::TRANSPORT_MISMATCH_SOURCE_ROLE,
+        ),
+        (
+            SessionId::new(83),
+            malformed_header(SessionId::new(83), 0, 0, 2, 0),
+            hibana::runtime::tap::TRANSPORT_MISMATCH_PEER_ROLE,
+        ),
+        (
+            SessionId::new(84),
+            malformed_header(SessionId::new(84), 0, 0, 1, 9),
+            hibana::runtime::tap::TRANSPORT_MISMATCH_LABEL,
+        ),
+    ];
+    for (sid, header, reason) in cases {
+        assert_malformed_direct_recv_fails_closed(sid, header, reason);
+    }
+}
+
+#[test]
+fn mismatch_tap_is_emitted_before_terminal_error() {
+    with_runtime_workspace(|slab| {
+        with_resident_tls_ref(&MALFORMED_SESSION_SLOT, |cluster| {
+            let sid = SessionId::new(85);
+            let program = g::send::<0, 1, Msg<1, FramePayload>>();
+            let target_program: RoleProgram<1> = project(&program);
+            let rv = cluster
+                .rendezvous(
+                    slab,
+                    MalformedRecvTransport {
+                        header: malformed_header(sid, 0, 0, 1, 9),
+                    },
+                )
+                .expect("register rendezvous");
+            let mut tap = rv.tap();
+            let mut target_endpoint = rv.enter(sid, &target_program).expect("target endpoint");
+
+            let mut recv = core::pin::pin!(target_endpoint.recv::<Msg<1, FramePayload>>());
+            let waker = futures::task::noop_waker_ref();
+            let mut context = Context::from_waker(waker);
+            match recv.as_mut().poll(&mut context) {
+                Poll::Ready(Err(error)) => {
+                    let rendered = format!("{error:?}");
+                    assert!(
+                        rendered.contains("PhaseInvariant"),
+                        "mismatch must be terminal: {rendered}"
+                    );
+                }
+                Poll::Ready(Ok(_)) => panic!("mismatch must not commit recv"),
+                Poll::Pending => panic!("mismatch must not remain pending"),
+            }
+
+            tap.find(|event| event.id() == hibana::runtime::tap::TRANSPORT_MISMATCH)
+                .expect("mismatch tap must be emitted by the failing poll");
+        });
+    });
+}

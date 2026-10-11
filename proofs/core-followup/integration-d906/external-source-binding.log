@@ -1,0 +1,5 @@
+PASS immutable pre-edit records, compressed inputs, and byte-identical 31-query core
+PASS exact elastic allocator implementation and regression source identity
+PASS exact Lean dependency source identity
+PASS exact compiler-cost artifacts and qualified seven-source manifest
+PASS fixture source correspondence; all assertions and production bytes preserved

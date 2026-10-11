@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+PROOF_DIR="${ROOT_DIR}/proofs/lean"
+GENERATED="${ROOT_DIR}/target/lean-proof/Generated.lean"
+RUNTIME_GENERATED="${ROOT_DIR}/target/lean-proof/RuntimeGenerated.lean"
+PUBLIC_OPERATION_GENERATED="${ROOT_DIR}/target/lean-proof/PublicOperationGenerated.lean"
+CAUSAL_GENERATED="${ROOT_DIR}/target/lean-proof/CausalGenerated.lean"
+PARALLEL_GENERATED="${ROOT_DIR}/target/lean-proof/ParallelGenerated.lean"
+GENERATED_CLAIM_SNAPSHOT="${PROOF_DIR}/generated-claim-surface.txt"
+RUNTIME_CLAIM_SNAPSHOT="${PROOF_DIR}/runtime-generated-claim-surface.txt"
+PUBLIC_OPERATION_CLAIM_SNAPSHOT="${PROOF_DIR}/public-operation-generated-claim-surface.txt"
+STATIC_CLAIM_SNAPSHOT="${PROOF_DIR}/all-claim-surface.txt"
+EXAMPLE_CLAIM_SNAPSHOT="${PROOF_DIR}/example-claim-surface.txt"
+TOOLCHAIN="${TOOLCHAIN:-1.95.0}"
+
+# Preserve the auditor's failure evidence even when the caller captures stdout.
+run_audit() {
+  local audit_output audit_status
+  if audit_output="$(bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" "$@")"; then
+    printf '%s\n' "${audit_output}"
+  else
+    audit_status=$?
+    printf '%s\n' "${audit_output}" >&2
+    return "${audit_status}"
+  fi
+}
+
+bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard toolchain "${PROOF_DIR}"
+bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" theorem-inventory --self-test
+bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" generated-axioms --self-test
+
+(
+  cd "${PROOF_DIR}"
+  lake build
+)
+bash "${ROOT_DIR}/.github/scripts/check_lean_claim_surface.sh"
+static_audit_output="$(run_audit \
+  theorem-inventory \
+  --static "${PROOF_DIR}" "${STATIC_CLAIM_SNAPSHOT}" 709 364 248 97)"
+printf '%s\n' "${static_audit_output}"
+printf '%s\n' "${static_audit_output}" | bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard markers static
+bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" theorem-inventory \
+  --example-types "${PROOF_DIR}" "${EXAMPLE_CLAIM_SNAPSHOT}" 36
+
+source "${ROOT_DIR}/.github/scripts/repo_rustflags.sh"
+hibana_enable_repo_tests_cfg
+mkdir -p "$(dirname "${GENERATED}")"
+rm -f "${GENERATED}" "${RUNTIME_GENERATED}" "${PUBLIC_OPERATION_GENERATED}" "${CAUSAL_GENERATED}" "${PARALLEL_GENERATED}"
+CARGO_BUILD_JOBS=1 \
+  RUST_TEST_THREADS=1 \
+cargo +"${TOOLCHAIN}" test -p hibana --lib \
+    global::event_program_cursor_tests::lean_proof_export::export_production_trace_for_lean \
+    -- --ignored --exact
+bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${GENERATED}" "production trace"
+CARGO_BUILD_JOBS=1 \
+  RUST_TEST_THREADS=1 \
+  cargo +"${TOOLCHAIN}" test -p hibana --lib \
+    rendezvous::core::storage_layout::capacity::tests::formal_certificate_export::export_runtime_certificates_for_lean \
+    -- --ignored --exact
+bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${RUNTIME_GENERATED}" "runtime"
+CARGO_BUILD_JOBS=1 \
+  RUST_TEST_THREADS=1 \
+  cargo +"${TOOLCHAIN}" test -p hibana --lib \
+    endpoint::kernel::core::public_operation::tests::export_public_operation_kernel_for_lean \
+    -- --ignored --exact
+bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${PUBLIC_OPERATION_GENERATED}" "public-operation"
+CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib \
+  global::const_dsl::receive_lane_causality::tests::export_causal_flow_for_lean \
+  -- --ignored --exact
+bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${CAUSAL_GENERATED}" "causal"
+CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib \
+  global::event_program_cursor_tests::lean_proof_export::parallel_certificate::export_parallel_dependencies_for_lean \
+  -- --ignored --exact
+bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${PARALLEL_GENERATED}" "parallel"
+parallel_output="$(run_audit generated-axioms \
+  --kernel "${PARALLEL_GENERATED}" "${PROOF_DIR}" \
+  "${PROOF_DIR}/parallel-generated-claim-surface.txt" 182)"
+printf '%s\n' "${parallel_output}"
+printf '%s\n' "${parallel_output}" | bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard markers parallel
+causal_output="$(run_audit generated-axioms \
+  --kernel "${CAUSAL_GENERATED}" "${PROOF_DIR}" \
+  "${PROOF_DIR}/causal-generated-claim-surface.txt" 36)"
+printf '%s\n' "${causal_output}"
+printf '%s\n' "${causal_output}" | bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard markers causal
+lean_output="$(run_audit generated-axioms \
+  "${GENERATED}" "${PROOF_DIR}" "${GENERATED_CLAIM_SNAPSHOT}")"
+printf '%s\n' "${lean_output}"
+printf '%s\n' "${lean_output}" | bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard markers generated
+runtime_lean_output="$(run_audit generated-axioms \
+  --kernel "${RUNTIME_GENERATED}" "${PROOF_DIR}" "${RUNTIME_CLAIM_SNAPSHOT}" 16)"
+printf '%s\n' "${runtime_lean_output}"
+printf '%s\n' "${runtime_lean_output}" | bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard markers runtime
+public_operation_lean_output="$(run_audit \
+  generated-axioms \
+  --kernel "${PUBLIC_OPERATION_GENERATED}" "${PROOF_DIR}" \
+  "${PUBLIC_OPERATION_CLAIM_SNAPSHOT}" 2)"
+printf '%s\n' "${public_operation_lean_output}"
+printf '%s\n' "${public_operation_lean_output}" | bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard markers public-operation
+
+echo "Lean proof gate passed toolchain=v4.30.0 traces=14 frames=66 projections=22 exact-descriptors=22 progress=4 projectability=8 distributed-progress=8 verified-protocols=8 static-theorems=709 parallel-descriptors=10 parallel-correspondence=182 causal-correspondence=36 anonymous-regressions=36 generated-theorems=506 generated-obligations=458 production-transitions=7 production-operations=6 production-owners=8 verified-codecs=3 verified-family=8 static-deployments=8 deployment-rejections=3 capabilities=6 runtime-regions=4 atomic-failures=4 public-operation-edges=16 public-operation-transitions=144 native-regressions=32"

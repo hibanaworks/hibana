@@ -1,0 +1,384 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "${ROOT_DIR}"
+
+MIRI_TOOLCHAIN="$(< .github/miri-toolchain)"
+MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_TIMEOUT_SECONDS:-180}"
+readonly MIRI_TIMEOUT_GRACE_SECONDS=10
+export MIRIFLAGS="-Zmiri-strict-provenance"
+
+if [[ ! "${MIRI_TOOLCHAIN}" =~ ^nightly-[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+  echo "miri gate invalid pinned toolchain: ${MIRI_TOOLCHAIN}" >&2
+  exit 1
+fi
+
+source "${ROOT_DIR}/.github/scripts/repo_rustflags.sh"
+hibana_enable_repo_tests_cfg
+
+if ! rustup run "${MIRI_TOOLCHAIN}" cargo miri --version >/dev/null 2>&1; then
+  echo "miri gate missing pinned toolchain/component: ${MIRI_TOOLCHAIN}" >&2
+  echo "install with: rustup toolchain install ${MIRI_TOOLCHAIN} --profile minimal --component miri --component rust-src" >&2
+  exit 1
+fi
+if ! rustup component list --toolchain "${MIRI_TOOLCHAIN}" \
+  | grep -Eq '^rust-src.*\(installed\)$'; then
+  echo "miri gate missing rust-src for pinned toolchain: ${MIRI_TOOLCHAIN}" >&2
+  exit 1
+fi
+if ! command -v timeout >/dev/null 2>&1; then
+  echo "miri gate requires GNU timeout" >&2
+  exit 1
+fi
+
+miri_totals="$(mktemp "${TMPDIR:-/tmp}/hibana-miri-totals.XXXXXX")"
+trap 'rm -f "$miri_totals"' EXIT
+run_miri_test() {
+  local label="$1"
+  shift
+  local output
+  output="$(mktemp "${TMPDIR:-/tmp}/hibana-miri.XXXXXX")"
+  if ! timeout --kill-after="${MIRI_TIMEOUT_GRACE_SECONDS}s" "${MIRI_TIMEOUT_SECONDS}s" \
+    cargo +"${MIRI_TOOLCHAIN}" miri test "$@" >"${output}" 2>&1; then
+    cat "${output}" >&2
+    rm -f "${output}"
+    echo "miri gate failed: ${label}" >&2
+    return 1
+  fi
+  cat "${output}"
+  if ! TOOLCHAIN="${MIRI_TOOLCHAIN}" bash "${ROOT_DIR}/.github/scripts/lib/test_result_tool.sh" miri "${output}" "${label}" "${miri_totals}" 0; then
+    rm -f "${output}"
+    return 1
+  fi
+  rm -f "${output}"
+}
+
+run_miri_test \
+  public-runtime-owner \
+  -p hibana \
+  --test miri_runtime_owner
+
+run_miri_test \
+  transport-requeue-owner \
+  -p hibana \
+  --lib \
+  transport_requeue_callback_reentry_revalidates_generation
+
+run_miri_test \
+  receive-frame-receipt-owner \
+  -p hibana \
+  --lib \
+  rendezvous::recv_frame_receipt::tests
+
+run_miri_test \
+  public-operation-kernel \
+  -p hibana \
+  --lib \
+  endpoint::kernel::core::public_operation::tests
+
+run_miri_test \
+  tap-ring-owner \
+  -p hibana \
+  --lib \
+  observe::core::tests
+
+run_miri_test \
+  descriptor-derived-route-history-owner \
+  -p hibana \
+  --lib \
+  endpoint::kernel::decision_state::tests::route_arm_history_accepts_257_descriptor_relations
+
+run_miri_test \
+  descriptor-domain-offer-frontier-owner \
+  -p hibana \
+  --lib \
+  endpoint::kernel::frontier::entry_sets::tests::observed_entry_set_streams_the_full_lane_domain
+
+run_miri_test \
+  exact-frontier-cursor-position-owner \
+  -p hibana \
+  --lib \
+  endpoint::kernel::frontier::visit_set::tests
+
+run_miri_test \
+  constant-state-frontier-selection-owner \
+  -p hibana \
+  --lib \
+  endpoint::kernel::frontier::progress_selection::tests
+
+run_miri_test \
+  root-frontier-packed-pool-owner \
+  -p hibana \
+  --lib \
+  endpoint::kernel::frontier_state::tests
+
+run_miri_test \
+  frontier-scratch-workspace-owner \
+  -p hibana \
+  --lib \
+  endpoint::kernel::frontier::scratch::tests
+
+MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_PROOF_EXPORT_TIMEOUT_SECONDS:-360}" \
+MIRIFLAGS="${MIRIFLAGS} -Zmiri-disable-isolation" run_miri_test \
+  production-proof-artifact-exporter \
+  -p hibana \
+  --lib \
+  global::event_program_cursor_tests::lean_proof_export::export_production_trace_for_lean \
+  -- \
+  --ignored
+
+run_miri_test \
+  rolled-output-pipeline-owner \
+  -p hibana \
+  --lib \
+  global::event_program_cursor_tests::production_cursor_pipelines_rolled_send_before_remote_receive
+
+run_miri_test \
+  immutable-event-admission \
+  -p hibana \
+  --lib \
+  global::event_program_cursor_tests::event_admission_
+
+run_miri_test \
+  endpoint-waiter-owner \
+  -p hibana \
+  --lib \
+  rendezvous::core::endpoint_waiter::tests
+
+run_miri_test \
+  affine-send-owner \
+  -p hibana \
+  --test affine_progression
+
+run_miri_test \
+  direct-recv-owner \
+  -p hibana \
+  --test cursor_send_recv_direct_recv
+
+run_miri_test \
+  forgotten-recv-owner \
+  -p hibana \
+  --test cursor_send_recv_session_forget_recv
+
+run_miri_test \
+  forgotten-send-owner \
+  -p hibana \
+  --test cursor_send_recv_session_forget_send
+
+run_miri_test \
+  endpoint-drop-wake-owner \
+  -p hibana \
+  --test cursor_send_recv_session_drop_wake
+
+run_miri_test \
+  session-fault-cancel-owner \
+  -p hibana \
+  --test cursor_send_recv_session_fault_cancel
+
+run_miri_test \
+  local-action-owner \
+  -p hibana \
+  --test local_action
+
+run_miri_test \
+  transport-contract-owner \
+  -p hibana \
+  --lib \
+  transport::tests::transport_contract_
+
+run_miri_test \
+  rolled-causal-exit-owner \
+  -p hibana \
+  --test cursor_send_recv_send_recv \
+  rolled_same_label_recv_requires_causal_exit_handoff
+
+run_miri_test \
+  intrinsic-route-in-band-owner \
+  -p hibana \
+  --test cursor_send_recv_send_recv \
+  intrinsic_route_passive_same_label_recv_commits_by_frame_evidence
+
+run_miri_test \
+  rolled-resolved-route-reentry-owner \
+  -p hibana \
+  --test rolled_resolver_reentry \
+  rolled_resolved_route_reenters_left_right_left_rows
+
+run_miri_test \
+  rolled-buffered-route-order-owner \
+  -p hibana \
+  --test rolled_resolver_reentry \
+  rolled_resolved_route_preserves_buffered_decision_order
+
+run_miri_test \
+  rolled-same-label-schema-reentry-owner \
+  -p hibana \
+  --test rolled_resolver_reentry \
+  rolled_resolved_same_label_reenters_with_selected_schema
+
+run_miri_test \
+  rolled-nested-resolver-reentry-owner \
+  -p hibana \
+  --test rolled_resolver_reentry \
+  rolled_nested_resolved_route_reenters_asymmetric_paths
+
+run_miri_test \
+  rolled-current-frontier-reuse-owner \
+  -p hibana \
+  --test rolled_resolver_reentry \
+  rolled_nested_resolved_route_reenters_passive_offer_asymmetric_paths
+
+MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \
+  rolled-elastic-route-path-color-owner \
+  -p hibana \
+  --test rolled_resolver_reentry \
+  rolled_deep_right_spine_passive_offer_reenters_across_all_depths
+
+run_miri_test \
+  session-family-isolation \
+  -p hibana \
+  --test cursor_send_recv_send_recv \
+  session_template_instances_interleave_and_fault_independently
+
+run_miri_test \
+  session-waiter-isolation \
+  -p hibana \
+  --test cursor_send_recv_send_recv \
+  same_lane_session_waiters_are_isolated
+
+run_miri_test \
+  route-branch-send-owner \
+  -p hibana \
+  --test route_branch_send
+
+run_miri_test \
+  resolved-send-owner \
+  -p hibana \
+  --test send_route_authority
+
+run_miri_test \
+  resolver-identity-owner \
+  -p hibana \
+  --test dynamic_route_scope_resolver \
+  same_scope_sites_with_distinct_resolver_ids_keep_distinct_authority
+
+run_miri_test \
+  resolver-full-id-domain-owner \
+  -p hibana \
+  --test dynamic_route_scope_resolver \
+  maximum_resolver_id_runs_end_to_end
+
+run_miri_test \
+  resolver-reject-cancellation-owner \
+  -p hibana \
+  --test dynamic_route_scope_resolver \
+  resolver_reject_does_not_encode_or_stage_send_payload
+
+run_miri_test \
+  dynamic-membership-seal-owner \
+  -p hibana \
+  --test dynamic_route_scope_resolver \
+  dynamic_resolution_seals_runtime_local_membership_before_evaluation
+
+run_miri_test \
+  offer-branch-owner \
+  -p hibana \
+  --test offer_branch_recv_evidence
+
+run_miri_test \
+  resident-sidecar-owner \
+  -p hibana \
+  --lib \
+  storage_layout::capacity::tests
+
+run_miri_test \
+  resident-descriptor-validation \
+  -p hibana \
+  --lib \
+  global::role_program::image_impl::tests::resident_
+
+run_miri_test \
+  descriptor-lane-byte-view-owner \
+  -p hibana \
+  --lib \
+  global::role_program::tests::descriptor_lane_byte_view_remains_byte_aligned_and_covers_lane_255
+
+run_miri_test \
+  compiled-program-descriptor-validation \
+  -p hibana \
+  --lib \
+  global::compiled::images::image::route_resolvers::tests::compiled_program_descriptor_rejects_
+
+run_miri_test \
+  compiled-program-atom-validation \
+  -p hibana \
+  --lib \
+  global::compiled::images::image::program_ref::tests::compiled_program_atom_descriptor_
+
+run_miri_test \
+  compiled-program-atom-decoder-boundaries \
+  -p hibana \
+  --lib \
+  global::compiled::images::image::program_ref::tests::compiled_program_atom_decoder_rejects_exact_invalid_boundaries
+
+run_miri_test \
+  compiled-program-atom-lookup \
+  -p hibana \
+  --lib \
+  global::compiled::images::image::program_ref::tests::compiled_program_atom_lookup_is_exact_for_dense_rows
+
+run_miri_test \
+  compiled-program-image-identity \
+  -p hibana \
+  --lib \
+  global::compiled::images::image::program_ref::tests::compiled_program_image_identity_is_exact_over_facts_columns_and_blob
+
+MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \
+  rolled-route-visit-ownership \
+  -p hibana \
+  --test security_report_regressions \
+  rolled_routes::
+
+MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \
+  elastic-roll-wire-ownership \
+  -p hibana \
+  --test security_report_regressions \
+  reentry_colors::
+
+MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \
+  nested-send-continuation-ownership \
+  -p hibana \
+  --test security_report_regressions \
+  send_continuations::
+
+run_miri_test \
+  nested-controller-offer-ownership \
+  -p hibana \
+  --test nested_resolver_self_continuations
+
+MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \
+  nested-input-visit-ownership \
+  -p hibana \
+  --test visible_route_reentry \
+  nested_input_roll_
+
+MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \
+  shared-query-tail-reentry \
+  -p hibana \
+  --test shared_query_tail_reentry \
+  switching_query_source_after_parallel_release_keeps_the_shared_reply_live
+
+MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \
+  completed-body-suffix-rejection \
+  -p hibana \
+  --test shared_query_tail_reentry \
+  a_completed_reply_cannot_be_reused_without_receiving_a_fresh_query
+
+run_miri_test \
+  program-image-storage-validation \
+  -p hibana \
+  --lib \
+  global::compiled::images::image::program_ref::tests::program_image_
+
+TOOLCHAIN="${MIRI_TOOLCHAIN}" bash "${ROOT_DIR}/.github/scripts/lib/test_result_tool.sh" miri-total "${MIRI_TOOLCHAIN}" "${miri_totals}"

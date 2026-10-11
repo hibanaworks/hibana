@@ -1,0 +1,3 @@
+error: no test target named `semantic_surface` in `hibana` package
+help: available test in `hibana-repo-tests` package:
+    semantic_surface

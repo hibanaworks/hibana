@@ -1,0 +1,41 @@
+{
+  "baseline": "ff6d167ed23f2f566d16affdeedd3b2ca8569cc2",
+  "started_utc": "2026-10-03T00:51:52.429589+00:00",
+  "source_sha256_before": {
+    "src/global/role_program/image_impl/projection.rs": "f2aeb2e83bbb945f32c193ce306b5936d45ae42380dabc86b54d2849c9d6b1f3",
+    "src/global/role_program/image_impl/blob_image.rs": "2d2b158235a5f5fa288791290b5f490f8107e880d92c615bdd469e2dce9d910f",
+    "src/global/role_program/image_impl/projection/dependency.rs": "e8978881a4c2b1ce06b9d5a9c762b2b28ff62847970155eb15667f6b107253a2",
+    "src/global/const_dsl/eff_list.rs": "19ec1efeab3953aaed72c9c155c1f9713d5fe7047357ea431369f883264e1f63",
+    "src/global/const_dsl/source_arena.rs": "89bed3911d62488a96c9edab41668e74c1f90d04d9a6bf93becdf7a5f3b58333",
+    "src/global/typestate/facts.rs": "3e2ce9349e3bb8979fef3d73a411b255f939b92e2de68e0af2f512d397efcc67"
+  },
+  "production_edit_applied": false,
+  "proof_runs": [
+    {
+      "name": "lean",
+      "command": [
+        "/workspace/scratch/0915e8fbff81/tools/lean/lean-4.30.0-linux/bin/lean",
+        "/workspace/scratch/0915e8fbff81/artifacts/projection-conflict-reuse/ConflictReuse.lean"
+      ],
+      "exit_code": 0,
+      "log_sha256": "33d4a2d94cbba537c806a0bc9160f16684cae31d33c46b655db1d9e532d0cd74"
+    },
+    {
+      "name": "z3",
+      "command": [
+        "/tmp/hibana-quic-proof-venv/bin/python",
+        "/workspace/scratch/0915e8fbff81/artifacts/projection-conflict-reuse/check_conflict_reuse.py"
+      ],
+      "exit_code": 0,
+      "log_sha256": "22e95ce598df5a723ea88066ed26e5ab2a913e23a3a30f060ba2d402d4e28d1b"
+    }
+  ],
+  "gate": "PASS before production edit",
+  "completed_utc": "2026-10-03T00:51:52.718412+00:00",
+  "proof_sha256": {
+    "ConflictReuse.lean": "f6877d5723a7982bb54629930e0a4952d1caa2dd91a0a11a1fd587d8960fc147",
+    "check_conflict_reuse.py": "1e1547c19c083aaf91d45b796e0b1da05c84ddd255a95a891eb198b886280727",
+    "SOURCE_BRIDGE.md": "80e02da98287afc8e568c479e1d056f4a31b9a7e34998a1b0d8244f9b64ce358",
+    "run_pre_edit_gate.py": "e1bb7d231675f385453f0965c88309fefe0bf3e52214c02c532e740b47199bcf"
+  }
+}

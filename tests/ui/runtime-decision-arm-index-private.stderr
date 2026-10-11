@@ -1,0 +1,10 @@
+error[E0624]: method `index` is private
+ --> tests/ui/runtime-decision-arm-index-private.rs:4:31
+  |
+4 |     let _ = DecisionArm::Left.index();
+  |                               ^^^^^ private method
+  |
+ ::: src/session/cluster/core/dynamic_resolvers.rs
+  |
+  |     pub(crate) const fn index(self) -> u8 {
+  |     ------------------------------------- private method defined here

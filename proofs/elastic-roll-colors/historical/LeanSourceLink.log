@@ -1,0 +1,27 @@
+PASS merged HEAD a6339772d4bf2c905f491e0284d3bef36e79bb6f
+Lean (version 4.30.0, x86_64-unknown-linux-gnu, commit d024af099ca4bf2c86f649261ebf59565dc8c622, Release)
+PASS pinned source equals compiled-donor source proofs/lean/Hibana/Commit.lean 2171e9f8d53b6a4373fa757e5b8a60b5d5d6416828186be7e30441ccd500bf78
+REUSED_OLEAN hibana-external-rolled-route-verify/proofs/lean/.lake/build/lib/lean/Hibana/Commit.olean 841780454abb7fe47abb98e9b92fb986014b58d8594b0a7254653450f4514c18
+PASS pinned source equals compiled-donor source proofs/lean/Hibana/EventGraph.lean c4bda323fdc94af0317fae94cff816685946d8f2ff7a7d5217a5c6ac09e82289
+REUSED_OLEAN hibana-external-rolled-route-verify/proofs/lean/.lake/build/lib/lean/Hibana/EventGraph.olean a9eec6c4ca208f17aff91e2710d4f6ef24f92f0e9352ea9ea7cd3e8645ca3727
+PASS pinned source equals compiled-donor source proofs/lean/Hibana/Generation.lean 05f6dc0fdea785616652ec57956cdfb646a76e609c4c127213295fb8f1d5a656
+REUSED_OLEAN hibana-external-rolled-route-verify/proofs/lean/.lake/build/lib/lean/Hibana/Generation.olean f6c87b3f7c7d7c49da476776a2eceaf4633d3382adc98e7bb0b109ea1e447804
+PASS pinned source equals compiled-donor source proofs/lean/Hibana/GlobalSemantics.lean be5c78505369e99e52cbbc9562622936d8e418a075ec19dd9ef9c8f512382337
+REUSED_OLEAN hibana-external-rolled-route-verify/proofs/lean/.lake/build/lib/lean/Hibana/GlobalSemantics.olean acec6378edafbccf3942c16a5fb6eaffa33523c1183b5772cec27556a8681e2a
+PASS pinned source equals compiled-donor source proofs/lean/Hibana/GlobalSyntax.lean 4ffee9eb9d987bfd11a20388d611c5008e0b991067bff30f0d7b756de3c25338
+REUSED_OLEAN hibana-external-rolled-route-verify/proofs/lean/.lake/build/lib/lean/Hibana/GlobalSyntax.olean 46e47d346bea7e3dee453de3112b7d13be53e3352f0902b496bd73a5fcf89494
+PASS pinned source equals compiled-donor source proofs/lean/Hibana/OperationAdmission.lean c0790656bfdfd7e9c55bb0f2bfee7e496bf98a9f07ca0febee06bbbdd907d60c
+REUSED_OLEAN hibana-external-rolled-route-verify/proofs/lean/.lake/build/lib/lean/Hibana/OperationAdmission.olean 4ef26b7de9a30e5cadca077faf460ebd4be72466c4c25bde269191041ba91aff
+PASS pinned source equals compiled-donor source proofs/lean/Hibana/Syntax.lean 4604c81cbbcffbbbe5113a81c1e2272333e57dc9e535555f14b05160a23ce419
+REUSED_OLEAN hibana-external-rolled-route-verify/proofs/lean/.lake/build/lib/lean/Hibana/Syntax.olean e3e9ee40008f0706137986a27380e7293324f74a4b45ffc13e6dfba0c63a2362
+PASS tracked source unchanged hibana-rolled-route-perf-integration/src/g/source.rs b8e10044c47a12722729a07fcf9aa9383fd3c1c0e70d3220dfed44b100b4704b
+PASS tracked source unchanged hibana-rolled-route-perf-integration/src/global/const_dsl/allocation/frame_labels/roll.rs b9671aec8199e4722d97ea5e41e98eda7df41540d06224efa7efb0dec35814d6
+PASS tracked source unchanged hibana-rolled-route-perf-integration/src/global/const_dsl/scope_ranges.rs 2861c2211eb75d94abb9c596407f397741ea9b9282addc272ea9b73cfc1ef41a
+PASS tracked source unchanged hibana-rolled-route-perf-integration/src/global/const_dsl/endpoint_selectors.rs 7d52066eae327eec0f640d0ab444cf1960ab76cf8a31b14efb859df7227bb85e
+PASS tracked source unchanged hibana-rolled-route-perf-integration/src/endpoint/kernel/offer/select_observed.rs 815969efb680df3fc02d59d7a05c8e8f8347805c43648a6dc6aeaac5381bc8b2
+EVIDENCE artifacts/current-offer-source-diagnostic/run.log ab86bb0997e1b2fa78dcf45d341e77b7674134cdafd6138cc3f238b9dba8049f
+EVIDENCE artifacts/external-stream-diagnostic/runtime/offer_vs_recv.rs d99bcf17e66be6d001072e64a78713e98371e03659f0a4e95938907820c8ba15
+EVIDENCE artifacts/external-stream-diagnostic/formal/MinimalDirect.lean a9295964ca3405a0d283ba36c4cca300605cb13a8e2c21d379af7008bed91d26
+EVIDENCE artifacts/rolled-route-perf-integration/proofs/DirectTraceExport.lean ae894039f53aa4798c2985e897ea3a0e11cc7b3146553d8b7af87b0a2f61c710
+PASS exact MinimalDirect.lean source and its three theorems retained unchanged at start of LeanMinimalTrace.lean
+LIMIT: source identity authorizes cache reuse but does not independently prove how the preexisting .olean files were produced; prior pinned build evidence is recorded in artifacts/rolled-route-perf-integration/proofs/source-correspondence.json

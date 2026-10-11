@@ -1,0 +1,64 @@
+{
+  "baseline": "a6339772d4bf2c905f491e0284d3bef36e79bb6f",
+  "started_utc": "2026-10-02T23:45:32.522699+00:00",
+  "source_sha256_before": {
+    "src/global/const_dsl/event_relations.rs": "f2a761b8bb87d0c093b24589d84d87dbace91b904101ab9ee214501c34b3766c",
+    "src/global/const_dsl/allocation/frame_labels/roll.rs": "b9671aec8199e4722d97ea5e41e98eda7df41540d06224efa7efb0dec35814d6",
+    "src/global/const_dsl/scope_ranges/route.rs": "c933570706919c2e866285da498100b81d205f077ceda7061152870c4d1c16a3",
+    "src/global/const_dsl/eff_list.rs": "19ec1efeab3953aaed72c9c155c1f9713d5fe7047357ea431369f883264e1f63"
+  },
+  "limits_increased": false,
+  "production_edits": false,
+  "lean-relation": {
+    "command": [
+      "/workspace/scratch/0915e8fbff81/tools/lean/lean-4.30.0-linux/bin/lean",
+      "/workspace/scratch/0915e8fbff81/hibana-participant-mask/proofs/route-path-refinement/RoutePathRefinement.lean"
+    ],
+    "exit_code": 0,
+    "elapsed_seconds": 0.6690373890014598,
+    "log_sha256": "3ab1d53fa0e3414a656a1a172178fe4a08f2f32c59e1d080c52dfa27b6e660fa"
+  },
+  "lean-cardinality": {
+    "command": [
+      "/workspace/scratch/0915e8fbff81/tools/lean/lean-4.30.0-linux/bin/lean",
+      "/workspace/scratch/0915e8fbff81/hibana-participant-mask/proofs/route-path-refinement/ProcessedCardinality.lean"
+    ],
+    "exit_code": 0,
+    "elapsed_seconds": 0.4151527840003837,
+    "log_sha256": "78c87aa7fc37aae09c517d984c940c070a1d4427a29bd9913a2872624f520d65"
+  },
+  "z3-unbounded": {
+    "command": [
+      "/tmp/hibana-quic-proof-venv/bin/python",
+      "-u",
+      "/workspace/scratch/0915e8fbff81/hibana-participant-mask/proofs/route-path-refinement/prove_unbounded_loop.py"
+    ],
+    "exit_code": 0,
+    "elapsed_seconds": 0.16441307100467384,
+    "log_sha256": "c804899ea605e32f79a1b601d8afb3c9e32d1a05b3ab62b7c850c2f9653f0c3c"
+  },
+  "z3-concrete": {
+    "command": [
+      "/tmp/hibana-quic-proof-venv/bin/python",
+      "-u",
+      "/workspace/scratch/0915e8fbff81/hibana-participant-mask/proofs/route-path-refinement/check_route_path_refinement.py"
+    ],
+    "exit_code": 0,
+    "elapsed_seconds": 0.5152442359976703,
+    "log_sha256": "756796c42bf63d2a204f9d93e0134b9264664653b8bd92d6f65b24ba146bf6d2"
+  },
+  "source_sha256_after": {
+    "src/global/const_dsl/event_relations.rs": "f2a761b8bb87d0c093b24589d84d87dbace91b904101ab9ee214501c34b3766c",
+    "src/global/const_dsl/allocation/frame_labels/roll.rs": "b9671aec8199e4722d97ea5e41e98eda7df41540d06224efa7efb0dec35814d6",
+    "src/global/const_dsl/scope_ranges/route.rs": "c933570706919c2e866285da498100b81d205f077ceda7061152870c4d1c16a3",
+    "src/global/const_dsl/eff_list.rs": "19ec1efeab3953aaed72c9c155c1f9713d5fe7047357ea431369f883264e1f63"
+  },
+  "proof_sha256": {
+    "ProcessedCardinality.lean": "10aab2f76f946362a0641a8a12884b50b556ae002a048ae385fe068f2de9c581",
+    "RoutePathRefinement.lean": "b682e29329f4cf19287e5a11c3a9870d0df686ce691c9826f9c9ddd29ad11eb8",
+    "run_pre_edit_gate.py": "c83185d7c684d4cd9fea4acb235fc893949899cee23345c0db1b778aac00a897",
+    "prove_unbounded_loop.py": "4fa125d0ad16ef8d904ac329ea9ce19832cf76623bc584270150f73a435f04ec",
+    "check_route_path_refinement.py": "98f4438d6d86852d27331a9c0ca0530b14116e8c7b40fa5e14dbd3c3db3bebbb"
+  },
+  "completed_utc": "2026-10-02T23:45:34.287687+00:00"
+}

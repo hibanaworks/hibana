@@ -1,0 +1,16 @@
+{
+  "stage2": {
+    "rustc": 7458672600737419911,
+    "features": "[\"default\"]",
+    "profile": 1592826742717036681,
+    "rustflags": [],
+    "compile_kind": 0
+  },
+  "stage3": {
+    "rustc": 7458672600737419911,
+    "features": "[\"default\"]",
+    "profile": 1592826742717036681,
+    "rustflags": [],
+    "compile_kind": 0
+  }
+}

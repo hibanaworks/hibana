@@ -1,0 +1,23 @@
+   Compiling hibana v0.9.6 (/workspace/scratch/0915e8fbff81/hibana-roll-color-fix)
+    Finished `test` profile [unoptimized] target(s) in 4.46s
+     Running tests/security_report_regressions.rs (/workspace/scratch/0915e8fbff81/hibana-roll-color-target/debug/deps/security_report_regressions-c25d02f3784cb717)
+
+running 14 tests
+test a_conforming_controller_cannot_send_opposite_arms_to_two_peers ... ok
+test fabricated_carrier_provenance_is_not_a_byzantine_agreement_guarantee ... ok
+test parallel_arms_remain_independent_after_the_sequential_input ... ok
+test reentry_colors::completed_elastic_roll_and_current_route_have_unambiguous_wire_identity ... ok
+test reentry_colors::elastic_continuation_offer_preserves_pending_and_dropped_preview ... ok
+test reentry_colors::genuine_old_elastic_reentry_preserves_the_current_continuation ... ok
+test reentry_colors::queued_current_packet_cannot_be_consumed_as_an_old_logical_type ... ok
+test rolled_routes::nested_three_result_route_reenters_after_a_fresh_request ... ok
+test rolled_routes::phase_packet_cannot_reenter_a_previous_unchosen_suffix ... ok
+test rolled_routes::rolled_adjacent_offer_cannot_skip_the_first_route ... ok
+test rolled_routes::rolled_adjacent_offer_rejects_wrong_source_lane_or_frame_color ... ok
+test rolled_routes::rolled_adjacent_offers_accept_each_sibling_arm_without_an_extra_ack ... ok
+test sequential_receive_cannot_select_the_later_lane_first ... ok
+test sequential_send_cannot_select_the_later_lane_first ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+error: no library targets found in package `hibana-repo-tests`

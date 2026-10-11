@@ -1,0 +1,38 @@
+{
+  "completed_utc": "2026-10-03T01:16:05.354043+00:00",
+  "checks": [
+    {
+      "command": [
+        "bash",
+        ".github/scripts/check_surface_hygiene.sh"
+      ],
+      "returncode": 0,
+      "output": "surface test alias hygiene check passed\nprojection surface hygiene check passed\nendpoint surface owner check passed\nsurface hygiene check passed\n"
+    },
+    {
+      "command": [
+        "bash",
+        ".github/scripts/check_source_file_budget.sh"
+      ],
+      "returncode": 0,
+      "output": "source file budget check passed\n"
+    },
+    {
+      "command": [
+        "bash",
+        ".github/scripts/check_no_underscore_discards.sh"
+      ],
+      "returncode": 0,
+      "output": "no underscore discard check passed\n"
+    },
+    {
+      "command": [
+        "git",
+        "diff",
+        "--check"
+      ],
+      "returncode": 0,
+      "output": ""
+    }
+  ]
+}

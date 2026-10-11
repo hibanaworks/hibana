@@ -1,0 +1,24 @@
+{
+  "base": "a6339772d4bf2c905f491e0284d3bef36e79bb6f",
+  "recorded_utc": "2026-10-03T00:19:51.737532+00:00",
+  "scope": "Implementation hashes record packaging-time source identity only; they do not establish semantic refinement. Qualified compiler-cost hashes remain separately exact.",
+  "lean_dependencies": {
+    "proofs/lean/Hibana/Syntax.lean": "4604c81cbbcffbbbe5113a81c1e2272333e57dc9e535555f14b05160a23ce419",
+    "proofs/lean/Hibana/GlobalSyntax.lean": "4ffee9eb9d987bfd11a20388d611c5008e0b991067bff30f0d7b756de3c25338",
+    "proofs/lean/Hibana/EventGraph.lean": "c4bda323fdc94af0317fae94cff816685946d8f2ff7a7d5217a5c6ac09e82289",
+    "proofs/lean/Hibana/Commit.lean": "2171e9f8d53b6a4373fa757e5b8a60b5d5d6416828186be7e30441ccd500bf78",
+    "proofs/lean/Hibana/OperationAdmission.lean": "c0790656bfdfd7e9c55bb0f2bfee7e496bf98a9f07ca0febee06bbbdd907d60c",
+    "proofs/lean/Hibana/Generation.lean": "05f6dc0fdea785616652ec57956cdfb646a76e609c4c127213295fb8f1d5a656",
+    "proofs/lean/Hibana/GlobalSemantics.lean": "be5c78505369e99e52cbbc9562622936d8e418a075ec19dd9ef9c8f512382337"
+  },
+  "implementation_snapshot": {
+    "src/g/source.rs": "79279da8bd3904350757cc01ac039c6d6fc88bacbbcc2e61bb19abe40ab26aae",
+    "src/global/const_dsl.rs": "49c91488074eb56d40b45d87942811308a217a9da05c06069af66d0359a0aa8d",
+    "src/global/const_dsl/allocation.rs": "225bf54984701333a568986d076c42df9e55d3d8f4a54f1b0712f2bb7dcbca38",
+    "src/global/const_dsl/allocation/frame_labels.rs": "219063748f98b22522909c6d083228f1ffddc7bc8701784d858cce2f72f700e2",
+    "src/global/const_dsl/allocation/frame_labels/reentry_domains.rs": "da90ce98dec6fc89b1bfc4e281436aa84be3435e5eaf5031a001b70d771fccf8",
+    "src/global/const_dsl/allocation/frame_labels/reentry_domains/tests.rs": "3eb828ad092d1243cd0b7cc618ab1afb6b3253e4da23acab2bcc4e5d589bc2a9",
+    "tests/security_report_regressions/reentry_colors.rs": "b5fcb9cbac025f4599102e5e143ccaaeacedd8911fcb9d44d90c5af3a2c74453",
+    "tests/security_report_regressions/rolled_routes.rs": "95edc38785ea661de0abc02ff331c4673519ef5541ea8f767a7396a5a8a0de89"
+  }
+}

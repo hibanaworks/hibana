@@ -1,0 +1,348 @@
+causal_case_000 : (((Choreo.send 0 1 0 0).seq
+          ((Choreo.route RouteAuthority.intrinsic (Choreo.send 1 2 0 0) (Choreo.send 1 2 0 0)).seq
+            (Choreo.send 2 1 0 0))).checkReceiveLaneCausality
+      5 &&
+    ((Choreo.send 0 1 0 0).seq
+          ((Choreo.route RouteAuthority.intrinsic (Choreo.send 1 2 0 0) (Choreo.send 1 2 0 0)).seq
+            (Choreo.send 2 1 0 0))).checkRollReceiveLaneCausality
+      5) =
+  true
+causal_case_001 : (((Choreo.send 0 1 0 0).seq
+          ((Choreo.route (RouteAuthority.dynamic 7) (Choreo.send 1 2 0 0) (Choreo.send 3 4 0 0)).seq
+            (Choreo.send 2 1 0 0))).checkReceiveLaneCausality
+      5 &&
+    ((Choreo.send 0 1 0 0).seq
+          ((Choreo.route (RouteAuthority.dynamic 7) (Choreo.send 1 2 0 0) (Choreo.send 3 4 0 0)).seq
+            (Choreo.send 2 1 0 0))).checkRollReceiveLaneCausality
+      5) =
+  false
+causal_case_002 : (((Choreo.send 0 1 0 0).seq
+          (((Choreo.send 1 2 0 0).par (Choreo.send 2 3 0 0)).seq (Choreo.send 3 1 0 0))).checkReceiveLaneCausality
+      5 &&
+    ((Choreo.send 0 1 0 0).seq
+          (((Choreo.send 1 2 0 0).par (Choreo.send 2 3 0 0)).seq (Choreo.send 3 1 0 0))).checkRollReceiveLaneCausality
+      5) =
+  false
+causal_case_003 : (((Choreo.send 0 1 0 0).seq
+          ((Choreo.route RouteAuthority.intrinsic
+                (Choreo.route RouteAuthority.intrinsic (Choreo.send 1 2 0 0) (Choreo.send 1 2 0 0))
+                (Choreo.send 1 2 0 0)).seq
+            (Choreo.send 2 1 0 0))).checkReceiveLaneCausality
+      5 &&
+    ((Choreo.send 0 1 0 0).seq
+          ((Choreo.route RouteAuthority.intrinsic
+                (Choreo.route RouteAuthority.intrinsic (Choreo.send 1 2 0 0) (Choreo.send 1 2 0 0))
+                (Choreo.send 1 2 0 0)).seq
+            (Choreo.send 2 1 0 0))).checkRollReceiveLaneCausality
+      5) =
+  true
+causal_case_004 : ((((Choreo.send 0 1 0 0).seq
+                ((Choreo.route RouteAuthority.intrinsic (Choreo.send 1 2 0 0) (Choreo.send 1 2 0 0)).seq
+                  (Choreo.send 2 1 0 0))).seq
+            (Choreo.send 1 0 0 0)).roll.checkReceiveLaneCausality
+      5 &&
+    (((Choreo.send 0 1 0 0).seq
+                ((Choreo.route RouteAuthority.intrinsic (Choreo.send 1 2 0 0) (Choreo.send 1 2 0 0)).seq
+                  (Choreo.send 2 1 0 0))).seq
+            (Choreo.send 1 0 0 0)).roll.checkRollReceiveLaneCausality
+      5) =
+  true
+causal_case_005 : (((Choreo.send 0 1 0 0).seq
+            ((Choreo.route RouteAuthority.intrinsic (Choreo.send 1 2 0 0) (Choreo.send 1 2 0 0)).seq
+              (Choreo.send 2 1 0 0))).roll.checkReceiveLaneCausality
+      5 &&
+    ((Choreo.send 0 1 0 0).seq
+            ((Choreo.route RouteAuthority.intrinsic (Choreo.send 1 2 0 0) (Choreo.send 1 2 0 0)).seq
+              (Choreo.send 2 1 0 0))).roll.checkRollReceiveLaneCausality
+      5) =
+  false
+causal_case_006 : (((Choreo.send 0 2 0 0).seq
+          ((Choreo.route RouteAuthority.intrinsic (Choreo.send 2 1 0 0) (Choreo.send 2 1 0 0)).seq
+            (Choreo.send 1 2 0 0))).checkReceiveLaneCausality
+      5 &&
+    ((Choreo.send 0 2 0 0).seq
+          ((Choreo.route RouteAuthority.intrinsic (Choreo.send 2 1 0 0) (Choreo.send 2 1 0 0)).seq
+            (Choreo.send 1 2 0 0))).checkRollReceiveLaneCausality
+      5) =
+  true
+causal_case_007 : (((Choreo.send 0 2 0 0).seq
+          ((Choreo.route (RouteAuthority.dynamic 7) (Choreo.send 2 1 0 0) (Choreo.send 3 4 0 0)).seq
+            (Choreo.send 1 2 0 0))).checkReceiveLaneCausality
+      5 &&
+    ((Choreo.send 0 2 0 0).seq
+          ((Choreo.route (RouteAuthority.dynamic 7) (Choreo.send 2 1 0 0) (Choreo.send 3 4 0 0)).seq
+            (Choreo.send 1 2 0 0))).checkRollReceiveLaneCausality
+      5) =
+  false
+causal_case_008 : (((Choreo.send 0 2 0 0).seq
+          (((Choreo.send 2 1 0 0).par (Choreo.send 1 3 0 0)).seq (Choreo.send 3 2 0 0))).checkReceiveLaneCausality
+      5 &&
+    ((Choreo.send 0 2 0 0).seq
+          (((Choreo.send 2 1 0 0).par (Choreo.send 1 3 0 0)).seq (Choreo.send 3 2 0 0))).checkRollReceiveLaneCausality
+      5) =
+  false
+causal_case_009 : (((Choreo.send 0 2 0 0).seq
+          ((Choreo.route RouteAuthority.intrinsic
+                (Choreo.route RouteAuthority.intrinsic (Choreo.send 2 1 0 0) (Choreo.send 2 1 0 0))
+                (Choreo.send 2 1 0 0)).seq
+            (Choreo.send 1 2 0 0))).checkReceiveLaneCausality
+      5 &&
+    ((Choreo.send 0 2 0 0).seq
+          ((Choreo.route RouteAuthority.intrinsic
+                (Choreo.route RouteAuthority.intrinsic (Choreo.send 2 1 0 0) (Choreo.send 2 1 0 0))
+                (Choreo.send 2 1 0 0)).seq
+            (Choreo.send 1 2 0 0))).checkRollReceiveLaneCausality
+      5) =
+  true
+causal_case_010 : ((((Choreo.send 0 2 0 0).seq
+                ((Choreo.route RouteAuthority.intrinsic (Choreo.send 2 1 0 0) (Choreo.send 2 1 0 0)).seq
+                  (Choreo.send 1 2 0 0))).seq
+            (Choreo.send 2 0 0 0)).roll.checkReceiveLaneCausality
+      5 &&
+    (((Choreo.send 0 2 0 0).seq
+                ((Choreo.route RouteAuthority.intrinsic (Choreo.send 2 1 0 0) (Choreo.send 2 1 0 0)).seq
+                  (Choreo.send 1 2 0 0))).seq
+            (Choreo.send 2 0 0 0)).roll.checkRollReceiveLaneCausality
+      5) =
+  true
+causal_case_011 : (((Choreo.send 0 2 0 0).seq
+            ((Choreo.route RouteAuthority.intrinsic (Choreo.send 2 1 0 0) (Choreo.send 2 1 0 0)).seq
+              (Choreo.send 1 2 0 0))).roll.checkReceiveLaneCausality
+      5 &&
+    ((Choreo.send 0 2 0 0).seq
+            ((Choreo.route RouteAuthority.intrinsic (Choreo.send 2 1 0 0) (Choreo.send 2 1 0 0)).seq
+              (Choreo.send 1 2 0 0))).roll.checkRollReceiveLaneCausality
+      5) =
+  false
+causal_case_012 : (((Choreo.send 1 0 0 0).seq
+          ((Choreo.route RouteAuthority.intrinsic (Choreo.send 0 2 0 0) (Choreo.send 0 2 0 0)).seq
+            (Choreo.send 2 0 0 0))).checkReceiveLaneCausality
+      5 &&
+    ((Choreo.send 1 0 0 0).seq
+          ((Choreo.route RouteAuthority.intrinsic (Choreo.send 0 2 0 0) (Choreo.send 0 2 0 0)).seq
+            (Choreo.send 2 0 0 0))).checkRollReceiveLaneCausality
+      5) =
+  true
+causal_case_013 : (((Choreo.send 1 0 0 0).seq
+          ((Choreo.route (RouteAuthority.dynamic 7) (Choreo.send 0 2 0 0) (Choreo.send 3 4 0 0)).seq
+            (Choreo.send 2 0 0 0))).checkReceiveLaneCausality
+      5 &&
+    ((Choreo.send 1 0 0 0).seq
+          ((Choreo.route (RouteAuthority.dynamic 7) (Choreo.send 0 2 0 0) (Choreo.send 3 4 0 0)).seq
+            (Choreo.send 2 0 0 0))).checkRollReceiveLaneCausality
+      5) =
+  false
+causal_case_014 : (((Choreo.send 1 0 0 0).seq
+          (((Choreo.send 0 2 0 0).par (Choreo.send 2 3 0 0)).seq (Choreo.send 3 0 0 0))).checkReceiveLaneCausality
+      5 &&
+    ((Choreo.send 1 0 0 0).seq
+          (((Choreo.send 0 2 0 0).par (Choreo.send 2 3 0 0)).seq (Choreo.send 3 0 0 0))).checkRollReceiveLaneCausality
+      5) =
+  false
+causal_case_015 : (((Choreo.send 1 0 0 0).seq
+          ((Choreo.route RouteAuthority.intrinsic
+                (Choreo.route RouteAuthority.intrinsic (Choreo.send 0 2 0 0) (Choreo.send 0 2 0 0))
+                (Choreo.send 0 2 0 0)).seq
+            (Choreo.send 2 0 0 0))).checkReceiveLaneCausality
+      5 &&
+    ((Choreo.send 1 0 0 0).seq
+          ((Choreo.route RouteAuthority.intrinsic
+                (Choreo.route RouteAuthority.intrinsic (Choreo.send 0 2 0 0) (Choreo.send 0 2 0 0))
+                (Choreo.send 0 2 0 0)).seq
+            (Choreo.send 2 0 0 0))).checkRollReceiveLaneCausality
+      5) =
+  true
+causal_case_016 : ((((Choreo.send 1 0 0 0).seq
+                ((Choreo.route RouteAuthority.intrinsic (Choreo.send 0 2 0 0) (Choreo.send 0 2 0 0)).seq
+                  (Choreo.send 2 0 0 0))).seq
+            (Choreo.send 0 1 0 0)).roll.checkReceiveLaneCausality
+      5 &&
+    (((Choreo.send 1 0 0 0).seq
+                ((Choreo.route RouteAuthority.intrinsic (Choreo.send 0 2 0 0) (Choreo.send 0 2 0 0)).seq
+                  (Choreo.send 2 0 0 0))).seq
+            (Choreo.send 0 1 0 0)).roll.checkRollReceiveLaneCausality
+      5) =
+  true
+causal_case_017 : (((Choreo.send 1 0 0 0).seq
+            ((Choreo.route RouteAuthority.intrinsic (Choreo.send 0 2 0 0) (Choreo.send 0 2 0 0)).seq
+              (Choreo.send 2 0 0 0))).roll.checkReceiveLaneCausality
+      5 &&
+    ((Choreo.send 1 0 0 0).seq
+            ((Choreo.route RouteAuthority.intrinsic (Choreo.send 0 2 0 0) (Choreo.send 0 2 0 0)).seq
+              (Choreo.send 2 0 0 0))).roll.checkRollReceiveLaneCausality
+      5) =
+  false
+causal_case_018 : (((Choreo.send 1 2 0 0).seq
+          ((Choreo.route RouteAuthority.intrinsic (Choreo.send 2 0 0 0) (Choreo.send 2 0 0 0)).seq
+            (Choreo.send 0 2 0 0))).checkReceiveLaneCausality
+      5 &&
+    ((Choreo.send 1 2 0 0).seq
+          ((Choreo.route RouteAuthority.intrinsic (Choreo.send 2 0 0 0) (Choreo.send 2 0 0 0)).seq
+            (Choreo.send 0 2 0 0))).checkRollReceiveLaneCausality
+      5) =
+  true
+causal_case_019 : (((Choreo.send 1 2 0 0).seq
+          ((Choreo.route (RouteAuthority.dynamic 7) (Choreo.send 2 0 0 0) (Choreo.send 3 4 0 0)).seq
+            (Choreo.send 0 2 0 0))).checkReceiveLaneCausality
+      5 &&
+    ((Choreo.send 1 2 0 0).seq
+          ((Choreo.route (RouteAuthority.dynamic 7) (Choreo.send 2 0 0 0) (Choreo.send 3 4 0 0)).seq
+            (Choreo.send 0 2 0 0))).checkRollReceiveLaneCausality
+      5) =
+  false
+causal_case_020 : (((Choreo.send 1 2 0 0).seq
+          (((Choreo.send 2 0 0 0).par (Choreo.send 0 3 0 0)).seq (Choreo.send 3 2 0 0))).checkReceiveLaneCausality
+      5 &&
+    ((Choreo.send 1 2 0 0).seq
+          (((Choreo.send 2 0 0 0).par (Choreo.send 0 3 0 0)).seq (Choreo.send 3 2 0 0))).checkRollReceiveLaneCausality
+      5) =
+  false
+causal_case_021 : (((Choreo.send 1 2 0 0).seq
+          ((Choreo.route RouteAuthority.intrinsic
+                (Choreo.route RouteAuthority.intrinsic (Choreo.send 2 0 0 0) (Choreo.send 2 0 0 0))
+                (Choreo.send 2 0 0 0)).seq
+            (Choreo.send 0 2 0 0))).checkReceiveLaneCausality
+      5 &&
+    ((Choreo.send 1 2 0 0).seq
+          ((Choreo.route RouteAuthority.intrinsic
+                (Choreo.route RouteAuthority.intrinsic (Choreo.send 2 0 0 0) (Choreo.send 2 0 0 0))
+                (Choreo.send 2 0 0 0)).seq
+            (Choreo.send 0 2 0 0))).checkRollReceiveLaneCausality
+      5) =
+  true
+causal_case_022 : ((((Choreo.send 1 2 0 0).seq
+                ((Choreo.route RouteAuthority.intrinsic (Choreo.send 2 0 0 0) (Choreo.send 2 0 0 0)).seq
+                  (Choreo.send 0 2 0 0))).seq
+            (Choreo.send 2 1 0 0)).roll.checkReceiveLaneCausality
+      5 &&
+    (((Choreo.send 1 2 0 0).seq
+                ((Choreo.route RouteAuthority.intrinsic (Choreo.send 2 0 0 0) (Choreo.send 2 0 0 0)).seq
+                  (Choreo.send 0 2 0 0))).seq
+            (Choreo.send 2 1 0 0)).roll.checkRollReceiveLaneCausality
+      5) =
+  true
+causal_case_023 : (((Choreo.send 1 2 0 0).seq
+            ((Choreo.route RouteAuthority.intrinsic (Choreo.send 2 0 0 0) (Choreo.send 2 0 0 0)).seq
+              (Choreo.send 0 2 0 0))).roll.checkReceiveLaneCausality
+      5 &&
+    ((Choreo.send 1 2 0 0).seq
+            ((Choreo.route RouteAuthority.intrinsic (Choreo.send 2 0 0 0) (Choreo.send 2 0 0 0)).seq
+              (Choreo.send 0 2 0 0))).roll.checkRollReceiveLaneCausality
+      5) =
+  false
+causal_case_024 : (((Choreo.send 2 0 0 0).seq
+          ((Choreo.route RouteAuthority.intrinsic (Choreo.send 0 1 0 0) (Choreo.send 0 1 0 0)).seq
+            (Choreo.send 1 0 0 0))).checkReceiveLaneCausality
+      5 &&
+    ((Choreo.send 2 0 0 0).seq
+          ((Choreo.route RouteAuthority.intrinsic (Choreo.send 0 1 0 0) (Choreo.send 0 1 0 0)).seq
+            (Choreo.send 1 0 0 0))).checkRollReceiveLaneCausality
+      5) =
+  true
+causal_case_025 : (((Choreo.send 2 0 0 0).seq
+          ((Choreo.route (RouteAuthority.dynamic 7) (Choreo.send 0 1 0 0) (Choreo.send 3 4 0 0)).seq
+            (Choreo.send 1 0 0 0))).checkReceiveLaneCausality
+      5 &&
+    ((Choreo.send 2 0 0 0).seq
+          ((Choreo.route (RouteAuthority.dynamic 7) (Choreo.send 0 1 0 0) (Choreo.send 3 4 0 0)).seq
+            (Choreo.send 1 0 0 0))).checkRollReceiveLaneCausality
+      5) =
+  false
+causal_case_026 : (((Choreo.send 2 0 0 0).seq
+          (((Choreo.send 0 1 0 0).par (Choreo.send 1 3 0 0)).seq (Choreo.send 3 0 0 0))).checkReceiveLaneCausality
+      5 &&
+    ((Choreo.send 2 0 0 0).seq
+          (((Choreo.send 0 1 0 0).par (Choreo.send 1 3 0 0)).seq (Choreo.send 3 0 0 0))).checkRollReceiveLaneCausality
+      5) =
+  false
+causal_case_027 : (((Choreo.send 2 0 0 0).seq
+          ((Choreo.route RouteAuthority.intrinsic
+                (Choreo.route RouteAuthority.intrinsic (Choreo.send 0 1 0 0) (Choreo.send 0 1 0 0))
+                (Choreo.send 0 1 0 0)).seq
+            (Choreo.send 1 0 0 0))).checkReceiveLaneCausality
+      5 &&
+    ((Choreo.send 2 0 0 0).seq
+          ((Choreo.route RouteAuthority.intrinsic
+                (Choreo.route RouteAuthority.intrinsic (Choreo.send 0 1 0 0) (Choreo.send 0 1 0 0))
+                (Choreo.send 0 1 0 0)).seq
+            (Choreo.send 1 0 0 0))).checkRollReceiveLaneCausality
+      5) =
+  true
+causal_case_028 : ((((Choreo.send 2 0 0 0).seq
+                ((Choreo.route RouteAuthority.intrinsic (Choreo.send 0 1 0 0) (Choreo.send 0 1 0 0)).seq
+                  (Choreo.send 1 0 0 0))).seq
+            (Choreo.send 0 2 0 0)).roll.checkReceiveLaneCausality
+      5 &&
+    (((Choreo.send 2 0 0 0).seq
+                ((Choreo.route RouteAuthority.intrinsic (Choreo.send 0 1 0 0) (Choreo.send 0 1 0 0)).seq
+                  (Choreo.send 1 0 0 0))).seq
+            (Choreo.send 0 2 0 0)).roll.checkRollReceiveLaneCausality
+      5) =
+  true
+causal_case_029 : (((Choreo.send 2 0 0 0).seq
+            ((Choreo.route RouteAuthority.intrinsic (Choreo.send 0 1 0 0) (Choreo.send 0 1 0 0)).seq
+              (Choreo.send 1 0 0 0))).roll.checkReceiveLaneCausality
+      5 &&
+    ((Choreo.send 2 0 0 0).seq
+            ((Choreo.route RouteAuthority.intrinsic (Choreo.send 0 1 0 0) (Choreo.send 0 1 0 0)).seq
+              (Choreo.send 1 0 0 0))).roll.checkRollReceiveLaneCausality
+      5) =
+  false
+causal_case_030 : (((Choreo.send 2 1 0 0).seq
+          ((Choreo.route RouteAuthority.intrinsic (Choreo.send 1 0 0 0) (Choreo.send 1 0 0 0)).seq
+            (Choreo.send 0 1 0 0))).checkReceiveLaneCausality
+      5 &&
+    ((Choreo.send 2 1 0 0).seq
+          ((Choreo.route RouteAuthority.intrinsic (Choreo.send 1 0 0 0) (Choreo.send 1 0 0 0)).seq
+            (Choreo.send 0 1 0 0))).checkRollReceiveLaneCausality
+      5) =
+  true
+causal_case_031 : (((Choreo.send 2 1 0 0).seq
+          ((Choreo.route (RouteAuthority.dynamic 7) (Choreo.send 1 0 0 0) (Choreo.send 3 4 0 0)).seq
+            (Choreo.send 0 1 0 0))).checkReceiveLaneCausality
+      5 &&
+    ((Choreo.send 2 1 0 0).seq
+          ((Choreo.route (RouteAuthority.dynamic 7) (Choreo.send 1 0 0 0) (Choreo.send 3 4 0 0)).seq
+            (Choreo.send 0 1 0 0))).checkRollReceiveLaneCausality
+      5) =
+  false
+causal_case_032 : (((Choreo.send 2 1 0 0).seq
+          (((Choreo.send 1 0 0 0).par (Choreo.send 0 3 0 0)).seq (Choreo.send 3 1 0 0))).checkReceiveLaneCausality
+      5 &&
+    ((Choreo.send 2 1 0 0).seq
+          (((Choreo.send 1 0 0 0).par (Choreo.send 0 3 0 0)).seq (Choreo.send 3 1 0 0))).checkRollReceiveLaneCausality
+      5) =
+  false
+causal_case_033 : (((Choreo.send 2 1 0 0).seq
+          ((Choreo.route RouteAuthority.intrinsic
+                (Choreo.route RouteAuthority.intrinsic (Choreo.send 1 0 0 0) (Choreo.send 1 0 0 0))
+                (Choreo.send 1 0 0 0)).seq
+            (Choreo.send 0 1 0 0))).checkReceiveLaneCausality
+      5 &&
+    ((Choreo.send 2 1 0 0).seq
+          ((Choreo.route RouteAuthority.intrinsic
+                (Choreo.route RouteAuthority.intrinsic (Choreo.send 1 0 0 0) (Choreo.send 1 0 0 0))
+                (Choreo.send 1 0 0 0)).seq
+            (Choreo.send 0 1 0 0))).checkRollReceiveLaneCausality
+      5) =
+  true
+causal_case_034 : ((((Choreo.send 2 1 0 0).seq
+                ((Choreo.route RouteAuthority.intrinsic (Choreo.send 1 0 0 0) (Choreo.send 1 0 0 0)).seq
+                  (Choreo.send 0 1 0 0))).seq
+            (Choreo.send 1 2 0 0)).roll.checkReceiveLaneCausality
+      5 &&
+    (((Choreo.send 2 1 0 0).seq
+                ((Choreo.route RouteAuthority.intrinsic (Choreo.send 1 0 0 0) (Choreo.send 1 0 0 0)).seq
+                  (Choreo.send 0 1 0 0))).seq
+            (Choreo.send 1 2 0 0)).roll.checkRollReceiveLaneCausality
+      5) =
+  true
+causal_case_035 : (((Choreo.send 2 1 0 0).seq
+            ((Choreo.route RouteAuthority.intrinsic (Choreo.send 1 0 0 0) (Choreo.send 1 0 0 0)).seq
+              (Choreo.send 0 1 0 0))).roll.checkReceiveLaneCausality
+      5 &&
+    ((Choreo.send 2 1 0 0).seq
+            ((Choreo.route RouteAuthority.intrinsic (Choreo.send 1 0 0 0) (Choreo.send 1 0 0 0)).seq
+              (Choreo.send 0 1 0 0))).roll.checkRollReceiveLaneCausality
+      5) =
+  false
