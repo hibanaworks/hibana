@@ -4,17 +4,17 @@ resolver = "3"
 
 [package]
 name          = "hibana"
-version       = "0.9.6"
+version       = "0.9.7"
 edition       = "2024"
 rust-version  = "1.95"
 autotests     = false
-description   = "Choreography-derived runtime enforcement kernel for no_std Rust multiparty protocols"
+description   = "Choreographic programming in Rust with no_std and no heap allocation"
 license       = "MIT OR Apache-2.0"
 repository    = "https://github.com/hibanaworks/hibana"
-homepage      = "https://github.com/hibanaworks/hibana"
+homepage      = "https://hibanaworks.dev"
 documentation = "https://docs.rs/hibana"
 readme        = "README.md"
-keywords      = ["mpst", "session-types", "no-std", "no-alloc", "choreography"]
+keywords      = ["choreography", "session-types", "mpst", "no-std", "no-alloc"]
 categories    = ["asynchronous", "concurrency", "embedded", "network-programming"]
 include       = [
     "/Cargo.toml",

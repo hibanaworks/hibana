@@ -30,6 +30,21 @@ Hibanaは、通信の流れをまとめて記述するchoreographic programming�
 [hibana-quic](https://github.com/hibanaworks/hibana-quic)は、Hibanaを使ったQUIC v1/v2とHTTP/3の実装です。
 接続内部の通信にも、QUIC経由でやり取りするアプリケーションのメッセージにも、同じ方法を使います。
 
+## プロジェクトに追加する
+
+プロジェクトのディレクトリで実行します。
+
+```sh
+cargo add hibana@0.9.7
+```
+
+`Cargo.toml`に次の依存関係が追加されます。
+
+```toml
+[dependencies]
+hibana = "0.9.7"
+```
+
 ## 小さな通信例
 
 クライアントが数値を送り、サーバーが1を足して返します。クライアントは返信を受け取る前に送信する必要があります。

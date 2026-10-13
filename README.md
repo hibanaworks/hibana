@@ -32,6 +32,21 @@ or newer. The runtime uses memory supplied by your program.
 QUIC v1/v2 and HTTP/3. It uses the same approach for communication within a
 connection and for application messages sent over QUIC.
 
+## Add to your project
+
+Run this in your project directory:
+
+```sh
+cargo add hibana@0.9.7
+```
+
+This adds the following dependency to `Cargo.toml`:
+
+```toml
+[dependencies]
+hibana = "0.9.7"
+```
+
 ## A small exchange
 
 A client sends a number. The server adds one and sends it back. The client must
