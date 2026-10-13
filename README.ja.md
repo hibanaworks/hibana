@@ -1,9 +1,9 @@
 <div align="center">
   <a href="#gh-light-mode-only">
-    <img src="hibana-header.png#gh-light-mode-only" width="600" alt="HIBANA — Choreographic Programming in Rust" />
+    <img src="hibana-header.png?v=20261013-2#gh-light-mode-only" width="600" alt="HIBANA — Choreographic Programming in Rust" />
   </a>
   <a href="#gh-dark-mode-only">
-    <img src="hibana-header-dark.png#gh-dark-mode-only" width="600" alt="HIBANA — Choreographic Programming in Rust" />
+    <img src="hibana-header-dark.png?v=20261013-2#gh-dark-mode-only" width="600" alt="HIBANA — Choreographic Programming in Rust" />
   </a>
 
   <p>
