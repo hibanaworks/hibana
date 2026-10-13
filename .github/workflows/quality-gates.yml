@@ -3,9 +3,18 @@ name: quality-gates
 on:
   push:
   pull_request:
+  workflow_dispatch:
+    inputs:
+      check:
+        description: Check to run
+        type: choice
+        required: true
+        default: all
+        options: [all, final-form]
 
 jobs:
   kani:
+    if: github.event_name != 'workflow_dispatch' || inputs.check == 'all'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
