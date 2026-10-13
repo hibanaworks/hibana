@@ -1,5 +1,9 @@
 <div align="center">
-  <img src="hibana-header.svg" width="600" alt="HIBANA - Choreography-Derived Runtime Enforcement for Rust" />
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="hibana-header-dark.svg" />
+    <source media="(prefers-color-scheme: light)" srcset="hibana-header.svg" />
+    <img src="hibana-header.svg" width="600" alt="HIBANA — Choreographic Programming in Rust" />
+  </picture>
 
   <p>
     <a href="https://github.com/hibanaworks/hibana/actions/workflows/quality-gates.yml"><img src="https://github.com/hibanaworks/hibana/actions/workflows/quality-gates.yml/badge.svg" alt="Quality gates" /></a>
@@ -9,850 +13,503 @@
   </p>
 </div>
 
-# Hibana
+# Hibana — Choreographic Programming in Rust
 
-Hibana lets Rust programs execute a finite multiparty protocol from one global
-choreography. The choreography is projected into a compact program for each
-role, and every send, receive, or route step must match that program before
-progress commits.
+[日本語](README.ja.md)
 
-Hibana is a **choreography-derived runtime enforcement kernel**. It is
-unconditionally `no_std`, needs no allocator, and uses caller-provided storage.
-Protocol state is kept in compact descriptors instead of a distinct Rust
-continuation type for every state, so protocol growth does not become endpoint
-type growth.
+Hibana is a Rust library for choreographic programming. You describe who sends
+what to whom, and in what order, in a shared protocol. Participants can be tasks
+in one program or programs on different machines.
 
-- one choreography for up to 256 roles using the complete one-byte role domain;
-- asynchronous `send`, `seq`, `par`, binary `route`, and guarded `roll`;
-- affine endpoints that may be dropped but cannot publish progress twice;
-- transport-neutral integration through one `Transport` trait;
-- the same public API on hosted and embedded targets.
+You write each participant's Rust code. Hibana derives its communication steps
+from the shared protocol and checks its sends and receives against those steps
+at runtime.
 
-Role IDs cover `0..=255`. Projection, route participation, and attachment
-accounting derive storage from actual events and local participants; the runtime
-does not reserve a 256-entry role table. Splitting a protocol across several
-sessions still changes the guarantee boundary: Hibana checks each session, not
-the original choreography as one global protocol.
+The core uses `no_std`, requires no heap allocator, and runs on stable Rust 1.95
+or newer. The runtime uses memory supplied by your program.
 
-Hibana does not implement a network stack or a distributed algorithm. It
-enforces the protocol at each attached endpoint and states the carrier,
-deployment, codec, and scheduling conditions needed to lift that local result
-to a distributed guarantee.
+[hibana-quic](https://github.com/hibanaworks/hibana-quic) uses Hibana to implement
+QUIC v1/v2 and HTTP/3. It uses the same approach for communication within a
+connection and for application messages sent over QUIC.
 
-This README is arranged by responsibility:
+## A small exchange
 
-| Reader | Start here | You will find |
-| --- | --- | --- |
-| Evaluating Hibana | [Model](#model) | What it enforces, what remains external, and why endpoint types stay small |
-| Writing a choreography | [Protocol Language](#protocol-language) | Projection, messages, routes, parallel flows, and repetition |
-| Implementing a role | [Endpoint Operations](#endpoint-operations) | `send`, `recv`, `offer`, branch handling, and failure behavior |
-| Integrating a protocol | [Runtime Boundary](#runtime-boundary) | Storage, attach, sessions, resolvers, and observation |
-| Implementing a carrier | [Transport](#transport) | The complete five-operation contract and delivery premises |
-| Auditing a deployment | [Guarantees](#guarantees) | Local guarantees, conditional distributed guarantees, resource use, and verification |
+A client sends a number. The server adds one and sends it back. The client must
+send before receiving the reply. The server must receive before replying.
 
-## Quick Start
+Write that order once:
 
-Add the crate:
+```rust
+use hibana::g;
 
-```bash
-cargo add hibana
+const CLIENT: u8 = 0;
+const SERVER: u8 = 1;
+type Request = g::Msg<1, u32>;
+type Reply = g::Msg<2, u32>;
+
+let exchange = g::seq(
+    g::send::<CLIENT, SERVER, Request>(),
+    g::send::<SERVER, CLIENT, Reply>(),
+);
 ```
 
-The crate uses Rust 2024 and requires stable Rust `1.95` or newer. It has no
-normal dependencies and no feature-selected hosted variant.
+`Request` and `Reply` both carry a `u32`. Their labels, `1` and `2`, distinguish
+the message kinds. `g::seq` puts the request before the reply.
 
-Run the complete two-role example from a repository checkout:
+Each participant gets an endpoint, a handle for its part of the protocol. The
+client sends `7` and waits for the answer:
 
-```bash
-cargo run --example ping_pong
+```rust
+client.send::<Request>(&7).await?;
+let answer = client.recv::<Reply>().await?;
 ```
+
+The server receives the number and replies:
+
+```rust
+let number = server.recv::<Request>().await?;
+server.send::<Reply>(&(number + 1)).await?;
+```
+
+These are excerpts. The
+[complete example](https://github.com/hibanaworks/hibana/blob/main/examples/ping_pong.rs)
+also supplies memory, sets up an in-memory transport, and attaches both
+endpoints. Libraries such as hibana-quic perform this setup for their
+application endpoints.
+
+Calling `client.recv::<Reply>()` before sending `Request` compiles as Rust, but
+Hibana returns an error at runtime because the receive is out of order. Hibana
+also checks the message kind and payload format before completing an operation.
+
+## Try it
+
+Clone the repository and run the example:
+
+```sh
+git clone https://github.com/hibanaworks/hibana.git
+cd hibana
+cargo +1.95.0 run --locked --example ping_pong
+```
+
+It prints:
 
 ```text
 ping=7, pong=8
 ```
 
-The example is self-checking, ships in the published package, and is executed
-by the release gate. Read the complete source in
-[`examples/ping_pong.rs`](examples/ping_pong.rs). Its protocol is small enough
-to see in one place:
+Protocols can also describe choices, independent communication in parallel,
+and repetition. Participant code uses the same `send`, `recv`, and `offer`
+operations.
 
-```rust
-use hibana::{
-    g::{self, Msg},
-    runtime::program::{RoleProgram, project},
-};
+## Using it over QUIC
 
-fn ping_pong() -> (RoleProgram<0>, RoleProgram<1>) {
-    let choreography = g::seq(
-        g::send::<0, 1, Msg<1, u32>>(),
-        g::send::<1, 0, Msg<2, u32>>(),
-    );
+The [hello-quic example](https://github.com/hibanaworks/hibana-quic/tree/main/examples/hello-quic)
+has a client send numbers over a QUIC stream and a server return their squares.
+Its [global protocol](https://github.com/hibanaworks/hibana-quic/blob/main/examples/hello-quic/global.rs)
+defines both sides of the exchange. The client and server each use an endpoint
+to run their part.
 
-    (project(&choreography), project(&choreography))
-}
-```
+Hibana also describes communication within hibana-quic. Its
+[QUIC protocol](https://github.com/hibanaworks/hibana-quic/blob/main/src/quic/global.rs)
+defines how packet processing, TLS, transmission, and timers communicate. The
+Rust functions implementing those roles use endpoints to follow the protocol.
+UDP I/O and cryptographic operations are implemented in hibana-quic and
+hibana-tls.
 
-The executable example adds caller-owned runtime storage and an in-memory host
-transport, attaches both role programs to one `SessionId`, and drives the two
-endpoints with `send()` and `recv()`. An embedded deployment supplies its own
-transport, storage budget, and executor; the choreography and endpoint
-operations stay the same.
+hibana-quic is experimental. The core protocol proofs do not prove the
+correctness of its QUIC or TLS implementation.
 
-## Model
+## How Hibana works
 
-```text
-global choreography
-  -> project(&choreography) once per role
-  -> compact RoleProgram descriptors
-  -> attach each role to one SessionId
-  -> drive Endpoint::send / recv / offer
-  -> commit exactly one permitted step or fail the session generation
-```
+### Global and local protocols
 
-**Multiparty** means peer, direction, and order come from one choreography
-projected for every role. **Asynchronous** means a successful send transfers a
-frame to the carrier; it does not wait for the remote receive. **Affine** means
-one live endpoint owner can advance a projected step at most once. The endpoint
-may be dropped, but it cannot be cloned or used to publish duplicate progress.
+In multiparty session types (MPST), a **global protocol** describes communication
+among all participants. A **role** identifies a participant in that protocol.
+**Endpoint projection** derives a **local protocol** for each role.
 
-Hibana has two public surfaces:
+For the exchange above, projection gives:
 
-| Audience | Surface | Responsibility |
+| Global communication | Client's local protocol | Server's local protocol |
 | --- | --- | --- |
-| Role implementation | `hibana::g`, `Endpoint`, `RouteBranch`, `EndpointError` | Describe messages and drive one attached role |
-| Protocol integration | `hibana::runtime` | Project roles, provide storage and transport, attach sessions, and install explicit resolvers |
+| Client sends `Request` to Server | Send `Request` | Receive `Request` |
+| Server sends `Reply` to Client | Receive `Reply` | Send `Reply` |
 
-Application code normally stays on `hibana::g` and `Endpoint`. Protocol
-integration code uses `hibana::runtime`; it does not expose carrier state or
-descriptor machinery to role code. [docs.rs](https://docs.rs/hibana) is the
-signature reference for the same surface described here.
+A role gets no send or receive for a message it does not participate in.
+Sequential and parallel composition determine the order and dependencies of
+its remaining operations.
 
-The temporary choreography value carries its structure in Rust while
-`project(&choreography)` builds a compact `RoleProgram<ROLE>`. Endpoint futures
-do not carry the choreography tree or every future payload type. Reusing one
-projected artifact for many isolated sessions therefore does not multiply
-endpoint types. Projection lowers the existing public DSL in one internal pass;
-its flat event rows, scope markers, resolver markers, and allocation scratch do
-not enter the endpoint, descriptor header, or Pico runtime state.
+Hibana began with
+[affine multiparty session types (AMPST)](https://arxiv.org/abs/2204.13464).
+Here, *affine* means that a communication resource can be used at most once.
+It may be dropped without completing the protocol.
 
-## Protocol Language
+The AMPST implementation, MultiCrusty, represents local session types as Rust
+types. As Hibana's protocols grew, representing every remaining communication
+step in endpoint types became too complex. Hibana instead compiles local
+protocols into data. An endpoint tracks its progress through that data rather
+than changing its Rust type after each operation.
 
-A named choreography can return `impl Projectable`, letting Rust infer its
-step-list from the expression. These values compose through the same `g`
-operators before projection; no second type-level declaration is required.
+Messages and the global protocol still use Rust types. Large source protocols
+can therefore still produce complex types.
+
+### Projection
+
+The global protocol is a typed, zero-sized value. `project` returns the protocol
+data for one role:
 
 ```rust
-use hibana::{g, runtime::program::{Projectable, project}};
+use hibana::runtime::program::project;
 
-fn exchange() -> impl Projectable {
-    g::seq(
-        g::send::<0, 1, g::Msg<1, u32>>(),
-        g::send::<1, 0, g::Msg<2, u32>>(),
-    )
-}
-
-let conversation = g::seq(exchange(), exchange());
-let client = project::<0>(&conversation);
-let server = project::<1>(&conversation);
+let client_program = project::<CLIENT>(&exchange);
+let server_program = project::<SERVER>(&exchange);
 ```
 
-`Projectable` is sealed: only Hibana choreography constructors establish it.
-The unprojected value remains zero-sized, and composition preserves the concrete
-step-list and projection checks. Runtime endpoints and owned resources are not
-made copyable by this choreography interface.
+Projection constructs and validates this data through Rust's const evaluation.
+The implementation uses associated constants, so the calls above do not need
+to appear in a `const` declaration.
+
+Each `RoleProgram` records sends and receives, peers, message labels, payload
+schemas, dependencies, and branch membership. It also records which
+communication channels can progress independently. The transport API calls
+these channels **lanes**.
+
+Projection checks whether roles can learn the choices they need to follow and
+whether parallel operations can be distinguished. Protocols that fail these
+checks are rejected during compilation.
+
+Projection generates communication data, not participant functions. You write
+the functions and their computations in Rust. The global protocol is checked
+at compile time. Each function's sends and receives are checked against its
+local protocol at runtime.
+
+### Selection, branching, and knowledge of choice
+
+**Selection** is the choosing role's action. **Branching** is another role's
+response to that choice. **Knowledge of choice** means that a role can learn
+which branch was selected before it must act differently in that branch.
+
+For a message-based choice, both branches must have the same choosing role.
+Other participating roles must learn the choice from incoming messages.
+Projection follows each role's local path through both branches. Common
+incoming steps may come first, but the paths must eventually provide
+distinguishable incoming steps before that role sends. A role absent from both
+branches needs no notification. A choice with a role present in only one branch
+is rejected.
+
+The current rule is conservative. It supports only some of the merges allowed
+by MPST projection. For example, it does not accept every case with identical
+outgoing continuations. Hibana rejects choices it cannot check under this rule.
+It does not insert broadcasts. To inform a third role of a choice, include a
+message to that role in the global protocol.
+
+At runtime, the received frame identifies a permitted branch. `offer()` returns
+a `RouteBranch`, which lets the participant inspect the selected branch without
+advancing the protocol. `label()` returns that branch's first logical message
+label. The branch's first successful send or receive advances the protocol.
+Reading or dropping the
+preview does not.
+
+Adding `.resolve::<ID>()` to a choice connects it to an application decision
+function. This changes how the choice is made, but does not bypass other roles'
+projection checks or send the decision to another machine. The application or
+deployment must supply any agreement needed before a choice message arrives.
+
+### Parallel communication and repetition
+
+`g::par(left, right)` allows independent communication in its two parts.
+Projection checks their ownership and separates their operations. Both retain
+the dependencies from preceding sequential steps. Neither depends on the
+other's intermediate progress. A later sequential continuation waits for the
+parallel work required by that role to finish. Your executor schedules the
+Rust functions.
+
+`body.roll()` allows a completed protocol fragment to run again. Projection
+requires guarded repetition. Each repetition reuses the compiled protocol
+data, and the fragment's steps can be executed again. FIFO delivery, replay
+exclusion, and separation of session runs are required to distinguish new
+messages from old ones. A repeated protocol may run indefinitely.
+
+### Local execution
+
+An attached endpoint borrows the storage for one role in one session. It cannot
+be cloned to repeat a completed step. Each successful operation advances its
+local protocol once.
+
+For a send, the runtime checks the requested operation and message schema before
+passing the frame to the transport. For a receive, it checks the frame against
+the permitted local step and validates the exact payload format before
+advancing.
+
+A successful asynchronous send means that the transport accepted the frame,
+not that the peer received it.
+
+Hibana checks the communication performed by handwritten participant functions.
+It does not detect or repair deadlock cycles by inspecting running tasks.
+Protocol deadlock freedom depends on the accepted protocol and the execution
+assumptions in [Guarantees and verification](#guarantees-and-verification).
+
+## Specification
+
+### Protocol language and endpoint operations
 
 | Form | Meaning |
 | --- | --- |
-| `g::send::<FROM, TO, g::Msg<LABEL, PAYLOAD>>()` | One visible asynchronous message |
-| `g::seq(left, right)` | `left` precedes `right` |
-| `g::par(left, right)` | Independent arms may progress concurrently |
-| `g::route(left, right)` | One of two protocol arms |
-| `route.resolve::<ID>()` | An explicit resolver owns a non-message choice |
-| `body.roll()` | A guarded structural region may re-enter |
+| `g::send::<FROM, TO, g::Msg<LABEL, PAYLOAD>>()` | One asynchronous message |
+| `g::seq(left, right)` | Sequential composition |
+| `g::par(left, right)` | Independent parallel composition |
+| `g::route(left, right)` | Binary choice |
+| `route.resolve::<ID>()` | Use an application decision function for a choice |
+| `body.roll()` | Guarded repetition |
 
-Projection rejects unsupported route shapes, ambiguous simultaneous endpoint
-operations, conflicting parallel lanes, empty parallel arms, and unguarded
-re-entry. Logical message labels identify choreography messages; they need not
-be globally unique. A same-role `send` is a zero-byte local effect and must use
-`()`. It does not hide payload data in a private queue.
+A named protocol can be a function returning `impl Projectable`. This trait is
+sealed to Hibana's protocol constructors. Compose protocols before projecting
+each role.
 
-Repeated regions add no iteration field to endpoint types, descriptor rows, or
-the eight-byte core frame header. Freshness comes from the projected execution
-rules plus carrier FIFO, replay exclusion, and generation isolation, not from
-growing every frame or endpoint.
+Logical message labels need not be globally unique. A `send` whose source and
+target are the same role is a zero-byte local operation and must use the unit
+payload `()`.
 
-The compact descriptor domains impose these explicit limits:
+Projection rejects malformed or unobservable choices, ambiguous simultaneous
+operations, conflicting parallel ownership, empty parallel parts, and unguarded
+repetition. It also checks causal order when successive receives on a lane
+change sender.
 
-| Domain | Limit | Meaning |
-| --- | ---: | --- |
-| Roles | 256 | The complete `u8` role domain, `0..=255` |
-| Event identities | 65,535 | Dense identity domain; `u16::MAX` remains the absent sentinel |
-| Program image | 65,535 B | Compact `u16` byte-offset domain for one immutable global image |
-| Atom-only program | 7,281 events | `65,535 / 9`; control columns reduce this shape-dependent ceiling |
-| Role image | 65,535 B per role | Compact `u16` byte-offset domain for one projected role image |
-| Structured scopes | Image-derived | Every scope contributes at least two five-byte markers, so the byte ceiling binds before the compact scope-id domain |
-| Route commit chain | Image-derived | A `u16` descriptor range; no separate `u8` chain ceiling |
-| Resolver identities | 65,536 | The complete `u16` domain; intrinsic/dynamic authority is tagged separately in the route row |
-| Physical lanes | 256 | Storage follows the exact projected lane span; lanes are reused when endpoint-role sets do not conflict and no hidden binding lanes are reserved |
-| Offer frontier | Descriptor-derived | Active-key storage follows active lanes; restart-spanning visited identities follow the finite local-step domain |
-| Inbound frame colors | 256 | Maximum simultaneously competing receive candidates for one source/receiver/lane key |
-
-Frame colors are not cumulative message numbers. More than 256 ordered
-messages may reuse a color; distinct sources may also reuse a color because the
-runtime compares source, lane, and frame color together. Inside `.roll`, equal
-route paths reuse one color while distinct paths of the same inbound key receive
-distinct colors for elastic re-entry. Projection rejects only a frontier that
-genuinely requires a 257th color for one complete inbound key. Routes remain
-binary by design.
-The event-identity domain is not a promise that every 65,535-event source fits
-one image. A protocol is accepted only when both its global image and every
-projected role image fit their byte domains; the exact event ceiling therefore
-depends on its messages, scopes, dependencies, route evidence, and role views.
-The internal scope-id domain contains 8,192 identities, but this is not an
-additional acceptance limit: even the smallest structured scope consumes ten
-program-image bytes, so a fitting image contains at most 6,553 scopes. Route
-commit-chain lengths use the same compact `u16` count domain and are therefore
-bounded by descriptor structure rather than by an unrelated 255-entry runtime
-field. Runtime route history is a packed sparse table sized by emitted
-`(lane, route)` relations, not by `active lanes × maximum route depth`.
-The temporary source is still a Rust type tree, but lowering stores events,
-normalized closed scope markers, and resolver markers in one exact-count tagged
-arena. Scope publication is atomic, and primary markers carry the proof-only arm
-boundaries needed by later passes; that metadata is erased from the descriptor.
-Production const capacity validation ties source counts to the exact final
-column counts and byte length, Kani checks the packed count domain, and Lean
-proves generally that the exact descriptor bytes dominate the source-row count.
-Row contents remain the separate responsibility of translation validation. The
-temporary arena therefore has no smaller independent acceptance ceiling. Its
-lane matching scratch is bounded by the 256-value wire lane domain rather than
-by event count.
-A const fixture constructs and emits the full 7,281-event
-atom-only image. Public typed fixtures separately track 289 messages and 258
-parallel events under rustc's default recursion limit. A Pico-target compile
-gate projects 256 linear cyclic sender handoffs, 64 handoffs per route arm, and
-a 64-event rolled cycle while bounding compiler time and memory for each causal
-validation path. Large generated type trees should compose balanced subtrees;
-genuinely nested source semantics deeper than that compiler limit may require a
-crate-level `recursion_limit`. The dedicated `>128` scope test keeps this source
-constraint separate from runtime, descriptor, stack, and SRAM measurements.
-
-Receive-lane sender changes use structured causal must analysis. A route joins
-only facts established in every possible arm; parallel arms start from the
-same incoming facts and cannot relay each other's intermediate results. A
-rolled body composes fresh visits with independent route choices. The exact
-256-role fact set occupies 32 bytes of compiler scratch and adds no endpoint,
-wire, or runtime state. The Lean model proves must facts for every selected-arm
-execution and derives receive-before-send order under its explicit schedule
-premises. Generated kernel checks compare concrete Rust and Lean decisions;
-they are finite correspondence evidence, not a universal Rust refinement.
-
-Role projection computes immutable source-to-parent scope facts once and shares
-those compiler facts across roles. The exact kind/ordinal domain is erased from
-the final descriptor. Route validation checks global authority once per scope
-and retains every role's observer checks. Parallel dependency compilation saves
-the shared sequential prefix at each fork, restores it at the split, and applies
-the whole local join after both arms. Both arms require that prefix even when
-the right arm introduces a new lane; neither arm acquires a dependency on its
-sibling's intermediate events. Shared-offset boundaries finish joins, restore splits,
-then record new inputs; serialized marker tie order is preserved. Initial offer
-dispatch follows the observed lane head when another arm has moved the shared
-cursor. Lean proves the sibling exclusion, retained sequential join, saved fork
-input, and lane-head preservation properties. Ten additional exact Rust/Lean
-descriptor fixtures and their corruption rejections are kernel-checked; these
-remain finite correspondence evidence rather than a universal Rust proof.
-
-### Messages And Payloads
-
-`g::Msg<L, P>` names logical label `L` and wire payload `P`. Built-in exact
-codecs cover `()`, `bool`, signed and unsigned integers, byte slices, and fixed
-byte arrays. Fixed-width decoders reject trailing bytes. Received slices may
-borrow from the carrier-owned frame for the endpoint borrow.
-
-Custom payloads implement both contracts:
-
-- `WireEncode::encode_into` writes deterministic bytes and reports their
-  length;
-- `WirePayload::validate_payload` accepts the exact canonical byte shape before
-  endpoint progress commits;
-- `WirePayload::decode_validated_payload` decodes bytes already validated;
-- `WirePayload::SCHEMA_ID` names that canonical wire contract in the
-  descriptor.
-
-The schema id is not a cross-binary Rust nominal type id and is not sent in the
-core frame header. Incompatible encodings or validation rules require distinct
-ids. Different Rust wrappers may share an id only when they deliberately
-implement the same canonical bytes and validation. Schema `0` belongs to the
-exact zero-byte unit schema.
-
-This complete custom fixed-width codec illustrates the contract:
-
-```rust
-use hibana::runtime::wire::{CodecError, Payload, WireEncode, WirePayload};
-
-struct FourBytes([u8; 4]);
-
-impl WireEncode for FourBytes {
-    fn encode_into(&self, out: &mut [u8]) -> Result<usize, CodecError> {
-        if out.len() < 4 {
-            return Err(CodecError::Truncated);
-        }
-        out[..4].copy_from_slice(&self.0);
-        Ok(4)
-    }
-}
-
-impl WirePayload for FourBytes {
-    const SCHEMA_ID: u32 = 0x4000_0000;
-
-    type Decoded<'a> = FourBytes;
-
-    fn validate_payload(input: Payload<'_>) -> Result<(), CodecError> {
-        if input.as_bytes().len() == 4 {
-            Ok(())
-        } else {
-            Err(CodecError::Malformed)
-        }
-    }
-
-    fn decode_validated_payload(input: Payload<'_>) -> Self::Decoded<'_> {
-        let bytes = input.as_bytes();
-        FourBytes([bytes[0], bytes[1], bytes[2], bytes[3]])
-    }
-}
-```
-
-Codec correctness remains the codec implementor's responsibility. Hibana
-checks that each operation uses the schema id projected for that event and that
-the decoder accepts the received bytes before committing progress.
-
-### Endpoint Operations
-
-The role API is deliberately small:
-
-| Operation | Result and commit rule |
+| Operation | Result |
 | --- | --- |
-| `Endpoint::send::<M>(&payload)` | Commits after the descriptor accepts `M` and the carrier accepts the frame |
-| `Endpoint::recv::<M>()` | Returns `M::Payload::Decoded` after carrier evidence, `M`, and its payload all match |
-| `Endpoint::offer()` | Returns a `RouteBranch` preview without committing by itself |
-| `RouteBranch::label()` | Reports the selected arm's first logical message label |
-| `RouteBranch::send` / `recv` | Consumes the preview and commits the selected arm's first visible step |
+| `Endpoint::send::<M>(&payload)` | Advances after the transport accepts the permitted message |
+| `Endpoint::recv::<M>()` | Validates the permitted message and returns its decoded payload |
+| `Endpoint::offer()` | Returns a branch preview without advancing |
+| `RouteBranch::label()` | Returns the first logical message label of the selected branch |
+| `RouteBranch::send` / `recv` | Consumes the preview and executes the branch's first visible step |
 
-Inside an async role function, ordinary message flow is direct:
+An operation **commits** when it advances the local protocol. Dropping a branch
+preview, dropping an operation before commit, or rejecting an operation does
+not advance it. Requeueing an uncommitted received frame does not advance it
+either.
 
-```rust
-use hibana::{Endpoint, EndpointError, g::Msg};
+### Payloads
 
-async fn client(endpoint: &mut Endpoint<'_, 0>) -> Result<u16, EndpointError> {
-    let request = [1, 2, 3, 4];
-    endpoint.send::<Msg<10, [u8; 4]>>(&request).await?;
-    endpoint.recv::<Msg<11, u16>>().await
-}
-```
+`g::Msg<L, P>` associates logical label `L` with payload type `P`. Built-in
+codecs support unit, booleans, integers, byte slices, and fixed byte arrays.
+Fixed-width decoders reject trailing bytes. A decoded value may borrow from
+the transport's receive buffer.
 
-Endpoint progress happens when `send()`, `recv()`, or a route branch first-step
-operation succeeds. Dropping an unpolled send publishes no progress. A dropped
-route preview, rejected operation, or successful `requeue(...)` consumes no
-protocol step.
+Custom payloads implement `WireEncode` and `WirePayload` through
+`hibana::runtime::wire`. Encoding writes deterministic bytes into supplied
+storage. Validation checks the exact canonical format before the operation
+commits. Decoding reads the validated bytes.
 
-### Route Choice
-
-Prefer in-band choice: make the message that selects a branch its first visible
-action. `RouteBranch::label()` then reports that selected arm's first logical
-message label, and the first send or receive is performed through the branch.
-Payload contents, queue position, and carrier observations are never branch
-authority.
-
-For example, this route is selected by the first message visible to role `1`:
-
-```rust
-use hibana::g;
-
-let accepted = g::send::<0, 1, g::Msg<31, u32>>();
-let rejected = g::send::<0, 1, g::Msg<33, ()>>();
-let routed = g::route(accepted, rejected);
-```
-
-The receiving role previews, inspects, and consumes that selected first step:
-
-```rust
-use hibana::{Endpoint, EndpointError, g::Msg};
-
-async fn receive_choice(
-    endpoint: &mut Endpoint<'_, 1>,
-) -> Result<Option<u32>, EndpointError> {
-    let branch = endpoint.offer().await?;
-    match branch.label() {
-        31 => Ok(Some(branch.recv::<Msg<31, u32>>().await?)),
-        33 => {
-            branch.recv::<Msg<33, ()>>().await?;
-            Ok(None)
-        }
-        label => panic!("unexpected route label {label}"),
-    }
-}
-```
-
-When a timer, readiness signal, budget, or another non-message signal owns the
-choice, mark the route with `.resolve::<ID>()` and install a typed
-`ResolverRef::<ID>::decision_state(...)`. Resolver failure rejects the step; it
-does not select another arm. Resolver state is local input, so roles that act
-before receiving in-band branch evidence need deployment-level agreement on
-the decision.
-
-### Parallel And Repeated Regions
-
-`g::par(left, right)` combines independent flows. Projection assigns logical
-lanes and rejects simultaneous local operations that cannot be selected
-exactly. The arms are not threads and do not choose an executor; they describe
-protocol independence that the attached roles may drive concurrently.
-
-```rust
-use hibana::g;
-
-let left = g::send::<0, 1, g::Msg<50, u32>>();
-let right = g::send::<2, 3, g::Msg<50, u32>>();
-let independent = g::par(left, right);
-```
-
-`.roll()` marks a guarded structural region that may re-enter. For an explicit
-route resolver, resolve the route first and roll the surrounding region second:
-
-```rust
-use hibana::g;
-
-const ROUTE_DECISION: u16 = 7;
-
-let repeated = g::route(
-    g::send::<0, 1, g::Msg<40, u32>>(),
-    g::send::<0, 1, g::Msg<41, ()>>(),
-)
-    .resolve::<ROUTE_DECISION>()
-    .roll();
-```
-
-The reverse call order is unavailable because `resolve::<ID>()` belongs to a
-route value, not to the rolled result. Nested repeated regions follow the same
-rule. An intentional infinite repeated region is valid protocol behavior, so
-Hibana does not claim that every session terminates.
-
-## Runtime Boundary
-
-The runtime borrows one caller-provided byte region and derives its internal
-layout from the projected descriptors. `SessionKitStorage::uninit().init()` is
-the single construction path. `SessionKit::rendezvous(...)` binds the storage
-region and one transport. `RendezvousKit::enter(...)` attaches a projected role
-to a session.
-
-`SessionKit` and its endpoints belong to one local runtime owner; they are not
-shared concurrent handles. Interrupts, worker threads, and device callbacks
-communicate through transport-owned state and wake the executor through stored
-wakers. The executor itself is integration-owned.
-
-The runnable example uses this complete construction sequence after projection:
-
-```rust
-use hibana::runtime::{SessionKitStorage, ids::SessionId};
-
-let mut slab = [0_u8; 3 * 1024];
-let mut storage = SessionKitStorage::<InMemoryTransport>::uninit();
-let kit = storage.init();
-let rendezvous = kit
-    .rendezvous(&mut slab, InMemoryTransport::new())
-    .expect("create rendezvous");
-let session = SessionId::new(1);
-let client = rendezvous
-    .enter(session, &client_program)
-    .expect("attach client");
-let server = rendezvous
-    .enter(session, &server_program)
-    .expect("attach server");
-```
-
-`InMemoryTransport`, `client_program`, and `server_program` are defined by the
-runnable example. A deployment replaces only the transport and measured slab
-budget. `SessionKitStorage`, the choreography, projection, attach sequence, and
-endpoint API are unchanged. An undersized slab produces `AttachError`; Hibana
-does not substitute a smaller layout or hidden allocation.
-
-The first local attach binds a session generation to one exact compiled
-program image. A byte-different image or a second live attach for the same
-`(rendezvous, SessionId, role)` is rejected. Dropping an endpoint releases its
-lease. Resolver-dependent local roles must be attached before first resolver
-execution seals local membership.
-
-| Boundary | Hibana owns | Integration owns |
-| --- | --- | --- |
-| Choreography | Projection and exact local descriptor admission | Distributing the accepted role images |
-| Endpoint | Affine, fail-closed progress | Driving enabled operations fairly |
-| Payload | Schema identity and validation at the endpoint | Correct canonical codec implementations |
-| Carrier | Framed header checks; unique lane/label/schema interpretation for headerless ingress; exact descriptor event admission in both cases | Peer binding, FIFO delivery, replay exclusion, generation isolation, and closure notification |
-| Security | No hidden security claim | Authentication, cryptography, admission control, and failure detection |
+`WirePayload::SCHEMA_ID` identifies the wire format and its validation rules,
+not the Rust type. It is not sent in the core frame header. Peers must agree on
+encoding and validation. Assigning the same ID does not establish that
+agreement. Different formats require different schema IDs. Schema `0` is the
+zero-byte unit format.
 
 ### Transport
 
-`Transport` owns byte buffers, framing, readiness, ingress demultiplexing, and
-wakeups. Hibana owns choreography meaning and route authority. Transport
-implementations provide two associated handle types and five operations:
+The transport provides buffers, framing, I/O readiness, and wakeups. It supplies
+borrowed transmit and receive handles through `hibana::runtime::transport`.
 
-| Operation | Required behavior |
+| Operation | Contract |
 | --- | --- |
-| `open(PortOpen)` | Create Tx/Rx handles bound to the descriptor-derived local role, `SessionId`, and lane |
-| `poll_send(tx, Outgoing, cx)` | Progress one frame; `Ready(Ok(()))` transfers it to carrier ownership, while `Pending` retains no payload pointer |
-| `cancel_send(tx)` | Remove transport-owned state for a dropped pending send, or retire the logical direction if bytes are already irrevocable |
-| `poll_recv(rx, cx)` | Return one borrowed `ReceivedFrame` and store the current waker whenever the operation parks |
-| `requeue(rx)` | Make the most recently returned frame observable again on the same handle after a zero-commit rejection |
+| `open(PortOpen)` | Bind handles to the projected role, session, and lane |
+| `poll_send` | Accept one frame or return pending without retaining the supplied payload pointer |
+| `cancel_send` | Discard a dropped pending send. If its bytes cannot be withdrawn, disable that logical send direction for the rest of the run |
+| `poll_recv` | Return one borrowed frame, or return pending and record the current waker |
+| `requeue` | Return the most recently received, uncommitted frame to the same receive handle |
 
-`PortOpen` exposes `local_role()`, `session_id()`, and `lane()`. `Outgoing`
-exposes `frame_label()`, `target_role()`, `lane()`, and `payload()`. The handles
-returned by `open` may borrow buffers, device state, DMA records, and wakers
-from the transport owner, so no allocation or transport-specific future type
-enters Hibana's endpoint API.
+A later send poll supplies the same encoded content, but its address may change.
+Pending I/O state must therefore belong to the transport, not the temporary
+payload buffer. Dropping a send must not leave bytes that a later send can
+transmit.
 
-After `poll_send` returns `Pending`, a later poll supplies the same encoded
-content again, but its scratch address may differ. The transport may retain its
-own progress in `Tx`; it must not retain the prior `Payload` pointer.
-
-Receive evidence has two explicit construction paths:
-
-```rust
-use hibana::runtime::{
-    transport::{FrameHeader, ReceivedFrame},
-    wire::Payload,
-};
-
-let direct = ReceivedFrame::deterministic(Payload::new(payload_bytes));
-let framed = ReceivedFrame::framed(
-    FrameHeader::from_bytes(header_bytes),
-    Payload::new(payload_bytes),
-);
-```
-
-`ReceivedFrame::deterministic(...)` is valid only when direct `recv()` has one
-live descriptor, or after `RouteBranch::recv()` already owns one materialized
-receive descriptor. Route offer and unresolved route demultiplexing require
-`ReceivedFrame::framed(...)` evidence. The core header is exactly eight
-carrier-owned bytes:
+A framed receive uses this eight-byte header:
 
 ```text
 session id (4 bytes, big endian) | lane | source role | target role | frame label
 ```
 
-The transport stores the `PortOpen` facts needed to build or validate that
-framing. A framed receive is checked against the endpoint's exact session, lane,
-source, target, frame label, descriptor event, logical label, and schema before
-progress commits. A deterministic receive does not claim to observe source,
-target, or frame label: its lane-bound Rx handle plus the requested logical label
-and schema must identify exactly one enabled descriptor receive. Zero or multiple
-matches fail closed. Peer authenticity and affine delivery remain carrier-profile
-premises in both cases; reordering, repetition, and mismatch are not repaired
-into ordinary progress.
+The transport owns these bytes. The frame label is a wire identifier assigned
+during projection, distinct from the logical message label in `Msg`. The
+runtime checks the header and requested message against the local protocol.
 
-A successful `poll_send` proves carrier acceptance, not remote receipt. To lift
-local enforcement to global fidelity and progress, a concrete carrier must
-also provide:
+`ReceivedFrame::deterministic` omits the header. It is valid only when the
+lane-bound receive and requested message identify exactly one enabled local
+receive, or when a branch preview already identifies that receive. An
+unresolved branch requires `ReceivedFrame::framed`.
 
-- expected peer and direction binding;
-- FIFO delivery within each mapped logical direction;
-- no unsolicited replay and no frame leakage across carrier generations;
-- exactly one observation for each delivered frame;
-- eventual delivery of accepted frames or observable terminal closure;
-- receiver wakeup after accepted frames drain or are quarantined on closure.
+For the global guarantees to apply, the transport must bind messages to the
+expected peer and direction, preserve FIFO order within each mapped direction,
+and prevent unsolicited replay and messages from earlier session runs from
+entering the current run. It must not duplicate incoming messages. Returning
+an uncommitted frame through `requeue` must not make it count as a second
+message.
 
-Fresh transport-instance state is a sufficient carrier generation. Address or
-path changes may remain inside one generation. Reusing a `SessionId` after
-retirement requires carrier state that cannot expose a frame from the retired
-generation. A multiplexed carrier may retire one logical direction while
-unrelated sessions remain live.
+An accepted frame must eventually arrive, or closure of its direction must
+become observable. After accepted frames have been drained or isolated,
+closure must wake a waiting receiver and return an error. A known closed
+direction must not remain pending forever.
 
-Route agreement also requires every controller to execute its accepted image
-through its Endpoint. Passive endpoints cannot detect a controller that bypasses
-the kernel and fabricates opposite-arm frames for different peers. Peer
-authentication alone does not make such a controller conforming. Hibana does
-not implement Byzantine agreement between independent passive endpoints; the
-carrier must preserve provenance from the conforming sender execution.
+These requirements apply to the transport implementation, not just its Rust
+interface. The
+[Unix datagram example](https://github.com/hibanaworks/hibana/tree/main/proofs/unix-carrier)
+tests them for one implementation.
 
-Protocol-invisible liveness detection belongs to the transport. A wait that
-cannot progress returns `TransportError` from `poll_send` or `poll_recv`; it
-does not create a hidden timeout branch. Returning `Pending` forever after
-known peer closure does not satisfy the closing contract.
+### Deadlines, errors, and cancellation
 
-Hibana does not require an in-band protocol-image handshake. A deployment may
-establish exact role-image agreement through its build artifact, authenticated
-manifest, or an application protocol. This keeps bootstrap policy out of the
-core and permits carriers with different framing requirements.
+Hibana has no built-in clock or failure detector. The transport decides whether
+an I/O operation has exceeded its deadline and reports `TransportError::Deadline`.
+The other transport errors are `Offline`, `Capacity`, and `Failed`.
 
-The [Unix datagram carrier](https://github.com/hibanaworks/hibana/tree/main/proofs/unix-carrier)
-is an executable conformance example for peer binding, FIFO delivery, replay
-exclusion, closure wakeup, and generation isolation. It demonstrates that the
-contract is realizable; it is not a mandatory dependency or universal proof of
-third-party transports.
+These transport errors end the current session run. The endpoint operation
+returns `EndpointError`. The runtime preserves the first fault and wakes local
+waiters. The failed operation does not advance the protocol. There is no
+automatic retry, deadline extension, or switch to another branch. The current
+run cannot continue after such an error.
 
-### External Route Resolvers
+If a timeout or cancellation must lead to further protocol communication,
+represent it as a message or an explicit choice in the global protocol.
+Restart after a transport error with a fresh session run. The transport must
+drain or isolate accepted frames so they cannot be delivered in the new run.
 
-An explicit resolver connects a non-message decision owner to a route marked
-with `.resolve::<ID>()`. The id is checked against the projected role program,
-and the state reference lives for the runtime configuration lifetime.
+Dropping a pending send invokes `cancel_send`. The transport must discard
+staged bytes. If some bytes can no longer be withdrawn, it must disable that
+logical send direction for the rest of the run. A local fault cannot notify a
+remote process by itself. Distributed cancellation also requires the transport
+to make closure observable to the peer.
 
-```rust
-use hibana::runtime::resolver::{DecisionArm, ResolverError, ResolverRef};
-
-const ROUTE_RESOLVER: u16 = 7;
-
-struct RouteState {
-    accept: bool,
-}
-
-fn decide_route(state: &RouteState) -> Result<DecisionArm, ResolverError> {
-    if state.accept {
-        Ok(DecisionArm::Left)
-    } else {
-        Ok(DecisionArm::Right)
-    }
-}
-
-let state = RouteState { accept: true };
-let resolver = ResolverRef::<ROUTE_RESOLVER>::decision_state(&state, decide_route);
-rendezvous.set_resolver(&role_program, resolver)?;
-```
-
-Register against the exact `RoleProgram` that contains the resolver site.
-`ResolverRef::decide()` permits typed resolver owners to compose other typed
-resolver owners without exposing erased storage. Resolver rejection is
-terminal evidence for that attempted endpoint step and never grants alternate
-route authority.
-
-A resolver registered in one rendezvous does not establish agreement with a
-remote device. If several roles act before receiving an in-band indication,
-the deployment or application protocol must supply the same decision to those
-resolver owners.
-
-### Sessions, Reconfiguration, And Observation
-
-A projected descriptor is a finite session template, not a singleton runtime
-instance. Distinct `SessionId` values have independent cursors, queues, leases,
-and failure domains. Resolver registrations belong to the exact role program
-within one rendezvous and may deliberately read application state shared across
-sessions. Retrying an interaction or changing the finite participant set
-creates a fresh session; changing the choreography also creates a fresh
-projected artifact.
-
-Persistent application data, membership policy, scheduling, restart policy,
-and algorithm invariants remain application-owned. Larger systems may compose
-explicit families of finite sessions, but each session keeps its own protocol
-guarantee. This is an application architecture, not an equivalent encoding of
-one global choreography across those sessions.
-
-`RendezvousKit::tap()` returns a read-only iterator over the latest 21 public
-16-byte evidence values. The ring stores 12-byte records and rebuilds their
-monotonic timestamps while reading, so its 252-byte storage stays within the
-256-byte budget. Events cover endpoint operations, carrier observations,
-faults, lanes, route selection, and resolver decisions. Public code may read
-records but cannot construct or push them. Tap is diagnostic evidence; it
-cannot select a route or authorize progress.
-
-### Failure Semantics
-
-Each public boundary reports its own error instead of widening all failures
-into one catch-all type:
-
-| Boundary | Error | Meaning |
-| --- | --- | --- |
-| `rendezvous` / `enter` | `AttachError` | Storage, descriptor image, role lease, or attach admission failed; no endpoint is returned |
-| `set_resolver` / resolver callback | `ResolverError` | Registration failed or the decision owner rejected the route step |
-| `poll_send` / `poll_recv` / `requeue` | `TransportError` | The carrier reports offline, deadline, capacity, or fatal I/O evidence |
-| `send` / `recv` / `offer` / branch operation | `EndpointError` | The current session generation cannot continue through that endpoint |
-
-`EndpointError` is terminal diagnostic evidence for the current session
-generation. A codec mismatch, descriptor mismatch, or carrier failure poisons
-that generation and wakes local waiters. Remote cancellation termination also
-requires the carrier to make peer closure observable after accepted frames are
-drained or quarantined.
-
-There is no public same-generation retry, reselection, timeout, or cancellation
-operation. Errors are not route arms. A fresh attempt uses a fresh session
-generation; a protocol-visible timeout or cancellation is expressed as an
-ordinary choreography message or explicit route decision.
-
-## Guarantees
-
-For every attached endpoint, Hibana enforces:
-
-- exactly one permitted descriptor transition for each successful operation;
-- zero transitions for previews, rejection, drop before commit, and requeue;
-- fail-closed checks of peer, direction, lane, event, label, schema, and payload;
-- no duplicate publication by one endpoint owner;
-- first-fault preservation and terminal local waiter wakeup;
-- isolation between live `SessionId` generations in one runtime.
-
-`project(&choreography)` rejects unsupported or ambiguous choreographies. The
-machine-checked global theorems apply to exact role images accepted by the
-independent protocol artifact checker.
-
-These guarantees do not silently absorb external responsibilities:
-
-| Claim | Additional requirement |
+| Where an error occurs | Error type |
 | --- | --- |
-| Exact local protocol enforcement | All endpoint operations go through Hibana |
-| Cross-role fidelity | Every role uses the exact accepted image and matching canonical schemas |
-| Distributed cancellation completion | The carrier drains or quarantines accepted frames and makes closure observable |
-| Session progress | The carrier remains live and the executor fairly polls enabled operations |
-| Deployment security | The integration authenticates peers and protects its medium as required |
+| Storage setup and endpoint attachment | `AttachError` |
+| Decision registration or callback | `ResolverError` |
+| Transport send, receive, or requeue | `TransportError` |
+| Endpoint or branch operation | `EndpointError` |
 
-### When Deadlock Freedom Holds
+### Sessions and storage
 
-Successful projection alone is not a distributed deadlock-freedom guarantee.
-Hibana provides per-session protocol deadlock freedom when all of the following
-hold:
+A session has a fixed protocol and a fixed, finite set of roles. A **session
+run** is one execution of that session. Restarting after failure begins a new
+run, even if the application reuses its `SessionId`.
 
-1. every role executes the exact accepted image of the same projectable
-   choreography;
-2. peers agree on each canonical wire schema and use conforming codecs;
-3. the carrier binds the expected peers and directions, preserves FIFO order,
-   excludes replay across session generations, and eventually delivers each
-   accepted frame or reports terminal closure;
-4. the executor eventually polls operations that remain enabled.
+Integration code uses `hibana::runtime` to project roles, supply memory and a
+transport, and attach endpoints. `SessionKitStorage` holds runtime storage.
+`rendezvous` takes a byte slab and a transport. `enter` attaches a projected
+role to a `SessionId`. An undersized slab or failed attachment returns
+`AttachError` without a partially attached endpoint.
 
-Under those conditions, every reachable live, unfinished protocol state has an
-enabled transition. An intentional infinite `.roll` may continue forever, and
-application cycles spanning separate sessions remain application scheduling
-concerns.
+Sessions have separate progress and failure state. Within one runtime, a role
+cannot have two live attachments to the same session. The runtime also rejects
+different protocol bytes for a session that already has a protocol bound to it.
+Across machines, the deployment must ensure that peers use the same protocol.
+Hibana does not perform a handshake to establish this agreement.
 
-## Measured Footprint
+Reusing a `SessionId` requires fresh transport state that cannot expose frames
+from its previous run. Changing the participant set or protocol requires a
+fresh session. Address migration can stay within a run if the transport
+preserves its guarantees. Channel delegation is not supported by this model.
 
-The repository compiles the public choreography and projection API for
-`thumbv6m-none-eabi` without an allocator, SDK, host transport, or target-only
-Hibana API. The release gate publishes fresh measurements for each checked
-revision and enforces the tracked resource ceilings. Measured values are not
-copied into a manually synchronized source table here.
+The runtime uses caller-supplied storage and borrowed buffers, with no heap
+fallback. Endpoints are tied to their local runtime and are neither `Send`
+nor `Sync`. Communication with another runtime goes through the transport.
+The application is responsible for scheduling, persistent application state,
+and restart policy.
 
-The gate measures `SessionKitStorage`, fixed per-session storage including tap
-records, peak live runtime slab, operation stack, modeled SRAM, the minimal
-and largest linked protocol artifacts, and complete library sections.
+### Capacity limits
 
-For example, the [dafdf8a CI measurement](https://github.com/hibanaworks/hibana/actions/runs/37240935107)
-reported a 5,274 B modeled runtime SRAM envelope and a 2,591 B operation-stack
-high-water mark, within the unchanged 8,954 B and 3,663 B ceilings. These are
-revision-specific observations, not promises for arbitrary application state.
-The no-default `thumbv6m-none-eabi` rlib sections were 97,344 B, below the
-169,965 B ceiling. A complete rlib is not the flash cost paid by one linked
-protocol. Host stack observations use the pinned
-`aarch64-unknown-linux-gnu` measurement host.
+| Item | Limit |
+| --- | ---: |
+| Role identifiers | 256, from `0` through `255` |
+| Event identifiers | 65,535, with `u16::MAX` reserved for absence |
+| Compiled global protocol | 65,535 bytes |
+| Compiled local protocol | 65,535 bytes per role |
+| Message-only global protocol | Up to 7,281 events, at nine bytes per event |
+| Branch and repetition regions | Limited by protocol bytes, at least ten bytes per region |
+| Decision function identifiers | 65,536, the full `u16` range |
+| Transport lanes | 256 |
+| Competing wire identifiers | 256 for one source, receiver, and lane |
 
-The modeled SRAM envelope combines the target's Hibana `.data/.bss`, storage
-owners, one measured live slab shape, and runtime operation stack. Component
-maxima may come from different shapes and must not be added as one observed
-run. Application state, concrete transport buffers, executor state, interrupt
-stacks, codec scratch, and platform startup are outside this Hibana-owned
-envelope.
+Both the global and local protocols must fit their byte limits. Branches,
+repetition, and dependencies consume additional bytes, so the event identifier
+range alone does not determine how many events fit. Branch metadata also uses
+this byte budget.
 
-[`examples/pico/src/lib.rs`](examples/pico/src/lib.rs) is the tracked `no_std`
-projection sample. The release gate regenerates these measurements and rejects
-any value above its ceiling.
+Wire identifiers distinguish receives that can compete. Ordered messages can
+reuse identifiers, as can messages from different sources. The 256-identifier
+limit is not a limit of 256 messages per protocol. Projection allocates lanes
+according to the communication and can reuse them when ownership does not
+conflict.
 
-## Verification
+The source protocol remains a Rust type tree. Large generated protocols should
+use balanced composition. Deeply nested protocols may need a larger Rust
+`recursion_limit`. Source compilation limits and runtime storage limits are
+separate.
 
-Hibana uses complementary tools rather than attributing every guarantee to one
-checker:
+## Guarantees and verification
 
-| Tool | Responsibility |
-| --- | --- |
-| Lean | Global and role-local semantics, projection artifacts, fidelity, progress, cancellation, and repeated-region freshness |
-| Kani/CBMC | Bounded exhaustive checks of compact prepare/commit kernels and ownership state |
-| Miri | Strict provenance, borrowing, drop, cancellation, waiter, and callback re-entry behavior |
-| Rust tests and release gates | Executable examples, compile-time rejection, carrier conformance, package contents, and resource regressions |
+Runtime checks enforce each endpoint's local protocol. Before an operation
+commits, the runtime checks direction, peer, lane, message identity, and payload
+schema. An endpoint can complete a local step at most once before moving on.
+Repetition can make that step available again. A failed operation does not
+advance the protocol.
 
-The [Lean verification guide](https://github.com/hibanaworks/hibana/blob/main/proofs/lean/README.md)
-summarizes the checked boundary, assumptions, generated artifacts, and
-machine-checked claim inventories. Each tool is evidence only for the part it
-checks. Kani and Miri strengthen the Rust implementation evidence; neither is
-presented as a Lean proof of arbitrary Rust source.
+The Lean proofs establish session fidelity, protocol progress, and cancellation
+properties for their models. The global results apply to the exact generated
+protocol data accepted by an independent checker. Successful Rust projection
+alone does not prove distributed deadlock freedom.
 
-The static Lean theorem package and exact descriptor/kernel certificates are
-kernel-checked. Finite executable regressions and concrete finite-closure
-witnesses that use the pinned native evaluator are isolated and audited rather
-than presented as kernel-only proofs.
+Applying these results to a running system requires:
 
-Release gates discover the Lean, Kani, and Miri inventories from their canonical
-sources, pin Lean claim types and axiom closures, and reject missing or changed
-obligations. Current inventory counts are emitted by the gates instead of being
-duplicated in documentation.
+1. Every role follows the accepted local protocol derived from the same global
+   protocol.
+2. Peers agree on wire formats and use conforming codecs.
+3. The transport provides the peer binding, ordering, replay exclusion, and
+   observable closure required by the selected model.
+4. The executor eventually polls operations that remain enabled.
+5. The runtime implementation follows the model's operation and ownership rules.
 
-## Build And Release
+Under these assumptions, a live, unfinished protocol has an enabled
+communication transition. This is **protocol deadlock freedom within one
+session**. It does not establish termination of repeated communication, freedom
+from deadlocks inside arbitrary Rust computations, or absence of dependency
+cycles between separate sessions.
 
-The crate has no normal dependencies and no feature-selected host API. Useful
-checks from a repository checkout are:
+The cancellation results cover the specified finite transport states and rules
+for disabling a direction. Deadlines and failure detection are assumptions
+about the transport. Branch agreement also assumes that the choosing role
+follows its endpoint. Authentication alone cannot ensure agreement if a
+participant sends conflicting choices to different peers.
 
-```bash
+[The Lean proof notes](https://github.com/hibanaworks/hibana/tree/main/proofs/lean)
+state the exact claims and assumptions. They do not verify every line of Rust
+or every `Transport` implementation. Kani checks bounded kernel cases. Miri
+checks borrowing, pointer provenance, and drop behavior in the executed tests.
+Rust tests cover projection failures, operation ordering, payload validation,
+and transport contracts. Rust/Lean comparisons check agreement for generated
+test cases.
+
+## Reference
+
+The direct inspiration is Lagaillardie, Neykova, and Yoshida's
+[Stay Safe under Panic: Affine Rust Programming with Multiparty Session Types](https://arxiv.org/abs/2204.13464)
+(ECOOP 2022).
+
+## Build and check
+
+The crate uses Rust 2024, has empty default features, and has no normal
+dependencies. Run these checks from the repository root:
+
+```sh
 cargo +1.95.0 check --no-default-features --lib -p hibana
-cargo +1.95.0 test -p hibana --test ui
-cargo +1.95.0 clippy --all-targets -- -D warnings
+cargo +1.95.0 test -p hibana
 cargo +1.95.0 doc -p hibana --no-deps --no-default-features
 ```
 
-Compile the tracked embedded projection with the same public API:
+The [CI workflow](https://github.com/hibanaworks/hibana/blob/main/.github/workflows/quality-gates.yml)
+also runs Lean, Kani, Miri, and embedded builds. It checks code size, stack and
+storage budgets, and endpoint and future layouts. These measurements describe
+the checked programs and builds. Memory use depends on the protocol and
+configuration.
 
-```bash
-rustup target add --toolchain 1.95.0 thumbv6m-none-eabi
-cargo +1.95.0 check --manifest-path examples/pico/Cargo.toml \
-  --target thumbv6m-none-eabi
-```
+## License
 
-Run the complete non-Kani release gate with the pinned toolchains:
-
-```bash
-bash ./.github/scripts/run_final_form_gates.sh
-```
-
-It executes the runnable example, Rust tests, `no_std` target checks, rustdoc,
-package checks, Miri, Lean, the Unix carrier conformance suite, and resource
-measurements. Rust tests exercise protocol behavior and compile-time ownership;
-resource gates measure compiled artifacts and operation stack use. Package
-checks compile the extracted crate and its test modules. CI leaves internal
-names, file layout and documentation wording to code review. Kani/CBMC is a
-separate required CI job and can be run locally
-after installing the version recorded in `.github/kani-version`:
-
-```bash
-bash ./.github/scripts/check_kani.sh
-```
-
-## Scope
-
-Hibana covers finite-role sessions executed through its endpoint API. It does
-not claim correctness for code that bypasses the endpoint, arbitrary transport
-implementations, application algorithms, carrier authentication or
-cryptography, failure-detector accuracy, unbounded role sets, or channel
-delegation. Cross-binary agreement is defined over canonical wire schemas, not
-Rust nominal type identity.
-
-The exact public position is therefore: a compact choreography-derived runtime
-enforcement kernel for finite-role affine asynchronous multiparty protocols,
-with distributed fidelity, progress, and cancellation conclusions stated under
-explicit carrier, deployment, codec, and scheduling requirements.
-
-Hibana is licensed under either Apache-2.0 or MIT, at your option.
-
-### Explaining projection failures
-
-Projection errors identify the affected role, structured scope, arm event ranges,
-and source messages when a witness is available. For example, a receive-lane
-error can name `event#0(8->9 label=168 lane=0)` followed by
-`event#1(27->9 label=190 lane=0)` and request a causal handoff. A rolled error also
-identifies the reentry scope. Missing branch knowledge names the passive role
-and shows which arm has no local event.
-
-For a read-only structured explanation without constructing endpoints, call
-`g::diagnose(&program)`. It returns `Option<g::ProjectionDiagnostic>` and supports
-`Display` and `Debug`. `None` means the existing projection checks accept; it is
-not evidence about payload algorithms or physical I/O. Projection itself remains
-fail-closed and includes the available explanation in its compile-time error.
-Scope and event numbers are zero-based source-order ordinals, not Rust line
-numbers. Some selector/passive-child failures currently have only a category;
-missing witnesses are never guessed. See `proofs/projection-diagnostics` for the
-verification scope and regression checks.
-
-### Explicit completion and resource return
-
-For finite RX/TX completion, failure, and resource-return boundaries using the
-existing API, see the [executable explicit-resource-join example and verification](proofs/explicit-resource-join/README.md). This preserves independent emergency
-stop and long-running parallel loops; it adds no automatic native-resource guarantee.
+Hibana is licensed under Apache-2.0 or MIT, at your option.
