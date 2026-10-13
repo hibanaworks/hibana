@@ -19,9 +19,11 @@ categories    = ["asynchronous", "concurrency", "embedded", "network-programming
 include       = [
     "/Cargo.toml",
     "/README.md",
+    "/README.ja.md",
     "/LICENSE-APACHE",
     "/LICENSE-MIT",
     "/hibana-header.svg",
+    "/hibana-header-dark.svg",
     "/examples/**",
     "/src/**",
     "/tests/**",
