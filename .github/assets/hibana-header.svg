@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="390" viewBox="0 0 800 260" role="img" aria-label="HIBANA — Choreographic Programming in Rust">
   <title>HIBANA — Choreographic Programming in Rust</title>
-  <desc>Compile-time projection, runtime checks, no_std, and no heap allocation. Light theme.</desc>
+  <desc>Compile-time projection, runtime checks, no_std, and no heap allocation. Uses the page color scheme.</desc>
   <defs>
     <style>
       text { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif; }
@@ -14,6 +14,11 @@
       .subtitle { fill: #000000; }
       .features { fill: #000000; }
       .charcoal { stroke: #64748B; fill: #64748B; }
+      @media (prefers-color-scheme: dark) {
+        .bg-flame { opacity: 0.65; }
+        .title, .subtitle, .features { fill: #FFFFFF; }
+        .charcoal { stroke: #CBD5E1; fill: #CBD5E1; }
+      }
     </style>
   </defs>
   <g class="bg-flame" transform="translate(400,135) scale(0.5)">

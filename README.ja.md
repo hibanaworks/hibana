@@ -1,10 +1,5 @@
 <div align="center">
-  <a href="#gh-light-mode-only">
-    <img src="hibana-header.png?v=20261013-2#gh-light-mode-only" width="600" alt="HIBANA — Choreographic Programming in Rust" />
-  </a>
-  <a href="#gh-dark-mode-only">
-    <img src="hibana-header-dark.png?v=20261013-2#gh-dark-mode-only" width="600" alt="HIBANA — Choreographic Programming in Rust" />
-  </a>
+  <img src="https://raw.githubusercontent.com/hibanaworks/hibana/development/0.9.9/.github/assets/hibana-header.svg" width="600" alt="HIBANA — Choreographic Programming in Rust" />
 
   <p>
     <a href="https://github.com/hibanaworks/hibana/actions/workflows/quality-gates.yml"><img src="https://github.com/hibanaworks/hibana/actions/workflows/quality-gates.yml/badge.svg" alt="Quality gates" /></a>
