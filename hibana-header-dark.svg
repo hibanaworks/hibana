@@ -10,9 +10,9 @@
       .flame1 { fill: #FF6B35; }
       .flame2, .glow-tip { fill: #FF8C42; }
       .bg-flame { opacity: 0.65; }
-      .title { fill: #F3F4F6; }
-      .subtitle { fill: #E5E7EB; }
-      .features { fill: #F3F4F6; }
+      .title { fill: #FFFFFF; }
+      .subtitle { fill: #FFFFFF; }
+      .features { fill: #FFFFFF; }
       .charcoal { stroke: #CBD5E1; fill: #CBD5E1; }
     </style>
   </defs>
