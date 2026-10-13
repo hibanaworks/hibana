@@ -20,7 +20,7 @@
 //!   role-local witnesses;
 //! - [`runtime::wire`](crate::runtime::wire) for payload codecs;
 //! - [`runtime::transport`](crate::runtime::transport) and
-//!   [`runtime::transport::Transport`] for I/O readiness and ingress
+//!   [`runtime::transport::Transport`](crate::runtime::transport::Transport) for I/O readiness and ingress
 //!   demux evidence;
 //! - [`runtime::resolver`](crate::runtime::resolver) for explicit
 //!   route resolver sites.

@@ -37,14 +37,14 @@ connection and for application messages sent over QUIC.
 Run this in your project directory:
 
 ```sh
-cargo add hibana@0.9.7
+cargo add hibana@0.9.8
 ```
 
 This adds the following dependency to `Cargo.toml`:
 
 ```toml
 [dependencies]
-hibana = "0.9.7"
+hibana = "0.9.8"
 ```
 
 ## A small exchange

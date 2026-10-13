@@ -35,14 +35,14 @@ Hibanaは、通信の流れをまとめて記述するchoreographic programming�
 プロジェクトのディレクトリで実行します。
 
 ```sh
-cargo add hibana@0.9.7
+cargo add hibana@0.9.8
 ```
 
 `Cargo.toml`に次の依存関係が追加されます。
 
 ```toml
 [dependencies]
-hibana = "0.9.7"
+hibana = "0.9.8"
 ```
 
 ## 小さな通信例
