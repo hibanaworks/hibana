@@ -24,6 +24,8 @@ include       = [
     "/LICENSE-MIT",
     "/hibana-header.svg",
     "/hibana-header-dark.svg",
+    "/hibana-header.png",
+    "/hibana-header-dark.png",
     "/examples/**",
     "/src/**",
     "/tests/**",

@@ -1,8 +1,8 @@
 <div align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="hibana-header-dark.svg" />
-    <source media="(prefers-color-scheme: light)" srcset="hibana-header.svg" />
-    <img src="hibana-header.svg" width="600" alt="HIBANA — Choreographic Programming in Rust" />
+    <source media="(prefers-color-scheme: dark)" srcset="hibana-header-dark.png" />
+    <source media="(prefers-color-scheme: light)" srcset="hibana-header.png" />
+    <img src="hibana-header.png" width="600" alt="HIBANA — Choreographic Programming in Rust" />
   </picture>
 
   <p>

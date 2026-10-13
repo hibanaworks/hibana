@@ -5,14 +5,14 @@
     <style>
       text { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif; }
       .title { font-weight: 800; font-size: 72px; letter-spacing: 0.15em; }
-      .subtitle { font-weight: 650; font-size: 25px; }
-      .features { font-weight: 400; font-size: 17px; }
+      .subtitle { font-weight: 700; font-size: 25px; }
+      .features { font-weight: 500; font-size: 17px; }
       .flame1 { fill: #FF6B35; }
       .flame2, .glow-tip { fill: #FF8C42; }
-      .bg-flame { opacity: 0.15; }
+      .bg-flame { opacity: 0.45; }
       .title { fill: #0B1020; }
       .subtitle { fill: #1F2937; }
-      .features { fill: #475569; }
+      .features { fill: #1F2937; }
       .charcoal { stroke: #64748B; fill: #64748B; }
     </style>
   </defs>
