@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="https://raw.githubusercontent.com/hibanaworks/hibana/development/0.9.9/.github/assets/hibana-header.svg" width="600" alt="HIBANA — Choreographic Programming in Rust" />
+  <img src="https://raw.githubusercontent.com/hibanaworks/hibana/v0.9.9/.github/assets/hibana-header.svg" width="600" alt="HIBANA — Choreographic Programming in Rust" />
 
   <p>
     <a href="https://github.com/hibanaworks/hibana/actions/workflows/quality-gates.yml"><img src="https://github.com/hibanaworks/hibana/actions/workflows/quality-gates.yml/badge.svg" alt="Quality gates" /></a>
@@ -31,14 +31,14 @@ Hibanaは、通信の流れをまとめて記述するchoreographic programming�
 プロジェクトのディレクトリで実行します。
 
 ```sh
-cargo add hibana@0.9.8
+cargo add hibana@0.9.9
 ```
 
 `Cargo.toml`に次の依存関係が追加されます。
 
 ```toml
 [dependencies]
-hibana = "0.9.8"
+hibana = "0.9.9"
 ```
 
 ## 小さな通信例

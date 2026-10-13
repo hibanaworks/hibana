@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="https://raw.githubusercontent.com/hibanaworks/hibana/development/0.9.9/.github/assets/hibana-header.svg" width="600" alt="HIBANA — Choreographic Programming in Rust" />
+  <img src="https://raw.githubusercontent.com/hibanaworks/hibana/v0.9.9/.github/assets/hibana-header.svg" width="600" alt="HIBANA — Choreographic Programming in Rust" />
 
   <p>
     <a href="https://github.com/hibanaworks/hibana/actions/workflows/quality-gates.yml"><img src="https://github.com/hibanaworks/hibana/actions/workflows/quality-gates.yml/badge.svg" alt="Quality gates" /></a>
@@ -33,14 +33,14 @@ connection and for application messages sent over QUIC.
 Run this in your project directory:
 
 ```sh
-cargo add hibana@0.9.8
+cargo add hibana@0.9.9
 ```
 
 This adds the following dependency to `Cargo.toml`:
 
 ```toml
 [dependencies]
-hibana = "0.9.8"
+hibana = "0.9.9"
 ```
 
 ## A small exchange
