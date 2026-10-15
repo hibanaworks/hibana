@@ -4,6 +4,11 @@ use super::OfferEntryPosition;
 use crate::global::const_dsl::ScopeId;
 use crate::global::typestate::{StateIndex, state_index_to_usize};
 
+pub(in crate::endpoint::kernel) enum ObservedIngressSelection {
+    Branch(OfferScopeSelection),
+    OrdinaryReceive(u8),
+}
+
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub(in crate::endpoint::kernel) enum FrameEvidenceResolution {
     Unresolved,

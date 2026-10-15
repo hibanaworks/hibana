@@ -1,5 +1,6 @@
 use super::{
-    CursorEndpoint, OfferScopeSelection, RecvError, RecvResult, Transport, state_index_to_usize,
+    CursorEndpoint, ObservedIngressSelection, OfferScopeSelection, RecvError, RecvResult,
+    Transport, state_index_to_usize,
 };
 use crate::{
     endpoint::kernel::frontier::checked_state_index,
@@ -11,14 +12,14 @@ impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
 where
     T: Transport + 'r,
 {
-    /// Frame identity selects a unique enabled receive, never a nearby cursor.
-    /// An offer requires a projected first-visible receive or a route arm's
-    /// first receive on that lane. The event checks are shared with recv.
-    pub(in crate::endpoint::kernel::offer) fn select_observed_ingress_route_scope(
+    /// Classify one exact enabled receive without advancing its local step.
+    /// Only a projected first-visible branch receive can select an offer.
+    /// Ordinary receives stay available to recv. Both share its event checks.
+    pub(in crate::endpoint::kernel::offer) fn select_observed_ingress(
         &mut self,
         carried_key: Option<InboundFrameKey>,
         carried_observation: Option<super::lane_port::FrameObservation>,
-    ) -> RecvResult<Option<OfferScopeSelection>> {
+    ) -> RecvResult<Option<ObservedIngressSelection>> {
         let Some(key) = carried_key else {
             return Ok(None);
         };
@@ -76,11 +77,9 @@ where
                     Some(_) | None => None,
                 }
             };
-            if let Some(scope) = scope {
-                matched = matched.add((scope, idx));
-                if matched.is_ambiguous() {
-                    break;
-                }
+            matched = matched.add((scope, idx));
+            if matched.is_ambiguous() {
+                break;
             }
         }
         let Some((scope_id, target_idx)) = matched
@@ -88,6 +87,9 @@ where
             .map_err(|_| RecvError::PhaseInvariant)?
         else {
             return Ok(None);
+        };
+        let Some(scope_id) = scope_id else {
+            return Ok(Some(ObservedIngressSelection::OrdinaryReceive(key.lane)));
         };
         let observed_arm = self.cursor.route_arm_for_index(scope_id, target_idx);
         let preview_conflict = self.cursor.event_conflict_for_index(target_idx);
@@ -117,7 +119,7 @@ where
         )?;
         selection.observed_target =
             checked_state_index(target_idx).ok_or(RecvError::PhaseInvariant)?;
-        Ok(Some(selection))
+        Ok(Some(ObservedIngressSelection::Branch(selection)))
     }
 
     pub(in crate::endpoint::kernel::offer) fn select_carried_ingress_scope(

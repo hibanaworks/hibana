@@ -102,13 +102,16 @@ continuation on both f1c4dd4bab211b005687cfec15bb53a1f77500ed and
 c2001ec06944d7f3b299e16b5b3efb5b0ba0366a.
 
 A previous visit's suffix is not necessarily enabled at the next visit's head.
-The candidate is now checked against the projected receive dependencies. The
-same check is required immediately before polling an active candidate: another
-lane can complete a visit without refreshing this lane's cache. The second
-regression observes an independent choice before completing that other lane,
-then queues ordinary data. Removing just the pre-I/O check makes it fail.
-Both tests retain four distinct payloads, abandon pending previews, and check
-that the ordinary receives still return their exact data.
+The first repair checked the cached branch heads before I/O. That repair passed
+these two tests but later blocked a valid service request after review rework:
+the new visit could begin in a different route. The cached-suffix guard has
+therefore been removed. Exact ingress classification now retains an ordinary
+receive for `recv` and clears only that lane's stale offer cache. The second
+regression observes an independent choice before completing its lane, then
+queues ordinary data. Both regressions retain four distinct payloads, repeatedly
+poll and abandon pending previews, and check exact ordinary receive data. See
+[`ordinary-offer-ingress`](../ordinary-offer-ingress) for the replacement boundary
+and its explicit proof assumptions.
 
 Strict Miri also found an independent ownership defect while cancelling the
 pending preview. A staged frame held a shared slice into an inline Rx buffer.
@@ -132,11 +135,12 @@ models retain their stated boundaries. Their checks do not establish Rust
 pointer provenance or prove the entire cache implementation. The new production
 regressions and strict Miri checks cover those concrete boundaries.
 
-The candidate also passed 885 workspace Rust tests (12 ignored), workspace
+The first cached-suffix candidate passed 885 workspace Rust tests (12 ignored), workspace
 all-target Clippy, the no_std host and thumbv6m builds, the full Lean gate,
 the related selector/dependency/resolver/ingress Lean and Z3 checks, and nine
 Kani harnesses for frontier selection and receive-receipt ownership. The
 size snapshot and subsystem layout gates passed: aggregate measured flash
 94,694 bytes, SRAM 5,418 bytes, and maximum measured stack 2,751 bytes in their
 checked programs. These measurements do not bound arbitrary consumer protocols.
-QUIC interoperability must be checked with this repair actually selected.
+These historical checks do not qualify the replacement ingress classification.
+QUIC interoperability must be checked with the selected repair actually built.

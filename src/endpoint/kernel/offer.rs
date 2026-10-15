@@ -50,7 +50,7 @@ pub(in crate::endpoint::kernel) use self::frontier_types::{
 };
 use self::ingress::OfferFrontierFacts;
 pub(in crate::endpoint::kernel) use self::ingress_types::{
-    FrameEvidenceResolution, OfferScopeSelection,
+    FrameEvidenceResolution, ObservedIngressSelection, OfferScopeSelection,
 };
 use self::profile::OfferAuthorityPath;
 pub(in crate::endpoint::kernel) use self::profile::{OfferEntryPosition, OfferScopeProfile};
@@ -137,9 +137,7 @@ where
         if lane_idx >= self.cursor.logical_lane_count() {
             crate::invariant();
         }
-        let detached = self.decision_state.clear_lane_offer_state(lane_idx);
-        self.detach_lane_from_offer_entry(detached);
-        self.detach_lane_from_root_frontier(detached);
+        self.clear_lane_offer_cache(lane_idx);
         if let Some(info) = self.compute_lane_offer_state(lane_idx) {
             let reentry = if self.is_reentry_route(info.scope) {
                 ReentryMark::Reentrant
@@ -151,6 +149,12 @@ where
             self.attach_lane_to_root_frontier(info);
             self.attach_lane_to_offer_entry(lane_idx, info);
         }
+    }
+
+    fn clear_lane_offer_cache(&mut self, lane_idx: usize) {
+        let detached = self.decision_state.clear_lane_offer_state(lane_idx);
+        self.detach_lane_from_offer_entry(detached);
+        self.detach_lane_from_root_frontier(detached);
     }
 
     fn poll_collect_offer_evidence(
@@ -239,7 +243,20 @@ where
             )
         };
         let selection = match selection_result {
-            Ok(selection) => selection,
+            Ok(ObservedIngressSelection::Branch(selection)) => selection,
+            Ok(ObservedIngressSelection::OrdinaryReceive(lane)) => {
+                let mut ingress = state.take_carried_ingress();
+                let payload = crate::invariant_some(ingress.take_transport());
+                if let Err(error) = self.requeue_offer_transport_payload(payload) {
+                    state.discard_terminal();
+                    return Poll::Ready(Err(error));
+                }
+                // This exact receive belongs to recv, not to the cached route.
+                // Cursor progress will refresh the cache when recv consumes it.
+                self.clear_lane_offer_cache(usize::from(lane));
+                cx.waker().wake_by_ref();
+                return Poll::Pending;
+            }
             Err(err) => {
                 state.discard_terminal();
                 return Poll::Ready(Err(err));
