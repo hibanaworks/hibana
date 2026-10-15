@@ -60,6 +60,11 @@ run_miri_test \
   --test miri_runtime_owner
 
 run_miri_test \
+  nested-resolver-reentry \
+  -p hibana \
+  --test nested_resolver_reentry
+
+run_miri_test \
   transport-requeue-owner \
   -p hibana \
   --lib \

@@ -21,7 +21,7 @@ where
         if rows.is_empty() {
             return Ok(SendRouteAuthority::none());
         }
-        let audit_start = self.resolve_send_route_preview_rows(meta, rows)?;
+        let audit_start = self.resolve_send_route_preview_rows(meta, rows, preview_idx)?;
         Ok(SendRouteAuthority::direct(meta.lane, audit_start))
     }
 
@@ -99,11 +99,15 @@ where
         &self,
         meta: &SendMeta,
         rows: SelectedRouteCommitRowsRef,
+        preview_idx: usize,
     ) -> SendResult<u16> {
         if rows.len() > u16::MAX as usize {
             return Err(SendError::PhaseInvariant);
         }
         let mut audit_start = rows.len() as u16;
+        let fresh_start = self
+            .fresh_route_start_for_rows(rows, preview_idx, Some(meta.lane))
+            .map_err(|_| SendError::PhaseInvariant)?;
         let mut idx = 0usize;
         while idx < rows.len() {
             let route_row = rows
@@ -111,18 +115,20 @@ where
                 .ok_or(SendError::PhaseInvariant)?;
             let scope_id = route_row.scope();
             let arm_index = route_row.selected_arm();
+            // A completed containing arm does not start a new visit when the
+            // candidate is a child's reentry rather than its own entry.
+            if fresh_start.is_none_or(|start| idx < start) {
+                if self.selected_arm_for_scope(scope_id) != Some(arm_index) {
+                    return Err(SendError::PhaseInvariant);
+                }
+                idx += 1;
+                continue;
+            }
             let Some(resolver) = self.cursor.route_scope_resolver(scope_id) else {
                 idx += 1;
                 continue;
             };
-            if self.selected_arm_for_scope(scope_id).is_none() && audit_start as usize == rows.len()
-            {
-                audit_start = idx as u16;
-            }
-            if let Some(selected) = self.selected_arm_for_scope(scope_id)
-                && self.reentrant_selected_arm_complete(scope_id, selected)
-                && audit_start as usize == rows.len()
-            {
+            if audit_start as usize == rows.len() {
                 audit_start = idx as u16;
             }
             self.resolve_dynamic_route_arm_for_send_preview(meta, arm_index, resolver)?;

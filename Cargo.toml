@@ -217,3 +217,7 @@ path = "tests/parallel_offer_delayed_ingress.rs"
 [[test]]
 name = "rolled_continuation_reuse"
 path = "tests/rolled_continuation_reuse.rs"
+
+[[test]]
+name = "nested_resolver_reentry"
+path = "tests/nested_resolver_reentry.rs"
