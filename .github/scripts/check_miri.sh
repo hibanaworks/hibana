@@ -375,6 +375,12 @@ MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_t
   --test shared_query_tail_reentry \
   a_completed_reply_cannot_be_reused_without_receiving_a_fresh_query
 
+MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \
+  inactive-parallel-continuation-reentry \
+  -p hibana \
+  --test shared_query_tail_reentry \
+  inactive_parallel_dependency_does_not_block_outer_roll_reentry
+
 run_miri_test \
   program-image-storage-validation \
   -p hibana \

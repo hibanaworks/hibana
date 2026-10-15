@@ -230,11 +230,6 @@ impl EventCursorMachine {
     }
 
     #[inline(always)]
-    fn dependency_for_index(&self, current_idx: usize) -> Option<LocalDependency> {
-        self.event_program().dependency_for_index(current_idx)
-    }
-
-    #[inline(always)]
     fn event_conflict_for_index(&self, current_idx: usize) -> PackedEventConflict {
         self.event_program().event_conflict_for_index(current_idx)
     }

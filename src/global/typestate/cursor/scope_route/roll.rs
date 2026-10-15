@@ -146,12 +146,9 @@ impl EventCursor {
                 && candidate_lane == lane
                 && self.node_event_done_for_lane(scan, candidate_lane)
             {
-                if let Some(dependency) = self.dependency_for_index(scan)
-                    && !Self::dependency_applies(dependency, &mut *selected_arm_for_scope)
-                {
-                    scan += 1;
-                    continue;
-                }
+                // A conditional dependency guards its prerequisite, not the
+                // event itself. An inactive prerequisite from another route
+                // arm does not erase this committed continuation.
                 let conflict = self.machine().event_conflict_for_index(scan);
                 if self.event_conflict_row_allows_with_preview(
                     conflict,

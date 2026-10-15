@@ -58,6 +58,8 @@ jobs:
         run: bash ./.github/scripts/run_final_form_gates.sh
       - name: Check elastic roll endpoint selectors with Lean and Z3
         run: bash proofs/roll-reentry-selectors/check.sh
+      - name: Check conditional roll continuation dependencies with Lean and Z3
+        run: bash proofs/roll-continuation-dependency/check.sh
       - name: Check rolled-route ownership with Lean and Z3
         run: bash proofs/rolled-route-ownership/check.sh
       - name: Check projection diagnostic models with Lean and Z3

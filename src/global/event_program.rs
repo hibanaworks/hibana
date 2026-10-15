@@ -228,11 +228,6 @@ impl LocalEventProgram {
     }
 
     #[inline(always)]
-    pub(crate) fn dependency_for_index(&self, idx: usize) -> Option<LocalDependency> {
-        self.event_row_at(idx).and_then(LocalEventRow::dependency)
-    }
-
-    #[inline(always)]
     pub(crate) fn event_conflict_for_index(&self, idx: usize) -> PackedEventConflict {
         if idx == self.local_len() {
             return PackedEventConflict::none();

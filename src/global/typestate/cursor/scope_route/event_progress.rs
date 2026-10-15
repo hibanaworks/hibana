@@ -18,11 +18,6 @@ impl EventCursor {
         self.machine().parallel_root(scope_id)
     }
 
-    #[inline(always)]
-    pub(crate) fn dependency_for_index(&self, current_idx: usize) -> Option<LocalDependency> {
-        self.machine().dependency_for_index(current_idx)
-    }
-
     #[inline]
     fn dependency_state(
         &self,
