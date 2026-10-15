@@ -23,10 +23,7 @@ mod select_alignment;
 mod select_observed;
 mod select_scope_selection;
 mod state;
-use core::{
-    ops::ControlFlow,
-    task::{Poll, ready},
-};
+use core::{ops::ControlFlow, task::Poll};
 
 use super::authority::RouteResolveStep;
 pub(in crate::endpoint::kernel) use super::authority::{Arm, RouteArmToken};
@@ -38,6 +35,7 @@ use super::frontier::{
 use super::lane_port;
 use crate::endpoint::{RecvError, RecvResult};
 use crate::global::const_dsl::{ReentryMark, ScopeId};
+use crate::global::role_program::{LANE_SET_VIEW_WORDS, LaneWord, lane_word_index};
 use crate::global::typestate::{InboundFrameKey, state_index_to_usize};
 use crate::transport::Transport;
 
@@ -157,32 +155,24 @@ where
         self.detach_lane_from_root_frontier(detached);
     }
 
-    fn poll_collect_offer_evidence(
-        &mut self,
-        pending_recv: &mut lane_port::PendingRecv,
-        state: &mut OfferCollectState<'r>,
-        cx: &mut core::task::Context<'_>,
-    ) -> Poll<RecvResult<()>> {
-        if state.ingress.is_empty()
-            && let Some(ingress) =
-                ready!(self.collect_offer_ingress(pending_recv, state.facts, cx))?
-        {
-            state.ingress.stage_transport(ingress);
-        }
-        Poll::Ready(Ok(()))
-    }
-
     pub(crate) fn poll_offer_state(
         &mut self,
         state: &mut OfferState<'r>,
         cx: &mut core::task::Context<'_>,
         scratch: &mut FrontierScratchWorkspace<'_>,
     ) -> Poll<RecvResult<u8>> {
+        // A causally early frame is inspected at most once in this poll. The
+        // transport retains it; this scan mask neither commits nor parks a lane.
+        let mut deferred_lanes = [0; LANE_SET_VIEW_WORDS];
         loop {
             let step = match state.execution.kind() {
                 OfferExecutionKind::Uninitialized => self.poll_offer_uninitialized(state),
-                OfferExecutionKind::Selecting => self.poll_offer_selecting(state, cx, scratch),
-                OfferExecutionKind::Collecting => self.poll_offer_collecting(state, cx),
+                OfferExecutionKind::Selecting => {
+                    self.poll_offer_selecting(state, cx, scratch, &mut deferred_lanes)
+                }
+                OfferExecutionKind::Collecting => {
+                    self.poll_offer_collecting(state, cx, &deferred_lanes)
+                }
                 OfferExecutionKind::Resolving => self.poll_offer_resolving(state, cx, scratch),
             };
             match step {
@@ -211,9 +201,14 @@ where
         state: &mut OfferState<'r>,
         cx: &mut core::task::Context<'_>,
         scratch: &mut FrontierScratchWorkspace<'_>,
+        deferred_lanes: &mut [LaneWord; LANE_SET_VIEW_WORDS],
     ) -> Poll<RecvResult<Option<u8>>> {
         if state.carried_transport_lane_wire().is_none() {
-            match self.poll_any_active_offer_transport_frame(&mut state.pending_recv, cx) {
+            match self.poll_any_active_offer_transport_frame(
+                &mut state.pending_recv,
+                cx,
+                deferred_lanes,
+            ) {
                 Poll::Pending => {}
                 Poll::Ready(Ok(Some(frame))) => {
                     let mut ingress = OfferStagedIngress::empty();
@@ -257,6 +252,17 @@ where
                 cx.waker().wake_by_ref();
                 return Poll::Pending;
             }
+            Ok(ObservedIngressSelection::PendingReceive(lane)) => {
+                let mut ingress = state.take_carried_ingress();
+                let payload = crate::invariant_some(ingress.take_transport());
+                if let Err(error) = self.requeue_offer_transport_payload(payload) {
+                    state.discard_terminal();
+                    return Poll::Ready(Err(error));
+                }
+                let (word, bit) = lane_word_index(usize::from(lane));
+                deferred_lanes[word] |= bit;
+                return Poll::Ready(Ok(None));
+            }
             Err(err) => {
                 state.discard_terminal();
                 return Poll::Ready(Err(err));
@@ -284,6 +290,7 @@ where
         &mut self,
         state: &mut OfferState<'r>,
         cx: &mut core::task::Context<'_>,
+        deferred_lanes: &[LaneWord; LANE_SET_VIEW_WORDS],
     ) -> Poll<RecvResult<Option<u8>>> {
         let (frontier_visited, resolve_stage) = {
             let OfferExecution::Collecting {
@@ -293,11 +300,32 @@ where
             else {
                 crate::invariant();
             };
-            match self.poll_collect_offer_evidence(&mut state.pending_recv, stage, cx) {
+            let collected = if stage.ingress.is_empty() {
+                self.collect_offer_ingress(&mut state.pending_recv, stage.facts, cx, deferred_lanes)
+            } else {
+                Poll::Ready(Ok(None))
+            };
+            match collected {
+                Poll::Ready(Ok(Some(frame))) => {
+                    // All newly observed frames enter exact receive matching,
+                    // including frames that arrived after selection began.
+                    let mut ingress = OfferStagedIngress::empty();
+                    ingress.stage_transport(frame);
+                    let visited = frontier_visited.take();
+                    state.execution = OfferExecution::Selecting {
+                        frontier_visited: visited,
+                    };
+                    state.carry_ingress(ingress);
+                    return Poll::Ready(Ok(None));
+                }
                 Poll::Pending => {
                     // No selected-scope frame is owned yet. Keep independent
                     // active receive lanes armed while this scope is waiting.
-                    match self.poll_any_active_offer_transport_frame(&mut state.pending_recv, cx) {
+                    match self.poll_any_active_offer_transport_frame(
+                        &mut state.pending_recv,
+                        cx,
+                        deferred_lanes,
+                    ) {
                         Poll::Ready(Ok(Some(frame))) => {
                             let mut ingress = OfferStagedIngress::empty();
                             ingress.stage_transport(frame);
@@ -319,7 +347,7 @@ where
                     stage.discard_terminal();
                     return Poll::Ready(Err(err));
                 }
-                Poll::Ready(Ok(())) => {
+                Poll::Ready(Ok(None)) => {
                     let scope_id = stage.facts.scope_id();
                     if self.scope_evidence_conflicted(scope_id) {
                         stage.discard_terminal();

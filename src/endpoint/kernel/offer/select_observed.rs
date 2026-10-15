@@ -4,7 +4,7 @@ use super::{
 };
 use crate::{
     endpoint::kernel::frontier::checked_state_index,
-    global::typestate::{EventArmView, InboundFrameKey},
+    global::typestate::{EventAdmissionError, EventArmView, InboundFrameKey},
     runtime_core::UniqueMatch,
 };
 
@@ -12,9 +12,10 @@ impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
 where
     T: Transport + 'r,
 {
-    /// Classify one exact enabled receive without advancing its local step.
+    /// Classify one exact user receive without advancing its local step.
     /// Only a projected first-visible branch receive can select an offer.
-    /// Ordinary receives stay available to recv. Both share its event checks.
+    /// Ordinary input stays available to recv; future input waits for its
+    /// projected predecessor. Both share recv's identity and progress checks.
     pub(in crate::endpoint::kernel::offer) fn select_observed_ingress(
         &mut self,
         carried_key: Option<InboundFrameKey>,
@@ -25,6 +26,7 @@ where
         };
         let current_idx = self.cursor.index();
         let mut matched = UniqueMatch::NONE;
+        let mut pending = UniqueMatch::NONE;
         for idx in 0..self.cursor.local_steps_len() {
             let Some(meta) = self.cursor.try_recv_meta_at(idx) else {
                 continue;
@@ -41,12 +43,13 @@ where
             let preview_conflict = self.cursor.event_conflict_for_index(idx);
             let mut selected =
                 |scope, view| self.selected_arm_for_recv_event(preview_conflict, scope, view);
-            if self
-                .cursor
-                .event_enabled(idx, meta.into(), &mut selected)
-                .is_err()
-            {
-                continue;
+            match self.cursor.event_enabled(idx, meta.into(), &mut selected) {
+                Ok(_) => {}
+                Err(EventAdmissionError::PredecessorPending) => {
+                    pending = pending.add(idx);
+                    continue;
+                }
+                Err(EventAdmissionError::Invariant) => continue,
             }
             let scope = if let Some(scope) = self
                 .cursor
@@ -86,6 +89,13 @@ where
             .finish_optional()
             .map_err(|_| RecvError::PhaseInvariant)?
         else {
+            if pending
+                .finish_optional()
+                .map_err(|_| RecvError::PhaseInvariant)?
+                .is_some()
+            {
+                return Ok(Some(ObservedIngressSelection::PendingReceive(key.lane)));
+            }
             return Ok(None);
         };
         let Some(scope_id) = scope_id else {

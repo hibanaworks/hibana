@@ -28,7 +28,7 @@ mod pending_events;
 mod scope_route;
 #[cfg(all(test, hibana_repo_tests))]
 mod validated_metadata_tests;
-pub(crate) use scope_route::EventArmView;
+pub(crate) use scope_route::{EventAdmissionError, EventArmView};
 
 #[cfg(all(test, hibana_repo_tests))]
 mod compact_cursor_position_tests {

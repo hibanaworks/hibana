@@ -12,6 +12,24 @@ pub(crate) enum EventArmView {
     Preview,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum EventAdmissionError {
+    Invariant,
+    PredecessorPending,
+}
+
+impl From<CursorInvariantError> for EventAdmissionError {
+    fn from(_: CursorInvariantError) -> Self {
+        Self::Invariant
+    }
+}
+
+impl From<EventAdmissionError> for CursorInvariantError {
+    fn from(_: EventAdmissionError) -> Self {
+        Self::INVARIANT
+    }
+}
+
 impl EventCursor {
     #[inline]
     pub(crate) fn parallel_scope_root(&self, scope_id: ScopeId) -> Option<ScopeId> {
@@ -94,7 +112,7 @@ impl EventCursor {
         idx: usize,
         event: EventCommitMeta,
         arm_for_scope: &mut dyn FnMut(ScopeId, EventArmView) -> Option<u8>,
-    ) -> Result<EnabledEventCommit, CursorInvariantError> {
+    ) -> Result<EnabledEventCommit, EventAdmissionError> {
         // Descriptor facts are immutable within this admission. Keep one
         // checked row; completion, route choice and reentry remain live checks.
         let row = self
@@ -103,33 +121,39 @@ impl EventCursor {
             .event_row_at(idx)
             .ok_or(CursorInvariantError::INVARIANT)?;
         if !row.matches_commit(event) {
-            return Err(CursorInvariantError::INVARIANT);
+            return Err(EventAdmissionError::Invariant);
         }
         let progress_step =
             self.relocatable_resident_lane_step_at_index(idx, event.lane as usize)?;
         let cursor_after = row.next();
         let preview_conflict = row.conflict();
-        {
-            let mut preview = |scope| arm_for_scope(scope, EventArmView::Preview);
-            if let Some(dependency) = row.dependency()
-                && !self
-                    .dependency_state(dependency, &mut preview)
-                    .allows_event()
-            {
-                return Err(CursorInvariantError::INVARIANT);
-            }
+        let dependency_state = {
+            let mut preview = |scope| {
+                // The candidate path guards its predecessors even when a
+                // completed parent visit has been masked for fresh admission.
+                // The separate reentry check still reads committed history.
+                arm_for_scope(scope, EventArmView::Preview)
+                    .or_else(|| self.preview_conflict_arm(preview_conflict, scope))
+            };
+            let dependency_state = row
+                .dependency()
+                .map(|dependency| self.dependency_state(dependency, &mut preview));
             if !self.event_conflict_row_allows_with_preview(
                 preview_conflict,
                 preview_conflict,
                 &mut preview,
             ) {
-                return Err(CursorInvariantError::INVARIANT);
+                return Err(EventAdmissionError::Invariant);
             }
-        }
+            dependency_state
+        };
         self.validate_event_enabled_reentry(idx, progress_step, event, arm_for_scope)?;
         let mut preview = |scope| arm_for_scope(scope, EventArmView::Preview);
         if !self.event_lane_head_allows(progress_step, preview_conflict, &mut preview) {
-            return Err(CursorInvariantError::INVARIANT);
+            return Err(EventAdmissionError::Invariant);
+        }
+        if dependency_state.is_some_and(|state| !state.allows_event()) {
+            return Err(EventAdmissionError::PredecessorPending);
         }
         Ok(EnabledEventCommit::new(
             StateIndex::from_usize(idx),

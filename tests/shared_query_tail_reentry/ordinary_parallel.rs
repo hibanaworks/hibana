@@ -48,9 +48,16 @@ fn normal_parallel_input_is_not_route_evidence_on_roll_reentry() {
             let mut b = rv.enter(SessionId::new(37), &p1).unwrap();
             let mut c = rv.enter(SessionId::new(37), &p2).unwrap();
             for round in 0..4u32 {
-                a.send::<Data>(&round).await.unwrap();
                 {
                     let mut offer = pin!(b.offer());
+                    for _ in 0..round % 2 {
+                        poll_fn(|cx| {
+                            assert!(matches!(offer.as_mut().poll(cx), Poll::Pending));
+                            Poll::Ready(())
+                        })
+                        .await;
+                    }
+                    a.send::<Data>(&round).await.unwrap();
                     for _ in 0..4 {
                         poll_fn(|cx| {
                             match offer.as_mut().poll(cx) {

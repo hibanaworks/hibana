@@ -14,7 +14,7 @@ optimization.
 The collecting path now also polls existing active offer lanes while no frame
 has been acquired. An actual frame transfers into the existing Selecting state
 and follows the existing exact-observation route validation. The guard comes
-from poll_collect_offer_evidence: Pending is possible only when stage.ingress
+from poll_offer_collecting: transport collection is entered only when stage.ingress
 is empty. No accepted frame is abandoned, no readiness is fabricated, and no
 state field, public API, capacity or wire representation is added.
 
@@ -58,7 +58,7 @@ Source correspondence:
 
 | Model | Runtime boundary |
 | --- | --- |
-| collect | poll_collect_offer_evidence, including the existing nonempty-ingress guard |
+| collect | poll_offer_collecting, including the existing nonempty-ingress guard |
 | advance waiting | poll_offer_collecting's Pending arm |
 | selecting frame/context | stage_transport, frontier_visited.take, carry_ingress |
 | resolving/error | existing selected-evidence and terminal error arms |
@@ -144,3 +144,9 @@ size snapshot and subsystem layout gates passed: aggregate measured flash
 checked programs. These measurements do not bound arbitrary consumer protocols.
 These historical checks do not qualify the replacement ingress classification.
 QUIC interoperability must be checked with the selected repair actually built.
+
+The later prefix-dependency repair also sends newly collected primary-lane
+frames through Selecting before any branch authority is used. This extends the
+same exact classification to arrivals after an offer first became pending.
+Its separate model and concrete delayed-frame regression are documented in
+[`offer-prefix-dependency`](../offer-prefix-dependency).

@@ -274,6 +274,36 @@ impl TestTransport {
         frame.len = len;
     }
 
+    /// Delay one accepted frame on the simulated network, retaining its bytes.
+    /// The returned one-shot delivery restores FIFO position and readiness.
+    #[allow(
+        dead_code,
+        reason = "shared carrier; only the nested-prefix suite delays delivery"
+    )]
+    pub(crate) fn hold_next_frame(
+        &self,
+        session_id: SessionId,
+        role: u8,
+        lane: u8,
+    ) -> impl FnOnce() + 'static {
+        let frame = self
+            .state
+            .borrow_mut()
+            .dequeue(role, session_id, lane)
+            .expect("accepted frame to delay");
+        let state = self.state.clone();
+        move || {
+            let wake = {
+                let mut state = state.borrow_mut();
+                state.requeue(role, frame);
+                state.role_mut(role).take_waiter(session_id, lane)
+            };
+            if let Some(wake) = wake {
+                wake.wake();
+            }
+        }
+    }
+
     pub(crate) fn stage_send(
         &self,
         tx: &mut TestTx,

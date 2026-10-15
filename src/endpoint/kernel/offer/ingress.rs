@@ -5,6 +5,7 @@ use core::task::Poll;
 use super::{CursorEndpoint, OfferScopeProfile, OfferScopeSelection, OfferStagedIngress};
 use crate::{
     endpoint::{RecvError, RecvResult},
+    global::role_program::{LANE_SET_VIEW_WORDS, LaneWord, lane_word_index},
     transport::Transport,
 };
 
@@ -86,12 +87,18 @@ where
         pending_recv: &mut lane_port::PendingRecv,
         facts: OfferFrontierFacts,
         cx: &mut core::task::Context<'_>,
+        deferred_lanes: &[LaneWord; LANE_SET_VIEW_WORDS],
     ) -> Poll<RecvResult<Option<lane_port::PreambleFrame<'r>>>> {
         if matches!(facts.ingress_mode, OfferIngressMode::ResolvedWithoutFrame) {
             return Poll::Ready(Ok(None));
         }
 
-        let frame = match self.poll_received_transport_frame_for_offer(pending_recv, facts, cx) {
+        let frame = match self.poll_received_transport_frame_for_offer(
+            pending_recv,
+            facts,
+            cx,
+            deferred_lanes,
+        ) {
             Poll::Pending => return Poll::Pending,
             Poll::Ready(Ok(frame)) => frame,
             Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
@@ -104,6 +111,7 @@ where
         &mut self,
         pending_recv: &mut lane_port::PendingRecv,
         cx: &mut core::task::Context<'_>,
+        deferred_lanes: &[LaneWord; LANE_SET_VIEW_WORDS],
     ) -> Poll<RecvResult<Option<lane_port::PreambleFrame<'r>>>> {
         let lane_limit = self.cursor.logical_lane_count();
         let mut start = 0usize;
@@ -112,6 +120,11 @@ where
                 .active_offer_lanes()
                 .next_set_from(start, lane_limit)
         } {
+            let (word, bit) = lane_word_index(lane_idx);
+            if deferred_lanes[word] & bit != 0 {
+                start = lane_idx + 1;
+                continue;
+            }
             match self.poll_received_framed_transport_frame_for_lane(
                 pending_recv,
                 lane_idx,
@@ -132,12 +145,17 @@ where
         pending_recv: &mut lane_port::PendingRecv,
         facts: OfferFrontierFacts,
         cx: &mut core::task::Context<'_>,
+        deferred_lanes: &[LaneWord; LANE_SET_VIEW_WORDS],
     ) -> Poll<RecvResult<lane_port::PreambleFrame<'r>>> {
         let lane_limit = self.cursor.logical_lane_count();
         let lanes = self.transport_lane_set_for_offer(facts);
         let preferred_lane = self.preferred_transport_lane_for_offer(facts);
         let mut lanes = OfferLaneScan::new(preferred_lane, lanes, lane_limit);
         while let Some(lane_idx) = lanes.next() {
+            let (word, bit) = lane_word_index(lane_idx);
+            if deferred_lanes[word] & bit != 0 {
+                continue;
+            }
             match self.poll_received_framed_transport_frame_for_lane(
                 pending_recv,
                 lane_idx,

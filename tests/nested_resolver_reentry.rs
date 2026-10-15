@@ -19,6 +19,144 @@ fn decide(input: &Cell<bool>) -> Result<DecisionArm, ResolverError> {
 }
 
 #[test]
+fn offer_preserves_visible_prefix_before_nested_receive() {
+    use core::{future::Future, pin::pin, task::Poll};
+    use std::{future::poll_fn, time::Duration};
+
+    tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .build()
+        .unwrap()
+        .block_on(async {
+            for initial_polls in 0..=1 {
+                const C: u8 = 0;
+                const D: u8 = 1;
+                const A: u8 = 2;
+                const B: u8 = 3;
+                type Start = g::Msg<1, ()>;
+                type AcceptA = g::Msg<2, ()>;
+                type BeginB = g::Msg<3, ()>;
+                type BeginDocB = g::Msg<4, u32>;
+                type AcceptB = g::Msg<5, ()>;
+                type BeginCombine = g::Msg<6, u32>;
+                type ReviseA = g::Msg<7, ()>;
+                type WaitB = g::Msg<8, ()>;
+                type ReviseDocA = g::Msg<9, ()>;
+                type ReviseB = g::Msg<10, ()>;
+                type ReviseDocB = g::Msg<11, u32>;
+                let second = g::seq(
+                    g::par(g::send::<C, B, BeginB>(), g::send::<C, D, BeginDocB>()),
+                    g::route(
+                        g::seq(g::send::<C, B, AcceptB>(), g::send::<C, D, BeginCombine>()),
+                        g::seq(g::send::<C, B, ReviseB>(), g::send::<C, D, ReviseDocB>()),
+                    )
+                    .resolve::<802>()
+                    .roll(),
+                );
+                let global = g::seq(
+                    g::send::<C, D, Start>(),
+                    g::route(
+                        g::seq(g::send::<C, A, AcceptA>(), second),
+                        g::seq(
+                            g::par(g::send::<C, A, ReviseA>(), g::send::<C, B, WaitB>()),
+                            g::send::<C, D, ReviseDocA>(),
+                        ),
+                    )
+                    .resolve::<801>()
+                    .roll(),
+                );
+                let pc = project::<C>(&global);
+                let pd = project::<D>(&global);
+                let choose_parent = Cell::new(initial_polls == 0);
+                let choose_child = Cell::new(initial_polls == 0);
+                let mut slab = vec![0; 65536];
+                let mut storage = SessionKitStorage::uninit();
+                let wire = common::TestTransport::new();
+                let rv = storage.init().rendezvous(&mut slab, wire.clone()).unwrap();
+                rv.set_resolver(
+                    &pc,
+                    ResolverRef::<801>::decision_state(&choose_parent, decide),
+                )
+                .unwrap();
+                rv.set_resolver(
+                    &pc,
+                    ResolverRef::<802>::decision_state(&choose_child, decide),
+                )
+                .unwrap();
+                let mut c = rv.enter(SessionId::new(49), &pc).unwrap();
+                let mut d = rv.enter(SessionId::new(49), &pd).unwrap();
+                c.send::<Start>(&()).await.unwrap();
+                d.recv::<Start>().await.unwrap();
+                if initial_polls != 0 {
+                    c.send::<ReviseA>(&()).await.unwrap();
+                    c.send::<WaitB>(&()).await.unwrap();
+                    c.send::<ReviseDocA>(&()).await.unwrap();
+                    d.offer().await.unwrap().recv::<ReviseDocA>().await.unwrap();
+                    choose_parent.set(true);
+                }
+                let prefix = 0x1234_5678 + initial_polls;
+                let later = 0x9876_5432 + initial_polls;
+                {
+                    let mut offered = pin!(d.offer());
+                    for _ in 0..initial_polls {
+                        poll_fn(|cx| {
+                            assert!(matches!(offered.as_mut().poll(cx), Poll::Pending));
+                            Poll::Ready(())
+                        })
+                        .await;
+                    }
+                    c.send::<AcceptA>(&()).await.unwrap();
+                    c.send::<BeginB>(&()).await.unwrap();
+                    c.send::<BeginDocB>(&prefix).await.unwrap();
+                    if initial_polls == 0 {
+                        c.send::<AcceptB>(&()).await.unwrap();
+                        c.send::<BeginCombine>(&later).await.unwrap();
+                    } else {
+                        c.send::<ReviseB>(&()).await.unwrap();
+                        c.send::<ReviseDocB>(&later).await.unwrap();
+                    }
+                    // The sender followed its protocol. Only network delivery of
+                    // the prefix on lane 1 is held while lane 0's suffix is ready.
+                    let deliver_prefix = wire.hold_next_frame(SessionId::new(49), D, 1);
+                    for _ in 0..3 {
+                        poll_fn(|cx| {
+                            assert!(matches!(offered.as_mut().poll(cx), Poll::Pending));
+                            Poll::Ready(())
+                        })
+                        .await;
+                    }
+                    let (branch, ()) = tokio::time::timeout(Duration::from_secs(1), async {
+                        tokio::join!(offered, async {
+                            tokio::task::yield_now().await;
+                            deliver_prefix();
+                        })
+                    })
+                    .await
+                    .expect("delayed prefix did not wake the pending offer");
+                    let branch = branch.unwrap();
+                    assert_eq!(branch.label(), 4);
+                    drop(branch);
+                }
+                // Abandoning the preview preserves both nonempty payloads.
+                let branch = d.offer().await.unwrap();
+                assert_eq!(
+                    branch.label(),
+                    4,
+                    "a later nested choice must not skip its visible prefix on another lane"
+                );
+                assert_eq!(branch.recv::<BeginDocB>().await.unwrap(), prefix);
+                let branch = d.offer().await.unwrap();
+                let value = if initial_polls == 0 {
+                    branch.recv::<BeginCombine>().await.unwrap()
+                } else {
+                    branch.recv::<ReviseDocB>().await.unwrap()
+                };
+                assert_eq!(value, later);
+            }
+        });
+}
+
+#[test]
 fn inner_reentry_does_not_restart_completed_containing_resolver() {
     tokio::runtime::Builder::new_current_thread()
         .build()

@@ -5,7 +5,7 @@ mod row_completion;
 mod send_preview;
 mod send_preview_route;
 mod send_preview_start;
-pub(crate) use event_progress::EventArmView;
+pub(crate) use event_progress::{EventAdmissionError, EventArmView};
 
 use super::super::facts::{LocalConflict, PackedEventConflict, PassiveArmChildFact};
 use super::{
