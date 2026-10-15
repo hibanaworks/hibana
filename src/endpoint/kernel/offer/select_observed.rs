@@ -26,7 +26,7 @@ where
         };
         let current_idx = self.cursor.index();
         let mut matched = UniqueMatch::NONE;
-        let mut pending = UniqueMatch::NONE;
+        let mut predecessor_pending = false;
         for idx in 0..self.cursor.local_steps_len() {
             let Some(meta) = self.cursor.try_recv_meta_at(idx) else {
                 continue;
@@ -46,7 +46,9 @@ where
             match self.cursor.event_enabled(idx, meta.into(), &mut selected) {
                 Ok(_) => {}
                 Err(EventAdmissionError::PredecessorPending) => {
-                    pending = pending.add(idx);
+                    // Ordered future messages can reuse a wire key. Retention
+                    // chooses no event; only enabled matches must be unique.
+                    predecessor_pending = true;
                     continue;
                 }
                 Err(EventAdmissionError::Invariant) => continue,
@@ -89,11 +91,7 @@ where
             .finish_optional()
             .map_err(|_| RecvError::PhaseInvariant)?
         else {
-            if pending
-                .finish_optional()
-                .map_err(|_| RecvError::PhaseInvariant)?
-                .is_some()
-            {
+            if predecessor_pending {
                 return Ok(Some(ObservedIngressSelection::PendingReceive(key.lane)));
             }
             return Ok(None);

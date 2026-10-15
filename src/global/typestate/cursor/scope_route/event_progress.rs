@@ -148,12 +148,14 @@ impl EventCursor {
             dependency_state
         };
         self.validate_event_enabled_reentry(idx, progress_step, event, arm_for_scope)?;
+        // A valid future event need not be a current lane head. Its projected
+        // predecessor must commit before that head can become available.
+        if dependency_state.is_some_and(|state| !state.allows_event()) {
+            return Err(EventAdmissionError::PredecessorPending);
+        }
         let mut preview = |scope| arm_for_scope(scope, EventArmView::Preview);
         if !self.event_lane_head_allows(progress_step, preview_conflict, &mut preview) {
             return Err(EventAdmissionError::Invariant);
-        }
-        if dependency_state.is_some_and(|state| !state.allows_event()) {
-            return Err(EventAdmissionError::PredecessorPending);
         }
         Ok(EnabledEventCommit::new(
             StateIndex::from_usize(idx),

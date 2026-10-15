@@ -12,7 +12,7 @@ check_trusted_proof_sources 'offer prefix dependency trusted declarations' "$PRO
 [[ "$FAILED" -eq 0 ]]
 lean --version | bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" version
 lean "$PROOFS/Check.lean" > "$EVIDENCE/lean.log" 2>&1
-bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" lean "$EVIDENCE/lean.log" 13
+bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" lean "$EVIDENCE/lean.log" 18
 z3 "$PROOFS/Check.smt2" > "$EVIDENCE/z3.log"
-bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" smt-sequence "$EVIDENCE/z3.log" unsat unsat unsat unsat unsat unsat unsat unsat unsat unsat unsat unsat sat
-printf 'Offer prefix dependency: 13 Lean theorems; Z3 12 UNSAT and 1 historical SAT. Evidence: %s\n' "$EVIDENCE"
+bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" smt-sequence "$EVIDENCE/z3.log" unsat unsat unsat unsat unsat unsat unsat unsat unsat unsat unsat unsat unsat unsat unsat unsat unsat sat sat
+printf 'Offer prefix dependency: 18 Lean theorems; Z3 17 UNSAT and 2 historical SAT. Evidence: %s\n' "$EVIDENCE"

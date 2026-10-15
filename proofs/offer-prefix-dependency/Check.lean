@@ -12,8 +12,8 @@ inductive Admission where
   deriving DecidableEq
 
 def checkEvent (identity conflict fresh head dependency : Bool) : Admission :=
-  if identity && conflict && fresh && head then
-    if dependency then .enabled else .waiting
+  if identity && conflict && fresh then
+    if !dependency then .waiting else if head then .enabled else .invalid
   else .invalid
 
 inductive Action where
@@ -28,6 +28,13 @@ def action : Admission → Option Bool → Action
   | .waiting, _ => .retain
   | .enabled, none => .retain
   | .enabled, some arm => .preview arm
+
+-- Enabled candidates choose a branch. Pending aliases only retain its bytes.
+def selectIngress (enabled : List Bool) (pending : Nat) : Action :=
+  match enabled with
+  | [arm] => .preview arm
+  | [] => if pending = 0 then .reject else .retain
+  | _ => .reject
 
 structure State (Frame : Type) where
   position : Nat
@@ -50,10 +57,27 @@ theorem explicit_choice_is_preserved (arm : Bool) (candidate : Option Bool) :
 
 theorem absent_path_cannot_invent_choice : previewArm none none = none := rfl
 
-theorem pending_requires_all_guards (i c f h d : Bool)
+theorem pending_requires_independent_guards (i c f h d : Bool)
     (waiting : checkEvent i c f h d = .waiting) :
-    i = true ∧ c = true ∧ f = true ∧ h = true ∧ d = false := by
+    i = true ∧ c = true ∧ f = true ∧ d = false := by
   cases i <;> cases c <;> cases f <;> cases h <;> cases d <;> simp_all [checkEvent]
+
+theorem predecessor_wait_does_not_require_current_head :
+    checkEvent true true true false false = .waiting := rfl
+
+theorem enabled_requires_all_guards (i c f h d : Bool)
+    (enabled : checkEvent i c f h d = .enabled) :
+    i = true ∧ c = true ∧ f = true ∧ h = true ∧ d = true := by
+  cases i <;> cases c <;> cases f <;> cases h <;> cases d <;> simp_all [checkEvent]
+
+theorem pending_aliases_retain_without_choosing (count : Nat) :
+    selectIngress [] (count + 1) = .retain := by simp [selectIngress]
+
+theorem pending_aliases_do_not_override_enabled (arm : Bool) (count : Nat) :
+    selectIngress [arm] count = .preview arm := rfl
+
+theorem enabled_ambiguity_remains_rejected (a b : Bool) (rest : List Bool) (count : Nat) :
+    selectIngress (a :: b :: rest) count = .reject := rfl
 
 theorem pending_frame_has_no_authority (arm : Option Bool) :
     action .waiting arm = .retain := rfl
@@ -95,7 +119,12 @@ theorem deferral_decreases_remaining_lanes (lanes : List Nat) (lane : Nat)
 #print axioms unseen_choice_uses_candidate
 #print axioms explicit_choice_is_preserved
 #print axioms absent_path_cannot_invent_choice
-#print axioms pending_requires_all_guards
+#print axioms pending_requires_independent_guards
+#print axioms predecessor_wait_does_not_require_current_head
+#print axioms enabled_requires_all_guards
+#print axioms pending_aliases_retain_without_choosing
+#print axioms pending_aliases_do_not_override_enabled
+#print axioms enabled_ambiguity_remains_rejected
 #print axioms pending_frame_has_no_authority
 #print axioms invalid_frame_is_rejected
 #print axioms preview_requires_enabled

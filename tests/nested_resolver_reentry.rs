@@ -1,4 +1,6 @@
 mod common;
+#[path = "sequential_resolver_parallel_prefix.rs"]
+mod sequential_parallel_prefix;
 use core::cell::Cell;
 use hibana::{
     g,
