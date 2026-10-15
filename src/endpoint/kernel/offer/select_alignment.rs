@@ -52,7 +52,7 @@ where
             let current_parallel = current_frontier_state.parallel();
             let current_scope_meta =
                 self.current_scope_selection_meta(node_scope, current_idx, current_frontier_state);
-            let current_scope_selected = self.selected_arm_for_scope(node_scope).is_some();
+            let current_scope_selected = self.selected_live_arm_for_scope(node_scope).is_some();
             if current_scope_selected
                 && current_scope_meta.is_some_and(|meta| meta.is_route_entry())
             {
@@ -99,7 +99,11 @@ where
                 CurrentOfferEntry::NonRoute
             };
             let current_authority = if current_scope_meta.is_controller() {
-                CurrentOfferAuthority::Controller
+                if self.cursor.route_scope_resolver(node_scope).is_some() {
+                    CurrentOfferAuthority::DynamicController
+                } else {
+                    CurrentOfferAuthority::Controller
+                }
             } else {
                 CurrentOfferAuthority::Passive
             };

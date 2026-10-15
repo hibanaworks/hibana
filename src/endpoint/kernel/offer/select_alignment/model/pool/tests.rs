@@ -282,3 +282,140 @@ fn excluded_exact_current_never_permits_retention() {
     assert!(!current.selectable());
     assert!(!current.permits_retention());
 }
+
+#[cfg(all(test, hibana_repo_tests))]
+#[test]
+fn a_local_resolver_can_progress_without_inventing_ingress_authority() {
+    let mut storage = [FrontierObservationSlot::EMPTY; 2];
+    let mut rows = ObservedEntrySetBuilder::from_slice(&mut storage);
+    rows.clear();
+    let policy = observed(
+        7,
+        1,
+        FrontierKind::Route,
+        OfferEntryObservedState::FLAG_CONTROLLER
+            | OfferEntryObservedState::FLAG_DYNAMIC
+            | OfferEntryObservedState::FLAG_READY,
+    );
+    assert!(!policy.has_progress_evidence());
+    assert!(!policy.has_ready_arm_evidence());
+    rows.push_exact_observation(policy, OfferEntryAdmission::Selectable);
+    rows.push_exact_observation(
+        observed(9, 2, FrontierKind::Route, 0),
+        OfferEntryAdmission::Selectable,
+    );
+    let pool = OfferAlignmentCandidatePool::from_observed(
+        rows.seal(),
+        candidate_input(
+            9,
+            current_observation(
+                9,
+                2,
+                FrontierKind::Route,
+                0,
+                OfferEntryAdmission::Selectable,
+            ),
+        ),
+    );
+    assert_eq!(
+        pool.selection()
+            .select(CurrentOfferCandidateStatus::NotSelectable, 9),
+        Some(OfferAlignmentDecision::Realign(7))
+    );
+}
+
+#[cfg(all(test, hibana_repo_tests))]
+#[test]
+fn parallel_local_resolvers_choose_work_without_realigning_back_and_forth() {
+    let flags = OfferEntryObservedState::FLAG_CONTROLLER
+        | OfferEntryObservedState::FLAG_DYNAMIC
+        | OfferEntryObservedState::FLAG_READY;
+    let mut storage = [FrontierObservationSlot::EMPTY; 2];
+    let mut rows = ObservedEntrySetBuilder::from_slice(&mut storage);
+    rows.clear();
+    rows.push_exact_observation(
+        observed(7, 1, FrontierKind::Route, flags),
+        OfferEntryAdmission::Selectable,
+    );
+    rows.push_exact_observation(
+        observed(9, 2, FrontierKind::Route, flags),
+        OfferEntryAdmission::Selectable,
+    );
+    let observations = rows.seal();
+    let first = OfferAlignmentCandidatePool::from_observed(
+        observations,
+        candidate_input(99, CurrentOfferObservation::empty()),
+    );
+    assert_eq!(
+        first
+            .selection()
+            .select(CurrentOfferCandidateStatus::NotSelectable, 99),
+        Some(OfferAlignmentDecision::Realign(7))
+    );
+    let mut input = candidate_input(
+        7,
+        current_observation(
+            7,
+            1,
+            FrontierKind::Route,
+            flags,
+            OfferEntryAdmission::Selectable,
+        ),
+    );
+    input.current_authority = CurrentOfferAuthority::DynamicController;
+    let current = OfferAlignmentCandidatePool::from_observed(observations, input);
+    assert!(current.selection().allows_current(7));
+    assert_eq!(
+        current
+            .selection()
+            .select(CurrentOfferCandidateStatus::Selectable, 7),
+        Some(OfferAlignmentDecision::KeepCurrent)
+    );
+}
+
+#[cfg(kani)]
+#[kani::proof]
+#[kani::unwind(8)]
+fn resolver_readiness_preserves_exact_admission_without_synthesizing_authority() {
+    let selectable: bool = kani::any();
+    let controller: bool = kani::any();
+    let dynamic: bool = kani::any();
+    let ready: bool = kani::any();
+    let mut flags = 0;
+    if controller {
+        flags |= OfferEntryObservedState::FLAG_CONTROLLER;
+    }
+    if dynamic {
+        flags |= OfferEntryObservedState::FLAG_DYNAMIC;
+    }
+    if ready {
+        flags |= OfferEntryObservedState::FLAG_READY;
+    }
+    let row = observed(7, 1, FrontierKind::Route, flags);
+    assert!(!row.has_progress_evidence());
+    assert!(!row.has_ready_arm_evidence());
+    let mut storage = [FrontierObservationSlot::EMPTY; 1];
+    let mut rows = ObservedEntrySetBuilder::from_slice(&mut storage);
+    rows.clear();
+    rows.push_exact_observation(
+        row,
+        if selectable {
+            OfferEntryAdmission::Selectable
+        } else {
+            OfferEntryAdmission::Excluded
+        },
+    );
+    let pool = OfferAlignmentCandidatePool::from_observed(
+        rows.seal(),
+        candidate_input(99, CurrentOfferObservation::empty()),
+    );
+    let selected = pool
+        .selection()
+        .select(CurrentOfferCandidateStatus::NotSelectable, 99);
+    if !selectable {
+        assert_eq!(selected, None);
+    }
+    if selectable && controller && dynamic && ready {
+        assert_eq!(selected, Some(OfferAlignmentDecision::Realign(7)));
+    }
+}

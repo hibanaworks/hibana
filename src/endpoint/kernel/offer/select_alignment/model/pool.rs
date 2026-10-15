@@ -40,6 +40,17 @@ impl<'a> OfferAlignmentCandidatePool<'a> {
     }
 
     #[inline]
+    fn slot_has_runnable_resolver(self, slot_idx: usize) -> bool {
+        self.observed_entries.slot(slot_idx).is_some_and(|slot| {
+            slot.is_selectable()
+                && !self.is_current_slot(slot_idx)
+                && slot.is_controller()
+                && slot.is_dynamic()
+                && slot.is_ready()
+        })
+    }
+
+    #[inline]
     fn current_yields_to_progress_sibling(self) -> bool {
         self.input.current_authority.is_controller()
             && self.current_matches_route()
@@ -55,7 +66,9 @@ impl<'a> OfferAlignmentCandidatePool<'a> {
         if !slot.is_selectable() || self.is_current_slot(slot_idx) {
             return false;
         }
-        !slot.is_controller() || self.slot_has_progress(slot_idx)
+        !slot.is_controller()
+            || self.slot_has_progress(slot_idx)
+            || self.slot_has_runnable_resolver(slot_idx)
     }
 
     #[inline]
@@ -64,6 +77,7 @@ impl<'a> OfferAlignmentCandidatePool<'a> {
             return false;
         }
         self.slot_has_progress(slot_idx)
+            || self.slot_has_runnable_resolver(slot_idx)
             || (self.input.current_entry.is_unrunnable_route() && !self.is_current_slot(slot_idx))
     }
 
@@ -90,13 +104,13 @@ impl<'a> OfferAlignmentCandidatePool<'a> {
     pub(in crate::endpoint::kernel::offer::select_alignment) fn selection(
         self,
     ) -> OfferAlignmentSelection {
-        let mut ready_count = 0usize;
         let mut ready_entry_filter = None;
         if self.current_matches_route()
             && !self.current_yields_to_progress_sibling()
-            && self.input.current_observation.has_ready_arm_evidence()
+            && (self.input.current_observation.has_ready_arm_evidence()
+                || (self.input.current_authority.is_dynamic()
+                    && self.input.current_observation.ready()))
         {
-            ready_count = 1;
             ready_entry_filter = Some(self.input.current_idx);
         }
         let mut slot_idx = 0usize;
@@ -107,23 +121,22 @@ impl<'a> OfferAlignmentCandidatePool<'a> {
             let mut has_ready_candidate = false;
             while current < group_end {
                 let slot = crate::invariant_some(self.observed_entries.slot(current));
-                if self.is_candidate(current) && slot.has_ready_arm() {
+                if self.is_candidate(current)
+                    && (slot.has_ready_arm() || self.slot_has_runnable_resolver(current))
+                {
                     has_ready_candidate = true;
                 }
                 current += 1;
             }
-            if has_ready_candidate {
-                ready_count += 1;
-                if ready_entry_filter.is_none() {
-                    ready_entry_filter = Some(entry_idx);
-                }
+            if has_ready_candidate && ready_entry_filter.is_none() {
+                ready_entry_filter = Some(entry_idx);
             }
             slot_idx = group_end;
         }
 
-        if ready_count != 1 {
-            ready_entry_filter = None;
-        }
+        // These are independent projected entries. Retain runnable current
+        // work, otherwise schedule the first ready entry. This selects work;
+        // the resolver or received frame still owns the branch decision.
         let mut classified = ClassifiedCandidates::EMPTY;
         slot_idx = 0;
         while slot_idx < self.observed_entries.len() {

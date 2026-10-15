@@ -381,6 +381,12 @@ MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_t
   --test shared_query_tail_reentry \
   inactive_parallel_dependency_does_not_block_outer_roll_reentry
 
+MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \
+  parallel-local-resolver-progress \
+  -p hibana \
+  --test shared_query_tail_reentry \
+  pending_local_resolvers_survive_other_parallel_requests
+
 run_miri_test \
   program-image-storage-validation \
   -p hibana \

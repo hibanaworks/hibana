@@ -314,3 +314,6 @@ fn a_completed_reply_cannot_be_reused_without_receiving_a_fresh_query() {
 
 #[path = "shared_query_tail_reentry/inactive_parallel.rs"]
 mod inactive_parallel;
+
+#[path = "shared_query_tail_reentry/parallel_resolvers.rs"]
+mod parallel_resolvers;
