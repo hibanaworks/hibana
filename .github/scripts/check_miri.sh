@@ -59,7 +59,9 @@ run_miri_test \
   -p hibana \
   --test miri_runtime_owner
 
-run_miri_test \
+# This suite covers nested rework and delayed ingress across several complete
+# visits. Strict Miri takes over 300 seconds for the full regression matrix.
+MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \
   nested-resolver-reentry \
   -p hibana \
   --test nested_resolver_reentry
