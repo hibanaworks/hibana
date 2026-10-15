@@ -1,4 +1,4 @@
-//! An unchosen branch may leave owner conditional parallel dependency on the chosen
+//! An unchosen branch may leave a conditional parallel dependency on the chosen
 //! continuation. Its inactive prerequisite must not erase that continuation.
 use hibana::{
     g,
@@ -81,7 +81,7 @@ async fn inactive_parallel_dependency_does_not_block_outer_roll_reentry() {
                     g::par(
                         merge,
                         g::seq(
-                            g::send::<REVIEWER, CLIENT, CloseRequestReady>(),
+                            g::send::<REVIEWER, CLIENT, CloseReady>(),
                             g::send::<CLIENT, REVIEWER, CloseExit>(),
                         )
                         .roll(),
