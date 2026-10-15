@@ -12,7 +12,6 @@ type Rejected = g::Msg<85, ()>;
 #[test]
 fn completed_send_choice_keeps_its_receive_continuation() {
     tokio::runtime::Builder::new_current_thread()
-        .enable_time()
         .build()
         .unwrap()
         .block_on(async {
@@ -34,47 +33,45 @@ fn completed_send_choice_keeps_its_receive_continuation() {
                 .unwrap();
             let mut source = rv.enter(SessionId::new(1), &p0).unwrap();
             let mut receiver = rv.enter(SessionId::new(1), &p1).unwrap();
-            tokio::time::timeout(std::time::Duration::from_secs(10), async {
-                tokio::join!(
-                    async {
-                        source.send::<Left>(&()).await.unwrap();
-                        source
-                            .offer()
-                            .await
-                            .unwrap()
-                            .recv::<Stopped>()
-                            .await
-                            .unwrap();
-                        source.send::<Right>(&()).await.unwrap();
-                        source
-                            .offer()
-                            .await
-                            .unwrap()
-                            .recv::<Accepted>()
-                            .await
-                            .unwrap();
-                    },
-                    async {
-                        receiver
-                            .offer()
-                            .await
-                            .unwrap()
-                            .recv::<Left>()
-                            .await
-                            .unwrap();
-                        receiver.send::<Stopped>(&()).await.unwrap();
-                        receiver
-                            .offer()
-                            .await
-                            .unwrap()
-                            .recv::<Right>()
-                            .await
-                            .unwrap();
-                        receiver.send::<Accepted>(&()).await.unwrap();
-                    }
-                );
-            })
-            .await
-            .expect("a committed send choice must not hide its reply");
+            // The Miri process has an external watchdog. Interpreter speed
+            // must not become a deadline in this in-memory protocol test.
+            tokio::join!(
+                async {
+                    source.send::<Left>(&()).await.unwrap();
+                    source
+                        .offer()
+                        .await
+                        .unwrap()
+                        .recv::<Stopped>()
+                        .await
+                        .unwrap();
+                    source.send::<Right>(&()).await.unwrap();
+                    source
+                        .offer()
+                        .await
+                        .unwrap()
+                        .recv::<Accepted>()
+                        .await
+                        .unwrap();
+                },
+                async {
+                    receiver
+                        .offer()
+                        .await
+                        .unwrap()
+                        .recv::<Left>()
+                        .await
+                        .unwrap();
+                    receiver.send::<Stopped>(&()).await.unwrap();
+                    receiver
+                        .offer()
+                        .await
+                        .unwrap()
+                        .recv::<Right>()
+                        .await
+                        .unwrap();
+                    receiver.send::<Accepted>(&()).await.unwrap();
+                }
+            );
         });
 }
