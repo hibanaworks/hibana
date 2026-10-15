@@ -1,8 +1,11 @@
+mod branch_paths;
+use branch_paths::BranchPaths;
+
 use super::{
     EffList, ScopeKind, ScopeMarkerView, eff,
     scope_ranges::{
         parallel_arm_ranges_from_enter, parallel_enter_at, roll_body_range_from_enter,
-        roll_continuation_end, route_arm_ranges_from_first_enter, route_enter_at,
+        route_arm_ranges_from_first_enter, route_enter_at,
     },
 };
 
@@ -116,10 +119,34 @@ pub(crate) const fn validate_parallel_endpoint_selectors<const E: usize>(
     true
 }
 
+// A role can restart a roll only at a local head. Inbound heads carry exact
+// occurrence evidence; outbound heads expose only (role, label, schema).
+// A later receive does not retire an elastic roll, so compare its outbound
+// heads with every compatible continuation, including after a parallel join.
 pub(crate) const fn validate_roll_reentry_endpoint_selectors<const E: usize>(
     eff_list: &EffList<E>,
 ) -> bool {
     let markers = eff_list.scope_markers();
+    let mut marker_idx = 0;
+    while marker_idx < markers.len()
+        && !matches!(
+            markers.at(marker_idx).scope_id.kind(),
+            Some(ScopeKind::Roll)
+        )
+    {
+        marker_idx += 1;
+    }
+    if marker_idx == markers.len() {
+        return true;
+    }
+    let paths = BranchPaths::<E>::new(markers);
+    let mut outbound = [0u64; E];
+    let mut event = 0;
+    while event < eff_list.len() {
+        outbound[event] = EndpointSelector::outbound(eff_list.atom_at(event)).0;
+        event += 1;
+    }
+    let sorted = sorted_selector_events(&outbound, eff_list.len());
     let mut idx = 0usize;
     while idx < markers.len() {
         let marker = markers.at(idx);
@@ -129,22 +156,53 @@ pub(crate) const fn validate_roll_reentry_endpoint_selectors<const E: usize>(
             let Some((body_start, body_end)) = roll_body_range_from_enter(markers, idx) else {
                 return false;
             };
-            let continuation_end = roll_continuation_end(markers, idx, body_end, eff_list.len());
-            if body_end < continuation_end
-                && first_visible_endpoint_selector_conflicts_from_markers(
-                    eff_list,
-                    body_start,
-                    body_end,
-                    body_end,
-                    continuation_end,
-                    idx + 1,
-                    0,
-                )
-            {
-                return false;
+            let mut head = body_start;
+            while head < body_end {
+                if outbound_roll_head(eff_list, &paths, body_start, head) {
+                    let key = outbound[head];
+                    let mut low = 0;
+                    let mut high = eff_list.len();
+                    while low < high {
+                        let mid = low + (high - low) / 2;
+                        if outbound[sorted[mid]] < key {
+                            low = mid + 1;
+                        } else {
+                            high = mid;
+                        }
+                    }
+                    while low < eff_list.len() && outbound[sorted[low]] == key {
+                        let later = sorted[low];
+                        if later >= body_end
+                            && !matches!(paths.separation(head, later), Some(ScopeKind::Route))
+                        {
+                            return false;
+                        }
+                        low += 1;
+                    }
+                }
+                head += 1;
             }
         }
         idx += 1;
+    }
+    true
+}
+
+const fn outbound_roll_head<const E: usize>(
+    eff_list: &EffList<E>,
+    paths: &BranchPaths<E>,
+    start: usize,
+    candidate: usize,
+) -> bool {
+    let owner = eff_list.atom_at(candidate).from;
+    let mut prior = start;
+    while prior < candidate {
+        let atom = eff_list.atom_at(prior);
+        if (atom.from == owner || atom.to == owner) && paths.separation(prior, candidate).is_none()
+        {
+            return false;
+        }
+        prior += 1;
     }
     true
 }
@@ -578,6 +636,58 @@ mod pruning_tests {
                         ),
                         first
                     );
+                }
+            }
+        }
+    }
+}
+
+#[cfg(all(test, hibana_repo_tests))]
+mod roll_tests {
+    use super::*;
+    use crate::eff::EventOrigin;
+
+    #[test]
+    fn projection_validation_rejects_only_the_competing_public_contract() {
+        for first_label in [0, 3, 24, 255] {
+            for next_label in [0, 3, 24, 255] {
+                for first_schema in [0, 1, u32::MAX] {
+                    for next_schema in [0, 1, u32::MAX] {
+                        let mut source = EffList::<5>::new_partitioned(3, 2, 0);
+                        source.push_event_mut(eff::EffAtom {
+                            from: 0,
+                            to: 1,
+                            label: first_label,
+                            payload_schema: first_schema,
+                            origin: EventOrigin::User,
+                            lane: 0,
+                        });
+                        source.push_event_mut(eff::EffAtom {
+                            from: 1,
+                            to: 0,
+                            label: 24,
+                            payload_schema: 0,
+                            origin: EventOrigin::User,
+                            lane: 0,
+                        });
+                        source.push_event_mut(eff::EffAtom {
+                            from: 0,
+                            to: 1,
+                            label: next_label,
+                            payload_schema: next_schema,
+                            origin: EventOrigin::User,
+                            lane: 0,
+                        });
+                        source.push_roll_scope_mut(
+                            super::super::ScopeId::new(ScopeKind::Roll, 0),
+                            0,
+                            1,
+                        );
+                        assert_eq!(
+                            validate_roll_reentry_endpoint_selectors(&source),
+                            first_label != next_label || first_schema != next_schema
+                        );
+                    }
                 }
             }
         }

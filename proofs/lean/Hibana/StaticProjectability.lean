@@ -839,9 +839,34 @@ def Choreo.checkParallelEndpointLinearityFrom (base : Nat) : Choreo -> Bool
         right.checkParallelEndpointLinearityFrom rightBase
   | .roll body => body.checkParallelEndpointLinearityFrom base
 
-/-- A roll body and its following continuation must not begin with the same
-endpoint selector. This is the host-side counterpart of the production
-reentry-ambiguity rejection. -/
+/-- First visible operations after projecting unrelated roles away. A role
+whose first operation is a receive has occurrence evidence before any send. -/
+def Choreo.firstRoleEndpointSelectorsFrom
+    (role base : Nat) : Choreo -> List StaticEndpointSelector
+  | .send sender receiver label schema =>
+      if role = sender then [.outbound sender label schema]
+      else if role = receiver then [.inbound base] else []
+  | .seq left right =>
+      let first := left.firstRoleEndpointSelectorsFrom role base
+      if first.isEmpty then
+        right.firstRoleEndpointSelectorsFrom role (base + left.globalEvents.length)
+      else first
+  | .par left right | .route _ left right =>
+      left.firstRoleEndpointSelectorsFrom role base ++
+        right.firstRoleEndpointSelectorsFrom role (base + left.globalEvents.length)
+  | .roll body => body.firstRoleEndpointSelectorsFrom role base
+
+def Choreo.outboundReentryHeadsFrom
+    (base : Nat) (choreo : Choreo) : List StaticEndpointSelector :=
+  (choreo.endpointSelectorsFrom base).filter fun selector =>
+    match selector with
+    | .outbound role _ _ =>
+        (choreo.firstRoleEndpointSelectorsFrom role base).contains selector
+    | .inbound _ => false
+
+/-- Elastic outbound heads must be distinguishable from every compatible later
+send, even after intervening receives or a parallel join. Ordinary sequential
+reuse, receive-guarded replies and mutually exclusive arms remain admissible. -/
 def Choreo.checkRollReentryLinearityFrom
     (base : Nat)
     (continuation : List StaticEndpointSelector) : Choreo -> Bool
@@ -849,7 +874,7 @@ def Choreo.checkRollReentryLinearityFrom
   | .seq left right =>
       let rightBase := base + left.globalEvents.length
       left.checkRollReentryLinearityFrom base
-          (right.firstEndpointSelectorsFrom rightBase) &&
+          (right.endpointSelectorsFrom rightBase ++ continuation) &&
         right.checkRollReentryLinearityFrom rightBase continuation
   | .par left right | .route _ left right =>
       let rightBase := base + left.globalEvents.length
@@ -857,8 +882,8 @@ def Choreo.checkRollReentryLinearityFrom
         right.checkRollReentryLinearityFrom rightBase continuation
   | .roll body =>
       staticSelectorsDisjoint
-          (body.firstEndpointSelectorsFrom base) continuation &&
-        body.checkRollReentryLinearityFrom base []
+          (body.outboundReentryHeadsFrom base) continuation &&
+        body.checkRollReentryLinearityFrom base continuation
 
 structure Choreo.StaticProjectable
     (roleCount : Nat) (choreo : Choreo) : Prop where

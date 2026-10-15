@@ -83,6 +83,8 @@ const RUSTC_1_95_STDERR_CASES: &[&str] = &[
     "tests/ui/g-route-roll-one-sided-observer.rs",
     "tests/ui/g-par-ambiguous-endpoint-op.rs",
     "tests/ui/g-roll-ambiguous-reentry-exit-outbound.rs",
+    "tests/ui/g-roll-late-reentry-outbound.rs",
+    "tests/ui/g-roll-role-erased-prefix.rs",
     "tests/ui/g-route-passive-first-visible-ambiguous.rs",
     "tests/ui/g-route-controller-mismatch.rs",
     "tests/ui/g-route-resolved-cross-arm-distinct-senders.rs",
@@ -164,6 +166,8 @@ fn g_compile_fails() {
     );
     compile_fail(&t, "tests/ui/g-par-ambiguous-endpoint-op.rs");
     compile_fail(&t, "tests/ui/g-roll-ambiguous-reentry-exit-outbound.rs");
+    compile_fail(&t, "tests/ui/g-roll-late-reentry-outbound.rs");
+    compile_fail(&t, "tests/ui/g-roll-role-erased-prefix.rs");
     compile_fail(&t, "tests/ui/g-route-passive-first-visible-ambiguous.rs");
     compile_fail(&t, "tests/ui/g-route-one-sided-observer.rs");
     compile_fail(&t, "tests/ui/g-route-passive-outbound-without-evidence.rs");
