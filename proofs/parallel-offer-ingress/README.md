@@ -90,3 +90,53 @@ affine lease implementation and final branch validation remain Rust/model-check
 and existing proof boundaries. Selecting a carried frame does not itself grant
 offer completion or admission of an invalid frame. Runtime layout, capacities,
 wire representation and partial-publication rejection remain unchanged.
+
+## Ordinary input during parallel roll reentry
+
+`tests/shared_query_tail_reentry/ordinary_parallel.rs` adds two public-endpoint
+regressions. One role receives ordinary data in parallel with a message-based
+choice, then handles another choice before repeating. Sending the next ordinary
+data before the parallel choice previously made `offer()` return
+`PhaseInvariant`. The failure reproduces without resolvers or a following
+continuation on both f1c4dd4bab211b005687cfec15bb53a1f77500ed and
+c2001ec06944d7f3b299e16b5b3efb5b0ba0366a.
+
+A previous visit's suffix is not necessarily enabled at the next visit's head.
+The candidate is now checked against the projected receive dependencies. The
+same check is required immediately before polling an active candidate: another
+lane can complete a visit without refreshing this lane's cache. The second
+regression observes an independent choice before completing that other lane,
+then queues ordinary data. Removing just the pre-I/O check makes it fail.
+Both tests retain four distinct payloads, abandon pending previews, and check
+that the ordinary receives still return their exact data.
+
+Strict Miri also found an independent ownership defect while cancelling the
+pending preview. A staged frame held a shared slice into an inline Rx buffer.
+Passing that frame by value protected the slice during `requeue_on`, which
+then mutably borrowed the same Rx. The affine receipt now retains the original
+slice pointer and lifetime without materializing a shared slice during requeue.
+Validation and successful receive commit reconstruct the borrowed payload.
+The existing receipt still proves exact port identity and one-shot resolution.
+The pointer representation has the same size as the borrowed slice and adds
+no allocation or public API.
+
+The two new regressions pass with strict provenance under nightly-2026-05-28
+Miri, including pending-preview cancellation with a nonempty inline payload.
+The existing send-selected receive continuation, 28 public runtime ownership
+tests, and six receive-receipt tests also pass. These tests use Tokio's current
+thread executor without an OS I/O driver when they require no OS I/O. Production
+runtime behavior has no Miri-only alternative.
+
+The Lean ingress model and the existing dependency, selector, and resolver
+models retain their stated boundaries. Their checks do not establish Rust
+pointer provenance or prove the entire cache implementation. The new production
+regressions and strict Miri checks cover those concrete boundaries.
+
+The candidate also passed 885 workspace Rust tests (12 ignored), workspace
+all-target Clippy, the no_std host and thumbv6m builds, the full Lean gate,
+the related selector/dependency/resolver/ingress Lean and Z3 checks, and nine
+Kani harnesses for frontier selection and receive-receipt ownership. The
+size snapshot and subsystem layout gates passed: aggregate measured flash
+94,694 bytes, SRAM 5,418 bytes, and maximum measured stack 2,751 bytes in their
+checked programs. These measurements do not bound arbitrary consumer protocols.
+QUIC interoperability must be checked with this repair actually selected.

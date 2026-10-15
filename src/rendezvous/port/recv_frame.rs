@@ -43,7 +43,11 @@ pub(crate) struct FrameMismatch {
 }
 
 struct ReceivedFrameCore<'r> {
-    payload: Payload<'r>,
+    // Keep the staged bytes as a pointer until validation/commit borrows them.
+    // A by-value shared slice would stay protected during requeue_on, which
+    // must mutably borrow Rx even when its buffer is stored inline in Rx.
+    payload: NonNull<[u8]>,
+    payload_lifetime: core::marker::PhantomData<&'r [u8]>,
     receipt: PortRecvFrameReceipt,
     observed_source_label: ObservedSourceLabel,
     source_label: u16,
@@ -340,7 +344,8 @@ impl<'r> ReceivedFrameCore<'r> {
         T: Transport + 'r,
     {
         Self {
-            payload,
+            payload: NonNull::from(payload.as_bytes()),
+            payload_lifetime: core::marker::PhantomData,
             receipt: port.recv_frame_receipt.issue(Port::port_key(port)),
             observed_source_label,
             source_label: source_label(source_role, label),
@@ -373,14 +378,25 @@ impl<'r> ReceivedFrameCore<'r> {
     where
         F: FnOnce(Payload<'r>) -> Result<(), E>,
     {
-        validate(self.payload)?;
-        Ok(self.payload)
+        let payload = self.payload();
+        validate(payload)?;
+        Ok(payload)
     }
 
     #[inline]
     fn into_payload(mut self) -> Payload<'r> {
         self.consume_receipt();
-        self.payload
+        self.payload()
+    }
+
+    #[inline]
+    fn payload(&self) -> Payload<'r> {
+        // SAFETY: from_payload records the transport's borrowed slice with
+        // its original provenance and lifetime. The affine frame receipt
+        // excludes another receive/requeue until this frame is resolved.
+        // Requeue never materializes this borrow; commit returns it under
+        // the existing endpoint borrow before Rx can be used again.
+        Payload::new(unsafe { self.payload.as_ref() })
     }
 
     #[inline]

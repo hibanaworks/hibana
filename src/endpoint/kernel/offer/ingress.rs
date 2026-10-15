@@ -112,6 +112,13 @@ where
                 .active_offer_lanes()
                 .next_set_from(start, lane_limit)
         } {
+            // A commit on another lane can complete this visit without
+            // refreshing this lane's cached candidate. Check before any I/O.
+            let scope = self.decision_state.lane_offer_state(lane_idx).scope;
+            if !self.passive_offer_entry_enabled(scope, lane_idx) {
+                start = lane_idx + 1;
+                continue;
+            }
             match self.poll_received_framed_transport_frame_for_lane(
                 pending_recv,
                 lane_idx,

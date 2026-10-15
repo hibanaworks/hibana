@@ -130,6 +130,9 @@ where
         )?;
         let scope_id = normalized.scope_id();
         let entry_idx = normalized.entry_idx();
+        if !self.passive_offer_entry_enabled(scope_id, lane_idx) {
+            return None;
+        }
         let is_controller = self.cursor.is_route_controller(scope_id);
         let is_dynamic = self.cursor.route_scope_resolver(scope_id).is_some();
         let frontier_facts =
@@ -183,5 +186,46 @@ where
             Err(CursorInvariantError::INVARIANT) => crate::invariant(),
         };
         self.cursor.active_reentry_offer_entry(scope)
+    }
+
+    pub(in crate::endpoint::kernel) fn passive_offer_entry_enabled(
+        &self,
+        scope: ScopeId,
+        lane_idx: usize,
+    ) -> bool {
+        // A completed visit does not make every old route on this lane a
+        // possible head of the next visit. A preceding ordinary receive can
+        // own that head while another lane has an independent route to offer.
+        // Never poll the ordinary receive's lane as evidence for an old suffix.
+        if !self.cursor.is_route_controller(scope)
+            && self.selected_live_arm_for_scope(scope).is_none()
+        {
+            for arm in 0..=1 {
+                let Some(step) = self
+                    .cursor
+                    .route_arm_lane_first_step(scope, arm, lane_idx as u8)
+                else {
+                    continue;
+                };
+                let Some(idx) = self.cursor.node_index_for_relocatable_step(step) else {
+                    crate::invariant();
+                };
+                let Some(meta) = self.cursor.try_recv_meta_at(idx) else {
+                    continue;
+                };
+                let conflict = self.cursor.event_conflict_for_index(idx);
+                if self
+                    .cursor
+                    .event_enabled(idx, meta.into(), &mut |scope, view| {
+                        self.selected_arm_for_recv_event(conflict, scope, view)
+                    })
+                    .is_ok()
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+        true
     }
 }

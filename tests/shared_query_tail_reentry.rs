@@ -320,3 +320,6 @@ mod parallel_resolvers;
 
 #[path = "shared_query_tail_reentry/static_controller.rs"]
 mod static_controller;
+
+#[path = "shared_query_tail_reentry/ordinary_parallel.rs"]
+mod ordinary_parallel;

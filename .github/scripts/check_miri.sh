@@ -393,6 +393,12 @@ MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_t
   --test shared_query_tail_reentry \
   completed_send_choice_keeps_its_receive_continuation
 
+MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \
+  ordinary-parallel-input-reentry \
+  -p hibana \
+  --test shared_query_tail_reentry \
+  ordinary_parallel::
+
 run_miri_test \
   program-image-storage-validation \
   -p hibana \
