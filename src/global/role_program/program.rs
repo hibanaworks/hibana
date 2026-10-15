@@ -33,6 +33,8 @@ impl<const ROLE: u8> RoleProgramView<ROLE> for RoleProgram<ROLE> {
 }
 
 /// Project a typed program into the local view for `ROLE`.
-pub fn project<const ROLE: u8>(program: &impl crate::global::program::Projectable) -> RoleProgram<ROLE> {
+pub fn project<const ROLE: u8>(
+    program: &impl crate::global::program::Projectable,
+) -> RoleProgram<ROLE> {
     crate::global::program::project_unnamed(program)
 }

@@ -317,3 +317,6 @@ mod inactive_parallel;
 
 #[path = "shared_query_tail_reentry/parallel_resolvers.rs"]
 mod parallel_resolvers;
+
+#[path = "shared_query_tail_reentry/static_controller.rs"]
+mod static_controller;

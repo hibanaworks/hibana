@@ -52,7 +52,14 @@ where
             let current_parallel = current_frontier_state.parallel();
             let current_scope_meta =
                 self.current_scope_selection_meta(node_scope, current_idx, current_frontier_state);
-            let current_scope_selected = self.selected_live_arm_for_scope(node_scope).is_some();
+            // A send-selected controller retains its committed choice while
+            // locating the following receive. Completing its first send is
+            // not a new resolver visit. Completed reentry observations must
+            // still yield to enabled parallel resolver work.
+            let current_scope_selected = self.selected_live_arm_for_scope(node_scope).is_some()
+                || (current_scope_meta.is_some_and(|meta| meta.is_controller())
+                    && self.cursor.route_scope_resolver(node_scope).is_none()
+                    && self.selected_arm_for_scope(node_scope).is_some());
             if current_scope_selected
                 && current_scope_meta.is_some_and(|meta| meta.is_route_entry())
             {

@@ -382,9 +382,11 @@ fn standalone_proof_logs_preserve_failed_tool_status_and_diagnostics() {
         assert_eq!(output.status.code(), Some(23), "{family}");
         assert!(String::from_utf8_lossy(&output.stdout).contains("solver stdout diagnostic"));
         assert!(String::from_utf8_lossy(&output.stderr).contains("solver stderr diagnostic"));
-        assert!(fs::read_to_string(evidence.join("z3.log"))
-            .unwrap()
-            .contains("solver stdout diagnostic"));
+        assert!(
+            fs::read_to_string(evidence.join("z3.log"))
+                .unwrap()
+                .contains("solver stdout diagnostic")
+        );
         fs::remove_file(z3).unwrap();
     }
     fs::remove_dir_all(root).unwrap();
