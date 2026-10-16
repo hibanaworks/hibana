@@ -13,7 +13,7 @@ RUNTIME_CLAIM_SNAPSHOT="${PROOF_DIR}/runtime-generated-claim-surface.txt"
 PUBLIC_OPERATION_CLAIM_SNAPSHOT="${PROOF_DIR}/public-operation-generated-claim-surface.txt"
 STATIC_CLAIM_SNAPSHOT="${PROOF_DIR}/all-claim-surface.txt"
 EXAMPLE_CLAIM_SNAPSHOT="${PROOF_DIR}/example-claim-surface.txt"
-TOOLCHAIN="${TOOLCHAIN:-1.95.0}"
+TOOLCHAIN="${TOOLCHAIN:-stable}"
 
 # Preserve the auditor's failure evidence even when the caller captures stdout.
 run_audit() {
@@ -31,10 +31,7 @@ bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard toolchain 
 bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" theorem-inventory --self-test
 bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" generated-axioms --self-test
 
-(
-  cd "${PROOF_DIR}"
-  lake build
-)
+bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" build-serial "${PROOF_DIR}"
 bash "${ROOT_DIR}/.github/scripts/check_lean_claim_surface.sh"
 static_audit_output="$(run_audit \
   theorem-inventory \
