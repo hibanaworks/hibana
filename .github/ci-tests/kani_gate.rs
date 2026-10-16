@@ -138,6 +138,8 @@ pub fn run(root: &Path) -> Audit<()> {
             "-Z",
             "unstable-options",
             "--run-sanity-checks",
+            "--jobs",
+            "1",
             "--output-format",
             "terse",
         ])

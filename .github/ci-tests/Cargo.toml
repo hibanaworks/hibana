@@ -15,6 +15,10 @@ name = "compile-pressure"
 path = "compile_pressure.rs"
 
 [[bin]]
+name = "resource-guard"
+path = "resource_guard.rs"
+
+[[bin]]
 name = "dispatch-model"
 path = "dispatch_model.rs"
 
