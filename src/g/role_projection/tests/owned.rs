@@ -5,6 +5,40 @@ use crate::{
 };
 
 #[test]
+fn typed_projection_checks_the_holders_knowledge_before_delegated_work() {
+    type OtherDbLoan = g::Msg<2, Endpoint<'static, 10>>;
+    type OtherRead = g::Msg<6, u32>;
+    let global = g::route(
+        g::seq(g::send::<0, 1, Loan>(), g::send::<10, 3, Read>()),
+        g::seq(
+            g::send::<0, 1, OtherDbLoan>(),
+            g::send::<10, 3, OtherRead>(),
+        ),
+    );
+    assert!(g::diagnose(&global).is_none());
+}
+
+#[test]
+fn typed_projection_rejects_equal_candidate_sets_with_different_actual_participants() {
+    let global = g::seq(
+        g::route(
+            g::seq(g::send::<0, 1, Loan>(), g::send::<0, 2, OtherLoan>()),
+            g::seq(g::send::<0, 2, Loan>(), g::send::<0, 1, OtherLoan>()),
+        )
+        .resolve::<701>(),
+        g::seq(
+            g::route(
+                g::send::<0, 10, g::Msg<5, ()>>(),
+                g::send::<0, 11, g::Msg<6, ()>>(),
+            ),
+            g::send::<1, 3, Read>(),
+        ),
+    );
+    let diagnostic = g::diagnose(&global).expect("the actual holder can miss this branch choice");
+    assert_eq!(diagnostic.problem, g::ProjectionProblem::UnprojectableRoute);
+}
+
+#[test]
 fn received_resource_endpoint_selects_its_own_resolved_route() {
     use crate::runtime::resolver::{DecisionArm, ResolverRef};
     type OtherRead = g::Msg<6, u32>;

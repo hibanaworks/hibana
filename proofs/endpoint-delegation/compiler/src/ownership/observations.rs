@@ -53,6 +53,13 @@ impl<const S: usize, const E: usize> Plan<'_, S, E> {
     pub const fn actor_decision_count(&self) -> usize {
         self.actors.decision_count()
     }
+
+    pub const fn has_branch_knowledge(&self) -> bool {
+        match self.source {
+            Some(source) => self.actors.has_branch_knowledge(source),
+            None => false,
+        }
+    }
     /// The production lane allocator's complete potential-actor set. This is
     /// a read-only construction observation, not current ownership or progress.
     pub const fn possible_actors(&self, event: usize) -> Option<[u8; 32]> {

@@ -191,10 +191,17 @@ where
 
     const DIAGNOSTIC: Option<ProjectionDiagnostic> = {
         Self::IMAGE.validate_projection_program();
-        crate::global::compiled::lowering::projection_diagnostic(
-            &Self::IMAGE,
-            Self::SOURCE_EFF_LIST,
-        )
+        if Steps::SOURCE_NODE.has_delegation() {
+            match Self::ERROR {
+                Some(error) => Some(ProjectionDiagnostic::from_error(error)),
+                None => None,
+            }
+        } else {
+            crate::global::compiled::lowering::projection_diagnostic(
+                &Self::IMAGE,
+                Self::SOURCE_EFF_LIST,
+            )
+        }
     };
 
     // Separate constant queries bound compiler work per proof obligation.
@@ -209,16 +216,25 @@ where
         crate::global::compiled::lowering::validate_passive_child_projection_guarantees(
             Self::SOURCE_EFF_LIST.scope_markers(),
         );
-    const ROUTE_ERROR: Option<ProgramSourceError> =
+    const ROUTE_ERROR: Option<ProgramSourceError> = if Steps::SOURCE_NODE.has_delegation() {
+        if let Some(error) =
+            crate::global::compiled::lowering::validate_route_control_shapes(Self::SOURCE_EFF_LIST)
+        {
+            Some(error)
+        } else if !Self::SOURCE.actor_branch_knowledge(&Steps::SOURCE_NODE) {
+            Some(ProgramSourceError::ProjectionRouteUnprojectable)
+        } else {
+            None
+        }
+    } else {
         crate::global::compiled::lowering::validate_route_projection_guarantees(
             &Self::IMAGE,
             Self::SOURCE_EFF_LIST,
-        );
+        )
+    };
 
-    const VALIDATION: () = {
-        let source = Self::SOURCE_EFF_LIST;
-        Self::IMAGE.validate_projection_program();
-        let error = if !Self::RECEIVE_CAUSAL {
+    const ERROR: Option<ProgramSourceError> = {
+        if !Self::RECEIVE_CAUSAL {
             Some(ProgramSourceError::ReceiveLaneCausalityConflict)
         } else if !Self::PARALLEL_SELECTORS {
             Some(ProgramSourceError::ParallelAmbiguousEndpointSelector)
@@ -228,12 +244,13 @@ where
             Some(error)
         } else {
             Self::ROUTE_ERROR
-        };
-        if let Some(error) = error {
-            let diagnostic = match crate::global::compiled::lowering::projection_diagnostic(
-                &Self::IMAGE,
-                source,
-            ) {
+        }
+    };
+
+    const VALIDATION: () = {
+        Self::IMAGE.validate_projection_program();
+        if let Some(error) = Self::ERROR {
+            let diagnostic = match Self::DIAGNOSTIC {
                 Some(diagnostic) => diagnostic,
                 None => ProjectionDiagnostic::from_error(error),
             };

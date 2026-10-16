@@ -11,6 +11,9 @@ use super::{
     Source, error, validate,
 };
 
+#[path = "actors/knowledge.rs"]
+mod knowledge;
+
 #[cfg(kani)]
 #[path = "actors/kani.rs"]
 mod kani;
@@ -95,6 +98,12 @@ impl<const E: usize, const D: usize> ActorImage<E, D> {
 
     pub const fn event_count(&self) -> usize {
         self.event_len
+    }
+
+    /// Check branch knowledge for this image's source. This construction fact
+    /// does not certify route shape, framing, codecs or distributed execution.
+    pub const fn has_branch_knowledge(&self, source: &Source<'_>) -> bool {
+        knowledge::check(source, self)
     }
 
     pub const fn decision_count(&self) -> usize {

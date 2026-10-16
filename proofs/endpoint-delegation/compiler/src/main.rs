@@ -104,6 +104,58 @@ const PAIRED: Source<'static> = Source::Route {
 };
 
 const CASES: &[(&str, &Source<'static>)] = &[
+    (
+        "owned-receive-teaches-holder",
+        &Source::Route {
+            left: &Source::Seq(&transfer(P, A, 1, DB), &wire(DB, SERVER, 3)),
+            right: &Source::Seq(&transfer(P, A, 2, DB), &wire(DB, SERVER, 4)),
+            resolver: None,
+        },
+    ),
+    (
+        "parallel-sibling-cannot-teach",
+        &Source::Seq(
+            &transfer(P, A, 1, DB),
+            &Source::Route {
+                left: &Source::Par(&wire(P, A, 2), &wire(DB, SERVER, 4)),
+                right: &Source::Par(&wire(P, A, 3), &wire(DB, SERVER, 5)),
+                resolver: None,
+            },
+        ),
+    ),
+    (
+        "conditional-holder-controls-later-choice",
+        &Source::Seq(
+            &Source::Route {
+                left: &Source::Seq(&transfer(P, A, 1, DB), &wire(P, B, 2)),
+                right: &Source::Seq(&transfer(P, B, 3, DB), &wire(P, A, 4)),
+                resolver: None,
+            },
+            &Source::Route {
+                left: &wire(DB, SERVER, 5),
+                right: &wire(DB, SERVER, 6),
+                resolver: None,
+            },
+        ),
+    ),
+    (
+        "equal-unions-different-actual-participants",
+        &Source::Seq(
+            &Source::Route {
+                left: &Source::Seq(&transfer(P, A, 1, DB), &transfer(P, B, 2, AUTH)),
+                right: &Source::Seq(&transfer(P, B, 3, DB), &transfer(P, A, 4, AUTH)),
+                resolver: None,
+            },
+            &Source::Seq(
+                &Source::Route {
+                    left: &wire(P, DB, 5),
+                    right: &wire(P, AUTH, 6),
+                    resolver: None,
+                },
+                &wire(A, SERVER, 7),
+            ),
+        ),
+    ),
     ("handoff-work-control-return", &EXCHANGE),
     (
         "parallel-closed-loans",
@@ -504,7 +556,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map(PathBuf::from)
         .ok_or("expected output .lean path")?;
     let mut output = String::from(
-        "import Projection\n\nset_option maxRecDepth 4096\nset_option maxHeartbeats 10000000\nnamespace Hibana.EndpointDelegation.Generated\n\n",
+        "import Knowledge\n\nset_option maxRecDepth 4096\nset_option maxHeartbeats 10000000\nnamespace Hibana.EndpointDelegation.Generated\n\n",
     );
     let mut scratch = Scratch::<SYMBOLS, EVENTS>::new();
     let mut accepted = 0;
@@ -565,6 +617,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .unwrap();
         theorems.push(format!("case_{index}"));
+        writeln!(
+            output,
+            "theorem knowledge_{index} : branchKnowledge source_{index} rust_{index} = {} := by decide",
+            plan.has_branch_knowledge()
+        )
+        .unwrap();
+        theorems.push(format!("knowledge_{index}"));
         for (path_index, artifact) in artifacts.iter().enumerate() {
             writeln!(
                 output,

@@ -231,6 +231,13 @@ impl<const CAPACITY: usize> ProgramSourceData<CAPACITY> {
     pub(crate) const fn actors(&self) -> Option<&'static SourceActorImage<CAPACITY>> {
         self.actors
     }
+
+    pub(crate) const fn actor_branch_knowledge(&self, source: &ProgramSourceNode) -> bool {
+        match self.actors {
+            Some(actors) => actors.has_branch_knowledge(source),
+            None => false,
+        }
+    }
 }
 
 const fn max_lane_span(lhs: u16, rhs: u16) -> u16 {

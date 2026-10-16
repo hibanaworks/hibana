@@ -208,11 +208,11 @@ where
     if !ProgramProjection::<Steps, CAPACITY>::IMAGE.contains_role(ROLE) {
         panic!("projected role is outside the choreography role range");
     }
-    // Actor-local construction is connected, but the public execution boundary
-    // remains closed until owned operations, view issuance and context import
-    // share the runtime commit. Metadata acceptance is not execution readiness.
+    // Owned operations and shared actor progress execute in private tests.
+    // Public issuance still requires the full acceptance/continuation proof and
+    // initial binding boundary. Static checks alone do not qualify execution.
     if Steps::SOURCE_NODE.has_delegation() {
-        panic!("owned endpoint execution is not yet connected");
+        panic!("owned endpoint projection is not yet qualified");
     }
     let () = ProgramProjection::<Steps, CAPACITY>::VALIDATION;
     &RoleProjection::<ROLE, Steps, CAPACITY>::IMAGE_REF

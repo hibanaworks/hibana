@@ -163,7 +163,9 @@ impl core::fmt::Display for ProjectionDiagnostic {
 /// `None` means the projection acceptance checks found no error. It does not
 /// validate payload algorithms, physical I/O, or application progress. Malformed
 /// source-domain invariants can still panic during lowering. The function uses
-/// the same acceptance gate as projection, with bounded, allocation-free data.
+/// projection's static obligations, with bounded, allocation-free data. Owned
+/// execution currently remains unavailable at the public witness boundary even
+/// when these source checks succeed.
 pub fn diagnose<P: Projectable>(program: &P) -> Option<ProjectionDiagnostic> {
     let _ = program;
     const {

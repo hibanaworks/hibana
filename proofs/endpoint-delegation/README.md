@@ -11,12 +11,15 @@ codec. Source projection checks its initial issuer, conflicting transfers,
 parallel uses, and rolled ownership before lowering. Core source tests and
 compiler rejection cases exercise the real `g` constructors.
 
-Owned descriptor lowering and owned `Endpoint::send` / `recv` are unfinished.
-A source that passes this ownership check is still rejected at the owned
-lowering boundary. This branch does not provide usable endpoint delegation.
+Owned descriptor lowering and value-consuming `Endpoint::send` / `recv` now
+execute in private actor-image tests. They cover return to the original actor,
+distinct runtime slabs, branch operations and independent rolled resource
+exchanges. Public owned projection remains closed while general continuation,
+initial resource binding and the complete verification boundary are unfinished.
+The public 0.9.9 release does not provide Endpoint delegation.
 
 An accepted ownership plan is not an accepted Hibana protocol. This package
-does not yet check knowledge of choice, route authority, codecs, lane mapping,
+does not certify knowledge of choice, route authority, codecs, lane mapping,
 remote delivery, or the implementation's operation commits. Its ownership
 elaboration must also produce compact actor/facet facts and connect to those
 checks and the operation kernel before any distributed progress claim is
@@ -100,8 +103,8 @@ and structural local order. The inferred-owner theorem applies to every
 assignment satisfying the emitted equations. It is not a full compiler
 soundness or progress theorem.
 
-The Rust exporter emits25 source terms and their actual results:16 accepted
-ownership plans with26 complete source paths, and9 rejections.129 generated
+The Rust exporter emits29 source terms and their actual results:20 accepted
+ownership plans with38 complete source paths, and9 rejections.193 generated
 Lean theorems check those results, every path's complete local-order relation,
 and mutations of actors, wire identity, initial issuance, selected scopes,
 and omitted order edges. Proofs use kernel
@@ -144,8 +147,19 @@ out-of-range roles and truncated owned-role encodings. The source tests also
 exercise independent rolled loans and a resolved route through compact image
 construction. These are compiler/data checks, not an executing handoff.
 
-Public projection still rejects owned sources after source validation until
-ownership-aware actor projection and the send/recv execution path are connected.
+Public projection still rejects owned sources. The new source knowledge checker
+tracks communication through the holder's actor, including owned receives. It
+does not learn from an independent parallel sibling. It retains correlations
+between prior ownership choices when comparing the actual participants in route
+arms. Candidate actor unions serve storage and lane coloring, not acceptance
+authority. `Knowledge.lean` interprets every complete normalized path and checks
+each sender's controller or causally preceding receive, together with actual
+participation in the opposite arm under the same other choices. It does not
+reuse Rust's actor DAG or query contexts. All20 ownership-accepted sources are
+compared, including four branch-knowledge regressions. Three general theorems
+cover knowledge shared by an actor's views, exclusion of receives outside a
+choice, and exclusion of parallel siblings. This correspondence for the exported
+cases is not an arbitrary-source projection/progress theorem.
 
 The normal source-to-global-image path emits owned bindings, reduced decisions
 and initial issuers into an owned-only tail. The ordinary program's eight-byte
@@ -167,17 +181,15 @@ not certify an owned image.
 
 ## Remaining integration
 
-- Connect the checked typed ownership source to accepted actor-local images.
-- Lower conditional ownership and cross-facet ordering to compact local facts,
-  preserving independent parallel flows without source scans in the hot path.
-- Send an owned Endpoint and receive its continuation through ordinary
-  `send`/`recv`, with one resident owner and no pointer serialization.
+- Complete the actor-aware source checks and independently qualify accepted
+  actor-local images, including branch knowledge and conditional holders.
+- Qualify general continuation across route/roll/par combinations. Ordinary
+  owned send/recv already shares one actor progress and serializes no pointer.
 - Bind initial issuance to the unique resource owner, including related runs.
 - Validate pending, commit, drop, failure, replay, and authenticated remote
   handoff against the same ownership and progress model.
 - Prove the full projection/implementation correspondence and communication
   progress under explicit transport and executor assumptions.
 
-The public0.9.9 release does not implement Endpoint delegation. The separate
-resident-owner foundation is an implementation prerequisite, not evidence
-that these remaining requirements have been completed.
+Actual passing private executions qualify their exact fixtures. They do not
+establish that these remaining requirements have been completed.

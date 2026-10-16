@@ -151,30 +151,12 @@ const fn validate_route_scope<const E: usize>(
     scope_markers: crate::global::const_dsl::ScopeMarkerView<'_>,
     route_enter_marker_idx: usize,
 ) -> Option<ProgramSourceError> {
+    let controller = match route_controller_and_selectors(eff_list, route_enter_marker_idx) {
+        Ok(controller) => controller,
+        Err(error) => return Some(error),
+    };
     let [(arm0_start, arm0_end), (arm1_start, arm1_end)] =
         route_arm_ranges_from_first_enter(scope_markers, route_enter_marker_idx);
-    let route_scope = scope_markers.at(route_enter_marker_idx).scope_id;
-    let has_dynamic_resolver = scope_has_dynamic_resolver(eff_list, route_scope);
-    let controller = match first_visible_controller(eff_list, arm0_start, arm0_end)
-        .merge(first_visible_controller(eff_list, arm1_start, arm1_end))
-        .unique()
-    {
-        Some(controller) => controller,
-        None => return Some(ProgramSourceError::RouteControllerMismatch),
-    };
-    if !has_dynamic_resolver
-        && first_visible_endpoint_selector_conflicts_from_markers(
-            eff_list,
-            arm0_start,
-            arm0_end,
-            arm1_start,
-            arm1_end,
-            route_enter_marker_idx + 1,
-            route_enter_marker_idx + 1,
-        )
-    {
-        return Some(ProgramSourceError::ProjectionRouteUnprojectable);
-    }
     let mut role = 0usize;
     while role < role_count {
         if (participants[role / 8] & (1u8 << (role % 8))) != 0 {
@@ -188,6 +170,59 @@ const fn validate_route_scope<const E: usize>(
         role += 1;
     }
     None
+}
+
+/// Route shape and wire selectors are the same obligations for logical-role
+/// and ownership-aware projection. Knowledge is checked over the corresponding
+/// local operations separately.
+pub(crate) const fn validate_route_control_shapes<const E: usize>(
+    eff_list: &EffList<E>,
+) -> Option<ProgramSourceError> {
+    let markers = eff_list.scope_markers();
+    let mut index = 0;
+    while index < markers.len() {
+        let marker = markers.at(index);
+        if matches!(marker.scope_id.kind(), Some(ScopeKind::Route))
+            && marker.event.is_primary_enter()
+            && let Err(error) = route_controller_and_selectors(eff_list, index)
+        {
+            return Some(error);
+        }
+        index += 1;
+    }
+    None
+}
+
+const fn route_controller_and_selectors<const E: usize>(
+    eff_list: &EffList<E>,
+    route_enter_marker_idx: usize,
+) -> Result<u8, ProgramSourceError> {
+    let scope_markers = eff_list.scope_markers();
+    let [(arm0_start, arm0_end), (arm1_start, arm1_end)] =
+        route_arm_ranges_from_first_enter(scope_markers, route_enter_marker_idx);
+    let route_scope = scope_markers.at(route_enter_marker_idx).scope_id;
+    let has_dynamic_resolver = scope_has_dynamic_resolver(eff_list, route_scope);
+    let controller = match first_visible_controller(eff_list, arm0_start, arm0_end)
+        .merge(first_visible_controller(eff_list, arm1_start, arm1_end))
+        .unique()
+    {
+        Some(controller) => controller,
+        None => return Err(ProgramSourceError::RouteControllerMismatch),
+    };
+    if !has_dynamic_resolver
+        && first_visible_endpoint_selector_conflicts_from_markers(
+            eff_list,
+            arm0_start,
+            arm0_end,
+            arm1_start,
+            arm1_end,
+            route_enter_marker_idx + 1,
+            route_enter_marker_idx + 1,
+        )
+    {
+        return Err(ProgramSourceError::ProjectionRouteUnprojectable);
+    }
+    Ok(controller)
 }
 
 #[inline(always)]

@@ -135,6 +135,85 @@ fn lane_actor_membership_is_the_union_of_both_complete_ownership_paths() {
 }
 
 #[test]
+fn receiving_an_owned_endpoint_teaches_its_holder_before_resource_sends() {
+    const SOURCE: Source<'static> = Source::Route {
+        left: &Source::Seq(&transfer(P, A, 1, DB), &wire(DB, SERVER, 3)),
+        right: &Source::Seq(&transfer(P, A, 2, DB), &wire(DB, SERVER, 4)),
+        resolver: None,
+    };
+    const EVENTS: usize = SOURCE.event_count();
+    let mut scratch = Scratch::<{ 3 * EVENTS }, EVENTS>::new();
+    let mut plan = Plan::new();
+    compile_into(&SOURCE, &mut scratch, &mut plan).unwrap();
+    assert!(plan.has_branch_knowledge());
+}
+
+#[test]
+fn a_parallel_siblings_receive_does_not_teach_an_independent_resource_send() {
+    const SOURCE: Source<'static> = Source::Seq(
+        &transfer(P, A, 1, DB),
+        &Source::Route {
+            left: &Source::Par(&wire(P, A, 2), &wire(DB, SERVER, 4)),
+            right: &Source::Par(&wire(P, A, 3), &wire(DB, SERVER, 5)),
+            resolver: None,
+        },
+    );
+    const EVENTS: usize = SOURCE.event_count();
+    let mut scratch = Scratch::<{ 3 * EVENTS }, EVENTS>::new();
+    let mut plan = Plan::new();
+    compile_into(&SOURCE, &mut scratch, &mut plan).unwrap();
+    assert!(!plan.has_branch_knowledge());
+}
+
+#[test]
+fn a_prior_conditional_holder_can_control_the_next_resource_choice() {
+    const SOURCE: Source<'static> = Source::Seq(
+        &Source::Route {
+            left: &Source::Seq(&transfer(P, A, 1, DB), &wire(P, B, 2)),
+            right: &Source::Seq(&transfer(P, B, 3, DB), &wire(P, A, 4)),
+            resolver: None,
+        },
+        &Source::Route {
+            left: &wire(DB, SERVER, 5),
+            right: &wire(DB, SERVER, 6),
+            resolver: None,
+        },
+    );
+    const EVENTS: usize = SOURCE.event_count();
+    let mut scratch = Scratch::<{ 3 * EVENTS }, EVENTS>::new();
+    let mut plan = Plan::new();
+    compile_into(&SOURCE, &mut scratch, &mut plan).unwrap();
+    assert!(plan.has_branch_knowledge());
+}
+
+#[test]
+fn candidate_actor_unions_cannot_hide_missing_knowledge_on_an_actual_path() {
+    const SOURCE: Source<'static> = Source::Seq(
+        &Source::Route {
+            left: &Source::Seq(&transfer(P, A, 1, DB), &transfer(P, B, 2, AUTH)),
+            right: &Source::Seq(&transfer(P, B, 3, DB), &transfer(P, A, 4, AUTH)),
+            resolver: None,
+        },
+        &Source::Seq(
+            &Source::Route {
+                left: &wire(P, DB, 5),
+                right: &wire(P, AUTH, 6),
+                resolver: None,
+            },
+            &wire(A, SERVER, 7),
+        ),
+    );
+    const EVENTS: usize = SOURCE.event_count();
+    let mut scratch = Scratch::<{ 3 * EVENTS }, EVENTS>::new();
+    let mut plan = Plan::new();
+    compile_into(&SOURCE, &mut scratch, &mut plan).unwrap();
+    // Both arms' candidate sets are {P, A, B}. In the prior left path,
+    // however, only A learns the next left choice and only B learns right.
+    assert_eq!(plan.possible_actors(4), plan.possible_actors(5));
+    assert!(!plan.has_branch_knowledge());
+}
+
+#[test]
 fn recipient_cannot_skip_resource_work_and_wait_on_its_control_endpoint() {
     let plan = &EXCHANGE_PLAN;
     // A's original control facet contains receive(0), receive(3), send(4).
