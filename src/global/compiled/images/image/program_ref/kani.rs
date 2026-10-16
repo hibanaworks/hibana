@@ -23,19 +23,19 @@ static LAST_BYTE_DIFFERENT: [u8; 45] = {
 };
 static DENSE_ATOM_ROWS: [u8; 27] = atom_rows();
 
-fn route_columns() -> ProgramImageColumns {
+const fn route_columns() -> ProgramImageColumns {
     ProgramImageColumns::new(0, 1, 2, 7)
 }
 
-fn identity_columns() -> ProgramImageColumns {
+const fn identity_columns() -> ProgramImageColumns {
     ProgramImageColumns::new(0, 0, 16, 0)
 }
 
-fn alternate_columns() -> ProgramImageColumns {
+const fn alternate_columns() -> ProgramImageColumns {
     ProgramImageColumns::new(5, 0, 0, 0)
 }
 
-fn program<const N: usize>(
+const fn program<const N: usize>(
     bytes: &'static [u8; N],
     facts: ProgramImageFacts,
     columns: ProgramImageColumns,
@@ -261,30 +261,64 @@ fn compiled_program_blob_comparison_matches_array_equality() {
 }
 
 #[kani::proof]
-fn compiled_program_image_identity_is_exact_over_facts_columns_and_blob() {
-    let facts = ProgramImageFacts { max_role: 1 };
-    let canonical = program(&CANONICAL_IMAGE, facts, route_columns());
-    let same_image_at_another_address = program(&SAME_IMAGE, facts, route_columns());
-    let different_facts = program(
-        &SAME_IMAGE,
-        ProgramImageFacts { max_role: 2 },
-        route_columns(),
-    );
-    let different_columns = program(&SAME_IMAGE, facts, alternate_columns());
-    let different_final_byte = program(&LAST_BYTE_DIFFERENT, facts, route_columns());
-
-    assert!(canonical.columns.blob_len() == different_columns.columns.blob_len());
-    kani::cover!(canonical.same_image(&same_image_at_another_address));
-    kani::cover!(!canonical.same_image(&different_facts));
-    kani::cover!(!canonical.same_image(&different_columns));
-    kani::cover!(!canonical.same_image(&different_final_byte));
-    assert!(canonical.same_image(&canonical));
-    assert!(canonical.same_image(&same_image_at_another_address));
-    assert!(same_image_at_another_address.same_image(&canonical));
-    assert!(!canonical.same_image(&different_facts));
-    assert!(!canonical.same_image(&different_columns));
-    assert!(!canonical.same_image(&different_final_byte));
+fn compiled_program_image_identity_is_reflexive() {
+    assert!(CANONICAL_PROGRAM.same_image(&CANONICAL_PROGRAM));
 }
+
+#[kani::proof]
+fn compiled_program_image_identity_accepts_equal_bytes_at_distinct_addresses() {
+    assert!(CANONICAL_PROGRAM.same_image(&SAME_PROGRAM));
+}
+
+#[kani::proof]
+fn compiled_program_image_identity_accepts_equal_bytes_in_reverse_order() {
+    assert!(SAME_PROGRAM.same_image(&CANONICAL_PROGRAM));
+}
+
+#[kani::proof]
+fn compiled_program_image_identity_rejects_different_facts() {
+    assert!(!CANONICAL_PROGRAM.same_image(&DIFFERENT_FACTS));
+}
+
+#[kani::proof]
+fn compiled_program_image_identity_rejects_different_columns_of_equal_size() {
+    assert!(CANONICAL_PROGRAM.columns.blob_len() == DIFFERENT_COLUMNS.columns.blob_len());
+    assert!(!CANONICAL_PROGRAM.same_image(&DIFFERENT_COLUMNS));
+}
+
+#[kani::proof]
+fn compiled_program_image_identity_checks_the_final_byte() {
+    assert!(!CANONICAL_PROGRAM.same_image(&DIFFERENT_FINAL_BYTE));
+}
+
+// Constructor validation of these fixed fixtures runs in Rust const evaluation.
+// Each original identity obligation is then checked against the production
+// comparison in its own process; no symbolic domain or byte is removed.
+static CANONICAL_PROGRAM: CompiledProgramRef = program(
+    &CANONICAL_IMAGE,
+    ProgramImageFacts { max_role: 1 },
+    route_columns(),
+);
+static SAME_PROGRAM: CompiledProgramRef = program(
+    &SAME_IMAGE,
+    ProgramImageFacts { max_role: 1 },
+    route_columns(),
+);
+static DIFFERENT_FACTS: CompiledProgramRef = program(
+    &SAME_IMAGE,
+    ProgramImageFacts { max_role: 2 },
+    route_columns(),
+);
+static DIFFERENT_COLUMNS: CompiledProgramRef = program(
+    &SAME_IMAGE,
+    ProgramImageFacts { max_role: 1 },
+    alternate_columns(),
+);
+static DIFFERENT_FINAL_BYTE: CompiledProgramRef = program(
+    &LAST_BYTE_DIFFERENT,
+    ProgramImageFacts { max_role: 1 },
+    route_columns(),
+);
 
 #[kani::proof]
 fn program_atom_row_decoding_accepts_exact_domain() {

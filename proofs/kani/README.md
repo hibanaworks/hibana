@@ -160,6 +160,16 @@ uses the larger of RSS and physical footprint. A shared OS file lock rejects
 concurrent local checks. Run other heavy checks through the same supervisor;
 do not put another supervisor around `check_kani.sh`.
 
+Fixed program-image identity obligations run in separate proof processes, with
+the same 45-byte fixtures validated by the production const constructor. The
+distinct-address, reverse-order, facts, equal-size columns, self-identity and
+final-byte checks are all retained. The independent fully symbolic 16-byte
+comparison harness remains unchanged. Resolver replacement likewise checks
+each of the three possible hole positions in its own process, still using the
+production raw storage, both registration keys and both typed callbacks.
+These partitions bound each verification formula without removing an input
+case or weakening pointer, overflow or bounds checks.
+
 The three-by-three matching check evaluates the actual production const
 matcher and its certificate on all 512 compatibility matrices. Const evaluation
 executes the original 256-entry arrays and rejects bounds errors, overflows and

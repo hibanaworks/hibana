@@ -87,7 +87,24 @@ fn resolver_initial_storage_is_initialized_and_dispatchable() {
 }
 
 #[kani::proof]
-fn resolver_replacement_compacts_entries_and_preserves_dispatch() {
+fn resolver_replacement_compacts_a_leading_hole_and_preserves_dispatch() {
+    replacement_compacts_entries_and_preserves_dispatch(0);
+}
+
+#[kani::proof]
+fn resolver_replacement_compacts_a_middle_hole_and_preserves_dispatch() {
+    replacement_compacts_entries_and_preserves_dispatch(1);
+}
+
+#[kani::proof]
+fn resolver_replacement_compacts_a_trailing_hole_and_preserves_dispatch() {
+    replacement_compacts_entries_and_preserves_dispatch(2);
+}
+
+// The complete three-position domain is checked in separate proof processes.
+// Keeping the source addresses concrete avoids multiplying pointer targets at
+// every copied entry and callback; the production raw-storage path is unchanged.
+fn replacement_compacts_entries_and_preserves_dispatch(hole: usize) {
     let first_key = ResolverRegistrationKey::new(program::<1>(), FIRST_RESOLVER);
     let second_key = ResolverRegistrationKey::new(program::<2>(), SECOND_RESOLVER);
     let mut source_slots = [None; 3];
@@ -118,7 +135,6 @@ fn resolver_replacement_compacts_entries_and_preserves_dispatch() {
             )
             .is_ok()
     );
-    let hole = usize::from(kani::any::<u8>() % 3);
     let first_entry = source_slots[0];
     let second_entry = source_slots[1];
     source_slots = match hole {
@@ -133,9 +149,6 @@ fn resolver_replacement_compacts_entries_and_preserves_dispatch() {
         2 => source_slots[2].is_none(),
         _ => false,
     });
-    kani::cover!(hole == 0);
-    kani::cover!(hole == 1);
-    kani::cover!(hole == 2);
 
     let mut replacement_slots: [Option<ResolverBucketEntry<'static>>; 4] = [None; 4];
     let replacement = Sidecar::from_raw_parts(

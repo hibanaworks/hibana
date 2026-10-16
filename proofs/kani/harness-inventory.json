@@ -102,7 +102,12 @@
       "global::compiled::images::image::program_ref::kani::compiled_program_atom_lookup_is_exact_for_dense_rows",
       "global::compiled::images::image::program_ref::kani::compiled_program_blob_comparison_matches_array_equality",
       "global::compiled::images::image::program_ref::kani::compiled_program_column_range_rejects_stride_multiplication_overflow",
-      "global::compiled::images::image::program_ref::kani::compiled_program_image_identity_is_exact_over_facts_columns_and_blob",
+      "global::compiled::images::image::program_ref::kani::compiled_program_image_identity_accepts_equal_bytes_at_distinct_addresses",
+      "global::compiled::images::image::program_ref::kani::compiled_program_image_identity_accepts_equal_bytes_in_reverse_order",
+      "global::compiled::images::image::program_ref::kani::compiled_program_image_identity_checks_the_final_byte",
+      "global::compiled::images::image::program_ref::kani::compiled_program_image_identity_is_reflexive",
+      "global::compiled::images::image::program_ref::kani::compiled_program_image_identity_rejects_different_columns_of_equal_size",
+      "global::compiled::images::image::program_ref::kani::compiled_program_image_identity_rejects_different_facts",
       "global::compiled::images::image::program_ref::kani::descriptor_scope_marker_tag_is_exact_and_injective",
       "global::compiled::images::image::program_ref::kani::packed_column_range_construction_is_exact_for_resident_stride_domain",
       "global::compiled::images::image::program_ref::kani::program_atom_row_decoding_accepts_exact_domain",
@@ -271,7 +276,9 @@
       "session::cluster::core::dynamic_resolvers::kani::resolver_initial_storage_is_initialized_and_dispatchable",
       "session::cluster::core::dynamic_resolvers::kani::resolver_registration_key_accepts_full_u16_id_domain",
       "session::cluster::core::dynamic_resolvers::kani::resolver_registration_key_is_program_and_id",
-      "session::cluster::core::dynamic_resolvers::kani::resolver_replacement_compacts_entries_and_preserves_dispatch"
+      "session::cluster::core::dynamic_resolvers::kani::resolver_replacement_compacts_a_leading_hole_and_preserves_dispatch",
+      "session::cluster::core::dynamic_resolvers::kani::resolver_replacement_compacts_a_middle_hole_and_preserves_dispatch",
+      "session::cluster::core::dynamic_resolvers::kani::resolver_replacement_compacts_a_trailing_hole_and_preserves_dispatch"
     ],
     "../../src/transport/kani.rs": [
       "transport::kani::frame_header_identity_is_exact_and_injective",
@@ -295,7 +302,7 @@
   "contract-harnesses": {},
   "contracts": [],
   "totals": {
-    "standard-harnesses": 201,
+    "standard-harnesses": 208,
     "contract-harnesses": 0,
     "functions-under-contract": 0
   }
