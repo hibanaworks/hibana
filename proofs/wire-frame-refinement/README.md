@@ -6,6 +6,12 @@ structurally compiled atoms. Both per-event and per-role canonical frame labels
 read those final atoms. There is no second `canonicalWireAtoms` allocator.
 `GlobalSyntax` remains the structural lowering source.
 
+The runner exports the descriptors from the current Rust implementation on
+every invocation. `WireSourceBridge` imports that generated module instead of
+keeping a second copy of its descriptor bytes. Both nested-Roll role images
+must pass exact admission. Two negative certificates clear a required Roll
+flag and must fail the same checker.
+
 The selected external definitions are imported directly. The proofs name small
 predicate and fold-step expressions only to reason about the production code;
 `actual_head_uses_this_predicate` and `actual_owner_is_this_fold` bind those views
@@ -21,13 +27,13 @@ remain unchanged. Exhaustion retains invalid byte value 256 in its event row.
 
 ## Replay
 
-With Rust 1.95.0, Lean 4.30.0, Z3 and gzip installed, from the repository root:
+With stable Rust, Lean 4.30.0, Z3 and gzip installed, from the repository root:
 
 ```sh
 bash proofs/wire-frame-refinement/check_all.sh --lean /path/to/lean
 ```
 
-The runner builds the actual Lean library and audits all 54 named theorem
+The runner builds the actual Lean library and audits all 56 named theorem
 axiom closures. It executes the 40-query Z3 model, eight option-match checks,
 and 29 external-specific Z3 obligations and controls. Each finite model layer
 checks 38,840 bounded cases; the external layer adds ten fixtures, eleven

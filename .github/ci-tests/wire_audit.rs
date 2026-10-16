@@ -35,8 +35,8 @@ fn inventory(repo: &Path) -> AuditResult<Names> {
         }
     }
     require(
-        result.len() == 54,
-        format!("expected 54 wire theorems, found {}", result.len()),
+        result.len() == 56,
+        format!("expected 56 wire theorems, found {}", result.len()),
     )?;
     Ok(result)
 }

@@ -83,6 +83,38 @@ fn invoke(
 fn text(path: &Path) -> &str {
     path.to_str().expect("UTF-8 proof path")
 }
+fn export_descriptors(repo: &Path, toolchain: &str) -> Result<PathBuf> {
+    let generated = repo.join("target/lean-proof/Generated.lean");
+    match fs::remove_file(&generated) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(format!("remove previous descriptor export: {error}")),
+    }
+    let flags = match env::var("RUSTFLAGS") {
+        Ok(flags) => format!("{flags} --cfg hibana_repo_tests"),
+        Err(env::VarError::NotPresent) => "--cfg hibana_repo_tests".into(),
+        Err(error) => return Err(format!("Rust flags: {error}")),
+    };
+    let output = Command::new("timeout")
+        .args(["300", "cargo", &format!("+{toolchain}"), "test", "--locked", "-p", "hibana", "--lib",
+            "global::event_program_cursor_tests::lean_proof_export::export_production_trace_for_lean",
+            "--", "--ignored", "--exact"])
+        .current_dir(repo)
+        .env("RUSTFLAGS", flags)
+        .env("CARGO_BUILD_JOBS", "1")
+        .env("RUST_TEST_THREADS", "1")
+        .output()
+        .map_err(|error| format!("Rust descriptor export: {error}"))?;
+    checked_output("Rust descriptor export", output, false)?;
+    if !fs::symlink_metadata(&generated)
+        .map_err(|error| error.to_string())?
+        .file_type()
+        .is_file()
+    {
+        return Err("Rust descriptor export must produce a fresh regular file".into());
+    }
+    Ok(generated)
+}
 fn compile(repo: &Path, build: &Path, name: &str, toolchain: &str) -> Result<PathBuf> {
     let binary = build.join(name);
     invoke(
@@ -152,7 +184,7 @@ fn run(args: &[String]) -> Result<()> {
     executable("gzip")?;
     let scratch = fresh_scratch()?;
     let build = &scratch.0;
-    let toolchain = env::var("TOOLCHAIN").unwrap_or_else(|_| "1.95.0".into());
+    let toolchain = env::var("TOOLCHAIN").unwrap_or_else(|_| "stable".into());
     let audit = compile(&repo, build, "wire_audit", &toolchain)?;
     let model = compile(&repo, build, "wire_model", &toolchain)?;
     let smt = compile(&repo, build, "smt_model", &toolchain)?;
@@ -164,7 +196,18 @@ fn run(args: &[String]) -> Result<()> {
         None,
         false,
     )?;
-    invoke(&lake, &["build"], &proofs, None, false)?;
+    invoke(
+        Path::new("bash"),
+        &[
+            text(&repo.join(".github/scripts/lib/lean_audit_tool.sh")),
+            "build-serial",
+            text(&proofs),
+        ],
+        &repo,
+        None,
+        false,
+    )?;
+    let generated = export_descriptors(&repo, &toolchain)?;
     // Capture only stdout for the path query; stderr is diagnostic, never a path.
     let path_output = Command::new("timeout")
         .arg("300")
@@ -179,6 +222,13 @@ fn run(args: &[String]) -> Result<()> {
     eprint!("{}", String::from_utf8_lossy(&path_output.stderr));
     let base = String::from_utf8(path_output.stdout).map_err(|e| e.to_string())?;
     let resolved = resolved_lean_path(&base, &proofs, build)?;
+    invoke(
+        &lean,
+        &["-o", text(&build.join("Generated.olean")), text(&generated)],
+        &repo,
+        Some(&resolved),
+        true,
+    )?;
     for module in [
         "OptionMatchEquivalence",
         "WireFrameRefinement",
@@ -222,7 +272,7 @@ fn run(args: &[String]) -> Result<()> {
     }
     invoke(&model, &[text(&repo)], &repo, Some(&resolved), false)?;
     println!(
-        "PASS wire-frame refinement: 54 Lean theorems; unchanged exact admission; Z3 and finite model correspondence"
+        "PASS wire-frame refinement: 56 Lean theorems; unchanged exact admission; Z3 and finite model correspondence"
     );
     println!("LIMIT: concrete runtime Covers/SameClassUnique remains an explicit premise");
     Ok(())
