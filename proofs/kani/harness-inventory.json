@@ -216,6 +216,11 @@
       "global::role_program::image_impl::kani::route_commit_partition_requires_the_exact_builder_maximum",
       "global::role_program::image_impl::kani::two_roll_scope_rows_are_accepted_exactly_when_unique_and_laminar"
     ],
+    "../../src/global/role_program/image_impl/projection/actors/kani.rs": [
+      "global::role_program::image_impl::projection::actors::kani::actor_projection_emits_each_side_once_in_storage_order",
+      "global::role_program::image_impl::projection::actors::kani::actor_projection_emits_only_permitted_sides_for_every_actor",
+      "global::role_program::image_impl::projection::actors::kani::actor_projection_emits_the_exact_count_for_every_actor"
+    ],
     "../../src/global/role_program/image_impl/projection/lanes/kani.rs": [
       "global::role_program::image_impl::projection::lanes::kani::local_lane_accumulator_preserves_exact_lane_relations_and_last_steps"
     ],
@@ -320,7 +325,7 @@
   "contract-harnesses": {},
   "contracts": [],
   "totals": {
-    "standard-harnesses": 222,
+    "standard-harnesses": 225,
     "contract-harnesses": 0,
     "functions-under-contract": 0
   }

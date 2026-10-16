@@ -16,15 +16,18 @@ jobs:
   kani:
     if: github.event_name != 'workflow_dispatch' || inputs.check == 'all'
     runs-on: ubuntu-24.04
+    env:
+      TOOLCHAIN: stable
     steps:
       - uses: actions/checkout@v7
       - name: Install pinned Kani and CBMC
         run: |
           sudo apt-get update
           sudo apt-get install -y ripgrep
+          rustup toolchain install stable --profile minimal
           KANI_VERSION="$(< .github/kani-version)"
-          cargo install --locked kani-verifier --version "${KANI_VERSION}"
-          cargo kani setup
+          cargo +stable install --locked kani-verifier --version "${KANI_VERSION}"
+          cargo +stable kani setup
       - name: Run Kani proofs
         run: bash ./.github/scripts/check_kani.sh
       - name: Check delegation equation roots
@@ -35,6 +38,8 @@ jobs:
 
   final-form:
     runs-on: ubuntu-24.04-arm
+    env:
+      TOOLCHAIN: stable
     steps:
       - uses: actions/checkout@v7
         with:
@@ -43,8 +48,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y ripgrep z3
-          rustup toolchain install 1.95.0 --profile minimal --component clippy --component rustfmt --component rust-src
-          cargo +1.95.0 fmt --version
+          rustup toolchain install stable --profile minimal --component clippy --component rustfmt --component rust-src
+          cargo +stable fmt --version
           MIRI_TOOLCHAIN="$(< .github/miri-toolchain)"
           rustup toolchain install "${MIRI_TOOLCHAIN}" --profile minimal --component miri --component rust-src
           ELAN_VERSION="4.2.3"

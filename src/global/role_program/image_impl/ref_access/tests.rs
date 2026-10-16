@@ -104,6 +104,8 @@ fn validated_metadata_constructor_rejects_every_skipped_metadata_class() {
     let rows = program.role_image_ref();
     let event = rows.columns.events.offset as usize;
     reject(rows, |b, _, _| b[event + 9] = 0x80); // event flags
+    reject(rows, |b, _, _| b[event + 9] ^= 0b110); // receive changed into send
+    reject(rows, |b, _, _| b[event + 9] &= 1); // wire receive changed into local action
     reject(rows, |b, _, _| put(b, event + 6, 0x8000)); // event scope
     reject(rows, |b, _, _| put(b, event, 100)); // missing program atom
     reject(rows, |b, _, _| put(b, event + 2, 100)); // missing dependency

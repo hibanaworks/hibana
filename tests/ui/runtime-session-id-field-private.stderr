@@ -4,6 +4,7 @@ error[E0423]: cannot initialize a tuple struct which contains private fields
 4 |     let _ = SessionId(1);
   |             ^^^^^^^^^
   |
+  = note: a struct named `SessionId` exists in another namespace
 note: constructor is not visible here due to private fields
  --> src/session/types.rs
   |

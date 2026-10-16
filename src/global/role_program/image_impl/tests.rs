@@ -288,6 +288,7 @@ const fn event_header_bytes(eff_index: u16, scope: u16) -> [u8; BLOB_LEN] {
 
 const fn local_event_with_lane_bytes(lane: u8) -> [u8; BLOB_LEN] {
     let mut bytes = event_header_bytes(0, u16::MAX);
+    bytes[9] = 2;
     bytes[ROLE_IMAGE_EVENT_STRIDE] = lane;
     bytes
 }
@@ -416,7 +417,7 @@ static ROLL_SCOPE_WITH_OUT_OF_BOUNDS_EVENT_BYTES: [u8; BLOB_LEN] = roll_scope_by
 static NON_ROUTE_SCOPE_BYTES: [u8; BLOB_LEN] = route_scope_bytes(ScopeId::roll_scope(0).raw());
 static ROUTE_SCOPE_OUT_OF_RANGE_BYTES: [u8; BLOB_LEN] = route_scope_bytes(0x8000);
 static ROLL_SCOPE_OUT_OF_RANGE_BYTES: [u8; BLOB_LEN] = roll_scope_bytes(ScopeId::LOCAL_CAPACITY, 1);
-static EVENT_WITH_INVALID_FLAGS_BYTES: [u8; BLOB_LEN] = event_bytes(u16::MAX, u16::MAX, 2);
+static EVENT_WITH_INVALID_FLAGS_BYTES: [u8; BLOB_LEN] = event_bytes(u16::MAX, u16::MAX, 6);
 static EVENT_WITH_OUT_OF_DOMAIN_INDEX_BYTES: [u8; BLOB_LEN] =
     event_header_bytes(u16::MAX, u16::MAX);
 static EVENT_WITH_OUT_OF_DOMAIN_SCOPE_BYTES: [u8; BLOB_LEN] = event_header_bytes(0, 0x8000);
@@ -871,7 +872,7 @@ fn resident_descriptor_rejects_program_lane_mismatch() {
         super::super::ROLE_IMAGE_LANE_STRIDE,
     );
     let raw = image(&columns, &LOCAL_EVENT_LANE_MISMATCH_BYTES);
-    let node = raw.local_step_node(0, 0, original.program()).unwrap();
+    let node = raw.local_step_node(0, original.program()).unwrap();
     assert!(matches!(node.action(), LocalAction::Send { lane: 0, .. }));
     assert_eq!(raw.local_step_lane(0, 2), Some(1));
     assert_invariant(|| {
@@ -900,9 +901,12 @@ fn resident_descriptor_rejects_foreign_role_event() {
         super::super::ROLE_IMAGE_LANE_STRIDE,
     );
     let raw = image(&columns, &LOCAL_EVENT_LANE_MISMATCH_BYTES);
-    assert_invariant(|| {
-        let _ = raw.local_step_node(0, 2, original.program());
-    });
+    // A raw row describes a logical operation; the role image constructor
+    // establishes that this operation belongs to its projected participant.
+    assert!(matches!(
+        raw.local_step_node(0, original.program()).unwrap().action(),
+        LocalAction::Send { .. }
+    ));
     assert_invariant(|| {
         let _ = RoleImageRef::new(
             original.program(),
@@ -927,7 +931,7 @@ fn resident_descriptor_rejects_missing_program_event() {
     );
     let raw = image(&columns, &MISSING_PROGRAM_EVENT_BYTES);
     assert_invariant(|| {
-        let _ = raw.local_step_node(0, 0, original.program());
+        let _ = raw.local_step_node(0, original.program());
     });
     assert_invariant(|| {
         let _ = RoleImageRef::new(
@@ -947,7 +951,7 @@ fn resident_descriptor_rejects_in_range_missing_event_and_lane_columns() {
     let columns = empty_columns();
     let raw = image(&columns, &EMPTY_DESCRIPTOR_BYTES);
     assert_eq!(raw.local_step_lane(0, 1), None);
-    assert!(raw.local_step_node(0, 0, original.program()).is_none());
+    assert!(raw.local_step_node(0, original.program()).is_none());
     assert_invariant(|| {
         let _ = RoleImageRef::new(
             original.program(),

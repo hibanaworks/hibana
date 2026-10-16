@@ -51,7 +51,13 @@ pub(super) const fn local_event_row_for_eff<const E: usize>(
         }
         None => RouteChoiceMark::Ordinary,
     };
-    PackedLocalEventRow::new(eff_idx, scope, frame_label, choice)
+    let atom = eff_list.atom_at(eff_idx);
+    let direction =
+        match super::super::super::event_rows::role_local_direction(role, atom.from, atom.to) {
+            Some(direction) => direction,
+            None => crate::invariant(),
+        };
+    PackedLocalEventRow::new(eff_idx, scope, frame_label, choice, direction)
 }
 
 impl<const N: usize> RoleImageBytes<N> {

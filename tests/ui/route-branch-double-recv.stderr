@@ -9,7 +9,7 @@ error[E0382]: use of moved value: `branch`
 38 |     let second_recv = branch.recv::<g::Msg<7, FramePayload>>();
    |                       ^^^^^^ value used here after move
    |
-note: `hibana::endpoint::branch::<impl RouteBranch<'e, 'r, ROLE>>::recv` takes ownership of the receiver `self`, which moves `branch`
+note: `hibana::endpoint::branch::<impl hibana::RouteBranch<'e, 'r, ROLE>>::recv` takes ownership of the receiver `self`, which moves `branch`
   --> src/endpoint/branch.rs
    |
    |         self,

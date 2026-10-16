@@ -10,6 +10,8 @@ use crate::global::{
     typestate::{LocalConflict, PackedEventConflict, RouteChoiceMark},
 };
 
+mod actors;
+pub(super) use actors::ActorEventProjection;
 mod dependency;
 mod lanes;
 mod resident;
@@ -314,8 +316,13 @@ pub(super) const fn local_event_row_for_eff<const E: usize>(
             RouteChoiceMark::Ordinary
         }
     };
+    let atom = eff_list.atom_at(eff_idx);
+    let direction = match super::event_rows::role_local_direction(role, atom.from, atom.to) {
+        Some(direction) => direction,
+        None => crate::invariant(),
+    };
     (
-        PackedLocalEventRow::new(eff_idx, scope, frame_label, choice),
+        PackedLocalEventRow::new(eff_idx, scope, frame_label, choice, direction),
         conflict,
     )
 }

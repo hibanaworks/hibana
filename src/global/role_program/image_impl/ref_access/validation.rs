@@ -1,3 +1,4 @@
+use super::super::projection::ActorEventProjection;
 use super::{RoleImageRef, invalid_resident_descriptor};
 use crate::global::typestate::LocalConflict;
 
@@ -17,6 +18,7 @@ impl RoleImageRef {
         {
             invalid_resident_descriptor();
         }
+        self.validate_actor_event_projection();
         let lanes = self.lanes();
         let mut slot = 0;
         while slot < scopes {
@@ -100,6 +102,40 @@ impl RoleImageRef {
                 }
             }
             idx += 1;
+        }
+    }
+
+    const fn validate_actor_event_projection(&self) {
+        if self.program.actor_decision_count() == 0 {
+            // Ordinary identity bindings and unconditional loans need no
+            // decision scratch. This specialization is construction-only.
+            self.validate_actor_events(&mut []);
+        } else {
+            const BYTES: usize =
+                crate::global::compiled::images::ACTOR_DECISION_CAPACITY.div_ceil(8);
+            self.validate_actor_events(&mut [0; BYTES]);
+        }
+    }
+
+    const fn validate_actor_events(&self, scratch: &mut [u8]) {
+        let Some(mut projected) = ActorEventProjection::new(self.program, self.role, scratch)
+        else {
+            invalid_resident_descriptor();
+        };
+        let mut index = 0;
+        while let Some(expected) = projected.next() {
+            let Some(actual) = self.lanes().local_step_event(index) else {
+                invalid_resident_descriptor();
+            };
+            if actual.eff_index as usize != expected.event
+                || actual.direction() as u8 != expected.direction as u8
+            {
+                invalid_resident_descriptor();
+            }
+            index += 1;
+        }
+        if index != self.local_step_count() {
+            invalid_resident_descriptor();
         }
     }
 }

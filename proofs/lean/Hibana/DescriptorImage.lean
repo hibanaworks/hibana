@@ -1783,7 +1783,9 @@ def Choreo.canonicalRoleEventFlags (choreo : Choreo) (role : Nat) : List Nat :=
   let atoms := enumerateProgramAtoms 0 source.atoms
   atoms.filterMap fun atom =>
     if (atom.localAction? role).isSome then
-      some (canonicalChoiceFlag source role atom)
+      let direction := if atom.sender = atom.receiver then 0
+        else if atom.sender = role then 2 else 4
+      some (direction + canonicalChoiceFlag source role atom)
     else
       none
 
@@ -1959,7 +1961,12 @@ def RustDescriptorImage.eventAction?
   if image.role < image.roleCount then pure () else none
   let atom ← image.eventAtom? eventId
   let lane ← image.eventLane? eventId
-  if lane = atom.lane then atom.localAction? image.role else none
+  if lane = atom.lane then
+    let flags ← image.eventFlags? eventId
+    let direction := if atom.sender = atom.receiver then 0
+      else if atom.sender = image.role then 1 else 2
+    if flags < 6 && flags / 2 = direction then atom.localAction? image.role else none
+  else none
 
 /-- Complete resident identity of one descriptor operation. `eventId` is the
 local occurrence selected by the cursor; `lane` and `frameLabel` are decoded

@@ -976,7 +976,7 @@ private def RustDescriptorImage.decodeRoleEventRow?
       (dependencyRow = packedU16Absent ∨ dependencyRow < image.dependencyRowCount) ∧
       (conflictRow = packedU16Absent ∨ conflictRow < image.conflictRowCount) ∧
       validPackedScope scope = true ∧
-      flags < 2 then
+      flags < 6 then
     pure { effIndex, dependencyRow, conflictRow, scope, frameLabel, flags }
   else
     none

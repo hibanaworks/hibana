@@ -1,19 +1,19 @@
-error[E0080]: evaluation panicked: parallel endpoint operations must be unambiguous
+error[E0080]: evaluation panicked: parallel endpoint operations must be unambiguous; help: make parallel endpoint selectors distinct
  --> src/g.rs
   |
-  |             panic_choreography_error(error);
-  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `hibana::g::ProgramProjection::<hibana::g::Par<hibana::g::Send<0, 1, hibana::g::Msg<5, ()>>, hibana::g::Send<0, 2, hibana::g::Msg<5, ()>>>, 8>::VALIDATION` failed inside this call
+  |             diagnostic_message::panic_diagnostic(diagnostic);
+  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `hibana::g::ProgramProjection::<hibana::g::Par<hibana::g::Send<0, 1, hibana::g::Msg<5, ()>>, hibana::g::Send<0, 2, hibana::g::Msg<5, ()>>>, 8>::VALIDATION` failed inside this call
   |
-note: inside `g::panic_choreography_error`
+note: inside `g::diagnostic_message::panic_diagnostic`
  --> $RUST/core/src/panic.rs
   |
-  |         $crate::panicking::panic_fmt($crate::const_format_args!($($t)+));
-  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the failure occurred here
+  |         $crate::panicking::panic_display(&$arg);
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the failure occurred here
   |
- ::: src/g.rs
+ ::: src/g/diagnostic_message.rs
   |
-  |             panic!("parallel endpoint operations must be unambiguous")
-  |             ---------------------------------------------------------- in this macro invocation
+  |         Ok(message) => panic!("{}", message),
+  |                        --------------------- in this macro invocation
 
 note: erroneous constant encountered
  --> src/g/role_projection.rs

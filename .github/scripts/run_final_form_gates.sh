@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${ROOT_DIR}"
+export TOOLCHAIN="${TOOLCHAIN:-stable}"
 
 if [[ "${HIBANA_FINAL_FORM_COMPILE_PRESSURE_GUARD:-1}" != "0" \
   && "${HIBANA_FINAL_FORM_COMPILE_PRESSURE_GUARD_ACTIVE:-0}" != "1" ]]; then
@@ -16,11 +17,10 @@ if [[ "${HIBANA_FINAL_FORM_COMPILE_PRESSURE_GUARD:-1}" != "0" \
   exit "$?"
 fi
 
-export TOOLCHAIN="${TOOLCHAIN:-1.95.0}"
 source "${ROOT_DIR}/.github/scripts/repo_rustflags.sh"
 hibana_enable_repo_tests_cfg
 
-bash ./.github/scripts/check_rust_1_95_stable.sh
+bash ./.github/scripts/check_rust_stable.sh
 bash ./.github/scripts/check_no_std_build.sh
 cargo +"${TOOLCHAIN}" clippy --workspace --all-targets -- -D warnings
 RUSTDOCFLAGS=-Dwarnings cargo +"${TOOLCHAIN}" doc -p hibana --no-deps --document-private-items

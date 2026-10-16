@@ -409,7 +409,7 @@ fn resident_event_header_decoding_accepts_exact_domain() {
     let scope_kind = (scope_raw >> 13) & 0b11;
     let scope_valid = scope_raw == u16::MAX || ((scope_raw & 0x8000) == 0 && scope_kind <= 2);
     let expected = (eff_index as usize) < crate::eff::meta::COMPACT_EVENT_IDENTITY_CAPACITY
-        && flags <= 1
+        && flags < 6
         && scope_valid;
     let decoded = decode_resident_event_header(eff_index, scope_raw, flags);
 

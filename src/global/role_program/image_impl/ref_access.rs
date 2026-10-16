@@ -378,10 +378,7 @@ impl RoleImageRef {
         if step_idx >= self.local_step_count() {
             None
         } else {
-            let node = match self
-                .lanes()
-                .local_step_node(step_idx, self.role, self.program)
-            {
+            let node = match self.lanes().local_step_node(step_idx, self.program) {
                 Some(node) => node,
                 None => invalid_resident_descriptor(),
             };

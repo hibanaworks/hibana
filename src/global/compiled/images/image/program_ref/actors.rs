@@ -29,6 +29,13 @@ const fn valid_reference(reference: u16, decisions: usize, max_role: u8) -> bool
 }
 
 impl CompiledProgramRef {
+    pub(crate) const fn actor_decision_count(&self) -> usize {
+        match self.ownership_columns() {
+            Some(columns) => columns.decisions.len as usize,
+            None => 0,
+        }
+    }
+
     const fn ownership_columns(&self) -> Option<OwnershipColumns> {
         if !self.columns.has_ownership() {
             return None;

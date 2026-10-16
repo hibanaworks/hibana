@@ -120,6 +120,12 @@ fn case_source(source: &EffList<512>, totals: &mut [usize; 4]) {
                 )
             });
             assert_eq!(old, new);
+            // Foreign logical roles have no direction to encode. The
+            // differential above checks their rejection; only accepted rows
+            // have a conflict fact to inspect below.
+            if old.is_err() {
+                continue;
+            }
             let (_, reused) = projection::local_event_row_for_eff(source, index, label, role);
             assert_eq!(
                 reused,
