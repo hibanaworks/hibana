@@ -4,11 +4,9 @@ use super::*;
 pub(crate) const fn projection_diagnostic<const E: usize>(
     summary: &CompiledProgramImage,
     eff_list: &EffList<E>,
-) -> Option<crate::g::ProjectionDiagnostic> {
+    error: ProgramSourceError,
+) -> crate::g::ProjectionDiagnostic {
     use crate::g::{DiagnosticEvent, DiagnosticRange, ProjectionDiagnostic, ProjectionProblem};
-    let Some(error) = projection_error_all_roles(summary, eff_list) else {
-        return None;
-    };
     let mut diagnostic = ProjectionDiagnostic::from_error(error);
     if matches!(error, ProgramSourceError::ReceiveLaneCausalityConflict) {
         if let Some((earlier, later, scope)) =
@@ -22,19 +20,19 @@ pub(crate) const fn projection_diagnostic<const E: usize>(
             ));
             diagnostic.second = Some(DiagnosticEvent::from_atom(later, eff_list.atom_at(later)));
         }
-        return Some(diagnostic);
+        return diagnostic;
     }
     if !matches!(
         error,
         ProgramSourceError::RouteControllerMismatch
             | ProgramSourceError::ProjectionRouteUnprojectable
     ) {
-        return Some(diagnostic);
+        return diagnostic;
     }
     if passive_child::validate_passive_child_projection_guarantees(eff_list.scope_markers())
         .is_some()
     {
-        return Some(diagnostic);
+        return diagnostic;
     }
     let participants = participating_roles(eff_list);
     let markers = eff_list.scope_markers();
@@ -80,16 +78,16 @@ pub(crate) const fn projection_diagnostic<const E: usize>(
                         diagnostic.role = Some(role as u8);
                         diagnostic.first = first_role_event(eff_list, a, b, role as u8);
                         diagnostic.second = first_role_event(eff_list, c, d, role as u8);
-                        return Some(diagnostic);
+                        return diagnostic;
                     }
                     role += 1;
                 }
             }
-            return Some(diagnostic);
+            return diagnostic;
         }
         marker_idx += 1;
     }
-    Some(diagnostic)
+    diagnostic
 }
 
 const fn first_role_event<const E: usize>(

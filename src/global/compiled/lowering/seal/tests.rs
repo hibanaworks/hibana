@@ -1,8 +1,32 @@
 use super::*;
 use crate::{
     eff::{EffAtom, EventOrigin},
-    global::const_dsl::{ReentryMark, ScopeId, merge_route_frame_labels},
+    global::const_dsl::{
+        ReentryMark, ScopeId, merge_route_frame_labels, validate_parallel_endpoint_selectors,
+        validate_receive_lane_causality, validate_roll_reentry_endpoint_selectors,
+    },
 };
+
+// Apply the production obligations to raw EffList fixtures for comparison with
+// the independent oracle. Typed projection caches each obligation separately.
+const fn projection_error_all_roles<const E: usize>(
+    summary: &CompiledProgramImage,
+    source: &EffList<E>,
+) -> Option<ProgramSourceError> {
+    if !validate_receive_lane_causality(source) {
+        return Some(ProgramSourceError::ReceiveLaneCausalityConflict);
+    }
+    if !validate_parallel_endpoint_selectors(source) {
+        return Some(ProgramSourceError::ParallelAmbiguousEndpointSelector);
+    }
+    if !validate_roll_reentry_endpoint_selectors(source) {
+        return Some(ProgramSourceError::ReentryAmbiguousEndpointSelector);
+    }
+    if let Some(error) = validate_passive_child_projection_guarantees(source.scope_markers()) {
+        return Some(error);
+    }
+    validate_route_projection_guarantees(summary, source)
+}
 
 const ROUTE_DEPTH: usize = 257;
 const EVENT_COUNT: usize = ROUTE_DEPTH + 1;

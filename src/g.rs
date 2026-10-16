@@ -191,16 +191,17 @@ where
 
     const DIAGNOSTIC: Option<ProjectionDiagnostic> = {
         Self::IMAGE.validate_projection_program();
-        if Steps::SOURCE_NODE.has_delegation() {
-            match Self::ERROR {
-                Some(error) => Some(ProjectionDiagnostic::from_error(error)),
-                None => None,
-            }
-        } else {
-            crate::global::compiled::lowering::projection_diagnostic(
-                &Self::IMAGE,
-                Self::SOURCE_EFF_LIST,
-            )
+        match Self::ERROR {
+            None => None,
+            Some(error) => Some(if Steps::SOURCE_NODE.has_delegation() {
+                ProjectionDiagnostic::from_error(error)
+            } else {
+                crate::global::compiled::lowering::projection_diagnostic(
+                    &Self::IMAGE,
+                    Self::SOURCE_EFF_LIST,
+                    error,
+                )
+            }),
         }
     };
 
@@ -248,12 +249,7 @@ where
     };
 
     const VALIDATION: () = {
-        Self::IMAGE.validate_projection_program();
-        if let Some(error) = Self::ERROR {
-            let diagnostic = match Self::DIAGNOSTIC {
-                Some(diagnostic) => diagnostic,
-                None => ProjectionDiagnostic::from_error(error),
-            };
+        if let Some(diagnostic) = Self::DIAGNOSTIC {
             diagnostic_message::panic_diagnostic(diagnostic);
         }
     };

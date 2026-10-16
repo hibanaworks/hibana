@@ -6,8 +6,6 @@ use crate::{
             EffList, ScopeKind, first_visible_controller,
             first_visible_endpoint_selector_conflicts_from_markers,
             local_route_observer_paths_mergeable, route_arm_ranges_from_first_enter,
-            validate_parallel_endpoint_selectors, validate_receive_lane_causality,
-            validate_roll_reentry_endpoint_selectors,
         },
         role_program::{
             LaneWord, compact_local_step_count, lane_word_count, logical_lane_count_for_role,
@@ -240,27 +238,6 @@ const fn scope_has_dynamic_resolver<const E: usize>(
     route_scope: crate::global::const_dsl::ScopeId,
 ) -> bool {
     eff_list.resolver_for_scope(route_scope).is_some()
-}
-
-pub(crate) const fn projection_error_all_roles<const E: usize>(
-    summary: &CompiledProgramImage,
-    eff_list: &EffList<E>,
-) -> Option<ProgramSourceError> {
-    if !validate_receive_lane_causality(eff_list) {
-        return Some(ProgramSourceError::ReceiveLaneCausalityConflict);
-    }
-    if !validate_parallel_endpoint_selectors(eff_list) {
-        return Some(ProgramSourceError::ParallelAmbiguousEndpointSelector);
-    }
-    if !validate_roll_reentry_endpoint_selectors(eff_list) {
-        return Some(ProgramSourceError::ReentryAmbiguousEndpointSelector);
-    }
-    if let Some(error) =
-        passive_child::validate_passive_child_projection_guarantees(eff_list.scope_markers())
-    {
-        return Some(error);
-    }
-    validate_route_projection_guarantees(summary, eff_list)
 }
 
 mod diagnostic;
