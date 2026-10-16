@@ -71,7 +71,7 @@ where
             &mut selected_arm,
         ) {
             Ok(enabled) => enabled,
-            Err(CursorInvariantError::INVARIANT) => return Err(SendError::PhaseInvariant),
+            Err(_) => return Err(SendError::PhaseInvariant),
         };
         let current_route_scope = meta.route_scope;
         let current_route_arm = meta.selected_route_arm;

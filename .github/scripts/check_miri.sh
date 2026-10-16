@@ -59,6 +59,13 @@ run_miri_test \
   -p hibana \
   --test miri_runtime_owner
 
+# This suite covers nested rework and delayed ingress across several complete
+# visits. Strict Miri takes over 300 seconds for the full regression matrix.
+MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \
+  nested-resolver-reentry \
+  -p hibana \
+  --test nested_resolver_reentry
+
 run_miri_test \
   transport-requeue-owner \
   -p hibana \
@@ -374,6 +381,30 @@ MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_t
   -p hibana \
   --test shared_query_tail_reentry \
   a_completed_reply_cannot_be_reused_without_receiving_a_fresh_query
+
+MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \
+  inactive-parallel-continuation-reentry \
+  -p hibana \
+  --test shared_query_tail_reentry \
+  inactive_parallel_dependency_does_not_block_outer_roll_reentry
+
+MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \
+  parallel-local-resolver-progress \
+  -p hibana \
+  --test shared_query_tail_reentry \
+  pending_local_resolvers_survive_other_parallel_requests
+
+MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \
+  send-selected-receive-continuation \
+  -p hibana \
+  --test shared_query_tail_reentry \
+  completed_send_choice_keeps_its_receive_continuation
+
+MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \
+  ordinary-parallel-input-reentry \
+  -p hibana \
+  --test shared_query_tail_reentry \
+  ordinary_parallel::
 
 run_miri_test \
   program-image-storage-validation \

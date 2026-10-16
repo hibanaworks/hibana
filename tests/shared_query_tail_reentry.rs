@@ -311,3 +311,15 @@ fn a_completed_reply_cannot_be_reused_without_receiving_a_fresh_query() {
         }
     }
 }
+
+#[path = "shared_query_tail_reentry/inactive_parallel.rs"]
+mod inactive_parallel;
+
+#[path = "shared_query_tail_reentry/parallel_resolvers.rs"]
+mod parallel_resolvers;
+
+#[path = "shared_query_tail_reentry/static_controller.rs"]
+mod static_controller;
+
+#[path = "shared_query_tail_reentry/ordinary_parallel.rs"]
+mod ordinary_parallel;

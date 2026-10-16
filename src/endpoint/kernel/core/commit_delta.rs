@@ -1,6 +1,7 @@
 use super::{
     CommitDelta, CommitEventRow, CursorEndpoint, CursorInvariantError, PreparedRouteCommitRows,
-    RelocatableResidentLaneStep, SelectedRouteCommitRow, Transport, state_index_to_usize,
+    RelocatableResidentLaneStep, SelectedRouteCommitRow, SelectedRouteCommitRowsRef, Transport,
+    state_index_to_usize,
 };
 use crate::global::const_dsl::ReentryMark;
 use crate::global::typestate::{EnabledEventCommit, StateIndex};
@@ -267,7 +268,7 @@ where
         &self,
         delta: &CommitDelta,
     ) -> Result<Option<usize>, CursorInvariantError> {
-        let routes = delta.selected_routes();
+        let routes = delta.selected_route_rows_ref();
         let entry_idx = match delta.event() {
             Some(event) => self
                 .cursor
@@ -275,7 +276,15 @@ where
                 .ok_or(CursorInvariantError::INVARIANT)?,
             None => state_index_to_usize(delta.cursor_after()),
         };
-        let lane = delta.selected_route_lane();
+        self.fresh_route_start_for_rows(routes, entry_idx, delta.selected_route_lane())
+    }
+
+    pub(in crate::endpoint::kernel::core) fn fresh_route_start_for_rows(
+        &self,
+        routes: SelectedRouteCommitRowsRef,
+        entry_idx: usize,
+        lane: Option<u8>,
+    ) -> Result<Option<usize>, CursorInvariantError> {
         let mut start = None;
         let mut idx = 0usize;
         while idx < routes.len() {

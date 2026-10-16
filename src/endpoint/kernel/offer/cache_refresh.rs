@@ -20,7 +20,12 @@ where
         while slot_idx < active_entries.len() {
             let slot = crate::invariant_some(active_entries.slot_at(slot_idx));
             let (active, observed) = self.scan_active_offer_entry_non_consuming(slot);
-            let admission = if self.cursor.has_route_scope(active.scope()) {
+            let info = active.representative();
+            let admission = if self.cursor.has_route_scope(active.scope())
+                && (!info.is_controller()
+                    || !info.is_dynamic()
+                    || self.resolver_offer_entry_enabled(active.scope()))
+            {
                 OfferEntryAdmission::Selectable
             } else {
                 OfferEntryAdmission::Excluded

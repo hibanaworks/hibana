@@ -14,7 +14,7 @@ optimization.
 The collecting path now also polls existing active offer lanes while no frame
 has been acquired. An actual frame transfers into the existing Selecting state
 and follows the existing exact-observation route validation. The guard comes
-from poll_collect_offer_evidence: Pending is possible only when stage.ingress
+from poll_offer_collecting: transport collection is entered only when stage.ingress
 is empty. No accepted frame is abandoned, no readiness is fabricated, and no
 state field, public API, capacity or wire representation is added.
 
@@ -58,7 +58,7 @@ Source correspondence:
 
 | Model | Runtime boundary |
 | --- | --- |
-| collect | poll_collect_offer_evidence, including the existing nonempty-ingress guard |
+| collect | poll_offer_collecting, including the existing nonempty-ingress guard |
 | advance waiting | poll_offer_collecting's Pending arm |
 | selecting frame/context | stage_transport, frontier_visited.take, carry_ingress |
 | resolving/error | existing selected-evidence and terminal error arms |
@@ -90,3 +90,63 @@ affine lease implementation and final branch validation remain Rust/model-check
 and existing proof boundaries. Selecting a carried frame does not itself grant
 offer completion or admission of an invalid frame. Runtime layout, capacities,
 wire representation and partial-publication rejection remain unchanged.
+
+## Ordinary input during parallel roll reentry
+
+`tests/shared_query_tail_reentry/ordinary_parallel.rs` adds two public-endpoint
+regressions. One role receives ordinary data in parallel with a message-based
+choice, then handles another choice before repeating. Sending the next ordinary
+data before the parallel choice previously made `offer()` return
+`PhaseInvariant`. The failure reproduces without resolvers or a following
+continuation on both f1c4dd4bab211b005687cfec15bb53a1f77500ed and
+c2001ec06944d7f3b299e16b5b3efb5b0ba0366a.
+
+A previous visit's suffix is not necessarily enabled at the next visit's head.
+The first repair checked the cached branch heads before I/O. That repair passed
+these two tests but later blocked a valid service request after review rework:
+the new visit could begin in a different route. The cached-suffix guard has
+therefore been removed. Exact ingress classification now retains an ordinary
+receive for `recv` and clears only that lane's stale offer cache. The second
+regression observes an independent choice before completing its lane, then
+queues ordinary data. Both regressions retain four distinct payloads, repeatedly
+poll and abandon pending previews, and check exact ordinary receive data. See
+[`ordinary-offer-ingress`](../ordinary-offer-ingress) for the replacement boundary
+and its explicit proof assumptions.
+
+Strict Miri also found an independent ownership defect while cancelling the
+pending preview. A staged frame held a shared slice into an inline Rx buffer.
+Passing that frame by value protected the slice during `requeue_on`, which
+then mutably borrowed the same Rx. The affine receipt now retains the original
+slice pointer and lifetime without materializing a shared slice during requeue.
+Validation and successful receive commit reconstruct the borrowed payload.
+The existing receipt still proves exact port identity and one-shot resolution.
+The pointer representation has the same size as the borrowed slice and adds
+no allocation or public API.
+
+The two new regressions pass with strict provenance under nightly-2026-05-28
+Miri, including pending-preview cancellation with a nonempty inline payload.
+The existing send-selected receive continuation, 28 public runtime ownership
+tests, and six receive-receipt tests also pass. These tests use Tokio's current
+thread executor without an OS I/O driver when they require no OS I/O. Production
+runtime behavior has no Miri-only alternative.
+
+The Lean ingress model and the existing dependency, selector, and resolver
+models retain their stated boundaries. Their checks do not establish Rust
+pointer provenance or prove the entire cache implementation. The new production
+regressions and strict Miri checks cover those concrete boundaries.
+
+The first cached-suffix candidate passed 885 workspace Rust tests (12 ignored), workspace
+all-target Clippy, the no_std host and thumbv6m builds, the full Lean gate,
+the related selector/dependency/resolver/ingress Lean and Z3 checks, and nine
+Kani harnesses for frontier selection and receive-receipt ownership. The
+size snapshot and subsystem layout gates passed: aggregate measured flash
+94,694 bytes, SRAM 5,418 bytes, and maximum measured stack 2,751 bytes in their
+checked programs. These measurements do not bound arbitrary consumer protocols.
+These historical checks do not qualify the replacement ingress classification.
+QUIC interoperability must be checked with the selected repair actually built.
+
+The later prefix-dependency repair also sends newly collected primary-lane
+frames through Selecting before any branch authority is used. This extends the
+same exact classification to arrivals after an offer first became pending.
+Its separate model and concrete delayed-frame regression are documented in
+[`offer-prefix-dependency`](../offer-prefix-dependency).

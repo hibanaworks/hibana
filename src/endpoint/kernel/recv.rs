@@ -260,7 +260,7 @@ where
             &mut selected_arm,
         ) {
             Ok(enabled) => enabled,
-            Err(CursorInvariantError::INVARIANT) => {
+            Err(_) => {
                 return Err(RecvError::PhaseInvariant);
             }
         };

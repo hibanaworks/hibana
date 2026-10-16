@@ -89,6 +89,7 @@
     "../../src/endpoint/kernel/offer/select_alignment/model/pool/tests.rs": [
       "endpoint::kernel::offer::select_alignment::model::pool::tests::exact_scope_rows_never_synthesize_controller_progress_authority",
       "endpoint::kernel::offer::select_alignment::model::pool::tests::excluded_exact_current_never_permits_retention",
+      "endpoint::kernel::offer::select_alignment::model::pool::tests::resolver_readiness_preserves_exact_admission_without_synthesizing_authority",
       "endpoint::kernel::offer::select_alignment::model::pool::tests::same_entry_erased_flags_cannot_change_exact_current_observation"
     ],
     "../../src/endpoint/kernel/offer/select_alignment/model/selection.rs": [
@@ -294,7 +295,7 @@
   "contract-harnesses": {},
   "contracts": [],
   "totals": {
-    "standard-harnesses": 200,
+    "standard-harnesses": 201,
     "contract-harnesses": 0,
     "functions-under-contract": 0
   }

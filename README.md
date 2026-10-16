@@ -240,6 +240,13 @@ data, and the fragment's steps can be executed again. FIFO delivery, replay
 exclusion, and separation of session runs are required to distinguish new
 messages from old ones. A repeated protocol may run indefinitely.
 
+Repetition can coexist with a later continuation. Projection rejects an
+outgoing operation that could start a repeated fragment and also select that
+continuation through the same role, label, and payload schema. An intervening
+receive after the fragment does not resolve this ambiguity. A receive at the
+start of the fragment can distinguish a later reply. Independent `par` arms,
+ordinary sequential reuse, and reuse in exclusive route arms remain supported.
+
 ### Local execution
 
 An attached endpoint borrows the storage for one role in one session. It cannot

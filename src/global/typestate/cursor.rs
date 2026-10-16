@@ -25,10 +25,10 @@ mod kani;
 mod lane_progress;
 mod navigation;
 mod pending_events;
+mod scope_route;
 #[cfg(all(test, hibana_repo_tests))]
 mod validated_metadata_tests;
-mod scope_route;
-pub(crate) use scope_route::EventArmView;
+pub(crate) use scope_route::{EventAdmissionError, EventArmView};
 
 #[cfg(all(test, hibana_repo_tests))]
 mod compact_cursor_position_tests {
@@ -227,11 +227,6 @@ impl EventCursorMachine {
     #[inline(always)]
     fn parallel_root(&self, scope_id: ScopeId) -> Option<ScopeId> {
         matches!(scope_id.kind(), Some(ScopeKind::Parallel)).then_some(scope_id)
-    }
-
-    #[inline(always)]
-    fn dependency_for_index(&self, current_idx: usize) -> Option<LocalDependency> {
-        self.event_program().dependency_for_index(current_idx)
     }
 
     #[inline(always)]

@@ -180,6 +180,53 @@ where
         offer_entry_observed_state(info, evidence)
     }
 
+    /// A resolver can run without ingress only at an enabled local or send
+    /// entry. Inspect projected facts without calling the resolver or advancing.
+    pub(in crate::endpoint::kernel) fn resolver_offer_entry_enabled(&self, scope: ScopeId) -> bool {
+        use crate::global::typestate::{EventArmView, EventCommitMeta};
+
+        for arm in 0..=1 {
+            if self
+                .selected_live_arm_for_scope(scope)
+                .is_some_and(|selected| selected != arm)
+            {
+                continue;
+            }
+            let Some((entry, _)) = self.cursor.controller_arm_entry_by_arm(scope, arm) else {
+                continue;
+            };
+            let idx = entry.as_usize();
+            let event = if let Some(meta) = self.cursor.try_local_meta_at(idx) {
+                EventCommitMeta::new(
+                    meta.eff_index,
+                    meta.label,
+                    meta.origin,
+                    meta.scope,
+                    meta.route_arm,
+                    meta.lane,
+                )
+            } else if let Some(meta) = self.cursor.try_send_meta_at(idx) {
+                meta.into()
+            } else {
+                continue;
+            };
+            let conflict = self.cursor.event_conflict_for_index(idx);
+            let mut selected = |candidate, view| {
+                if matches!(view, EventArmView::Committed) {
+                    self.selected_arm_for_scope(candidate)
+                } else if candidate == scope {
+                    Some(arm)
+                } else {
+                    self.selected_arm_for_recv_event(conflict, candidate, view)
+                }
+            };
+            if self.cursor.event_enabled(idx, event, &mut selected).is_ok() {
+                return true;
+            }
+        }
+        false
+    }
+
     pub(in crate::endpoint::kernel) fn scan_active_offer_entry_non_consuming(
         &self,
         slot: ActiveEntrySlot,

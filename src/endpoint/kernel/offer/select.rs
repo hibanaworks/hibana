@@ -2,9 +2,9 @@ use super::super::evidence_store::ReadyArmEvidence;
 use super::{
     Arm, ControlFlow, CurrentFrontierSelectionState, CurrentScopeSelectionMeta, CursorEndpoint,
     FrontierDeferOutcome, FrontierProgressSelection, FrontierScratchWorkspace, FrontierVisitSet,
-    IngressEvidenceState, OfferEntryKey, OfferEvidenceOutcome, OfferProgressState,
-    OfferScopeSelection, OfferStagedIngress, Poll, RecvError, RecvResult, ScopeId, Transport,
-    lane_port, state_index_to_usize,
+    IngressEvidenceState, ObservedIngressSelection, OfferEntryKey, OfferEvidenceOutcome,
+    OfferProgressState, OfferScopeSelection, OfferStagedIngress, Poll, RecvError, RecvResult,
+    ScopeId, Transport, lane_port, state_index_to_usize,
 };
 use crate::global::typestate::InboundFrameKey;
 
@@ -41,10 +41,8 @@ where
         carried_observation: Option<lane_port::FrameObservation>,
         frontier_visited: &mut FrontierVisitSet,
         scratch: &mut FrontierScratchWorkspace<'_>,
-    ) -> RecvResult<OfferScopeSelection> {
-        if let Some(selection) =
-            self.select_observed_ingress_route_scope(carried_key, carried_observation)?
-        {
+    ) -> RecvResult<ObservedIngressSelection> {
+        if let Some(selection) = self.select_observed_ingress(carried_key, carried_observation)? {
             return Ok(selection);
         }
         if let Some(observed) = carried_observation {
@@ -57,7 +55,7 @@ where
             return Err(RecvError::PhaseInvariant);
         }
         if let Some(selection) = self.select_carried_ingress_scope(carried_lane)? {
-            return Ok(selection);
+            return Ok(ObservedIngressSelection::Branch(selection));
         }
         let node_scope = self.align_cursor_to_selected_scope(frontier_visited, scratch)?;
         let current_idx = self.cursor.index();
@@ -97,6 +95,7 @@ where
             return Err(RecvError::PhaseInvariant);
         };
         self.offer_scope_selection_for_scope_lane(scope_id, current_idx, offer_lane)
+            .map(ObservedIngressSelection::Branch)
     }
 
     #[inline]

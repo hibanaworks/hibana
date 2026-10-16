@@ -1,9 +1,10 @@
 use super::{
-    CursorEndpoint, OfferScopeSelection, RecvError, RecvResult, Transport, state_index_to_usize,
+    CursorEndpoint, ObservedIngressSelection, OfferScopeSelection, RecvError, RecvResult,
+    Transport, state_index_to_usize,
 };
 use crate::{
     endpoint::kernel::frontier::checked_state_index,
-    global::typestate::{EventArmView, InboundFrameKey},
+    global::typestate::{EventAdmissionError, EventArmView, InboundFrameKey},
     runtime_core::UniqueMatch,
 };
 
@@ -11,19 +12,21 @@ impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
 where
     T: Transport + 'r,
 {
-    /// Frame identity selects a unique enabled receive, never a nearby cursor.
-    /// An offer requires a projected first-visible receive or a route arm's
-    /// first receive on that lane. The event checks are shared with recv.
-    pub(in crate::endpoint::kernel::offer) fn select_observed_ingress_route_scope(
+    /// Classify one exact user receive without advancing its local step.
+    /// Only a projected first-visible branch receive can select an offer.
+    /// Ordinary input stays available to recv; future input waits for its
+    /// projected predecessor. Both share recv's identity and progress checks.
+    pub(in crate::endpoint::kernel::offer) fn select_observed_ingress(
         &mut self,
         carried_key: Option<InboundFrameKey>,
         carried_observation: Option<super::lane_port::FrameObservation>,
-    ) -> RecvResult<Option<OfferScopeSelection>> {
+    ) -> RecvResult<Option<ObservedIngressSelection>> {
         let Some(key) = carried_key else {
             return Ok(None);
         };
         let current_idx = self.cursor.index();
         let mut matched = UniqueMatch::NONE;
+        let mut admission_pending = false;
         for idx in 0..self.cursor.local_steps_len() {
             let Some(meta) = self.cursor.try_recv_meta_at(idx) else {
                 continue;
@@ -40,12 +43,22 @@ where
             let preview_conflict = self.cursor.event_conflict_for_index(idx);
             let mut selected =
                 |scope, view| self.selected_arm_for_recv_event(preview_conflict, scope, view);
-            if self
-                .cursor
-                .event_enabled(idx, meta.into(), &mut selected)
-                .is_err()
-            {
-                continue;
+            match self.cursor.event_enabled(idx, meta.into(), &mut selected) {
+                Ok(_) => {}
+                Err(EventAdmissionError::PredecessorPending) => {
+                    // Ordered future messages can reuse a wire key. Retention
+                    // chooses no event; only enabled matches must be unique.
+                    admission_pending = true;
+                    continue;
+                }
+                Err(EventAdmissionError::Invariant) => {
+                    // A sender may finish its visit before this receiver's
+                    // nested work. Keep the next visit's entry on its original
+                    // port, without replacing the current committed arm.
+                    admission_pending |=
+                        self.future_route_entry_waits_for_current_arm(idx, meta.lane);
+                    continue;
+                }
             }
             let scope = if let Some(scope) = self
                 .cursor
@@ -76,18 +89,22 @@ where
                     Some(_) | None => None,
                 }
             };
-            if let Some(scope) = scope {
-                matched = matched.add((scope, idx));
-                if matched.is_ambiguous() {
-                    break;
-                }
+            matched = matched.add((scope, idx));
+            if matched.is_ambiguous() {
+                break;
             }
         }
         let Some((scope_id, target_idx)) = matched
             .finish_optional()
             .map_err(|_| RecvError::PhaseInvariant)?
         else {
+            if admission_pending {
+                return Ok(Some(ObservedIngressSelection::PendingReceive(key.lane)));
+            }
             return Ok(None);
+        };
+        let Some(scope_id) = scope_id else {
+            return Ok(Some(ObservedIngressSelection::OrdinaryReceive(key.lane)));
         };
         let observed_arm = self.cursor.route_arm_for_index(scope_id, target_idx);
         let preview_conflict = self.cursor.event_conflict_for_index(target_idx);
@@ -117,7 +134,50 @@ where
         )?;
         selection.observed_target =
             checked_state_index(target_idx).ok_or(RecvError::PhaseInvariant)?;
-        Ok(Some(selection))
+        Ok(Some(ObservedIngressSelection::Branch(selection)))
+    }
+
+    fn future_route_entry_waits_for_current_arm(&self, idx: usize, lane: u8) -> bool {
+        let Some(scope) = self
+            .cursor
+            .route_scope_for_offer_node(self.cursor.node_scope_id_at(idx), idx)
+        else {
+            return false;
+        };
+        let Some(observed) = self.cursor.route_arm_for_index(scope, idx) else {
+            return false;
+        };
+        let Some(current) = self.selected_arm_for_scope(scope) else {
+            return false;
+        };
+        if observed == current || !self.cursor.route_scope_reentry(scope) {
+            return false;
+        }
+        let Some(entry) = self.cursor.route_arm_lane_first_step(scope, observed, lane) else {
+            return false;
+        };
+        if self.cursor.node_index_for_relocatable_step(entry) != Some(idx) {
+            return false;
+        }
+        let Some(accepted_entry) = self.cursor.route_arm_lane_first_step(scope, current, lane)
+        else {
+            return false;
+        };
+        let Some(accepted_idx) = self.cursor.node_index_for_relocatable_step(accepted_entry) else {
+            return false;
+        };
+        if !self.cursor.relocatable_step_done(accepted_entry)
+            || self
+                .cursor
+                .try_recv_meta_at(accepted_idx)
+                .is_none_or(|meta| meta.origin.is_session())
+        {
+            return false;
+        }
+        let mut committed = |candidate| self.selected_arm_for_scope(candidate);
+        !self
+            .cursor
+            .reentrant_route_arm_event_row_done(scope, current, &mut committed)
     }
 
     pub(in crate::endpoint::kernel::offer) fn select_carried_ingress_scope(

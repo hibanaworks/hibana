@@ -75,13 +75,19 @@ impl CurrentOfferEntry {
 #[derive(Clone, Copy)]
 pub(in super::super) enum CurrentOfferAuthority {
     Controller,
+    DynamicController,
     Passive,
 }
 
 impl CurrentOfferAuthority {
     #[inline]
     pub(in super::super) const fn is_controller(self) -> bool {
-        matches!(self, Self::Controller)
+        matches!(self, Self::Controller | Self::DynamicController)
+    }
+
+    #[inline]
+    pub(in super::super) const fn is_dynamic(self) -> bool {
+        matches!(self, Self::DynamicController)
     }
 }
 

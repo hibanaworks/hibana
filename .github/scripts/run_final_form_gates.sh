@@ -41,6 +41,9 @@ bash ./.github/scripts/check_miri.sh
 bash ./.github/scripts/check_lean_proofs.sh
 bash proofs/controller-offer/check.sh
 bash proofs/live-descendant-preview/check.sh
+bash proofs/nested-resolver-reentry/check.sh
+bash proofs/ordinary-offer-ingress/check.sh
+bash proofs/offer-prefix-dependency/check.sh
 ELAN_TOOLCHAIN=leanprover/lean4:v4.30.0 \
   bash proofs/elastic-roll-colors/check_all.sh --lean lean
 ELAN_TOOLCHAIN=leanprover/lean4:v4.30.0 \
