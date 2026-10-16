@@ -2,6 +2,9 @@
   "kani-version": "0.67.0",
   "file-version": "0.1",
   "standard-harnesses": {
+    "../../src/endpoint/carrier/kani.rs": [
+      "endpoint::carrier::proofs::view_generation_never_wraps_reuses_or_loses_its_retirement_successor"
+    ],
     "../../src/endpoint/kernel/authority/kani.rs": [
       "endpoint::kernel::authority::kani::route_arm_decoding_accepts_exact_binary_domain",
       "endpoint::kernel::authority::kani::single_ready_mask_decoding_is_exact"
@@ -102,7 +105,16 @@
       "g::source::ownership::actors::kani::an_unselected_inner_decision_cannot_change_the_outer_right_actor",
       "g::source::ownership::actors::kani::insufficient_actor_image_storage_cannot_publish_a_partial_rebuild",
       "g::source::ownership::actors::kani::nested_actor_decisions_follow_every_complete_selection",
+      "g::source::ownership::actors::kani::possible_actor_membership_contains_exactly_the_canonical_choice_leaves",
       "g::source::ownership::actors::kani::unresolved_actor_decisions_require_unanimous_alternatives"
+    ],
+    "../../src/g/source/ownership/actors/knowledge/kani.rs": [
+      "g::source::ownership::actors::knowledge::kani::actor_equality_keeps_correlated_and_independent_choices_distinct",
+      "g::source::ownership::actors::knowledge::kani::actor_leaf_equality_is_exact",
+      "g::source::ownership::actors::knowledge::kani::an_actor_choice_equals_a_leaf_only_when_both_alternatives_equal_it",
+      "g::source::ownership::actors::knowledge::kani::an_actor_leaf_equals_a_choice_only_when_both_alternatives_equal_it",
+      "g::source::ownership::actors::knowledge::kani::equal_candidate_unions_cannot_erase_an_actual_participation_difference",
+      "g::source::ownership::actors::knowledge::kani::leaf_participation_is_exact_including_collapsed_choice_inputs"
     ],
     "../../src/global/compiled/images/image/program_ref/actors/kani.rs": [
       "global::compiled::images::image::program_ref::actors::kani::actor_row_lookups_reject_every_out_of_range_index",
@@ -248,7 +260,8 @@
       "global::typestate::facts::kani::packed_local_dependency_decoding_accepts_exact_domain",
       "global::typestate::facts::kani::packed_local_dependency_event_bounds_are_exact",
       "global::typestate::facts::kani::state_index_preserves_the_exact_present_identity_domain",
-      "global::typestate::facts::kani::state_index_rejects_the_reserved_absent_identity"
+      "global::typestate::facts::kani::state_index_rejects_the_reserved_absent_identity",
+      "global::typestate::facts::kani::wire_schema_never_authorizes_an_endpoint_with_the_same_numeric_identifier"
     ],
     "../../src/observe/core/ring_state.rs": [
       "observe::core::ring_state::kani::ring_state_step_preserves_the_exact_slot_domain"
@@ -329,7 +342,7 @@
   "contract-harnesses": {},
   "contracts": [],
   "totals": {
-    "standard-harnesses": 227,
+    "standard-harnesses": 236,
     "contract-harnesses": 0,
     "functions-under-contract": 0
   }

@@ -89,7 +89,8 @@ run_miri_test \
   --lib \
   global::compiled::images::image::program_ref::actors::tests
 
-run_miri_test \
+# Shared views include both conditional holders and independent rolled routes.
+MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \
   actor-local-progress \
   -p hibana \
   --lib \

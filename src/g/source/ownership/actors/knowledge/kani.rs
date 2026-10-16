@@ -92,13 +92,14 @@ fn actor_equality_keeps_correlated_and_independent_choices_distinct() {
     let first: u8 = kani::any();
     let second: u8 = kani::any();
     let third: u8 = kani::any();
+    let fourth: u8 = kani::any();
     let correlated: bool = kani::any();
-    let image = pair_image::<0>([first, second], [first, third], correlated);
+    let image = pair_image::<0>([first, second], [third, fourth], correlated);
     let checker = Checker { image: &image };
     let expected = if correlated {
-        second == third
+        first == third && second == fourth
     } else {
-        first == second && first == third
+        first == second && first == third && first == fourth
     };
     assert_eq!(
         checker.equivalent(

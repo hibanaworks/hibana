@@ -181,6 +181,14 @@ not certify an owned image.
 
 ## Remaining integration
 
+An additional private execution selects either of two holders, receives DB and
+AUTH views, runs the DB fragment twice with `roll`, and returns DB through the
+owned AUTH carrier. The initial holder then continues DB. All ordinary source
+validation constants are evaluated; only the public qualification guard is
+bypassed to obtain test images. Both choices pass native and strict Miri with
+four separate runtime/slab owners connected by the shared-memory test carrier.
+This is not a separate-process transport or a general initial-binding proof.
+
 - Complete the actor-aware source checks and independently qualify accepted
   actor-local images, including branch knowledge and conditional holders.
 - Qualify general continuation across route/roll/par combinations. Ordinary

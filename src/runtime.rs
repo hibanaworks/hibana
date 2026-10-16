@@ -16,13 +16,13 @@
 //!
 //! The everyday owners are:
 //!
-//! - [`runtime::program`](crate::runtime::program) for projection and
+//! - [`runtime::program`] for projection and
 //!   role-local witnesses;
-//! - [`runtime::wire`](crate::runtime::wire) for payload codecs;
-//! - [`runtime::transport`](crate::runtime::transport) and
-//!   [`runtime::transport::Transport`](crate::runtime::transport::Transport) for I/O readiness and ingress
+//! - [`runtime::wire`] for payload codecs;
+//! - [`runtime::transport`] and
+//!   [`runtime::transport::Transport`] for I/O readiness and ingress
 //!   demux evidence;
-//! - [`runtime::resolver`](crate::runtime::resolver) for explicit
+//! - [`runtime::resolver`] for explicit
 //!   route resolver sites.
 //!
 //! Transport observation and resolver authority stay under their owning modules;

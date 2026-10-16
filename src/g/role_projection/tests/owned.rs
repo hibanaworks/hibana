@@ -513,3 +513,138 @@ fn resolved_owned_branch_send_and_recv_preserve_the_resource_continuation() {
         drop(db);
     });
 }
+#[test]
+fn a_conditional_holder_keeps_resource_rolls_and_returns_through_an_owned_carrier() {
+    use crate::runtime::resolver::{DecisionArm, ResolverRef};
+    type Notice = g::Msg<8, ()>;
+    type AfterRead = g::Msg<9, u32>;
+    type Choice = g::Resolve<
+        g::Route<
+            g::Seq<g::Send<0, 1, Loan>, g::Seq<g::Send<0, 1, OtherLoan>, g::Send<0, 2, Notice>>>,
+            g::Seq<g::Send<0, 2, Loan>, g::Seq<g::Send<0, 2, OtherLoan>, g::Send<0, 1, Notice>>>,
+        >,
+        701,
+    >;
+    type Work = g::Roll<g::Seq<g::Send<10, 3, Read>, g::Send<3, 10, Value>>>;
+    type Steps = g::Seq<
+        Choice,
+        g::Seq<
+            Work,
+            g::Seq<g::Send<11, 0, Loan>, g::Seq<g::Send<10, 3, AfterRead>, g::Send<3, 10, Value>>>,
+        >,
+    >;
+    let () = crate::g::ProgramProjection::<Steps, 64>::VALIDATION;
+    let owner_program = crate::global::role_program::role_program_from_image::<0>(
+        &RoleProjection::<0, Steps, 64>::IMAGE_REF,
+    );
+    let db_program = crate::global::role_program::role_program_from_image::<10>(
+        &RoleProjection::<10, Steps, 64>::IMAGE_REF,
+    );
+    let auth_program = crate::global::role_program::role_program_from_image::<11>(
+        &RoleProjection::<11, Steps, 64>::IMAGE_REF,
+    );
+    let a_program = crate::global::role_program::role_program_from_image::<1>(
+        &RoleProjection::<1, Steps, 64>::IMAGE_REF,
+    );
+    let b_program = crate::global::role_program::role_program_from_image::<2>(
+        &RoleProjection::<2, Steps, 64>::IMAGE_REF,
+    );
+    let service_program = crate::global::role_program::role_program_from_image::<3>(
+        &RoleProjection::<3, Steps, 64>::IMAGE_REF,
+    );
+    for choose in [DecisionArm::Left, DecisionArm::Right] {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let mut owner_slab = [0u8; 32 * 1024];
+            let mut a_slab = [0u8; 32 * 1024];
+            let mut b_slab = [0u8; 32 * 1024];
+            let mut service_slab = [0u8; 32 * 1024];
+            let mut owner_storage = SessionKitStorage::<TestTransport>::uninit();
+            let mut a_storage = SessionKitStorage::<TestTransport>::uninit();
+            let mut b_storage = SessionKitStorage::<TestTransport>::uninit();
+            let mut service_storage = SessionKitStorage::<TestTransport>::uninit();
+            let network = TestTransport::new();
+            let owner_kit = owner_storage.init();
+            let a_kit = a_storage.init();
+            let b_kit = b_storage.init();
+            let service_kit = service_storage.init();
+            let rv = owner_kit
+                .rendezvous(&mut owner_slab, network.clone())
+                .unwrap();
+            let a_rv = a_kit.rendezvous(&mut a_slab, network.clone()).unwrap();
+            let b_rv = b_kit.rendezvous(&mut b_slab, network.clone()).unwrap();
+            let service_rv = service_kit.rendezvous(&mut service_slab, network).unwrap();
+            rv.set_resolver(
+                &owner_program,
+                ResolverRef::<701>::decision_state(&choose, |arm| Ok(*arm)),
+            )
+            .unwrap();
+            let sid = SessionId::new(830);
+            let mut owner = rv.enter(sid, &owner_program).unwrap();
+            let db = rv.enter(sid, &db_program).unwrap();
+            let auth = rv.enter(sid, &auth_program).unwrap();
+            let mut a = a_rv.enter(sid, &a_program).unwrap();
+            let mut b = b_rv.enter(sid, &b_program).unwrap();
+            let mut service = service_rv.enter(sid, &service_program).unwrap();
+            tokio::join!(
+                async {
+                    let branch = owner.offer().await.unwrap();
+                    branch.send::<Loan>(db).await.unwrap();
+                    owner.send::<OtherLoan>(auth).await.unwrap();
+                    owner.send::<Notice>(&()).await.unwrap();
+                    let mut db = owner.recv::<Loan>().await.unwrap();
+                    drop(owner);
+                    assert!(rv.enter(sid, &db_program).is_err());
+                    db.send::<AfterRead>(&47).await.unwrap();
+                    assert_eq!(db.recv::<Value>().await.unwrap(), 48);
+                },
+                async {
+                    let branch = a.offer().await.unwrap();
+                    match branch.label() {
+                        1 => {
+                            let mut db = branch.recv::<Loan>().await.unwrap();
+                            let mut auth = a.recv::<OtherLoan>().await.unwrap();
+                            for number in [41, 43] {
+                                db.send::<Read>(&number).await.unwrap();
+                                assert_eq!(db.recv::<Value>().await.unwrap(), number + 1);
+                            }
+                            auth.send::<Loan>(db).await.unwrap();
+                        }
+                        8 => {
+                            branch.recv::<Notice>().await.unwrap();
+                        }
+                        label => panic!("unexpected choice {label}"),
+                    }
+                },
+                async {
+                    let branch = b.offer().await.unwrap();
+                    match branch.label() {
+                        1 => {
+                            let mut db = branch.recv::<Loan>().await.unwrap();
+                            let mut auth = b.recv::<OtherLoan>().await.unwrap();
+                            for number in [41, 43] {
+                                db.send::<Read>(&number).await.unwrap();
+                                assert_eq!(db.recv::<Value>().await.unwrap(), number + 1);
+                            }
+                            auth.send::<Loan>(db).await.unwrap();
+                        }
+                        8 => {
+                            branch.recv::<Notice>().await.unwrap();
+                        }
+                        label => panic!("unexpected choice {label}"),
+                    }
+                },
+                async {
+                    for expected in [41, 43] {
+                        assert_eq!(service.recv::<Read>().await.unwrap(), expected);
+                        service.send::<Value>(&(expected + 1)).await.unwrap();
+                    }
+                    assert_eq!(service.recv::<AfterRead>().await.unwrap(), 47);
+                    service.send::<Value>(&48).await.unwrap();
+                },
+            );
+        });
+    }
+}
