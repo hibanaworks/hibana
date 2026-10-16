@@ -71,18 +71,28 @@ fn processes() -> Result<BTreeMap<i32, Process>> {
         return Err("cannot read validation process tree".into());
     }
     let text = String::from_utf8(output.stdout).map_err(|e| e.to_string())?;
+    parse_processes(&text)
+}
+
+fn parse_processes(text: &str) -> Result<BTreeMap<i32, Process>> {
     let mut table = BTreeMap::new();
     for line in text.lines() {
         let values = line.split_whitespace().collect::<Vec<_>>();
         if values.len() != 4 {
             return Err("invalid validation process table".into());
         }
-        let pid = values[0].parse::<i32>().map_err(|e| e.to_string())?;
-        let parent = values[1].parse::<i32>().map_err(|e| e.to_string())?;
-        let group = values[2].parse::<i32>().map_err(|e| e.to_string())?;
+        let pid = values[0]
+            .parse::<i32>()
+            .map_err(|e| format!("invalid process pid in {line:?}: {e}"))?;
+        let parent = values[1]
+            .parse::<i32>()
+            .map_err(|e| format!("invalid process parent in {line:?}: {e}"))?;
+        let group = values[2]
+            .parse::<i32>()
+            .map_err(|e| format!("invalid process group in {line:?}: {e}"))?;
         let rss = values[3]
             .parse::<u64>()
-            .map_err(|e| e.to_string())?
+            .map_err(|e| format!("invalid process RSS in {line:?}: {e}"))?
             .checked_mul(1024)
             .ok_or("process memory overflow")?;
         if pid <= 0 || table.insert(pid, Process { parent, group, rss }).is_some() {
@@ -227,6 +237,32 @@ fn main() {
 mod tests {
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn process_number_errors_identify_the_field_and_preserve_fail_closed_admission() {
+        let maximum =
+            parse_processes("2147483647 2147483647 2147483647 18014398509481983\n").unwrap();
+        assert_eq!(maximum[&i32::MAX].rss, 18_446_744_073_709_550_592);
+        for (line, field) in [
+            ("2147483648 1 1 1", "pid"),
+            ("1 2147483648 1 1", "parent"),
+            ("1 1 2147483648 1", "group"),
+            ("1 1 1 18446744073709551616", "RSS"),
+        ] {
+            let error = parse_processes(line).err().unwrap();
+            assert!(error.contains(field), "{error}");
+            assert!(error.contains(line), "{error}");
+        }
+        for invalid in [
+            "1 1 1 18014398509481984",
+            "1 1 1 1\n1 1 1 1",
+            "",
+            "1 1 1",
+            "0 0 0 0",
+        ] {
+            assert!(parse_processes(invalid).is_err(), "accepted {invalid:?}");
+        }
+    }
 
     fn test_lock() -> PathBuf {
         env::temp_dir().join(format!(
