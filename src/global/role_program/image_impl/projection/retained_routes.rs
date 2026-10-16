@@ -1,4 +1,4 @@
-use super::{DependencyCursor, ScopeFacts, passive_arm_child_scope, route_arm_ranges};
+use super::{DependencyCursor, LocalRows, ScopeFacts, passive_arm_child_scope, route_arm_ranges};
 use crate::global::{
     const_dsl::{EffList, ScopeId, ScopeKind},
     typestate::LocalConflict,
@@ -8,7 +8,7 @@ use crate::global::{
 // by the runtime. Global route identities remain unchanged after compaction.
 pub(in crate::global::role_program::image_impl) const fn retained_route_scopes<const E: usize>(
     source: (&EffList<E>, &ScopeFacts),
-    role: u8,
+    rows: LocalRows<'_, E>,
 ) -> [bool; ScopeId::LOCAL_CAPACITY as usize] {
     let (effects, scopes) = source;
     let markers = effects.scope_markers();
@@ -19,6 +19,9 @@ pub(in crate::global::role_program::image_impl) const fn retained_route_scopes<c
         if markers.is_first_enter(marker_idx)
             && matches!(marker.scope_id.kind(), Some(ScopeKind::Route))
         {
+            if rows.retains_context(marker.scope_id) {
+                retained[marker.scope_id.local_ordinal() as usize] = true;
+            }
             let Some(arms) = route_arm_ranges(markers, marker.scope_id) else {
                 panic!("route scope missing binary arm ranges");
             };
@@ -26,8 +29,7 @@ pub(in crate::global::role_program::image_impl) const fn retained_route_scopes<c
             while arm < 2 {
                 let (mut index, end) = arms[arm];
                 while index < end {
-                    let effect = effects.atom_at(index);
-                    if effect.from == role || effect.to == role {
+                    if rows.count(effects, index) != 0 {
                         // The global controller is an arm's visible sender,
                         // and participants are exactly its effect endpoints.
                         retained[marker.scope_id.local_ordinal() as usize] = true;
@@ -40,20 +42,23 @@ pub(in crate::global::role_program::image_impl) const fn retained_route_scopes<c
         }
         marker_idx += 1;
     }
-    let mut dependencies = DependencyCursor::new(effects, scopes, role);
+    let mut dependencies = DependencyCursor::new(effects, scopes, rows);
+    let local_len = rows.range(effects, 0, effects.len()).len();
     let mut index = 0usize;
     let mut local_step = 0usize;
     while index < effects.len() {
         let effect = effects.atom_at(index);
-        if effect.from == role || effect.to == role {
+        let mut side = 0;
+        while side < rows.count(effects, index) {
             let dependency = dependencies.next(index, effect.lane, local_step);
             // Local positions are bounded by the source effect domain.
-            if let Some(dependency) = dependency.to_dependency(effects.len())
+            if let Some(dependency) = dependency.to_dependency(local_len)
                 && let LocalConflict::RouteArm { scope, .. } = dependency.conflict()
             {
                 retained[scope.local_ordinal() as usize] = true;
             }
             local_step += 1;
+            side += 1;
         }
         index += 1;
     }
@@ -110,9 +115,9 @@ pub(in crate::global::role_program::image_impl) const fn retained_route_scopes<c
 
 pub(crate) const fn retained_route_counts<const E: usize>(
     source: (&EffList<E>, &ScopeFacts),
-    role: u8,
+    rows: LocalRows<'_, E>,
 ) -> (usize, usize) {
-    let retained = retained_route_scopes(source, role);
+    let retained = retained_route_scopes(source, rows);
     let markers = source.0.scope_markers();
     let mut count = 0usize;
     let mut max_depth = 0usize;

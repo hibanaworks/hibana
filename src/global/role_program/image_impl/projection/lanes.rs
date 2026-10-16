@@ -1,3 +1,4 @@
+use super::LocalRows;
 use crate::global::{
     const_dsl::EffList,
     role_program::{LANE_DOMAIN_SIZE, PackedLaneRange, lane_byte_count, lane_byte_index},
@@ -53,7 +54,7 @@ pub(in crate::global::role_program::image_impl) struct LocalLaneFacts {
 impl LocalLaneFacts {
     pub(in crate::global::role_program::image_impl) const fn for_eff_range<const E: usize>(
         eff_list: &EffList<E>,
-        role: u8,
+        rows: LocalRows<'_, E>,
         start_eff: usize,
         end_eff: usize,
     ) -> Self {
@@ -67,7 +68,8 @@ impl LocalLaneFacts {
         let mut eff_idx = 0usize;
         while eff_idx < end_eff {
             let atom = eff_list.atom_at(eff_idx);
-            if atom.from == role || atom.to == role {
+            let mut side = 0;
+            while side < rows.count(eff_list, eff_idx) {
                 if eff_idx >= start_eff {
                     if local_start.is_none() {
                         local_start = Some(local_step);
@@ -76,6 +78,7 @@ impl LocalLaneFacts {
                     local_len += 1;
                 }
                 local_step += 1;
+                side += 1;
             }
             eff_idx += 1;
         }

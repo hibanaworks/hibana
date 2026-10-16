@@ -8,6 +8,20 @@ use crate::global::{
 };
 
 #[test]
+fn owned_count_coverage_reads_the_checked_header_and_rejects_drift() {
+    let events = SOURCE.eff_list().len();
+    let scopes = SOURCE.eff_list().scope_markers().len();
+    let resolvers = COLUMNS.route_resolver_count();
+    assert!(PROGRAM.covers_source_counts(events, scopes, 0));
+    assert!(PROGRAM.covers_source_counts(events, scopes, resolvers));
+    assert!(!COLUMNS.covers_source_counts(events, scopes, resolvers));
+    assert!(!PROGRAM.covers_source_counts(events + 1, scopes, resolvers));
+    assert!(!PROGRAM.covers_source_counts(events, scopes + 1, resolvers));
+    assert!(!PROGRAM.covers_source_counts(events, scopes, resolvers + 1));
+    assert!(!PROGRAM.covers_source_counts(usize::MAX, scopes, resolvers));
+}
+
+#[test]
 fn owned_image_uses_the_existing_eight_byte_columns_and_exact_tail() {
     assert_eq!(core::mem::size_of_val(&COLUMNS), 8);
     assert_eq!(PROGRAM.actor_binding_at(0), Some([0, 1]));

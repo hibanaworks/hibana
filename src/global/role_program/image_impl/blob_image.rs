@@ -21,12 +21,12 @@ impl RoleImagePlan {
         &self,
         source: (&EffList<E>, &projection::ScopeFacts),
         facts: RuntimeRoleFacts,
-        role: u8,
+        rows: projection::LocalRows<'_, E>,
     ) -> Option<RoleImageBuild<N>> {
         if self.blob_len() > N {
             return None;
         }
-        Some(RoleImageBytes::<N>::emit(source, facts, role, self.columns))
+        Some(RoleImageBytes::<N>::emit(source, facts, rows, self.columns))
     }
 }
 
@@ -167,7 +167,7 @@ impl<const N: usize> RoleImageBytes<N> {
     pub(crate) const fn emit<const E: usize>(
         source: (&EffList<E>, &projection::ScopeFacts),
         facts: RuntimeRoleFacts,
-        role: u8,
+        rows: projection::LocalRows<'_, E>,
         columns: RoleImageColumns,
     ) -> RoleImageBuild<N> {
         let (eff_list, scopes) = source;
@@ -183,11 +183,12 @@ impl<const N: usize> RoleImageBytes<N> {
         let mut dependency_row = 0usize;
         let mut conflict_row = 0usize;
         let mut local_step = 0usize;
-        let mut dependencies = projection::DependencyCursor::new(eff_list, scopes, role);
+        let mut dependencies = projection::DependencyCursor::new(eff_list, scopes, rows);
         let mut eff_idx = 0usize;
         while eff_idx < eff_list.len() {
             let atom = eff_list.atom_at(eff_idx);
-            if atom.from == role || atom.to == role {
+            let mut side = 0;
+            while side < rows.count(eff_list, eff_idx) {
                 if atom.lane as usize >= footprint.logical_lane_count {
                     panic!("local event lane outside role logical domain");
                 }
@@ -195,7 +196,8 @@ impl<const N: usize> RoleImageBytes<N> {
                     eff_list,
                     eff_idx,
                     eff_list.frame_label_at(eff_idx),
-                    role,
+                    rows,
+                    side,
                 );
                 let dependency = dependencies.next(eff_idx, atom.lane, local_step);
                 if !dependency.is_none() {
@@ -221,6 +223,7 @@ impl<const N: usize> RoleImageBytes<N> {
                 out.write_event(columns.events, local_step, event);
                 out.w8(columns.lanes, local_step, ROLE_IMAGE_LANE_STRIDE, atom.lane);
                 local_step += 1;
+                side += 1;
             }
             eff_idx += 1;
         }
@@ -232,7 +235,7 @@ impl<const N: usize> RoleImageBytes<N> {
         }
 
         let active_lane_facts =
-            projection::LocalLaneFacts::for_eff_range(eff_list, role, 0, eff_list.len());
+            projection::LocalLaneFacts::for_eff_range(eff_list, rows, 0, eff_list.len());
         let active_lane_row = out.write_lane_bit_row(columns.lane_bits, 0, &active_lane_facts);
         let mut lane_bit_row = active_lane_row.end();
 
@@ -241,7 +244,7 @@ impl<const N: usize> RoleImageBytes<N> {
         } else {
             columns.resident_boundaries.len as usize - 1
         };
-        let mut resident_rows = projection::ResidentRowCursor::new(eff_list, role);
+        let mut resident_rows = projection::ResidentRowCursor::new(eff_list, rows);
         let mut resident_row = 0usize;
         let mut resident_end = None;
         while let Some(row) = resident_rows.next() {
@@ -273,7 +276,7 @@ impl<const N: usize> RoleImageBytes<N> {
             resident_row += 1;
         }
 
-        let retained = projection::retained_route_scopes(source, role);
+        let retained = projection::retained_route_scopes(source, rows);
         let mut retained_slots = [None; crate::global::const_dsl::ScopeId::LOCAL_CAPACITY as usize];
         let mut retained_count = 0usize;
         let mut index = 0usize;
@@ -323,7 +326,7 @@ impl<const N: usize> RoleImageBytes<N> {
                 while arm < 2 {
                     let (start_eff, end_eff) = ranges[arm];
                     let lane_facts = projection::LocalLaneFacts::for_eff_range(
-                        eff_list, role, start_eff, end_eff,
+                        eff_list, rows, start_eff, end_eff,
                     );
                     let local_row = lane_facts.local_row();
                     local_rows[arm] = local_row;
@@ -342,7 +345,7 @@ impl<const N: usize> RoleImageBytes<N> {
                         columns.route_arm_lane_step_rows,
                         route_arm_lane_step_row,
                         eff_list,
-                        role,
+                        rows,
                         &lane_facts,
                     );
                     let lane_step_row =
@@ -428,7 +431,7 @@ impl<const N: usize> RoleImageBytes<N> {
                     eff_list,
                     marker.offset(),
                     end_eff,
-                    role,
+                    rows,
                 );
                 if !row.is_absent_or_zero_len() {
                     out.write_roll_scope_row(

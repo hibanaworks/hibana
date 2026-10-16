@@ -7,7 +7,7 @@ if [[ ! -x "$RESOURCE_BINARY" || "$RESOURCE_SOURCE" -nt "$RESOURCE_BINARY" ]]; t
   mkdir -p "$(dirname "$RESOURCE_BINARY")"
   resource_temporary="$(mktemp "$RESOURCE_BINARY.XXXXXX")"
   trap 'rm -f "$resource_temporary"' EXIT
-  rustc +1.95.0 --edition=2024 -D warnings -O -C codegen-units=1 \
+  rustc +"${TOOLCHAIN:-stable}" --edition=2024 -D warnings -O -C codegen-units=1 \
     "$RESOURCE_SOURCE" -o "$resource_temporary"
   mv -f "$resource_temporary" "$RESOURCE_BINARY"
 fi

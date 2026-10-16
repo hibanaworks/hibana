@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
+export TOOLCHAIN="${TOOLCHAIN:-stable}"
 PROOFS="$ROOT/proofs/endpoint-delegation"
 EVIDENCE=${1:-$(mktemp -d /tmp/hibana-delegation-projection.XXXXXX)}
 mkdir -p "$EVIDENCE"
@@ -12,12 +13,12 @@ FAILED=0
 check_trusted_proof_sources 'endpoint delegation projection' "$PROOFS/Projection.lean"
 [[ "$FAILED" -eq 0 ]]
 lean --version | bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" version
-cargo +1.95.0 fmt --manifest-path "$PROOFS/compiler/Cargo.toml" --check
-cargo +1.95.0 test --manifest-path "$PROOFS/compiler/Cargo.toml" --locked --lib > "$EVIDENCE/rust-tests.log" 2>&1
-cargo +1.95.0 clippy --manifest-path "$PROOFS/compiler/Cargo.toml" --locked --all-targets -- -D warnings > "$EVIDENCE/clippy.log" 2>&1
-cargo +1.95.0 check --manifest-path "$PROOFS/compiler/Cargo.toml" --locked --lib --no-default-features > "$EVIDENCE/no-std-host.log" 2>&1
-cargo +1.95.0 check --manifest-path "$PROOFS/compiler/Cargo.toml" --locked --lib --no-default-features --target thumbv6m-none-eabi > "$EVIDENCE/no-std-thumb.log" 2>&1
-cargo +1.95.0 run --manifest-path "$PROOFS/compiler/Cargo.toml" --locked -- "$EVIDENCE/Generated.lean" > "$EVIDENCE/export.log" 2>&1
+cargo +"$TOOLCHAIN" fmt --manifest-path "$PROOFS/compiler/Cargo.toml" --check
+cargo +"$TOOLCHAIN" test --manifest-path "$PROOFS/compiler/Cargo.toml" --locked --lib > "$EVIDENCE/rust-tests.log" 2>&1
+cargo +"$TOOLCHAIN" clippy --manifest-path "$PROOFS/compiler/Cargo.toml" --locked --all-targets -- -D warnings > "$EVIDENCE/clippy.log" 2>&1
+cargo +"$TOOLCHAIN" check --manifest-path "$PROOFS/compiler/Cargo.toml" --locked --lib --no-default-features > "$EVIDENCE/no-std-host.log" 2>&1
+cargo +"$TOOLCHAIN" check --manifest-path "$PROOFS/compiler/Cargo.toml" --locked --lib --no-default-features --target thumbv6m-none-eabi > "$EVIDENCE/no-std-thumb.log" 2>&1
+cargo +"$TOOLCHAIN" run --manifest-path "$PROOFS/compiler/Cargo.toml" --locked -- "$EVIDENCE/Generated.lean" > "$EVIDENCE/export.log" 2>&1
 check_trusted_proof_sources 'generated endpoint delegation projection' "$EVIDENCE/Generated.lean"
 [[ "$FAILED" -eq 0 ]]
 lean -o "$EVIDENCE/Projection.olean" "$PROOFS/Projection.lean" > "$EVIDENCE/lean-model.log" 2>&1

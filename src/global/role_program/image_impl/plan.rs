@@ -33,10 +33,10 @@ impl RoleImagePlan {
     pub(crate) const fn from_program<const E: usize>(
         source: (&EffList<E>, &projection::ScopeFacts),
         facts: RuntimeRoleFacts,
-        role: u8,
+        rows: projection::LocalRows<'_, E>,
     ) -> Self {
         let counts =
-            RoleImageColumnCounts::from_program(source, facts.footprint().logical_lane_count, role);
+            RoleImageColumnCounts::from_program(source, facts.footprint().logical_lane_count, rows);
         Self {
             columns: counts.columns(facts),
         }
@@ -112,7 +112,7 @@ impl RoleImageColumnCounts {
     pub(super) const fn from_program<const E: usize>(
         source: (&EffList<E>, &projection::ScopeFacts),
         logical_lane_count: usize,
-        role: u8,
+        rows: projection::LocalRows<'_, E>,
     ) -> Self {
         let (eff_list, scopes) = source;
         if logical_lane_count == 0 || logical_lane_count > LANE_DOMAIN_SIZE {
@@ -124,11 +124,12 @@ impl RoleImageColumnCounts {
         let mut dependency_rows = 0usize;
         let mut conflict_rows = 0usize;
         let mut max_lane_plus_one = 0usize;
-        let mut dependencies = projection::DependencyCursor::new(eff_list, scopes, role);
+        let mut dependencies = projection::DependencyCursor::new(eff_list, scopes, rows);
         let mut idx = 0usize;
         while idx < eff_list.len() {
             let atom = eff_list.atom_at(idx);
-            if atom.from == role || atom.to == role {
+            let mut side = 0;
+            while side < rows.count(eff_list, idx) {
                 let lane_plus_one = atom.lane as usize + 1;
                 if lane_plus_one > logical_lane_count {
                     panic!("local event lane outside role logical domain");
@@ -146,12 +147,13 @@ impl RoleImageColumnCounts {
                     conflict_rows += 1;
                 }
                 local_step_count += 1;
+                side += 1;
             }
             idx += 1;
         }
-        let resident_rows = Self::resident_row_count(eff_list, role);
-        let route_facts = Self::route_facts(source, role);
-        let roll_scopes = Self::roll_scope_count(eff_list, role);
+        let resident_rows = Self::resident_row_count(eff_list, rows);
+        let route_facts = Self::route_facts(source, rows);
+        let roll_scopes = Self::roll_scope_count(eff_list, rows);
         let active_lane_bits = lane_byte_count(max_lane_plus_one);
         let resident_boundaries = if resident_rows == 0 {
             0
@@ -169,8 +171,11 @@ impl RoleImageColumnCounts {
         }
     }
 
-    const fn resident_row_count<const E: usize>(eff_list: &EffList<E>, role: u8) -> usize {
-        let mut rows = projection::ResidentRowCursor::new(eff_list, role);
+    const fn resident_row_count<const E: usize>(
+        eff_list: &EffList<E>,
+        selection: projection::LocalRows<'_, E>,
+    ) -> usize {
+        let mut rows = projection::ResidentRowCursor::new(eff_list, selection);
         let mut row_count = 0usize;
         while rows.next().is_some() {
             row_count += 1;
@@ -180,11 +185,11 @@ impl RoleImageColumnCounts {
 
     const fn route_facts<const E: usize>(
         source: (&EffList<E>, &projection::ScopeFacts),
-        role: u8,
+        rows: projection::LocalRows<'_, E>,
     ) -> RouteImagePlanRouteFacts {
         let (eff_list, scopes) = source;
         let markers = eff_list.scope_markers();
-        let retained = projection::retained_route_scopes(source, role);
+        let retained = projection::retained_route_scopes(source, rows);
         if !projection::scope_markers_contain_kind(markers, ScopeKind::Route) {
             return RouteImagePlanRouteFacts {
                 lane_bits: 0,
@@ -213,7 +218,7 @@ impl RoleImageColumnCounts {
                 while arm < 2 {
                     let (start, end) = ranges[arm];
                     let lanes =
-                        projection::LocalLaneFacts::for_eff_range(eff_list, role, start, end);
+                        projection::LocalLaneFacts::for_eff_range(eff_list, rows, start, end);
                     arm_lane_bits[arm] = lanes.lane_bit_len();
                     facts.lane_bits += lanes.lane_bit_len();
                     facts.route_arm_lane_steps += lanes.relation_count();
@@ -232,7 +237,10 @@ impl RoleImageColumnCounts {
         facts
     }
 
-    const fn roll_scope_count<const E: usize>(eff_list: &EffList<E>, role: u8) -> usize {
+    const fn roll_scope_count<const E: usize>(
+        eff_list: &EffList<E>,
+        rows: projection::LocalRows<'_, E>,
+    ) -> usize {
         let markers = eff_list.scope_markers();
         if !projection::scope_markers_contain_kind(markers, ScopeKind::Roll) {
             return 0;
@@ -250,7 +258,7 @@ impl RoleImageColumnCounts {
                     eff_list,
                     marker.offset(),
                     end_eff,
-                    role,
+                    rows,
                 );
                 if !row.is_absent_or_zero_len() {
                     count += 1;

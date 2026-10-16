@@ -189,7 +189,7 @@ fn owned_kind_survives_parallel_rolled_loans_and_resolved_choices() {
         ));
         assert_ne!(image.event_atom_at(1).lane, image.event_atom_at(5).lane);
         assert_eq!(
-            image.proof_scope_marker_count(),
+            image.source_scope_marker_count(),
             source.eff_list().scope_marker_count()
         );
         let mut resolvers = image.route_resolver_sites_for(7);

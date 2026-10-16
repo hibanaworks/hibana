@@ -3,6 +3,9 @@ use core::marker::PhantomData;
 use super::{ProgramProjection, ProgramShape};
 use crate::global::compiled::images::COMPACT_DESCRIPTOR_BYTE_CAPACITY;
 
+#[cfg(all(test, hibana_repo_tests))]
+mod tests;
+
 struct RoleProjection<const ROLE: u8, Steps, const CAPACITY: usize>(PhantomData<Steps>);
 struct ProgramProjectionBlob<Steps, const CAPACITY: usize, const N: usize>(PhantomData<Steps>);
 struct RoleProjectionBlob<const ROLE: u8, Steps, const CAPACITY: usize, const N: usize>(
@@ -32,27 +35,26 @@ where
     const PROGRAM_COLUMNS: crate::global::compiled::images::ProgramImageColumns =
         Self::PROGRAM_PLAN.columns();
     const PROGRAM_BLOB_LEN: usize = Self::PROGRAM_PLAN.blob_len();
-    const SOURCE_COUNTS_COVERED: () = {
-        if !Self::PROGRAM_COLUMNS.covers_source_counts(
+    const fn program_ref<const N: usize>() -> crate::global::compiled::images::CompiledProgramRef {
+        let bytes = match &ProgramProjectionBlob::<Steps, CAPACITY, N>::BYTES {
+            Some(bytes) => bytes,
+            None => panic!("program bucket selection"),
+        };
+        let program = bytes.compiled_ref(&Self::IMAGE, Self::PROGRAM_COLUMNS);
+        if !program.covers_source_counts(
             Steps::EVENT_COUNT,
             Steps::SCOPE_MARKER_COUNT,
             Steps::RESOLVER_MARKER_COUNT,
         ) {
             crate::invariant();
         }
-    };
-
-    const fn program_ref<const N: usize>() -> crate::global::compiled::images::CompiledProgramRef {
-        let bytes = match &ProgramProjectionBlob::<Steps, CAPACITY, N>::BYTES {
-            Some(bytes) => bytes,
-            None => panic!("program bucket selection"),
-        };
-        bytes.compiled_ref(&Self::IMAGE, Self::PROGRAM_COLUMNS)
+        program
     }
 
     const PROGRAM_REF: crate::global::compiled::images::CompiledProgramRef = {
-        let () = Self::SOURCE_COUNTS_COVERED;
-        let () = Self::VALIDATION;
+        // Build immutable facts before semantic validation so that ownership-
+        // aware checks can consume actor projections. Only the public witness
+        // boundary below certifies execution; a byte image is not that witness.
         if Self::PROGRAM_BLOB_LEN <= 32 {
             Self::program_ref::<32>()
         } else if Self::PROGRAM_BLOB_LEN <= 64 {
@@ -93,11 +95,28 @@ impl<const ROLE: u8, Steps, const CAPACITY: usize> RoleProjection<ROLE, Steps, C
 where
     Steps: ProgramShape,
 {
+    // Keeping the guard inside the constant prevents ordinary large programs
+    // from eagerly constructing an unused actor map during const evaluation.
+    const ACTOR_ROWS: Option<crate::global::role_program::ActorLocalRows<CAPACITY>> = {
+        if Steps::SOURCE_NODE.has_delegation() {
+            Some(crate::global::role_program::ActorLocalRows::new(
+                &ProgramProjection::<Steps, CAPACITY>::PROGRAM_REF,
+                ROLE,
+            ))
+        } else {
+            None
+        }
+    };
+    const ROWS: crate::global::role_program::LocalRows<'static, CAPACITY> = match &Self::ACTOR_ROWS
+    {
+        Some(rows) => crate::global::role_program::LocalRows::Actor(rows),
+        None => crate::global::role_program::LocalRows::Role(ROLE),
+    };
     const COUNTS: crate::global::compiled::lowering::RoleCompiledCounts =
         ProgramProjection::<Steps, CAPACITY>::IMAGE.role_lowering_counts(
             ProgramProjection::<Steps, CAPACITY>::SOURCE_EFF_LIST,
             &ProgramProjection::<Steps, CAPACITY>::SCOPE_FACTS,
-            ROLE,
+            Self::ROWS,
         );
     const FACTS: crate::global::role_program::RuntimeRoleFacts =
         crate::global::role_program::RuntimeRoleFacts::from_counts(Self::COUNTS);
@@ -108,7 +127,7 @@ where
                 &ProgramProjection::<Steps, CAPACITY>::SCOPE_FACTS,
             ),
             Self::FACTS,
-            ROLE,
+            Self::ROWS,
         );
     const BLOB_LEN: usize = Self::PLAN.blob_len();
 
@@ -171,7 +190,7 @@ where
                 &ProgramProjection::<Steps, CAPACITY>::SCOPE_FACTS,
             ),
             RoleProjection::<ROLE, Steps, CAPACITY>::FACTS,
-            ROLE,
+            RoleProjection::<ROLE, Steps, CAPACITY>::ROWS,
         );
 }
 
@@ -184,5 +203,12 @@ where
     if !ProgramProjection::<Steps, CAPACITY>::IMAGE.contains_role(ROLE) {
         panic!("projected role is outside the choreography role range");
     }
+    // Actor-local construction is connected, but the public execution boundary
+    // remains closed until owned operations, view issuance and context import
+    // share the runtime commit. Metadata acceptance is not execution readiness.
+    if Steps::SOURCE_NODE.has_delegation() {
+        panic!("owned endpoint execution is not yet connected");
+    }
+    let () = ProgramProjection::<Steps, CAPACITY>::VALIDATION;
     &RoleProjection::<ROLE, Steps, CAPACITY>::IMAGE_REF
 }

@@ -1,4 +1,4 @@
-use super::parallel_exit_for_enter;
+use super::{LocalRows, parallel_exit_for_enter};
 use crate::global::{
     const_dsl::{EffList, ScopeKind},
     role_program::PackedLaneRange,
@@ -6,16 +6,16 @@ use crate::global::{
 
 struct LocalStepCursor<'a, const E: usize> {
     eff_list: &'a EffList<E>,
-    role: u8,
+    rows: LocalRows<'a, E>,
     eff_index: usize,
     local_step: usize,
 }
 
 impl<'a, const E: usize> LocalStepCursor<'a, E> {
-    const fn new(eff_list: &'a EffList<E>, role: u8) -> Self {
+    const fn new(eff_list: &'a EffList<E>, rows: LocalRows<'a, E>) -> Self {
         Self {
             eff_list,
-            role,
+            rows,
             eff_index: 0,
             local_step: 0,
         }
@@ -28,10 +28,7 @@ impl<'a, const E: usize> LocalStepCursor<'a, E> {
             self.eff_list.len()
         };
         while self.eff_index < limit {
-            let atom = self.eff_list.atom_at(self.eff_index);
-            if atom.from == self.role || atom.to == self.role {
-                self.local_step += 1;
-            }
+            self.local_step += self.rows.count(self.eff_list, self.eff_index);
             self.eff_index += 1;
         }
     }
@@ -68,7 +65,7 @@ pub(in crate::global::role_program::image_impl) struct ResidentRowCursor<'a, con
 impl<'a, const E: usize> ResidentRowCursor<'a, E> {
     pub(in crate::global::role_program::image_impl) const fn new(
         eff_list: &'a EffList<E>,
-        role: u8,
+        rows: LocalRows<'a, E>,
     ) -> Self {
         Self {
             eff_list,
@@ -77,7 +74,7 @@ impl<'a, const E: usize> ResidentRowCursor<'a, E> {
             pending: None,
             emitted_rows: 0,
             finished: false,
-            local: LocalStepCursor::new(eff_list, role),
+            local: LocalStepCursor::new(eff_list, rows),
         }
     }
 

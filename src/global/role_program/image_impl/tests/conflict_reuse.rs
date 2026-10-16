@@ -48,7 +48,12 @@ fn compare<const E: usize, const N: usize>(
         (image.bytes.bytes, format!("{:?}", image.columns))
     });
     let new = outcome(|| {
-        let image = RoleImageBytes::<N>::emit((source, scopes), facts, role, columns);
+        let image = RoleImageBytes::<N>::emit(
+            (source, scopes),
+            facts,
+            projection::LocalRows::Role(role),
+            columns,
+        );
         (image.bytes.bytes, format!("{:?}", image.columns))
     });
     assert_eq!(old, new, "role {role}, columns {columns:?}");
@@ -73,9 +78,14 @@ fn case_source(source: &EffList<512>, totals: &mut [usize; 4]) {
         global_bytes.compiled_ref(&compiled, global_columns),
     ));
     for role in 0..=compiled.max_role() {
-        let counts = compiled.role_lowering_counts(source, &scopes, role);
+        let counts =
+            compiled.role_lowering_counts(source, &scopes, projection::LocalRows::Role(role));
         let facts = RuntimeRoleFacts::from_counts(counts);
-        let plan = RoleImagePlan::from_program((source, &scopes), facts, role);
+        let plan = RoleImagePlan::from_program(
+            (source, &scopes),
+            facts,
+            projection::LocalRows::Role(role),
+        );
         let full_counts = RoleImagePlan::full_reference_counts(source, role);
         let full_facts = RuntimeRoleFacts::from_counts(full_counts);
         let full_plan = RoleImagePlan::from_program_reference((source, &scopes), full_facts, role);
@@ -116,7 +126,14 @@ fn case_source(source: &EffList<512>, totals: &mut [usize; 4]) {
             let new = outcome(|| {
                 format!(
                     "{:?}",
-                    projection::local_event_row_for_eff(source, index, label, role).0
+                    projection::local_event_row_for_eff(
+                        source,
+                        index,
+                        label,
+                        projection::LocalRows::Role(role),
+                        0
+                    )
+                    .0
                 )
             });
             assert_eq!(old, new);
@@ -126,7 +143,13 @@ fn case_source(source: &EffList<512>, totals: &mut [usize; 4]) {
             if old.is_err() {
                 continue;
             }
-            let (_, reused) = projection::local_event_row_for_eff(source, index, label, role);
+            let (_, reused) = projection::local_event_row_for_eff(
+                source,
+                index,
+                label,
+                projection::LocalRows::Role(role),
+                0,
+            );
             assert_eq!(
                 reused,
                 projection::route_conflict_for_eff(source.scope_markers(), index)
@@ -190,7 +213,16 @@ fn case_source(source: &EffList<512>, totals: &mut [usize; 4]) {
         totals[1] += 1;
         // Packed event-index overflow preserves the exact original panic text.
         let old = outcome(|| original::local_event_row_for_eff(source, usize::MAX, 255, role));
-        let new = outcome(|| projection::local_event_row_for_eff(source, usize::MAX, 255, role).0);
+        let new = outcome(|| {
+            projection::local_event_row_for_eff(
+                source,
+                usize::MAX,
+                255,
+                projection::LocalRows::Role(role),
+                0,
+            )
+            .0
+        });
         assert_eq!(old.map(|r| format!("{r:?}")), new.map(|r| format!("{r:?}")));
         totals[1] += 1;
     }
@@ -224,7 +256,14 @@ fn overlapping_marker_failures_match() {
             let new = outcome(|| {
                 format!(
                     "{:?}",
-                    projection::local_event_row_for_eff(&source, index, 255, role).0
+                    projection::local_event_row_for_eff(
+                        &source,
+                        index,
+                        255,
+                        projection::LocalRows::Role(role),
+                        0
+                    )
+                    .0
                 )
             });
             assert_eq!(old, new, "overlapping marker index {index}, role {role}");
@@ -274,7 +313,12 @@ fn normalized_compare<const E: usize>(
 ) {
     let full =
         RoleImageBytes::<4096>::emit_reference((source, scopes), full_facts, role, full_columns);
-    let new = RoleImageBytes::<4096>::emit((source, scopes), new_facts, role, new_columns);
+    let new = RoleImageBytes::<4096>::emit(
+        (source, scopes),
+        new_facts,
+        projection::LocalRows::Role(role),
+        new_columns,
+    );
     let full_bytes = Box::leak(Box::new(full.bytes.bytes));
     let new_bytes = Box::leak(Box::new(new.bytes.bytes));
     let old = RoleLaneImage::new(

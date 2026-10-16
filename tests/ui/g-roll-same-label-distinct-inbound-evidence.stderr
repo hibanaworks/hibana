@@ -18,20 +18,8 @@ note: inside `g::diagnostic_message::panic_diagnostic`
 note: erroneous constant encountered
  --> src/g/role_projection.rs
   |
-  |         let () = Self::VALIDATION;
-  |                  ^^^^^^^^^^^^^^^^
-
-note: erroneous constant encountered
- --> src/g/role_projection.rs
-  |
-  |             &ProgramProjection::<Steps, CAPACITY>::PROGRAM_REF,
-  |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-note: erroneous constant encountered
- --> src/g/role_projection.rs
-  |
-  |     &RoleProjection::<ROLE, Steps, CAPACITY>::IMAGE_REF
-  |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |     let () = ProgramProjection::<Steps, CAPACITY>::VALIDATION;
+  |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 note: erroneous constant encountered
  --> src/g.rs

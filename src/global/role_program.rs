@@ -16,7 +16,9 @@ mod tests;
 
 pub use program::{RoleProgram, project};
 
-pub(crate) use image_impl::{RoleImageRef, ScopeFacts, retained_route_counts};
+pub(crate) use image_impl::{
+    ActorLocalRows, LocalRows, RoleImageRef, ScopeFacts, retained_route_counts,
+};
 pub(crate) use image_types::*;
 pub(crate) use lane_set::*;
 pub(crate) use program::role_program_from_image;

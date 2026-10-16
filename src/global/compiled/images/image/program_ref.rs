@@ -56,6 +56,31 @@ impl core::fmt::Debug for CompiledProgramRef {
 }
 
 impl CompiledProgramRef {
+    /// Count coverage uses the checked final bytes, including an owned image's
+    /// header. A count-only column prefix cannot certify its ownership tail.
+    pub(crate) const fn covers_source_counts(
+        &self,
+        events: usize,
+        scope_markers: usize,
+        resolver_markers: usize,
+    ) -> bool {
+        if !self.columns.has_ownership() {
+            return self
+                .columns
+                .covers_source_counts(events, scope_markers, resolver_markers);
+        }
+        let Some(rows) = events.checked_add(scope_markers) else {
+            return false;
+        };
+        let Some(rows) = rows.checked_add(resolver_markers) else {
+            return false;
+        };
+        events == self.columns.atom_count()
+            && scope_markers == self.source_scope_marker_count()
+            && resolver_markers <= self.columns.route_resolver_count()
+            && rows <= self.columns.blob_len()
+    }
+
     #[inline(always)]
     pub(crate) const fn compact<const N: usize>(
         facts: ProgramImageFacts,

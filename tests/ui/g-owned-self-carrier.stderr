@@ -18,8 +18,8 @@ note: erroneous constant encountered
 note: erroneous constant encountered
  --> src/g.rs
   |
-  |         let source = Self::SOURCE.eff_list();
-  |                      ^^^^^^^^^^^^
+  |         Self::SOURCE.eff_list();
+  |         ^^^^^^^^^^^^
 
 note: erroneous constant encountered
  --> src/g.rs

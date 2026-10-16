@@ -50,8 +50,7 @@ impl CompiledProgramRef {
         }
     }
 
-    #[cfg(all(test, hibana_repo_tests))]
-    pub(crate) const fn proof_scope_marker_count(&self) -> usize {
+    pub(crate) const fn source_scope_marker_count(&self) -> usize {
         if self.columns.has_ownership() {
             self.read_u16_at(self.columns.ownership_header().offset as usize) as usize
         } else {

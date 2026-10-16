@@ -95,7 +95,12 @@ fn reference_dependency<const E: usize>(
                         }
                     }
                 }
-                let input = local_step_range_for_eff_range(eff_list, floor, marker.offset(), role);
+                let input = local_step_range_for_eff_range(
+                    eff_list,
+                    floor,
+                    marker.offset(),
+                    LocalRows::Role(role),
+                );
                 if !input.is_absent_or_zero_len()
                     && (dependency.is_none() || input.end() > dependency.end() as usize)
                 {
@@ -109,7 +114,12 @@ fn reference_dependency<const E: usize>(
                     );
                 }
             }
-            let row = local_step_range_for_eff_range(eff_list, marker.offset(), exit_eff, role);
+            let row = local_step_range_for_eff_range(
+                eff_list,
+                marker.offset(),
+                exit_eff,
+                LocalRows::Role(role),
+            );
             let end = row.end();
             if row.start() < end && target >= end {
                 let independent = separates_parallel_siblings(eff_list, marker_idx, current_eff);
@@ -150,7 +160,7 @@ fn sequential_prefix_is_retained_at_nested_forks_without_sibling_edges() {
 
 fn assert_cursor_matches_reference<const E: usize>(eff_list: &EffList<E>, role: u8) {
     let scopes = ScopeFacts::new(eff_list);
-    let mut cursor = DependencyCursor::new(eff_list, &scopes, role);
+    let mut cursor = DependencyCursor::new(eff_list, &scopes, LocalRows::Role(role));
     let mut local_step = 0usize;
     let mut eff_idx = 0usize;
     while eff_idx < eff_list.len() {

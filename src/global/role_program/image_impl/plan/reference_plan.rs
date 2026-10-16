@@ -124,7 +124,8 @@ impl RoleImageColumnCounts {
         let mut dependency_rows = 0usize;
         let mut conflict_rows = 0usize;
         let mut max_lane_plus_one = 0usize;
-        let mut dependencies = projection::DependencyCursor::new(eff_list, scopes, role);
+        let mut dependencies =
+            projection::DependencyCursor::new(eff_list, scopes, projection::LocalRows::Role(role));
         let mut idx = 0usize;
         while idx < eff_list.len() {
             let atom = eff_list.atom_at(idx);
@@ -170,7 +171,8 @@ impl RoleImageColumnCounts {
     }
 
     const fn resident_row_count<const E: usize>(eff_list: &EffList<E>, role: u8) -> usize {
-        let mut rows = projection::ResidentRowCursor::new(eff_list, role);
+        let mut rows =
+            projection::ResidentRowCursor::new(eff_list, projection::LocalRows::Role(role));
         let mut row_count = 0usize;
         while rows.next().is_some() {
             row_count += 1;
@@ -210,8 +212,12 @@ impl RoleImageColumnCounts {
                 let mut arm_lane_bits = [0usize; 2];
                 while arm < 2 {
                     let (start, end) = ranges[arm];
-                    let lanes =
-                        projection::LocalLaneFacts::for_eff_range(eff_list, role, start, end);
+                    let lanes = projection::LocalLaneFacts::for_eff_range(
+                        eff_list,
+                        projection::LocalRows::Role(role),
+                        start,
+                        end,
+                    );
                     arm_lane_bits[arm] = lanes.lane_bit_len();
                     facts.lane_bits += lanes.lane_bit_len();
                     facts.route_arm_lane_steps += lanes.relation_count();
@@ -248,7 +254,7 @@ impl RoleImageColumnCounts {
                     eff_list,
                     marker.offset(),
                     end_eff,
-                    role,
+                    projection::LocalRows::Role(role),
                 );
                 if !row.is_absent_or_zero_len() {
                     count += 1;

@@ -60,7 +60,7 @@ const fn insert_lane(words: &mut [LaneWord; LANE_FACT_WORDS], lane: usize) -> bo
 
 pub(super) const fn exact_role_facts<const E: usize>(
     eff_list: &EffList<E>,
-    role: u8,
+    rows: crate::global::role_program::LocalRows<'_, E>,
 ) -> ExactRoleFacts {
     let mut active_lanes = [0u32; LANE_FACT_WORDS];
     let mut local_len = 0usize;
@@ -69,8 +69,9 @@ pub(super) const fn exact_role_facts<const E: usize>(
     let mut idx = 0usize;
     while idx < eff_list.len() {
         let atom = eff_list.atom_at(idx);
-        if atom.from == role || atom.to == role {
-            local_len += 1;
+        let count = rows.count(eff_list, idx);
+        if count != 0 {
+            local_len += count;
             let lane = atom.lane as usize;
             let lane_slot_count = lane + 1;
             if lane_slot_count > endpoint_lane_slot_count {

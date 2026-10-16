@@ -67,8 +67,12 @@ fn role_image_fit_probe_rejects_undersized_storage() {
     let plan = one_event_role_image_plan();
     assert!(plan.blob_len() == ROLE_IMAGE_EVENT_STRIDE);
     assert!(
-        plan.build_if_fits::<{ ROLE_IMAGE_EVENT_STRIDE - 1 }, 1>((&source, &scopes), facts, 0)
-            .is_none()
+        plan.build_if_fits::<{ ROLE_IMAGE_EVENT_STRIDE - 1 }, 1>(
+            (&source, &scopes),
+            facts,
+            super::projection::LocalRows::Role(0)
+        )
+        .is_none()
     );
 }
 
@@ -94,7 +98,11 @@ fn role_image_fit_probe_rejects_plan_mismatch() {
         logical_lane_count: 1,
     });
     let plan = one_event_role_image_plan();
-    let _ = plan.build_if_fits::<ROLE_IMAGE_EVENT_STRIDE, 1>((&source, &scopes), facts, 0);
+    let _ = plan.build_if_fits::<ROLE_IMAGE_EVENT_STRIDE, 1>(
+        (&source, &scopes),
+        facts,
+        super::projection::LocalRows::Role(0),
+    );
 }
 
 #[kani::proof]

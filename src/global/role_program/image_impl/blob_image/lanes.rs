@@ -84,7 +84,7 @@ impl<const N: usize> RoleImageBytes<N> {
         column: ColumnRange,
         row_start: usize,
         eff_list: &EffList<E>,
-        role: u8,
+        rows: super::projection::LocalRows<'_, E>,
         facts: &LocalLaneFacts,
     ) -> usize {
         let (start_eff, end_eff) = facts.eff_range();
@@ -95,7 +95,8 @@ impl<const N: usize> RoleImageBytes<N> {
         let mut eff_idx = start_eff;
         while eff_idx < end_eff {
             let atom = eff_list.atom_at(eff_idx);
-            if atom.from == role || atom.to == role {
+            let mut side = 0;
+            while side < rows.count(eff_list, eff_idx) {
                 let lane = atom.lane as usize;
                 let byte_idx = lane / 8;
                 let bit = 1u8 << (lane % 8);
@@ -109,6 +110,7 @@ impl<const N: usize> RoleImageBytes<N> {
                     written += 1;
                 }
                 local_step += 1;
+                side += 1;
             }
             eff_idx += 1;
         }

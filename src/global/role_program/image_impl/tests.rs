@@ -553,9 +553,10 @@ fn resident_role_image_fit_probe_rejects_undersized_storage() {
     });
 
     let scopes = ScopeFacts::new(&eff_list);
-    let plan = RoleImagePlan::from_program((&eff_list, &scopes), facts, 0);
+    let plan =
+        RoleImagePlan::from_program((&eff_list, &scopes), facts, projection::LocalRows::Role(0));
     assert!(
-        plan.build_if_fits::<0, 8>((&eff_list, &scopes), facts, 0)
+        plan.build_if_fits::<0, 8>((&eff_list, &scopes), facts, projection::LocalRows::Role(0))
             .is_none()
     );
 }
@@ -575,9 +576,10 @@ fn resident_parallel_role_image_plan_matches_lane_bit_storage() {
         logical_lane_count: 2,
     });
     let scopes = ScopeFacts::new(eff_list);
-    let plan = RoleImagePlan::from_program((eff_list, &scopes), facts, 0);
+    let plan =
+        RoleImagePlan::from_program((eff_list, &scopes), facts, projection::LocalRows::Role(0));
     let build = plan
-        .build_if_fits::<64, 8>((eff_list, &scopes), facts, 0)
+        .build_if_fits::<64, 8>((eff_list, &scopes), facts, projection::LocalRows::Role(0))
         .expect("planned parallel descriptor fits");
 
     assert_eq!(
@@ -599,11 +601,16 @@ fn resident_role_image_fit_probe_rejects_plan_drift() {
         logical_lane_count: 1,
     });
     let scopes = ScopeFacts::new(&eff_list);
-    let mut plan = RoleImagePlan::from_program((&eff_list, &scopes), facts, 0);
+    let mut plan =
+        RoleImagePlan::from_program((&eff_list, &scopes), facts, projection::LocalRows::Role(0));
     plan.columns.lane_bits.len += 1;
 
     assert_invariant(|| {
-        let _ = plan.build_if_fits::<64, 8>((&eff_list, &scopes), facts, 0);
+        let _ = plan.build_if_fits::<64, 8>(
+            (&eff_list, &scopes),
+            facts,
+            projection::LocalRows::Role(0),
+        );
     });
 }
 
@@ -620,8 +627,14 @@ fn resident_role_image_constructor_rejects_undersized_storage() {
         logical_lane_count: 1,
     });
     let scopes = ScopeFacts::new(&eff_list);
-    let plan = RoleImagePlan::from_program((&eff_list, &scopes), facts, 0);
-    let _ = RoleImageBytes::<0>::emit((&eff_list, &scopes), facts, 0, plan.columns);
+    let plan =
+        RoleImagePlan::from_program((&eff_list, &scopes), facts, projection::LocalRows::Role(0));
+    let _ = RoleImageBytes::<0>::emit(
+        (&eff_list, &scopes),
+        facts,
+        projection::LocalRows::Role(0),
+        plan.columns,
+    );
 }
 
 fn assert_route_commit_fixture_decodes(image: &RoleLaneImage<'_>, expected_rows: &[(ScopeId, u8)]) {
@@ -1209,3 +1222,4 @@ fn resident_descriptor_rejects_roll_scope_event_range_beyond_events() {
         let _ = image.roll_scope_row(0);
     });
 }
+use super::projection;

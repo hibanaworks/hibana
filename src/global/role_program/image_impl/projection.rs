@@ -12,6 +12,8 @@ use crate::global::{
 
 mod actors;
 pub(super) use actors::ActorEventProjection;
+mod local_rows;
+pub(crate) use local_rows::{ActorLocalRows, LocalRows};
 mod dependency;
 mod lanes;
 mod resident;
@@ -213,37 +215,17 @@ pub(super) const fn local_step_range_for_eff_range<const E: usize>(
     eff_list: &EffList<E>,
     start_eff: usize,
     end_eff: usize,
-    role: u8,
+    rows: LocalRows<'_, E>,
 ) -> PackedLaneRange {
     if start_eff >= end_eff {
         return PackedLaneRange::new(0, 0);
     }
-    let mut local_step = 0usize;
-    let mut local_start = None;
-    let mut local_len = 0usize;
     let limit = if end_eff < eff_list.len() {
         end_eff
     } else {
         eff_list.len()
     };
-    let mut eff_idx = 0usize;
-    while eff_idx < limit {
-        let atom = eff_list.atom_at(eff_idx);
-        if atom.from == role || atom.to == role {
-            if eff_idx >= start_eff && eff_idx < end_eff {
-                if local_start.is_none() {
-                    local_start = Some(local_step);
-                }
-                local_len += 1;
-            }
-            local_step += 1;
-        }
-        eff_idx += 1;
-    }
-    match local_start {
-        Some(start) => PackedLaneRange::new(start, local_len),
-        None => PackedLaneRange::new(0, 0),
-    }
+    rows.range(eff_list, start_eff, limit)
 }
 
 pub(super) const fn scope_at<const E: usize>(eff_list: &EffList<E>, eff_idx: usize) -> ScopeId {
@@ -278,7 +260,7 @@ const fn first_recv_eff_for_route_arm<const E: usize>(
     eff_list: &EffList<E>,
     route: ScopeId,
     arm: u8,
-    role: u8,
+    rows: LocalRows<'_, E>,
 ) -> Option<usize> {
     let arm = binary_route_arm_index(arm);
     let Some(ranges) = route_arm_ranges(eff_list.scope_markers(), route) else {
@@ -287,9 +269,15 @@ const fn first_recv_eff_for_route_arm<const E: usize>(
     let (start, end) = ranges[arm];
     let mut idx = start;
     while idx < end && idx < eff_list.len() {
-        let atom = eff_list.atom_at(idx);
-        if atom.to == role && atom.from != role {
-            return Some(idx);
+        let mut side = 0;
+        while side < rows.count(eff_list, idx) {
+            if matches!(
+                rows.direction(eff_list, idx, side),
+                super::event_rows::RoleLocalDirection::Recv
+            ) {
+                return Some(idx);
+            }
+            side += 1;
         }
         idx += 1;
     }
@@ -300,26 +288,28 @@ pub(super) const fn local_event_row_for_eff<const E: usize>(
     eff_list: &EffList<E>,
     eff_idx: usize,
     frame_label: u8,
-    role: u8,
+    rows: LocalRows<'_, E>,
+    side: usize,
 ) -> (PackedLocalEventRow, PackedEventConflict) {
     let scope = scope_at(eff_list, eff_idx);
     let conflict = route_conflict_for_eff(eff_list.scope_markers(), eff_idx);
+    let direction = rows.direction(eff_list, eff_idx, side);
     let choice = match conflict.to_conflict() {
         Some(LocalConflict::RouteArm {
             scope: route_scope,
             arm,
-        }) => match first_recv_eff_for_route_arm(eff_list, route_scope, arm, role) {
-            Some(first) if first == eff_idx => RouteChoiceMark::Determinant,
+        }) => match first_recv_eff_for_route_arm(eff_list, route_scope, arm, rows) {
+            Some(first)
+                if first == eff_idx
+                    && matches!(direction, super::event_rows::RoleLocalDirection::Recv) =>
+            {
+                RouteChoiceMark::Determinant
+            }
             Some(_) | None => RouteChoiceMark::Ordinary,
         },
         Some(LocalConflict::Unconditional | LocalConflict::SharedRoute) | None => {
             RouteChoiceMark::Ordinary
         }
-    };
-    let atom = eff_list.atom_at(eff_idx);
-    let direction = match super::event_rows::role_local_direction(role, atom.from, atom.to) {
-        Some(direction) => direction,
-        None => crate::invariant(),
     };
     (
         PackedLocalEventRow::new(eff_idx, scope, frame_label, choice, direction),

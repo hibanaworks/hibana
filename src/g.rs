@@ -179,15 +179,8 @@ where
     Steps: ProgramShape,
 {
     const SOURCE: ProgramSourceData<CAPACITY> = ProgramSourceData::lower::<Steps>();
-    pub(super) const SOURCE_EFF_LIST: &'static crate::global::const_dsl::EffList<CAPACITY> = {
-        // Until actor projection and owned execution are connected, no public
-        // projection or diagnostic may treat an owned source as role-local I/O.
-        let source = Self::SOURCE.eff_list();
-        if Steps::SOURCE_NODE.has_delegation() {
-            panic!("owned endpoint requires ownership-aware lowering");
-        }
-        source
-    };
+    pub(super) const SOURCE_EFF_LIST: &'static crate::global::const_dsl::EffList<CAPACITY> =
+        Self::SOURCE.eff_list();
 
     const IMAGE: crate::global::compiled::lowering::CompiledProgramImage = {
         let source = Self::SOURCE_EFF_LIST;

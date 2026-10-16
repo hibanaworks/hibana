@@ -6,7 +6,7 @@ mod lane_image;
 mod metadata;
 mod plan;
 mod projection;
-pub(crate) use projection::{ScopeFacts, retained_route_counts};
+pub(crate) use projection::{ActorLocalRows, LocalRows, ScopeFacts, retained_route_counts};
 mod ref_access;
 pub(crate) use ref_access::RoleImageRef;
 #[cfg(all(test, hibana_repo_tests))]

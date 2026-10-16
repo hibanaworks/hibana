@@ -1,5 +1,6 @@
 use super::{
-    ScopeFacts, local_step_range_for_eff_range, parallel_exit_for_enter, scope_markers_contain_kind,
+    LocalRows, ScopeFacts, local_step_range_for_eff_range, parallel_exit_for_enter,
+    scope_markers_contain_kind,
 };
 use crate::global::{
     const_dsl::{EffList, ScopeEvent, ScopeId, ScopeKind},
@@ -66,10 +67,10 @@ struct ParallelInput {
 pub(in crate::global::role_program::image_impl) struct DependencyCursor<'a, const E: usize> {
     eff_list: &'a EffList<E>,
     scopes: &'a ScopeFacts,
-    role: u8,
+    rows: LocalRows<'a, E>,
     marker_index: usize,
     next_local_step: usize,
-    previous_eff: Option<usize>,
+    previous_eff: Option<(usize, usize)>,
     branch_barrier: CandidateKey,
     branch_floor: usize,
     parallel_inputs: [Option<ParallelInput>; ScopeId::LOCAL_CAPACITY as usize],
@@ -81,13 +82,13 @@ impl<'a, const E: usize> DependencyCursor<'a, E> {
     pub(in crate::global::role_program::image_impl) const fn new(
         eff_list: &'a EffList<E>,
         scopes: &'a ScopeFacts,
-        role: u8,
+        rows: LocalRows<'a, E>,
     ) -> Self {
         let markers = eff_list.scope_markers();
         Self {
             eff_list,
             scopes,
-            role,
+            rows,
             marker_index: 0,
             next_local_step: 0,
             previous_eff: None,
@@ -108,7 +109,7 @@ impl<'a, const E: usize> DependencyCursor<'a, E> {
         let mut eff_index = start_eff;
         while eff_index < end_eff {
             let atom = self.eff_list.atom_at(eff_index);
-            if atom.from == self.role || atom.to == self.role {
+            if self.rows.count(self.eff_list, eff_index) != 0 {
                 let lane = atom.lane as usize;
                 self.lane_candidates[lane] = self.lane_candidates[lane].later(candidate);
             }
@@ -127,7 +128,7 @@ impl<'a, const E: usize> DependencyCursor<'a, E> {
             crate::invariant();
         }
         let row =
-            local_step_range_for_eff_range(self.eff_list, enter.offset(), exit_eff, self.role);
+            local_step_range_for_eff_range(self.eff_list, enter.offset(), exit_eff, self.rows);
         if row.is_absent_or_zero_len() {
             return;
         }
@@ -228,18 +229,20 @@ impl<'a, const E: usize> DependencyCursor<'a, E> {
         current_lane: u8,
         local_step: usize,
     ) -> PackedLocalDependency {
-        let ordered = match self.previous_eff {
-            Some(previous) => previous < current_eff,
-            None => true,
+        let side = match self.previous_eff {
+            Some((previous, side)) if previous == current_eff => side + 1,
+            Some((previous, _)) if previous > current_eff => crate::invariant(),
+            Some(_) | None => 0,
         };
-        if local_step != self.next_local_step || !ordered {
+        if local_step != self.next_local_step || side >= self.rows.count(self.eff_list, current_eff)
+        {
             crate::invariant();
         }
         let atom = self.eff_list.atom_at(current_eff);
-        if (atom.from != self.role && atom.to != self.role) || atom.lane != current_lane {
+        if atom.lane != current_lane {
             crate::invariant();
         }
-        self.previous_eff = Some(current_eff);
+        self.previous_eff = Some((current_eff, side));
         self.next_local_step += 1;
         if !self.has_parallel {
             return PackedLocalDependency::none();
