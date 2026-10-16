@@ -104,12 +104,14 @@ impl EventCursor {
         while idx < row.end() {
             if let Some(lane) = self.event_lane_at(idx) {
                 let conflict = self.machine().event_conflict_for_index(idx);
-                if !self.event_conflict_row_allows(
-                    conflict,
-                    ScopeId::none(),
-                    None,
-                    selected_arm_for_scope,
-                ) {
+                if self.event_actor_is_local(idx, selected_arm_for_scope) == Some(false)
+                    || !self.event_conflict_row_allows(
+                        conflict,
+                        ScopeId::none(),
+                        None,
+                        selected_arm_for_scope,
+                    )
+                {
                     idx += 1;
                     continue;
                 }
@@ -299,6 +301,7 @@ impl EventCursor {
         };
         while scan < idx && scan < end && self.contains_node_index(scan) {
             if self.roll_scope_contains_index(scope, scan)
+                && self.event_actor_is_local(scan, selected_arm_for_scope) != Some(false)
                 && let Some(prior_lane) = self.event_lane_at(scan)
                 && prior_lane == lane
             {

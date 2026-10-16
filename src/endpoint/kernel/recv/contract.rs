@@ -5,7 +5,7 @@ use crate::{
         role_program::{
             LANE_SET_VIEW_WORDS, LaneSetView, LaneWord, lane_word_count, lane_word_index,
         },
-        typestate::EventCommitMeta,
+        typestate::{EventAdmissionError, EventCommitMeta},
     },
     transport::Transport,
 };
@@ -22,6 +22,7 @@ where
     ) -> RecvResult<LaneSetView<'lanes>> {
         words.fill(0);
         let mut expected_payload = None;
+        let mut other_view_pending = false;
         let mut idx = 0usize;
         while idx < self.progress.cursor.local_steps_len() {
             if let Some(meta) = self.progress.cursor.try_recv_meta_at(idx)
@@ -32,12 +33,17 @@ where
                 let preview_conflict = self.progress.cursor.event_conflict_for_index(idx);
                 let mut selected_arm =
                     |scope, view| self.selected_arm_for_recv_event(preview_conflict, scope, view);
-                if self
-                    .progress
-                    .cursor
-                    .event_enabled(idx, EventCommitMeta::from(meta), &mut selected_arm)
-                    .is_ok()
+                let admission = self.progress.cursor.event_enabled(
+                    idx,
+                    EventCommitMeta::from(meta),
+                    &mut selected_arm,
+                );
+                if matches!(admission, Err(EventAdmissionError::OtherViewPending))
+                    && meta.payload_kind == target_payload
                 {
+                    other_view_pending = true;
+                }
+                if admission.is_ok() {
                     if meta.payload_kind == target_payload {
                         let lane = meta.lane as usize;
                         if lane >= self.progress.cursor.logical_lane_count() {
@@ -63,9 +69,12 @@ where
                 lane_word_count(self.progress.cursor.logical_lane_count()),
             )
         };
-        if lanes
-            .first_set(self.progress.cursor.logical_lane_count())
-            .is_some()
+        // No port is polled for a blocked row. The common actor's commit wakes
+        // this view, which then repeats admission against the same progress.
+        if other_view_pending
+            || lanes
+                .first_set(self.progress.cursor.logical_lane_count())
+                .is_some()
         {
             return Ok(lanes);
         }

@@ -16,6 +16,9 @@ pub(crate) enum EventArmView {
 pub(crate) enum EventAdmissionError {
     Invariant,
     PredecessorPending,
+    /// The view's own preceding actions are complete. Another co-resident view
+    /// must commit first; waiting grants no transport or progress authority.
+    OtherViewPending,
 }
 
 impl From<CursorInvariantError> for EventAdmissionError {
@@ -123,6 +126,13 @@ impl EventCursor {
         if !row.matches_commit(event) {
             return Err(EventAdmissionError::Invariant);
         }
+        match self.event_actor_is_local(idx, &mut |scope| {
+            arm_for_scope(scope, EventArmView::Preview)
+        }) {
+            Some(true) => {}
+            Some(false) => return Err(EventAdmissionError::Invariant),
+            None => return Err(EventAdmissionError::PredecessorPending),
+        }
         let progress_step =
             self.relocatable_resident_lane_step_at_index(idx, event.lane as usize)?;
         let cursor_after = row.next();
@@ -151,11 +161,52 @@ impl EventCursor {
         // A valid future event need not be a current lane head. Its projected
         // predecessor must commit before that head can become available.
         if dependency_state.is_some_and(|state| !state.allows_event()) {
-            return Err(EventAdmissionError::PredecessorPending);
+            let dependency = crate::invariant_some(row.dependency());
+            let rows = self
+                .machine()
+                .event_program()
+                .dependency_row_set(dependency);
+            let role = crate::invariant_some(self.logical_role_at(idx));
+            let own_lane_pending = !self.event_lane_head_allows_view(
+                progress_step,
+                preview_conflict,
+                Some(role),
+                &mut |scope| arm_for_scope(scope, EventArmView::Preview),
+            );
+            let own_pending = own_lane_pending
+                || self
+                    .pending_event_steps(rows.start()..rows.end())
+                    .any(|prior| {
+                        self.logical_role_at(prior) == Some(role)
+                            && self.event_actor_is_local(prior, &mut |scope| {
+                                arm_for_scope(scope, EventArmView::Preview)
+                            }) != Some(false)
+                            && self.event_conflict_row_allows_with_preview(
+                                self.machine().event_conflict_for_index(prior),
+                                preview_conflict,
+                                &mut |scope| arm_for_scope(scope, EventArmView::Preview),
+                            )
+                    });
+            return Err(if own_pending {
+                EventAdmissionError::PredecessorPending
+            } else {
+                EventAdmissionError::OtherViewPending
+            });
         }
         let mut preview = |scope| arm_for_scope(scope, EventArmView::Preview);
         if !self.event_lane_head_allows(progress_step, preview_conflict, &mut preview) {
-            return Err(EventAdmissionError::Invariant);
+            return Err(
+                if self.event_lane_head_allows_view(
+                    progress_step,
+                    preview_conflict,
+                    self.logical_role_at(idx),
+                    &mut preview,
+                ) {
+                    EventAdmissionError::OtherViewPending
+                } else {
+                    EventAdmissionError::Invariant
+                },
+            );
         }
         Ok(EnabledEventCommit::new(
             StateIndex::from_usize(idx),

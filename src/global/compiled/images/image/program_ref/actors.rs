@@ -90,6 +90,25 @@ impl CompiledProgramRef {
         ))
     }
 
+    /// Interpret a checked immutable reference under the existing route history.
+    /// Decision edges point backwards, so traversal needs no stack or holder map.
+    pub(crate) fn selected_actor(
+        &self,
+        mut reference: u16,
+        selected_arm: &mut dyn FnMut(ScopeId) -> Option<u8>,
+    ) -> Option<u8> {
+        while reference >= 256 {
+            let (scope, alternatives) =
+                crate::invariant_some(self.actor_decision_at(usize::from(reference) - 256));
+            reference = match selected_arm(scope)? {
+                0 => alternatives[0],
+                1 => alternatives[1],
+                _ => crate::invariant(),
+            };
+        }
+        Some(reference as u8)
+    }
+
     const fn initial_actor_at(&self, row: usize) -> Option<(u8, u8)> {
         let Some(columns) = self.ownership_columns() else {
             return None;

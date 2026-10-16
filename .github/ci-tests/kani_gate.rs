@@ -35,14 +35,14 @@ impl Drop for Scratch {
     }
 }
 
-fn cargo(root: &Path) -> Command {
+fn cargo(root: &Path, target: &Path) -> Command {
     let mut command = Command::new("cargo");
     command
         .arg("kani")
         .arg("--manifest-path")
         .arg(root.join("proofs/kani/Cargo.toml"))
         .arg("--target-dir")
-        .arg(root.join("target/kani"))
+        .arg(target)
         .env("RUSTFLAGS", "-D warnings")
         .env("CARGO_BUILD_JOBS", "1");
     command
@@ -120,7 +120,8 @@ pub fn run(root: &Path) -> Audit<()> {
     }
     walk(&root.join("src"))?;
     let scratch = Scratch::create()?;
-    let status = cargo(&root)
+    let target = scratch.0.join("target");
+    let status = cargo(&root, &target)
         .args(["list", "--format", "json"])
         .current_dir(&scratch.0)
         .status()
@@ -132,7 +133,7 @@ pub fn run(root: &Path) -> Audit<()> {
         format!("Kani gate did not produce a readable structured harness inventory: {e}")
     })?;
     let total = kani_json::inventory_total(&inventory, expected)?;
-    let mut groups = recursion::prepare(&root, &inventory, total)?;
+    let mut groups = recursion::prepare(&root, &target, &inventory, total)?;
     groups.sort_by_key(|group| group.recursion.is_none());
     for (index, group) in groups.into_iter().enumerate() {
         println!(
@@ -149,7 +150,7 @@ pub fn run(root: &Path) -> Audit<()> {
         let log = Arc::new(Mutex::new(
             File::create(&log_path).map_err(|e| e.to_string())?,
         ));
-        let mut command = cargo(&root);
+        let mut command = cargo(&root, &target);
         command.args([
             "-Z",
             "unstable-options",

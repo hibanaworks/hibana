@@ -189,7 +189,10 @@ where
         active: ActiveOfferEntry,
         evidence: OfferEntryEvidence,
     ) -> OfferEntryObservedState {
-        let info = active.representative();
+        let mut info = active.representative();
+        if !self.is_route_controller(active.scope()) {
+            info.flags &= !LaneOfferState::FLAG_CONTROLLER;
+        }
         offer_entry_observed_state(info, evidence)
     }
 

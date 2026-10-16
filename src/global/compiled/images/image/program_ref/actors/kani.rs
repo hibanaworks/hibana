@@ -4,6 +4,25 @@ use crate::global::const_dsl::{ScopeId, ScopeKind};
 
 #[kani::proof]
 #[kani::unwind(4)]
+fn selected_actor_preserves_identity_and_requires_the_actual_choice() {
+    let actor: u8 = kani::any();
+    let right: bool = kani::any();
+    assert_eq!(
+        PROGRAM.selected_actor(u16::from(actor), &mut |_| None),
+        Some(actor)
+    );
+    assert_eq!(
+        PROGRAM.selected_actor(256, &mut |scope| {
+            assert_eq!(scope, ScopeId::route(0));
+            Some(u8::from(right))
+        }),
+        Some(if right { 2 } else { 1 })
+    );
+    assert_eq!(PROGRAM.selected_actor(256, &mut |_| None), None);
+}
+
+#[kani::proof]
+#[kani::unwind(4)]
 fn initial_issuance_lookup_preserves_the_complete_role_domain() {
     let role: u8 = kani::any();
     assert_eq!(

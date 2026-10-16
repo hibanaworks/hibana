@@ -190,6 +190,43 @@ theorem controller_view_requires_projected_membership
   rfl
 def observedDecision (_ : Nat) : Option Bool := some true
 
+/-- An unresolved compiled holder choice remains a prerequisite. It cannot be
+used to erase a candidate event from completion or grant an operation right. -/
+def actorMayRemain (actor : Nat) : Option Nat → Bool
+  | none => true
+  | some holder => decide (holder = actor)
+
+theorem an_unknown_actor_binding_is_not_excluded (actor : Nat) :
+    actorMayRemain actor none = true := rfl
+
+theorem the_selected_local_actor_is_not_excluded (actor : Nat) :
+    actorMayRemain actor (some actor) = true := by
+  simp [actorMayRemain]
+
+theorem a_selected_foreign_actor_is_excluded
+    (actor holder : Nat) (different : holder ≠ actor) :
+    actorMayRemain actor (some holder) = false := by
+  simp [actorMayRemain, different]
+
+def waitsForAnotherView (view : Nat) (pending : List Nat) : Bool :=
+  !pending.isEmpty && !(pending.any fun role => decide (role = view))
+
+theorem a_pending_own_operation_cannot_be_waited_out
+    (view : Nat) (pending : List Nat) (own : view ∈ pending) :
+    waitsForAnotherView view pending = false := by
+  have present : (pending.any fun role => decide (role = view)) = true :=
+    List.any_eq_true.mpr ⟨view, own, decide_eq_true rfl⟩
+  simp [waitsForAnotherView, present]
+
+theorem waiting_for_another_view_never_authorizes_a_commit
+    (view : Nat) (pending : List Nat)
+    (waiting : waitsForAnotherView view pending = true) :
+    pending.isEmpty = false := by
+  cases empty : pending.isEmpty <;> simp_all [waitsForAnotherView]
+
+theorem a_finished_predecessor_set_does_not_wait (view : Nat) :
+    waitsForAnotherView view [] = false := rfl
+
 theorem old_first_label_is_an_unchosen_descendant :
     firstLabel (.route 102 (.leaf 2) (.leaf 3)) = 2 := rfl
 
@@ -216,4 +253,10 @@ theorem nested_right_decisions_select_the_actual_leaf :
 #print axioms first_controller_local_action_establishes_membership
 #print axioms another_logical_view_has_no_controller_authority
 #print axioms controller_view_requires_projected_membership
+#print axioms an_unknown_actor_binding_is_not_excluded
+#print axioms the_selected_local_actor_is_not_excluded
+#print axioms a_selected_foreign_actor_is_excluded
+#print axioms a_pending_own_operation_cannot_be_waited_out
+#print axioms waiting_for_another_view_never_authorizes_a_commit
+#print axioms a_finished_predecessor_set_does_not_wait
 end ControllerOffer

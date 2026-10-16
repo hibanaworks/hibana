@@ -48,6 +48,21 @@ impl EventCursor {
         preview_conflict: PackedEventConflict,
         selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
     ) -> bool {
+        self.event_lane_head_allows_view(
+            progress_step,
+            preview_conflict,
+            None,
+            selected_arm_for_scope,
+        )
+    }
+
+    fn event_lane_head_allows_view(
+        &self,
+        progress_step: RelocatableResidentLaneStep,
+        preview_conflict: PackedEventConflict,
+        role: Option<u8>,
+        selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
+    ) -> bool {
         let target = progress_step.0;
         for step_idx in self.pending_event_steps(0..usize::from(target.step_idx)) {
             if self.machine().event_program().local_step_lane(step_idx) == Some(target.lane)
@@ -55,6 +70,8 @@ impl EventCursor {
                     .machine()
                     .state_for_step_index(step_idx)
                     .map(state_index_to_usize)
+                && role.is_none_or(|role| self.logical_role_at(pending_idx) == Some(role))
+                && self.event_actor_is_local(pending_idx, selected_arm_for_scope) != Some(false)
                 && self.event_conflict_row_allows_with_preview(
                     self.machine().event_conflict_for_index(pending_idx),
                     preview_conflict,
@@ -410,6 +427,25 @@ impl EventCursor {
             .map(state_index_to_usize)
     }
 
+    /// First operation of one logical view on a lane, within an arm.
+    /// Co-resident views share progress, but not their operation identities.
+    pub(crate) fn route_arm_view_lane_entry(
+        &self,
+        scope: ScopeId,
+        arm: u8,
+        role: u8,
+        lane: u8,
+    ) -> Option<usize> {
+        let slot = self.route_scope_slot_inner(scope)?;
+        let rows = self
+            .machine()
+            .event_program()
+            .route_arm_event_row_by_slot(slot, arm)?;
+        (rows.start()..rows.end()).find(|&idx| {
+            self.logical_role_at(idx) == Some(role) && self.event_lane_at(idx) == Some(lane)
+        })
+    }
+
     /// Get arm count for a route scope.
     pub(crate) fn route_scope_arm_count(&self, scope_id: ScopeId) -> Option<u8> {
         self.route_arm_count_inner(scope_id)
@@ -559,6 +595,7 @@ impl EventCursor {
 
     pub(crate) fn current_route_arm_authorization(
         &self,
+        role: u8,
         mut selected_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>,
         mut preview_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>,
     ) -> Result<CurrentRouteArmAuthorization, CursorInvariantError> {
@@ -566,10 +603,12 @@ impl EventCursor {
             return Ok(CurrentRouteArmAuthorization::NotAuthorized);
         };
         let scope = region.scope();
+        let is_controller = self.contains_route_controller(scope)
+            && self.machine().route_controller_role(scope) == role;
         let Some(current_arm) = self.node_route_arm_at(self.index()) else {
             return Ok(CurrentRouteArmAuthorization::NotAuthorized);
         };
-        if self.index() == region.start() && self.contains_route_controller(scope) {
+        if self.index() == region.start() && is_controller {
             return Ok(CurrentRouteArmAuthorization::NotAuthorized);
         }
         if let Some(selected_arm) = selected_arm_for_scope(scope) {
@@ -587,7 +626,7 @@ impl EventCursor {
             }
             return Ok(CurrentRouteArmAuthorization::NotAuthorized);
         }
-        if !self.contains_route_controller(scope) {
+        if !is_controller {
             return Ok(CurrentRouteArmAuthorization::NotAuthorized);
         }
         Err(CursorInvariantError::INVARIANT)

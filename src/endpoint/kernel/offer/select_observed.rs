@@ -52,7 +52,9 @@ where
                 .event_enabled(idx, meta.into(), &mut selected)
             {
                 Ok(_) => {}
-                Err(EventAdmissionError::PredecessorPending) => {
+                Err(
+                    EventAdmissionError::PredecessorPending | EventAdmissionError::OtherViewPending,
+                ) => {
                     // Ordered future messages can reuse a wire key. Retention
                     // chooses no event; only enabled matches must be unique.
                     admission_pending = true;
@@ -72,12 +74,12 @@ where
                 .cursor
                 .route_scope_for_offer_node(self.progress.cursor.node_scope_id_at(idx), idx)
                 && let Some(arm) = self.progress.cursor.route_arm_for_index(scope, idx)
-                && self
-                    .progress
-                    .cursor
-                    .route_arm_lane_first_step(scope, arm, meta.lane)
-                    .and_then(|step| self.progress.cursor.node_index_for_relocatable_step(step))
-                    == Some(idx)
+                && self.progress.cursor.route_arm_view_lane_entry(
+                    scope,
+                    arm,
+                    self.public_header.role(),
+                    meta.lane,
+                ) == Some(idx)
             {
                 Some(scope)
             } else {

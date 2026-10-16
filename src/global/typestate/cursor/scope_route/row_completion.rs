@@ -21,6 +21,7 @@ impl EventCursor {
             let owns_step = (if receiving { atom.to } else { atom.from }) == role;
             let supplies_payload = !receiving && atom.payload == EventPayload::Endpoint(role);
             if (owns_step || supplies_payload)
+                && self.event_actor_is_local(idx, selected_arm_for_scope) != Some(false)
                 && let Some(row) = self.machine().event_program().event_row_at(idx)
                 && self.event_conflict_row_allows(
                     row.conflict(),
@@ -133,7 +134,8 @@ impl EventCursor {
             crate::invariant();
         }
         for idx in self.pending_event_steps(row_set.start()..row_set.end()) {
-            if let Some(row) = self.machine().event_program().event_row_at(idx)
+            if self.event_actor_is_local(idx, selected_arm_for_scope) != Some(false)
+                && let Some(row) = self.machine().event_program().event_row_at(idx)
                 && self.event_conflict_row_allows(
                     row.conflict(),
                     ScopeId::none(),

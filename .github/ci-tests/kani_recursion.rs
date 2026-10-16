@@ -160,11 +160,8 @@ fn read_json(path: &Path) -> Audit<Json> {
     kani_json::parse(&fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?)
 }
 
-fn bounds(root: &Path) -> Audit<[String; 3]> {
-    let target = root
-        .join("target/kani")
-        .canonicalize()
-        .map_err(|e| e.to_string())?;
+fn bounds(target: &Path) -> Audit<[String; 3]> {
+    let target = target.canonicalize().map_err(|e| e.to_string())?;
     let mut files = Vec::new();
     metadata_files(&target, &mut files)?;
     let wanted_family = family();
@@ -256,7 +253,12 @@ fn bounds(root: &Path) -> Audit<[String; 3]> {
     result.ok_or_else(|| "missing complete code-generated receive proof family".into())
 }
 
-pub(super) fn prepare(root: &Path, inventory: &str, total: u64) -> Audit<Vec<Group>> {
+pub(super) fn prepare(
+    root: &Path,
+    target: &Path,
+    inventory: &str,
+    total: u64,
+) -> Audit<Vec<Group>> {
     let names = inventory_names(&kani_json::parse(inventory)?, total)?;
     let reviewed = fs::read_to_string(root.join("proofs/kani/harness-inventory.json"))
         .map_err(|e| e.to_string())?;
@@ -269,14 +271,14 @@ pub(super) fn prepare(root: &Path, inventory: &str, total: u64) -> Audit<Vec<Gro
     }
     let mut groups = partition(names)?;
     if groups.iter().any(|group| group.label != "ordinary") {
-        let status = cargo(root)
+        let status = cargo(root, target)
             .args(["--only-codegen", "--harness", PREFIX.trim_end_matches("::")])
             .status()
             .map_err(|e| e.to_string())?;
         if !status.success() {
             return Err(format!("receive proof code generation failed: {status}"));
         }
-        let [linear, parallel, route] = bounds(root)?;
+        let [linear, parallel, route] = bounds(target)?;
         for group in &mut groups {
             group.recursion = match group.label {
                 "owned-linear" => Some(linear.clone()),
@@ -300,8 +302,9 @@ mod tests {
             .canonicalize()
             .unwrap();
         let scratch = super::super::Scratch::create().unwrap();
+        let target = scratch.0.join("target");
         assert!(
-            cargo(&root)
+            cargo(&root, &target)
                 .args(["list", "--format", "json"])
                 .current_dir(&scratch.0)
                 .status()
@@ -315,7 +318,7 @@ mod tests {
         let reviewed_total = kani_json::inventory_total(&reviewed, version.trim()).unwrap();
         let expected =
             inventory_names(&kani_json::parse(&reviewed).unwrap(), reviewed_total).unwrap();
-        let groups = prepare(&root, &inventory, total).unwrap();
+        let groups = prepare(&root, &target, &inventory, total).unwrap();
         let actual: BTreeSet<_> = groups
             .iter()
             .flat_map(|group| group.harnesses.iter().cloned())

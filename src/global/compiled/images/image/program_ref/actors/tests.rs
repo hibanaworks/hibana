@@ -8,6 +8,26 @@ use crate::global::{
 };
 
 #[test]
+fn actor_selection_uses_the_exact_choice_and_never_guesses_an_unknown_holder() {
+    for actor in 0..=u8::MAX {
+        assert_eq!(
+            PROGRAM.selected_actor(u16::from(actor), &mut |_| None),
+            Some(actor)
+        );
+    }
+    for arm in 0..=1 {
+        assert_eq!(
+            PROGRAM.selected_actor(256, &mut |scope| {
+                assert_eq!(scope, ScopeId::route(0));
+                Some(arm)
+            }),
+            Some(arm + 1)
+        );
+    }
+    assert_eq!(PROGRAM.selected_actor(256, &mut |_| None), None);
+}
+
+#[test]
 fn owned_count_coverage_reads_the_checked_header_and_rejects_drift() {
     let events = SOURCE.eff_list().len();
     let scopes = SOURCE.eff_list().scope_markers().len();

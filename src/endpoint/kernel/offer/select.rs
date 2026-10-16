@@ -274,7 +274,7 @@ where
             let info = active.representative();
             let parallel_root = active.parallel_root();
             let mut flags = 0u8;
-            if info.is_controller() {
+            if self.is_route_controller(scope_id) {
                 flags |= CurrentFrontierSelectionState::FLAG_CONTROLLER;
             }
             if info.intrinsic_ready() {

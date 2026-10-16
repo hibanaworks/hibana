@@ -121,6 +121,7 @@ where
         self.progress
             .cursor
             .current_route_arm_authorization(
+                self.public_header.role(),
                 |scope| self.selected_live_arm_for_scope(scope),
                 |scope| self.preview_live_selected_arm_for_scope(scope),
             )

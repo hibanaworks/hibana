@@ -152,12 +152,18 @@ Run the pinned fail-closed gate:
 bash .github/scripts/check_kani.sh
 ```
 
-The reviewed Kani inventory contains 252 harnesses, including two production
+The reviewed Kani inventory contains 253 harnesses, including two production
 cursor checks for route control after an Endpoint handoff. The final-form gate also
 runs the production route-correlation query exhaustively over every u8
 receiver, first holder and second holder, and both direct/swapped choices:
 33,554,432 cases. That native run enables debug assertions and overflow checks.
 Both CI jobs are required; the Kani result alone is not the full validation.
+
+Inventory, code generation, recursion-bound extraction and solver execution
+share one fresh compiler directory owned by that gate invocation. Old build
+metadata cannot supply function identities for a new source. The complete
+reviewed-name comparison, proof attributes, unstubbed implementation checks and
+conflicting-identity rejection remain mandatory.
 
 This enumeration replaces eight symbolic route-query harnesses. Their receiver
 generator was `WORD * 64 | (raw & 63)` for all four words; its image is exactly
@@ -172,7 +178,7 @@ checks and all other Kani harnesses still run with their original bounds and
 sanity checks. The standalone ownership package is checked separately.
 
 Earlier 258-harness symbolic runs were incomplete, not successful. Their logs
-remain evidence of those attempts. The verification plan is Kani252 plus complete
+remain evidence of those attempts. The verification plan is Kani253 plus complete
 finite route enumeration, not a successful258-harness Kani run. These are fixed
 source-shape obligations, not arbitrary-source compiler soundness.
 

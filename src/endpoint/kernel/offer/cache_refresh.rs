@@ -22,7 +22,7 @@ where
             let (active, observed) = self.scan_active_offer_entry_non_consuming(slot);
             let info = active.representative();
             let admission = if self.progress.cursor.has_route_scope(active.scope())
-                && (!info.is_controller()
+                && (!self.is_route_controller(active.scope())
                     || !info.is_dynamic()
                     || self.resolver_offer_entry_enabled(active.scope()))
             {

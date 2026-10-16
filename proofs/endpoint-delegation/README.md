@@ -81,6 +81,17 @@ No runtime permission table, application flag, or second progress cursor is
 produced. The plan is published only after validation;
 failure cannot expose a previous accepted plan or a partial new one.
 
+At runtime, an event's immutable actor reference is interpreted through the
+same route history used by progress. A candidate row is excluded only after
+that history selects another actor. An unresolved binding cannot authorize an
+operation or erase its prerequisite. Per-view first operations and controller
+authority remain distinct when several views reside at one actor. A receive
+may await a different view's predecessor without polling its transport or
+committing; missing actions of its own view still reject out-of-order use.
+`conditional_controller` exercises one common rolled route after either holder
+choice, including an observer polled before its co-resident controller. This
+fixture bypasses only public qualification, not source validation or admission.
+
 ## Verification
 
 Run from the Hibana root:

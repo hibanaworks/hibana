@@ -11,12 +11,25 @@ separate runtime slabs and a real child process. The service observes Left and
 Right on successive visits; after the child exits, the original actor uses
 the returned continuation to update the same file.
 
-The current supplemental model has 19 general Lean theorems and Z3 checks
-14 UNSAT obligations plus 3 SAT witnesses for earlier incorrect rules. The
-new claims concern projected first-operation membership and logical-view
-authority. They do not prove the full Rust compiler or distributed executor.
+Another regression selects the holder before entering one common rolled
+route. Candidate rows at an unselected actor must neither block a live receive
+nor count as completed work. Production reads immutable actor references using
+the existing selected route history. An unresolved reference remains a
+prerequisite. Co-resident views retain separate first operations and controller
+authority. A receive can await a different view's predecessor without admitting
+the receive or touching its transport early. Its own missing predecessor still
+rejects out-of-order use. The runtime fixture runs both holder choices and both
+inner choices, with the observer polled before its co-resident controller.
+
+The current supplemental model has 25 general Lean theorems and Z3 checks
+20 UNSAT obligations plus 4 SAT witnesses. The new claims concern projected
+first-operation membership, logical-view authority, conditional event exclusion
+and waiting without commit authority. They do not prove the full Rust compiler or distributed executor.
 Two Kani harnesses query the actual production cursor and owned role images
 over every raw u16 scope identity. Runtime regressions remain necessary.
+An additional Kani harness interprets the actual compact actor reference for
+every u8 direct actor and either selected arm, and checks that a missing choice
+returns no actor. It does not establish arbitrary-DAG executor refinement.
 
 The mouth lifecycle exposed a core defect on `e75d413b`: a controller arm
 starting directly with another resolver-backed route returned that child's

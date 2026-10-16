@@ -123,7 +123,8 @@
     "../../src/global/compiled/images/image/program_ref/actors/kani.rs": [
       "global::compiled::images::image::program_ref::actors::kani::actor_row_lookups_reject_every_out_of_range_index",
       "global::compiled::images::image::program_ref::actors::kani::initial_issuance_lookup_preserves_the_complete_role_domain",
-      "global::compiled::images::image::program_ref::actors::kani::owned_image_construction_rejects_a_self_referencing_decision"
+      "global::compiled::images::image::program_ref::actors::kani::owned_image_construction_rejects_a_self_referencing_decision",
+      "global::compiled::images::image::program_ref::actors::kani::selected_actor_preserves_identity_and_requires_the_actual_choice"
     ],
     "../../src/global/compiled/images/image/program_ref/kani.rs": [
       "global::compiled::images::image::program_ref::kani::compiled_program_atom_blob_decoding_preserves_every_schema_bit",
@@ -364,7 +365,7 @@
   "contract-harnesses": {},
   "contracts": [],
   "totals": {
-    "standard-harnesses": 252,
+    "standard-harnesses": 253,
     "contract-harnesses": 0,
     "functions-under-contract": 0
   }

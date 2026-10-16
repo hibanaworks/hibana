@@ -129,6 +129,29 @@ impl EventCursor {
         Some(if receiving { atom.to } else { atom.from })
     }
 
+    /// Select an immutable actor binding through the existing route decisions.
+    /// An undecided binding is not an operation right or a completed event.
+    pub(super) fn event_actor_is_local(
+        &self,
+        idx: usize,
+        selected_arm: &mut dyn FnMut(ScopeId) -> Option<u8>,
+    ) -> Option<bool> {
+        let (eff, receiving) = match self.action_at(idx) {
+            LocalAction::Send { eff_index, .. } | LocalAction::Local { eff_index, .. } => {
+                (eff_index, false)
+            }
+            LocalAction::Recv { eff_index, .. } => (eff_index, true),
+            LocalAction::Terminate => return Some(false),
+        };
+        let program = self.program_ref();
+        let Some(bindings) = program.actor_binding_at(eff.dense_ordinal()) else {
+            return Some(true);
+        };
+        program
+            .selected_actor(bindings[usize::from(receiving)], selected_arm)
+            .map(|actor| actor == self.role())
+    }
+
     #[inline]
     fn route_authority_at(&self, idx: usize, route_arm: Option<u8>) -> (ScopeId, Option<u8>) {
         // RoleImageRef construction proves exact conflict/scope/arm membership,
