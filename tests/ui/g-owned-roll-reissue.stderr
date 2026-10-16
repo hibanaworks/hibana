@@ -12,8 +12,8 @@ error[E0080]: evaluation panicked: rolled endpoint delegation must restore its i
 note: erroneous constant encountered
  --> src/g/source.rs
   |
-  |             Some(&SourceActors::<Steps, CAPACITY>::IMAGE)
-  |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |         let actors = match &SourceActors::<Steps, CAPACITY>::IMAGE {
+  |                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 note: erroneous constant encountered
  --> src/g.rs

@@ -40,7 +40,12 @@ type SourceActorImage<const E: usize> =
 struct SourceActors<Steps, const CAPACITY: usize>(core::marker::PhantomData<Steps>);
 
 impl<Steps: ProgramShape, const CAPACITY: usize> SourceActors<Steps, CAPACITY> {
-    const IMAGE: SourceActorImage<CAPACITY> = {
+    const IMAGE: Option<SourceActorImage<CAPACITY>> = if !Steps::SOURCE_NODE.has_delegation() {
+        // References to associated constants can be evaluated eagerly even in
+        // an untaken caller branch. Keep the guard inside the referenced value
+        // so ordinary sources never enter ownership analysis or build its DAG.
+        None
+    } else {
         let mut scratch = ownership::Scratch::<256, CAPACITY>::new();
         let mut image = ownership::ActorImage::new();
         match ownership::compile_actor_image_into(&Steps::SOURCE_NODE, &mut scratch, &mut image) {
@@ -67,7 +72,7 @@ impl<Steps: ProgramShape, const CAPACITY: usize> SourceActors<Steps, CAPACITY> {
                 }
             },
         }
-        image
+        Some(image)
     };
 }
 
@@ -186,10 +191,9 @@ impl<const CAPACITY: usize> ProgramSourceData<CAPACITY> {
         if Steps::SOURCE_ROW_COUNT == 0 || Steps::SOURCE_ROW_COUNT > CAPACITY {
             panic!("source bucket selection");
         }
-        let actors = if Steps::SOURCE_NODE.has_delegation() {
-            Some(&SourceActors::<Steps, CAPACITY>::IMAGE)
-        } else {
-            None
+        let actors = match &SourceActors::<Steps, CAPACITY>::IMAGE {
+            Some(image) => Some(image),
+            None => None,
         };
         let mut lowering = SourceLowering::new(
             Steps::EVENT_COUNT,
