@@ -11,7 +11,7 @@ if [[ ! -x "${BINARY}" || "${SOURCE}" -nt "${BINARY}" || "${JSON_SOURCE}" -nt "$
   mkdir -p "${BUILD_DIR}"
   temporary="$(mktemp "${BUILD_DIR}/check_kani_source.XXXXXX")"
   trap 'rm -f "${temporary}"' EXIT
-  rustc +"${TOOLCHAIN:-1.95.0}" --edition=2024 -D warnings -O "${SOURCE}" -o "${temporary}"
+  rustc +"${TOOLCHAIN:-stable}" --edition=2024 -D warnings -O "${SOURCE}" -o "${temporary}"
   mv -f "${temporary}" "${BINARY}"
 fi
 exec "${BINARY}" "$@"

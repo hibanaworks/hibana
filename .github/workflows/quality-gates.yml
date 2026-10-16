@@ -13,9 +13,22 @@ on:
         options: [all, final-form]
 
 jobs:
-  kani:
+  kani-proofs:
     if: github.event_name != 'workflow_dispatch' || inputs.check == 'all'
     runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        partition:
+          - common
+          - route-direct-0
+          - route-direct-1
+          - route-direct-2
+          - route-direct-3
+          - route-swapped-0
+          - route-swapped-1
+          - route-swapped-2
+          - route-swapped-3
     env:
       TOOLCHAIN: stable
     steps:
@@ -29,12 +42,23 @@ jobs:
           cargo +stable install --locked kani-verifier --version "${KANI_VERSION}"
           cargo +stable kani setup
       - name: Run Kani proofs
-        run: bash ./.github/scripts/check_kani.sh
+        run: bash ./.github/scripts/check_kani.sh --partition "${{ matrix.partition }}"
       - name: Check delegation equation roots
+        if: matrix.partition == 'common'
         run: >-
           bash .github/scripts/lib/resource_guard.sh
           cargo kani --manifest-path proofs/endpoint-delegation/kani/Cargo.toml
           --lib --jobs 1 --output-format terse
+
+  kani:
+    if: always() && (github.event_name != 'workflow_dispatch' || inputs.check == 'all')
+    needs: kani-proofs
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require every Kani partition
+        env:
+          PARTITIONS_RESULT: ${{ needs.kani-proofs.result }}
+        run: test "${PARTITIONS_RESULT}" = success
 
   final-form:
     runs-on: ubuntu-24.04-arm

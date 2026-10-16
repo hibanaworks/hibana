@@ -15,10 +15,66 @@ use std::{
 
 const PREFIX: &str = "global::const_dsl::receive_lane_causality::actors::kani::";
 
+const ROUTE_PARTITIONS: [(&str, &str); 8] = [
+    ("route-direct-0", "owned_route_direct_seed_word0"),
+    ("route-direct-1", "owned_route_direct_seed_word1"),
+    ("route-direct-2", "owned_route_direct_seed_word2"),
+    ("route-direct-3", "owned_route_direct_seed_word3"),
+    ("route-swapped-0", "owned_route_swapped_seed_word0"),
+    ("route-swapped-1", "owned_route_swapped_seed_word1"),
+    ("route-swapped-2", "owned_route_swapped_seed_word2"),
+    ("route-swapped-3", "owned_route_swapped_seed_word3"),
+];
+
+pub(super) fn validate_selection(selection: Option<&str>) -> Audit<()> {
+    match selection {
+        None | Some("common") => Ok(()),
+        Some(name) if ROUTE_PARTITIONS.iter().any(|(label, _)| *label == name) => Ok(()),
+        Some(name) => Err(format!("unknown Kani partition: {name}")),
+    }
+}
+
 pub(super) struct Group {
     pub label: &'static str,
     pub harnesses: Vec<String>,
     pub recursion: Option<String>,
+}
+
+/// Partition execution only after the full compiled inventory and bounds have
+/// been checked. Each symbolic query retains its original inputs and checks.
+pub(super) fn select(mut groups: Vec<Group>, selection: Option<&str>) -> Audit<Vec<Group>> {
+    validate_selection(selection)?;
+    let Some(selection) = selection else {
+        return Ok(groups);
+    };
+    let route_names: BTreeSet<_> = ROUTE_PARTITIONS
+        .iter()
+        .map(|(_, suffix)| format!("{PREFIX}{suffix}"))
+        .collect();
+    let actual: BTreeSet<_> = groups
+        .iter()
+        .flat_map(|group| &group.harnesses)
+        .filter(|name| route_names.contains(*name))
+        .cloned()
+        .collect();
+    if actual != route_names {
+        return Err("partitioned Kani requires the complete compiled route query family".into());
+    }
+    let selected = ROUTE_PARTITIONS
+        .iter()
+        .find(|(label, _)| *label == selection)
+        .map(|(_, suffix)| format!("{PREFIX}{suffix}"));
+    for group in &mut groups {
+        group.harnesses.retain(|name| match &selected {
+            Some(selected) => name == selected,
+            None => !route_names.contains(name),
+        });
+    }
+    groups.retain(|group| !group.harnesses.is_empty());
+    if groups.is_empty() {
+        return Err("Kani partition cannot be empty".into());
+    }
+    Ok(groups)
 }
 
 fn family() -> BTreeSet<String> {
@@ -280,6 +336,77 @@ pub(super) fn prepare(root: &Path, inventory: &str, total: u64) -> Audit<Vec<Gro
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn execution_partitions_cover_the_full_inventory_exactly_once() {
+        let mut names = family();
+        for index in 0..237 {
+            names.insert(format!("ordinary_proof_{index}"));
+        }
+        assert_eq!(names.len(), 258);
+        let mut covered = BTreeSet::new();
+        for selection in
+            std::iter::once("common").chain(ROUTE_PARTITIONS.iter().map(|(name, _)| *name))
+        {
+            let mut groups = partition(names.clone()).unwrap();
+            for group in &mut groups {
+                group.recursion = (group.label != "ordinary").then(|| "original-bounds".into());
+            }
+            let selected = select(groups, Some(selection)).unwrap();
+            assert_eq!(
+                selected
+                    .iter()
+                    .map(|group| group.harnesses.len())
+                    .sum::<usize>(),
+                if selection == "common" { 250 } else { 1 }
+            );
+            for group in selected {
+                assert_eq!(
+                    group.recursion.as_deref(),
+                    (group.label != "ordinary").then_some("original-bounds")
+                );
+                for name in group.harnesses {
+                    assert!(covered.insert(name), "duplicate proof across partitions");
+                }
+            }
+        }
+        assert_eq!(covered, names);
+        let all = select(partition(names.clone()).unwrap(), None).unwrap();
+        assert_eq!(
+            all.into_iter()
+                .flat_map(|group| group.harnesses)
+                .collect::<BTreeSet<_>>(),
+            names
+        );
+    }
+
+    #[test]
+    fn execution_partition_rejects_unknown_or_missing_compiled_queries() {
+        for unknown in [
+            "",
+            "all",
+            "route-direct-4",
+            "route-swapped--1",
+            "common-extra",
+        ] {
+            assert!(select(partition(family()).unwrap(), Some(unknown)).is_err());
+        }
+        for (_, missing) in ROUTE_PARTITIONS {
+            let mut groups = partition(family()).unwrap();
+            for group in &mut groups {
+                group
+                    .harnesses
+                    .retain(|name| name != &format!("{PREFIX}{missing}"));
+            }
+            assert!(select(groups, Some("common")).is_err());
+        }
+        assert!(
+            select(
+                partition(BTreeSet::from(["ordinary".into()])).unwrap(),
+                Some("common")
+            )
+            .is_err()
+        );
+    }
     #[test]
     fn partition_retains_all_harnesses_without_duplicating_ordinary_proofs() {
         let mut names = family();

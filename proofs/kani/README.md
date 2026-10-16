@@ -151,6 +151,20 @@ Run the pinned fail-closed gate:
 bash .github/scripts/check_kani.sh
 ```
 
+CI divides the same compiled inventory between nine independent runners:
+`common` checks 250 harnesses, and `route-direct-0` through `route-direct-3`
+and `route-swapped-0` through `route-swapped-3` each check one symbolic route
+query. Every runner validates the complete inventory and derives the original
+recursion bounds before selecting its work. The selection keeps all symbolic
+inputs, assertions, sanity checks and unwinding checks. Unit tests require the
+nine selections to cover every harness exactly once. The `kani` CI result
+requires all nine jobs to pass.
+
+To repeat one partition locally, pass `--partition NAME` to the entrypoint.
+Without that option the gate still verifies the entire inventory serially.
+An individual partition reports its selected and total counts separately and
+does not establish that the other partitions passed.
+
 The entrypoint runs one verification job at a time under
 `.github/scripts/lib/resource_guard.sh`. This dependency-free Rust supervisor
 counts the whole child process tree, including CBMC, rather than just Rust
