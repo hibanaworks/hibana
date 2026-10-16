@@ -40,7 +40,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y ripgrep z3
-          rustup toolchain install 1.95.0 --profile minimal --component clippy --component rust-src
+          rustup toolchain install 1.95.0 --profile minimal --component clippy --component rustfmt --component rust-src
+          cargo +1.95.0 fmt --version
           MIRI_TOOLCHAIN="$(< .github/miri-toolchain)"
           rustup toolchain install "${MIRI_TOOLCHAIN}" --profile minimal --component miri --component rust-src
           ELAN_VERSION="4.2.3"
