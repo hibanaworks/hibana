@@ -239,7 +239,7 @@ where
         let carried_lane = state.carried_transport_lane_wire();
         let carried_key = state.carried_transport_frame_key();
         let carried_observation =
-            state.carried_transport_observation(self.progress.sid.raw(), self.public_header.role());
+            state.carried_transport_observation(self.context.sid.raw(), self.public_header.role());
         let selection_result = {
             let OfferExecution::Selecting { frontier_visited } = &mut state.execution else {
                 crate::invariant();

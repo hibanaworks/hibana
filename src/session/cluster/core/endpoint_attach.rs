@@ -94,20 +94,17 @@ where
             .lease_port(rv_id, sid, session_wire_lane, ROLE)
             .map_err(AttachError::from)?;
         let session_access = session_lease.into_port_guard().map_err(AttachError::from)?;
-        let owner: crate::session::brand::Owner<'r> = /* SAFETY: the port guard
-        owns the validated session brand for this attach operation; narrowing it
-        to `'r` matches the endpoint lease lifetime that will hold the port. */ unsafe {
-            core::mem::transmute(crate::session::brand::Owner::<'cfg>::new(session_access.brand))
-        };
         let session: crate::endpoint::session::SessionCtx<'r, T> =
             /* SAFETY: endpoint attach owns the public endpoint slot for `'r`;
-            the session context stores the validated lane and a cluster pointer
-            that remains pinned for the session kit lifetime. */
+            both the cluster and rendezvous remain pinned for the session kit
+            lifetime. Only their borrow lifetimes are narrowed. */
             unsafe {
-                core::mem::transmute(crate::endpoint::session::SessionCtx::<'cfg, T>::new(
-                    session_wire_lane,
-                    &*(self as *const Self),
-                ))
+                let cluster = &*core::ptr::from_ref(self).cast::<
+                    crate::session::cluster::core::SessionCluster<'r, T>,
+                >();
+                let rendezvous = &*core::ptr::from_ref(crate::invariant_some(self.get_local(&rv_id)))
+                    .cast::<crate::rendezvous::core::Rendezvous<'r, 'r, T>>();
+                crate::endpoint::session::SessionCtx::new(cluster, rendezvous)
             };
 
         /* SAFETY: the endpoint lease returned `dst` and `arena_storage` for a
@@ -120,7 +117,6 @@ where
                     arena_storage,
                     primary_lane: primary_lane_index,
                     sid,
-                    owner,
                     role_descriptor: role_image.descriptor(),
                     public_rv: rv_id,
                     public_slot,
@@ -156,9 +152,11 @@ where
             unpublished. Disable public Drop's release
             path so reservation abort remains single-owner and explicit. */
             unsafe {
-                (*(*dst).progress.get()).public_generation = 0;
-                (*(*dst).progress.get()).public_slot_ownership =
-                    crate::endpoint::kernel::PublicSlotOwnership::Borrowed;
+                (*dst).context.public_generation.set(0);
+                (*dst)
+                    .context
+                    .public_slot_ownership
+                    .set(crate::endpoint::kernel::PublicSlotOwnership::Borrowed);
             }
             /* SAFETY: endpoint initialization failed before publication, so
             attach still owns `dst` and drops the partially initialized endpoint

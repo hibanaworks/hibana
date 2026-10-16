@@ -9,12 +9,13 @@ where
             return;
         };
         let mut waiters = WaiterTransfer::empty();
-        let operation_lease = actor.public_header.try_operation_lease();
+        let operation_lease = actor.context.try_operation_lease();
         let release = /* SAFETY: the sole public owner is being destroyed.
         A callback may drop a different actor while the rendezvous is leased,
         but cannot borrow this actor through the consumed affine Endpoint. */ unsafe {
             let mut kernel = crate::endpoint::kernel::OperationKernel {
                 public_header: &actor.public_header,
+                context: &actor.context,
                 progress: &mut *actor.progress.get(),
                 io: &mut *actor.io.get(),
             };

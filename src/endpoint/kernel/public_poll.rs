@@ -59,8 +59,7 @@ where
         let mut offer_state =
             core::mem::replace(&mut self.io.public_offer_state, OfferState::new());
         let poll = {
-            let Some(mut scratch_lease) =
-                self.port_for_lane(self.io.primary_lane).try_scratch_lease()
+            let Some(mut scratch_lease) = self.context.session.rendezvous().try_scratch_lease()
             else {
                 self.io.public_offer_state = offer_state;
                 cx.waker().wake_by_ref();

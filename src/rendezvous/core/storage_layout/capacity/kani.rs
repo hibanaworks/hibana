@@ -79,12 +79,20 @@ fn endpoint_membership_seal_is_published_and_idempotent() {
 #[kani::proof]
 fn endpoint_operation_and_nested_scratch_transitions_are_exact() {
     let state: RendezvousAccessState = kani::any();
+    let actor: crate::rendezvous::core::EndpointLeaseId = kani::any();
 
-    let operation = state.begin_endpoint_operation();
+    let operation = state.begin_endpoint_operation(actor);
     assert!(operation.is_some() == (state == RendezvousAccessState::Available));
     if let Some(active) = operation {
-        assert!(active == RendezvousAccessState::EndpointOperation);
-        assert!(active.finish_endpoint_operation() == Some(RendezvousAccessState::Available));
+        assert!(active == RendezvousAccessState::EndpointOperation(actor));
+        assert!(active.finish_endpoint_operation(actor) == Some(RendezvousAccessState::Available));
+        assert!(
+            active
+                .finish_endpoint_operation(crate::rendezvous::core::EndpointLeaseId(
+                    actor.0.wrapping_add(1)
+                ))
+                .is_none()
+        );
     }
 
     let scratch = state.begin_scratch();
@@ -92,14 +100,14 @@ fn endpoint_operation_and_nested_scratch_transitions_are_exact() {
         scratch.is_some()
             == matches!(
                 state,
-                RendezvousAccessState::Available | RendezvousAccessState::EndpointOperation
+                RendezvousAccessState::Available | RendezvousAccessState::EndpointOperation(_)
             )
     );
     if let Some((leased, restore)) = scratch {
         assert!(leased.finish_scratch() == Some(restore));
-        if state == RendezvousAccessState::EndpointOperation {
-            assert!(leased == RendezvousAccessState::EndpointScratchLease);
-            assert!(restore == RendezvousAccessState::EndpointOperation);
+        if let RendezvousAccessState::EndpointOperation(owner) = state {
+            assert!(leased == RendezvousAccessState::EndpointScratchLease(owner));
+            assert!(restore == RendezvousAccessState::EndpointOperation(owner));
         }
     }
 }

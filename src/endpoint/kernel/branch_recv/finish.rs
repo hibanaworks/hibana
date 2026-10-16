@@ -475,7 +475,7 @@ where
             pending_recv,
             lane_idx,
             lane_port::FrameExpectation {
-                session_raw: self.progress.sid.raw(),
+                session_raw: self.context.sid.raw(),
                 lane_wire: meta.lane,
                 source_role: meta.peer,
                 target_role: self.public_header.role(),

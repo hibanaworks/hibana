@@ -216,10 +216,13 @@ where
         resolver: DynamicRouteResolver,
     ) -> SendResult<crate::session::cluster::core::DecisionArm> {
         let scope_id = resolver.scope();
-        let cluster = self.progress.session.cluster();
-        self.port().seal_session_membership();
+        let cluster = self.context.session.cluster();
+        self.context
+            .session
+            .rendezvous()
+            .seal_session_membership(self.context.sid);
         let resolver_result = cluster.resolve_dynamic_resolver(
-            self.rendezvous_id(),
+            self.context.public_rv,
             self.progress.cursor.program_ref(),
             resolver,
         );

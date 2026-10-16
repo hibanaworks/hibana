@@ -226,7 +226,7 @@ where
             frame.observed_frame_label_raw(),
         );
         let observed = frame.observed_transport_frame(
-            self.progress.sid.raw(),
+            self.context.sid.raw(),
             recv_lane,
             self.public_header.role(),
         );

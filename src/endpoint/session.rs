@@ -1,20 +1,19 @@
-//! Session-context storage for endpoints.
+//! Shared session context for one actor's logical Endpoint views.
 //!
-//! Endpoints store rendezvous-scoped session context directly inside
-//! [`Endpoint`](super::Endpoint) so that session faulting, route resolution,
-//! and rendezvous-owned endpoint release remain bound to the resident session
-//! cluster.
+//! The actor retains the pinned cluster and rendezvous independently of its
+//! view ports, so terminal I/O retirement cannot discard shared workspace access.
 
 use core::ptr::NonNull;
 
-use crate::{session::types::Lane, transport::Transport};
+use crate::{rendezvous::core::Rendezvous, transport::Transport};
 
-/// Rendezvous-scoped session context stored inside endpoints.
+/// Pinned cluster and rendezvous borrows for a resident actor.
 pub(crate) struct SessionCtx<'rv, T>
 where
     T: Transport,
 {
     cluster: NonNull<crate::session::cluster::core::SessionCluster<'rv, T>>,
+    rendezvous: &'rv Rendezvous<'rv, 'rv, T>,
 }
 
 impl<'rv, T> SessionCtx<'rv, T>
@@ -22,12 +21,18 @@ where
     T: Transport,
 {
     pub(crate) fn new(
-        _lane: Lane,
         cluster: &'rv crate::session::cluster::core::SessionCluster<'rv, T>,
+        rendezvous: &'rv Rendezvous<'rv, 'rv, T>,
     ) -> Self {
         Self {
             cluster: NonNull::from(cluster),
+            rendezvous,
         }
+    }
+
+    #[inline]
+    pub(crate) fn rendezvous(&self) -> &'rv Rendezvous<'rv, 'rv, T> {
+        self.rendezvous
     }
 
     #[inline]

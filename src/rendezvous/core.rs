@@ -30,18 +30,17 @@ use crate::{
         events,
     },
     runtime_core::resources::RuntimeResources,
-    session::{
-        brand::{self, Guard},
-        cluster::error::ResourceScope,
-    },
+    session::{brand, cluster::error::ResourceScope},
     transport::Transport,
 };
 pub(crate) use storage_layout::Sidecar;
 mod access_state;
-pub(crate) use access_state::{EndpointOperationLease, RendezvousAccessState};
+pub(crate) use access_state::{EndpointOperationLease, RendezvousAccessState, ScratchLease};
+mod scratch;
 
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(kani, derive(::kani::Arbitrary))]
 pub(crate) struct EndpointLeaseId(u16);
 
 impl EndpointLeaseId {
@@ -107,10 +106,9 @@ impl core::fmt::Display for EndpointLeaseId {
     }
 }
 
-pub(crate) struct LanePortAccess<'lease, 'cfg, T: Transport> {
+pub(crate) struct LanePortAccess<'lease, T: Transport> {
     pub(crate) port: Port<'lease, T>,
     pub(crate) lane_guard: LaneGuard<'lease, T>,
-    pub(crate) brand: Guard<'cfg>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -394,8 +392,6 @@ where
     role: u8,
     /// Active lease counter borrowed from the parent cluster.
     active_leases: Option<&'lease core::cell::Cell<u32>>,
-    /// Rendezvous brand for typed owner construction.
-    brand: crate::session::brand::Guard<'cfg>,
 }
 
 impl<'lease, 'cfg, T> LaneLease<'lease, 'cfg, T>
@@ -411,7 +407,6 @@ where
         lane: Lane,
         role: u8,
         active_leases: &'lease core::cell::Cell<u32>,
-        brand: crate::session::brand::Guard<'cfg>,
     ) -> Self {
         Self {
             lease: Some(lease),
@@ -419,13 +414,10 @@ where
             lane,
             role,
             active_leases: Some(active_leases),
-            brand,
         }
     }
 
-    pub(crate) fn into_port_guard(
-        mut self,
-    ) -> Result<LanePortAccess<'lease, 'cfg, T>, RendezvousError> {
+    pub(crate) fn into_port_guard(mut self) -> Result<LanePortAccess<'lease, T>, RendezvousError> {
         let opened = {
             let lease = crate::invariant_some(self.lease.as_mut());
             let rv_ptr: *const Rendezvous<'cfg, 'cfg, T> =
@@ -443,7 +435,6 @@ where
         Ok(LanePortAccess {
             port,
             lane_guard: guard,
-            brand: self.brand,
         })
     }
 }

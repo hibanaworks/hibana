@@ -391,8 +391,6 @@ where
         let next = crate::invariant_some(active.get().checked_add(1));
         active.set(next);
 
-        let brand = lease.brand();
-
-        Ok(LaneLease::new(lease, sid, lane, role, active, brand))
+        Ok(LaneLease::new(lease, sid, lane, role, active))
     }
 }

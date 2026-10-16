@@ -148,7 +148,7 @@ where
         frame: &lane_port::PreambleFrame<'_>,
     ) -> lane_port::FrameMismatch {
         let observed = frame.observed_transport_frame(
-            self.progress.sid.raw(),
+            self.context.sid.raw(),
             frame.lane_wire(),
             self.public_header.role(),
         );

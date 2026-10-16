@@ -72,6 +72,12 @@ run_miri_test \
   endpoint::carrier::tests
 
 run_miri_test \
+  actor-shared-workspace \
+  -p hibana \
+  --lib \
+  endpoint::kernel::core::public_types::tests
+
+run_miri_test \
   typed-endpoint-ownership-source \
   -p hibana \
   --lib \

@@ -1,10 +1,13 @@
 use super::public_operation::PublicActiveOp;
 use super::{
     BranchMeta, EndpointLeaseId, EventCursor, FrontierState, LaneGuard, LaneSlotArray, LeasedState,
-    OfferState, Owner, Port, RendezvousId, RouteCommitRowSetBuilder, RouteState, SendMeta,
+    OfferState, Port, RendezvousId, RouteCommitRowSetBuilder, RouteState, SendMeta,
     SendRouteAuthority, SendState, SessionCtx, SessionId, StateIndex, Transport, lane_port,
 };
 use crate::endpoint::kernel::{branch_recv, recv};
+
+#[cfg(all(test, hibana_repo_tests))]
+mod tests;
 
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -21,20 +24,42 @@ where
     T: Transport + 'r,
 {
     pub(crate) public_header: crate::endpoint::carrier::KernelEndpointHeader<'r>,
-    pub(crate) progress: core::cell::UnsafeCell<ActorProgress<'r, T>>,
+    pub(crate) context: ActorContext<'r, T>,
+    pub(crate) progress: core::cell::UnsafeCell<ActorProgress>,
     pub(crate) io: core::cell::UnsafeCell<EndpointIo<'r, T>>,
 }
 
-/// One semantic continuation, regardless of the logical view used to drive it.
-pub(crate) struct ActorProgress<'r, T: Transport + 'r> {
+/// Pinned run identity and shared rendezvous access, independent of cursor mutation.
+pub(crate) struct ActorContext<'r, T: Transport + 'r> {
     pub(crate) sid: SessionId,
-    pub(crate) _owner: Owner<'r>,
-    pub(crate) cursor: EventCursor,
     pub(crate) public_rv: RendezvousId,
     pub(crate) public_slot: EndpointLeaseId,
-    pub(crate) public_generation: u32,
-    pub(crate) public_slot_ownership: PublicSlotOwnership,
+    pub(crate) public_generation: core::cell::Cell<u32>,
+    pub(crate) public_slot_ownership: core::cell::Cell<PublicSlotOwnership>,
     pub(crate) session: SessionCtx<'r, T>,
+}
+
+impl<'r, T: Transport + 'r> ActorContext<'r, T> {
+    pub(crate) fn try_operation_lease(
+        &self,
+    ) -> Option<crate::rendezvous::core::EndpointOperationLease<'r>> {
+        crate::rendezvous::core::EndpointOperationLease::try_acquire(
+            self.session.rendezvous().endpoint_operation_access_state(),
+            self.public_slot,
+        )
+    }
+
+    fn is_protected_by(&self, lease: &crate::rendezvous::core::EndpointOperationLease<'_>) -> bool {
+        lease.protects(
+            self.session.rendezvous().endpoint_operation_access_state(),
+            self.public_slot,
+        )
+    }
+}
+
+/// Mutable protocol progress, with no view or allocation ownership metadata.
+pub(crate) struct ActorProgress {
+    pub(crate) cursor: EventCursor,
     pub(in crate::endpoint::kernel) decision_state: LeasedState<RouteState>,
     pub(in crate::endpoint::kernel) route_commit_rows: LeasedState<RouteCommitRowSetBuilder>,
     pub(in crate::endpoint::kernel) frontier_state: LeasedState<FrontierState>,
@@ -62,7 +87,8 @@ pub(crate) struct EndpointIo<'r, T: Transport + 'r> {
 /// The borrow ends before a public future returns Pending.
 pub(crate) struct OperationKernel<'op, 'r, T: Transport + 'r> {
     pub(crate) public_header: &'op crate::endpoint::carrier::KernelEndpointHeader<'r>,
-    pub(crate) progress: &'op mut ActorProgress<'r, T>,
+    pub(crate) context: &'op ActorContext<'r, T>,
+    pub(crate) progress: &'op mut ActorProgress,
     pub(crate) io: &'op mut EndpointIo<'r, T>,
 }
 
@@ -72,11 +98,12 @@ impl<'r, T: Transport + 'r> ResidentActor<'r, T> {
         &'op self,
         lease: &'op mut crate::rendezvous::core::EndpointOperationLease<'r>,
     ) -> OperationKernel<'op, 'r, T> {
-        if !self.public_header.is_protected_by(lease) {
+        if !self.context.is_protected_by(lease) {
             crate::invariant();
         }
         OperationKernel {
             public_header: &self.public_header,
+            context: &self.context,
             // SAFETY: the checked lease excludes another carrier entry. Its
             // unique borrow prevents creating two kernels from this lease.
             progress: unsafe { &mut *self.progress.get() },
@@ -88,6 +115,7 @@ impl<'r, T: Transport + 'r> ResidentActor<'r, T> {
     pub(crate) fn kernel_mut(&mut self) -> OperationKernel<'_, 'r, T> {
         OperationKernel {
             public_header: &self.public_header,
+            context: &self.context,
             progress: self.progress.get_mut(),
             io: self.io.get_mut(),
         }

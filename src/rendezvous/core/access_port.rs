@@ -1,20 +1,23 @@
 use super::{
-    Cell, Guard, Lane, LaneGuard, Port, PortInit, Rendezvous, RendezvousError, SessionId, TapRing,
+    Cell, Lane, LaneGuard, Port, PortInit, Rendezvous, RendezvousError, SessionId, TapRing,
     Transport, emit, events,
 };
 impl<'rv, 'cfg, T: Transport> Rendezvous<'rv, 'cfg, T>
 where
     'cfg: 'rv,
 {
-    #[inline]
-    pub(crate) fn brand(&self) -> Guard<'rv> {
-        Guard::new()
-    }
-
     /// Observability ring; pushing events only needs `&self` because the ring
     /// is single-producer and internally synchronised.
     pub(crate) fn tap(&self) -> &TapRing<'cfg> {
         &self.tap
+    }
+
+    pub(crate) fn transport(&self) -> &T {
+        &self.transport
+    }
+
+    pub(crate) fn seal_session_membership(&self, sid: SessionId) {
+        super::EndpointLeaseRecord::seal_session_membership(&self.endpoint_lease_storage, sid);
     }
 
     pub(crate) fn activate_lane_attachment(
@@ -76,17 +79,11 @@ where
             return Err(RendezvousError::SessionPoisoned { sid });
         }
         let port = Port::new(PortInit {
-            transport: &self.transport,
-            tap: self.tap(),
-            slab_ptr: self.slab_ptr,
-            slab_len: self.slab_len,
-            access_state: &self.access_state,
-            image_frontier: &self.image_frontier,
-            frontier_workspace_bytes: &self.frontier_workspace_bytes,
-            endpoint_lease_storage: &self.endpoint_lease_storage,
-            sid,
+            // SAFETY: the counted lane guard retains this pinned rendezvous.
+            // Both invariant storage lifetimes are narrowed to the handle
+            // borrow; no reference is extended past the caller's lane lease.
+            rendezvous: unsafe { &*core::ptr::from_ref(self).cast::<Rendezvous<'a, 'a, T>>() },
             lane,
-            rv_id: self.id,
             tx,
             rx,
         });

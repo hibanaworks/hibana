@@ -136,17 +136,6 @@ impl RawSendPayload {
     }
 }
 
-#[inline]
-pub(super) fn frontier_scratch<'lease, 'r, T>(
-    port: &Port<'r, T>,
-    lease: &'lease mut crate::rendezvous::port::ScratchLease<'_>,
-) -> &'lease mut [u8]
-where
-    T: Transport + 'r,
-{
-    port.frontier_scratch(lease)
-}
-
 /// # Safety
 ///
 /// `payload` must point into endpoint-resident storage that remains valid for
@@ -334,11 +323,11 @@ where
         let mut unit_payload = [];
         return Poll::Ready(pending.payload.encode_into(&mut unit_payload).map(|_| ()));
     }
-    let Some(mut scratch_lease) = port.try_scratch_lease() else {
+    let Some(mut scratch_lease) = port.rendezvous().try_scratch_lease() else {
         cx.waker().wake_by_ref();
         return Poll::Pending;
     };
-    let scratch = port.scratch(&mut scratch_lease);
+    let scratch = port.rendezvous().scratch(&mut scratch_lease);
     let encoded_len = match pending.payload.encode_into(scratch) {
         Ok(encoded_len) => encoded_len,
         Err(err) => {

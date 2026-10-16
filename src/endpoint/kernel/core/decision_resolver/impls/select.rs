@@ -1,8 +1,7 @@
 use super::super::super::{
     Arm, CachedRecvMeta, ClusterError, CommitDelta, EffIndex, OfferScopeSelection, OperationKernel,
-    RecvError, RecvMeta, RecvResult, RendezvousId, ResolvedRouteArm, RouteArmToken,
-    RouteResolveStep, ScopeId, SendMeta, TapEvent, Transport, checked_state_index,
-    controller_arm_label, emit, events,
+    RecvError, RecvMeta, RecvResult, ResolvedRouteArm, RouteArmToken, RouteResolveStep, ScopeId,
+    SendMeta, TapEvent, Transport, checked_state_index, controller_arm_label, emit, events,
     prepare_route_site_materialization_rows_from_resident_route_commit_range,
     preview_selected_arm_for_scope_from_parts, state_index_to_usize,
 };
@@ -460,7 +459,7 @@ where
     ) {
         let port = self.port_for_lane(lane as usize);
         let causal = TapEvent::make_causal_key(port.lane().as_wire(), token.as_tap_seq());
-        let arg0 = self.progress.sid.raw();
+        let arg0 = self.context.sid.raw();
         let event =
             events::route_arm_selection_with_causal(causal, arg0, scope_id, token.arm().as_u8());
         emit(port.tap(), event);
@@ -476,9 +475,12 @@ where
             .route_scope_resolver(scope_id)
             .ok_or(RecvError::PhaseInvariant)?;
         let offer_lane = self.offer_lane_for_scope(scope_id);
-        let cluster = self.progress.session.cluster();
-        let rv_id = RendezvousId::new(self.rendezvous_id().raw());
-        self.port().seal_session_membership();
+        let cluster = self.context.session.cluster();
+        let rv_id = self.context.public_rv;
+        self.context
+            .session
+            .rendezvous()
+            .seal_session_membership(self.context.sid);
         let resolver_result =
             cluster.resolve_dynamic_resolver(rv_id, self.progress.cursor.program_ref(), resolver);
         if let Some(kind) = self.session_fault() {

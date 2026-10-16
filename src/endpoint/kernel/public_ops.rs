@@ -303,11 +303,11 @@ where
 
     #[inline]
     pub(in crate::endpoint::kernel) fn session_fault(&self) -> Option<SessionFaultKind> {
-        self.progress.session.cluster().session_fault(
-            self.progress.public_rv,
-            self.progress.public_slot,
-            self.progress.public_generation,
-            self.progress.sid,
+        self.context.session.cluster().session_fault(
+            self.context.public_rv,
+            self.context.public_slot,
+            self.context.public_generation.get(),
+            self.context.sid,
         )
     }
 
@@ -316,12 +316,12 @@ where
         &self,
         cause: SessionFaultKind,
     ) -> SessionFaultKind {
-        self.progress.session.cluster().poison_session(
+        self.context.session.cluster().poison_session(
             self.public_header.role(),
-            self.progress.public_rv,
-            self.progress.public_slot,
-            self.progress.public_generation,
-            self.progress.sid,
+            self.context.public_rv,
+            self.context.public_slot,
+            self.context.public_generation.get(),
+            self.context.sid,
             cause,
         )
     }
@@ -333,11 +333,11 @@ where
         }
         // A transport destructor is an external reentry point. Retirement is
         // only valid while this endpoint owns the rendezvous access barrier.
-        let retirement_port = crate::invariant_some(self.io.ports[0].as_ref());
-        let retirement_access = match retirement_port.try_scratch_lease() {
+        let rendezvous = self.context.session.rendezvous();
+        let retirement_access = match rendezvous.try_scratch_lease() {
             Some(access) => Some(access),
             None => {
-                retirement_port.require_access_barrier();
+                rendezvous.require_access_barrier();
                 None
             }
         };
@@ -374,13 +374,13 @@ where
     ) {
         let replacement = waiters.take_replacement();
         let displaced = self
-            .progress
+            .context
             .session
             .cluster()
             .replace_public_endpoint_waiter(
-                self.progress.public_rv,
-                self.progress.public_slot,
-                self.progress.public_generation,
+                self.context.public_rv,
+                self.context.public_slot,
+                self.context.public_generation.get(),
                 replacement,
             );
         waiters.defer(displaced);
@@ -388,10 +388,10 @@ where
 
     #[inline]
     pub(crate) fn clear_endpoint_waiter(&self, waiters: &mut WaiterTransfer) {
-        let waiter = self.progress.session.cluster().take_public_endpoint_waiter(
-            self.progress.public_rv,
-            self.progress.public_slot,
-            self.progress.public_generation,
+        let waiter = self.context.session.cluster().take_public_endpoint_waiter(
+            self.context.public_rv,
+            self.context.public_slot,
+            self.context.public_generation.get(),
         );
         waiters.defer(waiter);
     }

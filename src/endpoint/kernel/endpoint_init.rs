@@ -22,7 +22,6 @@ use crate::global::role_program::DenseLaneOrdinal;
 use crate::global::typestate::EventCursor;
 use crate::rendezvous::core::EndpointLeaseId;
 use crate::rendezvous::port::Port;
-use crate::session::brand::Owner;
 use crate::session::types::{RendezvousId, SessionId};
 use crate::transport::Transport;
 
@@ -50,7 +49,7 @@ where
 {
     let cursor_offset = crate::invariant_some(
         core::mem::offset_of!(ResidentActor<'r, T>, progress)
-            .checked_add(core::mem::offset_of!(ActorProgress<'r, T>, cursor)),
+            .checked_add(core::mem::offset_of!(ActorProgress, cursor)),
     );
     let required =
         crate::invariant_some(cursor_offset.checked_add(core::mem::size_of::<EventCursor>()));
@@ -89,7 +88,6 @@ where
     role: u8,
     primary_lane: usize,
     sid: SessionId,
-    owner: Owner<'r>,
     public_rv: RendezvousId,
     public_slot: EndpointLeaseId,
     public_generation: u32,
@@ -111,7 +109,6 @@ where
         role,
         primary_lane,
         sid,
-        owner,
         public_rv,
         public_slot,
         public_generation,
@@ -119,14 +116,15 @@ where
         public_slot_ownership,
         session,
     } = init;
-    let operation_access = crate::invariant_some(session.cluster().get_local(&public_rv))
-        .endpoint_operation_access_state();
+    if session.rendezvous().registry_id() != public_rv {
+        crate::invariant();
+    }
     /* SAFETY: `init_empty_from_compiled` passes the unpublished
     `ResidentActor` header field set and the endpoint arena base. This block
     initializes public state, lane slots, and session context before returning
     the endpoint to the rendezvous lease. */
     unsafe {
-        let progress = ::core::ptr::addr_of_mut!((*dst).progress).cast::<ActorProgress<'r, T>>();
+        let context = ::core::ptr::addr_of_mut!((*dst).context);
         let io = ::core::ptr::addr_of_mut!((*dst).io).cast::<EndpointIo<'r, T>>();
         super::lane_slots::LaneSlotArray::init_from_parts(
             ::core::ptr::addr_of_mut!((*io).ports),
@@ -147,16 +145,16 @@ where
                 public_ops,
                 public_generation,
                 role,
-                operation_access,
             ),
         );
         ::core::ptr::addr_of_mut!((*io).primary_lane).write(primary_lane);
-        ::core::ptr::addr_of_mut!((*progress).sid).write(sid);
-        ::core::ptr::addr_of_mut!((*progress)._owner).write(owner);
-        ::core::ptr::addr_of_mut!((*progress).public_rv).write(public_rv);
-        ::core::ptr::addr_of_mut!((*progress).public_slot).write(public_slot);
-        ::core::ptr::addr_of_mut!((*progress).public_generation).write(public_generation);
-        ::core::ptr::addr_of_mut!((*progress).public_slot_ownership).write(public_slot_ownership);
+        ::core::ptr::addr_of_mut!((*context).sid).write(sid);
+        ::core::ptr::addr_of_mut!((*context).public_rv).write(public_rv);
+        ::core::ptr::addr_of_mut!((*context).public_slot).write(public_slot);
+        ::core::ptr::addr_of_mut!((*context).public_generation)
+            .write(core::cell::Cell::new(public_generation));
+        ::core::ptr::addr_of_mut!((*context).public_slot_ownership)
+            .write(core::cell::Cell::new(public_slot_ownership));
         ::core::ptr::addr_of_mut!((*io).public_active_op).write(super::core::PublicActiveOp::Idle);
         ::core::ptr::addr_of_mut!((*io).public_offer_state).write(super::offer::OfferState::new());
         ::core::ptr::addr_of_mut!((*io).public_route_branch).write(None);
@@ -164,7 +162,7 @@ where
         ::core::ptr::addr_of_mut!((*io).public_branch_recv_state)
             .write(super::branch_recv::BranchRecvState::empty());
         ::core::ptr::addr_of_mut!((*io).public_send_state).write(super::core::SendState::Done);
-        ::core::ptr::addr_of_mut!((*progress).session).write(session);
+        ::core::ptr::addr_of_mut!((*context).session).write(session);
     }
 }
 
@@ -182,7 +180,7 @@ unsafe fn init_endpoint_cursor<'r, T>(
     descriptor. `EventCursor::init_from_compiled` initializes the cursor before
     endpoint publication. */
     unsafe {
-        let progress = ::core::ptr::addr_of_mut!((*dst).progress).cast::<ActorProgress<'r, T>>();
+        let progress = ::core::ptr::addr_of_mut!((*dst).progress).cast::<ActorProgress>();
         EventCursor::init_from_compiled(
             ::core::ptr::addr_of_mut!((*progress).cursor),
             section_ptr::<crate::global::typestate::EventCursorState>(
@@ -216,7 +214,7 @@ unsafe fn init_endpoint_route<'r, T>(
     fields. Every pointer passed to `RouteState::init_empty` is a section of the
     endpoint arena, and active-lane density is filled before route state reads it. */
     unsafe {
-        let progress = ::core::ptr::addr_of_mut!((*dst).progress).cast::<ActorProgress<'r, T>>();
+        let progress = ::core::ptr::addr_of_mut!((*dst).progress).cast::<ActorProgress>();
         let active_lane_dense_by_lane = section_ptr::<DenseLaneOrdinal>(
             arena_storage,
             arena_layout.route_state_lane_dense_by_lane(),
@@ -312,7 +310,7 @@ unsafe fn init_endpoint_frontier<'r, T>(
     field. The root rows, active slots, observation slots, and offer-entry slots
     are disjoint arena sections selected by the compiled endpoint layout. */
     unsafe {
-        let progress = ::core::ptr::addr_of_mut!((*dst).progress).cast::<ActorProgress<'r, T>>();
+        let progress = ::core::ptr::addr_of_mut!((*dst).progress).cast::<ActorProgress>();
         let frontier_state =
             section_ptr::<FrontierState>(arena_storage, arena_layout.frontier_state());
         LeasedState::init_from_ptr(
@@ -356,7 +354,6 @@ pub(crate) struct CompiledEndpointInit<'r, T: Transport + 'r> {
     pub(crate) arena_storage: *mut u8,
     pub(crate) primary_lane: usize,
     pub(crate) sid: SessionId,
-    pub(crate) owner: Owner<'r>,
     pub(crate) role_descriptor: RoleDescriptorRef,
     pub(crate) public_rv: RendezvousId,
     pub(crate) public_slot: EndpointLeaseId,
@@ -375,7 +372,6 @@ where
         arena_storage,
         primary_lane,
         sid,
-        owner,
         role_descriptor,
         public_rv,
         public_slot,
@@ -400,7 +396,6 @@ where
             role: role_descriptor.role(),
             primary_lane,
             sid,
-            owner,
             public_rv,
             public_slot,
             public_generation,

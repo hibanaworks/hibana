@@ -156,7 +156,7 @@ where
                     frame.lane_idx(),
                     lane_wire,
                     lane_port::FrameMismatch::headerless_preamble(
-                        self.progress.sid.raw(),
+                        self.context.sid.raw(),
                         lane_wire,
                         self.public_header.role(),
                     ),

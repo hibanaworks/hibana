@@ -297,7 +297,7 @@ where
         let lane = event.lane();
         let lane_wire = self.port_for_lane(lane as usize).lane().as_wire();
         let logical_meta = TapFrameMeta::new(
-            self.progress.sid.raw(),
+            self.context.sid.raw(),
             lane_wire,
             self.public_header.role(),
             event.event_label(),

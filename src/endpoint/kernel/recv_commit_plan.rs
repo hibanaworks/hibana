@@ -159,7 +159,7 @@ where
         match kind {
             RecvCommitPlanKind::Direct => {
                 let endpoint_meta = TapFrameMeta::new(
-                    self.progress.sid.raw(),
+                    self.context.sid.raw(),
                     event.lane,
                     self.public_header.role(),
                     event.label,
@@ -171,7 +171,7 @@ where
                 let committed = self.commit_prepared_delta(delta);
                 self.publish_branch_preview_commit_plan(branch, &committed);
                 let endpoint_meta = TapFrameMeta::new(
-                    self.progress.sid.raw(),
+                    self.context.sid.raw(),
                     event.lane,
                     self.public_header.role(),
                     event.label,

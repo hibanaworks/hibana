@@ -147,22 +147,15 @@ pub(crate) struct KernelEndpointHeader<'r> {
     ops: EndpointOps<'r>,
     generation: core::cell::Cell<u32>,
     role: u8,
-    operation_access: &'r core::cell::Cell<crate::rendezvous::core::RendezvousAccessState>,
 }
 
 impl<'r> KernelEndpointHeader<'r> {
     #[inline(always)]
-    pub(crate) const fn new(
-        ops: EndpointOps<'r>,
-        generation: u32,
-        role: u8,
-        operation_access: &'r core::cell::Cell<crate::rendezvous::core::RendezvousAccessState>,
-    ) -> Self {
+    pub(crate) const fn new(ops: EndpointOps<'r>, generation: u32, role: u8) -> Self {
         Self {
             ops,
             generation: core::cell::Cell::new(generation),
             role,
-            operation_access,
         }
     }
 
@@ -184,19 +177,6 @@ impl<'r> KernelEndpointHeader<'r> {
     #[inline(always)]
     pub(crate) fn retire_generation(&self) {
         self.generation.set(0);
-    }
-
-    pub(crate) fn try_operation_lease(
-        &self,
-    ) -> Option<crate::rendezvous::core::EndpointOperationLease<'r>> {
-        crate::rendezvous::core::EndpointOperationLease::try_acquire(self.operation_access)
-    }
-
-    pub(crate) fn is_protected_by(
-        &self,
-        lease: &crate::rendezvous::core::EndpointOperationLease<'_>,
-    ) -> bool {
-        lease.protects(self.operation_access)
     }
 }
 
@@ -325,7 +305,7 @@ where
         }) else {
             return missing;
         };
-        let Some(mut operation_lease) = actor.public_header.try_operation_lease() else {
+        let Some(mut operation_lease) = actor.context.try_operation_lease() else {
             return missing;
         };
         let mut kernel = actor.borrow_kernel(&mut operation_lease);

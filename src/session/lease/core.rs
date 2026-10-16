@@ -136,11 +136,6 @@ where
         f(self.rendezvous())
     }
     #[inline]
-    pub(crate) fn brand(&self) -> crate::session::brand::Guard<'cfg> {
-        self.with_rendezvous(|rv| rv.brand())
-    }
-
-    #[inline]
     pub(crate) fn release_lane_with_tap(&mut self, sid: SessionId, lane: Lane) {
         self.with_rendezvous(|rv| match rv.release_lane(sid, lane) {
             LaneRelease::Released => {

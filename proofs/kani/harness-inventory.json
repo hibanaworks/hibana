@@ -266,7 +266,8 @@
       "rendezvous::association::kani::packed_state_preserves_full_count_and_fault_code"
     ],
     "../../src/rendezvous/core/access_state/kani.rs": [
-      "rendezvous::core::access_state::proofs::operation_lease_protects_only_its_owner_and_releases_after_use"
+      "rendezvous::core::access_state::proofs::operation_lease_protects_only_its_owner_and_releases_after_use",
+      "rendezvous::core::access_state::proofs::scratch_lease_excludes_reentry_and_restores_its_exact_parent_access"
     ],
     "../../src/rendezvous/core/storage_layout/capacity/kani.rs": [
       "rendezvous::core::storage_layout::capacity::kani::association_storage_layout_is_bounded_and_exact",
@@ -328,7 +329,7 @@
   "contract-harnesses": {},
   "contracts": [],
   "totals": {
-    "standard-harnesses": 226,
+    "standard-harnesses": 227,
     "contract-harnesses": 0,
     "functions-under-contract": 0
   }

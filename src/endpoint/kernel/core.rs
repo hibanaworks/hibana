@@ -29,12 +29,8 @@ use crate::{
     observe::core::{TapEvent, emit},
     observe::{events, ids},
     rendezvous::SessionFaultKind,
-    rendezvous::{
-        core::EndpointLeaseId,
-        port::{Port, ScratchLease},
-    },
+    rendezvous::{core::EndpointLeaseId, core::ScratchLease, port::Port},
     session::{
-        brand::Owner,
         cluster::error::ClusterError,
         types::{Lane, RendezvousId, SessionId},
     },
@@ -343,36 +339,24 @@ where
         crate::rendezvous::core::EndpointLeaseId,
         u32,
     )> {
-        if self.progress.public_slot_ownership == PublicSlotOwnership::Borrowed {
+        if self.context.public_slot_ownership.get() == PublicSlotOwnership::Borrowed {
             return None;
         }
-        if self.progress.public_generation == 0
-            || self.public_header.generation() != self.progress.public_generation
+        if self.context.public_generation.get() == 0
+            || self.public_header.generation() != self.context.public_generation.get()
             || self.public_header.role() != self.progress.cursor.role()
         {
             crate::invariant();
         }
-        self.progress.public_slot_ownership = PublicSlotOwnership::Borrowed;
+        self.context
+            .public_slot_ownership
+            .set(PublicSlotOwnership::Borrowed);
         Some((
-            self.progress.session.cluster(),
-            self.progress.public_rv,
-            self.progress.public_slot,
-            self.progress.public_generation,
+            self.context.session.cluster(),
+            self.context.public_rv,
+            self.context.public_slot,
+            self.context.public_generation.get(),
         ))
-    }
-
-    /// Rendezvous id for the primary port.
-    #[inline]
-    pub(crate) fn rendezvous_id(&self) -> RendezvousId {
-        self.port().rv_id()
-    }
-
-    /// Get the descriptor-selected primary lane's port.
-    fn port(&self) -> &Port<'r, T> {
-        if self.io.ports[self.io.primary_lane].is_none() {
-            crate::invariant();
-        }
-        crate::invariant_some(self.io.ports[self.io.primary_lane].as_ref())
     }
 
     /// Get port for a specific lane.
@@ -388,8 +372,7 @@ where
         &self,
         lease: &'lease mut ScratchLease<'r>,
     ) -> FrontierScratchWorkspace<'lease> {
-        let port = self.port_for_lane(self.io.primary_lane);
-        let scratch = lane_port::frontier_scratch(port, lease);
+        let scratch = self.context.session.rendezvous().frontier_scratch(lease);
         let layout = self.progress.cursor.frontier_scratch_layout();
         FrontierScratchWorkspace::from_storage(scratch, layout)
     }
@@ -447,7 +430,7 @@ where
     T: Transport + 'r,
 {
     pub(super) fn retire_actor(&mut self) {
-        if self.progress.public_generation != 0
+        if self.context.public_generation.get() != 0
             && (self.io.public_active_op != PublicActiveOp::Idle || !self.projection_complete())
         {
             self.poison_session(SessionFaultKind::EndpointDropped);
@@ -466,13 +449,15 @@ where
                 drop(g);
             }
         }
-        if self.progress.public_generation != 0 {
-            if self.progress.public_slot_ownership == PublicSlotOwnership::Owned {
+        if self.context.public_generation.get() != 0 {
+            if self.context.public_slot_ownership.get() == PublicSlotOwnership::Owned {
                 crate::invariant();
             }
             self.public_header.retire_generation();
-            self.progress.public_generation = 0;
-            self.progress.public_slot_ownership = PublicSlotOwnership::Borrowed;
+            self.context.public_generation.set(0);
+            self.context
+                .public_slot_ownership
+                .set(PublicSlotOwnership::Borrowed);
         }
     }
 }

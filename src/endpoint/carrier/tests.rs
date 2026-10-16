@@ -48,7 +48,18 @@ fn reentrant_carrier_entry_is_rejected_before_mutable_actor_borrow() {
         client.owner.ptr.as_ref()
     };
     assert!(EndpointHandle::new(handle.generation(), 0).matches_header(header));
-    let lease = header.try_operation_lease().expect("outer lease released");
+    // SAFETY: the header belongs to the client's live pinned actor.
+    let actor = unsafe {
+        client
+            .owner
+            .ptr
+            .cast::<crate::endpoint::kernel::ResidentActor<'_, TestTransport>>()
+            .as_ref()
+    };
+    let lease = actor
+        .context
+        .try_operation_lease()
+        .expect("outer lease released");
     drop(lease);
     drop(client);
 }
@@ -78,8 +89,11 @@ fn pending_receive_keeps_its_io_but_releases_the_actor_borrow() {
         let lease = unsafe {
             // SAFETY: the public receive future retains its unique server
             // owner. Only immutable header metadata is read across Pending.
-            server_header.as_ref()
+            server_header
+                .cast::<crate::endpoint::kernel::ResidentActor<'_, TestTransport>>()
+                .as_ref()
         }
+        .context
         .try_operation_lease()
         .expect("Pending released the shared mutation lease");
         drop(lease);

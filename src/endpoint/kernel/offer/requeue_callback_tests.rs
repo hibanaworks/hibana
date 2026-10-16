@@ -174,10 +174,7 @@ fn transport_requeue_callback_reentry_revalidates_generation() {
         // this exact role/transport kernel, and `target` owns it exclusively.
         actor_ptr.as_ref()
     };
-    let mut operation_lease = actor
-        .public_header
-        .try_operation_lease()
-        .expect("kernel lease");
+    let mut operation_lease = actor.context.try_operation_lease().expect("kernel lease");
     {
         let mut kernel = actor.borrow_kernel(&mut operation_lease);
         let lane_idx = kernel.io.primary_lane;
