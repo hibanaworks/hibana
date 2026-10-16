@@ -43,10 +43,11 @@ validation still occurs at the actual receive commit.
 | `remaining` | poll-local `deferred_lanes`, checked by both offer transport scans |
 | matching after collection | newly received frames transfer from Collecting back to Selecting |
 
-Lean checks 18 kernel theorems, including strict reduction of the lanes remaining
+Lean checks 24 kernel theorems, including strict reduction of the lanes remaining
 in one poll, preservation of opaque frame data and independence of other lanes.
-Z3 checks 17 UNSAT obligations and two SAT witnesses for the old missing-parent
-guard and premature lane-head rejection. Run `bash proofs/offer-prefix-dependency/check.sh` to audit exact outputs
+Z3 checks 23 UNSAT obligations and three SAT witnesses for the old missing-parent
+guard, premature lane-head rejection and early next-arm rejection.
+Run `bash proofs/offer-prefix-dependency/check.sh` to audit exact outputs
 and their axiom inventory.
 
 These models assume correct descriptor decoding, exact unique matching and
@@ -65,3 +66,22 @@ must retain suffix input while its other-lane prefix is delayed. Two ordered
 suffix receives reuse a wire key. The test checks repeated pending polls, actual
 wakeup, an abandoned preview and all distinct nonempty payloads. This separates
 current-head rejection from the earlier nested-guard failure.
+
+`tests/future_rolled_choice.rs`, included by that same integration target,
+compares two legal delivery timings of one three-role global. A controller can
+send the next rolled visit's different-arm entry before the receiver finishes
+its current nested resolver. The kernel used to reject that early entry, even
+though sending it later succeeds. The receiver now retains it on the original
+port, completes its current nested choice and then consumes the next entry.
+Dropping and reacquiring the nested preview must not change that order, and all
+nonempty payloads must survive.
+
+`FutureEntry` models the additional descriptor/history guard in
+`future_route_entry_waits_for_current_arm`. The caller has already matched the
+exact lane, peer and wire key. Retention requires a reentrant scope, a different
+arm's first entry on that lane, and an already consumed user receive at the
+current arm's lane entry while that arm remains unfinished. It cannot preview
+or commit a new arm. After the current visit finishes, the retained frame still
+passes ordinary event admission; this guard does not authorize its consumption.
+Existing `requeue` and `remaining` theorems apply unchanged. This is a model of
+the guard and retention boundary, not a verification of every Rust cursor query.

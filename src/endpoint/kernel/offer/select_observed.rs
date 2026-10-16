@@ -26,7 +26,7 @@ where
         };
         let current_idx = self.cursor.index();
         let mut matched = UniqueMatch::NONE;
-        let mut predecessor_pending = false;
+        let mut admission_pending = false;
         for idx in 0..self.cursor.local_steps_len() {
             let Some(meta) = self.cursor.try_recv_meta_at(idx) else {
                 continue;
@@ -48,10 +48,17 @@ where
                 Err(EventAdmissionError::PredecessorPending) => {
                     // Ordered future messages can reuse a wire key. Retention
                     // chooses no event; only enabled matches must be unique.
-                    predecessor_pending = true;
+                    admission_pending = true;
                     continue;
                 }
-                Err(EventAdmissionError::Invariant) => continue,
+                Err(EventAdmissionError::Invariant) => {
+                    // A sender may finish its visit before this receiver's
+                    // nested work. Keep the next visit's entry on its original
+                    // port, without replacing the current committed arm.
+                    admission_pending |=
+                        self.future_route_entry_waits_for_current_arm(idx, meta.lane);
+                    continue;
+                }
             }
             let scope = if let Some(scope) = self
                 .cursor
@@ -91,7 +98,7 @@ where
             .finish_optional()
             .map_err(|_| RecvError::PhaseInvariant)?
         else {
-            if predecessor_pending {
+            if admission_pending {
                 return Ok(Some(ObservedIngressSelection::PendingReceive(key.lane)));
             }
             return Ok(None);
@@ -128,6 +135,49 @@ where
         selection.observed_target =
             checked_state_index(target_idx).ok_or(RecvError::PhaseInvariant)?;
         Ok(Some(ObservedIngressSelection::Branch(selection)))
+    }
+
+    fn future_route_entry_waits_for_current_arm(&self, idx: usize, lane: u8) -> bool {
+        let Some(scope) = self
+            .cursor
+            .route_scope_for_offer_node(self.cursor.node_scope_id_at(idx), idx)
+        else {
+            return false;
+        };
+        let Some(observed) = self.cursor.route_arm_for_index(scope, idx) else {
+            return false;
+        };
+        let Some(current) = self.selected_arm_for_scope(scope) else {
+            return false;
+        };
+        if observed == current || !self.cursor.route_scope_reentry(scope) {
+            return false;
+        }
+        let Some(entry) = self.cursor.route_arm_lane_first_step(scope, observed, lane) else {
+            return false;
+        };
+        if self.cursor.node_index_for_relocatable_step(entry) != Some(idx) {
+            return false;
+        }
+        let Some(accepted_entry) = self.cursor.route_arm_lane_first_step(scope, current, lane)
+        else {
+            return false;
+        };
+        let Some(accepted_idx) = self.cursor.node_index_for_relocatable_step(accepted_entry) else {
+            return false;
+        };
+        if !self.cursor.relocatable_step_done(accepted_entry)
+            || self
+                .cursor
+                .try_recv_meta_at(accepted_idx)
+                .is_none_or(|meta| meta.origin.is_session())
+        {
+            return false;
+        }
+        let mut committed = |candidate| self.selected_arm_for_scope(candidate);
+        !self
+            .cursor
+            .reentrant_route_arm_event_row_done(scope, current, &mut committed)
     }
 
     pub(in crate::endpoint::kernel::offer) fn select_carried_ingress_scope(

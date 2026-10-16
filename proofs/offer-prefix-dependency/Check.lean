@@ -116,6 +116,59 @@ theorem deferral_decreases_remaining_lanes (lanes : List Nat) (lane : Nat)
   apply List.length_filter_lt_length_iff_exists.mpr
   exact ⟨lane, present, by simp⟩
 
+-- A different entry of the next visit can arrive while a nested operation of
+-- the committed visit is still live. These are descriptor/history facts, not
+-- a new progress owner. Exact lane/peer/wire identity is checked by the caller.
+structure FutureEntry where
+  reentrant : Bool
+  firstOnLane : Bool
+  differentArm : Bool
+  currentWasReceive : Bool
+  currentEntryDone : Bool
+  currentArmDone : Bool
+
+def waitsForCurrent (g : FutureEntry) : Bool :=
+  g.reentrant && g.firstOnLane && g.differentArm && g.currentWasReceive &&
+    g.currentEntryDone && !g.currentArmDone
+
+def observeFuture (g : FutureEntry) (admission : Admission)
+    (arm : Option Bool) : Action :=
+  match admission with
+  | .invalid => if waitsForCurrent g then .retain else .reject
+  | other => action other arm
+
+theorem future_wait_requires_accepted_unfinished_visit (g : FutureEntry)
+    (waiting : waitsForCurrent g = true) :
+    g.reentrant = true ∧ g.firstOnLane = true ∧ g.differentArm = true ∧
+    g.currentWasReceive = true ∧ g.currentEntryDone = true ∧ g.currentArmDone = false := by
+  simpa [waitsForCurrent, Bool.and_eq_true, and_assoc] using waiting
+
+theorem future_wait_without_current_entry_is_rejected (g : FutureEntry)
+    (notAccepted : g.currentEntryDone = false) (arm : Option Bool) :
+    observeFuture g .invalid arm = .reject := by
+  simp [observeFuture, waitsForCurrent, notAccepted]
+
+theorem completed_visit_uses_ordinary_admission (g : FutureEntry)
+    (completed : g.currentArmDone = true) (arm : Option Bool) :
+    observeFuture g .invalid arm = .reject := by
+  simp [observeFuture, waitsForCurrent, completed]
+
+theorem future_retention_cannot_preview (g : FutureEntry) (arm : Option Bool)
+    (chosen : Bool) : observeFuture g .invalid arm ≠ .preview chosen := by
+  simp [observeFuture]
+  split <;> simp
+
+theorem deferred_entry_still_requires_enabled_admission (g : FutureEntry)
+    (admission : Admission) (arm : Option Bool) (chosen : Bool)
+    (preview : observeFuture g admission arm = .preview chosen) : admission = .enabled := by
+  cases admission with
+  | invalid => exact False.elim (future_retention_cannot_preview g arm chosen preview)
+  | waiting => simp [observeFuture, action] at preview
+  | enabled => rfl
+
+theorem early_next_arm_is_retained (arm : Option Bool) :
+    observeFuture ⟨true, true, true, true, true, false⟩ .invalid arm = .retain := rfl
+
 #print axioms unseen_choice_uses_candidate
 #print axioms explicit_choice_is_preserved
 #print axioms absent_path_cannot_invent_choice
@@ -134,4 +187,10 @@ theorem deferral_decreases_remaining_lanes (lanes : List Nat) (lane : Nat)
 #print axioms deferred_lane_is_not_repolled
 #print axioms independent_lane_remains_polled
 #print axioms deferral_decreases_remaining_lanes
+#print axioms future_wait_requires_accepted_unfinished_visit
+#print axioms future_wait_without_current_entry_is_rejected
+#print axioms completed_visit_uses_ordinary_admission
+#print axioms future_retention_cannot_preview
+#print axioms deferred_entry_still_requires_enabled_admission
+#print axioms early_next_arm_is_retained
 end OfferPrefixDependency

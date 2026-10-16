@@ -1,4 +1,6 @@
 mod common;
+#[path = "future_rolled_choice.rs"]
+mod future_rolled_choice;
 #[path = "sequential_resolver_parallel_prefix.rs"]
 mod sequential_parallel_prefix;
 use core::cell::Cell;
