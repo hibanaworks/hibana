@@ -1,9 +1,9 @@
 use super::{
-    Arm, BranchKind, CursorEndpoint, ScopeId, SendError, SendResult, Transport,
+    Arm, BranchKind, OperationKernel, ScopeId, SendError, SendResult, Transport,
     state_index_to_usize,
 };
 
-impl<'r, T> CursorEndpoint<'r, T>
+impl<'r, T> OperationKernel<'_, 'r, T>
 where
     T: Transport + 'r,
 {
@@ -13,7 +13,7 @@ where
         target_label: u8,
         target_schema: u32,
     ) -> SendResult<crate::endpoint::kernel::SendPreview> {
-        let Some(branch) = self.public_route_branch.as_ref() else {
+        let Some(branch) = self.io.public_route_branch.as_ref() else {
             return Err(SendError::PhaseInvariant);
         };
         let branch_meta = branch.branch_meta;
@@ -30,7 +30,7 @@ where
         }
 
         let cursor_index = state_index_to_usize(branch_meta.cursor_index);
-        let Some(mut meta) = self.cursor.try_send_meta_at(cursor_index) else {
+        let Some(mut meta) = self.progress.cursor.try_send_meta_at(cursor_index) else {
             return Err(SendError::PhaseInvariant);
         };
         if meta.payload_schema != target_schema {
@@ -66,7 +66,7 @@ where
         scope_id: ScopeId,
         lane: u8,
     ) -> SendResult<Option<u8>> {
-        let Some(resolver) = self.cursor.route_scope_resolver(scope_id) else {
+        let Some(resolver) = self.progress.cursor.route_scope_resolver(scope_id) else {
             return Ok(None);
         };
         let arm = self.resolve_dynamic_resolver_for_send_preview(lane, resolver)?;
@@ -101,12 +101,17 @@ where
         {
             return Ok(Some(arm));
         }
-        if self.cursor.route_scope_resolver(scope_id).is_some() {
+        if self
+            .progress
+            .cursor
+            .route_scope_resolver(scope_id)
+            .is_some()
+        {
             return Ok(None);
         }
         let offer_lanes = self.offer_lane_set_for_scope(scope_id);
         if offer_lanes
-            .first_set(self.cursor.logical_lane_count())
+            .first_set(self.progress.cursor.logical_lane_count())
             .is_none()
         {
             return Ok(None);

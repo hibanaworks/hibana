@@ -1,10 +1,10 @@
 use super::super::super::{
-    CursorEndpoint, SelectedRouteCommitRowsRef, SendError, SendMeta, SendResult,
+    OperationKernel, SelectedRouteCommitRowsRef, SendError, SendMeta, SendResult,
     SendRouteAuthority, Transport,
 };
 use crate::{global::const_dsl::DynamicRouteResolver, global::role_program::PackedLaneRange};
 
-impl<'r, T> CursorEndpoint<'r, T>
+impl<'r, T> OperationKernel<'_, 'r, T>
 where
     T: Transport + 'r,
 {
@@ -81,7 +81,7 @@ where
         meta: &SendMeta,
         preview_idx: usize,
     ) -> SendResult<Option<PackedLaneRange>> {
-        let conflict = self.cursor.event_conflict_for_index(preview_idx);
+        let conflict = self.progress.cursor.event_conflict_for_index(preview_idx);
         if conflict.to_conflict().is_none() {
             return Ok(None);
         }
@@ -89,7 +89,8 @@ where
             return Err(SendError::PhaseInvariant);
         }
         Ok(Some(
-            self.cursor
+            self.progress
+                .cursor
                 .route_commit_range_for_conflict(conflict)
                 .ok_or(SendError::PhaseInvariant)?,
         ))
@@ -111,7 +112,7 @@ where
         let mut idx = 0usize;
         while idx < rows.len() {
             let route_row = rows
-                .get(&self.cursor, idx)
+                .get(&self.progress.cursor, idx)
                 .ok_or(SendError::PhaseInvariant)?;
             let scope_id = route_row.scope();
             let arm_index = route_row.selected_arm();
@@ -124,7 +125,7 @@ where
                 idx += 1;
                 continue;
             }
-            let Some(resolver) = self.cursor.route_scope_resolver(scope_id) else {
+            let Some(resolver) = self.progress.cursor.route_scope_resolver(scope_id) else {
                 idx += 1;
                 continue;
             };
@@ -190,11 +191,15 @@ where
         let mut idx = 0usize;
         while idx < rows.len() {
             let route_row = rows
-                .get(&self.cursor, idx)
+                .get(&self.progress.cursor, idx)
                 .ok_or(SendError::PhaseInvariant)?;
             let scope_id = route_row.scope();
             let arm_index = route_row.selected_arm();
-            if self.cursor.route_scope_resolver(scope_id).is_some()
+            if self
+                .progress
+                .cursor
+                .route_scope_resolver(scope_id)
+                .is_some()
                 && let Some(selected) = self.selected_live_arm_for_scope(scope_id)
                 && selected != arm_index
             {
@@ -211,11 +216,11 @@ where
         resolver: DynamicRouteResolver,
     ) -> SendResult<crate::session::cluster::core::DecisionArm> {
         let scope_id = resolver.scope();
-        let cluster = self.session.cluster();
+        let cluster = self.progress.session.cluster();
         self.port().seal_session_membership();
         let resolver_result = cluster.resolve_dynamic_resolver(
             self.rendezvous_id(),
-            self.cursor.program_ref(),
+            self.progress.cursor.program_ref(),
             resolver,
         );
         if let Some(kind) = self.session_fault() {

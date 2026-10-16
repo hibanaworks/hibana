@@ -175,7 +175,7 @@ pub(in crate::endpoint::kernel::core) fn preview_selected_arm_for_scope_from_par
     scope_id: ScopeId,
 ) -> Option<u8> {
     // Completed rows describe the previous roll iteration. Match the live
-    // preview used by CursorEndpoint before consulting this iteration's poll.
+    // preview used by OperationKernel before consulting this iteration's poll.
     let selected =
         selected_arm_for_scope_from_parts(decision_state, cursor, scope_id).filter(|&arm| {
             let mut selected_arm_for_scope =

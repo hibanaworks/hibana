@@ -1,5 +1,5 @@
 use super::{
-    CommitDelta, CommitEventRow, CursorEndpoint, CursorInvariantError, PreparedRouteCommitRows,
+    CommitDelta, CommitEventRow, CursorInvariantError, OperationKernel, PreparedRouteCommitRows,
     RelocatableResidentLaneStep, SelectedRouteCommitRow, SelectedRouteCommitRowsRef, Transport,
     state_index_to_usize,
 };
@@ -131,7 +131,7 @@ impl CommitDeltaApplyPermit {
     }
 }
 
-impl<'r, T> CursorEndpoint<'r, T>
+impl<'r, T> OperationKernel<'_, 'r, T>
 where
     T: Transport + 'r,
 {
@@ -141,6 +141,7 @@ where
     ) -> Result<(), CursorInvariantError> {
         if let Some(event) = delta.event() {
             let idx = self
+                .progress
                 .cursor
                 .node_index_for_relocatable_step(event.progress_step())
                 .ok_or(CursorInvariantError::INVARIANT)?;
@@ -153,7 +154,7 @@ where
                     self.selected_arm_for_scope(scope)
                 }
             };
-            let enabled = self.cursor.event_enabled(
+            let enabled = self.progress.cursor.event_enabled(
                 idx,
                 crate::global::typestate::EventCommitMeta::new(
                     event.eff_index(),
@@ -188,8 +189,12 @@ where
         delta: &CommitDelta,
     ) -> Result<(), CursorInvariantError> {
         let routes = delta.selected_routes();
-        let conflict = self.cursor.event_conflict_for_index(event_idx);
-        let Some(range) = self.cursor.route_commit_range_for_conflict(conflict) else {
+        let conflict = self.progress.cursor.event_conflict_for_index(event_idx);
+        let Some(range) = self
+            .progress
+            .cursor
+            .route_commit_range_for_conflict(conflict)
+        else {
             return if conflict.to_conflict().is_none() && routes.is_empty() {
                 Ok(())
             } else {
@@ -202,13 +207,14 @@ where
         let mut idx = 0usize;
         while idx < range.len() {
             let Some(expected) = self
+                .progress
                 .cursor
                 .route_commit_row_at(range, idx)
                 .and_then(SelectedRouteCommitRow::from_resident_conflict)
             else {
                 return Err(CursorInvariantError::INVARIANT);
             };
-            let Some(row) = routes.get(&self.cursor, idx) else {
+            let Some(row) = routes.get(&self.progress.cursor, idx) else {
                 return Err(CursorInvariantError::INVARIANT);
             };
             if row.scope() != expected.scope() || row.selected_arm() != expected.selected_arm() {
@@ -225,7 +231,7 @@ where
         delta: &CommitDelta,
     ) -> Result<(), CursorInvariantError> {
         let cursor_after = state_index_to_usize(delta.cursor_after());
-        if cursor_after >= self.cursor.local_steps_len() {
+        if cursor_after >= self.progress.cursor.local_steps_len() {
             return Err(CursorInvariantError::INVARIANT);
         }
         Ok(())
@@ -245,14 +251,14 @@ where
         let mut idx = 0usize;
         while idx < routes.len() {
             let row = routes
-                .get(&self.cursor, idx)
+                .get(&self.progress.cursor, idx)
                 .ok_or(CursorInvariantError::INVARIANT)?;
             let lane = route_lane.ok_or(CursorInvariantError::INVARIANT)?;
             self.preflight_selected_route_row(row, lane)?;
             let mut prev_idx = 0usize;
             while prev_idx < idx {
                 let prev = routes
-                    .get(&self.cursor, prev_idx)
+                    .get(&self.progress.cursor, prev_idx)
                     .ok_or(CursorInvariantError::INVARIANT)?;
                 if prev.scope() == row.scope() {
                     return Err(CursorInvariantError::INVARIANT);
@@ -271,6 +277,7 @@ where
         let routes = delta.selected_route_rows_ref();
         let entry_idx = match delta.event() {
             Some(event) => self
+                .progress
                 .cursor
                 .node_index_for_relocatable_step(event.progress_step())
                 .ok_or(CursorInvariantError::INVARIANT)?,
@@ -289,20 +296,21 @@ where
         let mut idx = 0usize;
         while idx < routes.len() {
             let row = routes
-                .get(&self.cursor, idx)
+                .get(&self.progress.cursor, idx)
                 .ok_or(CursorInvariantError::INVARIANT)?;
             let scope = row.scope();
             let fresh = match self.selected_arm_for_scope(scope) {
                 None => true,
                 Some(selected) => {
-                    self.cursor.route_scope_reentry(scope)
+                    self.progress.cursor.route_scope_reentry(scope)
                         && self.reentrant_selected_arm_complete(scope, selected)
                         && {
                             let mut preview = |candidate| {
                                 let mut row_idx = 0;
                                 while row_idx < routes.len() {
-                                    let row =
-                                        crate::invariant_some(routes.get(&self.cursor, row_idx));
+                                    let row = crate::invariant_some(
+                                        routes.get(&self.progress.cursor, row_idx),
+                                    );
                                     if row.scope() == candidate {
                                         return Some(row.selected_arm());
                                     }
@@ -310,7 +318,7 @@ where
                                 }
                                 self.selected_arm_for_scope(candidate)
                             };
-                            self.cursor.route_reentry_head_allows_index(
+                            self.progress.cursor.route_reentry_head_allows_index(
                                 scope,
                                 entry_idx,
                                 lane.ok_or(CursorInvariantError::INVARIANT)?,
@@ -323,9 +331,10 @@ where
                 // A fresh containing visit also owns its descriptor-proven
                 // descendants, even when their previous selection was live.
                 let root = routes
-                    .get(&self.cursor, root_idx)
+                    .get(&self.progress.cursor, root_idx)
                     .ok_or(CursorInvariantError::INVARIANT)?;
                 if self
+                    .progress
                     .cursor
                     .route_scope_conflict_arm_for_scope(scope, root.scope())
                     != Some(root.selected_arm())
@@ -353,27 +362,30 @@ where
             return Err(CursorInvariantError::INVARIANT);
         }
         let lane_idx = lane as usize;
-        if lane_idx >= self.cursor.logical_lane_count() {
+        if lane_idx >= self.progress.cursor.logical_lane_count() {
             return Err(CursorInvariantError::INVARIANT);
         }
         let scope = row.scope();
-        if scope.is_none() || self.cursor.route_scope_slot(scope).is_none() {
+        if scope.is_none() || self.progress.cursor.route_scope_slot(scope).is_none() {
             return Err(CursorInvariantError::INVARIANT);
         }
         let scope_slot = self
+            .progress
             .cursor
             .route_scope_slot(scope)
             .ok_or(CursorInvariantError::INVARIANT)?;
-        let reentry = if self.cursor.route_scope_reentry(scope) {
+        let reentry = if self.progress.cursor.route_scope_reentry(scope) {
             ReentryMark::Reentrant
         } else {
             ReentryMark::SinglePass
         };
         if self
+            .progress
             .cursor
             .passive_observer_arm_entry_index(scope, row.selected_arm())
             .is_none()
             && self
+                .progress
                 .cursor
                 .controller_arm_entry_by_arm(scope, row.selected_arm())
                 .is_none()
@@ -388,7 +400,8 @@ where
                 return Err(CursorInvariantError::INVARIANT);
             }
         }
-        self.decision_state
+        self.progress
+            .decision_state
             .preflight_selected_route_commit(
                 lane_idx,
                 scope,
@@ -408,7 +421,8 @@ where
         let Some(step) = step else {
             return Ok(());
         };
-        self.cursor
+        self.progress
+            .cursor
             .node_index_for_relocatable_step(step)
             .ok_or(CursorInvariantError::INVARIANT)?;
         Ok(())
@@ -422,6 +436,7 @@ where
         self.preflight_commit_delta(&delta)?;
         let fresh_route_start = self.fresh_route_suffix_start(&delta)?;
         let selected_routes = self
+            .progress
             .route_commit_rows
             .seal(delta.selected_route_rows_ref())
             .map_err(|_| CursorInvariantError::INVARIANT)?;
@@ -450,6 +465,7 @@ where
         self.preflight_lane_relocation(delta.lane_relocation())?;
         let fresh_route_start = self.fresh_route_suffix_start(&delta)?;
         let selected_routes = self
+            .progress
             .route_commit_rows
             .seal(delta.selected_route_rows_ref())
             .map_err(|_| CursorInvariantError::INVARIANT)?;

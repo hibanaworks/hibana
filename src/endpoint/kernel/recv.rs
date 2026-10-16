@@ -4,7 +4,7 @@ use core::task::Poll;
 
 use super::{
     core::{
-        CommitDelta, CursorEndpoint, PreparedCommitDelta,
+        CommitDelta, OperationKernel, PreparedCommitDelta,
         prepare_event_selected_route_commit_rows_from_resident_route_commit_range,
     },
     lane_port,
@@ -44,7 +44,7 @@ impl RecvState {
     }
 }
 
-impl<'r, T> CursorEndpoint<'r, T>
+impl<'r, T> OperationKernel<'_, 'r, T>
 where
     T: Transport + 'r,
 {
@@ -58,11 +58,9 @@ where
             return self.selected_arm_for_scope(scope);
         }
         let mut selected_arm = |candidate| self.selected_arm_for_scope(candidate);
-        self.cursor.selected_arm_for_reentry_preview_conflict(
-            scope,
-            preview_conflict,
-            &mut selected_arm,
-        )
+        self.progress
+            .cursor
+            .selected_arm_for_reentry_preview_conflict(scope, preview_conflict, &mut selected_arm)
     }
 
     fn poll_recv_preamble_for_label(
@@ -72,7 +70,7 @@ where
         pending_recv: &mut lane_port::PendingRecv,
         cx: &mut core::task::Context<'_>,
     ) -> Poll<RecvResult<lane_port::PreambleFrame<'r>>> {
-        let lane_limit = self.cursor.logical_lane_count();
+        let lane_limit = self.progress.cursor.logical_lane_count();
         let mut words = [0; LANE_SET_VIEW_WORDS];
         let lanes = self.live_recv_lanes(target_label, target_schema, &mut words)?;
         let mut start = 0usize;
@@ -158,7 +156,7 @@ where
                     frame.lane_idx(),
                     lane_wire,
                     lane_port::FrameMismatch::headerless_preamble(
-                        self.sid.raw(),
+                        self.progress.sid.raw(),
                         lane_wire,
                         self.public_header.role(),
                     ),
@@ -255,10 +253,10 @@ where
             return Err(RecvError::PhaseInvariant);
         }
         let cursor_index = state_index_to_usize(desc.cursor_index);
-        let preview_conflict = self.cursor.event_conflict_for_index(cursor_index);
+        let preview_conflict = self.progress.cursor.event_conflict_for_index(cursor_index);
         let mut selected_arm =
             |scope, view| self.selected_arm_for_recv_event(preview_conflict, scope, view);
-        let enabled = match self.cursor.event_enabled(
+        let enabled = match self.progress.cursor.event_enabled(
             cursor_index,
             EventCommitMeta::from(meta),
             &mut selected_arm,
@@ -270,12 +268,12 @@ where
         };
         let route_rows = if meta.route_arm.is_some() {
             let route_rows = {
-                let Self {
+                let crate::endpoint::kernel::core::ActorProgress {
                     cursor,
                     decision_state,
                     route_commit_rows,
                     ..
-                } = &mut *self;
+                } = &mut *self.progress;
                 let mut rows = route_commit_rows.begin();
                 prepare_event_selected_route_commit_rows_from_resident_route_commit_range(
                     decision_state,
@@ -299,18 +297,21 @@ where
             enabled.cursor_after(),
             enabled.progress_step(),
         )
-        .with_lane_relocation(self.cursor.recv_reentry_cursor_step(meta, |scope| {
-            let mut row_idx = 0usize;
-            while row_idx < route_rows.len() {
-                if let Some(row) = route_rows.get(&self.cursor, row_idx)
-                    && row.scope() == scope
-                {
-                    return Some(row.selected_arm());
+        .with_lane_relocation(self.progress.cursor.recv_reentry_cursor_step(
+            meta,
+            |scope| {
+                let mut row_idx = 0usize;
+                while row_idx < route_rows.len() {
+                    if let Some(row) = route_rows.get(&self.progress.cursor, row_idx)
+                        && row.scope() == scope
+                    {
+                        return Some(row.selected_arm());
+                    }
+                    row_idx += 1;
                 }
-                row_idx += 1;
-            }
-            self.selected_arm_for_recv_event(preview_conflict, scope, EventArmView::Preview)
-        }));
+                self.selected_arm_for_recv_event(preview_conflict, scope, EventArmView::Preview)
+            },
+        ));
         let delta = match self.prepare_enabled_event_commit_delta(delta, enabled) {
             Ok(delta) => delta,
             Err(CursorInvariantError::INVARIANT) => {
@@ -333,7 +334,7 @@ where
     }
 }
 
-impl<'r, T> super::core::RecvKernelEndpoint<'r> for CursorEndpoint<'r, T>
+impl<'r, T> super::core::RecvKernelEndpoint<'r> for OperationKernel<'_, 'r, T>
 where
     T: Transport + 'r,
 {

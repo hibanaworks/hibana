@@ -1,13 +1,13 @@
 use super::evidence::{RecvCandidate, RecvDescriptor};
 use crate::{
-    endpoint::kernel::{core::CursorEndpoint, lane_port},
+    endpoint::kernel::{core::OperationKernel, lane_port},
     endpoint::{RecvError, RecvResult},
     global::typestate::{DeterministicInboundKey, EventCommitMeta, InboundFrameKey, StateIndex},
     runtime_core::{UniqueMatch, UniqueMatchFailure},
     transport::Transport,
 };
 
-impl<'r, T> CursorEndpoint<'r, T>
+impl<'r, T> OperationKernel<'_, 'r, T>
 where
     T: Transport + 'r,
 {
@@ -18,7 +18,7 @@ where
         target_schema: u32,
         observed: InboundFrameKey,
     ) -> RecvResult<Option<RecvCandidate>> {
-        let Some(meta) = self.cursor.try_recv_meta_at(idx) else {
+        let Some(meta) = self.progress.cursor.try_recv_meta_at(idx) else {
             return Ok(None);
         };
         if meta.label != target_label || meta.payload_schema != target_schema {
@@ -28,7 +28,7 @@ where
             return Err(RecvError::PhaseInvariant);
         }
         let lane_idx = meta.lane as usize;
-        if lane_idx >= self.cursor.logical_lane_count() {
+        if lane_idx >= self.progress.cursor.logical_lane_count() {
             return Err(RecvError::PhaseInvariant);
         }
         let lane_wire = self.port_for_lane(lane_idx).lane().as_wire();
@@ -38,11 +38,12 @@ where
         if !observed.matches_recv(meta) {
             return Ok(None);
         }
-        let preview_conflict = self.cursor.event_conflict_for_index(idx);
+        let preview_conflict = self.progress.cursor.event_conflict_for_index(idx);
         let mut selected_arm =
             |scope, view| self.selected_arm_for_recv_event(preview_conflict, scope, view);
         let enabled =
-            self.cursor
+            self.progress
+                .cursor
                 .event_enabled(idx, EventCommitMeta::from(meta), &mut selected_arm);
         if enabled.is_err() {
             return Ok(None);
@@ -61,14 +62,14 @@ where
         idx: usize,
         key: DeterministicInboundKey,
     ) -> RecvResult<Option<RecvCandidate>> {
-        let Some(meta) = self.cursor.try_recv_meta_at(idx) else {
+        let Some(meta) = self.progress.cursor.try_recv_meta_at(idx) else {
             return Ok(None);
         };
         if meta.origin.is_session() {
             return Err(RecvError::PhaseInvariant);
         }
         let lane_idx = meta.lane as usize;
-        if lane_idx >= self.cursor.logical_lane_count() {
+        if lane_idx >= self.progress.cursor.logical_lane_count() {
             return Err(RecvError::PhaseInvariant);
         }
         let candidate_lane_wire = self.port_for_lane(lane_idx).lane().as_wire();
@@ -78,11 +79,12 @@ where
         if !key.matches_recv(meta) {
             return Ok(None);
         }
-        let preview_conflict = self.cursor.event_conflict_for_index(idx);
+        let preview_conflict = self.progress.cursor.event_conflict_for_index(idx);
         let mut selected_arm =
             |scope, view| self.selected_arm_for_recv_event(preview_conflict, scope, view);
         let enabled =
-            self.cursor
+            self.progress
+                .cursor
                 .event_enabled(idx, EventCommitMeta::from(meta), &mut selected_arm);
         if enabled.is_err() {
             return Ok(None);
@@ -104,7 +106,7 @@ where
     ) -> RecvResult<Result<RecvCandidate, UniqueMatchFailure>> {
         let mut accumulator = UniqueMatch::NONE;
         let mut idx = 0usize;
-        while idx < self.cursor.local_steps_len() {
+        while idx < self.progress.cursor.local_steps_len() {
             if let Some(candidate) = self.recv_candidate_for_observed_evidence(
                 idx,
                 target_label,
@@ -127,7 +129,7 @@ where
     ) -> RecvResult<Result<RecvCandidate, UniqueMatchFailure>> {
         let mut accumulator = UniqueMatch::NONE;
         let mut idx = 0usize;
-        while idx < self.cursor.local_steps_len() {
+        while idx < self.progress.cursor.local_steps_len() {
             if let Some(candidate) = self.recv_candidate_for_deterministic_key(idx, key)? {
                 accumulator = accumulator.add(candidate);
                 if accumulator.is_ambiguous() {
@@ -146,7 +148,7 @@ where
         frame: &lane_port::PreambleFrame<'_>,
     ) -> lane_port::FrameMismatch {
         let observed = frame.observed_transport_frame(
-            self.sid.raw(),
+            self.progress.sid.raw(),
             frame.lane_wire(),
             self.public_header.role(),
         );

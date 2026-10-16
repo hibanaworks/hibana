@@ -4,7 +4,7 @@ use super::model::{
     OfferAlignmentCandidateInput, OfferAlignmentCandidatePool, OfferAlignmentDecision,
     OfferAlignmentSelection, ProgressEvidence, ProgressSiblingPresence,
 };
-use super::{CursorEndpoint, Transport};
+use super::{OperationKernel, Transport};
 use crate::endpoint::kernel::frontier::FrontierKind;
 
 #[derive(Clone, Copy)]
@@ -165,7 +165,7 @@ impl OfferAlignmentCurrent {
     }
 }
 
-impl<'r, T> CursorEndpoint<'r, T>
+impl<'r, T> OperationKernel<'_, 'r, T>
 where
     T: Transport + 'r,
 {

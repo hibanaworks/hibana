@@ -1,5 +1,5 @@
 use super::{
-    CursorEndpoint, FrontierScratchWorkspace, FrontierVisitSet, OfferEntryKey, RecvError,
+    FrontierScratchWorkspace, FrontierVisitSet, OfferEntryKey, OperationKernel, RecvError,
     RecvResult, Transport,
 };
 
@@ -10,7 +10,7 @@ use self::model::{
     OfferAlignmentCandidateInput, OfferAlignmentDecision, ProgressSiblingPresence,
 };
 
-impl<'r, T> CursorEndpoint<'r, T>
+impl<'r, T> OperationKernel<'_, 'r, T>
 where
     T: Transport + 'r,
 {
@@ -20,10 +20,10 @@ where
         scratch: &mut FrontierScratchWorkspace<'_>,
     ) -> RecvResult<crate::global::const_dsl::ScopeId> {
         loop {
-            let node_scope = self.cursor.node_scope_id();
+            let node_scope = self.progress.cursor.node_scope_id();
             if node_scope.is_none()
-                && let Some(entry_idx) = self.cursor.first_pending_step_index()
-                && entry_idx != self.cursor.index()
+                && let Some(entry_idx) = self.progress.cursor.first_pending_step_index()
+                && entry_idx != self.progress.cursor.index()
             {
                 self.commit_offer_alignment_realign(entry_idx, visited)?;
                 continue;
@@ -31,21 +31,22 @@ where
             let current_scope = self.current_offer_scope_id();
             if current_scope != node_scope
                 && !self
+                    .progress
                     .cursor
                     .route_offer_entry_cursor_position(
                         current_scope,
-                        self.cursor.index(),
+                        self.progress.cursor.index(),
                         self.preview_live_selected_arm_for_scope(current_scope),
                     )
                     .is_some_and(|position| position.is_at_entry())
                 && let Some(entry_idx) = self.route_scope_offer_entry_index(current_scope)
-                && entry_idx != self.cursor.index()
+                && entry_idx != self.progress.cursor.index()
             {
                 self.commit_offer_alignment_realign(entry_idx, visited)?;
                 continue;
             }
             let node_scope = current_scope;
-            let current_idx = self.cursor.index();
+            let current_idx = self.progress.cursor.index();
             let mut current_frontier_state =
                 self.current_frontier_selection_state(node_scope, current_idx);
             let current_frontier = current_frontier_state.frontier;
@@ -58,7 +59,11 @@ where
             // still yield to enabled parallel resolver work.
             let current_scope_selected = self.selected_live_arm_for_scope(node_scope).is_some()
                 || (current_scope_meta.is_some_and(|meta| meta.is_controller())
-                    && self.cursor.route_scope_resolver(node_scope).is_none()
+                    && self
+                        .progress
+                        .cursor
+                        .route_scope_resolver(node_scope)
+                        .is_none()
                     && self.selected_arm_for_scope(node_scope).is_some());
             if current_scope_selected
                 && current_scope_meta.is_some_and(|meta| meta.is_route_entry())
@@ -106,7 +111,12 @@ where
                 CurrentOfferEntry::NonRoute
             };
             let current_authority = if current_scope_meta.is_controller() {
-                if self.cursor.route_scope_resolver(node_scope).is_some() {
+                if self
+                    .progress
+                    .cursor
+                    .route_scope_resolver(node_scope)
+                    .is_some()
+                {
                     CurrentOfferAuthority::DynamicController
                 } else {
                     CurrentOfferAuthority::Controller
@@ -158,7 +168,7 @@ where
         entry_idx: usize,
         visited: &mut FrontierVisitSet,
     ) -> RecvResult<()> {
-        let current_idx = self.cursor.index();
+        let current_idx = self.progress.cursor.index();
         if entry_idx == current_idx || visited.contains(current_idx) {
             return Err(RecvError::PhaseInvariant);
         }

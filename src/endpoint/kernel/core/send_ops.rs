@@ -1,5 +1,5 @@
 use super::{
-    CursorEndpoint, CursorInvariantError, PendingSendIo, Poll, SendCommitOutcome, SendCommitPlan,
+    CursorInvariantError, OperationKernel, PendingSendIo, Poll, SendCommitOutcome, SendCommitPlan,
     SendCommitProof, SendError, SendInitOutcome, SendMeta, SendProgressCommitPlan, SendResult,
     SendRouteAudit, SendRouteAuthority, SendRuntimeDesc, StateIndex, TapFrameMeta, Transport, ids,
     lane_port,
@@ -8,7 +8,7 @@ use crate::global::typestate::state_index_to_usize;
 
 mod route_evidence;
 
-impl<'r, T> CursorEndpoint<'r, T>
+impl<'r, T> OperationKernel<'_, 'r, T>
 where
     T: Transport + 'r,
 {
@@ -21,9 +21,9 @@ where
     ) -> SendResult<SendProgressCommitPlan> {
         let preview_idx = match preview_cursor_index {
             Some(index) => state_index_to_usize(index),
-            None => self.cursor.index(),
+            None => self.progress.cursor.index(),
         };
-        let preview_conflict = self.cursor.event_conflict_for_index(preview_idx);
+        let preview_conflict = self.progress.cursor.event_conflict_for_index(preview_idx);
         let route_rows = match route_authority {
             SendRouteAuthority::None => super::SelectedRouteCommitRowsRef::EMPTY,
             SendRouteAuthority::Direct {
@@ -47,7 +47,7 @@ where
             }
             let mut row_idx = 0usize;
             while row_idx < route_rows.len() {
-                if let Some(row) = route_rows.get(&self.cursor, row_idx)
+                if let Some(row) = route_rows.get(&self.progress.cursor, row_idx)
                     && row.scope() == scope
                 {
                     return Some(row.selected_arm());
@@ -58,14 +58,16 @@ where
                 meta.selected_route_arm
             } else {
                 let mut committed = |candidate| self.selected_arm_for_scope(candidate);
-                self.cursor.selected_arm_for_reentry_preview_conflict(
-                    scope,
-                    preview_conflict,
-                    &mut committed,
-                )
+                self.progress
+                    .cursor
+                    .selected_arm_for_reentry_preview_conflict(
+                        scope,
+                        preview_conflict,
+                        &mut committed,
+                    )
             }
         };
-        let enabled = match self.cursor.event_enabled(
+        let enabled = match self.progress.cursor.event_enabled(
             preview_idx,
             crate::global::typestate::EventCommitMeta::from(meta),
             &mut selected_arm,
@@ -75,26 +77,31 @@ where
         };
         let current_route_scope = meta.route_scope;
         let current_route_arm = meta.selected_route_arm;
-        let reentry_cursor = self.cursor.send_reentry_cursor_step(meta, |scope| {
-            let mut row_idx = 0usize;
-            while row_idx < route_rows.len() {
-                if let Some(row) = route_rows.get(&self.cursor, row_idx)
-                    && row.scope() == scope
-                {
-                    return Some(row.selected_arm());
+        let reentry_cursor = self
+            .progress
+            .cursor
+            .send_reentry_cursor_step(meta, |scope| {
+                let mut row_idx = 0usize;
+                while row_idx < route_rows.len() {
+                    if let Some(row) = route_rows.get(&self.progress.cursor, row_idx)
+                        && row.scope() == scope
+                    {
+                        return Some(row.selected_arm());
+                    }
+                    row_idx += 1;
                 }
-                row_idx += 1;
-            }
-            if scope == current_route_scope {
-                return current_route_arm;
-            }
-            let mut committed = |candidate| self.selected_arm_for_scope(candidate);
-            self.cursor.selected_arm_for_reentry_preview_conflict(
-                scope,
-                preview_conflict,
-                &mut committed,
-            )
-        });
+                if scope == current_route_scope {
+                    return current_route_arm;
+                }
+                let mut committed = |candidate| self.selected_arm_for_scope(candidate);
+                self.progress
+                    .cursor
+                    .selected_arm_for_reentry_preview_conflict(
+                        scope,
+                        preview_conflict,
+                        &mut committed,
+                    )
+            });
         let delta = super::CommitDelta::from_meta(
             meta,
             route_rows,
@@ -203,7 +210,7 @@ where
 
         let preview_idx = match preview_cursor_index {
             Some(index) => state_index_to_usize(index),
-            None => self.cursor.index(),
+            None => self.progress.cursor.index(),
         };
         self.verify_send_route_authority(
             &meta,
@@ -290,7 +297,7 @@ where
         let lane = event.lane();
         let lane_wire = self.port_for_lane(lane as usize).lane().as_wire();
         let logical_meta = TapFrameMeta::new(
-            self.sid.raw(),
+            self.progress.sid.raw(),
             lane_wire,
             self.public_header.role(),
             event.event_label(),

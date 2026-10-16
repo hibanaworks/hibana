@@ -2,7 +2,7 @@
 
 use core::task::Poll;
 
-use super::core::CursorEndpoint;
+use super::core::OperationKernel;
 use crate::{
     endpoint::kernel::lane_port::{self, FrameMismatch},
     endpoint::{RecvError, RecvResult},
@@ -10,7 +10,7 @@ use crate::{
     transport::{Transport, TransportError},
 };
 
-impl<'r, T> CursorEndpoint<'r, T>
+impl<'r, T> OperationKernel<'_, 'r, T>
 where
     T: Transport + 'r,
 {
@@ -23,7 +23,7 @@ where
         mismatch: FrameMismatch,
     ) {
         let port = self.port_for_lane(lane_idx);
-        let event = mismatch.tap_event(self.sid.raw(), lane_wire);
+        let event = mismatch.tap_event(self.progress.sid.raw(), lane_wire);
         crate::observe::core::emit(port.tap(), event);
     }
 
@@ -50,7 +50,7 @@ where
         let transport_poll = lane_port::poll_recv_frame_preamble(
             pending_recv,
             port,
-            self.sid.raw(),
+            self.progress.sid.raw(),
             lane_wire,
             self.public_header.role(),
             cx,
@@ -87,7 +87,7 @@ where
                         lane_idx,
                         lane_wire,
                         lane_port::FrameMismatch::headerless_preamble(
-                            self.sid.raw(),
+                            self.progress.sid.raw(),
                             lane_wire,
                             self.public_header.role(),
                         ),
@@ -138,7 +138,7 @@ where
         frame: lane_port::PreambleFrame<'r>,
     ) -> RecvResult<lane_port::ReceivedFrame<'r>> {
         let observed = match frame.preamble_observation(
-            self.sid.raw(),
+            self.progress.sid.raw(),
             lane_wire,
             self.public_header.role(),
         ) {
@@ -146,7 +146,7 @@ where
             lane_port::PreambleObservation::Deterministic => None,
         };
         match frame.accept_parts(
-            self.sid.raw(),
+            self.progress.sid.raw(),
             self.public_header.role(),
             source_role,
             frame_label,
@@ -178,7 +178,7 @@ where
             .with_causal_key(crate::observe::core::TapEvent::make_causal_key(
                 lane_wire, reason,
             ))
-            .with_arg0(self.sid.raw())
+            .with_arg0(self.progress.sid.raw())
             .with_arg1(u32::from(lane_wire));
         crate::observe::core::emit(port.tap(), event);
     }

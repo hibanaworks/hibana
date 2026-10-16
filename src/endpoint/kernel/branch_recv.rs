@@ -10,7 +10,7 @@ pub(crate) use state::BranchRecvState;
 use super::decision_state::RouteState;
 use super::{
     core::{
-        CursorEndpoint,
+        OperationKernel,
         prepare_descriptor_checked_recv_reentry_rows_from_resident_route_commit_range,
         scope_slot_for_route_from_cursor,
     },

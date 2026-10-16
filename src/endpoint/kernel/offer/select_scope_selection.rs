@@ -1,9 +1,9 @@
 use super::{
-    CursorEndpoint, OfferEntryPosition, OfferScopeSelection, RecvError, RecvResult, ScopeId,
+    OfferEntryPosition, OfferScopeSelection, OperationKernel, RecvError, RecvResult, ScopeId,
     Transport,
 };
 
-impl<'r, T> CursorEndpoint<'r, T>
+impl<'r, T> OperationKernel<'_, 'r, T>
 where
     T: Transport + 'r,
 {
@@ -29,33 +29,36 @@ where
         selected_arm: Option<u8>,
     ) -> RecvResult<OfferScopeSelection> {
         let lane_idx = usize::from(offer_lane);
-        if lane_idx >= self.cursor.logical_lane_count() {
+        if lane_idx >= self.progress.cursor.logical_lane_count() {
             return Err(RecvError::PhaseInvariant);
         }
-        if !self
-            .cursor
-            .route_offer_entry_allows_current(scope_id, current_idx, selected_arm)
-        {
+        if !self.progress.cursor.route_offer_entry_allows_current(
+            scope_id,
+            current_idx,
+            selected_arm,
+        ) {
             return Err(RecvError::PhaseInvariant);
         }
         let offer_lanes = self.offer_lane_set_for_scope(scope_id);
         if !offer_lanes.contains(lane_idx) {
             return Err(RecvError::PhaseInvariant);
         }
-        let entry_position = if crate::invariant_some(
-            self.cursor
-                .route_offer_entry_cursor_position(scope_id, current_idx, selected_arm),
-        )
-        .is_at_entry()
-        {
-            OfferEntryPosition::RouteEntry
-        } else {
-            OfferEntryPosition::AfterRouteEntry
-        };
+        let entry_position =
+            if crate::invariant_some(self.progress.cursor.route_offer_entry_cursor_position(
+                scope_id,
+                current_idx,
+                selected_arm,
+            ))
+            .is_at_entry()
+            {
+                OfferEntryPosition::RouteEntry
+            } else {
+                OfferEntryPosition::AfterRouteEntry
+            };
         Ok(OfferScopeSelection {
             scope_id,
-            frontier_parallel_root: CursorEndpoint::<T>::parallel_scope_root(
-                &self.cursor,
+            frontier_parallel_root: OperationKernel::<T>::parallel_scope_root(
+                &self.progress.cursor,
                 scope_id,
             ),
             offer_lane,

@@ -1,5 +1,5 @@
 use super::{
-    core::{CursorEndpoint, PreparedCommitDelta},
+    core::{OperationKernel, PreparedCommitDelta},
     lane_port,
     offer::BranchMeta,
 };
@@ -128,7 +128,7 @@ impl<'r> RecvCommitPlan<'r> {
     }
 }
 
-impl<'r, T> CursorEndpoint<'r, T>
+impl<'r, T> OperationKernel<'_, 'r, T>
 where
     T: Transport + 'r,
 {
@@ -159,7 +159,7 @@ where
         match kind {
             RecvCommitPlanKind::Direct => {
                 let endpoint_meta = TapFrameMeta::new(
-                    self.sid.raw(),
+                    self.progress.sid.raw(),
                     event.lane,
                     self.public_header.role(),
                     event.label,
@@ -171,7 +171,7 @@ where
                 let committed = self.commit_prepared_delta(delta);
                 self.publish_branch_preview_commit_plan(branch, &committed);
                 let endpoint_meta = TapFrameMeta::new(
-                    self.sid.raw(),
+                    self.progress.sid.raw(),
                     event.lane,
                     self.public_header.role(),
                     event.label,

@@ -1,10 +1,10 @@
 use super::super::evidence_store::ReadyArmEvidence;
 use super::{
-    Arm, ControlFlow, CurrentFrontierSelectionState, CurrentScopeSelectionMeta, CursorEndpoint,
+    Arm, ControlFlow, CurrentFrontierSelectionState, CurrentScopeSelectionMeta,
     FrontierDeferOutcome, FrontierProgressSelection, FrontierScratchWorkspace, FrontierVisitSet,
     IngressEvidenceState, ObservedIngressSelection, OfferEntryKey, OfferEvidenceOutcome,
-    OfferProgressState, OfferScopeSelection, OfferStagedIngress, Poll, RecvError, RecvResult,
-    ScopeId, Transport, lane_port, state_index_to_usize,
+    OfferProgressState, OfferScopeSelection, OfferStagedIngress, OperationKernel, Poll, RecvError,
+    RecvResult, ScopeId, Transport, lane_port, state_index_to_usize,
 };
 use crate::global::typestate::InboundFrameKey;
 
@@ -14,18 +14,23 @@ pub(super) struct FrontierDeferRequest {
     pub(super) ingress: IngressEvidenceState,
 }
 
-impl<'r, T> CursorEndpoint<'r, T>
+impl<'r, T> OperationKernel<'_, 'r, T>
 where
     T: Transport + 'r,
 {
     #[inline]
-    pub(super) fn offer_refresh_mask(endpoint: &CursorEndpoint<'r, T>, lane_idx: usize) -> bool {
-        endpoint.cursor.lane_has_pending_step(lane_idx)
+    pub(super) fn offer_refresh_mask(
+        endpoint: &OperationKernel<'_, 'r, T>,
+        lane_idx: usize,
+    ) -> bool {
+        endpoint.progress.cursor.lane_has_pending_step(lane_idx)
             || endpoint
+                .progress
                 .decision_state
                 .lane_reentry_lanes()
                 .contains(lane_idx)
             || endpoint
+                .progress
                 .decision_state
                 .lane_offer_reentry_lanes()
                 .contains(lane_idx)
@@ -55,16 +60,17 @@ where
             return Ok(ObservedIngressSelection::Branch(selection));
         }
         let node_scope = self.align_cursor_to_selected_scope(frontier_visited, scratch)?;
-        let current_idx = self.cursor.index();
+        let current_idx = self.progress.cursor.index();
         let Some(scope_id) = self
+            .progress
             .cursor
             .route_scope_for_offer_node(node_scope, current_idx)
         else {
             return Err(RecvError::PhaseInvariant);
         };
-        if !self.cursor.route_offer_entry_allows_current(
+        if !self.progress.cursor.route_offer_entry_allows_current(
             scope_id,
-            self.cursor.index(),
+            self.progress.cursor.index(),
             self.preview_live_selected_arm_for_scope(scope_id),
         ) {
             return Err(RecvError::PhaseInvariant);
@@ -74,7 +80,7 @@ where
         let current_entry_active = current_active_entry.is_some();
         // Offer-lane choice remains local to the selected route scope.
         let offer_lanes = self.offer_lane_set_for_scope(scope_id);
-        let lane_limit = self.cursor.logical_lane_count();
+        let lane_limit = self.progress.cursor.logical_lane_count();
         let carried_offer_lane = carried_lane
             .map(usize::from)
             .filter(|&lane_idx| lane_idx < lane_limit && offer_lanes.contains(lane_idx))
@@ -116,6 +122,7 @@ where
         key: InboundFrameKey,
     ) -> RecvResult<bool> {
         let Some(arm) = self
+            .progress
             .cursor
             .passive_descendant_dispatch_arm_for_key(scope_id, key)
             .map_err(|_| RecvError::PhaseInvariant)?
@@ -149,9 +156,10 @@ where
     ) -> RecvResult<()> {
         let mut current_scope = scope_id;
         let mut depth = 0usize;
-        let depth_bound = self.cursor.route_chain_bound();
+        let depth_bound = self.progress.cursor.route_chain_bound();
         while depth < depth_bound {
             let Some(arm) = self
+                .progress
                 .cursor
                 .passive_descendant_dispatch_arm_for_key(current_scope, key)
                 .map_err(|_| RecvError::PhaseInvariant)?
@@ -160,7 +168,10 @@ where
             };
             let arm = Arm::from_raw(arm);
             self.mark_scope_ready_arm(current_scope, arm);
-            let Some(child_scope) = self.cursor.passive_child_scope(current_scope, arm.as_u8())
+            let Some(child_scope) = self
+                .progress
+                .cursor
+                .passive_child_scope(current_scope, arm.as_u8())
             else {
                 break;
             };
@@ -187,9 +198,9 @@ where
             OfferEvidenceOutcome::NewEvidence => Poll::Ready(Ok(FrontierDeferOutcome::Continue)),
             OfferEvidenceOutcome::Pending => Poll::Pending,
         };
-        let current_entry_idx = self.cursor.index();
+        let current_entry_idx = self.progress.cursor.index();
         visited.record(current_entry_idx);
-        let current_is_controller = self.cursor.is_route_controller(scope_id);
+        let current_is_controller = self.progress.cursor.is_route_controller(scope_id);
         let mut selection = FrontierProgressSelection::new(
             scope_id,
             current_entry_idx,
@@ -197,8 +208,8 @@ where
                 Some(root) => root,
                 None => ScopeId::none(),
             },
-            CursorEndpoint::<T>::frontier_kind_for_cursor(
-                &self.cursor,
+            OperationKernel::<T>::frontier_kind_for_cursor(
+                &self.progress.cursor,
                 scope_id,
                 current_is_controller,
             ),
@@ -216,7 +227,7 @@ where
         };
         let candidate_entry = candidate.entry.as_usize();
         visited.record(candidate_entry);
-        if candidate_entry != self.cursor.index() {
+        if candidate_entry != self.progress.cursor.index() {
             self.commit_cursor_realign_index(candidate_entry)
                 .map_err(|_| RecvError::PhaseInvariant)?;
         }
@@ -231,10 +242,10 @@ where
         if let Some(meta) = self.offer_entry_selection_meta(scope_id, current_idx) {
             return Some(meta);
         }
-        if !self.cursor.has_route_scope(scope_id) {
+        if !self.progress.cursor.has_route_scope(scope_id) {
             return Some(CurrentScopeSelectionMeta::EMPTY);
         }
-        let at_route_entry = self.cursor.route_offer_entry_cursor_position(
+        let at_route_entry = self.progress.cursor.route_offer_entry_cursor_position(
             scope_id,
             current_idx,
             self.preview_live_selected_arm_for_scope(scope_id),
@@ -275,18 +286,23 @@ where
                 flags,
             };
         }
-        let current_is_controller = self.cursor.is_route_controller(scope_id);
-        let current_is_dynamic =
-            current_is_controller && self.cursor.route_scope_resolver(scope_id).is_some();
-        let frontier_facts = CursorEndpoint::<T>::frontier_facts_at(
-            &self.cursor,
+        let current_is_controller = self.progress.cursor.is_route_controller(scope_id);
+        let current_is_dynamic = current_is_controller
+            && self
+                .progress
+                .cursor
+                .route_scope_resolver(scope_id)
+                .is_some();
+        let frontier_facts = OperationKernel::<T>::frontier_facts_at(
+            &self.progress.cursor,
             scope_id,
             current_is_controller,
             current_is_dynamic,
             current_idx,
         );
-        let current_parallel = CursorEndpoint::<T>::parallel_scope_root(&self.cursor, scope_id)
-            .filter(|&root| self.root_frontier_has_active_entries(root));
+        let current_parallel =
+            OperationKernel::<T>::parallel_scope_root(&self.progress.cursor, scope_id)
+                .filter(|&root| self.root_frontier_has_active_entries(root));
         let mut flags = 0u8;
         if current_is_controller {
             flags |= CurrentFrontierSelectionState::FLAG_CONTROLLER;
@@ -317,14 +333,14 @@ where
         let progress_lane = match selected_arm {
             Some(arm) => self
                 .route_scope_arm_lane_set_for_scope(selection.scope_id, arm.as_u8())
-                .and_then(|lanes| lanes.first_set(self.cursor.logical_lane_count()))
+                .and_then(|lanes| lanes.first_set(self.progress.cursor.logical_lane_count()))
                 .map(|lane_idx| lane_idx as u8),
             None => Some(selection.offer_lane),
         };
         if let Some(arm) = selected_arm
             && selection.entry_position.is_route_entry()
             && let Some(entry) = materialization_meta.passive_arm_entry(arm)
-            && !self.cursor.is_recv_at(state_index_to_usize(entry))
+            && !self.progress.cursor.is_recv_at(state_index_to_usize(entry))
         {
             return Poll::Ready(Ok(()));
         }

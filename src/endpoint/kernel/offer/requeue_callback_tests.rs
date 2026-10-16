@@ -5,7 +5,7 @@ use core::{
 use std::rc::Rc;
 
 use crate::{
-    endpoint::kernel::{CursorEndpoint, lane_port},
+    endpoint::kernel::{ResidentActor, lane_port},
     g::{self, Msg},
     runtime::{
         SessionKitStorage,
@@ -165,42 +165,50 @@ fn transport_requeue_callback_reentry_revalidates_generation() {
     let target = rendezvous.enter(sid, &role1).expect("target");
     state.arm(&mut peer);
 
-    let kernel_ptr = target
+    let actor_ptr = target
         .owner
         .ptr
-        .cast::<CursorEndpoint<'_, ReentrantRequeueTransport>>();
-    let kernel = unsafe {
+        .cast::<ResidentActor<'_, ReentrantRequeueTransport>>();
+    let actor = unsafe {
         // SAFETY: the public endpoint header is the first `repr(C)` field of
         // this exact role/transport kernel, and `target` owns it exclusively.
-        &mut *kernel_ptr.as_ptr()
+        actor_ptr.as_ref()
     };
-    let lane_idx = kernel.primary_lane;
-    let lane_wire = kernel.port_for_lane(lane_idx).lane().as_wire();
-    let mut pending_recv = lane_port::PendingRecv::new();
-    let waker = futures::task::noop_waker_ref();
-    let mut context = Context::from_waker(waker);
-    let frame = match kernel.poll_received_framed_transport_frame_for_lane(
-        &mut pending_recv,
-        lane_idx,
-        lane_wire,
-        &mut context,
-    ) {
-        Poll::Ready(Ok(frame)) => frame,
-        Poll::Ready(Err(error)) => panic!("receive frame failed: {error:?}"),
-        Poll::Pending => panic!("test transport must return one frame"),
-    };
+    let mut operation_lease = actor
+        .public_header
+        .try_operation_lease()
+        .expect("kernel lease");
+    {
+        let mut kernel = actor.borrow_kernel(&mut operation_lease);
+        let lane_idx = kernel.io.primary_lane;
+        let lane_wire = kernel.port_for_lane(lane_idx).lane().as_wire();
+        let mut pending_recv = lane_port::PendingRecv::new();
+        let waker = futures::task::noop_waker_ref();
+        let mut context = Context::from_waker(waker);
+        let frame = match kernel.poll_received_framed_transport_frame_for_lane(
+            &mut pending_recv,
+            lane_idx,
+            lane_wire,
+            &mut context,
+        ) {
+            Poll::Ready(Ok(frame)) => frame,
+            Poll::Ready(Err(error)) => panic!("receive frame failed: {error:?}"),
+            Poll::Pending => panic!("test transport must return one frame"),
+        };
 
-    let error = kernel
-        .requeue_offer_transport_payload(frame)
-        .expect_err("requeue callback must expose the peer-drop session fault");
+        let error = kernel
+            .requeue_offer_transport_payload(frame)
+            .expect_err("requeue callback must expose the peer-drop session fault");
 
-    assert!(state.fired.get());
-    assert!(peer.is_none());
-    assert!(matches!(
-        error,
-        crate::endpoint::RecvError::SessionFault(
-            crate::rendezvous::SessionFaultKind::EndpointDropped
-        )
-    ));
+        assert!(state.fired.get());
+        assert!(peer.is_none());
+        assert!(matches!(
+            error,
+            crate::endpoint::RecvError::SessionFault(
+                crate::rendezvous::SessionFaultKind::EndpointDropped
+            )
+        ));
+    }
+    drop(operation_lease);
     drop(target);
 }

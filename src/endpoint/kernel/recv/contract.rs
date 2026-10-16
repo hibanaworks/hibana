@@ -1,5 +1,5 @@
 use crate::{
-    endpoint::kernel::core::CursorEndpoint,
+    endpoint::kernel::core::OperationKernel,
     endpoint::{RecvError, RecvResult},
     global::{
         role_program::{
@@ -10,7 +10,7 @@ use crate::{
     transport::Transport,
 };
 
-impl<'r, T> CursorEndpoint<'r, T>
+impl<'r, T> OperationKernel<'_, 'r, T>
 where
     T: Transport + 'r,
 {
@@ -23,22 +23,23 @@ where
         words.fill(0);
         let mut expected_schema = None;
         let mut idx = 0usize;
-        while idx < self.cursor.local_steps_len() {
-            if let Some(meta) = self.cursor.try_recv_meta_at(idx)
+        while idx < self.progress.cursor.local_steps_len() {
+            if let Some(meta) = self.progress.cursor.try_recv_meta_at(idx)
                 && meta.label == target_label
                 && !meta.origin.is_session()
             {
-                let preview_conflict = self.cursor.event_conflict_for_index(idx);
+                let preview_conflict = self.progress.cursor.event_conflict_for_index(idx);
                 let mut selected_arm =
                     |scope, view| self.selected_arm_for_recv_event(preview_conflict, scope, view);
                 if self
+                    .progress
                     .cursor
                     .event_enabled(idx, EventCommitMeta::from(meta), &mut selected_arm)
                     .is_ok()
                 {
                     if meta.payload_schema == target_schema {
                         let lane = meta.lane as usize;
-                        if lane >= self.cursor.logical_lane_count() {
+                        if lane >= self.progress.cursor.logical_lane_count() {
                             return Err(RecvError::PhaseInvariant);
                         }
                         let (word, bit) = lane_word_index(lane);
@@ -58,10 +59,13 @@ where
         let lanes = unsafe {
             LaneSetView::from_parts(
                 words.as_ptr(),
-                lane_word_count(self.cursor.logical_lane_count()),
+                lane_word_count(self.progress.cursor.logical_lane_count()),
             )
         };
-        if lanes.first_set(self.cursor.logical_lane_count()).is_some() {
+        if lanes
+            .first_set(self.progress.cursor.logical_lane_count())
+            .is_some()
+        {
             return Ok(lanes);
         }
         match expected_schema {

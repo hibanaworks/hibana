@@ -19,6 +19,9 @@ mod recv;
 mod route;
 mod send;
 
+#[cfg(all(test, hibana_repo_tests))]
+mod tests;
+
 #[derive(Clone, Copy)]
 pub(crate) struct RawPayload {
     bytes: *const [u8],
@@ -142,17 +145,24 @@ impl WaiterTransfer {
 #[repr(C)]
 pub(crate) struct KernelEndpointHeader<'r> {
     ops: EndpointOps<'r>,
-    generation: u32,
+    generation: core::cell::Cell<u32>,
     role: u8,
+    operation_access: &'r core::cell::Cell<crate::rendezvous::core::RendezvousAccessState>,
 }
 
 impl<'r> KernelEndpointHeader<'r> {
     #[inline(always)]
-    pub(crate) const fn new(ops: EndpointOps<'r>, generation: u32, role: u8) -> Self {
+    pub(crate) const fn new(
+        ops: EndpointOps<'r>,
+        generation: u32,
+        role: u8,
+        operation_access: &'r core::cell::Cell<crate::rendezvous::core::RendezvousAccessState>,
+    ) -> Self {
         Self {
             ops,
-            generation,
+            generation: core::cell::Cell::new(generation),
             role,
+            operation_access,
         }
     }
 
@@ -163,7 +173,7 @@ impl<'r> KernelEndpointHeader<'r> {
 
     #[inline(always)]
     pub(crate) const fn generation(&self) -> u32 {
-        self.generation
+        self.generation.get()
     }
 
     #[inline(always)]
@@ -172,8 +182,21 @@ impl<'r> KernelEndpointHeader<'r> {
     }
 
     #[inline(always)]
-    pub(crate) fn retire_generation(&mut self) {
-        self.generation = 0;
+    pub(crate) fn retire_generation(&self) {
+        self.generation.set(0);
+    }
+
+    pub(crate) fn try_operation_lease(
+        &self,
+    ) -> Option<crate::rendezvous::core::EndpointOperationLease<'r>> {
+        crate::rendezvous::core::EndpointOperationLease::try_acquire(self.operation_access)
+    }
+
+    pub(crate) fn is_protected_by(
+        &self,
+        lease: &crate::rendezvous::core::EndpointOperationLease<'_>,
+    ) -> bool {
+        lease.protects(self.operation_access)
     }
 }
 
@@ -266,10 +289,10 @@ impl<'cfg, T> crate::runtime::SessionKit<'cfg, T>
 where
     T: crate::transport::Transport + 'cfg,
 {
-    unsafe fn public_endpoint_ptr_from_header<'r>(
+    unsafe fn resident_actor_from_header<'r>(
         ptr: NonNull<()>,
         handle: EndpointHandle,
-    ) -> Option<*mut crate::endpoint::kernel::CursorEndpoint<'r, T>>
+    ) -> Option<&'r crate::endpoint::kernel::ResidentActor<'r, T>>
     where
         'cfg: 'r,
     {
@@ -277,29 +300,12 @@ where
         if !handle.matches_header(header) {
             return None;
         }
-        Some(
-            ptr.cast::<crate::endpoint::kernel::CursorEndpoint<'r, T>>()
-                .as_ptr(),
-        )
-    }
-
-    unsafe fn public_endpoint_mut_from_header<'r>(
-        ptr: NonNull<()>,
-        handle: EndpointHandle,
-    ) -> Option<&'r mut crate::endpoint::kernel::CursorEndpoint<'r, T>>
-    where
-        'cfg: 'r,
-    {
-        let endpoint = unsafe {
-            // SAFETY: this helper preserves the same header tag, generation,
-            // and validated role preflight as the raw pointer projection above.
-            Self::public_endpoint_ptr_from_header::<'r>(ptr, handle)?
-        };
         Some(unsafe {
-            // SAFETY: public endpoint raw ops enter through a unique operation
-            // table callback; the carrier owns the pinned endpoint storage for
-            // the duration of this projection.
-            &mut *endpoint
+            // SAFETY: the immutable header is the first repr(C) actor field.
+            // Mutable progress and I/O are UnsafeCell-owned, so this shared
+            // preflight never borrows the kernel before its lease is acquired.
+            ptr.cast::<crate::endpoint::kernel::ResidentActor<'r, T>>()
+                .as_ref()
         })
     }
 
@@ -307,22 +313,23 @@ where
         ptr: NonNull<()>,
         handle: EndpointHandle,
         missing: R,
-        f: impl FnOnce(&mut crate::endpoint::kernel::CursorEndpoint<'r, T>) -> R,
+        f: impl FnOnce(&mut crate::endpoint::kernel::OperationKernel<'_, 'r, T>) -> R,
     ) -> R
     where
         'cfg: 'r,
     {
-        let Some(endpoint) = (unsafe {
+        let Some(actor) = (unsafe {
             // SAFETY: this callback-level helper applies the same carrier tag,
             // generation, and validated role preflight as direct raw endpoint projection.
-            Self::public_endpoint_mut_from_header::<'r>(ptr, handle)
+            Self::resident_actor_from_header::<'r>(ptr, handle)
         }) else {
             return missing;
         };
-        let Some(_operation_lease) = endpoint.try_public_operation_lease() else {
+        let Some(mut operation_lease) = actor.public_header.try_operation_lease() else {
             return missing;
         };
-        f(endpoint)
+        let mut kernel = actor.borrow_kernel(&mut operation_lease);
+        f(&mut kernel)
     }
 
     pub(crate) const fn endpoint_ops() -> EndpointOps<'cfg> {

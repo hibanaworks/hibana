@@ -173,10 +173,10 @@ mod public_poll;
 mod recv;
 mod recv_commit_plan;
 
-pub(crate) use self::core::cursor_endpoint_storage_layout;
+pub(crate) use self::core::actor_storage_layout;
 pub(super) use self::core::*;
 pub(crate) use self::core::{
-    CursorEndpoint, PublicSlotOwnership, SendInit, SendPreview, SendRuntimeDesc,
+    OperationKernel, PublicSlotOwnership, ResidentActor, SendInit, SendPreview, SendRuntimeDesc,
 };
 pub(crate) use self::frontier::FrontierScratchLayout;
 pub(crate) use self::lane_port::RawSendPayload;

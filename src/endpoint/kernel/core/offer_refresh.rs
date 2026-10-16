@@ -1,9 +1,10 @@
 use super::{
-    ActiveEntrySet, ActiveEntrySlot, CursorEndpoint, CursorInvariantError, CursorRefresh,
-    FrontierScratchSectionLease, LaneOfferState, OfferEntryKey, ReentryScopeLiveness, ScopeId,
-    StateIndex, Transport, frontier_global_active_entries_view, state_index_to_usize,
+    ActiveEntrySet, ActiveEntrySlot, CursorInvariantError, CursorRefresh,
+    FrontierScratchSectionLease, LaneOfferState, OfferEntryKey, OperationKernel,
+    ReentryScopeLiveness, ScopeId, StateIndex, Transport, frontier_global_active_entries_view,
+    state_index_to_usize,
 };
-impl<'r, T> CursorEndpoint<'r, T>
+impl<'r, T> OperationKernel<'_, 'r, T>
 where
     T: Transport + 'r,
 {
@@ -12,7 +13,9 @@ where
         &self,
         root: ScopeId,
     ) -> bool {
-        self.frontier_state.root_frontier_has_active_entries(root)
+        self.progress
+            .frontier_state
+            .root_frontier_has_active_entries(root)
     }
 
     #[inline]
@@ -20,7 +23,9 @@ where
         &self,
         root: ScopeId,
     ) -> ActiveEntrySet<'_> {
-        self.frontier_state.root_frontier_active_entries(root)
+        self.progress
+            .frontier_state
+            .root_frontier_active_entries(root)
     }
 
     #[inline]
@@ -50,14 +55,18 @@ where
         &mut self,
         info: LaneOfferState,
     ) {
-        self.frontier_state.detach_lane_from_root_frontier(info);
+        self.progress
+            .frontier_state
+            .detach_lane_from_root_frontier(info);
     }
 
     pub(in crate::endpoint::kernel) fn attach_lane_to_root_frontier(
         &mut self,
         info: LaneOfferState,
     ) {
-        self.frontier_state.attach_lane_to_root_frontier(info);
+        self.progress
+            .frontier_state
+            .attach_lane_to_root_frontier(info);
     }
 
     #[inline]
@@ -67,7 +76,8 @@ where
         root: ScopeId,
         lane_idx: u8,
     ) {
-        self.frontier_state
+        self.progress
+            .frontier_state
             .attach_offer_entry_to_root_frontier(key, root, lane_idx);
     }
 
@@ -77,7 +87,8 @@ where
         key: OfferEntryKey,
         root: ScopeId,
     ) {
-        self.frontier_state
+        self.progress
+            .frontier_state
             .detach_offer_entry_from_root_frontier(key, root);
     }
 
@@ -96,33 +107,35 @@ where
         &self,
         lane_idx: usize,
     ) -> Option<LaneOfferState> {
-        if lane_idx >= self.cursor.logical_lane_count() {
+        if lane_idx >= self.progress.cursor.logical_lane_count() {
             return None;
         }
         let reentry_offer = self.active_reentry_offer_for_lane(lane_idx);
-        let (entry_idx, scope_id) = if let Some(idx) = self.cursor.index_for_lane_step(lane_idx) {
-            let scope_id = self.cursor.node_scope_id_at(idx);
-            // A completed enclosing visit owns reentry; the old child scope
-            // cannot keep the lane inside that visit's already chosen arm.
-            if let Some((reentry_scope, entry)) = reentry_offer
-                && self.selected_live_arm_for_scope(reentry_scope).is_none()
-                && self
-                    .cursor
-                    .route_scope_conflict_arm_for_scope(scope_id, reentry_scope)
-                    .is_some()
-            {
-                (state_index_to_usize(entry), reentry_scope)
-            } else if self.cursor.has_route_scope(scope_id) {
-                (idx, scope_id)
+        let (entry_idx, scope_id) =
+            if let Some(idx) = self.progress.cursor.index_for_lane_step(lane_idx) {
+                let scope_id = self.progress.cursor.node_scope_id_at(idx);
+                // A completed enclosing visit owns reentry; the old child scope
+                // cannot keep the lane inside that visit's already chosen arm.
+                if let Some((reentry_scope, entry)) = reentry_offer
+                    && self.selected_live_arm_for_scope(reentry_scope).is_none()
+                    && self
+                        .progress
+                        .cursor
+                        .route_scope_conflict_arm_for_scope(scope_id, reentry_scope)
+                        .is_some()
+                {
+                    (state_index_to_usize(entry), reentry_scope)
+                } else if self.progress.cursor.has_route_scope(scope_id) {
+                    (idx, scope_id)
+                } else {
+                    let (scope_id, entry) = reentry_offer?;
+                    (state_index_to_usize(entry), scope_id)
+                }
             } else {
                 let (scope_id, entry) = reentry_offer?;
                 (state_index_to_usize(entry), scope_id)
-            }
-        } else {
-            let (scope_id, entry) = reentry_offer?;
-            (state_index_to_usize(entry), scope_id)
-        };
-        let normalized = self.cursor.normalize_lane_offer_entry(
+            };
+        let normalized = self.progress.cursor.normalize_lane_offer_entry(
             scope_id,
             entry_idx,
             |scope| self.selected_live_arm_for_scope(scope),
@@ -130,10 +143,19 @@ where
         )?;
         let scope_id = normalized.scope_id();
         let entry_idx = normalized.entry_idx();
-        let is_controller = self.cursor.is_route_controller(scope_id);
-        let is_dynamic = self.cursor.route_scope_resolver(scope_id).is_some();
-        let frontier_facts =
-            Self::frontier_facts_at(&self.cursor, scope_id, is_controller, is_dynamic, entry_idx);
+        let is_controller = self.progress.cursor.is_route_controller(scope_id);
+        let is_dynamic = self
+            .progress
+            .cursor
+            .route_scope_resolver(scope_id)
+            .is_some();
+        let frontier_facts = Self::frontier_facts_at(
+            &self.progress.cursor,
+            scope_id,
+            is_controller,
+            is_dynamic,
+            entry_idx,
+        );
         let mut flags = 0u8;
         if is_controller {
             flags |= LaneOfferState::FLAG_CONTROLLER;
@@ -144,7 +166,7 @@ where
         if frontier_facts.ready() {
             flags |= LaneOfferState::FLAG_INTRINSIC_READY;
         }
-        let parallel_root = match Self::parallel_scope_root(&self.cursor, scope_id) {
+        let parallel_root = match Self::parallel_scope_root(&self.progress.cursor, scope_id) {
             Some(root) => root,
             None => ScopeId::none(),
         };
@@ -161,27 +183,29 @@ where
         &self,
         lane_idx: usize,
     ) -> Option<(ScopeId, StateIndex)> {
-        if lane_idx >= self.cursor.logical_lane_count() {
+        if lane_idx >= self.progress.cursor.logical_lane_count() {
             return None;
         }
-        let scope = match self
-            .decision_state
-            .active_reentry_scope_for_lane(lane_idx, |scope| {
-                if !self.is_reentry_route(scope) {
-                    return Ok(ReentryScopeLiveness::NotReentry);
-                }
-                let Some(arm) = self.selected_arm_for_scope(scope) else {
-                    return Ok(ReentryScopeLiveness::Incomplete);
-                };
-                Ok(if self.reentrant_selected_arm_complete(scope, arm) {
-                    ReentryScopeLiveness::Complete
-                } else {
-                    ReentryScopeLiveness::Incomplete
-                })
-            }) {
-            Ok(scope) => scope?,
-            Err(CursorInvariantError::INVARIANT) => crate::invariant(),
-        };
-        self.cursor.active_reentry_offer_entry(scope)
+        let scope =
+            match self
+                .progress
+                .decision_state
+                .active_reentry_scope_for_lane(lane_idx, |scope| {
+                    if !self.is_reentry_route(scope) {
+                        return Ok(ReentryScopeLiveness::NotReentry);
+                    }
+                    let Some(arm) = self.selected_arm_for_scope(scope) else {
+                        return Ok(ReentryScopeLiveness::Incomplete);
+                    };
+                    Ok(if self.reentrant_selected_arm_complete(scope, arm) {
+                        ReentryScopeLiveness::Complete
+                    } else {
+                        ReentryScopeLiveness::Incomplete
+                    })
+                }) {
+                Ok(scope) => scope?,
+                Err(CursorInvariantError::INVARIANT) => crate::invariant(),
+            };
+        self.progress.cursor.active_reentry_offer_entry(scope)
     }
 }

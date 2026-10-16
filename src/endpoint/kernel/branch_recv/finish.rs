@@ -1,7 +1,7 @@
 use super::{
-    BranchKind, CursorEndpoint, EndpointRxEventPlan, EventCursor, Payload, Poll, RecvCommitPayload,
-    RecvCommitPlan, RecvError, RecvMeta, RecvResult, RouteState, SelectedRouteCommitRows,
-    StateIndex, Transport, branch_recv_phase_invariant, lane_port,
+    BranchKind, EndpointRxEventPlan, EventCursor, OperationKernel, Payload, Poll,
+    RecvCommitPayload, RecvCommitPlan, RecvError, RecvMeta, RecvResult, RouteState,
+    SelectedRouteCommitRows, StateIndex, Transport, branch_recv_phase_invariant, lane_port,
     prepare_descriptor_checked_recv_reentry_rows_from_resident_route_commit_range,
     scope_slot_for_route_from_cursor, state_index_to_usize,
 };
@@ -12,7 +12,7 @@ use crate::{
     transport::wire::CodecError,
 };
 
-impl<'r, T> CursorEndpoint<'r, T>
+impl<'r, T> OperationKernel<'_, 'r, T>
 where
     T: Transport + 'r,
 {
@@ -21,7 +21,7 @@ where
         logical_label: u8,
         payload_schema: u32,
     ) -> RecvResult<Option<crate::global::typestate::RecvMeta>> {
-        let Some(branch) = self.public_route_branch.as_ref() else {
+        let Some(branch) = self.io.public_route_branch.as_ref() else {
             return Err(branch_recv_phase_invariant());
         };
         let expected = logical_label;
@@ -44,6 +44,7 @@ where
             return Ok(None);
         }
         let meta = self
+            .progress
             .cursor
             .try_recv_meta_at(state_index_to_usize(branch.branch_meta.cursor_index))
             .ok_or_else(branch_recv_phase_invariant)?;
@@ -60,11 +61,13 @@ where
         let cursor_index = state_index_to_usize(branch_meta.cursor_index);
         match branch_meta.kind {
             BranchKind::WireRecv => self
+                .progress
                 .cursor
                 .try_recv_meta_at(cursor_index)
                 .map(|meta| meta.payload_schema)
                 .ok_or_else(branch_recv_phase_invariant),
             BranchKind::LocalAction => self
+                .progress
                 .cursor
                 .try_local_meta_at(cursor_index)
                 .map(|meta| meta.payload_schema)
@@ -85,7 +88,7 @@ where
         prepared_meta: Option<crate::global::typestate::RecvMeta>,
         validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
     ) -> RecvResult<Payload<'r>> {
-        let Some(branch) = self.public_route_branch.as_ref() else {
+        let Some(branch) = self.io.public_route_branch.as_ref() else {
             return Err(branch_recv_phase_invariant());
         };
         let branch_meta = branch.branch_meta;
@@ -126,6 +129,7 @@ where
                 let meta = if let Some(meta) = prepared_meta {
                     meta
                 } else if let Some(meta) = self
+                    .progress
                     .cursor
                     .try_recv_meta_at(state_index_to_usize(branch_meta.cursor_index))
                 {
@@ -138,7 +142,7 @@ where
                 }
 
                 {
-                    let Some(branch) = self.public_route_branch.as_ref() else {
+                    let Some(branch) = self.io.public_route_branch.as_ref() else {
                         return Err(branch_recv_phase_invariant());
                     };
                     let Some(offered_frame) = branch.offered_frame.as_ref() else {
@@ -158,7 +162,7 @@ where
                 let event =
                     EndpointRxEventPlan::branch(branch_meta.lane_wire, label, branch_meta.origin);
                 let frame = {
-                    let Some(branch) = self.public_route_branch.as_mut() else {
+                    let Some(branch) = self.io.public_route_branch.as_mut() else {
                         return Err(branch_recv_phase_invariant());
                     };
                     crate::invariant_some(branch.offered_frame.take()).into_frame()
@@ -189,11 +193,11 @@ where
         let cursor_index = publish_branch.cursor_index;
         let mut frame = Some(frame);
         let result = (|| {
-            let Self {
+            let crate::endpoint::kernel::core::ActorProgress {
                 cursor,
                 decision_state,
                 ..
-            } = self;
+            } = &mut *self.progress;
             let route_rows = SelectedRouteCommitRows::from_seed(route_seed_rows)?;
             let mut route_rows = route_rows;
             Self::collect_branch_recv_reentry_route_rows_from_parts(
@@ -287,19 +291,20 @@ where
         let delta = match kind {
             BranchKind::LocalAction => {
                 let idx = state_index_to_usize(cursor_index);
-                let preview_conflict = self.cursor.event_conflict_for_index(idx);
+                let preview_conflict = self.progress.cursor.event_conflict_for_index(idx);
                 let mut selected_arm = |candidate, view| {
                     if matches!(view, crate::global::typestate::EventArmView::Committed) {
                         return self.selected_arm_for_scope(candidate);
                     }
                     Self::selected_route_arm_from_parts_with_preview(
-                        &self.decision_state,
-                        &self.cursor,
+                        &self.progress.decision_state,
+                        &self.progress.cursor,
                         preview_conflict,
                         candidate,
                     )
                 };
                 let enabled = self
+                    .progress
                     .cursor
                     .event_enabled(idx, event_commit, &mut selected_arm)
                     .map_err(|_| RecvError::PhaseInvariant)?;
@@ -316,7 +321,7 @@ where
                     .map_err(|_| RecvError::PhaseInvariant)?
             }
             BranchKind::TerminalArm => {
-                let next_index = StateIndex::from_usize(self.cursor.index());
+                let next_index = StateIndex::from_usize(self.progress.cursor.index());
                 let delta = CommitDelta::route_rows(
                     route_rows.finish_route_only_for_lane(lane_wire)?,
                     next_index,
@@ -439,13 +444,14 @@ where
     }
 }
 
-impl<'r, T> crate::endpoint::kernel::core::BranchRecvKernelEndpoint<'r> for CursorEndpoint<'r, T>
+impl<'r, T> crate::endpoint::kernel::core::BranchRecvKernelEndpoint<'r>
+    for OperationKernel<'_, 'r, T>
 where
     T: Transport + 'r,
 {
     #[inline]
     fn has_branch_recv_kernel_branch(&self) -> bool {
-        self.public_route_branch.is_some()
+        self.io.public_route_branch.is_some()
     }
 
     #[inline]
@@ -469,7 +475,7 @@ where
             pending_recv,
             lane_idx,
             lane_port::FrameExpectation {
-                session_raw: self.sid.raw(),
+                session_raw: self.progress.sid.raw(),
                 lane_wire: meta.lane,
                 source_role: meta.peer,
                 target_role: self.public_header.role(),
@@ -484,7 +490,7 @@ where
         &mut self,
         frame: lane_port::ReceivedFrame<'r>,
     ) -> RecvResult<()> {
-        let Some(branch) = self.public_route_branch.as_mut() else {
+        let Some(branch) = self.io.public_route_branch.as_mut() else {
             frame.discard_uncommitted();
             return Err(branch_recv_phase_invariant());
         };

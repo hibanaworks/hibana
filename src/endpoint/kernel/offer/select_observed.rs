@@ -1,5 +1,5 @@
 use super::{
-    CursorEndpoint, ObservedIngressSelection, OfferScopeSelection, RecvError, RecvResult,
+    ObservedIngressSelection, OfferScopeSelection, OperationKernel, RecvError, RecvResult,
     Transport, state_index_to_usize,
 };
 use crate::{
@@ -8,7 +8,7 @@ use crate::{
     runtime_core::UniqueMatch,
 };
 
-impl<'r, T> CursorEndpoint<'r, T>
+impl<'r, T> OperationKernel<'_, 'r, T>
 where
     T: Transport + 'r,
 {
@@ -24,26 +24,30 @@ where
         let Some(key) = carried_key else {
             return Ok(None);
         };
-        let current_idx = self.cursor.index();
+        let current_idx = self.progress.cursor.index();
         let mut matched = UniqueMatch::NONE;
         let mut admission_pending = false;
-        for idx in 0..self.cursor.local_steps_len() {
-            let Some(meta) = self.cursor.try_recv_meta_at(idx) else {
+        for idx in 0..self.progress.cursor.local_steps_len() {
+            let Some(meta) = self.progress.cursor.try_recv_meta_at(idx) else {
                 continue;
             };
             if meta.origin.is_session() || !key.matches_recv(meta) {
                 continue;
             }
             let lane = usize::from(meta.lane);
-            if lane >= self.cursor.logical_lane_count()
+            if lane >= self.progress.cursor.logical_lane_count()
                 || self.port_for_lane(lane).lane().as_wire() != meta.lane
             {
                 return Err(RecvError::PhaseInvariant);
             }
-            let preview_conflict = self.cursor.event_conflict_for_index(idx);
+            let preview_conflict = self.progress.cursor.event_conflict_for_index(idx);
             let mut selected =
                 |scope, view| self.selected_arm_for_recv_event(preview_conflict, scope, view);
-            match self.cursor.event_enabled(idx, meta.into(), &mut selected) {
+            match self
+                .progress
+                .cursor
+                .event_enabled(idx, meta.into(), &mut selected)
+            {
                 Ok(_) => {}
                 Err(EventAdmissionError::PredecessorPending) => {
                     // Ordered future messages can reuse a wire key. Retention
@@ -61,24 +65,28 @@ where
                 }
             }
             let scope = if let Some(scope) = self
+                .progress
                 .cursor
-                .route_scope_for_offer_node(self.cursor.node_scope_id_at(idx), idx)
-                && let Some(arm) = self.cursor.route_arm_for_index(scope, idx)
+                .route_scope_for_offer_node(self.progress.cursor.node_scope_id_at(idx), idx)
+                && let Some(arm) = self.progress.cursor.route_arm_for_index(scope, idx)
                 && self
+                    .progress
                     .cursor
                     .route_arm_lane_first_step(scope, arm, meta.lane)
-                    .and_then(|step| self.cursor.node_index_for_relocatable_step(step))
+                    .and_then(|step| self.progress.cursor.node_index_for_relocatable_step(step))
                     == Some(idx)
             {
                 Some(scope)
             } else {
                 let scope = self
+                    .progress
                     .cursor
                     .enclosing_passive_route_scope_for_key(idx, key)
                     .map_err(|_| RecvError::PhaseInvariant)?;
                 match scope {
                     Some(scope)
                         if self
+                            .progress
                             .cursor
                             .passive_descendant_target_index_for_key(scope, key)
                             .map_err(|_| RecvError::PhaseInvariant)?
@@ -106,8 +114,11 @@ where
         let Some(scope_id) = scope_id else {
             return Ok(Some(ObservedIngressSelection::OrdinaryReceive(key.lane)));
         };
-        let observed_arm = self.cursor.route_arm_for_index(scope_id, target_idx);
-        let preview_conflict = self.cursor.event_conflict_for_index(target_idx);
+        let observed_arm = self
+            .progress
+            .cursor
+            .route_arm_for_index(scope_id, target_idx);
+        let preview_conflict = self.progress.cursor.event_conflict_for_index(target_idx);
         let selected =
             self.selected_arm_for_recv_event(preview_conflict, scope_id, EventArmView::Preview);
         if let (Some(selected), Some(observed)) = (selected, observed_arm)
@@ -139,35 +150,48 @@ where
 
     fn future_route_entry_waits_for_current_arm(&self, idx: usize, lane: u8) -> bool {
         let Some(scope) = self
+            .progress
             .cursor
-            .route_scope_for_offer_node(self.cursor.node_scope_id_at(idx), idx)
+            .route_scope_for_offer_node(self.progress.cursor.node_scope_id_at(idx), idx)
         else {
             return false;
         };
-        let Some(observed) = self.cursor.route_arm_for_index(scope, idx) else {
+        let Some(observed) = self.progress.cursor.route_arm_for_index(scope, idx) else {
             return false;
         };
         let Some(current) = self.selected_arm_for_scope(scope) else {
             return false;
         };
-        if observed == current || !self.cursor.route_scope_reentry(scope) {
+        if observed == current || !self.progress.cursor.route_scope_reentry(scope) {
             return false;
         }
-        let Some(entry) = self.cursor.route_arm_lane_first_step(scope, observed, lane) else {
-            return false;
-        };
-        if self.cursor.node_index_for_relocatable_step(entry) != Some(idx) {
-            return false;
-        }
-        let Some(accepted_entry) = self.cursor.route_arm_lane_first_step(scope, current, lane)
+        let Some(entry) = self
+            .progress
+            .cursor
+            .route_arm_lane_first_step(scope, observed, lane)
         else {
             return false;
         };
-        let Some(accepted_idx) = self.cursor.node_index_for_relocatable_step(accepted_entry) else {
+        if self.progress.cursor.node_index_for_relocatable_step(entry) != Some(idx) {
+            return false;
+        }
+        let Some(accepted_entry) = self
+            .progress
+            .cursor
+            .route_arm_lane_first_step(scope, current, lane)
+        else {
             return false;
         };
-        if !self.cursor.relocatable_step_done(accepted_entry)
+        let Some(accepted_idx) = self
+            .progress
+            .cursor
+            .node_index_for_relocatable_step(accepted_entry)
+        else {
+            return false;
+        };
+        if !self.progress.cursor.relocatable_step_done(accepted_entry)
             || self
+                .progress
                 .cursor
                 .try_recv_meta_at(accepted_idx)
                 .is_none_or(|meta| meta.origin.is_session())
@@ -176,6 +200,7 @@ where
         }
         let mut committed = |candidate| self.selected_arm_for_scope(candidate);
         !self
+            .progress
             .cursor
             .reentrant_route_arm_event_row_done(scope, current, &mut committed)
     }
@@ -187,27 +212,29 @@ where
         let Some(lane_idx) = carried_lane.map(usize::from) else {
             return Ok(None);
         };
-        if lane_idx >= self.cursor.logical_lane_count() {
+        if lane_idx >= self.progress.cursor.logical_lane_count() {
             return Err(RecvError::PhaseInvariant);
         }
-        let mut info = self.decision_state.lane_offer_state(lane_idx);
+        let mut info = self.progress.decision_state.lane_offer_state(lane_idx);
         if info.scope.is_none() {
             return Ok(None);
         }
-        if !info.entry.is_absent() && state_index_to_usize(info.entry) != self.cursor.index() {
+        if !info.entry.is_absent()
+            && state_index_to_usize(info.entry) != self.progress.cursor.index()
+        {
             self.commit_cursor_realign_index(state_index_to_usize(info.entry))
                 .map_err(|_| RecvError::PhaseInvariant)?;
             self.sync_lane_offer_state();
-            info = self.decision_state.lane_offer_state(lane_idx);
+            info = self.progress.decision_state.lane_offer_state(lane_idx);
             if info.scope.is_none()
                 || info.entry.is_absent()
-                || state_index_to_usize(info.entry) != self.cursor.index()
+                || state_index_to_usize(info.entry) != self.progress.cursor.index()
             {
                 return Err(RecvError::PhaseInvariant);
             }
         }
         let scope_id = info.scope;
-        let current_idx = self.cursor.index();
+        let current_idx = self.progress.cursor.index();
         self.offer_scope_selection_for_scope_lane(scope_id, current_idx, lane_idx as u8)
             .map(Some)
     }

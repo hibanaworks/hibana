@@ -27,7 +27,7 @@ use core::{ops::ControlFlow, task::Poll};
 
 use super::authority::RouteResolveStep;
 pub(in crate::endpoint::kernel) use super::authority::{Arm, RouteArmToken};
-use super::core::CursorEndpoint;
+use super::core::OperationKernel;
 use super::frontier::{
     ActiveEntrySet, FrontierProgressSelection, FrontierScratchWorkspace, FrontierVisitSet,
     LaneOfferState, ObservedEntrySet, OfferEntryKey,
@@ -66,7 +66,7 @@ use self::state::{
 };
 pub(in crate::endpoint::kernel) use super::core::IngressEvidenceState;
 
-impl<'r, T> CursorEndpoint<'r, T>
+impl<'r, T> OperationKernel<'_, 'r, T>
 where
     T: Transport + 'r,
 {
@@ -106,11 +106,17 @@ where
     }
 
     pub(crate) fn sync_lane_offer_state(&mut self) {
-        let logical_lane_count = self.cursor.logical_lane_count();
+        let logical_lane_count = self.progress.cursor.logical_lane_count();
         let mut lane_idx = 0usize;
         while lane_idx < logical_lane_count {
-            if self.decision_state.active_offer_lanes().contains(lane_idx) {
+            if self
+                .progress
+                .decision_state
+                .active_offer_lanes()
+                .contains(lane_idx)
+            {
                 let detached = self
+                    .progress
                     .decision_state
                     .take_lane_offer_state_for_rebuild(lane_idx);
                 self.detach_lane_from_offer_entry(detached);
@@ -123,7 +129,11 @@ where
         while lane_idx < logical_lane_count {
             if Self::offer_refresh_mask(self, lane_idx) {
                 self.refresh_lane_offer_state(lane_idx);
-            } else if self.decision_state.clear_lane_offer_state(lane_idx) != LaneOfferState::EMPTY
+            } else if self
+                .progress
+                .decision_state
+                .clear_lane_offer_state(lane_idx)
+                != LaneOfferState::EMPTY
             {
                 crate::invariant();
             }
@@ -132,7 +142,7 @@ where
     }
 
     pub(in crate::endpoint::kernel) fn refresh_lane_offer_state(&mut self, lane_idx: usize) {
-        if lane_idx >= self.cursor.logical_lane_count() {
+        if lane_idx >= self.progress.cursor.logical_lane_count() {
             crate::invariant();
         }
         self.clear_lane_offer_cache(lane_idx);
@@ -142,7 +152,8 @@ where
             } else {
                 ReentryMark::SinglePass
             };
-            self.decision_state
+            self.progress
+                .decision_state
                 .set_lane_offer_state(lane_idx, info, reentry);
             self.attach_lane_to_root_frontier(info);
             self.attach_lane_to_offer_entry(lane_idx, info);
@@ -150,7 +161,10 @@ where
     }
 
     fn clear_lane_offer_cache(&mut self, lane_idx: usize) {
-        let detached = self.decision_state.clear_lane_offer_state(lane_idx);
+        let detached = self
+            .progress
+            .decision_state
+            .clear_lane_offer_state(lane_idx);
         self.detach_lane_from_offer_entry(detached);
         self.detach_lane_from_root_frontier(detached);
     }
@@ -190,7 +204,7 @@ where
         state: &mut OfferState<'r>,
     ) -> Poll<RecvResult<Option<u8>>> {
         state.execution = OfferExecution::Selecting {
-            frontier_visited: self.frontier_state.empty_frontier_visit_set(),
+            frontier_visited: self.progress.frontier_state.empty_frontier_visit_set(),
         };
         Poll::Ready(Ok(None))
     }
@@ -225,7 +239,7 @@ where
         let carried_lane = state.carried_transport_lane_wire();
         let carried_key = state.carried_transport_frame_key();
         let carried_observation =
-            state.carried_transport_observation(self.sid.raw(), self.public_header.role());
+            state.carried_transport_observation(self.progress.sid.raw(), self.public_header.role());
         let selection_result = {
             let OfferExecution::Selecting { frontier_visited } = &mut state.execution else {
                 crate::invariant();
@@ -417,6 +431,7 @@ where
                 ResolveTokenOutcome::Resolved(resolved) => {
                     if stage.facts.profile.is_controller()
                         && let Some(child) = self
+                            .progress
                             .cursor
                             .passive_child_scope(stage.selection().scope_id, resolved.selected_arm)
                     {
@@ -424,6 +439,7 @@ where
                         // through every immediate decision; only event commit publishes
                         // the selected ancestry recorded by the resident descriptor.
                         let entry = self
+                            .progress
                             .cursor
                             .route_scope_materialization_index(child)
                             .ok_or(RecvError::PhaseInvariant)?;

@@ -2,9 +2,9 @@
 //!
 //! # Unsafe Owner Contract
 //!
-//! This module owns construction of a `CursorEndpoint` inside a rendezvous
+//! This module owns construction of a `ResidentActor` inside a rendezvous
 //! lease arena. Unsafe operations write each arena section exactly once using
-//! offsets computed by `CursorEndpointStorageLayout`; the caller supplies an
+//! offsets computed by `ActorStorageLayout`; the caller supplies an
 //! exclusive, aligned arena and keeps it resident for the endpoint lifetime.
 
 use crate::endpoint::affine::LaneGuard;
@@ -26,8 +26,9 @@ use crate::session::brand::Owner;
 use crate::session::types::{RendezvousId, SessionId};
 use crate::transport::Transport;
 
-use super::CursorEndpoint;
-use super::CursorEndpointStorageLayout;
+use super::ActorStorageLayout;
+use super::ResidentActor;
+use super::core::{ActorProgress, EndpointIo};
 use super::evidence_store::ScopeEvidenceSlot;
 use super::layout::EndpointArenaSection;
 use super::layout::LeasedState;
@@ -38,7 +39,7 @@ use super::layout::LeasedState;
 /// # Safety
 ///
 /// `storage..storage + storage_len` must contain one fully initialized
-/// `CursorEndpoint<'r, T>` allocation. `CursorEndpoint` is `repr(C)`;
+/// `ResidentActor<'r, T>` allocation. `ResidentActor` is `repr(C)`;
 /// its logical role is installed from the immutable projected descriptor.
 pub(crate) unsafe fn resident_program_ref<'r, T>(
     storage: *const u8,
@@ -47,7 +48,10 @@ pub(crate) unsafe fn resident_program_ref<'r, T>(
 where
     T: Transport + 'r,
 {
-    let cursor_offset = core::mem::offset_of!(CursorEndpoint<'r, T>, cursor);
+    let cursor_offset = crate::invariant_some(
+        core::mem::offset_of!(ResidentActor<'r, T>, progress)
+            .checked_add(core::mem::offset_of!(ActorProgress<'r, T>, cursor)),
+    );
     let required =
         crate::invariant_some(cursor_offset.checked_add(core::mem::size_of::<EventCursor>()));
     if required > storage_len {
@@ -68,7 +72,7 @@ where
 
 #[inline(always)]
 unsafe fn section_ptr<T>(base: *mut u8, section: EndpointArenaSection) -> *mut T {
-    /* SAFETY: `CursorEndpointStorageLayout` produced `section` for the endpoint
+    /* SAFETY: `ActorStorageLayout` produced `section` for the endpoint
     arena passed by the rendezvous lease. The section offset/alignment/size were
     checked when the arena layout was built. */
     unsafe { base.add(section.offset()).cast::<T>() }
@@ -78,9 +82,9 @@ struct EndpointHeaderInit<'r, T>
 where
     T: Transport + 'r,
 {
-    dst: *mut CursorEndpoint<'r, T>,
+    dst: *mut ResidentActor<'r, T>,
     storage_base: *mut u8,
-    storage_layout: CursorEndpointStorageLayout,
+    storage_layout: ActorStorageLayout,
     logical_lane_count: usize,
     role: u8,
     primary_lane: usize,
@@ -115,20 +119,24 @@ where
         public_slot_ownership,
         session,
     } = init;
+    let operation_access = crate::invariant_some(session.cluster().get_local(&public_rv))
+        .endpoint_operation_access_state();
     /* SAFETY: `init_empty_from_compiled` passes the unpublished
-    `CursorEndpoint` header field set and the endpoint arena base. This block
+    `ResidentActor` header field set and the endpoint arena base. This block
     initializes public state, lane slots, and session context before returning
     the endpoint to the rendezvous lease. */
     unsafe {
+        let progress = ::core::ptr::addr_of_mut!((*dst).progress).cast::<ActorProgress<'r, T>>();
+        let io = ::core::ptr::addr_of_mut!((*dst).io).cast::<EndpointIo<'r, T>>();
         super::lane_slots::LaneSlotArray::init_from_parts(
-            ::core::ptr::addr_of_mut!((*dst).ports),
+            ::core::ptr::addr_of_mut!((*io).ports),
             storage_base
                 .add(storage_layout.port_slots_offset())
                 .cast::<Option<Port<'r, T>>>(),
             logical_lane_count,
         );
         super::lane_slots::LaneSlotArray::init_from_parts(
-            ::core::ptr::addr_of_mut!((*dst).guards),
+            ::core::ptr::addr_of_mut!((*io).guards),
             storage_base
                 .add(storage_layout.guard_slots_offset())
                 .cast::<Option<LaneGuard<'r, T>>>(),
@@ -139,42 +147,44 @@ where
                 public_ops,
                 public_generation,
                 role,
+                operation_access,
             ),
         );
-        ::core::ptr::addr_of_mut!((*dst).primary_lane).write(primary_lane);
-        ::core::ptr::addr_of_mut!((*dst).sid).write(sid);
-        ::core::ptr::addr_of_mut!((*dst)._owner).write(owner);
-        ::core::ptr::addr_of_mut!((*dst).public_rv).write(public_rv);
-        ::core::ptr::addr_of_mut!((*dst).public_slot).write(public_slot);
-        ::core::ptr::addr_of_mut!((*dst).public_generation).write(public_generation);
-        ::core::ptr::addr_of_mut!((*dst).public_slot_ownership).write(public_slot_ownership);
-        ::core::ptr::addr_of_mut!((*dst).public_active_op).write(super::core::PublicActiveOp::Idle);
-        ::core::ptr::addr_of_mut!((*dst).public_offer_state).write(super::offer::OfferState::new());
-        ::core::ptr::addr_of_mut!((*dst).public_route_branch).write(None);
-        ::core::ptr::addr_of_mut!((*dst).public_recv_state).write(super::recv::RecvState::new());
-        ::core::ptr::addr_of_mut!((*dst).public_branch_recv_state)
+        ::core::ptr::addr_of_mut!((*io).primary_lane).write(primary_lane);
+        ::core::ptr::addr_of_mut!((*progress).sid).write(sid);
+        ::core::ptr::addr_of_mut!((*progress)._owner).write(owner);
+        ::core::ptr::addr_of_mut!((*progress).public_rv).write(public_rv);
+        ::core::ptr::addr_of_mut!((*progress).public_slot).write(public_slot);
+        ::core::ptr::addr_of_mut!((*progress).public_generation).write(public_generation);
+        ::core::ptr::addr_of_mut!((*progress).public_slot_ownership).write(public_slot_ownership);
+        ::core::ptr::addr_of_mut!((*io).public_active_op).write(super::core::PublicActiveOp::Idle);
+        ::core::ptr::addr_of_mut!((*io).public_offer_state).write(super::offer::OfferState::new());
+        ::core::ptr::addr_of_mut!((*io).public_route_branch).write(None);
+        ::core::ptr::addr_of_mut!((*io).public_recv_state).write(super::recv::RecvState::new());
+        ::core::ptr::addr_of_mut!((*io).public_branch_recv_state)
             .write(super::branch_recv::BranchRecvState::empty());
-        ::core::ptr::addr_of_mut!((*dst).public_send_state).write(super::core::SendState::Done);
-        ::core::ptr::addr_of_mut!((*dst).session).write(session);
+        ::core::ptr::addr_of_mut!((*io).public_send_state).write(super::core::SendState::Done);
+        ::core::ptr::addr_of_mut!((*progress).session).write(session);
     }
 }
 
 #[inline(never)]
 unsafe fn init_endpoint_cursor<'r, T>(
-    dst: *mut CursorEndpoint<'r, T>,
+    dst: *mut ResidentActor<'r, T>,
     arena_storage: *mut u8,
     arena_layout: &crate::endpoint::kernel::layout::EndpointArenaLayout,
     role_descriptor: RoleDescriptorRef,
 ) where
     T: Transport + 'r,
 {
-    /* SAFETY: `dst.cursor` is still unpublished, and all cursor backing
+    /* SAFETY: the actor cursor is still unpublished, and all cursor backing
     columns come from the endpoint arena sections selected by the compiled role
     descriptor. `EventCursor::init_from_compiled` initializes the cursor before
     endpoint publication. */
     unsafe {
+        let progress = ::core::ptr::addr_of_mut!((*dst).progress).cast::<ActorProgress<'r, T>>();
         EventCursor::init_from_compiled(
-            ::core::ptr::addr_of_mut!((*dst).cursor),
+            ::core::ptr::addr_of_mut!((*progress).cursor),
             section_ptr::<crate::global::typestate::EventCursorState>(
                 arena_storage,
                 arena_layout.event_cursor_state(),
@@ -195,7 +205,7 @@ unsafe fn init_endpoint_cursor<'r, T>(
 
 #[inline(never)]
 unsafe fn init_endpoint_route<'r, T>(
-    dst: *mut CursorEndpoint<'r, T>,
+    dst: *mut ResidentActor<'r, T>,
     arena_storage: *mut u8,
     arena_layout: &crate::endpoint::kernel::layout::EndpointArenaLayout,
     role_descriptor: RoleDescriptorRef,
@@ -206,6 +216,7 @@ unsafe fn init_endpoint_route<'r, T>(
     fields. Every pointer passed to `RouteState::init_empty` is a section of the
     endpoint arena, and active-lane density is filled before route state reads it. */
     unsafe {
+        let progress = ::core::ptr::addr_of_mut!((*dst).progress).cast::<ActorProgress<'r, T>>();
         let active_lane_dense_by_lane = section_ptr::<DenseLaneOrdinal>(
             arena_storage,
             arena_layout.route_state_lane_dense_by_lane(),
@@ -221,7 +232,7 @@ unsafe fn init_endpoint_route<'r, T>(
         let decision_state =
             section_ptr::<RouteState>(arena_storage, arena_layout.decision_state());
         LeasedState::init_from_ptr(
-            ::core::ptr::addr_of_mut!((*dst).decision_state),
+            ::core::ptr::addr_of_mut!((*progress).decision_state),
             decision_state,
         );
         let route_commit_row_set_builder = section_ptr::<RouteCommitRowSetBuilder>(
@@ -229,7 +240,7 @@ unsafe fn init_endpoint_route<'r, T>(
             arena_layout.route_commit_row_set_builder(),
         );
         LeasedState::init_from_ptr(
-            ::core::ptr::addr_of_mut!((*dst).route_commit_rows),
+            ::core::ptr::addr_of_mut!((*progress).route_commit_rows),
             route_commit_row_set_builder,
         );
         RouteCommitRowSetBuilder::init(
@@ -290,7 +301,7 @@ unsafe fn init_endpoint_route<'r, T>(
 
 #[inline(never)]
 unsafe fn init_endpoint_frontier<'r, T>(
-    dst: *mut CursorEndpoint<'r, T>,
+    dst: *mut ResidentActor<'r, T>,
     arena_storage: *mut u8,
     arena_layout: &crate::endpoint::kernel::layout::EndpointArenaLayout,
     role_descriptor: RoleDescriptorRef,
@@ -301,10 +312,11 @@ unsafe fn init_endpoint_frontier<'r, T>(
     field. The root rows, active slots, observation slots, and offer-entry slots
     are disjoint arena sections selected by the compiled endpoint layout. */
     unsafe {
+        let progress = ::core::ptr::addr_of_mut!((*dst).progress).cast::<ActorProgress<'r, T>>();
         let frontier_state =
             section_ptr::<FrontierState>(arena_storage, arena_layout.frontier_state());
         LeasedState::init_from_ptr(
-            ::core::ptr::addr_of_mut!((*dst).frontier_state),
+            ::core::ptr::addr_of_mut!((*progress).frontier_state),
             frontier_state,
         );
         FrontierState::init_empty(
@@ -340,7 +352,7 @@ unsafe fn init_endpoint_frontier<'r, T>(
 }
 
 pub(crate) struct CompiledEndpointInit<'r, T: Transport + 'r> {
-    pub(crate) dst: *mut CursorEndpoint<'r, T>,
+    pub(crate) dst: *mut ResidentActor<'r, T>,
     pub(crate) arena_storage: *mut u8,
     pub(crate) primary_lane: usize,
     pub(crate) sid: SessionId,
@@ -374,7 +386,7 @@ where
     } = init;
     let arena_layout = role_descriptor.endpoint_arena_layout();
     let lane_slot_count = role_descriptor.endpoint_lane_slot_count();
-    let storage_layout = super::cursor_endpoint_storage_layout::<T>(&arena_layout, lane_slot_count);
+    let storage_layout = super::actor_storage_layout::<T>(&arena_layout, lane_slot_count);
     let storage_base = dst.cast::<u8>();
     /* SAFETY: the rendezvous lease passes the unpublished endpoint allocation.
     Header, cursor, route, and frontier owners initialize disjoint fields and
@@ -403,7 +415,7 @@ where
 }
 
 pub(crate) unsafe fn write_port_slot<'r, T>(
-    dst: *mut CursorEndpoint<'r, T>,
+    dst: *mut ResidentActor<'r, T>,
     logical_lane: usize,
     port: Port<'r, T>,
 ) where
@@ -413,12 +425,12 @@ pub(crate) unsafe fn write_port_slot<'r, T>(
     `logical_lane` indexes the initialized port-slot array, and the write occurs
     before a public endpoint borrow can access that lane. */
     unsafe {
-        (&mut *dst).ports[logical_lane] = Some(port);
+        (&mut *(*dst).io.get()).ports[logical_lane] = Some(port);
     }
 }
 
 pub(crate) unsafe fn write_guard_slot<'r, T>(
-    dst: *mut CursorEndpoint<'r, T>,
+    dst: *mut ResidentActor<'r, T>,
     logical_lane: usize,
     guard: LaneGuard<'r, T>,
 ) where
@@ -428,11 +440,11 @@ pub(crate) unsafe fn write_guard_slot<'r, T>(
     `logical_lane` indexes the initialized guard-slot array, and this consumes
     the guard into that one slot. */
     unsafe {
-        (&mut *dst).guards[logical_lane] = Some(guard);
+        (&mut *(*dst).io.get()).guards[logical_lane] = Some(guard);
     }
 }
 
-pub(crate) unsafe fn finish_init<'r, T>(dst: *mut CursorEndpoint<'r, T>)
+pub(crate) unsafe fn finish_init<'r, T>(dst: *mut ResidentActor<'r, T>)
 where
     T: Transport + 'r,
 {
@@ -440,6 +452,6 @@ where
     synchronized after all lane slots and route/frontier sections have been
     initialized and before endpoint publication. */
     unsafe {
-        (&mut *dst).sync_lane_offer_state();
+        (&mut *dst).kernel_mut().sync_lane_offer_state();
     }
 }

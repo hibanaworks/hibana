@@ -4,12 +4,12 @@ use core::task::Poll;
 
 use super::resolve::{MaterializationReadyOutcome, RouteAuthorityResolution};
 use super::{
-    CursorEndpoint, FrontierDeferOutcome, FrontierDeferRequest, FrontierScratchWorkspace,
-    FrontierVisitSet, OfferResolveState, RecvError, RecvResult, ResolvedRouteArm, RouteArmToken,
+    FrontierDeferOutcome, FrontierDeferRequest, FrontierScratchWorkspace, FrontierVisitSet,
+    OfferResolveState, OperationKernel, RecvError, RecvResult, ResolvedRouteArm, RouteArmToken,
     Transport,
 };
 
-impl<'r, T> CursorEndpoint<'r, T>
+impl<'r, T> OperationKernel<'_, 'r, T>
 where
     T: Transport + 'r,
 {
@@ -92,7 +92,7 @@ where
         let Some(lanes) = self.route_scope_arm_lane_set_for_scope(scope_id, selected_arm) else {
             return Poll::Ready(Ok(false));
         };
-        let lane_limit = self.cursor.logical_lane_count();
+        let lane_limit = self.progress.cursor.logical_lane_count();
         let mut next = lanes.first_set(lane_limit);
         while let Some(lane_idx) = next {
             match self.poll_received_framed_transport_frame_for_lane(
@@ -146,7 +146,8 @@ where
         let Some(key) = state.ingress.transport_frame_key() else {
             return Ok(false);
         };
-        self.cursor
+        self.progress
+            .cursor
             .passive_descendant_dispatch_arm_for_key(selection.scope_id, key)
             .map(|arm| arm == Some(selected_arm))
             .map_err(|_| RecvError::PhaseInvariant)

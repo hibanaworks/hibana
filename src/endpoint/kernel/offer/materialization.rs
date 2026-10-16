@@ -1,8 +1,8 @@
 //! Route-branch materialization for `offer()`.
 
 use super::{
-    BranchKind, BranchMeta, CursorEndpoint, OfferScopeProfile, OfferScopeSelection,
-    OfferStagedIngress, ResolvedRouteArm,
+    BranchKind, BranchMeta, OfferScopeProfile, OfferScopeSelection, OfferStagedIngress,
+    OperationKernel, ResolvedRouteArm,
 };
 use crate::{
     endpoint::{RecvError, RecvResult},
@@ -15,7 +15,7 @@ use crate::endpoint::kernel::{
     lane_port,
 };
 
-impl<'r, T> CursorEndpoint<'r, T>
+impl<'r, T> OperationKernel<'_, 'r, T>
 where
     T: Transport + 'r,
 {
@@ -71,13 +71,13 @@ where
             route_arm_selection_commit_evidence: resolved.route_arm_selection_commit_evidence,
         };
         let offered_frame = transport_payload_for_branch.map(OfferedFrame::new);
-        if self.public_route_branch.is_some() {
+        if self.io.public_route_branch.is_some() {
             if let Some(payload) = offered_frame {
                 payload.discard_terminal();
             }
             crate::invariant();
         }
-        self.public_route_branch = Some(MaterializedRouteBranch {
+        self.io.public_route_branch = Some(MaterializedRouteBranch {
             offered_frame,
             branch_meta,
         });
@@ -88,9 +88,9 @@ where
         let cursor_index = state_index_to_usize(preview_meta.cursor_index);
         if preview_meta.is_recv_step() {
             BranchKind::WireRecv
-        } else if self.cursor.is_send_at(cursor_index) {
+        } else if self.progress.cursor.is_send_at(cursor_index) {
             BranchKind::ArmSend
-        } else if self.cursor.is_local_action_at(cursor_index) {
+        } else if self.progress.cursor.is_local_action_at(cursor_index) {
             BranchKind::LocalAction
         } else {
             BranchKind::TerminalArm

@@ -1,5 +1,5 @@
 use super::super::super::{
-    Arm, CachedRecvMeta, ClusterError, CommitDelta, CursorEndpoint, EffIndex, OfferScopeSelection,
+    Arm, CachedRecvMeta, ClusterError, CommitDelta, EffIndex, OfferScopeSelection, OperationKernel,
     RecvError, RecvMeta, RecvResult, RendezvousId, ResolvedRouteArm, RouteArmToken,
     RouteResolveStep, ScopeId, SendMeta, TapEvent, Transport, checked_state_index,
     controller_arm_label, emit, events,
@@ -8,7 +8,7 @@ use super::super::super::{
 };
 use crate::eff::EventOrigin;
 use crate::global::typestate::{InboundFrameKey, LocalAction};
-impl<'r, T> CursorEndpoint<'r, T>
+impl<'r, T> OperationKernel<'_, 'r, T>
 where
     T: Transport + 'r,
 {
@@ -20,6 +20,7 @@ where
     ) -> CachedRecvMeta {
         let target_arm = Arm::from_raw(target_arm).as_u8();
         let Some(recv_entry) = self
+            .progress
             .cursor
             .route_scope_arm_recv_index(scope_id, target_arm)
             .and_then(checked_state_index)
@@ -27,7 +28,7 @@ where
             return CachedRecvMeta::EMPTY;
         };
         let idx = state_index_to_usize(recv_entry);
-        let Some(meta) = self.cursor.try_recv_meta_at(idx) else {
+        let Some(meta) = self.progress.cursor.try_recv_meta_at(idx) else {
             return CachedRecvMeta::EMPTY;
         };
         Self::cached_recv_meta_from_recv(idx, meta)
@@ -127,7 +128,7 @@ where
         route_arm: u8,
         lane: u8,
     ) -> CachedRecvMeta {
-        let Some(label) = controller_arm_label(&self.cursor, scope_id, route_arm) else {
+        let Some(label) = controller_arm_label(&self.progress.cursor, scope_id, route_arm) else {
             return CachedRecvMeta::EMPTY;
         };
         self.route_arm_cached_recv_meta(cursor_index, label, lane)
@@ -141,30 +142,34 @@ where
         offer_lane: u8,
     ) -> CachedRecvMeta {
         let target_arm = Arm::from_raw(target_arm).as_u8();
-        let Some(entry) = self.cursor.passive_observer_arm_entry(scope_id, target_arm) else {
+        let Some(entry) = self
+            .progress
+            .cursor
+            .passive_observer_arm_entry(scope_id, target_arm)
+        else {
             return CachedRecvMeta::EMPTY;
         };
         let entry_idx = state_index_to_usize(entry);
-        if let Some(recv_meta) = self.cursor.try_recv_meta_at(entry_idx) {
+        if let Some(recv_meta) = self.progress.cursor.try_recv_meta_at(entry_idx) {
             return Self::cached_recv_meta_from_recv(entry_idx, recv_meta);
         }
-        if let Some(send_meta) = self.cursor.try_send_meta_at(entry_idx) {
+        if let Some(send_meta) = self.progress.cursor.try_send_meta_at(entry_idx) {
             return Self::cached_recv_meta_from_send(entry_idx, send_meta);
         }
-        if !self.cursor.has_route_scope(scope_id) {
+        if !self.progress.cursor.has_route_scope(scope_id) {
             return CachedRecvMeta::EMPTY;
         }
-        if self.cursor.route_scope_reentry(scope_id) {
+        if self.progress.cursor.route_scope_reentry(scope_id) {
             return self
                 .route_arm_cached_recv_meta_for_arm(entry_idx, scope_id, target_arm, offer_lane);
         }
         if let Some(target_idx) =
             self.preview_passive_materialization_index_for_selected_arm(scope_id, target_arm)
         {
-            if let Some(recv_meta) = self.cursor.try_recv_meta_at(target_idx) {
+            if let Some(recv_meta) = self.progress.cursor.try_recv_meta_at(target_idx) {
                 return Self::cached_recv_meta_from_recv(target_idx, recv_meta);
             }
-            if let Some(send_meta) = self.cursor.try_send_meta_at(target_idx) {
+            if let Some(send_meta) = self.progress.cursor.try_send_meta_at(target_idx) {
                 return Self::cached_recv_meta_from_send(target_idx, send_meta);
             }
         }
@@ -183,6 +188,7 @@ where
         let scope_id = selection.scope_id;
         let at_route_entry = selection.entry_position.is_route_entry();
         let controller_arm_entry = self
+            .progress
             .cursor
             .shared_controller_arm_entry_by_arm(scope_id, arm_raw);
         if is_route_controller
@@ -190,12 +196,14 @@ where
             && let Some((entry, _)) = controller_arm_entry
         {
             return self
+                .progress
                 .cursor
                 .try_recv_meta_at(state_index_to_usize(entry))
                 .is_some_and(|recv_meta| recv_meta.peer != self.public_header.role());
         }
         if at_route_entry
             && self
+                .progress
                 .cursor
                 .passive_observer_arm_entry(scope_id, arm_raw)
                 .is_some()
@@ -217,7 +225,8 @@ where
             }
             return true;
         }
-        self.cursor
+        self.progress
+            .cursor
             .route_scope_arm_recv_index(scope_id, arm_raw)
             .is_some()
     }
@@ -229,17 +238,22 @@ where
         arm: Arm,
     ) -> bool {
         let arm = arm.as_u8();
-        let Some(entry) = self.cursor.passive_observer_arm_entry(scope_id, arm) else {
+        let Some(entry) = self
+            .progress
+            .cursor
+            .passive_observer_arm_entry(scope_id, arm)
+        else {
             return false;
         };
         let entry_idx = state_index_to_usize(entry);
-        if self.cursor.is_recv_at(entry_idx)
-            || self.cursor.is_send_at(entry_idx)
-            || self.cursor.is_local_action_at(entry_idx)
+        if self.progress.cursor.is_recv_at(entry_idx)
+            || self.progress.cursor.is_send_at(entry_idx)
+            || self.progress.cursor.is_local_action_at(entry_idx)
         {
             return true;
         }
-        self.cursor
+        self.progress
+            .cursor
             .passive_child_scope(scope_id, arm)
             .and_then(|scope| self.preview_live_selected_arm_for_scope(scope))
             .is_some()
@@ -248,6 +262,7 @@ where
     #[inline]
     fn selected_arm_has_first_recv_dispatch(&self, scope_id: ScopeId, arm: Arm) -> bool {
         let Some(mask) = self
+            .progress
             .cursor
             .route_scope_first_recv_dispatch_arm_mask(scope_id)
         else {
@@ -266,9 +281,10 @@ where
         arm: Arm,
     ) -> Option<RecvMeta> {
         let entry_idx = self
+            .progress
             .cursor
             .passive_observer_arm_entry_index(scope_id, arm.as_u8())?;
-        self.cursor.try_recv_meta_at(entry_idx)
+        self.progress.cursor.try_recv_meta_at(entry_idx)
     }
 
     #[inline(never)]
@@ -281,6 +297,7 @@ where
         let scope_id = selection.scope_id;
         if let Some(target_idx) = selection.observed_target_index() {
             let target_arm = self
+                .progress
                 .cursor
                 .route_arm_for_index(scope_id, target_idx)
                 .ok_or(RecvError::PhaseInvariant)?;
@@ -288,13 +305,15 @@ where
                 return Err(RecvError::PhaseInvariant);
             }
             let meta = self
+                .progress
                 .cursor
                 .try_recv_meta_at(target_idx)
                 .ok_or(RecvError::PhaseInvariant)?;
             return Ok(Self::cached_recv_meta_from_recv(target_idx, meta));
         }
-        let controller_arm_entry = if self.cursor.is_route_controller(scope_id) {
-            self.cursor
+        let controller_arm_entry = if self.progress.cursor.is_route_controller(scope_id) {
+            self.progress
+                .cursor
                 .shared_controller_arm_entry_by_arm(scope_id, selected_arm)
         } else {
             None
@@ -304,18 +323,18 @@ where
             let arm_entry_idx = state_index_to_usize(arm_entry_idx);
             // Every real event retains its exact resident identity, including
             // its wire color. Synthetic arm metadata belongs only to terminal arms.
-            match self.cursor.action_at(arm_entry_idx) {
+            match self.progress.cursor.action_at(arm_entry_idx) {
                 LocalAction::Send { .. } => Self::cached_recv_meta_from_send(
                     arm_entry_idx,
-                    crate::invariant_some(self.cursor.try_send_meta_at(arm_entry_idx)),
+                    crate::invariant_some(self.progress.cursor.try_send_meta_at(arm_entry_idx)),
                 ),
                 LocalAction::Recv { .. } => Self::cached_recv_meta_from_recv(
                     arm_entry_idx,
-                    crate::invariant_some(self.cursor.try_recv_meta_at(arm_entry_idx)),
+                    crate::invariant_some(self.progress.cursor.try_recv_meta_at(arm_entry_idx)),
                 ),
                 LocalAction::Local { .. } => self.cached_recv_meta_from_local(
                     arm_entry_idx,
-                    crate::invariant_some(self.cursor.try_local_meta_at(arm_entry_idx)),
+                    crate::invariant_some(self.progress.cursor.try_local_meta_at(arm_entry_idx)),
                 ),
                 LocalAction::Terminate => self.route_arm_cached_recv_meta(
                     arm_entry_idx,
@@ -325,6 +344,7 @@ where
             }
         } else if selected_arm
             < self
+                .progress
                 .cursor
                 .route_scope_arm_count(scope_id)
                 .ok_or(RecvError::PhaseInvariant)?
@@ -361,6 +381,7 @@ where
         if let Some(key) = observed_frame {
             let meta = self.preview_selected_arm_meta(selection, selected_arm)?;
             let exact_target = self
+                .progress
                 .cursor
                 .passive_descendant_target_index_for_key(scope_id, key)
                 .map_err(|_| RecvError::PhaseInvariant)?;
@@ -375,12 +396,12 @@ where
         }
         let nested_scope = self.rebase_passive_descendant_scope(scope_id, nested_scope);
         let (target_index, route_rows) = {
-            let Self {
+            let crate::endpoint::kernel::core::ActorProgress {
                 cursor,
                 decision_state,
                 route_commit_rows,
                 ..
-            } = self;
+            } = &mut *self.progress;
             let mut route_rows = route_commit_rows.begin();
             let mut route_row_result = Ok(());
             let target_index = cursor
@@ -439,7 +460,7 @@ where
     ) {
         let port = self.port_for_lane(lane as usize);
         let causal = TapEvent::make_causal_key(port.lane().as_wire(), token.as_tap_seq());
-        let arg0 = self.sid.raw();
+        let arg0 = self.progress.sid.raw();
         let event =
             events::route_arm_selection_with_causal(causal, arg0, scope_id, token.arm().as_u8());
         emit(port.tap(), event);
@@ -450,15 +471,16 @@ where
         scope_id: ScopeId,
     ) -> RecvResult<RouteResolveStep> {
         let resolver = self
+            .progress
             .cursor
             .route_scope_resolver(scope_id)
             .ok_or(RecvError::PhaseInvariant)?;
         let offer_lane = self.offer_lane_for_scope(scope_id);
-        let cluster = self.session.cluster();
+        let cluster = self.progress.session.cluster();
         let rv_id = RendezvousId::new(self.rendezvous_id().raw());
         self.port().seal_session_membership();
         let resolver_result =
-            cluster.resolve_dynamic_resolver(rv_id, self.cursor.program_ref(), resolver);
+            cluster.resolve_dynamic_resolver(rv_id, self.progress.cursor.program_ref(), resolver);
         if let Some(kind) = self.session_fault() {
             return Err(RecvError::SessionFault(kind));
         }

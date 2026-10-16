@@ -1,9 +1,9 @@
 use super::{
-    CursorEndpoint, EventCursor, FrontierFacts, FrontierKind, FrontierReadiness,
-    OfferScopeSelection, ScopeArmMaterializationMeta, ScopeId, ScopeReentryMeta, Transport,
+    EventCursor, FrontierFacts, FrontierKind, FrontierReadiness, OfferScopeSelection,
+    OperationKernel, ScopeArmMaterializationMeta, ScopeId, ScopeReentryMeta, Transport,
     state_index_to_usize,
 };
-impl<'r, T> CursorEndpoint<'r, T>
+impl<'r, T> OperationKernel<'_, 'r, T>
 where
     T: Transport + 'r,
 {
@@ -64,8 +64,11 @@ where
         scope_id: ScopeId,
         offer_lane_idx: usize,
     ) -> ScopeArmMaterializationMeta {
-        if offer_lane_idx < self.cursor.logical_lane_count() {
-            let info = self.decision_state.lane_offer_state(offer_lane_idx);
+        if offer_lane_idx < self.progress.cursor.logical_lane_count() {
+            let info = self
+                .progress
+                .decision_state
+                .lane_offer_state(offer_lane_idx);
             if info.scope == scope_id
                 && let Some(cached) = self
                     .offer_entry_materialization_meta(scope_id, state_index_to_usize(info.entry))
@@ -73,9 +76,9 @@ where
                 return cached;
             }
         }
-        if let Some(offer_entry) = self.cursor.route_scope_offer_entry(scope_id) {
+        if let Some(offer_entry) = self.progress.cursor.route_scope_offer_entry(scope_id) {
             let entry_idx = if offer_entry.is_absent() {
-                self.cursor.index()
+                self.progress.cursor.index()
             } else {
                 state_index_to_usize(offer_entry)
             };

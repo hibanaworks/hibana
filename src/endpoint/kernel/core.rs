@@ -1,7 +1,7 @@
-//! Endpoint kernel built on top of `EventCursor`.
+//! Borrowed operation kernel over the actor's `EventCursor`.
 //!
-//! The kernel endpoint owns the rendezvous port outright and advances
-//! according to the typestate cursor obtained from `RoleProgram` projection.
+//! Pinned actor storage owns semantic progress; logical-view storage owns ports
+//! and pending I/O. Each carrier entry borrows both for one synchronous poll.
 
 use core::{ops::ControlFlow, task::Poll};
 
@@ -248,7 +248,7 @@ pub(crate) fn kernel_send<'r>(
     }
 }
 
-impl<'r, T> SendKernelEndpoint<'r> for CursorEndpoint<'r, T>
+impl<'r, T> SendKernelEndpoint<'r> for OperationKernel<'_, 'r, T>
 where
     T: Transport + 'r,
 {
@@ -325,12 +325,13 @@ pub(in crate::endpoint::kernel) use route_preview::IngressEvidenceState;
 pub(crate) use runtime_types::*;
 pub(crate) use send_route_authority::*;
 
-impl<'r, T> CursorEndpoint<'r, T>
+impl<'r, T> OperationKernel<'_, 'r, T>
 where
     T: Transport + 'r,
 {
     fn projection_complete(&self) -> bool {
-        self.cursor
+        self.progress
+            .cursor
             .is_complete(&mut |scope| self.selected_arm_for_scope(scope))
     }
 
@@ -342,21 +343,21 @@ where
         crate::rendezvous::core::EndpointLeaseId,
         u32,
     )> {
-        if self.public_slot_ownership == PublicSlotOwnership::Borrowed {
+        if self.progress.public_slot_ownership == PublicSlotOwnership::Borrowed {
             return None;
         }
-        if self.public_generation == 0
-            || self.public_header.generation() != self.public_generation
-            || self.public_header.role() != self.cursor.role()
+        if self.progress.public_generation == 0
+            || self.public_header.generation() != self.progress.public_generation
+            || self.public_header.role() != self.progress.cursor.role()
         {
             crate::invariant();
         }
-        self.public_slot_ownership = PublicSlotOwnership::Borrowed;
+        self.progress.public_slot_ownership = PublicSlotOwnership::Borrowed;
         Some((
-            self.session.cluster(),
-            self.public_rv,
-            self.public_slot,
-            self.public_generation,
+            self.progress.session.cluster(),
+            self.progress.public_rv,
+            self.progress.public_slot,
+            self.progress.public_generation,
         ))
     }
 
@@ -368,29 +369,18 @@ where
 
     /// Get the descriptor-selected primary lane's port.
     fn port(&self) -> &Port<'r, T> {
-        if self.ports[self.primary_lane].is_none() {
+        if self.io.ports[self.io.primary_lane].is_none() {
             crate::invariant();
         }
-        crate::invariant_some(self.ports[self.primary_lane].as_ref())
-    }
-
-    #[inline]
-    pub(crate) fn try_public_operation_lease(
-        &self,
-    ) -> Option<crate::rendezvous::core::EndpointOperationLease<'r>> {
-        self.session.cluster().try_public_endpoint_operation_lease(
-            self.public_rv,
-            self.public_slot,
-            self.public_generation,
-        )
+        crate::invariant_some(self.io.ports[self.io.primary_lane].as_ref())
     }
 
     /// Get port for a specific lane.
     pub(crate) fn port_for_lane(&self, lane_idx: usize) -> &Port<'r, T> {
-        if self.ports[lane_idx].is_none() {
+        if self.io.ports[lane_idx].is_none() {
             crate::invariant();
         }
-        crate::invariant_some(self.ports[lane_idx].as_ref())
+        crate::invariant_some(self.io.ports[lane_idx].as_ref())
     }
 
     #[inline]
@@ -398,15 +388,15 @@ where
         &self,
         lease: &'lease mut ScratchLease<'r>,
     ) -> FrontierScratchWorkspace<'lease> {
-        let port = self.port_for_lane(self.primary_lane);
+        let port = self.port_for_lane(self.io.primary_lane);
         let scratch = lane_port::frontier_scratch(port, lease);
-        let layout = self.cursor.frontier_scratch_layout();
+        let layout = self.progress.cursor.frontier_scratch_layout();
         FrontierScratchWorkspace::from_storage(scratch, layout)
     }
 
     #[inline]
     pub(crate) fn offer_lane_set_for_scope(&self, scope_id: ScopeId) -> LaneSetView<'static> {
-        match self.cursor.route_scope_offer_lane_set(scope_id) {
+        match self.progress.cursor.route_scope_offer_lane_set(scope_id) {
             Some(lanes) => lanes,
             None => crate::invariant(),
         }
@@ -418,26 +408,32 @@ where
         scope_id: ScopeId,
         arm: u8,
     ) -> Option<LaneSetView<'static>> {
-        self.cursor.route_scope_arm_lane_set(scope_id, arm)
+        self.progress.cursor.route_scope_arm_lane_set(scope_id, arm)
     }
 
     #[inline]
     pub(crate) fn offer_lane_for_scope(&self, scope_id: ScopeId) -> u8 {
         let offer_lanes = self.offer_lane_set_for_scope(scope_id);
         let lane_idx =
-            crate::invariant_some(offer_lanes.first_set(self.cursor.logical_lane_count()));
+            crate::invariant_some(offer_lanes.first_set(self.progress.cursor.logical_lane_count()));
         crate::invariant_ok(u8::try_from(lane_idx))
     }
 
     #[inline]
     pub(crate) fn controller_arm_at_cursor(&self, scope_id: ScopeId) -> Option<u8> {
-        let idx = self.cursor.index();
-        if let Some((entry, _)) = self.cursor.controller_arm_entry_by_arm(scope_id, 0)
+        let idx = self.progress.cursor.index();
+        if let Some((entry, _)) = self
+            .progress
+            .cursor
+            .controller_arm_entry_by_arm(scope_id, 0)
             && idx == state_index_to_usize(entry)
         {
             return Some(0);
         }
-        if let Some((entry, _)) = self.cursor.controller_arm_entry_by_arm(scope_id, 1)
+        if let Some((entry, _)) = self
+            .progress
+            .cursor
+            .controller_arm_entry_by_arm(scope_id, 1)
             && idx == state_index_to_usize(entry)
         {
             return Some(1);
@@ -446,13 +442,13 @@ where
     }
 }
 
-impl<'r, T> Drop for CursorEndpoint<'r, T>
+impl<'r, T> OperationKernel<'_, 'r, T>
 where
     T: Transport + 'r,
 {
-    fn drop(&mut self) {
-        if self.public_generation != 0
-            && (self.public_active_op != PublicActiveOp::Idle || !self.projection_complete())
+    pub(super) fn retire_actor(&mut self) {
+        if self.progress.public_generation != 0
+            && (self.io.public_active_op != PublicActiveOp::Idle || !self.projection_complete())
         {
             self.poison_session(SessionFaultKind::EndpointDropped);
         }
@@ -460,23 +456,23 @@ where
         self.terminal_clear_public_recv_state();
         self.terminal_clear_public_offer_state();
         self.terminal_clear_public_branch_recv_state();
-        if let Some(branch) = self.public_route_branch.take() {
+        if let Some(branch) = self.io.public_route_branch.take() {
             branch.discard_terminal();
         }
         self.clear_public_op_terminal();
         self.retire_transport_handles();
-        for guard in self.guards.iter_mut() {
+        for guard in self.io.guards.iter_mut() {
             if let Some(g) = guard.take() {
                 drop(g);
             }
         }
-        if self.public_generation != 0 {
-            if self.public_slot_ownership == PublicSlotOwnership::Owned {
+        if self.progress.public_generation != 0 {
+            if self.progress.public_slot_ownership == PublicSlotOwnership::Owned {
                 crate::invariant();
             }
             self.public_header.retire_generation();
-            self.public_generation = 0;
-            self.public_slot_ownership = PublicSlotOwnership::Borrowed;
+            self.progress.public_generation = 0;
+            self.progress.public_slot_ownership = PublicSlotOwnership::Borrowed;
         }
     }
 }

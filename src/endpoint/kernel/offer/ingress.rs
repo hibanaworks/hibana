@@ -2,7 +2,7 @@
 
 use core::task::Poll;
 
-use super::{CursorEndpoint, OfferScopeProfile, OfferScopeSelection, OfferStagedIngress};
+use super::{OfferScopeProfile, OfferScopeSelection, OfferStagedIngress, OperationKernel};
 use crate::{
     endpoint::{RecvError, RecvResult},
     global::role_program::{LANE_SET_VIEW_WORDS, LaneWord, lane_word_index},
@@ -41,7 +41,7 @@ pub(super) enum OfferIngressMode {
     TransportFrame,
 }
 
-impl<'r, T> CursorEndpoint<'r, T>
+impl<'r, T> OperationKernel<'_, 'r, T>
 where
     T: Transport + 'r,
 {
@@ -113,10 +113,11 @@ where
         cx: &mut core::task::Context<'_>,
         deferred_lanes: &[LaneWord; LANE_SET_VIEW_WORDS],
     ) -> Poll<RecvResult<Option<lane_port::PreambleFrame<'r>>>> {
-        let lane_limit = self.cursor.logical_lane_count();
+        let lane_limit = self.progress.cursor.logical_lane_count();
         let mut start = 0usize;
         while let Some(lane_idx) = {
-            self.decision_state
+            self.progress
+                .decision_state
                 .active_offer_lanes()
                 .next_set_from(start, lane_limit)
         } {
@@ -147,7 +148,7 @@ where
         cx: &mut core::task::Context<'_>,
         deferred_lanes: &[LaneWord; LANE_SET_VIEW_WORDS],
     ) -> Poll<RecvResult<lane_port::PreambleFrame<'r>>> {
-        let lane_limit = self.cursor.logical_lane_count();
+        let lane_limit = self.progress.cursor.logical_lane_count();
         let lanes = self.transport_lane_set_for_offer(facts);
         let preferred_lane = self.preferred_transport_lane_for_offer(facts);
         let mut lanes = OfferLaneScan::new(preferred_lane, lanes, lane_limit);

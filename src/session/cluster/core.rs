@@ -41,7 +41,7 @@ pub(in crate::session::cluster::core) struct PublicEndpointStorageRequest {
 }
 
 struct EndpointInitArgs<'r, const ROLE: u8, T: crate::transport::Transport + 'r> {
-    dst: *mut crate::endpoint::kernel::CursorEndpoint<'r, T>,
+    dst: *mut crate::endpoint::kernel::ResidentActor<'r, T>,
     arena_storage: *mut u8,
     rv_id: RendezvousId,
     sid: SessionId,

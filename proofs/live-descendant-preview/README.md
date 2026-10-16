@@ -8,7 +8,7 @@ QUIC retains an independent capacity-one regression using its actual carrier.
 when `reentrant_route_arm_event_row_done` proved it complete. Descendant
 materialization then tried to commit that previous selection against the new
 poll's different arm. The complete row is now excluded from the preview, using
-the same live-selection predicate as `CursorEndpoint`'s existing preview. A live
+the same live-selection predicate as `OperationKernel`'s preview. A live
 conflict continues to violate the contract. No queue, stack, resource ceiling,
 public operation check, receive identity check, or preflight assertion changed.
 

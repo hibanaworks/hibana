@@ -320,11 +320,8 @@ where
         self.access_state.get() != RendezvousAccessState::Available
     }
 
-    #[inline]
-    pub(crate) fn try_endpoint_operation_lease(&self) -> Option<EndpointOperationLease<'_>> {
-        let next = self.access_state.get().begin_endpoint_operation()?;
-        self.access_state.set(next);
-        Some(EndpointOperationLease::new(&self.access_state))
+    pub(crate) const fn endpoint_operation_access_state(&self) -> &Cell<RendezvousAccessState> {
+        &self.access_state
     }
 
     #[inline]

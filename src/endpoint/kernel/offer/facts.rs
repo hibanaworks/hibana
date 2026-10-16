@@ -3,9 +3,11 @@
 mod evidence;
 mod planner;
 
-use super::{CursorEndpoint, FrontierVisitSet, OfferFrontierFacts, OfferScopeSelection, Transport};
+use super::{
+    FrontierVisitSet, OfferFrontierFacts, OfferScopeSelection, OperationKernel, Transport,
+};
 
-impl<'r, T> CursorEndpoint<'r, T>
+impl<'r, T> OperationKernel<'_, 'r, T>
 where
     T: Transport + 'r,
 {
@@ -15,7 +17,7 @@ where
         frontier_visited: &mut FrontierVisitSet,
     ) -> OfferFrontierFacts {
         let scope_id = selection.scope_id;
-        frontier_visited.record(self.cursor.index());
+        frontier_visited.record(self.progress.cursor.index());
         let entry = selection.entry_position;
         let profile = self.offer_scope_profile(scope_id);
         let evidence = self.offer_ingress_evidence(selection, entry, profile);

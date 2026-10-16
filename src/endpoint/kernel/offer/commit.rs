@@ -5,11 +5,11 @@ use crate::transport::Transport;
 
 use super::super::authority::{Arm, RouteArmToken};
 use super::super::core::{
-    CommittedCommitDelta, CursorEndpoint,
+    CommittedCommitDelta, OperationKernel,
     prepare_event_selected_route_commit_rows_from_resident_route_commit_range,
 };
 use super::{BranchCommitPlan, BranchKind, BranchMeta};
-impl<'r, T> CursorEndpoint<'r, T>
+impl<'r, T> OperationKernel<'_, 'r, T>
 where
     T: Transport + 'r,
 {
@@ -21,16 +21,16 @@ where
         let selected_arm = branch.selected_arm;
         let lane_wire = branch.lane_wire;
         let lane_idx = lane_wire as usize;
-        if lane_idx >= self.cursor.logical_lane_count() {
+        if lane_idx >= self.progress.cursor.logical_lane_count() {
             return Err(RecvError::PhaseInvariant);
         }
         let route_seed_rows = {
-            let Self {
+            let crate::endpoint::kernel::core::ActorProgress {
                 cursor,
                 decision_state,
                 route_commit_rows,
                 ..
-            } = self;
+            } = &mut *self.progress;
             let event_idx = state_index_to_usize(branch.cursor_index);
             let mut rows = route_commit_rows.begin();
             prepare_event_selected_route_commit_rows_from_resident_route_commit_range(
@@ -48,7 +48,7 @@ where
         let mut branch_scope_arm = None;
         let mut row_idx = 0usize;
         while row_idx < route_seed_rows.len() {
-            if let Some(row) = route_seed_rows.get(&self.cursor, row_idx)
+            if let Some(row) = route_seed_rows.get(&self.progress.cursor, row_idx)
                 && row.scope() == scope_id
             {
                 branch_scope_arm = Some(row.selected_arm());
@@ -59,7 +59,12 @@ where
         if branch_scope_arm != Some(selected_arm) {
             return Err(RecvError::PhaseInvariant);
         }
-        if branch.route_token.is_resolver() && self.cursor.route_scope_resolver(scope_id).is_none()
+        if branch.route_token.is_resolver()
+            && self
+                .progress
+                .cursor
+                .route_scope_resolver(scope_id)
+                .is_none()
         {
             return Err(RecvError::PhaseInvariant);
         }
@@ -76,6 +81,7 @@ where
                 .poll_wire_commit_requires_intrinsic_observation()
             {
                 let Some(arm) = self
+                    .progress
                     .cursor
                     .route_arm_for_index(scope_id, state_index_to_usize(branch.cursor_index))
                 else {
@@ -89,6 +95,7 @@ where
 
         let meta = if branch.kind == BranchKind::WireRecv {
             let mut meta = if let Some(meta) = self
+                .progress
                 .cursor
                 .try_recv_meta_at(state_index_to_usize(branch.cursor_index))
             {
@@ -120,15 +127,15 @@ where
         let mut branch_route_fresh = false;
         let mut route_idx = 0usize;
         while route_idx < routes.len() {
-            let Some(row) = routes.get(&self.cursor, route_idx) else {
+            let Some(row) = routes.get(&self.progress.cursor, route_idx) else {
                 crate::invariant();
             };
             if committed.route_is_fresh(route_idx) && row.scope() == scope_id {
                 branch_route_fresh = true;
             }
             if committed.route_is_fresh(route_idx)
-                && self.cursor.is_route_controller(row.scope())
-                && let Some(resolver) = self.cursor.route_scope_resolver(row.scope())
+                && self.progress.cursor.is_route_controller(row.scope())
+                && let Some(resolver) = self.progress.cursor.route_scope_resolver(row.scope())
             {
                 let arm = match row.selected_arm() {
                     0 => DecisionArm::Left,
@@ -155,7 +162,12 @@ where
             if !branch_route_fresh {
                 crate::invariant();
             }
-            if self.cursor.route_scope_resolver(scope_id).is_none() {
+            if self
+                .progress
+                .cursor
+                .route_scope_resolver(scope_id)
+                .is_none()
+            {
                 crate::invariant();
             }
         } else if route_token.is_ack() && branch.profile.publishes_controller_ack_decision() {
@@ -170,7 +182,7 @@ where
                     let lane = lane_wire;
                     self.emit_route_arm_selection(scope_id, token, lane);
                 } else {
-                    let lane_limit = self.cursor.logical_lane_count();
+                    let lane_limit = self.progress.cursor.logical_lane_count();
                     let mut next = offer_lanes.first_set(lane_limit);
                     while let Some(lane_idx) = next {
                         let lane = lane_idx as u8;

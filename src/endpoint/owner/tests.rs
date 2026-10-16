@@ -1,8 +1,6 @@
-#[path = "../../../tests/common/mod.rs"]
-mod common;
-
 use super::EndpointOwner;
 use crate::endpoint::carrier::EndpointHandle;
+use crate::test_support::transport::TestTransport;
 use crate::{
     Endpoint,
     g::{self, Msg},
@@ -12,7 +10,6 @@ use crate::{
         program::{RoleProgram, project},
     },
 };
-use common::TestTransport;
 use core::{future::Future, pin::pin, task::Context};
 
 static_assertions::assert_not_impl_any!(EndpointOwner<'static>: Clone, Copy, Send, Sync);

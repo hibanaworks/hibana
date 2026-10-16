@@ -66,6 +66,12 @@ run_miri_test \
   endpoint::owner::tests
 
 run_miri_test \
+  carrier-actor-borrow \
+  -p hibana \
+  --lib \
+  endpoint::carrier::tests
+
+run_miri_test \
   typed-endpoint-ownership-source \
   -p hibana \
   --lib \

@@ -2,7 +2,9 @@ use super::super::frontier::{
     ActiveEntrySlot, FrontierKind, FrontierObservationSlot, FrontierScratchSectionLease,
     frontier_global_active_entries_view, frontier_observed_entries_view,
 };
-use super::{ActiveEntrySet, CursorEndpoint, ObservedEntrySet, ObservedEntrySetBuilder, Transport};
+use super::{
+    ActiveEntrySet, ObservedEntrySet, ObservedEntrySetBuilder, OperationKernel, Transport,
+};
 use crate::endpoint::kernel::offer::CurrentReentryControllerEvidence;
 
 #[inline]
@@ -20,7 +22,7 @@ fn is_selectable_progress_sibling(
             || slot.is_in_frontier(current_frontier))
 }
 
-impl<'r, T> CursorEndpoint<'r, T>
+impl<'r, T> OperationKernel<'_, 'r, T>
 where
     T: Transport + 'r,
 {
@@ -31,11 +33,11 @@ where
     ) -> ActiveEntrySet<'a> {
         let mut active_entries = frontier_global_active_entries_view(scratch);
         active_entries.clear();
-        let active_offer_lanes = self.decision_state.active_offer_lanes();
-        let lane_limit = self.cursor.logical_lane_count();
+        let active_offer_lanes = self.progress.decision_state.active_offer_lanes();
+        let lane_limit = self.progress.cursor.logical_lane_count();
         let mut next = active_offer_lanes.first_set(lane_limit);
         while let Some(lane_idx) = next {
-            let info = self.decision_state.lane_offer_state(lane_idx);
+            let info = self.progress.decision_state.lane_offer_state(lane_idx);
             if info.entry.is_absent() || info.scope.is_none() {
                 crate::invariant();
             }

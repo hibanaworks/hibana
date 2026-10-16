@@ -1,11 +1,11 @@
 use super::{
-    CommitEventRow, CursorEndpoint, PreparedRouteCommitRows, RelocatableResidentLaneStep,
+    CommitEventRow, OperationKernel, PreparedRouteCommitRows, RelocatableResidentLaneStep,
     SelectedRouteCommitRow, Transport, commit_delta::CommitDeltaApplyPermit,
     commit_delta::CommittedCommitDelta, commit_delta::PreparedCommitDelta, state_index_to_usize,
 };
 use crate::global::const_dsl::{ReentryMark, ScopeId};
 
-impl<'r, T> CursorEndpoint<'r, T>
+impl<'r, T> OperationKernel<'_, 'r, T>
 where
     T: Transport + 'r,
 {
@@ -23,7 +23,7 @@ where
         let route_lane = delta.selected_route_lane();
         let mut idx = 0usize;
         while idx < delta.selected_routes().len() {
-            let Some(row) = delta.selected_routes().get(&self.cursor, idx) else {
+            let Some(row) = delta.selected_routes().get(&self.progress.cursor, idx) else {
                 crate::invariant();
             };
             let Some(lane) = route_lane else {
@@ -56,25 +56,30 @@ where
     fn prepared_body_reentry_scope(&self, event: Option<CommitEventRow>) -> Option<ScopeId> {
         let event = event?;
         let mut selected_arm_for_scope = |scope| self.selected_arm_for_scope(scope);
-        self.cursor
+        self.progress
+            .cursor
             .roll_body_reentry_scope_for_step(event.progress_step(), &mut selected_arm_for_scope)
     }
 
     fn clear_reentry_scope_state(&mut self, scope: ScopeId) {
-        self.cursor.clear_reentry_scope_events(scope);
-        let lane_limit = self.cursor.logical_lane_count();
+        self.progress.cursor.clear_reentry_scope_events(scope);
+        let lane_limit = self.progress.cursor.logical_lane_count();
         let mut lane_idx = 0usize;
         while lane_idx < lane_limit {
-            if self.decision_state.lane_route_arm_len(lane_idx) != 0 {
+            if self.progress.decision_state.lane_route_arm_len(lane_idx) != 0 {
                 {
-                    let cursor = &self.cursor;
-                    self.decision_state.clear_lane_route_selections_in_scope(
-                        lane_idx,
-                        |candidate| cursor.route_scope_contained_in_roll_scope(candidate, scope),
-                        |candidate| cursor.route_scope_slot(candidate),
-                        |candidate| cursor.route_scope_reentry(candidate),
-                        CommitDeltaApplyPermit::new(),
-                    );
+                    let cursor = &self.progress.cursor;
+                    self.progress
+                        .decision_state
+                        .clear_lane_route_selections_in_scope(
+                            lane_idx,
+                            |candidate| {
+                                cursor.route_scope_contained_in_roll_scope(candidate, scope)
+                            },
+                            |candidate| cursor.route_scope_slot(candidate),
+                            |candidate| cursor.route_scope_reentry(candidate),
+                            CommitDeltaApplyPermit::new(),
+                        );
                 }
             }
             lane_idx += 1;
@@ -84,18 +89,24 @@ where
 
     #[inline(always)]
     fn apply_prepared_cursor_index(&mut self, idx: usize) {
-        self.cursor.set_index(idx);
+        self.progress.cursor.set_index(idx);
     }
 
     #[inline(always)]
     fn apply_prepared_lane_advance(&mut self, target: RelocatableResidentLaneStep) {
-        let refresh = self.cursor.advance_lane_to_relocatable_step(target);
+        let refresh = self
+            .progress
+            .cursor
+            .advance_lane_to_relocatable_step(target);
         self.refresh_after_cursor_move(refresh);
     }
 
     #[inline(always)]
     fn apply_prepared_lane_relocation(&mut self, target: RelocatableResidentLaneStep) {
-        let refresh = self.cursor.set_lane_cursor_to_relocatable_step(target);
+        let refresh = self
+            .progress
+            .cursor
+            .set_lane_cursor_to_relocatable_step(target);
         self.refresh_after_cursor_move(refresh);
     }
 
@@ -118,12 +129,17 @@ where
 
     #[inline(always)]
     fn apply_prepared_route_completion_cursor(&mut self, rows: &PreparedRouteCommitRows) {
-        let idx = self.cursor.index();
-        if self.cursor.enclosing_route_scope_rows_at(idx).is_none() {
+        let idx = self.progress.cursor.index();
+        if self
+            .progress
+            .cursor
+            .enclosing_route_scope_rows_at(idx)
+            .is_none()
+        {
             return;
         }
-        let cursor = &self.cursor;
-        let decision_state = &self.decision_state;
+        let cursor = &self.progress.cursor;
+        let decision_state = &self.progress.decision_state;
         let Some(end) = cursor.selected_enclosing_route_scope_end_at(idx, |scope| {
             match Self::selected_arm_from_prepared_rows(rows, cursor, scope) {
                 Some(prepared) => Some(prepared),
@@ -135,8 +151,8 @@ where
         }) else {
             return;
         };
-        if end != idx && self.cursor.contains_node_index(end) {
-            self.cursor.set_index(end);
+        if end != idx && self.progress.cursor.contains_node_index(end) {
+            self.progress.cursor.set_index(end);
         }
     }
 
@@ -148,47 +164,51 @@ where
     ) {
         let lane_idx = lane as usize;
         let scope = row.scope();
-        let Some(scope_slot) = self.cursor.route_scope_slot(scope) else {
+        let Some(scope_slot) = self.progress.cursor.route_scope_slot(scope) else {
             crate::invariant();
         };
-        let reentry = if self.cursor.route_scope_reentry(scope) {
+        let reentry = if self.progress.cursor.route_scope_reentry(scope) {
             ReentryMark::Reentrant
         } else {
             ReentryMark::SinglePass
         };
         if let Some(completed_arm) = completed_iteration_arm {
-            let cursor = &self.cursor;
+            let cursor = &self.progress.cursor;
             let lane_limit = cursor.logical_lane_count();
             let mut clear_lane = 0usize;
             while clear_lane < lane_limit {
-                if self.decision_state.lane_route_arm_len(clear_lane) != 0 {
-                    self.decision_state.replace_route_selection_arm_for_scope(
-                        clear_lane,
-                        scope,
-                        completed_arm,
-                        row.selected_arm(),
-                    );
-                    self.decision_state.clear_lane_route_selections_in_scope(
-                        clear_lane,
-                        |candidate| {
-                            cursor.route_scope_conflict_arm_for_scope(candidate, scope)
-                                == Some(completed_arm)
-                        },
-                        |candidate| cursor.route_scope_slot(candidate),
-                        |candidate| cursor.route_scope_reentry(candidate),
-                        CommitDeltaApplyPermit::new(),
-                    );
+                if self.progress.decision_state.lane_route_arm_len(clear_lane) != 0 {
+                    self.progress
+                        .decision_state
+                        .replace_route_selection_arm_for_scope(
+                            clear_lane,
+                            scope,
+                            completed_arm,
+                            row.selected_arm(),
+                        );
+                    self.progress
+                        .decision_state
+                        .clear_lane_route_selections_in_scope(
+                            clear_lane,
+                            |candidate| {
+                                cursor.route_scope_conflict_arm_for_scope(candidate, scope)
+                                    == Some(completed_arm)
+                            },
+                            |candidate| cursor.route_scope_slot(candidate),
+                            |candidate| cursor.route_scope_reentry(candidate),
+                            CommitDeltaApplyPermit::new(),
+                        );
                 }
                 clear_lane += 1;
             }
-            self.decision_state.replace_selected_arm_slot(
+            self.progress.decision_state.replace_selected_arm_slot(
                 scope_slot,
                 completed_arm,
                 row.selected_arm(),
             );
-            self.cursor.clear_reentry_scope_events(scope);
+            self.progress.cursor.clear_reentry_scope_events(scope);
         }
-        self.decision_state.apply_prepared_route_selection(
+        self.progress.decision_state.apply_prepared_route_selection(
             lane_idx,
             scope_slot,
             reentry,

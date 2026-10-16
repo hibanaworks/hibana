@@ -1,7 +1,7 @@
 use super::{
-    CursorEndpoint, FrameEvidenceResolution, FrontierDeferOutcome, FrontierDeferRequest,
-    FrontierScratchWorkspace, FrontierVisitSet, IngressEvidenceState, OfferProgressState,
-    OfferResolveState, OfferScopeSelection, OfferStagedIngress, Poll, RecvError, RecvResult,
+    FrameEvidenceResolution, FrontierDeferOutcome, FrontierDeferRequest, FrontierScratchWorkspace,
+    FrontierVisitSet, IngressEvidenceState, OfferProgressState, OfferResolveState,
+    OfferScopeSelection, OfferStagedIngress, OperationKernel, Poll, RecvError, RecvResult,
     ResolvePendingState, ResolveTokenOutcome, Transport, lane_port,
 };
 pub(super) struct PassiveRouteEvidenceInput {
@@ -75,7 +75,7 @@ impl<'a, 'r> PassiveRouteEvidenceContext<'a, 'r> {
     }
 }
 
-impl<'r, T> CursorEndpoint<'r, T>
+impl<'r, T> OperationKernel<'_, 'r, T>
 where
     T: Transport + 'r,
 {
@@ -225,9 +225,13 @@ where
             recv_lane,
             frame.observed_frame_label_raw(),
         );
-        let observed =
-            frame.observed_transport_frame(self.sid.raw(), recv_lane, self.public_header.role());
+        let observed = frame.observed_transport_frame(
+            self.progress.sid.raw(),
+            recv_lane,
+            self.public_header.role(),
+        );
         if self
+            .progress
             .cursor
             .passive_descendant_dispatch_arm_for_key(selection.scope_id, key)
             .map_err(|_| RecvError::PhaseInvariant)?

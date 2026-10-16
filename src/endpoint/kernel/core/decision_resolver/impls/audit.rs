@@ -1,4 +1,4 @@
-use super::super::super::{CursorEndpoint, Transport, emit, events};
+use super::super::super::{OperationKernel, Transport, emit, events};
 use crate::global::const_dsl::ScopeId;
 use crate::session::cluster::core::DecisionArm;
 
@@ -14,7 +14,7 @@ const fn resolver_audit_result(arm: DecisionArm) -> u8 {
     }
 }
 
-impl<'r, T> CursorEndpoint<'r, T>
+impl<'r, T> OperationKernel<'_, 'r, T>
 where
     T: Transport + 'r,
 {
@@ -28,7 +28,7 @@ where
         let port = self.port_for_lane(lane as usize);
         let event = events::resolver_audit(
             port.lane().as_wire(),
-            self.sid.raw(),
+            self.progress.sid.raw(),
             scope_id,
             resolver_id,
             result,

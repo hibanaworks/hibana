@@ -1,10 +1,10 @@
-use super::{ActiveEntrySet, CursorEndpoint, ObservedEntrySet, OfferEntryKey, Transport};
+use super::{ActiveEntrySet, ObservedEntrySet, OfferEntryKey, OperationKernel, Transport};
 use crate::endpoint::kernel::frontier::{
     ExactOfferObservation, FrontierObservationSlot, FrontierScratchSectionLease,
     OfferEntryAdmission,
 };
 
-impl<'r, T> CursorEndpoint<'r, T>
+impl<'r, T> OperationKernel<'_, 'r, T>
 where
     T: Transport + 'r,
 {
@@ -21,7 +21,7 @@ where
             let slot = crate::invariant_some(active_entries.slot_at(slot_idx));
             let (active, observed) = self.scan_active_offer_entry_non_consuming(slot);
             let info = active.representative();
-            let admission = if self.cursor.has_route_scope(active.scope())
+            let admission = if self.progress.cursor.has_route_scope(active.scope())
                 && (!info.is_controller()
                     || !info.is_dynamic()
                     || self.resolver_offer_entry_enabled(active.scope()))

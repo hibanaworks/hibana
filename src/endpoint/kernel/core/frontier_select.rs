@@ -1,10 +1,10 @@
 use super::{
-    ActiveEntrySlot, ActiveOfferEntry, ControlFlow, CurrentScopeSelectionMeta, CursorEndpoint,
+    ActiveEntrySlot, ActiveOfferEntry, ControlFlow, CurrentScopeSelectionMeta,
     FrontierProgressCandidate, LaneOfferState, OfferEntryEvidence, OfferEntryKey,
-    OfferEntryObservedState, ScopeArmMaterializationMeta, ScopeId, Transport,
+    OfferEntryObservedState, OperationKernel, ScopeArmMaterializationMeta, ScopeId, Transport,
     offer_entry_frontier_progress_candidate, offer_entry_observed_state,
 };
-impl<'r, T> CursorEndpoint<'r, T>
+impl<'r, T> OperationKernel<'_, 'r, T>
 where
     T: Transport + 'r,
 {
@@ -13,12 +13,15 @@ where
         key: OfferEntryKey,
         owner_lane_idx: usize,
     ) -> ActiveOfferEntry {
-        let lane_limit = self.cursor.logical_lane_count();
-        let active_offer_lanes = self.decision_state.active_offer_lanes();
+        let lane_limit = self.progress.cursor.logical_lane_count();
+        let active_offer_lanes = self.progress.decision_state.active_offer_lanes();
         if owner_lane_idx >= lane_limit || !active_offer_lanes.contains(owner_lane_idx) {
             crate::invariant();
         }
-        let owner = self.decision_state.lane_offer_state(owner_lane_idx);
+        let owner = self
+            .progress
+            .decision_state
+            .lane_offer_state(owner_lane_idx);
         if owner.key() != Some(key) {
             crate::invariant();
         }
@@ -37,12 +40,12 @@ where
         if key.is_absent() {
             crate::invariant();
         }
-        let lane_limit = self.cursor.logical_lane_count();
-        let active_offer_lanes = self.decision_state.active_offer_lanes();
+        let lane_limit = self.progress.cursor.logical_lane_count();
+        let active_offer_lanes = self.progress.decision_state.active_offer_lanes();
         let mut active: Option<ActiveOfferEntry> = None;
         let mut next = active_offer_lanes.first_set(lane_limit);
         while let Some(lane_idx) = next {
-            let info = self.decision_state.lane_offer_state(lane_idx);
+            let info = self.progress.decision_state.lane_offer_state(lane_idx);
             if info.entry.is_absent() || info.scope.is_none() {
                 crate::invariant();
             }
@@ -114,7 +117,7 @@ where
         has_offer_lanes: bool,
     ) -> CurrentScopeSelectionMeta {
         let scope_id = info.scope;
-        if !self.cursor.has_route_scope(scope_id) {
+        if !self.progress.cursor.has_route_scope(scope_id) {
             return CurrentScopeSelectionMeta::EMPTY;
         }
         let mut flags = CurrentScopeSelectionMeta::FLAG_ROUTE_ENTRY;
@@ -131,17 +134,26 @@ where
         &self,
         scope_id: ScopeId,
     ) -> ScopeArmMaterializationMeta {
-        if self.cursor.route_scope_arm_count(scope_id).is_none() {
+        if self
+            .progress
+            .cursor
+            .route_scope_arm_count(scope_id)
+            .is_none()
+        {
             crate::invariant();
         }
         let mut meta = ScopeArmMaterializationMeta::EMPTY;
         let mut arm = 0u8;
         while arm <= 1 {
             let arm_idx = arm as usize;
-            if let Some(entry) = self.cursor.passive_observer_arm_entry(scope_id, arm) {
+            if let Some(entry) = self
+                .progress
+                .cursor
+                .passive_observer_arm_entry(scope_id, arm)
+            {
                 meta.passive_arm_entry[arm_idx] = entry;
             }
-            if let Some(scope) = self.cursor.passive_child_scope(scope_id, arm) {
+            if let Some(scope) = self.progress.cursor.passive_child_scope(scope_id, arm) {
                 meta.passive_child_scope[arm_idx] = scope;
             }
             if arm == 1 {
@@ -150,6 +162,7 @@ where
             arm += 1;
         }
         if let Some(arm_mask) = self
+            .progress
             .cursor
             .route_scope_first_recv_dispatch_arm_mask(scope_id)
         {
@@ -192,11 +205,12 @@ where
             {
                 continue;
             }
-            let Some((entry, _)) = self.cursor.controller_arm_entry_by_arm(scope, arm) else {
+            let Some((entry, _)) = self.progress.cursor.controller_arm_entry_by_arm(scope, arm)
+            else {
                 continue;
             };
             let idx = entry.as_usize();
-            let event = if let Some(meta) = self.cursor.try_local_meta_at(idx) {
+            let event = if let Some(meta) = self.progress.cursor.try_local_meta_at(idx) {
                 EventCommitMeta::new(
                     meta.eff_index,
                     meta.label,
@@ -205,12 +219,12 @@ where
                     meta.route_arm,
                     meta.lane,
                 )
-            } else if let Some(meta) = self.cursor.try_send_meta_at(idx) {
+            } else if let Some(meta) = self.progress.cursor.try_send_meta_at(idx) {
                 meta.into()
             } else {
                 continue;
             };
-            let conflict = self.cursor.event_conflict_for_index(idx);
+            let conflict = self.progress.cursor.event_conflict_for_index(idx);
             let mut selected = |candidate, view| {
                 if matches!(view, EventArmView::Committed) {
                     self.selected_arm_for_scope(candidate)
@@ -220,7 +234,12 @@ where
                     self.selected_arm_for_recv_event(conflict, candidate, view)
                 }
             };
-            if self.cursor.event_enabled(idx, event, &mut selected).is_ok() {
+            if self
+                .progress
+                .cursor
+                .event_enabled(idx, event, &mut selected)
+                .is_ok()
+            {
                 return true;
             }
         }

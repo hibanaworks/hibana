@@ -1,8 +1,12 @@
 use core::cell::Cell;
 
+#[cfg(kani)]
+#[path = "access_state/kani.rs"]
+mod proofs;
+
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(kani, derive(kani::Arbitrary))]
+#[cfg_attr(kani, derive(::kani::Arbitrary))]
 pub(crate) enum RendezvousAccessState {
     Available = 0,
     RegistryLease = 1,
@@ -58,8 +62,18 @@ pub(crate) struct EndpointOperationLease<'r> {
 }
 
 impl<'r> EndpointOperationLease<'r> {
-    pub(super) const fn new(state: &'r Cell<RendezvousAccessState>) -> Self {
+    const fn new(state: &'r Cell<RendezvousAccessState>) -> Self {
         Self { state }
+    }
+
+    pub(crate) fn try_acquire(state: &'r Cell<RendezvousAccessState>) -> Option<Self> {
+        let next = state.get().begin_endpoint_operation()?;
+        state.set(next);
+        Some(Self::new(state))
+    }
+
+    pub(crate) fn protects(&self, state: &Cell<RendezvousAccessState>) -> bool {
+        core::ptr::eq(self.state, state)
     }
 }
 

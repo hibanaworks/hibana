@@ -1,6 +1,6 @@
 use super::commit_delta::PreparedCommitDelta;
 use super::{
-    CursorEndpoint, EndpointArenaLayout, Lane, LaneGuard, Port, SendMeta, SendPreview, SendResult,
+    EndpointArenaLayout, Lane, LaneGuard, Port, ResidentActor, SendMeta, SendPreview, SendResult,
     SendRouteAudit, SendRouteAuthority, StateIndex, Transport, lane_port,
 };
 
@@ -130,7 +130,7 @@ pub(crate) enum SendState<'r> {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct CursorEndpointStorageLayout {
+pub(crate) struct ActorStorageLayout {
     header_bytes: usize,
     header_align: usize,
     port_slots_offset: usize,
@@ -146,7 +146,7 @@ pub(crate) struct CursorEndpointStorageLayout {
     total_align: usize,
 }
 
-impl CursorEndpointStorageLayout {
+impl ActorStorageLayout {
     #[inline(always)]
     pub(crate) const fn port_slots_offset(self) -> usize {
         self.port_slots_offset
@@ -179,15 +179,15 @@ const fn storage_max(lhs: usize, rhs: usize) -> usize {
 }
 
 #[inline]
-pub(crate) const fn cursor_endpoint_storage_layout<'r, T>(
+pub(crate) const fn actor_storage_layout<'r, T>(
     arena_layout: &EndpointArenaLayout,
     lane_slot_count: usize,
-) -> CursorEndpointStorageLayout
+) -> ActorStorageLayout
 where
     T: Transport + 'r,
 {
-    let header_bytes = core::mem::size_of::<CursorEndpoint<'r, T>>();
-    let header_align = core::mem::align_of::<CursorEndpoint<'r, T>>();
+    let header_bytes = core::mem::size_of::<ResidentActor<'r, T>>();
+    let header_align = core::mem::align_of::<ResidentActor<'r, T>>();
     let port_slots_align = core::mem::align_of::<Option<Port<'r, T>>>();
     let port_slots_bytes = crate::runtime_core::layout::mul(
         core::mem::size_of::<Option<Port<'r, T>>>(),
@@ -214,7 +214,7 @@ where
         ),
         arena_layout.header_align(),
     );
-    CursorEndpointStorageLayout {
+    ActorStorageLayout {
         header_bytes,
         header_align,
         port_slots_offset,

@@ -83,7 +83,7 @@ where
         role_image: RoleImageSlice<ROLE>,
     ) -> PublicEndpointStorageLayout {
         let arena_layout = role_image.endpoint_arena_layout();
-        let storage_layout = crate::endpoint::kernel::cursor_endpoint_storage_layout::<T>(
+        let storage_layout = crate::endpoint::kernel::actor_storage_layout::<T>(
             &arena_layout,
             role_image.endpoint_lane_slot_count(),
         );
@@ -102,7 +102,7 @@ where
         (
             EndpointLeaseId,
             u32,
-            *mut crate::endpoint::kernel::CursorEndpoint<'r, T>,
+            *mut crate::endpoint::kernel::ResidentActor<'r, T>,
         ),
         ClusterError,
     >
@@ -159,8 +159,7 @@ where
             generation,
             /* SAFETY: `offset..offset+required_bytes` was checked against the
             rendezvous slab length and the endpoint lease was confirmed live. */
-            unsafe { slab_ptr.add(offset) }
-                .cast::<crate::endpoint::kernel::CursorEndpoint<'r, T>>(),
+            unsafe { slab_ptr.add(offset) }.cast::<crate::endpoint::kernel::ResidentActor<'r, T>>(),
         ))
     }
 
@@ -187,18 +186,6 @@ where
                 .cast::<crate::endpoint::carrier::KernelEndpointHeader<'cfg>>()
         };
         crate::invariant_some(core::ptr::NonNull::new(ptr))
-    }
-
-    pub(crate) fn try_public_endpoint_operation_lease(
-        &self,
-        rv_id: RendezvousId,
-        slot: EndpointLeaseId,
-        generation: u32,
-    ) -> Option<crate::rendezvous::core::EndpointOperationLease<'_>> {
-        let rendezvous = self
-            .locals()
-            .published_endpoint_owner(rv_id, slot, generation)?;
-        rendezvous.try_endpoint_operation_lease()
     }
 
     #[inline]

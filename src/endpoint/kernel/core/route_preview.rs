@@ -1,5 +1,5 @@
 use super::{
-    Arm, CursorEndpoint, RecvError, RecvResult, ScopeId, TapFrameMeta, Transport, emit, events,
+    Arm, OperationKernel, RecvError, RecvResult, ScopeId, TapFrameMeta, Transport, emit, events,
     state_index_to_usize,
 };
 
@@ -17,12 +17,12 @@ impl IngressEvidenceState {
     }
 }
 
-impl<'r, T> CursorEndpoint<'r, T>
+impl<'r, T> OperationKernel<'_, 'r, T>
 where
     T: Transport + 'r,
 {
     pub(crate) fn is_reentry_route(&self, scope: ScopeId) -> bool {
-        self.cursor.route_scope_reentry(scope)
+        self.progress.cursor.route_scope_reentry(scope)
     }
 
     pub(crate) fn selected_arm_for_scope(&self, scope: ScopeId) -> Option<u8> {
@@ -30,7 +30,9 @@ where
             return None;
         }
         let scope_slot = self.scope_slot_for_route(scope)?;
-        self.decision_state.selected_arm_for_scope_slot(scope_slot)
+        self.progress
+            .decision_state
+            .selected_arm_for_scope_slot(scope_slot)
     }
 
     pub(in crate::endpoint::kernel) fn selected_live_arm_for_scope(
@@ -51,14 +53,17 @@ where
         arm: u8,
     ) -> bool {
         let mut selected_arm_for_scope = |scope| self.selected_arm_for_scope(scope);
-        self.cursor
-            .reentrant_route_arm_event_row_done(scope_id, arm, &mut selected_arm_for_scope)
+        self.progress.cursor.reentrant_route_arm_event_row_done(
+            scope_id,
+            arm,
+            &mut selected_arm_for_scope,
+        )
     }
 
     pub(crate) fn route_scope_offer_entry_index(&self, scope_id: ScopeId) -> Option<usize> {
-        let offer_entry = self.cursor.route_scope_offer_entry(scope_id)?;
+        let offer_entry = self.progress.cursor.route_scope_offer_entry(scope_id)?;
         Some(if offer_entry.is_absent() {
-            self.cursor.index()
+            self.progress.cursor.index()
         } else {
             state_index_to_usize(offer_entry)
         })
@@ -69,7 +74,8 @@ where
         scope_id: ScopeId,
         arm: u8,
     ) -> Option<usize> {
-        self.cursor
+        self.progress
+            .cursor
             .passive_materialization_index_for_selected_arm(scope_id, arm, |scope| {
                 self.preview_live_selected_arm_for_scope(scope)
             })
@@ -93,7 +99,7 @@ where
         let mut selected_arm_for_scope = |scope| self.selected_live_arm_for_scope(scope);
         let mut preview_selected_arm_for_scope =
             |scope| self.poll_arm_from_ready_mask(scope).map(Arm::as_u8);
-        self.cursor.current_offer_scope_id(
+        self.progress.cursor.current_offer_scope_id(
             &mut selected_arm_for_scope,
             &mut preview_selected_arm_for_scope,
         )
@@ -104,14 +110,16 @@ where
         stop_scope: ScopeId,
         initial_scope: ScopeId,
     ) -> ScopeId {
-        self.cursor
+        self.progress
+            .cursor
             .rebase_passive_descendant_scope(stop_scope, initial_scope, |scope| {
                 self.preview_live_selected_arm_for_scope(scope)
             })
     }
 
     pub(crate) fn current_route_arm_authorized(&self) -> RecvResult<bool> {
-        self.cursor
+        self.progress
+            .cursor
             .current_route_arm_authorization(
                 |scope| self.selected_live_arm_for_scope(scope),
                 |scope| self.preview_live_selected_arm_for_scope(scope),

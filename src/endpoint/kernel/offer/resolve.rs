@@ -4,10 +4,10 @@ use super::passive::{
     PassiveRouteEvidenceContext, PassiveRouteEvidenceInput, PassiveRouteEvidenceOutcome,
 };
 use super::{
-    Arm, CursorEndpoint, FrameEvidenceResolution, FrontierDeferOutcome, FrontierDeferRequest,
+    Arm, FrameEvidenceResolution, FrontierDeferOutcome, FrontierDeferRequest,
     FrontierScratchWorkspace, FrontierVisitSet, IngressEvidenceState, OfferAuthorityPath,
-    OfferResolveState, RecvError, RecvResult, ResolveTokenOutcome, ResolvedRouteArm,
-    RouteArmCommitEvidence, RouteArmToken, RouteResolveStep, Transport,
+    OfferResolveState, OperationKernel, RecvError, RecvResult, ResolveTokenOutcome,
+    ResolvedRouteArm, RouteArmCommitEvidence, RouteArmToken, RouteResolveStep, Transport,
 };
 pub(super) struct RouteAuthorityResolution {
     pub(super) route_token: RouteArmToken,
@@ -34,7 +34,7 @@ enum PassiveRouteAuthorityOutcome {
     RestartFrontier,
 }
 
-impl<'r, T> CursorEndpoint<'r, T>
+impl<'r, T> OperationKernel<'_, 'r, T>
 where
     T: Transport + 'r,
 {
@@ -156,30 +156,32 @@ where
         let Some(key) = state.ingress.transport_frame_key() else {
             return Ok(None);
         };
-        let (arm, marks_descendant) = if let Some(target_idx) =
-            state.selection().observed_target_index()
-        {
-            let mut selected = None;
-            self.cursor
-                .visit_route_arms_for_index(target_idx, |candidate_scope, candidate_arm| {
-                    if candidate_scope == scope_id {
-                        selected = Some(candidate_arm);
-                    }
-                });
-            let Some(selected) = selected else {
-                return Ok(None);
+        let (arm, marks_descendant) =
+            if let Some(target_idx) = state.selection().observed_target_index() {
+                let mut selected = None;
+                self.progress.cursor.visit_route_arms_for_index(
+                    target_idx,
+                    |candidate_scope, candidate_arm| {
+                        if candidate_scope == scope_id {
+                            selected = Some(candidate_arm);
+                        }
+                    },
+                );
+                let Some(selected) = selected else {
+                    return Ok(None);
+                };
+                (Arm::from_raw(selected), false)
+            } else {
+                let Some(selected) = self
+                    .progress
+                    .cursor
+                    .passive_descendant_dispatch_arm_for_key(scope_id, key)
+                    .map_err(|_| RecvError::PhaseInvariant)?
+                else {
+                    return Ok(None);
+                };
+                (Arm::from_raw(selected), true)
             };
-            (Arm::from_raw(selected), false)
-        } else {
-            let Some(selected) = self
-                .cursor
-                .passive_descendant_dispatch_arm_for_key(scope_id, key)
-                .map_err(|_| RecvError::PhaseInvariant)?
-            else {
-                return Ok(None);
-            };
-            (Arm::from_raw(selected), true)
-        };
         if marks_descendant {
             self.mark_intrinsic_passive_descendant_path_ready(scope_id, key)?;
         }
@@ -388,7 +390,11 @@ where
         &self,
         scope_id: crate::global::const_dsl::ScopeId,
     ) -> Option<RouteAuthorityResolution> {
-        let is_dynamic_route_scope = self.cursor.route_scope_resolver(scope_id).is_some();
+        let is_dynamic_route_scope = self
+            .progress
+            .cursor
+            .route_scope_resolver(scope_id)
+            .is_some();
         if is_dynamic_route_scope {
             return None;
         }

@@ -1,5 +1,6 @@
 use super::super::{
-    CursorEndpoint, OfferScopeProfile, OfferScopeSelection, ScopeArmMaterializationMeta, Transport,
+    OfferScopeProfile, OfferScopeSelection, OperationKernel, ScopeArmMaterializationMeta,
+    Transport,
     profile::{
         OfferArmRecvEvidence, OfferControllerCursorArm, OfferControllerLocalEvidence,
         OfferControllerLocalReadiness, OfferCursorReadiness, OfferEntryPosition,
@@ -16,7 +17,7 @@ struct OfferIngressPlannerInput {
     cursor: OfferCursorReadiness,
 }
 
-impl<'r, T> CursorEndpoint<'r, T>
+impl<'r, T> OperationKernel<'_, 'r, T>
 where
     T: Transport + 'r,
 {
@@ -30,7 +31,7 @@ where
             selection,
             entry,
             materialization: self.selection_materialization_meta(selection),
-            cursor: if self.cursor.is_recv() {
+            cursor: if self.progress.cursor.is_recv() {
                 OfferCursorReadiness::Recv
             } else {
                 OfferCursorReadiness::NonRecv
@@ -51,8 +52,12 @@ where
         &self,
         scope_id: crate::global::const_dsl::ScopeId,
     ) -> OfferScopeProfile {
-        let is_controller = self.cursor.is_route_controller(scope_id);
-        let is_dynamic = self.cursor.route_scope_resolver(scope_id).is_some();
+        let is_controller = self.progress.cursor.is_route_controller(scope_id);
+        let is_dynamic = self
+            .progress
+            .cursor
+            .route_scope_resolver(scope_id)
+            .is_some();
         match (is_controller, is_dynamic) {
             (true, true) => OfferScopeProfile::ControllerDynamic,
             (true, false) => OfferScopeProfile::ControllerIntrinsic,

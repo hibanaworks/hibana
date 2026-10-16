@@ -1,12 +1,12 @@
 use core::cell::Cell;
 
 use super::{
-    CursorEndpoint, PublicActiveOp, SendError, SendPreviewError, SendResult, Transport,
+    OperationKernel, PublicActiveOp, SendError, SendPreviewError, SendResult, Transport,
     state_index_to_usize,
 };
 use crate::endpoint::carrier::WaiterTransfer;
 
-impl<'r, T> CursorEndpoint<'r, T>
+impl<'r, T> OperationKernel<'_, 'r, T>
 where
     T: Transport + 'r,
 {
@@ -38,7 +38,7 @@ where
             if let Some(kind) = self.session_fault() {
                 return Err(SendError::SessionFault(kind));
             }
-            match self.public_active_op {
+            match self.io.public_active_op {
                 PublicActiveOp::Idle => {}
                 PublicActiveOp::RouteBranch => {
                     return self.preview_branch_send_meta(target_label, target_schema);
@@ -77,7 +77,7 @@ where
                 let mut lane_for_contract_or_offer = |scope, label, schema| {
                     endpoint.lane_for_contract_or_offer(scope, label, schema)
                 };
-                endpoint.cursor.send_preview_meta_for_contract(
+                endpoint.progress.cursor.send_preview_meta_for_contract(
                     crate::global::typestate::MessageSelector::new(
                         endpoint.public_header.role(),
                         target_label,

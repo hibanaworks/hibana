@@ -1,5 +1,5 @@
 use super::super::{
-    Arm, CommittedCommitDelta, CursorEndpoint, RouteArmToken, SelectedRouteCommitRow,
+    Arm, CommittedCommitDelta, OperationKernel, RouteArmToken, SelectedRouteCommitRow,
     SelectedRouteCommitRowsRef, SendError, SendMeta, SendResult, Transport,
     prepare_event_selected_route_commit_rows_from_resident_route_commit_range,
 };
@@ -10,7 +10,7 @@ enum SendRouteEvidencePhase {
     Continue,
 }
 
-impl<'r, T> CursorEndpoint<'r, T>
+impl<'r, T> OperationKernel<'_, 'r, T>
 where
     T: Transport + 'r,
 {
@@ -23,12 +23,12 @@ where
         if meta.selected_route_arm.is_none() {
             return Ok(SelectedRouteCommitRowsRef::EMPTY);
         }
-        let Self {
+        let crate::endpoint::kernel::core::ActorProgress {
             cursor,
             decision_state,
             route_commit_rows,
             ..
-        } = self;
+        } = &mut *self.progress;
         let mut rows = route_commit_rows.begin();
         prepare_event_selected_route_commit_rows_from_resident_route_commit_range(
             decision_state,
@@ -51,7 +51,11 @@ where
     ) {
         let scope_id = route_row.scope();
         let selected_arm = route_row.selected_arm();
-        let has_resolver = self.cursor.route_scope_resolver(scope_id).is_some();
+        let has_resolver = self
+            .progress
+            .cursor
+            .route_scope_resolver(scope_id)
+            .is_some();
         if matches!(phase, SendRouteEvidencePhase::Begin) && !has_resolver {
             crate::invariant();
         }
@@ -78,7 +82,7 @@ where
         let route_lane = crate::invariant_some(delta.selected_route_lane());
         let mut idx = 0usize;
         while idx < routes.len() {
-            let route_row = crate::invariant_some(routes.get(&self.cursor, idx));
+            let route_row = crate::invariant_some(routes.get(&self.progress.cursor, idx));
             let phase = if begin_route_start.is_some_and(|start| idx >= start) {
                 if !delta.route_is_fresh(idx) {
                     crate::invariant();
@@ -105,11 +109,11 @@ where
         let route_lane = crate::invariant_some(delta.selected_route_lane());
         let mut idx = start as usize;
         while idx < routes.len() {
-            let Some(route_row) = routes.get(&self.cursor, idx) else {
+            let Some(route_row) = routes.get(&self.progress.cursor, idx) else {
                 crate::invariant();
             };
             let scope_id = route_row.scope();
-            if let Some(resolver) = self.cursor.route_scope_resolver(scope_id) {
+            if let Some(resolver) = self.progress.cursor.route_scope_resolver(scope_id) {
                 let resolver_id = resolver.resolver_id();
                 let arm = match route_row.selected_arm() {
                     0 => crate::session::cluster::core::DecisionArm::Left,

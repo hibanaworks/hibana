@@ -7,7 +7,7 @@ struct SecondaryEndpointLaneAttach<'lease, const ROLE: u8, T>
 where
     T: crate::transport::Transport + 'lease,
 {
-    dst: *mut crate::endpoint::kernel::CursorEndpoint<'lease, T>,
+    dst: *mut crate::endpoint::kernel::ResidentActor<'lease, T>,
     rv_id: RendezvousId,
     sid: SessionId,
     role_image: RoleImageSlice<ROLE>,
@@ -156,8 +156,8 @@ where
             unpublished. Disable public Drop's release
             path so reservation abort remains single-owner and explicit. */
             unsafe {
-                (*dst).public_generation = 0;
-                (*dst).public_slot_ownership =
+                (*(*dst).progress.get()).public_generation = 0;
+                (*(*dst).progress.get()).public_slot_ownership =
                     crate::endpoint::kernel::PublicSlotOwnership::Borrowed;
             }
             /* SAFETY: endpoint initialization failed before publication, so
