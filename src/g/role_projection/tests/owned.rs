@@ -5,6 +5,43 @@ use crate::{
 };
 
 #[test]
+fn a_message_between_co_resident_views_consumes_both_local_halves_before_handoff() {
+    type Steps = g::Seq<g::Send<0, 10, Read>, g::Seq<g::Send<0, 1, Loan>, g::Send<1, 0, Loan>>>;
+    let () = crate::g::ProgramProjection::<Steps, 8>::VALIDATION;
+    let owner_program = crate::global::role_program::role_program_from_image::<0>(
+        &RoleProjection::<0, Steps, 8>::IMAGE_REF,
+    );
+    let db_program = crate::global::role_program::role_program_from_image::<10>(
+        &RoleProjection::<10, Steps, 8>::IMAGE_REF,
+    );
+    let worker_program = crate::global::role_program::role_program_from_image::<1>(
+        &RoleProjection::<1, Steps, 8>::IMAGE_REF,
+    );
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let mut slab = [0u8; 48 * 1024];
+        let mut storage = SessionKitStorage::<TestTransport>::uninit();
+        let kit = storage.init();
+        let rv = kit.rendezvous(&mut slab, TestTransport::new()).unwrap();
+        let sid = SessionId::new(846);
+        let mut owner = rv.enter(sid, &owner_program).unwrap();
+        let mut db = rv.enter(sid, &db_program).unwrap();
+        let mut worker = rv.enter(sid, &worker_program).unwrap();
+
+        // OWNER and DB are different logical roles held by the same actor.
+        // Sending must leave DB's matching receive available in that actor.
+        owner.send::<Read>(&42).await.unwrap();
+        assert_eq!(db.recv::<Read>().await.unwrap(), 42);
+        owner.send::<Loan>(db).await.unwrap();
+        let db = worker.recv::<Loan>().await.unwrap();
+        worker.send::<Loan>(db).await.unwrap();
+        drop(owner.recv::<Loan>().await.unwrap());
+    });
+}
+
+#[test]
 fn one_resource_binding_cannot_issue_again_in_another_runtime_or_session() {
     type Steps = g::Seq<g::Send<0, 1, Loan>, g::Send<1, 0, Loan>>;
     let () = crate::g::ProgramProjection::<Steps, 8>::VALIDATION;
