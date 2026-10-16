@@ -14,15 +14,12 @@ pub(super) struct FrontierDeferRequest {
     pub(super) ingress: IngressEvidenceState,
 }
 
-impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
+impl<'r, T> CursorEndpoint<'r, T>
 where
     T: Transport + 'r,
 {
     #[inline]
-    pub(super) fn offer_refresh_mask(
-        endpoint: &CursorEndpoint<'r, ROLE, T>,
-        lane_idx: usize,
-    ) -> bool {
+    pub(super) fn offer_refresh_mask(endpoint: &CursorEndpoint<'r, T>, lane_idx: usize) -> bool {
         endpoint.cursor.lane_has_pending_step(lane_idx)
             || endpoint
                 .decision_state
@@ -200,7 +197,7 @@ where
                 Some(root) => root,
                 None => ScopeId::none(),
             },
-            CursorEndpoint::<ROLE, T>::frontier_kind_for_cursor(
+            CursorEndpoint::<T>::frontier_kind_for_cursor(
                 &self.cursor,
                 scope_id,
                 current_is_controller,
@@ -281,16 +278,15 @@ where
         let current_is_controller = self.cursor.is_route_controller(scope_id);
         let current_is_dynamic =
             current_is_controller && self.cursor.route_scope_resolver(scope_id).is_some();
-        let frontier_facts = CursorEndpoint::<ROLE, T>::frontier_facts_at(
+        let frontier_facts = CursorEndpoint::<T>::frontier_facts_at(
             &self.cursor,
             scope_id,
             current_is_controller,
             current_is_dynamic,
             current_idx,
         );
-        let current_parallel =
-            CursorEndpoint::<ROLE, T>::parallel_scope_root(&self.cursor, scope_id)
-                .filter(|&root| self.root_frontier_has_active_entries(root));
+        let current_parallel = CursorEndpoint::<T>::parallel_scope_root(&self.cursor, scope_id)
+            .filter(|&root| self.root_frontier_has_active_entries(root));
         let mut flags = 0u8;
         if current_is_controller {
             flags |= CurrentFrontierSelectionState::FLAG_CONTROLLER;

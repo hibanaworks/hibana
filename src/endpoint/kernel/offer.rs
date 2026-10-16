@@ -66,7 +66,7 @@ use self::state::{
 };
 pub(in crate::endpoint::kernel) use super::core::IngressEvidenceState;
 
-impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
+impl<'r, T> CursorEndpoint<'r, T>
 where
     T: Transport + 'r,
 {
@@ -224,7 +224,8 @@ where
         }
         let carried_lane = state.carried_transport_lane_wire();
         let carried_key = state.carried_transport_frame_key();
-        let carried_observation = state.carried_transport_observation(self.sid.raw(), ROLE);
+        let carried_observation =
+            state.carried_transport_observation(self.sid.raw(), self.public_header.role());
         let selection_result = {
             let OfferExecution::Selecting { frontier_visited } = &mut state.execution else {
                 crate::invariant();

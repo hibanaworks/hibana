@@ -11,7 +11,7 @@ use crate::{
     transport::Transport,
 };
 
-impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
+impl<'r, T> CursorEndpoint<'r, T>
 where
     T: Transport + 'r,
 {
@@ -316,7 +316,8 @@ where
         &self,
         cause: SessionFaultKind,
     ) -> SessionFaultKind {
-        self.session.cluster().poison_session::<ROLE>(
+        self.session.cluster().poison_session(
+            self.public_header.role(),
             self.public_rv,
             self.public_slot,
             self.public_generation,

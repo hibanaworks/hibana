@@ -475,6 +475,11 @@ pub(crate) struct EventCursor {
 
 impl EventCursor {
     #[inline(always)]
+    pub(crate) fn role(&self) -> u8 {
+        self.machine().role()
+    }
+
+    #[inline(always)]
     const fn encode_index(idx: usize) -> u16 {
         match compact_cursor_position(idx) {
             Some(encoded) => encoded,

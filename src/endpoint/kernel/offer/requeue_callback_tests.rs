@@ -168,7 +168,7 @@ fn transport_requeue_callback_reentry_revalidates_generation() {
     let kernel_ptr = target
         .owner
         .ptr
-        .cast::<CursorEndpoint<'_, 1, ReentrantRequeueTransport>>();
+        .cast::<CursorEndpoint<'_, ReentrantRequeueTransport>>();
     let kernel = unsafe {
         // SAFETY: the public endpoint header is the first `repr(C)` field of
         // this exact role/transport kernel, and `target` owns it exclusively.

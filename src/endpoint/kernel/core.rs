@@ -248,7 +248,7 @@ pub(crate) fn kernel_send<'r>(
     }
 }
 
-impl<'r, const ROLE: u8, T> SendKernelEndpoint<'r> for CursorEndpoint<'r, ROLE, T>
+impl<'r, T> SendKernelEndpoint<'r> for CursorEndpoint<'r, T>
 where
     T: Transport + 'r,
 {
@@ -325,7 +325,7 @@ pub(in crate::endpoint::kernel) use route_preview::IngressEvidenceState;
 pub(crate) use runtime_types::*;
 pub(crate) use send_route_authority::*;
 
-impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
+impl<'r, T> CursorEndpoint<'r, T>
 where
     T: Transport + 'r,
 {
@@ -347,7 +347,7 @@ where
         }
         if self.public_generation == 0
             || self.public_header.generation() != self.public_generation
-            || self.public_header.role() != ROLE
+            || self.public_header.role() != self.cursor.role()
         {
             crate::invariant();
         }
@@ -446,7 +446,7 @@ where
     }
 }
 
-impl<'r, const ROLE: u8, T> Drop for CursorEndpoint<'r, ROLE, T>
+impl<'r, T> Drop for CursorEndpoint<'r, T>
 where
     T: Transport + 'r,
 {

@@ -83,7 +83,7 @@ where
         role_image: RoleImageSlice<ROLE>,
     ) -> PublicEndpointStorageLayout {
         let arena_layout = role_image.endpoint_arena_layout();
-        let storage_layout = crate::endpoint::kernel::cursor_endpoint_storage_layout::<0, T>(
+        let storage_layout = crate::endpoint::kernel::cursor_endpoint_storage_layout::<T>(
             &arena_layout,
             role_image.endpoint_lane_slot_count(),
         );
@@ -95,17 +95,14 @@ where
     }
 
     #[inline(never)]
-    pub(in crate::session::cluster::core) fn allocate_public_endpoint_storage_for_rv<
-        'r,
-        const ROLE: u8,
-    >(
+    pub(in crate::session::cluster::core) fn allocate_public_endpoint_storage_for_rv<'r>(
         &self,
         request: PublicEndpointStorageRequest,
     ) -> Result<
         (
             EndpointLeaseId,
             u32,
-            *mut crate::endpoint::kernel::CursorEndpoint<'r, ROLE, T>,
+            *mut crate::endpoint::kernel::CursorEndpoint<'r, T>,
         ),
         ClusterError,
     >
@@ -132,7 +129,7 @@ where
             .allocate_endpoint_lease_for_session_role(EndpointLeaseRequest {
                 rendezvous: rv_id,
                 session: sid,
-                role: ROLE,
+                role: role_descriptor.role(),
                 program: role_descriptor.program(),
                 bytes: required_bytes,
                 align: required_align,
@@ -163,7 +160,7 @@ where
             /* SAFETY: `offset..offset+required_bytes` was checked against the
             rendezvous slab length and the endpoint lease was confirmed live. */
             unsafe { slab_ptr.add(offset) }
-                .cast::<crate::endpoint::kernel::CursorEndpoint<'r, ROLE, T>>(),
+                .cast::<crate::endpoint::kernel::CursorEndpoint<'r, T>>(),
         ))
     }
 
@@ -220,8 +217,9 @@ where
     }
 
     #[inline]
-    pub(crate) fn poison_session<const ROLE: u8>(
+    pub(crate) fn poison_session(
         &self,
+        role: u8,
         rv_id: RendezvousId,
         slot: EndpointLeaseId,
         generation: u32,
@@ -232,7 +230,7 @@ where
             self.locals()
                 .published_endpoint_owner(rv_id, slot, generation),
         );
-        rv.poison_session(sid, ROLE, cause)
+        rv.poison_session(sid, role, cause)
     }
 
     fn ensure_compiled_program_ref<const ROLE: u8, P>(

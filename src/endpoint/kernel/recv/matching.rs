@@ -7,7 +7,7 @@ use crate::{
     transport::Transport,
 };
 
-impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
+impl<'r, T> CursorEndpoint<'r, T>
 where
     T: Transport + 'r,
 {
@@ -145,7 +145,11 @@ where
         target_schema: u32,
         frame: &lane_port::PreambleFrame<'_>,
     ) -> lane_port::FrameMismatch {
-        let observed = frame.observed_transport_frame(self.sid.raw(), frame.lane_wire(), ROLE);
+        let observed = frame.observed_transport_frame(
+            self.sid.raw(),
+            frame.lane_wire(),
+            self.public_header.role(),
+        );
         let key = DeterministicInboundKey::new(frame.lane_wire(), target_label, target_schema);
         match self.unique_deterministic_recv_candidate(key) {
             Ok(Ok(candidate)) => lane_port::FrameMismatch::source_label_mismatch(

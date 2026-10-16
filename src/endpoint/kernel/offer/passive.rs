@@ -75,7 +75,7 @@ impl<'a, 'r> PassiveRouteEvidenceContext<'a, 'r> {
     }
 }
 
-impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
+impl<'r, T> CursorEndpoint<'r, T>
 where
     T: Transport + 'r,
 {
@@ -225,7 +225,8 @@ where
             recv_lane,
             frame.observed_frame_label_raw(),
         );
-        let observed = frame.observed_transport_frame(self.sid.raw(), recv_lane, ROLE);
+        let observed =
+            frame.observed_transport_frame(self.sid.raw(), recv_lane, self.public_header.role());
         if self
             .cursor
             .passive_descendant_dispatch_arm_for_key(selection.scope_id, key)

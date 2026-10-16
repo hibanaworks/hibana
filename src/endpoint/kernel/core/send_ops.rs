@@ -8,7 +8,7 @@ use crate::global::typestate::state_index_to_usize;
 
 mod route_evidence;
 
-impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
+impl<'r, T> CursorEndpoint<'r, T>
 where
     T: Transport + 'r,
 {
@@ -168,7 +168,7 @@ where
         let payload = payload.ok_or(SendError::PhaseInvariant)?;
         let port = self.port_for_lane(meta.lane as usize);
         let lane = port.lane();
-        let carrier = if meta.peer == ROLE {
+        let carrier = if meta.peer == self.public_header.role() {
             lane_port::SendCarrier::Local
         } else {
             lane_port::SendCarrier::Transport
@@ -289,7 +289,12 @@ where
         let event = crate::invariant_some(delta.event());
         let lane = event.lane();
         let lane_wire = self.port_for_lane(lane as usize).lane().as_wire();
-        let logical_meta = TapFrameMeta::new(self.sid.raw(), lane_wire, ROLE, event.event_label());
+        let logical_meta = TapFrameMeta::new(
+            self.sid.raw(),
+            lane_wire,
+            self.public_header.role(),
+            event.event_label(),
+        );
         let event_id = event.event_id(ids::ENDPOINT_SEND, ids::ENDPOINT_SESSION);
         self.emit_endpoint_event(event_id, logical_meta, lane);
     }

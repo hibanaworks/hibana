@@ -44,7 +44,7 @@ impl RecvState {
     }
 }
 
-impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
+impl<'r, T> CursorEndpoint<'r, T>
 where
     T: Transport + 'r,
 {
@@ -157,7 +157,11 @@ where
                 self.emit_materialization_mismatch_observation(
                     frame.lane_idx(),
                     lane_wire,
-                    lane_port::FrameMismatch::headerless_preamble(self.sid.raw(), lane_wire, ROLE),
+                    lane_port::FrameMismatch::headerless_preamble(
+                        self.sid.raw(),
+                        lane_wire,
+                        self.public_header.role(),
+                    ),
                 );
                 frame.discard_uncommitted();
                 Err(RecvError::PhaseInvariant)
@@ -329,7 +333,7 @@ where
     }
 }
 
-impl<'r, const ROLE: u8, T> super::core::RecvKernelEndpoint<'r> for CursorEndpoint<'r, ROLE, T>
+impl<'r, T> super::core::RecvKernelEndpoint<'r> for CursorEndpoint<'r, T>
 where
     T: Transport + 'r,
 {

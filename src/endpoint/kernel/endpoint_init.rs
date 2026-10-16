@@ -38,8 +38,8 @@ use super::layout::LeasedState;
 /// # Safety
 ///
 /// `storage..storage + storage_len` must contain one fully initialized
-/// `CursorEndpoint<'r, ROLE, T>` allocation for any `ROLE`. `CursorEndpoint` is
-/// `repr(C)`, and its field sequence is independent of the const role value.
+/// `CursorEndpoint<'r, T>` allocation. `CursorEndpoint` is `repr(C)`;
+/// its logical role is installed from the immutable projected descriptor.
 pub(crate) unsafe fn resident_program_ref<'r, T>(
     storage: *const u8,
     storage_len: usize,
@@ -47,7 +47,7 @@ pub(crate) unsafe fn resident_program_ref<'r, T>(
 where
     T: Transport + 'r,
 {
-    let cursor_offset = core::mem::offset_of!(CursorEndpoint<'r, 0, T>, cursor);
+    let cursor_offset = core::mem::offset_of!(CursorEndpoint<'r, T>, cursor);
     let required =
         crate::invariant_some(cursor_offset.checked_add(core::mem::size_of::<EventCursor>()));
     if required > storage_len {
@@ -74,14 +74,15 @@ unsafe fn section_ptr<T>(base: *mut u8, section: EndpointArenaSection) -> *mut T
     unsafe { base.add(section.offset()).cast::<T>() }
 }
 
-struct EndpointHeaderInit<'r, const ROLE: u8, T>
+struct EndpointHeaderInit<'r, T>
 where
     T: Transport + 'r,
 {
-    dst: *mut CursorEndpoint<'r, ROLE, T>,
+    dst: *mut CursorEndpoint<'r, T>,
     storage_base: *mut u8,
     storage_layout: CursorEndpointStorageLayout,
     logical_lane_count: usize,
+    role: u8,
     primary_lane: usize,
     sid: SessionId,
     owner: Owner<'r>,
@@ -94,7 +95,7 @@ where
 }
 
 #[inline(never)]
-unsafe fn init_endpoint_header<'r, const ROLE: u8, T>(init: EndpointHeaderInit<'r, ROLE, T>)
+unsafe fn init_endpoint_header<'r, T>(init: EndpointHeaderInit<'r, T>)
 where
     T: Transport + 'r,
 {
@@ -103,6 +104,7 @@ where
         storage_base,
         storage_layout,
         logical_lane_count,
+        role,
         primary_lane,
         sid,
         owner,
@@ -136,7 +138,7 @@ where
             crate::endpoint::carrier::KernelEndpointHeader::new(
                 public_ops,
                 public_generation,
-                ROLE,
+                role,
             ),
         );
         ::core::ptr::addr_of_mut!((*dst).primary_lane).write(primary_lane);
@@ -158,8 +160,8 @@ where
 }
 
 #[inline(never)]
-unsafe fn init_endpoint_cursor<'r, const ROLE: u8, T>(
-    dst: *mut CursorEndpoint<'r, ROLE, T>,
+unsafe fn init_endpoint_cursor<'r, T>(
+    dst: *mut CursorEndpoint<'r, T>,
     arena_storage: *mut u8,
     arena_layout: &crate::endpoint::kernel::layout::EndpointArenaLayout,
     role_descriptor: RoleDescriptorRef,
@@ -192,8 +194,8 @@ unsafe fn init_endpoint_cursor<'r, const ROLE: u8, T>(
 }
 
 #[inline(never)]
-unsafe fn init_endpoint_route<'r, const ROLE: u8, T>(
-    dst: *mut CursorEndpoint<'r, ROLE, T>,
+unsafe fn init_endpoint_route<'r, T>(
+    dst: *mut CursorEndpoint<'r, T>,
     arena_storage: *mut u8,
     arena_layout: &crate::endpoint::kernel::layout::EndpointArenaLayout,
     role_descriptor: RoleDescriptorRef,
@@ -287,8 +289,8 @@ unsafe fn init_endpoint_route<'r, const ROLE: u8, T>(
 }
 
 #[inline(never)]
-unsafe fn init_endpoint_frontier<'r, const ROLE: u8, T>(
-    dst: *mut CursorEndpoint<'r, ROLE, T>,
+unsafe fn init_endpoint_frontier<'r, T>(
+    dst: *mut CursorEndpoint<'r, T>,
     arena_storage: *mut u8,
     arena_layout: &crate::endpoint::kernel::layout::EndpointArenaLayout,
     role_descriptor: RoleDescriptorRef,
@@ -337,8 +339,8 @@ unsafe fn init_endpoint_frontier<'r, const ROLE: u8, T>(
     }
 }
 
-pub(crate) struct CompiledEndpointInit<'r, const ROLE: u8, T: Transport + 'r> {
-    pub(crate) dst: *mut CursorEndpoint<'r, ROLE, T>,
+pub(crate) struct CompiledEndpointInit<'r, T: Transport + 'r> {
+    pub(crate) dst: *mut CursorEndpoint<'r, T>,
     pub(crate) arena_storage: *mut u8,
     pub(crate) primary_lane: usize,
     pub(crate) sid: SessionId,
@@ -352,9 +354,8 @@ pub(crate) struct CompiledEndpointInit<'r, const ROLE: u8, T: Transport + 'r> {
     pub(crate) session: SessionCtx<'r, T>,
 }
 
-pub(crate) unsafe fn init_empty_from_compiled<'r, const ROLE: u8, T>(
-    init: CompiledEndpointInit<'r, ROLE, T>,
-) where
+pub(crate) unsafe fn init_empty_from_compiled<'r, T>(init: CompiledEndpointInit<'r, T>)
+where
     T: Transport + 'r,
 {
     let CompiledEndpointInit {
@@ -373,8 +374,7 @@ pub(crate) unsafe fn init_empty_from_compiled<'r, const ROLE: u8, T>(
     } = init;
     let arena_layout = role_descriptor.endpoint_arena_layout();
     let lane_slot_count = role_descriptor.endpoint_lane_slot_count();
-    let storage_layout =
-        super::cursor_endpoint_storage_layout::<ROLE, T>(&arena_layout, lane_slot_count);
+    let storage_layout = super::cursor_endpoint_storage_layout::<T>(&arena_layout, lane_slot_count);
     let storage_base = dst.cast::<u8>();
     /* SAFETY: the rendezvous lease passes the unpublished endpoint allocation.
     Header, cursor, route, and frontier owners initialize disjoint fields and
@@ -385,6 +385,7 @@ pub(crate) unsafe fn init_empty_from_compiled<'r, const ROLE: u8, T>(
             storage_base,
             storage_layout,
             logical_lane_count: lane_slot_count,
+            role: role_descriptor.role(),
             primary_lane,
             sid,
             owner,
@@ -401,8 +402,8 @@ pub(crate) unsafe fn init_empty_from_compiled<'r, const ROLE: u8, T>(
     }
 }
 
-pub(crate) unsafe fn write_port_slot<'r, const ROLE: u8, T>(
-    dst: *mut CursorEndpoint<'r, ROLE, T>,
+pub(crate) unsafe fn write_port_slot<'r, T>(
+    dst: *mut CursorEndpoint<'r, T>,
     logical_lane: usize,
     port: Port<'r, T>,
 ) where
@@ -416,8 +417,8 @@ pub(crate) unsafe fn write_port_slot<'r, const ROLE: u8, T>(
     }
 }
 
-pub(crate) unsafe fn write_guard_slot<'r, const ROLE: u8, T>(
-    dst: *mut CursorEndpoint<'r, ROLE, T>,
+pub(crate) unsafe fn write_guard_slot<'r, T>(
+    dst: *mut CursorEndpoint<'r, T>,
     logical_lane: usize,
     guard: LaneGuard<'r, T>,
 ) where
@@ -431,7 +432,7 @@ pub(crate) unsafe fn write_guard_slot<'r, const ROLE: u8, T>(
     }
 }
 
-pub(crate) unsafe fn finish_init<'r, const ROLE: u8, T>(dst: *mut CursorEndpoint<'r, ROLE, T>)
+pub(crate) unsafe fn finish_init<'r, T>(dst: *mut CursorEndpoint<'r, T>)
 where
     T: Transport + 'r,
 {

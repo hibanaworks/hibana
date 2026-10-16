@@ -1,26 +1,23 @@
 //! The sole owned carrier lease behind a typed Endpoint.
 //!
 //! Moving this value keeps the resident cursor, ports and generation in place.
-//! Restoring its typed facade checks the logical role and does not attach again.
+//! Restoring its typed facade checks the issued role/generation and does not attach again.
 //! This is an internal ownership primitive, not a wire representation.
 use super::{
     Endpoint,
-    carrier::{KernelEndpointHeader, PackedEndpointHandle},
+    carrier::{EndpointHandle, KernelEndpointHeader},
 };
 use core::{marker::PhantomData, ptr::NonNull};
 
 pub(super) struct EndpointOwner<'r> {
     pub(super) ptr: NonNull<KernelEndpointHeader<'r>>,
-    pub(super) handle: PackedEndpointHandle,
+    pub(super) handle: EndpointHandle,
     _borrow: PhantomData<&'r mut ()>,
     _local_only: crate::local::LocalOnly,
 }
 
 impl<'r> EndpointOwner<'r> {
-    pub(super) fn new(
-        ptr: NonNull<KernelEndpointHeader<'r>>,
-        handle: PackedEndpointHandle,
-    ) -> Self {
+    pub(super) fn new(ptr: NonNull<KernelEndpointHeader<'r>>, handle: EndpointHandle) -> Self {
         Self {
             ptr,
             handle,
@@ -33,7 +30,10 @@ impl<'r> EndpointOwner<'r> {
         // SAFETY: only the rendezvous-installed live owner constructs this
         // value. Its unique lease keeps the resident header pinned for 'r.
         let header = unsafe { self.ptr.as_ref() };
-        if header.role() != ROLE || header.generation() != self.handle.generation() {
+        if header.role() != ROLE
+            || self.handle.role() != ROLE
+            || header.generation() != self.handle.generation()
+        {
             return Err(self);
         }
         Ok(Endpoint { owner: self })

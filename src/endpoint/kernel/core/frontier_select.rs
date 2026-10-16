@@ -4,7 +4,7 @@ use super::{
     OfferEntryObservedState, ScopeArmMaterializationMeta, ScopeId, Transport,
     offer_entry_frontier_progress_candidate, offer_entry_observed_state,
 };
-impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
+impl<'r, T> CursorEndpoint<'r, T>
 where
     T: Transport + 'r,
 {

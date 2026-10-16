@@ -9,7 +9,7 @@ use super::super::core::{
     prepare_event_selected_route_commit_rows_from_resident_route_commit_range,
 };
 use super::{BranchCommitPlan, BranchKind, BranchMeta};
-impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
+impl<'r, T> CursorEndpoint<'r, T>
 where
     T: Transport + 'r,
 {

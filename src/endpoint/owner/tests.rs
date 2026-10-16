@@ -2,6 +2,7 @@
 mod common;
 
 use super::EndpointOwner;
+use crate::endpoint::carrier::EndpointHandle;
 use crate::{
     Endpoint,
     g::{self, Msg},
@@ -16,6 +17,57 @@ use core::{future::Future, pin::pin, task::Context};
 
 static_assertions::assert_not_impl_any!(EndpointOwner<'static>: Clone, Copy, Send, Sync);
 static_assertions::assert_not_impl_any!(Endpoint<'static, 0>: Clone, Copy, Send, Sync);
+
+#[test]
+fn foreign_role_or_generation_cannot_release_a_live_endpoint() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .expect("runtime");
+    runtime.block_on(async {
+        let protocol = g::send::<0, 1, Msg<1, u32>>();
+        let client_program: RoleProgram<0> = project(&protocol);
+        let server_program: RoleProgram<1> = project(&protocol);
+        let mut slab = [0_u8; 16 * 1024];
+        let mut storage = SessionKitStorage::<TestTransport>::uninit();
+        let kit = storage.init();
+        let rendezvous = kit
+            .rendezvous(&mut slab, TestTransport::new())
+            .expect("rendezvous");
+        let session = SessionId::new(815);
+        let client = rendezvous.enter(session, &client_program).expect("client");
+        let mut server = rendezvous.enter(session, &server_program).expect("server");
+        let original = client.owner.handle;
+        let wrong_role = EndpointHandle::new(original.generation(), 1);
+        let wrong_generation = EndpointHandle::new(
+            original
+                .generation()
+                .checked_add(1)
+                .expect("fresh generation"),
+            0,
+        );
+        // SAFETY: the header belongs to the live client. Copy the immutable
+        // callback before testing rejection so no header borrow spans a call.
+        let release = unsafe { client.owner.ptr.as_ref().ops().drop_endpoint };
+        for invalid in [wrong_role, wrong_generation] {
+            // SAFETY: this is a live carrier pointer with no operation in
+            // flight. An invalid role/generation must be rejected before any
+            // mutation or destruction; the client remains the sole owner.
+            unsafe { release(client.owner.ptr.cast(), invalid) };
+        }
+        let Endpoint { mut owner } = client;
+        owner.handle = wrong_role;
+        let Err(mut owner) = owner.into_endpoint::<0>() else {
+            panic!("a mismatched handle cannot restore a typed endpoint");
+        };
+        assert!(rendezvous.enter(session, &client_program).is_err());
+        owner.handle = original;
+        let Ok(mut client) = owner.into_endpoint::<0>() else {
+            panic!("the original owner must retain the same continuation");
+        };
+        client.send::<Msg<1, u32>>(&7).await.expect("request");
+        assert_eq!(server.recv::<Msg<1, u32>>().await.expect("request"), 7);
+    });
+}
 
 // These tests use the in-memory carrier and need task scheduling, not OS I/O.
 // Keep the same Tokio runtime in native and Miri runs without opening kqueue.

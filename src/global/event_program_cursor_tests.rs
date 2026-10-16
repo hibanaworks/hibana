@@ -1716,9 +1716,8 @@ impl ProductionCursorTrace {
             }
             self.lane_for_label(label)
         };
-        self.cursor().send_preview_meta_for_contract::<ROLE>(
-            target_label,
-            target_schema,
+        self.cursor().send_preview_meta_for_contract(
+            crate::global::typestate::MessageSelector::new(ROLE, target_label, target_schema),
             &mut committed_arm_for_scope,
             &mut preview_controller_arm_for_scope,
             &mut selected_arm_for_scope,

@@ -2,7 +2,7 @@
 //
 // This fragment owns only the public endpoint facade's carrier dispatch
 // boundary. Each unsafe call dereferences the rendezvous-installed endpoint
-// carrier header and forwards the packed handle to the kernel owner. The
+// carrier header and forwards the issued role/generation tag to the kernel owner. The
 // endpoint borrow keeps role-local aliasing exclusive; this fragment must not
 // cache raw kernel pointers or publish progress without the carrier operation.
 
@@ -17,7 +17,7 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     #[inline]
     fn new(
         ptr: core::ptr::NonNull<carrier::KernelEndpointHeader<'r>>,
-        handle: carrier::PackedEndpointHandle,
+        handle: carrier::EndpointHandle,
     ) -> Self {
         match super::owner::EndpointOwner::new(ptr, handle).into_endpoint() {
             Ok(endpoint) => endpoint,
@@ -39,13 +39,10 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     }
 
     #[inline]
-    fn call_handle_op(
-        &mut self,
-        op: unsafe fn(core::ptr::NonNull<()>, carrier::PackedEndpointHandle),
-    ) {
+    fn call_handle_op(&mut self, op: unsafe fn(core::ptr::NonNull<()>, carrier::EndpointHandle)) {
         unsafe {
             /* SAFETY: handle-only carrier calls use this endpoint's rendezvous-installed
-            `KernelEndpointHeader`, `self.owner.handle` is the packed carrier lease for
+            `KernelEndpointHeader`, `self.owner.handle` is the issued carrier tag for
             the same generation, and `&mut self` excludes a second public
             endpoint operation while the callback mutates resident state. */
             op(self.erased_ptr(), self.owner.handle);
@@ -56,15 +53,12 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     #[must_use]
     fn call_lease_op(
         &mut self,
-        op: unsafe fn(
-            core::ptr::NonNull<()>,
-            carrier::PackedEndpointHandle,
-        ) -> kernel::PublicOpLease,
+        op: unsafe fn(core::ptr::NonNull<()>, carrier::EndpointHandle) -> kernel::PublicOpLease,
     ) -> kernel::PublicOpLease {
         unsafe {
             /* SAFETY: lease-producing carrier calls use this endpoint's
             rendezvous-installed
-            `KernelEndpointHeader`, `self.owner.handle` is the packed carrier lease for
+            `KernelEndpointHeader`, `self.owner.handle` is the issued carrier tag for
             the same generation, and `&mut self` excludes a second public
             endpoint operation while the callback mutates resident state. */
             op(self.erased_ptr(), self.owner.handle)
@@ -77,7 +71,7 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
         &mut self,
         op: unsafe fn(
             core::ptr::NonNull<()>,
-            carrier::PackedEndpointHandle,
+            carrier::EndpointHandle,
             *const kernel::SendInit,
         ) -> kernel::PublicOpLease,
         init: &kernel::SendInit,
@@ -85,7 +79,7 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
         unsafe {
             /* SAFETY: send-init carrier calls use this endpoint's
             rendezvous-installed
-            `KernelEndpointHeader`, `self.owner.handle` is the packed carrier lease for
+            `KernelEndpointHeader`, `self.owner.handle` is the issued carrier tag for
             the same generation, and `init` is a caller-owned initialized
             `SendInit` slot read only during this carrier callback. */
             op(
@@ -99,7 +93,7 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     #[inline]
     pub(crate) fn from_handle(
         ptr: core::ptr::NonNull<carrier::KernelEndpointHeader<'r>>,
-        handle: carrier::PackedEndpointHandle,
+        handle: carrier::EndpointHandle,
     ) -> Self {
         Self::new(ptr, handle)
     }

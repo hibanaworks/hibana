@@ -3,7 +3,7 @@ use super::{
     FrontierScratchSectionLease, LaneOfferState, OfferEntryKey, ReentryScopeLiveness, ScopeId,
     StateIndex, Transport, frontier_global_active_entries_view, state_index_to_usize,
 };
-impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
+impl<'r, T> CursorEndpoint<'r, T>
 where
     T: Transport + 'r,
 {

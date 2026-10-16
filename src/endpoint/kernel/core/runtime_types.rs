@@ -179,15 +179,15 @@ const fn storage_max(lhs: usize, rhs: usize) -> usize {
 }
 
 #[inline]
-pub(crate) const fn cursor_endpoint_storage_layout<'r, const ROLE: u8, T>(
+pub(crate) const fn cursor_endpoint_storage_layout<'r, T>(
     arena_layout: &EndpointArenaLayout,
     lane_slot_count: usize,
 ) -> CursorEndpointStorageLayout
 where
     T: Transport + 'r,
 {
-    let header_bytes = core::mem::size_of::<CursorEndpoint<'r, ROLE, T>>();
-    let header_align = core::mem::align_of::<CursorEndpoint<'r, ROLE, T>>();
+    let header_bytes = core::mem::size_of::<CursorEndpoint<'r, T>>();
+    let header_align = core::mem::align_of::<CursorEndpoint<'r, T>>();
     let port_slots_align = core::mem::align_of::<Option<Port<'r, T>>>();
     let port_slots_bytes = crate::runtime_core::layout::mul(
         core::mem::size_of::<Option<Port<'r, T>>>(),

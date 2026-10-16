@@ -5,6 +5,24 @@ use crate::{
 
 use super::{RouteChoiceMark, StateIndex};
 
+/// The logical view and message family requested by one endpoint operation.
+#[derive(Clone, Copy)]
+pub(crate) struct MessageSelector {
+    pub(crate) role: u8,
+    pub(crate) label: u8,
+    pub(crate) payload_schema: u32,
+}
+
+impl MessageSelector {
+    pub(crate) const fn new(role: u8, label: u8, payload_schema: u32) -> Self {
+        Self {
+            role,
+            label,
+            payload_schema,
+        }
+    }
+}
+
 /// Metadata for a send transition derived from typestate.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct SendMeta {

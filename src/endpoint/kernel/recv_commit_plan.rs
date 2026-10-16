@@ -128,7 +128,7 @@ impl<'r> RecvCommitPlan<'r> {
     }
 }
 
-impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
+impl<'r, T> CursorEndpoint<'r, T>
 where
     T: Transport + 'r,
 {
@@ -158,16 +158,24 @@ where
         } = plan;
         match kind {
             RecvCommitPlanKind::Direct => {
-                let endpoint_meta =
-                    TapFrameMeta::new(self.sid.raw(), event.lane, ROLE, event.label);
+                let endpoint_meta = TapFrameMeta::new(
+                    self.sid.raw(),
+                    event.lane,
+                    self.public_header.role(),
+                    event.label,
+                );
                 self.emit_endpoint_event(event.event_id, endpoint_meta, event.lane);
                 self.commit_prepared_delta(delta);
             }
             RecvCommitPlanKind::Branch { branch } => {
                 let committed = self.commit_prepared_delta(delta);
                 self.publish_branch_preview_commit_plan(branch, &committed);
-                let endpoint_meta =
-                    TapFrameMeta::new(self.sid.raw(), event.lane, ROLE, event.label);
+                let endpoint_meta = TapFrameMeta::new(
+                    self.sid.raw(),
+                    event.lane,
+                    self.public_header.role(),
+                    event.label,
+                );
                 self.emit_endpoint_event(event.event_id, endpoint_meta, event.lane);
             }
         }

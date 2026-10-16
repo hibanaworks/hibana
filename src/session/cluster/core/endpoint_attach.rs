@@ -7,7 +7,7 @@ struct SecondaryEndpointLaneAttach<'lease, const ROLE: u8, T>
 where
     T: crate::transport::Transport + 'lease,
 {
-    dst: *mut crate::endpoint::kernel::CursorEndpoint<'lease, ROLE, T>,
+    dst: *mut crate::endpoint::kernel::CursorEndpoint<'lease, T>,
     rv_id: RendezvousId,
     sid: SessionId,
     role_image: RoleImageSlice<ROLE>,
@@ -258,20 +258,18 @@ where
                     logical_lane_count,
                 );
                 let storage_layout = Self::public_endpoint_storage_requirement(role_image);
-                let (slot, generation, dst) = self
-                    .allocate_public_endpoint_storage_for_rv::<ROLE>(
-                        PublicEndpointStorageRequest {
-                            rv_id,
-                            sid,
-                            required_bytes: storage_layout.total_bytes,
-                            required_align: storage_layout.total_align,
-                            logical_lane_count,
-                            required_assoc_slots,
-                            role_descriptor: role_image.descriptor(),
-                        },
-                    )?;
+                let (slot, generation, dst) =
+                    self.allocate_public_endpoint_storage_for_rv(PublicEndpointStorageRequest {
+                        rv_id,
+                        sid,
+                        required_bytes: storage_layout.total_bytes,
+                        required_align: storage_layout.total_align,
+                        logical_lane_count,
+                        required_assoc_slots,
+                        role_descriptor: role_image.descriptor(),
+                    })?;
                 let arena_storage = dst.cast::<u8>().add(storage_layout.arena_offset);
-                let public_ops = crate::runtime::SessionKit::<'cfg, T>::endpoint_ops::<ROLE>();
+                let public_ops = crate::runtime::SessionKit::<'cfg, T>::endpoint_ops();
                 if let Err(err) = self.init_endpoint_with_compiled_into::<ROLE>(EndpointInitArgs {
                     dst,
                     arena_storage,

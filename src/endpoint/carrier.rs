@@ -73,7 +73,7 @@ impl OutSlot<()> {
 
 pub(crate) struct RecvPollRequest<'a, 'cx> {
     pub(crate) ptr: NonNull<()>,
-    pub(crate) handle: PackedEndpointHandle,
+    pub(crate) handle: EndpointHandle,
     pub(crate) logical_label: u8,
     pub(crate) payload_schema: u32,
     pub(crate) validate:
@@ -84,7 +84,7 @@ pub(crate) struct RecvPollRequest<'a, 'cx> {
 
 pub(crate) struct BranchRecvPollRequest<'a, 'cx> {
     pub(crate) ptr: NonNull<()>,
-    pub(crate) handle: PackedEndpointHandle,
+    pub(crate) handle: EndpointHandle,
     pub(crate) logical_label: u8,
     pub(crate) payload_schema: u32,
     pub(crate) validate:
@@ -180,35 +180,33 @@ impl<'r> KernelEndpointHeader<'r> {
 #[derive(Clone, Copy)]
 pub(crate) struct EndpointOps<'r> {
     _lifetime: PhantomData<&'r ()>,
-    pub(crate) drop_endpoint: unsafe fn(ptr: NonNull<()>, handle: PackedEndpointHandle),
-    pub(crate) restore_public_route_branch:
-        unsafe fn(ptr: NonNull<()>, handle: PackedEndpointHandle),
-    pub(crate) reset_public_offer_state: unsafe fn(ptr: NonNull<()>, handle: PackedEndpointHandle),
+    pub(crate) drop_endpoint: unsafe fn(ptr: NonNull<()>, handle: EndpointHandle),
+    pub(crate) restore_public_route_branch: unsafe fn(ptr: NonNull<()>, handle: EndpointHandle),
+    pub(crate) reset_public_offer_state: unsafe fn(ptr: NonNull<()>, handle: EndpointHandle),
     pub(crate) init_public_offer_state: unsafe fn(
         ptr: NonNull<()>,
-        handle: PackedEndpointHandle,
+        handle: EndpointHandle,
     ) -> crate::endpoint::kernel::PublicOpLease,
     pub(crate) init_public_send_state: unsafe fn(
         ptr: NonNull<()>,
-        handle: PackedEndpointHandle,
+        handle: EndpointHandle,
         init: *const crate::endpoint::kernel::SendInit,
     ) -> crate::endpoint::kernel::PublicOpLease,
-    pub(crate) reset_public_send_state: unsafe fn(ptr: NonNull<()>, handle: PackedEndpointHandle),
+    pub(crate) reset_public_send_state: unsafe fn(ptr: NonNull<()>, handle: EndpointHandle),
     pub(crate) init_public_recv_state: unsafe fn(
         ptr: NonNull<()>,
-        handle: PackedEndpointHandle,
+        handle: EndpointHandle,
     ) -> crate::endpoint::kernel::PublicOpLease,
-    pub(crate) reset_public_recv_state: unsafe fn(ptr: NonNull<()>, handle: PackedEndpointHandle),
+    pub(crate) reset_public_recv_state: unsafe fn(ptr: NonNull<()>, handle: EndpointHandle),
     pub(crate) begin_public_branch_recv_state: unsafe fn(
         ptr: NonNull<()>,
-        handle: PackedEndpointHandle,
+        handle: EndpointHandle,
     )
         -> crate::endpoint::kernel::PublicOpLease,
-    pub(crate) reset_public_branch_recv_state:
-        unsafe fn(ptr: NonNull<()>, handle: PackedEndpointHandle),
+    pub(crate) reset_public_branch_recv_state: unsafe fn(ptr: NonNull<()>, handle: EndpointHandle),
     pub(crate) preview_send: unsafe fn(
         ptr: NonNull<()>,
-        handle: PackedEndpointHandle,
+        handle: EndpointHandle,
         logical_label: u8,
         payload_schema: u32,
         out: *mut crate::endpoint::kernel::SendPreview,
@@ -216,38 +214,51 @@ pub(crate) struct EndpointOps<'r> {
     pub(crate) poll_recv: for<'a, 'cx> unsafe fn(RecvPollRequest<'a, 'cx>),
     pub(crate) poll_offer: unsafe fn(
         ptr: NonNull<()>,
-        handle: PackedEndpointHandle,
+        handle: EndpointHandle,
         cx: &mut Context<'_>,
         out: *mut Poll<crate::endpoint::RecvResult<u8>>,
     ),
     pub(crate) poll_branch_recv: for<'a, 'cx> unsafe fn(BranchRecvPollRequest<'a, 'cx>),
     pub(crate) poll_send: unsafe fn(
         ptr: NonNull<()>,
-        handle: PackedEndpointHandle,
+        handle: EndpointHandle,
         payload: Option<crate::endpoint::kernel::RawSendPayload>,
         cx: &mut Context<'_>,
         out: *mut (),
     ),
 }
 
-#[repr(transparent)]
 #[derive(Clone, Copy)]
-pub(crate) struct PackedEndpointHandle(u32);
+// This tag is not ownership: EndpointOwner alone owns the live lease. Keeping
+// the issued role beside its nonzero generation checks a shared ops table
+// without specializing the resident kernel for every role.
+pub(crate) struct EndpointHandle {
+    generation: core::num::NonZeroU32,
+    role: u8,
+}
 
-impl PackedEndpointHandle {
+impl EndpointHandle {
     #[inline]
-    pub(crate) const fn new(generation: u32) -> Self {
-        Self(generation)
+    pub(crate) const fn new(generation: u32, role: u8) -> Self {
+        let Some(generation) = core::num::NonZeroU32::new(generation) else {
+            panic!("an endpoint handle requires a live generation");
+        };
+        Self { generation, role }
     }
 
     #[inline]
     pub(crate) const fn generation(self) -> u32 {
-        self.0
+        self.generation.get()
     }
 
     #[inline]
-    pub(crate) fn matches_header(self, header: &KernelEndpointHeader<'_>, role: u8) -> bool {
-        header.generation() == self.generation() && header.role() == role
+    pub(crate) const fn role(self) -> u8 {
+        self.role
+    }
+
+    #[inline]
+    pub(crate) fn matches_header(self, header: &KernelEndpointHeader<'_>) -> bool {
+        header.generation() == self.generation() && header.role() == self.role()
     }
 }
 
@@ -255,34 +266,34 @@ impl<'cfg, T> crate::runtime::SessionKit<'cfg, T>
 where
     T: crate::transport::Transport + 'cfg,
 {
-    unsafe fn public_endpoint_ptr_from_header<'r, const ROLE: u8>(
+    unsafe fn public_endpoint_ptr_from_header<'r>(
         ptr: NonNull<()>,
-        handle: PackedEndpointHandle,
-    ) -> Option<*mut crate::endpoint::kernel::CursorEndpoint<'r, ROLE, T>>
+        handle: EndpointHandle,
+    ) -> Option<*mut crate::endpoint::kernel::CursorEndpoint<'r, T>>
     where
         'cfg: 'r,
     {
         let header = /* SAFETY: endpoint carrier validates the resident header tag and generation before projecting the stored endpoint pointer. */ unsafe { ptr.cast::<KernelEndpointHeader<'r>>().as_ref() };
-        if !handle.matches_header(header, ROLE) {
+        if !handle.matches_header(header) {
             return None;
         }
         Some(
-            ptr.cast::<crate::endpoint::kernel::CursorEndpoint<'r, ROLE, T>>()
+            ptr.cast::<crate::endpoint::kernel::CursorEndpoint<'r, T>>()
                 .as_ptr(),
         )
     }
 
-    unsafe fn public_endpoint_mut_from_header<'r, const ROLE: u8>(
+    unsafe fn public_endpoint_mut_from_header<'r>(
         ptr: NonNull<()>,
-        handle: PackedEndpointHandle,
-    ) -> Option<&'r mut crate::endpoint::kernel::CursorEndpoint<'r, ROLE, T>>
+        handle: EndpointHandle,
+    ) -> Option<&'r mut crate::endpoint::kernel::CursorEndpoint<'r, T>>
     where
         'cfg: 'r,
     {
         let endpoint = unsafe {
             // SAFETY: this helper preserves the same header tag, generation,
             // and validated role preflight as the raw pointer projection above.
-            Self::public_endpoint_ptr_from_header::<'r, ROLE>(ptr, handle)?
+            Self::public_endpoint_ptr_from_header::<'r>(ptr, handle)?
         };
         Some(unsafe {
             // SAFETY: public endpoint raw ops enter through a unique operation
@@ -292,11 +303,11 @@ where
         })
     }
 
-    unsafe fn with_public_endpoint_mut<'r, const ROLE: u8, R>(
+    unsafe fn with_public_endpoint_mut<'r, R>(
         ptr: NonNull<()>,
-        handle: PackedEndpointHandle,
+        handle: EndpointHandle,
         missing: R,
-        f: impl FnOnce(&mut crate::endpoint::kernel::CursorEndpoint<'r, ROLE, T>) -> R,
+        f: impl FnOnce(&mut crate::endpoint::kernel::CursorEndpoint<'r, T>) -> R,
     ) -> R
     where
         'cfg: 'r,
@@ -304,7 +315,7 @@ where
         let Some(endpoint) = (unsafe {
             // SAFETY: this callback-level helper applies the same carrier tag,
             // generation, and validated role preflight as direct raw endpoint projection.
-            Self::public_endpoint_mut_from_header::<'r, ROLE>(ptr, handle)
+            Self::public_endpoint_mut_from_header::<'r>(ptr, handle)
         }) else {
             return missing;
         };
@@ -314,24 +325,24 @@ where
         f(endpoint)
     }
 
-    pub(crate) const fn endpoint_ops<const ROLE: u8>() -> EndpointOps<'cfg> {
+    pub(crate) const fn endpoint_ops() -> EndpointOps<'cfg> {
         EndpointOps::<'cfg> {
             _lifetime: PhantomData,
-            drop_endpoint: Self::drop_public_endpoint_raw::<ROLE>,
-            restore_public_route_branch: Self::restore_public_route_branch_raw::<ROLE>,
-            reset_public_offer_state: Self::reset_public_offer_state_raw::<ROLE>,
-            init_public_offer_state: Self::init_public_offer_state_raw::<ROLE>,
-            init_public_send_state: Self::init_public_send_state_raw::<ROLE>,
-            reset_public_send_state: Self::reset_public_send_state_raw::<ROLE>,
-            init_public_recv_state: Self::init_public_recv_state_raw::<ROLE>,
-            reset_public_recv_state: Self::reset_public_recv_state_raw::<ROLE>,
-            begin_public_branch_recv_state: Self::begin_public_branch_recv_state_raw::<ROLE>,
-            reset_public_branch_recv_state: Self::reset_public_branch_recv_state_raw::<ROLE>,
-            preview_send: Self::preview_public_send::<ROLE>,
-            poll_recv: Self::poll_recv_public_endpoint::<ROLE>,
-            poll_offer: Self::poll_offer_public_endpoint::<ROLE>,
-            poll_branch_recv: Self::poll_branch_recv_public_endpoint::<ROLE>,
-            poll_send: Self::poll_send_public_endpoint::<ROLE>,
+            drop_endpoint: Self::drop_public_endpoint_raw,
+            restore_public_route_branch: Self::restore_public_route_branch_raw,
+            reset_public_offer_state: Self::reset_public_offer_state_raw,
+            init_public_offer_state: Self::init_public_offer_state_raw,
+            init_public_send_state: Self::init_public_send_state_raw,
+            reset_public_send_state: Self::reset_public_send_state_raw,
+            init_public_recv_state: Self::init_public_recv_state_raw,
+            reset_public_recv_state: Self::reset_public_recv_state_raw,
+            begin_public_branch_recv_state: Self::begin_public_branch_recv_state_raw,
+            reset_public_branch_recv_state: Self::reset_public_branch_recv_state_raw,
+            preview_send: Self::preview_public_send,
+            poll_recv: Self::poll_recv_public_endpoint,
+            poll_offer: Self::poll_offer_public_endpoint,
+            poll_branch_recv: Self::poll_branch_recv_public_endpoint,
+            poll_send: Self::poll_send_public_endpoint,
         }
     }
 }

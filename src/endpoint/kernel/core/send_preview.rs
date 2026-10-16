@@ -6,7 +6,7 @@ use super::{
 };
 use crate::endpoint::carrier::WaiterTransfer;
 
-impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
+impl<'r, T> CursorEndpoint<'r, T>
 where
     T: Transport + 'r,
 {
@@ -77,9 +77,12 @@ where
                 let mut lane_for_contract_or_offer = |scope, label, schema| {
                     endpoint.lane_for_contract_or_offer(scope, label, schema)
                 };
-                endpoint.cursor.send_preview_meta_for_contract::<ROLE>(
-                    target_label,
-                    target_schema,
+                endpoint.cursor.send_preview_meta_for_contract(
+                    crate::global::typestate::MessageSelector::new(
+                        endpoint.public_header.role(),
+                        target_label,
+                        target_schema,
+                    ),
                     &mut committed_arm_for_scope,
                     &mut preview_controller_arm_for_scope,
                     &mut selected_arm_for_scope,

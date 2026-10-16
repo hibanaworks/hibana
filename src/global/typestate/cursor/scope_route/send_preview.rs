@@ -480,8 +480,9 @@ impl EventCursor {
     }
 
     #[inline(never)]
-    fn send_preview_meta_at_index<const ROLE: u8>(
+    fn send_preview_meta_at_index(
         &self,
+        role: u8,
         idx: usize,
         preview_route_arm: Option<SendPreviewRouteArm>,
     ) -> Result<SendMeta, SendPreviewError> {
@@ -491,7 +492,7 @@ impl EventCursor {
                 .ok_or(SendPreviewError::Invariant)?;
             SendMeta {
                 eff_index: local.eff_index,
-                peer: ROLE,
+                peer: role,
                 label: local.label,
                 payload_schema: local.payload_schema,
                 frame_label: local.frame_label,
@@ -541,15 +542,16 @@ impl EventCursor {
     }
 
     #[inline(never)]
-    fn send_preview_step_for_contract<const ROLE: u8>(
+    fn send_preview_step_for_contract(
         &self,
         idx: &mut usize,
-        target_label: u8,
-        target_schema: u32,
+        selector: crate::global::typestate::MessageSelector,
         preview_route_arm: Option<SendPreviewRouteArm>,
         committed_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
         selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
     ) -> Result<Option<(SendMeta, StateIndex)>, SendPreviewError> {
+        let target_label = selector.label;
+        let target_schema = selector.payload_schema;
         if !self.send_preview_conflict_allows(
             *idx,
             preview_route_arm,
@@ -568,7 +570,8 @@ impl EventCursor {
             return Ok(None);
         }
 
-        let current_meta = self.send_preview_meta_at_index::<ROLE>(*idx, preview_route_arm)?;
+        let current_meta =
+            self.send_preview_meta_at_index(selector.role, *idx, preview_route_arm)?;
         let progress_step = self
             .relocatable_resident_lane_step_at_index(*idx, current_meta.lane as usize)
             .map_err(|_| SendPreviewError::Invariant)?;
@@ -633,15 +636,16 @@ impl EventCursor {
         }
     }
 
-    pub(crate) fn send_preview_meta_for_contract<const ROLE: u8>(
+    pub(crate) fn send_preview_meta_for_contract(
         &self,
-        target_label: u8,
-        target_schema: u32,
+        selector: crate::global::typestate::MessageSelector,
         committed_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
         preview_controller_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
         selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
         lane_for_contract_or_offer: &mut dyn FnMut(ScopeId, u8, u32) -> u8,
     ) -> Result<(SendMeta, StateIndex), SendPreviewError> {
+        let target_label = selector.label;
+        let target_schema = selector.payload_schema;
         let mut idx = self
             .send_preview_start_index_for_contract(
                 target_label,
@@ -672,10 +676,9 @@ impl EventCursor {
                 return Err(SendPreviewError::Invariant);
             }
 
-            if let Some(result) = self.send_preview_step_for_contract::<ROLE>(
+            if let Some(result) = self.send_preview_step_for_contract(
                 &mut idx,
-                target_label,
-                target_schema,
+                selector,
                 preview_route_arm,
                 committed_arm_for_scope,
                 selected_arm_for_scope,

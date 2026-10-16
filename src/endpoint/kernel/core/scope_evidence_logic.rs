@@ -4,7 +4,7 @@ use super::{
     OfferEntryEvidence, ScopeArmMaterializationMeta, ScopeEvidence, ScopeId, Transport,
     state_index_to_usize,
 };
-impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
+impl<'r, T> CursorEndpoint<'r, T>
 where
     T: Transport + 'r,
 {
@@ -211,7 +211,7 @@ where
             && let Some((entry, _)) = self.cursor.controller_arm_entry_by_arm(scope_id, arm)
         {
             if let Some(recv_meta) = self.cursor.try_recv_meta_at(state_index_to_usize(entry)) {
-                return recv_meta.peer != ROLE;
+                return recv_meta.peer != self.public_header.role();
             }
             return false;
         }
@@ -219,7 +219,7 @@ where
             let Some(recv_meta) = self.cursor.try_recv_meta_at(entry_idx) else {
                 return false;
             };
-            if recv_meta.peer == ROLE {
+            if recv_meta.peer == self.public_header.role() {
                 return false;
             }
             if recv_meta.origin.is_session()

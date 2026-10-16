@@ -235,7 +235,7 @@ where
     {
         let (slot, generation) = self.inner.enter::<ROLE>(rv, sid, program)?;
         let ptr = self.inner.public_endpoint_header_ptr(rv, slot, generation);
-        let handle = crate::endpoint::carrier::PackedEndpointHandle::new(generation);
+        let handle = crate::endpoint::carrier::EndpointHandle::new(generation, ROLE);
         Ok(crate::endpoint::Endpoint::from_handle(ptr, handle))
     }
 

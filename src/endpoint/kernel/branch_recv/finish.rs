@@ -12,7 +12,7 @@ use crate::{
     transport::wire::CodecError,
 };
 
-impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
+impl<'r, T> CursorEndpoint<'r, T>
 where
     T: Transport + 'r,
 {
@@ -439,8 +439,7 @@ where
     }
 }
 
-impl<'r, const ROLE: u8, T> crate::endpoint::kernel::core::BranchRecvKernelEndpoint<'r>
-    for CursorEndpoint<'r, ROLE, T>
+impl<'r, T> crate::endpoint::kernel::core::BranchRecvKernelEndpoint<'r> for CursorEndpoint<'r, T>
 where
     T: Transport + 'r,
 {
@@ -473,7 +472,7 @@ where
                 session_raw: self.sid.raw(),
                 lane_wire: meta.lane,
                 source_role: meta.peer,
-                target_role: ROLE,
+                target_role: self.public_header.role(),
                 label: meta.frame_label,
             },
             cx,

@@ -17,8 +17,9 @@ pub(crate) use self::{
     },
     facts::{
         DeterministicInboundKey, EventCommitMeta, InboundFrameKey, LocalAtomFacts, LocalConflict,
-        LocalDependency, LocalMeta, LocalNode, LocalNodeMeta, PRESENT_STATE_INDEX_CAPACITY,
-        PackedEventConflict, PackedLocalDependency, PassiveArmChildFact, RecvMeta, RouteChoiceMark,
-        RouteScopeRows, SendMeta, state_index_to_usize,
+        LocalDependency, LocalMeta, LocalNode, LocalNodeMeta, MessageSelector,
+        PRESENT_STATE_INDEX_CAPACITY, PackedEventConflict, PackedLocalDependency,
+        PassiveArmChildFact, RecvMeta, RouteChoiceMark, RouteScopeRows, SendMeta,
+        state_index_to_usize,
     },
 };

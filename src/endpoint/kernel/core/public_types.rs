@@ -17,7 +17,7 @@ pub(crate) enum PublicSlotOwnership {
 /// release handle. Dropping the endpoint releases the lane back to the
 /// `SessionCluster` via the handle.
 #[repr(C)]
-pub(crate) struct CursorEndpoint<'r, const ROLE: u8, T: Transport + 'r>
+pub(crate) struct CursorEndpoint<'r, T: Transport + 'r>
 where
     T: Transport + 'r,
 {

@@ -8,7 +8,7 @@ use super::super::super::{
 };
 use crate::eff::EventOrigin;
 use crate::global::typestate::{InboundFrameKey, LocalAction};
-impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
+impl<'r, T> CursorEndpoint<'r, T>
 where
     T: Transport + 'r,
 {
@@ -75,6 +75,7 @@ where
 
     #[inline]
     fn cached_recv_meta_from_local(
+        &self,
         cursor_index: usize,
         meta: crate::global::typestate::LocalMeta,
     ) -> CachedRecvMeta {
@@ -87,7 +88,7 @@ where
         CachedRecvMeta {
             cursor_index,
             eff_index: meta.eff_index,
-            peer: ROLE,
+            peer: self.public_header.role(),
             label: meta.label,
             frame_label: meta.frame_label,
             origin: meta.origin,
@@ -97,14 +98,19 @@ where
     }
 
     #[inline]
-    fn route_arm_cached_recv_meta(cursor_index: usize, label: u8, lane: u8) -> CachedRecvMeta {
+    fn route_arm_cached_recv_meta(
+        &self,
+        cursor_index: usize,
+        label: u8,
+        lane: u8,
+    ) -> CachedRecvMeta {
         let Some(cursor_index) = checked_state_index(cursor_index) else {
             crate::invariant();
         };
         CachedRecvMeta {
             cursor_index,
             eff_index: EffIndex::ZERO,
-            peer: ROLE,
+            peer: self.public_header.role(),
             label,
             frame_label: 0,
             origin: EventOrigin::Session,
@@ -124,7 +130,7 @@ where
         let Some(label) = controller_arm_label(&self.cursor, scope_id, route_arm) else {
             return CachedRecvMeta::EMPTY;
         };
-        Self::route_arm_cached_recv_meta(cursor_index, label, lane)
+        self.route_arm_cached_recv_meta(cursor_index, label, lane)
     }
 
     #[inline(never)]
@@ -186,7 +192,7 @@ where
             return self
                 .cursor
                 .try_recv_meta_at(state_index_to_usize(entry))
-                .is_some_and(|recv_meta| recv_meta.peer != ROLE);
+                .is_some_and(|recv_meta| recv_meta.peer != self.public_header.role());
         }
         if at_route_entry
             && self
@@ -201,7 +207,7 @@ where
             return false;
         }
         if let Some(passive_recv) = self.selected_passive_arm_recv_ready_meta(scope_id, arm) {
-            if passive_recv.peer == ROLE {
+            if passive_recv.peer == self.public_header.role() {
                 return false;
             }
             if passive_recv.origin.is_session()
@@ -307,11 +313,11 @@ where
                     arm_entry_idx,
                     crate::invariant_some(self.cursor.try_recv_meta_at(arm_entry_idx)),
                 ),
-                LocalAction::Local { .. } => Self::cached_recv_meta_from_local(
+                LocalAction::Local { .. } => self.cached_recv_meta_from_local(
                     arm_entry_idx,
                     crate::invariant_some(self.cursor.try_local_meta_at(arm_entry_idx)),
                 ),
-                LocalAction::Terminate => Self::route_arm_cached_recv_meta(
+                LocalAction::Terminate => self.route_arm_cached_recv_meta(
                     arm_entry_idx,
                     arm_entry_label,
                     selection.offer_lane,

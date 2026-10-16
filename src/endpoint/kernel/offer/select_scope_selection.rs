@@ -3,7 +3,7 @@ use super::{
     Transport,
 };
 
-impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
+impl<'r, T> CursorEndpoint<'r, T>
 where
     T: Transport + 'r,
 {
@@ -54,7 +54,7 @@ where
         };
         Ok(OfferScopeSelection {
             scope_id,
-            frontier_parallel_root: CursorEndpoint::<ROLE, T>::parallel_scope_root(
+            frontier_parallel_root: CursorEndpoint::<T>::parallel_scope_root(
                 &self.cursor,
                 scope_id,
             ),

@@ -15,7 +15,7 @@ use crate::endpoint::kernel::{
     lane_port,
 };
 
-impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
+impl<'r, T> CursorEndpoint<'r, T>
 where
     T: Transport + 'r,
 {

@@ -1,18 +1,16 @@
-use super::{
-    NonNull, OutSlot, PackedEndpointHandle, Poll, RawPayload, RecvPollRequest, WaiterTransfer,
-};
+use super::{EndpointHandle, NonNull, OutSlot, Poll, RawPayload, RecvPollRequest, WaiterTransfer};
 impl<'cfg, T> crate::runtime::SessionKit<'cfg, T>
 where
     T: crate::transport::Transport + 'cfg,
 {
-    pub(super) unsafe fn init_public_recv_state_raw<const ROLE: u8>(
+    pub(super) unsafe fn init_public_recv_state_raw(
         ptr: NonNull<()>,
-        handle: PackedEndpointHandle,
+        handle: EndpointHandle,
     ) -> crate::endpoint::kernel::PublicOpLease {
         unsafe {
             // SAFETY: recv-state initialization owns the carrier endpoint slot
             // selected by `handle` and installs only public recv state.
-            Self::with_public_endpoint_mut::<'cfg, ROLE, _>(
+            Self::with_public_endpoint_mut::<'cfg, _>(
                 ptr,
                 handle,
                 crate::endpoint::kernel::PublicOpLease::Rejected,
@@ -21,23 +19,18 @@ where
         }
     }
 
-    pub(super) unsafe fn reset_public_recv_state_raw<const ROLE: u8>(
-        ptr: NonNull<()>,
-        handle: PackedEndpointHandle,
-    ) {
+    pub(super) unsafe fn reset_public_recv_state_raw(ptr: NonNull<()>, handle: EndpointHandle) {
         let mut waiters = WaiterTransfer::empty();
         unsafe {
             // SAFETY: recv-state reset owns the carrier endpoint slot selected
             // by `handle` and clears only the resident recv state.
-            Self::with_public_endpoint_mut::<'cfg, ROLE, _>(ptr, handle, (), |kernel| {
+            Self::with_public_endpoint_mut::<'cfg, _>(ptr, handle, (), |kernel| {
                 kernel.reset_public_recv_state(&mut waiters);
             });
         }
     }
 
-    pub(super) unsafe fn poll_recv_public_endpoint<const ROLE: u8>(
-        request: RecvPollRequest<'_, '_>,
-    ) {
+    pub(super) unsafe fn poll_recv_public_endpoint(request: RecvPollRequest<'_, '_>) {
         let RecvPollRequest {
             ptr,
             handle,
@@ -52,7 +45,7 @@ where
             // SAFETY: endpoint recv polling owns the carrier endpoint slot
             // selected by `handle`; validation and payload staging stay inside
             // this recv poll callback.
-            Self::with_public_endpoint_mut::<'cfg, ROLE, _>(
+            Self::with_public_endpoint_mut::<'cfg, _>(
                 ptr,
                 handle,
                 Poll::Ready(Err(crate::endpoint::RecvError::Transport(

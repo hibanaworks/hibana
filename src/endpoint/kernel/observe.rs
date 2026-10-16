@@ -10,7 +10,7 @@ use crate::{
     transport::{Transport, TransportError},
 };
 
-impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
+impl<'r, T> CursorEndpoint<'r, T>
 where
     T: Transport + 'r,
 {
@@ -52,7 +52,7 @@ where
             port,
             self.sid.raw(),
             lane_wire,
-            ROLE,
+            self.public_header.role(),
             cx,
         );
         if let Some(kind) = self.session_fault() {
@@ -89,7 +89,7 @@ where
                         lane_port::FrameMismatch::headerless_preamble(
                             self.sid.raw(),
                             lane_wire,
-                            ROLE,
+                            self.public_header.role(),
                         ),
                     );
                     frame.discard_uncommitted();
@@ -137,11 +137,20 @@ where
         frame_label: u8,
         frame: lane_port::PreambleFrame<'r>,
     ) -> RecvResult<lane_port::ReceivedFrame<'r>> {
-        let observed = match frame.preamble_observation(self.sid.raw(), lane_wire, ROLE) {
+        let observed = match frame.preamble_observation(
+            self.sid.raw(),
+            lane_wire,
+            self.public_header.role(),
+        ) {
             lane_port::PreambleObservation::Framed(observation) => Some(observation),
             lane_port::PreambleObservation::Deterministic => None,
         };
-        match frame.accept_parts(self.sid.raw(), ROLE, source_role, frame_label) {
+        match frame.accept_parts(
+            self.sid.raw(),
+            self.public_header.role(),
+            source_role,
+            frame_label,
+        ) {
             Ok(frame) => {
                 if let Some(observed) = observed {
                     self.emit_materialized_transport_frame_observation(lane_idx, observed);

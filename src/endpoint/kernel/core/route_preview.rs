@@ -17,7 +17,7 @@ impl IngressEvidenceState {
     }
 }
 
-impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
+impl<'r, T> CursorEndpoint<'r, T>
 where
     T: Transport + 'r,
 {
@@ -122,8 +122,9 @@ where
 
     pub(crate) fn emit_endpoint_event(&self, id: u16, meta: TapFrameMeta, lane: u8) {
         let port = self.port_for_lane(lane as usize);
-        let packed =
-            ((ROLE as u32) << 24) | ((meta.lane as u32) << 16) | ((meta.label as u32) << 8);
+        let packed = ((self.public_header.role() as u32) << 24)
+            | ((meta.lane as u32) << 16)
+            | ((meta.label as u32) << 8);
         let event = events::raw_event(id).with_arg0(meta.sid).with_arg1(packed);
         emit(port.tap(), event);
     }
