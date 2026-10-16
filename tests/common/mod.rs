@@ -7,6 +7,7 @@ use std::{
     cell::RefCell,
     rc::Rc,
     task::{Context, Poll, Waker},
+    vec::Vec,
 };
 
 const TEST_QUEUE_CAPACITY: usize = 16;

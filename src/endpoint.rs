@@ -33,6 +33,7 @@ mod futures;
 /// Endpoint kernel implementation.
 pub(crate) mod kernel;
 mod ops;
+mod owner;
 mod public_types;
 /// Send future.
 pub(crate) mod send;

@@ -166,6 +166,7 @@ fn transport_requeue_callback_reentry_revalidates_generation() {
     state.arm(&mut peer);
 
     let kernel_ptr = target
+        .owner
         .ptr
         .cast::<CursorEndpoint<'_, 1, ReentrantRequeueTransport>>();
     let kernel = unsafe {

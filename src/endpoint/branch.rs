@@ -103,12 +103,6 @@ impl<'e, 'r, const ROLE: u8> RouteBranch<'e, 'r, ROLE> {
     }
 }
 
-impl<'r, const ROLE: u8> Drop for Endpoint<'r, ROLE> {
-    fn drop(&mut self) {
-        self.drop_kernel_endpoint();
-    }
-}
-
 impl<'e, 'r, const ROLE: u8> Drop for RouteBranch<'e, 'r, ROLE> {
     fn drop(&mut self) {
         /* SAFETY: `RouteBranch` owns the route preview borrow produced by

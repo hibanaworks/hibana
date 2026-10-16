@@ -19,11 +19,9 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
         ptr: core::ptr::NonNull<carrier::KernelEndpointHeader<'r>>,
         handle: carrier::PackedEndpointHandle,
     ) -> Self {
-        Self {
-            ptr,
-            handle,
-            _borrow: core::marker::PhantomData,
-            _local_only: crate::local::LocalOnly::new(),
+        match super::owner::EndpointOwner::new(ptr, handle).into_endpoint() {
+            Ok(endpoint) => endpoint,
+            Err(_owner) => crate::invariant(),
         }
     }
 
@@ -32,12 +30,12 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
         /* SAFETY: `Endpoint::from_handle` stores a non-null `KernelEndpointHeader`
         pointer installed by the rendezvous carrier; the header remains pinned for
         `'r`, and this shared read exposes only the immutable ops table. */
-        unsafe { self.ptr.as_ref().ops() }
+        unsafe { self.owner.ptr.as_ref().ops() }
     }
 
     #[inline]
     fn erased_ptr(&self) -> core::ptr::NonNull<()> {
-        self.ptr.cast()
+        self.owner.ptr.cast()
     }
 
     #[inline]
@@ -47,10 +45,10 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     ) {
         unsafe {
             /* SAFETY: handle-only carrier calls use this endpoint's rendezvous-installed
-            `KernelEndpointHeader`, `self.handle` is the packed carrier lease for
+            `KernelEndpointHeader`, `self.owner.handle` is the packed carrier lease for
             the same generation, and `&mut self` excludes a second public
             endpoint operation while the callback mutates resident state. */
-            op(self.erased_ptr(), self.handle);
+            op(self.erased_ptr(), self.owner.handle);
         }
     }
 
@@ -66,10 +64,10 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
         unsafe {
             /* SAFETY: lease-producing carrier calls use this endpoint's
             rendezvous-installed
-            `KernelEndpointHeader`, `self.handle` is the packed carrier lease for
+            `KernelEndpointHeader`, `self.owner.handle` is the packed carrier lease for
             the same generation, and `&mut self` excludes a second public
             endpoint operation while the callback mutates resident state. */
-            op(self.erased_ptr(), self.handle)
+            op(self.erased_ptr(), self.owner.handle)
         }
     }
 
@@ -87,10 +85,14 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
         unsafe {
             /* SAFETY: send-init carrier calls use this endpoint's
             rendezvous-installed
-            `KernelEndpointHeader`, `self.handle` is the packed carrier lease for
+            `KernelEndpointHeader`, `self.owner.handle` is the packed carrier lease for
             the same generation, and `init` is a caller-owned initialized
             `SendInit` slot read only during this carrier callback. */
-            op(self.erased_ptr(), self.handle, core::ptr::from_ref(init))
+            op(
+                self.erased_ptr(),
+                self.owner.handle,
+                core::ptr::from_ref(init),
+            )
         }
     }
 
@@ -100,11 +102,6 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
         handle: carrier::PackedEndpointHandle,
     ) -> Self {
         Self::new(ptr, handle)
-    }
-
-    #[inline]
-    pub(super) fn drop_kernel_endpoint(&mut self) {
-        self.call_handle_op(self.ops().drop_endpoint);
     }
 
     #[inline]
@@ -188,13 +185,13 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
         payload_schema: u32,
         out: *mut kernel::SendPreview,
     ) -> SendResult<()> {
-        /* SAFETY: `self.ptr` identifies this endpoint's carrier header and
-        `self.handle` names the same generation; `out` is the caller-owned
+        /* SAFETY: `self.owner.ptr` identifies this endpoint's carrier header and
+        `self.owner.handle` names the same generation; `out` is the caller-owned
         `SendPreview` slot that `preview_send` writes before returning `Ok`. */
         unsafe {
             (self.ops().preview_send)(
                 self.erased_ptr(),
-                self.handle,
+                self.owner.handle,
                 logical_label,
                 payload_schema,
                 out,
@@ -211,13 +208,13 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
         cx: &mut Context<'_>,
     ) -> Poll<RecvResult<carrier::RawPayload>> {
         let mut out = core::mem::MaybeUninit::<Poll<RecvResult<carrier::RawPayload>>>::uninit();
-        /* SAFETY: `self.ptr` identifies this endpoint's carrier header,
-        `self.handle` names the same generation, and the local `out` slot is
+        /* SAFETY: `self.owner.ptr` identifies this endpoint's carrier header,
+        `self.owner.handle` names the same generation, and the local `out` slot is
         written by `poll_recv` before `assume_init` reads it. */
         unsafe {
             (self.ops().poll_recv)(carrier::RecvPollRequest {
                 ptr: self.erased_ptr(),
-                handle: self.handle,
+                handle: self.owner.handle,
                 logical_label,
                 payload_schema,
                 validate,
@@ -233,7 +230,7 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
         let mut out = core::mem::MaybeUninit::<Poll<RecvResult<u8>>>::uninit();
         /* SAFETY: the carrier callback receives this endpoint's header pointer and handle plus a local `MaybeUninit` out slot; the callback writes the poll result before returning and the slot is not read on any other path. */
         unsafe {
-            (self.ops().poll_offer)(self.erased_ptr(), self.handle, cx, out.as_mut_ptr());
+            (self.ops().poll_offer)(self.erased_ptr(), self.owner.handle, cx, out.as_mut_ptr());
             out.assume_init()
         }
     }
@@ -247,13 +244,13 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
         cx: &mut Context<'_>,
     ) -> Poll<RecvResult<carrier::RawPayload>> {
         let mut out = core::mem::MaybeUninit::<Poll<RecvResult<carrier::RawPayload>>>::uninit();
-        /* SAFETY: `self.ptr` identifies this endpoint's carrier header,
-        `self.handle` names the same generation, and the local `out` slot is
+        /* SAFETY: `self.owner.ptr` identifies this endpoint's carrier header,
+        `self.owner.handle` names the same generation, and the local `out` slot is
         written by `poll_branch_recv` before `assume_init` reads it. */
         unsafe {
             (self.ops().poll_branch_recv)(carrier::BranchRecvPollRequest {
                 ptr: self.erased_ptr(),
-                handle: self.handle,
+                handle: self.owner.handle,
                 logical_label,
                 payload_schema,
                 validate,
@@ -276,7 +273,7 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
         unsafe {
             (self.ops().poll_send)(
                 self.erased_ptr(),
-                self.handle,
+                self.owner.handle,
                 payload,
                 cx,
                 out.as_mut_ptr().cast(),
