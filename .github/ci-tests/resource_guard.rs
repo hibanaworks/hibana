@@ -156,6 +156,73 @@ fn stop(child: &mut Child) -> Result<()> {
     Ok(())
 }
 
+fn run(command: &[String], limit: u64, lock_path: PathBuf) -> Result<i32> {
+    let lock: File = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .mode(0o600)
+        .open(lock_path)
+        .map_err(|e| e.to_string())?;
+    lock.try_lock()
+        .map_err(|e| format!("another local validation is active: {e}"))?;
+    let mut child = Command::new(&command[0])
+        .args(&command[1..])
+        .env("CARGO_BUILD_JOBS", "1")
+        .env("RUST_TEST_THREADS", "1")
+        .process_group(0)
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    let mut maximum = 0;
+    let result = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                break Ok(status.code().unwrap_or(128 + status.signal().unwrap_or(0)));
+            }
+            Ok(None) => (),
+            Err(error) => break Err(error.to_string()),
+        }
+        match processes().and_then(|table| memory(&table, child.id() as i32)) {
+            Ok(bytes) => {
+                maximum = maximum.max(bytes);
+                if bytes >= limit {
+                    eprintln!(
+                        "validation memory budget exceeded: bytes={bytes} stop_bytes={limit}"
+                    );
+                    break Ok(137);
+                }
+            }
+            Err(error) => break Err(error),
+        }
+        thread::sleep(INTERVAL);
+    };
+    // Also remove any background child after an otherwise normal root exit.
+    stop(&mut child)?;
+    eprintln!("validation memory: maximum_bytes={maximum} stop_bytes={limit}");
+    drop(lock);
+    result
+}
+
+fn main() {
+    let mut command = env::args().skip(1).collect::<Vec<_>>();
+    if command.first().is_some_and(|arg| arg == "--") {
+        command.remove(0);
+    }
+    if command.is_empty() {
+        eprintln!("usage: resource-guard -- COMMAND [ARG...]");
+        std::process::exit(2);
+    }
+    let lock = env::temp_dir().join("hibana-local-validation.lock");
+    match run(&command, STOP_BYTES, lock) {
+        Ok(status) => std::process::exit(status),
+        Err(error) => {
+            eprintln!("validation memory guard failed: {error}");
+            std::process::exit(2);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -233,72 +300,5 @@ mod tests {
         std::hint::black_box(&bytes);
         thread::sleep(Duration::from_secs(30));
         std::hint::black_box(bytes);
-    }
-}
-
-fn run(command: &[String], limit: u64, lock_path: PathBuf) -> Result<i32> {
-    let lock: File = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .mode(0o600)
-        .open(lock_path)
-        .map_err(|e| e.to_string())?;
-    lock.try_lock()
-        .map_err(|e| format!("another local validation is active: {e}"))?;
-    let mut child = Command::new(&command[0])
-        .args(&command[1..])
-        .env("CARGO_BUILD_JOBS", "1")
-        .env("RUST_TEST_THREADS", "1")
-        .process_group(0)
-        .spawn()
-        .map_err(|e| e.to_string())?;
-    let mut maximum = 0;
-    let result = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => {
-                break Ok(status.code().unwrap_or(128 + status.signal().unwrap_or(0)));
-            }
-            Ok(None) => (),
-            Err(error) => break Err(error.to_string()),
-        }
-        match processes().and_then(|table| memory(&table, child.id() as i32)) {
-            Ok(bytes) => {
-                maximum = maximum.max(bytes);
-                if bytes >= limit {
-                    eprintln!(
-                        "validation memory budget exceeded: bytes={bytes} stop_bytes={limit}"
-                    );
-                    break Ok(137);
-                }
-            }
-            Err(error) => break Err(error),
-        }
-        thread::sleep(INTERVAL);
-    };
-    // Also remove any background child after an otherwise normal root exit.
-    stop(&mut child)?;
-    eprintln!("validation memory: maximum_bytes={maximum} stop_bytes={limit}");
-    drop(lock);
-    result
-}
-
-fn main() {
-    let mut command = env::args().skip(1).collect::<Vec<_>>();
-    if command.first().is_some_and(|arg| arg == "--") {
-        command.remove(0);
-    }
-    if command.is_empty() {
-        eprintln!("usage: resource-guard -- COMMAND [ARG...]");
-        std::process::exit(2);
-    }
-    let lock = env::temp_dir().join("hibana-local-validation.lock");
-    match run(&command, STOP_BYTES, lock) {
-        Ok(status) => std::process::exit(status),
-        Err(error) => {
-            eprintln!("validation memory guard failed: {error}");
-            std::process::exit(2);
-        }
     }
 }
