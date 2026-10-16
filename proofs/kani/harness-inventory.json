@@ -65,10 +65,10 @@
       "endpoint::kernel::frontier::select::kani::progress_candidate_rejects_evidence_without_readiness"
     ],
     "../../src/endpoint/kernel/frontier/visit_set/kani.rs": [
+      "endpoint::kernel::frontier::visit_set::kani::frontier_visit_capacity_is_exact_nonempty_cursor_position_domain",
       "endpoint::kernel::frontier::visit_set::kani::local_step_count_rejects_values_beyond_the_packed_descriptor_domain",
       "endpoint::kernel::frontier::visit_set::kani::repeated_alignment_source_remains_detectable_without_capacity_growth",
       "endpoint::kernel::frontier::visit_set::kani::rolled_reentry_can_visit_more_cursor_positions_than_active_lanes",
-      "endpoint::kernel::frontier::visit_set::kani::route_frontier_visit_capacity_is_exact_cursor_position_domain",
       "endpoint::kernel::frontier::visit_set::kani::terminal_cursor_position_is_not_an_absent_event_identity",
       "endpoint::kernel::frontier::visit_set::kani::visited_cursor_position_identity_is_exact_and_never_silent"
     ],
@@ -149,9 +149,13 @@
       "global::const_dsl::endpoint_controller::kani::controller_merge_accepts_exact_single_role_domain"
     ],
     "../../src/global/const_dsl/endpoint_selectors/kani.rs": [
+      "global::const_dsl::endpoint_selectors::kani::branch_ancestry_distinguishes_parallel_work_from_exclusive_choices",
       "global::const_dsl::endpoint_selectors::kani::inbound_selector_identity_is_exact_compact_event_identity",
       "global::const_dsl::endpoint_selectors::kani::observer_path_decision_has_exact_merge_domain",
-      "global::const_dsl::endpoint_selectors::kani::outbound_selector_identity_is_exact_public_send_contract"
+      "global::const_dsl::endpoint_selectors::kani::outbound_selector_identity_is_exact_public_send_contract",
+      "global::const_dsl::endpoint_selectors::kani::receive_guarded_reentry_keeps_repeated_outbound_replies_projectable",
+      "global::const_dsl::endpoint_selectors::kani::role_erased_prefixes_cannot_hide_competing_roll_heads",
+      "global::const_dsl::endpoint_selectors::kani::roll_reentry_rejects_a_later_equal_outbound_contract_after_inbound"
     ],
     "../../src/global/const_dsl/receive_lane_causality/kani.rs": [
       "global::const_dsl::receive_lane_causality::kani::causal_role_facts_and_joins_are_role_exact",
@@ -302,7 +306,7 @@
   "contract-harnesses": {},
   "contracts": [],
   "totals": {
-    "standard-harnesses": 208,
+    "standard-harnesses": 212,
     "contract-harnesses": 0,
     "functions-under-contract": 0
   }
