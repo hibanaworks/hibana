@@ -24,6 +24,8 @@ use std::{
 mod mailbox;
 use mailbox::{Mailboxes, NativeTransport};
 
+type Queued = g::Msg<5, u32>;
+
 // SERVICE grants DB to OWNER, which lends it to WORKER. After the return,
 // OWNER continues DB's protocol and returns the finished right to SERVICE.
 type Global = g::Seq<
@@ -37,8 +39,11 @@ type Global = g::Seq<
                 g::Seq<
                     g::Send<1, 0, Loan>,
                     g::Seq<
-                        g::Send<10, 2, Read>,
-                        g::Seq<g::Send<2, 10, Value>, g::Send<0, 2, Loan>>,
+                        g::Send<2, 10, Queued>,
+                        g::Seq<
+                            g::Send<10, 2, Read>,
+                            g::Seq<g::Send<2, 10, Value>, g::Send<0, 2, Loan>>,
+                        >,
                     >,
                 >,
             >,
@@ -165,6 +170,7 @@ async fn a_process_returns_the_endpoint_and_exits_before_its_continuation_runs()
                 resource.seek(SeekFrom::Start(0)).unwrap();
                 resource.write_all(&value.to_be_bytes()).unwrap();
                 service.send::<Value>(&value).await.unwrap();
+                service.send::<Queued>(&123).await.unwrap();
 
                 let delta = service.recv::<Read>().await.unwrap();
                 resource.seek(SeekFrom::Start(0)).unwrap();
@@ -198,6 +204,7 @@ async fn a_process_returns_the_endpoint_and_exits_before_its_continuation_runs()
                 for line in String::from_utf8(output.stdout).unwrap().lines() {
                     std::eprintln!("native worker: {line}");
                 }
+                assert_eq!(db.recv::<Queued>().await.unwrap(), 123);
                 db.send::<Read>(&5).await.unwrap();
                 assert_eq!(db.recv::<Value>().await.unwrap(), 49);
                 owner.send::<Loan>(db).await.unwrap();
@@ -223,7 +230,7 @@ async fn worker_process() {
     assert_ne!(parent, std::process::id());
     std::println!("pid={} parent={parent}", std::process::id());
     let directory = std::path::PathBuf::from(std::env::var_os("HIBANA_NATIVE_DIRECTORY").unwrap());
-    let descriptors = std::env::var("HIBANA_NATIVE_DESCRIPTORS")
+    let descriptors: Vec<_> = std::env::var("HIBANA_NATIVE_DESCRIPTORS")
         .unwrap()
         .split(';')
         .map(|item| {
@@ -241,6 +248,11 @@ async fn worker_process() {
             ((role, lane), socket)
         })
         .collect();
+    let observation_sockets: Vec<_> = descriptors
+        .iter()
+        .filter(|((role, _), _)| *role == 10)
+        .map(|(_, socket)| socket.try_clone().unwrap())
+        .collect();
     let io = NativeTransport::new(&directory, descriptors, None).unwrap();
     let () = g::ProgramProjection::<Global, 16>::VALIDATION;
     let worker_program = crate::global::role_program::role_program_from_image::<1>(
@@ -257,5 +269,41 @@ async fn worker_process() {
     let mut db = worker.recv::<Loan>().await.unwrap();
     db.send::<Read>(&3).await.unwrap();
     assert_eq!(db.recv::<Value>().await.unwrap(), 44);
+    // Test observation only: force the unread-frame schedule without taking
+    // the frame from the queue or changing any protocol state. The next DB
+    // receive belongs to OWNER, after the ordinary Loan handoff below.
+    tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            for socket in &observation_sockets {
+                let mut bytes = [0u8; 13];
+                // SAFETY: the socket is live and nonblocking; bytes is writable
+                // for its exact length. MSG_PEEK does not consume the datagram.
+                let length = unsafe {
+                    libc::recv(
+                        socket.as_raw_fd(),
+                        bytes.as_mut_ptr().cast(),
+                        bytes.len(),
+                        libc::MSG_PEEK,
+                    )
+                };
+                if length < 0 {
+                    assert_eq!(
+                        std::io::Error::last_os_error().kind(),
+                        std::io::ErrorKind::WouldBlock
+                    );
+                    continue;
+                }
+                assert_eq!(length, 12);
+                assert_eq!(bytes[..4], SID.raw().to_be_bytes());
+                assert_eq!(bytes[5..7], [2, 10]);
+                assert_eq!(bytes[8..12], 123u32.to_be_bytes());
+                std::println!("unread service frame observed before Endpoint return");
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    })
+    .await
+    .unwrap();
     worker.send::<Loan>(db).await.unwrap();
 }
