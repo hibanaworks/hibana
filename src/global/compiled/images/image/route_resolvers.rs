@@ -252,7 +252,7 @@ impl CompiledProgramRef {
     }
 
     #[inline]
-    fn route_scope_raw_at(&self, row: usize) -> u16 {
+    pub(super) const fn route_scope_raw_at(&self, row: usize) -> u16 {
         let offset = match self.column_offset(
             self.columns.route_resolvers(),
             row,

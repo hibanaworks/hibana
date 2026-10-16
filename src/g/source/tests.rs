@@ -60,12 +60,18 @@ fn typed_owned_source_keeps_its_kind_and_full_role_in_the_compact_program_image(
     type Grant = g::Msg<19, Endpoint<'static, 255>>;
     const SOURCE: super::ProgramSourceData<8> =
         super::ProgramSourceData::lower::<g::Send<0, 1, Grant>>();
-    const PLAN: ProgramImagePlan = ProgramImagePlan::from_program(SOURCE.eff_list());
+    const PLAN: ProgramImagePlan = ProgramImagePlan::from_source(&SOURCE);
     const SUMMARY: CompiledProgramImage = CompiledProgramImage::scan_const(SOURCE.eff_list());
-    static BYTES: ProgramImageBytes<9> =
-        ProgramImageBytes::from_image(SOURCE.eff_list(), PLAN.columns());
+    static BYTES: ProgramImageBytes<19> =
+        match ProgramImageBytes::from_source_if_fits(&SOURCE, PLAN.columns()) {
+            Some(bytes) => bytes,
+            None => panic!("exact owned image storage"),
+        };
     let program = BYTES.compiled_ref(&SUMMARY, PLAN.columns());
-    assert_eq!(PLAN.blob_len(), 9);
+    assert_eq!(PLAN.blob_len(), 19);
+    assert_eq!(program.actor_binding_at(0), Some([0, 1]));
+    assert_eq!(program.initial_actor_for(255), Some(0));
+    assert_eq!(program.initial_actor_for(0), None);
     assert_eq!(SUMMARY.max_role(), 255);
     let grant = program.event_atom_at(0);
     assert_eq!((grant.from, grant.to, grant.label), (0, 1, 19));
@@ -114,6 +120,30 @@ fn typed_global_checks_handoff_work_and_return_as_one_source() {
 }
 
 #[test]
+fn typed_owned_operations_and_control_communications_compile_to_the_same_actor() {
+    let source = source(g::seq(
+        g::send::<P, A, GrantDb>(),
+        g::seq(
+            g::send::<DB, SERVICE, Work>(),
+            g::seq(
+                g::send::<SERVICE, DB, ResultMessage>(),
+                g::seq(g::send::<SERVICE, A, Work>(), g::send::<A, P, GrantDb>()),
+            ),
+        ),
+    ));
+    let mut scratch = ownership::Scratch::<256, 8>::new();
+    let mut image = ownership::ActorImage::<8, 0>::new();
+    ownership::compile_actor_image_into(source, &mut scratch, &mut image).unwrap();
+    assert_eq!(image.event_count(), 5);
+    assert_eq!(image.actors_at(0, &[]), Some((P, A)));
+    assert_eq!(image.actors_at(1, &[]), Some((A, SERVICE)));
+    assert_eq!(image.actors_at(2, &[]), Some((SERVICE, A)));
+    assert_eq!(image.actors_at(3, &[]), Some((SERVICE, A)));
+    assert_eq!(image.actors_at(4, &[]), Some((A, P)));
+    assert_eq!(image.decision_count(), 0);
+}
+
+#[test]
 fn owned_kind_survives_parallel_rolled_loans_and_resolved_choices() {
     use crate::eff::EventPayload;
     use crate::global::compiled::{
@@ -123,12 +153,15 @@ fn owned_kind_survives_parallel_rolled_loans_and_resolved_choices() {
 
     fn check<Steps: ProgramShape>(_: g::Program<Steps>) {
         let source = const { super::ProgramSourceData::<64>::lower::<Steps>() };
-        let plan = ProgramImagePlan::from_program(source.eff_list());
+        let plan = ProgramImagePlan::from_source(&source);
         let summary = CompiledProgramImage::scan_const(source.eff_list());
         let bytes: &'static ProgramImageBytes<256> = &const {
             let source = super::ProgramSourceData::<64>::lower::<Steps>();
-            let plan = ProgramImagePlan::from_program(source.eff_list());
-            ProgramImageBytes::from_image(source.eff_list(), plan.columns())
+            let plan = ProgramImagePlan::from_source(&source);
+            match ProgramImageBytes::from_source_if_fits(&source, plan.columns()) {
+                Some(bytes) => bytes,
+                None => panic!("owned source image storage"),
+            }
         };
         let image = bytes.compiled_ref(&summary, plan.columns());
 
@@ -156,7 +189,7 @@ fn owned_kind_survives_parallel_rolled_loans_and_resolved_choices() {
         ));
         assert_ne!(image.event_atom_at(1).lane, image.event_atom_at(5).lane);
         assert_eq!(
-            usize::from(plan.columns().scope_markers().len),
+            image.proof_scope_marker_count(),
             source.eff_list().scope_marker_count()
         );
         let mut resolvers = image.route_resolver_sites_for(7);
@@ -191,6 +224,90 @@ fn owned_kind_survives_parallel_rolled_loans_and_resolved_choices() {
         )
         .roll(),
     ));
+}
+
+#[test]
+fn compact_actor_decisions_reuse_canonical_scopes_and_keep_logical_roles() {
+    use crate::global::{
+        compiled::{
+            images::{ProgramImageBytes, ProgramImagePlan},
+            lowering::CompiledProgramImage,
+        },
+        const_dsl::{ScopeId, ScopeKind},
+    };
+    fn check<Steps: ProgramShape>(_: g::Program<Steps>) {
+        let source = const { super::ProgramSourceData::<64>::lower::<Steps>() };
+        let plan = ProgramImagePlan::from_source(&source);
+        let summary = CompiledProgramImage::scan_const(source.eff_list());
+        let bytes: &'static ProgramImageBytes<256> = &const {
+            let source = super::ProgramSourceData::<64>::lower::<Steps>();
+            let plan = ProgramImagePlan::from_source(&source);
+            match ProgramImageBytes::from_source_if_fits(&source, plan.columns()) {
+                Some(bytes) => bytes,
+                None => panic!("owned conditional image storage"),
+            }
+        };
+        let image = bytes.compiled_ref(&summary, plan.columns());
+        assert_eq!(image.actor_binding_at(2), Some([256, SERVICE as u16]));
+        assert_eq!(image.actor_binding_at(3), Some([SERVICE as u16, 256]));
+        assert_eq!(
+            image.actor_decision_at(0),
+            Some((ScopeId::new(ScopeKind::Route, 1), [A as u16, B as u16]))
+        );
+        assert_eq!(image.actor_decision_at(1), None);
+        assert_eq!(image.initial_actor_for(DB), Some(P));
+        assert_eq!(image.initial_actor_for(AUTH), Some(P));
+        assert_eq!(image.initial_actor_for(A), None);
+        assert_eq!(image.event_atom_at(2).from, DB);
+        assert_eq!(image.event_atom_at(3).to, DB);
+    }
+    check(g::par(
+        g::seq(
+            g::route(g::send::<P, A, GrantDb>(), g::send::<P, B, GrantDb>()).resolve::<701>(),
+            g::seq(
+                g::send::<DB, SERVICE, Work>(),
+                g::send::<SERVICE, DB, ResultMessage>(),
+            )
+            .roll(),
+        ),
+        g::seq(
+            g::send::<P, B, GrantAuth>(),
+            g::seq(
+                g::send::<AUTH, SERVICE, Work>(),
+                g::send::<B, P, GrantAuth>(),
+            ),
+        )
+        .roll(),
+    ));
+}
+
+#[test]
+fn distinct_logical_endpoints_at_one_actor_keep_their_payload_communication() {
+    use crate::global::compiled::{
+        images::{ProgramImageBytes, ProgramImagePlan},
+        lowering::CompiledProgramImage,
+    };
+    type Steps =
+        g::Seq<g::Send<P, A, GrantDb>, g::Seq<g::Send<DB, A, Work>, g::Send<A, P, GrantDb>>>;
+    const SOURCE: super::ProgramSourceData<8> = super::ProgramSourceData::lower::<Steps>();
+    const PLAN: ProgramImagePlan = ProgramImagePlan::from_source(&SOURCE);
+    const SUMMARY: CompiledProgramImage = CompiledProgramImage::scan_const(SOURCE.eff_list());
+    static BYTES: ProgramImageBytes<64> =
+        match ProgramImageBytes::from_source_if_fits(&SOURCE, PLAN.columns()) {
+            Some(bytes) => bytes,
+            None => panic!("same-actor logical communication storage"),
+        };
+    let image = BYTES.compiled_ref(&SUMMARY, PLAN.columns());
+    assert_eq!(image.actor_binding_at(1), Some([A as u16, A as u16]));
+    let work = image.event_atom_at(1);
+    assert_eq!((work.from, work.to), (DB, A));
+    assert_eq!(
+        work.payload.wire_schema(),
+        crate::global::payload_schema::<Work>()
+    );
+    assert_ne!(work.payload.wire_schema(), 0);
+    assert_eq!(image.actor_binding_at(2), Some([A as u16, P as u16]));
+    assert_eq!(image.initial_actor_for(DB), Some(P));
 }
 
 #[test]

@@ -13,6 +13,9 @@ pub use super::tree::{EndpointKey, Message, Payload, Source};
 mod queries;
 pub use queries::{Arm, Scope, Selection};
 use queries::{At, Atom, Context, Evaluation, Query};
+#[path = "ownership/actors.rs"]
+mod actors;
+pub use actors::{ActorImage, compile_actor_image_into};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ErrorKind {

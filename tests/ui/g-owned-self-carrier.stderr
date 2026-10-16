@@ -1,19 +1,19 @@
 error[E0080]: evaluation panicked: an owned endpoint cannot carry its own delegation
- --> src/g.rs
-  |
-  |     const SOURCE: ProgramSourceData<CAPACITY> = ProgramSourceData::lower::<Steps>();
-  |                                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `hibana::g::ProgramProjection::<hibana::g::Send<0, 1, hibana::g::Msg<1, hibana::Endpoint<'_, 0>>>, 8>::SOURCE` failed inside this call
-  |
-note: inside `g::source::ProgramSourceData::<8>::lower::<hibana::g::Send<0, 1, Msg<1, Endpoint<'_, 0>>>>`
  --> $RUST/core/src/panic.rs
   |
   |         $crate::panicking::panic_fmt($crate::const_format_args!($($t)+));
-  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the failure occurred here
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `hibana::g::source::SourceActors::<hibana::g::Send<0, 1, hibana::g::Msg<1, hibana::Endpoint<'_, 0>>>, 8>::IMAGE` failed here
   |
  ::: src/g/source.rs
   |
-  |                         panic!("an owned endpoint cannot carry its own delegation")
-  |                         ----------------------------------------------------------- in this macro invocation
+  |                     panic!("an owned endpoint cannot carry its own delegation")
+  |                     ----------------------------------------------------------- in this macro invocation
+
+note: erroneous constant encountered
+ --> src/g/source.rs
+  |
+  |             Some(&SourceActors::<Steps, CAPACITY>::IMAGE)
+  |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 note: erroneous constant encountered
  --> src/g.rs

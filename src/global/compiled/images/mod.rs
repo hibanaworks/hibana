@@ -3,8 +3,9 @@ pub(super) mod program;
 
 pub(crate) use self::{
     image::{
-        COMPACT_DESCRIPTOR_BYTE_CAPACITY, CompiledProgramRef, ProgramImageBytes,
-        ProgramImageColumns, ProgramImagePlan, RoleDescriptorRef, RoleImageSlice,
+        ACTOR_DECISION_CAPACITY, COMPACT_DESCRIPTOR_BYTE_CAPACITY, CompiledProgramRef,
+        ProgramImageBytes, ProgramImageColumns, ProgramImagePlan, RoleDescriptorRef,
+        RoleImageSlice,
     },
     program::EventSemanticKind,
 };

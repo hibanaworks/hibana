@@ -7,6 +7,11 @@ pub(crate) const PROGRAM_IMAGE_ATOM_STRIDE: usize = 9;
 pub(crate) const PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE: usize = 8;
 pub(crate) const PROGRAM_IMAGE_ROUTE_PARTICIPANT_STRIDE: usize = 1;
 pub(crate) const PROGRAM_IMAGE_SCOPE_MARKER_STRIDE: usize = 5;
+pub(super) const PROGRAM_IMAGE_ACTOR_BINDING_STRIDE: usize = 4;
+pub(super) const PROGRAM_IMAGE_ACTOR_DECISION_STRIDE: usize = 6;
+pub(crate) const ACTOR_DECISION_CAPACITY: usize =
+    u16::MAX as usize / PROGRAM_IMAGE_ACTOR_DECISION_STRIDE;
+pub(super) const PROGRAM_IMAGE_INITIAL_ACTOR_STRIDE: usize = 2;
 pub(crate) const COMPACT_DESCRIPTOR_BYTE_CAPACITY: usize = u16::MAX as usize;
 pub(crate) const PROGRAM_IMAGE_MIN_SCOPE_BYTES: usize = 2 * PROGRAM_IMAGE_SCOPE_MARKER_STRIDE;
 const PROGRAM_IMAGE_SCOPE_CAPACITY: usize =
@@ -66,10 +71,21 @@ pub(crate) struct ProgramImageColumns {
     atom_len: u16,
     route_resolver_len: u16,
     route_participant_len: u16,
-    scope_marker_len: u16,
+    // Ordinary scope count, or total bytes for the tagged owned grammar.
+    tail: u16,
+}
+
+pub(super) struct OwnershipColumns {
+    pub(super) bindings: ProgramColumnRange,
+    pub(super) decisions: ProgramColumnRange,
+    pub(super) initial: ProgramColumnRange,
 }
 
 impl ProgramImageColumns {
+    // Atom counts fit below 8192. This tag selects the owned image grammar;
+    // its final word is the total length and its four-byte tail header stores
+    // scope/decision counts. Ordinary columns and resident refs stay unchanged.
+    const OWNED: u16 = 1 << 15;
     pub(crate) const fn try_new(
         atom_len: usize,
         route_resolver_len: usize,
@@ -120,7 +136,30 @@ impl ProgramImageColumns {
             atom_len: atom_len as u16,
             route_resolver_len: route_resolver_len as u16,
             route_participant_len: route_participant_len as u16,
-            scope_marker_len: scope_marker_len as u16,
+            tail: scope_marker_len as u16,
+        })
+    }
+
+    const fn with_actors(self, decisions: usize, initial_actors: usize) -> Option<Self> {
+        if self.has_ownership()
+            || self.atom_count() == 0
+            || decisions > u16::MAX as usize - 256
+            || initial_actors == 0
+            || initial_actors > 256
+        {
+            return None;
+        }
+        let bindings = self.atom_count() * PROGRAM_IMAGE_ACTOR_BINDING_STRIDE;
+        let decisions_bytes = decisions * PROGRAM_IMAGE_ACTOR_DECISION_STRIDE;
+        let initial_bytes = initial_actors * PROGRAM_IMAGE_INITIAL_ACTOR_STRIDE;
+        let total = self.blob_len() + 4 + bindings + decisions_bytes + initial_bytes;
+        if total > COMPACT_DESCRIPTOR_BYTE_CAPACITY {
+            return None;
+        }
+        Some(Self {
+            atom_len: self.atom_len | Self::OWNED,
+            tail: total as u16,
+            ..self
         })
     }
 
@@ -143,7 +182,7 @@ impl ProgramImageColumns {
 
     #[inline(always)]
     pub(crate) const fn atoms(self) -> ProgramColumnRange {
-        ProgramColumnRange::new(0, self.atom_len as usize, PROGRAM_IMAGE_ATOM_STRIDE)
+        ProgramColumnRange::new(0, self.atom_count(), PROGRAM_IMAGE_ATOM_STRIDE)
     }
 
     #[inline(always)]
@@ -157,10 +196,18 @@ impl ProgramImageColumns {
 
     #[inline(always)]
     pub(crate) const fn scope_markers(self) -> ProgramColumnRange {
+        if self.has_ownership() {
+            crate::invariant();
+        }
+        self.scope_markers_for(self.tail as usize)
+    }
+
+    pub(super) const fn scope_markers_for(self, count: usize) -> ProgramColumnRange {
         ProgramColumnRange::new(
             self.route_participants()
-                .end_offset(PROGRAM_IMAGE_ROUTE_PARTICIPANT_STRIDE),
-            self.scope_marker_len as usize,
+                .end_offset(PROGRAM_IMAGE_ROUTE_PARTICIPANT_STRIDE)
+                + if self.has_ownership() { 4 } else { 0 },
+            count,
             PROGRAM_IMAGE_SCOPE_MARKER_STRIDE,
         )
     }
@@ -175,9 +222,69 @@ impl ProgramImageColumns {
         )
     }
 
+    pub(super) const fn has_ownership(self) -> bool {
+        self.atom_len & Self::OWNED != 0
+    }
+
+    pub(super) const fn ownership_header(self) -> ProgramColumnRange {
+        if !self.has_ownership() {
+            crate::invariant();
+        }
+        ProgramColumnRange::new(
+            self.route_participants()
+                .end_offset(PROGRAM_IMAGE_ROUTE_PARTICIPANT_STRIDE),
+            2,
+            2,
+        )
+    }
+
+    pub(super) const fn ownership_columns(
+        self,
+        scopes: usize,
+        decisions: usize,
+    ) -> Option<OwnershipColumns> {
+        if !self.has_ownership()
+            || self.atom_count() == 0
+            || scopes > u16::MAX as usize
+            || decisions > ACTOR_DECISION_CAPACITY
+        {
+            return None;
+        }
+        let binding_start =
+            self.ownership_header().end_offset(2) + scopes * PROGRAM_IMAGE_SCOPE_MARKER_STRIDE;
+        let decision_start = binding_start + self.atom_count() * PROGRAM_IMAGE_ACTOR_BINDING_STRIDE;
+        let initial_start = decision_start + decisions * PROGRAM_IMAGE_ACTOR_DECISION_STRIDE;
+        if initial_start >= self.blob_len() {
+            return None;
+        }
+        let remaining = self.blob_len() - initial_start;
+        if !remaining.is_multiple_of(PROGRAM_IMAGE_INITIAL_ACTOR_STRIDE)
+            || remaining / PROGRAM_IMAGE_INITIAL_ACTOR_STRIDE > 256
+        {
+            return None;
+        }
+        Some(OwnershipColumns {
+            bindings: ProgramColumnRange::new(
+                binding_start,
+                self.atom_count(),
+                PROGRAM_IMAGE_ACTOR_BINDING_STRIDE,
+            ),
+            decisions: ProgramColumnRange::new(
+                decision_start,
+                decisions,
+                PROGRAM_IMAGE_ACTOR_DECISION_STRIDE,
+            ),
+            initial: ProgramColumnRange::new(
+                initial_start,
+                remaining / PROGRAM_IMAGE_INITIAL_ACTOR_STRIDE,
+                PROGRAM_IMAGE_INITIAL_ACTOR_STRIDE,
+            ),
+        })
+    }
+
     #[inline(always)]
     pub(crate) const fn atom_count(self) -> usize {
-        self.atom_len as usize
+        (self.atom_len & !Self::OWNED) as usize
     }
 
     #[inline(always)]
@@ -187,7 +294,10 @@ impl ProgramImageColumns {
 
     #[inline(always)]
     pub(crate) const fn scope_marker_count(self) -> usize {
-        self.scope_marker_len as usize
+        if self.has_ownership() {
+            crate::invariant();
+        }
+        self.tail as usize
     }
 
     #[inline(always)]
@@ -206,6 +316,11 @@ impl ProgramImageColumns {
         scope_marker_count: usize,
         resolver_marker_count: usize,
     ) -> bool {
+        // An owned image's exact scope count lives in its validated header.
+        // A count-only prefix cannot certify that translation.
+        if self.has_ownership() {
+            return false;
+        }
         let Some(source_rows) = event_count.checked_add(scope_marker_count) else {
             return false;
         };
@@ -220,8 +335,12 @@ impl ProgramImageColumns {
 
     #[inline(always)]
     pub(crate) const fn blob_len(self) -> usize {
-        self.scope_markers()
-            .end_offset(PROGRAM_IMAGE_SCOPE_MARKER_STRIDE)
+        if self.has_ownership() {
+            self.tail as usize
+        } else {
+            self.scope_markers()
+                .end_offset(PROGRAM_IMAGE_SCOPE_MARKER_STRIDE)
+        }
     }
 }
 
@@ -231,6 +350,33 @@ pub(crate) struct ProgramImagePlan {
 }
 
 impl ProgramImagePlan {
+    pub(crate) const fn from_source<const E: usize>(
+        source: &crate::g::ProgramSourceData<E>,
+    ) -> Self {
+        let mut plan = Self::from_program(source.eff_list());
+        if let Some(actors) = source.actors() {
+            if actors.event_count() != plan.columns.atom_count() {
+                crate::invariant();
+            }
+            let mut initial_actors = 0;
+            let mut role = 0u16;
+            while role <= u8::MAX as u16 {
+                if first_endpoint_transfer(source.eff_list(), role as u8).is_some() {
+                    initial_actors += 1;
+                }
+                role += 1;
+            }
+            plan.columns = match plan
+                .columns
+                .with_actors(actors.decision_count(), initial_actors)
+            {
+                Some(columns) => columns,
+                None => panic!("owned program image exceeds compact offset domain"),
+            };
+        }
+        plan
+    }
+
     #[inline(always)]
     pub(crate) const fn from_program<const E: usize>(eff_list: &EffList<E>) -> Self {
         Self {
@@ -247,6 +393,22 @@ impl ProgramImagePlan {
     pub(crate) const fn blob_len(self) -> usize {
         self.columns.blob_len()
     }
+}
+
+pub(super) const fn first_endpoint_transfer<const E: usize>(
+    eff: &EffList<E>,
+    role: u8,
+) -> Option<usize> {
+    let mut event = 0;
+    while event < eff.len() {
+        if let crate::eff::EventPayload::Endpoint(payload) = eff.atom_at(event).payload
+            && payload == role
+        {
+            return Some(event);
+        }
+        event += 1;
+    }
+    None
 }
 
 #[inline]

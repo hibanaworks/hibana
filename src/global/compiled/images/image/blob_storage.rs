@@ -1,7 +1,9 @@
 use super::columns::{
-    PROGRAM_IMAGE_ATOM_STRIDE, PROGRAM_IMAGE_ROUTE_PARTICIPANT_STRIDE,
-    PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE, PROGRAM_IMAGE_SCOPE_MARKER_STRIDE, ProgramColumnRange,
-    ProgramImageColumns, ProgramImageFacts,
+    PROGRAM_IMAGE_ACTOR_BINDING_STRIDE, PROGRAM_IMAGE_ACTOR_DECISION_STRIDE,
+    PROGRAM_IMAGE_ATOM_STRIDE, PROGRAM_IMAGE_INITIAL_ACTOR_STRIDE,
+    PROGRAM_IMAGE_ROUTE_PARTICIPANT_STRIDE, PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE,
+    PROGRAM_IMAGE_SCOPE_MARKER_STRIDE, ProgramColumnRange, ProgramImageColumns, ProgramImageFacts,
+    first_endpoint_transfer,
 };
 use super::route_resolvers::PackedRouteAuthority;
 use crate::{
@@ -51,6 +53,108 @@ pub(crate) struct ProgramImageBytes<const N: usize> {
 }
 
 impl<const N: usize> ProgramImageBytes<N> {
+    pub(crate) const fn from_source_if_fits<const E: usize>(
+        source: &crate::g::ProgramSourceData<E>,
+        columns: ProgramImageColumns,
+    ) -> Option<Self> {
+        let Some(mut out) = Self::from_image_if_fits(source.eff_list(), columns) else {
+            return None;
+        };
+        let Some(actors) = source.actors() else {
+            if columns.has_ownership() {
+                crate::invariant();
+            }
+            return Some(out);
+        };
+        let markers = source.eff_list().scope_markers();
+        let Some(ownership) = columns.ownership_columns(markers.len(), actors.decision_count())
+        else {
+            crate::invariant();
+        };
+        let header = columns.ownership_header().offset as usize;
+        out.write_u16(header, markers.len() as u16);
+        out.write_u16(header + 2, actors.decision_count() as u16);
+        if actors.event_count() != ownership.bindings.len as usize {
+            crate::invariant();
+        }
+        let mut event = 0;
+        while event < actors.event_count() {
+            let Some([from, to]) = actors.event_references(event) else {
+                crate::invariant();
+            };
+            let offset = Self::column_offset(
+                ownership.bindings,
+                event,
+                PROGRAM_IMAGE_ACTOR_BINDING_STRIDE,
+            );
+            out.write_u16(offset, from);
+            out.write_u16(offset + 2, to);
+            event += 1;
+        }
+
+        let mut decision = 0;
+        while decision < actors.decision_count() {
+            let Some((range, [left, right])) = actors.decision(decision) else {
+                crate::invariant();
+            };
+            let mut scope = None;
+            let mut marker_index = 0;
+            while marker_index < markers.len() {
+                let marker = markers.at(marker_index);
+                if marker.event.is_primary_enter()
+                    && matches!(marker.scope_id.kind(), Some(ScopeKind::Route))
+                {
+                    let [(start, split), (_, stop)] =
+                        route_arm_ranges_from_first_enter(markers, marker_index);
+                    if start == range.start as usize
+                        && split == range.split as usize
+                        && stop == range.stop as usize
+                    {
+                        if scope.is_some() {
+                            crate::invariant();
+                        }
+                        scope = Some(marker.scope_id);
+                    }
+                }
+                marker_index += 1;
+            }
+            let Some(scope) = scope else {
+                crate::invariant();
+            };
+            let offset = Self::column_offset(
+                ownership.decisions,
+                decision,
+                PROGRAM_IMAGE_ACTOR_DECISION_STRIDE,
+            );
+            out.write_u16(offset, scope.raw());
+            out.write_u16(offset + 2, left);
+            out.write_u16(offset + 4, right);
+            decision += 1;
+        }
+
+        let mut row = 0;
+        let mut role = 0u16;
+        while role <= u8::MAX as u16 {
+            if let Some(event) = first_endpoint_transfer(source.eff_list(), role as u8) {
+                // The first transfer's sender must agree on the one initial
+                // issuer in every source path, as required by source validation.
+                let Some((actor, _)) = actors.actors_at(event, &[]) else {
+                    crate::invariant();
+                };
+                let offset =
+                    Self::column_offset(ownership.initial, row, PROGRAM_IMAGE_INITIAL_ACTOR_STRIDE);
+                out.write_u8(offset, role as u8);
+                out.write_u8(offset + 1, actor);
+                row += 1;
+            }
+            role += 1;
+        }
+        if row != ownership.initial.len as usize {
+            crate::invariant();
+        }
+        Some(out)
+    }
+
     #[inline(always)]
     const fn empty() -> Self {
         Self { bytes: [0; N] }
@@ -246,6 +350,11 @@ impl<const N: usize> ProgramImageBytes<N> {
             crate::invariant();
         }
         let markers = eff_list.scope_markers();
+        let marker_column = if columns.has_ownership() {
+            columns.scope_markers_for(markers.len())
+        } else {
+            columns.scope_markers()
+        };
         if projected_len > u16::MAX as usize {
             crate::invariant();
         }
@@ -311,14 +420,14 @@ impl<const N: usize> ProgramImageBytes<N> {
         }
         if route_row != columns.route_resolver_count()
             || participant_row != columns.route_participant_count()
-            || markers.len() != columns.scope_marker_count()
+            || markers.len() != marker_column.len as usize
         {
             crate::invariant();
         }
 
         idx = 0;
         while idx < markers.len() {
-            out.write_scope_marker(columns.scope_markers(), idx, markers.at(idx));
+            out.write_scope_marker(marker_column, idx, markers.at(idx));
             idx += 1;
         }
         out

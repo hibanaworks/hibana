@@ -96,6 +96,19 @@
       "endpoint::kernel::offer::select_alignment::model::selection::verification::erased_candidate_can_only_request_distinct_realign",
       "endpoint::kernel::offer::select_alignment::model::selection::verification::exact_current_selection_never_becomes_realign"
     ],
+    "../../src/g/source/ownership/actors/kani.rs": [
+      "g::source::ownership::actors::kani::actor_and_decision_references_have_exact_disjoint_domains",
+      "g::source::ownership::actors::kani::actor_decisions_collapse_equal_alternatives_and_intern_equal_nodes",
+      "g::source::ownership::actors::kani::an_unselected_inner_decision_cannot_change_the_outer_right_actor",
+      "g::source::ownership::actors::kani::insufficient_actor_image_storage_cannot_publish_a_partial_rebuild",
+      "g::source::ownership::actors::kani::nested_actor_decisions_follow_every_complete_selection",
+      "g::source::ownership::actors::kani::unresolved_actor_decisions_require_unanimous_alternatives"
+    ],
+    "../../src/global/compiled/images/image/program_ref/actors/kani.rs": [
+      "global::compiled::images::image::program_ref::actors::kani::actor_row_lookups_reject_every_out_of_range_index",
+      "global::compiled::images::image::program_ref::actors::kani::initial_issuance_lookup_preserves_the_complete_role_domain",
+      "global::compiled::images::image::program_ref::actors::kani::owned_image_construction_rejects_a_self_referencing_decision"
+    ],
     "../../src/global/compiled/images/image/program_ref/kani.rs": [
       "global::compiled::images::image::program_ref::kani::compiled_program_atom_blob_decoding_preserves_every_schema_bit",
       "global::compiled::images::image::program_ref::kani::compiled_program_atom_constructor_rejects_invalid_roles",
@@ -307,7 +320,7 @@
   "contract-harnesses": {},
   "contracts": [],
   "totals": {
-    "standard-harnesses": 213,
+    "standard-harnesses": 222,
     "contract-harnesses": 0,
     "functions-under-contract": 0
   }

@@ -71,6 +71,12 @@ run_miri_test \
   --lib \
   g::source::tests
 
+run_miri_test \
+  owned-actor-image \
+  -p hibana \
+  --lib \
+  global::compiled::images::image::program_ref::actors::tests
+
 # This suite covers nested rework and delayed ingress across several complete
 # visits. Strict Miri takes over 300 seconds for the full regression matrix.
 MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \

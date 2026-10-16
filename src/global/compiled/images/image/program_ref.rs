@@ -7,6 +7,8 @@ use crate::{
     global::role_program::BlobPtr,
 };
 
+mod actors;
+
 const fn decode_program_atom(
     bytes: [u8; PROGRAM_IMAGE_ATOM_STRIDE],
     max_role: u8,
@@ -71,6 +73,7 @@ impl CompiledProgramRef {
         // Immutable descriptor validation belongs at construction, not on
         // every endpoint lookup. The private certificate is not protocol state.
         image.routes_sorted = image.validate_route_resolver_rows();
+        image.validate_actor_rows();
         image
     }
 

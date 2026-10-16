@@ -8,8 +8,8 @@ rules. The Lean checker remains independent.
 
 Typed `g::Msg<L, Endpoint<'static, R>>` records an owned endpoint, not a wire
 codec. Source projection checks its initial issuer, conflicting transfers,
-parallel uses, and rolled ownership before lowering. Seven core source tests
-and four compiler rejection cases exercise the real `g` constructors.
+parallel uses, and rolled ownership before lowering. Core source tests and
+compiler rejection cases exercise the real `g` constructors.
 
 Owned descriptor lowering and owned `Endpoint::send` / `recv` are unfinished.
 A source that passes this ownership check is still rejected at the owned
@@ -54,11 +54,24 @@ without requiring the two alternative holders to be equal.
 
 The compiler library is `no_std`, uses stable Rust1.95, and has no dependencies.
 Scratch and output are caller-owned arrays sized from the input. The source
-tree is borrowed. Rust queries ownership from source prefixes, capturing the
-receiver's holder at the transfer event. Moving that receiving endpoint later
-does not move other values along with it. No mutable current-holder map, undo
-trail, or map copy at a fork is needed. These queries belong to projection and
-reference checking; they must be lowered to runtime facts before integration.
+tree is borrowed. During compilation Rust queries ownership from source
+prefixes, capturing the receiver's holder at the transfer event. Moving that
+receiving endpoint later does not move other values along with it.
+`ActorImage` records the resulting sender/receiver bindings as references into
+one immutable decision DAG. Equal alternatives collapse, and equal decisions
+share a node, including when several resources follow one choice. Direct actor
+references retain the complete u8 domain; node references occupy a disjoint
+domain. Nodes refer only to earlier nodes. Output capacity failure publishes
+neither events nor decisions.
+
+The read-only proof observations use this compiled image, rather than repeating
+source-prefix queries for each binding. Missing choices return a holder only
+when all remaining alternatives agree. This inspection is not runtime admission
+or a route authority. No mutable current-holder map, undo trail, or map copy at a
+fork is needed. The global image now retains these facts and maps source
+choices to the existing compiled scope identities. Actor-local descriptor
+emission still needs to consume them and preserve logical facets and operation
+ordering before runtime integration is complete.
 No runtime permission table, application flag, or second progress cursor is
 produced. The plan is published only after validation;
 failure cannot expose a previous accepted plan or a partial new one.
@@ -73,7 +86,7 @@ MIRIFLAGS=-Zmiri-strict-provenance cargo +nightly-2026-05-28 miri test \
   --manifest-path proofs/endpoint-delegation/compiler/Cargo.toml --locked --lib
 ```
 
-The check runs28 Rust tests, including actual const-evaluated plans, strict
+The check runs Rust tests, including actual const-evaluated plans, strict
 Clippy, host and thumbv6m `no_std` builds, Lean, and Z3. Its evidence directory
 contains the actual Rust results and generated Lean source.
 
@@ -99,7 +112,11 @@ matching substitutes for these checks.
 
 Four bounded checks use the actual compiler's equation solver with arbitrary
 u8 actors. They cover independent roots, conflicting merge atomicity, forced
-ownership after merging, and merge orientation:
+ownership after merging, and merge orientation. Six additional checks cover
+the exact disjoint actor/node reference domains, reduced nested choices with
+arbitrary actors and selections, and atomic failure of an undersized actor
+image rebuild. Nested-choice properties are separate proof obligations with
+the same full actor/selection domains and enabled unwinding assertions:
 
 ```sh
 bash .github/scripts/lib/resource_guard.sh \
@@ -129,6 +146,24 @@ construction. These are compiler/data checks, not an executing handoff.
 
 Public projection still rejects owned sources after source validation until
 ownership-aware actor projection and the send/recv execution path are connected.
+
+The normal source-to-global-image path emits owned bindings, reduced decisions
+and initial issuers into an owned-only tail. The ordinary program's eight-byte
+column record and encoded bytes are unchanged. A reserved atom-count bit tags
+the owned grammar; its final count word stores the complete blob length. A
+four-byte header stores scope/decision counts, and the remaining bytes determine
+the exact initial-issuer count. Atom rows stay nine bytes, binding rows four,
+decision rows six and initial-issuer rows two. All bytes share the existing
+65,535-byte descriptor limit. Compiler decision scratch is bounded by that byte
+limit rather than assuming there can be at most one decision per source event.
+
+Construction rejects absent ownership facts, cyclic/out-of-range references,
+foreign choice scopes, malformed count headers, duplicate initial issuers and
+an initial actor inconsistent with the first transfer. It does not recompute
+source ownership or authorize an operation at runtime. Header-aware global
+translation checks and actor-local admission must be connected before an owned
+RoleProgram may be accepted. Existing count-only acceptance deliberately does
+not certify an owned image.
 
 ## Remaining integration
 

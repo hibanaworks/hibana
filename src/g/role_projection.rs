@@ -14,8 +14,8 @@ where
     Steps: ProgramShape,
 {
     const BYTES: Option<crate::global::compiled::images::ProgramImageBytes<N>> =
-        crate::global::compiled::images::ProgramImageBytes::<N>::from_image_if_fits(
-            ProgramProjection::<Steps, CAPACITY>::SOURCE_EFF_LIST,
+        crate::global::compiled::images::ProgramImageBytes::<N>::from_source_if_fits(
+            &ProgramProjection::<Steps, CAPACITY>::SOURCE,
             ProgramProjection::<Steps, CAPACITY>::PROGRAM_COLUMNS,
         );
 }
@@ -28,7 +28,7 @@ where
         crate::global::role_program::ScopeFacts::new(Self::SOURCE_EFF_LIST);
 
     const PROGRAM_PLAN: crate::global::compiled::images::ProgramImagePlan =
-        crate::global::compiled::images::ProgramImagePlan::from_program(Self::SOURCE_EFF_LIST);
+        crate::global::compiled::images::ProgramImagePlan::from_source(&Self::SOURCE);
     const PROGRAM_COLUMNS: crate::global::compiled::images::ProgramImageColumns =
         Self::PROGRAM_PLAN.columns();
     const PROGRAM_BLOB_LEN: usize = Self::PROGRAM_PLAN.blob_len();

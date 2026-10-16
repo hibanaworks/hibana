@@ -18,6 +18,7 @@ pub struct Issuance {
 /// Read-only inferred facts. No runtime ownership or cursor is stored here.
 pub struct Plan<'a, const SYMBOLS: usize, const EVENTS: usize> {
     source: Option<&'a Source<'a>>,
+    actors: ActorImage<EVENTS, EVENTS>,
     messages: [Option<Message>; EVENTS],
     event_len: usize,
     issuance: [Option<Issuance>; SYMBOLS],
@@ -34,6 +35,7 @@ impl<const S: usize, const E: usize> Plan<'_, S, E> {
     pub const fn new() -> Self {
         Self {
             source: None,
+            actors: ActorImage::new(),
             messages: [None; E],
             event_len: 0,
             issuance: [None; S],
@@ -46,6 +48,10 @@ impl<const S: usize, const E: usize> Plan<'_, S, E> {
     }
     pub const fn is_empty(&self) -> bool {
         self.event_len == 0
+    }
+
+    pub const fn actor_decision_count(&self) -> usize {
+        self.actors.decision_count()
     }
     pub const fn binding(&self, event: usize) -> Option<Binding> {
         self.binding_in(event, &[])
@@ -71,22 +77,7 @@ impl<const S: usize, const E: usize> Plan<'_, S, E> {
         if !active(source, 0, event, &context) {
             return None;
         }
-        let Some(sender_actor) = self.actor(
-            At {
-                key: message.from,
-                cut: event,
-            },
-            &context,
-        ) else {
-            return None;
-        };
-        let Some(receiver_actor) = self.actor(
-            At {
-                key: message.to,
-                cut: event,
-            },
-            &context,
-        ) else {
+        let Some((sender_actor, receiver_actor)) = self.actors.actors_at(event, selections) else {
             return None;
         };
         Some(Binding {
@@ -96,42 +87,6 @@ impl<const S: usize, const E: usize> Plan<'_, S, E> {
         })
     }
 
-    const fn actor(&self, at: At, context: &Context<'_>) -> Option<u8> {
-        let Some(source) = self.source else {
-            return None;
-        };
-        let scope = match Query::new(source).owner(at, context) {
-            Evaluation::Atom(Atom::Actor(actor)) => return Some(actor),
-            Evaluation::Atom(Atom::Initial(key)) => {
-                let mut index = 0;
-                while index < self.issuance_len {
-                    if let Some(issuance) = self.issuance[index]
-                        && issuance.endpoint.same(key)
-                    {
-                        return Some(issuance.actor);
-                    }
-                    index += 1;
-                }
-                panic!("published initial owner")
-            }
-            Evaluation::Choice(scope) => scope,
-        };
-        let left_context = context.select(Selection {
-            scope,
-            arm: Arm::Left,
-        });
-        let Some(left) = self.actor(at, &left_context) else {
-            return None;
-        };
-        let right_context = context.select(Selection {
-            scope,
-            arm: Arm::Right,
-        });
-        let Some(right) = self.actor(at, &right_context) else {
-            return None;
-        };
-        if left == right { Some(left) } else { None }
-    }
     pub const fn issuance(&self, index: usize) -> Option<Issuance> {
         if index < self.issuance_len {
             self.issuance[index]
@@ -150,7 +105,7 @@ pub const fn compile_into<'a, const S: usize, const E: usize>(
     output.source = None;
     output.event_len = 0;
     output.issuance_len = 0;
-    if let Err(error) = validate(source, scratch) {
+    if let Err(error) = compile_actor_image_into(source, scratch, &mut output.actors) {
         return Err(error);
     }
     let mut index = 0;

@@ -9,7 +9,10 @@ mod route_resolvers;
 
 pub(crate) use self::{
     blob_storage::ProgramImageBytes,
-    columns::{COMPACT_DESCRIPTOR_BYTE_CAPACITY, ProgramImageColumns, ProgramImagePlan},
+    columns::{
+        ACTOR_DECISION_CAPACITY, COMPACT_DESCRIPTOR_BYTE_CAPACITY, ProgramImageColumns,
+        ProgramImagePlan,
+    },
     program_ref::CompiledProgramRef,
     role_descriptor_ref::RoleDescriptorRef,
 };

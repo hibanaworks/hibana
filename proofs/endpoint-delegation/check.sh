@@ -25,4 +25,4 @@ bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" lean "$EVIDENCE/lea
 LEAN_PATH="$EVIDENCE" lean "$EVIDENCE/Generated.lean" > "$EVIDENCE/lean-generated.log" 2>&1
 bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" lean "$EVIDENCE/lean-generated.log" 129
 bash "$ROOT/.github/scripts/check_smt2.sh" "$PROOFS/Ownership.smt2" > "$EVIDENCE/z3.log"
-printf 'Endpoint ownership projection: 28 Rust tests; 14 general and 129 generated Lean theorems; Z3 7 UNSAT, 2 counterexample SAT, 1 positive SAT. Evidence: %s\n' "$EVIDENCE"
+printf 'Endpoint ownership projection: Rust tests passed; 14 general and 129 generated Lean theorems; Z3 7 UNSAT, 2 counterexample SAT, 1 positive SAT. Evidence: %s\n' "$EVIDENCE"

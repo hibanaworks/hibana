@@ -1,19 +1,19 @@
 error[E0080]: evaluation panicked: parallel endpoint delegation conflicts with another use
- --> src/g.rs
-  |
-  |     const SOURCE: ProgramSourceData<CAPACITY> = ProgramSourceData::lower::<Steps>();
-  |                                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `hibana::g::ProgramProjection::<hibana::g::Par<hibana::g::Send<0, 1, hibana::g::Msg<1, hibana::Endpoint<'_, 10>>>, hibana::g::Send<10, 3, hibana::g::Msg<2, u32>>>, 8>::SOURCE` failed inside this call
-  |
-note: inside `g::source::ProgramSourceData::<8>::lower::<Par<hibana::g::Send<0, 1, Msg<1, Endpoint<'_, 10>>>, hibana::g::Send<10, 3, Msg<2, u32>>>>`
  --> $RUST/core/src/panic.rs
   |
   |         $crate::panicking::panic_fmt($crate::const_format_args!($($t)+));
-  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the failure occurred here
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `hibana::g::source::SourceActors::<hibana::g::Par<hibana::g::Send<0, 1, hibana::g::Msg<1, hibana::Endpoint<'_, 10>>>, hibana::g::Send<10, 3, hibana::g::Msg<2, u32>>>, 8>::IMAGE` failed here
   |
  ::: src/g/source.rs
   |
-  |                         panic!("parallel endpoint delegation conflicts with another use")
-  |                         ----------------------------------------------------------------- in this macro invocation
+  |                     panic!("parallel endpoint delegation conflicts with another use")
+  |                     ----------------------------------------------------------------- in this macro invocation
+
+note: erroneous constant encountered
+ --> src/g/source.rs
+  |
+  |             Some(&SourceActors::<Steps, CAPACITY>::IMAGE)
+  |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 note: erroneous constant encountered
  --> src/g.rs

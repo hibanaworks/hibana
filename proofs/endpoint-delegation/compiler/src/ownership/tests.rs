@@ -793,3 +793,81 @@ fn rolled_work_preserves_the_conditional_holder_chosen_before_the_loop() {
         assert_eq!(PLAN.binding_in(4, &path).unwrap().message.from, DB);
     }
 }
+
+#[test]
+fn correlated_resources_share_the_same_compiled_actor_decision() {
+    const LEFT: Source<'static> = Source::Seq(&transfer(P, A, 1, DB), &transfer(P, A, 2, AUTH));
+    const RIGHT: Source<'static> = Source::Seq(&transfer(P, B, 3, DB), &transfer(P, B, 4, AUTH));
+    const SOURCE: Source<'static> = Source::Seq(
+        &Source::Route {
+            left: &LEFT,
+            right: &RIGHT,
+            resolver: Some(701),
+        },
+        &Source::Par(&wire(DB, SERVER, 5), &wire(AUTH, OTHER_SERVER, 6)),
+    );
+    const E: usize = SOURCE.event_count();
+    let mut scratch = Scratch::<{ 3 * E }, E>::new();
+    let mut plan = Plan::new();
+    compile_into(&SOURCE, &mut scratch, &mut plan).unwrap();
+    assert_eq!(plan.actor_decision_count(), 1);
+    assert_eq!(plan.binding(4), None);
+    assert_eq!(plan.binding(5), None);
+    let scope = Scope {
+        start: 0,
+        split: 2,
+        stop: 4,
+    };
+    for (arm, actor) in [(Arm::Left, A.role), (Arm::Right, B.role)] {
+        let path = [Selection { scope, arm }];
+        assert_eq!(plan.binding_in(4, &path).unwrap().sender_actor, actor);
+        assert_eq!(plan.binding_in(5, &path).unwrap().sender_actor, actor);
+        assert_eq!(plan.binding_in(4, &path).unwrap().message.from, DB);
+        assert_eq!(plan.binding_in(5, &path).unwrap().message.from, AUTH);
+    }
+}
+
+#[test]
+fn actor_image_capacity_failure_publishes_neither_events_nor_decisions() {
+    const SOURCE: Source<'static> = Source::Seq(
+        &Source::Route {
+            left: &transfer(P, A, 1, DB),
+            right: &transfer(P, B, 2, DB),
+            resolver: Some(701),
+        },
+        &wire(DB, SERVER, 3),
+    );
+    const E: usize = SOURCE.event_count();
+    let mut scratch = Scratch::<{ 3 * E }, E>::new();
+    let mut image = ActorImage::<E, 0>::new();
+    compile_actor_image_into(&wire(P, A, 9), &mut scratch, &mut image).unwrap();
+    assert_eq!(image.event_count(), 1);
+    assert_eq!(image.actors_at(0, &[]), Some((P.role, A.role)));
+    assert_eq!(
+        compile_actor_image_into(&SOURCE, &mut scratch, &mut image)
+            .unwrap_err()
+            .kind,
+        ErrorKind::Capacity
+    );
+    assert_eq!(image.event_count(), 0);
+    assert_eq!(image.decision_count(), 0);
+    assert_eq!(image.actors_at(0, &[]), None);
+}
+
+#[test]
+fn direct_actor_ids_keep_the_complete_u8_domain_without_decision_storage() {
+    const FROM: EndpointKey = EndpointKey {
+        component: 0,
+        role: 255,
+    };
+    const TO: EndpointKey = EndpointKey {
+        component: 0,
+        role: 254,
+    };
+    let mut scratch = Scratch::<2, 1>::new();
+    let mut image = ActorImage::<1, 0>::new();
+    compile_actor_image_into(&wire(FROM, TO, 1), &mut scratch, &mut image).unwrap();
+    assert_eq!(image.actors_at(0, &[]), Some((255, 254)));
+    assert_eq!(image.actors_at(1, &[]), None);
+    assert_eq!(image.decision_count(), 0);
+}

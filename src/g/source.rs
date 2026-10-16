@@ -31,6 +31,44 @@ pub trait ProgramShape {
 
 pub(crate) struct ProgramSourceData<const CAPACITY: usize> {
     eff: EffList<CAPACITY>,
+    actors: Option<&'static SourceActorImage<CAPACITY>>,
+}
+
+type SourceActorImage<const E: usize> =
+    ownership::ActorImage<E, { crate::global::compiled::images::ACTOR_DECISION_CAPACITY }>;
+
+struct SourceActors<Steps, const CAPACITY: usize>(core::marker::PhantomData<Steps>);
+
+impl<Steps: ProgramShape, const CAPACITY: usize> SourceActors<Steps, CAPACITY> {
+    const IMAGE: SourceActorImage<CAPACITY> = {
+        let mut scratch = ownership::Scratch::<256, CAPACITY>::new();
+        let mut image = ownership::ActorImage::new();
+        match ownership::compile_actor_image_into(&Steps::SOURCE_NODE, &mut scratch, &mut image) {
+            Ok(()) => (),
+            Err(error) => match error.kind {
+                ownership::ErrorKind::Capacity => panic!("owned endpoint source capacity"),
+                ownership::ErrorKind::NonUnitSelfMessage => {
+                    panic!("self-role actions require the unit payload")
+                }
+                ownership::ErrorKind::EndpointIsItsOwnCarrier => {
+                    panic!("an owned endpoint cannot carry its own delegation")
+                }
+                ownership::ErrorKind::ConflictingInitialOwners => {
+                    panic!("owned endpoint has conflicting initial actors")
+                }
+                ownership::ErrorKind::UnrootedInitialOwner => {
+                    panic!("owned endpoint has no unique initial actor")
+                }
+                ownership::ErrorKind::ParallelOwnershipConflict => {
+                    panic!("parallel endpoint delegation conflicts with another use")
+                }
+                ownership::ErrorKind::RollChangesOwner => {
+                    panic!("rolled endpoint delegation must restore its incoming ownership")
+                }
+            },
+        }
+        image
+    };
 }
 
 struct SourceLowering<const CAPACITY: usize> {
@@ -148,33 +186,11 @@ impl<const CAPACITY: usize> ProgramSourceData<CAPACITY> {
         if Steps::SOURCE_ROW_COUNT == 0 || Steps::SOURCE_ROW_COUNT > CAPACITY {
             panic!("source bucket selection");
         }
-        if Steps::SOURCE_NODE.has_delegation() {
-            let mut scratch = ownership::Scratch::<256, CAPACITY>::new();
-            match ownership::validate(&Steps::SOURCE_NODE, &mut scratch) {
-                Ok(()) => (),
-                Err(error) => match error.kind {
-                    ownership::ErrorKind::Capacity => panic!("owned endpoint source capacity"),
-                    ownership::ErrorKind::NonUnitSelfMessage => {
-                        panic!("self-role actions require the unit payload")
-                    }
-                    ownership::ErrorKind::EndpointIsItsOwnCarrier => {
-                        panic!("an owned endpoint cannot carry its own delegation")
-                    }
-                    ownership::ErrorKind::ConflictingInitialOwners => {
-                        panic!("owned endpoint has conflicting initial actors")
-                    }
-                    ownership::ErrorKind::UnrootedInitialOwner => {
-                        panic!("owned endpoint has no unique initial actor")
-                    }
-                    ownership::ErrorKind::ParallelOwnershipConflict => {
-                        panic!("parallel endpoint delegation conflicts with another use")
-                    }
-                    ownership::ErrorKind::RollChangesOwner => {
-                        panic!("rolled endpoint delegation must restore its incoming ownership")
-                    }
-                },
-            }
-        }
+        let actors = if Steps::SOURCE_NODE.has_delegation() {
+            Some(&SourceActors::<Steps, CAPACITY>::IMAGE)
+        } else {
+            None
+        };
         let mut lowering = SourceLowering::new(
             Steps::EVENT_COUNT,
             Steps::SCOPE_MARKER_COUNT,
@@ -188,12 +204,19 @@ impl<const CAPACITY: usize> ProgramSourceData<CAPACITY> {
             panic!("type tree and lowered source disagree");
         }
         separate_roll_frame_domains(&mut lowering.eff);
-        Self { eff: lowering.eff }
+        Self {
+            eff: lowering.eff,
+            actors,
+        }
     }
 
     #[inline(always)]
     pub(crate) const fn eff_list(&self) -> &EffList<CAPACITY> {
         &self.eff
+    }
+
+    pub(crate) const fn actors(&self) -> Option<&'static SourceActorImage<CAPACITY>> {
+        self.actors
     }
 }
 
