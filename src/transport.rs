@@ -343,6 +343,24 @@ pub trait Transport {
     type Rx<'a>: 'a
     where
         Self: 'a;
+
+    /// Return the physical resource's sole initial Endpoint issuer.
+    ///
+    /// Only attachment of a logical role carried as an Endpoint payload calls
+    /// this method. Ordinary wire-only roles do not require a binding. A
+    /// transport without the binding cannot issue that initial resource view;
+    /// it can still receive an Endpoint through the projected choreography.
+    ///
+    /// All handles and runtime instances for the same exclusive resource must
+    /// return the same durable authority, including when its logical role or
+    /// SessionId differs. The physical owner establishes that identity at the
+    /// binding's construction boundary. A fresh transport or runtime does not
+    /// replenish an issued binding. This method supplies identity, never a
+    /// branch choice, current holder, or continuation position.
+    fn initial_endpoint_binding(&self, _role: u8) -> Option<&EndpointBinding> {
+        None
+    }
+
     /// Open Tx/Rx handles bound to the lifetime of this transport reference.
     ///
     /// `port` carries the projected role/session/lane fact for the returned Tx/Rx
@@ -408,8 +426,10 @@ pub trait Transport {
     fn requeue<'a>(&self, rx: &mut Self::Rx<'a>) -> Result<(), TransportError>;
 }
 
+mod binding;
 /// Observability helpers for logical frame inspection.
 pub(crate) mod trace;
+pub use binding::EndpointBinding;
 /// Wire helpers: payload views and serialization traits.
 pub(crate) mod wire;
 

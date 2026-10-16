@@ -31,6 +31,7 @@ pub struct AttachError {
 enum AttachErrorKind {
     Cluster(ClusterError),
     Rendezvous(crate::rendezvous::error::RendezvousError),
+    EndpointBindingUnavailable { role: u8 },
 }
 
 impl fmt::Debug for AttachError {
@@ -42,6 +43,13 @@ impl fmt::Debug for AttachError {
 }
 
 impl AttachError {
+    pub(crate) const fn endpoint_binding_unavailable(role: u8) -> Self {
+        Self {
+            op: AttachOp::Attach,
+            kind: AttachErrorKind::EndpointBindingUnavailable { role },
+        }
+    }
+
     #[inline]
     pub(crate) fn cluster(error: ClusterError) -> Self {
         Self {
@@ -68,7 +76,9 @@ impl AttachError {
     pub(crate) const fn cluster_cause(&self) -> Option<ClusterError> {
         match self.kind {
             AttachErrorKind::Cluster(error) => Some(error),
-            AttachErrorKind::Rendezvous(_) => None,
+            AttachErrorKind::Rendezvous(_) | AttachErrorKind::EndpointBindingUnavailable { .. } => {
+                None
+            }
         }
     }
 

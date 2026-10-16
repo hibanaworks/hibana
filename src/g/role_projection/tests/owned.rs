@@ -5,6 +5,144 @@ use crate::{
 };
 
 #[test]
+fn one_resource_binding_cannot_issue_again_in_another_runtime_or_session() {
+    type Steps = g::Seq<g::Send<0, 1, Loan>, g::Send<1, 0, Loan>>;
+    let () = crate::g::ProgramProjection::<Steps, 8>::VALIDATION;
+    let resource_program = crate::global::role_program::role_program_from_image::<10>(
+        &RoleProjection::<10, Steps, 8>::IMAGE_REF,
+    );
+    let network = TestTransport::new();
+    let mut other_slab = [0u8; 32 * 1024];
+    let mut other_storage = SessionKitStorage::<TestTransport>::uninit();
+    let other_kit = other_storage.init();
+    let other_rv = other_kit
+        .rendezvous(&mut other_slab, network.clone())
+        .unwrap();
+    {
+        let mut owner_slab = [0u8; 32 * 1024];
+        let mut owner_storage = SessionKitStorage::<TestTransport>::uninit();
+        let owner_kit = owner_storage.init();
+        let owner_rv = owner_kit
+            .rendezvous(&mut owner_slab, network.clone())
+            .unwrap();
+        let db = owner_rv
+            .enter(SessionId::new(840), &resource_program)
+            .unwrap();
+        for sid in [840, 841] {
+            let error = other_rv
+                .enter(SessionId::new(sid), &resource_program)
+                .err()
+                .expect("a new runtime/session cannot duplicate the physical right");
+            assert_eq!(
+                error,
+                crate::runtime::AttachError::endpoint_binding_unavailable(10)
+                    .with_operation(crate::session::cluster::error::AttachOp::Enter)
+            );
+        }
+        drop(db);
+    }
+    // Neither dropping an unfinished Endpoint nor destroying its whole kit
+    // fences a possibly remote right. The resource authority stays consumed.
+    let error = other_rv
+        .enter(SessionId::new(842), &resource_program)
+        .err()
+        .expect("runtime destruction must not resurrect the initial right");
+    assert_eq!(
+        error,
+        crate::runtime::AttachError::endpoint_binding_unavailable(10)
+            .with_operation(crate::session::cluster::error::AttachOp::Enter)
+    );
+}
+
+#[test]
+fn failed_initial_attachment_does_not_consume_the_physical_resource_binding() {
+    type Steps = g::Seq<g::Send<0, 1, Loan>, g::Send<1, 0, Loan>>;
+    let () = crate::g::ProgramProjection::<Steps, 8>::VALIDATION;
+    let resource_program = crate::global::role_program::role_program_from_image::<10>(
+        &RoleProjection::<10, Steps, 8>::IMAGE_REF,
+    );
+    let network = TestTransport::new();
+    {
+        let mut slab = [0u8; 2048];
+        let mut storage = SessionKitStorage::<TestTransport>::uninit();
+        let kit = storage.init();
+        let rv = kit.rendezvous(&mut slab, network.clone()).unwrap();
+        assert!(rv.enter(SessionId::new(843), &resource_program).is_err());
+    }
+    let mut slab = [0u8; 32 * 1024];
+    let mut storage = SessionKitStorage::<TestTransport>::uninit();
+    let kit = storage.init();
+    let rv = kit.rendezvous(&mut slab, network).unwrap();
+    // Same identity and resource, after a failure before publication.
+    let db = rv.enter(SessionId::new(843), &resource_program).unwrap();
+    drop(db);
+}
+
+#[test]
+fn received_resource_keeps_working_after_its_original_runtime_is_destroyed() {
+    type Steps = g::Seq<g::Send<0, 1, Loan>, g::Seq<g::Send<10, 3, Read>, g::Send<3, 10, Value>>>;
+    let () = crate::g::ProgramProjection::<Steps, 8>::VALIDATION;
+    let owner_program = crate::global::role_program::role_program_from_image::<0>(
+        &RoleProjection::<0, Steps, 8>::IMAGE_REF,
+    );
+    let db_program = crate::global::role_program::role_program_from_image::<10>(
+        &RoleProjection::<10, Steps, 8>::IMAGE_REF,
+    );
+    let worker_program = crate::global::role_program::role_program_from_image::<1>(
+        &RoleProjection::<1, Steps, 8>::IMAGE_REF,
+    );
+    let service_program = crate::global::role_program::role_program_from_image::<3>(
+        &RoleProjection::<3, Steps, 8>::IMAGE_REF,
+    );
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let network = TestTransport::new();
+        let mut worker_slab = [0u8; 32 * 1024];
+        let mut service_slab = [0u8; 32 * 1024];
+        let mut worker_storage = SessionKitStorage::<TestTransport>::uninit();
+        let mut service_storage = SessionKitStorage::<TestTransport>::uninit();
+        let worker_kit = worker_storage.init();
+        let service_kit = service_storage.init();
+        let worker_rv = worker_kit
+            .rendezvous(&mut worker_slab, network.clone())
+            .unwrap();
+        let service_rv = service_kit
+            .rendezvous(&mut service_slab, network.clone())
+            .unwrap();
+        let sid = SessionId::new(844);
+        let mut worker = worker_rv.enter(sid, &worker_program).unwrap();
+        let mut service = service_rv.enter(sid, &service_program).unwrap();
+        let mut db = {
+            let mut owner_slab = [0u8; 32 * 1024];
+            let mut owner_storage = SessionKitStorage::<TestTransport>::uninit();
+            let owner_kit = owner_storage.init();
+            let owner_rv = owner_kit
+                .rendezvous(&mut owner_slab, network.clone())
+                .unwrap();
+            let mut owner = owner_rv.enter(sid, &owner_program).unwrap();
+            let db = owner_rv.enter(sid, &db_program).unwrap();
+            owner.send::<Loan>(db).await.unwrap();
+            worker.recv::<Loan>().await.unwrap()
+        };
+        // The sender's kit/slab/ports have all been destroyed. The received
+        // value owns a continuation in the receiver, not a pointer into them.
+        assert!(worker_rv.enter(SessionId::new(845), &db_program).is_err());
+        tokio::join!(
+            async {
+                db.send::<Read>(&42).await.unwrap();
+                assert_eq!(db.recv::<Value>().await.unwrap(), 43);
+            },
+            async {
+                let key = service.recv::<Read>().await.unwrap();
+                service.send::<Value>(&(key + 1)).await.unwrap();
+            }
+        );
+    });
+}
+
+#[test]
 fn typed_projection_checks_the_holders_knowledge_before_delegated_work() {
     type OtherDbLoan = g::Msg<2, Endpoint<'static, 10>>;
     type OtherRead = g::Msg<6, u32>;

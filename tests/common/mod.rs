@@ -247,12 +247,19 @@ pub(crate) struct TestRx<'a> {
 
 pub(crate) struct TestTransport {
     state: Rc<RefCell<TestState>>,
+    bindings: Rc<[hibana::runtime::transport::EndpointBinding; 256]>,
 }
 
 impl TestTransport {
     pub(crate) fn new() -> Self {
         Self {
             state: Rc::new(RefCell::new(TestState::new())),
+            bindings: Rc::new(core::array::from_fn(|_| {
+                // SAFETY: each slot owns one isolated test resource. All
+                // transport clones share these same authorities, and the
+                // fixture's resources have no operations outside its Endpoints.
+                unsafe { hibana::runtime::transport::EndpointBinding::new() }
+            })),
         }
     }
 
@@ -414,6 +421,7 @@ impl Clone for TestTransport {
     fn clone(&self) -> Self {
         Self {
             state: Rc::clone(&self.state),
+            bindings: Rc::clone(&self.bindings),
         }
     }
 }
@@ -433,6 +441,13 @@ impl Transport for TestTransport {
         = TestRx<'a>
     where
         Self: 'a;
+
+    fn initial_endpoint_binding(
+        &self,
+        role: u8,
+    ) -> Option<&hibana::runtime::transport::EndpointBinding> {
+        Some(&self.bindings[usize::from(role)])
+    }
 
     fn open<'a>(
         &'a self,

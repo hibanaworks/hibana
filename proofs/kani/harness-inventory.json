@@ -320,6 +320,9 @@
       "session::cluster::core::dynamic_resolvers::kani::resolver_replacement_compacts_a_middle_hole_and_preserves_dispatch",
       "session::cluster::core::dynamic_resolvers::kani::resolver_replacement_compacts_a_trailing_hole_and_preserves_dispatch"
     ],
+    "../../src/transport/binding.rs": [
+      "transport::binding::kani::one_physical_binding_can_publish_at_most_one_initial_endpoint"
+    ],
     "../../src/transport/kani.rs": [
       "transport::kani::frame_header_identity_is_exact_and_injective",
       "transport::kani::frame_header_roundtrip_preserves_every_field"
@@ -342,7 +345,7 @@
   "contract-harnesses": {},
   "contracts": [],
   "totals": {
-    "standard-harnesses": 236,
+    "standard-harnesses": 237,
     "contract-harnesses": 0,
     "functions-under-contract": 0
   }

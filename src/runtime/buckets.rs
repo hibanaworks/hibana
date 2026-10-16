@@ -33,6 +33,7 @@ pub mod wire {
 /// Transport I/O surface plus observation/detail owners.
 pub mod transport {
     pub use crate::transport::{
-        FrameHeader, FrameLabel, Outgoing, PortOpen, ReceivedFrame, Transport, TransportError,
+        EndpointBinding, FrameHeader, FrameLabel, Outgoing, PortOpen, ReceivedFrame, Transport,
+        TransportError,
     };
 }

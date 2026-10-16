@@ -15,7 +15,10 @@ Owned descriptor lowering and value-consuming `Endpoint::send` / `recv` now
 execute in private actor-image tests. They cover return to the original actor,
 distinct runtime slabs, branch operations and independent rolled resource
 exchanges. Public owned projection remains closed while general continuation,
-initial resource binding and the complete verification boundary are unfinished.
+authenticated transport integration and the complete verification boundary are
+unfinished. Initial attachment now reserves the physical resource's durable
+`EndpointBinding`, independently of runtime and session identity. The integration
+establishes physical identity at its explicit unsafe construction boundary.
 The public 0.9.9 release does not provide Endpoint delegation.
 
 An accepted ownership plan is not an accepted Hibana protocol. This package
@@ -189,11 +192,37 @@ bypassed to obtain test images. Both choices pass native and strict Miri with
 four separate runtime/slab owners connected by the shared-memory test carrier.
 This is not a separate-process transport or a general initial-binding proof.
 
+## Initial physical binding
+
+`Transport::initial_endpoint_binding` supplies the unique resource owner's
+authority. Initial attachment of an owned logical role fails if no authority
+is available. Ordinary wire roles and checked owned receives do not mint an
+initial right. A reservation excludes callback reentry; failed unpublished
+attachment returns it. Successful publication permanently consumes it. Endpoint
+and runtime Drop do not make another initial right available.
+
+The one-byte binding contains no holder table, branch history, or second cursor.
+All aliases of one physical resource must return the same authority. Establishing
+that identity, keeping it alive across remote loans, and fencing older rights
+before replacing it belong to the physical integration's unsafe constructor
+contract. Core cannot infer that two arbitrary OS or service handles alias.
+
+Actual Endpoint tests reject duplicate issuance in another runtime and another
+session, retain rejection after destroying the original runtime, and permit
+retry after an undersized, unpublished attachment. `Issuance.lean` proves four
+facts about the irreversible issuance boundary. `Issuance.smt2` checks three
+invariants, exposes the erroneous destruction/revival rule, and keeps a legal
+publication witness. These models do not establish physical handle identity or
+authenticated distributed handoff.
+
+## Remaining qualification
+
 - Complete the actor-aware source checks and independently qualify accepted
   actor-local images, including branch knowledge and conditional holders.
 - Qualify general continuation across route/roll/par combinations. Ordinary
   owned send/recv already shares one actor progress and serializes no pointer.
-- Bind initial issuance to the unique resource owner, including related runs.
+- Qualify the initial binding against a real physical operation boundary,
+  including related runs and native fencing.
 - Validate pending, commit, drop, failure, replay, and authenticated remote
   handoff against the same ownership and progress model.
 - Prove the full projection/implementation correspondence and communication

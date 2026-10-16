@@ -66,6 +66,12 @@ run_miri_test \
   endpoint::owner::tests
 
 run_miri_test \
+  initial-endpoint-binding \
+  -p hibana \
+  --lib \
+  transport::binding::tests
+
+run_miri_test \
   carrier-actor-borrow \
   -p hibana \
   --lib \

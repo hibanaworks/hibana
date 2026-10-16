@@ -276,6 +276,30 @@ where
         P: crate::global::RoleProgramView<ROLE>,
         'cfg: 'r,
     {
+        // Reserve at the physical owner before allocation or transport
+        // callbacks can reenter attachment. This is independent of the local
+        // session/actor registry, so another runtime cannot issue the same
+        // binding. Only an unpublished failure returns this reservation.
+        let initial_binding = if program
+            .role_image_ref()
+            .program()
+            .initial_actor_for(ROLE)
+            .is_some()
+        {
+            let rv = self
+                .locals()
+                .get_checked(&rv_id)
+                .map_err(Self::map_rendezvous_access_error)
+                .map_err(AttachError::cluster)?;
+            Some(
+                rv.transport()
+                    .initial_endpoint_binding(ROLE)
+                    .and_then(crate::transport::EndpointBinding::reserve)
+                    .ok_or(AttachError::endpoint_binding_unavailable(ROLE))?,
+            )
+        } else {
+            None
+        };
         match self.ensure_role_image_slice(rv_id, program) {
             Ok(role_image) =>
             /* SAFETY: allocation preview leases the target rendezvous through
@@ -312,6 +336,9 @@ where
                     let actor = self.public_actor_ptr(rv_id, slot, generation);
                     if !actor.as_ref().issue_initial_view(ROLE) {
                         return Err(super::ClusterError::RendezvousBusy { id: rv_id.raw() }.into());
+                    }
+                    if let Some(reservation) = initial_binding {
+                        reservation.commit();
                     }
                     return Ok((slot, generation));
                 }
@@ -350,6 +377,9 @@ where
                     return Err(err);
                 }
                 self.publish_public_endpoint_slot(rv_id, slot, generation);
+                if let Some(reservation) = initial_binding {
+                    reservation.commit();
+                }
                 Ok((slot, generation))
             },
             Err(err) => Err(err),
