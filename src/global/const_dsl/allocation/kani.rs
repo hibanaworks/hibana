@@ -23,6 +23,26 @@ const fn atom(from: u8, to: u8, lane: u8) -> EffAtom {
     }
 }
 
+const fn two_by_two_result(conflicts: u8) -> [Option<u16>; 2] {
+    let left_index =
+        LaneEndpointIndex::<1>::from_two_role_masks(conflicts & 0b0011, conflicts & 0b1100);
+    let right_index =
+        LaneEndpointIndex::<1>::from_two_role_masks(conflicts & 0b0101, conflicts & 0b1010);
+    let matching = maximum_lane_matching(&left_index, &right_index, 2, 2);
+    super::lane_matching::validate_maximum_certificate(&left_index, &right_index, 2, 2, &matching);
+    [matching.left_for_right(0), matching.left_for_right(1)]
+}
+
+const TWO_BY_TWO_RESULTS: [[Option<u16>; 2]; 16] = {
+    let mut results = [[None; 2]; 16];
+    let mut conflicts = 0;
+    while conflicts < results.len() {
+        results[conflicts] = two_by_two_result(conflicts as u8);
+        conflicts += 1;
+    }
+    results
+};
+
 #[kani::proof]
 #[kani::unwind(8)]
 fn two_by_two_parallel_lane_matching_has_minimum_span() {
@@ -30,13 +50,10 @@ fn two_by_two_parallel_lane_matching_has_minimum_span() {
     // left/right reuse edges. Shared edge markers and edge-private
     // role identities realize every one of those sixteen graphs with four symbolic
     // conflict bits. The separate index harness proves role-to-set aggregation;
-    // this harness verifies the production matching kernel without symbolic
-    // role-index writes obscuring the finite graph domain.
+    // the production matcher and certificate run on every graph in const
+    // evaluation. Kani checks those actual outputs against the closed-form
+    // optimum, without expanding the production 256-entry work arrays.
     let conflicts: u8 = kani::any::<u8>() & 0x0f;
-    let left_index =
-        LaneEndpointIndex::<1>::from_two_role_masks(conflicts & 0b0011, conflicts & 0b1100);
-    let right_index =
-        LaneEndpointIndex::<1>::from_two_role_masks(conflicts & 0b0101, conflicts & 0b1010);
 
     let zero_zero = conflicts & (1 << 0) == 0;
     let zero_one = conflicts & (1 << 1) == 0;
@@ -45,9 +62,7 @@ fn two_by_two_parallel_lane_matching_has_minimum_span() {
     let perfect = (zero_zero && one_one) || (zero_one && one_zero);
     let any_reuse = zero_zero || zero_one || one_zero || one_one;
 
-    let matching = maximum_lane_matching(&left_index, &right_index, 2, 2);
-    let right_zero_lane = matching.left_for_right(0);
-    let right_one_lane = matching.left_for_right(1);
+    let [right_zero_lane, right_one_lane] = TWO_BY_TWO_RESULTS[conflicts as usize];
     let reused = right_zero_lane.is_some() as u16 + right_one_lane.is_some() as u16;
     let lane_span = 4 - reused;
 
@@ -62,6 +77,8 @@ fn two_by_two_parallel_lane_matching_has_minimum_span() {
             }
     );
     assert!(right_zero_lane.is_none() || right_zero_lane != right_one_lane);
+    assert!(matches!(right_zero_lane, None | Some(0..=1)));
+    assert!(matches!(right_one_lane, None | Some(0..=1)));
     assert!(
         right_zero_lane.is_none()
             || if right_zero_lane == Some(0) {
