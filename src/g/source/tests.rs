@@ -1,6 +1,8 @@
 use super::{ProgramShape, ownership, tree};
 use crate::{Endpoint, g};
 
+mod receive_causality;
+
 const P: u8 = 0;
 const A: u8 = 1;
 const B: u8 = 2;

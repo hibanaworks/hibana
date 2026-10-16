@@ -11,8 +11,9 @@
 pub use super::tree::{EndpointKey, Message, Payload, Source};
 #[path = "ownership/queries.rs"]
 mod queries;
+pub(crate) use queries::Context;
 pub use queries::{Arm, Scope, Selection};
-use queries::{At, Atom, Context, Evaluation, Query};
+use queries::{At, Atom, Evaluation, Query};
 #[path = "ownership/actors.rs"]
 mod actors;
 pub use actors::{ActorImage, compile_actor_image_into};

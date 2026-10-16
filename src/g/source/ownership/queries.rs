@@ -29,24 +29,24 @@ pub struct Selection {
 
 /// A borrowed compile-time control path. No array of ownership maps is copied
 /// when a branch is inspected. A choice always refers to its source scope.
-pub(super) struct Context<'a> {
+pub(crate) struct Context<'a> {
     base: &'a [Selection],
     extra: Option<(Selection, &'a Context<'a>)>,
 }
 
 impl<'a> Context<'a> {
-    pub(super) const fn new(base: &'a [Selection]) -> Self {
+    pub(crate) const fn new(base: &'a [Selection]) -> Self {
         Self { base, extra: None }
     }
 
-    pub(super) const fn select<'b>(&'b self, selection: Selection) -> Context<'b> {
+    pub(crate) const fn select<'b>(&'b self, selection: Selection) -> Context<'b> {
         Context {
             base: self.base,
             extra: Some((selection, self)),
         }
     }
 
-    pub(super) const fn get(&self, scope: Scope) -> Option<Arm> {
+    pub(crate) const fn get(&self, scope: Scope) -> Option<Arm> {
         let mut context = self;
         while let Some((selection, parent)) = context.extra {
             if selection.scope.same(scope) {

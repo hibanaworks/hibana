@@ -7,6 +7,9 @@ use crate::{
 };
 
 mod ownership;
+pub(crate) use ownership::{
+    Arm as SourceArm, Context as SourceContext, Scope as SourceScope, Selection as SourceSelection,
+};
 mod tree;
 pub(crate) use tree::{EndpointKey, Message as SourceMessage, Payload as SourcePayload};
 pub type ProgramSourceNode = tree::Source<'static>;
@@ -34,8 +37,10 @@ pub(crate) struct ProgramSourceData<const CAPACITY: usize> {
     actors: Option<&'static SourceActorImage<CAPACITY>>,
 }
 
-pub(crate) type SourceActorImage<const E: usize> =
-    ownership::ActorImage<E, { crate::global::compiled::images::ACTOR_DECISION_CAPACITY }>;
+pub(crate) type SourceActorImage<
+    const E: usize,
+    const D: usize = { crate::global::compiled::images::ACTOR_DECISION_CAPACITY },
+> = ownership::ActorImage<E, D>;
 
 struct SourceActors<Steps, const CAPACITY: usize>(core::marker::PhantomData<Steps>);
 

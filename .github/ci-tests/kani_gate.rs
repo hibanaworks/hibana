@@ -11,6 +11,9 @@ use std::{
 
 use crate::{Audit, kani_json, walk};
 
+#[path = "kani_recursion.rs"]
+mod recursion;
+
 struct Scratch(PathBuf);
 impl Scratch {
     fn create() -> Audit<Self> {
@@ -129,12 +132,25 @@ pub fn run(root: &Path) -> Audit<()> {
         format!("Kani gate did not produce a readable structured harness inventory: {e}")
     })?;
     let total = kani_json::inventory_total(&inventory, expected)?;
-    let log_path = scratch.0.join("verification.log");
-    let log = Arc::new(Mutex::new(
-        File::create(&log_path).map_err(|e| e.to_string())?,
-    ));
-    let mut child = cargo(&root)
-        .args([
+    let mut groups = recursion::prepare(&root, &inventory, total)?;
+    groups.sort_by_key(|group| group.recursion.is_none());
+    for (index, group) in groups.into_iter().enumerate() {
+        println!(
+            "Kani proof group={} harnesses={} recursion_bound={}",
+            group.label,
+            group.harnesses.len(),
+            if group.recursion.is_some() {
+                "1"
+            } else {
+                "default"
+            }
+        );
+        let log_path = scratch.0.join(format!("verification-{index}.log"));
+        let log = Arc::new(Mutex::new(
+            File::create(&log_path).map_err(|e| e.to_string())?,
+        ));
+        let mut command = cargo(&root);
+        command.args([
             "-Z",
             "unstable-options",
             "--run-sanity-checks",
@@ -142,28 +158,42 @@ pub fn run(root: &Path) -> Audit<()> {
             "1",
             "--output-format",
             "terse",
-        ])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("Kani verification process: {e}"))?;
-    let stdout = child.stdout.take().ok_or("missing verification stdout")?;
-    let stderr = child.stderr.take().ok_or("missing verification stderr")?;
-    let out_log = Arc::clone(&log);
-    let output = thread::spawn(move || copy_log(stdout, out_log));
-    let errors = thread::spawn(move || copy_log(stderr, log));
-    let status = child.wait().map_err(|e| e.to_string())?;
-    let out_result = output.join().map_err(|_| "Kani stdout reader panicked")?;
-    let err_result = errors.join().map_err(|_| "Kani stderr reader panicked")?;
-    out_result?;
-    err_result?;
-    if !status.success() {
-        return Err(format!("Kani verification process failed: {status}"));
+            "--exact",
+        ]);
+        for harness in &group.harnesses {
+            command.args(["--harness", harness]);
+        }
+        if let Some(bounds) = &group.recursion {
+            command.args(["--cbmc-args", "--unwindset", bounds]);
+            if group.label == "owned-route" {
+                // Check every bounded path separately without retaining one
+                // large merged equation for the conditional actor image.
+                command.args(["--paths", "lifo"]);
+            }
+        }
+        let mut child = command
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("Kani verification process: {e}"))?;
+        let stdout = child.stdout.take().ok_or("missing verification stdout")?;
+        let stderr = child.stderr.take().ok_or("missing verification stderr")?;
+        let out_log = Arc::clone(&log);
+        let output = thread::spawn(move || copy_log(stdout, out_log));
+        let errors = thread::spawn(move || copy_log(stderr, log));
+        let status = child.wait().map_err(|e| e.to_string())?;
+        let out_result = output.join().map_err(|_| "Kani stdout reader panicked")?;
+        let err_result = errors.join().map_err(|_| "Kani stderr reader panicked")?;
+        out_result?;
+        err_result?;
+        if !status.success() {
+            return Err(format!("Kani verification process failed: {status}"));
+        }
+        summary(
+            &fs::read_to_string(&log_path).map_err(|e| e.to_string())?,
+            group.harnesses.len() as u64,
+        )?;
     }
-    summary(
-        &fs::read_to_string(&log_path).map_err(|e| e.to_string())?,
-        total,
-    )?;
     println!("Kani gate passed version={expected} harnesses={total} backend=CBMC");
     Ok(())
 }

@@ -34,7 +34,7 @@ pub(crate) use self::endpoint_selectors::{
     validate_parallel_endpoint_selectors, validate_roll_reentry_endpoint_selectors,
 };
 pub(crate) use self::receive_lane_causality::{
-    receive_lane_conflict, validate_receive_lane_causality,
+    receive_lane_conflict, validate_owned_receive_lane_causality, validate_receive_lane_causality,
 };
 pub(crate) use self::route::{DynamicRouteResolver, ReentryMark, RouteResolverMarker};
 pub(crate) use self::scope::{ScopeEvent, ScopeId, ScopeKind};

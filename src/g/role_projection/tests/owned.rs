@@ -143,6 +143,98 @@ fn received_resource_keeps_working_after_its_original_runtime_is_destroyed() {
 }
 
 #[test]
+fn physical_service_grants_the_initial_right_and_remote_holders_only_receive_it() {
+    type Steps = g::Seq<
+        g::Send<3, 0, Loan>,
+        g::Seq<
+            g::Send<0, 1, Loan>,
+            g::Seq<
+                g::Send<10, 3, Read>,
+                g::Seq<g::Send<3, 10, Value>, g::Seq<g::Send<1, 0, Loan>, g::Send<0, 3, Loan>>>,
+            >,
+        >,
+    >;
+    let () = crate::g::ProgramProjection::<Steps, 16>::VALIDATION;
+    let owner_program = crate::global::role_program::role_program_from_image::<0>(
+        &RoleProjection::<0, Steps, 16>::IMAGE_REF,
+    );
+    let worker_program = crate::global::role_program::role_program_from_image::<1>(
+        &RoleProjection::<1, Steps, 16>::IMAGE_REF,
+    );
+    let service_program = crate::global::role_program::role_program_from_image::<3>(
+        &RoleProjection::<3, Steps, 16>::IMAGE_REF,
+    );
+    let db_program = crate::global::role_program::role_program_from_image::<10>(
+        &RoleProjection::<10, Steps, 16>::IMAGE_REF,
+    );
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let network = TestTransport::new();
+        // The two remote holders can carry frames but have no initial issuer.
+        // All initial authority stays at the service's physical resource owner.
+        let mut owner_transport = network.clone();
+        owner_transport.bindings = None;
+        let mut worker_transport = network.clone();
+        worker_transport.bindings = None;
+        let mut owner_slab = [0u8; 32 * 1024];
+        let mut worker_slab = [0u8; 32 * 1024];
+        let mut service_slab = [0u8; 32 * 1024];
+        let mut owner_storage = SessionKitStorage::<TestTransport>::uninit();
+        let mut worker_storage = SessionKitStorage::<TestTransport>::uninit();
+        let mut service_storage = SessionKitStorage::<TestTransport>::uninit();
+        let owner_kit = owner_storage.init();
+        let worker_kit = worker_storage.init();
+        let service_kit = service_storage.init();
+        let owner_rv = owner_kit
+            .rendezvous(&mut owner_slab, owner_transport)
+            .unwrap();
+        let worker_rv = worker_kit
+            .rendezvous(&mut worker_slab, worker_transport)
+            .unwrap();
+        let service_rv = service_kit.rendezvous(&mut service_slab, network).unwrap();
+        let sid = SessionId::new(846);
+        for result in [
+            owner_rv.enter(sid, &db_program),
+            worker_rv.enter(sid, &db_program),
+        ] {
+            assert_eq!(
+                result
+                    .err()
+                    .expect("a carrier does not imply an initial resource right"),
+                crate::runtime::AttachError::endpoint_binding_unavailable(10)
+                    .with_operation(crate::session::cluster::error::AttachOp::Enter)
+            );
+        }
+        let mut owner = owner_rv.enter(sid, &owner_program).unwrap();
+        let mut worker = worker_rv.enter(sid, &worker_program).unwrap();
+        let mut service = service_rv.enter(sid, &service_program).unwrap();
+        let db = service_rv.enter(sid, &db_program).unwrap();
+        tokio::join!(
+            async {
+                service.send::<Loan>(db).await.unwrap();
+                let key = service.recv::<Read>().await.unwrap();
+                service.send::<Value>(&(key + 1)).await.unwrap();
+                drop(service.recv::<Loan>().await.unwrap());
+            },
+            async {
+                let db = owner.recv::<Loan>().await.unwrap();
+                owner.send::<Loan>(db).await.unwrap();
+                let db = owner.recv::<Loan>().await.unwrap();
+                owner.send::<Loan>(db).await.unwrap();
+            },
+            async {
+                let mut db = worker.recv::<Loan>().await.unwrap();
+                db.send::<Read>(&42).await.unwrap();
+                assert_eq!(db.recv::<Value>().await.unwrap(), 43);
+                worker.send::<Loan>(db).await.unwrap();
+            }
+        );
+    });
+}
+
+#[test]
 fn typed_projection_checks_the_holders_knowledge_before_delegated_work() {
     type OtherDbLoan = g::Msg<2, Endpoint<'static, 10>>;
     type OtherRead = g::Msg<6, u32>;

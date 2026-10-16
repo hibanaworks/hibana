@@ -22,11 +22,10 @@ establishes physical identity at its explicit unsafe construction boundary.
 The public 0.9.9 release does not provide Endpoint delegation.
 
 An accepted ownership plan is not an accepted Hibana protocol. This package
-does not certify knowledge of choice, route authority, codecs, lane mapping,
-remote delivery, or the implementation's operation commits. Its ownership
-elaboration must also produce compact actor/facet facts and connect to those
-checks and the operation kernel before any distributed progress claim is
-justified. The harness can describe related components; production `g` source
+also checks branch knowledge and the causal-path laws below, but does not
+certify the complete projection boundary, route authority, codecs, lane mapping,
+remote delivery or operation commits. Those boundaries and their implementation
+correspondence remain necessary for distributed progress. The harness can describe related components; production `g` source
 currently describes one composed choreography, not arbitrary unrelated sessions.
 
 ## What the compiler computes
@@ -75,9 +74,9 @@ source-prefix queries for each binding. Missing choices return a holder only
 when all remaining alternatives agree. This inspection is not runtime admission
 or a route authority. No mutable current-holder map, undo trail, or map copy at a
 fork is needed. The global image now retains these facts and maps source
-choices to the existing compiled scope identities. Actor-local descriptor
-emission still needs to consume them and preserve logical facets and operation
-ordering before runtime integration is complete.
+choices to the existing compiled scope identities. Private runtime fixtures
+consume actor-local descriptors, while complete public qualification remains
+unfinished.
 No runtime permission table, application flag, or second progress cursor is
 produced. The plan is published only after validation;
 failure cannot expose a previous accepted plan or a partial new one.
@@ -115,6 +114,25 @@ reduction; their reported axiom closures are checked against `propext` and
 `Quot.sound` only. Z3 checks7 impossible violations,2 satisfiable witnesses
 for incorrect rules, and1 positive conditional-loop witness. No source-string
 matching substitutes for these checks.
+
+The core receive-order validator uses logical peers and lanes to identify
+competing receives, and this same actor image to propagate causal evidence.
+It can follow a reply through a different endpoint view of its current holder.
+Equal physical senders alone do not provide FIFO between different logical
+directions. Branch-specific evidence remains correlated with the selected
+holder; parallel siblings share only their input until their join. Inner
+rolled choices vary between visits, while choices outside the repeated body
+stay shared. No runtime ownership table or additional notification is added.
+
+`Causality.lean` proves four general local-order/path composition laws over
+the independent action model, including order through different views of one
+holder and the absence of that edge across parallel siblings. They do not
+prove the complete Rust causal validator sound. Its actual decisions are also
+compared with a separate concrete send/receive DAG in core tests, enumerating
+selected paths and two visits per repeated fragment. `Causality.smt2` checks
+three impossible violations, three witnesses for incorrect shortcuts and a
+legal change of choice between visits. Kani separately checks the actual
+query implementation. These checks retain their stated finite boundaries.
 
 Four bounded checks use the actual compiler's equation solver with arbitrary
 u8 actors. They cover independent roots, conflicting merge atomicity, forced

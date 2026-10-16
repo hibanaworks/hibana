@@ -3,11 +3,15 @@ use super::{
     EffList, ScopeKind, parallel_arm_ranges_from_enter, route_arm_ranges_from_first_enter,
 };
 
+mod actors;
+pub(crate) use actors::validate_owned_receive_lane_causality;
+use actors::{ActorMap, NeedChoice};
+
 const CAUSAL_ROLE_COUNT: usize = u8::MAX as usize + 1;
 const CAUSAL_ROLE_WORDS: usize = CAUSAL_ROLE_COUNT / u64::BITS as usize;
 
-/// Compile-time must facts, indexed by the exact wire role domain. A fact
-/// means the earlier receive precedes this role's next local action. Branches
+/// Compile-time must facts, indexed by the exact actor domain. A fact
+/// means the earlier receive precedes this actor's next local action. Branches
 /// share their incoming facts, never another parallel arm's outgoing facts.
 #[derive(Clone, Copy)]
 struct CausalRoles([u64; CAUSAL_ROLE_WORDS]);
@@ -22,14 +26,7 @@ impl CausalRoles {
     }
 
     const fn is_empty(self) -> bool {
-        let mut word = 0;
-        while word < CAUSAL_ROLE_WORDS {
-            if self.0[word] != 0 {
-                return false;
-            }
-            word += 1;
-        }
-        true
+        self.0[0] | self.0[1] | self.0[2] | self.0[3] == 0
     }
 
     const fn insert(&mut self, role: u8) {
@@ -37,23 +34,21 @@ impl CausalRoles {
     }
 
     const fn intersect(self, other: Self) -> Self {
-        let mut result = Self::empty();
-        let mut word = 0;
-        while word < CAUSAL_ROLE_WORDS {
-            result.0[word] = self.0[word] & other.0[word];
-            word += 1;
-        }
-        result
+        Self([
+            self.0[0] & other.0[0],
+            self.0[1] & other.0[1],
+            self.0[2] & other.0[2],
+            self.0[3] & other.0[3],
+        ])
     }
 
     const fn union(self, other: Self) -> Self {
-        let mut result = Self::empty();
-        let mut word = 0;
-        while word < CAUSAL_ROLE_WORDS {
-            result.0[word] = self.0[word] | other.0[word];
-            word += 1;
-        }
-        result
+        Self([
+            self.0[0] | other.0[0],
+            self.0[1] | other.0[1],
+            self.0[2] | other.0[2],
+            self.0[3] | other.0[3],
+        ])
     }
 
     const fn handoff(&mut self, atom: crate::eff::EffAtom) {
@@ -160,9 +155,21 @@ impl<const E: usize> CausalFlow<'_, E> {
         None
     }
 
-    const fn advance(&self, mut range: FlowRange, mut facts: CausalRoles) -> Option<CausalRoles> {
+    const fn advance(&self, range: FlowRange, facts: CausalRoles) -> Option<CausalRoles> {
+        match self.advance_as(range, facts, ActorMap::<E, 0>::Logical) {
+            Ok(result) => result,
+            Err(_) => crate::invariant(),
+        }
+    }
+
+    const fn advance_as<const D: usize>(
+        &self,
+        mut range: FlowRange,
+        mut facts: CausalRoles,
+        actors: ActorMap<'_, E, D>,
+    ) -> Result<Option<CausalRoles>, NeedChoice> {
         if self.occurrence(range.end) <= self.earlier {
-            return Some(facts);
+            return Ok(Some(facts));
         }
         while range.start < range.end && self.occurrence(range.start) < self.goal.stop() {
             // Relays cannot create evidence from an empty input. Before the
@@ -211,9 +218,24 @@ impl<const E: usize> CausalFlow<'_, E> {
                     marker_floor: idx + 1,
                 };
                 let advanced = match marker.scope_id.kind() {
-                    Some(ScopeKind::Roll) => self.advance(left, facts),
+                    Some(ScopeKind::Roll) => self.advance_as(left, facts, actors),
                     Some(kind @ (ScopeKind::Route | ScopeKind::Parallel)) => {
-                        let selected = if self.contains(left, self.goal.selected_target())
+                        let known_arm = if matches!(kind, ScopeKind::Route) {
+                            actors.selected_route(
+                                range.start,
+                                left_end,
+                                right_end,
+                                self.iteration_start,
+                            )
+                        } else {
+                            None
+                        };
+                        let selected = if let Some(arm) = known_arm {
+                            Some(match arm {
+                                crate::g::SourceArm::Left => left,
+                                crate::g::SourceArm::Right => right,
+                            })
+                        } else if self.contains(left, self.goal.selected_target())
                             || matches!(kind, ScopeKind::Route) && self.contains(left, self.earlier)
                         {
                             Some(left)
@@ -226,49 +248,73 @@ impl<const E: usize> CausalFlow<'_, E> {
                             None
                         };
                         if let Some(arm) = selected {
-                            self.advance(arm, facts)
+                            self.advance_as(arm, facts, actors)
                         } else {
                             // Fork with a shared input; join only after each arm
                             // completes. One recursive frame per source scope.
-                            let Some(left) = self.advance(left, facts) else {
-                                return None;
+                            let left = match self.advance_as(left, facts, actors) {
+                                Ok(Some(value)) => value,
+                                Ok(None) => return Ok(None),
+                                Err(choice) => return Err(choice),
                             };
-                            let Some(right) = self.advance(right, facts) else {
-                                return None;
+                            let right = match self.advance_as(right, facts, actors) {
+                                Ok(Some(value)) => value,
+                                Ok(None) => return Ok(None),
+                                Err(choice) => return Err(choice),
                             };
-                            Some(match kind {
+                            Ok(Some(match kind {
                                 ScopeKind::Route => left.intersect(right),
                                 ScopeKind::Parallel => left.union(right),
                                 ScopeKind::Roll => crate::invariant(),
-                            })
+                            }))
                         }
                     }
                     None => crate::invariant(),
                 };
-                let Some(joined) = advanced else { return None };
+                let joined = match advanced {
+                    Ok(Some(value)) => value,
+                    Ok(None) => return Ok(None),
+                    Err(choice) => return Err(choice),
+                };
                 facts = joined;
                 // If the target was inside the scope, its prefix is complete.
                 if self.occurrence(right_end) > self.goal.stop() {
-                    return Some(facts);
+                    return Ok(Some(facts));
                 }
                 range.start = right_end;
             } else {
                 let atom = self.eff_list.atom_at(range.start);
                 if self.occurrence(range.start) == self.earlier {
-                    facts.insert(atom.to);
+                    let receiver = match actors.receiver(range.start, atom, self.iteration_start) {
+                        Ok(value) => value,
+                        Err(choice) => return Err(choice),
+                    };
+                    facts.insert(receiver);
                 } else {
+                    let known_sender =
+                        match actors.sender_known(range.start, atom, self.iteration_start, facts) {
+                            Ok(value) => value,
+                            Err(choice) => return Err(choice),
+                        };
                     if self.occurrence(range.start) > self.earlier
                         && self.goal.sender_change(atom)
-                        && !facts.contains(atom.from)
+                        && !known_sender
                     {
-                        return None;
+                        return Ok(None);
                     }
-                    facts.handoff(atom);
+                    if known_sender {
+                        let receiver =
+                            match actors.receiver(range.start, atom, self.iteration_start) {
+                                Ok(value) => value,
+                                Err(choice) => return Err(choice),
+                            };
+                        facts.insert(receiver);
+                    }
                 }
                 range.start += 1;
             }
         }
-        Some(facts)
+        Ok(Some(facts))
     }
 }
 

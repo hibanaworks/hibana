@@ -78,8 +78,7 @@ impl Drop for Fixture {
     }
 }
 
-const INVENTORY: &str =
-    r#"{"kani-version":"0.67.0","totals":{"standard-harnesses":3,"contract-harnesses":0}}"#;
+const INVENTORY: &str = r#"{"kani-version":"0.67.0","standard-harnesses":{"fixture.rs":["a","b","c"]},"totals":{"standard-harnesses":3,"contract-harnesses":0}}"#;
 const SUMMARY: &str = "Complete - 3 successfully verified harnesses, 0 failures, 3 total.\n";
 
 #[test]

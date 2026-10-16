@@ -87,6 +87,34 @@ pub struct ActorImage<const EVENTS: usize, const DECISIONS: usize> {
 }
 
 impl<const E: usize, const D: usize> ActorImage<E, D> {
+    /// Verifier-only DAG fixtures exercise the receive checker independently
+    /// of ownership elaboration. All references are bounded and backward.
+    #[cfg(kani)]
+    pub(crate) fn causal_fixture(bindings: &[[u16; 2]], decisions: &[(Scope, [u16; 2])]) -> Self {
+        assert!(bindings.len() <= E && decisions.len() <= D);
+        let mut image = Self::new();
+        for (index, &(scope, children)) in decisions.iter().enumerate() {
+            assert!(usize::from(children[0]) < 256 + index);
+            assert!(usize::from(children[1]) < 256 + index);
+            image.choices[index] = ActorChoice {
+                scope,
+                left: ActorRef(children[0]),
+                right: ActorRef(children[1]),
+            };
+        }
+        image.choice_len = decisions.len();
+        for (index, &pair) in bindings.iter().enumerate() {
+            assert!(usize::from(pair[0]) < 256 + decisions.len());
+            assert!(usize::from(pair[1]) < 256 + decisions.len());
+            image.events[index] = ActorPair {
+                sender: ActorRef(pair[0]),
+                receiver: ActorRef(pair[1]),
+            };
+        }
+        image.event_len = bindings.len();
+        image
+    }
+
     pub const fn new() -> Self {
         Self {
             events: [ActorPair::EMPTY; E],

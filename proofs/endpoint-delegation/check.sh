@@ -10,7 +10,7 @@ cd "$ROOT"
 export ELAN_TOOLCHAIN=leanprover/lean4:v4.30.0
 source "$ROOT/.github/scripts/lib/proof_audit.sh"
 FAILED=0
-check_trusted_proof_sources 'endpoint delegation projection' "$PROOFS/Projection.lean" "$PROOFS/Knowledge.lean" "$PROOFS/Issuance.lean"
+check_trusted_proof_sources 'endpoint delegation projection' "$PROOFS/Projection.lean" "$PROOFS/Knowledge.lean" "$PROOFS/Issuance.lean" "$PROOFS/Causality.lean"
 [[ "$FAILED" -eq 0 ]]
 lean --version | bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" version
 cargo +"$TOOLCHAIN" fmt --manifest-path "$PROOFS/compiler/Cargo.toml" --check
@@ -25,10 +25,13 @@ lean -o "$EVIDENCE/Projection.olean" "$PROOFS/Projection.lean" > "$EVIDENCE/lean
 bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" lean "$EVIDENCE/lean-model.log" 14
 LEAN_PATH="$EVIDENCE" lean -o "$EVIDENCE/Knowledge.olean" "$PROOFS/Knowledge.lean" > "$EVIDENCE/lean-knowledge.log" 2>&1
 bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" lean "$EVIDENCE/lean-knowledge.log" 3
+LEAN_PATH="$EVIDENCE" lean -o "$EVIDENCE/Causality.olean" "$PROOFS/Causality.lean" > "$EVIDENCE/lean-causality.log" 2>&1
+bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" lean "$EVIDENCE/lean-causality.log" 4
 lean -o "$EVIDENCE/Issuance.olean" "$PROOFS/Issuance.lean" > "$EVIDENCE/lean-issuance.log" 2>&1
 bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" lean "$EVIDENCE/lean-issuance.log" 4
 LEAN_PATH="$EVIDENCE" lean "$EVIDENCE/Generated.lean" > "$EVIDENCE/lean-generated.log" 2>&1
 bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" lean "$EVIDENCE/lean-generated.log" 193
 bash "$ROOT/.github/scripts/check_smt2.sh" "$PROOFS/Ownership.smt2" > "$EVIDENCE/z3.log"
 bash "$ROOT/.github/scripts/check_smt2.sh" "$PROOFS/Issuance.smt2" > "$EVIDENCE/z3-issuance.log"
-printf 'Endpoint ownership projection: Rust tests passed; 17 projection/knowledge and 4 issuance general Lean theorems, 193 generated; ownership Z3 7 UNSAT, 2 counterexample SAT, 1 positive SAT; issuance Z3 3 UNSAT, 1 counterexample SAT, 1 positive SAT. Evidence: %s\n' "$EVIDENCE"
+bash "$ROOT/.github/scripts/check_smt2.sh" "$PROOFS/Causality.smt2" > "$EVIDENCE/z3-causality.log"
+printf 'Endpoint ownership projection: Rust tests passed; 17 projection/knowledge, 4 issuance and 4 causal-path general Lean theorems, 193 generated; ownership Z3 7 UNSAT, 2 counterexample SAT, 1 positive SAT; issuance Z3 3 UNSAT, 1 counterexample SAT, 1 positive SAT; causality Z3 3 UNSAT, 3 counterexample SAT, 1 independent-visit SAT. Evidence: %s\n' "$EVIDENCE"

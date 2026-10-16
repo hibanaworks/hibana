@@ -183,6 +183,29 @@
       "global::const_dsl::endpoint_selectors::kani::role_erased_prefixes_cannot_hide_competing_roll_heads",
       "global::const_dsl::endpoint_selectors::kani::roll_reentry_rejects_a_later_equal_outbound_contract_after_inbound"
     ],
+    "../../src/global/const_dsl/receive_lane_causality/actors/kani.rs": [
+      "global::const_dsl::receive_lane_causality::actors::kani::owned_linear_seed_word0",
+      "global::const_dsl::receive_lane_causality::actors::kani::owned_linear_seed_word1",
+      "global::const_dsl::receive_lane_causality::actors::kani::owned_linear_seed_word2",
+      "global::const_dsl::receive_lane_causality::actors::kani::owned_linear_seed_word3",
+      "global::const_dsl::receive_lane_causality::actors::kani::owned_parallel_seed_word0",
+      "global::const_dsl::receive_lane_causality::actors::kani::owned_parallel_seed_word1",
+      "global::const_dsl::receive_lane_causality::actors::kani::owned_parallel_seed_word2",
+      "global::const_dsl::receive_lane_causality::actors::kani::owned_parallel_seed_word3",
+      "global::const_dsl::receive_lane_causality::actors::kani::owned_route_direct_seed_word0",
+      "global::const_dsl::receive_lane_causality::actors::kani::owned_route_direct_seed_word1",
+      "global::const_dsl::receive_lane_causality::actors::kani::owned_route_direct_seed_word2",
+      "global::const_dsl::receive_lane_causality::actors::kani::owned_route_direct_seed_word3",
+      "global::const_dsl::receive_lane_causality::actors::kani::owned_route_swapped_seed_word0",
+      "global::const_dsl::receive_lane_causality::actors::kani::owned_route_swapped_seed_word1",
+      "global::const_dsl::receive_lane_causality::actors::kani::owned_route_swapped_seed_word2",
+      "global::const_dsl::receive_lane_causality::actors::kani::owned_route_swapped_seed_word3",
+      "global::const_dsl::receive_lane_causality::actors::kani::repeated_inner_choices_are_independent_while_outer_choices_stay_shared",
+      "global::const_dsl::receive_lane_causality::actors::kani::source_scan_parallel_direct",
+      "global::const_dsl::receive_lane_causality::actors::kani::source_scan_parallel_swapped",
+      "global::const_dsl::receive_lane_causality::actors::kani::source_scan_route_direct",
+      "global::const_dsl::receive_lane_causality::actors::kani::source_scan_route_swapped"
+    ],
     "../../src/global/const_dsl/receive_lane_causality/kani.rs": [
       "global::const_dsl::receive_lane_causality::kani::causal_role_facts_and_joins_are_role_exact",
       "global::const_dsl::receive_lane_causality::kani::roll_reentry_causal_closure_accepts_closed_cycle",
@@ -345,7 +368,7 @@
   "contract-harnesses": {},
   "contracts": [],
   "totals": {
-    "standard-harnesses": 237,
+    "standard-harnesses": 258,
     "contract-harnesses": 0,
     "functions-under-contract": 0
   }
