@@ -10,6 +10,8 @@ use crate::global::{
 };
 use crate::{Endpoint, g};
 use core::mem::MaybeUninit;
+#[cfg(all(unix, not(miri)))]
+mod native;
 mod owned;
 
 #[test]
