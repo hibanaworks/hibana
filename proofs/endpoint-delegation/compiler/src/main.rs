@@ -1,7 +1,7 @@
 //! Host-only exporter of source terms and actual Rust projection results.
 use hibana_delegation_model::{
-    ActionId, Binding, EndpointKey, Issuance, Message, Payload, Plan, Scratch, Side, Source,
-    compile_into,
+    ActionId, Arm, Binding, EndpointKey, Issuance, Message, Payload, Plan, Scope, Scratch,
+    Selection, Side, Source, compile_into,
 };
 use std::{fmt::Write, fs, path::PathBuf};
 
@@ -93,6 +93,14 @@ const CONTROL_A: EndpointKey = EndpointKey {
 const CONTROL_SERVER: EndpointKey = EndpointKey {
     component: 9,
     role: SERVER.role,
+};
+
+const PAIRED_LEFT: Source<'static> = Source::Seq(&transfer(P, A, 1, DB), &transfer(P, A, 2, AUTH));
+const PAIRED_RIGHT: Source<'static> = Source::Seq(&transfer(P, B, 3, DB), &transfer(P, B, 4, AUTH));
+const PAIRED: Source<'static> = Source::Route {
+    left: &PAIRED_LEFT,
+    right: &PAIRED_RIGHT,
+    resolver: Some(701),
 };
 
 const CASES: &[(&str, &Source<'static>)] = &[
@@ -249,6 +257,52 @@ const CASES: &[(&str, &Source<'static>)] = &[
         ),
     ),
     ("self-owned-carrier", &transfer(DB, A, 1, DB)),
+    (
+        "correlated-resources-return-through-current-carrier",
+        &Source::Seq(
+            &PAIRED,
+            &Source::Seq(&transfer(AUTH, P, 5, DB), &wire(DB, SERVER, 6)),
+        ),
+    ),
+    (
+        "independent-parallel-owner-choices",
+        &Source::Seq(
+            &Source::Par(
+                &Source::Route {
+                    left: &transfer(P, A, 1, DB),
+                    right: &transfer(P, B, 2, DB),
+                    resolver: None,
+                },
+                &Source::Route {
+                    left: &transfer(P, A, 3, AUTH),
+                    right: &transfer(P, B, 4, AUTH),
+                    resolver: None,
+                },
+            ),
+            &Source::Par(&wire(DB, SERVER, 5), &wire(AUTH, CONTROL_SERVER, 6)),
+        ),
+    ),
+    (
+        "conditional-loop-entry-owner",
+        &Source::Seq(
+            &PAIRED,
+            &Source::Roll(&Source::Seq(
+                &wire(DB, SERVER, 5),
+                &Source::Seq(&transfer(AUTH, P, 6, DB), &transfer(P, AUTH, 7, DB)),
+            )),
+        ),
+    ),
+    (
+        "no-branch-dependent-initial-issuer",
+        &Source::Seq(
+            &Source::Route {
+                left: &transfer(P, A, 1, DB),
+                right: &transfer(P, B, 2, DB),
+                resolver: None,
+            },
+            &transfer(DB, P, 3, AUTH),
+        ),
+    ),
 ];
 
 const fn max_events() -> usize {
@@ -324,7 +378,54 @@ fn source(output: &mut String, value: &Source<'_>) {
     }
 }
 
-fn normalization(output: &mut String, issuance: &[Issuance], bindings: &[Binding]) {
+#[derive(Clone)]
+struct PathArtifact {
+    selections: Vec<Selection>,
+    bindings: Vec<(usize, Binding)>,
+    order: Vec<(usize, usize)>,
+}
+
+fn write_selections(output: &mut String, values: &[Selection]) {
+    output.push('[');
+    for (index, value) in values.iter().enumerate() {
+        if index != 0 {
+            output.push_str(", ");
+        }
+        let arm = match value.arm {
+            Arm::Left => "left",
+            Arm::Right => "right",
+        };
+        write!(
+            output,
+            "{{ scope := {{ start := {}, split := {}, stop := {} }}, arm := .{arm} }}",
+            value.scope.start, value.scope.split, value.scope.stop
+        )
+        .unwrap();
+    }
+    output.push(']');
+}
+
+fn write_path(output: &mut String, path: &PathArtifact) {
+    output.push_str("{ selections := ");
+    write_selections(output, &path.selections);
+    output.push_str(", bindings := [");
+    for (index, (event, binding)) in path.bindings.iter().enumerate() {
+        if index != 0 {
+            output.push_str(", ");
+        }
+        write!(output, "({event}, {{ message := ").unwrap();
+        message(output, binding.message);
+        write!(
+            output,
+            ", senderActor := {}, receiverActor := {} }})",
+            binding.sender_actor, binding.receiver_actor
+        )
+        .unwrap();
+    }
+    output.push_str("] }");
+}
+
+fn normalization(output: &mut String, issuance: &[Issuance], paths: &[PathArtifact]) {
     output.push_str("{ issuance := [");
     for (index, value) in issuance.iter().enumerate() {
         if index != 0 {
@@ -334,21 +435,45 @@ fn normalization(output: &mut String, issuance: &[Issuance], bindings: &[Binding
         key(output, value.endpoint);
         write!(output, ", actor := {} }}", value.actor).unwrap();
     }
-    output.push_str("], bindings := [");
-    for (index, value) in bindings.iter().enumerate() {
+    output.push_str("], paths := [");
+    for (index, path) in paths.iter().enumerate() {
         if index != 0 {
             output.push_str(", ");
         }
-        output.push_str("{ message := ");
-        message(output, value.message);
-        write!(
-            output,
-            ", senderActor := {}, receiverActor := {} }}",
-            value.sender_actor, value.receiver_actor
-        )
-        .unwrap();
+        write_path(output, path);
     }
     output.push_str("] }");
+}
+
+fn collect_scopes(source: &Source<'_>, start: usize, output: &mut Vec<Scope>) {
+    match source {
+        Source::Send(_) => {}
+        Source::Seq(left, right) | Source::Par(left, right) | Source::Route { left, right, .. } => {
+            let split = start + left.event_count();
+            if matches!(source, Source::Route { .. }) {
+                output.push(Scope {
+                    start: start.try_into().unwrap(),
+                    split: split.try_into().unwrap(),
+                    stop: (split + right.event_count()).try_into().unwrap(),
+                });
+            }
+            collect_scopes(left, start, output);
+            collect_scopes(right, split, output);
+        }
+        Source::Roll(body) => collect_scopes(body, start, output),
+    }
+}
+
+fn all_paths(scopes: &[Scope], prefix: &mut Vec<Selection>, output: &mut Vec<Vec<Selection>>) {
+    let Some((scope, rest)) = scopes.split_first() else {
+        output.push(prefix.clone());
+        return;
+    };
+    for arm in [Arm::Left, Arm::Right] {
+        prefix.push(Selection { scope: *scope, arm });
+        all_paths(rest, prefix, output);
+        prefix.pop();
+    }
 }
 
 fn edges(output: &mut String, values: &[(usize, usize)]) {
@@ -384,6 +509,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut scratch = Scratch::<SYMBOLS, EVENTS>::new();
     let mut accepted = 0;
     let mut rejected = 0;
+    let mut path_count = 0;
     let mut theorems = Vec::new();
     for (index, (name, input)) in CASES.iter().enumerate() {
         writeln!(output, "-- {name}\ndef source_{index} : Source :=").unwrap();
@@ -401,79 +527,118 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             continue;
         }
         accepted += 1;
-        let bindings: Vec<_> = (0..plan.len())
-            .map(|event| plan.binding(event).unwrap())
-            .collect();
+        let mut scopes = Vec::new();
+        collect_scopes(input, 0, &mut scopes);
+        let mut paths = Vec::new();
+        all_paths(&scopes, &mut Vec::new(), &mut paths);
+        let mut artifacts = Vec::new();
+        let domain = 3 * (input.event_count() + 1);
+        for selections in paths {
+            let bindings: Vec<_> = (0..plan.len())
+                .filter_map(|event| {
+                    plan.binding_in(event, &selections)
+                        .map(|binding| (event, binding))
+                })
+                .collect();
+            let mut order = Vec::new();
+            for before in 0..domain {
+                for after in 0..domain {
+                    if plan.precedes_in(action(before), action(after), &selections) {
+                        order.push((before, after));
+                    }
+                }
+            }
+            artifacts.push(PathArtifact {
+                selections,
+                bindings,
+                order,
+            });
+        }
+        path_count += artifacts.len();
         let mut issuance: Vec<_> = (0..SYMBOLS).filter_map(|row| plan.issuance(row)).collect();
         issuance.sort_by_key(|value| (value.endpoint.component, value.endpoint.role));
         writeln!(output, "def rust_{index} : Normalization :=").unwrap();
-        normalization(&mut output, &issuance, &bindings);
+        normalization(&mut output, &issuance, &artifacts);
         writeln!(
             output,
             "\ntheorem case_{index} : normalize source_{index} = some rust_{index} := by decide"
         )
         .unwrap();
         theorems.push(format!("case_{index}"));
-        let domain = 3 * (input.event_count() + 1);
-        let mut order = Vec::new();
-        for before in 0..domain {
-            for after in 0..domain {
-                if plan.precedes(action(before), action(after)) {
-                    order.push((before, after));
-                }
+        for (path_index, artifact) in artifacts.iter().enumerate() {
+            writeln!(
+                output,
+                "def rust_{index}_path_{path_index} : NormalizedPath :="
+            )
+            .unwrap();
+            write_path(&mut output, artifact);
+            writeln!(output, "\ntheorem order_{index}_{path_index} : orderEdges source_{index} rust_{index}_path_{path_index}.bindings =").unwrap();
+            edges(&mut output, &artifact.order);
+            output.push_str(" := by decide\n");
+            theorems.push(format!("order_{index}_{path_index}"));
+            if !artifact.order.is_empty() {
+                let mut missing = artifact.order.clone();
+                missing.remove(0);
+                writeln!(output, "theorem order_mutant_{index}_{path_index} : orderEdges source_{index} rust_{index}_path_{path_index}.bindings \u{2260}").unwrap();
+                edges(&mut output, &missing);
+                output.push_str(" := by decide\n");
+                theorems.push(format!("order_mutant_{index}_{path_index}"));
             }
         }
+        let mut wrong_actor = artifacts.clone();
+        wrong_actor[0].bindings[0].1.sender_actor =
+            wrong_actor[0].bindings[0].1.sender_actor.wrapping_add(1);
         writeln!(
             output,
-            "theorem order_{index} : orderEdges source_{index} rust_{index}.bindings ="
-        )
-        .unwrap();
-        edges(&mut output, &order);
-        output.push_str(" := by decide\n");
-        theorems.push(format!("order_{index}"));
-        let mut wrong_actor = bindings.clone();
-        wrong_actor[0].sender_actor = wrong_actor[0].sender_actor.wrapping_add(1);
-        writeln!(
-            output,
-            "theorem actor_mutant_{index} : normalize source_{index} ≠ some"
+            "theorem actor_mutant_{index} : normalize source_{index} \u{2260} some"
         )
         .unwrap();
         normalization(&mut output, &issuance, &wrong_actor);
         output.push_str(" := by decide\n");
         theorems.push(format!("actor_mutant_{index}"));
-        let mut wrong_wire = bindings.clone();
-        wrong_wire[0].message.from.component = wrong_wire[0].message.from.component.wrapping_add(1);
+
+        let mut wrong_wire = artifacts.clone();
+        wrong_wire[0].bindings[0].1.message.from.component = wrong_wire[0].bindings[0]
+            .1
+            .message
+            .from
+            .component
+            .wrapping_add(1);
         writeln!(
             output,
-            "theorem wire_mutant_{index} : normalize source_{index} ≠ some"
+            "theorem wire_mutant_{index} : normalize source_{index} \u{2260} some"
         )
         .unwrap();
         normalization(&mut output, &issuance, &wrong_wire);
         output.push_str(" := by decide\n");
         theorems.push(format!("wire_mutant_{index}"));
+
         if !issuance.is_empty() {
             let mut wrong_issuer = issuance.clone();
             wrong_issuer[0].actor = wrong_issuer[0].actor.wrapping_add(1);
             writeln!(
                 output,
-                "theorem issuer_mutant_{index} : normalize source_{index} ≠ some"
+                "theorem issuer_mutant_{index} : normalize source_{index} \u{2260} some"
             )
             .unwrap();
-            normalization(&mut output, &wrong_issuer, &bindings);
+            normalization(&mut output, &wrong_issuer, &artifacts);
             output.push_str(" := by decide\n");
             theorems.push(format!("issuer_mutant_{index}"));
         }
-        if !order.is_empty() {
-            let mut missing_edge = order.clone();
-            missing_edge.remove(0);
+        if !artifacts[0].selections.is_empty() {
+            let mut wrong_selection = artifacts.clone();
+            wrong_selection[0].selections[0].arm = match wrong_selection[0].selections[0].arm {
+                Arm::Left => Arm::Right,
+                Arm::Right => Arm::Left,
+            };
             writeln!(
                 output,
-                "theorem order_mutant_{index} : orderEdges source_{index} rust_{index}.bindings ≠"
+                "theorem selection_mutant_{index} : normalize source_{index} \u{2260} some"
             )
             .unwrap();
-            edges(&mut output, &missing_edge);
+            normalization(&mut output, &issuance, &wrong_selection);
             output.push_str(" := by decide\n");
-            theorems.push(format!("order_mutant_{index}"));
+            theorems.push(format!("selection_mutant_{index}"));
         }
         output.push('\n');
     }
@@ -483,7 +648,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     output.push_str("\nend Hibana.EndpointDelegation.Generated\n");
     fs::write(destination, output)?;
     println!(
-        "delegation model export: cases={} accepted={accepted} rejected={rejected} kernel-theorems={}",
+        "delegation model export: cases={} accepted={accepted} rejected={rejected} paths={path_count} kernel-theorems={}",
         CASES.len(),
         theorems.len()
     );

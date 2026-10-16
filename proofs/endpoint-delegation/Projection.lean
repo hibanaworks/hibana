@@ -82,9 +82,44 @@ structure SymbolicBinding where
   receiver : OwnerExpr
   deriving Repr, DecidableEq
 
+structure Scope where
+  start : Nat
+  split : Nat
+  stop : Nat
+  deriving Repr, DecidableEq, BEq
+
+inductive Arm where
+  | left | right
+  deriving Repr, DecidableEq, BEq
+
+structure Selection where
+  scope : Scope
+  arm : Arm
+  deriving Repr, DecidableEq, BEq
+
+def Source.scopes : Source → Nat → List Scope
+  | .send _, _ => []
+  | .seq left right, start | .par left right, start =>
+      left.scopes start ++ right.scopes (start + left.eventCount)
+  | .route _ left right, start =>
+      let split := start + left.eventCount
+      { start, split, stop := split + right.eventCount } ::
+        (left.scopes start ++ right.scopes split)
+  | .roll body, start => body.scopes start
+
+def paths : List Scope → List (List Selection)
+  | [] => [[]]
+  | scope :: rest =>
+      let suffixes := paths rest
+      (suffixes.map fun tail => { scope, arm := .left } :: tail) ++
+        (suffixes.map fun tail => { scope, arm := .right } :: tail)
+
+def chosen? (path : List Selection) (scope : Scope) : Option Arm :=
+  (path.find? fun selection => selection.scope == scope).map Selection.arm
+
 structure Elaboration where
   owners : OwnerMap
-  bindings : List SymbolicBinding
+  bindings : List (Nat × SymbolicBinding)
   equations : List Equation
 
 def incompatibleParallel (left right : Source) : Bool :=
@@ -100,53 +135,50 @@ def validMessage (message : Message) : Bool :=
   | .endpoint key => validKey key && key != message.sender && key != message.receiver &&
       message.sender != message.receiver
 
-/-- Functional reference elaboration. Rust uses union/find and an undo trail;
-this model instead emits equations and retains functional branch contexts. -/
-def elaborate (resources : List EndpointKey) (owners : OwnerMap) (following : List Source) :
-    Source → Option Elaboration
-  | .send message => do
+/-- Independent functional execution along one complete source selection.
+The reference explores source paths, whereas Rust queries ownership from
+source prefixes and only splits equations on the decisions they need. -/
+def elaborate (resources : List EndpointKey) (owners : OwnerMap)
+    (path : List Selection) : Source → Nat → Option Elaboration
+  | .send message, event => do
       if !validMessage message then none else
       let binding : SymbolicBinding := {
         message, sender := owners message.sender, receiver := owners message.receiver
       }
       match message.payload with
-      | .wire _ => some { owners, bindings := [binding], equations := [] }
+      | .wire _ => some { owners, bindings := [(event, binding)], equations := [] }
       | .endpoint key => some {
           owners := withOwner owners key binding.receiver
-          bindings := [binding]
+          bindings := [(event, binding)]
           equations := [(owners key, binding.sender)]
         }
-  | .seq left right => do
-      let first ← elaborate resources owners (right :: following) left
-      let second ← elaborate resources first.owners following right
+  | .seq left right, start => do
+      let first ← elaborate resources owners path left start
+      let second ← elaborate resources first.owners path right (start + left.eventCount)
       some {
         owners := second.owners
         bindings := first.bindings ++ second.bindings
         equations := first.equations ++ second.equations
       }
-  | .par left right => do
+  | .par left right, start => do
       if incompatibleParallel left right then none else
-      let first ← elaborate resources owners following left
-      let second ← elaborate resources owners following right
+      let first ← elaborate resources owners path left start
+      let second ← elaborate resources owners path right (start + left.eventCount)
       some {
         owners := fun key =>
           if left.resources.contains key then first.owners key else second.owners key
         bindings := first.bindings ++ second.bindings
         equations := first.equations ++ second.equations
       }
-  | .route resolver left right => do
+  | .route resolver left right, start => do
       if resolver.any (fun value => value >= 65536) then none else
-      let first ← elaborate resources owners following left
-      let second ← elaborate resources owners following right
-      some {
-        owners := second.owners
-        bindings := first.bindings ++ second.bindings
-        equations := first.equations ++ second.equations ++
-          (resources.filter (fun key => following.any (fun source => source.uses.contains key))).map
-            (fun key => (first.owners key, second.owners key))
-      }
-  | .roll body => do
-      let inner ← elaborate resources owners (body :: following) body
+      let split := start + left.eventCount
+      let arm ← chosen? path { start, split, stop := split + right.eventCount }
+      match arm with
+      | .left => elaborate resources owners path left start
+      | .right => elaborate resources owners path right split
+  | .roll body, start => do
+      let inner ← elaborate resources owners path body start
       some {
         owners := inner.owners
         bindings := inner.bindings
@@ -208,9 +240,14 @@ def instantiateBinding (issuance : List Issuance) (binding : SymbolicBinding) :
   let receiverActor ← instantiate issuance binding.receiver
   some { message := binding.message, senderActor, receiverActor }
 
+structure NormalizedPath where
+  selections : List Selection
+  bindings : List (Nat × Binding)
+  deriving Repr, DecidableEq
+
 structure Normalization where
   issuance : List Issuance
-  bindings : List Binding
+  paths : List NormalizedPath
   deriving Repr, DecidableEq
 
 def issuanceOrder (left right : Issuance) : Bool :=
@@ -227,17 +264,25 @@ def sortIssuance : List Issuance → List Issuance
   | [] => []
   | head :: tail => insertIssuance head (sortIssuance tail)
 
-/-- Independent graph-based checker for the prototype's inferred artifact.
-It does not use Rust's union/find representatives or its event undo trail. -/
+/-- Compile all source paths against one initial issuance. Paths may differ in
+their later holders; they cannot infer different initial owners. Functional
+maps and graph closure are independent of Rust's source-prefix query engine. -/
 def normalize (source : Source) : Option Normalization := do
   let resources := source.resources
-  let elaborated ← elaborate resources (initialOwners resources) [] source
+  let runs ← (paths (source.scopes 0)).mapM fun selections => do
+    let elaborated ← elaborate resources (initialOwners resources) selections source 0
+    some (selections, elaborated)
+  let equations := runs.flatMap fun run => run.2.equations
   let issuance ← resources.mapM fun endpoint => do
-    let actor ← initialActor? elaborated.equations endpoint
+    let actor ← initialActor? equations endpoint
     some ({ endpoint, actor } : Issuance)
-  if !(elaborated.equations.all (equationAccepted issuance)) then none else
-  let bindings ← elaborated.bindings.mapM (instantiateBinding issuance)
-  some { issuance := sortIssuance issuance, bindings }
+  if !(equations.all (equationAccepted issuance)) then none else
+  let normalized ← runs.mapM fun (selections, elaborated) => do
+    let bindings ← elaborated.bindings.mapM fun (event, symbolic) => do
+      let binding ← instantiateBinding issuance symbolic
+      some (event, binding)
+    some ({ selections, bindings } : NormalizedPath)
+  some { issuance := sortIssuance issuance, paths := normalized }
 
 inductive Side where
   | send | receive | local
@@ -254,8 +299,8 @@ structure Action where
   side : Side
   deriving Repr, DecidableEq
 
-def action? (bindings : List Binding) (id : ActionId) : Option Action := do
-  let binding ← bindings[id.event]?
+def action? (bindings : List (Nat × Binding)) (id : ActionId) : Option Action := do
+  let (_, binding) ← bindings.find? fun row => row.1 == id.event
   let isLocal := binding.message.sender == binding.message.receiver
   match id.side with
   | .send => if isLocal then none else some {
@@ -285,7 +330,7 @@ def Source.before : Source → Nat → Nat → Bool
       else false
   | .roll body, before, after => body.before before after
 
-def precedes (source : Source) (bindings : List Binding) (before after : ActionId) : Bool :=
+def precedes (source : Source) (bindings : List (Nat × Binding)) (before after : ActionId) : Bool :=
   match action? bindings before, action? bindings after with
   | some left, some right =>
       left.actor == right.actor &&
@@ -298,7 +343,7 @@ def decodeActionId (encoded : Nat) : ActionId := {
   side := match encoded % 3 with | 0 => .send | 1 => .receive | _ => .local
 }
 
-def orderEdges (source : Source) (bindings : List Binding) : List (Nat × Nat) :=
+def orderEdges (source : Source) (bindings : List (Nat × Binding)) : List (Nat × Nat) :=
   let domain := List.range (3 * (source.eventCount + 1))
   domain.flatMap fun before => domain.filterMap fun after =>
     if precedes source bindings (decodeActionId before) (decodeActionId after)

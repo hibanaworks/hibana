@@ -33,22 +33,23 @@ The logical identity used on the wire remains unchanged.
 
 Independent resources and operations remain unordered under `par`. A transfer
 cannot race another branch's operation or transfer on the same endpoint.
-Rolled fragments must preserve ownership across visits. A branch join needs
-common ownership only for endpoints used by a following fragment or visit.
-An endpoint with no later use may remain in different hands in the two arms;
-no redundant return message is required.
-
-Live path-dependent ownership at a branch join is not represented yet. The
-prototype rejects it explicitly rather than choosing one arm's owner. This is
-an outstanding expressiveness limit, not a claim that every such source is
-unsafe. A general extension must retain safe uses of choices and repetition.
+After a route, the holder may depend on the selected arm, including in the
+common continuation. The same decision determines ownership; there is no
+second choice or guessed holder. Correlated resources may be passed through
+their current carrier, and independent choices keep independent resources
+parallel. Rolled fragments must restore their incoming ownership for each
+legal path. An earlier choice may therefore remain visible at a loop header
+without requiring the two alternative holders to be equal.
 
 The compiler library is `no_std`, uses stable Rust1.95, and has no dependencies.
 Scratch and output are caller-owned arrays sized from the input. The source
-tree is borrowed. Branch rollback uses the existing event trail, without
-copying a complete ownership map at each fork. Continuation liveness borrows
-source fragments. No runtime permission table, application flag, or second
-progress cursor is produced. The plan is published only after validation;
+tree is borrowed. Rust queries ownership from source prefixes, capturing the
+receiver's holder at the transfer event. Moving that receiving endpoint later
+does not move other values along with it. No mutable current-holder map, undo
+trail, or map copy at a fork is needed. These queries belong to projection and
+reference checking; they must be lowered to runtime facts before integration.
+No runtime permission table, application flag, or second progress cursor is
+produced. The plan is published only after validation;
 failure cannot expose a previous accepted plan or a partial new one.
 
 ## Verification
@@ -61,27 +62,33 @@ MIRIFLAGS=-Zmiri-strict-provenance cargo +nightly-2026-05-28 miri test \
   --manifest-path proofs/endpoint-delegation/compiler/Cargo.toml --locked --lib
 ```
 
-The check runs23 Rust tests, including an actual const-evaluated plan, strict
+The check runs28 Rust tests, including actual const-evaluated plans, strict
 Clippy, host and thumbv6m `no_std` builds, Lean, and Z3. Its evidence directory
 contains the actual Rust results and generated Lean source.
 
-`Projection.lean` elaborates ownership functionally and infers initial owners
-through graph closure. It does not reuse Rust's union/find implementation or
-undo trail. Fourteen general theorems cover independent moves, closure
+`Projection.lean` independently executes each complete source path with a
+functional owner map, then solves the combined equations by graph closure.
+All paths share one initial issuance; they may have different later holders.
+It does not reuse Rust's source-prefix query or union/find implementation.
+Fourteen general theorems cover independent moves, closure
 connectivity, initial-owner inference, preservation of logical wire identity,
 and structural local order. The inferred-owner theorem applies to every
 assignment satisfying the emitted equations. It is not a full compiler
 soundness or progress theorem.
 
-The Rust exporter emits21 source terms and their actual results:11 accepted
-ownership plans and10 rejections. Seventy-three generated Lean theorems check
-those results, the complete local-order relations, and mutations of actors,
-wire identity, initial issuance, and omitted order edges. Proofs use kernel
+The Rust exporter emits25 source terms and their actual results:16 accepted
+ownership plans with26 complete source paths, and9 rejections.129 generated
+Lean theorems check those results, every path's complete local-order relation,
+and mutations of actors, wire identity, initial issuance, selected scopes,
+and omitted order edges. Proofs use kernel
 reduction; their reported axiom closures are checked against `propext` and
-`Quot.sound` only. Z3 checks7 impossible violations and2 satisfiable witnesses
-for incorrect rules. No source-string matching substitutes for these checks.
+`Quot.sound` only. Z3 checks7 impossible violations,2 satisfiable witnesses
+for incorrect rules, and1 positive conditional-loop witness. No source-string
+matching substitutes for these checks.
 
-Optional bounded checks use exactly the same compiler source:
+Four bounded checks use the actual compiler's equation solver with arbitrary
+u8 actors. They cover independent roots, conflicting merge atomicity, forced
+ownership after merging, and merge orientation:
 
 ```sh
 cargo kani --manifest-path proofs/endpoint-delegation/kani/Cargo.toml \
@@ -97,7 +104,8 @@ distributed runtime correctness.
 ## Remaining integration
 
 - Connect ownership elaboration to the typed global and accepted local images.
-- Represent safe live path-dependent ownership without global serialization.
+- Lower conditional ownership and cross-facet ordering to compact local facts,
+  preserving independent parallel flows without source scans in the hot path.
 - Send an owned Endpoint and receive its continuation through ordinary
   `send`/`recv`, with one resident owner and no pointer serialization.
 - Bind initial issuance to the unique resource owner, including related runs.

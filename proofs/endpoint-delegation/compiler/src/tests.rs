@@ -329,7 +329,7 @@ fn unrelated_continuation_does_not_require_a_redundant_endpoint_return() {
 }
 
 #[test]
-fn live_path_dependent_ownership_is_rejected_instead_of_picking_one_branch() {
+fn live_path_dependent_ownership_follows_the_original_route() {
     const CHOICE: Source<'static> = Source::Route {
         left: &transfer(P, A, 1, DB),
         right: &transfer(P, B, 2, DB),
@@ -339,13 +339,29 @@ fn live_path_dependent_ownership_is_rejected_instead_of_picking_one_branch() {
     const EVENTS: usize = SOURCE.event_count();
     let mut scratch = Scratch::<{ 3 * EVENTS }, EVENTS>::new();
     let mut plan = Plan::new();
-    assert_eq!(
-        compile_into(&SOURCE, &mut scratch, &mut plan)
-            .unwrap_err()
-            .kind,
-        ErrorKind::BranchOwnersDiffer
-    );
-    assert!(plan.is_empty());
+    compile_into(&SOURCE, &mut scratch, &mut plan).unwrap();
+    let scope = Scope {
+        start: 0,
+        split: 1,
+        stop: 2,
+    };
+    let left = [Selection {
+        scope,
+        arm: Arm::Left,
+    }];
+    let right = [Selection {
+        scope,
+        arm: Arm::Right,
+    }];
+    assert_eq!(plan.binding(2), None);
+    assert_eq!(plan.binding_in(2, &left).unwrap().sender_actor, A.role);
+    assert_eq!(plan.binding_in(2, &right).unwrap().sender_actor, B.role);
+    assert_eq!(plan.binding_in(2, &left).unwrap().message.from, DB);
+    assert_eq!(plan.binding_in(2, &right).unwrap().message.from, DB);
+    assert_eq!(plan.binding_in(0, &right), None);
+    assert_eq!(plan.binding_in(1, &left), None);
+    assert!(plan.precedes_in(recv(0), send(2), &left));
+    assert!(plan.precedes_in(recv(1), send(2), &right));
 }
 
 #[test]
@@ -363,7 +379,7 @@ fn later_owned_payload_counts_as_a_live_endpoint_use() {
         compile_into(&SOURCE, &mut scratch, &mut plan)
             .unwrap_err()
             .kind,
-        ErrorKind::BranchOwnersDiffer
+        ErrorKind::ConflictingInitialOwners
     );
     assert!(plan.is_empty());
 }
@@ -383,7 +399,7 @@ fn next_roll_visit_keeps_a_terminal_branch_endpoint_live() {
         compile_into(&SOURCE, &mut scratch, &mut plan)
             .unwrap_err()
             .kind,
-        ErrorKind::BranchOwnersDiffer
+        ErrorKind::RollChangesOwner
     );
     assert!(plan.is_empty());
 }
@@ -400,13 +416,37 @@ fn nested_terminal_branch_still_checks_the_enclosing_continuation() {
     const EVENTS: usize = SOURCE.event_count();
     let mut scratch = Scratch::<{ 3 * EVENTS }, EVENTS>::new();
     let mut plan = Plan::new();
+    compile_into(&SOURCE, &mut scratch, &mut plan).unwrap();
+    let scope = Scope {
+        start: 1,
+        split: 2,
+        stop: 3,
+    };
+    assert_eq!(plan.binding(3), None);
     assert_eq!(
-        compile_into(&SOURCE, &mut scratch, &mut plan)
-            .unwrap_err()
-            .kind,
-        ErrorKind::BranchOwnersDiffer
+        plan.binding_in(
+            3,
+            &[Selection {
+                scope,
+                arm: Arm::Left
+            }]
+        )
+        .unwrap()
+        .receiver_actor,
+        A.role
     );
-    assert!(plan.is_empty());
+    assert_eq!(
+        plan.binding_in(
+            3,
+            &[Selection {
+                scope,
+                arm: Arm::Right
+            }]
+        )
+        .unwrap()
+        .receiver_actor,
+        B.role
+    );
 }
 
 #[test]
@@ -568,4 +608,188 @@ fn one_actor_can_own_both_message_facets_without_collapsing_the_payload() {
         }),
         None
     );
+}
+
+#[test]
+fn correlated_resources_can_be_returned_through_their_current_carrier() {
+    const LEFT: Source<'static> = Source::Seq(&transfer(P, A, 1, DB), &transfer(P, A, 2, AUTH));
+    const RIGHT: Source<'static> = Source::Seq(&transfer(P, B, 3, DB), &transfer(P, B, 4, AUTH));
+    const SOURCE: Source<'static> = Source::Seq(
+        &Source::Route {
+            left: &LEFT,
+            right: &RIGHT,
+            resolver: Some(701),
+        },
+        &Source::Seq(&transfer(AUTH, P, 5, DB), &wire(DB, SERVER, 6)),
+    );
+    const EVENTS: usize = SOURCE.event_count();
+    let mut scratch = Scratch::<{ 3 * EVENTS }, EVENTS>::new();
+    let mut plan = Plan::new();
+    compile_into(&SOURCE, &mut scratch, &mut plan).unwrap();
+    let scope = Scope {
+        start: 0,
+        split: 2,
+        stop: 4,
+    };
+    assert_eq!(plan.binding(4), None);
+    for (arm, actor) in [(Arm::Left, A.role), (Arm::Right, B.role)] {
+        let path = [Selection { scope, arm }];
+        assert_eq!(plan.binding_in(4, &path).unwrap().sender_actor, actor);
+        assert_eq!(plan.binding_in(4, &path).unwrap().message.from, AUTH);
+        assert!(plan.precedes_in(recv(4), send(5), &path));
+    }
+    // An unconditional return overwrites the conditional holder in the source.
+    assert_eq!(plan.binding(5).unwrap().sender_actor, P.role);
+}
+
+#[test]
+fn parallel_choices_keep_independent_resource_holders_in_all_four_paths() {
+    const LEFT: Source<'static> = Source::Route {
+        left: &transfer(P, A, 1, DB),
+        right: &transfer(P, B, 2, DB),
+        resolver: None,
+    };
+    const RIGHT: Source<'static> = Source::Route {
+        left: &transfer(P, A, 3, AUTH),
+        right: &transfer(P, B, 4, AUTH),
+        resolver: None,
+    };
+    const SOURCE: Source<'static> = Source::Seq(
+        &Source::Par(&LEFT, &RIGHT),
+        &Source::Par(&wire(DB, SERVER, 5), &wire(AUTH, OTHER_SERVER, 6)),
+    );
+    const EVENTS: usize = SOURCE.event_count();
+    let mut scratch = Scratch::<{ 3 * EVENTS }, EVENTS>::new();
+    let mut plan = Plan::new();
+    compile_into(&SOURCE, &mut scratch, &mut plan).unwrap();
+    for (db_arm, db_actor) in [(Arm::Left, A.role), (Arm::Right, B.role)] {
+        for (auth_arm, auth_actor) in [(Arm::Left, A.role), (Arm::Right, B.role)] {
+            let path = [
+                Selection {
+                    scope: Scope {
+                        start: 0,
+                        split: 1,
+                        stop: 2,
+                    },
+                    arm: db_arm,
+                },
+                Selection {
+                    scope: Scope {
+                        start: 2,
+                        split: 3,
+                        stop: 4,
+                    },
+                    arm: auth_arm,
+                },
+            ];
+            assert_eq!(plan.binding_in(4, &path).unwrap().sender_actor, db_actor);
+            assert_eq!(plan.binding_in(5, &path).unwrap().sender_actor, auth_actor);
+            assert!(!plan.precedes_in(send(4), send(5), &path));
+            assert!(!plan.precedes_in(send(5), send(4), &path));
+        }
+    }
+}
+
+#[test]
+fn a_branch_dependent_carrier_does_not_move_an_unrelated_initial_owner() {
+    const CHOICE: Source<'static> = Source::Route {
+        left: &transfer(P, A, 1, DB),
+        right: &transfer(P, B, 2, DB),
+        resolver: None,
+    };
+    const SOURCE: Source<'static> = Source::Seq(&CHOICE, &transfer(DB, P, 3, AUTH));
+    const EVENTS: usize = SOURCE.event_count();
+    let mut scratch = Scratch::<{ 3 * EVENTS }, EVENTS>::new();
+    let mut plan = Plan::new();
+    // AUTH cannot have two different initial owners depending on that route.
+    assert_eq!(
+        compile_into(&SOURCE, &mut scratch, &mut plan)
+            .unwrap_err()
+            .kind,
+        ErrorKind::ConflictingInitialOwners
+    );
+    assert!(plan.is_empty());
+}
+
+#[test]
+fn inconsistent_or_foreign_selection_records_never_choose_a_holder() {
+    const CHOICE: Source<'static> = Source::Route {
+        left: &transfer(P, A, 1, DB),
+        right: &transfer(P, B, 2, DB),
+        resolver: None,
+    };
+    const SOURCE: Source<'static> = Source::Seq(&CHOICE, &wire(DB, SERVER, 3));
+    const EVENTS: usize = SOURCE.event_count();
+    let mut scratch = Scratch::<{ 3 * EVENTS }, EVENTS>::new();
+    let mut plan = Plan::new();
+    compile_into(&SOURCE, &mut scratch, &mut plan).unwrap();
+    let scope = Scope {
+        start: 0,
+        split: 1,
+        stop: 2,
+    };
+    let left = Selection {
+        scope,
+        arm: Arm::Left,
+    };
+    let right = Selection {
+        scope,
+        arm: Arm::Right,
+    };
+    assert_eq!(plan.binding_in(2, &[left, right]), None);
+    assert_eq!(plan.binding_in(2, &[left, left]), None);
+    assert_eq!(
+        plan.binding_in(
+            2,
+            &[Selection {
+                scope: Scope {
+                    start: 0,
+                    split: 2,
+                    stop: 3
+                },
+                arm: Arm::Left,
+            }]
+        ),
+        None
+    );
+}
+
+#[test]
+fn rolled_work_preserves_the_conditional_holder_chosen_before_the_loop() {
+    const LEFT: Source<'static> = Source::Seq(&transfer(P, A, 1, DB), &transfer(P, A, 2, AUTH));
+    const RIGHT: Source<'static> = Source::Seq(&transfer(P, B, 3, DB), &transfer(P, B, 4, AUTH));
+    const BODY: Source<'static> = Source::Seq(
+        &wire(DB, SERVER, 5),
+        &Source::Seq(&transfer(AUTH, P, 6, DB), &transfer(P, AUTH, 7, DB)),
+    );
+    const SOURCE: Source<'static> = Source::Seq(
+        &Source::Route {
+            left: &LEFT,
+            right: &RIGHT,
+            resolver: Some(701),
+        },
+        &Source::Roll(&BODY),
+    );
+    const EVENTS: usize = SOURCE.event_count();
+    const SYMBOLS: usize = 3 * EVENTS;
+    const PLAN: Plan<'static, SYMBOLS, EVENTS> = {
+        let mut scratch = Scratch::new();
+        let mut output = Plan::new();
+        match compile_into(&SOURCE, &mut scratch, &mut output) {
+            Ok(()) => output,
+            Err(_) => panic!("conditional ownership invariant in a const projected roll"),
+        }
+    };
+    let scope = Scope {
+        start: 0,
+        split: 2,
+        stop: 4,
+    };
+    for (arm, actor) in [(Arm::Left, A.role), (Arm::Right, B.role)] {
+        let path = [Selection { scope, arm }];
+        assert_eq!(PLAN.binding_in(4, &path).unwrap().sender_actor, actor);
+        assert_eq!(PLAN.binding_in(5, &path).unwrap().sender_actor, actor);
+        assert_eq!(PLAN.binding_in(6, &path).unwrap().receiver_actor, actor);
+        assert_eq!(PLAN.binding_in(4, &path).unwrap().message.from, DB);
+    }
 }

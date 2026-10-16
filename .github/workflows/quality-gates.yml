@@ -27,6 +27,8 @@ jobs:
           cargo kani setup
       - name: Run Kani proofs
         run: bash ./.github/scripts/check_kani.sh
+      - name: Check delegation equation roots
+        run: cargo kani --manifest-path proofs/endpoint-delegation/kani/Cargo.toml --lib --output-format terse
 
   final-form:
     runs-on: ubuntu-24.04-arm

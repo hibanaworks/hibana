@@ -68,16 +68,19 @@
 (check-sat)
 (pop)
 
-; A rolled next visit that uses the resource makes its join live even when
-; there are no ordinary messages after the route in the current visit.
-(declare-const ordinary_suffix_uses Bool)
-(declare-const next_visit_uses Bool)
-(define-fun live_join () Bool (or ordinary_suffix_uses next_visit_uses))
+; A loop header may have different holders under an earlier route. Returning
+; and regranting through that route's carrier restores its own incoming holder;
+; equality between the two alternative holders is not required.
+(declare-const choose_right Bool)
+(define-fun incoming_holder () Int (ite choose_right bob alice))
 (push)
-(assert (not ordinary_suffix_uses))
-(assert next_visit_uses)
 (assert (distinct alice bob))
-(assert (=> live_join (= alice bob)))
+(assert (= (select owners resource) incoming_holder))
+; A satisfiable positive witness, not an incorrect-rule counterexample.
+; EXPECT: sat
+(check-sat)
+(assert (distinct (select owners resource)
+  (select (store (store owners resource provider) resource incoming_holder) resource)))
 ; EXPECT: unsat
 (check-sat)
 (pop)

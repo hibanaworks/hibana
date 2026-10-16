@@ -8,9 +8,13 @@
 //! the core. The output preserves logical wire identities and assigns each
 //! operation to the actor currently holding its endpoint.
 //!
-//! Scratch and output are caller-owned. Symbolic ownership is compiler data,
-//! never an application permission table. Branches undo their own writes in
-//! the event trail instead of copying a complete ownership map at every fork.
+//! Scratch and output are caller-owned. Ownership follows the source prefix
+//! and its choices, without a mutable table of current holders. Queries here
+//! run during projection/reference checking, not on the runtime's hot path.
+
+mod ownership;
+pub use ownership::{Arm, Scope, Selection};
+use ownership::{At, Atom, Context, Evaluation, Query};
 
 /// A logical endpoint in a statically composed protocol family.
 ///
@@ -79,25 +83,17 @@ impl Source<'_> {
             Self::Roll(body) => body.uses(key),
         }
     }
-}
 
-/// Borrowed source continuations used only during projection. A rolled body is
-/// included because its next visit can use an endpoint again. No ownership map
-/// or source subtree is copied to compute liveness.
-struct Following<'a> {
-    source: &'a Source<'a>,
-    next: Option<&'a Self>,
-}
-
-impl Following<'_> {
-    const fn uses(mut following: Option<&Self>, key: EndpointKey) -> bool {
-        while let Some(fragment) = following {
-            if fragment.source.uses(key) {
-                return true;
+    const fn transfers(&self, key: EndpointKey) -> bool {
+        match self {
+            Self::Send(message) => {
+                matches!(message.payload, Payload::Endpoint(payload) if payload.same(key))
             }
-            following = fragment.next;
+            Self::Seq(left, right) | Self::Par(left, right) | Self::Route { left, right, .. } => {
+                left.transfers(key) || right.transfers(key)
+            }
+            Self::Roll(body) => body.transfers(key),
         }
-        false
     }
 }
 
@@ -110,7 +106,6 @@ pub enum ErrorKind {
     ConflictingInitialOwners,
     UnrootedInitialOwner,
     ParallelOwnershipConflict,
-    BranchOwnersDiffer,
     RollChangesOwner,
 }
 
@@ -149,21 +144,6 @@ struct InitialOwner {
     actor: Option<u8>,
 }
 
-#[derive(Clone, Copy)]
-struct Transfer {
-    endpoint: u16,
-    before: Owner,
-    after: Owner,
-}
-
-#[derive(Clone, Copy)]
-struct PendingBinding {
-    message: Message,
-    sender: Owner,
-    receiver: Owner,
-    transfer: Option<Transfer>,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Binding {
     pub message: Message,
@@ -182,8 +162,7 @@ pub struct Scratch<const SYMBOLS: usize, const EVENTS: usize> {
     symbols: [Option<Symbol>; SYMBOLS],
     symbol_len: usize,
     initial: [InitialOwner; SYMBOLS],
-    current: [Owner; SYMBOLS],
-    events: [Option<PendingBinding>; EVENTS],
+    events: [Option<Message>; EVENTS],
     event_len: usize,
 }
 
@@ -203,7 +182,6 @@ impl<const S: usize, const E: usize> Scratch<S, E> {
                 rank: 0,
                 actor: None,
             }; S],
-            current: [Owner::Actor(0); S],
             events: [None; E],
             event_len: 0,
         }
@@ -268,17 +246,10 @@ impl<const S: usize, const E: usize> Scratch<S, E> {
     const fn initialize_owners(&mut self) {
         let mut index = 0;
         while index < self.symbol_len {
-            let Some(symbol) = self.symbols[index] else {
-                panic!("collected symbol")
-            };
             self.initial[index] = InitialOwner {
                 parent: index as u16,
                 rank: 0,
                 actor: None,
-            };
-            self.current[index] = match symbol.kind {
-                EndpointKind::Control => Owner::Actor(symbol.key.role),
-                EndpointKind::Delegated => Owner::Initial(index as u16),
             };
             index += 1;
         }
@@ -340,7 +311,54 @@ impl<const S: usize, const E: usize> Scratch<S, E> {
         }
     }
 
-    const fn emit(&mut self, message: Message) -> Result<(), Error> {
+    const fn atom(&self, atom: Atom) -> Owner {
+        match atom {
+            Atom::Actor(actor) => Owner::Actor(actor),
+            Atom::Initial(key) => {
+                let Some(index) = self.index(key) else {
+                    panic!("collected initial owner")
+                };
+                Owner::Initial(index as u16)
+            }
+        }
+    }
+
+    const fn equate(
+        &mut self,
+        source: &Source<'_>,
+        left: At,
+        right: At,
+        context: &Context<'_>,
+    ) -> bool {
+        let query = Query::new(source);
+        let left_owner = query.owner(left, context);
+        let right_owner = query.owner(right, context);
+        let scope = match (left_owner, right_owner) {
+            (Evaluation::Atom(left), Evaluation::Atom(right)) => {
+                return self.unify(self.atom(left), self.atom(right));
+            }
+            (Evaluation::Choice(scope), _) | (_, Evaluation::Choice(scope)) => scope,
+        };
+        let left_path = context.select(Selection {
+            scope,
+            arm: Arm::Left,
+        });
+        if !self.equate(source, left, right, &left_path) {
+            return false;
+        }
+        let right_path = context.select(Selection {
+            scope,
+            arm: Arm::Right,
+        });
+        self.equate(source, left, right, &right_path)
+    }
+
+    const fn emit(
+        &mut self,
+        source: &Source<'_>,
+        message: Message,
+        context: &Context<'_>,
+    ) -> Result<(), Error> {
         if self.event_len == E {
             return Err(error(ErrorKind::Capacity, None));
         }
@@ -348,128 +366,88 @@ impl<const S: usize, const E: usize> Scratch<S, E> {
         {
             return Err(error(ErrorKind::NonUnitSelfMessage, Some(message.from)));
         }
-        let Some(from) = self.index(message.from) else {
-            return Err(error(ErrorKind::InvalidSource, Some(message.from)));
-        };
-        let Some(to) = self.index(message.to) else {
-            return Err(error(ErrorKind::InvalidSource, Some(message.to)));
-        };
-        let sender = self.current[from];
-        let receiver = self.current[to];
-        let transfer = match message.payload {
-            Payload::Wire { .. } => None,
-            Payload::Endpoint(key) => {
-                if key.same(message.from) || key.same(message.to) {
-                    return Err(error(ErrorKind::EndpointIsItsOwnCarrier, Some(key)));
-                }
-                let Some(index) = self.index(key) else {
-                    return Err(error(ErrorKind::InvalidSource, Some(key)));
-                };
-                let before = self.current[index];
-                if !self.unify(before, sender) {
-                    return Err(error(ErrorKind::ConflictingInitialOwners, Some(key)));
-                }
-                self.current[index] = receiver;
-                Some(Transfer {
-                    endpoint: index as u16,
-                    before,
-                    after: receiver,
-                })
+        if let Payload::Endpoint(key) = message.payload {
+            if key.same(message.from) || key.same(message.to) {
+                return Err(error(ErrorKind::EndpointIsItsOwnCarrier, Some(key)));
             }
-        };
-        self.events[self.event_len] = Some(PendingBinding {
-            message,
-            sender,
-            receiver,
-            transfer,
-        });
+            let cut = self.event_len;
+            if !self.equate(
+                source,
+                At { key, cut },
+                At {
+                    key: message.from,
+                    cut,
+                },
+                context,
+            ) {
+                return Err(error(ErrorKind::ConflictingInitialOwners, Some(key)));
+            }
+        }
+        self.events[self.event_len] = Some(message);
         self.event_len += 1;
         Ok(())
     }
 
-    const fn last_transfer(&self, endpoint: usize, start: usize, stop: usize) -> Option<Transfer> {
-        let mut cursor = stop;
-        while start < cursor {
-            cursor -= 1;
-            if let Some(event) = self.events[cursor]
-                && let Some(transfer) = event.transfer
-                && transfer.endpoint as usize == endpoint
-            {
-                return Some(transfer);
-            }
-        }
-        None
-    }
-
-    const fn first_transfer(&self, endpoint: usize, start: usize, stop: usize) -> Option<Transfer> {
-        let mut cursor = start;
-        while cursor < stop {
-            if let Some(event) = self.events[cursor]
-                && let Some(transfer) = event.transfer
-                && transfer.endpoint as usize == endpoint
-            {
-                return Some(transfer);
-            }
-            cursor += 1;
-        }
-        None
-    }
-
-    const fn rollback(&mut self, start: usize, stop: usize) {
-        let mut cursor = stop;
-        while start < cursor {
-            cursor -= 1;
-            if let Some(event) = self.events[cursor]
-                && let Some(transfer) = event.transfer
-            {
-                self.current[transfer.endpoint as usize] = transfer.before;
-            }
-        }
-    }
-
-    const fn uses(&self, key: EndpointKey, start: usize, stop: usize) -> bool {
-        let mut cursor = start;
-        while cursor < stop {
-            if let Some(event) = self.events[cursor] {
-                if event.message.from.same(key) || event.message.to.same(key) {
-                    return true;
-                }
-                if let Payload::Endpoint(payload) = event.message.payload
-                    && payload.same(key)
-                {
-                    return true;
-                }
-            }
-            cursor += 1;
-        }
-        false
-    }
-
     const fn visit(
         &mut self,
+        root: &Source<'_>,
         source: &Source<'_>,
-        following: Option<&Following<'_>>,
+        context: &Context<'_>,
     ) -> Result<(), Error> {
         match source {
-            Source::Send(message) => self.emit(*message),
+            Source::Send(message) => self.emit(root, *message, context),
             Source::Seq(left, right) => {
-                let suffix = Following {
-                    source: right,
-                    next: following,
-                };
-                if let Err(error) = self.visit(left, Some(&suffix)) {
+                if let Err(error) = self.visit(root, left, context) {
                     return Err(error);
                 }
-                self.visit(right, following)
+                self.visit(root, right, context)
             }
-            Source::Par(left, right) | Source::Route { left, right, .. } => {
-                let start = self.event_len;
-                if let Err(error) = self.visit(left, following) {
+            Source::Par(left, right) => {
+                let mut index = 0;
+                while index < self.symbol_len {
+                    let Some(symbol) = self.symbols[index] else {
+                        panic!("collected symbol")
+                    };
+                    if (left.transfers(symbol.key) && right.uses(symbol.key))
+                        || (right.transfers(symbol.key) && left.uses(symbol.key))
+                    {
+                        return Err(error(
+                            ErrorKind::ParallelOwnershipConflict,
+                            Some(symbol.key),
+                        ));
+                    }
+                    index += 1;
+                }
+                if let Err(error) = self.visit(root, left, context) {
                     return Err(error);
                 }
-                let split = self.event_len;
-                self.rollback(start, split);
-                if let Err(error) = self.visit(right, following) {
+                self.visit(root, right, context)
+            }
+            Source::Route { left, right, .. } => {
+                let start = self.event_len;
+                let split = start + left.event_count();
+                let stop = split + right.event_count();
+                let scope = Scope {
+                    start: start as u16,
+                    split: split as u16,
+                    stop: stop as u16,
+                };
+                let left_path = context.select(Selection {
+                    scope,
+                    arm: Arm::Left,
+                });
+                if let Err(error) = self.visit(root, left, &left_path) {
+                    return Err(error);
+                }
+                let right_path = context.select(Selection {
+                    scope,
+                    arm: Arm::Right,
+                });
+                self.visit(root, right, &right_path)
+            }
+            Source::Roll(body) => {
+                let start = self.event_len;
+                if let Err(error) = self.visit(root, body, context) {
                     return Err(error);
                 }
                 let stop = self.event_len;
@@ -478,54 +456,20 @@ impl<const S: usize, const E: usize> Scratch<S, E> {
                     let Some(symbol) = self.symbols[index] else {
                         panic!("collected symbol")
                     };
-                    let left_write = self.last_transfer(index, start, split);
-                    let right_write = self.last_transfer(index, split, stop);
-                    if let Source::Par(_, _) = source {
-                        if (left_write.is_some() && self.uses(symbol.key, split, stop))
-                            || (right_write.is_some() && self.uses(symbol.key, start, split))
-                        {
-                            return Err(error(
-                                ErrorKind::ParallelOwnershipConflict,
-                                Some(symbol.key),
-                            ));
-                        }
-                        if let Some(transfer) = left_write {
-                            self.current[index] = transfer.after;
-                        }
-                    } else if Following::uses(following, symbol.key) {
-                        let left_owner = match left_write {
-                            Some(transfer) => transfer.after,
-                            None => match self.first_transfer(index, split, stop) {
-                                Some(transfer) => transfer.before,
-                                None => self.current[index],
+                    if body.transfers(symbol.key)
+                        && !self.equate(
+                            root,
+                            At {
+                                key: symbol.key,
+                                cut: start,
                             },
-                        };
-                        if !self.unify(left_owner, self.current[index]) {
-                            return Err(error(ErrorKind::BranchOwnersDiffer, Some(symbol.key)));
-                        }
-                    }
-                    index += 1;
-                }
-                Ok(())
-            }
-            Source::Roll(body) => {
-                let start = self.event_len;
-                let next_visit = Following {
-                    source: body,
-                    next: following,
-                };
-                if let Err(error) = self.visit(body, Some(&next_visit)) {
-                    return Err(error);
-                }
-                let stop = self.event_len;
-                let mut index = 0;
-                while index < self.symbol_len {
-                    if let Some(first) = self.first_transfer(index, start, stop)
-                        && !self.unify(first.before, self.current[index])
+                            At {
+                                key: symbol.key,
+                                cut: stop,
+                            },
+                            context,
+                        )
                     {
-                        let Some(symbol) = self.symbols[index] else {
-                            panic!("collected symbol")
-                        };
                         return Err(error(ErrorKind::RollChangesOwner, Some(symbol.key)));
                     }
                     index += 1;
@@ -539,7 +483,7 @@ impl<const S: usize, const E: usize> Scratch<S, E> {
 /// Read-only inferred facts. No runtime ownership or cursor is stored here.
 pub struct Plan<'a, const SYMBOLS: usize, const EVENTS: usize> {
     source: Option<&'a Source<'a>>,
-    bindings: [Option<Binding>; EVENTS],
+    messages: [Option<Message>; EVENTS],
     event_len: usize,
     issuance: [Option<Issuance>; SYMBOLS],
     issuance_len: usize,
@@ -555,7 +499,7 @@ impl<const S: usize, const E: usize> Plan<'_, S, E> {
     pub const fn new() -> Self {
         Self {
             source: None,
-            bindings: [None; E],
+            messages: [None; E],
             event_len: 0,
             issuance: [None; S],
             issuance_len: 0,
@@ -569,11 +513,89 @@ impl<const S: usize, const E: usize> Plan<'_, S, E> {
         self.event_len == 0
     }
     pub const fn binding(&self, event: usize) -> Option<Binding> {
-        if event < self.event_len {
-            self.bindings[event]
-        } else {
-            None
+        self.binding_in(event, &[])
+    }
+
+    /// Resolve a structural event using the source's route selections. A
+    /// missing decision never picks a holder: the result is present only when
+    /// all possible remaining decisions give the same actor.
+    pub const fn binding_in(&self, event: usize, selections: &[Selection]) -> Option<Binding> {
+        if event >= self.event_len {
+            return None;
         }
+        let Some(source) = self.source else {
+            return None;
+        };
+        if !ownership::valid_selections(source, selections) {
+            return None;
+        }
+        let Some(message) = self.messages[event] else {
+            return None;
+        };
+        let context = Context::new(selections);
+        if !ownership::active(source, 0, event, &context) {
+            return None;
+        }
+        let Some(sender_actor) = self.actor(
+            At {
+                key: message.from,
+                cut: event,
+            },
+            &context,
+        ) else {
+            return None;
+        };
+        let Some(receiver_actor) = self.actor(
+            At {
+                key: message.to,
+                cut: event,
+            },
+            &context,
+        ) else {
+            return None;
+        };
+        Some(Binding {
+            message,
+            sender_actor,
+            receiver_actor,
+        })
+    }
+
+    const fn actor(&self, at: At, context: &Context<'_>) -> Option<u8> {
+        let Some(source) = self.source else {
+            return None;
+        };
+        let scope = match Query::new(source).owner(at, context) {
+            Evaluation::Atom(Atom::Actor(actor)) => return Some(actor),
+            Evaluation::Atom(Atom::Initial(key)) => {
+                let mut index = 0;
+                while index < self.issuance_len {
+                    if let Some(issuance) = self.issuance[index]
+                        && issuance.endpoint.same(key)
+                    {
+                        return Some(issuance.actor);
+                    }
+                    index += 1;
+                }
+                panic!("published initial owner")
+            }
+            Evaluation::Choice(scope) => scope,
+        };
+        let left_context = context.select(Selection {
+            scope,
+            arm: Arm::Left,
+        });
+        let Some(left) = self.actor(at, &left_context) else {
+            return None;
+        };
+        let right_context = context.select(Selection {
+            scope,
+            arm: Arm::Right,
+        });
+        let Some(right) = self.actor(at, &right_context) else {
+            return None;
+        };
+        if left == right { Some(left) } else { None }
     }
     pub const fn issuance(&self, index: usize) -> Option<Issuance> {
         if index < self.issuance_len {
@@ -586,11 +608,9 @@ impl<const S: usize, const E: usize> Plan<'_, S, E> {
 
 /// Elaborate into supplied output, publishing no accepted partial plan.
 ///
-/// Capacity comes from source event/symbol counts. This prototype currently
-/// requires common ownership at route joins for endpoints used by a following
-/// fragment or visit, and invariant ownership at roll boundaries. An endpoint
-/// with no subsequent use may end in different hands. Live path-dependent
-/// ownership is not yet represented by this prototype.
+/// Capacity comes from source event/symbol counts. Ownership after a route
+/// follows its actual arm, including in the common continuation. A rolled
+/// body must preserve ownership for every legal selection of its arms.
 pub const fn compile_into<'a, const S: usize, const E: usize>(
     source: &'a Source<'a>,
     scratch: &mut Scratch<S, E>,
@@ -601,14 +621,14 @@ pub const fn compile_into<'a, const S: usize, const E: usize>(
     output.issuance_len = 0;
     scratch.symbol_len = 0;
     scratch.event_len = 0;
-    if S > u16::MAX as usize || E > u16::MAX as usize {
+    if S > u16::MAX as usize || E > u16::MAX as usize || source.event_count() > E {
         return Err(error(ErrorKind::Capacity, None));
     }
     if let Err(error) = scratch.collect(source) {
         return Err(error);
     }
     scratch.initialize_owners();
-    if let Err(error) = scratch.visit(source, None) {
+    if let Err(error) = scratch.visit(source, source, &Context::new(&[])) {
         return Err(error);
     }
     let mut index = 0;
@@ -629,17 +649,7 @@ pub const fn compile_into<'a, const S: usize, const E: usize>(
         let Some(event) = scratch.events[index] else {
             panic!("emitted event")
         };
-        let Some(sender_actor) = scratch.resolve(event.sender) else {
-            panic!("rooted sender")
-        };
-        let Some(receiver_actor) = scratch.resolve(event.receiver) else {
-            panic!("rooted receiver")
-        };
-        output.bindings[index] = Some(Binding {
-            message: event.message,
-            sender_actor,
-            receiver_actor,
-        });
+        output.messages[index] = Some(event);
         index += 1;
     }
     index = 0;
@@ -687,7 +697,11 @@ pub struct Action {
 
 impl<const S: usize, const E: usize> Plan<'_, S, E> {
     pub const fn action(&self, id: ActionId) -> Option<Action> {
-        let Some(binding) = self.binding(id.event) else {
+        self.action_in(id, &[])
+    }
+
+    pub const fn action_in(&self, id: ActionId, selections: &[Selection]) -> Option<Action> {
+        let Some(binding) = self.binding_in(id.event, selections) else {
             return None;
         };
         let local = binding.message.from.same(binding.message.to);
@@ -710,7 +724,19 @@ impl<const S: usize, const E: usize> Plan<'_, S, E> {
     /// as the actor's original control endpoint. Roll freshness is a separate
     /// obligation, not inferred from these visit-local event ordinals.
     pub const fn precedes(&self, before: ActionId, after: ActionId) -> bool {
-        let (Some(left), Some(right)) = (self.action(before), self.action(after)) else {
+        self.precedes_in(before, after, &[])
+    }
+
+    pub const fn precedes_in(
+        &self,
+        before: ActionId,
+        after: ActionId,
+        selections: &[Selection],
+    ) -> bool {
+        let (Some(left), Some(right)) = (
+            self.action_in(before, selections),
+            self.action_in(after, selections),
+        ) else {
             return false;
         };
         if left.actor != right.actor {
