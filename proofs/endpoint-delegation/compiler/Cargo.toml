@@ -11,4 +11,4 @@ publish = false
 default = []
 
 [lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)', 'cfg(hibana_repo_tests)'] }

@@ -1,5 +1,5 @@
+use super::super::{ActorChoice, ActorPair};
 use super::{ActorImage, ActorRef, Checker, Context, Scope};
-use crate::g::source::ownership::actors::{ActorChoice, ActorPair};
 
 const PRIOR: Scope = Scope {
     start: 0,
