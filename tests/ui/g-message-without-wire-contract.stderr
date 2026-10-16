@@ -19,14 +19,16 @@ help: the trait `WireEncode` is not implemented for `NoWireContract`
             i32
             i64
           and $N others
+  = note: required for `NoWireContract` to implement `hibana::global::message::PayloadSpec`
+  = note: required for `Msg<31, NoWireContract>` to implement `Message`
 note: required by a bound in `send`
  --> src/g.rs
   |
   | pub const fn send<const FROM: u8, const TO: u8, M>() -> Program<Send<FROM, TO, M>>
   |              ---- required by a bound in this function
-...
-  |     M::Payload: crate::transport::wire::WireEncode + crate::transport::wire::WirePayload,
-  |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `send`
+  | where
+  |     M: Message,
+  |        ^^^^^^^ required by this bound in `send`
 
 error[E0277]: the trait bound `NoWireContract: WirePayload` is not satisfied
  --> tests/ui/g-message-without-wire-contract.rs:6:29
@@ -49,11 +51,13 @@ help: the trait `WirePayload` is not implemented for `NoWireContract`
             i32
             i64
           and $N others
+  = note: required for `NoWireContract` to implement `hibana::global::message::PayloadSpec`
+  = note: required for `Msg<31, NoWireContract>` to implement `Message`
 note: required by a bound in `send`
  --> src/g.rs
   |
   | pub const fn send<const FROM: u8, const TO: u8, M>() -> Program<Send<FROM, TO, M>>
   |              ---- required by a bound in this function
-...
-  |     M::Payload: crate::transport::wire::WireEncode + crate::transport::wire::WirePayload,
-  |                                                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `send`
+  | where
+  |     M: Message,
+  |        ^^^^^^^ required by this bound in `send`

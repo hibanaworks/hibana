@@ -3,19 +3,24 @@ use std::{
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
     process::{Command, Output},
+    sync::atomic::{AtomicU64, Ordering},
     time::{SystemTime, UNIX_EPOCH},
 };
 struct Fixture(PathBuf);
+static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
+
 impl Fixture {
     fn new() -> Self {
         let path = std::env::temp_dir().join(format!(
-            "hibana-thumb-codegen-{}-{}",
+            "hibana-thumb-codegen-{}-{}-{}",
             std::process::id(),
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
-                .as_nanos()
+                .as_nanos(),
+            NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed),
         ));
+        fs::create_dir(&path).unwrap();
         fs::create_dir_all(path.join("bin")).unwrap();
         fs::write(path.join("probe.o"), b"object-fixture").unwrap();
         Self(path)

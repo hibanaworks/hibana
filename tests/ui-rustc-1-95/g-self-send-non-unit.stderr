@@ -14,8 +14,8 @@ note: erroneous constant encountered
   |
   | /     const {
   | |         if FROM == TO
-  | |             && <M::Payload as crate::transport::wire::WirePayload>::SCHEMA_ID
-  | |                 != <() as crate::transport::wire::WirePayload>::SCHEMA_ID
+  | |             && !matches!(
+  | |                 crate::global::source_payload::<M>(),
 ... |
   | |     }
   | |_____^

@@ -32,9 +32,8 @@ mod terms;
 use core::marker::PhantomData;
 
 pub use crate::global::Message;
-pub(crate) use source::{
-    ProgramShape, ProgramSourceData, ProgramSourceNode, SourceRouteResolver, checked_source_count,
-};
+pub(crate) use source::{EndpointKey, SourcePayload};
+pub(crate) use source::{ProgramShape, ProgramSourceData, ProgramSourceNode, checked_source_count};
 
 mod diagnostic;
 mod diagnostic_message;
@@ -93,12 +92,13 @@ impl<Steps> Program<Steps> {
 pub const fn send<const FROM: u8, const TO: u8, M>() -> Program<Send<FROM, TO, M>>
 where
     M: Message,
-    M::Payload: crate::transport::wire::WireEncode + crate::transport::wire::WirePayload,
 {
     const {
         if FROM == TO
-            && <M::Payload as crate::transport::wire::WirePayload>::SCHEMA_ID
-                != <() as crate::transport::wire::WirePayload>::SCHEMA_ID
+            && !matches!(
+                crate::global::source_payload::<M>(),
+                SourcePayload::Wire { schema: 0 }
+            )
         {
             panic!("self-role actions require the unit payload");
         }

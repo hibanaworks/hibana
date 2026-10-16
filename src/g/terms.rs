@@ -1,20 +1,22 @@
 use super::{
-    Par, ProgramShape, ProgramSourceNode, Resolve, Roll, Route, Send, Seq, SourceRouteResolver,
-    checked_source_count,
+    Par, ProgramShape, ProgramSourceNode, Resolve, Roll, Route, Send, Seq, checked_source_count,
 };
 
 impl<const FROM: u8, const TO: u8, M> ProgramShape for Send<FROM, TO, M>
 where
     M: crate::global::Message,
-    M::Payload: crate::transport::wire::WireEncode + crate::transport::wire::WirePayload,
 {
-    const SOURCE_NODE: ProgramSourceNode = ProgramSourceNode::Send(crate::eff::EffAtom {
-        from: FROM,
-        to: TO,
+    const SOURCE_NODE: ProgramSourceNode = ProgramSourceNode::Send(super::source::SourceMessage {
+        from: super::source::EndpointKey {
+            component: 0,
+            role: FROM,
+        },
+        to: super::source::EndpointKey {
+            component: 0,
+            role: TO,
+        },
         label: <M as crate::global::Message>::LOGICAL_LABEL,
-        payload_schema: crate::global::payload_schema::<M>(),
-        origin: crate::eff::EventOrigin::User,
-        lane: 0,
+        payload: crate::global::source_payload::<M>(),
     });
     const EVENT_COUNT: usize = 1;
     const SCOPE_MARKER_COUNT: usize = 0;
@@ -26,10 +28,8 @@ where
     Left: ProgramShape,
     Right: ProgramShape,
 {
-    const SOURCE_NODE: ProgramSourceNode = ProgramSourceNode::Seq {
-        left: &Left::SOURCE_NODE,
-        right: &Right::SOURCE_NODE,
-    };
+    const SOURCE_NODE: ProgramSourceNode =
+        ProgramSourceNode::Seq(&Left::SOURCE_NODE, &Right::SOURCE_NODE);
     const EVENT_COUNT: usize = checked_source_count(Left::EVENT_COUNT, Right::EVENT_COUNT, 0);
     const SCOPE_MARKER_COUNT: usize =
         checked_source_count(Left::SCOPE_MARKER_COUNT, Right::SCOPE_MARKER_COUNT, 0);
@@ -45,7 +45,7 @@ where
     const SOURCE_NODE: ProgramSourceNode = ProgramSourceNode::Route {
         left: &Left::SOURCE_NODE,
         right: &Right::SOURCE_NODE,
-        resolver: SourceRouteResolver::Intrinsic,
+        resolver: None,
     };
     const EVENT_COUNT: usize = checked_source_count(Left::EVENT_COUNT, Right::EVENT_COUNT, 0);
     const SCOPE_MARKER_COUNT: usize =
@@ -59,10 +59,8 @@ where
     Left: ProgramShape,
     Right: ProgramShape,
 {
-    const SOURCE_NODE: ProgramSourceNode = ProgramSourceNode::Parallel {
-        left: &Left::SOURCE_NODE,
-        right: &Right::SOURCE_NODE,
-    };
+    const SOURCE_NODE: ProgramSourceNode =
+        ProgramSourceNode::Par(&Left::SOURCE_NODE, &Right::SOURCE_NODE);
     const EVENT_COUNT: usize = checked_source_count(Left::EVENT_COUNT, Right::EVENT_COUNT, 0);
     const SCOPE_MARKER_COUNT: usize =
         checked_source_count(Left::SCOPE_MARKER_COUNT, Right::SCOPE_MARKER_COUNT, 3);
@@ -78,7 +76,7 @@ where
     const SOURCE_NODE: ProgramSourceNode = ProgramSourceNode::Route {
         left: &Left::SOURCE_NODE,
         right: &Right::SOURCE_NODE,
-        resolver: SourceRouteResolver::Dynamic(RESOLVER_ID),
+        resolver: Some(RESOLVER_ID),
     };
     const EVENT_COUNT: usize = <Route<Left, Right> as ProgramShape>::EVENT_COUNT;
     const SCOPE_MARKER_COUNT: usize = <Route<Left, Right> as ProgramShape>::SCOPE_MARKER_COUNT;

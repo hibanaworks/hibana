@@ -6,30 +6,13 @@ use crate::{
     },
 };
 
-#[derive(Clone, Copy)]
-pub enum SourceRouteResolver {
-    Intrinsic,
-    Dynamic(u16),
-}
+mod ownership;
+mod tree;
+pub(crate) use tree::{EndpointKey, Message as SourceMessage, Payload as SourcePayload};
+pub type ProgramSourceNode = tree::Source<'static>;
 
-#[derive(Clone, Copy)]
-pub enum ProgramSourceNode {
-    Send(EffAtom),
-    Seq {
-        left: &'static Self,
-        right: &'static Self,
-    },
-    Route {
-        left: &'static Self,
-        right: &'static Self,
-        resolver: SourceRouteResolver,
-    },
-    Parallel {
-        left: &'static Self,
-        right: &'static Self,
-    },
-    Roll(&'static Self),
-}
+#[cfg(all(test, hibana_repo_tests))]
+mod tests;
 
 // Public within this private module so the sealed composition contract can name
 // its associated step-list without exposing the source builders as an API.
@@ -74,11 +57,24 @@ impl<const CAPACITY: usize> SourceLowering<CAPACITY> {
 
     const fn emit(&mut self, node: &ProgramSourceNode, route_reentry: ReentryMark) -> u16 {
         match node {
-            ProgramSourceNode::Send(atom) => {
-                self.eff.push_event_mut(*atom);
+            ProgramSourceNode::Send(message) => {
+                if message.from.component != 0 || message.to.component != 0 {
+                    panic!("source component is outside the composed choreography");
+                }
+                let SourcePayload::Wire { schema } = message.payload else {
+                    panic!("owned endpoint requires ownership-aware lowering");
+                };
+                self.eff.push_event_mut(EffAtom {
+                    from: message.from.role,
+                    to: message.to.role,
+                    label: message.label,
+                    payload_schema: schema,
+                    origin: crate::eff::EventOrigin::User,
+                    lane: 0,
+                });
                 1
             }
-            ProgramSourceNode::Seq { left, right } => {
+            ProgramSourceNode::Seq(left, right) => {
                 let left_span = self.emit(left, route_reentry);
                 let right_span = self.emit(right, route_reentry);
                 max_lane_span(left_span, right_span)
@@ -102,12 +98,12 @@ impl<const CAPACITY: usize> SourceLowering<CAPACITY> {
                     route_reentry,
                 );
                 merge_route_frame_labels(&mut self.eff, left_start, right_start, right_end);
-                if let SourceRouteResolver::Dynamic(resolver_id) = *resolver {
+                if let Some(resolver_id) = *resolver {
                     self.eff.push_route_resolver_mut(scope, resolver_id);
                 }
                 max_lane_span(left_span, right_span)
             }
-            ProgramSourceNode::Parallel { left, right } => {
+            ProgramSourceNode::Par(left, right) => {
                 let scope = self.allocate_scope(ScopeKind::Parallel);
                 let left_start = self.eff.len();
                 let left_span = self.emit(left, route_reentry);
@@ -145,6 +141,33 @@ impl<const CAPACITY: usize> ProgramSourceData<CAPACITY> {
     {
         if Steps::SOURCE_ROW_COUNT == 0 || Steps::SOURCE_ROW_COUNT > CAPACITY {
             panic!("source bucket selection");
+        }
+        if Steps::SOURCE_NODE.has_delegation() {
+            let mut scratch = ownership::Scratch::<256, CAPACITY>::new();
+            match ownership::validate(&Steps::SOURCE_NODE, &mut scratch) {
+                Ok(()) => (),
+                Err(error) => match error.kind {
+                    ownership::ErrorKind::Capacity => panic!("owned endpoint source capacity"),
+                    ownership::ErrorKind::NonUnitSelfMessage => {
+                        panic!("self-role actions require the unit payload")
+                    }
+                    ownership::ErrorKind::EndpointIsItsOwnCarrier => {
+                        panic!("an owned endpoint cannot carry its own delegation")
+                    }
+                    ownership::ErrorKind::ConflictingInitialOwners => {
+                        panic!("owned endpoint has conflicting initial actors")
+                    }
+                    ownership::ErrorKind::UnrootedInitialOwner => {
+                        panic!("owned endpoint has no unique initial actor")
+                    }
+                    ownership::ErrorKind::ParallelOwnershipConflict => {
+                        panic!("parallel endpoint delegation conflicts with another use")
+                    }
+                    ownership::ErrorKind::RollChangesOwner => {
+                        panic!("rolled endpoint delegation must restore its incoming ownership")
+                    }
+                },
+            }
         }
         let mut lowering = SourceLowering::new(
             Steps::EVENT_COUNT,

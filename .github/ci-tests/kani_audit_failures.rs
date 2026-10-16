@@ -2,20 +2,25 @@ use std::{
     fs,
     path::PathBuf,
     process::Command,
+    sync::atomic::{AtomicU64, Ordering},
     time::{SystemTime, UNIX_EPOCH},
 };
 
 struct Fixture(PathBuf);
+static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
+
 impl Fixture {
     fn new() -> Self {
         let path = std::env::temp_dir().join(format!(
-            "hibana-kani-mutants-{}-{}",
+            "hibana-kani-mutants-{}-{}-{}",
             std::process::id(),
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
-                .as_nanos()
+                .as_nanos(),
+            NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed),
         ));
+        fs::create_dir(&path).unwrap();
         fs::create_dir_all(path.join("src")).unwrap();
         fs::create_dir_all(path.join(".github")).unwrap();
         fs::create_dir_all(path.join("bin")).unwrap();

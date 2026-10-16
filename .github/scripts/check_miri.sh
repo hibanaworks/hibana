@@ -65,6 +65,12 @@ run_miri_test \
   --lib \
   endpoint::owner::tests
 
+run_miri_test \
+  typed-endpoint-ownership-source \
+  -p hibana \
+  --lib \
+  g::source::tests
+
 # This suite covers nested rework and delayed ingress across several complete
 # visits. Strict Miri takes over 300 seconds for the full regression matrix.
 MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \

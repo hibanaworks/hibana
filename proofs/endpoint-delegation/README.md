@@ -1,16 +1,27 @@
 # Ownership-aware endpoint projection
 
-This is an executable reference model and a proof package for the delegation
-extension. It is not the Hibana runtime, a public API, or a second application
-language. The source constructors mirror `send`, `seq`, `par`, binary
-`route`/resolver, and `roll` so that ownership rules can be checked before the
-owned-message runtime is introduced.
+This proof package runs the ownership validator used by Hibana's typed source
+boundary. The source tree and validator live in `src/g/source/`; the proof
+harness includes that implementation and adds read-only observations. There
+is no separate Rust source language or second implementation of its ownership
+rules. The Lean checker remains independent.
+
+Typed `g::Msg<L, Endpoint<'static, R>>` records an owned endpoint, not a wire
+codec. Source projection checks its initial issuer, conflicting transfers,
+parallel uses, and rolled ownership before lowering. Seven core source tests
+and four compiler rejection cases exercise the real `g` constructors.
+
+Owned descriptor lowering and owned `Endpoint::send` / `recv` are unfinished.
+A source that passes this ownership check is still rejected at the owned
+lowering boundary. This branch does not provide usable endpoint delegation.
 
 An accepted ownership plan is not an accepted Hibana protocol. This package
 does not yet check knowledge of choice, route authority, codecs, lane mapping,
 remote delivery, or the implementation's operation commits. Its ownership
-elaboration must be incorporated into typed projection, with those checks,
-before any distributed progress claim is justified.
+elaboration must also produce compact actor/facet facts and connect to those
+checks and the operation kernel before any distributed progress claim is
+justified. The harness can describe related components; production `g` source
+currently describes one composed choreography, not arbitrary unrelated sessions.
 
 ## What the compiler computes
 

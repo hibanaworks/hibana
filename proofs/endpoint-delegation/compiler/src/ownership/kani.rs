@@ -1,4 +1,4 @@
-//! Bounded checks of the actual ownership equation solver. Artifact queries
+//! Bounded checks of the ownership equation solver. Artifact queries
 //! are checked by Rust/Miri and the independent Lean source-path checker.
 //! Full projection/implementation progress is outside this harness set.
 use super::{EndpointKey, EndpointKind, Owner, Scratch};

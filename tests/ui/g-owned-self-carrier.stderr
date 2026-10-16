@@ -1,0 +1,52 @@
+error[E0080]: evaluation panicked: an owned endpoint cannot carry its own delegation
+ --> src/g.rs
+  |
+  |     const SOURCE: ProgramSourceData<CAPACITY> = ProgramSourceData::lower::<Steps>();
+  |                                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `hibana::g::ProgramProjection::<hibana::g::Send<0, 1, hibana::g::Msg<1, hibana::Endpoint<'_, 0>>>, 8>::SOURCE` failed inside this call
+  |
+note: inside `g::source::ProgramSourceData::<8>::lower::<hibana::g::Send<0, 1, Msg<1, Endpoint<'_, 0>>>>`
+ --> $RUST/core/src/panic.rs
+  |
+  |         $crate::panicking::panic_fmt($crate::const_format_args!($($t)+));
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the failure occurred here
+  |
+ ::: src/g/source.rs
+  |
+  |                         panic!("an owned endpoint cannot carry its own delegation")
+  |                         ----------------------------------------------------------- in this macro invocation
+
+note: erroneous constant encountered
+ --> src/g.rs
+  |
+  |         Self::SOURCE.eff_list();
+  |         ^^^^^^^^^^^^
+
+note: erroneous constant encountered
+ --> src/g.rs
+  |
+  |         let source = Self::SOURCE_EFF_LIST;
+  |                      ^^^^^^^^^^^^^^^^^^^^^
+
+note: erroneous constant encountered
+ --> src/g/role_projection.rs
+  |
+  |     if !ProgramProjection::<Steps, CAPACITY>::IMAGE.contains_role(ROLE) {
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+note: erroneous constant encountered
+ --> src/g.rs
+  |
+  |       let image = const {
+  |  _________________^
+  | |         let required_rows = <Steps as ProgramShape>::SOURCE_ROW_COUNT;
+  | |         if required_rows <= 8 {
+  | |             role_projection::role_projection_image_for::<ROLE, Steps, 8>()
+... |
+  | |     };
+  | |_____^
+
+note: the above error was encountered while instantiating `fn g::project::<0, hibana::g::Send<0, 1, Msg<1, Endpoint<'_, 0>>>>`
+ --> src/global/program.rs
+  |
+  |         crate::g::project(self)
+  |         ^^^^^^^^^^^^^^^^^^^^^^^

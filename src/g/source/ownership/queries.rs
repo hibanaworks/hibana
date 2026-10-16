@@ -1,4 +1,4 @@
-//! Source-prefix ownership queries. These run during projection/reference
+//! Source-prefix ownership queries. These run during projection
 //! checking, never on the production runtime's hot path.
 use super::{EndpointKey, Payload, Source};
 
@@ -186,78 +186,4 @@ impl<'a> Query<'a> {
             Source::Roll(body) => self.after(body, start, at, previous, context),
         }
     }
-}
-
-/// Structural membership of an event in explicitly selected branches. Missing
-/// decisions leave a structural projection view; they never select an arm.
-pub(super) const fn active(
-    source: &Source<'_>,
-    start: usize,
-    event: usize,
-    context: &Context<'_>,
-) -> bool {
-    match source {
-        Source::Send(_) => start == event,
-        Source::Seq(left, right) | Source::Par(left, right) | Source::Route { left, right, .. } => {
-            let split = start + left.event_count();
-            if let Source::Route { .. } = source {
-                let scope = Scope {
-                    start: start as u16,
-                    split: split as u16,
-                    stop: (split + right.event_count()) as u16,
-                };
-                if let Some(arm) = context.get(scope) {
-                    match arm {
-                        Arm::Left if event >= split => return false,
-                        Arm::Right if event < split => return false,
-                        _ => {}
-                    }
-                }
-            }
-            if event < split {
-                active(left, start, event, context)
-            } else {
-                active(right, split, event, context)
-            }
-        }
-        Source::Roll(body) => active(body, start, event, context),
-    }
-}
-
-const fn contains_scope(source: &Source<'_>, start: usize, scope: Scope) -> bool {
-    match source {
-        Source::Send(_) => false,
-        Source::Seq(left, right) | Source::Par(left, right) | Source::Route { left, right, .. } => {
-            let split = start + left.event_count();
-            if let Source::Route { .. } = source
-                && scope.same(Scope {
-                    start: start as u16,
-                    split: split as u16,
-                    stop: (split + right.event_count()) as u16,
-                })
-            {
-                return true;
-            }
-            contains_scope(left, start, scope) || contains_scope(right, split, scope)
-        }
-        Source::Roll(body) => contains_scope(body, start, scope),
-    }
-}
-
-pub(super) const fn valid_selections(source: &Source<'_>, selections: &[Selection]) -> bool {
-    let mut index = 0;
-    while index < selections.len() {
-        if !contains_scope(source, 0, selections[index].scope) {
-            return false;
-        }
-        let mut earlier = 0;
-        while earlier < index {
-            if selections[earlier].scope.same(selections[index].scope) {
-                return false;
-            }
-            earlier += 1;
-        }
-        index += 1;
-    }
-    true
 }
