@@ -10,6 +10,10 @@ use crate::{
     g::{SourceActorImage, SourceArm, SourceContext, SourceScope, SourceSelection},
 };
 
+#[cfg(all(test, hibana_repo_tests, not(miri)))]
+mod exhaustive;
+#[cfg(any(kani, all(test, hibana_repo_tests, not(miri))))]
+mod fixtures;
 #[cfg(kani)]
 mod kani;
 

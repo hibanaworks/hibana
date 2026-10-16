@@ -38,6 +38,10 @@ CARGO_PROFILE_RELEASE_LTO=true CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1 \
   cargo +"${TOOLCHAIN}" test --locked -p hibana --release \
     --test rolled_publication_exit -- --test-threads=1
 bash ./.github/scripts/check_miri.sh
+CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS=true CARGO_PROFILE_RELEASE_OVERFLOW_CHECKS=true \
+  cargo +"${TOOLCHAIN}" test --locked -p hibana --lib --release \
+    global::const_dsl::receive_lane_causality::actors::exhaustive \
+    -- --ignored --nocapture --test-threads=1
 bash ./.github/scripts/check_lean_proofs.sh
 bash proofs/controller-offer/check.sh
 bash proofs/live-descendant-preview/check.sh
