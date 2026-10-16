@@ -9,7 +9,7 @@ use crate::global::const_dsl::EffList;
 fn parallel_lane_coloring_reuses_disjoint_class() {
     let mut source = EffList::<2>::new().push(atom(0, 1, 0)).push(atom(2, 3, 0));
 
-    let lane_span = merge_parallel_lanes(&mut source, 0, 1, 2, 1, 1);
+    let lane_span = merge_parallel_lanes(&mut source, None, 0, 1, 2, 1, 1);
 
     assert!(source.atom_at(1).lane == 0);
     assert!(lane_span == 1);
@@ -20,7 +20,7 @@ fn parallel_lane_coloring_reuses_disjoint_class() {
 fn parallel_lane_coloring_separates_conflicting_class() {
     let mut source = EffList::<2>::new().push(atom(0, 1, 0)).push(atom(1, 2, 0));
 
-    let lane_span = merge_parallel_lanes(&mut source, 0, 1, 2, 1, 1);
+    let lane_span = merge_parallel_lanes(&mut source, None, 0, 1, 2, 1, 1);
 
     assert!(source.atom_at(1).lane == 1);
     assert!(lane_span == 2);
@@ -35,9 +35,10 @@ fn lane_reuse_conflict_matches_endpoint_equality() {
     let right_to: u8 = kani::any();
     let left = EffList::<1>::new().push(atom(left_from, left_to, 0));
     let right = EffList::<1>::new().push(atom(right_from, right_to, 0));
-    let left_index = LaneEndpointIndex::<BYTE_DOMAIN_MASK_BYTES>::from_range(&left, 0, left.len());
+    let left_index =
+        LaneEndpointIndex::<BYTE_DOMAIN_MASK_BYTES>::from_range(&left, None, 0, left.len());
     let right_index =
-        LaneEndpointIndex::<BYTE_DOMAIN_MASK_BYTES>::from_range(&right, 0, right.len());
+        LaneEndpointIndex::<BYTE_DOMAIN_MASK_BYTES>::from_range(&right, None, 0, right.len());
 
     let actual = !left_index.lane_is_disjoint_from(0, &right_index, 0);
     let expected = left_from == right_from

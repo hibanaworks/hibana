@@ -134,7 +134,7 @@ where
                 branch_route_fresh = true;
             }
             if committed.route_is_fresh(route_idx)
-                && self.progress.cursor.is_route_controller(row.scope())
+                && self.is_route_controller(row.scope())
                 && let Some(resolver) = self.progress.cursor.route_scope_resolver(row.scope())
             {
                 let arm = match row.selected_arm() {

@@ -599,7 +599,7 @@ fn schema_mismatch_in_public_route_recv_poisons_same_generation() {
             };
             assert!(format!("{err:?}").contains("operation: \"recv\""));
             assert!(
-                format!("{err:?}").contains("SchemaMismatch"),
+                format!("{err:?}").contains("PayloadMismatch"),
                 "same-width wrong payload must preserve schema evidence: {err:?}"
             );
 

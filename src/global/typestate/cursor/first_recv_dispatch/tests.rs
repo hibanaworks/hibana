@@ -21,6 +21,8 @@ fn fixture() -> &'static RoleImageRef {
 
 fn machine(rows: &'static RoleImageRef) -> EventCursorMachine {
     EventCursorMachine {
+        logical_views: crate::global::compiled::images::RoleDescriptorRef::from_resident(rows)
+            .logical_views(),
         role: rows.role(),
         event_program: LocalEventProgram::from_rows(rows),
     }

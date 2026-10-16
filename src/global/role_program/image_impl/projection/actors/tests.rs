@@ -173,27 +173,29 @@ fn resident_actor_image_checks_both_sides_before_publication() {
         let mut bytes = [0; 64];
         let mut row = 0;
         while row < 3 {
-            bytes[row * 10] = if row == 0 { 0 } else { 1 };
+            bytes[row * crate::global::role_program::ROLE_IMAGE_EVENT_STRIDE] =
+                if row == 0 { 0 } else { 1 };
             let mut field = 2;
             while field < 8 {
-                bytes[row * 10 + field] = 255;
+                bytes[row * crate::global::role_program::ROLE_IMAGE_EVENT_STRIDE + field] = 255;
                 field += 1;
             }
-            bytes[row * 10 + 9] = if row == 1 { 2 } else { 4 };
+            bytes[row * crate::global::role_program::ROLE_IMAGE_EVENT_STRIDE + 9] =
+                if row == 1 { 2 } else { 4 };
             row += 1;
         }
-        bytes[33] = 1;
+        bytes[3 * crate::global::role_program::ROLE_IMAGE_EVENT_STRIDE + 3] = 1;
         bytes
     }
     static LOCAL: [u8; 64] = local_bytes();
     static DUPLICATED_SEND: [u8; 64] = {
         let mut bytes = local_bytes();
-        bytes[29] = 2;
+        bytes[2 * crate::global::role_program::ROLE_IMAGE_EVENT_STRIDE + 9] = 2;
         bytes
     };
     static COLLAPSED_LOCAL: [u8; 64] = {
         let mut bytes = local_bytes();
-        bytes[19] = 0;
+        bytes[crate::global::role_program::ROLE_IMAGE_EVENT_STRIDE + 9] = 0;
         bytes
     };
     let facts = RuntimeRoleFacts::from_counts(RoleCompiledCounts {

@@ -234,8 +234,12 @@ where
         'cfg: 'r,
     {
         let (slot, generation) = self.inner.enter::<ROLE>(rv, sid, program)?;
-        let ptr = self.inner.public_endpoint_header_ptr(rv, slot, generation);
-        let handle = crate::endpoint::carrier::EndpointHandle::new(generation, ROLE);
+        let ptr = self
+            .inner
+            .public_endpoint_header_ptr::<ROLE>(rv, slot, generation);
+        // SAFETY: enter has published this unique view in the pinned actor.
+        let view_generation = unsafe { ptr.as_ref() }.view_generation();
+        let handle = crate::endpoint::carrier::EndpointHandle::new(generation, view_generation);
         Ok(crate::endpoint::Endpoint::from_handle(ptr, handle))
     }
 

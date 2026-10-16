@@ -1704,21 +1704,26 @@ impl ProductionCursorTrace {
         let mut committed_arm_for_scope = |scope| selected_arm(selected, scope);
         let mut preview_controller_arm_for_scope = |_scope| None;
         let mut selected_arm_for_scope = |scope| selected_arm(selected, scope);
-        let mut lane_for_contract_or_offer = |_scope: ScopeId, label, schema| {
-            let mut idx = 0usize;
-            while idx < self.descriptor.local_len() {
-                if self.action_contract_at(idx) == Some((label, schema)) {
-                    return self
-                        .event_program
-                        .local_step_lane(idx)
-                        .expect("message contract must retain a lane");
+        let mut lane_for_contract_or_offer =
+            |_scope: ScopeId, label, schema: crate::eff::EventPayload| {
+                let mut idx = 0usize;
+                while idx < self.descriptor.local_len() {
+                    if self.action_contract_at(idx) == Some((label, schema.wire_schema())) {
+                        return self
+                            .event_program
+                            .local_step_lane(idx)
+                            .expect("message contract must retain a lane");
+                    }
+                    idx += 1;
                 }
-                idx += 1;
-            }
-            self.lane_for_label(label)
-        };
+                self.lane_for_label(label)
+            };
         self.cursor().send_preview_meta_for_contract(
-            crate::global::typestate::MessageSelector::new(ROLE, target_label, target_schema),
+            crate::global::typestate::MessageSelector::new(
+                ROLE,
+                target_label,
+                crate::eff::EventPayload::Wire(target_schema),
+            ),
             &mut committed_arm_for_scope,
             &mut preview_controller_arm_for_scope,
             &mut selected_arm_for_scope,

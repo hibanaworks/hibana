@@ -200,7 +200,7 @@ where
         };
         let current_entry_idx = self.progress.cursor.index();
         visited.record(current_entry_idx);
-        let current_is_controller = self.progress.cursor.is_route_controller(scope_id);
+        let current_is_controller = self.is_route_controller(scope_id);
         let mut selection = FrontierProgressSelection::new(
             scope_id,
             current_entry_idx,
@@ -286,7 +286,7 @@ where
                 flags,
             };
         }
-        let current_is_controller = self.progress.cursor.is_route_controller(scope_id);
+        let current_is_controller = self.is_route_controller(scope_id);
         let current_is_dynamic = current_is_controller
             && self
                 .progress

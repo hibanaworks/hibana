@@ -111,7 +111,7 @@ fn lane_endpoint_index_aggregates_exact_symbolic_membership() {
         .push(atom(first_from, first_to, first_lane))
         .push(atom(second_from, second_to, second_lane));
 
-    let index = LaneEndpointIndex::<BYTE_DOMAIN_MASK_BYTES>::from_range(&source, 0, 2);
+    let index = LaneEndpointIndex::<BYTE_DOMAIN_MASK_BYTES>::from_range(&source, None, 0, 2);
     let actual = index.contains_role(query_lane, query_role);
     let expected = (query_lane == first_lane
         && (query_role == first_from || query_role == first_to))

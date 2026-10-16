@@ -172,7 +172,7 @@ fn run_local_route_recv_non_empty_payload_fails_closed(
         .expect_err("local branch receive must match the unit descriptor schema");
     let rendered = format!("{error:?}");
     assert!(
-        rendered.contains("SchemaMismatch"),
+        rendered.contains("PayloadMismatch"),
         "local branch payload mismatch must fail before synthetic payload validation: {rendered}"
     );
     assert!(transport_queue_is_empty(transport));

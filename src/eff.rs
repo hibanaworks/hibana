@@ -78,6 +78,7 @@ pub struct EffAtom {
 /// The source payload kind survives lowering. An endpoint is never a wire
 /// schema, including when a codec uses the same numeric value as its role.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(kani, derive(::kani::Arbitrary))]
 pub(crate) enum EventPayload {
     Wire(u32),
     Endpoint(u8),
@@ -115,6 +116,7 @@ impl EventPayload {
         }
     }
 
+    #[cfg(any(kani, all(test, hibana_repo_tests)))]
     pub(crate) const fn wire_schema(self) -> u32 {
         match self {
             Self::Wire(schema) => schema,

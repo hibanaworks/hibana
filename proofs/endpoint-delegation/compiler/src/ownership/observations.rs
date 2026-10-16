@@ -53,6 +53,15 @@ impl<const S: usize, const E: usize> Plan<'_, S, E> {
     pub const fn actor_decision_count(&self) -> usize {
         self.actors.decision_count()
     }
+    /// The production lane allocator's complete potential-actor set. This is
+    /// a read-only construction observation, not current ownership or progress.
+    pub const fn possible_actors(&self, event: usize) -> Option<[u8; 32]> {
+        if event < self.event_len {
+            Some(self.actors.possible_actors(event))
+        } else {
+            None
+        }
+    }
     pub const fn binding(&self, event: usize) -> Option<Binding> {
         self.binding_in(event, &[])
     }

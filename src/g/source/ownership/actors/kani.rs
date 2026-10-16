@@ -111,6 +111,22 @@ fn nested_actor_decisions_follow_every_complete_selection() {
 
 #[kani::proof]
 #[kani::unwind(4)]
+fn possible_actor_membership_contains_exactly_the_canonical_choice_leaves() {
+    let first: u8 = kani::any();
+    let second: u8 = kani::any();
+    let third: u8 = kani::any();
+    let actor: u8 = kani::any();
+    let image = nested_image(first, second, third);
+    let members = image.possible_actors(0);
+    let actual = members[actor as usize / 8] & (1 << (actor % 8)) != 0;
+    assert_eq!(
+        actual,
+        actor == first || actor == second || actor == third || actor == 255
+    );
+}
+
+#[kani::proof]
+#[kani::unwind(4)]
 fn an_unselected_inner_decision_cannot_change_the_outer_right_actor() {
     let first: u8 = kani::any();
     let second: u8 = kani::any();

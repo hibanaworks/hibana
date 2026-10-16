@@ -1,4 +1,3 @@
-use crate::endpoint::kernel::EndpointArenaLayout;
 use crate::global::role_program::RoleImageRef;
 
 mod blob_storage;
@@ -14,7 +13,7 @@ pub(crate) use self::{
         ProgramImagePlan,
     },
     program_ref::CompiledProgramRef,
-    role_descriptor_ref::RoleDescriptorRef,
+    role_descriptor_ref::{LogicalViews, RoleDescriptorRef},
 };
 
 #[cfg(all(test, hibana_repo_tests))]
@@ -52,17 +51,7 @@ impl<const ROLE: u8> RoleImageSlice<ROLE> {
     }
 
     #[inline(always)]
-    pub(crate) fn endpoint_lane_slot_count(&self) -> usize {
-        self.descriptor.endpoint_lane_slot_count()
-    }
-
-    #[inline(always)]
     pub(crate) fn logical_lane_count(&self) -> usize {
         self.descriptor.logical_lane_count()
-    }
-
-    #[inline(always)]
-    pub(crate) fn endpoint_arena_layout(&self) -> EndpointArenaLayout {
-        self.descriptor.endpoint_arena_layout()
     }
 }

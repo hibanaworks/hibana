@@ -188,7 +188,7 @@ impl EventCursor {
         &self,
         scope_id: ScopeId,
     ) -> bool {
-        !self.is_route_controller(scope_id) && self.route_scope_resolver(scope_id).is_none()
+        !self.contains_route_controller(scope_id) && self.route_scope_resolver(scope_id).is_none()
     }
 
     pub(crate) fn passive_descendant_dispatch_arm_for_key(
@@ -254,19 +254,17 @@ impl EventCursor {
             .first_recv_descendant_target_for_key(scope_id, key)
     }
 
-    /// Check if this role is the controller for the given route scope.
-    ///
-    /// Uses the shared program route atlas to compare the route controller role
-    /// against the attached role image. This keeps controller authority program-wide
-    /// instead of duplicating it in every role-local scope record.
-    ///
-    /// Returns `true` if `controller_role == self.compiled.role()`, `false` otherwise.
+    /// Whether this actor's compiled view set includes the logical controller.
+    /// This is an immutable navigation fact, not an issued view or authority to
+    /// call a resolver. Kernel entry must also check its active logical role.
     #[inline]
-    pub(crate) fn is_route_controller(&self, scope_id: ScopeId) -> bool {
+    pub(crate) fn contains_route_controller(&self, scope_id: ScopeId) -> bool {
         if !matches!(scope_id.kind(), Some(ScopeKind::Route)) {
             return false;
         }
-        self.machine().route_controller_role(scope_id) == self.machine().role()
+        self.machine()
+            .logical_views
+            .contains(self.machine().route_controller_role(scope_id))
     }
 
     /// Scope ID stored on the current node (no parent traversal).

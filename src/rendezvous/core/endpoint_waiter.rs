@@ -1,6 +1,6 @@
 use core::{cell::UnsafeCell, task::Waker};
 
-/// One wake owner for one published endpoint lease generation.
+/// One wake owner for one issued logical Endpoint view.
 pub(crate) struct EndpointWaiter {
     waker: UnsafeCell<Option<Waker>>,
 }
@@ -40,7 +40,7 @@ impl EndpointWaiter {
 
 impl Drop for EndpointWaiter {
     fn drop(&mut self) {
-        if self.waker.get_mut().is_some() {
+        if !self.is_empty() {
             crate::invariant();
         }
     }

@@ -48,11 +48,11 @@ fn route_arms_separate_only_competing_receive_lane_classes() {
 #[test]
 fn parallel_lanes_reuse_colors_exactly_for_disjoint_endpoint_sets() {
     let mut disjoint = EffList::<2>::new().push(atom(0, 1, 0)).push(atom(2, 3, 0));
-    assert_eq!(merge_parallel_lanes(&mut disjoint, 0, 1, 2, 1, 1), 1);
+    assert_eq!(merge_parallel_lanes(&mut disjoint, None, 0, 1, 2, 1, 1), 1);
     assert_eq!(disjoint.atom_at(1).lane, 0);
 
     let mut shared = EffList::<2>::new().push(atom(0, 1, 0)).push(atom(1, 2, 0));
-    assert_eq!(merge_parallel_lanes(&mut shared, 0, 1, 2, 1, 1), 2);
+    assert_eq!(merge_parallel_lanes(&mut shared, None, 0, 1, 2, 1, 1), 2);
     assert_eq!(shared.atom_at(1).lane, 1);
 }
 
@@ -64,7 +64,7 @@ fn parallel_lane_matching_reassigns_an_earlier_class_for_a_constrained_class() {
         .push(atom(4, 5, 0))
         .push(atom(2, 6, 1));
 
-    assert_eq!(merge_parallel_lanes(&mut source, 0, 2, 4, 2, 2), 2);
+    assert_eq!(merge_parallel_lanes(&mut source, None, 0, 2, 4, 2, 2), 2);
     assert_eq!(source.atom_at(2).lane, 1);
     assert_eq!(source.atom_at(3).lane, 0);
 }
@@ -78,7 +78,10 @@ fn parallel_lane_matching_avoids_a_false_two_hundred_fifty_seventh_lane() {
     source.push_event_mut(atom(4, 5, 0));
     source.push_event_mut(atom(2, 6, 1));
 
-    assert_eq!(merge_parallel_lanes(&mut source, 0, 256, 258, 256, 2), 256);
+    assert_eq!(
+        merge_parallel_lanes(&mut source, None, 0, 256, 258, 256, 2),
+        256
+    );
     assert_eq!(source.atom_at(256).lane, 1);
     assert_eq!(source.atom_at(257).lane, 0);
 }

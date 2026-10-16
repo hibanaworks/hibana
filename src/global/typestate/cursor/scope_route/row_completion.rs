@@ -2,6 +2,39 @@ use super::super::{EventCursor, LocalDependency, ScopeId};
 use crate::global::event_program::LocalEventRowSet;
 
 impl EventCursor {
+    pub(crate) fn is_view_complete(
+        &self,
+        role: u8,
+        selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
+    ) -> bool {
+        use crate::{eff::EventPayload, global::typestate::LocalAction};
+        for idx in self.pending_event_steps(0..self.local_steps_len()) {
+            let action = self.machine().node(idx).action();
+            let (eff, receiving) = match action {
+                LocalAction::Send { eff_index, .. } | LocalAction::Local { eff_index, .. } => {
+                    (eff_index, false)
+                }
+                LocalAction::Recv { eff_index, .. } => (eff_index, true),
+                LocalAction::Terminate => continue,
+            };
+            let atom = self.program_ref().event_atom_at(eff.dense_ordinal());
+            let owns_step = (if receiving { atom.to } else { atom.from }) == role;
+            let supplies_payload = !receiving && atom.payload == EventPayload::Endpoint(role);
+            if (owns_step || supplies_payload)
+                && let Some(row) = self.machine().event_program().event_row_at(idx)
+                && self.event_conflict_row_allows(
+                    row.conflict(),
+                    ScopeId::none(),
+                    None,
+                    selected_arm_for_scope,
+                )
+            {
+                return false;
+            }
+        }
+        true
+    }
+
     /// Completion belongs to every live event in the committed projection.
     /// The current node is only a navigation locator: independently committed
     /// parallel arms may leave it before a completed event or after a pending

@@ -47,12 +47,16 @@ fn reentrant_carrier_entry_is_rejected_before_mutable_actor_borrow() {
         // SAFETY: the affine client still owns this pinned immutable header.
         client.owner.ptr.as_ref()
     };
-    assert!(EndpointHandle::new(handle.generation(), 0).matches_header(header));
+    assert!(
+        EndpointHandle::new(handle.generation(), handle.view_generation()).matches_header(header)
+    );
     // SAFETY: the header belongs to the client's live pinned actor.
     let actor = unsafe {
         client
             .owner
             .ptr
+            .as_ref()
+            .actor()
             .cast::<crate::endpoint::kernel::ResidentActor<'_, TestTransport>>()
             .as_ref()
     };
@@ -90,6 +94,8 @@ fn pending_receive_keeps_its_io_but_releases_the_actor_borrow() {
             // SAFETY: the public receive future retains its unique server
             // owner. Only immutable header metadata is read across Pending.
             server_header
+                .as_ref()
+                .actor()
                 .cast::<crate::endpoint::kernel::ResidentActor<'_, TestTransport>>()
                 .as_ref()
         }

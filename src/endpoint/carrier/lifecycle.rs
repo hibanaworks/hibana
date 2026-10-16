@@ -1,4 +1,4 @@
-use super::{EndpointHandle, NonNull, WaiterTransfer};
+use super::{EndpointHandle, NonNull};
 impl<'cfg, T> crate::runtime::SessionKit<'cfg, T>
 where
     T: crate::transport::Transport + 'cfg,
@@ -8,27 +8,52 @@ where
         else {
             return;
         };
-        let mut waiters = WaiterTransfer::empty();
-        let operation_lease = actor.context.try_operation_lease();
-        let release = /* SAFETY: the sole public owner is being destroyed.
-        A callback may drop a different actor while the rendezvous is leased,
-        but cannot borrow this actor through the consumed affine Endpoint. */ unsafe {
-            let mut kernel = crate::endpoint::kernel::OperationKernel {
-                public_header: &actor.public_header,
-                context: &actor.context,
-                progress: &mut *actor.progress.get(),
-                io: &mut *actor.io.get(),
-            };
-            kernel.clear_endpoint_waiter(&mut waiters);
-            kernel.take_owned_slot_release()
+        // Keep the original allocation provenance for final destruction.
+        // A pointer reconstructed from `&ResidentActor` cannot authorize Drop's
+        // unique borrow over the immutable prefix of that allocation.
+        let actor_ptr = unsafe {
+            ptr.cast::<crate::endpoint::carrier::KernelEndpointHeader>()
+                .as_ref()
+                .actor()
+                .cast::<crate::endpoint::kernel::ResidentActor<'cfg, T>>()
         };
-        /* SAFETY: endpoint carrier validates the resident header tag and
-        generation before projecting the stored endpoint pointer. */
+        let operation_lease = actor.context.try_operation_lease();
+        // SAFETY: immutable header validation above established this role.
+        let role = unsafe {
+            ptr.cast::<crate::endpoint::carrier::KernelEndpointHeader>()
+                .as_ref()
+        }
+        .role();
+        let view = crate::invariant_some(actor.views.get(role));
+        actor.retire_view(view);
+        // Reentry from a sibling view's poll only enqueues destruction. The
+        // active entry drains it after releasing the common progress borrow.
+        if !actor.drain_retired_views() || actor.context.live_views.get() != 0 {
+            return;
+        }
+        actor.finish_all_view_io();
+        let context = &actor.context;
+        let generation = context.public_generation.get();
+        let release = if context.public_slot_ownership.get()
+            == crate::endpoint::kernel::PublicSlotOwnership::Owned
+        {
+            context
+                .public_slot_ownership
+                .set(crate::endpoint::kernel::PublicSlotOwnership::Borrowed);
+            Some((
+                context.session.cluster(),
+                context.public_rv,
+                context.public_slot,
+                generation,
+            ))
+        } else {
+            None
+        };
+        context.public_generation.set(0);
+        // SAFETY: no issued view or active progress borrow remains, and all
+        // external I/O destructors and waiters were retired above.
         unsafe {
-            core::ptr::drop_in_place(
-                ptr.cast::<crate::endpoint::kernel::ResidentActor<'cfg, T>>()
-                    .as_ptr(),
-            );
+            core::ptr::drop_in_place(actor_ptr.as_ptr());
         }
         drop(operation_lease);
         if let Some((cluster, rv_id, slot, generation)) = release {

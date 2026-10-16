@@ -82,11 +82,8 @@ where
     pub(in crate::session::cluster::core) fn public_endpoint_storage_requirement<const ROLE: u8>(
         role_image: RoleImageSlice<ROLE>,
     ) -> PublicEndpointStorageLayout {
-        let arena_layout = role_image.endpoint_arena_layout();
-        let storage_layout = crate::endpoint::kernel::actor_storage_layout::<T>(
-            &arena_layout,
-            role_image.endpoint_lane_slot_count(),
-        );
+        let storage_layout =
+            crate::endpoint::kernel::actor_storage_layout::<T>(role_image.descriptor());
         PublicEndpointStorageLayout {
             total_bytes: storage_layout.total_bytes(),
             total_align: storage_layout.total_align(),
@@ -163,12 +160,25 @@ where
         ))
     }
 
-    pub(crate) fn public_endpoint_header_ptr(
+    pub(crate) fn public_endpoint_header_ptr<const ROLE: u8>(
         &self,
         rv_id: RendezvousId,
         slot: EndpointLeaseId,
         generation: u32,
-    ) -> core::ptr::NonNull<crate::endpoint::carrier::KernelEndpointHeader<'cfg>> {
+    ) -> core::ptr::NonNull<crate::endpoint::carrier::KernelEndpointHeader> {
+        let actor = self.public_actor_ptr(rv_id, slot, generation);
+        // SAFETY: the checked published allocation remains pinned while any
+        // issued view or attach operation retains it.
+        let actor = unsafe { actor.as_ref() };
+        core::ptr::NonNull::from(&crate::invariant_some(actor.views.get(ROLE)).public_header)
+    }
+
+    pub(crate) fn public_actor_ptr(
+        &self,
+        rv_id: RendezvousId,
+        slot: EndpointLeaseId,
+        generation: u32,
+    ) -> core::ptr::NonNull<crate::endpoint::kernel::ResidentActor<'cfg, T>> {
         let rv = crate::invariant_some(
             self.locals()
                 .published_endpoint_owner(rv_id, slot, generation),
@@ -183,7 +193,7 @@ where
         which was checked inside the pinned rendezvous slab. */ unsafe {
             slab_ptr
                 .add(offset)
-                .cast::<crate::endpoint::carrier::KernelEndpointHeader<'cfg>>()
+                .cast::<crate::endpoint::kernel::ResidentActor<'cfg, T>>()
         };
         crate::invariant_some(core::ptr::NonNull::new(ptr))
     }
@@ -264,33 +274,6 @@ where
                 .published_endpoint_owner(rv_id, slot, generation),
         )
         .release_endpoint_lease(slot, generation);
-    }
-
-    pub(crate) fn replace_public_endpoint_waiter(
-        &self,
-        rv_id: RendezvousId,
-        slot: EndpointLeaseId,
-        generation: u32,
-        replacement: core::task::Waker,
-    ) -> Option<core::task::Waker> {
-        crate::invariant_some(
-            self.locals()
-                .published_endpoint_owner(rv_id, slot, generation),
-        )
-        .replace_endpoint_waiter(slot, generation, replacement)
-    }
-
-    pub(crate) fn take_public_endpoint_waiter(
-        &self,
-        rv_id: RendezvousId,
-        slot: EndpointLeaseId,
-        generation: u32,
-    ) -> Option<core::task::Waker> {
-        crate::invariant_some(
-            self.locals()
-                .published_endpoint_owner(rv_id, slot, generation),
-        )
-        .take_endpoint_waiter(slot, generation)
     }
 
     pub(crate) fn publish_public_endpoint_slot(

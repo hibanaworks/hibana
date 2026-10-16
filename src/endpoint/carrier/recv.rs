@@ -1,4 +1,6 @@
-use super::{EndpointHandle, NonNull, OutSlot, Poll, RawPayload, RecvPollRequest, WaiterTransfer};
+use super::{
+    EndpointHandle, NonNull, OutSlot, Poll, RawRecvOutput, RecvPollRequest, WaiterTransfer,
+};
 impl<'cfg, T> crate::runtime::SessionKit<'cfg, T>
 where
     T: crate::transport::Transport + 'cfg,
@@ -35,7 +37,7 @@ where
             ptr,
             handle,
             logical_label,
-            payload_schema,
+            payload_kind,
             validate,
             cx,
             out,
@@ -53,13 +55,15 @@ where
                 ))),
                 |kernel| match kernel.poll_public_recv(
                     logical_label,
-                    payload_schema,
+                    payload_kind,
                     validate,
                     cx,
                     &mut waiters,
                 ) {
                     Poll::Pending => Poll::Pending,
-                    Poll::Ready(Ok(payload)) => Poll::Ready(Ok(RawPayload::from_payload(payload))),
+                    Poll::Ready(Ok(payload)) => {
+                        Poll::Ready(Ok(RawRecvOutput::from_kernel(payload)))
+                    }
                     Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
                 },
             )

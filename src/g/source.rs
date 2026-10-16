@@ -34,7 +34,7 @@ pub(crate) struct ProgramSourceData<const CAPACITY: usize> {
     actors: Option<&'static SourceActorImage<CAPACITY>>,
 }
 
-type SourceActorImage<const E: usize> =
+pub(crate) type SourceActorImage<const E: usize> =
     ownership::ActorImage<E, { crate::global::compiled::images::ACTOR_DECISION_CAPACITY }>;
 
 struct SourceActors<Steps, const CAPACITY: usize>(core::marker::PhantomData<Steps>);
@@ -78,13 +78,20 @@ impl<Steps: ProgramShape, const CAPACITY: usize> SourceActors<Steps, CAPACITY> {
 
 struct SourceLowering<const CAPACITY: usize> {
     eff: EffList<CAPACITY>,
+    actors: Option<&'static SourceActorImage<CAPACITY>>,
     next_scope_ordinal: u16,
 }
 
 impl<const CAPACITY: usize> SourceLowering<CAPACITY> {
-    const fn new(event_count: usize, scope_count: usize, resolver_count: usize) -> Self {
+    const fn new(
+        event_count: usize,
+        scope_count: usize,
+        resolver_count: usize,
+        actors: Option<&'static SourceActorImage<CAPACITY>>,
+    ) -> Self {
         Self {
             eff: EffList::new_partitioned(event_count, scope_count, resolver_count),
+            actors,
             next_scope_ordinal: 0,
         }
     }
@@ -163,6 +170,7 @@ impl<const CAPACITY: usize> SourceLowering<CAPACITY> {
                     .push_parallel_scope_mut(scope, left_start, right_start, right_end);
                 merge_parallel_lanes(
                     &mut self.eff,
+                    self.actors,
                     left_start,
                     right_start,
                     right_end,
@@ -199,6 +207,7 @@ impl<const CAPACITY: usize> ProgramSourceData<CAPACITY> {
             Steps::EVENT_COUNT,
             Steps::SCOPE_MARKER_COUNT,
             Steps::RESOLVER_MARKER_COUNT,
+            actors,
         );
         let _ = lowering.emit(&Steps::SOURCE_NODE, ReentryMark::SinglePass);
         if lowering.eff.len() != Steps::EVENT_COUNT

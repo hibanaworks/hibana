@@ -310,7 +310,7 @@ where
                 .ok_or(RecvError::PhaseInvariant)?;
             return Ok(Self::cached_recv_meta_from_recv(target_idx, meta));
         }
-        let controller_arm_entry = if self.progress.cursor.is_route_controller(scope_id) {
+        let controller_arm_entry = if self.is_route_controller(scope_id) {
             self.progress
                 .cursor
                 .shared_controller_arm_entry_by_arm(scope_id, selected_arm)

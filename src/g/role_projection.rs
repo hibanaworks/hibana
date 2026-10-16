@@ -95,13 +95,18 @@ impl<const ROLE: u8, Steps, const CAPACITY: usize> RoleProjection<ROLE, Steps, C
 where
     Steps: ProgramShape,
 {
+    const ACTOR: u8 =
+        match ProgramProjection::<Steps, CAPACITY>::PROGRAM_REF.initial_actor_for(ROLE) {
+            Some(actor) => actor,
+            None => ROLE,
+        };
     // Keeping the guard inside the constant prevents ordinary large programs
     // from eagerly constructing an unused actor map during const evaluation.
     const ACTOR_ROWS: Option<crate::global::role_program::ActorLocalRows<CAPACITY>> = {
         if Steps::SOURCE_NODE.has_delegation() {
             Some(crate::global::role_program::ActorLocalRows::new(
                 &ProgramProjection::<Steps, CAPACITY>::PROGRAM_REF,
-                ROLE,
+                Self::ACTOR,
             ))
         } else {
             None
@@ -110,7 +115,7 @@ where
     const ROWS: crate::global::role_program::LocalRows<'static, CAPACITY> = match &Self::ACTOR_ROWS
     {
         Some(rows) => crate::global::role_program::LocalRows::Actor(rows),
-        None => crate::global::role_program::LocalRows::Role(ROLE),
+        None => crate::global::role_program::LocalRows::Role(Self::ACTOR),
     };
     const COUNTS: crate::global::compiled::lowering::RoleCompiledCounts =
         ProgramProjection::<Steps, CAPACITY>::IMAGE.role_lowering_counts(
@@ -138,7 +143,7 @@ where
         };
         build.image_ref(
             &ProgramProjection::<Steps, CAPACITY>::PROGRAM_REF,
-            ROLE,
+            Self::ACTOR,
             Self::FACTS,
         )
     }

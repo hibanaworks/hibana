@@ -1,7 +1,7 @@
 use super::commit_delta::PreparedCommitDelta;
 use super::{
-    EndpointArenaLayout, Lane, LaneGuard, Port, ResidentActor, SendMeta, SendPreview, SendResult,
-    SendRouteAudit, SendRouteAuthority, StateIndex, Transport, lane_port,
+    Lane, LaneGuard, Port, ResidentActor, SendMeta, SendPreview, SendResult, SendRouteAudit,
+    SendRouteAuthority, StateIndex, Transport, lane_port,
 };
 
 pub(in crate::endpoint::kernel::core) struct SendProgressCommitPlan {
@@ -13,6 +13,8 @@ mod commit;
 pub(crate) use commit::{CommitDelta, CommitEventRow, CommitRow};
 
 pub(crate) struct SendCommitProof<'rv> {
+    pub(in crate::endpoint::kernel::core) transfer:
+        Option<crate::endpoint::transfer::EndpointTransfer>,
     pub(in crate::endpoint::kernel::core) progress: SendProgressCommitPlan,
     pub(in crate::endpoint::kernel::core) _borrow: core::marker::PhantomData<&'rv ()>,
 }
@@ -133,6 +135,7 @@ pub(crate) enum SendState<'r> {
 pub(crate) struct ActorStorageLayout {
     header_bytes: usize,
     header_align: usize,
+    views_offset: usize,
     port_slots_offset: usize,
     port_slots_bytes: usize,
     port_slots_align: usize,
@@ -147,6 +150,9 @@ pub(crate) struct ActorStorageLayout {
 }
 
 impl ActorStorageLayout {
+    pub(crate) const fn views_offset(self) -> usize {
+        self.views_offset
+    }
     #[inline(always)]
     pub(crate) const fn port_slots_offset(self) -> usize {
         self.port_slots_offset
@@ -179,21 +185,31 @@ const fn storage_max(lhs: usize, rhs: usize) -> usize {
 }
 
 #[inline]
-pub(crate) const fn actor_storage_layout<'r, T>(
-    arena_layout: &EndpointArenaLayout,
-    lane_slot_count: usize,
+pub(crate) fn actor_storage_layout<'r, T>(
+    descriptor: crate::global::compiled::images::RoleDescriptorRef,
 ) -> ActorStorageLayout
 where
     T: Transport + 'r,
 {
+    let arena_layout = descriptor.endpoint_arena_layout();
+    let lane_slot_count = descriptor.all_view_lane_slots();
     let header_bytes = core::mem::size_of::<ResidentActor<'r, T>>();
     let header_align = core::mem::align_of::<ResidentActor<'r, T>>();
+    let view_align = core::mem::align_of::<super::ResidentView<'r, T>>();
+    let views_offset = crate::runtime_core::layout::align_up(header_bytes, view_align);
+    let views_bytes = crate::runtime_core::layout::mul(
+        core::mem::size_of::<super::ResidentView<'r, T>>(),
+        descriptor.logical_views().len(),
+    );
     let port_slots_align = core::mem::align_of::<Option<Port<'r, T>>>();
     let port_slots_bytes = crate::runtime_core::layout::mul(
         core::mem::size_of::<Option<Port<'r, T>>>(),
         lane_slot_count,
     );
-    let port_slots_offset = crate::runtime_core::layout::align_up(header_bytes, port_slots_align);
+    let port_slots_offset = crate::runtime_core::layout::align_up(
+        crate::runtime_core::layout::add(views_offset, views_bytes),
+        port_slots_align,
+    );
     let guard_slots_align = core::mem::align_of::<Option<LaneGuard<'r, T>>>();
     let guard_slots_bytes = crate::runtime_core::layout::mul(
         core::mem::size_of::<Option<LaneGuard<'r, T>>>(),
@@ -209,7 +225,7 @@ where
     );
     let total_align = storage_max(
         storage_max(
-            storage_max(header_align, port_slots_align),
+            storage_max(storage_max(header_align, view_align), port_slots_align),
             guard_slots_align,
         ),
         arena_layout.header_align(),
@@ -217,6 +233,7 @@ where
     ActorStorageLayout {
         header_bytes,
         header_align,
+        views_offset,
         port_slots_offset,
         port_slots_bytes,
         port_slots_align,

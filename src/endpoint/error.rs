@@ -57,9 +57,17 @@ pub(super) enum EndpointErrorKind {
     Codec(CodecError),
     Transport(TransportError),
     PhaseInvariant,
-    LabelMismatch { expected: u8, actual: u8 },
-    SchemaMismatch { expected: u32, actual: u32 },
-    ResolverReject { resolver_id: u16 },
+    LabelMismatch {
+        expected: u8,
+        actual: u8,
+    },
+    PayloadMismatch {
+        expected: crate::eff::EventPayload,
+        actual: crate::eff::EventPayload,
+    },
+    ResolverReject {
+        resolver_id: u16,
+    },
     SessionFault(crate::rendezvous::SessionFaultKind),
 }
 
@@ -74,8 +82,8 @@ impl fmt::Debug for EndpointErrorKind {
                 .field("expected", expected)
                 .field("actual", actual)
                 .finish(),
-            Self::SchemaMismatch { expected, actual } => formatter
-                .debug_struct("SchemaMismatch")
+            Self::PayloadMismatch { expected, actual } => formatter
+                .debug_struct("PayloadMismatch")
                 .field("expected", expected)
                 .field("actual", actual)
                 .finish(),
@@ -98,8 +106,8 @@ impl From<SendError> for EndpointErrorKind {
             SendError::LabelMismatch { expected, actual } => {
                 Self::LabelMismatch { expected, actual }
             }
-            SendError::SchemaMismatch { expected, actual } => {
-                Self::SchemaMismatch { expected, actual }
+            SendError::PayloadMismatch { expected, actual } => {
+                Self::PayloadMismatch { expected, actual }
             }
             SendError::ResolverReject { resolver_id } => Self::ResolverReject { resolver_id },
             SendError::SessionFault(kind) => Self::SessionFault(kind),
@@ -117,8 +125,8 @@ impl From<RecvError> for EndpointErrorKind {
             RecvError::LabelMismatch { expected, actual } => {
                 Self::LabelMismatch { expected, actual }
             }
-            RecvError::SchemaMismatch { expected, actual } => {
-                Self::SchemaMismatch { expected, actual }
+            RecvError::PayloadMismatch { expected, actual } => {
+                Self::PayloadMismatch { expected, actual }
             }
             RecvError::ResolverReject { resolver_id } => Self::ResolverReject { resolver_id },
             RecvError::SessionFault(kind) => Self::SessionFault(kind),
@@ -138,7 +146,10 @@ pub(crate) enum SendError {
     /// Attempted to send a message whose label does not match the typestate step.
     LabelMismatch { expected: u8, actual: u8 },
     /// Attempted to send a payload schema that differs from the choreography.
-    SchemaMismatch { expected: u32, actual: u32 },
+    PayloadMismatch {
+        expected: crate::eff::EventPayload,
+        actual: crate::eff::EventPayload,
+    },
     /// Resolver rejected the send operation.
     ResolverReject { resolver_id: u16 },
     /// Current session generation has terminal fault evidence.
@@ -157,7 +168,10 @@ pub(crate) enum RecvError {
     /// Choreography logical label did not match the projected typestate step.
     LabelMismatch { expected: u8, actual: u8 },
     /// Requested payload schema differed from the projected choreography.
-    SchemaMismatch { expected: u32, actual: u32 },
+    PayloadMismatch {
+        expected: crate::eff::EventPayload,
+        actual: crate::eff::EventPayload,
+    },
     /// Resolver rejected the receive operation.
     ResolverReject { resolver_id: u16 },
     /// Current session generation has terminal fault evidence.

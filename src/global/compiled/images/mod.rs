@@ -4,7 +4,7 @@ pub(super) mod program;
 pub(crate) use self::{
     image::{
         ACTOR_DECISION_CAPACITY, COMPACT_DESCRIPTOR_BYTE_CAPACITY, CompiledProgramRef,
-        ProgramImageBytes, ProgramImageColumns, ProgramImagePlan, RoleDescriptorRef,
+        LogicalViews, ProgramImageBytes, ProgramImageColumns, ProgramImagePlan, RoleDescriptorRef,
         RoleImageSlice,
     },
     program::EventSemanticKind,

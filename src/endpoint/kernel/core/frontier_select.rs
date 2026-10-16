@@ -124,7 +124,7 @@ where
         if has_offer_lanes {
             flags |= CurrentScopeSelectionMeta::FLAG_HAS_OFFER_LANES;
         }
-        if info.is_controller() {
+        if self.is_route_controller(scope_id) {
             flags |= CurrentScopeSelectionMeta::FLAG_CONTROLLER;
         }
         CurrentScopeSelectionMeta { flags }
@@ -198,6 +198,9 @@ where
     pub(in crate::endpoint::kernel) fn resolver_offer_entry_enabled(&self, scope: ScopeId) -> bool {
         use crate::global::typestate::{EventArmView, EventCommitMeta};
 
+        if !self.is_route_controller(scope) {
+            return false;
+        }
         for arm in 0..=1 {
             if self
                 .selected_live_arm_for_scope(scope)
@@ -210,6 +213,9 @@ where
                 continue;
             };
             let idx = entry.as_usize();
+            if self.progress.cursor.logical_role_at(idx) != Some(self.public_header.role()) {
+                continue;
+            }
             let event = if let Some(meta) = self.progress.cursor.try_local_meta_at(idx) {
                 EventCommitMeta::new(
                     meta.eff_index,

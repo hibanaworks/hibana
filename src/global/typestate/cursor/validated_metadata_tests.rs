@@ -107,12 +107,11 @@ impl Legacy<'_> {
                 origin,
                 lane,
             } => {
-                let payload_schema = self
+                let payload_kind = self
                     .machine()
                     .program_ref()
                     .event_atom_at(eff_index.dense_ordinal())
-                    .payload
-                    .wire_schema();
+                    .payload;
                 let scope = node.scope();
                 let route_arm = node.route_arm();
                 let (route_scope, selected_route_arm) = self.route_authority_at(idx, route_arm);
@@ -120,7 +119,7 @@ impl Legacy<'_> {
                     eff_index,
                     peer,
                     label,
-                    payload_schema,
+                    payload_kind,
                     frame_label,
                     semantic: node.event_semantic(),
                     origin,
@@ -147,12 +146,11 @@ impl Legacy<'_> {
                 origin,
                 lane,
             } => {
-                let payload_schema = self
+                let payload_kind = self
                     .machine()
                     .program_ref()
                     .event_atom_at(eff_index.dense_ordinal())
-                    .payload
-                    .wire_schema();
+                    .payload;
                 let scope = node.scope();
                 let route_arm = node.route_arm();
                 let (route_scope, _) = self.route_authority_at(idx, route_arm);
@@ -160,7 +158,7 @@ impl Legacy<'_> {
                     eff_index,
                     peer,
                     label,
-                    payload_schema,
+                    payload_kind,
                     frame_label,
                     semantic: node.event_semantic(),
                     origin,
@@ -186,19 +184,18 @@ impl Legacy<'_> {
                 origin,
                 lane,
             } => {
-                let payload_schema = self
+                let payload_kind = self
                     .machine()
                     .program_ref()
                     .event_atom_at(eff_index.dense_ordinal())
-                    .payload
-                    .wire_schema();
+                    .payload;
                 let scope = node.scope();
                 let route_arm = node.route_arm();
                 let (route_scope, _) = self.route_authority_at(idx, route_arm);
                 Some(LocalMeta {
                     eff_index,
                     label,
-                    payload_schema,
+                    payload_kind,
                     frame_label,
                     semantic: node.event_semantic(),
                     origin,

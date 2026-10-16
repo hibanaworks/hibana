@@ -68,6 +68,7 @@ pub(in super::super) struct LaneEndpointIndex<const ROLE_BYTES: usize> {
 impl<const ROLE_BYTES: usize> LaneEndpointIndex<ROLE_BYTES> {
     pub(in super::super) const fn from_range<const E: usize>(
         eff_list: &EffList<E>,
+        actors: Option<&crate::g::SourceActorImage<E>>,
         start: usize,
         end: usize,
     ) -> Self {
@@ -95,8 +96,20 @@ impl<const ROLE_BYTES: usize> LaneEndpointIndex<ROLE_BYTES> {
             } else {
                 index.slot_by_lane[lane]
             };
-            index.endpoints[slot as usize].insert(atom.from);
-            index.endpoints[slot as usize].insert(atom.to);
+            if let Some(actors) = actors {
+                let members = actors.possible_actors(idx);
+                let mut byte = 0;
+                while byte < members.len() {
+                    if byte >= ROLE_BYTES {
+                        panic!("actor lane domain is incomplete");
+                    }
+                    index.endpoints[slot as usize].0[byte] |= members[byte];
+                    byte += 1;
+                }
+            } else {
+                index.endpoints[slot as usize].insert(atom.from);
+                index.endpoints[slot as usize].insert(atom.to);
+            }
             idx += 1;
         }
         index

@@ -1,5 +1,5 @@
 use core::{
-    cell::Cell,
+    cell::{Cell, RefCell},
     task::{Context, Poll},
 };
 use std::rc::Rc;
@@ -41,8 +41,9 @@ impl DropEndpointState {
         }
     }
 
-    fn arm<T>(&self, target: &mut Option<T>) {
-        self.target.set(core::ptr::from_mut(target).cast::<()>());
+    fn arm<T>(&self, target: &RefCell<Option<T>>) {
+        self.target
+            .set(core::ptr::from_ref(target).cast_mut().cast::<()>());
         self.drop_target.set(Some(drop_option::<T>));
     }
 
@@ -63,11 +64,12 @@ impl DropEndpointState {
 
 unsafe fn drop_option<T>(target: *mut ()) {
     let target = unsafe {
-        // SAFETY: `DropEndpointState::arm` stored the unique pointer to this
-        // live `Option<T>` together with this monomorphized callback.
-        &mut *target.cast::<Option<T>>()
+        // SAFETY: `arm` stored a pointer to this live, stationary RefCell
+        // together with the matching monomorphized callback. The closure can
+        // inspect it after reentry without aliasing the mutation in `take`.
+        &*target.cast::<RefCell<Option<T>>>()
     };
-    drop(target.take());
+    drop(target.borrow_mut().take());
 }
 
 struct ReentrantRequeueTransport {
@@ -161,51 +163,55 @@ fn transport_requeue_callback_reentry_revalidates_generation() {
         )
         .expect("register rendezvous");
     let sid = SessionId::new(8);
-    let mut peer = Some(rendezvous.enter(sid, &role0).expect("peer"));
+    let peer = RefCell::new(Some(rendezvous.enter(sid, &role0).expect("peer")));
     let target = rendezvous.enter(sid, &role1).expect("target");
-    state.arm(&mut peer);
+    state.arm(&peer);
 
-    let actor_ptr = target
-        .owner
-        .ptr
-        .cast::<ResidentActor<'_, ReentrantRequeueTransport>>();
     let actor = unsafe {
-        // SAFETY: the public endpoint header is the first `repr(C)` field of
-        // this exact role/transport kernel, and `target` owns it exclusively.
-        actor_ptr.as_ref()
+        // SAFETY: the issued view retains this exact pinned actor root.
+        target
+            .owner
+            .ptr
+            .as_ref()
+            .actor()
+            .cast::<ResidentActor<'_, ReentrantRequeueTransport>>()
+            .as_ref()
     };
     let mut operation_lease = actor.context.try_operation_lease().expect("kernel lease");
-    {
-        let mut kernel = actor.borrow_kernel(&mut operation_lease);
-        let lane_idx = kernel.io.primary_lane;
-        let lane_wire = kernel.port_for_lane(lane_idx).lane().as_wire();
-        let mut pending_recv = lane_port::PendingRecv::new();
-        let waker = futures::task::noop_waker_ref();
-        let mut context = Context::from_waker(waker);
-        let frame = match kernel.poll_received_framed_transport_frame_for_lane(
-            &mut pending_recv,
-            lane_idx,
-            lane_wire,
-            &mut context,
-        ) {
-            Poll::Ready(Ok(frame)) => frame,
-            Poll::Ready(Err(error)) => panic!("receive frame failed: {error:?}"),
-            Poll::Pending => panic!("test transport must return one frame"),
-        };
+    actor.with_kernel(
+        &mut operation_lease,
+        actor.views.get(1).unwrap(),
+        |kernel| {
+            let lane_idx = kernel.io.primary_lane;
+            let lane_wire = kernel.port_for_lane(lane_idx).lane().as_wire();
+            let mut pending_recv = lane_port::PendingRecv::new();
+            let waker = futures::task::noop_waker_ref();
+            let mut context = Context::from_waker(waker);
+            let frame = match kernel.poll_received_framed_transport_frame_for_lane(
+                &mut pending_recv,
+                lane_idx,
+                lane_wire,
+                &mut context,
+            ) {
+                Poll::Ready(Ok(frame)) => frame,
+                Poll::Ready(Err(error)) => panic!("receive frame failed: {error:?}"),
+                Poll::Pending => panic!("test transport must return one frame"),
+            };
 
-        let error = kernel
-            .requeue_offer_transport_payload(frame)
-            .expect_err("requeue callback must expose the peer-drop session fault");
+            let error = kernel
+                .requeue_offer_transport_payload(frame)
+                .expect_err("requeue callback must expose the peer-drop session fault");
 
-        assert!(state.fired.get());
-        assert!(peer.is_none());
-        assert!(matches!(
-            error,
-            crate::endpoint::RecvError::SessionFault(
-                crate::rendezvous::SessionFaultKind::EndpointDropped
-            )
-        ));
-    }
+            assert!(state.fired.get());
+            assert!(peer.borrow().is_none());
+            assert!(matches!(
+                error,
+                crate::endpoint::RecvError::SessionFault(
+                    crate::rendezvous::SessionFaultKind::EndpointDropped
+                )
+            ));
+        },
+    );
     drop(operation_lease);
     drop(target);
 }

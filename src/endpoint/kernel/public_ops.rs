@@ -373,26 +373,13 @@ where
         waiters: &mut WaiterTransfer,
     ) {
         let replacement = waiters.take_replacement();
-        let displaced = self
-            .context
-            .session
-            .cluster()
-            .replace_public_endpoint_waiter(
-                self.context.public_rv,
-                self.context.public_slot,
-                self.context.public_generation.get(),
-                replacement,
-            );
+        let displaced = self.waiter.replace(replacement);
         waiters.defer(displaced);
     }
 
     #[inline]
     pub(crate) fn clear_endpoint_waiter(&self, waiters: &mut WaiterTransfer) {
-        let waiter = self.context.session.cluster().take_public_endpoint_waiter(
-            self.context.public_rv,
-            self.context.public_slot,
-            self.context.public_generation.get(),
-        );
+        let waiter = self.waiter.take();
         waiters.defer(waiter);
     }
 
@@ -407,7 +394,7 @@ where
             RecvError::Codec(_) => SessionFaultKind::DecodeFailed,
             RecvError::PhaseInvariant => SessionFaultKind::ProgressInvariantViolated,
             RecvError::LabelMismatch { .. }
-            | RecvError::SchemaMismatch { .. }
+            | RecvError::PayloadMismatch { .. }
             | RecvError::ResolverReject { .. } => SessionFaultKind::ProtocolViolation,
         };
         self.fail_session(cause)
@@ -423,7 +410,7 @@ where
             SendError::SessionFault(kind) => *kind,
             SendError::Codec(_)
             | SendError::LabelMismatch { .. }
-            | SendError::SchemaMismatch { .. }
+            | SendError::PayloadMismatch { .. }
             | SendError::ResolverReject { .. } => SessionFaultKind::ProtocolViolation,
             SendError::PhaseInvariant => SessionFaultKind::ProgressInvariantViolated,
         };

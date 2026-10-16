@@ -44,26 +44,33 @@ impl InboundFrameKey {
 pub(crate) struct DeterministicInboundKey {
     pub(crate) lane: u8,
     pub(crate) label: u8,
-    pub(crate) schema: u32,
+    pub(crate) payload_kind: crate::eff::EventPayload,
 }
 
 impl DeterministicInboundKey {
     #[inline(always)]
-    pub(crate) const fn new(lane: u8, label: u8, schema: u32) -> Self {
+    pub(crate) const fn new(lane: u8, label: u8, payload_kind: crate::eff::EventPayload) -> Self {
         Self {
             lane,
             label,
-            schema,
+            payload_kind,
         }
     }
 
     #[inline(always)]
     pub(crate) const fn matches_recv(self, meta: RecvMeta) -> bool {
-        self.matches_parts(meta.lane, meta.label, meta.payload_schema)
+        self.matches_parts(meta.lane, meta.label, meta.payload_kind)
     }
 
     #[inline(always)]
-    pub(super) const fn matches_parts(self, lane: u8, label: u8, schema: u32) -> bool {
-        self.lane == lane && self.label == label && self.schema == schema
+    pub(super) const fn matches_parts(
+        self,
+        lane: u8,
+        label: u8,
+        payload_kind: crate::eff::EventPayload,
+    ) -> bool {
+        self.lane == lane
+            && self.label == label
+            && self.payload_kind.selector_bits() == payload_kind.selector_bits()
     }
 }

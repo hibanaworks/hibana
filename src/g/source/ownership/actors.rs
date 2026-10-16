@@ -109,6 +109,60 @@ impl<const E: usize, const D: usize> ActorImage<E, D> {
         Some([pair.sender.0, pair.receiver.0])
     }
 
+    /// Construction-time actor membership for lane coloring. Follow the same
+    /// canonical decision DAG, retaining every possible leaf. This cannot select
+    /// a current holder or authorize an operation. Backward references let each
+    /// reachable node be processed once, without recursive expansion.
+    pub(crate) const fn possible_actors(&self, event: usize) -> [u8; 32] {
+        if event >= self.event_len {
+            panic!("actor membership event outside source");
+        }
+        let pair = self.events[event];
+        let roots = [pair.sender, pair.receiver];
+        let mut actors = [0u8; 32];
+        let mut pending = [false; D];
+        let mut bound = 0;
+        let mut side = 0;
+        while side < 2 {
+            let reference = roots[side].0 as usize;
+            if reference < ActorRef::NODE_BASE {
+                actors[reference / 8] |= 1 << (reference % 8);
+            } else {
+                let index = reference - ActorRef::NODE_BASE;
+                if index >= self.choice_len {
+                    panic!("actor membership reference outside source");
+                }
+                pending[index] = true;
+                if index + 1 > bound {
+                    bound = index + 1;
+                }
+            }
+            side += 1;
+        }
+        while bound != 0 {
+            bound -= 1;
+            if pending[bound] {
+                let choice = self.choices[bound];
+                let children = [choice.left, choice.right];
+                side = 0;
+                while side < 2 {
+                    let reference = children[side].0 as usize;
+                    if reference < ActorRef::NODE_BASE {
+                        actors[reference / 8] |= 1 << (reference % 8);
+                    } else {
+                        let index = reference - ActorRef::NODE_BASE;
+                        if index >= bound {
+                            panic!("actor membership reference is not backward");
+                        }
+                        pending[index] = true;
+                    }
+                    side += 1;
+                }
+            }
+        }
+        actors
+    }
+
     pub const fn decision(&self, index: usize) -> Option<(Scope, [u16; 2])> {
         if index >= self.choice_len {
             return None;

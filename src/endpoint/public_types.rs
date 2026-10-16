@@ -7,7 +7,8 @@
 /// its detached step. Once a committed fault is observed, the same session
 /// generation cannot produce a new continuation.
 pub struct Endpoint<'r, const ROLE: u8> {
-    pub(super) owner: super::owner::EndpointOwner<'r>,
+    pub(super) owner: super::owner::EndpointOwner,
+    pub(super) _borrow: core::marker::PhantomData<&'r mut ()>,
 }
 
 /// Preview of a selected route branch returned by [`Endpoint::offer`].

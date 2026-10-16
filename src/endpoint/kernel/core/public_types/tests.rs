@@ -24,6 +24,8 @@ fn another_actor_in_the_same_rendezvous_cannot_use_the_mutation_lease() {
         client
             .owner
             .ptr
+            .as_ref()
+            .actor()
             .cast::<ResidentActor<'_, TestTransport>>()
             .as_ref()
     };
@@ -31,12 +33,14 @@ fn another_actor_in_the_same_rendezvous_cannot_use_the_mutation_lease() {
     let other = unsafe {
         peer.owner
             .ptr
+            .as_ref()
+            .actor()
             .cast::<ResidentActor<'_, TestTransport>>()
             .as_ref()
     };
     let mut lease = actor.context.try_operation_lease().expect("operation");
     let rejected = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let _kernel = other.borrow_kernel(&mut lease);
+        other.with_kernel(&mut lease, other.views.get(1).unwrap(), |_| ());
     }));
     assert!(
         rejected.is_err(),
@@ -70,12 +74,13 @@ fn shared_frontier_workspace_outlives_retired_view_ports() {
         client
             .owner
             .ptr
+            .as_ref()
+            .actor()
             .cast::<ResidentActor<'_, TestTransport>>()
             .as_ref()
     };
     let mut operation = actor.context.try_operation_lease().expect("operation");
-    {
-        let mut kernel = actor.borrow_kernel(&mut operation);
+    actor.with_kernel(&mut operation, actor.views.get(0).unwrap(), |kernel| {
         let mut scratch = kernel
             .context
             .session
@@ -87,7 +92,7 @@ fn shared_frontier_workspace_outlives_retired_view_ports() {
         // This must borrow the common owner, even though this view no longer
         // has a transport port through which to reach its workspace.
         core::hint::black_box(kernel.frontier_scratch_workspace(&mut scratch));
-    }
+    });
     drop(operation);
     drop(client);
     drop(peer);

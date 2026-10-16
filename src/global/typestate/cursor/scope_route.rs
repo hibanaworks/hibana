@@ -569,7 +569,7 @@ impl EventCursor {
         let Some(current_arm) = self.node_route_arm_at(self.index()) else {
             return Ok(CurrentRouteArmAuthorization::NotAuthorized);
         };
-        if self.index() == region.start() && self.is_route_controller(scope) {
+        if self.index() == region.start() && self.contains_route_controller(scope) {
             return Ok(CurrentRouteArmAuthorization::NotAuthorized);
         }
         if let Some(selected_arm) = selected_arm_for_scope(scope) {
@@ -587,7 +587,7 @@ impl EventCursor {
             }
             return Ok(CurrentRouteArmAuthorization::NotAuthorized);
         }
-        if !self.is_route_controller(scope) {
+        if !self.contains_route_controller(scope) {
             return Ok(CurrentRouteArmAuthorization::NotAuthorized);
         }
         Err(CursorInvariantError::INVARIANT)
@@ -735,7 +735,7 @@ impl EventCursor {
         scope_id: ScopeId,
         arm: u8,
     ) -> Option<(StateIndex, u8)> {
-        if !self.is_route_controller(scope_id) {
+        if !self.contains_route_controller(scope_id) {
             return None;
         }
         self.controller_arm_entry_by_arm_inner(scope_id, arm)

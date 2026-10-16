@@ -17,14 +17,15 @@ where
     pub(in crate::endpoint::kernel::recv) fn live_recv_lanes<'lanes>(
         &self,
         target_label: u8,
-        target_schema: u32,
+        target_payload: crate::eff::EventPayload,
         words: &'lanes mut [LaneWord; LANE_SET_VIEW_WORDS],
     ) -> RecvResult<LaneSetView<'lanes>> {
         words.fill(0);
-        let mut expected_schema = None;
+        let mut expected_payload = None;
         let mut idx = 0usize;
         while idx < self.progress.cursor.local_steps_len() {
             if let Some(meta) = self.progress.cursor.try_recv_meta_at(idx)
+                && self.progress.cursor.logical_role_at(idx) == Some(self.public_header.role())
                 && meta.label == target_label
                 && !meta.origin.is_session()
             {
@@ -37,7 +38,7 @@ where
                     .event_enabled(idx, EventCommitMeta::from(meta), &mut selected_arm)
                     .is_ok()
                 {
-                    if meta.payload_schema == target_schema {
+                    if meta.payload_kind == target_payload {
                         let lane = meta.lane as usize;
                         if lane >= self.progress.cursor.logical_lane_count() {
                             return Err(RecvError::PhaseInvariant);
@@ -45,7 +46,7 @@ where
                         let (word, bit) = lane_word_index(lane);
                         words[word] |= bit;
                     } else {
-                        expected_schema = Some(meta.payload_schema);
+                        expected_payload = Some(meta.payload_kind);
                     }
                 }
             }
@@ -68,10 +69,10 @@ where
         {
             return Ok(lanes);
         }
-        match expected_schema {
-            Some(expected) => Err(RecvError::SchemaMismatch {
+        match expected_payload {
+            Some(expected) => Err(RecvError::PayloadMismatch {
                 expected,
-                actual: target_schema,
+                actual: target_payload,
             }),
             None => Err(RecvError::PhaseInvariant),
         }

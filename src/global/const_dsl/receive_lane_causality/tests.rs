@@ -276,7 +276,7 @@ fn export_causal_flow_for_lean() {
             };
             if shape == 2 {
                 events.push_parallel_scope_mut(ScopeId::parallel(0), 1, 2, 3);
-                merge_parallel_lanes(&mut events, 1, 2, 3, 1, 1);
+                merge_parallel_lanes(&mut events, None, 1, 2, 3, 1, 1);
             } else if shape == 3 {
                 events.push_route_scope_mut(ScopeId::route(1), 1, 2, 3, ReentryMark::SinglePass);
                 events.push_route_scope_mut(ScopeId::route(0), 1, 3, 4, ReentryMark::SinglePass);

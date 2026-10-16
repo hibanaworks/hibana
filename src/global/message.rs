@@ -5,25 +5,46 @@ mod seal {
 }
 
 /// Sealed through `Message`; ordinary codecs cannot declare an owned endpoint.
-trait PayloadSpec {
+#[doc(hidden)]
+pub trait PayloadSpec: Sized {
     const SOURCE: crate::g::SourcePayload;
-}
-
-impl<P> PayloadSpec for P
-where
-    P: crate::transport::wire::WireEncode + crate::transport::wire::WirePayload,
-{
-    const SOURCE: crate::g::SourcePayload = crate::g::SourcePayload::Wire {
-        schema: P::SCHEMA_ID,
-    };
-}
-
-impl<const ROLE: u8> PayloadSpec for crate::Endpoint<'_, ROLE> {
-    const SOURCE: crate::g::SourcePayload =
-        crate::g::SourcePayload::Endpoint(crate::g::EndpointKey {
-            component: 0,
-            role: ROLE,
-        });
+    type SendArgument<'a, 'r>
+    where
+        Self: 'a,
+        'r: 'a;
+    type Received<'e, 'r>
+    where
+        'r: 'e;
+    fn send<'a, 'e, 'r, M, const ROLE: u8>(
+        endpoint: &'e mut crate::Endpoint<'r, ROLE>,
+        payload: Self::SendArgument<'a, 'r>,
+    ) -> impl core::future::Future<Output = Result<(), crate::EndpointError>> + 'a
+    where
+        M: Message<Payload = Self> + 'a,
+        Self: 'a,
+        'e: 'a,
+        'r: 'e;
+    fn recv<'e, 'r, M, const ROLE: u8>(
+        endpoint: &'e mut crate::Endpoint<'r, ROLE>,
+    ) -> impl core::future::Future<Output = Result<Self::Received<'e, 'r>, crate::EndpointError>> + 'e
+    where
+        M: Message<Payload = Self> + 'e,
+        'r: 'e;
+    fn branch_send<'a, 'e, 'r, M, const ROLE: u8>(
+        branch: crate::RouteBranch<'e, 'r, ROLE>,
+        payload: Self::SendArgument<'a, 'r>,
+    ) -> impl core::future::Future<Output = Result<(), crate::EndpointError>> + 'a
+    where
+        M: Message<Payload = Self> + 'a,
+        Self: 'a,
+        'e: 'a,
+        'r: 'e;
+    fn branch_recv<'e, 'r, M, const ROLE: u8>(
+        branch: crate::RouteBranch<'e, 'r, ROLE>,
+    ) -> impl core::future::Future<Output = Result<Self::Received<'e, 'r>, crate::EndpointError>> + 'e
+    where
+        M: Message<Payload = Self> + 'e,
+        'r: 'e;
 }
 
 /// Public message shape carried by `g::Msg`.
@@ -31,7 +52,7 @@ pub trait Message: seal::Sealed {
     /// Logical label associated with the choreography message.
     const LOGICAL_LABEL: u8;
     /// Payload type named by the choreography.
-    type Payload;
+    type Payload: PayloadSpec;
 }
 
 impl<const LOGICAL_LABEL: u8, P: PayloadSpec> Message for crate::g::Msg<LOGICAL_LABEL, P> {
@@ -49,9 +70,9 @@ pub(crate) const fn source_payload<M: Message>() -> crate::g::SourcePayload {
 }
 
 #[inline(always)]
-pub(crate) const fn payload_schema<M: Message>() -> u32
-where
-    M::Payload: crate::transport::wire::WirePayload,
-{
-    <M::Payload as crate::transport::wire::WirePayload>::SCHEMA_ID
+pub(crate) const fn payload_kind<M: Message>() -> crate::eff::EventPayload {
+    match source_payload::<M>() {
+        crate::g::SourcePayload::Wire { schema } => crate::eff::EventPayload::Wire(schema),
+        crate::g::SourcePayload::Endpoint(key) => crate::eff::EventPayload::Endpoint(key.role),
+    }
 }

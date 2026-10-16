@@ -33,7 +33,7 @@ fn deterministic_inbound_key_matching_is_exact_on_every_available_axis() {
     let key = DeterministicInboundKey::new(kani::any(), kani::any(), kani::any());
     let lane: u8 = kani::any();
     let label: u8 = kani::any();
-    let schema: u32 = kani::any();
+    let schema: crate::eff::EventPayload = kani::any();
 
     assert_eq!(
         key.matches_parts(lane, label, schema),
@@ -45,12 +45,28 @@ fn deterministic_inbound_key_matching_is_exact_on_every_available_axis() {
 fn deterministic_inbound_key_rejects_each_single_axis_mismatch() {
     let lane: u8 = kani::any();
     let label: u8 = kani::any();
-    let schema: u32 = kani::any();
+    let schema: crate::eff::EventPayload = kani::any();
     let key = DeterministicInboundKey::new(lane, label, schema);
 
     assert!(!key.matches_parts(lane.wrapping_add(1), label, schema));
     assert!(!key.matches_parts(lane, label.wrapping_add(1), schema));
-    assert!(!key.matches_parts(lane, label, schema.wrapping_add(1)));
+    let different = match schema {
+        crate::eff::EventPayload::Wire(id) => crate::eff::EventPayload::Wire(id.wrapping_add(1)),
+        crate::eff::EventPayload::Endpoint(role) => {
+            crate::eff::EventPayload::Endpoint(role.wrapping_add(1))
+        }
+    };
+    assert!(!key.matches_parts(lane, label, different));
+}
+
+#[kani::proof]
+fn wire_schema_never_authorizes_an_endpoint_with_the_same_numeric_identifier() {
+    let lane: u8 = kani::any();
+    let label: u8 = kani::any();
+    let role: u8 = kani::any();
+    let key =
+        DeterministicInboundKey::new(lane, label, crate::eff::EventPayload::Wire(role as u32));
+    assert!(!key.matches_parts(lane, label, crate::eff::EventPayload::Endpoint(role)));
 }
 
 #[kani::proof]

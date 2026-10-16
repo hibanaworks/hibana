@@ -11,7 +11,7 @@ use super::frontier::*;
 use super::frontier_state::FrontierState;
 use super::lane_port;
 use super::lane_slots::LaneSlotArray;
-use super::layout::{EndpointArenaLayout, LeasedState};
+use super::layout::LeasedState;
 use super::offer::*;
 mod route_commit_helpers;
 use super::decision_state::{ReentryScopeLiveness, RouteCommitRowSetBuilder, RouteState};
@@ -52,7 +52,7 @@ pub(crate) trait RecvKernelEndpoint<'r> {
     fn poll_recv_kernel_frame_source(
         &mut self,
         logical_label: u8,
-        payload_schema: u32,
+        payload_kind: crate::eff::EventPayload,
         state: &mut super::recv::RecvState,
         cx: &mut core::task::Context<'_>,
     ) -> Poll<RecvResult<super::recv::MatchedRecvFrame<'r>>>;
@@ -60,10 +60,10 @@ pub(crate) trait RecvKernelEndpoint<'r> {
     fn finish_recv_kernel_frame(
         &mut self,
         logical_label: u8,
-        payload_schema: u32,
+        payload_kind: crate::eff::EventPayload,
         frame: super::recv::MatchedRecvFrame<'r>,
         validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
-    ) -> RecvResult<Payload<'r>>;
+    ) -> RecvResult<crate::endpoint::transfer::RecvOutput<'r>>;
 }
 
 pub(crate) trait BranchRecvKernelEndpoint<'r> {
@@ -72,7 +72,7 @@ pub(crate) trait BranchRecvKernelEndpoint<'r> {
     fn prepare_branch_recv_kernel_transport_wait(
         &mut self,
         logical_label: u8,
-        payload_schema: u32,
+        payload_kind: crate::eff::EventPayload,
     ) -> RecvResult<Option<RecvMeta>>;
 
     fn poll_branch_recv_kernel_transport_payload(
@@ -90,10 +90,10 @@ pub(crate) trait BranchRecvKernelEndpoint<'r> {
     fn finish_branch_recv_kernel(
         &mut self,
         logical_label: u8,
-        payload_schema: u32,
+        payload_kind: crate::eff::EventPayload,
         prepared_meta: Option<RecvMeta>,
         validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
-    ) -> RecvResult<Payload<'r>>;
+    ) -> RecvResult<crate::endpoint::transfer::RecvOutput<'r>>;
 }
 
 pub(crate) trait SendKernelEndpoint<'r> {
@@ -103,7 +103,7 @@ pub(crate) trait SendKernelEndpoint<'r> {
         meta: SendMeta,
         preview_cursor_index: Option<StateIndex>,
         route_authority: SendRouteAuthority,
-        payload: Option<lane_port::RawSendPayload>,
+        payload: Option<lane_port::SendInput>,
     ) -> SendInitOutcome<'r>;
 
     fn poll_send_pending_kernel(
@@ -122,21 +122,21 @@ pub(crate) trait SendKernelEndpoint<'r> {
 pub(crate) fn kernel_recv<'r>(
     endpoint: &mut dyn RecvKernelEndpoint<'r>,
     logical_label: u8,
-    payload_schema: u32,
+    payload_kind: crate::eff::EventPayload,
     validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
     state: &mut super::recv::RecvState,
     cx: &mut core::task::Context<'_>,
-) -> Poll<RecvResult<Payload<'r>>> {
-    match endpoint.poll_recv_kernel_frame_source(logical_label, payload_schema, state, cx) {
+) -> Poll<RecvResult<crate::endpoint::transfer::RecvOutput<'r>>> {
+    match endpoint.poll_recv_kernel_frame_source(logical_label, payload_kind, state, cx) {
         Poll::Pending => Poll::Pending,
         Poll::Ready(Ok(frame)) => {
             Poll::Ready(
                 endpoint
-                    .finish_recv_kernel_frame(logical_label, payload_schema, frame, validate)
+                    .finish_recv_kernel_frame(logical_label, payload_kind, frame, validate)
                     .map(|payload| unsafe {
                         // SAFETY: recv payloads returned by the kernel are backed by
                         // endpoint-resident transport, ingress, or a canonical zero-length slice.
-                        lane_port::endpoint_resident_payload(payload)
+                        payload.into_resident()
                     }),
             )
         }
@@ -148,21 +148,20 @@ pub(crate) fn kernel_recv<'r>(
 pub(crate) fn kernel_branch_recv<'r>(
     endpoint: &mut dyn BranchRecvKernelEndpoint<'r>,
     logical_label: u8,
-    payload_schema: u32,
+    payload_kind: crate::eff::EventPayload,
     validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
     state: &mut super::branch_recv::BranchRecvState,
     cx: &mut core::task::Context<'_>,
-) -> Poll<RecvResult<Payload<'r>>> {
+) -> Poll<RecvResult<crate::endpoint::transfer::RecvOutput<'r>>> {
     if !endpoint.has_branch_recv_kernel_branch() {
         return Poll::Ready(Err(RecvError::PhaseInvariant));
     }
     if state.prepared_meta().is_none() {
-        let prepared = match endpoint
-            .prepare_branch_recv_kernel_transport_wait(logical_label, payload_schema)
-        {
-            Ok(meta) => meta,
-            Err(err) => return Poll::Ready(Err(err)),
-        };
+        let prepared =
+            match endpoint.prepare_branch_recv_kernel_transport_wait(logical_label, payload_kind) {
+                Ok(meta) => meta,
+                Err(err) => return Poll::Ready(Err(err)),
+            };
         state.set_prepared_meta(prepared);
     }
     if let Some(meta) = state.prepared_meta() {
@@ -185,12 +184,12 @@ pub(crate) fn kernel_branch_recv<'r>(
     }
     let prepared_meta = state.prepared_meta();
     let result =
-        endpoint.finish_branch_recv_kernel(logical_label, payload_schema, prepared_meta, validate);
+        endpoint.finish_branch_recv_kernel(logical_label, payload_kind, prepared_meta, validate);
     match result {
         Ok(payload) => Poll::Ready(Ok(unsafe {
             // SAFETY: committed decode payloads are staged in endpoint-resident
             // transport/ingress storage or the static empty local payload.
-            lane_port::endpoint_resident_payload(payload)
+            payload.into_resident()
         })),
         Err(err) => Poll::Ready(Err(err)),
     }
@@ -200,7 +199,7 @@ pub(crate) fn kernel_branch_recv<'r>(
 pub(crate) fn kernel_send<'r>(
     endpoint: &mut dyn SendKernelEndpoint<'r>,
     state: &mut SendState<'r>,
-    payload: &mut Option<lane_port::RawSendPayload>,
+    payload: &mut Option<lane_port::SendInput>,
     cx: &mut core::task::Context<'_>,
 ) -> Poll<SendResult<SendCommitOutcome<'r>>> {
     loop {
@@ -255,7 +254,7 @@ where
         meta: SendMeta,
         preview_cursor_index: Option<StateIndex>,
         route_authority: SendRouteAuthority,
-        payload: Option<lane_port::RawSendPayload>,
+        payload: Option<lane_port::SendInput>,
     ) -> SendInitOutcome<'r> {
         self.poll_send_init(
             descriptor,
@@ -302,6 +301,7 @@ mod scope_evidence_logic;
 
 mod decision_resolver;
 mod frontier_helpers;
+mod owned;
 mod public_types;
 mod route_preview;
 mod runtime_types;
@@ -325,38 +325,25 @@ impl<'r, T> OperationKernel<'_, 'r, T>
 where
     T: Transport + 'r,
 {
-    fn projection_complete(&self) -> bool {
-        self.progress
-            .cursor
-            .is_complete(&mut |scope| self.selected_arm_for_scope(scope))
+    /// Resolver authority belongs to the issued logical view, even when its
+    /// cursor is shared with other views at the same physical actor.
+    pub(in crate::endpoint::kernel) fn is_route_controller(&self, scope: ScopeId) -> bool {
+        self.progress.cursor.contains_route_controller(scope)
+            && self.context.program.route_controller_role(scope) == self.public_header.role()
     }
 
-    pub(crate) fn take_owned_slot_release(
-        &mut self,
-    ) -> Option<(
-        &'r crate::session::cluster::core::SessionCluster<'r, T>,
-        crate::session::types::RendezvousId,
-        crate::rendezvous::core::EndpointLeaseId,
-        u32,
-    )> {
-        if self.context.public_slot_ownership.get() == PublicSlotOwnership::Borrowed {
-            return None;
+    fn projection_complete(&self) -> bool {
+        if self.context.program.actor_binding_at(0).is_none() {
+            return self
+                .progress
+                .cursor
+                .is_complete(&mut |scope| self.selected_arm_for_scope(scope));
         }
-        if self.context.public_generation.get() == 0
-            || self.public_header.generation() != self.context.public_generation.get()
-            || self.public_header.role() != self.progress.cursor.role()
-        {
-            crate::invariant();
-        }
-        self.context
-            .public_slot_ownership
-            .set(PublicSlotOwnership::Borrowed);
-        Some((
-            self.context.session.cluster(),
-            self.context.public_rv,
-            self.context.public_slot,
-            self.context.public_generation.get(),
-        ))
+        self.progress
+            .cursor
+            .is_view_complete(self.public_header.role(), &mut |scope| {
+                self.selected_arm_for_scope(scope)
+            })
     }
 
     /// Get port for a specific lane.
@@ -429,12 +416,30 @@ impl<'r, T> OperationKernel<'_, 'r, T>
 where
     T: Transport + 'r,
 {
-    pub(super) fn retire_actor(&mut self) {
+    pub(in crate::endpoint) fn retire_actor(&mut self) {
+        self.retire_view();
+        if self.context.public_generation.get() != 0 {
+            if self.context.public_slot_ownership.get() == PublicSlotOwnership::Owned {
+                crate::invariant();
+            }
+            self.public_header.retire_generation();
+            self.context.public_generation.set(0);
+            self.context
+                .public_slot_ownership
+                .set(PublicSlotOwnership::Borrowed);
+        }
+    }
+
+    pub(in crate::endpoint) fn retire_view(&mut self) {
         if self.context.public_generation.get() != 0
             && (self.io.public_active_op != PublicActiveOp::Idle || !self.projection_complete())
         {
             self.poison_session(SessionFaultKind::EndpointDropped);
         }
+        self.finish_view_io();
+    }
+
+    pub(in crate::endpoint) fn finish_view_io(&mut self) {
         self.terminal_clear_public_send_state();
         self.terminal_clear_public_recv_state();
         self.terminal_clear_public_offer_state();
@@ -448,16 +453,6 @@ where
             if let Some(g) = guard.take() {
                 drop(g);
             }
-        }
-        if self.context.public_generation.get() != 0 {
-            if self.context.public_slot_ownership.get() == PublicSlotOwnership::Owned {
-                crate::invariant();
-            }
-            self.public_header.retire_generation();
-            self.context.public_generation.set(0);
-            self.context
-                .public_slot_ownership
-                .set(PublicSlotOwnership::Borrowed);
         }
     }
 }

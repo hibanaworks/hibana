@@ -178,7 +178,6 @@ impl EndpointLeaseSlot {
 
 pub(crate) struct EndpointLeaseRecord {
     slot: Cell<EndpointLeaseSlot>,
-    waiter: endpoint_waiter::EndpointWaiter,
 }
 
 impl EndpointLeaseRecord {
@@ -186,7 +185,6 @@ impl EndpointLeaseRecord {
     const fn empty() -> Self {
         Self {
             slot: Cell::new(EndpointLeaseSlot::EMPTY),
-            waiter: endpoint_waiter::EndpointWaiter::empty(),
         }
     }
 
@@ -198,21 +196,6 @@ impl EndpointLeaseRecord {
     #[inline]
     pub(crate) fn set_slot(&self, slot: EndpointLeaseSlot) {
         self.slot.set(slot);
-    }
-
-    #[inline]
-    pub(crate) fn replace_waiter(&self, waker: core::task::Waker) -> Option<core::task::Waker> {
-        self.waiter.replace(waker)
-    }
-
-    #[inline]
-    pub(crate) fn take_waiter(&self) -> Option<core::task::Waker> {
-        self.waiter.take()
-    }
-
-    #[inline]
-    pub(crate) fn waiter_is_empty(&self) -> bool {
-        self.waiter.is_empty()
     }
 
     #[inline]
@@ -367,6 +350,7 @@ where
 
 mod endpoint_leases;
 mod endpoint_waiter;
+pub(crate) use endpoint_waiter::EndpointWaiter;
 mod lane_lifecycle;
 mod storage_layout;
 mod storage_runtime_budget;

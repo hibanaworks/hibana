@@ -14,7 +14,7 @@ impl EventCursor {
                 && idx < region.end()
             {
                 let scope = region.scope();
-                if self.is_route_controller(scope) {
+                if self.contains_route_controller(scope) {
                     selected = Some(match selected {
                         Some(current) => self.deeper_route_scope(current, scope),
                         None => scope,

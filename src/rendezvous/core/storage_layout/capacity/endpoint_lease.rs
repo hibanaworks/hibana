@@ -51,45 +51,6 @@ impl EndpointLeaseRecord {
             crate::invariant();
         }
     }
-
-    fn take_published_waiter(&self) -> Option<core::task::Waker> {
-        if !self.slot().is_published() {
-            crate::invariant();
-        }
-        self.take_waiter()
-    }
-
-    pub(crate) fn wake_session_waiters(
-        storage: &core::cell::Cell<Sidecar<Self>>,
-        sid: crate::session::types::SessionId,
-        excluded_role: u8,
-    ) {
-        let mut idx = 0usize;
-        loop {
-            let current = storage.get();
-            let slot_count = Self::storage_slot_count(current);
-            if idx >= slot_count {
-                return;
-            }
-            let record = unsafe {
-                // SAFETY: `idx` is inside the freshly reloaded lease-record
-                // sidecar. No record reference survives the callback below.
-                &*current.ptr().add(idx)
-            };
-            let slot = record.slot();
-            let waiter = if slot.is_published() && slot.sid == sid && slot.role != excluded_role {
-                record.take_published_waiter()
-            } else {
-                None
-            };
-            idx += 1;
-            if let Some(waiter) = waiter {
-                // No sidecar pointer or lease-record reference survives this
-                // callback. The next iteration reloads the owner root.
-                waiter.wake();
-            }
-        }
-    }
 }
 
 impl<'rv, 'cfg, T: Transport> Rendezvous<'rv, 'cfg, T>
@@ -162,43 +123,55 @@ where
         sid: crate::session::types::SessionId,
         excluded_role: u8,
     ) {
-        EndpointLeaseRecord::wake_session_waiters(&self.endpoint_lease_storage, sid, excluded_role);
-    }
-
-    #[inline]
-    pub(crate) fn replace_endpoint_waiter(
-        &self,
-        lease_slot: EndpointLeaseId,
-        generation: u32,
-        replacement: core::task::Waker,
-    ) -> Option<core::task::Waker> {
-        crate::invariant_some(
-            self.with_endpoint_lease_record(lease_slot, generation, |record| {
-                record.replace_waiter(replacement)
-            }),
-        )
-    }
-
-    #[inline]
-    pub(crate) fn take_endpoint_waiter(
-        &self,
-        lease_slot: EndpointLeaseId,
-        generation: u32,
-    ) -> Option<core::task::Waker> {
-        crate::invariant_some(self.with_endpoint_lease_record(
-            lease_slot,
-            generation,
-            EndpointLeaseRecord::take_waiter,
-        ))
-    }
-
-    #[inline]
-    pub(crate) fn require_empty_endpoint_waiter_slot(&self, idx: usize) {
-        let is_empty = crate::invariant_some(
-            self.with_endpoint_lease_record_at(idx, EndpointLeaseRecord::waiter_is_empty),
-        );
-        if !is_empty {
-            crate::invariant();
+        let mut actor_index = 0;
+        while actor_index < self.endpoint_lease_slot_count() {
+            let slot = crate::invariant_some(self.endpoint_lease_slot_by_index(actor_index));
+            if !slot.is_published() || slot.sid != sid {
+                actor_index += 1;
+                continue;
+            }
+            let generation = slot.generation;
+            let mut view_index = 0;
+            while let Some(current) = self.endpoint_lease_slot_by_index(actor_index) {
+                // A wake can destroy another view or actor and relocate the
+                // record table. Reload and validate before every view access.
+                if !current.is_published() || current.generation != generation || current.sid != sid
+                {
+                    break;
+                }
+                let (slab, slab_len) = self.slab_ptr_and_len();
+                let offset = current.offset as usize;
+                let len = current.len as usize;
+                if offset.checked_add(len).is_none_or(|end| end > slab_len)
+                    || len < core::mem::size_of::<crate::endpoint::kernel::ResidentActor<'_, T>>()
+                {
+                    crate::invariant();
+                }
+                let waiter = {
+                    // SAFETY: only a published slot addresses an initialized
+                    // pinned actor. No actor/view reference spans wake().
+                    let actor = unsafe {
+                        &*slab
+                            .add(offset)
+                            .cast::<crate::endpoint::kernel::ResidentActor<'_, T>>()
+                    };
+                    let Some(view) = actor.views.as_slice().get(view_index) else {
+                        break;
+                    };
+                    if view.public_header.generation() != 0
+                        && view.public_header.role() != excluded_role
+                    {
+                        view.waiter.take()
+                    } else {
+                        None
+                    }
+                };
+                view_index += 1;
+                if let Some(waiter) = waiter {
+                    waiter.wake();
+                }
+            }
+            actor_index += 1;
         }
     }
 
@@ -268,8 +241,8 @@ where
         let new_ptr = lease.ptr().cast::<EndpointLeaseRecord>();
         unsafe {
             /* SAFETY: the replacement is disjoint and unpublished. The loop
-            initializes its tail, then bytewise relocation transfers each live
-            Waker exactly once before the owner root is published. */
+            initializes its tail, then relocates allocation records. Wakers
+            remain in their pinned logical-view records. */
             let mut idx = current;
             while idx < required_slots {
                 new_ptr.add(idx).write(EndpointLeaseRecord::empty());
@@ -296,7 +269,6 @@ where
             if slot.is_occupied() {
                 break;
             }
-            self.require_empty_endpoint_waiter_slot(idx);
             required_slots -= 1;
         }
         if required_slots == current_slots {

@@ -303,7 +303,7 @@ fn distinct_logical_endpoints_at_one_actor_keep_their_payload_communication() {
     assert_eq!((work.from, work.to), (DB, A));
     assert_eq!(
         work.payload.wire_schema(),
-        crate::global::payload_schema::<Work>()
+        crate::global::payload_kind::<Work>().wire_schema()
     );
     assert_ne!(work.payload.wire_schema(), 0);
     assert_eq!(image.actor_binding_at(2), Some([A as u16, P as u16]));

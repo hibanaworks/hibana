@@ -473,7 +473,11 @@ fn aborted_endpoint_reservation_restores_generation_and_owner_capacities() {
 
     assert_eq!(rv.endpoint_lease_generation.get(), first_generation);
     assert_eq!(rv.endpoint_lease_slot_count(), 1);
-    assert!(rv.image_frontier.get() <= frontier_before);
+    assert!(
+        rv.image_frontier.get() <= frontier_before,
+        "frontier before={frontier_before}, after={}",
+        rv.image_frontier.get()
+    );
     assert_eq!(resident_owner_capacities(rv), owners_before);
     assert_eq!(rv.active_lane_attachment_count(), 1);
     assert!(rv.has_lane_attachment(first_sid, crate::session::types::Lane::new(0)));
@@ -487,8 +491,8 @@ fn aborted_endpoint_reservation_restores_generation_and_owner_capacities() {
 fn published_endpoint_lease_cannot_be_published_twice() {
     let mut slab = [0u8; 4096];
     let rv = init_test_rendezvous(&mut slab);
-    let header_bytes = core::mem::size_of::<crate::endpoint::carrier::KernelEndpointHeader<'_>>();
-    let header_align = core::mem::align_of::<crate::endpoint::carrier::KernelEndpointHeader<'_>>();
+    let header_bytes = core::mem::size_of::<crate::endpoint::carrier::KernelEndpointHeader>();
+    let header_align = core::mem::align_of::<crate::endpoint::carrier::KernelEndpointHeader>();
     let (lease_slot, generation, _, _) = rv
         .allocate_endpoint_lease(
             crate::session::types::SessionId::new(1),

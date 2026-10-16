@@ -325,7 +325,7 @@ where
         from: FROM,
         to: TO,
         label: <M as crate::global::Message>::LOGICAL_LABEL,
-        payload: crate::eff::EventPayload::Wire(crate::global::payload_schema::<M>()),
+        payload: crate::global::payload_kind::<M>(),
         origin: crate::eff::EventOrigin::User,
         lane: LANE,
     };

@@ -52,7 +52,7 @@ where
         &self,
         scope_id: crate::global::const_dsl::ScopeId,
     ) -> OfferScopeProfile {
-        let is_controller = self.progress.cursor.is_route_controller(scope_id);
+        let is_controller = self.is_route_controller(scope_id);
         let is_dynamic = self
             .progress
             .cursor

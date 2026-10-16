@@ -11,7 +11,7 @@ where
     pub(in crate::endpoint::kernel::core) fn preview_branch_send_meta(
         &mut self,
         target_label: u8,
-        target_schema: u32,
+        target_payload: crate::eff::EventPayload,
     ) -> SendResult<crate::endpoint::kernel::SendPreview> {
         let Some(branch) = self.io.public_route_branch.as_ref() else {
             return Err(SendError::PhaseInvariant);
@@ -30,13 +30,16 @@ where
         }
 
         let cursor_index = state_index_to_usize(branch_meta.cursor_index);
+        if self.progress.cursor.logical_role_at(cursor_index) != Some(self.public_header.role()) {
+            return Err(SendError::PhaseInvariant);
+        }
         let Some(mut meta) = self.progress.cursor.try_send_meta_at(cursor_index) else {
             return Err(SendError::PhaseInvariant);
         };
-        if meta.payload_schema != target_schema {
-            return Err(SendError::SchemaMismatch {
-                expected: meta.payload_schema,
-                actual: target_schema,
+        if meta.payload_kind != target_payload {
+            return Err(SendError::PayloadMismatch {
+                expected: meta.payload_kind,
+                actual: target_payload,
             });
         }
         if meta.label != branch_meta.label
@@ -79,7 +82,7 @@ where
         scope_id: ScopeId,
         lane: u8,
     ) -> SendResult<Option<u8>> {
-        if scope_id.is_none() {
+        if !self.is_route_controller(scope_id) {
             return Ok(None);
         }
         if let Some(arm) = self.selected_live_arm_for_scope(scope_id) {

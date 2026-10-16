@@ -159,7 +159,7 @@ fn payload_schema_mismatch_cannot_publish_send_or_consume_recv() {
 
             let send_error = futures::executor::block_on(origin.send::<Msg<13, i32>>(&1234_i32))
                 .expect_err("same-width wrong send schema must fail before publication");
-            assert!(format!("{send_error:?}").contains("SchemaMismatch"));
+            assert!(format!("{send_error:?}").contains("PayloadMismatch"));
             assert!(transport.queue_is_empty());
 
             let poisoned = futures::executor::block_on(origin.send::<Msg<13, u32>>(&1234_u32))
@@ -178,7 +178,7 @@ fn payload_schema_mismatch_cannot_publish_send_or_consume_recv() {
 
             let recv_error = futures::executor::block_on(target.recv::<Msg<13, i32>>())
                 .expect_err("same-width wrong recv schema must fail before frame consumption");
-            assert!(format!("{recv_error:?}").contains("SchemaMismatch"));
+            assert!(format!("{recv_error:?}").contains("PayloadMismatch"));
             assert!(
                 !transport.queue_is_empty(),
                 "schema rejection must leave the queued frame unconsumed"
@@ -219,7 +219,7 @@ fn payload_schema_tracks_selected_route_when_labels_match() {
 
             let mismatch = futures::executor::block_on(origin.send::<Msg<14, u32>>(&23))
                 .expect_err("selected right arm must reject the left payload schema");
-            assert!(format!("{mismatch:?}").contains("SchemaMismatch"));
+            assert!(format!("{mismatch:?}").contains("PayloadMismatch"));
             assert!(transport.queue_is_empty());
 
             let poisoned = futures::executor::block_on(origin.send::<Msg<14, i32>>(&-17))

@@ -15,13 +15,16 @@ where
         &self,
         idx: usize,
         target_label: u8,
-        target_schema: u32,
+        target_payload: crate::eff::EventPayload,
         observed: InboundFrameKey,
     ) -> RecvResult<Option<RecvCandidate>> {
         let Some(meta) = self.progress.cursor.try_recv_meta_at(idx) else {
             return Ok(None);
         };
-        if meta.label != target_label || meta.payload_schema != target_schema {
+        if self.progress.cursor.logical_role_at(idx) != Some(self.public_header.role())
+            || meta.label != target_label
+            || meta.payload_kind != target_payload
+        {
             return Ok(None);
         }
         if meta.origin.is_session() {
@@ -65,6 +68,9 @@ where
         let Some(meta) = self.progress.cursor.try_recv_meta_at(idx) else {
             return Ok(None);
         };
+        if self.progress.cursor.logical_role_at(idx) != Some(self.public_header.role()) {
+            return Ok(None);
+        }
         if meta.origin.is_session() {
             return Err(RecvError::PhaseInvariant);
         }
@@ -101,7 +107,7 @@ where
     pub(in crate::endpoint::kernel::recv) fn unique_recv_candidate(
         &self,
         target_label: u8,
-        target_schema: u32,
+        target_payload: crate::eff::EventPayload,
         observed: InboundFrameKey,
     ) -> RecvResult<Result<RecvCandidate, UniqueMatchFailure>> {
         let mut accumulator = UniqueMatch::NONE;
@@ -110,7 +116,7 @@ where
             if let Some(candidate) = self.recv_candidate_for_observed_evidence(
                 idx,
                 target_label,
-                target_schema,
+                target_payload,
                 observed,
             )? {
                 accumulator = accumulator.add(candidate);
@@ -144,7 +150,7 @@ where
     pub(in crate::endpoint::kernel::recv) fn framed_recv_mismatch_for_unmatched_candidate(
         &self,
         target_label: u8,
-        target_schema: u32,
+        target_payload: crate::eff::EventPayload,
         frame: &lane_port::PreambleFrame<'_>,
     ) -> lane_port::FrameMismatch {
         let observed = frame.observed_transport_frame(
@@ -152,7 +158,7 @@ where
             frame.lane_wire(),
             self.public_header.role(),
         );
-        let key = DeterministicInboundKey::new(frame.lane_wire(), target_label, target_schema);
+        let key = DeterministicInboundKey::new(frame.lane_wire(), target_label, target_payload);
         match self.unique_deterministic_recv_candidate(key) {
             Ok(Ok(candidate)) => lane_port::FrameMismatch::source_label_mismatch(
                 observed,

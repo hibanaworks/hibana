@@ -8,8 +8,9 @@ impl EventCursor {
     /// Returns `Some((lane_idx, step))` if found, `None` otherwise.
     pub(crate) fn pending_step_for_contract(
         &self,
+        role: u8,
         target_label: u8,
-        target_schema: u32,
+        target_payload: crate::eff::EventPayload,
     ) -> Option<(usize, StateIndex)> {
         let target_code = Self::encode_current_step_label(target_label);
         let lane_limit = self.logical_lane_count();
@@ -20,6 +21,10 @@ impl EventCursor {
                     crate::invariant();
                 };
                 let node = self.machine().node(state_index_to_usize(state_idx));
+                if self.logical_role_at(state_index_to_usize(state_idx)) != Some(role) {
+                    lane_idx += 1;
+                    continue;
+                }
                 let Some(label) = (match node.action() {
                     LocalAction::Send { label, .. }
                     | LocalAction::Recv { label, .. }
@@ -34,15 +39,15 @@ impl EventCursor {
                 let schema = if let Some(meta) =
                     self.try_send_meta_at(state_index_to_usize(state_idx))
                 {
-                    meta.payload_schema
+                    meta.payload_kind
                 } else if let Some(meta) = self.try_recv_meta_at(state_index_to_usize(state_idx)) {
-                    meta.payload_schema
+                    meta.payload_kind
                 } else if let Some(meta) = self.try_local_meta_at(state_index_to_usize(state_idx)) {
-                    meta.payload_schema
+                    meta.payload_kind
                 } else {
                     crate::invariant()
                 };
-                if schema != target_schema {
+                if schema != target_payload {
                     lane_idx += 1;
                     continue;
                 }
@@ -210,6 +215,17 @@ impl EventCursor {
         } else {
             CursorRefresh::Lane(lane)
         }
+    }
+
+    /// Refresh a row locator after sequential progress entered another compiled
+    /// region. This seeds descriptor caches only; it consumes no event and
+    /// changes neither completion bits nor route authority.
+    pub(crate) fn refresh_resident_row_at_index(&mut self) -> Option<CursorRefresh> {
+        let index = self.index();
+        let lane = self.machine().event_program().local_step_lane(index)?;
+        let row = crate::invariant_some(self.resident_lane_step_locator(lane as usize, index).ok());
+        (row != self.resident_row_index_usize())
+            .then(|| self.select_resident_row_for_lane(row, lane))
     }
 
     /// Advance a lane past a resident step that may require resident-row relocation.

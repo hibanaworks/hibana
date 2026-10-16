@@ -48,7 +48,7 @@ struct EndpointInitArgs<'r, const ROLE: u8, T: crate::transport::Transport + 'r>
     role_image: RoleImageSlice<ROLE>,
     public_slot: EndpointLeaseId,
     public_generation: u32,
-    public_ops: crate::endpoint::carrier::EndpointOps<'r>,
+    public_ops: crate::endpoint::carrier::EndpointOps,
     public_slot_ownership: crate::endpoint::kernel::PublicSlotOwnership,
 }
 mod cluster_storage;

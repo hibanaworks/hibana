@@ -17,8 +17,8 @@ where
             SendPreviewError::LabelMismatch { expected, actual } => {
                 SendError::LabelMismatch { expected, actual }
             }
-            SendPreviewError::SchemaMismatch { expected, actual } => {
-                SendError::SchemaMismatch { expected, actual }
+            SendPreviewError::PayloadMismatch { expected, actual } => {
+                SendError::PayloadMismatch { expected, actual }
             }
         }
     }
@@ -31,17 +31,17 @@ where
     pub(crate) fn preview_send_meta(
         &mut self,
         target_label: u8,
-        target_schema: u32,
+        target_payload: crate::eff::EventPayload,
         waiters: &mut WaiterTransfer,
     ) -> SendResult<crate::endpoint::kernel::SendPreview> {
-        let result = (|| {
+        let mut result = (|| {
             if let Some(kind) = self.session_fault() {
                 return Err(SendError::SessionFault(kind));
             }
             match self.io.public_active_op {
                 PublicActiveOp::Idle => {}
                 PublicActiveOp::RouteBranch => {
-                    return self.preview_branch_send_meta(target_label, target_schema);
+                    return self.preview_branch_send_meta(target_label, target_payload);
                 }
                 PublicActiveOp::Poisoned
                 | PublicActiveOp::Send
@@ -57,7 +57,7 @@ where
                 let mut committed_arm_for_scope = |scope| endpoint.selected_arm_for_scope(scope);
                 let mut preview_controller_arm_for_scope = |scope| {
                     let lane =
-                        endpoint.lane_for_contract_or_offer(scope, target_label, target_schema);
+                        endpoint.lane_for_contract_or_offer(scope, target_label, target_payload);
                     match endpoint.preview_controller_send_arm_for_scope(scope, lane) {
                         Ok(arm) => arm,
                         Err(error) => {
@@ -81,7 +81,7 @@ where
                     crate::global::typestate::MessageSelector::new(
                         endpoint.public_header.role(),
                         target_label,
-                        target_schema,
+                        target_payload,
                     ),
                     &mut committed_arm_for_scope,
                     &mut preview_controller_arm_for_scope,
@@ -93,10 +93,10 @@ where
                 return Err(error);
             }
             let (meta, cursor_index) = preview_result.map_err(Self::map_send_preview_error)?;
-            if meta.payload_schema != target_schema {
-                return Err(SendError::SchemaMismatch {
-                    expected: meta.payload_schema,
-                    actual: target_schema,
+            if meta.payload_kind != target_payload {
+                return Err(SendError::PayloadMismatch {
+                    expected: meta.payload_kind,
+                    actual: target_payload,
                 });
             }
             let route_authority = self.prepare_send_route_authority(
@@ -110,6 +110,10 @@ where
                 route_authority,
             ))
         })();
+        self.reconcile_retired_views();
+        if let Some(kind) = self.session_fault() {
+            result = Err(SendError::SessionFault(kind));
+        }
         if let Err(error) = &result {
             self.clear_endpoint_waiter(waiters);
             self.poison_for_send_error(error);

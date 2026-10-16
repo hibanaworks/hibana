@@ -111,6 +111,30 @@ fn stable_const_projection_preserves_wire_identity_and_infers_initial_issuance()
 }
 
 #[test]
+fn lane_actor_membership_is_the_union_of_both_complete_ownership_paths() {
+    const SOURCE: Source<'static> = Source::Seq(
+        &Source::Route {
+            left: &transfer(P, A, 1, DB),
+            right: &transfer(P, B, 2, DB),
+            resolver: None,
+        },
+        &wire(DB, SERVER, 3),
+    );
+    const EVENTS: usize = SOURCE.event_count();
+    let mut scratch = Scratch::<{ 3 * EVENTS }, EVENTS>::new();
+    let mut plan = Plan::new();
+    compile_into(&SOURCE, &mut scratch, &mut plan).unwrap();
+    let members = plan.possible_actors(2).unwrap();
+    for actor in 0..=u8::MAX {
+        assert_eq!(
+            members[actor as usize / 8] & (1 << (actor % 8)) != 0,
+            actor == A.role || actor == B.role || actor == SERVER.role,
+        );
+    }
+    assert_eq!(plan.possible_actors(3), None);
+}
+
+#[test]
 fn recipient_cannot_skip_resource_work_and_wait_on_its_control_endpoint() {
     let plan = &EXCHANGE_PLAN;
     // A's original control facet contains receive(0), receive(3), send(4).

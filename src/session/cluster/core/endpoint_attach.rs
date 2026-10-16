@@ -13,6 +13,7 @@ where
     role_image: RoleImageSlice<ROLE>,
     logical_lane_count: usize,
     occupied_lane_index: usize,
+    logical_role: u8,
 }
 
 impl<'cfg, T> SessionCluster<'cfg, T>
@@ -34,17 +35,22 @@ where
             role_image,
             logical_lane_count,
             occupied_lane_index,
+            logical_role,
         } = attach;
         let mut logical_idx = 0usize;
         while logical_idx < logical_lane_count {
-            if logical_idx == occupied_lane_index || !role_image.has_active_lane(logical_idx) {
+            if logical_idx == occupied_lane_index
+                || !role_image
+                    .descriptor()
+                    .has_view_lane(logical_role, logical_idx)
+            {
                 logical_idx += 1;
                 continue;
             }
 
             let physical_lane = Lane::new(logical_idx as u32);
             let lease = self
-                .lease_port(rv_id, sid, physical_lane, ROLE)
+                .lease_port(rv_id, sid, physical_lane, logical_role)
                 .map_err(AttachError::from)?;
             let access = lease.into_port_guard().map_err(AttachError::from)?;
             /* SAFETY: secondary-lane attach owns the endpoint slot before
@@ -53,11 +59,13 @@ where
             unsafe {
                 crate::endpoint::kernel::endpoint_init::write_port_slot(
                     dst,
+                    logical_role,
                     logical_idx,
                     access.port,
                 );
                 crate::endpoint::kernel::endpoint_init::write_guard_slot(
                     dst,
+                    logical_role,
                     logical_idx,
                     access.lane_guard,
                 );
@@ -86,7 +94,7 @@ where
             public_ops,
             public_slot_ownership,
         } = args;
-        let logical_lane_count = role_image.logical_lane_count();
+        let logical_lane_count = role_image.descriptor().view_lane_slot_count(ROLE);
         let primary_lane_index = Self::primary_endpoint_lane_index(role_image, logical_lane_count);
         let session_lane_index = 0usize;
         let session_wire_lane = Lane::new(session_lane_index as u32);
@@ -116,6 +124,7 @@ where
                     dst,
                     arena_storage,
                     primary_lane: primary_lane_index,
+                    initial_role: ROLE,
                     sid,
                     role_descriptor: role_image.descriptor(),
                     public_rv: rv_id,
@@ -128,24 +137,54 @@ where
             );
             crate::endpoint::kernel::endpoint_init::write_port_slot(
                 dst,
+                ROLE,
                 session_lane_index,
                 session_access.port,
             );
             crate::endpoint::kernel::endpoint_init::write_guard_slot(
                 dst,
+                ROLE,
                 session_lane_index,
                 session_access.lane_guard,
             );
         }
-        let init_result =
-            self.attach_secondary_endpoint_lanes::<ROLE>(SecondaryEndpointLaneAttach {
-                dst,
-                rv_id,
-                sid,
-                role_image,
-                logical_lane_count,
-                occupied_lane_index: session_lane_index,
-            });
+        let init_result = (|| {
+            // Ports are physical storage, not operation rights. Initialize
+            // every projected candidate before publication; issuing another
+            // initial view then needs no callback or partial attach.
+            for logical_role in role_image.descriptor().logical_views().roles() {
+                if logical_role != ROLE {
+                    let access = self
+                        .lease_port(rv_id, sid, session_wire_lane, logical_role)?
+                        .into_port_guard()?;
+                    // SAFETY: all view records are initialized and unpublished.
+                    unsafe {
+                        crate::endpoint::kernel::endpoint_init::write_port_slot(
+                            dst,
+                            logical_role,
+                            session_lane_index,
+                            access.port,
+                        );
+                        crate::endpoint::kernel::endpoint_init::write_guard_slot(
+                            dst,
+                            logical_role,
+                            session_lane_index,
+                            access.lane_guard,
+                        );
+                    }
+                }
+                self.attach_secondary_endpoint_lanes::<ROLE>(SecondaryEndpointLaneAttach {
+                    dst,
+                    rv_id,
+                    sid,
+                    role_image,
+                    logical_lane_count: role_image.descriptor().view_lane_slot_count(logical_role),
+                    occupied_lane_index: session_lane_index,
+                    logical_role,
+                })?;
+            }
+            Ok::<(), AttachError>(())
+        })();
 
         if let Err(err) = init_result {
             /* SAFETY: the caller still owns the endpoint lease while attach is
@@ -171,7 +210,7 @@ where
         Finish synchronizes initialized lane state before the public endpoint
         handle can be returned. */
         unsafe {
-            crate::endpoint::kernel::endpoint_init::finish_init(dst);
+            crate::endpoint::kernel::endpoint_init::finish_init(dst, ROLE);
         }
         Ok(())
     }
@@ -249,6 +288,33 @@ where
                     .get_checked(&rv_id)
                     .map_err(Self::map_rendezvous_access_error)
                     .map_err(AttachError::cluster)?;
+                if let Some((slot, generation)) =
+                    rv.published_actor_for(sid, role_image.descriptor().role())
+                {
+                    if rv.session_fault(sid).is_some() {
+                        return Err(crate::rendezvous::error::RendezvousError::SessionPoisoned {
+                            sid,
+                        }
+                        .into());
+                    }
+                    let bound = crate::invariant_some(rv.endpoint_session_program(sid));
+                    if !bound.same_image(role_image.descriptor().program()) {
+                        return Err(
+                            super::ClusterError::SessionProgramMismatch { sid: sid.raw() }.into(),
+                        );
+                    }
+                    if rv.session_membership_is_sealed(sid) {
+                        return Err(super::ClusterError::SessionMembershipSealed {
+                            sid: sid.raw(),
+                        }
+                        .into());
+                    }
+                    let actor = self.public_actor_ptr(rv_id, slot, generation);
+                    if !actor.as_ref().issue_initial_view(ROLE) {
+                        return Err(super::ClusterError::RendezvousBusy { id: rv_id.raw() }.into());
+                    }
+                    return Ok((slot, generation));
+                }
                 let required_assoc_slots = Self::required_assoc_slots_for_endpoint(
                     rv,
                     sid,

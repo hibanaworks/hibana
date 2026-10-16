@@ -19,7 +19,7 @@ where
     fn prepare_branch_recv_transport_wait(
         &mut self,
         logical_label: u8,
-        payload_schema: u32,
+        payload_kind: crate::eff::EventPayload,
     ) -> RecvResult<Option<crate::global::typestate::RecvMeta>> {
         let Some(branch) = self.io.public_route_branch.as_ref() else {
             return Err(branch_recv_phase_invariant());
@@ -31,11 +31,11 @@ where
                 actual: branch.branch_meta.label,
             });
         }
-        let expected_schema = self.branch_recv_payload_schema(branch.branch_meta)?;
-        if expected_schema != payload_schema {
-            return Err(RecvError::SchemaMismatch {
-                expected: expected_schema,
-                actual: payload_schema,
+        let expected_payload = self.branch_recv_payload_kind(branch.branch_meta)?;
+        if expected_payload != payload_kind {
+            return Err(RecvError::PayloadMismatch {
+                expected: expected_payload,
+                actual: payload_kind,
             });
         }
         if !matches!(branch.branch_meta.kind, BranchKind::WireRecv)
@@ -57,22 +57,30 @@ where
         Ok(Some(meta))
     }
 
-    fn branch_recv_payload_schema(&self, branch_meta: super::BranchMeta) -> RecvResult<u32> {
+    fn branch_recv_payload_kind(
+        &self,
+        branch_meta: super::BranchMeta,
+    ) -> RecvResult<crate::eff::EventPayload> {
         let cursor_index = state_index_to_usize(branch_meta.cursor_index);
+        if branch_meta.kind != BranchKind::TerminalArm
+            && self.progress.cursor.logical_role_at(cursor_index) != Some(self.public_header.role())
+        {
+            return Err(branch_recv_phase_invariant());
+        }
         match branch_meta.kind {
             BranchKind::WireRecv => self
                 .progress
                 .cursor
                 .try_recv_meta_at(cursor_index)
-                .map(|meta| meta.payload_schema)
+                .map(|meta| meta.payload_kind)
                 .ok_or_else(branch_recv_phase_invariant),
             BranchKind::LocalAction => self
                 .progress
                 .cursor
                 .try_local_meta_at(cursor_index)
-                .map(|meta| meta.payload_schema)
+                .map(|meta| meta.payload_kind)
                 .ok_or_else(branch_recv_phase_invariant),
-            BranchKind::TerminalArm => Ok(<() as crate::transport::wire::WirePayload>::SCHEMA_ID),
+            BranchKind::TerminalArm => Ok(crate::eff::EventPayload::Wire(0)),
             BranchKind::ArmSend => Err(branch_recv_phase_invariant()),
         }
     }
@@ -84,10 +92,10 @@ where
     fn finish_route_branch_recv(
         &mut self,
         logical_label: u8,
-        payload_schema: u32,
+        payload_kind: crate::eff::EventPayload,
         prepared_meta: Option<crate::global::typestate::RecvMeta>,
         validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
-    ) -> RecvResult<Payload<'r>> {
+    ) -> RecvResult<crate::endpoint::transfer::RecvOutput<'r>> {
         let Some(branch) = self.io.public_route_branch.as_ref() else {
             return Err(branch_recv_phase_invariant());
         };
@@ -101,11 +109,11 @@ where
                 actual: label,
             });
         }
-        let expected_schema = self.branch_recv_payload_schema(branch_meta)?;
-        if expected_schema != payload_schema {
-            return Err(RecvError::SchemaMismatch {
-                expected: expected_schema,
-                actual: payload_schema,
+        let expected_payload = self.branch_recv_payload_kind(branch_meta)?;
+        if expected_payload != payload_kind {
+            return Err(RecvError::PayloadMismatch {
+                expected: expected_payload,
+                actual: payload_kind,
             });
         }
         match branch_meta.kind {
@@ -458,9 +466,9 @@ where
     fn prepare_branch_recv_kernel_transport_wait(
         &mut self,
         logical_label: u8,
-        payload_schema: u32,
+        payload_kind: crate::eff::EventPayload,
     ) -> RecvResult<Option<crate::global::typestate::RecvMeta>> {
-        self.prepare_branch_recv_transport_wait(logical_label, payload_schema)
+        self.prepare_branch_recv_transport_wait(logical_label, payload_kind)
     }
 
     #[inline]
@@ -506,10 +514,10 @@ where
     fn finish_branch_recv_kernel(
         &mut self,
         logical_label: u8,
-        payload_schema: u32,
+        payload_kind: crate::eff::EventPayload,
         prepared_meta: Option<crate::global::typestate::RecvMeta>,
         validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
-    ) -> RecvResult<Payload<'r>> {
-        self.finish_route_branch_recv(logical_label, payload_schema, prepared_meta, validate)
+    ) -> RecvResult<crate::endpoint::transfer::RecvOutput<'r>> {
+        self.finish_route_branch_recv(logical_label, payload_kind, prepared_meta, validate)
     }
 }

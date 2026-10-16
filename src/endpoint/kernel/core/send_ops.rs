@@ -140,6 +140,7 @@ where
             self.build_send_progress_commit_plan(preview_cursor_index, meta, route_authority)?;
         Ok(SendCommitPlan {
             proof: SendCommitProof {
+                transfer: None,
                 progress,
                 _borrow: core::marker::PhantomData,
             },
@@ -167,12 +168,23 @@ where
         &mut self,
         preview_cursor_index: Option<StateIndex>,
         meta: SendMeta,
-        payload: Option<lane_port::RawSendPayload>,
+        payload: Option<lane_port::SendInput>,
         route_authority: SendRouteAuthority,
     ) -> SendResult<PendingSendIo<'r>> {
-        let commit_plan =
+        let mut commit_plan =
             self.build_send_commit_plan(preview_cursor_index, meta, route_authority)?;
         let payload = payload.ok_or(SendError::PhaseInvariant)?;
+        match (&payload, meta.payload_kind) {
+            (lane_port::SendInput::Payload(_), crate::eff::EventPayload::Wire(_)) => {}
+            (
+                lane_port::SendInput::Endpoint(transfer),
+                crate::eff::EventPayload::Endpoint(role),
+            ) => {
+                self.preflight_transfer_out(*transfer, role)?;
+                commit_plan.proof.transfer = Some(*transfer);
+            }
+            _ => return Err(SendError::PhaseInvariant),
+        }
         let port = self.port_for_lane(meta.lane as usize);
         let lane = port.lane();
         let carrier = if meta.peer == self.public_header.role() {
@@ -229,7 +241,7 @@ where
         meta: SendMeta,
         preview_cursor_index: Option<StateIndex>,
         route_authority: SendRouteAuthority,
-        payload: Option<lane_port::RawSendPayload>,
+        payload: Option<lane_port::SendInput>,
     ) -> SendInitOutcome<'r> {
         if descriptor.frame_label() != crate::transport::FrameLabel::new(meta.frame_label) {
             return SendInitOutcome::Ready(Err(SendError::PhaseInvariant));
@@ -257,8 +269,9 @@ where
         let port = self.port_for_lane(lane_idx);
         let lane_wire = pending.lane_wire();
         let transport_poll = lane_port::poll_send_outgoing(&mut pending.transport, port, cx);
+        self.reconcile_retired_views();
         if let Some(kind) = self.session_fault() {
-            lane_port::cancel_send_outgoing(&mut pending.transport, port);
+            lane_port::cancel_send_outgoing(&mut pending.transport, self.port_for_lane(lane_idx));
             return Poll::Ready(Err(SendError::SessionFault(kind)));
         }
         match transport_poll {
@@ -281,10 +294,14 @@ where
         let SendCommitPlan {
             proof:
                 SendCommitProof {
+                    transfer,
                     progress,
                     _borrow: _,
                 },
         } = commit_plan;
+        if let Some(transfer) = transfer {
+            self.commit_transfer_out(transfer);
+        }
         self.publish_send_progress_commit_plan(progress);
         SendCommitOutcome {
             _borrow: core::marker::PhantomData,

@@ -14,7 +14,7 @@ where
         format!(
             "Hibana.Choreo.send {FROM} {TO} {} {}",
             M::LOGICAL_LABEL,
-            crate::global::payload_schema::<M>()
+            crate::global::payload_kind::<M>().wire_schema()
         )
     }
 }

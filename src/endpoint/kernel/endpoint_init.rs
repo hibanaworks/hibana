@@ -27,7 +27,7 @@ use crate::transport::Transport;
 
 use super::ActorStorageLayout;
 use super::ResidentActor;
-use super::core::{ActorProgress, EndpointIo};
+use super::core::{ActorProgress, ActorViews, EndpointIo, ResidentView};
 use super::evidence_store::ScopeEvidenceSlot;
 use super::layout::EndpointArenaSection;
 use super::layout::LeasedState;
@@ -47,26 +47,31 @@ pub(crate) unsafe fn resident_program_ref<'r, T>(
 where
     T: Transport + 'r,
 {
-    let cursor_offset = crate::invariant_some(
-        core::mem::offset_of!(ResidentActor<'r, T>, progress)
-            .checked_add(core::mem::offset_of!(ActorProgress, cursor)),
+    let program_offset = crate::invariant_some(
+        core::mem::offset_of!(ResidentActor<'r, T>, context).checked_add(core::mem::offset_of!(
+            super::core::ActorContext<'r, T>,
+            program
+        )),
     );
-    let required =
-        crate::invariant_some(cursor_offset.checked_add(core::mem::size_of::<EventCursor>()));
+    let required = crate::invariant_some(program_offset.checked_add(core::mem::size_of::<
+        &'static crate::global::compiled::images::CompiledProgramRef,
+    >()));
     if required > storage_len {
         crate::invariant();
     }
-    let cursor = /* SAFETY: the caller provides a live initialized endpoint;
-    `cursor_offset` is the role-independent `repr(C)` field offset and the
+    let program = /* SAFETY: the caller provides a live initialized endpoint;
+    `program_offset` is the role-independent field offset and the
     complete field range was checked above. */ unsafe {
-        storage.add(cursor_offset).cast::<EventCursor>()
+        storage.add(program_offset).cast::<&'static crate::global::compiled::images::CompiledProgramRef>()
     };
-    if !(cursor as usize).is_multiple_of(core::mem::align_of::<EventCursor>()) {
+    if !(program as usize).is_multiple_of(core::mem::align_of::<
+        &'static crate::global::compiled::images::CompiledProgramRef,
+    >()) {
         crate::invariant();
     }
-    /* SAFETY: `cursor` addresses the initialized cursor field of the published
-    endpoint and immutable program rows outlive every endpoint lease. */
-    unsafe { &*cursor }.program_ref()
+    /* SAFETY: this immutable pointer is outside the progress borrow cell;
+    the compiled rows outlive the published actor allocation. */
+    unsafe { *program }
 }
 
 #[inline(always)]
@@ -84,14 +89,14 @@ where
     dst: *mut ResidentActor<'r, T>,
     storage_base: *mut u8,
     storage_layout: ActorStorageLayout,
-    logical_lane_count: usize,
-    role: u8,
+    descriptor: RoleDescriptorRef,
+    initial_role: u8,
     primary_lane: usize,
     sid: SessionId,
     public_rv: RendezvousId,
     public_slot: EndpointLeaseId,
     public_generation: u32,
-    public_ops: EndpointOps<'r>,
+    public_ops: EndpointOps,
     public_slot_ownership: super::core::PublicSlotOwnership,
     session: SessionCtx<'r, T>,
 }
@@ -105,8 +110,8 @@ where
         dst,
         storage_base,
         storage_layout,
-        logical_lane_count,
-        role,
+        descriptor,
+        initial_role,
         primary_lane,
         sid,
         public_rv,
@@ -125,43 +130,84 @@ where
     the endpoint to the rendezvous lease. */
     unsafe {
         let context = ::core::ptr::addr_of_mut!((*dst).context);
-        let io = ::core::ptr::addr_of_mut!((*dst).io).cast::<EndpointIo<'r, T>>();
-        super::lane_slots::LaneSlotArray::init_from_parts(
-            ::core::ptr::addr_of_mut!((*io).ports),
-            storage_base
-                .add(storage_layout.port_slots_offset())
-                .cast::<Option<Port<'r, T>>>(),
-            logical_lane_count,
-        );
-        super::lane_slots::LaneSlotArray::init_from_parts(
-            ::core::ptr::addr_of_mut!((*io).guards),
-            storage_base
-                .add(storage_layout.guard_slots_offset())
-                .cast::<Option<LaneGuard<'r, T>>>(),
-            logical_lane_count,
-        );
-        ::core::ptr::addr_of_mut!((*dst).public_header).write(
-            crate::endpoint::carrier::KernelEndpointHeader::new(
-                public_ops,
-                public_generation,
-                role,
-            ),
-        );
-        ::core::ptr::addr_of_mut!((*io).primary_lane).write(primary_lane);
+        ::core::ptr::addr_of_mut!((*dst).progress)
+            .write(core::cell::RefCell::new(core::mem::MaybeUninit::uninit()));
+        ::core::ptr::addr_of_mut!((*dst).public_header)
+            .write(crate::endpoint::carrier::KernelActorHeader::new(public_ops));
+        let actor_header = crate::invariant_some(core::ptr::NonNull::new(
+            ::core::ptr::addr_of_mut!((*dst).public_header),
+        ));
+        let views = descriptor.logical_views();
+        let view_ptr = storage_base
+            .add(storage_layout.views_offset())
+            .cast::<ResidentView<'r, T>>();
+        ::core::ptr::addr_of_mut!((*dst).views)
+            .write(ActorViews::from_parts(view_ptr, views.len()));
+        let mut lane_offset = 0;
+        for (ordinal, role) in views.roles().enumerate() {
+            let view = view_ptr.add(ordinal);
+            let io = ::core::ptr::addr_of_mut!((*view).io).cast::<EndpointIo<'r, T>>();
+            let logical_lane_count = descriptor.view_lane_slot_count(role);
+            super::lane_slots::LaneSlotArray::init_from_parts(
+                ::core::ptr::addr_of_mut!((*io).ports),
+                storage_base
+                    .add(storage_layout.port_slots_offset())
+                    .cast::<Option<Port<'r, T>>>()
+                    .add(lane_offset),
+                logical_lane_count,
+            );
+            super::lane_slots::LaneSlotArray::init_from_parts(
+                ::core::ptr::addr_of_mut!((*io).guards),
+                storage_base
+                    .add(storage_layout.guard_slots_offset())
+                    .cast::<Option<LaneGuard<'r, T>>>()
+                    .add(lane_offset),
+                logical_lane_count,
+            );
+            ::core::ptr::addr_of_mut!((*view).public_header).write(
+                crate::endpoint::carrier::KernelEndpointHeader::new(
+                    actor_header,
+                    public_generation,
+                    role,
+                ),
+            );
+            ::core::ptr::addr_of_mut!((*view).waiter)
+                .write(crate::rendezvous::core::EndpointWaiter::empty());
+            ::core::ptr::addr_of_mut!((*view).retired_next).write(core::cell::Cell::new(None));
+            let view_primary = if role == initial_role {
+                primary_lane
+            } else {
+                0
+            };
+            if view_primary >= logical_lane_count {
+                crate::invariant();
+            }
+            ::core::ptr::addr_of_mut!((*io).primary_lane).write(view_primary);
+            ::core::ptr::addr_of_mut!((*io).public_active_op)
+                .write(super::core::PublicActiveOp::Idle);
+            ::core::ptr::addr_of_mut!((*io).public_offer_state)
+                .write(super::offer::OfferState::new());
+            ::core::ptr::addr_of_mut!((*io).public_route_branch).write(None);
+            ::core::ptr::addr_of_mut!((*io).public_recv_state).write(super::recv::RecvState::new());
+            ::core::ptr::addr_of_mut!((*io).public_branch_recv_state)
+                .write(super::branch_recv::BranchRecvState::empty());
+            ::core::ptr::addr_of_mut!((*io).public_send_state).write(super::core::SendState::Done);
+            if role == initial_role && !(*view).public_header.issue_initial(1) {
+                crate::invariant();
+            }
+            lane_offset += logical_lane_count;
+        }
         ::core::ptr::addr_of_mut!((*context).sid).write(sid);
+        ::core::ptr::addr_of_mut!((*context).program).write(descriptor.program());
         ::core::ptr::addr_of_mut!((*context).public_rv).write(public_rv);
         ::core::ptr::addr_of_mut!((*context).public_slot).write(public_slot);
         ::core::ptr::addr_of_mut!((*context).public_generation)
             .write(core::cell::Cell::new(public_generation));
+        ::core::ptr::addr_of_mut!((*context).view_generation).write(core::cell::Cell::new(1));
+        ::core::ptr::addr_of_mut!((*context).live_views).write(core::cell::Cell::new(1));
+        ::core::ptr::addr_of_mut!((*context).retired_views).write(core::cell::Cell::new(None));
         ::core::ptr::addr_of_mut!((*context).public_slot_ownership)
             .write(core::cell::Cell::new(public_slot_ownership));
-        ::core::ptr::addr_of_mut!((*io).public_active_op).write(super::core::PublicActiveOp::Idle);
-        ::core::ptr::addr_of_mut!((*io).public_offer_state).write(super::offer::OfferState::new());
-        ::core::ptr::addr_of_mut!((*io).public_route_branch).write(None);
-        ::core::ptr::addr_of_mut!((*io).public_recv_state).write(super::recv::RecvState::new());
-        ::core::ptr::addr_of_mut!((*io).public_branch_recv_state)
-            .write(super::branch_recv::BranchRecvState::empty());
-        ::core::ptr::addr_of_mut!((*io).public_send_state).write(super::core::SendState::Done);
         ::core::ptr::addr_of_mut!((*context).session).write(session);
     }
 }
@@ -180,7 +226,7 @@ unsafe fn init_endpoint_cursor<'r, T>(
     descriptor. `EventCursor::init_from_compiled` initializes the cursor before
     endpoint publication. */
     unsafe {
-        let progress = ::core::ptr::addr_of_mut!((*dst).progress).cast::<ActorProgress>();
+        let progress = (*dst).progress.as_ptr().cast::<ActorProgress>();
         EventCursor::init_from_compiled(
             ::core::ptr::addr_of_mut!((*progress).cursor),
             section_ptr::<crate::global::typestate::EventCursorState>(
@@ -214,7 +260,7 @@ unsafe fn init_endpoint_route<'r, T>(
     fields. Every pointer passed to `RouteState::init_empty` is a section of the
     endpoint arena, and active-lane density is filled before route state reads it. */
     unsafe {
-        let progress = ::core::ptr::addr_of_mut!((*dst).progress).cast::<ActorProgress>();
+        let progress = (*dst).progress.as_ptr().cast::<ActorProgress>();
         let active_lane_dense_by_lane = section_ptr::<DenseLaneOrdinal>(
             arena_storage,
             arena_layout.route_state_lane_dense_by_lane(),
@@ -310,7 +356,7 @@ unsafe fn init_endpoint_frontier<'r, T>(
     field. The root rows, active slots, observation slots, and offer-entry slots
     are disjoint arena sections selected by the compiled endpoint layout. */
     unsafe {
-        let progress = ::core::ptr::addr_of_mut!((*dst).progress).cast::<ActorProgress>();
+        let progress = (*dst).progress.as_ptr().cast::<ActorProgress>();
         let frontier_state =
             section_ptr::<FrontierState>(arena_storage, arena_layout.frontier_state());
         LeasedState::init_from_ptr(
@@ -353,12 +399,13 @@ pub(crate) struct CompiledEndpointInit<'r, T: Transport + 'r> {
     pub(crate) dst: *mut ResidentActor<'r, T>,
     pub(crate) arena_storage: *mut u8,
     pub(crate) primary_lane: usize,
+    pub(crate) initial_role: u8,
     pub(crate) sid: SessionId,
     pub(crate) role_descriptor: RoleDescriptorRef,
     pub(crate) public_rv: RendezvousId,
     pub(crate) public_slot: EndpointLeaseId,
     pub(crate) public_generation: u32,
-    pub(crate) public_ops: EndpointOps<'r>,
+    pub(crate) public_ops: EndpointOps,
     pub(crate) public_slot_ownership: super::core::PublicSlotOwnership,
     pub(crate) session: SessionCtx<'r, T>,
 }
@@ -371,6 +418,7 @@ where
         dst,
         arena_storage,
         primary_lane,
+        initial_role,
         sid,
         role_descriptor,
         public_rv,
@@ -381,8 +429,7 @@ where
         session,
     } = init;
     let arena_layout = role_descriptor.endpoint_arena_layout();
-    let lane_slot_count = role_descriptor.endpoint_lane_slot_count();
-    let storage_layout = super::actor_storage_layout::<T>(&arena_layout, lane_slot_count);
+    let storage_layout = super::actor_storage_layout::<T>(role_descriptor);
     let storage_base = dst.cast::<u8>();
     /* SAFETY: the rendezvous lease passes the unpublished endpoint allocation.
     Header, cursor, route, and frontier owners initialize disjoint fields and
@@ -392,8 +439,8 @@ where
             dst,
             storage_base,
             storage_layout,
-            logical_lane_count: lane_slot_count,
-            role: role_descriptor.role(),
+            descriptor: role_descriptor,
+            initial_role,
             primary_lane,
             sid,
             public_rv,
@@ -411,6 +458,7 @@ where
 
 pub(crate) unsafe fn write_port_slot<'r, T>(
     dst: *mut ResidentActor<'r, T>,
+    role: u8,
     logical_lane: usize,
     port: Port<'r, T>,
 ) where
@@ -420,12 +468,14 @@ pub(crate) unsafe fn write_port_slot<'r, T>(
     `logical_lane` indexes the initialized port-slot array, and the write occurs
     before a public endpoint borrow can access that lane. */
     unsafe {
-        (&mut *(*dst).io.get()).ports[logical_lane] = Some(port);
+        let view = crate::invariant_some((*dst).views.get(role));
+        (&mut *view.io.get()).ports[logical_lane] = Some(port);
     }
 }
 
 pub(crate) unsafe fn write_guard_slot<'r, T>(
     dst: *mut ResidentActor<'r, T>,
+    role: u8,
     logical_lane: usize,
     guard: LaneGuard<'r, T>,
 ) where
@@ -435,11 +485,12 @@ pub(crate) unsafe fn write_guard_slot<'r, T>(
     `logical_lane` indexes the initialized guard-slot array, and this consumes
     the guard into that one slot. */
     unsafe {
-        (&mut *(*dst).io.get()).guards[logical_lane] = Some(guard);
+        let view = crate::invariant_some((*dst).views.get(role));
+        (&mut *view.io.get()).guards[logical_lane] = Some(guard);
     }
 }
 
-pub(crate) unsafe fn finish_init<'r, T>(dst: *mut ResidentActor<'r, T>)
+pub(crate) unsafe fn finish_init<'r, T>(dst: *mut ResidentActor<'r, T>, role: u8)
 where
     T: Transport + 'r,
 {
@@ -447,6 +498,11 @@ where
     synchronized after all lane slots and route/frontier sections have been
     initialized and before endpoint publication. */
     unsafe {
-        (&mut *dst).kernel_mut().sync_lane_offer_state();
+        let actor = &*dst;
+        crate::invariant_some(
+            actor.try_with_kernel(crate::invariant_some(actor.views.get(role)), |kernel| {
+                kernel.sync_lane_offer_state()
+            }),
+        );
     }
 }

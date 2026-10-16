@@ -7,7 +7,6 @@
 //! the creating endpoint lease still owns the referenced resident image.
 
 use core::{
-    marker::PhantomData,
     ptr::NonNull,
     task::{Context, Poll, Waker},
 };
@@ -15,9 +14,22 @@ use core::{
 use crate::transport::wire::Payload;
 
 mod lifecycle;
+#[cfg(kani)]
+#[path = "carrier/kani.rs"]
+mod proofs;
 mod recv;
 mod route;
 mod send;
+
+pub(crate) const fn next_view_generation(current: u32) -> Option<u32> {
+    if current & 1 == 0 {
+        return None;
+    }
+    match current.checked_add(2) {
+        Some(next) if next != u32::MAX => Some(next),
+        Some(_) | None => None,
+    }
+}
 
 #[cfg(all(test, hibana_repo_tests))]
 mod tests;
@@ -42,6 +54,29 @@ impl RawPayload {
         restores the shared byte-slice view. */
             unsafe { &*self.bytes };
         Payload::new(bytes)
+    }
+}
+
+pub(crate) enum RawRecvOutput {
+    Payload(RawPayload),
+    Endpoint(super::owner::EndpointOwner),
+}
+
+impl RawRecvOutput {
+    fn from_kernel(output: super::transfer::RecvOutput<'_>) -> Self {
+        match output {
+            super::transfer::RecvOutput::Payload(payload) => {
+                Self::Payload(RawPayload::from_payload(payload))
+            }
+            super::transfer::RecvOutput::Endpoint(owner) => Self::Endpoint(owner),
+        }
+    }
+
+    pub(crate) unsafe fn into_payload<'a>(self) -> Payload<'a> {
+        match self {
+            Self::Payload(payload) => unsafe { payload.into_payload() },
+            Self::Endpoint(_) => crate::invariant(),
+        }
     }
 }
 
@@ -78,22 +113,22 @@ pub(crate) struct RecvPollRequest<'a, 'cx> {
     pub(crate) ptr: NonNull<()>,
     pub(crate) handle: EndpointHandle,
     pub(crate) logical_label: u8,
-    pub(crate) payload_schema: u32,
+    pub(crate) payload_kind: crate::eff::EventPayload,
     pub(crate) validate:
         for<'payload> fn(Payload<'payload>) -> Result<(), crate::transport::wire::CodecError>,
     pub(crate) cx: &'a mut Context<'cx>,
-    pub(crate) out: *mut Poll<crate::endpoint::RecvResult<RawPayload>>,
+    pub(crate) out: *mut Poll<crate::endpoint::RecvResult<RawRecvOutput>>,
 }
 
 pub(crate) struct BranchRecvPollRequest<'a, 'cx> {
     pub(crate) ptr: NonNull<()>,
     pub(crate) handle: EndpointHandle,
     pub(crate) logical_label: u8,
-    pub(crate) payload_schema: u32,
+    pub(crate) payload_kind: crate::eff::EventPayload,
     pub(crate) validate:
         for<'payload> fn(Payload<'payload>) -> Result<(), crate::transport::wire::CodecError>,
     pub(crate) cx: &'a mut Context<'cx>,
-    pub(crate) out: *mut Poll<crate::endpoint::RecvResult<RawPayload>>,
+    pub(crate) out: *mut Poll<crate::endpoint::RecvResult<RawRecvOutput>>,
 }
 
 /// Callback-free Waker ownership crossing one raw endpoint carrier borrow.
@@ -143,30 +178,72 @@ impl WaiterTransfer {
 }
 
 #[repr(C)]
-pub(crate) struct KernelEndpointHeader<'r> {
-    ops: EndpointOps<'r>,
-    generation: core::cell::Cell<u32>,
+pub(crate) struct KernelActorHeader {
+    ops: EndpointOps,
+}
+
+impl KernelActorHeader {
+    pub(crate) const fn new(ops: EndpointOps) -> Self {
+        Self { ops }
+    }
+}
+
+#[repr(C)]
+pub(crate) struct KernelEndpointHeader {
+    actor: NonNull<KernelActorHeader>,
+    generation: u32,
+    view_generation: core::cell::Cell<u32>,
     role: u8,
 }
 
-impl<'r> KernelEndpointHeader<'r> {
+impl KernelEndpointHeader {
     #[inline(always)]
-    pub(crate) const fn new(ops: EndpointOps<'r>, generation: u32, role: u8) -> Self {
+    pub(crate) const fn new(actor: NonNull<KernelActorHeader>, generation: u32, role: u8) -> Self {
         Self {
-            ops,
-            generation: core::cell::Cell::new(generation),
+            actor,
+            generation,
+            view_generation: core::cell::Cell::new(0),
             role,
         }
     }
 
     #[inline(always)]
-    pub(crate) const fn ops(&self) -> &EndpointOps<'r> {
-        &self.ops
+    pub(crate) const fn ops(&self) -> &EndpointOps {
+        // SAFETY: the view and its common callback table occupy one pinned
+        // actor allocation, retained for every issued view's lifetime.
+        unsafe { &self.actor.as_ref().ops }
     }
 
     #[inline(always)]
     pub(crate) const fn generation(&self) -> u32 {
-        self.generation.get()
+        if self.view_generation.get() & 1 == 1 {
+            self.generation
+        } else {
+            0
+        }
+    }
+
+    pub(crate) const fn view_generation(&self) -> u32 {
+        self.view_generation.get()
+    }
+
+    pub(crate) const fn actor(&self) -> NonNull<KernelActorHeader> {
+        self.actor
+    }
+
+    pub(crate) fn issue_initial(&self, generation: u32) -> bool {
+        if self.view_generation.get() != 0 || generation & 1 == 0 || generation == u32::MAX {
+            return false;
+        }
+        self.view_generation.set(generation);
+        true
+    }
+
+    pub(crate) fn issue_received(&self, generation: u32) {
+        if self.view_generation.get() & 1 == 1 || generation & 1 == 0 || generation == u32::MAX {
+            crate::invariant();
+        }
+        self.view_generation.set(generation);
     }
 
     #[inline(always)]
@@ -176,13 +253,16 @@ impl<'r> KernelEndpointHeader<'r> {
 
     #[inline(always)]
     pub(crate) fn retire_generation(&self) {
-        self.generation.set(0);
+        let generation = self.view_generation.get();
+        if generation & 1 == 1 {
+            self.view_generation
+                .set(crate::invariant_some(generation.checked_add(1)));
+        }
     }
 }
 
 #[derive(Clone, Copy)]
-pub(crate) struct EndpointOps<'r> {
-    _lifetime: PhantomData<&'r ()>,
+pub(crate) struct EndpointOps {
     pub(crate) drop_endpoint: unsafe fn(ptr: NonNull<()>, handle: EndpointHandle),
     pub(crate) restore_public_route_branch: unsafe fn(ptr: NonNull<()>, handle: EndpointHandle),
     pub(crate) reset_public_offer_state: unsafe fn(ptr: NonNull<()>, handle: EndpointHandle),
@@ -211,7 +291,7 @@ pub(crate) struct EndpointOps<'r> {
         ptr: NonNull<()>,
         handle: EndpointHandle,
         logical_label: u8,
-        payload_schema: u32,
+        payload_kind: crate::eff::EventPayload,
         out: *mut crate::endpoint::kernel::SendPreview,
     ) -> crate::endpoint::SendResult<()>,
     pub(crate) poll_recv: for<'a, 'cx> unsafe fn(RecvPollRequest<'a, 'cx>),
@@ -225,28 +305,34 @@ pub(crate) struct EndpointOps<'r> {
     pub(crate) poll_send: unsafe fn(
         ptr: NonNull<()>,
         handle: EndpointHandle,
-        payload: Option<crate::endpoint::kernel::RawSendPayload>,
+        payload: Option<crate::endpoint::kernel::lane_port::SendInput>,
         cx: &mut Context<'_>,
         out: *mut (),
     ),
 }
 
 #[derive(Clone, Copy)]
-// This tag is not ownership: EndpointOwner alone owns the live lease. Keeping
-// the issued role beside its nonzero generation checks a shared ops table
-// without specializing the resident kernel for every role.
+// This tag is not ownership: EndpointOwner alone owns the live view. View
+// generations are unique within an allocation, so the immutable view header
+// supplies the logical role without a duplicate role field in every handle.
 pub(crate) struct EndpointHandle {
     generation: core::num::NonZeroU32,
-    role: u8,
+    view_generation: core::num::NonZeroU32,
 }
 
 impl EndpointHandle {
     #[inline]
-    pub(crate) const fn new(generation: u32, role: u8) -> Self {
+    pub(crate) const fn new(generation: u32, view_generation: u32) -> Self {
         let Some(generation) = core::num::NonZeroU32::new(generation) else {
             panic!("an endpoint handle requires a live generation");
         };
-        Self { generation, role }
+        Self {
+            generation,
+            view_generation: match core::num::NonZeroU32::new(view_generation) {
+                Some(value) if view_generation & 1 == 1 && view_generation != u32::MAX => value,
+                _ => panic!("an endpoint handle requires an issued view generation"),
+            },
+        }
     }
 
     #[inline]
@@ -255,13 +341,14 @@ impl EndpointHandle {
     }
 
     #[inline]
-    pub(crate) const fn role(self) -> u8 {
-        self.role
+    pub(crate) const fn view_generation(self) -> u32 {
+        self.view_generation.get()
     }
 
     #[inline]
-    pub(crate) fn matches_header(self, header: &KernelEndpointHeader<'_>) -> bool {
-        header.generation() == self.generation() && header.role() == self.role()
+    pub(crate) fn matches_header(self, header: &KernelEndpointHeader) -> bool {
+        header.generation() == self.generation()
+            && header.view_generation() == self.view_generation()
     }
 }
 
@@ -276,15 +363,18 @@ where
     where
         'cfg: 'r,
     {
-        let header = /* SAFETY: endpoint carrier validates the resident header tag and generation before projecting the stored endpoint pointer. */ unsafe { ptr.cast::<KernelEndpointHeader<'r>>().as_ref() };
+        let header = /* SAFETY: endpoint carrier validates the resident header tag and generation before projecting the stored endpoint pointer. */ unsafe { ptr.cast::<KernelEndpointHeader>().as_ref() };
         if !handle.matches_header(header) {
             return None;
         }
         Some(unsafe {
-            // SAFETY: the immutable header is the first repr(C) actor field.
+            // SAFETY: the view retains its pinned actor root. The common
+            // callback table is the first repr(C) actor field.
             // Mutable progress and I/O are UnsafeCell-owned, so this shared
             // preflight never borrows the kernel before its lease is acquired.
-            ptr.cast::<crate::endpoint::kernel::ResidentActor<'r, T>>()
+            header
+                .actor()
+                .cast::<crate::endpoint::kernel::ResidentActor<'r, T>>()
                 .as_ref()
         })
     }
@@ -308,13 +398,23 @@ where
         let Some(mut operation_lease) = actor.context.try_operation_lease() else {
             return missing;
         };
-        let mut kernel = actor.borrow_kernel(&mut operation_lease);
-        f(&mut kernel)
+        // Read the narrow header, then recover the whole view from its actor's
+        // original allocation pointer. A header reborrow grants no provenance
+        // for expanding that pointer over the surrounding I/O record.
+        let role = unsafe { ptr.cast::<KernelEndpointHeader>().as_ref() }.role();
+        let view = crate::invariant_some(actor.views.get(role));
+        if core::ptr::from_ref(&view.public_header).cast::<()>() != ptr.as_ptr().cast_const() {
+            crate::invariant();
+        }
+        let result = actor.with_kernel(&mut operation_lease, view, f);
+        if !actor.drain_retired_views() || actor.context.live_views.get() == 0 {
+            crate::invariant();
+        }
+        result
     }
 
-    pub(crate) const fn endpoint_ops() -> EndpointOps<'cfg> {
-        EndpointOps::<'cfg> {
-            _lifetime: PhantomData,
+    pub(crate) const fn endpoint_ops() -> EndpointOps {
+        EndpointOps {
             drop_endpoint: Self::drop_public_endpoint_raw,
             restore_public_route_branch: Self::restore_public_route_branch_raw,
             reset_public_offer_state: Self::reset_public_offer_state_raw,

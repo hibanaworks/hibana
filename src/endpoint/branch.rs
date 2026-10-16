@@ -1,9 +1,7 @@
 use super::{
     Endpoint, EndpointError, EndpointOp, RecvResult, RouteBranch,
-    futures::{BranchRecvFuture, OfferFuture, OfferFutureLease, RawOfferFuture},
-    send::SendFuture,
+    futures::{OfferFuture, OfferFutureLease, RawOfferFuture},
 };
-use crate::transport::wire::{WireEncode, WirePayload};
 use core::{
     future::Future,
     pin::Pin,
@@ -40,13 +38,16 @@ impl<'e, 'r, const ROLE: u8> RouteBranch<'e, 'r, ROLE> {
     pub fn recv<M>(
         self,
     ) -> impl core::future::Future<
-        Output = core::result::Result<<M::Payload as WirePayload>::Decoded<'e>, EndpointError>,
-    > + use<'e, 'r, M, ROLE>
+        Output = Result<
+            <M::Payload as crate::global::PayloadSpec>::Received<'e, 'r>,
+            EndpointError,
+        >,
+    > + 'e
     where
-        M: crate::g::Message,
-        M::Payload: WireEncode + WirePayload,
+        M: crate::g::Message + 'e,
+        'r: 'e,
     {
-        BranchRecvFuture::<'e, 'r, ROLE, M>::new(self)
+        <M::Payload as crate::global::PayloadSpec>::branch_recv::<M, ROLE>(self)
     }
 
     /// Send the first payload of a selected route arm.
@@ -58,48 +59,15 @@ impl<'e, 'r, const ROLE: u8> RouteBranch<'e, 'r, ROLE> {
     #[inline]
     pub fn send<'a, M>(
         self,
-        payload: &'a M::Payload,
-    ) -> impl core::future::Future<Output = core::result::Result<(), EndpointError>>
-    + 'a
-    + use<'a, 'e, 'r, M, ROLE>
+        payload: <M::Payload as crate::global::PayloadSpec>::SendArgument<'a, 'r>,
+    ) -> impl core::future::Future<Output = Result<(), EndpointError>> + 'a + use<'a, 'e, 'r, M, ROLE>
     where
         M: crate::g::Message + 'a,
-        M::Payload: WireEncode + WirePayload + 'a,
+        M::Payload: 'a,
         'e: 'a,
-        'r: 'a,
+        'r: 'e,
     {
-        let branch = core::mem::ManuallyDrop::new(self);
-        let endpoint = branch.endpoint;
-        let logical_label = <M as crate::g::Message>::LOGICAL_LABEL;
-        let payload_schema = crate::global::payload_schema::<M>();
-        let mut preview = core::mem::MaybeUninit::<crate::endpoint::kernel::SendPreview>::uninit();
-        if let Err(error) =
-            /* SAFETY: consuming the branch transfers its unique endpoint borrow into the returned future or a terminal ready error. */
-            unsafe {
-                (&mut *endpoint).preview_send(logical_label, payload_schema, preview.as_mut_ptr())
-            }
-        {
-            return SendFuture::ready_error(error);
-        }
-        let preview = /* SAFETY: preview_send returned Ok and initialized the out slot. */ unsafe {
-            preview.assume_init()
-        };
-        let desc = crate::endpoint::send::send_runtime_desc(
-            logical_label,
-            crate::transport::FrameLabel::new(preview.frame_label()),
-        );
-        let init = crate::endpoint::kernel::SendInit::new(desc, preview);
-        let lease = /* SAFETY: the consumed branch owns the in-flight kernel borrow until the returned future completes or drops. */ unsafe {
-            (&mut *endpoint).init_public_send_state(&init)
-        };
-        match lease {
-            crate::endpoint::kernel::PublicOpLease::Held => {}
-            crate::endpoint::kernel::PublicOpLease::Rejected => {
-                return SendFuture::ready_error(crate::endpoint::SendError::PhaseInvariant);
-            }
-            crate::endpoint::kernel::PublicOpLease::Faulted => crate::invariant(),
-        }
-        SendFuture::pending_armed(endpoint, payload)
+        <M::Payload as crate::global::PayloadSpec>::branch_send::<M, ROLE>(self, payload)
     }
 }
 

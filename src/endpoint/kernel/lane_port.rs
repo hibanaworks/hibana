@@ -33,6 +33,33 @@ pub(crate) struct RawSendPayload {
     encode: unsafe fn(*const (), &mut [u8]) -> Result<usize, crate::transport::wire::CodecError>,
 }
 
+pub(crate) enum SendInput {
+    Payload(RawSendPayload),
+    Endpoint(crate::endpoint::transfer::EndpointTransfer),
+}
+
+impl SendInput {
+    fn encode_into(
+        &self,
+        eff: crate::eff::EffIndex,
+        scratch: &mut [u8],
+    ) -> Result<usize, SendError> {
+        match self {
+            Self::Payload(payload) => payload.encode_into(scratch),
+            Self::Endpoint(transfer) => {
+                let out = scratch.get_mut(..3).ok_or(SendError::Codec(
+                    crate::transport::wire::CodecError::Malformed,
+                ))?;
+                // SAFETY: the send future retains this affine owner until
+                // the operation commits or cancels. Only its role is encoded.
+                out[0] = unsafe { transfer.ptr.as_ref() }.role();
+                out[1..].copy_from_slice(&(eff.dense_ordinal() as u16).to_be_bytes());
+                Ok(3)
+            }
+        }
+    }
+}
+
 pub(crate) struct PendingRecv {
     port_key: Option<*const ()>,
 }
@@ -85,7 +112,7 @@ pub(super) enum SendCarrier {
 }
 
 pub(super) struct PendingSend {
-    payload: RawSendPayload,
+    payload: SendInput,
     meta: crate::transport::SendMeta,
     carrier: SendCarrier,
     state: SendIoState,
@@ -94,7 +121,7 @@ pub(super) struct PendingSend {
 impl PendingSend {
     #[inline]
     pub(super) const fn new(
-        payload: RawSendPayload,
+        payload: SendInput,
         meta: crate::transport::SendMeta,
         carrier: SendCarrier,
     ) -> Self {
@@ -321,14 +348,19 @@ where
             crate::invariant();
         }
         let mut unit_payload = [];
-        return Poll::Ready(pending.payload.encode_into(&mut unit_payload).map(|_| ()));
+        return Poll::Ready(
+            pending
+                .payload
+                .encode_into(pending.meta.eff_index, &mut unit_payload)
+                .map(|_| ()),
+        );
     }
     let Some(mut scratch_lease) = port.rendezvous().try_scratch_lease() else {
         cx.waker().wake_by_ref();
         return Poll::Pending;
     };
     let scratch = port.rendezvous().scratch(&mut scratch_lease);
-    let encoded_len = match pending.payload.encode_into(scratch) {
+    let encoded_len = match pending.payload.encode_into(pending.meta.eff_index, scratch) {
         Ok(encoded_len) => encoded_len,
         Err(err) => {
             if pending.transport_is_pending() {

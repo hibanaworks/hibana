@@ -66,13 +66,13 @@ where
     fn poll_recv_preamble_for_label(
         &mut self,
         target_label: u8,
-        target_schema: u32,
+        target_payload: crate::eff::EventPayload,
         pending_recv: &mut lane_port::PendingRecv,
         cx: &mut core::task::Context<'_>,
     ) -> Poll<RecvResult<lane_port::PreambleFrame<'r>>> {
         let lane_limit = self.progress.cursor.logical_lane_count();
         let mut words = [0; LANE_SET_VIEW_WORDS];
-        let lanes = self.live_recv_lanes(target_label, target_schema, &mut words)?;
+        let lanes = self.live_recv_lanes(target_label, target_payload, &mut words)?;
         let mut start = 0usize;
         while let Some(lane_idx) = lanes.next_set_from(start, lane_limit) {
             let lane_wire = self.port_for_lane(lane_idx).lane().as_wire();
@@ -90,7 +90,7 @@ where
     fn accept_framed_recv_frame(
         &mut self,
         target_label: u8,
-        target_schema: u32,
+        target_payload: crate::eff::EventPayload,
         frame: lane_port::PreambleFrame<'r>,
     ) -> RecvResult<MatchedRecvFrame<'r>> {
         let observed = InboundFrameKey::new(
@@ -98,7 +98,7 @@ where
             frame.lane_wire(),
             frame.observed_frame_label_raw(),
         );
-        match self.unique_recv_candidate(target_label, target_schema, observed)? {
+        match self.unique_recv_candidate(target_label, target_payload, observed)? {
             Ok(candidate) => {
                 let desc = candidate.desc;
                 let frame = self.accept_materialized_transport_frame(
@@ -113,7 +113,7 @@ where
             Err(UniqueMatchFailure::None) => {
                 let mismatch = self.framed_recv_mismatch_for_unmatched_candidate(
                     target_label,
-                    target_schema,
+                    target_payload,
                     &frame,
                 );
                 self.emit_materialization_mismatch_observation(
@@ -134,11 +134,11 @@ where
     fn accept_deterministic_recv_frame(
         &mut self,
         target_label: u8,
-        target_schema: u32,
+        target_payload: crate::eff::EventPayload,
         frame: lane_port::PreambleFrame<'r>,
     ) -> RecvResult<MatchedRecvFrame<'r>> {
         let lane_wire = frame.lane_wire();
-        let key = DeterministicInboundKey::new(lane_wire, target_label, target_schema);
+        let key = DeterministicInboundKey::new(lane_wire, target_label, target_payload);
         match self.unique_deterministic_recv_candidate(key)? {
             Ok(candidate) => {
                 let desc = candidate.desc;
@@ -174,51 +174,48 @@ where
     fn accept_recv_frame(
         &mut self,
         target_label: u8,
-        target_schema: u32,
+        target_payload: crate::eff::EventPayload,
         frame: lane_port::PreambleFrame<'r>,
     ) -> RecvResult<MatchedRecvFrame<'r>> {
         if frame.is_deterministic() {
-            self.accept_deterministic_recv_frame(target_label, target_schema, frame)
+            self.accept_deterministic_recv_frame(target_label, target_payload, frame)
         } else {
-            self.accept_framed_recv_frame(target_label, target_schema, frame)
+            self.accept_framed_recv_frame(target_label, target_payload, frame)
         }
     }
 
     fn poll_recv_frame_source(
         &mut self,
         target_label: u8,
-        target_schema: u32,
+        target_payload: crate::eff::EventPayload,
         pending_recv: &mut lane_port::PendingRecv,
         cx: &mut core::task::Context<'_>,
     ) -> Poll<RecvResult<MatchedRecvFrame<'r>>> {
-        let frame = match self.poll_recv_preamble_for_label(
-            target_label,
-            target_schema,
-            pending_recv,
-            cx,
-        ) {
-            Poll::Pending => return Poll::Pending,
-            Poll::Ready(Ok(frame)) => frame,
-            Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
-        };
-        Poll::Ready(self.accept_recv_frame(target_label, target_schema, frame))
+        let frame =
+            match self.poll_recv_preamble_for_label(target_label, target_payload, pending_recv, cx)
+            {
+                Poll::Pending => return Poll::Pending,
+                Poll::Ready(Ok(frame)) => frame,
+                Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
+            };
+        Poll::Ready(self.accept_recv_frame(target_label, target_payload, frame))
     }
 
     fn build_recv_commit_plan(
         &mut self,
         logical_label: u8,
-        payload_schema: u32,
+        payload_kind: crate::eff::EventPayload,
         matched: MatchedRecvFrame<'r>,
     ) -> RecvResult<RecvCommitPlan<'r>> {
         let MatchedRecvFrame { desc, frame } = matched;
-        let delta =
-            match self.prepare_recv_commit_delta(logical_label, payload_schema, desc, &frame) {
-                Ok(delta) => delta,
-                Err(err) => {
-                    frame.discard_uncommitted();
-                    return Err(err);
-                }
-            };
+        let delta = match self.prepare_recv_commit_delta(logical_label, payload_kind, desc, &frame)
+        {
+            Ok(delta) => delta,
+            Err(err) => {
+                frame.discard_uncommitted();
+                return Err(err);
+            }
+        };
         Ok(RecvCommitPlan::direct(
             EndpointRxEventPlan::direct(desc.meta.lane, desc.meta.label),
             delta,
@@ -229,7 +226,7 @@ where
     fn prepare_recv_commit_delta(
         &mut self,
         logical_label: u8,
-        payload_schema: u32,
+        payload_kind: crate::eff::EventPayload,
         desc: RecvDescriptor,
         frame: &lane_port::ReceivedFrame<'_>,
     ) -> RecvResult<PreparedCommitDelta> {
@@ -240,10 +237,10 @@ where
                 actual: meta.label,
             });
         }
-        if meta.payload_schema != payload_schema {
-            return Err(RecvError::SchemaMismatch {
-                expected: meta.payload_schema,
-                actual: payload_schema,
+        if meta.payload_kind != payload_kind {
+            return Err(RecvError::PayloadMismatch {
+                expected: meta.payload_kind,
+                actual: payload_kind,
             });
         }
         if meta.origin.is_session() {
@@ -325,11 +322,11 @@ where
     fn finish_recv_frame(
         &mut self,
         logical_label: u8,
-        payload_schema: u32,
+        payload_kind: crate::eff::EventPayload,
         frame: MatchedRecvFrame<'r>,
         validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
-    ) -> RecvResult<Payload<'r>> {
-        let plan = self.build_recv_commit_plan(logical_label, payload_schema, frame)?;
+    ) -> RecvResult<crate::endpoint::transfer::RecvOutput<'r>> {
+        let plan = self.build_recv_commit_plan(logical_label, payload_kind, frame)?;
         self.publish_recv_commit_plan(plan, validate)
     }
 }
@@ -342,22 +339,22 @@ where
     fn poll_recv_kernel_frame_source(
         &mut self,
         logical_label: u8,
-        payload_schema: u32,
+        payload_kind: crate::eff::EventPayload,
         state: &mut RecvState,
         cx: &mut core::task::Context<'_>,
     ) -> Poll<RecvResult<MatchedRecvFrame<'r>>> {
         let pending_recv = &mut state.pending_recv;
-        self.poll_recv_frame_source(logical_label, payload_schema, pending_recv, cx)
+        self.poll_recv_frame_source(logical_label, payload_kind, pending_recv, cx)
     }
 
     #[inline]
     fn finish_recv_kernel_frame(
         &mut self,
         logical_label: u8,
-        payload_schema: u32,
+        payload_kind: crate::eff::EventPayload,
         frame: MatchedRecvFrame<'r>,
         validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
-    ) -> RecvResult<Payload<'r>> {
-        self.finish_recv_frame(logical_label, payload_schema, frame, validate)
+    ) -> RecvResult<crate::endpoint::transfer::RecvOutput<'r>> {
+        self.finish_recv_frame(logical_label, payload_kind, frame, validate)
     }
 }

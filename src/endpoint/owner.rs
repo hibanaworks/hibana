@@ -7,40 +7,43 @@ use super::{
     Endpoint,
     carrier::{EndpointHandle, KernelEndpointHeader},
 };
-use core::{marker::PhantomData, ptr::NonNull};
+use core::ptr::NonNull;
 
-pub(super) struct EndpointOwner<'r> {
-    pub(super) ptr: NonNull<KernelEndpointHeader<'r>>,
+pub(crate) struct EndpointOwner {
+    pub(super) ptr: NonNull<KernelEndpointHeader>,
     pub(super) handle: EndpointHandle,
-    _borrow: PhantomData<&'r mut ()>,
     _local_only: crate::local::LocalOnly,
 }
 
-impl<'r> EndpointOwner<'r> {
-    pub(super) fn new(ptr: NonNull<KernelEndpointHeader<'r>>, handle: EndpointHandle) -> Self {
+impl EndpointOwner {
+    pub(super) fn new(ptr: NonNull<KernelEndpointHeader>, handle: EndpointHandle) -> Self {
         Self {
             ptr,
             handle,
-            _borrow: PhantomData,
             _local_only: crate::local::LocalOnly::new(),
         }
     }
 
-    pub(super) fn into_endpoint<const ROLE: u8>(self) -> Result<Endpoint<'r, ROLE>, Self> {
+    /// # Safety
+    /// The caller must retain this owner's resident actor and runtime for 'r.
+    /// Only attachment or a completed owned receive may select that lifetime.
+    pub(super) unsafe fn into_endpoint<'r, const ROLE: u8>(
+        self,
+    ) -> Result<Endpoint<'r, ROLE>, Self> {
         // SAFETY: only the rendezvous-installed live owner constructs this
         // value. Its unique lease keeps the resident header pinned for 'r.
         let header = unsafe { self.ptr.as_ref() };
-        if header.role() != ROLE
-            || self.handle.role() != ROLE
-            || header.generation() != self.handle.generation()
-        {
+        if header.role() != ROLE || !self.handle.matches_header(header) {
             return Err(self);
         }
-        Ok(Endpoint { owner: self })
+        Ok(Endpoint {
+            owner: self,
+            _borrow: core::marker::PhantomData,
+        })
     }
 }
 
-impl Drop for EndpointOwner<'_> {
+impl Drop for EndpointOwner {
     fn drop(&mut self) {
         // SAFETY: this value owns the same resident carrier lease formerly
         // owned directly by Endpoint. Copy the callback before invoking it so

@@ -120,13 +120,13 @@ where
         &self,
         scope_id: ScopeId,
         target_label: u8,
-        target_schema: u32,
+        target_payload: crate::eff::EventPayload,
     ) -> u8 {
-        if let Some((lane_idx, _)) = self
-            .progress
-            .cursor
-            .pending_step_for_contract(target_label, target_schema)
-        {
+        if let Some((lane_idx, _)) = self.progress.cursor.pending_step_for_contract(
+            self.public_header.role(),
+            target_label,
+            target_payload,
+        ) {
             lane_idx as u8
         } else {
             self.offer_lane_for_scope(scope_id)
@@ -220,7 +220,7 @@ where
                     entry.is_absent() || self.progress.cursor.index() == state_index_to_usize(entry)
                 },
             ));
-        if self.progress.cursor.is_route_controller(scope_id)
+        if self.is_route_controller(scope_id)
             && at_scope_offer_entry
             && let Some((entry, _)) = self
                 .progress

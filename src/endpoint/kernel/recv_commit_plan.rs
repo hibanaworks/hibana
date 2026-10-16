@@ -72,9 +72,9 @@ impl<'r> RecvCommitPayload<'r> {
         Self::NonWire(payload)
     }
 
-    fn validate<F>(&self, validate: F) -> Result<(), CodecError>
+    fn validate<F, E>(&self, validate: F) -> Result<(), E>
     where
-        F: FnOnce(Payload<'r>) -> Result<(), CodecError>,
+        F: FnOnce(Payload<'r>) -> Result<(), E>,
     {
         match self {
             Self::Wire(frame) => frame.validated_payload(validate).map(|_| ()),
@@ -136,18 +136,29 @@ where
         &mut self,
         plan: RecvCommitPlan<'r>,
         validate: F,
-    ) -> RecvResult<Payload<'r>>
+    ) -> RecvResult<crate::endpoint::transfer::RecvOutput<'r>>
     where
         F: FnOnce(Payload<'r>) -> Result<(), CodecError>,
     {
-        let validation = plan.payload.validate(validate);
+        let mut issue = None;
+        let validation = plan.payload.validate(|payload| {
+            if let Some(event) = plan.delta.event() {
+                issue = self.prepare_received_view(event.eff_index(), payload)?;
+            }
+            if issue.is_some() {
+                Ok(())
+            } else {
+                validate(payload).map_err(RecvError::Codec)
+            }
+        });
+        self.reconcile_retired_views();
         if let Some(kind) = self.session_fault() {
             plan.payload.discard_uncommitted();
             return Err(RecvError::SessionFault(kind));
         }
         if let Err(err) = validation {
             plan.payload.discard_uncommitted();
-            return Err(RecvError::Codec(err));
+            return Err(err);
         }
 
         let RecvCommitPlan {
@@ -156,6 +167,13 @@ where
             delta,
             payload,
         } = plan;
+        let output = match issue {
+            Some(issue) => {
+                let _ = payload.into_payload();
+                crate::endpoint::transfer::RecvOutput::Endpoint(self.commit_received_view(issue))
+            }
+            None => crate::endpoint::transfer::RecvOutput::Payload(payload.into_payload()),
+        };
         match kind {
             RecvCommitPlanKind::Direct => {
                 let endpoint_meta = TapFrameMeta::new(
@@ -164,8 +182,8 @@ where
                     self.public_header.role(),
                     event.label,
                 );
-                self.emit_endpoint_event(event.event_id, endpoint_meta, event.lane);
                 self.commit_prepared_delta(delta);
+                self.emit_endpoint_event(event.event_id, endpoint_meta, event.lane);
             }
             RecvCommitPlanKind::Branch { branch } => {
                 let committed = self.commit_prepared_delta(delta);
@@ -179,6 +197,6 @@ where
                 self.emit_endpoint_event(event.event_id, endpoint_meta, event.lane);
             }
         }
-        Ok(payload.into_payload())
+        Ok(output)
     }
 }

@@ -45,65 +45,156 @@ where
 
     pub(super) fn packed_sidecar_frontier(
         &self,
-        mut sidecars: [super::ResidentSidecar; 3],
+        sidecars: [super::ResidentSidecar; 3],
     ) -> Option<usize> {
+        self.sidecar_packing_order(sidecars).map(|(_, end)| end)
+    }
+
+    /// Choose the smallest packing of the three owner classes. Allocation
+    /// replacement must not change persistent capacity through alignment alone.
+    fn sidecar_packing_order(
+        &self,
+        sidecars: [super::ResidentSidecar; 3],
+    ) -> Option<([super::ResidentSidecar; 3], usize)> {
         let (slab_ptr, _) = self.slab_ptr_and_len();
         let base = slab_ptr.addr();
-        self.sort_resident_sidecars(&mut sidecars);
-        let mut frontier = 0usize;
-        for resident in sidecars {
-            if resident.storage.is_empty() {
-                continue;
+        let mut best = None;
+        for first in 0..sidecars.len() {
+            for second in 0..sidecars.len() {
+                if second == first {
+                    continue;
+                }
+                for third in 0..sidecars.len() {
+                    if third == first || third == second {
+                        continue;
+                    }
+                    let order = [sidecars[first], sidecars[second], sidecars[third]];
+                    let mut frontier = Some(0);
+                    for resident in order {
+                        if !resident.storage.is_empty() {
+                            frontier = frontier.and_then(|offset| {
+                                packed_sidecar_range(
+                                    base,
+                                    offset,
+                                    resident.storage.bytes(),
+                                    resident.align,
+                                )
+                                .map(|(_, end)| end)
+                            });
+                        }
+                    }
+                    if let Some(end) = frontier
+                        && best.as_ref().is_none_or(|(_, previous)| end < *previous)
+                    {
+                        best = Some((order, end));
+                    }
+                }
             }
-            let (_, destination_end) =
-                packed_sidecar_range(base, frontier, resident.storage.bytes(), resident.align)?;
-            frontier = destination_end;
         }
-        Some(frontier)
+        best
     }
 
     pub(super) fn compact_live_sidecars(&self) {
         let (slab_ptr, _) = self.slab_ptr_and_len();
         let base = slab_ptr.addr();
         let mut sidecars = self.live_sidecars();
+        let (wanted, optimal_end) = crate::invariant_some(self.sidecar_packing_order(sidecars));
         self.sort_resident_sidecars(&mut sidecars);
-
+        // First pack opaque bytes without padding, preserving physical order.
+        // Typed roots are rebound only after every block is aligned again.
         let mut frontier = 0usize;
-        for resident in sidecars {
-            let Some((source_start, source_end)) = self.sidecar_range(resident.storage) else {
+        let mut active = 0;
+        for resident in &mut sidecars {
+            let Some((source_start, _)) = self.sidecar_range(resident.storage) else {
                 continue;
             };
-            let (destination_start, destination_end) = crate::invariant_some(packed_sidecar_range(
+            if frontier > source_start {
+                crate::invariant();
+            }
+            let destination = unsafe { slab_ptr.add(frontier) };
+            // SAFETY: left packing preserves source order and cannot overwrite
+            // a later source. Copying opaque bytes also preserves padding.
+            unsafe {
+                core::ptr::copy(
+                    resident.storage.ptr(),
+                    destination,
+                    resident.storage.bytes(),
+                );
+            }
+            resident.storage = Sidecar::from_raw_parts(destination, resident.storage.bytes());
+            frontier = crate::runtime_core::layout::add(frontier, resident.storage.bytes());
+            active += 1;
+        }
+        let mut target = 0;
+        for desired in wanted {
+            if desired.storage.is_empty() {
+                continue;
+            }
+            let selected = crate::invariant_some(
+                (target..active).find(|&index| sidecars[index].kind == desired.kind),
+            );
+            if selected != target {
+                let (start, _) =
+                    crate::invariant_some(self.sidecar_range(sidecars[target].storage));
+                let (_, end) =
+                    crate::invariant_some(self.sidecar_range(sidecars[selected].storage));
+                let moved = sidecars[selected].storage.bytes();
+                // SAFETY: initialized blocks and their padding are moved as
+                // MaybeUninit bytes, with no interpretation of pointer bytes or
+                // callback. The contiguous span stays inside its old extent.
+                unsafe {
+                    core::slice::from_raw_parts_mut(
+                        slab_ptr.add(start).cast::<core::mem::MaybeUninit<u8>>(),
+                        end - start,
+                    )
+                    .rotate_right(moved);
+                }
+                sidecars[target..=selected].rotate_right(1);
+                let mut offset = start;
+                for resident in &mut sidecars[target..=selected] {
+                    resident.storage = Sidecar::from_raw_parts(
+                        unsafe { slab_ptr.add(offset) },
+                        resident.storage.bytes(),
+                    );
+                    offset = crate::runtime_core::layout::add(offset, resident.storage.bytes());
+                }
+            }
+            target += 1;
+        }
+        let mut destinations = [0; 3];
+        frontier = 0;
+        for (index, resident) in sidecars[..active].iter().enumerate() {
+            let (start, end) = crate::invariant_some(packed_sidecar_range(
                 base,
                 frontier,
                 resident.storage.bytes(),
                 resident.align,
             ));
-            if destination_start > source_start {
-                crate::invariant();
+            destinations[index] = start;
+            frontier = end;
+        }
+        if frontier != optimal_end || frontier > self.image_frontier.get() as usize {
+            crate::invariant();
+        }
+        // Insert alignment gaps backwards so an expanding destination cannot
+        // overwrite a not-yet-moved source. No heap or size-dependent temporary.
+        for index in (0..active).rev() {
+            let resident = &mut sidecars[index];
+            let destination = unsafe { slab_ptr.add(destinations[index]) };
+            unsafe {
+                core::ptr::copy(
+                    resident.storage.ptr(),
+                    destination,
+                    resident.storage.bytes(),
+                );
             }
-            if destination_end > source_end {
-                crate::invariant();
+            resident.storage = Sidecar::from_raw_parts(destination, resident.storage.bytes());
+        }
+        for resident in sidecars {
+            if resident.storage.is_empty() {
+                continue;
             }
-            let destination = /* SAFETY: canonical packing preserves physical
-            sidecar order, so each destination ends no later than its source and
-            cannot overwrite a later live source. `ptr::copy` handles overlap;
-            no owner callback runs before every typed root is rebound. */ unsafe {
-                slab_ptr.add(destination_start)
-            };
-            if destination_start != source_start {
-                /* SAFETY: source/destination are within the same resident slab;
-                the owner roots are rebound below and the source bytes are never
-                observed or dropped again. */
-                unsafe {
-                    core::ptr::copy(
-                        resident.storage.ptr(),
-                        destination,
-                        resident.storage.bytes(),
-                    );
-                }
-            }
-            let compacted = Sidecar::from_raw_parts(destination, resident.storage.bytes());
+            let compacted = resident.storage;
             match resident.kind {
                 ResidentSidecarKind::EndpointLeases => {
                     self.endpoint_lease_storage.set(compacted.cast());
@@ -124,7 +215,6 @@ where
                     }
                 }
             }
-            frontier = destination_end;
         }
 
         let reserved_end = crate::invariant_some(

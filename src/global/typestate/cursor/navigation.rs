@@ -54,7 +54,7 @@ impl EventCursor {
         scope_id: ScopeId,
         target_arm: u8,
     ) -> Option<StateIndex> {
-        if !self.is_route_controller(scope_id)
+        if !self.contains_route_controller(scope_id)
             && let Some(entry_idx) = self.passive_arm_entry(scope_id, target_arm)
         {
             Some(entry_idx)
@@ -116,6 +116,19 @@ impl EventCursor {
         self.try_local_meta_from_node(idx)
     }
 
+    /// Logical operation owner, independent of the physical actor holding it.
+    pub(crate) fn logical_role_at(&self, idx: usize) -> Option<u8> {
+        let (eff, receiving) = match self.machine().node(idx).action() {
+            LocalAction::Send { eff_index, .. } | LocalAction::Local { eff_index, .. } => {
+                (eff_index, false)
+            }
+            LocalAction::Recv { eff_index, .. } => (eff_index, true),
+            LocalAction::Terminate => return None,
+        };
+        let atom = self.program_ref().event_atom_at(eff.dense_ordinal());
+        Some(if receiving { atom.to } else { atom.from })
+    }
+
     #[inline]
     fn route_authority_at(&self, idx: usize, route_arm: Option<u8>) -> (ScopeId, Option<u8>) {
         // RoleImageRef construction proves exact conflict/scope/arm membership,
@@ -140,12 +153,11 @@ impl EventCursor {
                 origin,
                 lane,
             } => {
-                let payload_schema = self
+                let payload_kind = self
                     .machine()
                     .program_ref()
                     .event_atom_at(eff_index.dense_ordinal())
-                    .payload
-                    .wire_schema();
+                    .payload;
                 let scope = node.scope();
                 let route_arm = node.route_arm();
                 let (route_scope, selected_route_arm) = self.route_authority_at(idx, route_arm);
@@ -153,7 +165,7 @@ impl EventCursor {
                     eff_index,
                     peer,
                     label,
-                    payload_schema,
+                    payload_kind,
                     frame_label,
                     semantic: node.event_semantic(),
                     origin,
@@ -180,12 +192,11 @@ impl EventCursor {
                 origin,
                 lane,
             } => {
-                let payload_schema = self
+                let payload_kind = self
                     .machine()
                     .program_ref()
                     .event_atom_at(eff_index.dense_ordinal())
-                    .payload
-                    .wire_schema();
+                    .payload;
                 let scope = node.scope();
                 let route_arm = node.route_arm();
                 let (route_scope, _) = self.route_authority_at(idx, route_arm);
@@ -193,7 +204,7 @@ impl EventCursor {
                     eff_index,
                     peer,
                     label,
-                    payload_schema,
+                    payload_kind,
                     frame_label,
                     semantic: node.event_semantic(),
                     origin,
@@ -219,19 +230,18 @@ impl EventCursor {
                 origin,
                 lane,
             } => {
-                let payload_schema = self
+                let payload_kind = self
                     .machine()
                     .program_ref()
                     .event_atom_at(eff_index.dense_ordinal())
-                    .payload
-                    .wire_schema();
+                    .payload;
                 let scope = node.scope();
                 let route_arm = node.route_arm();
                 let (route_scope, _) = self.route_authority_at(idx, route_arm);
                 Some(LocalMeta {
                     eff_index,
                     label,
-                    payload_schema,
+                    payload_kind,
                     frame_label,
                     semantic: node.event_semantic(),
                     origin,

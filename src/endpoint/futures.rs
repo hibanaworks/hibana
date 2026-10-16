@@ -93,7 +93,7 @@ where
 
 impl<'e, 'r, const ROLE: u8> RawBranchRecvFuture<'e, 'r, ROLE> {
     #[inline]
-    fn new(branch: RouteBranch<'e, 'r, ROLE>) -> Self {
+    pub(super) fn new(branch: RouteBranch<'e, 'r, ROLE>) -> Self {
         let branch = core::mem::ManuallyDrop::new(branch);
         let endpoint = branch.endpoint;
         /* SAFETY: consuming `RouteBranch` transfers its route preview borrow to
@@ -115,13 +115,13 @@ impl<'e, 'r, const ROLE: u8> RawBranchRecvFuture<'e, 'r, ROLE> {
     }
 
     #[inline]
-    fn poll_raw(
+    pub(super) fn poll_raw(
         &mut self,
         logical_label: u8,
-        payload_schema: u32,
+        payload_kind: crate::eff::EventPayload,
         validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
         cx: &mut Context<'_>,
-    ) -> Poll<RecvResult<carrier::RawPayload>> {
+    ) -> Poll<RecvResult<carrier::RawRecvOutput>> {
         if self.progress == BranchRecvFutureProgress::Finished {
             crate::invariant();
         }
@@ -136,7 +136,7 @@ impl<'e, 'r, const ROLE: u8> RawBranchRecvFuture<'e, 'r, ROLE> {
         let endpoint = /* SAFETY: the future owns the unique endpoint borrow.
         `Held` owns branch-recv state; `Faulted` performs one terminal fault
         observation without arming that state. */ unsafe { &mut *self.endpoint };
-        match endpoint.poll_branch_recv(logical_label, payload_schema, validate, cx) {
+        match endpoint.poll_branch_recv(logical_label, payload_kind, validate, cx) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Ok(payload)) => {
                 self.finish();
@@ -152,7 +152,7 @@ impl<'e, 'r, const ROLE: u8> RawBranchRecvFuture<'e, 'r, ROLE> {
 
 impl<'e, 'r, const ROLE: u8> RawRecvFuture<'e, 'r, ROLE> {
     #[inline]
-    fn new(endpoint: &'e mut Endpoint<'r, ROLE>) -> Self {
+    pub(super) fn new(endpoint: &'e mut Endpoint<'r, ROLE>) -> Self {
         let lease = RecvFutureLease::from_public_lease(endpoint.init_public_recv_state());
         Self {
             endpoint: core::ptr::from_mut(endpoint),
@@ -162,13 +162,13 @@ impl<'e, 'r, const ROLE: u8> RawRecvFuture<'e, 'r, ROLE> {
     }
 
     #[inline]
-    fn poll_raw(
+    pub(super) fn poll_raw(
         &mut self,
         logical_label: u8,
-        payload_schema: u32,
+        payload_kind: crate::eff::EventPayload,
         validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
         cx: &mut Context<'_>,
-    ) -> Poll<RecvResult<carrier::RawPayload>> {
+    ) -> Poll<RecvResult<carrier::RawRecvOutput>> {
         match self.lease {
             RecvFutureLease::Completed => crate::invariant(),
             RecvFutureLease::Rejected => {
@@ -180,7 +180,7 @@ impl<'e, 'r, const ROLE: u8> RawRecvFuture<'e, 'r, ROLE> {
         let endpoint = /* SAFETY: the future owns the unique endpoint borrow.
         `RestoreOnDrop` owns recv state; `Faulted` performs one terminal fault
         observation without arming that state. */ unsafe { &mut *self.endpoint };
-        match endpoint.poll_recv(logical_label, payload_schema, validate, cx) {
+        match endpoint.poll_recv(logical_label, payload_kind, validate, cx) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Ok(payload)) => {
                 self.lease = RecvFutureLease::Completed;
@@ -236,7 +236,7 @@ where
         };
         match this.raw.poll_raw(
             <M as crate::g::Message>::LOGICAL_LABEL,
-            crate::global::payload_schema::<M>(),
+            crate::global::payload_kind::<M>(),
             <M::Payload as WirePayload>::validate_payload,
             cx,
         ) {
@@ -266,7 +266,7 @@ where
         };
         match this.raw.poll_raw(
             <M as crate::g::Message>::LOGICAL_LABEL,
-            crate::global::payload_schema::<M>(),
+            crate::global::payload_kind::<M>(),
             <M::Payload as WirePayload>::validate_payload,
             cx,
         ) {

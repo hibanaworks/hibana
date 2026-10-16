@@ -13,24 +13,27 @@ struct SendPreviewRouteArm {
 
 struct SendPreviewDecisionContext<'a> {
     target_label: u8,
-    target_schema: u32,
+    target_payload: crate::eff::EventPayload,
     preview_route_arm: &'a mut Option<SendPreviewRouteArm>,
     committed_arm_for_scope: &'a mut dyn FnMut(ScopeId) -> Option<u8>,
     preview_controller_arm_for_scope: &'a mut dyn FnMut(ScopeId) -> Option<u8>,
     selected_arm_for_scope: &'a mut dyn FnMut(ScopeId) -> Option<u8>,
-    lane_for_contract_or_offer: &'a mut dyn FnMut(ScopeId, u8, u32) -> u8,
+    lane_for_contract_or_offer: &'a mut dyn FnMut(ScopeId, u8, crate::eff::EventPayload) -> u8,
 }
 
 impl EventCursor {
-    fn send_preview_local_contract_lane_at(&self, idx: usize) -> Option<(u8, u32, u8)> {
+    fn send_preview_local_contract_lane_at(
+        &self,
+        idx: usize,
+    ) -> Option<(u8, crate::eff::EventPayload, u8)> {
         if let Some(meta) = self.try_recv_meta_at(idx) {
-            return Some((meta.label, meta.payload_schema, meta.lane));
+            return Some((meta.label, meta.payload_kind, meta.lane));
         }
         if let Some(meta) = self.try_send_meta_at(idx) {
-            return Some((meta.label, meta.payload_schema, meta.lane));
+            return Some((meta.label, meta.payload_kind, meta.lane));
         }
         if let Some(meta) = self.try_local_meta_at(idx) {
-            return Some((meta.label, meta.payload_schema, meta.lane));
+            return Some((meta.label, meta.payload_kind, meta.lane));
         }
         None
     }
@@ -41,7 +44,7 @@ impl EventCursor {
         scope_id: ScopeId,
         arm: u8,
         target_label: u8,
-        target_schema: u32,
+        target_payload: crate::eff::EventPayload,
     ) -> Option<usize> {
         let slot = self.route_scope_slot(scope_id)?;
         let row = self
@@ -53,7 +56,7 @@ impl EventCursor {
         while idx < row.end() {
             if let Some((label, schema, lane)) = self.send_preview_local_contract_lane_at(idx)
                 && label == target_label
-                && schema == target_schema
+                && schema == target_payload
             {
                 if !self.node_event_done_for_lane(idx, lane) {
                     return Some(idx);
@@ -89,7 +92,7 @@ impl EventCursor {
         &self,
         scope_id: ScopeId,
         target_label: u8,
-        target_schema: u32,
+        target_payload: crate::eff::EventPayload,
     ) -> Option<(u8, usize)> {
         let mut arm = 0u8;
         while arm <= 1 {
@@ -98,7 +101,7 @@ impl EventCursor {
                 && self
                     .send_preview_local_contract_lane_at(entry_idx)
                     .is_some_and(|(label, schema, _)| {
-                        label == target_label && schema == target_schema
+                        label == target_label && schema == target_payload
                     })
             {
                 return Some((arm, entry_idx));
@@ -117,7 +120,7 @@ impl EventCursor {
         scope_id: ScopeId,
         arm: u8,
         target_label: u8,
-        target_schema: u32,
+        target_payload: crate::eff::EventPayload,
     ) -> Result<usize, SendPreviewError> {
         if let Some((entry, _)) = self.controller_arm_entry_by_arm(scope_id, arm) {
             let entry_idx = state_index_to_usize(entry);
@@ -126,21 +129,21 @@ impl EventCursor {
             else {
                 return Err(SendPreviewError::Invariant);
             };
-            if entry_label == target_label && entry_schema == target_schema {
+            if entry_label == target_label && entry_schema == target_payload {
                 return Ok(entry_idx);
             }
             if let Some(idx) = self.send_preview_route_arm_contract_index(
                 scope_id,
                 arm,
                 target_label,
-                target_schema,
+                target_payload,
             ) {
                 return Ok(idx);
             }
             if entry_label == target_label {
-                return Err(SendPreviewError::SchemaMismatch {
+                return Err(SendPreviewError::PayloadMismatch {
                     expected: entry_schema,
-                    actual: target_schema,
+                    actual: target_payload,
                 });
             }
             return Err(SendPreviewError::LabelMismatch {
@@ -148,7 +151,7 @@ impl EventCursor {
                 actual: target_label,
             });
         }
-        self.send_preview_route_arm_contract_index(scope_id, arm, target_label, target_schema)
+        self.send_preview_route_arm_contract_index(scope_id, arm, target_label, target_payload)
             .ok_or(SendPreviewError::Invariant)
     }
 
@@ -248,15 +251,15 @@ impl EventCursor {
         self.route_scope_end_by_id(scope_id)
     }
 
-    fn send_preview_contract_at_index(&self, idx: usize) -> Option<(u8, u32)> {
+    fn send_preview_contract_at_index(&self, idx: usize) -> Option<(u8, crate::eff::EventPayload)> {
         if let Some(meta) = self.try_recv_meta_at(idx) {
-            return Some((meta.label, meta.payload_schema));
+            return Some((meta.label, meta.payload_kind));
         }
         if let Some(meta) = self.try_send_meta_at(idx) {
-            return Some((meta.label, meta.payload_schema));
+            return Some((meta.label, meta.payload_kind));
         }
         if let Some(meta) = self.try_local_meta_at(idx) {
-            return Some((meta.label, meta.payload_schema));
+            return Some((meta.label, meta.payload_kind));
         }
         None
     }
@@ -264,16 +267,16 @@ impl EventCursor {
     fn send_preview_missing_start_error(
         &self,
         target_label: u8,
-        target_schema: u32,
+        target_payload: crate::eff::EventPayload,
     ) -> SendPreviewError {
         if let Some(idx) = self.first_pending_step_index()
-            && let Some((expected_label, expected_schema)) =
+            && let Some((expected_label, expected_payload)) =
                 self.send_preview_contract_at_index(idx)
         {
             if expected_label == target_label {
-                return SendPreviewError::SchemaMismatch {
-                    expected: expected_schema,
-                    actual: target_schema,
+                return SendPreviewError::PayloadMismatch {
+                    expected: expected_payload,
+                    actual: target_payload,
                 };
             }
             return SendPreviewError::LabelMismatch {
@@ -301,7 +304,7 @@ impl EventCursor {
                 .intrinsic_send_preview_controller_arm_entry_for_contract(
                     scope_id,
                     ctx.target_label,
-                    ctx.target_schema,
+                    ctx.target_payload,
                 )
             && let Some(committed) = (ctx.committed_arm_for_scope)(scope_id)
             && committed != arm
@@ -322,7 +325,7 @@ impl EventCursor {
                 scope_id,
                 selected,
                 ctx.target_label,
-                ctx.target_schema,
+                ctx.target_payload,
             )?;
             if let Some(committed) = (ctx.committed_arm_for_scope)(scope_id)
                 && committed != selected
@@ -345,7 +348,7 @@ impl EventCursor {
                 .intrinsic_send_preview_controller_arm_entry_for_contract(
                     scope_id,
                     ctx.target_label,
-                    ctx.target_schema,
+                    ctx.target_payload,
                 )
         {
             if let Some(committed) = (ctx.committed_arm_for_scope)(scope_id)
@@ -389,7 +392,7 @@ impl EventCursor {
             return;
         }
         let lane_wire =
-            (ctx.lane_for_contract_or_offer)(scope_id, ctx.target_label, ctx.target_schema);
+            (ctx.lane_for_contract_or_offer)(scope_id, ctx.target_label, ctx.target_payload);
         let selected_arm = match (ctx.selected_arm_for_scope)(scope_id) {
             Some(arm) => Some(arm),
             None => (*ctx.preview_route_arm).and_then(|preview| {
@@ -431,7 +434,7 @@ impl EventCursor {
             !self.is_send_at(*idx) && !self.is_recv_at(*idx) && !self.is_local_action_at(*idx);
         let at_decision = at_route_start || unlabeled;
 
-        if self.is_route_controller(scope_id) {
+        if self.contains_route_controller(scope_id) {
             return self.send_preview_apply_controller_route_decision_for_contract(
                 idx,
                 scope_id,
@@ -486,6 +489,9 @@ impl EventCursor {
         idx: usize,
         preview_route_arm: Option<SendPreviewRouteArm>,
     ) -> Result<SendMeta, SendPreviewError> {
+        if self.logical_role_at(idx) != Some(role) {
+            return Err(SendPreviewError::Invariant);
+        }
         let mut current_meta = if self.is_local_action_at(idx) {
             let local = self
                 .try_local_meta_at(idx)
@@ -494,7 +500,7 @@ impl EventCursor {
                 eff_index: local.eff_index,
                 peer: role,
                 label: local.label,
-                payload_schema: local.payload_schema,
+                payload_kind: local.payload_kind,
                 frame_label: local.frame_label,
                 semantic: local.semantic,
                 origin: local.origin,
@@ -551,7 +557,7 @@ impl EventCursor {
         selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
     ) -> Result<Option<(SendMeta, StateIndex)>, SendPreviewError> {
         let target_label = selector.label;
-        let target_schema = selector.payload_schema;
+        let target_payload = selector.payload_kind;
         if !self.send_preview_conflict_allows(
             *idx,
             preview_route_arm,
@@ -576,7 +582,7 @@ impl EventCursor {
             .relocatable_resident_lane_step_at_index(*idx, current_meta.lane as usize)
             .map_err(|_| SendPreviewError::Invariant)?;
         let contract_matches =
-            current_meta.label == target_label && current_meta.payload_schema == target_schema;
+            current_meta.label == target_label && current_meta.payload_kind == target_payload;
         if !contract_matches && self.relocatable_step_done(progress_step) {
             *idx = state_index_to_usize(self.node_next_index_at(*idx));
             return Ok(None);
@@ -624,9 +630,9 @@ impl EventCursor {
         }
 
         if current_meta.label == target_label {
-            Err(SendPreviewError::SchemaMismatch {
-                expected: current_meta.payload_schema,
-                actual: target_schema,
+            Err(SendPreviewError::PayloadMismatch {
+                expected: current_meta.payload_kind,
+                actual: target_payload,
             })
         } else {
             Err(SendPreviewError::LabelMismatch {
@@ -642,23 +648,24 @@ impl EventCursor {
         committed_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
         preview_controller_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
         selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
-        lane_for_contract_or_offer: &mut dyn FnMut(ScopeId, u8, u32) -> u8,
+        lane_for_contract_or_offer: &mut dyn FnMut(ScopeId, u8, crate::eff::EventPayload) -> u8,
     ) -> Result<(SendMeta, StateIndex), SendPreviewError> {
         let target_label = selector.label;
-        let target_schema = selector.payload_schema;
+        let target_payload = selector.payload_kind;
         let mut idx = self
             .send_preview_start_index_for_contract(
+                selector.role,
                 target_label,
-                target_schema,
+                target_payload,
                 committed_arm_for_scope,
             )
-            .ok_or_else(|| self.send_preview_missing_start_error(target_label, target_schema))?;
+            .ok_or_else(|| self.send_preview_missing_start_error(target_label, target_payload))?;
         let mut preview_route_arm: Option<SendPreviewRouteArm> = None;
 
         {
             let mut route_decision = SendPreviewDecisionContext {
                 target_label,
-                target_schema,
+                target_payload,
                 preview_route_arm: &mut preview_route_arm,
                 committed_arm_for_scope,
                 preview_controller_arm_for_scope,

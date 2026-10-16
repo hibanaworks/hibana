@@ -29,7 +29,6 @@ where
         while slot_idx < slot_count {
             let slot = crate::invariant_some(self.endpoint_lease_slot_by_index(slot_idx));
             if !slot.is_occupied() {
-                self.require_empty_endpoint_waiter_slot(slot_idx);
                 break;
             }
             slot_idx += 1;
@@ -65,7 +64,6 @@ where
         if slot.is_occupied() {
             crate::invariant();
         }
-        self.require_empty_endpoint_waiter_slot(slot_idx);
         let generation = crate::invariant_some(self.next_endpoint_lease_generation());
         self.write_endpoint_lease_slot(
             slot_idx,
@@ -95,6 +93,23 @@ where
         false
     }
 
+    pub(crate) fn published_actor_for(
+        &self,
+        sid: SessionId,
+        actor: u8,
+    ) -> Option<(EndpointLeaseId, u32)> {
+        for idx in 0..self.endpoint_lease_slot_count() {
+            let slot = crate::invariant_some(self.endpoint_lease_slot_by_index(idx));
+            if slot.is_published() && slot.sid == sid && slot.role == actor {
+                return Some((
+                    crate::invariant_ok(EndpointLeaseId::try_from(idx)),
+                    slot.generation,
+                ));
+            }
+        }
+        None
+    }
+
     #[inline]
     pub(crate) fn publish_endpoint_lease(&self, lease_slot: EndpointLeaseId, generation: u32) {
         let idx = usize::from(lease_slot);
@@ -122,7 +137,6 @@ where
         if !slot.is_occupied() || slot.generation != generation {
             crate::invariant();
         }
-        self.require_empty_endpoint_waiter_slot(idx);
         self.write_endpoint_lease_slot(
             idx,
             EndpointLeaseSlot {

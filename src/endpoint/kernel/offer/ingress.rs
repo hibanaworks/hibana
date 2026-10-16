@@ -122,7 +122,9 @@ where
                 .next_set_from(start, lane_limit)
         } {
             let (word, bit) = lane_word_index(lane_idx);
-            if deferred_lanes[word] & bit != 0 {
+            if deferred_lanes[word] & bit != 0
+                || self.io.ports.get(lane_idx).is_none_or(Option::is_none)
+            {
                 start = lane_idx + 1;
                 continue;
             }
@@ -154,7 +156,9 @@ where
         let mut lanes = OfferLaneScan::new(preferred_lane, lanes, lane_limit);
         while let Some(lane_idx) = lanes.next() {
             let (word, bit) = lane_word_index(lane_idx);
-            if deferred_lanes[word] & bit != 0 {
+            if deferred_lanes[word] & bit != 0
+                || self.io.ports.get(lane_idx).is_none_or(Option::is_none)
+            {
                 continue;
             }
             match self.poll_received_framed_transport_frame_for_lane(

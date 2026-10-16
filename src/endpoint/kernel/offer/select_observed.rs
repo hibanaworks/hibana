@@ -31,7 +31,10 @@ where
             let Some(meta) = self.progress.cursor.try_recv_meta_at(idx) else {
                 continue;
             };
-            if meta.origin.is_session() || !key.matches_recv(meta) {
+            if self.progress.cursor.logical_role_at(idx) != Some(self.public_header.role())
+                || meta.origin.is_session()
+                || !key.matches_recv(meta)
+            {
                 continue;
             }
             let lane = usize::from(meta.lane);

@@ -177,6 +177,7 @@ pub(in super::super) const fn validate_maximum_certificate<const ROLE_BYTES: usi
 /// order cannot cause a false wire-domain rejection.
 pub(crate) const fn merge_parallel_lanes<const E: usize>(
     eff_list: &mut EffList<E>,
+    actors: Option<&crate::g::SourceActorImage<E>>,
     left_start: usize,
     left_end: usize,
     right_end: usize,
@@ -198,10 +199,12 @@ pub(crate) const fn merge_parallel_lanes<const E: usize>(
     validate_lane_span(eff_list, left_start, left_end, left_lane_span);
     validate_lane_span(eff_list, left_end, right_end, right_lane_span);
 
-    let left_index =
-        LaneEndpointIndex::<BYTE_DOMAIN_MASK_BYTES>::from_range(eff_list, left_start, left_end);
-    let right_index =
-        LaneEndpointIndex::<BYTE_DOMAIN_MASK_BYTES>::from_range(eff_list, left_end, right_end);
+    let left_index = LaneEndpointIndex::<BYTE_DOMAIN_MASK_BYTES>::from_range(
+        eff_list, actors, left_start, left_end,
+    );
+    let right_index = LaneEndpointIndex::<BYTE_DOMAIN_MASK_BYTES>::from_range(
+        eff_list, actors, left_end, right_end,
+    );
     validate_dense_lane_classes(&left_index, left_lane_span);
     validate_dense_lane_classes(&right_index, right_lane_span);
 

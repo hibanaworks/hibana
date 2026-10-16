@@ -24,6 +24,7 @@ where
 {
     #[inline]
     fn publish_public_route_branch(&mut self, label: u8) -> RecvResult<u8> {
+        self.reconcile_retired_views();
         match self.transition_public_op(PublicOpEdge::PublishRouteBranch) {
             super::core::PublicOpLease::Held => Ok(label),
             super::core::PublicOpLease::Rejected | super::core::PublicOpLease::Faulted => Err(
@@ -56,6 +57,9 @@ where
             self.io.public_offer_state = OfferState::new();
             return Poll::Ready(self.publish_public_route_branch(label));
         }
+        if let Some(refresh) = self.progress.cursor.refresh_resident_row_at_index() {
+            self.refresh_after_cursor_move(refresh);
+        }
         let mut offer_state =
             core::mem::replace(&mut self.io.public_offer_state, OfferState::new());
         let poll = {
@@ -67,6 +71,11 @@ where
             };
             let mut frontier_scratch = self.frontier_scratch_workspace(&mut scratch_lease);
             self.poll_offer_state(&mut offer_state, cx, &mut frontier_scratch)
+        };
+        self.reconcile_retired_views();
+        let poll = match self.session_fault() {
+            Some(kind) => Poll::Ready(Err(RecvError::SessionFault(kind))),
+            None => poll,
         };
         match poll {
             Poll::Pending => {
@@ -96,11 +105,11 @@ where
     pub(in crate::endpoint) fn poll_public_recv(
         &mut self,
         logical_label: u8,
-        payload_schema: u32,
+        payload_kind: crate::eff::EventPayload,
         validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
         cx: &mut core::task::Context<'_>,
         waiters: &mut WaiterTransfer,
-    ) -> Poll<RecvResult<Payload<'r>>> {
+    ) -> Poll<RecvResult<crate::endpoint::transfer::RecvOutput<'r>>> {
         if let Some(kind) = self.session_fault() {
             self.clear_endpoint_waiter(waiters);
             self.fail_session(kind);
@@ -120,7 +129,7 @@ where
         match kernel_recv(
             self,
             logical_label,
-            payload_schema,
+            payload_kind,
             validate,
             &mut recv_state,
             cx,
@@ -148,11 +157,11 @@ where
     pub(in crate::endpoint) fn poll_public_branch_recv(
         &mut self,
         logical_label: u8,
-        payload_schema: u32,
+        payload_kind: crate::eff::EventPayload,
         validate: for<'a> fn(Payload<'a>) -> Result<(), crate::transport::wire::CodecError>,
         cx: &mut core::task::Context<'_>,
         waiters: &mut WaiterTransfer,
-    ) -> Poll<RecvResult<Payload<'r>>> {
+    ) -> Poll<RecvResult<crate::endpoint::transfer::RecvOutput<'r>>> {
         if let Some(kind) = self.session_fault() {
             self.clear_endpoint_waiter(waiters);
             self.fail_session(kind);
@@ -179,7 +188,7 @@ where
         match kernel_branch_recv(
             self,
             logical_label,
-            payload_schema,
+            payload_kind,
             validate,
             &mut branch_recv_state,
             cx,
@@ -217,7 +226,7 @@ where
     pub(in crate::endpoint) fn poll_public_send(
         &mut self,
         cx: &mut core::task::Context<'_>,
-        payload: Option<lane_port::RawSendPayload>,
+        payload: Option<lane_port::SendInput>,
         waiters: &mut WaiterTransfer,
     ) -> Poll<SendResult<SendCommitOutcome<'r>>> {
         let active_op = self.io.public_active_op;

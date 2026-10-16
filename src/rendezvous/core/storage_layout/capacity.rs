@@ -18,7 +18,7 @@ pub(in crate::rendezvous::core) use resident_lease::PersistentSidecarLease;
 // retirement packs those roots canonically and recomputes the frontier, so
 // replacement history cannot consume resident storage.
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum ResidentSidecarKind {
     EndpointLeases,
     Associations,

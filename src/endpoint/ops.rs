@@ -6,27 +6,29 @@
 // endpoint borrow keeps role-local aliasing exclusive; this fragment must not
 // cache raw kernel pointers or publish progress without the carrier operation.
 
+use super::send;
 use super::{
-    Endpoint, EndpointError, RecvFuture, RecvResult, RouteBranch, SendResult, carrier,
-    futures::OfferFuture, kernel, send,
+    Endpoint, EndpointError, RecvResult, RouteBranch, SendResult, carrier, futures::OfferFuture,
+    kernel,
 };
-use crate::transport::wire::{CodecError, Payload, WireEncode, WirePayload};
+use crate::transport::wire::{CodecError, Payload};
 use core::task::{Context, Poll};
 
 impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     #[inline]
     fn new(
-        ptr: core::ptr::NonNull<carrier::KernelEndpointHeader<'r>>,
+        ptr: core::ptr::NonNull<carrier::KernelEndpointHeader>,
         handle: carrier::EndpointHandle,
     ) -> Self {
-        match super::owner::EndpointOwner::new(ptr, handle).into_endpoint() {
+        // SAFETY: the rendezvous attachment retains this issued actor for 'r.
+        match unsafe { super::owner::EndpointOwner::new(ptr, handle).into_endpoint() } {
             Ok(endpoint) => endpoint,
             Err(_owner) => crate::invariant(),
         }
     }
 
     #[inline]
-    fn ops(&self) -> &carrier::EndpointOps<'r> {
+    fn ops(&self) -> &carrier::EndpointOps {
         /* SAFETY: `Endpoint::from_handle` stores a non-null `KernelEndpointHeader`
         pointer installed by the rendezvous carrier; the header remains pinned for
         `'r`, and this shared read exposes only the immutable ops table. */
@@ -92,7 +94,7 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
 
     #[inline]
     pub(crate) fn from_handle(
-        ptr: core::ptr::NonNull<carrier::KernelEndpointHeader<'r>>,
+        ptr: core::ptr::NonNull<carrier::KernelEndpointHeader>,
         handle: carrier::EndpointHandle,
     ) -> Self {
         Self::new(ptr, handle)
@@ -127,10 +129,10 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     pub(super) fn begin_public_send_state(
         &mut self,
         logical_label: u8,
-        payload_schema: u32,
+        payload_kind: crate::eff::EventPayload,
     ) -> SendResult<()> {
         let mut preview = core::mem::MaybeUninit::<kernel::SendPreview>::uninit();
-        self.preview_send(logical_label, payload_schema, preview.as_mut_ptr())?;
+        self.preview_send(logical_label, payload_kind, preview.as_mut_ptr())?;
         let preview = /* SAFETY: `preview_send` returned `Ok`, so the carrier
         callback wrote one `SendPreview` into this local `MaybeUninit` slot
         before return. */ unsafe { preview.assume_init() };
@@ -176,7 +178,7 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     pub(super) fn preview_send(
         &mut self,
         logical_label: u8,
-        payload_schema: u32,
+        payload_kind: crate::eff::EventPayload,
         out: *mut kernel::SendPreview,
     ) -> SendResult<()> {
         /* SAFETY: `self.owner.ptr` identifies this endpoint's carrier header and
@@ -187,7 +189,7 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
                 self.erased_ptr(),
                 self.owner.handle,
                 logical_label,
-                payload_schema,
+                payload_kind,
                 out,
             )
         }
@@ -197,11 +199,11 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     pub(super) fn poll_recv(
         &mut self,
         logical_label: u8,
-        payload_schema: u32,
+        payload_kind: crate::eff::EventPayload,
         validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
         cx: &mut Context<'_>,
-    ) -> Poll<RecvResult<carrier::RawPayload>> {
-        let mut out = core::mem::MaybeUninit::<Poll<RecvResult<carrier::RawPayload>>>::uninit();
+    ) -> Poll<RecvResult<carrier::RawRecvOutput>> {
+        let mut out = core::mem::MaybeUninit::<Poll<RecvResult<carrier::RawRecvOutput>>>::uninit();
         /* SAFETY: `self.owner.ptr` identifies this endpoint's carrier header,
         `self.owner.handle` names the same generation, and the local `out` slot is
         written by `poll_recv` before `assume_init` reads it. */
@@ -210,7 +212,7 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
                 ptr: self.erased_ptr(),
                 handle: self.owner.handle,
                 logical_label,
-                payload_schema,
+                payload_kind,
                 validate,
                 cx,
                 out: out.as_mut_ptr(),
@@ -233,11 +235,11 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     pub(super) fn poll_branch_recv(
         &mut self,
         logical_label: u8,
-        payload_schema: u32,
+        payload_kind: crate::eff::EventPayload,
         validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
         cx: &mut Context<'_>,
-    ) -> Poll<RecvResult<carrier::RawPayload>> {
-        let mut out = core::mem::MaybeUninit::<Poll<RecvResult<carrier::RawPayload>>>::uninit();
+    ) -> Poll<RecvResult<carrier::RawRecvOutput>> {
+        let mut out = core::mem::MaybeUninit::<Poll<RecvResult<carrier::RawRecvOutput>>>::uninit();
         /* SAFETY: `self.owner.ptr` identifies this endpoint's carrier header,
         `self.owner.handle` names the same generation, and the local `out` slot is
         written by `poll_branch_recv` before `assume_init` reads it. */
@@ -246,7 +248,7 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
                 ptr: self.erased_ptr(),
                 handle: self.owner.handle,
                 logical_label,
-                payload_schema,
+                payload_kind,
                 validate,
                 cx,
                 out: out.as_mut_ptr(),
@@ -259,7 +261,7 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     pub(crate) fn poll_send(
         &mut self,
         cx: &mut Context<'_>,
-        payload: Option<kernel::RawSendPayload>,
+        payload: Option<kernel::lane_port::SendInput>,
     ) -> Poll<SendResult<kernel::SendCommitOutcome<'r>>> {
         let mut out =
             core::mem::MaybeUninit::<Poll<SendResult<kernel::SendCommitOutcome<'r>>>>::uninit();
@@ -279,26 +281,25 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     #[inline]
     /// Send the next projected message as `M`.
     ///
+    /// Wire payloads are borrowed; Endpoint payloads move into the future.
+    /// Cancelling an owned send does not restore the transferred operation
+    /// right. Dropping an unfinished resource ends the current run.
+    ///
     /// The endpoint previews the projected send descriptor on first poll.
     /// Dropping the future before completion leaves the endpoint on the same
     /// typestate step. A preview mismatch reports its exact send failure and
     /// makes the current session generation terminal.
     pub fn send<'a, 'e, M>(
         &'e mut self,
-        payload: &'a M::Payload,
-    ) -> impl core::future::Future<Output = core::result::Result<(), EndpointError>>
-    + 'a
-    + use<'a, 'e, 'r, M, ROLE>
+        payload: <M::Payload as crate::global::PayloadSpec>::SendArgument<'a, 'r>,
+    ) -> impl core::future::Future<Output = Result<(), EndpointError>> + 'a + use<'a, 'e, 'r, M, ROLE>
     where
         M: crate::g::Message + 'a,
-        M::Payload: WireEncode + WirePayload + 'a,
+        M::Payload: 'a,
         'e: 'a,
-        'r: 'a,
+        'r: 'e,
     {
-        let endpoint = core::ptr::from_mut(self);
-        let logical_label = <M as crate::g::Message>::LOGICAL_LABEL;
-        let payload_schema = crate::global::payload_schema::<M>();
-        send::SendFuture::pending_direct(endpoint, logical_label, payload_schema, payload)
+        <M::Payload as crate::global::PayloadSpec>::send::<M, ROLE>(self, payload)
     }
 
     #[inline]
@@ -309,16 +310,21 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     /// trailing bytes, while borrowed payloads may return views tied to the
     /// endpoint borrow. A committed receive fault poisons the session generation
     /// before the error is returned.
+    /// Endpoint payloads return a uniquely issued continuation tied to the
+    /// receiving runtime, independent of this temporary receive borrow.
     pub fn recv<'e, M>(
         &'e mut self,
     ) -> impl core::future::Future<
-        Output = core::result::Result<<M::Payload as WirePayload>::Decoded<'e>, EndpointError>,
+        Output = Result<
+            <M::Payload as crate::global::PayloadSpec>::Received<'e, 'r>,
+            EndpointError,
+        >,
     > + 'e
     where
         M: crate::g::Message + 'e,
-        M::Payload: WireEncode + WirePayload,
+        'r: 'e,
     {
-        RecvFuture::<'e, 'r, ROLE, M>::new(self)
+        <M::Payload as crate::global::PayloadSpec>::recv::<M, ROLE>(self)
     }
 
     #[inline]

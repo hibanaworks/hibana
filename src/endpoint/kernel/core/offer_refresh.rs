@@ -143,7 +143,7 @@ where
         )?;
         let scope_id = normalized.scope_id();
         let entry_idx = normalized.entry_idx();
-        let is_controller = self.progress.cursor.is_route_controller(scope_id);
+        let is_controller = self.progress.cursor.contains_route_controller(scope_id);
         let is_dynamic = self
             .progress
             .cursor

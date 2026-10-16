@@ -12,11 +12,11 @@ use crate::{
 };
 use core::{future::Future, pin::pin, task::Context};
 
-static_assertions::assert_not_impl_any!(EndpointOwner<'static>: Clone, Copy, Send, Sync);
+static_assertions::assert_not_impl_any!(EndpointOwner: Clone, Copy, Send, Sync);
 static_assertions::assert_not_impl_any!(Endpoint<'static, 0>: Clone, Copy, Send, Sync);
 
 #[test]
-fn foreign_role_or_generation_cannot_release_a_live_endpoint() {
+fn foreign_view_or_generation_cannot_release_a_live_endpoint() {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .build()
         .expect("runtime");
@@ -34,31 +34,31 @@ fn foreign_role_or_generation_cannot_release_a_live_endpoint() {
         let client = rendezvous.enter(session, &client_program).expect("client");
         let mut server = rendezvous.enter(session, &server_program).expect("server");
         let original = client.owner.handle;
-        let wrong_role = EndpointHandle::new(original.generation(), 1);
+        let wrong_view = EndpointHandle::new(original.generation(), original.view_generation() + 2);
         let wrong_generation = EndpointHandle::new(
             original
                 .generation()
                 .checked_add(1)
                 .expect("fresh generation"),
-            0,
+            original.view_generation(),
         );
         // SAFETY: the header belongs to the live client. Copy the immutable
         // callback before testing rejection so no header borrow spans a call.
         let release = unsafe { client.owner.ptr.as_ref().ops().drop_endpoint };
-        for invalid in [wrong_role, wrong_generation] {
+        for invalid in [wrong_view, wrong_generation] {
             // SAFETY: this is a live carrier pointer with no operation in
-            // flight. An invalid role/generation must be rejected before any
+            // flight. An invalid view/generation must be rejected before any
             // mutation or destruction; the client remains the sole owner.
             unsafe { release(client.owner.ptr.cast(), invalid) };
         }
-        let Endpoint { mut owner } = client;
-        owner.handle = wrong_role;
-        let Err(mut owner) = owner.into_endpoint::<0>() else {
+        let Endpoint { mut owner, .. } = client;
+        owner.handle = wrong_view;
+        let Err(mut owner) = (unsafe { owner.into_endpoint::<0>() }) else {
             panic!("a mismatched handle cannot restore a typed endpoint");
         };
         assert!(rendezvous.enter(session, &client_program).is_err());
         owner.handle = original;
-        let Ok(mut client) = owner.into_endpoint::<0>() else {
+        let Ok(mut client) = (unsafe { owner.into_endpoint::<0>() }) else {
             panic!("the original owner must retain the same continuation");
         };
         client.send::<Msg<1, u32>>(&7).await.expect("request");
@@ -99,12 +99,12 @@ fn moving_owner_preserves_committed_cursor_and_live_lease() {
 
         let original_header = client.owner.ptr;
         let original_generation = client.owner.handle.generation();
-        let Endpoint { owner } = client;
+        let Endpoint { owner, .. } = client;
         assert!(
             rendezvous.enter(session, &client_program).is_err(),
             "moving the owner must retain the original attachment lease"
         );
-        let Ok(mut client) = owner.into_endpoint::<0>() else {
+        let Ok(mut client) = (unsafe { owner.into_endpoint::<0>() }) else {
             panic!("same logical role must retain its endpoint");
         };
         assert_eq!(client.owner.ptr, original_header);
@@ -135,13 +135,13 @@ fn wrong_role_returns_the_same_unconsumed_owner() {
         let mut server = rendezvous.enter(session, &server_program).expect("server");
 
         let original_header = client.owner.ptr;
-        let Endpoint { owner } = client;
-        let Err(owner) = owner.into_endpoint::<1>() else {
+        let Endpoint { owner, .. } = client;
+        let Err(owner) = (unsafe { owner.into_endpoint::<1>() }) else {
             panic!("a physical holder change must not change the logical role");
         };
         assert_eq!(owner.ptr, original_header);
         assert!(rendezvous.enter(session, &client_program).is_err());
-        let Ok(mut client) = owner.into_endpoint::<0>() else {
+        let Ok(mut client) = (unsafe { owner.into_endpoint::<0>() }) else {
             panic!("rejected restoration must preserve ownership");
         };
         client.send::<Msg<1, u32>>(&37).await.expect("request");
@@ -182,8 +182,8 @@ fn moving_owner_preserves_unconsumed_route_frame() {
         assert_eq!(preview.label(), 2);
         drop(preview);
 
-        let Endpoint { owner } = server;
-        let Ok(mut server) = owner.into_endpoint::<1>() else {
+        let Endpoint { owner, .. } = server;
+        let Ok(mut server) = (unsafe { owner.into_endpoint::<1>() }) else {
             panic!("same logical role must restore");
         };
         let preview = server.offer().await.expect("same receive preview");
@@ -238,8 +238,8 @@ fn moving_owner_preserves_independent_repetition_cursors() {
         left.send::<Msg<2, u32>>(&8).await.expect("left reply");
         assert_eq!(client.recv::<Msg<2, u32>>().await.expect("left reply"), 8);
 
-        let Endpoint { owner } = client;
-        let Ok(mut client) = owner.into_endpoint::<0>() else {
+        let Endpoint { owner, .. } = client;
+        let Ok(mut client) = (unsafe { owner.into_endpoint::<0>() }) else {
             panic!("same logical role must restore");
         };
         client
@@ -284,7 +284,7 @@ fn dropping_owner_keeps_peer_cancellation_observable() {
     let mut context = Context::from_waker(core::task::Waker::noop());
     assert!(receive.as_mut().poll(&mut context).is_pending());
 
-    let Endpoint { owner } = client;
+    let Endpoint { owner, .. } = client;
     assert!(receive.as_mut().poll(&mut context).is_pending());
     drop(owner);
     let core::task::Poll::Ready(Err(error)) = receive.as_mut().poll(&mut context) else {
@@ -296,8 +296,8 @@ fn dropping_owner_keeps_peer_cancellation_observable() {
 #[test]
 fn erased_owner_uses_the_existing_endpoint_budget() {
     assert_eq!(
-        core::mem::size_of::<EndpointOwner<'static>>(),
+        core::mem::size_of::<EndpointOwner>(),
         core::mem::size_of::<Endpoint<'static, 0>>(),
     );
-    assert!(core::mem::size_of::<EndpointOwner<'static>>() <= 2 * core::mem::size_of::<usize>(),);
+    assert!(core::mem::size_of::<EndpointOwner>() <= 2 * core::mem::size_of::<usize>(),);
 }

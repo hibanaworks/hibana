@@ -33,7 +33,9 @@ use core::marker::PhantomData;
 
 pub use crate::global::Message;
 pub(crate) use source::{EndpointKey, SourcePayload};
-pub(crate) use source::{ProgramShape, ProgramSourceData, ProgramSourceNode, checked_source_count};
+pub(crate) use source::{
+    ProgramShape, ProgramSourceData, ProgramSourceNode, SourceActorImage, checked_source_count,
+};
 
 mod diagnostic;
 mod diagnostic_message;

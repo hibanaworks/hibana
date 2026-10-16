@@ -20,7 +20,7 @@ use crate::{
 enum SendFutureState {
     DirectUnarmed {
         logical_label: u8,
-        payload_schema: u32,
+        payload_kind: crate::eff::EventPayload,
     },
     Armed,
     ReadyError(SendError),
@@ -51,7 +51,7 @@ impl<'a, 'e, 'r, const ROLE: u8> SendFuture<'a, 'e, 'r, ROLE> {
     pub(crate) fn pending_direct(
         endpoint: *mut super::Endpoint<'r, ROLE>,
         logical_label: u8,
-        payload_schema: u32,
+        payload_kind: crate::eff::EventPayload,
         payload: &'a impl WireEncode,
     ) -> Self {
         Self {
@@ -59,7 +59,7 @@ impl<'a, 'e, 'r, const ROLE: u8> SendFuture<'a, 'e, 'r, ROLE> {
                 endpoint,
                 SendFutureState::DirectUnarmed {
                     logical_label,
-                    payload_schema,
+                    payload_kind,
                 },
                 Some(kernel::RawSendPayload::from_typed(payload)),
             ),
@@ -121,12 +121,12 @@ impl<'a, 'e, 'r, const ROLE: u8> RawSendFuture<'a, 'e, 'r, ROLE> {
 
     #[inline]
     fn arm_on_first_poll(&mut self) -> SendResult<()> {
-        let (logical_label, payload_schema) = match self.state {
+        let (logical_label, payload_kind) = match self.state {
             SendFutureState::Armed => return Ok(()),
             SendFutureState::DirectUnarmed {
                 logical_label,
-                payload_schema,
-            } => (logical_label, payload_schema),
+                payload_kind,
+            } => (logical_label, payload_kind),
             SendFutureState::ReadyError(_) | SendFutureState::Done => crate::invariant(),
         };
         if self.endpoint.is_null() {
@@ -136,7 +136,7 @@ impl<'a, 'e, 'r, const ROLE: u8> RawSendFuture<'a, 'e, 'r, ROLE> {
             let endpoint = /* SAFETY: unarmed send futures hold the unique
             endpoint borrow but have not yet published resident send state. */
                 unsafe { &mut *self.endpoint };
-            endpoint.begin_public_send_state(logical_label, payload_schema)
+            endpoint.begin_public_send_state(logical_label, payload_kind)
         };
         match result {
             Ok(()) => {
@@ -168,7 +168,12 @@ impl<'a, 'e, 'r, const ROLE: u8> RawSendFuture<'a, 'e, 'r, ROLE> {
             this is the only mutable access until the future resolves or Drop
             resets the send state. */
                 unsafe { &mut *self.endpoint };
-            endpoint.poll_send(cx, self.payload.take())
+            endpoint.poll_send(
+                cx,
+                self.payload
+                    .take()
+                    .map(kernel::lane_port::SendInput::Payload),
+            )
         };
         match poll {
             Poll::Pending => Poll::Pending,

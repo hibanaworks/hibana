@@ -41,8 +41,8 @@ pub(crate) mod send;
 pub(crate) mod session;
 #[cfg(all(test, hibana_repo_tests))]
 mod tests;
+mod transfer;
 
 pub use self::error::EndpointError;
 pub(crate) use self::error::{EndpointOp, RecvError, RecvResult, SendError, SendResult};
-pub(crate) use self::futures::RecvFuture;
 pub use self::public_types::{Endpoint, RouteBranch};

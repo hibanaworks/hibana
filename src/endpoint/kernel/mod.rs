@@ -8,7 +8,7 @@ mod evidence;
 mod evidence_store;
 mod frontier;
 mod frontier_state;
-mod lane_port;
+pub(in crate::endpoint) mod lane_port;
 mod session;
 mod lane_slots {
     pub(super) struct LaneSlotArray<T> {

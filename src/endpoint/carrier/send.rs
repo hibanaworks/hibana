@@ -7,7 +7,7 @@ where
         ptr: NonNull<()>,
         handle: EndpointHandle,
         logical_label: u8,
-        payload_schema: u32,
+        payload_kind: crate::eff::EventPayload,
         out: *mut crate::endpoint::kernel::SendPreview,
     ) -> crate::endpoint::SendResult<()> {
         let mut waiters = WaiterTransfer::empty();
@@ -23,7 +23,7 @@ where
                 )),
                 |kernel| {
                     let preview =
-                        kernel.preview_send_meta(logical_label, payload_schema, &mut waiters)?;
+                        kernel.preview_send_meta(logical_label, payload_kind, &mut waiters)?;
                     OutSlot::new(out).write(preview);
                     Ok(())
                 },
@@ -68,7 +68,7 @@ where
     pub(super) unsafe fn poll_send_public_endpoint(
         ptr: NonNull<()>,
         handle: EndpointHandle,
-        payload: Option<crate::endpoint::kernel::RawSendPayload>,
+        payload: Option<crate::endpoint::kernel::lane_port::SendInput>,
         cx: &mut Context<'_>,
         out: *mut (),
     ) {

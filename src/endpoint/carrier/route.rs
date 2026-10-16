@@ -1,5 +1,5 @@
 use super::{
-    BranchRecvPollRequest, Context, EndpointHandle, NonNull, OutSlot, Poll, RawPayload,
+    BranchRecvPollRequest, Context, EndpointHandle, NonNull, OutSlot, Poll, RawRecvOutput,
     WaiterTransfer,
 };
 impl<'cfg, T> crate::runtime::SessionKit<'cfg, T>
@@ -102,7 +102,7 @@ where
             ptr,
             handle,
             logical_label,
-            payload_schema,
+            payload_kind,
             validate,
             cx,
             out,
@@ -120,13 +120,15 @@ where
                 ))),
                 |kernel| match kernel.poll_public_branch_recv(
                     logical_label,
-                    payload_schema,
+                    payload_kind,
                     validate,
                     cx,
                     &mut waiters,
                 ) {
                     Poll::Pending => Poll::Pending,
-                    Poll::Ready(Ok(payload)) => Poll::Ready(Ok(RawPayload::from_payload(payload))),
+                    Poll::Ready(Ok(payload)) => {
+                        Poll::Ready(Ok(RawRecvOutput::from_kernel(payload)))
+                    }
                     Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
                 },
             )

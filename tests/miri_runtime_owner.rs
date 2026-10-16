@@ -641,7 +641,7 @@ fn payload_schema_mismatch_poison_session_without_publishing() {
     let mismatch = futures::executor::block_on(endpoint.send::<Msg<1, i32>>(&7))
         .expect_err("same-width payload with the wrong schema must be rejected");
     assert!(
-        format!("{mismatch:?}").contains("SchemaMismatch"),
+        format!("{mismatch:?}").contains("PayloadMismatch"),
         "wrong payload schema must remain distinguishable: {mismatch:?}"
     );
     let poisoned = futures::executor::block_on(endpoint.send::<Msg<1, u32>>(&7))
@@ -771,7 +771,7 @@ fn payload_schema_mismatch_precedes_receive_transport_poll() {
     let mismatch = futures::executor::block_on(endpoint.recv::<Msg<1, i32>>())
         .expect_err("same-width payload with the wrong schema must be rejected");
     assert!(
-        format!("{mismatch:?}").contains("SchemaMismatch"),
+        format!("{mismatch:?}").contains("PayloadMismatch"),
         "wrong payload schema must remain distinguishable: {mismatch:?}"
     );
     assert_eq!(
