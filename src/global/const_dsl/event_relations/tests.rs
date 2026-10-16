@@ -89,7 +89,7 @@ fn atom(from: u8, to: u8, lane: u8) -> EffAtom {
         to,
         lane,
         label: 0,
-        payload_schema: 0,
+        payload: crate::eff::EventPayload::Wire(0),
         origin: EventOrigin::User,
     }
 }

@@ -150,6 +150,7 @@
     ],
     "../../src/global/const_dsl/endpoint_selectors/kani.rs": [
       "global::const_dsl::endpoint_selectors::kani::branch_ancestry_distinguishes_parallel_work_from_exclusive_choices",
+      "global::const_dsl::endpoint_selectors::kani::endpoint_selector_never_confuses_an_owned_endpoint_with_any_wire_schema",
       "global::const_dsl::endpoint_selectors::kani::inbound_selector_identity_is_exact_compact_event_identity",
       "global::const_dsl::endpoint_selectors::kani::observer_path_decision_has_exact_merge_domain",
       "global::const_dsl::endpoint_selectors::kani::outbound_selector_identity_is_exact_public_send_contract",
@@ -306,7 +307,7 @@
   "contract-harnesses": {},
   "contracts": [],
   "totals": {
-    "standard-harnesses": 212,
+    "standard-harnesses": 213,
     "contract-harnesses": 0,
     "functions-under-contract": 0
   }

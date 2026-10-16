@@ -93,7 +93,7 @@ impl<const N: usize> ProgramImageBytes<N> {
     }
 
     #[inline(always)]
-    const fn write_payload_schema(&mut self, offset: usize, value: u32) {
+    const fn write_u32(&mut self, offset: usize, value: u32) {
         self.write_u16(offset, value as u16);
         self.write_u16(offset + 2, (value >> 16) as u16);
     }
@@ -112,8 +112,11 @@ impl<const N: usize> ProgramImageBytes<N> {
         self.write_u8(out, atom.from);
         self.write_u8(out + 1, atom.to);
         self.write_u8(out + 2, atom.label);
-        self.write_payload_schema(out + 3, atom.payload_schema);
-        self.write_u8(out + 7, atom.origin.packed_bits());
+        self.write_u32(out + 3, atom.payload.encoded_value());
+        self.write_u8(
+            out + 7,
+            atom.origin.packed_bits() | atom.payload.kind_bits(),
+        );
         self.write_u8(out + 8, atom.lane);
     }
 

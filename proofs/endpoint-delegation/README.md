@@ -102,8 +102,9 @@ u8 actors. They cover independent roots, conflicting merge atomicity, forced
 ownership after merging, and merge orientation:
 
 ```sh
-cargo kani --manifest-path proofs/endpoint-delegation/kani/Cargo.toml \
-  --lib --output-format terse
+bash .github/scripts/lib/resource_guard.sh \
+  cargo kani --manifest-path proofs/endpoint-delegation/kani/Cargo.toml \
+  --lib --jobs 1 --output-format terse
 ```
 
 The separate verification manifest follows the repository's existing Kani
@@ -112,9 +113,26 @@ the production or reference compiler's Rust1.95 requirement. Unwinding checks
 remain enabled. These harnesses do not establish arbitrary-size projection or
 distributed runtime correctness.
 
+## Typed source and compact payload identity
+
+The typed `g::Msg<L, Endpoint<'r, R>>` source identifies an owned endpoint
+without giving Endpoint an ordinary wire codec. Source ownership validation
+rejects conflicting initial issuers, concurrent transfer/use, self-carriage and
+ownership changes across roll reentry.
+
+The internal global image now retains this payload kind and its full u8 role
+in the existing nine-byte atom row. Wire payloads retain every u32 schema value;
+no schema value aliases the owned kind. Decoder checks reject reserved bits,
+out-of-range roles and truncated owned-role encodings. The source tests also
+exercise independent rolled loans and a resolved route through compact image
+construction. These are compiler/data checks, not an executing handoff.
+
+Public projection still rejects owned sources after source validation until
+ownership-aware actor projection and the send/recv execution path are connected.
+
 ## Remaining integration
 
-- Connect ownership elaboration to the typed global and accepted local images.
+- Connect the checked typed ownership source to accepted actor-local images.
 - Lower conditional ownership and cross-facet ordering to compact local facts,
   preserving independent parallel flows without source scans in the hot path.
 - Send an owned Endpoint and receive its continuation through ordinary

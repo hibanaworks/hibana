@@ -23,7 +23,7 @@ const fn test_atom(label: u8, lane: u8) -> EffAtom {
         from: 0,
         to: 1,
         label,
-        payload_schema: label as u32,
+        payload: crate::eff::EventPayload::Wire(label as u32),
         origin: EventOrigin::User,
         lane,
     }

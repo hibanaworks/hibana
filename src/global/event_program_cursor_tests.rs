@@ -1671,7 +1671,8 @@ impl ProductionCursorTrace {
             .program_ref()
             .atom_at(eff_index.dense_ordinal())
             .expect("local event must retain its global payload contract")
-            .payload_schema;
+            .payload
+            .wire_schema();
         Some((label, schema))
     }
 

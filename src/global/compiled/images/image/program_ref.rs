@@ -2,7 +2,7 @@ use super::columns::{
     PROGRAM_IMAGE_ATOM_STRIDE, ProgramColumnRange, ProgramImageColumns, ProgramImageFacts,
 };
 use crate::{
-    eff::{EffAtom, EventOrigin},
+    eff::{EffAtom, EventOrigin, EventPayload},
     global::const_dsl::DynamicRouteResolver,
     global::role_program::BlobPtr,
 };
@@ -14,15 +14,23 @@ const fn decode_program_atom(
     if bytes[0] > max_role || bytes[1] > max_role {
         return None;
     }
-    let origin = match EventOrigin::decode_packed_bits(bytes[7]) {
+    if bytes[7] & !(EventPayload::OWNED_FLAG | 1) != 0 {
+        return None;
+    }
+    let origin = match EventOrigin::decode_packed_bits(bytes[7] & 1) {
         Some(origin) => origin,
+        None => return None,
+    };
+    let value = u32::from_le_bytes([bytes[3], bytes[4], bytes[5], bytes[6]]);
+    let payload = match EventPayload::decode(value, bytes[7], max_role) {
+        Some(payload) => payload,
         None => return None,
     };
     Some(EffAtom {
         from: bytes[0],
         to: bytes[1],
         label: bytes[2],
-        payload_schema: u32::from_le_bytes([bytes[3], bytes[4], bytes[5], bytes[6]]),
+        payload,
         origin,
         lane: bytes[8],
     })

@@ -324,17 +324,20 @@ static DIFFERENT_FINAL_BYTE: CompiledProgramRef = program(
 fn program_atom_row_decoding_accepts_exact_domain() {
     let bytes: [u8; 9] = kani::any();
     let max_role: u8 = kani::any();
-    let expected = bytes[0] <= max_role && bytes[1] <= max_role && bytes[7] <= 1;
+    let value = u32::from_le_bytes([bytes[3], bytes[4], bytes[5], bytes[6]]);
+    let expected = bytes[0] <= max_role
+        && bytes[1] <= max_role
+        && bytes[7] <= 3
+        && (bytes[7] & 2 == 0 || value <= max_role as u32);
     let decoded = decode_program_atom(bytes, max_role);
     assert!(decoded.is_some() == expected);
     if let Some(atom) = decoded {
         assert!(atom.from == bytes[0]);
         assert!(atom.to == bytes[1]);
         assert!(atom.label == bytes[2]);
-        assert!(
-            atom.payload_schema == u32::from_le_bytes([bytes[3], bytes[4], bytes[5], bytes[6]])
-        );
-        assert!(atom.origin.packed_bits() == bytes[7]);
+        assert!(atom.payload.encoded_value() == value);
+        assert!(atom.payload.kind_bits() == bytes[7] & 2);
+        assert!(atom.origin.packed_bits() == bytes[7] & 1);
         assert!(atom.lane == bytes[8]);
     }
 }
@@ -394,5 +397,5 @@ fn compiled_program_atom_blob_decoding_preserves_every_schema_bit() {
     .atom_at(0)
     .expect("valid symbolic atom");
 
-    assert!(row.payload_schema == payload_schema);
+    assert!(row.payload.wire_schema() == payload_schema);
 }

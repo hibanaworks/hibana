@@ -18,8 +18,8 @@ note: inside `g::source::ProgramSourceData::<8>::lower::<Seq<hibana::g::Send<0, 
 note: erroneous constant encountered
  --> src/g.rs
   |
-  |         Self::SOURCE.eff_list();
-  |         ^^^^^^^^^^^^
+  |         let source = Self::SOURCE.eff_list();
+  |                      ^^^^^^^^^^^^
 
 note: erroneous constant encountered
  --> src/g.rs

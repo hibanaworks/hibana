@@ -61,14 +61,20 @@ impl<const CAPACITY: usize> SourceLowering<CAPACITY> {
                 if message.from.component != 0 || message.to.component != 0 {
                     panic!("source component is outside the composed choreography");
                 }
-                let SourcePayload::Wire { schema } = message.payload else {
-                    panic!("owned endpoint requires ownership-aware lowering");
+                let payload = match message.payload {
+                    SourcePayload::Wire { schema } => crate::eff::EventPayload::Wire(schema),
+                    SourcePayload::Endpoint(key) => {
+                        if key.component != 0 {
+                            panic!("owned endpoint is outside the composed choreography");
+                        }
+                        crate::eff::EventPayload::Endpoint(key.role)
+                    }
                 };
                 self.eff.push_event_mut(EffAtom {
                     from: message.from.role,
                     to: message.to.role,
                     label: message.label,
-                    payload_schema: schema,
+                    payload,
                     origin: crate::eff::EventOrigin::User,
                     lane: 0,
                 });

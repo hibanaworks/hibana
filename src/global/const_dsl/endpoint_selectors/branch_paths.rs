@@ -110,7 +110,7 @@ mod tests {
                 from: 0,
                 to: 1,
                 label,
-                payload_schema: 0,
+                payload: crate::eff::EventPayload::Wire(0),
                 origin: EventOrigin::User,
                 lane: 0,
             });

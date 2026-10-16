@@ -342,6 +342,12 @@ run_miri_test \
   global::compiled::images::image::program_ref::tests::compiled_program_atom_decoder_rejects_exact_invalid_boundaries
 
 run_miri_test \
+  compiled-program-owned-payload-kind \
+  -p hibana \
+  --lib \
+  global::compiled::images::image::program_ref::tests::program_image_owned_kind_cannot_alias_a_wire_schema_or_truncate_a_role
+
+run_miri_test \
   compiled-program-atom-lookup \
   -p hibana \
   --lib \

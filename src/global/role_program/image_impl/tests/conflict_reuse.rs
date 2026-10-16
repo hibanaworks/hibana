@@ -199,7 +199,7 @@ fn overlapping_marker_failures_match() {
             from: 0,
             to: 1,
             label,
-            payload_schema: 0,
+            payload: crate::eff::EventPayload::Wire(0),
             origin: EventOrigin::User,
             lane: 0,
         });
@@ -538,7 +538,7 @@ fn filtered_projection_matches_full_reference_with_sparse_unsorted_route_ids() {
             from,
             to,
             label,
-            payload_schema: 0,
+            payload: crate::eff::EventPayload::Wire(0),
             origin: EventOrigin::User,
             lane: 0,
         });

@@ -20,7 +20,7 @@ const fn maximum_atom_only_source() -> EffList<PROGRAM_IMAGE_ATOM_ONLY_EVENT_CAP
         from: 0,
         to: 1,
         label: 0,
-        payload_schema: 0,
+        payload: crate::eff::EventPayload::Wire(0),
         origin: EventOrigin::User,
         lane: 0,
     };
@@ -146,7 +146,7 @@ static LAST_BYTE_DIFFERENT: [u8; 9] = encoded_atom(0, 1, 9, VALID_SCHEMA, 1, 0);
 static SAME_COLUMN_BYTES: [u8; 45] = [0; 45];
 static FROM_OUT_OF_RANGE: [u8; 9] = encoded_atom(2, 1, 9, VALID_SCHEMA, 1, 0);
 static TO_OUT_OF_RANGE: [u8; 9] = encoded_atom(0, 2, 9, VALID_SCHEMA, 1, 0);
-static ORIGIN_OUT_OF_RANGE: [u8; 9] = encoded_atom(0, 1, 9, VALID_SCHEMA, 2, 0);
+static ORIGIN_OUT_OF_RANGE: [u8; 9] = encoded_atom(0, 1, 9, VALID_SCHEMA, 4, 0);
 
 #[test]
 fn compiled_program_atom_descriptor_decodes_canonical_row() {
@@ -154,7 +154,7 @@ fn compiled_program_atom_descriptor_decodes_canonical_row() {
     assert_eq!(atom.from, 0);
     assert_eq!(atom.to, 1);
     assert_eq!(atom.label, 9);
-    assert_eq!(atom.payload_schema, VALID_SCHEMA);
+    assert_eq!(atom.payload.wire_schema(), VALID_SCHEMA);
     assert_eq!(atom.origin.packed_bits(), 1);
     assert_eq!(atom.lane, u8::MAX);
 }
@@ -210,10 +210,31 @@ fn compiled_program_image_identity_is_exact_over_facts_columns_and_blob() {
 fn compiled_program_atom_decoder_rejects_exact_invalid_boundaries() {
     let fields = |from, to, origin| [from, to, 0, 0, 0, 0, 0, origin, 0];
     assert!(decode_program_atom(fields(0, 0, 0), 0).is_some());
-    assert!(decode_program_atom(fields(0, 0, 2), 0).is_none());
+    assert!(decode_program_atom(fields(0, 0, 4), 0).is_none());
     assert!(decode_program_atom(fields(1, 0, 0), 0).is_none());
     assert!(decode_program_atom(fields(0, 1, 0), 0).is_none());
     assert!(decode_program_atom(fields(u8::MAX, u8::MAX, 0), u8::MAX).is_some());
+}
+
+#[test]
+fn program_image_owned_kind_cannot_alias_a_wire_schema_or_truncate_a_role() {
+    use crate::eff::EventPayload;
+    for role in 0..=u8::MAX {
+        let owned = encoded_atom(0, 1, 9, role as u32, 2, 0);
+        let wire = encoded_atom(0, 1, 9, role as u32, 0, 0);
+        let owned_atom = decode_program_atom(owned, u8::MAX).unwrap();
+        let wire_atom = decode_program_atom(wire, u8::MAX).unwrap();
+        assert_eq!(owned_atom.payload, EventPayload::Endpoint(role));
+        assert_eq!(wire_atom.payload, EventPayload::Wire(role as u32));
+        assert_ne!(
+            owned_atom.payload.selector_bits(),
+            wire_atom.payload.selector_bits()
+        );
+    }
+    for role in [256, 257, 0x10000, u32::MAX] {
+        assert!(decode_program_atom(encoded_atom(0, 1, 9, role, 2, 0), u8::MAX).is_none());
+    }
+    assert!(decode_program_atom(encoded_atom(0, 1, 9, 2, 2, 0), 1).is_none());
 }
 
 #[test]

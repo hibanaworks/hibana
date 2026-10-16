@@ -18,6 +18,11 @@ impl CompiledProgramImage {
             if atom.to > max_role {
                 max_role = atom.to;
             }
+            if let crate::eff::EventPayload::Endpoint(role) = atom.payload
+                && role > max_role
+            {
+                max_role = role;
+            }
             idx += 1;
         }
 

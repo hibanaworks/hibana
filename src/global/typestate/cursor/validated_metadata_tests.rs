@@ -111,7 +111,8 @@ impl Legacy<'_> {
                     .machine()
                     .program_ref()
                     .event_atom_at(eff_index.dense_ordinal())
-                    .payload_schema;
+                    .payload
+                    .wire_schema();
                 let scope = node.scope();
                 let route_arm = node.route_arm();
                 let (route_scope, selected_route_arm) = self.route_authority_at(idx, route_arm);
@@ -150,7 +151,8 @@ impl Legacy<'_> {
                     .machine()
                     .program_ref()
                     .event_atom_at(eff_index.dense_ordinal())
-                    .payload_schema;
+                    .payload
+                    .wire_schema();
                 let scope = node.scope();
                 let route_arm = node.route_arm();
                 let (route_scope, _) = self.route_authority_at(idx, route_arm);
@@ -188,7 +190,8 @@ impl Legacy<'_> {
                     .machine()
                     .program_ref()
                     .event_atom_at(eff_index.dense_ordinal())
-                    .payload_schema;
+                    .payload
+                    .wire_schema();
                 let scope = node.scope();
                 let route_arm = node.route_arm();
                 let (route_scope, _) = self.route_authority_at(idx, route_arm);

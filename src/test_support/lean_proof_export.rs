@@ -215,7 +215,7 @@ impl ProductionCursorTrace {
             kind,
             peer,
             label,
-            schema: atom.payload_schema,
+            schema: atom.payload.wire_schema(),
         })
     }
 

@@ -39,7 +39,7 @@ const fn atom() -> EffAtom {
         from: 0,
         to: 1,
         label: 0,
-        payload_schema: 0,
+        payload: crate::eff::EventPayload::Wire(0),
         origin: EventOrigin::User,
         lane: 0,
     }

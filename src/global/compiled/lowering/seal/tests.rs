@@ -17,7 +17,7 @@ fn route_commit_count_257_source() -> EffList<SOURCE_CAPACITY> {
             from: 0,
             to: 0,
             label: event as u8,
-            payload_schema: 0,
+            payload: crate::eff::EventPayload::Wire(0),
             origin: EventOrigin::User,
             lane: 0,
         });
@@ -75,7 +75,7 @@ fn projection_derives_one_row_for_one_route() {
             from: 0,
             to: 0,
             label,
-            payload_schema: 0,
+            payload: crate::eff::EventPayload::Wire(0),
             origin: EventOrigin::User,
             lane: 0,
         });

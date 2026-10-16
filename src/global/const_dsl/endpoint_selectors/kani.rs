@@ -1,12 +1,23 @@
 use super::{EndpointSelector, ObserverPathDecision, observer_path_decision};
 use crate::eff::{EffAtom, EventOrigin};
 
+#[kani::proof]
+fn endpoint_selector_never_confuses_an_owned_endpoint_with_any_wire_schema() {
+    let mut wire = symbolic_atom();
+    let wire_selector = EndpointSelector::outbound(wire);
+    wire.payload = crate::eff::EventPayload::Endpoint(kani::any());
+    let owned_selector = EndpointSelector::outbound(wire);
+    assert!(wire_selector.is_outbound());
+    assert!(owned_selector.is_outbound());
+    assert!(!wire_selector.same(owned_selector));
+}
+
 fn symbolic_atom() -> EffAtom {
     EffAtom {
         from: kani::any(),
         to: kani::any(),
         label: kani::any(),
-        payload_schema: kani::any(),
+        payload: crate::eff::EventPayload::Wire(kani::any()),
         origin: EventOrigin::User,
         lane: kani::any(),
     }
@@ -27,7 +38,7 @@ fn outbound_selector_identity_is_exact_public_send_contract() {
         left_selector.same(right_selector)
             == (left.from == right.from
                 && left.label == right.label
-                && left.payload_schema == right.payload_schema)
+                && left.payload == right.payload)
     );
     kani::cover!(left.to != right.to && left_selector.same(right_selector));
     kani::cover!(left.lane != right.lane && left_selector.same(right_selector));
@@ -90,7 +101,7 @@ fn roll_reentry_rejects_a_later_equal_outbound_contract_after_inbound() {
         from: 0,
         to: 1,
         label: first_label,
-        payload_schema: first_schema,
+        payload: crate::eff::EventPayload::Wire(first_schema),
         origin: EventOrigin::User,
         lane: 0,
     });
@@ -98,7 +109,7 @@ fn roll_reentry_rejects_a_later_equal_outbound_contract_after_inbound() {
         from: 1,
         to: 0,
         label: 24,
-        payload_schema: 0,
+        payload: crate::eff::EventPayload::Wire(0),
         origin: EventOrigin::User,
         lane: 0,
     });
@@ -106,7 +117,7 @@ fn roll_reentry_rejects_a_later_equal_outbound_contract_after_inbound() {
         from: 0,
         to: 1,
         label: next_label,
-        payload_schema: next_schema,
+        payload: crate::eff::EventPayload::Wire(next_schema),
         origin: EventOrigin::User,
         lane: 0,
     });
@@ -129,7 +140,7 @@ fn receive_guarded_reentry_keeps_repeated_outbound_replies_projectable() {
         from: 0,
         to: 1,
         label: 10,
-        payload_schema: 0,
+        payload: crate::eff::EventPayload::Wire(0),
         origin: EventOrigin::User,
         lane: 0,
     });
@@ -137,7 +148,7 @@ fn receive_guarded_reentry_keeps_repeated_outbound_replies_projectable() {
         from: 1,
         to: 0,
         label: reply_label,
-        payload_schema: schema,
+        payload: crate::eff::EventPayload::Wire(schema),
         origin: EventOrigin::User,
         lane: 0,
     });
@@ -145,7 +156,7 @@ fn receive_guarded_reentry_keeps_repeated_outbound_replies_projectable() {
         from: 0,
         to: 1,
         label: 20,
-        payload_schema: 0,
+        payload: crate::eff::EventPayload::Wire(0),
         origin: EventOrigin::User,
         lane: 0,
     });
@@ -153,7 +164,7 @@ fn receive_guarded_reentry_keeps_repeated_outbound_replies_projectable() {
         from: 1,
         to: 0,
         label: reply_label,
-        payload_schema: schema,
+        payload: crate::eff::EventPayload::Wire(schema),
         origin: EventOrigin::User,
         lane: 0,
     });
@@ -175,7 +186,7 @@ fn role_erased_prefixes_cannot_hide_competing_roll_heads() {
         from: 0,
         to: 1,
         label: 10,
-        payload_schema: 0,
+        payload: crate::eff::EventPayload::Wire(0),
         origin: EventOrigin::User,
         lane: 0,
     });
@@ -183,7 +194,7 @@ fn role_erased_prefixes_cannot_hide_competing_roll_heads() {
         from: 2,
         to: 3,
         label: first_label,
-        payload_schema: first_schema,
+        payload: crate::eff::EventPayload::Wire(first_schema),
         origin: EventOrigin::User,
         lane: 0,
     });
@@ -191,7 +202,7 @@ fn role_erased_prefixes_cannot_hide_competing_roll_heads() {
         from: 0,
         to: 1,
         label: 20,
-        payload_schema: 0,
+        payload: crate::eff::EventPayload::Wire(0),
         origin: EventOrigin::User,
         lane: 0,
     });
@@ -199,7 +210,7 @@ fn role_erased_prefixes_cannot_hide_competing_roll_heads() {
         from: 2,
         to: 3,
         label: next_label,
-        payload_schema: next_schema,
+        payload: crate::eff::EventPayload::Wire(next_schema),
         origin: EventOrigin::User,
         lane: 0,
     });
@@ -222,7 +233,7 @@ fn branch_ancestry_distinguishes_parallel_work_from_exclusive_choices() {
             from: 0,
             to: 1,
             label,
-            payload_schema: 0,
+            payload: crate::eff::EventPayload::Wire(0),
             origin: EventOrigin::User,
             lane: 0,
         });

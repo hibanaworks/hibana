@@ -22,7 +22,7 @@ impl EndpointSelector {
             (Self::OUTBOUND << Self::KIND_SHIFT)
                 | ((atom.from as u64) << 48)
                 | ((atom.label as u64) << 40)
-                | atom.payload_schema as u64,
+                | atom.payload.selector_bits(),
         )
     }
 
@@ -120,7 +120,7 @@ pub(crate) const fn validate_parallel_endpoint_selectors<const E: usize>(
 }
 
 // A role can restart a roll only at a local head. Inbound heads carry exact
-// occurrence evidence; outbound heads expose only (role, label, schema).
+// occurrence evidence; outbound heads expose (role, label, payload kind).
 // A later receive does not retire an elastic roll, so compare its outbound
 // heads with every compatible continuation, including after a parallel join.
 pub(crate) const fn validate_roll_reentry_endpoint_selectors<const E: usize>(
@@ -563,7 +563,7 @@ mod pruning_tests {
                 from: (i % 2) as u8,
                 to: ((i + 1) % 2) as u8,
                 label: (i % 3) as u8,
-                payload_schema: 0,
+                payload: crate::eff::EventPayload::Wire(0),
                 origin: eff::EventOrigin::User,
                 lane: 0,
             };
@@ -609,7 +609,7 @@ mod pruning_tests {
                 from: 0,
                 to: 1,
                 label,
-                payload_schema: 0,
+                payload: crate::eff::EventPayload::Wire(0),
                 origin: eff::EventOrigin::User,
                 lane: 0,
             });
@@ -658,7 +658,7 @@ mod roll_tests {
                             from: 0,
                             to: 1,
                             label: first_label,
-                            payload_schema: first_schema,
+                            payload: crate::eff::EventPayload::Wire(first_schema),
                             origin: EventOrigin::User,
                             lane: 0,
                         });
@@ -666,7 +666,7 @@ mod roll_tests {
                             from: 1,
                             to: 0,
                             label: 24,
-                            payload_schema: 0,
+                            payload: crate::eff::EventPayload::Wire(0),
                             origin: EventOrigin::User,
                             lane: 0,
                         });
@@ -674,7 +674,7 @@ mod roll_tests {
                             from: 0,
                             to: 1,
                             label: next_label,
-                            payload_schema: next_schema,
+                            payload: crate::eff::EventPayload::Wire(next_schema),
                             origin: EventOrigin::User,
                             lane: 0,
                         });

@@ -69,10 +69,58 @@ pub struct EffAtom {
     pub(crate) from: u8,
     pub(crate) to: u8,
     pub(crate) label: u8,
-    pub(crate) payload_schema: u32,
+    pub(crate) payload: EventPayload,
     pub(crate) origin: EventOrigin,
     /// Type-level lane for parallel composition; lane 0 is the primary lane.
     pub(crate) lane: u8,
+}
+
+/// The source payload kind survives lowering. An endpoint is never a wire
+/// schema, including when a codec uses the same numeric value as its role.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum EventPayload {
+    Wire(u32),
+    Endpoint(u8),
+}
+
+impl EventPayload {
+    pub(crate) const OWNED_FLAG: u8 = 1 << 1;
+
+    pub(crate) const fn encoded_value(self) -> u32 {
+        match self {
+            Self::Wire(schema) => schema,
+            Self::Endpoint(role) => role as u32,
+        }
+    }
+
+    pub(crate) const fn kind_bits(self) -> u8 {
+        match self {
+            Self::Wire(_) => 0,
+            Self::Endpoint(_) => Self::OWNED_FLAG,
+        }
+    }
+
+    pub(crate) const fn decode(value: u32, flags: u8, max_role: u8) -> Option<Self> {
+        match flags & Self::OWNED_FLAG {
+            0 => Some(Self::Wire(value)),
+            _ if value <= max_role as u32 => Some(Self::Endpoint(value as u8)),
+            _ => None,
+        }
+    }
+
+    pub(crate) const fn selector_bits(self) -> u64 {
+        match self {
+            Self::Wire(schema) => schema as u64,
+            Self::Endpoint(role) => (1u64 << 32) | role as u64,
+        }
+    }
+
+    pub(crate) const fn wire_schema(self) -> u32 {
+        match self {
+            Self::Wire(schema) => schema,
+            Self::Endpoint(_) => panic!("owned endpoint is not a wire payload"),
+        }
+    }
 }
 
 #[cfg(test)]
