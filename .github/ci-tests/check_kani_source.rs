@@ -280,12 +280,7 @@ fn walk(root: &Path) -> Audit<usize> {
 fn main() {
     let args: Vec<_> = env::args_os().collect();
     let result = if args.len() == 3 && args[1] == "--gate" {
-        kani_gate::run(Path::new(&args[2]), None)
-    } else if args.len() == 5 && args[1] == "--gate" && args[3] == "--partition" {
-        args[4]
-            .to_str()
-            .ok_or_else(|| "non-UTF8 Kani partition".to_owned())
-            .and_then(|selection| kani_gate::run(Path::new(&args[2]), Some(selection)))
+        kani_gate::run(Path::new(&args[2]))
     } else if args.len() == 2 {
         walk(Path::new(&args[1])).map(|_| ())
     } else if args.len() == 4 && args[1] == "--inventory" {
@@ -299,7 +294,7 @@ fn main() {
             })
     } else {
         eprintln!(
-            "usage: check-kani-source SOURCE_DIRECTORY | --inventory JSON EXPECTED_VERSION | --gate ROOT [--partition NAME]"
+            "usage: check-kani-source SOURCE_DIRECTORY | --inventory JSON EXPECTED_VERSION | --gate ROOT"
         );
         process::exit(2);
     };

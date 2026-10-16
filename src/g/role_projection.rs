@@ -3,6 +3,8 @@ use core::marker::PhantomData;
 use super::{ProgramProjection, ProgramShape};
 use crate::global::compiled::images::COMPACT_DESCRIPTOR_BYTE_CAPACITY;
 
+#[cfg(kani)]
+mod kani;
 #[cfg(all(test, hibana_repo_tests))]
 mod tests;
 

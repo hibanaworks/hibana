@@ -254,17 +254,37 @@ impl EventCursor {
             .first_recv_descendant_target_for_key(scope_id, key)
     }
 
-    /// Whether this actor's compiled view set includes the logical controller.
-    /// This is an immutable navigation fact, not an issued view or authority to
-    /// call a resolver. Kernel entry must also check its active logical role.
+    /// Whether a first-visible local send belongs to this route's controller.
+    /// Holding that role before or after the route does not make the actor a
+    /// controller here. Kernel entry must also check its active logical view.
     #[inline]
     pub(crate) fn contains_route_controller(&self, scope_id: ScopeId) -> bool {
         if !matches!(scope_id.kind(), Some(ScopeKind::Route)) {
             return false;
         }
-        self.machine()
-            .logical_views
-            .contains(self.machine().route_controller_role(scope_id))
+        let Some(slot) = self.route_scope_slot_inner(scope_id) else {
+            return false;
+        };
+        let controller = self.machine().route_controller_role(scope_id);
+        for arm in 0..=1 {
+            let Some(row) = self
+                .machine()
+                .event_program()
+                .route_arm_event_row_by_slot(slot, arm)
+            else {
+                continue;
+            };
+            if row.start() < row.end()
+                && matches!(
+                    self.action_at(row.start()),
+                    LocalAction::Send { .. } | LocalAction::Local { .. }
+                )
+                && self.logical_role_at(row.start()) == Some(controller)
+            {
+                return true;
+            }
+        }
+        false
     }
 
     /// Scope ID stored on the current node (no parent traversal).

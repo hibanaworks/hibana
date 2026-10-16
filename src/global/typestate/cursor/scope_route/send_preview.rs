@@ -12,6 +12,7 @@ struct SendPreviewRouteArm {
 }
 
 struct SendPreviewDecisionContext<'a> {
+    role: u8,
     target_label: u8,
     target_payload: crate::eff::EventPayload,
     preview_route_arm: &'a mut Option<SendPreviewRouteArm>,
@@ -434,7 +435,9 @@ impl EventCursor {
             !self.is_send_at(*idx) && !self.is_recv_at(*idx) && !self.is_local_action_at(*idx);
         let at_decision = at_route_start || unlabeled;
 
-        if self.contains_route_controller(scope_id) {
+        if self.contains_route_controller(scope_id)
+            && self.machine().route_controller_role(scope_id) == ctx.role
+        {
             return self.send_preview_apply_controller_route_decision_for_contract(
                 idx,
                 scope_id,
@@ -664,6 +667,7 @@ impl EventCursor {
 
         {
             let mut route_decision = SendPreviewDecisionContext {
+                role: selector.role,
                 target_label,
                 target_payload,
                 preview_route_arm: &mut preview_route_arm,

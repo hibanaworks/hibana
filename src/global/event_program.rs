@@ -25,11 +25,6 @@ impl core::fmt::Debug for LocalEventProgram {
 }
 
 impl LocalEventProgram {
-    pub(crate) fn logical_views(&self) -> crate::global::compiled::images::LogicalViews {
-        crate::global::compiled::images::RoleDescriptorRef::from_resident(self.rows())
-            .logical_views()
-    }
-
     #[inline(always)]
     pub(crate) const fn from_rows(rows: &'static RoleImageRef) -> Self {
         Self { rows }

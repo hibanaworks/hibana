@@ -99,6 +99,10 @@
       "endpoint::kernel::offer::select_alignment::model::selection::verification::erased_candidate_can_only_request_distinct_realign",
       "endpoint::kernel::offer::select_alignment::model::selection::verification::exact_current_selection_never_becomes_realign"
     ],
+    "../../src/g/role_projection/kani.rs": [
+      "g::role_projection::kani::initial_resource_issuance_cannot_confer_later_route_control",
+      "g::role_projection::kani::received_controller_view_has_only_its_projected_route"
+    ],
     "../../src/g/source/ownership/actors/kani.rs": [
       "g::source::ownership::actors::kani::actor_and_decision_references_have_exact_disjoint_domains",
       "g::source::ownership::actors::kani::actor_decisions_collapse_equal_alternatives_and_intern_equal_nodes",
@@ -192,14 +196,6 @@
       "global::const_dsl::receive_lane_causality::actors::kani::owned_parallel_seed_word1",
       "global::const_dsl::receive_lane_causality::actors::kani::owned_parallel_seed_word2",
       "global::const_dsl::receive_lane_causality::actors::kani::owned_parallel_seed_word3",
-      "global::const_dsl::receive_lane_causality::actors::kani::owned_route_direct_seed_word0",
-      "global::const_dsl::receive_lane_causality::actors::kani::owned_route_direct_seed_word1",
-      "global::const_dsl::receive_lane_causality::actors::kani::owned_route_direct_seed_word2",
-      "global::const_dsl::receive_lane_causality::actors::kani::owned_route_direct_seed_word3",
-      "global::const_dsl::receive_lane_causality::actors::kani::owned_route_swapped_seed_word0",
-      "global::const_dsl::receive_lane_causality::actors::kani::owned_route_swapped_seed_word1",
-      "global::const_dsl::receive_lane_causality::actors::kani::owned_route_swapped_seed_word2",
-      "global::const_dsl::receive_lane_causality::actors::kani::owned_route_swapped_seed_word3",
       "global::const_dsl::receive_lane_causality::actors::kani::repeated_inner_choices_are_independent_while_outer_choices_stay_shared",
       "global::const_dsl::receive_lane_causality::actors::kani::source_scan_parallel_direct",
       "global::const_dsl::receive_lane_causality::actors::kani::source_scan_parallel_swapped",
@@ -368,7 +364,7 @@
   "contract-harnesses": {},
   "contracts": [],
   "totals": {
-    "standard-harnesses": 258,
+    "standard-harnesses": 252,
     "contract-harnesses": 0,
     "functions-under-contract": 0
   }

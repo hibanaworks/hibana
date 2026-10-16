@@ -13,7 +13,7 @@ pub(crate) use self::{
         ProgramImagePlan,
     },
     program_ref::CompiledProgramRef,
-    role_descriptor_ref::{LogicalViews, RoleDescriptorRef},
+    role_descriptor_ref::RoleDescriptorRef,
 };
 
 #[cfg(all(test, hibana_repo_tests))]

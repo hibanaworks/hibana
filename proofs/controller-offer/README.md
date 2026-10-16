@@ -1,5 +1,23 @@
 # Nested controller offers
 
+The Endpoint handoff regression adds a distinct controller-membership case.
+A service issues DB and later observes DB's choices while a worker holds it.
+Actor-wide view residence incorrectly classified that service as a controller.
+Production now reads the first projected operation in each arm and separately
+checks the active logical view for send previews. The actor's view-set cache
+is no longer stored in the cursor. A shared global exercises resolver choices
+inside a rolled loan in parallel with another rolled exchange, using both
+separate runtime slabs and a real child process. The service observes Left and
+Right on successive visits; after the child exits, the original actor uses
+the returned continuation to update the same file.
+
+The current supplemental model has 19 general Lean theorems and Z3 checks
+14 UNSAT obligations plus 3 SAT witnesses for earlier incorrect rules. The
+new claims concern projected first-operation membership and logical-view
+authority. They do not prove the full Rust compiler or distributed executor.
+Two Kani harnesses query the actual production cursor and owned role images
+over every raw u16 scope identity. Runtime regressions remain necessary.
+
 The mouth lifecycle exposed a core defect on `e75d413b`: a controller arm
 starting directly with another resolver-backed route returned that child's
 first label without evaluating its resolver. Right/Right selected label 2
@@ -31,7 +49,7 @@ capacities and external dependencies are unchanged.
 `ControllerOffer.lean` proves selection rules for arbitrary finite decision trees
 and conflict chains, including parent rejection, ancestor decision provenance
 and parent priority. It also checks the exact-entry and completed-envelope guards
-and the reproduced label selection. All 13 theorems are kernel checked with only
+and the reproduced label selection. Those original 13 theorems are kernel checked with only
 `propext` and `Quot.sound` admitted in their axiom closure. The Z3 model checks
 nine negated guard obligations as UNSAT and retains two SAT witnesses of the
 old priority and arm-membership shortcuts.

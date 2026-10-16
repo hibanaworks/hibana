@@ -96,8 +96,7 @@ fn copy_log(mut input: impl Read, log: Arc<Mutex<File>>) -> Audit<()> {
     }
 }
 
-pub fn run(root: &Path, selection: Option<&str>) -> Audit<()> {
-    recursion::validate_selection(selection)?;
+pub fn run(root: &Path) -> Audit<()> {
     let root = fs::canonicalize(root).map_err(|e| e.to_string())?;
     let expected =
         fs::read_to_string(root.join(".github/kani-version")).map_err(|e| e.to_string())?;
@@ -133,12 +132,7 @@ pub fn run(root: &Path, selection: Option<&str>) -> Audit<()> {
         format!("Kani gate did not produce a readable structured harness inventory: {e}")
     })?;
     let total = kani_json::inventory_total(&inventory, expected)?;
-    let mut groups = recursion::select(recursion::prepare(&root, &inventory, total)?, selection)?;
-    let selected: usize = groups.iter().map(|group| group.harnesses.len()).sum();
-    println!(
-        "Kani compiled inventory={total} partition={} selected={selected}",
-        selection.unwrap_or("all")
-    );
+    let mut groups = recursion::prepare(&root, &inventory, total)?;
     groups.sort_by_key(|group| group.recursion.is_none());
     for (index, group) in groups.into_iter().enumerate() {
         println!(
@@ -200,10 +194,7 @@ pub fn run(root: &Path, selection: Option<&str>) -> Audit<()> {
             group.harnesses.len() as u64,
         )?;
     }
-    println!(
-        "Kani gate passed version={expected} harnesses={selected} inventory={total} partition={} backend=CBMC",
-        selection.unwrap_or("all")
-    );
+    println!("Kani gate passed version={expected} harnesses={total} backend=CBMC");
     Ok(())
 }
 

@@ -135,6 +135,59 @@ theorem incomplete_envelope_keeps_its_child (contains : Bool) (node enclosing : 
   cases contains <;> rfl
 
 def observedTree : Tree := .route 101 (.leaf 1) (.route 102 (.leaf 2) (.leaf 3))
+
+/-- A projected arm's first operation, before any runtime branch decision. -/
+inductive FirstOperation where
+  | send (role : Nat)
+  | receive (role : Nat)
+  | local (role : Nat)
+  deriving DecidableEq
+
+def controlsFromFirst (controller : Nat) : Option FirstOperation → Bool
+  | some (.send role) | some (.local role) => decide (role = controller)
+  | some (.receive _) | none => false
+
+def containsController (controller : Nat)
+    (left right : Option FirstOperation) : Bool :=
+  controlsFromFirst controller left || controlsFromFirst controller right
+
+def viewControls (controller view : Nat)
+    (left right : Option FirstOperation) : Bool :=
+  containsController controller left right && decide (view = controller)
+
+theorem absent_arms_do_not_control (controller : Nat) :
+    containsController controller none none = false := rfl
+
+theorem incoming_arms_do_not_control (controller left right : Nat) :
+    containsController controller (some (.receive left)) (some (.receive right)) = false := rfl
+
+theorem first_controller_send_establishes_membership
+    (controller : Nat) (right : Option FirstOperation) :
+    containsController controller (some (.send controller)) right = true := by
+  change (decide (controller = controller) || controlsFromFirst controller right) = true
+  exact congrArg (fun same : Bool => same || controlsFromFirst controller right)
+    (decide_eq_true rfl)
+
+theorem first_controller_local_action_establishes_membership
+    (controller : Nat) (right : Option FirstOperation) :
+    containsController controller (some (.local controller)) right = true := by
+  change (decide (controller = controller) || controlsFromFirst controller right) = true
+  exact congrArg (fun same : Bool => same || controlsFromFirst controller right)
+    (decide_eq_true rfl)
+
+theorem another_logical_view_has_no_controller_authority
+    (controller view : Nat) (left right : Option FirstOperation)
+    (different : view ≠ controller) :
+    viewControls controller view left right = false := by
+  simp [viewControls, different]
+
+theorem controller_view_requires_projected_membership
+    (controller : Nat) (left right : Option FirstOperation)
+    (absent : containsController controller left right = false) :
+    viewControls controller controller left right = false := by
+  unfold viewControls
+  rw [absent]
+  rfl
 def observedDecision (_ : Nat) : Option Bool := some true
 
 theorem old_first_label_is_an_unchosen_descendant :
@@ -157,4 +210,10 @@ theorem nested_right_decisions_select_the_actual_leaf :
 #print axioms incomplete_envelope_keeps_its_child
 #print axioms old_first_label_is_an_unchosen_descendant
 #print axioms nested_right_decisions_select_the_actual_leaf
+#print axioms absent_arms_do_not_control
+#print axioms incoming_arms_do_not_control
+#print axioms first_controller_send_establishes_membership
+#print axioms first_controller_local_action_establishes_membership
+#print axioms another_logical_view_has_no_controller_authority
+#print axioms controller_view_requires_projected_membership
 end ControllerOffer

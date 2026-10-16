@@ -117,8 +117,9 @@ The pinned gate exhausts the production arithmetic for:
 
 Kani itself discovers every production `#[kani::proof]` into its structured
 JSON inventory. The gate compares that output with the reviewed inventory and
-then verifies every listed harness without passing a filter. The complete CBMC
-summary must report exactly the same total, so a deleted, added, skipped,
+assigns every discovered name to exactly one proof group. Each group runs its
+complete exact-name set and must produce a successful CBMC summary with the
+same count. The combined groups must retain the inventory total, so a deleted, added, skipped,
 partial, failed, or empty harness set is rejected without a hand-written second
 execution list. Harnesses contain no `kani::assume`: finite subdomains use
 total surjective generators, while constrained product domains preserve every
@@ -151,19 +152,29 @@ Run the pinned fail-closed gate:
 bash .github/scripts/check_kani.sh
 ```
 
-CI divides the same compiled inventory between nine independent runners:
-`common` checks 250 harnesses, and `route-direct-0` through `route-direct-3`
-and `route-swapped-0` through `route-swapped-3` each check one symbolic route
-query. Every runner validates the complete inventory and derives the original
-recursion bounds before selecting its work. The selection keeps all symbolic
-inputs, assertions, sanity checks and unwinding checks. Unit tests require the
-nine selections to cover every harness exactly once. The `kani` CI result
-requires all nine jobs to pass.
+The reviewed Kani inventory contains 252 harnesses, including two production
+cursor checks for route control after an Endpoint handoff. The final-form gate also
+runs the production route-correlation query exhaustively over every u8
+receiver, first holder and second holder, and both direct/swapped choices:
+33,554,432 cases. That native run enables debug assertions and overflow checks.
+Both CI jobs are required; the Kani result alone is not the full validation.
 
-To repeat one partition locally, pass `--partition NAME` to the entrypoint.
-Without that option the gate still verifies the entire inventory serially.
-An individual partition reports its selected and total counts separately and
-does not establish that the other partitions passed.
+This enumeration replaces eight symbolic route-query harnesses. Their receiver
+generator was `WORD * 64 | (raw & 63)` for all four words; its image is exactly
+the complete u8 domain. The other two actors were arbitrary u8 and the choice
+was fixed once per correlation. For each receiver `r`, choose `WORD = r / 64`
+and `raw = r % 64`. Thus the native enumeration covers every distinct production
+input of those harnesses, with the same source geometry, actor bindings,
+query entrypoint and `!swap || first == second` result assertion. It does not
+sample, restrict actor values or replace the production query with a model.
+The retained symbolic full-source route scans, parallel/linear queries, context
+checks and all other Kani harnesses still run with their original bounds and
+sanity checks. The standalone ownership package is checked separately.
+
+Earlier 258-harness symbolic runs were incomplete, not successful. Their logs
+remain evidence of those attempts. The verification plan is Kani252 plus complete
+finite route enumeration, not a successful258-harness Kani run. These are fixed
+source-shape obligations, not arbitrary-source compiler soundness.
 
 The entrypoint runs one verification job at a time under
 `.github/scripts/lib/resource_guard.sh`. This dependency-free Rust supervisor

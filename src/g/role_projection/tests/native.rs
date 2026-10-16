@@ -24,6 +24,8 @@ use std::{
 mod mailbox;
 use mailbox::{Mailboxes, NativeTransport};
 
+mod composed;
+
 type Queued = g::Msg<5, u32>;
 
 // SERVICE grants DB to OWNER, which lends it to WORKER. After the return,

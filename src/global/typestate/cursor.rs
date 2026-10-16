@@ -150,7 +150,6 @@ const EVENT_CURSOR_STATE_NONE: StateIndex = StateIndex::ABSENT;
 #[derive(Debug)]
 struct EventCursorMachine {
     role: u8,
-    logical_views: crate::global::compiled::images::LogicalViews,
     event_program: LocalEventProgram,
 }
 
@@ -162,7 +161,6 @@ impl EventCursorMachine {
         before cursor methods can read the machine. */
         unsafe {
             core::ptr::addr_of_mut!((*dst).role).write(role);
-            core::ptr::addr_of_mut!((*dst).logical_views).write(event_program.logical_views());
             core::ptr::addr_of_mut!((*dst).event_program).write(event_program);
         }
     }

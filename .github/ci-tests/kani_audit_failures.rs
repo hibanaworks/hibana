@@ -24,7 +24,9 @@ impl Fixture {
         fs::create_dir_all(path.join("src")).unwrap();
         fs::create_dir_all(path.join(".github")).unwrap();
         fs::create_dir_all(path.join("bin")).unwrap();
+        fs::create_dir_all(path.join("proofs/kani")).unwrap();
         fs::write(path.join(".github/kani-version"), "0.67.0\n").unwrap();
+        fs::write(path.join("proofs/kani/harness-inventory.json"), INVENTORY).unwrap();
         fs::write(
             path.join("src/fixture.rs"),
             "#[kani::should_panic] fn rejects() { production(checked()); }\n",
@@ -120,6 +122,7 @@ fn inventory_mutants_never_start_verification() {
         INVENTORY.replace(":3", ":true"),
         INVENTORY.replace(":3", ":3.5"),
         INVENTORY.replace(":0", ":1"),
+        INVENTORY.replace("\"a\"", "\"unreviewed\""),
         format!("{INVENTORY}{INVENTORY}"),
     ] {
         f.cargo(0, &bad, 0, SUMMARY, 0);

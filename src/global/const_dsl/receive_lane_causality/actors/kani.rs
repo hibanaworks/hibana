@@ -22,34 +22,6 @@ fn owned_linear_receive_handoff<const WORD: u8>() {
     assert_eq!(receive_conflict(&LINEAR, &actors), expected);
 }
 
-fn owned_route_keeps_the_correlation<const WORD: u8, const SWAP: bool>() {
-    let receiver = seed::<WORD>();
-    let first: u8 = kani::any();
-    let second: u8 = kani::any();
-    let swap = SWAP;
-    let scope = SourceScope {
-        start: 1,
-        split: 2,
-        stop: 3,
-    };
-    let holders = if swap {
-        [second.into(), first.into()]
-    } else {
-        [first.into(), second.into()]
-    };
-    let actors = SourceActorImage::<8, 1>::causal_fixture(
-        &[
-            [0, receiver.into()],
-            [receiver.into(), first.into()],
-            [receiver.into(), second.into()],
-            [256, receiver.into()],
-        ],
-        &[(scope, holders)],
-    );
-    let expected = !swap || first == second;
-    assert_eq!(receive_conflict(&ROUTE, &actors), expected);
-}
-
 fn owned_parallel_relays<const WORD: u8>() {
     let receiver = seed::<WORD>();
     let first: u8 = kani::any();
@@ -79,29 +51,29 @@ fn seed<const WORD: u8>() -> u8 {
 }
 
 macro_rules! seed_words {
-    ($check:ident $(<$swap:literal>)?, $word0:ident, $word1:ident, $word2:ident, $word3:ident) => {
+    ($check:ident, $word0:ident, $word1:ident, $word2:ident, $word3:ident) => {
         // Five includes exhaustion of the four-event/four-marker loops.
         // Choice depth is one, with two context links at most. Unwinding
         // and sanity assertions stay enabled for every partition.
         #[kani::proof]
         #[kani::unwind(5)]
         fn $word0() {
-            $check::<0 $(, $swap)?>();
+            $check::<0>();
         }
         #[kani::proof]
         #[kani::unwind(5)]
         fn $word1() {
-            $check::<1 $(, $swap)?>();
+            $check::<1>();
         }
         #[kani::proof]
         #[kani::unwind(5)]
         fn $word2() {
-            $check::<2 $(, $swap)?>();
+            $check::<2>();
         }
         #[kani::proof]
         #[kani::unwind(5)]
         fn $word3() {
-            $check::<3 $(, $swap)?>();
+            $check::<3>();
         }
     };
 }
@@ -112,20 +84,6 @@ seed_words!(
     owned_linear_seed_word1,
     owned_linear_seed_word2,
     owned_linear_seed_word3
-);
-seed_words!(
-    owned_route_keeps_the_correlation<false>,
-    owned_route_direct_seed_word0,
-    owned_route_direct_seed_word1,
-    owned_route_direct_seed_word2,
-    owned_route_direct_seed_word3
-);
-seed_words!(
-    owned_route_keeps_the_correlation<true>,
-    owned_route_swapped_seed_word0,
-    owned_route_swapped_seed_word1,
-    owned_route_swapped_seed_word2,
-    owned_route_swapped_seed_word3
 );
 seed_words!(
     owned_parallel_relays,
