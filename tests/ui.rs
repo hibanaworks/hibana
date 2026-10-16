@@ -185,6 +185,9 @@ fn g_compile_fails() {
     compile_fail(&t, "tests/ui/g-owned-second-issuer.rs");
     compile_fail(&t, "tests/ui/g-owned-roll-reissue.rs");
     compile_fail(&t, "tests/ui/g-owned-self-carrier.rs");
+    compile_fail(&t, "tests/ui/owned-send-moves-before-poll.rs");
+    compile_fail(&t, "tests/ui/owned-recv-cannot-extend-runtime.rs");
+    t.pass("tests/ui-pass/owned-recv-releases-carrier-borrow.rs");
     t.pass("tests/ui-pass/g-par-many.rs");
     t.pass("tests/ui-pass/g-par-same-role-auto-lanes.rs");
     t.pass("tests/ui-pass/g-par-same-label-distinct-local-endpoints.rs");

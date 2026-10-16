@@ -8,6 +8,17 @@ use core::ptr::NonNull;
 mod futures;
 mod payload;
 
+#[cfg(all(test, hibana_repo_tests))]
+mod tests {
+    #[test]
+    fn owned_receive_future_stays_within_three_words() {
+        use core::mem::size_of;
+        let bytes = size_of::<super::futures::OwnedRecvFuture<'static, 'static, 0, 10>>();
+        std::println!("owned-receive-future bytes={bytes}");
+        assert!(bytes <= 3 * size_of::<usize>());
+    }
+}
+
 #[derive(Clone, Copy)]
 pub(crate) struct EndpointTransfer {
     pub(crate) ptr: NonNull<KernelEndpointHeader>,

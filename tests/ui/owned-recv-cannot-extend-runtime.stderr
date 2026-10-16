@@ -1,0 +1,11 @@
+error: lifetime may not live long enough
+ --> tests/ui/owned-recv-cannot-extend-runtime.rs:6:5
+  |
+5 | async fn escape_runtime<'short, 'long>(worker: &mut Endpoint<'short, 1>) -> Endpoint<'long, 10> {
+  |                         ------  ----- lifetime `'long` defined here
+  |                         |
+  |                         lifetime `'short` defined here
+6 |     worker.recv::<Loan>().await.unwrap()
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ function was supposed to return data with lifetime `'long` but it is returning data with lifetime `'short`
+  |
+  = help: consider adding the following bound: `'short: 'long`

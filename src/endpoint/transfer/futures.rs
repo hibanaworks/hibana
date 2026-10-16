@@ -1,8 +1,6 @@
 use crate::endpoint::{
-    Endpoint, EndpointError, EndpointOp, RouteBranch,
-    carrier::RawRecvOutput,
-    futures::{RawBranchRecvFuture, RawRecvFuture},
-    kernel::lane_port::SendInput,
+    Endpoint, EndpointError, EndpointOp, RouteBranch, carrier::RawRecvOutput,
+    futures::RawRecvFuture, kernel::lane_port::SendInput,
 };
 use crate::{
     eff::EventPayload,
@@ -112,13 +110,8 @@ impl<const ROLE: u8, const RESOURCE: u8> Drop for OwnedSendFuture<'_, '_, ROLE, 
     }
 }
 
-enum OwnedRecvSource<'e, 'r, const ROLE: u8> {
-    Direct(RawRecvFuture<'e, 'r, ROLE>),
-    Branch(RawBranchRecvFuture<'e, 'r, ROLE>),
-}
-
 pub(super) struct OwnedRecvFuture<'e, 'r, const ROLE: u8, const RESOURCE: u8> {
-    source: OwnedRecvSource<'e, 'r, ROLE>,
+    raw: RawRecvFuture<'e, 'r, ROLE>,
     label: u8,
 }
 
@@ -134,13 +127,13 @@ fn validate_envelope<const RESOURCE: u8>(payload: Payload<'_>) -> Result<(), Cod
 impl<'e, 'r, const ROLE: u8, const RESOURCE: u8> OwnedRecvFuture<'e, 'r, ROLE, RESOURCE> {
     pub(super) fn direct(endpoint: &'e mut Endpoint<'r, ROLE>, label: u8) -> Self {
         Self {
-            source: OwnedRecvSource::Direct(RawRecvFuture::new(endpoint)),
+            raw: RawRecvFuture::new(endpoint),
             label,
         }
     }
     pub(super) fn branch(branch: RouteBranch<'e, 'r, ROLE>, label: u8) -> Self {
         Self {
-            source: OwnedRecvSource::Branch(RawBranchRecvFuture::new(branch)),
+            raw: RawRecvFuture::from_branch(branch),
             label,
         }
     }
@@ -153,14 +146,9 @@ impl<'e, 'r, const ROLE: u8, const RESOURCE: u8> Future
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.get_mut();
         let kind = EventPayload::Endpoint(RESOURCE);
-        let result = match &mut this.source {
-            OwnedRecvSource::Direct(source) => {
-                source.poll_raw(this.label, kind, validate_envelope::<RESOURCE>, cx)
-            }
-            OwnedRecvSource::Branch(source) => {
-                source.poll_raw(this.label, kind, validate_envelope::<RESOURCE>, cx)
-            }
-        };
+        let result = this
+            .raw
+            .poll_raw(this.label, kind, validate_envelope::<RESOURCE>, cx);
         match result {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Err(error)) => {

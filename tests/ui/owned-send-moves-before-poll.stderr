@@ -1,0 +1,9 @@
+error[E0382]: borrow of moved value: `db`
+ --> tests/ui/owned-send-moves-before-poll.rs:8:22
+  |
+6 | fn reuse_after_move<'r>(owner: &mut Endpoint<'r, 0>, mut db: Endpoint<'r, 10>) {
+  |                                                      ------ move occurs because `db` has type `Endpoint<'_, 10>`, which does not implement the `Copy` trait
+7 |     let pending = owner.send::<Loan>(db);
+  |                                      -- value moved here
+8 |     let _operation = db.recv::<Read>();
+  |                      ^^ value borrowed here after move
