@@ -14,6 +14,12 @@ fn public_operation_transition_classifier_is_exact() {
     let expected = symbolic_operation(kani::any());
     let edge = symbolic_edge(kani::any());
     let transition = current.transition(edge);
+    let resource: u8 = kani::any();
+    let sent: Option<u8> = kani::any();
+    assert_eq!(
+        current.check_payload_borrow(resource, sent).is_ok(),
+        current != PublicActiveOp::SendPayload || sent == Some(resource)
+    );
 
     assert_eq!(
         current.clear_if_current(expected),

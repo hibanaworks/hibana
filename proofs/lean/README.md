@@ -209,8 +209,13 @@ can change arms while preserving the parent prefix. The complete nested trace
 runs twice. Before the parent suffix, both the completed arm and the unused
 alternative are rejected. These six kernel proofs replace seven lemmas about the removed
 route-only reset and its unused selector. Including the transfer model below,
-the static inventory is 813, with 440 using `propext` and `Quot.sound`,
-267 using only `propext`, and 106 axiom-free.
+the static inventory is 816, with 440 using `propext` and `Quot.sound`,
+270 using only `propext`, and 106 axiom-free. The three additional
+`PublicOperationKernel.lean` claims cover the owned-send payload borrow:
+other resource-dependent work waits, that payload's own transfer may finish,
+and an unborrowed view gains no extra dependency. The generated Rust table
+checks all 180 phase/edge combinations. `PendingSend.smt2` checks the abstract
+admission boundary; it does not establish transport refinement by itself.
 The allowed axioms and inventory checks are unchanged. `RollBoundary.smt2`
 checks all completion masks of this six-event shape, including the difference
 between old committed and new preview choices and preservation outside the

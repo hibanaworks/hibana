@@ -191,6 +191,11 @@ pub(crate) struct PreparedRouteCommitRows {
 
 impl PreparedRouteCommitRows {
     #[inline(always)]
+    pub(in crate::endpoint::kernel) const fn as_ref(&self) -> SelectedRouteCommitRowsRef {
+        self.selected_routes
+    }
+
+    #[inline(always)]
     pub(in crate::endpoint::kernel) const fn empty() -> Self {
         Self {
             selected_routes: SelectedRouteCommitRowsRef::EMPTY,

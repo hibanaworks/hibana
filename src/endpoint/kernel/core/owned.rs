@@ -1,10 +1,12 @@
 use super::{
-    CommitEventRow, CursorInvariantError, OperationKernel, PublicActiveOp, ResidentActor, Transport,
+    CommitEventRow, CursorInvariantError, OperationKernel, PublicActiveOp, PublicOpEdge,
+    PublicOpLease, ResidentActor, ResidentView, Transport,
 };
 use crate::eff::{EffIndex, EventPayload};
 use crate::endpoint::{
     RecvError, RecvResult, SendError, SendResult, owner::EndpointOwner, transfer::EndpointTransfer,
 };
+use crate::global::typestate::EventAdmissionError;
 use core::ptr::NonNull;
 
 pub(in crate::endpoint::kernel) struct PreparedViewIssue {
@@ -26,7 +28,7 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
     pub(in crate::endpoint::kernel::core) fn preflight_roll_entry_views(
         &self,
         event: Option<CommitEventRow>,
-    ) -> Result<(), CursorInvariantError> {
+    ) -> Result<(), EventAdmissionError> {
         let Some(scope) = self.prepared_body_reentry_scope(event) else {
             return Ok(());
         };
@@ -37,38 +39,62 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
                 .cast::<ResidentActor<'r, T>>()
                 .as_ref()
         };
-        let available =
-            self.progress
-                .cursor
-                .roll_entry_views_are_available(scope, |role, owner| {
-                    match self
-                        .context
-                        .program
-                        .selected_actor(owner, &mut |scope| self.selected_arm_for_scope(scope))
-                    {
-                        Some(expected) if expected != self.progress.cursor.role() => actor
-                            .views
-                            .get(role)
-                            .is_none_or(|view| view.public_header.generation() == 0),
-                        Some(_) => actor
-                            .views
-                            .get(role)
-                            .is_some_and(|view| view.public_header.generation() != 0),
-                        None => false,
-                    }
-                });
-        if available {
-            Ok(())
-        } else {
-            Err(CursorInvariantError::INVARIANT)
+        let sent = event.and_then(|event| {
+            let atom = self
+                .context
+                .program
+                .event_atom_at(event.eff_index().dense_ordinal());
+            match atom.payload {
+                EventPayload::Endpoint(role) if atom.from == self.public_header.role() => {
+                    Some(role)
+                }
+                EventPayload::Wire(_) | EventPayload::Endpoint(_) => None,
+            }
+        });
+        let rows = self
+            .progress
+            .cursor
+            .roll_entry_views(scope)
+            .ok_or(EventAdmissionError::Invariant)?;
+        let mut verdict = Ok(());
+        for (role, owner) in rows {
+            let view = actor.views.get(role);
+            if let Some(view) = view {
+                // SAFETY: the actor operation lease excludes another kernel;
+                // the payload view is distinct from this borrowed carrier.
+                let operation = if core::ptr::eq(&view.public_header, self.public_header) {
+                    self.io.public_active_op
+                } else {
+                    unsafe { &*view.io.get() }.public_active_op
+                };
+                if operation.check_payload_borrow(role, sent).is_err() {
+                    verdict = Err(EventAdmissionError::OtherViewPending);
+                    continue;
+                }
+            }
+            let available = match self
+                .context
+                .program
+                .selected_actor(owner, &mut |scope| self.selected_arm_for_scope(scope))
+            {
+                Some(expected) if expected != self.progress.cursor.role() => {
+                    view.is_none_or(|view| view.public_header.generation() == 0)
+                }
+                Some(_) => view.is_some_and(|view| view.public_header.generation() != 0),
+                None => false,
+            };
+            if !available {
+                return Err(EventAdmissionError::Invariant);
+            }
         }
+        verdict
     }
 
-    pub(in crate::endpoint::kernel::core) fn preflight_transfer_out(
+    fn outgoing_transfer_view(
         &self,
         transfer: EndpointTransfer,
         role: u8,
-    ) -> SendResult<()> {
+    ) -> SendResult<&ResidentView<'r, T>> {
         // SAFETY: the owned send future retains the value behind this tag.
         let header = unsafe { transfer.ptr.as_ref() };
         if header.actor() != self.public_header.actor()
@@ -81,10 +107,39 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
         // Recover the enclosing view using the actor's original allocation
         // pointer, rather than expanding the narrow header reborrow.
         let actor = unsafe { header.actor().cast::<ResidentActor<'r, T>>().as_ref() };
-        let view = actor.views.get(role).ok_or(SendError::PhaseInvariant)?;
-        // The common progress borrow excludes another kernel. Moving the
-        // Endpoint excludes a public operation/preview borrow of this view.
-        if unsafe { &*view.io.get() }.public_active_op != PublicActiveOp::Idle {
+        actor.views.get(role).ok_or(SendError::PhaseInvariant)
+    }
+
+    pub(in crate::endpoint::kernel::core) fn reserve_transfer_out(
+        &self,
+        transfer: EndpointTransfer,
+        role: u8,
+    ) -> SendResult<()> {
+        let view = self.outgoing_transfer_view(transfer, role)?;
+        // SAFETY: the common actor lease protects the distinct payload view;
+        // its Endpoint value is exclusively owned by this send future.
+        let io = unsafe { &mut *view.io.get() };
+        if io.public_active_op != PublicActiveOp::Idle {
+            return Err(SendError::PhaseInvariant);
+        }
+        let borrowed = io
+            .public_active_op
+            .transition(PublicOpEdge::BeginSendPayload);
+        if borrowed.lease() != PublicOpLease::Held {
+            crate::invariant();
+        }
+        io.public_active_op = borrowed.phase();
+        Ok(())
+    }
+
+    pub(in crate::endpoint::kernel::core) fn preflight_transfer_out(
+        &self,
+        transfer: EndpointTransfer,
+        role: u8,
+    ) -> SendResult<()> {
+        let view = self.outgoing_transfer_view(transfer, role)?;
+        // SAFETY: the same actor lease excludes concurrent payload mutation.
+        if unsafe { &*view.io.get() }.public_active_op != PublicActiveOp::SendPayload {
             return Err(SendError::PhaseInvariant);
         }
         Ok(())
@@ -192,8 +247,22 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
         match view {
             None => None,
             Some(PreparedViewCommit::Retire(transfer)) => {
+                let header = unsafe { transfer.ptr.as_ref() };
+                let view = self
+                    .outgoing_transfer_view(transfer, header.role())
+                    .unwrap_or_else(|_| crate::invariant());
+                // SAFETY: preflight proved the unique payload borrow, and the
+                // actor lease keeps its release and retirement in one commit.
+                let io = unsafe { &mut *view.io.get() };
+                let released = io
+                    .public_active_op
+                    .transition(PublicOpEdge::FinishSendPayload);
+                if released.lease() != PublicOpLease::Held {
+                    crate::invariant();
+                }
+                io.public_active_op = released.phase();
                 // SAFETY: preflight rechecked the unique future-owned view.
-                unsafe { transfer.ptr.as_ref() }.retire_generation();
+                header.retire_generation();
                 self.context.live_views.set(live_views);
                 // Ports and storage belong to the actor/run and survive return.
                 None

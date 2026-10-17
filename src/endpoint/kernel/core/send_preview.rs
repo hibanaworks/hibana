@@ -1,14 +1,40 @@
 use core::{cell::Cell, task::Poll};
 
 use super::{
-    OperationKernel, PublicActiveOp, SendError, SendPreviewError, SendResult, Transport,
-    state_index_to_usize,
+    CommitEventRow, CommitRow, OperationKernel, PublicActiveOp, SendError, SendMeta,
+    SendPreviewError, SendResult, StateIndex, Transport, state_index_to_usize,
 };
 
 impl<'r, T> OperationKernel<'_, 'r, T>
 where
     T: Transport + 'r,
 {
+    fn poll_send_entry_views(&self, meta: SendMeta, index: StateIndex) -> Poll<SendResult<()>> {
+        let step = self
+            .progress
+            .cursor
+            .relocatable_resident_lane_step_at_index(
+                state_index_to_usize(index),
+                usize::from(meta.lane),
+            )
+            .map_err(|_| SendError::PhaseInvariant)?;
+        let event = CommitEventRow::new(
+            meta.eff_index,
+            meta.label,
+            meta.origin,
+            CommitRow::from_send_meta(meta),
+            step,
+        );
+        match self.preflight_roll_entry_views(Some(event)) {
+            Ok(()) => Poll::Ready(Ok(())),
+            Err(crate::global::typestate::EventAdmissionError::OtherViewPending) => Poll::Pending,
+            Err(
+                crate::global::typestate::EventAdmissionError::Invariant
+                | crate::global::typestate::EventAdmissionError::PredecessorPending,
+            ) => Poll::Ready(Err(SendError::PhaseInvariant)),
+        }
+    }
+
     #[inline]
     fn map_send_preview_error(error: SendPreviewError) -> Poll<SendError> {
         match error {
@@ -40,9 +66,9 @@ where
             match self.io.public_active_op {
                 PublicActiveOp::Send => {}
                 PublicActiveOp::BranchSend => {
-                    return Poll::Ready(
-                        self.preview_branch_send_meta(target_label, target_payload),
-                    );
+                    let preview = self.preview_branch_send_meta(target_label, target_payload)?;
+                    let (meta, index, _) = preview.into_parts();
+                    return self.poll_send_entry_views(meta, index).map_ok(|()| preview);
                 }
                 PublicActiveOp::Poisoned
                 | PublicActiveOp::Idle
@@ -50,7 +76,10 @@ where
                 | PublicActiveOp::Offer
                 | PublicActiveOp::RouteBranch
                 | PublicActiveOp::RestoredRouteBranch
-                | PublicActiveOp::BranchRecv => return Poll::Ready(Err(SendError::PhaseInvariant)),
+                | PublicActiveOp::BranchRecv
+                | PublicActiveOp::SendPayload => {
+                    return Poll::Ready(Err(SendError::PhaseInvariant));
+                }
             }
             let preview_error = Cell::new(None::<SendError>);
             let preview_result = {
@@ -105,6 +134,10 @@ where
                     expected: meta.payload_kind,
                     actual: target_payload,
                 }));
+            }
+            match self.poll_send_entry_views(meta, cursor_index) {
+                Poll::Pending => return Poll::Pending,
+                Poll::Ready(result) => result?,
             }
             let route_authority = self.prepare_send_route_authority(
                 &meta,

@@ -10,7 +10,7 @@ const TOOLCHAIN: &str = "leanprover/lean4:v4.30.0";
 fn markers(kind: &str) -> AuditResult<&'static [(&'static str, &'static str)]> {
     match kind {
         "static" => Ok(&[(
-            "Lean static theorem audit passed theorems=813 both=440 propext=267 free=106",
+            "Lean static theorem audit passed theorems=816 both=440 propext=270 free=106",
             "static theorem boundary",
         )]),
         "parallel" => Ok(&[(
@@ -47,7 +47,7 @@ fn markers(kind: &str) -> AuditResult<&'static [(&'static str, &'static str)]> {
         ]),
         "public-operation" => Ok(&[
             (
-                "hibana Lean public-operation kernel proof passed states=9 edges=16 transitions=144",
+                "hibana Lean public-operation kernel proof passed states=10 edges=18 transitions=180",
                 "public-operation certificate",
             ),
             (

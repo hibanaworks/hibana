@@ -12,6 +12,7 @@ inductive PublicOperationPhase where
   | restoredRouteBranch
   | branchRecv
   | branchSend
+  | sendPayload
   deriving Repr, DecidableEq
 
 inductive PublicOperationLease where
@@ -42,10 +43,12 @@ inductive PublicOperationEdge where
   | finishRecv
   | finishBranchRecv
   | parkBranchRecv
+  | beginSendPayload
+  | finishSendPayload
   deriving Repr, DecidableEq
 
 def PublicOperationEdge.expected : PublicOperationEdge → PublicOperationPhase
-  | .beginOffer | .beginSend | .beginRecv => .idle
+  | .beginOffer | .beginSend | .beginRecv | .beginSendPayload => .idle
   | .resumeOffer => .restoredRouteBranch
   | .publishRouteBranch | .finishOffer | .parkOffer => .offer
   | .parkRouteBranch | .beginBranchSend | .beginBranchRecv => .routeBranch
@@ -53,6 +56,7 @@ def PublicOperationEdge.expected : PublicOperationEdge → PublicOperationPhase
   | .finishBranchSend | .parkBranchSend => .branchSend
   | .finishRecv => .recv
   | .finishBranchRecv | .parkBranchRecv => .branchRecv
+  | .finishSendPayload => .sendPayload
 
 def PublicOperationEdge.next : PublicOperationEdge → PublicOperationPhase
   | .beginOffer | .resumeOffer => .offer
@@ -63,8 +67,9 @@ def PublicOperationEdge.next : PublicOperationEdge → PublicOperationPhase
   | .beginBranchSend => .branchSend
   | .beginRecv => .recv
   | .beginBranchRecv => .branchRecv
+  | .beginSendPayload => .sendPayload
   | .finishOffer | .finishSend | .finishBranchSend | .finishRecv |
-      .finishBranchRecv => .idle
+      .finishBranchRecv | .finishSendPayload => .idle
 
 def transitionPublicOperation
     (current : PublicOperationPhase)
@@ -88,6 +93,30 @@ def faultPublicOperation
     (_current : PublicOperationPhase) : PublicOperationPhase :=
   .poisoned
 
+/-- An owned-send future keeps its payload view borrowed. Only that payload's
+own transfer may use the borrow as its roll-entry evidence. This predicate
+uses the operation phase and projected payload role, not a second owner map. -/
+def checkSendPayloadBorrow (current : PublicOperationPhase)
+    (resource : Nat) (sent : Option Nat) : Bool :=
+  decide (current ≠ .sendPayload ∨ sent = some resource)
+
+theorem a_pending_payload_requires_its_own_send
+    (resource : Nat) (sent : Option Nat)
+    (accepted : checkSendPayloadBorrow .sendPayload resource sent = true) :
+    sent = some resource := by
+  simpa [checkSendPayloadBorrow] using accepted
+
+theorem a_non_payload_view_adds_no_borrow_dependency
+    (current : PublicOperationPhase) (resource : Nat) (sent : Option Nat)
+    (free : current ≠ .sendPayload) :
+    checkSendPayloadBorrow current resource sent = true := by
+  simp [checkSendPayloadBorrow, free]
+
+theorem a_payloads_own_transfer_can_finish
+    (current : PublicOperationPhase) (resource : Nat) :
+    checkSendPayloadBorrow current resource (some resource) = true := by
+  simp [checkSendPayloadBorrow]
+
 def publicOperationPhases : List PublicOperationPhase := [
   .idle,
   .poisoned,
@@ -97,7 +126,8 @@ def publicOperationPhases : List PublicOperationPhase := [
   .routeBranch,
   .restoredRouteBranch,
   .branchRecv,
-  .branchSend
+  .branchSend,
+  .sendPayload
 ]
 
 def publicOperationEdges : List PublicOperationEdge := [
@@ -116,7 +146,9 @@ def publicOperationEdges : List PublicOperationEdge := [
   .beginBranchRecv,
   .finishRecv,
   .finishBranchRecv,
-  .parkBranchRecv
+  .parkBranchRecv,
+  .beginSendPayload,
+  .finishSendPayload
 ]
 
 theorem public_operation_phase_inventory_exact :

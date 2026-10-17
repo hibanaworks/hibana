@@ -6,6 +6,7 @@ use super::{
 };
 use crate::global::typestate::state_index_to_usize;
 
+mod revalidate;
 mod route_evidence;
 
 impl<'r, T> OperationKernel<'_, 'r, T>
@@ -188,7 +189,7 @@ where
                 lane_port::SendInput::Endpoint(transfer),
                 crate::eff::EventPayload::Endpoint(role),
             ) => {
-                self.preflight_transfer_out(*transfer, role)?;
+                self.reserve_transfer_out(*transfer, role)?;
                 commit_plan.proof.transfer = Some(*transfer);
             }
             _ => return Err(SendError::PhaseInvariant),
@@ -274,6 +275,26 @@ where
         cx: &mut core::task::Context<'_>,
     ) -> Poll<SendResult<()>> {
         let lane_idx = pending.lane_idx();
+        self.reconcile_retired_views();
+        if let Some(kind) = self.session_fault() {
+            lane_port::cancel_send_outgoing(&mut pending.transport, self.port_for_lane(lane_idx));
+            return Poll::Ready(Err(SendError::SessionFault(kind)));
+        }
+        let admission = match pending.commit_plan.as_mut() {
+            Some(plan) => self.revalidate_pending_send(plan),
+            None => Poll::Ready(Err(SendError::PhaseInvariant)),
+        };
+        match admission {
+            Poll::Pending => return Poll::Pending,
+            Poll::Ready(Err(error)) => {
+                lane_port::cancel_send_outgoing(
+                    &mut pending.transport,
+                    self.port_for_lane(lane_idx),
+                );
+                return Poll::Ready(Err(error));
+            }
+            Poll::Ready(Ok(())) => (),
+        }
         let port = self.port_for_lane(lane_idx);
         let lane_wire = pending.lane_wire();
         let transport_poll = lane_port::poll_send_outgoing(&mut pending.transport, port, cx);

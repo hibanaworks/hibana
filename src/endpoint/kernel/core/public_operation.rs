@@ -12,6 +12,8 @@ define_public_operation_kernel! {
         RestoredRouteBranch,
         BranchRecv,
         BranchSend,
+        // This view is held as another view's owned-send payload.
+        SendPayload,
     }
     edges {
         BeginOffer => (Idle, Offer),
@@ -30,10 +32,24 @@ define_public_operation_kernel! {
         FinishRecv => (Recv, Idle),
         FinishBranchRecv => (BranchRecv, Idle),
         ParkBranchRecv => (BranchRecv, RestoredRouteBranch),
+        BeginSendPayload => (Idle, SendPayload),
+        FinishSendPayload => (SendPayload, Idle),
     }
 }
 
 impl PublicActiveOp {
+    pub(crate) fn check_payload_borrow(
+        self,
+        role: u8,
+        sent: Option<u8>,
+    ) -> Result<(), crate::global::typestate::EventAdmissionError> {
+        if self == Self::SendPayload && sent != Some(role) {
+            Err(crate::global::typestate::EventAdmissionError::OtherViewPending)
+        } else {
+            Ok(())
+        }
+    }
+
     #[inline(always)]
     pub(in crate::endpoint::kernel) fn transition(self, edge: PublicOpEdge) -> PublicOpTransition {
         if self == Self::Poisoned {

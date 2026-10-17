@@ -262,10 +262,19 @@ Hibana.EndpointDelegation.withOwner_same : ∀ (owners : Hibana.EndpointDelegati
   @Hibana.EndpointTransfer.Step View Frame action before after →
     @LE.le.{0} Nat instLENat (@Hibana.EndpointTransfer.Observation.authorityCount View Frame after)
       (@Hibana.EndpointTransfer.Observation.authorityCount View Frame before)
+Hibana.a_non_payload_view_adds_no_borrow_dependency : ∀ (current : Hibana.PublicOperationPhase) (resource : Nat)
+  (sent : Option.{0} Nat),
+  @Ne.{1} Hibana.PublicOperationPhase current Hibana.PublicOperationPhase.sendPayload →
+    @Eq.{1} Bool (Hibana.checkSendPayloadBorrow current resource sent) true
 Hibana.a_parallel_sibling_cannot_supply_reentry_authority : ∀ (left right : Hibana.EndpointDelegation.Source)
   {earlier event : Nat},
   @LT.lt.{0} Nat instLTNat earlier left.eventCount →
     @LE.le.{0} Nat instLENat left.eventCount event → @Eq.{1} Bool ((left.par right).before earlier event) false
+Hibana.a_payloads_own_transfer_can_finish : ∀ (current : Hibana.PublicOperationPhase) (resource : Nat),
+  @Eq.{1} Bool (Hibana.checkSendPayloadBorrow current resource (@some.{0} Nat resource)) true
+Hibana.a_pending_payload_requires_its_own_send : ∀ (resource : Nat) (sent : Option.{0} Nat),
+  @Eq.{1} Bool (Hibana.checkSendPayloadBorrow Hibana.PublicOperationPhase.sendPayload resource sent) true →
+    @Eq.{1} (Option.{0} Nat) sent (@some.{0} Nat resource)
 Hibana.abort_invalidates_outstanding_receipt : ∀ (before after : Hibana.TransportState) (frame : Hibana.TransportFrame)
   (resolution : Hibana.ReceiptResolution),
   @Eq.{1} (Option.{0} Hibana.TransportBoundaryState)

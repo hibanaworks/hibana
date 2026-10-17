@@ -125,7 +125,8 @@ where
             | PublicActiveOp::Offer
             | PublicActiveOp::RouteBranch
             | PublicActiveOp::BranchRecv
-            | PublicActiveOp::BranchSend => {
+            | PublicActiveOp::BranchSend
+            | PublicActiveOp::SendPayload => {
                 self.public_op_busy_fault();
                 super::core::PublicOpLease::Rejected
             }
@@ -169,7 +170,8 @@ where
             | PublicActiveOp::Offer
             | PublicActiveOp::RestoredRouteBranch
             | PublicActiveOp::BranchRecv
-            | PublicActiveOp::BranchSend => {
+            | PublicActiveOp::BranchSend
+            | PublicActiveOp::SendPayload => {
                 self.public_op_busy_fault();
                 super::core::PublicOpLease::Rejected
             }
@@ -209,7 +211,8 @@ where
             | PublicActiveOp::Offer
             | PublicActiveOp::RouteBranch
             | PublicActiveOp::RestoredRouteBranch
-            | PublicActiveOp::BranchRecv => self.public_op_busy_fault(),
+            | PublicActiveOp::BranchRecv
+            | PublicActiveOp::SendPayload => self.public_op_busy_fault(),
         }
         let state = core::mem::replace(&mut self.io.public_send_state, SendState::Done);
         self.cancel_detached_send_state(state);

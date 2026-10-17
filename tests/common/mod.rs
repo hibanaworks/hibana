@@ -248,18 +248,42 @@ pub(crate) struct TestRx<'a> {
 pub(crate) struct TestTransport {
     state: Rc<RefCell<TestState>>,
     pub(crate) bindings: Option<Rc<[hibana::runtime::transport::EndpointBinding; 256]>>,
+    blocked_send: Rc<RefCell<Option<BlockedSend>>>,
+}
+
+struct BlockedSend {
+    role: u8,
+    waker: Option<Waker>,
 }
 
 impl TestTransport {
     pub(crate) fn new() -> Self {
         Self {
             state: Rc::new(RefCell::new(TestState::new())),
+            blocked_send: Rc::new(RefCell::new(None)),
             bindings: Some(Rc::new(core::array::from_fn(|_| {
                 // SAFETY: each slot owns one isolated test resource. All
                 // transport clones share these same authorities, and the
                 // fixture's resources have no operations outside its Endpoints.
                 unsafe { hibana::runtime::transport::EndpointBinding::new() }
             }))),
+        }
+    }
+
+    /// Test I/O readiness only: no bytes enter the peer queue until resumed.
+    pub(crate) fn pause_send(&self, role: u8) {
+        assert!(self.blocked_send.borrow().is_none());
+        *self.blocked_send.borrow_mut() = Some(BlockedSend { role, waker: None });
+    }
+
+    pub(crate) fn resume_send(&self) {
+        let blocked = self
+            .blocked_send
+            .borrow_mut()
+            .take()
+            .expect("paused sender");
+        if let Some(waker) = blocked.waker {
+            waker.wake();
         }
     }
 
@@ -447,11 +471,14 @@ impl Clone for TestTransport {
         Self {
             state: Rc::clone(&self.state),
             bindings: self.bindings.clone(),
+            blocked_send: Rc::clone(&self.blocked_send),
         }
     }
 }
 
 const _: fn(&TestTransport) -> bool = TestTransport::queue_is_empty;
+const _: fn(&TestTransport, u8) = TestTransport::pause_send;
+const _: fn(&TestTransport) = TestTransport::resume_send;
 const _: fn(&TestTransport, u8) -> (FrameHeader, Vec<u8>) = TestTransport::queued_frame;
 const _: fn(&TestTransport, u8, usize) = TestTransport::truncate_next_payload;
 const _: for<'a> fn(&'a TestTransport, SessionId, u8, u8) -> TestRx<'a> = TestTransport::open_rx;
@@ -507,7 +534,7 @@ impl Transport for TestTransport {
         &self,
         tx: &'a mut Self::Tx<'a>,
         outgoing: hibana::runtime::transport::Outgoing<'f>,
-        _cx: &mut Context<'_>,
+        cx: &mut Context<'_>,
     ) -> Poll<Result<(), TransportError>>
     where
         'a: 'f,
@@ -519,6 +546,12 @@ impl Transport for TestTransport {
             outgoing.frame_label().raw(),
             outgoing.payload().as_bytes(),
         );
+        if let Some(blocked) = self.blocked_send.borrow_mut().as_mut()
+            && blocked.role == tx.local_role
+        {
+            blocked.waker = Some(cx.waker().clone());
+            return Poll::Pending;
+        }
         self.poll_send_staged(tx)
     }
 

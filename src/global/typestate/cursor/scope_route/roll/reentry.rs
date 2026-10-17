@@ -1,18 +1,15 @@
 use super::super::super::{EventCursor, RelocatableResidentLaneStep, ScopeId};
 
 impl EventCursor {
-    pub(crate) fn roll_entry_views_are_available(
+    pub(crate) fn roll_entry_views(
         &self,
         scope: ScopeId,
-        mut available: impl FnMut(u8, u16) -> bool,
-    ) -> bool {
-        let Some(range) = self.machine().event_program().roll_entry_range(scope) else {
-            return false;
-        };
-        (range.start()..range.end()).all(|index| {
-            let (role, owner) = self.machine().event_program().roll_entry_view(index);
-            available(role, owner)
-        })
+    ) -> Option<impl Iterator<Item = (u8, u16)> + '_> {
+        let range = self.machine().event_program().roll_entry_range(scope)?;
+        Some(
+            (range.start()..range.end())
+                .map(|index| self.machine().event_program().roll_entry_view(index)),
+        )
     }
 
     /// A completed ancestor is retained when this event enters only a child

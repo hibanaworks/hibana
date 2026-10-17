@@ -21,6 +21,7 @@ mod native;
 mod order;
 mod owned;
 mod partial_choice;
+mod pending_reentry;
 mod program_columns;
 mod reentry;
 mod reentry_choice;
