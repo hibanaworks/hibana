@@ -412,25 +412,101 @@ def DecodedActorRow.sourceAction (row : DecodedActorRow) (actor : Nat) :
     actor, endpoint := { component := 0, role := row.view }, side := row.actionId.side
   })
 
-def RustDescriptorImage.decodeActorRows? (image : RustDescriptorImage) :
-    Option (List DecodedActorRow) := do
-  let atoms ← image.decodeAtoms?
-  let columns ← image.decodeProgramColumns?
-  (List.range image.eventCount).mapM fun eventId => do
+private def actorReferenceFrom?
+    (columns : DecodedProgramColumns) (atom : DecodedProgramAtom)
+    (occurrence view : Nat) : Option Nat :=
+  if columns.actorBindings.isEmpty then some view else do
+    let (sender, receiver) ← columns.actorBindings[occurrence]?
+    if view == atom.sender then some sender
+    else if view == atom.receiver then some receiver else none
+
+private def RustDescriptorImage.actorRowFrom?
+    (image : RustDescriptorImage) (atoms : List DecodedProgramAtom)
+    (columns : DecodedProgramColumns) (eventId : Nat) : Option DecodedActorRow := do
     let effIndex ← image.eventEffIndex? eventId
-    let (atom, occurrence) ← resolveUnique?
+    let entry ← resolveUnique?
       (atoms.zipIdx.filter fun (atom, _) => atom.effIndex == effIndex)
     let action ← image.eventAction? eventId
     let view ← image.eventView? eventId
-    let reference ← if columns.actorBindings.isEmpty then some view else do
-      let (sender, receiver) ← columns.actorBindings[occurrence]?
-      if view == atom.sender then some sender
-      else if view == atom.receiver then some receiver else none
+    let reference ← actorReferenceFrom? columns entry.1 entry.2 view
     let side := match action with
       | .send _ _ _ => EndpointDelegation.Side.send
       | .recv _ _ _ => EndpointDelegation.Side.receive
       | .local _ _ => EndpointDelegation.Side.local
-    pure { eventId, actionId := { event := occurrence, side }, view, actorReference := reference }
+    pure { eventId, actionId := { event := entry.2, side }, view, actorReference := reference }
+
+def RustDescriptorImage.decodeActorRows? (image : RustDescriptorImage) :
+    Option (List DecodedActorRow) := do
+  let atoms ← image.decodeAtoms?
+  let columns ← image.decodeProgramColumns?
+  (List.range image.eventCount).mapM (image.actorRowFrom? atoms columns)
+
+private theorem decoded_actor_row_binds_view
+    {image : RustDescriptorImage} {atoms : List DecodedProgramAtom}
+    {columns : DecodedProgramColumns} {eventId : Nat} {row : DecodedActorRow}
+    (decoded : image.actorRowFrom? atoms columns eventId = some row) :
+    row.eventId = eventId ∧ image.eventView? eventId = some row.view ∧
+      ∃ action, image.eventAction? eventId = some action ∧ row.actionId.side =
+        match action with
+        | .send _ _ _ => .send
+        | .recv _ _ _ => .receive
+        | .local _ _ => .local := by
+  unfold RustDescriptorImage.actorRowFrom? at decoded
+  simp only [Option.bind_eq_bind, Option.bind_eq_some_iff, Option.pure_def,
+    Option.some.injEq] at decoded
+  rcases decoded with ⟨effIndex, _, pair, _, action, actionAt, view, viewAt, reference, _, same⟩
+  cases same
+  exact ⟨rfl, viewAt, action, actionAt, rfl⟩
+
+private theorem actor_row_mapM_member_binds_view
+    {image : RustDescriptorImage} {atoms : List DecodedProgramAtom}
+    {columns : DecodedProgramColumns} {indices : List Nat} {rows : List DecodedActorRow}
+    {row : DecodedActorRow}
+    (decoded : indices.mapM (image.actorRowFrom? atoms columns) = some rows)
+    (member : row ∈ rows) : image.eventView? row.eventId = some row.view ∧
+      ∃ action, image.eventAction? row.eventId = some action ∧ row.actionId.side =
+        match action with
+        | .send _ _ _ => .send
+        | .recv _ _ _ => .receive
+        | .local _ _ => .local := by
+  induction indices generalizing rows with
+  | nil => simp at decoded; subst rows; simp at member
+  | cons index rest ih =>
+      cases headAt : image.actorRowFrom? atoms columns index with
+      | none => simp [headAt] at decoded
+      | some head =>
+          cases tailAt : rest.mapM (image.actorRowFrom? atoms columns) with
+          | none => simp [headAt, tailAt] at decoded
+          | some tail =>
+              have same : rows = head :: tail :=
+                (Option.some.inj (by simpa [headAt, tailAt] using decoded)).symm
+              rw [same] at member
+              rcases List.mem_cons.mp member with equal | member
+              · subst row
+                have fields := decoded_actor_row_binds_view headAt
+                simpa only [fields.1] using fields.2
+              · exact ih tailAt member
+
+theorem decoded_actor_rows_bind_operation_identity
+    {image : RustDescriptorImage} {rows : List DecodedActorRow} {row : DecodedActorRow}
+    (decoded : image.decodeActorRows? = some rows) (member : row ∈ rows) :
+    image.eventView? row.eventId = some row.view ∧
+      ∃ action, image.eventAction? row.eventId = some action ∧ row.actionId.side =
+        match action with
+        | .send _ _ _ => .send
+        | .recv _ _ _ => .receive
+        | .local _ _ => .local := by
+  unfold RustDescriptorImage.decodeActorRows? at decoded
+  cases atomsAt : image.decodeAtoms? with
+  | none => simp [atomsAt] at decoded
+  | some atoms =>
+      cases columnsAt : image.decodeProgramColumns? with
+      | none => simp [atomsAt, columnsAt] at decoded
+      | some columns =>
+          have rowsAt : (List.range image.eventCount).mapM
+              (image.actorRowFrom? atoms columns) = some rows := by
+            simpa [atomsAt, columnsAt] using decoded
+          exact actor_row_mapM_member_binds_view rowsAt member
 
 /-- Source action identities retain both send and receive when two different
 logical roles share one physical actor. No runtime holder state is synthesized. -/
@@ -453,6 +529,25 @@ def EndpointDelegation.Source.actorCandidateActions
     paths.findSome? fun path => do
       let action ← EndpointDelegation.action? path.bindings id
       if action.actor == actor then some (id, action) else none
+
+theorem source_candidate_action_has_a_source_path
+    {source : EndpointDelegation.Source} {paths : List EndpointDelegation.NormalizedPath}
+    {actor : Nat} {id : EndpointDelegation.ActionId} {action : EndpointDelegation.Action}
+    (member : (id, action) ∈ source.actorCandidateActions paths actor) :
+    ∃ path ∈ paths, EndpointDelegation.action? path.bindings id = some action ∧
+      action.actor = actor := by
+  obtain ⟨encoded, _, found⟩ := List.mem_filterMap.mp member
+  obtain ⟨path, pathMember, atPath⟩ := List.exists_of_findSome?_eq_some found
+  cases actionAt : EndpointDelegation.action? path.bindings
+      (EndpointDelegation.decodeActionId encoded) with
+  | none => simp [actionAt] at atPath
+  | some actual =>
+      by_cases belongs : actual.actor = actor
+      · have pair : (EndpointDelegation.decodeActionId encoded, actual) = (id, action) := by
+          simpa [actionAt, belongs] using atPath
+        cases pair
+        exact ⟨path, pathMember, actionAt, belongs⟩
+      · simp [actionAt, belongs] at atPath
 
 def DecodedProgramColumns.actorRowsForPath
     (columns : DecodedProgramColumns) (markers : List DecodedScopeMarker)

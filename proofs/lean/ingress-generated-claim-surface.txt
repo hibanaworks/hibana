@@ -1,0 +1,41 @@
+ingressBlockedFrameCannotSelect : (ingressImage.resolveActorInbound? 1 ingressWorkerKey fun x => false) = none
+ingressReadyAgreesWithSource : (match ingressImage.decodeActorOrder? ingressChoreo with
+  | none => false
+  | some data =>
+    (List.range ingressImage.eventCount).all fun event =>
+      ingressAdmitted event ==
+        (!ingressSnapshot.done event &&
+          data.normalized.paths.any fun path =>
+            ((data.activeRows path).any fun row => row.eventId == event) &&
+              (data.sourcePredecessors path event).all ingressSnapshot.done)) =
+  true
+ingressResourceFrameSelectsResource : Option.map (fun x => x.eventId)
+    (ingressImage.resolveActorInbound? 10 ingressResourceKey ingressAdmitted) =
+  some 2
+ingressSourceControllerMatches : ingressImage.actorControllerCheck ingressChoreo = true
+ingressSourceOrderMatches : ingressImage.actorOrderCheck ingressChoreo = true
+ingressSourceRoutesMatch : ingressImage.actorRouteCheck ingressChoreo = true
+ingressSourceRowsMatch : ingressImage.actorRowsCheck ingressChoreo = true
+ingressWorkerFrameSelectsWorker : Option.map (fun x => x.eventId)
+    (ingressImage.resolveActorInbound? 1 ingressWorkerKey ingressAdmitted) =
+  some 1
+resourceUnrelatedViewRejected : ingressImage.resolveActorInbound? 255 ingressResourceKey ingressAdmitted = none
+resourceWrongFrameLabelRejected : ingressImage.resolveActorInbound? 10 { source := 0, lane := 0, frameLabel := 128 }
+    ingressAdmitted =
+  none
+resourceWrongLaneRejected : ingressImage.resolveActorInbound? 10 { source := 0, lane := 128, frameLabel := 0 }
+    ingressAdmitted =
+  none
+resourceWrongSourceRejected : ingressImage.resolveActorInbound? 10 { source := 128, lane := 0, frameLabel := 0 }
+    ingressAdmitted =
+  none
+workerUnrelatedViewRejected : ingressImage.resolveActorInbound? 255 ingressWorkerKey ingressAdmitted = none
+workerWrongFrameLabelRejected : ingressImage.resolveActorInbound? 1 { source := 0, lane := 0, frameLabel := 128 }
+    ingressAdmitted =
+  none
+workerWrongLaneRejected : ingressImage.resolveActorInbound? 1 { source := 0, lane := 128, frameLabel := 0 }
+    ingressAdmitted =
+  none
+workerWrongSourceRejected : ingressImage.resolveActorInbound? 1 { source := 128, lane := 0, frameLabel := 0 }
+    ingressAdmitted =
+  none

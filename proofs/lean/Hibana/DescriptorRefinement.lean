@@ -1,5 +1,5 @@
 import Hibana.DescriptorTopology
-import Hibana.ActorAuthority
+import Hibana.ActorIngress
 
 namespace Hibana
 

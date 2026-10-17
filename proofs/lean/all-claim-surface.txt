@@ -166,6 +166,32 @@ Hibana.abort_peer_is_well_formed : ∀ (state : Hibana.TransportState), state.ab
       (@LT.lt.{0} Nat instLTNat row.right
         (@HAdd.hAdd.{0, 0, 0} Nat Nat Nat (@instHAdd.{0} Nat instAddNat)
           (@OfNat.ofNat.{0} Nat (nat_lit 256) (instOfNatNat (nat_lit 256))) index))
+@Hibana.accepted_actor_ingress_binds_source_receive : ∀ {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo}
+  {view : Nat} {key : Hibana.InboundOperationKey} {admitted : Nat → Bool} {row : Hibana.DecodedActorRow},
+  @Eq.{1} Bool (image.actorRowsCheck choreo) true →
+    @Eq.{1} (Option.{0} Hibana.DecodedActorRow) (image.resolveActorInbound? view key admitted)
+        (@some.{0} Hibana.DecodedActorRow row) →
+      @Exists.{1} Hibana.EndpointDelegation.Source fun source =>
+        @Exists.{1} Hibana.EndpointDelegation.Normalization fun normalized =>
+          @Exists.{1} Hibana.EndpointDelegation.NormalizedPath fun path =>
+            And
+              (@Eq.{1} (Option.{0} Hibana.EndpointDelegation.Source) choreo.ownershipSource?
+                (@some.{0} Hibana.EndpointDelegation.Source source))
+              (And
+                (@Eq.{1} (Option.{0} Hibana.EndpointDelegation.Normalization)
+                  (Hibana.EndpointDelegation.normalize source)
+                  (@some.{0} Hibana.EndpointDelegation.Normalization normalized))
+                (And
+                  (@Membership.mem.{0, 0} Hibana.EndpointDelegation.NormalizedPath
+                    (List.{0} Hibana.EndpointDelegation.NormalizedPath)
+                    (@List.instMembership.{0} Hibana.EndpointDelegation.NormalizedPath) normalized.paths path)
+                  (@Eq.{1} (Option.{0} Hibana.EndpointDelegation.Action)
+                    (Hibana.EndpointDelegation.action? path.bindings row.actionId)
+                    (@some.{0} Hibana.EndpointDelegation.Action
+                      { actor := image.role,
+                        endpoint :=
+                          { component := @OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0)), role := view },
+                        side := Hibana.EndpointDelegation.Side.receive }))))
 @Hibana.accepted_actor_order_binds_source_readiness : ∀ {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo},
   @Eq.{1} Bool (image.actorOrderCheck choreo) true →
     And (@Eq.{1} Bool (image.actorRowsCheck choreo) true)
@@ -1499,6 +1525,22 @@ Hibana.decode_packed_lane_range_accepts_bounded : ∀ (raw capacity : Nat),
               (@OfNat.ofNat.{0} Nat (nat_lit 65536) (instOfNatNat (nat_lit 65536))))
             (@HMod.hMod.{0, 0, 0} Nat Nat Nat (@instHMod.{0} Nat Nat.instMod) raw
               (@OfNat.ofNat.{0} Nat (nat_lit 65536) (instOfNatNat (nat_lit 65536))))))
+@Hibana.decoded_actor_rows_bind_operation_identity : ∀ {image : Hibana.RustDescriptorImage}
+  {rows : List.{0} Hibana.DecodedActorRow} {row : Hibana.DecodedActorRow},
+  @Eq.{1} (Option.{0} (List.{0} Hibana.DecodedActorRow)) image.decodeActorRows?
+      (@some.{0} (List.{0} Hibana.DecodedActorRow) rows) →
+    @Membership.mem.{0, 0} Hibana.DecodedActorRow (List.{0} Hibana.DecodedActorRow)
+        (@List.instMembership.{0} Hibana.DecodedActorRow) rows row →
+      And (@Eq.{1} (Option.{0} Nat) (image.eventView? row.eventId) (@some.{0} Nat row.view))
+        (@Exists.{1} Hibana.LocalAction fun action =>
+          And
+            (@Eq.{1} (Option.{0} Hibana.LocalAction) (image.eventAction? row.eventId)
+              (@some.{0} Hibana.LocalAction action))
+            (@Eq.{1} Hibana.EndpointDelegation.Side row.actionId.side
+              (Hibana.RustDescriptorImage.actorRowFrom?.match_3✝.{1} (fun action => Hibana.EndpointDelegation.Side)
+                action (fun peer label schema => Hibana.EndpointDelegation.Side.send)
+                (fun peer label schema => Hibana.EndpointDelegation.Side.receive) fun label schema =>
+                Hibana.EndpointDelegation.Side.local)))
 @Hibana.decoded_event_action_binds_exact_lane : ∀ {image : Hibana.RustDescriptorImage} {eventId : Nat}
   {action : Hibana.LocalAction},
   @Eq.{1} (Option.{0} Hibana.LocalAction) (image.eventAction? eventId) (@some.{0} Hibana.LocalAction action) →
@@ -4026,6 +4068,25 @@ Hibana.reset_route_arm_preserves_selection : ∀ (state : Hibana.CommitState) (e
       (∀ (requested : Hibana.RouteArm),
         @Eq.{1} (Option.{0} Hibana.GlobalConfig) (next.resolveStep? role conflict resolver requested)
           (@none.{0} Hibana.GlobalConfig))
+@Hibana.resolved_actor_ingress_binds_view_and_complete_key : ∀ {image : Hibana.RustDescriptorImage} {view : Nat}
+  {key : Hibana.InboundOperationKey} {admitted : Nat → Bool} {row : Hibana.DecodedActorRow},
+  @Eq.{1} (Option.{0} Hibana.DecodedActorRow) (image.resolveActorInbound? view key admitted)
+      (@some.{0} Hibana.DecodedActorRow row) →
+    @Exists.{1} Hibana.DescriptorOperation fun operation =>
+      And
+        (@Eq.{1} (Option.{0} Hibana.DescriptorOperation) (image.eventOperation? row.eventId)
+          (@some.{0} Hibana.DescriptorOperation operation))
+        (And (@Eq.{1} (Option.{0} Nat) (image.eventView? row.eventId) (@some.{0} Nat view))
+          (And (@Eq.{1} Nat row.view view)
+            (And (@Eq.{1} Hibana.EndpointDelegation.Side row.actionId.side Hibana.EndpointDelegation.Side.receive)
+              (And (@Eq.{1} Bool (operation.matchesInbound key) true) (@Eq.{1} Bool (admitted row.eventId) true)))))
+@Hibana.resolved_actor_ingress_is_unique : ∀ {image : Hibana.RustDescriptorImage} {view : Nat}
+  {key : Hibana.InboundOperationKey} {admitted : Nat → Bool} {row : Hibana.DecodedActorRow},
+  @Eq.{1} (Option.{0} Hibana.DecodedActorRow) (image.resolveActorInbound? view key admitted)
+      (@some.{0} Hibana.DecodedActorRow row) →
+    @Eq.{1} (Option.{0} (List.{0} Hibana.DecodedActorRow)) (image.matchingActorInboundRows? view key admitted)
+      (@some.{0} (List.{0} Hibana.DecodedActorRow)
+        (@List.cons.{0} Hibana.DecodedActorRow row (@List.nil.{0} Hibana.DecodedActorRow)))
 @Hibana.resolved_deterministic_inbound_operation_binds_exact_event_columns : ∀ {image : Hibana.RustDescriptorImage}
   {graph : Hibana.EventGraph} {state : Hibana.CommitState} {key : Hibana.DeterministicInboundKey}
   {operation : Hibana.DescriptorOperation},
@@ -4855,6 +4916,23 @@ Hibana.sequential_input_guards_both_parallel_arms : ∀ (entry split exit left r
     @Eq.{1} (Option.{0} Hibana.SessionPool) (pool.step? operation) (@some.{0} Hibana.SessionPool next) → next.WellFormed
 @Hibana.slab_layout_certificate_sound : ∀ {certificate : Hibana.SlabLayoutCertificate},
   @Eq.{1} Bool certificate.check true → certificate.WellFormed
+@Hibana.source_candidate_action_has_a_source_path : ∀ {source : Hibana.EndpointDelegation.Source}
+  {paths : List.{0} Hibana.EndpointDelegation.NormalizedPath} {actor : Nat} {id : Hibana.EndpointDelegation.ActionId}
+  {action : Hibana.EndpointDelegation.Action},
+  @Membership.mem.{0, 0} (Prod.{0, 0} Hibana.EndpointDelegation.ActionId Hibana.EndpointDelegation.Action)
+      (List.{0} (Prod.{0, 0} Hibana.EndpointDelegation.ActionId Hibana.EndpointDelegation.Action))
+      (@List.instMembership.{0} (Prod.{0, 0} Hibana.EndpointDelegation.ActionId Hibana.EndpointDelegation.Action))
+      (source.actorCandidateActions paths actor)
+      (@Prod.mk.{0, 0} Hibana.EndpointDelegation.ActionId Hibana.EndpointDelegation.Action id action) →
+    @Exists.{1} Hibana.EndpointDelegation.NormalizedPath fun path =>
+      And
+        (@Membership.mem.{0, 0} Hibana.EndpointDelegation.NormalizedPath
+          (List.{0} Hibana.EndpointDelegation.NormalizedPath)
+          (@List.instMembership.{0} Hibana.EndpointDelegation.NormalizedPath) paths path)
+        (And
+          (@Eq.{1} (Option.{0} Hibana.EndpointDelegation.Action) (Hibana.EndpointDelegation.action? path.bindings id)
+            (@some.{0} Hibana.EndpointDelegation.Action action))
+          (@Eq.{1} Nat action.actor actor))
 Hibana.sparse_route_history_avoids_the_lane_depth_product : And
   (@Eq.{1} Nat (Hibana.productionRouteHistoryCapacity Hibana.sparseRouteHistoryExample)
     (@OfNat.ofNat.{0} Nat (nat_lit 17) (instOfNatNat (nat_lit 17))))
