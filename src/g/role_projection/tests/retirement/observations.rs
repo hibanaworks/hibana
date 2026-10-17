@@ -62,14 +62,19 @@ abbrev RetirementAuthority := Observation (Nat × Nat × Nat × Nat) Unit
             complete,
         } = sample;
         let view = before.views.iter().find(|view| view.role == 10).unwrap();
-        let (before_authority, action) = match origin {
+        let (before_authority, action, prefix) = match origin {
             RetirementOrigin::Future => (
                 std::format!(
                     "{{ usable := [], preparing := [{name}Value], acceptedFutures := [], inFlight := [] }}"
                 ),
                 "abandonPreparation",
+                std::format!(".tail (.refl _) (Step.seal (initial {name}Value) [] [] {name}Value)"),
             ),
-            RetirementOrigin::Application => (std::format!("initial {name}Value"), "dropValue"),
+            RetirementOrigin::Application => (
+                std::format!("initial {name}Value"),
+                "dropValue",
+                ".refl _".into(),
+            ),
         };
         source.push_str(&std::format!(
             r#"def {name} : Hibana.ViewRetirementObservation := {{
@@ -124,6 +129,25 @@ theorem {name}AuthorityRetirement : Step .{action} {name}BeforeAuthority {name}A
   Step.{action} {name}BeforeAuthority [] [] {name}Value
 
 theorem {name}NoAuthorityRestored : {name}AfterAuthority.authorityCount = 0 := by decide
+
+theorem {name}BeforeAuthorityLocated : Hibana.TransferAuthorityLocated {name}BeforeAuthority :=
+  Hibana.count_one_transfer_authority_has_one_location (by decide)
+
+theorem {name}AuthorityHistory : Execution (initial {name}Value) {name}AfterAuthority :=
+  .tail ({prefix}) {name}AuthorityRetirement
+
+theorem {name}LossBoundary :
+  ∃ middle following action,
+    Execution (initial {name}Value) middle ∧
+    Step action middle following ∧
+    (action = .abandonPreparation ∨ action = .dropValue ∨ action = .fenceFrame) ∧
+    Execution following {name}AfterAuthority := by
+  rcases Hibana.initial_transfer_execution_is_located_or_has_retired {name}AuthorityHistory with
+    located | retired
+  · have count := Hibana.located_transfer_authority_has_count_one located
+    rw [{name}NoAuthorityRestored] at count
+    contradiction
+  · exact retired
 
 "#,
             before = super::super::commit::observation_source(before),

@@ -2059,6 +2059,11 @@ Hibana.constrained_parallel_lane_matching_uses_minimum_span : @Eq.{1} (List.{0} 
     @Eq.{1} (Option.{0} Hibana.AdmittedMessage) (config.queuedMessage? globalId) (@none.{0} Hibana.AdmittedMessage)
 @Hibana.controller_authority_belongs_to_its_logical_view : ∀ {controller view : Nat} {present : Bool},
   @Eq.{1} Bool (Hibana.controllerViewAllows controller present view) true → @Eq.{1} Nat view controller
+@Hibana.count_one_transfer_authority_has_one_location : ∀ {View Frame : Type}
+  {state : Hibana.EndpointTransfer.Observation View Frame},
+  @Eq.{1} Nat (@Hibana.EndpointTransfer.Observation.authorityCount View Frame state)
+      (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1))) →
+    @Hibana.TransferAuthorityLocated View Frame state
 @Hibana.covered_predecessors_have_equal_readiness : ∀ {expected : Nat → List.{0} Nat} {actual : List.{0} Nat}
   {event : Nat} {state : Hibana.CommitState},
   @Eq.{1} Bool (Hibana.predecessorCoverage expected actual event) true →
@@ -3535,6 +3540,22 @@ Hibana.initial_state_has_no_completed_event : ∀ (event : Nat),
   @Eq.{1} Bool (Hibana.CommitState.initial.done event) false
 Hibana.initial_state_has_no_selected_arm : ∀ (conflict : Nat),
   @Eq.{1} (Option.{0} Hibana.RouteArm) (Hibana.CommitState.initial.selected conflict) (@none.{0} Hibana.RouteArm)
+@Hibana.initial_transfer_execution_is_located_or_has_retired : ∀ {View Frame : Type} {initialView : View}
+  {state : Hibana.EndpointTransfer.Observation View Frame},
+  @Hibana.EndpointTransfer.Execution View Frame (@Hibana.EndpointTransfer.initial View Frame initialView) state →
+    Or (@Hibana.TransferAuthorityLocated View Frame state)
+      (@Exists.{1} (Hibana.EndpointTransfer.Observation View Frame) fun middle =>
+        @Exists.{1} (Hibana.EndpointTransfer.Observation View Frame) fun following =>
+          @Exists.{1} Hibana.EndpointTransfer.Action fun action =>
+            And
+              (@Hibana.EndpointTransfer.Execution View Frame (@Hibana.EndpointTransfer.initial View Frame initialView)
+                middle)
+              (And (@Hibana.EndpointTransfer.Step View Frame action middle following)
+                (And
+                  (Or (@Eq.{1} Hibana.EndpointTransfer.Action action Hibana.EndpointTransfer.Action.abandonPreparation)
+                    (Or (@Eq.{1} Hibana.EndpointTransfer.Action action Hibana.EndpointTransfer.Action.dropValue)
+                      (@Eq.{1} Hibana.EndpointTransfer.Action action Hibana.EndpointTransfer.Action.fenceFrame)))
+                  (@Hibana.EndpointTransfer.Execution View Frame following state))))
 Hibana.initial_transport_is_well_formed : ∀ (channel : Hibana.TransportChannel),
   (Hibana.TransportState.initial channel).WellFormed
 Hibana.insert_erased_cursor_observation_length : ∀ (incoming : Hibana.ErasedCursorObservation)
@@ -3849,6 +3870,11 @@ Hibana.local_action_unit_self_send_projects_local : ∀ (role label : Nat),
 @Hibana.local_step_preserves_protocol_identity : ∀ {config next : Hibana.GlobalConfig} {globalId : Nat},
   @Eq.{1} (Option.{0} Hibana.GlobalConfig) (config.localStep? globalId) (@some.{0} Hibana.GlobalConfig next) →
     @Eq.{1} Hibana.GlobalProtocolIdentity next.protocolIdentity config.protocolIdentity
+@Hibana.located_transfer_authority_has_count_one : ∀ {View Frame : Type}
+  {state : Hibana.EndpointTransfer.Observation View Frame},
+  @Hibana.TransferAuthorityLocated View Frame state →
+    @Eq.{1} Nat (@Hibana.EndpointTransfer.Observation.authorityCount View Frame state)
+      (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1)))
 @Hibana.logical_progress_checker_sound : ∀ {graph : Hibana.EventGraph} {state : Hibana.CompactCommitState},
   @Eq.{1} Bool (Hibana.checkLogicalProgress graph state) true → Hibana.LogicalProgress graph state
 @Hibana.lost_transfer_authority_requires_explicit_retirement : ∀ {View Frame : Type}
@@ -5277,6 +5303,17 @@ Hibana.retirement_fault_matches_existing_generation_model : ∀ (before : Option
               (Hibana.applySessionGenerationAction (Hibana.observedGeneration sample.beforeFault)
                 (Hibana.retirementGenerationAction current.operation complete))
               (@some.{0} Hibana.SessionGenerationState (Hibana.observedGeneration sample.afterFault))))
+@Hibana.retirement_step_consumes_one_authority : ∀ {View Frame : Type} {action : Hibana.EndpointTransfer.Action}
+  {before after : Hibana.EndpointTransfer.Observation View Frame},
+  @Hibana.EndpointTransfer.Step View Frame action before after →
+    Or (@Eq.{1} Hibana.EndpointTransfer.Action action Hibana.EndpointTransfer.Action.abandonPreparation)
+        (Or (@Eq.{1} Hibana.EndpointTransfer.Action action Hibana.EndpointTransfer.Action.dropValue)
+          (@Eq.{1} Hibana.EndpointTransfer.Action action Hibana.EndpointTransfer.Action.fenceFrame)) →
+      @Eq.{1} Nat
+        (@HAdd.hAdd.{0, 0, 0} Nat Nat Nat (@instHAdd.{0} Nat instAddNat)
+          (@Hibana.EndpointTransfer.Observation.authorityCount View Frame after)
+          (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1))))
+        (@Hibana.EndpointTransfer.Observation.authorityCount View Frame before)
 @Hibana.retirement_with_pending_source_disables_publication : ∀ {sample : Hibana.ViewRetirementObservation}
   {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo},
   @Eq.{1} Bool (sample.check image choreo) true →
@@ -6320,6 +6357,21 @@ Hibana.terminal_public_operation_clear_is_exact : ∀ (current : Hibana.PublicOp
 Hibana.trace_checker_sound : ∀ (graph : Hibana.EventGraph) (state : Hibana.CommitState)
   (trace : List.{0} Hibana.TraceFrame),
   @Eq.{1} Bool (Hibana.checkTrace graph state trace) true → Hibana.ValidTrace graph state trace
+@Hibana.transfer_execution_loss_has_retirement_boundary : ∀ {View Frame : Type}
+  {before after : Hibana.EndpointTransfer.Observation View Frame},
+  @Hibana.EndpointTransfer.Execution View Frame before after →
+    @LT.lt.{0} Nat instLTNat (@Hibana.EndpointTransfer.Observation.authorityCount View Frame after)
+        (@Hibana.EndpointTransfer.Observation.authorityCount View Frame before) →
+      @Exists.{1} (Hibana.EndpointTransfer.Observation View Frame) fun middle =>
+        @Exists.{1} (Hibana.EndpointTransfer.Observation View Frame) fun following =>
+          @Exists.{1} Hibana.EndpointTransfer.Action fun action =>
+            And (@Hibana.EndpointTransfer.Execution View Frame before middle)
+              (And (@Hibana.EndpointTransfer.Step View Frame action middle following)
+                (And
+                  (Or (@Eq.{1} Hibana.EndpointTransfer.Action action Hibana.EndpointTransfer.Action.abandonPreparation)
+                    (Or (@Eq.{1} Hibana.EndpointTransfer.Action action Hibana.EndpointTransfer.Action.dropValue)
+                      (@Eq.{1} Hibana.EndpointTransfer.Action action Hibana.EndpointTransfer.Action.fenceFrame)))
+                  (@Hibana.EndpointTransfer.Execution View Frame following after)))
 @Hibana.transfer_step_preserves_authority_without_retirement : ∀ {View Frame : Type}
   {action : Hibana.EndpointTransfer.Action} {before after : Hibana.EndpointTransfer.Observation View Frame},
   @Hibana.EndpointTransfer.Step View Frame action before after →

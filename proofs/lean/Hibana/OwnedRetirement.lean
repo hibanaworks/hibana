@@ -295,4 +295,108 @@ theorem lost_transfer_authority_requires_explicit_retirement
     simp_all [EndpointTransfer.Observation.authorityCount, List.length_append,
       List.length_cons, List.length_nil] <;> omega
 
+/-- An explicit retirement consumes exactly one authority. Private witnesses
+left in completed send futures do not restore that authority. -/
+theorem retirement_step_consumes_one_authority
+    {View Frame : Type} {action : EndpointTransfer.Action}
+    {before after : EndpointTransfer.Observation View Frame}
+    (step : EndpointTransfer.Step action before after)
+    (retired : action = .abandonPreparation ∨ action = .dropValue ∨ action = .fenceFrame) :
+    after.authorityCount + 1 = before.authorityCount := by
+  cases step <;>
+    simp_all [EndpointTransfer.Observation.authorityCount, List.length_append,
+      List.length_cons] <;> omega
+
+/-- Loss in an arbitrary finite execution has a concrete retirement boundary
+with a prefix and suffix. It cannot be explained by an ordinary send, receive,
+or the destruction of a completed sender's private witness. -/
+theorem transfer_execution_loss_has_retirement_boundary
+    {View Frame : Type} {before after : EndpointTransfer.Observation View Frame}
+    (execution : EndpointTransfer.Execution before after)
+    (lost : after.authorityCount < before.authorityCount) :
+    ∃ middle following action,
+      EndpointTransfer.Execution before middle ∧
+      EndpointTransfer.Step action middle following ∧
+      (action = .abandonPreparation ∨ action = .dropValue ∨ action = .fenceFrame) ∧
+      EndpointTransfer.Execution following after := by
+  induction execution with
+  | refl => exact False.elim (Nat.lt_irrefl _ lost)
+  | @tail middle action last history step ih =>
+      by_cases earlier : middle.authorityCount < before.authorityCount
+      · obtain ⟨retiring, retired, operation, prior, boundary, kind, suffix⟩ := ih earlier
+        exact ⟨retiring, retired, operation, prior, boundary, kind, .tail suffix step⟩
+      · have bound := EndpointTransfer.transfer_execution_cannot_duplicate_authority history
+        have decreased : last.authorityCount < middle.authorityCount := by omega
+        exact ⟨middle, last, action, history, step,
+          lost_transfer_authority_requires_explicit_retirement step decreased, .refl _⟩
+
+/-- Proof-only location of the one authority already represented by Rust
+values/futures and carrier receipts. This is not an owner/progress table.
+Completed sender witnesses may coexist with any of the three locations. -/
+def TransferAuthorityLocated (state : EndpointTransfer.Observation View Frame) : Prop :=
+  (∃ view, state.usable = [view] ∧ state.preparing = [] ∧ state.inFlight = []) ∨
+  (∃ view, state.usable = [] ∧ state.preparing = [view] ∧ state.inFlight = []) ∨
+  (∃ frame, state.usable = [] ∧ state.preparing = [] ∧ state.inFlight = [frame])
+
+theorem located_transfer_authority_has_count_one
+    {View Frame : Type} {state : EndpointTransfer.Observation View Frame}
+    (located : TransferAuthorityLocated state) : state.authorityCount = 1 := by
+  rcases located with ⟨view, usable, preparing, frames⟩ |
+    ⟨view, usable, preparing, frames⟩ | ⟨frame, usable, preparing, frames⟩ <;>
+    simp [EndpointTransfer.Observation.authorityCount, usable, preparing, frames]
+
+theorem count_one_transfer_authority_has_one_location
+    {View Frame : Type} {state : EndpointTransfer.Observation View Frame}
+    (count : state.authorityCount = 1) : TransferAuthorityLocated state := by
+  cases usable : state.usable with
+  | cons view rest =>
+      have lengths : rest.length = 0 ∧ state.preparing.length = 0 ∧ state.inFlight.length = 0 := by
+        simp only [EndpointTransfer.Observation.authorityCount, usable, List.length_cons] at count
+        exact ⟨by omega, by omega, by omega⟩
+      exact .inl ⟨view, by simpa [List.length_eq_zero_iff.mp lengths.1] using usable,
+        List.length_eq_zero_iff.mp lengths.2.1, List.length_eq_zero_iff.mp lengths.2.2⟩
+  | nil =>
+      cases preparing : state.preparing with
+      | cons view rest =>
+          have lengths : rest.length = 0 ∧ state.inFlight.length = 0 := by
+            simp only [EndpointTransfer.Observation.authorityCount, usable, preparing,
+              List.length_nil, List.length_cons] at count
+            exact ⟨by omega, by omega⟩
+          exact .inr (.inl ⟨view, usable,
+            by simpa [List.length_eq_zero_iff.mp lengths.1] using preparing,
+            List.length_eq_zero_iff.mp lengths.2⟩)
+      | nil =>
+          cases frames : state.inFlight with
+          | nil => simp [EndpointTransfer.Observation.authorityCount, usable, preparing, frames] at count
+          | cons frame rest =>
+              have length : rest.length = 0 := by
+                simp only [EndpointTransfer.Observation.authorityCount, usable, preparing,
+                  frames, List.length_nil, List.length_cons] at count
+                omega
+              exact .inr (.inr ⟨frame, usable, preparing,
+                by simpa [List.length_eq_zero_iff.mp length] using frames⟩)
+
+/-- For every execution from the unique initial issue, the required resource
+is located or there is an explicit retirement boundary in its history. This
+does not itself establish source/future/frame correspondence or fresh visits;
+those observations must connect a boundary to completion or observable fault. -/
+theorem initial_transfer_execution_is_located_or_has_retired
+    {View Frame : Type} {initialView : View}
+    {state : EndpointTransfer.Observation View Frame}
+    (execution : EndpointTransfer.Execution (EndpointTransfer.initial initialView) state) :
+    TransferAuthorityLocated state ∨
+      ∃ middle following action,
+        EndpointTransfer.Execution (EndpointTransfer.initial initialView) middle ∧
+        EndpointTransfer.Step action middle following ∧
+        (action = .abandonPreparation ∨ action = .dropValue ∨ action = .fenceFrame) ∧
+        EndpointTransfer.Execution following state := by
+  by_cases one : state.authorityCount = 1
+  · exact .inl (count_one_transfer_authority_has_one_location one)
+  · have bound := EndpointTransfer.one_binding_has_at_most_one_transferable_authority execution
+    have empty : state.authorityCount < 1 := by omega
+    have lost : state.authorityCount <
+        (EndpointTransfer.initial initialView : EndpointTransfer.Observation View Frame).authorityCount := by
+      simpa [EndpointTransfer.initial, EndpointTransfer.Observation.authorityCount] using empty
+    exact .inr (transfer_execution_loss_has_retirement_boundary execution lost)
+
 end Hibana

@@ -1,6 +1,8 @@
 predecessorAccepted : predecessor.check retirementImage retirementChoreo = true
 predecessorAfterValid : predecessor.after.valid = true
+predecessorAuthorityHistory : Execution (initial predecessorValue) predecessorAfterAuthority
 predecessorAuthorityRetirement : Step Action.abandonPreparation predecessorBeforeAuthority predecessorAfterAuthority
+predecessorBeforeAuthorityLocated : Hibana.TransferAuthorityLocated predecessorBeforeAuthority
 predecessorBeforeValid : predecessor.before.valid = true
 predecessorGenerationRealized : ∃ complete current,
   Hibana.sourceViewComplete? predecessor.before retirementImage retirementChoreo 10 = some complete ∧
@@ -21,6 +23,11 @@ predecessorGhostProgressRejected : (have __src := predecessor;
         beforeFault := __src.beforeFault, afterFault := __src.afterFault }).check
     retirementImage retirementChoreo =
   false
+predecessorLossBoundary : ∃ middle following action,
+  Execution (initial predecessorValue) middle ∧
+    Step action middle following ∧
+      (action = Action.abandonPreparation ∨ action = Action.dropValue ∨ action = Action.fenceFrame) ∧
+        Execution following predecessorAfterAuthority
 predecessorMissingFaultRejected : (have __src := predecessor;
       { view := __src.view, before := __src.before, after := __src.after, beforeFault := __src.beforeFault,
         afterFault := none }).check
@@ -52,7 +59,9 @@ predecessorSourceCompletion : Hibana.sourceViewComplete? predecessor.before reti
   some false
 transportAccepted : transport.check retirementImage retirementChoreo = true
 transportAfterValid : transport.after.valid = true
+transportAuthorityHistory : Execution (initial transportValue) transportAfterAuthority
 transportAuthorityRetirement : Step Action.abandonPreparation transportBeforeAuthority transportAfterAuthority
+transportBeforeAuthorityLocated : Hibana.TransferAuthorityLocated transportBeforeAuthority
 transportBeforeValid : transport.before.valid = true
 transportGenerationRealized : ∃ complete current,
   Hibana.sourceViewComplete? transport.before retirementImage retirementChoreo 10 = some complete ∧
@@ -73,6 +82,11 @@ transportGhostProgressRejected : (have __src := transport;
         beforeFault := __src.beforeFault, afterFault := __src.afterFault }).check
     retirementImage retirementChoreo =
   false
+transportLossBoundary : ∃ middle following action,
+  Execution (initial transportValue) middle ∧
+    Step action middle following ∧
+      (action = Action.abandonPreparation ∨ action = Action.dropValue ∨ action = Action.fenceFrame) ∧
+        Execution following transportAfterAuthority
 transportMissingFaultRejected : (have __src := transport;
       { view := __src.view, before := __src.before, after := __src.after, beforeFault := __src.beforeFault,
         afterFault := none }).check
@@ -103,7 +117,9 @@ transportRetired : transport.after.viewIssued 10 = false
 transportSourceCompletion : Hibana.sourceViewComplete? transport.before retirementImage retirementChoreo 10 = some false
 unpolledAccepted : unpolled.check retirementImage retirementChoreo = true
 unpolledAfterValid : unpolled.after.valid = true
+unpolledAuthorityHistory : Execution (initial unpolledValue) unpolledAfterAuthority
 unpolledAuthorityRetirement : Step Action.abandonPreparation unpolledBeforeAuthority unpolledAfterAuthority
+unpolledBeforeAuthorityLocated : Hibana.TransferAuthorityLocated unpolledBeforeAuthority
 unpolledBeforeValid : unpolled.before.valid = true
 unpolledGenerationRealized : ∃ complete current,
   Hibana.sourceViewComplete? unpolled.before retirementImage retirementChoreo 10 = some complete ∧
@@ -124,6 +140,11 @@ unpolledGhostProgressRejected : (have __src := unpolled;
         beforeFault := __src.beforeFault, afterFault := __src.afterFault }).check
     retirementImage retirementChoreo =
   false
+unpolledLossBoundary : ∃ middle following action,
+  Execution (initial unpolledValue) middle ∧
+    Step action middle following ∧
+      (action = Action.abandonPreparation ∨ action = Action.dropValue ∨ action = Action.fenceFrame) ∧
+        Execution following unpolledAfterAuthority
 unpolledMissingFaultRejected : (have __src := unpolled;
       { view := __src.view, before := __src.before, after := __src.after, beforeFault := __src.beforeFault,
         afterFault := none }).check

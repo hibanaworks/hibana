@@ -1,6 +1,8 @@
 completedAccepted : completed.check retirementImage retirementChoreo = true
 completedAfterValid : completed.after.valid = true
+completedAuthorityHistory : Execution (initial completedValue) completedAfterAuthority
 completedAuthorityRetirement : Step Action.dropValue completedBeforeAuthority completedAfterAuthority
+completedBeforeAuthorityLocated : Hibana.TransferAuthorityLocated completedBeforeAuthority
 completedBeforeValid : completed.before.valid = true
 completedGenerationRealized : ∃ complete current,
   Hibana.sourceViewComplete? completed.before retirementImage retirementChoreo 10 = some complete ∧
@@ -25,6 +27,11 @@ completedLiveSourceCompleted : Hibana.sourceViewComplete? completed.before retir
     some true ∧
   ∃ current,
     Hibana.observedActorView? completed.before 10 = some current ∧ current.operation = Hibana.PublicOperationPhase.idle
+completedLossBoundary : ∃ middle following action,
+  Execution (initial completedValue) middle ∧
+    Step action middle following ∧
+      (action = Action.abandonPreparation ∨ action = Action.dropValue ∨ action = Action.fenceFrame) ∧
+        Execution following completedAfterAuthority
 completedMissingRetirementRejected : (have __src := completed;
       { view := __src.view, before := __src.before,
         after :=
