@@ -2,6 +2,7 @@ import Hibana.Allocation
 import Hibana.Authority
 import Hibana.Commit
 import Hibana.RollBoundary
+import Hibana.EndpointTransfer
 import Hibana.Generation
 import Hibana.ViewGeneration
 import Hibana.ActorSourceProgress

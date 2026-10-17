@@ -208,12 +208,27 @@ completed parent can restart at its prefix, and an explicitly rolled child
 can change arms while preserving the parent prefix. The complete nested trace
 runs twice. Before the parent suffix, both the completed arm and the unused
 alternative are rejected. These six kernel proofs replace seven lemmas about the removed
-route-only reset and its unused selector. The static inventory is 777, with
-412 using `propext` and `Quot.sound`, 264 using only `propext`, and 101 axiom-free.
+route-only reset and its unused selector. Including the transfer model below,
+the static inventory is 789, with 420 using `propext` and `Quot.sound`,
+265 using only `propext`, and 104 axiom-free.
 The allowed axioms and inventory checks are unchanged. `RollBoundary.smt2`
 checks all completion masks of this six-event shape, including the difference
 between old committed and new preview choices and preservation outside the
 explicit child. It is a shape-specific check, not a distributed progress proof.
+
+`EndpointTransfer.lean` proves affine conservation for every finite transfer
+execution from one initial binding. It distinguishes application values from
+private send payloads and accepted frames. Acceptance can precede sender
+publication, and receive can publish the new value while the old private
+payload remains. Dropping that old payload cannot restore an application value.
+The send and committed-receive theorems use the existing ordered carrier profile.
+Receipt commit is a proof boundary, not another public Rust operation.
+
+These twelve theorems assume the execution follows the stated transfer steps.
+They do not establish that every Rust execution has that abstraction, that a
+deployment supplies a valid physical binding, or that its carrier refines the
+profile. Source/continuation correspondence and distributed progress remain
+separate obligations; public owned projection is still closed.
 
 The compiler scope memo, fork-input restoration, independent-sibling exclusion,
 and retained sequential joins have general model lemmas. Ingress-head

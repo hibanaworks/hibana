@@ -94,6 +94,166 @@ Hibana.EndpointDelegation.withOwner_other : ∀ (owners : Hibana.EndpointDelegat
 Hibana.EndpointDelegation.withOwner_same : ∀ (owners : Hibana.EndpointDelegation.OwnerMap)
   (key : Hibana.EndpointDelegation.EndpointKey) (value : Hibana.EndpointDelegation.OwnerExpr),
   @Eq.{1} Hibana.EndpointDelegation.OwnerExpr (Hibana.EndpointDelegation.withOwner owners key value key) value
+@Hibana.EndpointTransfer.abandoning_preparation_does_not_restore_a_value : ∀ {View Frame : Type}
+  {before after : Hibana.EndpointTransfer.Observation View Frame},
+  @Hibana.EndpointTransfer.Step View Frame Hibana.EndpointTransfer.Action.abandonPreparation before after →
+    @Eq.{1} (List.{0} View) (@Hibana.EndpointTransfer.Observation.usable View Frame after)
+      (@Hibana.EndpointTransfer.Observation.usable View Frame before)
+@Hibana.EndpointTransfer.accepted_future_retirement_cannot_restore_an_application_value : ∀ {View Frame : Type}
+  {before after : Hibana.EndpointTransfer.Observation View Frame},
+  @Hibana.EndpointTransfer.Step View Frame Hibana.EndpointTransfer.Action.retireAcceptedFuture before after →
+    And
+      (@Eq.{1} (List.{0} View) (@Hibana.EndpointTransfer.Observation.usable View Frame after)
+        (@Hibana.EndpointTransfer.Observation.usable View Frame before))
+      (And
+        (@Eq.{1} (List.{0} View) (@Hibana.EndpointTransfer.Observation.preparing View Frame after)
+          (@Hibana.EndpointTransfer.Observation.preparing View Frame before))
+        (@Eq.{1} (List.{0} Frame) (@Hibana.EndpointTransfer.Observation.inFlight View Frame after)
+          (@Hibana.EndpointTransfer.Observation.inFlight View Frame before)))
+@Hibana.EndpointTransfer.application_value_and_in_flight_receipt_are_exclusive : ∀ {View Frame : Type} {view : View}
+  {final : Hibana.EndpointTransfer.Observation View Frame},
+  @Hibana.EndpointTransfer.Execution View Frame (@Hibana.EndpointTransfer.initial View Frame view) final →
+    @Ne.{1} (List.{0} View) (@Hibana.EndpointTransfer.Observation.usable View Frame final) (@List.nil.{0} View) →
+      @Eq.{1} (List.{0} Frame) (@Hibana.EndpointTransfer.Observation.inFlight View Frame final) (@List.nil.{0} Frame)
+@Hibana.EndpointTransfer.observed_affine_receipt_preserves_unique_authority : ∀ {View : Type}
+  {state next : Hibana.EndpointTransfer.Observation View Hibana.TransportFrame}
+  {transport delivered : Hibana.TransportState} (initialView fresh : View),
+  @Hibana.EndpointTransfer.Execution View Hibana.TransportFrame
+      (@Hibana.EndpointTransfer.initial View Hibana.TransportFrame initialView) state →
+    transport.WellFormed →
+      @Eq.{1}
+          (Option.{0}
+            (Prod.{0, 0} (Hibana.EndpointTransfer.Observation View Hibana.TransportFrame) Hibana.TransportState))
+          (@Hibana.EndpointTransfer.observeReceive? View state transport fresh)
+          (@some.{0}
+            (Prod.{0, 0} (Hibana.EndpointTransfer.Observation View Hibana.TransportFrame) Hibana.TransportState)
+            (@Prod.mk.{0, 0} (Hibana.EndpointTransfer.Observation View Hibana.TransportFrame) Hibana.TransportState next
+              delivered)) →
+        And
+          (@LE.le.{0} Nat instLENat
+            (@List.length.{0} View (@Hibana.EndpointTransfer.Observation.usable View Hibana.TransportFrame next))
+            (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1))))
+          (And (@LT.lt.{0} Nat instLTNat transport.delivered delivered.delivered)
+            (@Exists.{1} Hibana.TransportFrame fun frame =>
+              And (@Eq.{1} Hibana.TransportPoll transport.pollReceive (Hibana.TransportPoll.delivered frame delivered))
+                (And (@Eq.{1} Hibana.TransportChannel frame.channel transport.channel)
+                  (@Eq.{1} Nat frame.sequence transport.delivered))))
+@Hibana.EndpointTransfer.observed_receipt_realizes_an_affine_transfer : ∀ {View : Type}
+  {state next : Hibana.EndpointTransfer.Observation View Hibana.TransportFrame}
+  {transport delivered : Hibana.TransportState} (fresh : View),
+  @Eq.{1}
+      (Option.{0} (Prod.{0, 0} (Hibana.EndpointTransfer.Observation View Hibana.TransportFrame) Hibana.TransportState))
+      (@Hibana.EndpointTransfer.observeReceive? View state transport fresh)
+      (@some.{0} (Prod.{0, 0} (Hibana.EndpointTransfer.Observation View Hibana.TransportFrame) Hibana.TransportState)
+        (@Prod.mk.{0, 0} (Hibana.EndpointTransfer.Observation View Hibana.TransportFrame) Hibana.TransportState next
+          delivered)) →
+    And (@Hibana.EndpointTransfer.Step View Hibana.TransportFrame Hibana.EndpointTransfer.Action.receive state next)
+      (@Exists.{1} Hibana.TransportFrame fun frame =>
+        @Eq.{1} Hibana.TransportPoll transport.pollReceive (Hibana.TransportPoll.delivered frame delivered))
+@Hibana.EndpointTransfer.one_binding_cannot_have_two_application_values : ∀ {View Frame : Type} {view : View}
+  {final : Hibana.EndpointTransfer.Observation View Frame},
+  @Hibana.EndpointTransfer.Execution View Frame (@Hibana.EndpointTransfer.initial View Frame view) final →
+    @LE.le.{0} Nat instLENat (@List.length.{0} View (@Hibana.EndpointTransfer.Observation.usable View Frame final))
+      (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1)))
+@Hibana.EndpointTransfer.one_binding_has_at_most_one_transferable_authority : ∀ {View Frame : Type} {view : View}
+  {final : Hibana.EndpointTransfer.Observation View Frame},
+  @Hibana.EndpointTransfer.Execution View Frame (@Hibana.EndpointTransfer.initial View Frame view) final →
+    @LE.le.{0} Nat instLENat (@Hibana.EndpointTransfer.Observation.authorityCount View Frame final)
+      (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1)))
+@Hibana.EndpointTransfer.ordered_carrier_commit_preserves_unique_authority : ∀ {View : Type}
+  {carrier : Hibana.CarrierSemantics} {abstraction : carrier.State → Hibana.TransportBoundaryState} {Fairness : Prop},
+  Hibana.CarrierProfile.ordered.Holds carrier abstraction Fairness →
+    ∀ {current offered committed : carrier.State} {frame : Hibana.TransportFrame} {before : Hibana.TransportState}
+      {state : Hibana.EndpointTransfer.Observation View Hibana.TransportFrame} {rest : List.{0} Hibana.TransportFrame}
+      (initialView fresh : View),
+      @Hibana.EndpointTransfer.Execution View Hibana.TransportFrame
+          (@Hibana.EndpointTransfer.initial View Hibana.TransportFrame initialView) state →
+        @Eq.{1} Hibana.TransportBoundaryState (abstraction current) (Hibana.TransportBoundaryState.idle before) →
+          before.WellFormed →
+            @Eq.{1} (Hibana.CarrierPoll carrier.State) (carrier.pollReceive current)
+                (@Hibana.CarrierPoll.delivered carrier.State frame offered) →
+              @Eq.{1} (Option.{0} carrier.State) (carrier.resolve offered Hibana.ReceiptResolution.commit)
+                  (@some.{0} carrier.State committed) →
+                @Eq.{1} (List.{0} Hibana.TransportFrame)
+                    (@Hibana.EndpointTransfer.Observation.inFlight View Hibana.TransportFrame state)
+                    (@List.cons.{0} Hibana.TransportFrame frame rest) →
+                  @Exists.{1} (Hibana.EndpointTransfer.Observation View Hibana.TransportFrame) fun next =>
+                    @Exists.{1} Hibana.TransportState fun after =>
+                      And
+                        (@Hibana.EndpointTransfer.Step View Hibana.TransportFrame Hibana.EndpointTransfer.Action.receive
+                          state next)
+                        (And
+                          (@LE.le.{0} Nat instLENat
+                            (@List.length.{0} View
+                              (@Hibana.EndpointTransfer.Observation.usable View Hibana.TransportFrame next))
+                            (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1))))
+                          (And
+                            (@Eq.{1} Hibana.TransportBoundaryState (abstraction committed)
+                              (Hibana.TransportBoundaryState.idle after))
+                            (And (@LT.lt.{0} Nat instLTNat before.delivered after.delivered)
+                              (And (@Eq.{1} Hibana.TransportChannel frame.channel before.channel)
+                                (@Eq.{1} Nat frame.sequence before.delivered)))))
+@Hibana.EndpointTransfer.ordered_carrier_send_preserves_unique_authority : ∀ {View : Type}
+  {carrier : Hibana.CarrierSemantics} {abstraction : carrier.State → Hibana.TransportBoundaryState} {Fairness : Prop},
+  Hibana.CarrierProfile.ordered.Holds carrier abstraction Fairness →
+    ∀ {current accepted : carrier.State} {before : Hibana.TransportState}
+      {state : Hibana.EndpointTransfer.Observation View Hibana.TransportFrame} {left right : List.{0} View}
+      (initialView sending : View) (label : Fin (@OfNat.ofNat.{0} Nat (nat_lit 256) (instOfNatNat (nat_lit 256)))),
+      @Hibana.EndpointTransfer.Execution View Hibana.TransportFrame
+          (@Hibana.EndpointTransfer.initial View Hibana.TransportFrame initialView) state →
+        @Eq.{1} (List.{0} View) (@Hibana.EndpointTransfer.Observation.preparing View Hibana.TransportFrame state)
+            (@HAppend.hAppend.{0, 0, 0} (List.{0} View) (List.{0} View) (List.{0} View)
+              (@instHAppendOfAppend.{0} (List.{0} View) (@List.instAppend.{0} View)) left
+              (@List.cons.{0} View sending right)) →
+          @Eq.{1} Hibana.TransportBoundaryState (abstraction current) (Hibana.TransportBoundaryState.idle before) →
+            @Eq.{1} (Option.{0} carrier.State) (carrier.send current label) (@some.{0} carrier.State accepted) →
+              @Exists.{1} (Hibana.EndpointTransfer.Observation View Hibana.TransportFrame) fun next =>
+                @Exists.{1} Hibana.TransportFrame fun frame =>
+                  @Exists.{1} Hibana.TransportState fun after =>
+                    And
+                      (@Hibana.EndpointTransfer.Step View Hibana.TransportFrame Hibana.EndpointTransfer.Action.accept
+                        state next)
+                      (And
+                        (@LE.le.{0} Nat instLENat
+                          (@Hibana.EndpointTransfer.Observation.authorityCount View Hibana.TransportFrame next)
+                          (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1))))
+                        (And
+                          (@Eq.{1} Hibana.TransportBoundaryState (abstraction accepted)
+                            (Hibana.TransportBoundaryState.idle after))
+                          (And
+                            (@Eq.{1} (List.{0} Hibana.TransportFrame) after.frames
+                              (@HAppend.hAppend.{0, 0, 0} (List.{0} Hibana.TransportFrame)
+                                (List.{0} Hibana.TransportFrame) (List.{0} Hibana.TransportFrame)
+                                (@instHAppendOfAppend.{0} (List.{0} Hibana.TransportFrame)
+                                  (@List.instAppend.{0} Hibana.TransportFrame))
+                                before.frames
+                                (@List.cons.{0} Hibana.TransportFrame frame (@List.nil.{0} Hibana.TransportFrame))))
+                            (And (@Eq.{1} Hibana.TransportChannel frame.channel before.channel)
+                              (And (@Eq.{1} Nat frame.sequence (@List.length.{0} Hibana.TransportFrame before.frames))
+                                (@Eq.{1} (Fin (@OfNat.ofNat.{0} Nat (nat_lit 256) (instOfNatNat (nat_lit 256))))
+                                  frame.frameLabel label))))))
+@Hibana.EndpointTransfer.receive_does_not_require_sender_publication : ∀ {View Frame : Type} (sender receiver : View)
+  (frame : Frame),
+  @Exists.{1} (Hibana.EndpointTransfer.Observation View Frame) fun state =>
+    And (@Hibana.EndpointTransfer.Execution View Frame (@Hibana.EndpointTransfer.initial View Frame sender) state)
+      (And
+        (@Eq.{1} (List.{0} View) (@Hibana.EndpointTransfer.Observation.usable View Frame state)
+          (@List.cons.{0} View receiver (@List.nil.{0} View)))
+        (And
+          (@Eq.{1} (List.{0} View) (@Hibana.EndpointTransfer.Observation.acceptedFutures View Frame state)
+            (@List.cons.{0} View sender (@List.nil.{0} View)))
+          (@Eq.{1} (List.{0} Frame) (@Hibana.EndpointTransfer.Observation.inFlight View Frame state)
+            (@List.nil.{0} Frame))))
+@Hibana.EndpointTransfer.transfer_execution_cannot_duplicate_authority : ∀ {View Frame : Type}
+  {before after : Hibana.EndpointTransfer.Observation View Frame},
+  @Hibana.EndpointTransfer.Execution View Frame before after →
+    @LE.le.{0} Nat instLENat (@Hibana.EndpointTransfer.Observation.authorityCount View Frame after)
+      (@Hibana.EndpointTransfer.Observation.authorityCount View Frame before)
+@Hibana.EndpointTransfer.transfer_step_cannot_duplicate_authority : ∀ {action : Hibana.EndpointTransfer.Action}
+  {View Frame : Type} {before after : Hibana.EndpointTransfer.Observation View Frame},
+  @Hibana.EndpointTransfer.Step View Frame action before after →
+    @LE.le.{0} Nat instLENat (@Hibana.EndpointTransfer.Observation.authorityCount View Frame after)
+      (@Hibana.EndpointTransfer.Observation.authorityCount View Frame before)
 Hibana.abort_invalidates_outstanding_receipt : ∀ (before after : Hibana.TransportState) (frame : Hibana.TransportFrame)
   (resolution : Hibana.ReceiptResolution),
   @Eq.{1} (Option.{0} Hibana.TransportBoundaryState)
