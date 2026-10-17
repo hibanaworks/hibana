@@ -21,6 +21,7 @@ mod order;
 mod owned;
 mod partial_choice;
 mod program_columns;
+mod reentry;
 mod routing;
 mod send_wait;
 
