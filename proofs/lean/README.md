@@ -263,7 +263,27 @@ payload remains. Dropping that old payload cannot restore an application value.
 The send and committed-receive theorems use the existing ordered carrier profile.
 Receipt commit is a proof boundary, not another public Rust operation.
 
-These twelve theorems assume the execution follows the stated transfer steps.
+`FutureCustodyGenerated.lean` connects one actual two-runtime round trip to
+that model, from construction of an unpolled public `send` future through its
+final drop. The Tokio schedule copies real actor headers, operation phases,
+progress, and accepted frame bytes. Constructing the future moves the Rust
+value without changing runtime progress; its first pending poll borrows the
+payload. Both completed send futures remain alive when the resource returns
+to the original actor with a fresh tag. Dropping either old witness leaves
+the issued view and progress unchanged, and that returned Endpoint performs
+the next request and reply. Independent final transfers are driven with
+`join!`; the observations do not schedule them.
+
+Its 57 kernel claims check all eleven snapshots, four source-ordered owned
+commits, exact issued and retired view tags, and the nine-step transfer
+execution. The existing conservation
+theorems then distinguish the two private sender witnesses from the single
+application authority. Treating the unpolled payload as another application
+value is inconsistent with that execution. Value placement is observed at
+the Rust move/drop boundaries; this concrete correspondence is not an
+extraction of every possible Rust execution or a proof of source readiness.
+
+The twelve general transfer theorems assume execution follows the stated steps.
 They do not establish that every Rust execution has that abstraction, that a
 deployment supplies a valid physical binding, or that its carrier refines the
 profile. Source/continuation correspondence and distributed progress remain
@@ -278,7 +298,7 @@ not require the sender to have published its local completion first.
 
 The real two-runtime exchange copies each accepted frame before its receive,
 without consuming it or changing readiness. Its four observed commits generate
-48 checked claims, including rejection of a different resource, effect index,
+56 checked claims, including rejection of a missing carrier, resource, effect index,
 receiver, actor and session. Carrier generation and sequence are not invented
 from the core header; the general theorem obtains them from the carrier profile.
 These observations validate the exercised commits. Completeness of the

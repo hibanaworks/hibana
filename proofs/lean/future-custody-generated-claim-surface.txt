@@ -1,0 +1,74 @@
+custodyAcceptStep : Step Action.accept custodyPending custodySent
+custodyCannotTreatTheUnpolledPayloadAsAnApplicationValue : ¬Execution custodyInitial
+    (have __src := custodySealed;
+    { usable := [initialValue], preparing := __src.preparing, acceptedFutures := __src.acceptedFutures,
+      inFlight := __src.inFlight })
+custodyFinalValueIsUnique : custodyRetired.usable.length ≤ 1
+custodyInitialValueMatchesPendingHeader : Option.map (fun view => (ownerPending.actor, view.role, view.run, view.nonce))
+    (Hibana.observedActorView? ownerPending 10) =
+  some initialValue
+custodyLoanRecvAccepted : custodyLoanRecv.ownedCheck workerImage custodyChoreo loanWire 873 = true
+custodyLoanRecvSourceOrdered : custodyLoanRecv.SourceOrdered workerImage custodyChoreo
+custodyLoanSendAccepted : custodyLoanSend.ownedCheck ownerImage custodyChoreo loanWire 873 = true
+custodyLoanSendSourceOrdered : custodyLoanSend.SourceOrdered ownerImage custodyChoreo
+custodyOldFutureDropUnchanged : ownerRetired = ownerReturned
+custodyOldRetireStep : Step Action.retireAcceptedFuture custodyReturnRetired custodyRetired
+custodyOriginalTagRetired : Option.map (fun view => (ownerSent.actor, view.role, view.run, view.nonce))
+    (Hibana.observedActorView? ownerSent 10) ≠
+  some initialValue
+custodyPendingExecution : Execution custodyInitial custodyPending
+custodyPendingHeadersUnchanged : ownerPending.viewHeaders = ownerBefore.viewHeaders
+custodyPendingPayloadBorrowed : Option.map (fun x => x.operation) (Hibana.observedActorView? ownerPending 10) =
+  some Hibana.PublicOperationPhase.sendPayload
+custodyPendingProgressUnchanged : ownerPending.progress = ownerBefore.progress
+custodyPendingStep : Step Action.unchanged custodySealed custodyPending
+custodyReceiveStep : Step Action.receive custodySent custodyReceived
+custodyReceivedExecution : Execution custodyInitial custodyReceived
+custodyReceivedValueMatchesSourceCommit : Option.map
+    (fun facts => (custodyLoanRecv.after.actor, facts.afterView.role, facts.afterView.run, facts.afterView.nonce))
+    (custodyLoanRecv.ownedFacts? workerImage custodyChoreo) =
+  some receivedValue
+custodyReceiverTagRetired : Option.map (fun view => (workerSent.actor, view.role, view.run, view.nonce))
+    (Hibana.observedActorView? workerSent 10) ≠
+  some receivedValue
+custodyRetiredExecution : Execution custodyInitial custodyRetired
+custodyReturnAcceptStep : Step Action.accept custodyReturnSealed custodyReturnSent
+custodyReturnFutureDropUnchanged : workerRetired = workerSent
+custodyReturnReceiveStep : Step Action.receive custodyReturnSent custodyReturned
+custodyReturnRecvAccepted : custodyReturnRecv.ownedCheck ownerImage custodyChoreo returnWire 873 = true
+custodyReturnRecvSourceOrdered : custodyReturnRecv.SourceOrdered ownerImage custodyChoreo
+custodyReturnRetireStep : Step Action.retireAcceptedFuture custodyReturned custodyReturnRetired
+custodyReturnRetiredExecution : Execution custodyInitial custodyReturnRetired
+custodyReturnSealStep : Step Action.seal custodyReceived custodyReturnSealed
+custodyReturnSealedExecution : Execution custodyInitial custodyReturnSealed
+custodyReturnSendAccepted : custodyReturnSend.ownedCheck workerImage custodyChoreo returnWire 873 = true
+custodyReturnSendSourceOrdered : custodyReturnSend.SourceOrdered workerImage custodyChoreo
+custodyReturnSentExecution : Execution custodyInitial custodyReturnSent
+custodyReturnUnpolledRuntimeUnchanged : workerSealed = workerReceived
+custodyReturnedExecution : Execution custodyInitial custodyReturned
+custodyReturnedTagFresh : returnedValue ≠ initialValue
+custodyReturnedValueMatchesSourceCommit : Option.map
+    (fun facts => (custodyReturnRecv.after.actor, facts.afterView.role, facts.afterView.run, facts.afterView.nonce))
+    (custodyReturnRecv.ownedFacts? ownerImage custodyChoreo) =
+  some returnedValue
+custodySealStep : Step Action.seal custodyInitial custodySealed
+custodySealedExecution : Execution custodyInitial custodySealed
+custodySentExecution : Execution custodyInitial custodySent
+custodyTwoPrivateFuturesAreNotTwoAuthorities : custodyReturned.acceptedFutures.length = 2 ∧
+  Observation.authorityCount custodyReturned ≤ 1
+custodyUnpolledRuntimeUnchanged : ownerSealed = ownerBefore
+custodyUnpolledValueIsNotApplicationAuthority : custodySealed.usable = [] ∧ custodySealed.preparing = [initialValue]
+initialValueIssued : ownerBefore.viewIssued 10 = true
+ownerBeforeValid : ownerBefore.valid = true
+ownerPendingValid : ownerPending.valid = true
+ownerRetiredValid : ownerRetired.valid = true
+ownerReturnedValid : ownerReturned.valid = true
+ownerSealedValid : ownerSealed.valid = true
+ownerSentValid : ownerSent.valid = true
+receivedValueIssued : workerReceived.viewIssued 10 = true
+returnedValueIssued : ownerReturned.viewIssued 10 = true
+workerBeforeValid : workerBefore.valid = true
+workerReceivedValid : workerReceived.valid = true
+workerRetiredValid : workerRetired.valid = true
+workerSealedValid : workerSealed.valid = true
+workerSentValid : workerSent.valid = true

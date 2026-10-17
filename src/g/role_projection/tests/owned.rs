@@ -128,9 +128,12 @@ fn a_rolled_body_can_restart_after_its_resource_returns_from_the_continuation() 
         });
 }
 
+#[cfg(not(miri))]
+mod future_custody;
+
 #[test]
 fn dropping_a_completed_owned_send_does_not_retire_the_returned_resource_view() {
-    use crate::endpoint::proof_snapshot::view_tag;
+    use crate::endpoint::proof_snapshot::{actor_snapshot, view_tag};
     use core::{
         future::{Future, poll_fn},
         pin::Pin,
@@ -139,11 +142,18 @@ fn dropping_a_completed_owned_send_does_not_retire_the_returned_resource_view() 
     // AUTH is a second view at OWNER. Its later loan fixes that initial actor
     // in the global, so it can receive DB while OWNER's completed send future
     // still borrows the OWNER view and retains its stale DB payload value.
+    type ObserverLoan = g::Msg<5, Endpoint<'static, 12>>;
     type Steps = g::Seq<
         g::Send<0, 1, Loan>,
         g::Seq<
             g::Send<1, 11, Loan>,
-            g::Seq<g::Send<10, 3, Read>, g::Seq<g::Send<3, 10, Value>, g::Send<0, 2, OtherLoan>>>,
+            g::Seq<
+                g::Send<10, 3, Read>,
+                g::Seq<
+                    g::Send<3, 10, Value>,
+                    g::Par<g::Send<0, 2, OtherLoan>, g::Send<1, 5, ObserverLoan>>,
+                >,
+            >,
         >,
     >;
     let () = crate::g::ProgramProjection::<Steps, 16>::VALIDATION;
@@ -165,6 +175,12 @@ fn dropping_a_completed_owned_send_does_not_retire_the_returned_resource_view() 
     let auth_program = crate::global::role_program::role_program_from_image::<11>(
         &RoleProjection::<11, Steps, 16>::IMAGE_REF,
     );
+    let observer_program = crate::global::role_program::role_program_from_image::<12>(
+        &RoleProjection::<12, Steps, 16>::IMAGE_REF,
+    );
+    let observer_sink_program = crate::global::role_program::role_program_from_image::<5>(
+        &RoleProjection::<5, Steps, 16>::IMAGE_REF,
+    );
     let runtime = tokio::runtime::Builder::new_current_thread()
         .build()
         .unwrap();
@@ -179,30 +195,134 @@ fn dropping_a_completed_owned_send_does_not_retire_the_returned_resource_view() 
         let owner_rv = owner_kit
             .rendezvous(&mut owner_slab, network.clone())
             .unwrap();
-        let peer_rv = peer_kit.rendezvous(&mut peer_slab, network).unwrap();
+        let peer_rv = peer_kit
+            .rendezvous(&mut peer_slab, network.clone())
+            .unwrap();
         let sid = SessionId::new(873);
         let mut owner = owner_rv.enter(sid, &owner_program).unwrap();
         let mut auth = owner_rv.enter(sid, &auth_program).unwrap();
         let db = owner_rv.enter(sid, &db_program).unwrap();
         let mut worker = peer_rv.enter(sid, &worker_program).unwrap();
+        let observer = peer_rv.enter(sid, &observer_program).unwrap();
+        let mut observer_sink = peer_rv.enter(sid, &observer_sink_program).unwrap();
         let mut service = peer_rv.enter(sid, &service_program).unwrap();
         let mut receiver = peer_rv.enter(sid, &receiver_program).unwrap();
 
         let old_tag = view_tag(&db);
         // SAFETY: owner_storage retains the observed pinned view record.
         assert!(unsafe { old_tag.matches_header() });
+        // SAFETY: all copied observations belong to these TestTransport actors.
+        let owner_before = unsafe { actor_snapshot(&auth) };
+        network.pause_send(0);
         let mut loan = owner.send::<Loan>(db);
+        // The Rust value has moved into the unpolled future. The unchanged
+        // header is not a second application value or a progress publication.
+        // SAFETY: AUTH is a distinct live view of the same pinned actor.
+        let owner_sealed = unsafe { actor_snapshot(&auth) };
+        assert_eq!(owner_sealed, owner_before);
+        assert!(network.queue_is_empty());
+        poll_fn(|cx| {
+            assert!(Pin::new(&mut loan).poll(cx).is_pending());
+            core::task::Poll::Ready(())
+        })
+        .await;
+        // SAFETY: the paused future does not retain the actor mutation lease.
+        let owner_pending = unsafe { actor_snapshot(&auth) };
+        assert!(owner_pending.view_headers().eq(owner_before.view_headers()));
+        assert_eq!(owner_pending.steps, owner_before.steps);
+        assert_eq!(owner_pending.counter, owner_before.counter);
+        assert_eq!(owner_pending.live_views, owner_before.live_views);
+        assert_eq!(owner_pending.choices, owner_before.choices);
+        assert_eq!(
+            owner_pending
+                .views
+                .iter()
+                .find(|view| view.role == 10)
+                .unwrap()
+                .operation,
+            "SendPayload"
+        );
+        assert!(network.queue_is_empty());
+        network.resume_send();
         poll_fn(|cx| Pin::new(&mut loan).poll(cx)).await.unwrap();
+        // SAFETY: the successful send still retains its private old payload.
+        let owner_sent = unsafe { actor_snapshot(&auth) };
+        assert_eq!(owner_sent.live_views + 1, owner_pending.live_views);
+        assert_eq!(owner_sent.counter, owner_pending.counter);
+        let loan_wire = network.queued_frame(1);
+        assert_eq!(loan_wire.1, [10, 0, 0]);
         // SAFETY: successful transfer retains the original runtime storage.
         assert!(!unsafe { old_tag.matches_header() });
+        // SAFETY: WORKER was attached to peer_rv with TestTransport.
+        let worker_before = unsafe { actor_snapshot(&worker) };
         let db = worker.recv::<Loan>().await.unwrap();
-        worker.send::<Loan>(db).await.unwrap();
+        // SAFETY: the received view belongs to the same pinned peer actor.
+        let worker_received = unsafe { actor_snapshot(&db) };
+        assert_eq!(worker_received.live_views, worker_before.live_views + 1);
+        assert!(network.queue_is_empty());
+        let mut returned = worker.send::<Loan>(db);
+        // SAFETY: OBSERVER is a distinct, source-bound view of the peer actor.
+        let worker_sealed = unsafe { actor_snapshot(&observer) };
+        assert_eq!(worker_sealed, worker_received);
+        poll_fn(|cx| Pin::new(&mut returned).poll(cx))
+            .await
+            .unwrap();
+        // SAFETY: OBSERVER is independent of returned's carrier borrow.
+        let worker_sent = unsafe { actor_snapshot(&observer) };
+        let return_wire = network.queued_frame(11);
+        assert_eq!(return_wire.1, [10, 0, 1]);
+        // The return future remains alive through the receiver's commit.
         let mut db = auth.recv::<Loan>().await.unwrap();
+        // SAFETY: DB is freshly issued in the pinned original actor.
+        let owner_returned = unsafe { actor_snapshot(&db) };
+        assert!(network.queue_is_empty());
         // SAFETY: this return reuses the same pinned record, with a fresh tag.
         assert!(!unsafe { old_tag.matches_header() });
+        drop(returned);
+        // SAFETY: the peer actor is still retained by OBSERVER.
+        let worker_retired = unsafe { actor_snapshot(&observer) };
+        assert_eq!(worker_retired, worker_sent);
         // The old send has completed, but its owned payload is only destroyed
         // here, after DB has been reissued at the original physical actor.
         drop(loan);
+        // SAFETY: the stale future's Drop must not touch this fresh view.
+        let owner_retired = unsafe { actor_snapshot(&db) };
+        assert_eq!(owner_retired, owner_returned);
+        #[cfg(not(miri))]
+        {
+            use crate::test_support::{
+                lean_choreo::LeanChoreo, lean_descriptor::descriptor_source,
+            };
+            future_custody::write(
+                Steps::lean_source(),
+                [
+                    descriptor_source(
+                        crate::global::compiled::images::RoleDescriptorRef::from_resident(
+                            &RoleProjection::<0, Steps, 16>::IMAGE_REF,
+                        ),
+                    ),
+                    descriptor_source(
+                        crate::global::compiled::images::RoleDescriptorRef::from_resident(
+                            &RoleProjection::<1, Steps, 16>::IMAGE_REF,
+                        ),
+                    ),
+                ],
+                &[
+                    ("ownerBefore", &owner_before),
+                    ("ownerSealed", &owner_sealed),
+                    ("ownerPending", &owner_pending),
+                    ("ownerSent", &owner_sent),
+                    ("workerBefore", &worker_before),
+                    ("workerReceived", &worker_received),
+                    ("workerSealed", &worker_sealed),
+                    ("workerSent", &worker_sent),
+                    ("workerRetired", &worker_retired),
+                    ("ownerReturned", &owner_returned),
+                    ("ownerRetired", &owner_retired),
+                ],
+                &[("loanWire", &loan_wire), ("returnWire", &return_wire)],
+            );
+        }
         let (value, ()) = tokio::join!(
             async {
                 db.send::<Read>(&42).await.unwrap();
@@ -214,8 +334,16 @@ fn dropping_a_completed_owned_send_does_not_retire_the_returned_resource_view() 
             },
         );
         assert_eq!(value, 43);
-        owner.send::<OtherLoan>(auth).await.unwrap();
-        drop(receiver.recv::<OtherLoan>().await.unwrap());
+        let (auth_sent, observer_sent, auth_received, observer_received) = tokio::join!(
+            owner.send::<OtherLoan>(auth),
+            worker.send::<ObserverLoan>(observer),
+            receiver.recv::<OtherLoan>(),
+            observer_sink.recv::<ObserverLoan>(),
+        );
+        auth_sent.unwrap();
+        observer_sent.unwrap();
+        drop(auth_received.unwrap());
+        drop(observer_received.unwrap());
     });
 }
 
