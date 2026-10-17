@@ -70,7 +70,9 @@ fn certificate<Steps: g::ProgramShape + LeanChoreo, const CAPACITY: usize>(name:
     ));
     source.push_str(&format!(
         "theorem {name}ActorRowsMatchSource :\n  \
-         {name}Image.actorRowsCheck {name}Choreo = true := by\n  decide\n\n",
+         {name}Image.actorRowsCheck {name}Choreo = true := by\n  decide\n\n\
+         theorem {name}ActorOrderMatchesSource :\n  \
+         {name}Image.actorOrderCheck {name}Choreo = true := by\n  decide\n\n",
     ));
     if !bindings.is_empty() {
         let wrong_length = columns.proof_header_bytes()[6] ^ 1;
@@ -142,6 +144,8 @@ fn actor_certificate<const ROLE: u8, Steps: g::ProgramShape + LeanChoreo, const 
          def {name}Image : Hibana.RustDescriptorImage := {image}\n\n\
          theorem {name}ActorRowsMatchSource :\n  \
          {name}Image.actorRowsCheck {name}Choreo = true := by\n  decide\n\n\
+         theorem {name}ActorOrderMatchesSource :\n  \
+         {name}Image.actorOrderCheck {name}Choreo = true := by\n  decide\n\n\
          theorem {name}InvalidDirectionRejected :\n  \
          ({{ {name}Image with roleBytes := {name}Image.roleBytes.set 9 6 }} : \
          Hibana.RustDescriptorImage).actorRowsCheck {name}Choreo = false := by\n  decide\n\n\
@@ -191,6 +195,36 @@ fn export_program_columns_for_lean() {
     ));
     type CoLocated = g::Seq<g::Send<0, 1, Loan>, g::Send<10, 1, Read>>;
     source.push_str(&actor_certificate::<1, CoLocated, 8>("coLocatedRows"));
+    source.push_str(&actor_certificate::<1, order::Steps, 16>(
+        "nestedActorOrder",
+    ));
+    let nested =
+        RoleDescriptorRef::from_resident(&RoleProjection::<1, order::Steps, 16>::IMAGE_REF);
+    assert_eq!(nested.local_len(), 5);
+    let join_dependency = [nested.proof_byte_at(32), nested.proof_byte_at(33)];
+    let fork_dependency = [nested.proof_byte_at(42), nested.proof_byte_at(43)];
+    assert_ne!(join_dependency, [255, 255]);
+    assert_ne!(fork_dependency, join_dependency);
+    for (name, row, dependency) in [
+        ("extraParallelWait", 4, join_dependency),
+        ("missingParallelJoin", 3, [255, 255]),
+    ] {
+        source.push_str(&format!(
+            "def {name}Image : Hibana.RustDescriptorImage := \
+             {{ nestedActorOrderImage with roleBytes := \
+             (nestedActorOrderImage.roleBytes.set {} {}).set {} {} }}\n\n\
+             theorem {name}RowsStillMatch :\n  \
+             {name}Image.actorRowsCheck nestedActorOrderChoreo = true := by\n  decide\n\n\
+             theorem {name}LaneColumnsStillCoherent :\n  \
+             {name}Image.laneColumnsCoherent = true := by\n  decide\n\n\
+             theorem {name}OrderRejected :\n  \
+             {name}Image.actorOrderCheck nestedActorOrderChoreo = false := by\n  decide\n\n",
+            row * 10 + 2,
+            dependency[0],
+            row * 10 + 3,
+            dependency[1],
+        ));
+    }
     let loan_schema = 0x1_0000_0000u64 + 10;
     let read_schema = <u32 as crate::transport::wire::WirePayload>::SCHEMA_ID;
     source.push_str(&format!(

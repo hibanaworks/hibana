@@ -14,6 +14,7 @@ mod composed;
 mod conditional_controller;
 #[cfg(all(unix, not(miri)))]
 mod native;
+mod order;
 mod owned;
 mod program_columns;
 mod send_wait;

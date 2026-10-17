@@ -1,3 +1,4 @@
+coLocatedRowsActorOrderMatchesSource : coLocatedRowsImage.actorOrderCheck coLocatedRowsChoreo = true
 coLocatedRowsActorRowsMatchSource : coLocatedRowsImage.actorRowsCheck coLocatedRowsChoreo = true
 coLocatedRowsCannotBecomeSelfSend : (have __src := coLocatedRowsImage;
       { roleCount := __src.roleCount, role := __src.role, logicalLaneCount := __src.logicalLaneCount,
@@ -49,6 +50,47 @@ coLocatedRowsRetainBothLogicalFacets : coLocatedRowsImage.decodeActions? =
 coLocatedRowsRetainLogicalViews : [coLocatedRowsImage.eventView? 0, coLocatedRowsImage.eventView? 1,
     coLocatedRowsImage.eventView? 2] =
   [some 1, some 10, some 1]
+extraParallelWaitLaneColumnsStillCoherent : extraParallelWaitImage.laneColumnsCoherent = true
+extraParallelWaitOrderRejected : extraParallelWaitImage.actorOrderCheck nestedActorOrderChoreo = false
+extraParallelWaitRowsStillMatch : extraParallelWaitImage.actorRowsCheck nestedActorOrderChoreo = true
+missingParallelJoinLaneColumnsStillCoherent : missingParallelJoinImage.laneColumnsCoherent = true
+missingParallelJoinOrderRejected : missingParallelJoinImage.actorOrderCheck nestedActorOrderChoreo = false
+missingParallelJoinRowsStillMatch : missingParallelJoinImage.actorRowsCheck nestedActorOrderChoreo = true
+nestedActorOrderActorOrderMatchesSource : nestedActorOrderImage.actorOrderCheck nestedActorOrderChoreo = true
+nestedActorOrderActorRowsMatchSource : nestedActorOrderImage.actorRowsCheck nestedActorOrderChoreo = true
+nestedActorOrderInvalidDirectionRejected : (have __src := nestedActorOrderImage;
+      { roleCount := __src.roleCount, role := __src.role, logicalLaneCount := __src.logicalLaneCount,
+        activeLaneCount := __src.activeLaneCount, endpointLaneSlotCount := __src.endpointLaneSlotCount,
+        maxRouteCommitCount := __src.maxRouteCommitCount, firstActiveLane := __src.firstActiveLane,
+        activeLaneStart := __src.activeLaneStart, activeLaneLength := __src.activeLaneLength,
+        atomCount := __src.atomCount, routeResolverCount := __src.routeResolverCount,
+        routeParticipantCount := __src.routeParticipantCount, scopeMarkerCount := __src.scopeMarkerCount,
+        eventCount := __src.eventCount, dependencyRowCount := __src.dependencyRowCount,
+        conflictRowCount := __src.conflictRowCount, routeScopeCount := __src.routeScopeCount,
+        residentBoundaryCount := __src.residentBoundaryCount, laneBitCount := __src.laneBitCount,
+        routeArmLaneStepCount := __src.routeArmLaneStepCount, routeCommitRowCount := __src.routeCommitRowCount,
+        rollScopeCount := __src.rollScopeCount, programColumnBytes := __src.programColumnBytes,
+        programBytes := __src.programBytes, roleBytes := nestedActorOrderImage.roleBytes.set 9 6 }).actorRowsCheck
+    nestedActorOrderChoreo =
+  false
+nestedActorOrderMissingOperationsRejected : (have __src := nestedActorOrderImage;
+      { roleCount := __src.roleCount, role := __src.role, logicalLaneCount := __src.logicalLaneCount,
+        activeLaneCount := __src.activeLaneCount, endpointLaneSlotCount := __src.endpointLaneSlotCount,
+        maxRouteCommitCount := __src.maxRouteCommitCount, firstActiveLane := __src.firstActiveLane,
+        activeLaneStart := __src.activeLaneStart, activeLaneLength := __src.activeLaneLength,
+        atomCount := __src.atomCount, routeResolverCount := __src.routeResolverCount,
+        routeParticipantCount := __src.routeParticipantCount, scopeMarkerCount := __src.scopeMarkerCount,
+        eventCount := 0, dependencyRowCount := __src.dependencyRowCount, conflictRowCount := __src.conflictRowCount,
+        routeScopeCount := __src.routeScopeCount, residentBoundaryCount := __src.residentBoundaryCount,
+        laneBitCount := __src.laneBitCount, routeArmLaneStepCount := __src.routeArmLaneStepCount,
+        routeCommitRowCount := __src.routeCommitRowCount, rollScopeCount := __src.rollScopeCount,
+        programColumnBytes := __src.programColumnBytes, programBytes := __src.programBytes,
+        roleBytes := __src.roleBytes }).actorRowsCheck
+    nestedActorOrderChoreo =
+  false
+ordinaryProgramColumnsActorOrderMatchesSource : ordinaryProgramColumnsImage.actorOrderCheck
+    ordinaryProgramColumnsChoreo =
+  true
 ordinaryProgramColumnsActorRowsMatchSource : ordinaryProgramColumnsImage.actorRowsCheck ordinaryProgramColumnsChoreo =
   true
 ordinaryProgramColumnsDecoded : Hibana.decodeProgramColumns? ordinaryProgramColumnsHeader ordinaryProgramColumnsBytes =
@@ -58,6 +100,8 @@ ordinaryProgramColumnsSourceOwnershipMatches : ordinaryProgramColumnsImage.owner
 ordinaryProgramColumnsTruncatedHeaderRejected : Hibana.decodeProgramColumns? (List.take 7 ordinaryProgramColumnsHeader)
     ordinaryProgramColumnsBytes =
   none
+ordinaryReceiverRowsActorOrderMatchesSource : ordinaryReceiverRowsImage.actorOrderCheck ordinaryReceiverRowsChoreo =
+  true
 ordinaryReceiverRowsActorRowsMatchSource : ordinaryReceiverRowsImage.actorRowsCheck ordinaryReceiverRowsChoreo = true
 ordinaryReceiverRowsInvalidDirectionRejected : (have __src := ordinaryReceiverRowsImage;
       { roleCount := __src.roleCount, role := __src.role, logicalLaneCount := __src.logicalLaneCount,
@@ -89,6 +133,9 @@ ordinaryReceiverRowsMissingOperationsRejected : (have __src := ordinaryReceiverR
         roleBytes := __src.roleBytes }).actorRowsCheck
     ordinaryReceiverRowsChoreo =
   false
+ownedConditionalColumnsActorOrderMatchesSource : ownedConditionalColumnsImage.actorOrderCheck
+    ownedConditionalColumnsChoreo =
+  true
 ownedConditionalColumnsActorRowsMatchSource : ownedConditionalColumnsImage.actorRowsCheck
     ownedConditionalColumnsChoreo =
   true
@@ -160,6 +207,9 @@ ownedConditionalColumnsWrongInitialIssuerRejected : (have __src := ownedConditio
 ownedConditionalColumnsWrongLengthRejected : Hibana.decodeProgramColumns? (ownedConditionalColumnsHeader.set 6 17)
     ownedConditionalColumnsBytes =
   none
+ownedConditionalFirstRowsActorOrderMatchesSource : ownedConditionalFirstRowsImage.actorOrderCheck
+    ownedConditionalFirstRowsChoreo =
+  true
 ownedConditionalFirstRowsActorRowsMatchSource : ownedConditionalFirstRowsImage.actorRowsCheck
     ownedConditionalFirstRowsChoreo =
   true
@@ -194,6 +244,9 @@ ownedConditionalFirstRowsMissingOperationsRejected : (have __src := ownedConditi
         roleBytes := __src.roleBytes }).actorRowsCheck
     ownedConditionalFirstRowsChoreo =
   false
+ownedConditionalSecondRowsActorOrderMatchesSource : ownedConditionalSecondRowsImage.actorOrderCheck
+    ownedConditionalSecondRowsChoreo =
+  true
 ownedConditionalSecondRowsActorRowsMatchSource : ownedConditionalSecondRowsImage.actorRowsCheck
     ownedConditionalSecondRowsChoreo =
   true
@@ -228,6 +281,7 @@ ownedConditionalSecondRowsMissingOperationsRejected : (have __src := ownedCondit
         roleBytes := __src.roleBytes }).actorRowsCheck
     ownedConditionalSecondRowsChoreo =
   false
+ownedLinearColumnsActorOrderMatchesSource : ownedLinearColumnsImage.actorOrderCheck ownedLinearColumnsChoreo = true
 ownedLinearColumnsActorRowsMatchSource : ownedLinearColumnsImage.actorRowsCheck ownedLinearColumnsChoreo = true
 ownedLinearColumnsClearedTagRejected : Hibana.decodeProgramColumns? (ownedLinearColumnsHeader.set 1 0)
     ownedLinearColumnsBytes =
@@ -278,6 +332,7 @@ ownedLinearColumnsWrongInitialIssuerRejected : (have __src := ownedLinearColumns
 ownedLinearColumnsWrongLengthRejected : Hibana.decodeProgramColumns? (ownedLinearColumnsHeader.set 6 85)
     ownedLinearColumnsBytes =
   none
+ownedNativeColumnsActorOrderMatchesSource : ownedNativeColumnsImage.actorOrderCheck ownedNativeColumnsChoreo = true
 ownedNativeColumnsActorRowsMatchSource : ownedNativeColumnsImage.actorRowsCheck ownedNativeColumnsChoreo = true
 ownedNativeColumnsClearedTagRejected : Hibana.decodeProgramColumns? (ownedNativeColumnsHeader.set 1 0)
     ownedNativeColumnsBytes =
@@ -328,6 +383,9 @@ ownedNativeColumnsWrongInitialIssuerRejected : (have __src := ownedNativeColumns
 ownedNativeColumnsWrongLengthRejected : Hibana.decodeProgramColumns? (ownedNativeColumnsHeader.set 6 228)
     ownedNativeColumnsBytes =
   none
+ownedNativeParallelPeerRowsActorOrderMatchesSource : ownedNativeParallelPeerRowsImage.actorOrderCheck
+    ownedNativeParallelPeerRowsChoreo =
+  true
 ownedNativeParallelPeerRowsActorRowsMatchSource : ownedNativeParallelPeerRowsImage.actorRowsCheck
     ownedNativeParallelPeerRowsChoreo =
   true
@@ -362,6 +420,9 @@ ownedNativeParallelPeerRowsMissingOperationsRejected : (have __src := ownedNativ
         roleBytes := __src.roleBytes }).actorRowsCheck
     ownedNativeParallelPeerRowsChoreo =
   false
+ownedNativeParallelRowsActorOrderMatchesSource : ownedNativeParallelRowsImage.actorOrderCheck
+    ownedNativeParallelRowsChoreo =
+  true
 ownedNativeParallelRowsActorRowsMatchSource : ownedNativeParallelRowsImage.actorRowsCheck
     ownedNativeParallelRowsChoreo =
   true
@@ -396,6 +457,9 @@ ownedNativeParallelRowsMissingOperationsRejected : (have __src := ownedNativePar
         roleBytes := __src.roleBytes }).actorRowsCheck
     ownedNativeParallelRowsChoreo =
   false
+ownedNativeServiceRowsActorOrderMatchesSource : ownedNativeServiceRowsImage.actorOrderCheck
+    ownedNativeServiceRowsChoreo =
+  true
 ownedNativeServiceRowsActorRowsMatchSource : ownedNativeServiceRowsImage.actorRowsCheck ownedNativeServiceRowsChoreo =
   true
 ownedNativeServiceRowsInvalidDirectionRejected : (have __src := ownedNativeServiceRowsImage;
@@ -428,6 +492,8 @@ ownedNativeServiceRowsMissingOperationsRejected : (have __src := ownedNativeServ
         roleBytes := __src.roleBytes }).actorRowsCheck
     ownedNativeServiceRowsChoreo =
   false
+ownedNativeWorkerRowsActorOrderMatchesSource : ownedNativeWorkerRowsImage.actorOrderCheck ownedNativeWorkerRowsChoreo =
+  true
 ownedNativeWorkerRowsActorRowsMatchSource : ownedNativeWorkerRowsImage.actorRowsCheck ownedNativeWorkerRowsChoreo = true
 ownedNativeWorkerRowsInvalidDirectionRejected : (have __src := ownedNativeWorkerRowsImage;
       { roleCount := __src.roleCount, role := __src.role, logicalLaneCount := __src.logicalLaneCount,
@@ -459,6 +525,8 @@ ownedNativeWorkerRowsMissingOperationsRejected : (have __src := ownedNativeWorke
         roleBytes := __src.roleBytes }).actorRowsCheck
     ownedNativeWorkerRowsChoreo =
   false
+ownedParallelColumnsActorOrderMatchesSource : ownedParallelColumnsImage.actorOrderCheck ownedParallelColumnsChoreo =
+  true
 ownedParallelColumnsActorRowsMatchSource : ownedParallelColumnsImage.actorRowsCheck ownedParallelColumnsChoreo = true
 ownedParallelColumnsClearedTagRejected : Hibana.decodeProgramColumns? (ownedParallelColumnsHeader.set 1 0)
     ownedParallelColumnsBytes =
@@ -509,6 +577,9 @@ ownedParallelColumnsWrongInitialIssuerRejected : (have __src := ownedParallelCol
 ownedParallelColumnsWrongLengthRejected : Hibana.decodeProgramColumns? (ownedParallelColumnsHeader.set 6 146)
     ownedParallelColumnsBytes =
   none
+ownedParallelWorkerRowsActorOrderMatchesSource : ownedParallelWorkerRowsImage.actorOrderCheck
+    ownedParallelWorkerRowsChoreo =
+  true
 ownedParallelWorkerRowsActorRowsMatchSource : ownedParallelWorkerRowsImage.actorRowsCheck
     ownedParallelWorkerRowsChoreo =
   true
@@ -543,6 +614,7 @@ ownedParallelWorkerRowsMissingOperationsRejected : (have __src := ownedParallelW
         roleBytes := __src.roleBytes }).actorRowsCheck
     ownedParallelWorkerRowsChoreo =
   false
+ownedServiceRowsActorOrderMatchesSource : ownedServiceRowsImage.actorOrderCheck ownedServiceRowsChoreo = true
 ownedServiceRowsActorRowsMatchSource : ownedServiceRowsImage.actorRowsCheck ownedServiceRowsChoreo = true
 ownedServiceRowsInvalidDirectionRejected : (have __src := ownedServiceRowsImage;
       { roleCount := __src.roleCount, role := __src.role, logicalLaneCount := __src.logicalLaneCount,
@@ -574,6 +646,7 @@ ownedServiceRowsMissingOperationsRejected : (have __src := ownedServiceRowsImage
         roleBytes := __src.roleBytes }).actorRowsCheck
     ownedServiceRowsChoreo =
   false
+ownedWorkerRowsActorOrderMatchesSource : ownedWorkerRowsImage.actorOrderCheck ownedWorkerRowsChoreo = true
 ownedWorkerRowsActorRowsMatchSource : ownedWorkerRowsImage.actorRowsCheck ownedWorkerRowsChoreo = true
 ownedWorkerRowsInvalidDirectionRejected : (have __src := ownedWorkerRowsImage;
       { roleCount := __src.roleCount, role := __src.role, logicalLaneCount := __src.logicalLaneCount,

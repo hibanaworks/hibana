@@ -10,7 +10,7 @@ private structure DecodedRoleEventRow where
   frameLabel : Nat
   flags : Nat
 
-private structure DecodedDependencyRow where
+structure DecodedDependencyRow where
   start : Nat
   stop : Nat
   parallelScope : Nat

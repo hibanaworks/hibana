@@ -302,8 +302,23 @@ theorem accepted_owned_program_binds_source_ownership
       · exact of_decide_eq_true (by simpa using checked.1.2)
       · exact List.all_eq_true.mp checked.2.2
 
-private def RustDescriptorImage.actorRows? (image : RustDescriptorImage) :
-    Option (List (EndpointDelegation.ActionId × Nat × Nat)) := do
+/-- Immutable identity of one actor-local row. Its local event index and source
+occurrence are different coordinates; neither is a second progress cursor. -/
+structure DecodedActorRow where
+  eventId : Nat
+  actionId : EndpointDelegation.ActionId
+  view : Nat
+  actorReference : Nat
+  deriving Repr, DecidableEq
+
+def DecodedActorRow.sourceAction (row : DecodedActorRow) (actor : Nat) :
+    EndpointDelegation.ActionId × EndpointDelegation.Action :=
+  (row.actionId, {
+    actor, endpoint := { component := 0, role := row.view }, side := row.actionId.side
+  })
+
+def RustDescriptorImage.decodeActorRows? (image : RustDescriptorImage) :
+    Option (List DecodedActorRow) := do
   let atoms ← image.decodeAtoms?
   let columns ← image.decodeProgramColumns?
   (List.range image.eventCount).mapM fun eventId => do
@@ -320,7 +335,7 @@ private def RustDescriptorImage.actorRows? (image : RustDescriptorImage) :
       | .send _ _ _ => EndpointDelegation.Side.send
       | .recv _ _ _ => EndpointDelegation.Side.receive
       | .local _ _ => EndpointDelegation.Side.local
-    pure ({ event := occurrence, side }, view, reference)
+    pure { eventId, actionId := { event := occurrence, side }, view, actorReference := reference }
 
 /-- Source action identities retain both send and receive when two different
 logical roles share one physical actor. No runtime holder state is synthesized. -/
@@ -332,28 +347,25 @@ def EndpointDelegation.Source.actorActions
     let action ← EndpointDelegation.action? path.bindings id
     if action.actor == actor then some (id, action) else none
 
-private def activeActorRows
+def DecodedProgramColumns.actorRowsForPath
     (columns : DecodedProgramColumns) (markers : List DecodedScopeMarker)
     (path : EndpointDelegation.NormalizedPath) (actor : Nat)
-    (rows : List (EndpointDelegation.ActionId × Nat × Nat)) :
-    List (EndpointDelegation.ActionId × EndpointDelegation.Action) :=
-  rows.filterMap fun (id, view, reference) => do
-    if !(path.bindings.any fun (event, _) => event == id.event) then none else
-    let actual ← columns.selectedActor? (sourcePathArm? markers path) reference
-    if actual == actor then some (id, {
-      actor := actual, endpoint := { component := 0, role := view }, side := id.side
-    }) else none
+    (rows : List DecodedActorRow) : List DecodedActorRow :=
+  rows.filter fun row =>
+    (path.bindings.any fun (event, _) => event == row.actionId.event) &&
+      columns.selectedActor? (sourcePathArm? markers path) row.actorReference == some actor
 
 /-- Exact actor-row agreement on every independently interpreted source path.
 Inactive route arms and conditional holders are filtered by that same path,
 not by the union of possible holders. Dependency and reentry refinement remain
 separate obligations of the full descriptor certificate. -/
 def RustDescriptorImage.actorRowsCheck (image : RustDescriptorImage) (choreo : Choreo) : Bool :=
-  match ownershipData? image choreo, image.actorRows? with
+  match ownershipData? image choreo, image.decodeActorRows? with
   | some (source, normalized, columns, atoms, markers), some rows =>
       ownershipColumnsMatch image choreo normalized columns atoms markers &&
       normalized.paths.all fun path =>
-        activeActorRows columns markers path image.role rows == source.actorActions path image.role
+        ((columns.actorRowsForPath markers path image.role rows).map
+          (·.sourceAction image.role)) == source.actorActions path image.role
   | _, _ => false
 
 theorem accepted_actor_rows_bind_source_operations
@@ -363,20 +375,22 @@ theorem accepted_actor_rows_bind_source_operations
       choreo.ownershipSource? = some source ∧
       EndpointDelegation.normalize source = some normalized ∧
       image.decodeProgramColumns? = some columns ∧ image.decodeAtoms? = some atoms ∧
-      image.decodeScopeMarkers? = some markers ∧ image.actorRows? = some rows ∧
+      image.decodeScopeMarkers? = some markers ∧ image.decodeActorRows? = some rows ∧
       image.ownershipCheck choreo = true ∧
       ∀ path ∈ normalized.paths,
-        activeActorRows columns markers path image.role rows = source.actorActions path image.role := by
+        ((columns.actorRowsForPath markers path image.role rows).map
+          (·.sourceAction image.role)) = source.actorActions path image.role := by
   cases decoded : ownershipData? image choreo with
   | none => simp [RustDescriptorImage.actorRowsCheck, decoded] at accepted
   | some data =>
       rcases data with ⟨source, normalized, columns, atoms, markers⟩
-      cases rowsAt : image.actorRows? with
+      cases rowsAt : image.decodeActorRows? with
       | none => simp [RustDescriptorImage.actorRowsCheck, decoded, rowsAt] at accepted
       | some rows =>
           have checked : ownershipColumnsMatch image choreo normalized columns atoms markers = true ∧
               (normalized.paths.all fun path =>
-                activeActorRows columns markers path image.role rows ==
+                ((columns.actorRowsForPath markers path image.role rows).map
+                  (·.sourceAction image.role)) ==
                   source.actorActions path image.role) = true := by
             simpa [RustDescriptorImage.actorRowsCheck, decoded, rowsAt] using accepted
           have fields := ownership_data_binds_decoders decoded

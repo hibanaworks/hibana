@@ -112,6 +112,34 @@ Hibana.abort_peer_is_well_formed : ∀ (state : Hibana.TransportState), state.ab
       (@LT.lt.{0} Nat instLTNat row.right
         (@HAdd.hAdd.{0, 0, 0} Nat Nat Nat (@instHAdd.{0} Nat instAddNat)
           (@OfNat.ofNat.{0} Nat (nat_lit 256) (instOfNatNat (nat_lit 256))) index))
+@Hibana.accepted_actor_order_binds_source_readiness : ∀ {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo},
+  @Eq.{1} Bool (image.actorOrderCheck choreo) true →
+    And (@Eq.{1} Bool (image.actorRowsCheck choreo) true)
+      (@Exists.{1} Hibana.DecodedActorOrder fun data =>
+        And
+          (@Eq.{1} (Option.{0} Hibana.DecodedActorOrder) (image.decodeActorOrder? choreo)
+            (@some.{0} Hibana.DecodedActorOrder data))
+          (∀ (path : Hibana.EndpointDelegation.NormalizedPath),
+            @Membership.mem.{0, 0} Hibana.EndpointDelegation.NormalizedPath
+                (List.{0} Hibana.EndpointDelegation.NormalizedPath)
+                (@List.instMembership.{0} Hibana.EndpointDelegation.NormalizedPath) data.normalized.paths path →
+              ∀ (row : Hibana.DecodedActorRow),
+                @Membership.mem.{0, 0} Hibana.DecodedActorRow (List.{0} Hibana.DecodedActorRow)
+                    (@List.instMembership.{0} Hibana.DecodedActorRow) (data.activeRows path) row →
+                  @Exists.{1} (List.{0} Nat) fun actual =>
+                    And
+                      (@Eq.{1} (Option.{0} (List.{0} Nat)) (data.runtimePredecessors? path row.eventId)
+                        (@some.{0} (List.{0} Nat) actual))
+                      (And
+                        (∀ (before : Nat),
+                          @Membership.mem.{0, 0} Nat (List.{0} Nat) (@List.instMembership.{0} Nat)
+                              (data.sourcePredecessors path row.eventId) before →
+                            @LT.lt.{0} Nat instLTNat before row.eventId)
+                        (∀ (state : Hibana.CommitState),
+                          state.PrefixClosed (data.sourcePredecessors path) →
+                            Iff (@Eq.{1} Bool (@List.all.{0} Nat actual state.done) true)
+                              (@Eq.{1} Bool (@List.all.{0} Nat (data.sourcePredecessors path row.eventId) state.done)
+                                true)))))
 @Hibana.accepted_actor_rows_bind_source_operations : ∀ {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo},
   @Eq.{1} Bool (image.actorRowsCheck choreo) true →
     @Exists.{1} Hibana.EndpointDelegation.Source fun source =>
@@ -119,7 +147,7 @@ Hibana.abort_peer_is_well_formed : ∀ (state : Hibana.TransportState), state.ab
         @Exists.{1} Hibana.DecodedProgramColumns fun columns =>
           @Exists.{1} (List.{0} Hibana.DecodedProgramAtom) fun atoms =>
             @Exists.{1} (List.{0} Hibana.DecodedScopeMarker) fun markers =>
-              @Exists.{1} (List.{0} (Prod.{0, 0} Hibana.EndpointDelegation.ActionId (Prod.{0, 0} Nat Nat))) fun rows =>
+              @Exists.{1} (List.{0} Hibana.DecodedActorRow) fun rows =>
                 And
                   (@Eq.{1} (Option.{0} Hibana.EndpointDelegation.Source) choreo.ownershipSource?
                     (@some.{0} Hibana.EndpointDelegation.Source source))
@@ -137,12 +165,8 @@ Hibana.abort_peer_is_well_formed : ∀ (state : Hibana.TransportState), state.ab
                           (@Eq.{1} (Option.{0} (List.{0} Hibana.DecodedScopeMarker)) image.decodeScopeMarkers?
                             (@some.{0} (List.{0} Hibana.DecodedScopeMarker) markers))
                           (And
-                            (@Eq.{1}
-                              (Option.{0}
-                                (List.{0} (Prod.{0, 0} Hibana.EndpointDelegation.ActionId (Prod.{0, 0} Nat Nat))))
-                              (Hibana.RustDescriptorImage.actorRows?✝ image)
-                              (@some.{0}
-                                (List.{0} (Prod.{0, 0} Hibana.EndpointDelegation.ActionId (Prod.{0, 0} Nat Nat))) rows))
+                            (@Eq.{1} (Option.{0} (List.{0} Hibana.DecodedActorRow)) image.decodeActorRows?
+                              (@some.{0} (List.{0} Hibana.DecodedActorRow) rows))
                             (And (@Eq.{1} Bool (image.ownershipCheck choreo) true)
                               (∀ (path : Hibana.EndpointDelegation.NormalizedPath),
                                 @Membership.mem.{0, 0} Hibana.EndpointDelegation.NormalizedPath
@@ -152,7 +176,10 @@ Hibana.abort_peer_is_well_formed : ∀ (state : Hibana.TransportState), state.ab
                                   @Eq.{1}
                                     (List.{0}
                                       (Prod.{0, 0} Hibana.EndpointDelegation.ActionId Hibana.EndpointDelegation.Action))
-                                    (Hibana.activeActorRows✝ columns markers path image.role rows)
+                                    (@List.map.{0, 0} Hibana.DecodedActorRow
+                                      (Prod.{0, 0} Hibana.EndpointDelegation.ActionId Hibana.EndpointDelegation.Action)
+                                      (fun x => x.sourceAction image.role)
+                                      (columns.actorRowsForPath markers path image.role rows))
                                     (source.actorActions path image.role))))))))
 @Hibana.accepted_causal_flow_has_must_handoff : ∀ {flow : Hibana.CausalFlowExpr} {sender : Nat},
   @Eq.{1} Bool (flow.eval (fun x => false) sender) true → Hibana.MustCausalHandoff flow sender
@@ -474,6 +501,13 @@ Hibana.active_offer_key_mem_iff_owned : ∀ (target : Hibana.ActiveOfferKey) (la
         (@Membership.mem.{0, 0} Hibana.ActiveOfferLane (List.{0} Hibana.ActiveOfferLane)
           (@List.instMembership.{0} Hibana.ActiveOfferLane) lanes owner)
         (@Eq.{1} Hibana.ActiveOfferKey owner.key target))
+@Hibana.actor_commit_delta_preserves_source_prefix : ∀ {predecessors : Nat → List.{0} Nat}
+  {base next : Hibana.CommitState} {event : Nat},
+  base.PrefixClosed predecessors →
+    @Eq.{1} Bool (@List.all.{0} Nat (predecessors event) base.done) true →
+      @Eq.{1} Bool (next.done event) true →
+        (∀ (other : Nat), @Ne.{1} Nat other event → @Eq.{1} Bool (next.done other) (base.done other)) →
+          next.PrefixClosed predecessors
 @Hibana.admission_acceptance_iff_admissible : ∀ {graph : Hibana.EventGraph} {state : Hibana.CommitState}
   {request : Hibana.OperationRequest},
   Iff
@@ -1228,6 +1262,12 @@ Hibana.constrained_parallel_lane_matching_uses_minimum_span : @Eq.{1} (List.{0} 
 @Hibana.consumed_event_has_no_queued_message : ∀ {config : Hibana.GlobalConfig} {globalId epoch : Nat},
   @Eq.{1} Hibana.EventPhase (config.phase globalId) (Hibana.EventPhase.consumed epoch) →
     @Eq.{1} (Option.{0} Hibana.AdmittedMessage) (config.queuedMessage? globalId) (@none.{0} Hibana.AdmittedMessage)
+@Hibana.covered_predecessors_have_equal_readiness : ∀ {expected : Nat → List.{0} Nat} {actual : List.{0} Nat}
+  {event : Nat} {state : Hibana.CommitState},
+  @Eq.{1} Bool (Hibana.predecessorCoverage expected actual event) true →
+    state.PrefixClosed expected →
+      Iff (@Eq.{1} Bool (@List.all.{0} Nat actual state.done) true)
+        (@Eq.{1} Bool (@List.all.{0} Nat (expected event) state.done) true)
 Hibana.cross_rendezvous_session_attach_rejected : ∀ (binding : Hibana.SessionBinding) (rendezvous : Nat),
   @Ne.{1} Nat binding.rendezvous rendezvous →
     @Eq.{1} (Option.{0} Hibana.SessionBinding)
@@ -2528,6 +2568,8 @@ Hibana.initial_global_invariant : ∀ (session roleCount : Nat) (choreo : Hibana
     Hibana.GlobalProgramWellFormed roleCount choreo →
       Hibana.GlobalReachable (Hibana.GlobalConfig.initial session roleCount choreo) current →
         Hibana.GlobalInvariant current
+Hibana.initial_progress_is_source_prefix : ∀ (predecessors : Nat → List.{0} Nat),
+  Hibana.CommitState.initial.PrefixClosed predecessors
 Hibana.initial_route_selection_fidelity : ∀ (session roleCount : Nat) (choreo : Hibana.Choreo),
   Hibana.RouteSelectionFidelity (Hibana.GlobalConfig.initial session roleCount choreo)
 Hibana.initial_session_fidelity : ∀ (session roleCount : Nat) (choreo : Hibana.Choreo),

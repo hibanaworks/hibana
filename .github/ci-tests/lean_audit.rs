@@ -299,7 +299,9 @@ pub fn allowed_axiom(axiom: &str) -> Option<&str> {
 }
 pub fn run_lean(root: &Path, source: &str) -> AuditResult<Output> {
     let mut child = Command::new("lake")
-        .args(["env", "lean", "--stdin"])
+        // A single process may otherwise elaborate several large proof terms
+        // concurrently. Keep all claims while bounding that internal work.
+        .args(["env", "lean", "-j", "1", "--stdin"])
         .current_dir(root)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

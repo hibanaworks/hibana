@@ -129,7 +129,14 @@ actor-row component checks all active operations against each independent source
 path, including both wire facets when two logical roles share one actor.
 It rejects missing operations and malformed directions. A general theorem binds
 accepted rows to source operations; ordinary rows still belong to their single
-image role. Dependency, route admission and roll reentry refinement remain open.
+image role. `ActorProgress.lean` compares the exact lane-prefix and dependency
+guards with source order under a fixed complete path within one visit. On a
+source-closed shared `CommitState`, both allow exactly the same next operation.
+Initial progress and the commit done-bit delta preserve that property. Concrete
+mutations with an extra parallel wait or a missing join are rejected even when
+their operation rows and lane format still pass. This does not yet establish
+the property for a prepared base after route or roll reentry. Route authority,
+ownership transfer commits and continuation refinement remain open.
 The ordinary certificate still rejects owned actor columns, and public owned
 projection remains closed until those semantic connections are verified.
 

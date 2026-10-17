@@ -24,12 +24,24 @@ fn lean_auditors_fail_closed_on_mutants_and_process_failures() {
     };
     let install = |output: &str, status: i32| {
         fs::write(root.join("output"), output).unwrap();
-        fs::write(root.join("bin/lake"),format!("#!/bin/bash\n/bin/cat >/dev/null\n/bin/cat '{}'\nprintf 'lean-stderr-evidence\\n' >&2\nexit {status}\n",root.join("output").display())).unwrap();
+        fs::write(
+            root.join("bin/lake"),
+            format!(
+                "#!/bin/bash\nprintf '%s\\n' \"$@\" > '{}'\n/bin/cat >/dev/null\n/bin/cat '{}'\nprintf 'lean-stderr-evidence\\n' >&2\nexit {status}\n",
+                root.join("arguments").display(),
+                root.join("output").display(),
+            ),
+        )
+        .unwrap();
         use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(root.join("bin/lake"), fs::Permissions::from_mode(0o755)).unwrap();
     };
     install(good, 0);
     assert!(run().status.success());
+    assert_eq!(
+        fs::read_to_string(root.join("arguments")).unwrap(),
+        "env\nlean\n-j\n1\n--stdin\n",
+    );
     for (label, mutant) in [
         (
             "weakened-type",

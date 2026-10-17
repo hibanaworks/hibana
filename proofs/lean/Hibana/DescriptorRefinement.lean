@@ -1,5 +1,5 @@
 import Hibana.DescriptorTopology
-import Hibana.OwnershipDescriptor
+import Hibana.ActorProgress
 
 namespace Hibana
 
@@ -36,7 +36,7 @@ private def ExactDescriptorCertificate.ProgramImageMatches
     certificate.image.decodeScopeMarkers? =
       some certificate.choreo.canonicalScopeMarkers ∧
     (certificate.choreo.hasOwnedPayload = true →
-      certificate.image.actorRowsCheck certificate.choreo = true)
+      certificate.image.actorOrderCheck certificate.choreo = true)
 
 private def ExactDescriptorCertificate.RoleEventImageMatches
     (certificate : ExactDescriptorCertificate) : Prop :=

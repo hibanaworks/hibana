@@ -102,13 +102,21 @@ MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_t
   --lib \
   g::role_projection::tests
 
-# Keep nested rework and delayed ingress in the broad suite. The shared
-# parallel prefix has its own run with the same per-run deadline.
+# Keep every nested rework, delayed ingress and shared parallel prefix case.
+# Separate the two larger cases without changing their per-run deadline.
 MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \
   nested-resolver-reentry \
   -p hibana \
   --test nested_resolver_reentry \
-  -- --skip sequential_parallel_prefix::next_resolver_preserves_a_parallel_rolled_prefix
+  -- --skip sequential_parallel_prefix::next_resolver_preserves_a_parallel_rolled_prefix \
+  --skip rolled_service_requests_resume_after_review_rework_while_another_flow_is_idle
+
+MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \
+  rolled-service-review-rework \
+  -p hibana \
+  --test nested_resolver_reentry \
+  rolled_service_requests_resume_after_review_rework_while_another_flow_is_idle \
+  -- --exact
 
 MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \
   sequential-parallel-resolver-prefix \
