@@ -4,6 +4,7 @@ import Hibana.Commit
 import Hibana.Generation
 import Hibana.ViewGeneration
 import Hibana.ActorSourceProgress
+import Hibana.ActorCommit
 import Hibana.GlobalSemantics
 import Hibana.GlobalAllocationCorrectness
 import Hibana.GlobalMessageTransitions

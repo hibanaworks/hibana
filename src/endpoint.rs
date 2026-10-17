@@ -34,6 +34,8 @@ mod futures;
 pub(crate) mod kernel;
 mod ops;
 mod owner;
+#[cfg(all(test, hibana_repo_tests))]
+pub(crate) mod proof_snapshot;
 mod public_types;
 /// Send future.
 pub(crate) mod send;

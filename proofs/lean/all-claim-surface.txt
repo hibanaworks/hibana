@@ -102,6 +102,9 @@ Hibana.abort_invalidates_outstanding_receipt : ∀ (before after : Hibana.Transp
 Hibana.abort_peer_is_immediately_observable : ∀ (state : Hibana.TransportState),
   @Eq.{1} Hibana.TransportPoll state.abortPeer.pollReceive Hibana.TransportPoll.peerClosed
 Hibana.abort_peer_is_well_formed : ∀ (state : Hibana.TransportState), state.abortPeer.WellFormed
+@Hibana.accepted_actor_commit_matches_source_progress : ∀ {sample : Hibana.ActorCommitObservation}
+  {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo},
+  @Eq.{1} Bool (sample.check image choreo) true → sample.SourceOrdered image choreo
 @Hibana.accepted_actor_controllers_bind_source_authority : ∀ {image : Hibana.RustDescriptorImage}
   {choreo : Hibana.Choreo},
   @Eq.{1} Bool (image.actorControllerCheck choreo) true →
@@ -3263,6 +3266,10 @@ Hibana.non_controller_resolve_is_rejected : ∀ (config : Hibana.GlobalConfig) {
   Hibana.AsyncCancellationReachable start finish →
     @Ne.{1} Hibana.AsyncCancellationConfig start finish →
       @LT.lt.{0} Nat instLTNat finish.retirementMeasure start.retirementMeasure
+@Hibana.observed_source_prefix_check_is_sound : ∀ {data : Hibana.DecodedActorOrder}
+  {path : Hibana.EndpointDelegation.NormalizedPath} {snapshot : Hibana.ActorProgressObservation} {event : Nat},
+  @Eq.{1} Bool (Hibana.observedSourcePrefixCheck data path snapshot event) true →
+    snapshot.doneState.PrefixClosed (data.sourcePredecessors path) (data.sourcePredecessors path event)
 @Hibana.observed_transport_admission_ignores_carrier_history : ∀ {config : Hibana.GlobalConfig}
   {left right : Hibana.TransportFrame},
   left.SameObservation right →

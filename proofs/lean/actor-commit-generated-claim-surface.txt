@@ -1,0 +1,92 @@
+ownerLoanAccepted : ownerLoan.check ownerImage actorCommitChoreo = true
+ownerLoanMissingProgressRejected : (have __src := ownerLoan;
+      { pathIndex := __src.pathIndex, event := __src.event, view := __src.view, before := __src.before,
+        after :=
+          have __src := ownerLoan.after;
+          { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
+            views := __src.views, steps := ownerLoan.before.steps } }).check
+    ownerImage actorCommitChoreo =
+  false
+ownerLoanMissingViewRejected : (have __src := ownerLoan;
+      { pathIndex := __src.pathIndex, event := __src.event, view := __src.view, before := __src.before,
+        after :=
+          have __src := ownerLoan.after;
+          { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
+            views := ownerLoan.before.views, steps := __src.steps } }).check
+    ownerImage actorCommitChoreo =
+  false
+ownerLoanSourceOrdered : ownerLoan.SourceOrdered ownerImage actorCommitChoreo
+ownerLoanWrongLocalRowRejected : (have __src := ownerLoan;
+      { pathIndex := __src.pathIndex, event := 1, view := __src.view, before := __src.before,
+        after := __src.after }).check
+    ownerImage actorCommitChoreo =
+  false
+ownerReturnAccepted : ownerReturn.check ownerImage actorCommitChoreo = true
+ownerReturnMissingProgressRejected : (have __src := ownerReturn;
+      { pathIndex := __src.pathIndex, event := __src.event, view := __src.view, before := __src.before,
+        after :=
+          have __src := ownerReturn.after;
+          { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
+            views := __src.views, steps := ownerReturn.before.steps } }).check
+    ownerImage actorCommitChoreo =
+  false
+ownerReturnMissingViewRejected : (have __src := ownerReturn;
+      { pathIndex := __src.pathIndex, event := __src.event, view := __src.view, before := __src.before,
+        after :=
+          have __src := ownerReturn.after;
+          { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
+            views := ownerReturn.before.views, steps := __src.steps } }).check
+    ownerImage actorCommitChoreo =
+  false
+ownerReturnSourceOrdered : ownerReturn.SourceOrdered ownerImage actorCommitChoreo
+ownerReturnWrongLocalRowRejected : (have __src := ownerReturn;
+      { pathIndex := __src.pathIndex, event := 2, view := __src.view, before := __src.before,
+        after := __src.after }).check
+    ownerImage actorCommitChoreo =
+  false
+workerLoanAccepted : workerLoan.check workerImage actorCommitChoreo = true
+workerLoanMissingProgressRejected : (have __src := workerLoan;
+      { pathIndex := __src.pathIndex, event := __src.event, view := __src.view, before := __src.before,
+        after :=
+          have __src := workerLoan.after;
+          { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
+            views := __src.views, steps := workerLoan.before.steps } }).check
+    workerImage actorCommitChoreo =
+  false
+workerLoanMissingViewRejected : (have __src := workerLoan;
+      { pathIndex := __src.pathIndex, event := __src.event, view := __src.view, before := __src.before,
+        after :=
+          have __src := workerLoan.after;
+          { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
+            views := workerLoan.before.views, steps := __src.steps } }).check
+    workerImage actorCommitChoreo =
+  false
+workerLoanSourceOrdered : workerLoan.SourceOrdered workerImage actorCommitChoreo
+workerLoanWrongLocalRowRejected : (have __src := workerLoan;
+      { pathIndex := __src.pathIndex, event := 1, view := __src.view, before := __src.before,
+        after := __src.after }).check
+    workerImage actorCommitChoreo =
+  false
+workerReturnAccepted : workerReturn.check workerImage actorCommitChoreo = true
+workerReturnMissingProgressRejected : (have __src := workerReturn;
+      { pathIndex := __src.pathIndex, event := __src.event, view := __src.view, before := __src.before,
+        after :=
+          have __src := workerReturn.after;
+          { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
+            views := __src.views, steps := workerReturn.before.steps } }).check
+    workerImage actorCommitChoreo =
+  false
+workerReturnMissingViewRejected : (have __src := workerReturn;
+      { pathIndex := __src.pathIndex, event := __src.event, view := __src.view, before := __src.before,
+        after :=
+          have __src := workerReturn.after;
+          { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
+            views := workerReturn.before.views, steps := __src.steps } }).check
+    workerImage actorCommitChoreo =
+  false
+workerReturnSourceOrdered : workerReturn.SourceOrdered workerImage actorCommitChoreo
+workerReturnWrongLocalRowRejected : (have __src := workerReturn;
+      { pathIndex := __src.pathIndex, event := 4, view := __src.view, before := __src.before,
+        after := __src.after }).check
+    workerImage actorCommitChoreo =
+  false

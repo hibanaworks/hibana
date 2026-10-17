@@ -147,6 +147,18 @@ rejected even when their actor order and earlier route-column checks pass.
 The ordinary certificate still rejects owned actor columns, and public owned
 projection remains closed until those semantic connections are verified.
 
+`ActorCommit.lean` checks observations copied from the existing Rust actor
+cursor and view headers. The Tokio fixture lends and returns one Endpoint
+between two runtimes and runs independent operations with `join!`. It observes
+each successful send before the completed future is dropped. For each of four
+commits, the generated kernel proof checks the exact source row, its causal
+predecessors, one done-bit update, and the matching view retirement or issuance.
+It rejects unchanged progress, unchanged view headers, and a different local
+row. The observations never control execution and add no production state.
+This is translation validation of successful commits in one selected visit.
+It does not establish ownership across in-flight transport frames, prepared
+bases after reentry, resource binding, closure, or general distributed progress.
+
 The compiler scope memo, fork-input restoration, independent-sibling exclusion,
 and retained sequential joins have general model lemmas. Ingress-head
 preservation is conditional on progress outside the observed lane. Their
