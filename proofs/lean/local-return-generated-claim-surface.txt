@@ -1,4 +1,9 @@
-localDropPreservesProgress : localAfterDrop = localBeforeWait
+localDropPreservesProgress : localAfterDrop.actor = localBeforeWait.actor ∧
+  localAfterDrop.run = localBeforeWait.run ∧
+    localAfterDrop.counter = localBeforeWait.counter ∧
+      localAfterDrop.liveViews = localBeforeWait.liveViews ∧
+        localAfterDrop.viewHeaders = localBeforeWait.viewHeaders ∧
+          localAfterDrop.steps = localBeforeWait.steps ∧ localAfterDrop.choices = localBeforeWait.choices
 localEntryHeadersAccepted : Hibana.observedRollEntryHeadersMatch localBeforeResume localReturnImage
     localReturnCommit.scope =
   true
@@ -6,7 +11,12 @@ localMissingEntryAfterValid : localMissingEntryHeader.after.valid = true
 localMissingEntryBeforeValid : localMissingEntryHeader.before.valid = true
 localMissingEntryHeaderRejected : localMissingEntryHeader.check localReturnImage localReturnChoreo = false
 localMissingResetRejected : localMissingReset.check localReturnImage localReturnChoreo = false
-localPendingPreservesProgress : localAfterPending = localBeforeWait
+localPendingPreservesProgress : localAfterPending.actor = localBeforeWait.actor ∧
+  localAfterPending.run = localBeforeWait.run ∧
+    localAfterPending.counter = localBeforeWait.counter ∧
+      localAfterPending.liveViews = localBeforeWait.liveViews ∧
+        localAfterPending.viewHeaders = localBeforeWait.viewHeaders ∧
+          localAfterPending.steps = localBeforeWait.steps ∧ localAfterPending.choices = localBeforeWait.choices
 localReceiptIndexAccepted : localReturnImage.ownedRecoveryIndexCheck = true
 localResumeBeforeValid : localBeforeResume.valid = true
 localReturnCommitAccepted : localReturnCommit.check localReturnImage localReturnChoreo = true

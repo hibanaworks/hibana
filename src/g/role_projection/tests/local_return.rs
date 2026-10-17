@@ -111,7 +111,7 @@ fn a_local_branch_waits_for_another_view_to_receive_its_entry_resource() {
                 assert_eq!(observed.run, before_wait.run);
                 assert_eq!(observed.counter, before_wait.counter);
                 assert_eq!(observed.live_views, before_wait.live_views);
-                assert_eq!(observed.views, before_wait.views);
+                assert!(observed.view_headers().eq(before_wait.view_headers()));
                 assert_eq!(observed.choices, before_wait.choices);
                 assert_eq!(observed.steps.len(), before_wait.steps.len());
                 for (actual, previous) in observed.steps.iter().zip(&before_wait.steps) {
@@ -193,8 +193,22 @@ fn a_local_branch_waits_for_another_view_to_receive_its_entry_resource() {
                      previousPath := 0, nextPath := 1, scope := {scope}, event := {event}, view := 0,\n  \
                      before := localBeforeResume, after := localAfterResume\n}}\n\n\
                      theorem localReceiptIndexAccepted : localReturnImage.ownedRecoveryIndexCheck = true := by decide\n\n\
-                     theorem localPendingPreservesProgress : localAfterPending = localBeforeWait := by decide\n\n\
-                     theorem localDropPreservesProgress : localAfterDrop = localBeforeWait := by decide\n\n\
+                     theorem localPendingPreservesProgress :\n  \
+                     localAfterPending.actor = localBeforeWait.actor ∧\n  \
+                     localAfterPending.run = localBeforeWait.run ∧\n  \
+                     localAfterPending.counter = localBeforeWait.counter ∧\n  \
+                     localAfterPending.liveViews = localBeforeWait.liveViews ∧\n  \
+                     localAfterPending.viewHeaders = localBeforeWait.viewHeaders ∧\n  \
+                     localAfterPending.steps = localBeforeWait.steps ∧\n  \
+                     localAfterPending.choices = localBeforeWait.choices := by decide\n\n\
+                     theorem localDropPreservesProgress :\n  \
+                     localAfterDrop.actor = localBeforeWait.actor ∧\n  \
+                     localAfterDrop.run = localBeforeWait.run ∧\n  \
+                     localAfterDrop.counter = localBeforeWait.counter ∧\n  \
+                     localAfterDrop.liveViews = localBeforeWait.liveViews ∧\n  \
+                     localAfterDrop.viewHeaders = localBeforeWait.viewHeaders ∧\n  \
+                     localAfterDrop.steps = localBeforeWait.steps ∧\n  \
+                     localAfterDrop.choices = localBeforeWait.choices := by decide\n\n\
                      theorem localResumeBeforeValid : localBeforeResume.valid = true := by decide\n\n\
                      theorem localReturnCommitAccepted : localReturnCommit.check localReturnImage localReturnChoreo = true := by decide\n\n\
                      theorem localReturnCommitSourceOrdered : localReturnCommit.SourceOrdered localReturnImage localReturnChoreo :=\n  \
@@ -227,7 +241,7 @@ fn a_local_branch_waits_for_another_view_to_receive_its_entry_resource() {
                 std::fs::create_dir_all(&output).unwrap();
                 std::fs::write(output.join("LocalReturnGenerated.lean"), source).unwrap();
             }
-            assert_eq!(before_local.views, after_local.views);
+            assert!(before_local.view_headers().eq(after_local.view_headers()));
             drop(db);
         });
 }

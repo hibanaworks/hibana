@@ -21,8 +21,8 @@ fn done(snapshot: &ActorSnapshot) -> Vec<bool> {
 }
 
 fn resource(snapshot: &ActorSnapshot) -> (u32, u32) {
-    let (_, run, nonce) = snapshot.views.iter().find(|view| view.0 == 10).unwrap();
-    (*run, *nonce)
+    let view = snapshot.views.iter().find(|view| view.role == 10).unwrap();
+    (view.run, view.nonce)
 }
 
 #[test]
@@ -135,7 +135,11 @@ fn owned_commits_publish_the_shared_actor_step_and_resource_view_together() {
             // SAFETY: ordinary operations do not change the actor's transport.
             let worker_worked = unsafe { actor_snapshot(&worker) };
             assert_eq!(done(&worker_worked), [true, true, true, false, false]);
-            assert_eq!(worker_worked.views, worker_received.views);
+            assert!(
+                worker_worked
+                    .view_headers()
+                    .eq(worker_received.view_headers())
+            );
             assert_eq!(worker_worked.counter, worker_received.counter);
 
             let worker_returned = {
@@ -220,8 +224,15 @@ pub(super) fn observation_source(snapshot: &ActorSnapshot) -> std::string::Strin
     let views = snapshot
         .views
         .iter()
-        .map(|(role, run, nonce)| {
-            std::format!("{{ role := {role}, run := {run}, nonce := {nonce} }}")
+        .map(|view| {
+            let mut operation = view.operation.clone();
+            operation.get_mut(..1).unwrap().make_ascii_lowercase();
+            std::format!(
+                "{{ role := {}, run := {}, nonce := {}, operation := .{operation} }}",
+                view.role,
+                view.run,
+                view.nonce
+            )
         })
         .collect::<Vec<_>>()
         .join(", ");

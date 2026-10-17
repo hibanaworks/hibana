@@ -1,0 +1,14 @@
+pendingBorrowDBHeldBySend : Option.map Hibana.ActorViewObservation.operation
+    (Hibana.observedActorView? pendingBorrowBefore 10) =
+  some Hibana.PublicOperationPhase.sendPayload
+pendingBorrowDBIssued : pendingBorrowBefore.viewIssued 10 = true
+pendingBorrowHeadersMatch : Hibana.observedRollEntryHeadersMatch pendingBorrowBefore pendingBorrowImage 1 = true
+pendingBorrowOwnPayloadFromSource : Hibana.observedOutgoingPayload? pendingBorrowImage 2 11 = some (some 10)
+pendingBorrowOwnSendCanFinish : Hibana.observedRollEntryBorrowMatches pendingBorrowBefore pendingBorrowImage 1 2 11 =
+  true
+pendingBorrowRestartWaits : Hibana.observedRollEntryBorrowMatches pendingBorrowBefore pendingBorrowImage 1 0 0 = false
+pendingBorrowSnapshotValid : pendingBorrowBefore.valid = true
+pendingIndependent0Accepted : pendingIndependent0.check pendingBorrowImage pendingBorrowChoreo = true
+pendingIndependent0SourceOrdered : pendingIndependent0.SourceOrdered pendingBorrowImage pendingBorrowChoreo
+pendingIndependent1Accepted : pendingIndependent1.check pendingBorrowImage pendingBorrowChoreo = true
+pendingIndependent1SourceOrdered : pendingIndependent1.SourceOrdered pendingBorrowImage pendingBorrowChoreo

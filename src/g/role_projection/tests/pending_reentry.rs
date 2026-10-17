@@ -223,8 +223,21 @@ fn a_pending_owned_send_keeps_its_payload_unavailable_for_resource_dependent_ree
             // The send future owns DB. Even before transport acceptance, that
             // value cannot perform the next visit's resource action.
             // Independent par work on this same actor must remain enabled.
+            // SAFETY: owner remains attached to this TestTransport actor.
+            let pending_snapshot = unsafe { actor_snapshot(&owner) };
+            let borrowed_db = pending_snapshot.views.iter().find(|view| view.role == 10).unwrap();
+            assert_eq!(borrowed_db.run, pending_snapshot.run);
+            assert_eq!(borrowed_db.operation, "SendPayload");
+            let mut independent_observations = std::vec::Vec::new();
             for value in [2, 3] {
+                // SAFETY: the ordinary owner view is not borrowed by pending.
+                let before = unsafe { actor_snapshot(&owner) };
                 owner.send::<Independent>(&value).await.unwrap();
+                // SAFETY: the completed send released the same live owner view.
+                let after = unsafe { actor_snapshot(&owner) };
+                assert!(before.view_headers().eq(after.view_headers()));
+                assert_eq!(after.views.iter().find(|view| view.role == 10).unwrap().operation, "SendPayload");
+                independent_observations.push((before, after));
                 assert_eq!(independent.recv::<Independent>().await.unwrap(), value);
             }
             let mut restart = pin!(owner.send::<Tick>(&()));
@@ -253,5 +266,61 @@ fn a_pending_owned_send_keeps_its_payload_unavailable_for_resource_dependent_ree
             );
             assert!(network.queue_is_empty());
             drop(transferred);
+            #[cfg(not(miri))]
+            {
+                use crate::test_support::{lean_choreo::LeanChoreo, lean_descriptor::descriptor_source};
+                let tick = pending_snapshot.steps.iter().position(|row|
+                    row.view == 0 && matches!(row.action, LocalAction::Send { label: 39, .. })
+                ).unwrap();
+                let tick_scope = pending_snapshot.steps[tick].reentry_scope.unwrap();
+                let loan = pending_snapshot.steps.iter().position(|row|
+                    row.view == 11 && matches!(row.action, LocalAction::Send { label: 1, .. })
+                ).unwrap();
+                let independent_event = pending_snapshot.steps.iter().position(|row|
+                    row.view == 0 && matches!(row.action, LocalAction::Send { label: 37, .. })
+                ).unwrap();
+                let independent_scope = independent_observations[1].0.steps[independent_event].reentry_scope.unwrap();
+                let mut source = std::format!(
+                    "import Hibana.ActorReentryCommit\n\nset_option maxRecDepth 10000\n\n\
+                     def pendingBorrowChoreo : Hibana.Choreo := {}\n\n\
+                     def pendingBorrowImage : Hibana.RustDescriptorImage := {}\n\n\
+                     def pendingBorrowBefore : Hibana.ActorProgressObservation := {}\n\n\
+                     theorem pendingBorrowSnapshotValid : pendingBorrowBefore.valid = true := by decide\n\n\
+                     theorem pendingBorrowDBIssued : pendingBorrowBefore.viewIssued 10 = true := by decide\n\n\
+                     theorem pendingBorrowDBHeldBySend :\n  \
+                     (Hibana.observedActorView? pendingBorrowBefore 10).map Hibana.ActorViewObservation.operation = some .sendPayload := by decide\n\n\
+                     theorem pendingBorrowHeadersMatch :\n  \
+                     Hibana.observedRollEntryHeadersMatch pendingBorrowBefore pendingBorrowImage {tick_scope} = true := by decide\n\n\
+                     theorem pendingBorrowRestartWaits :\n  \
+                     Hibana.observedRollEntryBorrowMatches pendingBorrowBefore pendingBorrowImage {tick_scope} {tick} 0 = false := by decide\n\n\
+                     theorem pendingBorrowOwnPayloadFromSource :\n  \
+                     Hibana.observedOutgoingPayload? pendingBorrowImage {loan} 11 = some (some 10) := by decide\n\n\
+                     theorem pendingBorrowOwnSendCanFinish :\n  \
+                     Hibana.observedRollEntryBorrowMatches pendingBorrowBefore pendingBorrowImage {tick_scope} {loan} 11 = true := by decide\n\n",
+                    Global::lean_source(),
+                    descriptor_source(RoleDescriptorRef::from_resident(&RoleProjection::<0, Global, 16>::IMAGE_REF)),
+                    super::commit::observation_source(&pending_snapshot),
+                );
+                for (visit, (before, after)) in independent_observations.iter().enumerate() {
+                    let sample = std::format!("pendingIndependent{visit}");
+                    let ty = if visit == 0 { "ActorCommitObservation" } else { "ActorReentryCommitObservation" };
+                    let path = if visit == 0 { std::string::String::from("pathIndex := 0") } else {
+                        std::format!("previousPath := 0, nextPath := 0, scope := {independent_scope}")
+                    };
+                    let proof = if visit == 0 { "accepted_actor_commit_matches_source_progress" } else { "accepted_body_reentry_restores_source_progress" };
+                    source.push_str(&std::format!(
+                        "def {sample} : Hibana.{ty} := {{\n  \
+                         {path}, event := {independent_event}, view := 0,\n  \
+                         before := {},\n  after := {}\n}}\n\n\
+                         theorem {sample}Accepted : {sample}.check pendingBorrowImage pendingBorrowChoreo = true := by decide\n\n\
+                         theorem {sample}SourceOrdered : {sample}.SourceOrdered pendingBorrowImage pendingBorrowChoreo :=\n  \
+                         Hibana.{proof} {sample}Accepted\n\n",
+                        super::commit::observation_source(before), super::commit::observation_source(after),
+                    ));
+                }
+                let output = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/lean-proof");
+                std::fs::create_dir_all(&output).unwrap();
+                std::fs::write(output.join("PendingBorrowGenerated.lean"), source).unwrap();
+            }
         });
 }

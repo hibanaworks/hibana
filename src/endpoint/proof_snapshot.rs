@@ -37,16 +37,32 @@ pub(crate) struct StepSnapshot {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ViewSnapshot {
+    pub(crate) role: u8,
+    pub(crate) run: u32,
+    pub(crate) nonce: u32,
+    /// Debug spelling of the existing kernel phase, serialized to Lean only.
+    pub(crate) operation: std::string::String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ActorSnapshot {
     pub(crate) actor: u8,
     pub(crate) run: u32,
     pub(crate) counter: u32,
     pub(crate) live_views: u16,
-    /// (logical role, live run generation, actor-local view nonce).
-    pub(crate) views: Vec<(u8, u32, u32)>,
+    pub(crate) views: Vec<ViewSnapshot>,
     pub(crate) steps: Vec<StepSnapshot>,
     /// Committed route history. Unknown choices remain unknown.
     pub(crate) choices: Vec<(u16, Option<u8>)>,
+}
+
+impl ActorSnapshot {
+    pub(crate) fn view_headers(&self) -> impl Iterator<Item = (u8, u32, u32)> + '_ {
+        self.views
+            .iter()
+            .map(|view| (view.role, view.run, view.nonce))
+    }
 }
 
 /// Observe an offered branch before consuming its first operation.
@@ -126,7 +142,19 @@ pub(crate) unsafe fn actor_snapshot<const ROLE: u8>(
                 .iter()
                 .map(|view| {
                     let header = &view.public_header;
-                    (header.role(), header.generation(), header.view_generation())
+                    let operation = if core::ptr::eq(header, kernel.public_header) {
+                        kernel.io.public_active_op
+                    } else {
+                        // SAFETY: the actor operation lease excludes mutation,
+                        // and this view is distinct from kernel.io's borrow.
+                        unsafe { &*view.io.get() }.public_active_op
+                    };
+                    ViewSnapshot {
+                        role: header.role(),
+                        run: header.generation(),
+                        nonce: header.view_generation(),
+                        operation: std::format!("{operation:?}"),
+                    }
                 })
                 .collect(),
             steps,

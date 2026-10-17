@@ -41,6 +41,46 @@ def observedRollEntryHeadersMatch
     | some (_, entries) => observedEntryHeadersMatch snapshot columns entries
   | _, _ => false
 
+/-- The prospective owned payload comes from the immutable source atom, not
+from a runtime decision or the contents of a received frame. -/
+def observedOutgoingPayload?
+    (image : RustDescriptorImage) (event view : Nat) : Option (Option Nat) := do
+  let eff ← image.eventEffIndex? event
+  let atoms ← image.decodeAtoms?
+  let atom ← resolveUnique? (atoms.filter fun atom => atom.effIndex == eff)
+  if atom.sender != view || atom.schema < 4294967296 then pure none
+  else if atom.schema < 4294967552 then pure (some (atom.schema - 4294967296))
+  else none
+
+def observedEntryBorrowMatches
+    (snapshot : ActorProgressObservation) (entries : List (Nat × Nat))
+    (sent : Option Nat) : Bool :=
+  entries.all fun (role, _) =>
+    match observedActorView? snapshot role with
+    | none => true
+    | some view => checkSendPayloadBorrow view.operation role sent
+
+def observedRollEntryBorrowMatches
+    (snapshot : ActorProgressObservation) (image : RustDescriptorImage)
+    (scope event view : Nat) : Bool :=
+  match image.decodeRollEntryResources?, observedOutgoingPayload? image event view with
+  | some rows, some sent =>
+    match resolveUnique? (rows.filter fun row => row.1.scope == scope) with
+    | none => false
+    | some (_, entries) => observedEntryBorrowMatches snapshot entries sent
+  | _, _ => false
+
+theorem observed_entry_borrow_requires_its_own_send
+    {snapshot : ActorProgressObservation} {entries : List (Nat × Nat)}
+    {role reference : Nat} {view : ActorViewObservation} {sent : Option Nat}
+    (checked : observedEntryBorrowMatches snapshot entries sent = true)
+    (member : (role, reference) ∈ entries)
+    (found : observedActorView? snapshot role = some view)
+    (borrowed : view.operation = .sendPayload) : sent = some role := by
+  have one := List.all_eq_true.mp checked (role, reference) member
+  apply a_pending_payload_requires_its_own_send
+  simpa only [found, borrowed] using one
+
 theorem observed_entry_header_requires_issued_resource
     {snapshot : ActorProgressObservation} {columns : DecodedProgramColumns}
     {entries : List (Nat × Nat)} {role reference : Nat}
@@ -72,7 +112,8 @@ def resetObservedChoices?
 def ActorReentryCommitObservation.prepared?
     (sample : ActorReentryCommitObservation) (image : RustDescriptorImage)
     (choreo : Choreo) : Option (DecodedRollRow × ActorCommitObservation) :=
-  if observedRollEntryHeadersMatch sample.before image sample.scope then do
+  if observedRollEntryHeadersMatch sample.before image sample.scope &&
+      observedRollEntryBorrowMatches sample.before image sample.scope sample.event sample.view then do
     let data ← image.decodeActorOrder? choreo
     let previous ← data.normalized.paths[sample.previousPath]?
     let next ← data.normalized.paths[sample.nextPath]?
@@ -123,14 +164,17 @@ private theorem prepared_reentry_facts
     (prepared : sample.prepared? image choreo = some (roll, step)) :
     image.actorRollCheck choreo = true ∧
       observedRollEntryHeadersMatch sample.before image sample.scope = true ∧
+      observedRollEntryBorrowMatches sample.before image sample.scope sample.event sample.view = true ∧
       ∃ rows choices, image.decodeRollRows? = some rows ∧ roll ∈ rows ∧
         step.before = resetObservedActor sample.before roll choices := by
   unfold ActorReentryCommitObservation.prepared? at prepared
-  have issued : observedRollEntryHeadersMatch sample.before image sample.scope = true := by
-    cases flag : observedRollEntryHeadersMatch sample.before image sample.scope with
+  have qualified : (observedRollEntryHeadersMatch sample.before image sample.scope &&
+      observedRollEntryBorrowMatches sample.before image sample.scope sample.event sample.view) = true := by
+    cases flag : (observedRollEntryHeadersMatch sample.before image sample.scope &&
+        observedRollEntryBorrowMatches sample.before image sample.scope sample.event sample.view) with
     | false => simp [flag] at prepared
     | true => rfl
-  simp only [issued, if_true] at prepared
+  simp only [qualified, if_true] at prepared
   change (image.decodeActorOrder? choreo).bind _ = some (roll, step) at prepared
   obtain ⟨data, _, prepared⟩ := Option.bind_eq_some_iff.mp prepared
   change data.normalized.paths[sample.previousPath]?.bind _ = some (roll, step) at prepared
@@ -166,7 +210,8 @@ private theorem prepared_reentry_facts
       exact (List.mem_filter.mp filtered).1
     simp only [Bool.and_eq_true] at guarded
     obtain ⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨_, ranges⟩, _⟩, _⟩, _⟩, _⟩, _⟩, _⟩, _⟩, _⟩, _⟩, _⟩ := guarded
-    exact ⟨ranges, issued, rows, choices, rowsAt, member, rfl⟩
+    exact ⟨ranges, (Bool.and_eq_true_iff.mp qualified).1,
+      (Bool.and_eq_true_iff.mp qualified).2, rows, choices, rowsAt, member, rfl⟩
   next rejected => simp at allowed
 
 theorem accepted_body_reentry_requires_entry_headers
@@ -177,6 +222,31 @@ theorem accepted_body_reentry_requires_entry_headers
   cases found : sample.prepared? image choreo with
   | none => simp [found] at accepted
   | some entry => exact (prepared_reentry_facts found).2.1
+
+theorem accepted_body_reentry_checks_entry_borrows
+    {sample : ActorReentryCommitObservation} {image : RustDescriptorImage} {choreo : Choreo}
+    (accepted : sample.check image choreo = true) :
+    observedRollEntryBorrowMatches sample.before image sample.scope sample.event sample.view = true := by
+  unfold ActorReentryCommitObservation.check at accepted
+  cases found : sample.prepared? image choreo with
+  | none => simp [found] at accepted
+  | some entry => exact (prepared_reentry_facts found).2.2.1
+
+theorem accepted_body_reentry_borrowed_entry_is_its_payload
+    {sample : ActorReentryCommitObservation} {image : RustDescriptorImage} {choreo : Choreo}
+    {rows : OwnedEntryResources} {roll : DecodedRollRow} {entries : List (Nat × Nat)}
+    {role reference : Nat} {view : ActorViewObservation} {sent : Option Nat}
+    (accepted : sample.check image choreo = true)
+    (rowsAt : image.decodeRollEntryResources? = some rows)
+    (payloadAt : observedOutgoingPayload? image sample.event sample.view = some sent)
+    (scopeAt : resolveUnique? (rows.filter fun row => row.1.scope == sample.scope) =
+      some (roll, entries))
+    (member : (role, reference) ∈ entries)
+    (found : observedActorView? sample.before role = some view)
+    (borrowed : view.operation = .sendPayload) : sent = some role := by
+  have checked := accepted_body_reentry_checks_entry_borrows accepted
+  simp only [observedRollEntryBorrowMatches, rowsAt, payloadAt, scopeAt] at checked
+  exact observed_entry_borrow_requires_its_own_send checked member found borrowed
 
 theorem accepted_body_reentry_uses_issued_entry_resource
     {sample : ActorReentryCommitObservation} {image : RustDescriptorImage} {choreo : Choreo}
@@ -220,7 +290,7 @@ theorem accepted_body_reentry_restores_source_progress
   | some entry =>
       rcases entry with ⟨roll, step⟩
       have checked : step.check image choreo = true := by simpa [found] using accepted
-      obtain ⟨ranges, _, actual, choices, actualAt, member, base⟩ := prepared_reentry_facts found
+      obtain ⟨ranges, _, _, actual, choices, actualAt, member, base⟩ := prepared_reentry_facts found
       obtain ⟨_, _, rows, rowsAt, decoded⟩ := accepted_actor_rolls_bind_source_ranges ranges
       have same : actual = rows := Option.some.inj (actualAt.symm.trans decoded)
       refine ⟨roll, step, rows, rfl, rowsAt, by simpa only [← same] using member, ?_,

@@ -557,6 +557,34 @@ Hibana.abort_peer_is_well_formed : ∀ (state : Hibana.TransportState), state.ab
                                       (fun x => x.sourceAction image.role)
                                       (columns.actorRowsForPath markers path image.role rows))
                                     (source.actorActions path image.role))))))))
+@Hibana.accepted_body_reentry_borrowed_entry_is_its_payload : ∀ {sample : Hibana.ActorReentryCommitObservation}
+  {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo} {rows : Hibana.OwnedEntryResources}
+  {roll : Hibana.DecodedRollRow} {entries : List.{0} (Prod.{0, 0} Nat Nat)} {role reference : Nat}
+  {view : Hibana.ActorViewObservation} {sent : Option.{0} Nat},
+  @Eq.{1} Bool (sample.check image choreo) true →
+    @Eq.{1} (Option.{0} Hibana.OwnedEntryResources) image.decodeRollEntryResources?
+        (@some.{0} Hibana.OwnedEntryResources rows) →
+      @Eq.{1} (Option.{0} (Option.{0} Nat)) (Hibana.observedOutgoingPayload? image sample.event sample.view)
+          (@some.{0} (Option.{0} Nat) sent) →
+        @Eq.{1} (Option.{0} (Prod.{0, 0} Hibana.DecodedRollRow (List.{0} (Prod.{0, 0} Nat Nat))))
+            (@Hibana.resolveUnique? (Prod.{0, 0} Hibana.DecodedRollRow (List.{0} (Prod.{0, 0} Nat Nat)))
+              (@List.filter.{0} (Prod.{0, 0} Hibana.DecodedRollRow (List.{0} (Prod.{0, 0} Nat Nat)))
+                (fun row =>
+                  @BEq.beq.{0} Nat (@instBEqOfDecidableEq.{0} Nat instDecidableEqNat)
+                    (@Prod.fst.{0, 0} Hibana.DecodedRollRow (List.{0} (Prod.{0, 0} Nat Nat)) row).scope sample.scope)
+                rows))
+            (@some.{0} (Prod.{0, 0} Hibana.DecodedRollRow (List.{0} (Prod.{0, 0} Nat Nat)))
+              (@Prod.mk.{0, 0} Hibana.DecodedRollRow (List.{0} (Prod.{0, 0} Nat Nat)) roll entries)) →
+          @Membership.mem.{0, 0} (Prod.{0, 0} Nat Nat) (List.{0} (Prod.{0, 0} Nat Nat))
+              (@List.instMembership.{0} (Prod.{0, 0} Nat Nat)) entries (@Prod.mk.{0, 0} Nat Nat role reference) →
+            @Eq.{1} (Option.{0} Hibana.ActorViewObservation) (Hibana.observedActorView? sample.before role)
+                (@some.{0} Hibana.ActorViewObservation view) →
+              @Eq.{1} Hibana.PublicOperationPhase view.operation Hibana.PublicOperationPhase.sendPayload →
+                @Eq.{1} (Option.{0} Nat) sent (@some.{0} Nat role)
+@Hibana.accepted_body_reentry_checks_entry_borrows : ∀ {sample : Hibana.ActorReentryCommitObservation}
+  {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo},
+  @Eq.{1} Bool (sample.check image choreo) true →
+    @Eq.{1} Bool (Hibana.observedRollEntryBorrowMatches sample.before image sample.scope sample.event sample.view) true
 @Hibana.accepted_body_reentry_requires_entry_headers : ∀ {sample : Hibana.ActorReentryCommitObservation}
   {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo},
   @Eq.{1} Bool (sample.check image choreo) true →
@@ -3935,6 +3963,16 @@ Hibana.non_controller_resolve_is_rejected : ∀ (config : Hibana.GlobalConfig) {
   Hibana.AsyncCancellationReachable start finish →
     @Ne.{1} Hibana.AsyncCancellationConfig start finish →
       @LT.lt.{0} Nat instLTNat finish.retirementMeasure start.retirementMeasure
+@Hibana.observed_entry_borrow_requires_its_own_send : ∀ {snapshot : Hibana.ActorProgressObservation}
+  {entries : List.{0} (Prod.{0, 0} Nat Nat)} {role reference : Nat} {view : Hibana.ActorViewObservation}
+  {sent : Option.{0} Nat},
+  @Eq.{1} Bool (Hibana.observedEntryBorrowMatches snapshot entries sent) true →
+    @Membership.mem.{0, 0} (Prod.{0, 0} Nat Nat) (List.{0} (Prod.{0, 0} Nat Nat))
+        (@List.instMembership.{0} (Prod.{0, 0} Nat Nat)) entries (@Prod.mk.{0, 0} Nat Nat role reference) →
+      @Eq.{1} (Option.{0} Hibana.ActorViewObservation) (Hibana.observedActorView? snapshot role)
+          (@some.{0} Hibana.ActorViewObservation view) →
+        @Eq.{1} Hibana.PublicOperationPhase view.operation Hibana.PublicOperationPhase.sendPayload →
+          @Eq.{1} (Option.{0} Nat) sent (@some.{0} Nat role)
 @Hibana.observed_entry_header_requires_issued_resource : ∀ {snapshot : Hibana.ActorProgressObservation}
   {columns : Hibana.DecodedProgramColumns} {entries : List.{0} (Prod.{0, 0} Nat Nat)} {role reference : Nat},
   @Eq.{1} Bool (Hibana.observedEntryHeadersMatch snapshot columns entries) true →

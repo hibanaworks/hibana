@@ -358,16 +358,20 @@ fn a_conditional_controller_does_not_take_authority_from_its_co_resident_observe
                 }
             );
             }).await.expect("five route visits must complete without an incoming controller frame");
-            for (before, offered, _) in a_observations.iter().chain(&controller_observations) {
-                assert_eq!(
-                    before, offered,
-                    "controller offer must not consume progress"
-                );
-            }
-            if matches!(outer, DecisionArm::Left) {
-                for (before, offered, _) in &observer_observations {
-                    assert_eq!(before, offered, "remote offer must not consume progress");
-                }
+            for (before, offered, _) in a_observations.iter().chain(&controller_observations).chain(
+                observer_observations
+                    .iter()
+                    .filter(|_| matches!(outer, DecisionArm::Left)),
+            ) {
+                // The preview may hold a RouteBranch operation lease while
+                // every pre-existing protocol/issuance observation is unchanged.
+                assert_eq!(before.actor, offered.actor);
+                assert_eq!(before.run, offered.run);
+                assert_eq!(before.counter, offered.counter);
+                assert_eq!(before.live_views, offered.live_views);
+                assert!(before.view_headers().eq(offered.view_headers()));
+                assert_eq!(before.steps, offered.steps);
+                assert_eq!(before.choices, offered.choices);
             }
             #[cfg(not(miri))]
             observations::write(

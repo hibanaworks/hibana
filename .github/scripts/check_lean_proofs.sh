@@ -15,6 +15,7 @@ INGRESS_GENERATED="${ROOT_DIR}/target/lean-proof/IngressGenerated.lean"
 REENTRY_GENERATED="${ROOT_DIR}/target/lean-proof/ReentryGenerated.lean"
 OWNED_RECOVERY_GENERATED="${ROOT_DIR}/target/lean-proof/OwnedRecoveryGenerated.lean"
 LOCAL_RETURN_GENERATED="${ROOT_DIR}/target/lean-proof/LocalReturnGenerated.lean"
+PENDING_BORROW_GENERATED="${ROOT_DIR}/target/lean-proof/PendingBorrowGenerated.lean"
 OWNED_ENTRY_GENERATED="${ROOT_DIR}/target/lean-proof/OwnedEntryGenerated.lean"
 ACTOR_COMMIT_GENERATED="${ROOT_DIR}/target/lean-proof/ActorCommitGenerated.lean"
 ACTOR_REENTRY_COMMIT_GENERATED="${ROOT_DIR}/target/lean-proof/ActorReentryCommitGenerated.lean"
@@ -48,7 +49,7 @@ bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" build-serial "${PROOF_
 bash "${ROOT_DIR}/.github/scripts/check_lean_claim_surface.sh"
 static_audit_output="$(run_audit \
   theorem-inventory \
-  --static "${PROOF_DIR}" "${STATIC_CLAIM_SNAPSHOT}" 825 449 270 106)"
+  --static "${PROOF_DIR}" "${STATIC_CLAIM_SNAPSHOT}" 828 452 270 106)"
 printf '%s\n' "${static_audit_output}"
 printf '%s\n' "${static_audit_output}" | bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard markers static
 bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" theorem-inventory \
@@ -60,6 +61,7 @@ mkdir -p "$(dirname "${GENERATED}")"
 rm -f "${GENERATED}" "${RUNTIME_GENERATED}" "${PUBLIC_OPERATION_GENERATED}" "${CAUSAL_GENERATED}" "${PARALLEL_GENERATED}" "${PROGRAM_COLUMNS_GENERATED}" "${PARTIAL_CHOICE_GENERATED}" "${CONTROLLER_GENERATED}" "${INGRESS_GENERATED}" "${REENTRY_GENERATED}" "${ACTOR_COMMIT_GENERATED}" "${ACTOR_REENTRY_COMMIT_GENERATED}" "${ACTOR_PARALLEL_REENTRY_GENERATED}" "${ACTOR_ROUTE_LEFT_REENTRY_GENERATED}" "${ACTOR_ROUTE_RIGHT_REENTRY_GENERATED}"
 rm -f "${OWNED_RECOVERY_GENERATED}"
 rm -f "${LOCAL_RETURN_GENERATED}"
+rm -f "${PENDING_BORROW_GENERATED}"
 rm -f "${OWNED_ENTRY_GENERATED}"
 CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib \
   g::role_projection::tests::entry_image::missing_wrong_owner_and_unrelated_roll_entry_resources_are_rejected \
@@ -79,6 +81,12 @@ CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --li
 bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${LOCAL_RETURN_GENERATED}" "local resource return"
 run_audit generated-axioms --kernel "${LOCAL_RETURN_GENERATED}" "${PROOF_DIR}" \
   "${PROOF_DIR}/local-return-generated-claim-surface.txt" 12
+CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib \
+  g::role_projection::tests::pending_reentry::a_pending_owned_send_keeps_its_payload_unavailable_for_resource_dependent_reentry \
+  -- --exact
+bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${PENDING_BORROW_GENERATED}" "pending payload borrow"
+run_audit generated-axioms --kernel "${PENDING_BORROW_GENERATED}" "${PROOF_DIR}" \
+  "${PROOF_DIR}/pending-borrow-generated-claim-surface.txt" 11
 CARGO_BUILD_JOBS=1 \
   RUST_TEST_THREADS=1 \
 cargo +"${TOOLCHAIN}" test -p hibana --lib \
@@ -175,4 +183,4 @@ public_operation_lean_output="$(run_audit \
 printf '%s\n' "${public_operation_lean_output}"
 printf '%s\n' "${public_operation_lean_output}" | bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard markers public-operation
 
-echo "Lean proof gate passed toolchain=v4.30.0 traces=14 frames=66 projections=22 exact-descriptors=22 progress=4 projectability=8 distributed-progress=8 verified-protocols=8 static-theorems=825 owned-entry-correspondence=5 owned-recovery-correspondence=5 local-return-correspondence=12 actor-commit-correspondence=56 actor-body-reentry-correspondence=36 actor-parallel-reentry-correspondence=12 actor-route-reentry-correspondence=168 program-column-correspondence=139 partial-choice-correspondence=30 controller-correspondence=57 actor-ingress-correspondence=16 actor-reentry-correspondence=97 parallel-descriptors=10 parallel-correspondence=182 causal-correspondence=36 anonymous-regressions=36 generated-theorems=506 generated-obligations=458 production-transitions=7 production-operations=6 production-owners=8 verified-codecs=3 verified-family=8 static-deployments=8 deployment-rejections=3 capabilities=6 runtime-regions=4 atomic-failures=4 public-operation-edges=18 public-operation-transitions=180 native-regressions=32"
+echo "Lean proof gate passed toolchain=v4.30.0 traces=14 frames=66 projections=22 exact-descriptors=22 progress=4 projectability=8 distributed-progress=8 verified-protocols=8 static-theorems=828 owned-entry-correspondence=5 owned-recovery-correspondence=5 local-return-correspondence=12 pending-borrow-correspondence=11 actor-commit-correspondence=56 actor-body-reentry-correspondence=36 actor-parallel-reentry-correspondence=12 actor-route-reentry-correspondence=168 program-column-correspondence=139 partial-choice-correspondence=30 controller-correspondence=57 actor-ingress-correspondence=16 actor-reentry-correspondence=97 parallel-descriptors=10 parallel-correspondence=182 causal-correspondence=36 anonymous-regressions=36 generated-theorems=506 generated-obligations=458 production-transitions=7 production-operations=6 production-owners=8 verified-codecs=3 verified-family=8 static-deployments=8 deployment-rejections=3 capabilities=6 runtime-regions=4 atomic-failures=4 public-operation-edges=18 public-operation-transitions=180 native-regressions=32"

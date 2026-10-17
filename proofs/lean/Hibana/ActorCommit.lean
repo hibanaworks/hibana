@@ -1,6 +1,7 @@
 import Hibana.ActorSourceProgress
 import Hibana.ActorRouting
 import Hibana.ViewGeneration
+import Hibana.PublicOperationKernel
 
 namespace Hibana
 open EndpointDelegation
@@ -18,6 +19,7 @@ structure ActorViewObservation where
   role : Nat
   run : Nat
   nonce : Nat
+  operation : PublicOperationPhase
   deriving Repr, DecidableEq
 
 structure ActorProgressObservation where
@@ -32,6 +34,12 @@ structure ActorProgressObservation where
 
 def ActorProgressObservation.progress (snapshot : ActorProgressObservation) : List Bool :=
   snapshot.steps.map ActorStepObservation.done
+
+def ActorViewObservation.header (view : ActorViewObservation) : Nat × Nat × Nat :=
+  (view.role, view.run, view.nonce)
+
+def ActorProgressObservation.viewHeaders (snapshot : ActorProgressObservation) : List (Nat × Nat × Nat) :=
+  snapshot.views.map ActorViewObservation.header
 
 /-- Copy the existing done bits and committed choices. Commit checks bind both
 choice histories and their publication to the selected source visit; reentry
@@ -123,13 +131,15 @@ def replaceObservedActorView
     if view.role == role then { view with run, nonce } else view
 
 /-- Check the same retirement/issuance arithmetic as the raw carrier. Header
-counts are actor-local observations, not globally usable ownership counts. -/
+counts are actor-local observations, not globally usable ownership counts.
+Operation leases may change without changing these headers, including previews.
+Their payload-borrow condition is checked at reentry admission separately. -/
 def observedViewCommitMatches
     (before after : ActorProgressObservation) (payload : EndpointDelegation.Payload)
     (side : Side) : Bool :=
   match payload with
   | .wire _ =>
-      decide (after.views = before.views) && after.counter == before.counter &&
+      decide (after.viewHeaders = before.viewHeaders) && after.counter == before.counter &&
         after.liveViews == before.liveViews
   | .endpoint key =>
       key.component == 0 &&
@@ -140,15 +150,16 @@ def observedViewCommitMatches
           | .local => false
           | .send =>
               view.run == before.run && view.nonce % 2 == 1 &&
-              decide (after.views = replaceObservedActorView before key.role 0
-                (retireViewGeneration view.nonce)) &&
+              decide (after.viewHeaders = (replaceObservedActorView before key.role 0
+                (retireViewGeneration view.nonce)).map ActorViewObservation.header) &&
               after.counter == before.counter && after.liveViews + 1 == before.liveViews
           | .receive =>
               view.run == 0 && view.nonce % 2 == 0 &&
               match nextViewGeneration? before.counter with
               | none => false
               | some nonce =>
-                  decide (after.views = replaceObservedActorView before key.role before.run nonce) &&
+                  decide (after.viewHeaders = (replaceObservedActorView before key.role before.run nonce).map
+                    ActorViewObservation.header) &&
                   after.counter == nonce && after.liveViews == before.liveViews + 1
 
 def observedSourcePrefixCheck

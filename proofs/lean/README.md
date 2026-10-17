@@ -175,9 +175,31 @@ issued header; a different actor cannot retain an issued header for it. Five
 general lemmas connect accepted commits and reentry to these header facts.
 The local-return fixture retires the required DB header in both copied states,
 preserving their validity and the progress delta, and the reentry checker rejects it.
-Issuance alone does not establish that a view is free from a pending owned-send
-borrow or that its next frame is available. Those remaining correspondence and
-distributed-progress obligations are not discharged by this check.
+Each view observation now also copies its existing public-operation phase under
+the same actor lease. Reentry checks `checkSendPayloadBorrow` for every required
+entry view. The prospective payload role comes from the immutable source atom.
+A view in phase `sendPayload` can authorize that same payload's transfer, while
+other resource-dependent reentry waits. Three general lemmas connect accepted
+reentry observations to that borrow rule.
+
+`PendingBorrowGenerated.lean` records a real pending owned send with an issued
+DB header and phase `sendPayload`. Its resource-dependent restart is denied by
+the borrow check, but its own send is allowed. Independent communication on the
+same actor completes both an initial visit and a repeated visit. Eleven kernel
+claims connect those observations to the source/commit checks. The runtime's
+actual suspension and empty peer queue are also checked by the Rust test.
+
+An operation lease may change during `offer` or drop while protocol progress
+and header issuance stay unchanged. The two local-return preservation claims
+therefore list every pre-existing observation field explicitly, including all
+headers, metadata, steps and choices. They do not claim the new lease field is
+unchanged. Header retirement/issuance checks likewise compare the same original
+header fields separately from the transient operation phase.
+
+Mapping all future-owned values, including unpolled futures, and in-flight
+frames to source readiness remains part of the implementation correspondence.
+These checks still do not establish general frame availability, transport
+refinement, terminal behavior or distributed progress for every live execution.
 No second runtime cursor or progress table is added.
 
 One fixture emits six commits from both arms of an enclosing choice across
@@ -221,7 +243,7 @@ can change arms while preserving the parent prefix. The complete nested trace
 runs twice. Before the parent suffix, both the completed arm and the unused
 alternative are rejected. These six kernel proofs replace seven lemmas about the removed
 route-only reset and its unused selector. Including the transfer model below,
-the static inventory is 825, with 449 using `propext` and `Quot.sound`,
+the static inventory is 828, with 452 using `propext` and `Quot.sound`,
 270 using only `propext`, and 106 axiom-free. The three additional
 `PublicOperationKernel.lean` claims cover the owned-send payload borrow:
 other resource-dependent work waits, that payload's own transfer may finish,

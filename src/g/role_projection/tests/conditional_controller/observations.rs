@@ -47,7 +47,7 @@ pub(super) fn write(
         {
             assert_eq!(before.actor, image.role());
             assert_eq!(before.counter, after.counter);
-            assert_eq!(before.views, after.views);
+            assert!(before.view_headers().eq(after.view_headers()));
             let arm = usize::from(number % 2 == 0);
             let label = if arm == 0 { 3 } else { 6 };
             let event = before
