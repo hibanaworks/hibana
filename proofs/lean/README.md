@@ -159,6 +159,25 @@ This is translation validation of successful commits in one selected visit.
 It does not establish ownership across in-flight transport frames, prepared
 bases after reentry, resource binding, closure, or general distributed progress.
 
+`ActorReentryCommit.lean` derives a fresh base from the observed old state and
+the exact source-validated body range. It checks completion of the old body,
+the recorded choices against the old and new source paths, clearing of choices
+inside the body, publication of the current operation's source route, and the
+ordinary commit check on that fresh base. Its general theorem binds the reset
+to a canonical source range, preserves every outside done bit, and reuses the
+source-order and local view-publication theorem for the successful operation.
+No second runtime cursor or progress table is added.
+
+One fixture emits six commits from both arms of an enclosing choice across
+three runtimes. Another emits two commits after concurrent DB/AUTH operations,
+with AUTH and a sequential continuation already complete. The generated checks
+reject missing resets, erased outside progress or choices, a different body,
+and an incorrect live-view update. The Rust snapshots read the existing cursor
+and committed route history; they never schedule or authorize operations.
+These checks cover successful body reentry observations. General fresh route
+reentry, interleaved distributed ownership, physical resource binding and
+transport closure still need their complete correspondence.
+
 The compiler scope memo, fork-input restoration, independent-sibling exclusion,
 and retained sequential joins have general model lemmas. Ingress-head
 preservation is conditional on progress outside the observed lane. Their

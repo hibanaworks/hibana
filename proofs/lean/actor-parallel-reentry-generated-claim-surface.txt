@@ -1,0 +1,84 @@
+parallelReentryActor0Accepted : parallelReentryActor0.check parallelReentryImage0 parallelReentryChoreo = true
+parallelReentryActor0ClearedSiblingRejected : (have __src := parallelReentryActor0;
+      { previousPath := __src.previousPath, nextPath := __src.nextPath, scope := __src.scope, event := __src.event,
+        view := __src.view, before := __src.before,
+        after :=
+          have __src := parallelReentryActor0.after;
+          { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
+            views := __src.views,
+            steps :=
+              List.mapIdx
+                (fun event step =>
+                  if (decide (0 ≤ event) && decide (event < 2)) = true then step
+                  else { effIndex := step.effIndex, view := step.view, side := step.side, done := false })
+                parallelReentryActor0.after.steps,
+            choices := __src.choices } }).check
+    parallelReentryImage0 parallelReentryChoreo =
+  false
+parallelReentryActor0MissingResetRejected : (have __src := parallelReentryActor0;
+      { previousPath := __src.previousPath, nextPath := __src.nextPath, scope := __src.scope, event := __src.event,
+        view := __src.view, before := __src.before,
+        after :=
+          have __src := parallelReentryActor0.after;
+          { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
+            views := __src.views, steps := parallelReentryActor0.before.steps, choices := __src.choices } }).check
+    parallelReentryImage0 parallelReentryChoreo =
+  false
+parallelReentryActor0SourceOrdered : parallelReentryActor0.SourceOrdered parallelReentryImage0 parallelReentryChoreo
+parallelReentryActor0WrongScopeRejected : (have __src := parallelReentryActor0;
+      { previousPath := __src.previousPath, nextPath := __src.nextPath, scope := 2, event := __src.event,
+        view := __src.view, before := __src.before, after := __src.after }).check
+    parallelReentryImage0 parallelReentryChoreo =
+  false
+parallelReentryActor0WrongViewCountRejected : (have __src := parallelReentryActor0;
+      { previousPath := __src.previousPath, nextPath := __src.nextPath, scope := __src.scope, event := __src.event,
+        view := __src.view, before := __src.before,
+        after :=
+          have __src := parallelReentryActor0.after;
+          { actor := __src.actor, run := __src.run, counter := __src.counter,
+            liveViews := parallelReentryActor0.after.liveViews + 1, views := __src.views, steps := __src.steps,
+            choices := __src.choices } }).check
+    parallelReentryImage0 parallelReentryChoreo =
+  false
+parallelReentryActor1Accepted : parallelReentryActor1.check parallelReentryImage1 parallelReentryChoreo = true
+parallelReentryActor1ClearedSiblingRejected : (have __src := parallelReentryActor1;
+      { previousPath := __src.previousPath, nextPath := __src.nextPath, scope := __src.scope, event := __src.event,
+        view := __src.view, before := __src.before,
+        after :=
+          have __src := parallelReentryActor1.after;
+          { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
+            views := __src.views,
+            steps :=
+              List.mapIdx
+                (fun event step =>
+                  if (decide (0 ≤ event) && decide (event < 4)) = true then step
+                  else { effIndex := step.effIndex, view := step.view, side := step.side, done := false })
+                parallelReentryActor1.after.steps,
+            choices := __src.choices } }).check
+    parallelReentryImage1 parallelReentryChoreo =
+  false
+parallelReentryActor1MissingResetRejected : (have __src := parallelReentryActor1;
+      { previousPath := __src.previousPath, nextPath := __src.nextPath, scope := __src.scope, event := __src.event,
+        view := __src.view, before := __src.before,
+        after :=
+          have __src := parallelReentryActor1.after;
+          { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
+            views := __src.views, steps := parallelReentryActor1.before.steps, choices := __src.choices } }).check
+    parallelReentryImage1 parallelReentryChoreo =
+  false
+parallelReentryActor1SourceOrdered : parallelReentryActor1.SourceOrdered parallelReentryImage1 parallelReentryChoreo
+parallelReentryActor1WrongScopeRejected : (have __src := parallelReentryActor1;
+      { previousPath := __src.previousPath, nextPath := __src.nextPath, scope := 2, event := __src.event,
+        view := __src.view, before := __src.before, after := __src.after }).check
+    parallelReentryImage1 parallelReentryChoreo =
+  false
+parallelReentryActor1WrongViewCountRejected : (have __src := parallelReentryActor1;
+      { previousPath := __src.previousPath, nextPath := __src.nextPath, scope := __src.scope, event := __src.event,
+        view := __src.view, before := __src.before,
+        after :=
+          have __src := parallelReentryActor1.after;
+          { actor := __src.actor, run := __src.run, counter := __src.counter,
+            liveViews := parallelReentryActor1.after.liveViews + 1, views := __src.views, steps := __src.steps,
+            choices := __src.choices } }).check
+    parallelReentryImage1 parallelReentryChoreo =
+  false

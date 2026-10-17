@@ -1,0 +1,216 @@
+reentry0Actor0Accepted : reentry0Actor0.check reentryActor0 reentryCommitChoreo = true
+reentry0Actor0ClearedOuterChoiceRejected : (have __src := reentry0Actor0;
+      { previousPath := __src.previousPath, nextPath := __src.nextPath, scope := __src.scope, event := __src.event,
+        view := __src.view, before := __src.before,
+        after :=
+          have __src := reentry0Actor0.after;
+          { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
+            views := __src.views, steps := __src.steps,
+            choices := List.map (fun entry => (entry.fst, none)) reentry0Actor0.after.choices } }).check
+    reentryActor0 reentryCommitChoreo =
+  false
+reentry0Actor0MissingResetRejected : (have __src := reentry0Actor0;
+      { previousPath := __src.previousPath, nextPath := __src.nextPath, scope := __src.scope, event := __src.event,
+        view := __src.view, before := __src.before,
+        after :=
+          have __src := reentry0Actor0.after;
+          { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
+            views := __src.views, steps := reentry0Actor0.before.steps, choices := __src.choices } }).check
+    reentryActor0 reentryCommitChoreo =
+  false
+reentry0Actor0SourceOrdered : reentry0Actor0.SourceOrdered reentryActor0 reentryCommitChoreo
+reentry0Actor0WrongScopeRejected : (have __src := reentry0Actor0;
+      { previousPath := __src.previousPath, nextPath := __src.nextPath, scope := 2, event := __src.event,
+        view := __src.view, before := __src.before, after := __src.after }).check
+    reentryActor0 reentryCommitChoreo =
+  false
+reentry0Actor0WrongViewCountRejected : (have __src := reentry0Actor0;
+      { previousPath := __src.previousPath, nextPath := __src.nextPath, scope := __src.scope, event := __src.event,
+        view := __src.view, before := __src.before,
+        after :=
+          have __src := reentry0Actor0.after;
+          { actor := __src.actor, run := __src.run, counter := __src.counter,
+            liveViews := reentry0Actor0.after.liveViews + 1, views := __src.views, steps := __src.steps,
+            choices := __src.choices } }).check
+    reentryActor0 reentryCommitChoreo =
+  false
+reentry0Actor1Accepted : reentry0Actor1.check reentryActor1 reentryCommitChoreo = true
+reentry0Actor1ClearedOuterChoiceRejected : (have __src := reentry0Actor1;
+      { previousPath := __src.previousPath, nextPath := __src.nextPath, scope := __src.scope, event := __src.event,
+        view := __src.view, before := __src.before,
+        after :=
+          have __src := reentry0Actor1.after;
+          { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
+            views := __src.views, steps := __src.steps,
+            choices := List.map (fun entry => (entry.fst, none)) reentry0Actor1.after.choices } }).check
+    reentryActor1 reentryCommitChoreo =
+  false
+reentry0Actor1MissingResetRejected : (have __src := reentry0Actor1;
+      { previousPath := __src.previousPath, nextPath := __src.nextPath, scope := __src.scope, event := __src.event,
+        view := __src.view, before := __src.before,
+        after :=
+          have __src := reentry0Actor1.after;
+          { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
+            views := __src.views, steps := reentry0Actor1.before.steps, choices := __src.choices } }).check
+    reentryActor1 reentryCommitChoreo =
+  false
+reentry0Actor1SourceOrdered : reentry0Actor1.SourceOrdered reentryActor1 reentryCommitChoreo
+reentry0Actor1WrongScopeRejected : (have __src := reentry0Actor1;
+      { previousPath := __src.previousPath, nextPath := __src.nextPath, scope := 2, event := __src.event,
+        view := __src.view, before := __src.before, after := __src.after }).check
+    reentryActor1 reentryCommitChoreo =
+  false
+reentry0Actor1WrongViewCountRejected : (have __src := reentry0Actor1;
+      { previousPath := __src.previousPath, nextPath := __src.nextPath, scope := __src.scope, event := __src.event,
+        view := __src.view, before := __src.before,
+        after :=
+          have __src := reentry0Actor1.after;
+          { actor := __src.actor, run := __src.run, counter := __src.counter,
+            liveViews := reentry0Actor1.after.liveViews + 1, views := __src.views, steps := __src.steps,
+            choices := __src.choices } }).check
+    reentryActor1 reentryCommitChoreo =
+  false
+reentry0Actor3Accepted : reentry0Actor3.check reentryActor3 reentryCommitChoreo = true
+reentry0Actor3ClearedOuterChoiceRejected : (have __src := reentry0Actor3;
+      { previousPath := __src.previousPath, nextPath := __src.nextPath, scope := __src.scope, event := __src.event,
+        view := __src.view, before := __src.before,
+        after :=
+          have __src := reentry0Actor3.after;
+          { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
+            views := __src.views, steps := __src.steps,
+            choices := List.map (fun entry => (entry.fst, none)) reentry0Actor3.after.choices } }).check
+    reentryActor3 reentryCommitChoreo =
+  false
+reentry0Actor3MissingResetRejected : (have __src := reentry0Actor3;
+      { previousPath := __src.previousPath, nextPath := __src.nextPath, scope := __src.scope, event := __src.event,
+        view := __src.view, before := __src.before,
+        after :=
+          have __src := reentry0Actor3.after;
+          { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
+            views := __src.views, steps := reentry0Actor3.before.steps, choices := __src.choices } }).check
+    reentryActor3 reentryCommitChoreo =
+  false
+reentry0Actor3SourceOrdered : reentry0Actor3.SourceOrdered reentryActor3 reentryCommitChoreo
+reentry0Actor3WrongScopeRejected : (have __src := reentry0Actor3;
+      { previousPath := __src.previousPath, nextPath := __src.nextPath, scope := 2, event := __src.event,
+        view := __src.view, before := __src.before, after := __src.after }).check
+    reentryActor3 reentryCommitChoreo =
+  false
+reentry0Actor3WrongViewCountRejected : (have __src := reentry0Actor3;
+      { previousPath := __src.previousPath, nextPath := __src.nextPath, scope := __src.scope, event := __src.event,
+        view := __src.view, before := __src.before,
+        after :=
+          have __src := reentry0Actor3.after;
+          { actor := __src.actor, run := __src.run, counter := __src.counter,
+            liveViews := reentry0Actor3.after.liveViews + 1, views := __src.views, steps := __src.steps,
+            choices := __src.choices } }).check
+    reentryActor3 reentryCommitChoreo =
+  false
+reentry1Actor0Accepted : reentry1Actor0.check reentryActor0 reentryCommitChoreo = true
+reentry1Actor0ClearedOuterChoiceRejected : (have __src := reentry1Actor0;
+      { previousPath := __src.previousPath, nextPath := __src.nextPath, scope := __src.scope, event := __src.event,
+        view := __src.view, before := __src.before,
+        after :=
+          have __src := reentry1Actor0.after;
+          { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
+            views := __src.views, steps := __src.steps,
+            choices := List.map (fun entry => (entry.fst, none)) reentry1Actor0.after.choices } }).check
+    reentryActor0 reentryCommitChoreo =
+  false
+reentry1Actor0MissingResetRejected : (have __src := reentry1Actor0;
+      { previousPath := __src.previousPath, nextPath := __src.nextPath, scope := __src.scope, event := __src.event,
+        view := __src.view, before := __src.before,
+        after :=
+          have __src := reentry1Actor0.after;
+          { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
+            views := __src.views, steps := reentry1Actor0.before.steps, choices := __src.choices } }).check
+    reentryActor0 reentryCommitChoreo =
+  false
+reentry1Actor0SourceOrdered : reentry1Actor0.SourceOrdered reentryActor0 reentryCommitChoreo
+reentry1Actor0WrongScopeRejected : (have __src := reentry1Actor0;
+      { previousPath := __src.previousPath, nextPath := __src.nextPath, scope := 1, event := __src.event,
+        view := __src.view, before := __src.before, after := __src.after }).check
+    reentryActor0 reentryCommitChoreo =
+  false
+reentry1Actor0WrongViewCountRejected : (have __src := reentry1Actor0;
+      { previousPath := __src.previousPath, nextPath := __src.nextPath, scope := __src.scope, event := __src.event,
+        view := __src.view, before := __src.before,
+        after :=
+          have __src := reentry1Actor0.after;
+          { actor := __src.actor, run := __src.run, counter := __src.counter,
+            liveViews := reentry1Actor0.after.liveViews + 1, views := __src.views, steps := __src.steps,
+            choices := __src.choices } }).check
+    reentryActor0 reentryCommitChoreo =
+  false
+reentry1Actor1Accepted : reentry1Actor1.check reentryActor1 reentryCommitChoreo = true
+reentry1Actor1ClearedOuterChoiceRejected : (have __src := reentry1Actor1;
+      { previousPath := __src.previousPath, nextPath := __src.nextPath, scope := __src.scope, event := __src.event,
+        view := __src.view, before := __src.before,
+        after :=
+          have __src := reentry1Actor1.after;
+          { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
+            views := __src.views, steps := __src.steps,
+            choices := List.map (fun entry => (entry.fst, none)) reentry1Actor1.after.choices } }).check
+    reentryActor1 reentryCommitChoreo =
+  false
+reentry1Actor1MissingResetRejected : (have __src := reentry1Actor1;
+      { previousPath := __src.previousPath, nextPath := __src.nextPath, scope := __src.scope, event := __src.event,
+        view := __src.view, before := __src.before,
+        after :=
+          have __src := reentry1Actor1.after;
+          { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
+            views := __src.views, steps := reentry1Actor1.before.steps, choices := __src.choices } }).check
+    reentryActor1 reentryCommitChoreo =
+  false
+reentry1Actor1SourceOrdered : reentry1Actor1.SourceOrdered reentryActor1 reentryCommitChoreo
+reentry1Actor1WrongScopeRejected : (have __src := reentry1Actor1;
+      { previousPath := __src.previousPath, nextPath := __src.nextPath, scope := 1, event := __src.event,
+        view := __src.view, before := __src.before, after := __src.after }).check
+    reentryActor1 reentryCommitChoreo =
+  false
+reentry1Actor1WrongViewCountRejected : (have __src := reentry1Actor1;
+      { previousPath := __src.previousPath, nextPath := __src.nextPath, scope := __src.scope, event := __src.event,
+        view := __src.view, before := __src.before,
+        after :=
+          have __src := reentry1Actor1.after;
+          { actor := __src.actor, run := __src.run, counter := __src.counter,
+            liveViews := reentry1Actor1.after.liveViews + 1, views := __src.views, steps := __src.steps,
+            choices := __src.choices } }).check
+    reentryActor1 reentryCommitChoreo =
+  false
+reentry1Actor3Accepted : reentry1Actor3.check reentryActor3 reentryCommitChoreo = true
+reentry1Actor3ClearedOuterChoiceRejected : (have __src := reentry1Actor3;
+      { previousPath := __src.previousPath, nextPath := __src.nextPath, scope := __src.scope, event := __src.event,
+        view := __src.view, before := __src.before,
+        after :=
+          have __src := reentry1Actor3.after;
+          { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
+            views := __src.views, steps := __src.steps,
+            choices := List.map (fun entry => (entry.fst, none)) reentry1Actor3.after.choices } }).check
+    reentryActor3 reentryCommitChoreo =
+  false
+reentry1Actor3MissingResetRejected : (have __src := reentry1Actor3;
+      { previousPath := __src.previousPath, nextPath := __src.nextPath, scope := __src.scope, event := __src.event,
+        view := __src.view, before := __src.before,
+        after :=
+          have __src := reentry1Actor3.after;
+          { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
+            views := __src.views, steps := reentry1Actor3.before.steps, choices := __src.choices } }).check
+    reentryActor3 reentryCommitChoreo =
+  false
+reentry1Actor3SourceOrdered : reentry1Actor3.SourceOrdered reentryActor3 reentryCommitChoreo
+reentry1Actor3WrongScopeRejected : (have __src := reentry1Actor3;
+      { previousPath := __src.previousPath, nextPath := __src.nextPath, scope := 1, event := __src.event,
+        view := __src.view, before := __src.before, after := __src.after }).check
+    reentryActor3 reentryCommitChoreo =
+  false
+reentry1Actor3WrongViewCountRejected : (have __src := reentry1Actor3;
+      { previousPath := __src.previousPath, nextPath := __src.nextPath, scope := __src.scope, event := __src.event,
+        view := __src.view, before := __src.before,
+        after :=
+          have __src := reentry1Actor3.after;
+          { actor := __src.actor, run := __src.run, counter := __src.counter,
+            liveViews := reentry1Actor3.after.liveViews + 1, views := __src.views, steps := __src.steps,
+            choices := __src.choices } }).check
+    reentryActor3 reentryCommitChoreo =
+  false

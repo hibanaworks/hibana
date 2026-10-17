@@ -5,6 +5,7 @@ import Hibana.Generation
 import Hibana.ViewGeneration
 import Hibana.ActorSourceProgress
 import Hibana.ActorCommit
+import Hibana.ActorReentryCommit
 import Hibana.GlobalSemantics
 import Hibana.GlobalAllocationCorrectness
 import Hibana.GlobalMessageTransitions

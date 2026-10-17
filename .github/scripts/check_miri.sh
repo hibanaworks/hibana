@@ -100,7 +100,22 @@ MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_t
   actor-local-progress \
   -p hibana \
   --lib \
-  g::role_projection::tests
+  g::role_projection::tests \
+  -- --skip g::role_projection::tests::reentry_choice::an_enclosing_choice_survives_two_delegated_roll_visits \
+  --skip g::role_projection::tests::reentry_parallel::parallel_loan_reentry_preserves_the_other_body_and_completed_tail
+
+# Keep both observation-heavy reentries under their own existing deadline.
+MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \
+  actor-body-reentry-commit \
+  -p hibana --lib \
+  g::role_projection::tests::reentry_choice::an_enclosing_choice_survives_two_delegated_roll_visits \
+  -- --exact
+
+MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \
+  actor-parallel-reentry-commit \
+  -p hibana --lib \
+  g::role_projection::tests::reentry_parallel::parallel_loan_reentry_preserves_the_other_body_and_completed_tail \
+  -- --exact
 
 # Keep every nested rework, delayed ingress and shared parallel prefix case.
 # Separate the two larger cases without changing their per-run deadline.

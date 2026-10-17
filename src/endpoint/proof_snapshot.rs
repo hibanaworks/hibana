@@ -9,6 +9,8 @@ pub(crate) struct StepSnapshot {
     pub(crate) view: u8,
     pub(crate) action: LocalAction,
     pub(crate) done: bool,
+    /// Existing cursor query for this candidate; observation, never authority.
+    pub(crate) reentry_scope: Option<u16>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -20,6 +22,8 @@ pub(crate) struct ActorSnapshot {
     /// (logical role, live run generation, actor-local view nonce).
     pub(crate) views: Vec<(u8, u32, u32)>,
     pub(crate) steps: Vec<StepSnapshot>,
+    /// Committed route history. Unknown choices remain unknown.
+    pub(crate) choices: Vec<(u16, Option<u8>)>,
 }
 
 /// Copy observations under the existing operation lease and kernel borrow.
@@ -63,6 +67,14 @@ pub(crate) unsafe fn actor_snapshot<const ROLE: u8>(
                     view: cursor.logical_role_at(index).expect("operation view"),
                     action,
                     done: cursor.node_event_done_for_lane(index, lane),
+                    reentry_scope: cursor
+                        .roll_body_reentry_scope_for_step(
+                            cursor
+                                .relocatable_resident_lane_step_at_index(index, usize::from(lane))
+                                .unwrap(),
+                            &mut |scope| kernel.selected_arm_for_scope(scope),
+                        )
+                        .map(|scope| scope.raw() % 8192),
                 });
             }
             index += 1;
@@ -83,6 +95,18 @@ pub(crate) unsafe fn actor_snapshot<const ROLE: u8>(
                 })
                 .collect(),
             steps,
+            choices: (0..kernel.context.program.route_resolver_row_count())
+                .filter_map(|row| {
+                    let (scope, _) = kernel
+                        .context
+                        .program
+                        .route_resolver_authority_at_row(row)
+                        .unwrap();
+                    cursor
+                        .has_route_scope(scope)
+                        .then(|| (scope.raw() % 8192, kernel.selected_arm_for_scope(scope)))
+                })
+                .collect(),
         }
     })
 }

@@ -185,7 +185,7 @@ fn owned_commits_publish_the_shared_actor_step_and_resource_view_together() {
 }
 
 #[cfg(not(miri))]
-fn observation_source(snapshot: &ActorSnapshot) -> std::string::String {
+pub(super) fn observation_source(snapshot: &ActorSnapshot) -> std::string::String {
     let views = snapshot
         .views
         .iter()
@@ -213,8 +213,22 @@ fn observation_source(snapshot: &ActorSnapshot) -> std::string::String {
         })
         .collect::<Vec<_>>()
         .join(", ");
+    let choices = snapshot
+        .choices
+        .iter()
+        .map(|(scope, arm)| {
+            let arm = match arm {
+                None => "none",
+                Some(0) => "some .left",
+                Some(1) => "some .right",
+                _ => panic!("invalid observed route arm"),
+            };
+            std::format!("({scope}, {arm})")
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
     std::format!(
-        "{{ actor := {}, run := {}, counter := {}, liveViews := {}, views := [{views}], steps := [{steps}] }}",
+        "{{ actor := {}, run := {}, counter := {}, liveViews := {}, views := [{views}], steps := [{steps}], choices := [{choices}] }}",
         snapshot.actor,
         snapshot.run,
         snapshot.counter,

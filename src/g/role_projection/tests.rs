@@ -25,6 +25,9 @@ mod program_columns;
 mod reentry;
 mod reentry_choice;
 mod reentry_columns;
+#[cfg(not(miri))]
+mod reentry_commit;
+mod reentry_parallel;
 mod routing;
 mod send_wait;
 

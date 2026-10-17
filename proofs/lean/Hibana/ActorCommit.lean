@@ -26,22 +26,34 @@ structure ActorProgressObservation where
   liveViews : Nat
   views : List ActorViewObservation
   steps : List ActorStepObservation
+  choices : List (Nat × Option RouteArm) := []
   deriving Repr, DecidableEq
 
 def ActorProgressObservation.progress (snapshot : ActorProgressObservation) : List Bool :=
   snapshot.steps.map ActorStepObservation.done
 
-/-- Only the existing done bits are interpreted here. Selection knowledge is
-not inferred from this observation and must be bound to a visit separately. -/
+/-- Copy the existing done bits and committed choices. The commit theorem below
+uses done bits; reentry also binds the observed choices to a source visit. -/
 def ActorProgressObservation.doneState (snapshot : ActorProgressObservation) : CommitState := {
   done := fun event => snapshot.progress[event]?.getD false
-  selected := fun _ => none
+  selected := fun scope =>
+    (snapshot.choices.find? fun entry => entry.1 == scope).bind Prod.snd
 }
+
+def ActorProgressObservation.choicesMatch
+    (snapshot : ActorProgressObservation) (image : RustDescriptorImage) : Bool :=
+  snapshot.choices.length == image.routeScopeCount &&
+    decide (snapshot.choices.map Prod.fst).Nodup &&
+    (List.range image.routeScopeCount).all fun slot =>
+      match image.decodeRouteScope? slot with
+      | none => false
+      | some scope => snapshot.choices.any fun entry => entry.1 == scope
 
 def ActorProgressObservation.metadataMatches
     (snapshot : ActorProgressObservation) (image : RustDescriptorImage)
     (rows : List DecodedActorRow) : Bool :=
-  snapshot.actor == image.role && snapshot.steps.length == image.eventCount &&
+  snapshot.actor == image.role && snapshot.choicesMatch image &&
+    snapshot.steps.length == image.eventCount &&
     snapshot.steps.length == rows.length &&
     (snapshot.steps.zip rows).all fun (step, row) =>
       image.eventEffIndex? row.eventId == some step.effIndex &&
