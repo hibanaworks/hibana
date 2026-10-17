@@ -41,7 +41,7 @@ where
         if !observed.matches_recv(meta) {
             return Ok(None);
         }
-        let enabled = self.recv_event_enabled(idx, meta);
+        let enabled = self.recv_event_enabled(idx, meta.into());
         if enabled.is_err() {
             return Ok(None);
         }
@@ -79,7 +79,7 @@ where
         if !key.matches_recv(meta) {
             return Ok(None);
         }
-        let enabled = self.recv_event_enabled(idx, meta);
+        let enabled = self.recv_event_enabled(idx, meta.into());
         if enabled.is_err() {
             return Ok(None);
         }

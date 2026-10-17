@@ -16,6 +16,7 @@ mod conditional_controller;
 mod controller_columns;
 mod ingress;
 mod ingress_columns;
+mod local_return;
 #[cfg(all(unix, not(miri)))]
 mod native;
 mod order;

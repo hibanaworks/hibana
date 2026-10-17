@@ -1,0 +1,8 @@
+localDropPreservesProgress : localAfterDrop = localBeforeWait
+localMissingResetRejected : localMissingReset.check localReturnImage localReturnChoreo = false
+localPendingPreservesProgress : localAfterPending = localBeforeWait
+localReceiptIndexAccepted : localReturnImage.ownedRecoveryIndexCheck = true
+localResumeBeforeValid : localBeforeResume.valid = true
+localReturnCommitAccepted : localReturnCommit.check localReturnImage localReturnChoreo = true
+localReturnCommitSourceOrdered : localReturnCommit.SourceOrdered localReturnImage localReturnChoreo
+localWrongViewCountRejected : localWrongViewCount.check localReturnImage localReturnChoreo = false

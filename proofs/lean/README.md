@@ -309,9 +309,17 @@ is complete for an arbitrary source, or prove all distributed waiting paths.
 
 Runtime admission uses this immutable index with existing affine view headers,
 completion, and route choices. A temporarily absent resource may return through
-a different view while a rolled send, receive, or offered wire receive waits.
+a different view while a rolled send, receive, or offered local or wire receive waits.
 No owner ledger or application progress flag is added. Real Tokio tests retain
 independent parallel work and reject waits that borrow their own prerequisite.
+
+`LocalReturnGenerated.lean` records an actual local branch's pending, drop,
+receipt, and resumed commit. Its eight kernel-checked claims preserve affine
+progress while waiting and bind the resumed commit to the source's next visit.
+The fixture switches from the left arm to the right arm, changes the resolver's
+input while pending, and keeps an independent rolled view progressing. Missing
+reset and changed live-view count are rejected. This correspondence covers the
+observed execution, not every local operation or distributed waiting path.
 
 The compiler scope memo, fork-input restoration, independent-sibling exclusion,
 and retained sequential joins have general model lemmas. Ingress-head

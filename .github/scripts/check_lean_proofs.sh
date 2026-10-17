@@ -14,6 +14,7 @@ CONTROLLER_GENERATED="${ROOT_DIR}/target/lean-proof/ControllerGenerated.lean"
 INGRESS_GENERATED="${ROOT_DIR}/target/lean-proof/IngressGenerated.lean"
 REENTRY_GENERATED="${ROOT_DIR}/target/lean-proof/ReentryGenerated.lean"
 OWNED_RECOVERY_GENERATED="${ROOT_DIR}/target/lean-proof/OwnedRecoveryGenerated.lean"
+LOCAL_RETURN_GENERATED="${ROOT_DIR}/target/lean-proof/LocalReturnGenerated.lean"
 ACTOR_COMMIT_GENERATED="${ROOT_DIR}/target/lean-proof/ActorCommitGenerated.lean"
 ACTOR_REENTRY_COMMIT_GENERATED="${ROOT_DIR}/target/lean-proof/ActorReentryCommitGenerated.lean"
 ACTOR_PARALLEL_REENTRY_GENERATED="${ROOT_DIR}/target/lean-proof/ActorParallelReentryGenerated.lean"
@@ -57,12 +58,19 @@ hibana_enable_repo_tests_cfg
 mkdir -p "$(dirname "${GENERATED}")"
 rm -f "${GENERATED}" "${RUNTIME_GENERATED}" "${PUBLIC_OPERATION_GENERATED}" "${CAUSAL_GENERATED}" "${PARALLEL_GENERATED}" "${PROGRAM_COLUMNS_GENERATED}" "${PARTIAL_CHOICE_GENERATED}" "${CONTROLLER_GENERATED}" "${INGRESS_GENERATED}" "${REENTRY_GENERATED}" "${ACTOR_COMMIT_GENERATED}" "${ACTOR_REENTRY_COMMIT_GENERATED}" "${ACTOR_PARALLEL_REENTRY_GENERATED}" "${ACTOR_ROUTE_LEFT_REENTRY_GENERATED}" "${ACTOR_ROUTE_RIGHT_REENTRY_GENERATED}"
 rm -f "${OWNED_RECOVERY_GENERATED}"
+rm -f "${LOCAL_RETURN_GENERATED}"
 CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib \
   g::role_projection::tests::recovery_image::missing_wrong_and_out_of_bounds_owned_receipts_are_rejected \
   -- --exact
 bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${OWNED_RECOVERY_GENERATED}" "owned resource receipts"
 run_audit generated-axioms --kernel "${OWNED_RECOVERY_GENERATED}" "${PROOF_DIR}" \
   "${PROOF_DIR}/owned-recovery-generated-claim-surface.txt" 5
+CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib \
+  g::role_projection::tests::local_return::a_local_branch_waits_for_another_view_to_receive_its_entry_resource \
+  -- --exact
+bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${LOCAL_RETURN_GENERATED}" "local resource return"
+run_audit generated-axioms --kernel "${LOCAL_RETURN_GENERATED}" "${PROOF_DIR}" \
+  "${PROOF_DIR}/local-return-generated-claim-surface.txt" 8
 CARGO_BUILD_JOBS=1 \
   RUST_TEST_THREADS=1 \
 cargo +"${TOOLCHAIN}" test -p hibana --lib \
@@ -159,4 +167,4 @@ public_operation_lean_output="$(run_audit \
 printf '%s\n' "${public_operation_lean_output}"
 printf '%s\n' "${public_operation_lean_output}" | bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard markers public-operation
 
-echo "Lean proof gate passed toolchain=v4.30.0 traces=14 frames=66 projections=22 exact-descriptors=22 progress=4 projectability=8 distributed-progress=8 verified-protocols=8 static-theorems=818 owned-recovery-correspondence=5 actor-commit-correspondence=48 actor-body-reentry-correspondence=36 actor-parallel-reentry-correspondence=12 actor-route-reentry-correspondence=168 program-column-correspondence=139 partial-choice-correspondence=30 controller-correspondence=57 actor-ingress-correspondence=16 actor-reentry-correspondence=97 parallel-descriptors=10 parallel-correspondence=182 causal-correspondence=36 anonymous-regressions=36 generated-theorems=506 generated-obligations=458 production-transitions=7 production-operations=6 production-owners=8 verified-codecs=3 verified-family=8 static-deployments=8 deployment-rejections=3 capabilities=6 runtime-regions=4 atomic-failures=4 public-operation-edges=18 public-operation-transitions=180 native-regressions=32"
+echo "Lean proof gate passed toolchain=v4.30.0 traces=14 frames=66 projections=22 exact-descriptors=22 progress=4 projectability=8 distributed-progress=8 verified-protocols=8 static-theorems=818 owned-recovery-correspondence=5 local-return-correspondence=8 actor-commit-correspondence=48 actor-body-reentry-correspondence=36 actor-parallel-reentry-correspondence=12 actor-route-reentry-correspondence=168 program-column-correspondence=139 partial-choice-correspondence=30 controller-correspondence=57 actor-ingress-correspondence=16 actor-reentry-correspondence=97 parallel-descriptors=10 parallel-correspondence=182 causal-correspondence=36 anonymous-regressions=36 generated-theorems=506 generated-obligations=458 production-transitions=7 production-operations=6 production-owners=8 verified-codecs=3 verified-family=8 static-deployments=8 deployment-rejections=3 capabilities=6 runtime-regions=4 atomic-failures=4 public-operation-edges=18 public-operation-transitions=180 native-regressions=32"

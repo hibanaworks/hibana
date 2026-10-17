@@ -38,25 +38,38 @@ where
                 actual: payload_kind,
             }));
         }
-        if branch.branch_meta.kind != BranchKind::WireRecv {
-            return Poll::Ready(Ok(None));
-        }
-        let meta = self
-            .progress
-            .cursor
-            .try_recv_meta_at(state_index_to_usize(branch.branch_meta.cursor_index))
-            .ok_or_else(branch_recv_phase_invariant)?;
-        if meta.origin.is_session() {
-            return Poll::Ready(Err(branch_recv_phase_invariant()));
-        }
-        if branch.branch_meta.frame_label != meta.frame_label {
-            return Poll::Ready(Err(branch_recv_phase_invariant()));
-        }
-        // A preview may retain the next visit's frame while its entry resource
-        // is still returning through a distinct view. Admission is shared with
-        // ordinary recv and consumes neither the preview nor the frame.
-        match self.recv_event_enabled(state_index_to_usize(branch.branch_meta.cursor_index), meta) {
-            Ok(_) => Poll::Ready(Ok(branch.offered_frame.is_none().then_some(meta))),
+        let index = state_index_to_usize(branch.branch_meta.cursor_index);
+        let (event, transport_wait) = match branch.branch_meta.kind {
+            BranchKind::WireRecv => {
+                let meta = self
+                    .progress
+                    .cursor
+                    .try_recv_meta_at(index)
+                    .ok_or_else(branch_recv_phase_invariant)?;
+                if meta.origin.is_session() || branch.branch_meta.frame_label != meta.frame_label {
+                    return Poll::Ready(Err(branch_recv_phase_invariant()));
+                }
+                (meta.into(), branch.offered_frame.is_none().then_some(meta))
+            }
+            BranchKind::LocalAction => (
+                crate::global::typestate::EventCommitMeta::new(
+                    branch.branch_meta.eff_index,
+                    branch.branch_meta.label,
+                    branch.branch_meta.origin,
+                    branch.branch_meta.scope_id,
+                    Some(branch.branch_meta.selected_arm),
+                    branch.branch_meta.lane_wire,
+                ),
+                None,
+            ),
+            BranchKind::TerminalArm => return Poll::Ready(Ok(None)),
+            BranchKind::ArmSend => return Poll::Ready(Err(branch_recv_phase_invariant())),
+        };
+        // A preview can wait for its entry resource to return through another
+        // view. Both local and wire actions share ordinary recv's admission;
+        // neither the preview nor an offered frame is consumed while pending.
+        match self.recv_event_enabled(index, event) {
+            Ok(_) => Poll::Ready(Ok(transport_wait)),
             Err(crate::global::typestate::EventAdmissionError::OtherViewPending) => Poll::Pending,
             Err(_) => Poll::Ready(Err(branch_recv_phase_invariant())),
         }
@@ -304,22 +317,8 @@ where
         let delta = match kind {
             BranchKind::LocalAction => {
                 let idx = state_index_to_usize(cursor_index);
-                let preview_conflict = self.progress.cursor.event_conflict_for_index(idx);
-                let mut selected_arm = |candidate, view| {
-                    if matches!(view, crate::global::typestate::EventArmView::Committed) {
-                        return self.selected_arm_for_scope(candidate);
-                    }
-                    Self::selected_route_arm_from_parts_with_preview(
-                        &self.progress.decision_state,
-                        &self.progress.cursor,
-                        preview_conflict,
-                        candidate,
-                    )
-                };
                 let enabled = self
-                    .progress
-                    .cursor
-                    .event_enabled(idx, event_commit, &mut selected_arm)
+                    .recv_event_enabled(idx, event_commit)
                     .map_err(|_| RecvError::PhaseInvariant)?;
                 let delta = CommitDelta::from_event_row(
                     event_commit.eff_index,

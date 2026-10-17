@@ -5,7 +5,7 @@ use crate::{
         role_program::{
             LANE_SET_VIEW_WORDS, LaneSetView, LaneWord, lane_word_count, lane_word_index,
         },
-        typestate::{EnabledEventCommit, EventAdmissionError, EventCommitMeta, RecvMeta},
+        typestate::{EnabledEventCommit, EventAdmissionError, EventCommitMeta},
     },
     transport::Transport,
 };
@@ -17,19 +17,20 @@ where
     pub(in crate::endpoint::kernel) fn recv_event_enabled(
         &self,
         index: usize,
-        meta: RecvMeta,
+        meta: EventCommitMeta,
     ) -> Result<EnabledEventCommit, EventAdmissionError> {
         let conflict = self.progress.cursor.event_conflict_for_index(index);
-        let enabled = self.progress.cursor.event_enabled(
-            index,
-            EventCommitMeta::from(meta),
-            &mut |scope, view| self.selected_arm_for_recv_event(conflict, scope, view),
-        )?;
+        let enabled = self
+            .progress
+            .cursor
+            .event_enabled(index, meta, &mut |scope, view| {
+                self.selected_arm_for_recv_event(conflict, scope, view)
+            })?;
         self.preflight_roll_entry_views(Some(CommitEventRow::new(
             meta.eff_index,
             meta.label,
             meta.origin,
-            CommitRow::from_recv_meta(meta),
+            CommitRow::new(meta.scope, meta.route_arm, meta.lane),
             enabled.progress_step(),
         )))?;
         Ok(enabled)
@@ -51,7 +52,7 @@ where
                 && meta.label == target_label
                 && !meta.origin.is_session()
             {
-                let admission = self.recv_event_enabled(idx, meta);
+                let admission = self.recv_event_enabled(idx, meta.into());
                 if matches!(admission, Err(EventAdmissionError::OtherViewPending))
                     && meta.payload_kind == target_payload
                 {

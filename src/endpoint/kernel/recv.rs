@@ -251,7 +251,7 @@ where
         }
         let cursor_index = state_index_to_usize(desc.cursor_index);
         let preview_conflict = self.progress.cursor.event_conflict_for_index(cursor_index);
-        let enabled = match self.recv_event_enabled(cursor_index, meta) {
+        let enabled = match self.recv_event_enabled(cursor_index, meta.into()) {
             Ok(enabled) => enabled,
             Err(_) => {
                 return Err(RecvError::PhaseInvariant);
