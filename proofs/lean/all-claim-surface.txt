@@ -783,6 +783,38 @@ Hibana.abort_peer_is_well_formed : ∀ (state : Hibana.TransportState), state.ab
                         (And (@Eq.{1} Nat wire.sender facts.binding.message.sender.role)
                           (And (@Eq.{1} Nat wire.receiver facts.binding.message.receiver.role)
                             (@Eq.{1} (List.{0} Nat) wire.payload facts.envelope)))))))))))
+@Hibana.accepted_owned_entry_resource_cannot_be_omitted : ∀ {image : Hibana.RustDescriptorImage}
+  {rows : Hibana.OwnedEntryResources} {roll : Hibana.DecodedRollRow} {resource owner : Nat}
+  {entries : List.{0} (Prod.{0, 0} Nat Nat)},
+  @Eq.{1} Bool image.ownedEntryResourcesCheck true →
+    @Eq.{1} (Option.{0} Hibana.OwnedEntryResources) image.expectedRollEntryResources?
+        (@some.{0} Hibana.OwnedEntryResources rows) →
+      @Membership.mem.{0, 0} (Prod.{0, 0} Hibana.DecodedRollRow (List.{0} (Prod.{0, 0} Nat Nat)))
+          Hibana.OwnedEntryResources
+          (@List.instMembership.{0} (Prod.{0, 0} Hibana.DecodedRollRow (List.{0} (Prod.{0, 0} Nat Nat)))) rows
+          (@Prod.mk.{0, 0} Hibana.DecodedRollRow (List.{0} (Prod.{0, 0} Nat Nat)) roll entries) →
+        @Membership.mem.{0, 0} (Prod.{0, 0} Nat Nat) (List.{0} (Prod.{0, 0} Nat Nat))
+            (@List.instMembership.{0} (Prod.{0, 0} Nat Nat)) entries (@Prod.mk.{0, 0} Nat Nat resource owner) →
+          @Exists.{1} Hibana.OwnedEntryResources fun actual =>
+            And
+              (@Eq.{1} (Option.{0} Hibana.OwnedEntryResources) image.decodeRollEntryResources?
+                (@some.{0} Hibana.OwnedEntryResources actual))
+              (@Exists.{1} (List.{0} (Prod.{0, 0} Nat Nat)) fun present =>
+                And
+                  (@Membership.mem.{0, 0} (Prod.{0, 0} Hibana.DecodedRollRow (List.{0} (Prod.{0, 0} Nat Nat)))
+                    Hibana.OwnedEntryResources
+                    (@List.instMembership.{0} (Prod.{0, 0} Hibana.DecodedRollRow (List.{0} (Prod.{0, 0} Nat Nat))))
+                    actual (@Prod.mk.{0, 0} Hibana.DecodedRollRow (List.{0} (Prod.{0, 0} Nat Nat)) roll present))
+                  (@Membership.mem.{0, 0} (Prod.{0, 0} Nat Nat) (List.{0} (Prod.{0, 0} Nat Nat))
+                    (@List.instMembership.{0} (Prod.{0, 0} Nat Nat)) present (@Prod.mk.{0, 0} Nat Nat resource owner)))
+@Hibana.accepted_owned_entry_resources_match_source : ∀ {image : Hibana.RustDescriptorImage},
+  @Eq.{1} Bool image.ownedEntryResourcesCheck true →
+    @Exists.{1} Hibana.OwnedEntryResources fun rows =>
+      And
+        (@Eq.{1} (Option.{0} Hibana.OwnedEntryResources) image.expectedRollEntryResources?
+          (@some.{0} Hibana.OwnedEntryResources rows))
+        (@Eq.{1} (Option.{0} Hibana.OwnedEntryResources) image.decodeRollEntryResources?
+          (@some.{0} Hibana.OwnedEntryResources rows))
 @Hibana.accepted_owned_program_binds_partial_choice_evidence : ∀ {image : Hibana.RustDescriptorImage}
   {choreo : Hibana.Choreo},
   @Eq.{1} Bool (image.ownershipCheck choreo) true →

@@ -110,9 +110,9 @@ pub(super) fn export() {
             "def {name}Image : Hibana.RustDescriptorImage :=\n  \
              {{ rollWorkerImage with roleBytes := (rollWorkerImage.roleBytes.set\n    \
              (rollWorkerImage.roleRollScopeOffset + {offset}) {value}) }}\n\n\
-             theorem {name}PriorRowsAndOrder :\n  \
-             ({name}Image.actorRowsCheck rollWorkerChoreo &&\n    \
-             {name}Image.actorOrderCheck rollWorkerChoreo) = true := by\n  decide\n\n\
+             theorem {name}RowsPreservedAndOrderRejected :\n  \
+             {name}Image.actorRowsCheck rollWorkerChoreo = true ∧\n  \
+             {name}Image.actorOrderCheck rollWorkerChoreo = false := by\n  decide\n\n\
              theorem {name}StructurallyCoherent :\n  \
              {name}Image.rollColumnsCoherent = true := by\n  decide\n\n\
              theorem {name}SourceRejected :\n  \

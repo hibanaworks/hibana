@@ -281,9 +281,9 @@ parallelTailWorkerSourceRanges : parallelTailWorkerImage.actorRollCheck parallel
 rollDoneResetAgreesWithRust : ((List.range 6).all fun event =>
     (Hibana.resetRoll rollBefore preparedRoll).done event == rollAfter.done event) =
   true
-rollIncludesContinuationPriorRowsAndOrder : (rollIncludesContinuationImage.actorRowsCheck rollWorkerChoreo &&
-    rollIncludesContinuationImage.actorOrderCheck rollWorkerChoreo) =
-  true
+rollIncludesContinuationRowsPreservedAndOrderRejected : rollIncludesContinuationImage.actorRowsCheck rollWorkerChoreo =
+    true ∧
+  rollIncludesContinuationImage.actorOrderCheck rollWorkerChoreo = false
 rollIncludesContinuationSourceRejected : rollIncludesContinuationImage.actorRollCheck rollWorkerChoreo = false
 rollIncludesContinuationStructurallyCoherent : rollIncludesContinuationImage.rollColumnsCoherent = true
 rollOwnerRustChoiceReset : Option.map
@@ -307,14 +307,12 @@ rollReadyAgreesWithSource : (match rollWorkerImage.decodeActorOrder? rollWorkerC
             ((data.activeRows path).any fun row => row.eventId == event) &&
               (data.sourcePredecessors path event).all rollAfter.done)) =
   true
-rollSkipsLoanPriorRowsAndOrder : (rollSkipsLoanImage.actorRowsCheck rollWorkerChoreo &&
-    rollSkipsLoanImage.actorOrderCheck rollWorkerChoreo) =
-  true
+rollSkipsLoanRowsPreservedAndOrderRejected : rollSkipsLoanImage.actorRowsCheck rollWorkerChoreo = true ∧
+  rollSkipsLoanImage.actorOrderCheck rollWorkerChoreo = false
 rollSkipsLoanSourceRejected : rollSkipsLoanImage.actorRollCheck rollWorkerChoreo = false
 rollSkipsLoanStructurallyCoherent : rollSkipsLoanImage.rollColumnsCoherent = true
-rollTooShortPriorRowsAndOrder : (rollTooShortImage.actorRowsCheck rollWorkerChoreo &&
-    rollTooShortImage.actorOrderCheck rollWorkerChoreo) =
-  true
+rollTooShortRowsPreservedAndOrderRejected : rollTooShortImage.actorRowsCheck rollWorkerChoreo = true ∧
+  rollTooShortImage.actorOrderCheck rollWorkerChoreo = false
 rollTooShortSourceRejected : rollTooShortImage.actorRollCheck rollWorkerChoreo = false
 rollTooShortStructurallyCoherent : rollTooShortImage.rollColumnsCoherent = true
 rollWorkerRustChoiceReset : Option.map
@@ -329,8 +327,7 @@ rollWorkerRustRanges : Option.map (fun rows => List.map (fun row => (row.scope, 
   some [(0, 0, 4)]
 rollWorkerSourceOrder : rollWorkerImage.actorOrderCheck rollWorkerChoreo = true
 rollWorkerSourceRanges : rollWorkerImage.actorRollCheck rollWorkerChoreo = true
-rollWrongScopePriorRowsAndOrder : (rollWrongScopeImage.actorRowsCheck rollWorkerChoreo &&
-    rollWrongScopeImage.actorOrderCheck rollWorkerChoreo) =
-  true
+rollWrongScopeRowsPreservedAndOrderRejected : rollWrongScopeImage.actorRowsCheck rollWorkerChoreo = true ∧
+  rollWrongScopeImage.actorOrderCheck rollWorkerChoreo = false
 rollWrongScopeSourceRejected : rollWrongScopeImage.actorRollCheck rollWorkerChoreo = false
 rollWrongScopeStructurallyCoherent : rollWrongScopeImage.rollColumnsCoherent = true

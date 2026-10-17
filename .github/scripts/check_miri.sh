@@ -114,6 +114,7 @@ MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_t
   --skip g::role_projection::tests::return_reentry:: \
   --skip g::role_projection::tests::local_return:: \
   --skip g::role_projection::tests::recovery_image:: \
+  --skip g::role_projection::tests::entry_image:: \
   --skip g::role_projection::tests::shared_holder_can_finish_either_parallel_loan_first_and_join_requires_both \
   --skip g::role_projection::tests::reentry_choice::an_enclosing_choice_survives_two_delegated_roll_visits \
   --skip g::role_projection::tests::reentry_parallel::parallel_loan_reentry_preserves_the_other_body_and_completed_tail \
@@ -140,6 +141,11 @@ run_miri_test \
   actor-resource-receipt-image \
   -p hibana --lib \
   g::role_projection::tests::recovery_image::
+
+run_miri_test \
+  actor-resource-entry-image \
+  -p hibana --lib \
+  g::role_projection::tests::entry_image::
 
 MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \
   actor-pending-send-admission \

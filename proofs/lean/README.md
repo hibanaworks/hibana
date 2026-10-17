@@ -209,7 +209,7 @@ can change arms while preserving the parent prefix. The complete nested trace
 runs twice. Before the parent suffix, both the completed arm and the unused
 alternative are rejected. These six kernel proofs replace seven lemmas about the removed
 route-only reset and its unused selector. Including the transfer model below,
-the static inventory is 818, with 442 using `propext` and `Quot.sound`,
+the static inventory is 820, with 444 using `propext` and `Quot.sound`,
 270 using only `propext`, and 106 axiom-free. The three additional
 `PublicOperationKernel.lean` claims cover the owned-send payload borrow:
 other resource-dependent work waits, that payload's own transfer may finish,
@@ -304,8 +304,19 @@ catalog and the exact receipt slice of every declared roll-entry resource. Its
 two general lemmas establish catalog equality and completeness of those slices.
 The kernel checks one real generated image and four malformed versions: an
 out-of-bounds row, a wire-only receive, a missing entry slice, and a missing
-catalog. These claims do not establish that the set of entry resources itself
-is complete for an arbitrary source, or prove all distributed waiting paths.
+catalog. These receipt-slice claims alone do not establish that the set of
+entry resources is complete or prove all distributed waiting paths.
+
+`OwnedEntry.lean` rebuilds local roll ranges from global source markers and
+checked local directions, then rebuilds each range's resource and entry-owner
+references from global atoms and actor bindings. The checker requires exact
+agreement with the serialized local tables, including when those tables claim
+to be empty. Two general lemmas bind accepted tables to these reconstructed
+obligations and preserve every required entry. Five actual-byte claims cover
+a valid image, a missing resource table, a changed owner, an unrelated resource,
+and a missing roll table. The Rust constructor enforces the same comparisons
+without adding runtime state. The full source-normalization ownership argument
+and refinement of arbitrary distributed executions remain separate obligations.
 
 Runtime admission uses this immutable index with existing affine view headers,
 completion, and route choices. A temporarily absent resource may return through

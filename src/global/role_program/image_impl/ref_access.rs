@@ -13,6 +13,7 @@ use crate::global::{
     typestate::{LocalAction, LocalDependency, LocalNode, PackedEventConflict},
 };
 
+mod entry_resources;
 #[cfg(all(test, hibana_repo_tests))]
 mod tests;
 mod validation;

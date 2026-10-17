@@ -8,6 +8,7 @@ use crate::{
         compiled::images::image::columns::{
             OwnershipColumns, PROGRAM_IMAGE_ACTOR_BINDING_STRIDE,
             PROGRAM_IMAGE_ACTOR_DECISION_STRIDE, PROGRAM_IMAGE_INITIAL_ACTOR_STRIDE,
+            PROGRAM_IMAGE_SCOPE_MARKER_STRIDE,
         },
         const_dsl::{ScopeId, ScopeKind},
     },
@@ -56,6 +57,39 @@ impl CompiledProgramRef {
         } else {
             self.columns.scope_marker_count()
         }
+    }
+
+    /// Read a roll enter at this source marker and its global atom interval.
+    /// A local table cannot hide a source scope by omitting its own roll row.
+    pub(crate) const fn source_roll_at(&self, marker: usize) -> Option<(ScopeId, usize, usize)> {
+        let markers = self
+            .columns
+            .scope_markers_for(self.source_scope_marker_count());
+        if marker >= markers.len as usize {
+            return None;
+        }
+        let offset = markers.offset as usize + marker * PROGRAM_IMAGE_SCOPE_MARKER_STRIDE;
+        let scope = match ScopeId::decode_raw(self.read_u16_at(offset + 2)) {
+            Some(scope) => scope,
+            None => crate::invariant(),
+        };
+        if !matches!(scope.kind(), Some(ScopeKind::Roll)) || self.byte_at(offset + 4) & 3 != 0 {
+            return None;
+        }
+        let start = self.read_u16_at(offset) as usize;
+        let mut index = marker + 1;
+        while index < markers.len as usize {
+            let offset = markers.offset as usize + index * PROGRAM_IMAGE_SCOPE_MARKER_STRIDE;
+            if self.read_u16_at(offset + 2) == scope.raw() && self.byte_at(offset + 4) & 3 == 2 {
+                let end = self.read_u16_at(offset) as usize;
+                if start >= end || end > self.columns.atom_count() {
+                    crate::invariant();
+                }
+                return Some((scope, start, end));
+            }
+            index += 1;
+        }
+        crate::invariant()
     }
 
     pub(crate) const fn actor_binding_at(&self, event: usize) -> Option<[u16; 2]> {

@@ -1,0 +1,5 @@
+generatedOwnedEntryAccepted : generatedOwnedEntryImage.ownedEntryResourcesCheck = true
+generatedOwnedEntryMutant0Rejected : generatedOwnedEntryMutant0.ownedEntryResourcesCheck = false
+generatedOwnedEntryMutant1Rejected : generatedOwnedEntryMutant1.ownedEntryResourcesCheck = false
+generatedOwnedEntryMutant2Rejected : generatedOwnedEntryMutant2.ownedEntryResourcesCheck = false
+generatedOwnedEntryMutant3Rejected : generatedOwnedEntryMutant3.ownedEntryResourcesCheck = false

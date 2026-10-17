@@ -14,6 +14,7 @@ mod commit;
 mod composed;
 mod conditional_controller;
 mod controller_columns;
+mod entry_image;
 mod ingress;
 mod ingress_columns;
 mod local_return;
