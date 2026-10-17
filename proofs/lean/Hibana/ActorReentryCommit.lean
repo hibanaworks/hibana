@@ -1,5 +1,6 @@
 import Hibana.ActorCommit
 import Hibana.ActorReentry
+import Hibana.SourceResourceAvailability
 
 namespace Hibana
 open EndpointDelegation
@@ -148,6 +149,37 @@ def ActorReentryCommitObservation.check
   | none => false
   | some (_, step) => step.check image choreo
 
+/-- An owned first operation of a fresh visit checks the same derived base
+against the actual accepted frame. It does not infer a visit from the envelope:
+FIFO, replay exclusion and run isolation remain carrier obligations. -/
+def ActorReentryCommitObservation.ownedCheck
+    (sample : ActorReentryCommitObservation) (image : RustDescriptorImage)
+    (choreo : Choreo) (wire : OwnedWireObservation) (session : Nat) : Bool :=
+  match sample.prepared? image choreo with
+  | none => false
+  | some (_, step) => step.ownedCheck image choreo wire session
+
+theorem accepted_owned_body_reentry_has_checked_owned_step
+    {sample : ActorReentryCommitObservation} {image : RustDescriptorImage} {choreo : Choreo}
+    {wire : OwnedWireObservation} {session : Nat}
+    (checked : sample.ownedCheck image choreo wire session = true) :
+    ∃ roll step, sample.prepared? image choreo = some (roll, step) ∧
+      step.ownedCheck image choreo wire session = true := by
+  unfold ActorReentryCommitObservation.ownedCheck at checked
+  cases prepared : sample.prepared? image choreo with
+  | none => simp [prepared] at checked
+  | some entry =>
+      exact ⟨entry.1, entry.2, rfl, by simpa only [prepared] using checked⟩
+
+theorem accepted_owned_body_reentry_also_checks_source_reset
+    {sample : ActorReentryCommitObservation} {image : RustDescriptorImage} {choreo : Choreo}
+    {wire : OwnedWireObservation} {session : Nat}
+    (checked : sample.ownedCheck image choreo wire session = true) :
+    sample.check image choreo = true := by
+  obtain ⟨roll, step, prepared, owned⟩ := accepted_owned_body_reentry_has_checked_owned_step checked
+  simp only [ActorReentryCommitObservation.check, prepared]
+  exact (Bool.and_eq_true_iff.mp owned).1
+
 private theorem reset_observed_actor_done
     (snapshot : ActorProgressObservation) (roll : DecodedRollRow)
     (choices : List (Nat × Option RouteArm)) (event : Nat) :
@@ -213,6 +245,18 @@ private theorem prepared_reentry_facts
     exact ⟨ranges, (Bool.and_eq_true_iff.mp qualified).1,
       (Bool.and_eq_true_iff.mp qualified).2, rows, choices, rowsAt, member, rfl⟩
   next rejected => simp at allowed
+
+/-- Reset changes progress and choices, not the retained Endpoint tags or
+temporary borrow phases. This alone is not evidence of Rust value availability. -/
+theorem prepared_body_reentry_preserves_value_identity
+    {sample : ActorReentryCommitObservation} {image : RustDescriptorImage} {choreo : Choreo}
+    {roll : DecodedRollRow} {step : ActorCommitObservation}
+    (prepared : sample.prepared? image choreo = some (roll, step)) :
+    step.before.actor = sample.before.actor ∧ step.before.run = sample.before.run ∧
+      step.before.views = sample.before.views := by
+  obtain ⟨_, _, _, _, choices, _, _, base⟩ := prepared_reentry_facts prepared
+  rw [base]
+  exact ⟨rfl, rfl, rfl⟩
 
 theorem accepted_body_reentry_requires_entry_headers
     {sample : ActorReentryCommitObservation} {image : RustDescriptorImage} {choreo : Choreo}
@@ -298,5 +342,47 @@ theorem accepted_body_reentry_restores_source_progress
       intro event
       rw [base]
       exact reset_observed_actor_done sample.before roll choices event
+
+/-- The first owned receive of a checked fresh visit publishes the exact
+projected continuation, composes with ordered delivery, and retains at most one
+usable authority. Sender publication is not a premise. The carrier supplies
+run isolation and replay exclusion; the three-byte envelope has no visit tag. -/
+theorem source_checked_reentry_receipt_preserves_unique_authority
+    {sample : ActorReentryCommitObservation} {image : RustDescriptorImage} {choreo : Choreo}
+    {wire : OwnedWireObservation} {session : Nat} {roll : DecodedRollRow}
+    {step : ActorCommitObservation} {facts : OwnedCommitFacts}
+    (checked : sample.ownedCheck image choreo wire session = true)
+    (prepared : sample.prepared? image choreo = some (roll, step))
+    (decoded : step.ownedFacts? image choreo = some facts)
+    (receiving : facts.side = .receive)
+    {carrier : CarrierSemantics}
+    {abstraction : carrier.State → TransportBoundaryState} {Fairness : Prop}
+    (profile : CarrierProfile.ordered.Holds carrier abstraction Fairness)
+    {current offered committed : carrier.State} {frame : TransportFrame}
+    {before : TransportState}
+    {state : EndpointTransfer.Observation (Nat × Nat × Nat × Nat) TransportFrame}
+    {rest : List TransportFrame} (initialView : Nat × Nat × Nat × Nat)
+    (execution : EndpointTransfer.Execution (EndpointTransfer.initial initialView) state)
+    (currentExact : abstraction current = .idle before) (wellFormed : before.WellFormed)
+    (received : carrier.pollReceive current = .delivered frame offered)
+    (resolved : carrier.resolve offered .commit = some committed)
+    (identity : wire.identifies frame) (queued : state.inFlight = frame :: rest) :
+    sample.SourceOrdered image choreo ∧
+      step.before.actor = sample.before.actor ∧ step.before.run = sample.before.run ∧
+      step.before.views = sample.before.views ∧
+      step.after.actor = facts.binding.receiverActor ∧
+      ∃ next after, EndpointTransfer.Step .receive state next ∧ next.usable.length ≤ 1 ∧
+        next.usable = (step.after.actor, facts.afterView.header) :: state.usable ∧
+        abstraction committed = .idle after ∧ before.delivered < after.delivered := by
+  have owned : step.ownedCheck image choreo wire session = true := by
+    simpa only [ActorReentryCommitObservation.ownedCheck, prepared] using checked
+  obtain ⟨_, _, _, next, after, transition, unique, value, carrierAt, advances, _⟩ :=
+    source_checked_carrier_receive_preserves_unique_authority owned decoded receiving profile
+      initialView execution currentExact wellFormed received resolved identity queued
+  obtain ⟨sameActor, sameRun, sameViews⟩ := prepared_body_reentry_preserves_value_identity prepared
+  exact ⟨accepted_body_reentry_restores_source_progress
+    (accepted_owned_body_reentry_also_checks_source_reset checked), sameActor, sameRun,
+    sameViews, (checked_owned_receive_publishes_its_projected_actor owned decoded receiving),
+    next, after, transition, unique, value, carrierAt, advances⟩
 
 end Hibana

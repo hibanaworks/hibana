@@ -988,6 +988,20 @@ Hibana.abort_peer_is_well_formed : ∀ (state : Hibana.TransportState), state.ab
                           (@Prod.mk.{0, 0} Nat Hibana.EndpointDelegation.Binding event binding))
                   run.bindings)
                 (@some.{0} (List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)) selected.bindings)))
+@Hibana.accepted_owned_body_reentry_also_checks_source_reset : ∀ {sample : Hibana.ActorReentryCommitObservation}
+  {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo} {wire : Hibana.OwnedWireObservation} {session : Nat},
+  @Eq.{1} Bool (sample.ownedCheck image choreo wire session) true → @Eq.{1} Bool (sample.check image choreo) true
+@Hibana.accepted_owned_body_reentry_has_checked_owned_step : ∀ {sample : Hibana.ActorReentryCommitObservation}
+  {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo} {wire : Hibana.OwnedWireObservation} {session : Nat},
+  @Eq.{1} Bool (sample.ownedCheck image choreo wire session) true →
+    @Exists.{1} Hibana.DecodedRollRow fun roll =>
+      @Exists.{1} Hibana.ActorCommitObservation fun step =>
+        And
+          (@Eq.{1} (Option.{0} (Prod.{0, 0} Hibana.DecodedRollRow Hibana.ActorCommitObservation))
+            (sample.prepared? image choreo)
+            (@some.{0} (Prod.{0, 0} Hibana.DecodedRollRow Hibana.ActorCommitObservation)
+              (@Prod.mk.{0, 0} Hibana.DecodedRollRow Hibana.ActorCommitObservation roll step)))
+          (@Eq.{1} Bool (step.ownedCheck image choreo wire session) true)
 @Hibana.accepted_owned_commit_binds_source_view_and_wire : ∀ {sample : Hibana.ActorCommitObservation}
   {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo} {wire : Hibana.OwnedWireObservation} {session : Nat},
   @Eq.{1} Bool (sample.ownedCheck image choreo wire session) true →
@@ -4963,6 +4977,15 @@ Hibana.poisoned_public_operation_remains_faulted : ∀ (edge : Hibana.PublicOper
     @Eq.{1} (Option.{0} Hibana.TransportBoundaryState) (offered.resolve Hibana.ReceiptResolution.requeue)
         (@some.{0} Hibana.TransportBoundaryState restored) →
       @Eq.{1} Hibana.TransportBoundaryState restored current
+@Hibana.prepared_body_reentry_preserves_value_identity : ∀ {sample : Hibana.ActorReentryCommitObservation}
+  {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo} {roll : Hibana.DecodedRollRow}
+  {step : Hibana.ActorCommitObservation},
+  @Eq.{1} (Option.{0} (Prod.{0, 0} Hibana.DecodedRollRow Hibana.ActorCommitObservation)) (sample.prepared? image choreo)
+      (@some.{0} (Prod.{0, 0} Hibana.DecodedRollRow Hibana.ActorCommitObservation)
+        (@Prod.mk.{0, 0} Hibana.DecodedRollRow Hibana.ActorCommitObservation roll step)) →
+    And (@Eq.{1} Nat step.before.actor sample.before.actor)
+      (And (@Eq.{1} Nat step.before.run sample.before.run)
+        (@Eq.{1} (List.{0} Hibana.ActorViewObservation) step.before.views sample.before.views))
 @Hibana.prepared_kernel_commit_has_accepted_transition_certificate : ∀ {kernel : Hibana.PreparedKernelSemantics}
   {session roleCount : Nat} {choreo : Hibana.Choreo},
   Hibana.PreparedKernelRefinement kernel session roleCount choreo →
@@ -6948,6 +6971,86 @@ Hibana.sequential_input_guards_both_parallel_arms : ∀ (entry split exit left r
                                                                       (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))
                                                                       sample.after.actor facts.afterView.header)
                                                                     final))))))
+@Hibana.source_checked_reentry_receipt_preserves_unique_authority : ∀ {sample : Hibana.ActorReentryCommitObservation}
+  {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo} {wire : Hibana.OwnedWireObservation} {session : Nat}
+  {roll : Hibana.DecodedRollRow} {step : Hibana.ActorCommitObservation} {facts : Hibana.OwnedCommitFacts},
+  @Eq.{1} Bool (sample.ownedCheck image choreo wire session) true →
+    @Eq.{1} (Option.{0} (Prod.{0, 0} Hibana.DecodedRollRow Hibana.ActorCommitObservation))
+        (sample.prepared? image choreo)
+        (@some.{0} (Prod.{0, 0} Hibana.DecodedRollRow Hibana.ActorCommitObservation)
+          (@Prod.mk.{0, 0} Hibana.DecodedRollRow Hibana.ActorCommitObservation roll step)) →
+      @Eq.{1} (Option.{0} Hibana.OwnedCommitFacts) (step.ownedFacts? image choreo)
+          (@some.{0} Hibana.OwnedCommitFacts facts) →
+        @Eq.{1} Hibana.EndpointDelegation.Side facts.side Hibana.EndpointDelegation.Side.receive →
+          ∀ {carrier : Hibana.CarrierSemantics} {abstraction : carrier.State → Hibana.TransportBoundaryState}
+            {Fairness : Prop},
+            Hibana.CarrierProfile.ordered.Holds carrier abstraction Fairness →
+              ∀ {current offered committed : carrier.State} {frame : Hibana.TransportFrame}
+                {before : Hibana.TransportState}
+                {state :
+                  Hibana.EndpointTransfer.Observation (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)))
+                    Hibana.TransportFrame}
+                {rest : List.{0} Hibana.TransportFrame}
+                (initialView : Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))),
+                @Hibana.EndpointTransfer.Execution (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)))
+                    Hibana.TransportFrame
+                    (@Hibana.EndpointTransfer.initial (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)))
+                      Hibana.TransportFrame initialView)
+                    state →
+                  @Eq.{1} Hibana.TransportBoundaryState (abstraction current)
+                      (Hibana.TransportBoundaryState.idle before) →
+                    before.WellFormed →
+                      @Eq.{1} (Hibana.CarrierPoll carrier.State) (carrier.pollReceive current)
+                          (@Hibana.CarrierPoll.delivered carrier.State frame offered) →
+                        @Eq.{1} (Option.{0} carrier.State) (carrier.resolve offered Hibana.ReceiptResolution.commit)
+                            (@some.{0} carrier.State committed) →
+                          wire.identifies frame →
+                            @Eq.{1} (List.{0} Hibana.TransportFrame)
+                                (@Hibana.EndpointTransfer.Observation.inFlight
+                                  (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) Hibana.TransportFrame state)
+                                (@List.cons.{0} Hibana.TransportFrame frame rest) →
+                              And (sample.SourceOrdered image choreo)
+                                (And (@Eq.{1} Nat step.before.actor sample.before.actor)
+                                  (And (@Eq.{1} Nat step.before.run sample.before.run)
+                                    (And
+                                      (@Eq.{1} (List.{0} Hibana.ActorViewObservation) step.before.views
+                                        sample.before.views)
+                                      (And (@Eq.{1} Nat step.after.actor facts.binding.receiverActor)
+                                        (@Exists.{1}
+                                          (Hibana.EndpointTransfer.Observation
+                                            (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)))
+                                            Hibana.TransportFrame)
+                                          fun next =>
+                                          @Exists.{1} Hibana.TransportState fun after =>
+                                            And
+                                              (@Hibana.EndpointTransfer.Step
+                                                (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)))
+                                                Hibana.TransportFrame Hibana.EndpointTransfer.Action.receive state next)
+                                              (And
+                                                (@LE.le.{0} Nat instLENat
+                                                  (@List.length.{0}
+                                                    (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)))
+                                                    (@Hibana.EndpointTransfer.Observation.usable
+                                                      (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)))
+                                                      Hibana.TransportFrame next))
+                                                  (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1))))
+                                                (And
+                                                  (@Eq.{1}
+                                                    (List.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))))
+                                                    (@Hibana.EndpointTransfer.Observation.usable
+                                                      (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)))
+                                                      Hibana.TransportFrame next)
+                                                    (@List.cons.{0}
+                                                      (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)))
+                                                      (@Prod.mk.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))
+                                                        step.after.actor facts.afterView.header)
+                                                      (@Hibana.EndpointTransfer.Observation.usable
+                                                        (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)))
+                                                        Hibana.TransportFrame state)))
+                                                  (And
+                                                    (@Eq.{1} Hibana.TransportBoundaryState (abstraction committed)
+                                                      (Hibana.TransportBoundaryState.idle after))
+                                                    (@LT.lt.{0} Nat instLTNat before.delivered after.delivered)))))))))
 @Hibana.source_checked_send_keeps_the_exact_frame_until_receive_or_fence : ∀ {sample : Hibana.ActorCommitObservation}
   {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo} {wire : Hibana.OwnedWireObservation} {session : Nat}
   {facts : Hibana.OwnedCommitFacts},

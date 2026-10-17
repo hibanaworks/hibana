@@ -96,6 +96,16 @@ The temporary operation phase belongs to the actor's I/O state, rather than the
 Endpoint value, and remains checked separately. The actual custody observations
 show an unchanged value identity while its view changes to `SendPayload`.
 
+`ActorReentryCommitObservation.ownedCheck` applies the owned wire check to the
+same derived reset base as the first operation of a fresh visit. The general
+composition preserves the pre-reset value tags and borrow phases, checks the
+actual continuation envelope, and publishes at most one receiver authority
+under the ordered carrier profile. The parallel reentry observations bind both
+ends to the actual copied frame while preserving completed independent work.
+They reject a different resource payload, sender or session. This envelope has
+no visit tag: FIFO, replay exclusion and run isolation still come from the
+carrier. General fresh-visit availability and distributed progress remain open.
+
 Schema equality means equality of the canonical wire contract identified by
 `SCHEMA_ID`; it does not prove cross-binary Rust nominal type equality.
 

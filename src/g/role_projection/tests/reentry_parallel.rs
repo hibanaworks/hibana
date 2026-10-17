@@ -50,7 +50,7 @@ fn parallel_loan_reentry_preserves_the_other_body_and_completed_tail() {
                 .unwrap();
             let worker_rv = worker_storage
                 .init()
-                .rendezvous(&mut worker_slab, network)
+                .rendezvous(&mut worker_slab, network.clone())
                 .unwrap();
             let sid = SessionId::new(875);
             let mut owner = owner_rv.enter(sid, &owner_program).unwrap();
@@ -59,7 +59,7 @@ fn parallel_loan_reentry_preserves_the_other_body_and_completed_tail() {
             let mut worker = worker_rv.enter(sid, &worker_program).unwrap();
             let mut db_service = worker_rv.enter(sid, &db_service_program).unwrap();
             let mut auth_service = worker_rv.enter(sid, &auth_service_program).unwrap();
-            let (owner_commit, worker_commit, (), ()) =
+            let ((owner_before, owner_after, wire), worker_commit, (), ()) =
                 tokio::time::timeout(Duration::from_secs(30), async {
                     tokio::join!(
                         async {
@@ -73,9 +73,12 @@ fn parallel_loan_reentry_preserves_the_other_body_and_completed_tail() {
                             owner.send::<Loan>(db).await.unwrap();
                             // SAFETY: sending preserves the actor's TestTransport type.
                             let after = unsafe { actor_snapshot(&owner) };
+                            // Copy the actual new-visit frame before WORKER can
+                            // consume it on this current-thread executor.
+                            let wire = network.queued_frame(1);
                             drop(owner.recv::<Loan>().await.unwrap());
                             drop(auth);
-                            (before, after)
+                            (before, after, wire)
                         },
                         async {
                             let mut db = worker.recv::<Loan>().await.unwrap();
@@ -119,7 +122,7 @@ fn parallel_loan_reentry_preserves_the_other_body_and_completed_tail() {
                 })
                 .await
                 .expect("parallel loan reentry stopped progressing");
-            let observations = [owner_commit, worker_commit];
+            let observations = [(owner_before, owner_after), worker_commit];
             for ((before, after), image) in observations.iter().zip([
                 &RoleProjection::<0, Steps, 32>::IMAGE_REF,
                 &RoleProjection::<1, Steps, 32>::IMAGE_REF,
@@ -149,12 +152,17 @@ fn parallel_loan_reentry_preserves_the_other_body_and_completed_tail() {
                     == (!(first..stop).contains(&index) || index == event)));
             }
             #[cfg(not(miri))]
-            write_observations(&observations);
+            write_observations(&observations, &wire);
+            #[cfg(miri)]
+            assert_eq!(wire.1[0], 10);
         });
 }
 
 #[cfg(not(miri))]
-fn write_observations(observations: &[(ActorSnapshot, ActorSnapshot)]) {
+fn write_observations(
+    observations: &[(ActorSnapshot, ActorSnapshot)],
+    wire: &(crate::transport::FrameHeader, std::vec::Vec<u8>),
+) {
     use crate::test_support::{lean_choreo::LeanChoreo, lean_descriptor::descriptor_source};
     let images = [
         &RoleProjection::<0, Steps, 32>::IMAGE_REF,
@@ -165,6 +173,16 @@ fn write_observations(observations: &[(ActorSnapshot, ActorSnapshot)]) {
          def parallelReentryChoreo : Hibana.Choreo := {}\n\n",
         Steps::lean_source(),
     );
+    source.push_str(&std::format!(
+        "def parallelReentryWire : Hibana.OwnedWireObservation := {{ session := {}, lane := {}, \
+         sender := {}, receiver := {}, frameLabel := {}, payload := {:?} }}\n\n",
+        wire.0.session().raw(),
+        wire.0.lane(),
+        wire.0.source_role(),
+        wire.0.target_role(),
+        wire.0.label().raw(),
+        wire.1,
+    ));
     for ((before, after), image) in observations.iter().zip(images) {
         let actor = before.actor;
         assert_eq!(image.role(), actor);
@@ -220,7 +238,60 @@ fn write_observations(observations: &[(ActorSnapshot, ActorSnapshot)]) {
             super::commit::observation_source(before),
             super::commit::observation_source(after),
         ));
+        source.push_str(&std::format!(
+            r#"
+def {name}Prepared : Hibana.DecodedRollRow × Hibana.ActorCommitObservation :=
+  ({name}.prepared? parallelReentryImage{actor} parallelReentryChoreo).get (by decide)
+
+theorem {name}OwnedAccepted :
+    {name}.ownedCheck parallelReentryImage{actor} parallelReentryChoreo parallelReentryWire {session} = true := by decide
+theorem {name}PreparedOwned :
+    {name}Prepared.2.ownedCheck parallelReentryImage{actor} parallelReentryChoreo parallelReentryWire {session} = true := by decide
+theorem {name}ValueTagsSurviveReset :
+    {name}Prepared.2.before.actor = {name}.before.actor ∧
+      {name}Prepared.2.before.run = {name}.before.run ∧
+      {name}Prepared.2.before.views = {name}.before.views :=
+  Hibana.prepared_body_reentry_preserves_value_identity
+    ((Option.some_get (x := {name}.prepared? parallelReentryImage{actor} parallelReentryChoreo) (by decide)).symm)
+theorem {name}WrongEnvelopeRejected :
+    {name}.ownedCheck parallelReentryImage{actor} parallelReentryChoreo
+      ({{ parallelReentryWire with payload := 11 :: parallelReentryWire.payload.drop 1 }}) {session} = false := by decide
+theorem {name}WrongSenderRejected :
+    {name}.ownedCheck parallelReentryImage{actor} parallelReentryChoreo
+      ({{ parallelReentryWire with sender := parallelReentryWire.sender + 1 }}) {session} = false := by decide
+theorem {name}WrongSessionRejected :
+    {name}.ownedCheck parallelReentryImage{actor} parallelReentryChoreo
+      ({{ parallelReentryWire with session := parallelReentryWire.session + 1 }}) {session} = false := by decide
+
+"#,
+            session = wire.0.session().raw(),
+        ));
     }
+    source.push_str(
+        r#"
+def parallelReentrySendFacts : Hibana.OwnedCommitFacts :=
+  (parallelReentryActor0Prepared.2.ownedFacts? parallelReentryImage0 parallelReentryChoreo).get (by decide)
+def parallelReentryRecvFacts : Hibana.OwnedCommitFacts :=
+  (parallelReentryActor1Prepared.2.ownedFacts? parallelReentryImage1 parallelReentryChoreo).get (by decide)
+
+theorem parallelReentryFrameNamesTheSameContinuation :
+    parallelReentrySendFacts.resource = parallelReentryRecvFacts.resource ∧
+      parallelReentrySendFacts.effIndex = parallelReentryRecvFacts.effIndex :=
+  Hibana.checked_owned_frame_has_the_same_source_at_send_and_receive
+    parallelReentryActor0PreparedOwned parallelReentryActor1PreparedOwned
+    ((Option.some_get (x := parallelReentryActor0Prepared.2.ownedFacts? parallelReentryImage0 parallelReentryChoreo) (by decide)).symm)
+    ((Option.some_get (x := parallelReentryActor1Prepared.2.ownedFacts? parallelReentryImage1 parallelReentryChoreo) (by decide)).symm)
+    rfl
+
+theorem parallelReentryReceiverPublishesItsActualActor :
+    parallelReentryActor1Prepared.2.after.actor = parallelReentryRecvFacts.binding.receiverActor :=
+  Hibana.checked_owned_receive_publishes_its_projected_actor
+    parallelReentryActor1PreparedOwned
+    ((Option.some_get (x := parallelReentryActor1Prepared.2.ownedFacts? parallelReentryImage1 parallelReentryChoreo) (by decide)).symm)
+    (by decide)
+
+"#,
+    );
     let directory = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/lean-proof");
     std::fs::create_dir_all(&directory).unwrap();
     std::fs::write(directory.join("ActorParallelReentryGenerated.lean"), source).unwrap();
