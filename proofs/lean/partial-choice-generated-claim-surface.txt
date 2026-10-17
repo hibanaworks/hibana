@@ -1,0 +1,183 @@
+ownedPartialChoiceActorOrderMatchesSource : ownedPartialChoiceImage.actorOrderCheck ownedPartialChoiceChoreo = true
+ownedPartialChoiceActorRoutesMatchSource : ownedPartialChoiceImage.actorRouteCheck ownedPartialChoiceChoreo = true
+ownedPartialChoiceActorRowsMatchSource : ownedPartialChoiceImage.actorRowsCheck ownedPartialChoiceChoreo = true
+ownedPartialChoiceActorsAgreeWithRust : List.map
+    (fun choices =>
+      ownedPartialChoiceColumns.selectedActor?
+        (fun scope => if (scope == 0) = true then choices.fst else if (scope == 1) = true then choices.snd else none)
+        257)
+    ownedPartialChoiceInputs =
+  ownedPartialChoiceRustActors
+ownedPartialChoiceClearedTagRejected : Hibana.decodeProgramColumns? (ownedPartialChoiceHeader.set 1 0)
+    ownedPartialChoiceBytes =
+  none
+ownedPartialChoiceDecoded : Hibana.decodeProgramColumns? ownedPartialChoiceHeader ownedPartialChoiceBytes =
+  some ownedPartialChoiceColumns
+ownedPartialChoiceOddIssuerTailRejected : Hibana.decodeProgramColumns? ((ownedPartialChoiceHeader.set 6 232).set 7 0)
+    (List.take 232 ownedPartialChoiceBytes) =
+  none
+ownedPartialChoiceOversizedDecisionsRejected : Hibana.decodeProgramColumns? ownedPartialChoiceHeader
+    ((ownedPartialChoiceBytes.set 133 255).set 134 255) =
+  none
+ownedPartialChoiceSourceOwnershipMatches : ownedPartialChoiceImage.ownershipCheck ownedPartialChoiceChoreo = true
+ownedPartialChoiceSwappedChoiceActorsRejected : (have __src := ownedPartialChoiceImage;
+      { roleCount := __src.roleCount, role := __src.role, logicalLaneCount := __src.logicalLaneCount,
+        activeLaneCount := __src.activeLaneCount, endpointLaneSlotCount := __src.endpointLaneSlotCount,
+        maxRouteCommitCount := __src.maxRouteCommitCount, firstActiveLane := __src.firstActiveLane,
+        activeLaneStart := __src.activeLaneStart, activeLaneLength := __src.activeLaneLength,
+        atomCount := __src.atomCount, routeResolverCount := __src.routeResolverCount,
+        routeParticipantCount := __src.routeParticipantCount, scopeMarkerCount := __src.scopeMarkerCount,
+        eventCount := __src.eventCount, dependencyRowCount := __src.dependencyRowCount,
+        conflictRowCount := __src.conflictRowCount, routeScopeCount := __src.routeScopeCount,
+        residentBoundaryCount := __src.residentBoundaryCount, laneBitCount := __src.laneBitCount,
+        routeArmLaneStepCount := __src.routeArmLaneStepCount, routeCommitRowCount := __src.routeCommitRowCount,
+        rollScopeCount := __src.rollScopeCount, programColumnBytes := __src.programColumnBytes,
+        programBytes := (((ownedPartialChoiceBytes.set 221 2).set 222 0).set 223 1).set 224 0,
+        roleBytes := __src.roleBytes }).ownershipCheck
+    ownedPartialChoiceChoreo =
+  false
+ownedPartialChoiceTruncatedHeaderRejected : Hibana.decodeProgramColumns? (List.take 7 ownedPartialChoiceHeader)
+    ownedPartialChoiceBytes =
+  none
+ownedPartialChoiceUnqualifiedTopologyRejected : ownedPartialChoiceImage.check = false
+ownedPartialChoiceWrongActorBindingRejected : (have __src := ownedPartialChoiceImage;
+      { roleCount := __src.roleCount, role := __src.role, logicalLaneCount := __src.logicalLaneCount,
+        activeLaneCount := __src.activeLaneCount, endpointLaneSlotCount := __src.endpointLaneSlotCount,
+        maxRouteCommitCount := __src.maxRouteCommitCount, firstActiveLane := __src.firstActiveLane,
+        activeLaneStart := __src.activeLaneStart, activeLaneLength := __src.activeLaneLength,
+        atomCount := __src.atomCount, routeResolverCount := __src.routeResolverCount,
+        routeParticipantCount := __src.routeParticipantCount, scopeMarkerCount := __src.scopeMarkerCount,
+        eventCount := __src.eventCount, dependencyRowCount := __src.dependencyRowCount,
+        conflictRowCount := __src.conflictRowCount, routeScopeCount := __src.routeScopeCount,
+        residentBoundaryCount := __src.residentBoundaryCount, laneBitCount := __src.laneBitCount,
+        routeArmLaneStepCount := __src.routeArmLaneStepCount, routeCommitRowCount := __src.routeCommitRowCount,
+        rollScopeCount := __src.rollScopeCount, programColumnBytes := __src.programColumnBytes,
+        programBytes := ownedPartialChoiceBytes.set 175 1, roleBytes := __src.roleBytes }).ownershipCheck
+    ownedPartialChoiceChoreo =
+  false
+ownedPartialChoiceWrongInitialIssuerRejected : (have __src := ownedPartialChoiceImage;
+      { roleCount := __src.roleCount, role := __src.role, logicalLaneCount := __src.logicalLaneCount,
+        activeLaneCount := __src.activeLaneCount, endpointLaneSlotCount := __src.endpointLaneSlotCount,
+        maxRouteCommitCount := __src.maxRouteCommitCount, firstActiveLane := __src.firstActiveLane,
+        activeLaneStart := __src.activeLaneStart, activeLaneLength := __src.activeLaneLength,
+        atomCount := __src.atomCount, routeResolverCount := __src.routeResolverCount,
+        routeParticipantCount := __src.routeParticipantCount, scopeMarkerCount := __src.scopeMarkerCount,
+        eventCount := __src.eventCount, dependencyRowCount := __src.dependencyRowCount,
+        conflictRowCount := __src.conflictRowCount, routeScopeCount := __src.routeScopeCount,
+        residentBoundaryCount := __src.residentBoundaryCount, laneBitCount := __src.laneBitCount,
+        routeArmLaneStepCount := __src.routeArmLaneStepCount, routeCommitRowCount := __src.routeCommitRowCount,
+        rollScopeCount := __src.rollScopeCount, programColumnBytes := __src.programColumnBytes,
+        programBytes := ownedPartialChoiceBytes.set 232 1, roleBytes := __src.roleBytes }).ownershipCheck
+    ownedPartialChoiceChoreo =
+  false
+ownedPartialChoiceWrongLengthRejected : Hibana.decodeProgramColumns? (ownedPartialChoiceHeader.set 6 232)
+    ownedPartialChoiceBytes =
+  none
+ownedPartialFirstRowsActorOrderMatchesSource : ownedPartialFirstRowsImage.actorOrderCheck ownedPartialFirstRowsChoreo =
+  true
+ownedPartialFirstRowsActorRoutesMatchSource : ownedPartialFirstRowsImage.actorRouteCheck ownedPartialFirstRowsChoreo =
+  true
+ownedPartialFirstRowsActorRowsMatchSource : ownedPartialFirstRowsImage.actorRowsCheck ownedPartialFirstRowsChoreo = true
+ownedPartialFirstRowsInvalidDirectionRejected : (have __src := ownedPartialFirstRowsImage;
+      { roleCount := __src.roleCount, role := __src.role, logicalLaneCount := __src.logicalLaneCount,
+        activeLaneCount := __src.activeLaneCount, endpointLaneSlotCount := __src.endpointLaneSlotCount,
+        maxRouteCommitCount := __src.maxRouteCommitCount, firstActiveLane := __src.firstActiveLane,
+        activeLaneStart := __src.activeLaneStart, activeLaneLength := __src.activeLaneLength,
+        atomCount := __src.atomCount, routeResolverCount := __src.routeResolverCount,
+        routeParticipantCount := __src.routeParticipantCount, scopeMarkerCount := __src.scopeMarkerCount,
+        eventCount := __src.eventCount, dependencyRowCount := __src.dependencyRowCount,
+        conflictRowCount := __src.conflictRowCount, routeScopeCount := __src.routeScopeCount,
+        residentBoundaryCount := __src.residentBoundaryCount, laneBitCount := __src.laneBitCount,
+        routeArmLaneStepCount := __src.routeArmLaneStepCount, routeCommitRowCount := __src.routeCommitRowCount,
+        rollScopeCount := __src.rollScopeCount, programColumnBytes := __src.programColumnBytes,
+        programBytes := __src.programBytes, roleBytes := ownedPartialFirstRowsImage.roleBytes.set 9 6 }).actorRowsCheck
+    ownedPartialFirstRowsChoreo =
+  false
+ownedPartialFirstRowsMissingOperationsRejected : (have __src := ownedPartialFirstRowsImage;
+      { roleCount := __src.roleCount, role := __src.role, logicalLaneCount := __src.logicalLaneCount,
+        activeLaneCount := __src.activeLaneCount, endpointLaneSlotCount := __src.endpointLaneSlotCount,
+        maxRouteCommitCount := __src.maxRouteCommitCount, firstActiveLane := __src.firstActiveLane,
+        activeLaneStart := __src.activeLaneStart, activeLaneLength := __src.activeLaneLength,
+        atomCount := __src.atomCount, routeResolverCount := __src.routeResolverCount,
+        routeParticipantCount := __src.routeParticipantCount, scopeMarkerCount := __src.scopeMarkerCount,
+        eventCount := 0, dependencyRowCount := __src.dependencyRowCount, conflictRowCount := __src.conflictRowCount,
+        routeScopeCount := __src.routeScopeCount, residentBoundaryCount := __src.residentBoundaryCount,
+        laneBitCount := __src.laneBitCount, routeArmLaneStepCount := __src.routeArmLaneStepCount,
+        routeCommitRowCount := __src.routeCommitRowCount, rollScopeCount := __src.rollScopeCount,
+        programColumnBytes := __src.programColumnBytes, programBytes := __src.programBytes,
+        roleBytes := __src.roleBytes }).actorRowsCheck
+    ownedPartialFirstRowsChoreo =
+  false
+ownedPartialSecondRowsActorOrderMatchesSource : ownedPartialSecondRowsImage.actorOrderCheck
+    ownedPartialSecondRowsChoreo =
+  true
+ownedPartialSecondRowsActorRoutesMatchSource : ownedPartialSecondRowsImage.actorRouteCheck
+    ownedPartialSecondRowsChoreo =
+  true
+ownedPartialSecondRowsActorRowsMatchSource : ownedPartialSecondRowsImage.actorRowsCheck ownedPartialSecondRowsChoreo =
+  true
+ownedPartialSecondRowsInvalidDirectionRejected : (have __src := ownedPartialSecondRowsImage;
+      { roleCount := __src.roleCount, role := __src.role, logicalLaneCount := __src.logicalLaneCount,
+        activeLaneCount := __src.activeLaneCount, endpointLaneSlotCount := __src.endpointLaneSlotCount,
+        maxRouteCommitCount := __src.maxRouteCommitCount, firstActiveLane := __src.firstActiveLane,
+        activeLaneStart := __src.activeLaneStart, activeLaneLength := __src.activeLaneLength,
+        atomCount := __src.atomCount, routeResolverCount := __src.routeResolverCount,
+        routeParticipantCount := __src.routeParticipantCount, scopeMarkerCount := __src.scopeMarkerCount,
+        eventCount := __src.eventCount, dependencyRowCount := __src.dependencyRowCount,
+        conflictRowCount := __src.conflictRowCount, routeScopeCount := __src.routeScopeCount,
+        residentBoundaryCount := __src.residentBoundaryCount, laneBitCount := __src.laneBitCount,
+        routeArmLaneStepCount := __src.routeArmLaneStepCount, routeCommitRowCount := __src.routeCommitRowCount,
+        rollScopeCount := __src.rollScopeCount, programColumnBytes := __src.programColumnBytes,
+        programBytes := __src.programBytes, roleBytes := ownedPartialSecondRowsImage.roleBytes.set 9 6 }).actorRowsCheck
+    ownedPartialSecondRowsChoreo =
+  false
+ownedPartialSecondRowsMissingOperationsRejected : (have __src := ownedPartialSecondRowsImage;
+      { roleCount := __src.roleCount, role := __src.role, logicalLaneCount := __src.logicalLaneCount,
+        activeLaneCount := __src.activeLaneCount, endpointLaneSlotCount := __src.endpointLaneSlotCount,
+        maxRouteCommitCount := __src.maxRouteCommitCount, firstActiveLane := __src.firstActiveLane,
+        activeLaneStart := __src.activeLaneStart, activeLaneLength := __src.activeLaneLength,
+        atomCount := __src.atomCount, routeResolverCount := __src.routeResolverCount,
+        routeParticipantCount := __src.routeParticipantCount, scopeMarkerCount := __src.scopeMarkerCount,
+        eventCount := 0, dependencyRowCount := __src.dependencyRowCount, conflictRowCount := __src.conflictRowCount,
+        routeScopeCount := __src.routeScopeCount, residentBoundaryCount := __src.residentBoundaryCount,
+        laneBitCount := __src.laneBitCount, routeArmLaneStepCount := __src.routeArmLaneStepCount,
+        routeCommitRowCount := __src.routeCommitRowCount, rollScopeCount := __src.rollScopeCount,
+        programColumnBytes := __src.programColumnBytes, programBytes := __src.programBytes,
+        roleBytes := __src.roleBytes }).actorRowsCheck
+    ownedPartialSecondRowsChoreo =
+  false
+ownedPartialThirdRowsActorOrderMatchesSource : ownedPartialThirdRowsImage.actorOrderCheck ownedPartialThirdRowsChoreo =
+  true
+ownedPartialThirdRowsActorRoutesMatchSource : ownedPartialThirdRowsImage.actorRouteCheck ownedPartialThirdRowsChoreo =
+  true
+ownedPartialThirdRowsActorRowsMatchSource : ownedPartialThirdRowsImage.actorRowsCheck ownedPartialThirdRowsChoreo = true
+ownedPartialThirdRowsInvalidDirectionRejected : (have __src := ownedPartialThirdRowsImage;
+      { roleCount := __src.roleCount, role := __src.role, logicalLaneCount := __src.logicalLaneCount,
+        activeLaneCount := __src.activeLaneCount, endpointLaneSlotCount := __src.endpointLaneSlotCount,
+        maxRouteCommitCount := __src.maxRouteCommitCount, firstActiveLane := __src.firstActiveLane,
+        activeLaneStart := __src.activeLaneStart, activeLaneLength := __src.activeLaneLength,
+        atomCount := __src.atomCount, routeResolverCount := __src.routeResolverCount,
+        routeParticipantCount := __src.routeParticipantCount, scopeMarkerCount := __src.scopeMarkerCount,
+        eventCount := __src.eventCount, dependencyRowCount := __src.dependencyRowCount,
+        conflictRowCount := __src.conflictRowCount, routeScopeCount := __src.routeScopeCount,
+        residentBoundaryCount := __src.residentBoundaryCount, laneBitCount := __src.laneBitCount,
+        routeArmLaneStepCount := __src.routeArmLaneStepCount, routeCommitRowCount := __src.routeCommitRowCount,
+        rollScopeCount := __src.rollScopeCount, programColumnBytes := __src.programColumnBytes,
+        programBytes := __src.programBytes, roleBytes := ownedPartialThirdRowsImage.roleBytes.set 9 6 }).actorRowsCheck
+    ownedPartialThirdRowsChoreo =
+  false
+ownedPartialThirdRowsMissingOperationsRejected : (have __src := ownedPartialThirdRowsImage;
+      { roleCount := __src.roleCount, role := __src.role, logicalLaneCount := __src.logicalLaneCount,
+        activeLaneCount := __src.activeLaneCount, endpointLaneSlotCount := __src.endpointLaneSlotCount,
+        maxRouteCommitCount := __src.maxRouteCommitCount, firstActiveLane := __src.firstActiveLane,
+        activeLaneStart := __src.activeLaneStart, activeLaneLength := __src.activeLaneLength,
+        atomCount := __src.atomCount, routeResolverCount := __src.routeResolverCount,
+        routeParticipantCount := __src.routeParticipantCount, scopeMarkerCount := __src.scopeMarkerCount,
+        eventCount := 0, dependencyRowCount := __src.dependencyRowCount, conflictRowCount := __src.conflictRowCount,
+        routeScopeCount := __src.routeScopeCount, residentBoundaryCount := __src.residentBoundaryCount,
+        laneBitCount := __src.laneBitCount, routeArmLaneStepCount := __src.routeArmLaneStepCount,
+        routeCommitRowCount := __src.routeCommitRowCount, rollScopeCount := __src.rollScopeCount,
+        programColumnBytes := __src.programColumnBytes, programBytes := __src.programBytes,
+        roleBytes := __src.roleBytes }).actorRowsCheck
+    ownedPartialThirdRowsChoreo =
+  false

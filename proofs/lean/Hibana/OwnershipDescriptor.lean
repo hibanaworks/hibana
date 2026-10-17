@@ -69,6 +69,50 @@ theorem unknown_actor_choice_does_not_authorize_a_holder
   simp [DecodedProgramColumns.selectedActor?, selectActorWithBound,
     Nat.not_lt.mpr decision, rowAt, unknown]
 
+/-- Adding choice evidence within a visit cannot change an already known
+actor. This uses the same immutable decision rows and traversal bound. -/
+theorem known_actor_is_stable_under_choice_extension
+    {columns : DecodedProgramColumns} {known extended : Nat → Option RouteArm}
+    (extension : ∀ scope arm, known scope = some arm → extended scope = some arm)
+    {reference actor : Nat}
+    (found : columns.selectedActor? known reference = some actor) :
+    columns.selectedActor? extended reference = some actor := by
+  have stable : ∀ fuel reference actor,
+      selectActorWithBound columns.actorDecisions known fuel reference = some actor →
+      selectActorWithBound columns.actorDecisions extended fuel reference = some actor := by
+    intro fuel
+    induction fuel with
+    | zero => intro reference actor impossible; simp [selectActorWithBound] at impossible
+    | succ remaining ih =>
+        intro reference actor accepted
+        by_cases direct : reference < 256
+        · simpa only [selectActorWithBound, if_pos direct] using accepted
+        · cases rowAt : columns.actorDecisions[reference - 256]? with
+          | none => simp [selectActorWithBound, direct, rowAt] at accepted
+          | some row =>
+              cases armAt : known row.scope with
+              | none => simp [selectActorWithBound, direct, rowAt, armAt] at accepted
+              | some arm =>
+                  have agreed := extension row.scope arm armAt
+                  cases arm with
+                  | left =>
+                      by_cases lower : row.left < reference
+                      · have prior : selectActorWithBound columns.actorDecisions known
+                            remaining row.left = some actor := by
+                          simpa [selectActorWithBound, direct, rowAt, armAt, lower] using accepted
+                        have next := ih row.left actor prior
+                        simpa [selectActorWithBound, direct, rowAt, agreed, lower] using next
+                      · simp [selectActorWithBound, direct, rowAt, armAt, lower] at accepted
+                  | right =>
+                      by_cases lower : row.right < reference
+                      · have prior : selectActorWithBound columns.actorDecisions known
+                            remaining row.right = some actor := by
+                          simpa [selectActorWithBound, direct, rowAt, armAt, lower] using accepted
+                        have next := ih row.right actor prior
+                        simpa [selectActorWithBound, direct, rowAt, agreed, lower] using next
+                      · simp [selectActorWithBound, direct, rowAt, armAt, lower] at accepted
+  exact stable (columns.actorDecisions.length + 1) reference actor found
+
 private theorem actor_reference_valid_with_more_rows
     {roleCount before after reference : Nat}
     (valid : validActorReference roleCount before reference = true)
@@ -211,6 +255,29 @@ theorem matching_source_path_has_the_source_actors
       rcases pair with ⟨sender, receiver⟩
       exact ⟨sender, receiver, rfl, by simpa [bindingAt] using atBinding⟩
 
+/-- Every known partial result agrees with every source path extending that
+evidence. Unknown results grant no actor and require no current-holder map. -/
+theorem matching_source_path_binds_partially_known_actors
+    {columns : DecodedProgramColumns} {markers : List DecodedScopeMarker}
+    {path : EndpointDelegation.NormalizedPath} {known : Nat → Option RouteArm}
+    {event : Nat} {binding : EndpointDelegation.Binding}
+    (agrees : columns.sourcePathMatches markers path = true)
+    (extension : ∀ scope arm, known scope = some arm →
+      sourcePathArm? markers path scope = some arm)
+    (member : (event, binding) ∈ path.bindings) :
+    ∃ sender receiver, columns.actorBindings[event]? = some (sender, receiver) ∧
+      (∀ actor, columns.selectedActor? known sender = some actor → actor = binding.senderActor) ∧
+      (∀ actor, columns.selectedActor? known receiver = some actor → actor = binding.receiverActor) := by
+  obtain ⟨sender, receiver, bindingAt, sourceSender, sourceReceiver⟩ :=
+    matching_source_path_has_the_source_actors agrees member
+  refine ⟨sender, receiver, bindingAt, ?_, ?_⟩
+  · intro actor found
+    have stable := known_actor_is_stable_under_choice_extension extension found
+    exact Option.some.inj (stable.symm.trans sourceSender)
+  · intro actor found
+    have stable := known_actor_is_stable_under_choice_extension extension found
+    exact Option.some.inj (stable.symm.trans sourceReceiver)
+
 private def eraseGlobalLane (event : GlobalEvent) : GlobalEvent := { event with lane := 0 }
 
 private def ownershipColumnsMatch
@@ -301,6 +368,34 @@ theorem accepted_owned_program_binds_source_ownership
         fields.2.2.1, fields.2.2.2.1, fields.2.2.2.2, ?_, ?_⟩
       · exact of_decide_eq_true (by simpa using checked.1.2)
       · exact List.all_eq_true.mp checked.2.2
+
+/-- Exact owned bytes bind partially known actors to the original source on
+every compatible path. This is within one visit, not a rule for stale choices
+after a repeated-region reset or an ownership-transfer commit theorem. -/
+theorem accepted_owned_program_binds_partial_choice_evidence
+    {image : RustDescriptorImage} {choreo : Choreo}
+    (accepted : image.ownershipCheck choreo = true)
+    (owned : choreo.hasOwnedPayload = true) :
+    ∃ source normalized columns atoms markers,
+      choreo.ownershipSource? = some source ∧
+      EndpointDelegation.normalize source = some normalized ∧
+      image.decodeProgramColumns? = some columns ∧ image.decodeAtoms? = some atoms ∧
+      image.decodeScopeMarkers? = some markers ∧
+      ∀ path ∈ normalized.paths, ∀ known : Nat → Option RouteArm,
+        (∀ scope arm, known scope = some arm → sourcePathArm? markers path scope = some arm) →
+        ∀ event binding, (event, binding) ∈ path.bindings →
+          ∃ sender receiver, columns.actorBindings[event]? = some (sender, receiver) ∧
+            (∀ actor, columns.selectedActor? known sender = some actor →
+              actor = binding.senderActor) ∧
+            (∀ actor, columns.selectedActor? known receiver = some actor →
+              actor = binding.receiverActor) := by
+  obtain ⟨source, normalized, columns, atoms, markers,
+      sourceAt, normalizedAt, columnsAt, atomsAt, markersAt, _, paths⟩ :=
+    accepted_owned_program_binds_source_ownership accepted owned
+  refine ⟨source, normalized, columns, atoms, markers,
+    sourceAt, normalizedAt, columnsAt, atomsAt, markersAt, ?_⟩
+  intro path pathMember known extension event binding member
+  exact matching_source_path_binds_partially_known_actors (paths path pathMember) extension member
 
 /-- Immutable identity of one actor-local row. Its local event index and source
 occurrence are different coordinates; neither is a second progress cursor. -/

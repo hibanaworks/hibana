@@ -159,6 +159,75 @@ fn actor_certificate<const ROLE: u8, Steps: g::ProgramShape + LeanChoreo, const 
     )
 }
 
+fn partial_choice_certificate() -> String {
+    let mut source = String::from("import Hibana\n\nset_option maxRecDepth 10000\n\n");
+    source.push_str(&certificate::<partial_choice::Steps, 32>(
+        "ownedPartialChoice",
+    ));
+    let program = g::ProgramProjection::<partial_choice::Steps, 32>::PROGRAM_REF;
+    let [reference, _] = program
+        .actor_binding_at(program.columns.atom_count() - 2)
+        .unwrap();
+    let (outer_scope, [inner_reference, _]) = program
+        .actor_decision_at(usize::from(reference) - 256)
+        .unwrap();
+    let (inner_scope, _) = program
+        .actor_decision_at(usize::from(inner_reference) - 256)
+        .unwrap();
+    let arm = |value| match value {
+        None => "none",
+        Some(0) => "some .left",
+        Some(1) => "some .right",
+        _ => unreachable!(),
+    };
+    let inputs = partial_choice::CASES
+        .iter()
+        .map(|&(outer, inner, _)| format!("({}, {})", arm(outer), arm(inner)))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let observed = partial_choice::CASES
+        .iter()
+        .map(|&(outer, inner, expected)| {
+            let observed = program.selected_actor(reference, &mut |scope| {
+                if scope == outer_scope {
+                    outer
+                } else {
+                    assert_eq!(scope, inner_scope);
+                    inner
+                }
+            });
+            assert_eq!(observed, expected);
+            match observed {
+                None => String::from("none"),
+                Some(actor) => format!("some {actor}"),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    source.push_str(&format!(
+        "def ownedPartialChoiceInputs : List (Option Hibana.RouteArm × Option Hibana.RouteArm) :=\n  \
+         [{inputs}]\n\n\
+         def ownedPartialChoiceRustActors : List (Option Nat) := [{observed}]\n\n\
+         theorem ownedPartialChoiceActorsAgreeWithRust :\n  \
+         ownedPartialChoiceInputs.map (fun choices =>\n    \
+         ownedPartialChoiceColumns.selectedActor? (fun scope =>\n      \
+         if scope == {} then choices.1 else if scope == {} then choices.2 else none) \
+         {reference}) = ownedPartialChoiceRustActors := by\n  decide\n\n",
+        outer_scope.raw(),
+        inner_scope.raw(),
+    ));
+    source.push_str(&actor_certificate::<1, partial_choice::Steps, 32>(
+        "ownedPartialFirstRows",
+    ));
+    source.push_str(&actor_certificate::<2, partial_choice::Steps, 32>(
+        "ownedPartialSecondRows",
+    ));
+    source.push_str(&actor_certificate::<3, partial_choice::Steps, 32>(
+        "ownedPartialThirdRows",
+    ));
+    source
+}
+
 #[test]
 #[ignore = "host-only exact program-column proof artifact export"]
 fn export_program_columns_for_lean() {
@@ -272,5 +341,10 @@ fn export_program_columns_for_lean() {
     let output = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("target/lean-proof/ProgramColumnsGenerated.lean");
     fs::create_dir_all(output.parent().unwrap()).unwrap();
-    fs::write(output, source).unwrap();
+    fs::write(&output, source).unwrap();
+    fs::write(
+        output.with_file_name("PartialChoiceGenerated.lean"),
+        partial_choice_certificate(),
+    )
+    .unwrap();
 }

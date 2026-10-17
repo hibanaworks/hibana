@@ -9,6 +9,7 @@ PUBLIC_OPERATION_GENERATED="${ROOT_DIR}/target/lean-proof/PublicOperationGenerat
 CAUSAL_GENERATED="${ROOT_DIR}/target/lean-proof/CausalGenerated.lean"
 PARALLEL_GENERATED="${ROOT_DIR}/target/lean-proof/ParallelGenerated.lean"
 PROGRAM_COLUMNS_GENERATED="${ROOT_DIR}/target/lean-proof/ProgramColumnsGenerated.lean"
+PARTIAL_CHOICE_GENERATED="${ROOT_DIR}/target/lean-proof/PartialChoiceGenerated.lean"
 GENERATED_CLAIM_SNAPSHOT="${PROOF_DIR}/generated-claim-surface.txt"
 RUNTIME_CLAIM_SNAPSHOT="${PROOF_DIR}/runtime-generated-claim-surface.txt"
 PUBLIC_OPERATION_CLAIM_SNAPSHOT="${PROOF_DIR}/public-operation-generated-claim-surface.txt"
@@ -36,7 +37,7 @@ bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" build-serial "${PROOF_
 bash "${ROOT_DIR}/.github/scripts/check_lean_claim_surface.sh"
 static_audit_output="$(run_audit \
   theorem-inventory \
-  --static "${PROOF_DIR}" "${STATIC_CLAIM_SNAPSHOT}" 740 385 254 101)"
+  --static "${PROOF_DIR}" "${STATIC_CLAIM_SNAPSHOT}" 743 387 255 101)"
 printf '%s\n' "${static_audit_output}"
 printf '%s\n' "${static_audit_output}" | bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard markers static
 bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" theorem-inventory \
@@ -45,7 +46,7 @@ bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" theorem-inventory \
 source "${ROOT_DIR}/.github/scripts/repo_rustflags.sh"
 hibana_enable_repo_tests_cfg
 mkdir -p "$(dirname "${GENERATED}")"
-rm -f "${GENERATED}" "${RUNTIME_GENERATED}" "${PUBLIC_OPERATION_GENERATED}" "${CAUSAL_GENERATED}" "${PARALLEL_GENERATED}" "${PROGRAM_COLUMNS_GENERATED}"
+rm -f "${GENERATED}" "${RUNTIME_GENERATED}" "${PUBLIC_OPERATION_GENERATED}" "${CAUSAL_GENERATED}" "${PARALLEL_GENERATED}" "${PROGRAM_COLUMNS_GENERATED}" "${PARTIAL_CHOICE_GENERATED}"
 CARGO_BUILD_JOBS=1 \
   RUST_TEST_THREADS=1 \
 cargo +"${TOOLCHAIN}" test -p hibana --lib \
@@ -76,8 +77,11 @@ CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --li
   g::role_projection::tests::program_columns::export_program_columns_for_lean \
   -- --ignored --exact
 bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${PROGRAM_COLUMNS_GENERATED}" "program columns"
+bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${PARTIAL_CHOICE_GENERATED}" "partial choices"
 run_audit generated-axioms --kernel "${PROGRAM_COLUMNS_GENERATED}" "${PROOF_DIR}" \
   "${PROOF_DIR}/program-columns-generated-claim-surface.txt" 139
+run_audit generated-axioms --kernel "${PARTIAL_CHOICE_GENERATED}" "${PROOF_DIR}" \
+  "${PROOF_DIR}/partial-choice-generated-claim-surface.txt" 30
 parallel_output="$(run_audit generated-axioms \
   --kernel "${PARALLEL_GENERATED}" "${PROOF_DIR}" \
   "${PROOF_DIR}/parallel-generated-claim-surface.txt" 182)"
@@ -103,4 +107,4 @@ public_operation_lean_output="$(run_audit \
 printf '%s\n' "${public_operation_lean_output}"
 printf '%s\n' "${public_operation_lean_output}" | bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard markers public-operation
 
-echo "Lean proof gate passed toolchain=v4.30.0 traces=14 frames=66 projections=22 exact-descriptors=22 progress=4 projectability=8 distributed-progress=8 verified-protocols=8 static-theorems=740 program-column-correspondence=139 parallel-descriptors=10 parallel-correspondence=182 causal-correspondence=36 anonymous-regressions=36 generated-theorems=506 generated-obligations=458 production-transitions=7 production-operations=6 production-owners=8 verified-codecs=3 verified-family=8 static-deployments=8 deployment-rejections=3 capabilities=6 runtime-regions=4 atomic-failures=4 public-operation-edges=16 public-operation-transitions=144 native-regressions=32"
+echo "Lean proof gate passed toolchain=v4.30.0 traces=14 frames=66 projections=22 exact-descriptors=22 progress=4 projectability=8 distributed-progress=8 verified-protocols=8 static-theorems=743 program-column-correspondence=139 partial-choice-correspondence=30 parallel-descriptors=10 parallel-correspondence=182 causal-correspondence=36 anonymous-regressions=36 generated-theorems=506 generated-obligations=458 production-transitions=7 production-operations=6 production-owners=8 verified-codecs=3 verified-family=8 static-deployments=8 deployment-rejections=3 capabilities=6 runtime-regions=4 atomic-failures=4 public-operation-edges=16 public-operation-transitions=144 native-regressions=32"

@@ -16,6 +16,7 @@ mod conditional_controller;
 mod native;
 mod order;
 mod owned;
+mod partial_choice;
 mod program_columns;
 mod routing;
 mod send_wait;

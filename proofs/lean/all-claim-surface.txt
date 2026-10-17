@@ -417,6 +417,69 @@ Hibana.abort_peer_is_well_formed : ∀ (state : Hibana.TransportState), state.ab
           @LT.lt.{0} Nat instLTNat role roleCount →
             Or (@Eq.{1} Nat role controller)
               (@Eq.{1} Bool (Hibana.Choreo.observerPathsMergeable role leftBase rightBase left right) true))
+@Hibana.accepted_owned_program_binds_partial_choice_evidence : ∀ {image : Hibana.RustDescriptorImage}
+  {choreo : Hibana.Choreo},
+  @Eq.{1} Bool (image.ownershipCheck choreo) true →
+    @Eq.{1} Bool choreo.hasOwnedPayload true →
+      @Exists.{1} Hibana.EndpointDelegation.Source fun source =>
+        @Exists.{1} Hibana.EndpointDelegation.Normalization fun normalized =>
+          @Exists.{1} Hibana.DecodedProgramColumns fun columns =>
+            @Exists.{1} (List.{0} Hibana.DecodedProgramAtom) fun atoms =>
+              @Exists.{1} (List.{0} Hibana.DecodedScopeMarker) fun markers =>
+                And
+                  (@Eq.{1} (Option.{0} Hibana.EndpointDelegation.Source) choreo.ownershipSource?
+                    (@some.{0} Hibana.EndpointDelegation.Source source))
+                  (And
+                    (@Eq.{1} (Option.{0} Hibana.EndpointDelegation.Normalization)
+                      (Hibana.EndpointDelegation.normalize source)
+                      (@some.{0} Hibana.EndpointDelegation.Normalization normalized))
+                    (And
+                      (@Eq.{1} (Option.{0} Hibana.DecodedProgramColumns) image.decodeProgramColumns?
+                        (@some.{0} Hibana.DecodedProgramColumns columns))
+                      (And
+                        (@Eq.{1} (Option.{0} (List.{0} Hibana.DecodedProgramAtom)) image.decodeAtoms?
+                          (@some.{0} (List.{0} Hibana.DecodedProgramAtom) atoms))
+                        (And
+                          (@Eq.{1} (Option.{0} (List.{0} Hibana.DecodedScopeMarker)) image.decodeScopeMarkers?
+                            (@some.{0} (List.{0} Hibana.DecodedScopeMarker) markers))
+                          (∀ (path : Hibana.EndpointDelegation.NormalizedPath),
+                            @Membership.mem.{0, 0} Hibana.EndpointDelegation.NormalizedPath
+                                (List.{0} Hibana.EndpointDelegation.NormalizedPath)
+                                (@List.instMembership.{0} Hibana.EndpointDelegation.NormalizedPath) normalized.paths
+                                path →
+                              ∀ (known : Nat → Option.{0} Hibana.RouteArm),
+                                (∀ (scope : Nat) (arm : Hibana.RouteArm),
+                                    @Eq.{1} (Option.{0} Hibana.RouteArm) (known scope) (@some.{0} Hibana.RouteArm arm) →
+                                      @Eq.{1} (Option.{0} Hibana.RouteArm) (Hibana.sourcePathArm? markers path scope)
+                                        (@some.{0} Hibana.RouteArm arm)) →
+                                  ∀ (event : Nat) (binding : Hibana.EndpointDelegation.Binding),
+                                    @Membership.mem.{0, 0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)
+                                        (List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding))
+                                        (@List.instMembership.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding))
+                                        path.bindings
+                                        (@Prod.mk.{0, 0} Nat Hibana.EndpointDelegation.Binding event binding) →
+                                      @Exists.{1} Nat fun sender =>
+                                        @Exists.{1} Nat fun receiver =>
+                                          And
+                                            (@Eq.{1} (Option.{0} (Prod.{0, 0} Nat Nat))
+                                              (@getElem?.{0, 0, 0} (List.{0} (Prod.{0, 0} Nat Nat)) Nat
+                                                (Prod.{0, 0} Nat Nat)
+                                                (fun as i =>
+                                                  @LT.lt.{0} Nat instLTNat i
+                                                    (@List.length.{0} (Prod.{0, 0} Nat Nat) as))
+                                                (@List.instGetElem?NatLtLength.{0} (Prod.{0, 0} Nat Nat))
+                                                columns.actorBindings event)
+                                              (@some.{0} (Prod.{0, 0} Nat Nat)
+                                                (@Prod.mk.{0, 0} Nat Nat sender receiver)))
+                                            (And
+                                              (∀ (actor : Nat),
+                                                @Eq.{1} (Option.{0} Nat) (columns.selectedActor? known sender)
+                                                    (@some.{0} Nat actor) →
+                                                  @Eq.{1} Nat actor binding.senderActor)
+                                              (∀ (actor : Nat),
+                                                @Eq.{1} (Option.{0} Nat) (columns.selectedActor? known receiver)
+                                                    (@some.{0} Nat actor) →
+                                                  @Eq.{1} Nat actor binding.receiverActor)))))))
 @Hibana.accepted_owned_program_binds_source_ownership : ∀ {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo},
   @Eq.{1} Bool (image.ownershipCheck choreo) true →
     @Eq.{1} Bool choreo.hasOwnedPayload true →
@@ -2649,6 +2712,14 @@ Hibana.insert_erased_cursor_observation_preserves_entry_order : ∀ (incoming : 
   @LE.le.{0} Nat instLENat (@OfNat.ofNat.{0} Nat (nat_lit 2) (instOfNatNat (nat_lit 2))) raw →
     @Eq.{1} (Option.{0} Hibana.RouteAuthorityPublication) (Hibana.publishRawRouteArm? state raw)
       (@none.{0} Hibana.RouteAuthorityPublication)
+@Hibana.known_actor_is_stable_under_choice_extension : ∀ {columns : Hibana.DecodedProgramColumns}
+  {known extended : Nat → Option.{0} Hibana.RouteArm},
+  (∀ (scope : Nat) (arm : Hibana.RouteArm),
+      @Eq.{1} (Option.{0} Hibana.RouteArm) (known scope) (@some.{0} Hibana.RouteArm arm) →
+        @Eq.{1} (Option.{0} Hibana.RouteArm) (extended scope) (@some.{0} Hibana.RouteArm arm)) →
+    ∀ {reference actor : Nat},
+      @Eq.{1} (Option.{0} Nat) (columns.selectedActor? known reference) (@some.{0} Nat actor) →
+        @Eq.{1} (Option.{0} Nat) (columns.selectedActor? extended reference) (@some.{0} Nat actor)
 @Hibana.lane_bound_route_rows_finish_exactly : ∀ {Row : Type} (bound : Hibana.LaneBoundRouteRows Row),
   @Eq.{1} (Option.{0} (List.{0} Row))
     (@Hibana.finishRouteRowsForLane? Row (@some.{0} (Hibana.LaneBoundRouteRows Row) bound)
@@ -2835,6 +2906,33 @@ Hibana.matching_ready_arm_record_is_idempotent : ∀ (arm : Hibana.RouteArm),
 Hibana.matching_ready_evidence_consumption_is_exact : ∀ (arm : Hibana.RouteArm),
   @Eq.{1} Hibana.ScopeReadyEvidence (Hibana.consumeScopeReadyArm (Hibana.ScopeReadyEvidence.selected arm) arm)
     Hibana.ScopeReadyEvidence.empty
+@Hibana.matching_source_path_binds_partially_known_actors : ∀ {columns : Hibana.DecodedProgramColumns}
+  {markers : List.{0} Hibana.DecodedScopeMarker} {path : Hibana.EndpointDelegation.NormalizedPath}
+  {known : Nat → Option.{0} Hibana.RouteArm} {event : Nat} {binding : Hibana.EndpointDelegation.Binding},
+  @Eq.{1} Bool (columns.sourcePathMatches markers path) true →
+    (∀ (scope : Nat) (arm : Hibana.RouteArm),
+        @Eq.{1} (Option.{0} Hibana.RouteArm) (known scope) (@some.{0} Hibana.RouteArm arm) →
+          @Eq.{1} (Option.{0} Hibana.RouteArm) (Hibana.sourcePathArm? markers path scope)
+            (@some.{0} Hibana.RouteArm arm)) →
+      @Membership.mem.{0, 0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)
+          (List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding))
+          (@List.instMembership.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)) path.bindings
+          (@Prod.mk.{0, 0} Nat Hibana.EndpointDelegation.Binding event binding) →
+        @Exists.{1} Nat fun sender =>
+          @Exists.{1} Nat fun receiver =>
+            And
+              (@Eq.{1} (Option.{0} (Prod.{0, 0} Nat Nat))
+                (@getElem?.{0, 0, 0} (List.{0} (Prod.{0, 0} Nat Nat)) Nat (Prod.{0, 0} Nat Nat)
+                  (fun as i => @LT.lt.{0} Nat instLTNat i (@List.length.{0} (Prod.{0, 0} Nat Nat) as))
+                  (@List.instGetElem?NatLtLength.{0} (Prod.{0, 0} Nat Nat)) columns.actorBindings event)
+                (@some.{0} (Prod.{0, 0} Nat Nat) (@Prod.mk.{0, 0} Nat Nat sender receiver)))
+              (And
+                (∀ (actor : Nat),
+                  @Eq.{1} (Option.{0} Nat) (columns.selectedActor? known sender) (@some.{0} Nat actor) →
+                    @Eq.{1} Nat actor binding.senderActor)
+                (∀ (actor : Nat),
+                  @Eq.{1} (Option.{0} Nat) (columns.selectedActor? known receiver) (@some.{0} Nat actor) →
+                    @Eq.{1} Nat actor binding.receiverActor))
 @Hibana.matching_source_path_has_the_source_actors : ∀ {columns : Hibana.DecodedProgramColumns}
   {markers : List.{0} Hibana.DecodedScopeMarker} {path : Hibana.EndpointDelegation.NormalizedPath} {event : Nat}
   {binding : Hibana.EndpointDelegation.Binding},
