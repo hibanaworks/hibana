@@ -1,0 +1,214 @@
+controllerCoLocatedControllerWitnessesAgreeWithRust : (controllerCoLocatedRustControllers.all fun row =>
+    controllerCoLocatedImage.decodeRouteScope? row.fst == some row.snd.fst &&
+        controllerCoLocatedImage.routeControllerAt? row.fst == some row.snd.snd.fst &&
+      controllerCoLocatedImage.routeControllerPresent? row.fst row.snd.snd.fst == some row.snd.snd.snd) =
+  true
+controllerCoLocatedControllersMatchSource : controllerCoLocatedImage.actorControllerCheck controllerCoLocatedChoreo =
+  true
+controllerConditionalFirstControllerWitnessesAgreeWithRust : (controllerConditionalFirstRustControllers.all fun row =>
+    controllerConditionalFirstImage.decodeRouteScope? row.fst == some row.snd.fst &&
+        controllerConditionalFirstImage.routeControllerAt? row.fst == some row.snd.snd.fst &&
+      controllerConditionalFirstImage.routeControllerPresent? row.fst row.snd.snd.fst == some row.snd.snd.snd) =
+  true
+controllerConditionalFirstControllersMatchSource : controllerConditionalFirstImage.actorControllerCheck
+    controllerConditionalFirstChoreo =
+  true
+controllerConditionalOwnerControllerWitnessesAgreeWithRust : (controllerConditionalOwnerRustControllers.all fun row =>
+    controllerConditionalOwnerImage.decodeRouteScope? row.fst == some row.snd.fst &&
+        controllerConditionalOwnerImage.routeControllerAt? row.fst == some row.snd.snd.fst &&
+      controllerConditionalOwnerImage.routeControllerPresent? row.fst row.snd.snd.fst == some row.snd.snd.snd) =
+  true
+controllerConditionalOwnerControllersMatchSource : controllerConditionalOwnerImage.actorControllerCheck
+    controllerConditionalOwnerChoreo =
+  true
+controllerConditionalSecondControllerWitnessesAgreeWithRust : (controllerConditionalSecondRustControllers.all fun row =>
+    controllerConditionalSecondImage.decodeRouteScope? row.fst == some row.snd.fst &&
+        controllerConditionalSecondImage.routeControllerAt? row.fst == some row.snd.snd.fst &&
+      controllerConditionalSecondImage.routeControllerPresent? row.fst row.snd.snd.fst == some row.snd.snd.snd) =
+  true
+controllerConditionalSecondControllersMatchSource : controllerConditionalSecondImage.actorControllerCheck
+    controllerConditionalSecondChoreo =
+  true
+controllerLinearOwnerControllerWitnessesAgreeWithRust : (controllerLinearOwnerRustControllers.all fun row =>
+    controllerLinearOwnerImage.decodeRouteScope? row.fst == some row.snd.fst &&
+        controllerLinearOwnerImage.routeControllerAt? row.fst == some row.snd.snd.fst &&
+      controllerLinearOwnerImage.routeControllerPresent? row.fst row.snd.snd.fst == some row.snd.snd.snd) =
+  true
+controllerLinearOwnerControllersMatchSource : controllerLinearOwnerImage.actorControllerCheck
+    controllerLinearOwnerChoreo =
+  true
+controllerLinearServiceControllerWitnessesAgreeWithRust : (controllerLinearServiceRustControllers.all fun row =>
+    controllerLinearServiceImage.decodeRouteScope? row.fst == some row.snd.fst &&
+        controllerLinearServiceImage.routeControllerAt? row.fst == some row.snd.snd.fst &&
+      controllerLinearServiceImage.routeControllerPresent? row.fst row.snd.snd.fst == some row.snd.snd.snd) =
+  true
+controllerLinearServiceControllersMatchSource : controllerLinearServiceImage.actorControllerCheck
+    controllerLinearServiceChoreo =
+  true
+controllerLinearWorkerControllerWitnessesAgreeWithRust : (controllerLinearWorkerRustControllers.all fun row =>
+    controllerLinearWorkerImage.decodeRouteScope? row.fst == some row.snd.fst &&
+        controllerLinearWorkerImage.routeControllerAt? row.fst == some row.snd.snd.fst &&
+      controllerLinearWorkerImage.routeControllerPresent? row.fst row.snd.snd.fst == some row.snd.snd.snd) =
+  true
+controllerLinearWorkerControllersMatchSource : controllerLinearWorkerImage.actorControllerCheck
+    controllerLinearWorkerChoreo =
+  true
+controllerLocalOwnerControllerWitnessesAgreeWithRust : (controllerLocalOwnerRustControllers.all fun row =>
+    controllerLocalOwnerImage.decodeRouteScope? row.fst == some row.snd.fst &&
+        controllerLocalOwnerImage.routeControllerAt? row.fst == some row.snd.snd.fst &&
+      controllerLocalOwnerImage.routeControllerPresent? row.fst row.snd.snd.fst == some row.snd.snd.snd) =
+  true
+controllerLocalOwnerControllersMatchSource : controllerLocalOwnerImage.actorControllerCheck controllerLocalOwnerChoreo =
+  true
+controllerLocalWorkerControllerWitnessesAgreeWithRust : (controllerLocalWorkerRustControllers.all fun row =>
+    controllerLocalWorkerImage.decodeRouteScope? row.fst == some row.snd.fst &&
+        controllerLocalWorkerImage.routeControllerAt? row.fst == some row.snd.snd.fst &&
+      controllerLocalWorkerImage.routeControllerPresent? row.fst row.snd.snd.fst == some row.snd.snd.snd) =
+  true
+controllerLocalWorkerControllersMatchSource : controllerLocalWorkerImage.actorControllerCheck
+    controllerLocalWorkerChoreo =
+  true
+controllerNativeOwnerControllerWitnessesAgreeWithRust : (controllerNativeOwnerRustControllers.all fun row =>
+    controllerNativeOwnerImage.decodeRouteScope? row.fst == some row.snd.fst &&
+        controllerNativeOwnerImage.routeControllerAt? row.fst == some row.snd.snd.fst &&
+      controllerNativeOwnerImage.routeControllerPresent? row.fst row.snd.snd.fst == some row.snd.snd.snd) =
+  true
+controllerNativeOwnerControllersMatchSource : controllerNativeOwnerImage.actorControllerCheck
+    controllerNativeOwnerChoreo =
+  true
+controllerNativeParallelControllerWitnessesAgreeWithRust : (controllerNativeParallelRustControllers.all fun row =>
+    controllerNativeParallelImage.decodeRouteScope? row.fst == some row.snd.fst &&
+        controllerNativeParallelImage.routeControllerAt? row.fst == some row.snd.snd.fst &&
+      controllerNativeParallelImage.routeControllerPresent? row.fst row.snd.snd.fst == some row.snd.snd.snd) =
+  true
+controllerNativeParallelControllersMatchSource : controllerNativeParallelImage.actorControllerCheck
+    controllerNativeParallelChoreo =
+  true
+controllerNativeParallelPeerControllerWitnessesAgreeWithRust : (controllerNativeParallelPeerRustControllers.all
+    fun row =>
+    controllerNativeParallelPeerImage.decodeRouteScope? row.fst == some row.snd.fst &&
+        controllerNativeParallelPeerImage.routeControllerAt? row.fst == some row.snd.snd.fst &&
+      controllerNativeParallelPeerImage.routeControllerPresent? row.fst row.snd.snd.fst == some row.snd.snd.snd) =
+  true
+controllerNativeParallelPeerControllersMatchSource : controllerNativeParallelPeerImage.actorControllerCheck
+    controllerNativeParallelPeerChoreo =
+  true
+controllerNativeServiceControllerWitnessesAgreeWithRust : (controllerNativeServiceRustControllers.all fun row =>
+    controllerNativeServiceImage.decodeRouteScope? row.fst == some row.snd.fst &&
+        controllerNativeServiceImage.routeControllerAt? row.fst == some row.snd.snd.fst &&
+      controllerNativeServiceImage.routeControllerPresent? row.fst row.snd.snd.fst == some row.snd.snd.snd) =
+  true
+controllerNativeServiceControllersMatchSource : controllerNativeServiceImage.actorControllerCheck
+    controllerNativeServiceChoreo =
+  true
+controllerNativeWorkerControllerWitnessesAgreeWithRust : (controllerNativeWorkerRustControllers.all fun row =>
+    controllerNativeWorkerImage.decodeRouteScope? row.fst == some row.snd.fst &&
+        controllerNativeWorkerImage.routeControllerAt? row.fst == some row.snd.snd.fst &&
+      controllerNativeWorkerImage.routeControllerPresent? row.fst row.snd.snd.fst == some row.snd.snd.snd) =
+  true
+controllerNativeWorkerControllersMatchSource : controllerNativeWorkerImage.actorControllerCheck
+    controllerNativeWorkerChoreo =
+  true
+controllerNestedOrderControllerWitnessesAgreeWithRust : (controllerNestedOrderRustControllers.all fun row =>
+    controllerNestedOrderImage.decodeRouteScope? row.fst == some row.snd.fst &&
+        controllerNestedOrderImage.routeControllerAt? row.fst == some row.snd.snd.fst &&
+      controllerNestedOrderImage.routeControllerPresent? row.fst row.snd.snd.fst == some row.snd.snd.snd) =
+  true
+controllerNestedOrderControllersMatchSource : controllerNestedOrderImage.actorControllerCheck
+    controllerNestedOrderChoreo =
+  true
+controllerNestedRoutesControllerWitnessesAgreeWithRust : (controllerNestedRoutesRustControllers.all fun row =>
+    controllerNestedRoutesImage.decodeRouteScope? row.fst == some row.snd.fst &&
+        controllerNestedRoutesImage.routeControllerAt? row.fst == some row.snd.snd.fst &&
+      controllerNestedRoutesImage.routeControllerPresent? row.fst row.snd.snd.fst == some row.snd.snd.snd) =
+  true
+controllerNestedRoutesControllersMatchSource : controllerNestedRoutesImage.actorControllerCheck
+    controllerNestedRoutesChoreo =
+  true
+controllerOrdinaryOwnerControllerWitnessesAgreeWithRust : (controllerOrdinaryOwnerRustControllers.all fun row =>
+    controllerOrdinaryOwnerImage.decodeRouteScope? row.fst == some row.snd.fst &&
+        controllerOrdinaryOwnerImage.routeControllerAt? row.fst == some row.snd.snd.fst &&
+      controllerOrdinaryOwnerImage.routeControllerPresent? row.fst row.snd.snd.fst == some row.snd.snd.snd) =
+  true
+controllerOrdinaryOwnerControllersMatchSource : controllerOrdinaryOwnerImage.actorControllerCheck
+    controllerOrdinaryOwnerChoreo =
+  true
+controllerOrdinaryPeerControllerWitnessesAgreeWithRust : (controllerOrdinaryPeerRustControllers.all fun row =>
+    controllerOrdinaryPeerImage.decodeRouteScope? row.fst == some row.snd.fst &&
+        controllerOrdinaryPeerImage.routeControllerAt? row.fst == some row.snd.snd.fst &&
+      controllerOrdinaryPeerImage.routeControllerPresent? row.fst row.snd.snd.fst == some row.snd.snd.snd) =
+  true
+controllerOrdinaryPeerControllersMatchSource : controllerOrdinaryPeerImage.actorControllerCheck
+    controllerOrdinaryPeerChoreo =
+  true
+controllerParallelOwnerControllerWitnessesAgreeWithRust : (controllerParallelOwnerRustControllers.all fun row =>
+    controllerParallelOwnerImage.decodeRouteScope? row.fst == some row.snd.fst &&
+        controllerParallelOwnerImage.routeControllerAt? row.fst == some row.snd.snd.fst &&
+      controllerParallelOwnerImage.routeControllerPresent? row.fst row.snd.snd.fst == some row.snd.snd.snd) =
+  true
+controllerParallelOwnerControllersMatchSource : controllerParallelOwnerImage.actorControllerCheck
+    controllerParallelOwnerChoreo =
+  true
+controllerParallelWorkerControllerWitnessesAgreeWithRust : (controllerParallelWorkerRustControllers.all fun row =>
+    controllerParallelWorkerImage.decodeRouteScope? row.fst == some row.snd.fst &&
+        controllerParallelWorkerImage.routeControllerAt? row.fst == some row.snd.snd.fst &&
+      controllerParallelWorkerImage.routeControllerPresent? row.fst row.snd.snd.fst == some row.snd.snd.snd) =
+  true
+controllerParallelWorkerControllersMatchSource : controllerParallelWorkerImage.actorControllerCheck
+    controllerParallelWorkerChoreo =
+  true
+controllerPartialFirstControllerWitnessesAgreeWithRust : (controllerPartialFirstRustControllers.all fun row =>
+    controllerPartialFirstImage.decodeRouteScope? row.fst == some row.snd.fst &&
+        controllerPartialFirstImage.routeControllerAt? row.fst == some row.snd.snd.fst &&
+      controllerPartialFirstImage.routeControllerPresent? row.fst row.snd.snd.fst == some row.snd.snd.snd) =
+  true
+controllerPartialFirstControllersMatchSource : controllerPartialFirstImage.actorControllerCheck
+    controllerPartialFirstChoreo =
+  true
+controllerPartialOwnerControllerWitnessesAgreeWithRust : (controllerPartialOwnerRustControllers.all fun row =>
+    controllerPartialOwnerImage.decodeRouteScope? row.fst == some row.snd.fst &&
+        controllerPartialOwnerImage.routeControllerAt? row.fst == some row.snd.snd.fst &&
+      controllerPartialOwnerImage.routeControllerPresent? row.fst row.snd.snd.fst == some row.snd.snd.snd) =
+  true
+controllerPartialOwnerControllersMatchSource : controllerPartialOwnerImage.actorControllerCheck
+    controllerPartialOwnerChoreo =
+  true
+controllerPartialSecondControllerWitnessesAgreeWithRust : (controllerPartialSecondRustControllers.all fun row =>
+    controllerPartialSecondImage.decodeRouteScope? row.fst == some row.snd.fst &&
+        controllerPartialSecondImage.routeControllerAt? row.fst == some row.snd.snd.fst &&
+      controllerPartialSecondImage.routeControllerPresent? row.fst row.snd.snd.fst == some row.snd.snd.snd) =
+  true
+controllerPartialSecondControllersMatchSource : controllerPartialSecondImage.actorControllerCheck
+    controllerPartialSecondChoreo =
+  true
+controllerPartialThirdControllerWitnessesAgreeWithRust : (controllerPartialThirdRustControllers.all fun row =>
+    controllerPartialThirdImage.decodeRouteScope? row.fst == some row.snd.fst &&
+        controllerPartialThirdImage.routeControllerAt? row.fst == some row.snd.snd.fst &&
+      controllerPartialThirdImage.routeControllerPresent? row.fst row.snd.snd.fst == some row.snd.snd.snd) =
+  true
+controllerPartialThirdControllersMatchSource : controllerPartialThirdImage.actorControllerCheck
+    controllerPartialThirdChoreo =
+  true
+ghostActorOwnershipStillMatches : ghostActorImage.ownershipCheck controllerCoLocatedChoreo = true
+ghostActorUnreachableRowsRejected : ghostActorImage.actorRowsCheck controllerCoLocatedChoreo = false
+missingControllerWitnessOperationsStillMatch : missingControllerWitnessImage.actorRowsCheck
+    controllerConditionalSecondChoreo =
+  true
+missingControllerWitnessRangesStillDecode : ((missingControllerWitnessImage.decodeRouteArmEvents? 1 0).isSome &&
+    (missingControllerWitnessImage.decodeRouteArmEvents? 1 1).isSome) =
+  true
+missingControllerWitnessSourceRejected : missingControllerWitnessImage.actorControllerCheck
+    controllerConditionalSecondChoreo =
+  false
+wrongControllerControllerSourceRejected : wrongControllerImage.actorControllerCheck controllerConditionalSecondChoreo =
+  false
+wrongControllerPriorOperationsAndOrderStillMatch : (wrongControllerImage.actorRowsCheck
+      controllerConditionalSecondChoreo &&
+    wrongControllerImage.actorOrderCheck controllerConditionalSecondChoreo) =
+  true
+wrongResolverIdControllerSourceRejected : wrongResolverIdImage.actorControllerCheck controllerConditionalSecondChoreo =
+  false
+wrongResolverIdPriorOperationsAndOrderStillMatch : (wrongResolverIdImage.actorRowsCheck
+      controllerConditionalSecondChoreo &&
+    wrongResolverIdImage.actorOrderCheck controllerConditionalSecondChoreo) =
+  true

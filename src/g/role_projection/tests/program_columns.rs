@@ -347,4 +347,5 @@ fn export_program_columns_for_lean() {
         partial_choice_certificate(),
     )
     .unwrap();
+    controller_columns::export();
 }

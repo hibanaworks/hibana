@@ -43,6 +43,11 @@ pub(super) type Steps = g::Seq<
     >,
 >;
 
+pub(super) type LocalSteps = g::Seq<
+    g::Send<0, 1, Loan>,
+    g::Resolve<g::Route<g::Send<10, 10, g::Msg<20, ()>>, g::Send<10, 10, g::Msg<21, ()>>>, 710>,
+>;
+
 #[test]
 fn a_conditional_controller_does_not_take_authority_from_its_co_resident_observer() {
     let () = g::ProgramProjection::<Steps, 32>::VALIDATION;
@@ -71,7 +76,9 @@ fn a_conditional_controller_does_not_take_authority_from_its_co_resident_observe
             let mut a_slab = std::vec![0; 64 * 1024];
             let mut service_slab = std::vec![0; 64 * 1024];
             let a_number = Cell::new(41u32);
-            let service_number = Cell::new(41u32);
+            // The observer must not resolve from stale application input before
+            // the distinct DB view sets its next value and chooses its branch.
+            let service_number = Cell::new(42u32);
             let mut owner_storage = SessionKitStorage::uninit();
             let mut a_storage = SessionKitStorage::uninit();
             let mut service_storage = SessionKitStorage::uninit();

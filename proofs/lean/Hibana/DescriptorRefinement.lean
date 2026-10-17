@@ -1,5 +1,5 @@
 import Hibana.DescriptorTopology
-import Hibana.ActorRouting
+import Hibana.ActorAuthority
 
 namespace Hibana
 
@@ -37,7 +37,8 @@ private def ExactDescriptorCertificate.ProgramImageMatches
       some certificate.choreo.canonicalScopeMarkers ∧
     (certificate.choreo.hasOwnedPayload = true →
       certificate.image.actorOrderCheck certificate.choreo = true ∧
-      certificate.image.actorRouteCheck certificate.choreo = true)
+      certificate.image.actorRouteCheck certificate.choreo = true ∧
+      certificate.image.actorControllerCheck certificate.choreo = true)
 
 private def ExactDescriptorCertificate.RoleEventImageMatches
     (certificate : ExactDescriptorCertificate) : Prop :=

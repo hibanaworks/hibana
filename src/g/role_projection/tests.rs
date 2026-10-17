@@ -12,6 +12,7 @@ use crate::{Endpoint, g};
 use core::mem::MaybeUninit;
 mod composed;
 mod conditional_controller;
+mod controller_columns;
 #[cfg(all(unix, not(miri)))]
 mod native;
 mod order;

@@ -102,6 +102,60 @@ Hibana.abort_invalidates_outstanding_receipt : ∀ (before after : Hibana.Transp
 Hibana.abort_peer_is_immediately_observable : ∀ (state : Hibana.TransportState),
   @Eq.{1} Hibana.TransportPoll state.abortPeer.pollReceive Hibana.TransportPoll.peerClosed
 Hibana.abort_peer_is_well_formed : ∀ (state : Hibana.TransportState), state.abortPeer.WellFormed
+@Hibana.accepted_actor_controllers_bind_source_authority : ∀ {image : Hibana.RustDescriptorImage}
+  {choreo : Hibana.Choreo},
+  @Eq.{1} Bool (image.actorControllerCheck choreo) true →
+    And (@Eq.{1} Bool (image.actorRowsCheck choreo) true)
+      (@Exists.{1} Hibana.EndpointDelegation.Source fun source =>
+        @Exists.{1} Hibana.EndpointDelegation.Normalization fun normalized =>
+          @Exists.{1} (List.{0} Hibana.DecodedRouteResolver) fun resolvers =>
+            @Exists.{1} (List.{0} Nat) fun scopes =>
+              And
+                (@Eq.{1} (Option.{0} Hibana.EndpointDelegation.Source) choreo.ownershipSource?
+                  (@some.{0} Hibana.EndpointDelegation.Source source))
+                (And
+                  (@Eq.{1} (Option.{0} Hibana.EndpointDelegation.Normalization)
+                    (Hibana.EndpointDelegation.normalize source)
+                    (@some.{0} Hibana.EndpointDelegation.Normalization normalized))
+                  (And
+                    (@Eq.{1} (Option.{0} (List.{0} Hibana.DecodedRouteResolver)) image.decodeRouteResolvers?
+                      (@some.{0} (List.{0} Hibana.DecodedRouteResolver) resolvers))
+                    (And
+                      (@Eq.{1} (Option.{0} (List.{0} Nat)) image.decodeRouteScopeRows?
+                        (@some.{0} (List.{0} Nat) scopes))
+                      (And
+                        (@Eq.{1} (List.{0} Hibana.DecodedRouteResolver) resolvers
+                          (Hibana.canonicalProgramSource choreo).resolvers)
+                        (∀ (scope slot : Nat),
+                          @Membership.mem.{0, 0} (Prod.{0, 0} Nat Nat) (List.{0} (Prod.{0, 0} Nat Nat))
+                              (@List.instMembership.{0} (Prod.{0, 0} Nat Nat))
+                              (@List.zipIdx.{0} Nat scopes
+                                (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0))))
+                              (@Prod.mk.{0, 0} Nat Nat scope slot) →
+                            @Exists.{1} Nat fun controller =>
+                              @Exists.{1} Bool fun present =>
+                                And
+                                  (@Eq.{1} (Option.{0} Nat)
+                                    (@Option.bind.{0, 0} Hibana.DecodedRouteResolver Nat
+                                      (@List.find?.{0} Hibana.DecodedRouteResolver
+                                        (fun row =>
+                                          @BEq.beq.{0} Nat (@instBEqOfDecidableEq.{0} Nat instDecidableEqNat) row.scope
+                                            scope)
+                                        resolvers)
+                                      fun x => x.controller)
+                                    (@some.{0} Nat controller))
+                                  (And
+                                    (@Eq.{1} (Option.{0} Bool) (image.routeControllerPresent? slot controller)
+                                      (@some.{0} Bool present))
+                                    (And
+                                      (@Eq.{1} (Option.{0} Bool)
+                                        (Hibana.sourceActorControllerPresent?
+                                          (Hibana.canonicalProgramSource choreo).markers
+                                          (source.actorCandidateActions normalized.paths image.role) scope controller)
+                                        (@some.{0} Bool present))
+                                      (∀ (view : Nat),
+                                        @Eq.{1} Bool (Hibana.controllerViewAllows controller present view) true →
+                                          @Eq.{1} Nat view controller)))))))))
 @Hibana.accepted_actor_decision_references_decrease : ∀ {row : Hibana.DecodedActorDecision} {roleCount index : Nat}
   {routeScopes : List.{0} Nat},
   @Eq.{1} Bool (row.check roleCount index routeScopes) true →
@@ -163,6 +217,25 @@ Hibana.abort_peer_is_well_formed : ∀ (state : Hibana.TransportState), state.ab
                           (@some.{0} (List.{0} (Prod.{0, 0} Nat Nat)) expected) →
                         @Eq.{1} Bool (Hibana.routePathAllows actual selected preview)
                           (Hibana.routePathAllows expected selected preview)))))
+@Hibana.accepted_actor_rows_bind_candidate_operations : ∀ {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo},
+  @Eq.{1} Bool (image.actorRowsCheck choreo) true →
+    @Exists.{1} Hibana.EndpointDelegation.Source fun source =>
+      @Exists.{1} Hibana.EndpointDelegation.Normalization fun normalized =>
+        @Exists.{1} (List.{0} Hibana.DecodedActorRow) fun rows =>
+          And
+            (@Eq.{1} (Option.{0} Hibana.EndpointDelegation.Source) choreo.ownershipSource?
+              (@some.{0} Hibana.EndpointDelegation.Source source))
+            (And
+              (@Eq.{1} (Option.{0} Hibana.EndpointDelegation.Normalization) (Hibana.EndpointDelegation.normalize source)
+                (@some.{0} Hibana.EndpointDelegation.Normalization normalized))
+              (And
+                (@Eq.{1} (Option.{0} (List.{0} Hibana.DecodedActorRow)) image.decodeActorRows?
+                  (@some.{0} (List.{0} Hibana.DecodedActorRow) rows))
+                (@Eq.{1} (List.{0} (Prod.{0, 0} Hibana.EndpointDelegation.ActionId Hibana.EndpointDelegation.Action))
+                  (@List.map.{0, 0} Hibana.DecodedActorRow
+                    (Prod.{0, 0} Hibana.EndpointDelegation.ActionId Hibana.EndpointDelegation.Action)
+                    (fun x => x.sourceAction image.role) rows)
+                  (source.actorCandidateActions normalized.paths image.role))))
 @Hibana.accepted_actor_rows_bind_source_operations : ∀ {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo},
   @Eq.{1} Bool (image.actorRowsCheck choreo) true →
     @Exists.{1} Hibana.EndpointDelegation.Source fun source =>
@@ -1356,6 +1429,8 @@ Hibana.constrained_parallel_lane_matching_uses_minimum_span : @Eq.{1} (List.{0} 
 @Hibana.consumed_event_has_no_queued_message : ∀ {config : Hibana.GlobalConfig} {globalId epoch : Nat},
   @Eq.{1} Hibana.EventPhase (config.phase globalId) (Hibana.EventPhase.consumed epoch) →
     @Eq.{1} (Option.{0} Hibana.AdmittedMessage) (config.queuedMessage? globalId) (@none.{0} Hibana.AdmittedMessage)
+@Hibana.controller_authority_belongs_to_its_logical_view : ∀ {controller view : Nat} {present : Bool},
+  @Eq.{1} Bool (Hibana.controllerViewAllows controller present view) true → @Eq.{1} Nat view controller
 @Hibana.covered_predecessors_have_equal_readiness : ∀ {expected : Nat → List.{0} Nat} {actual : List.{0} Nat}
   {event : Nat} {state : Hibana.CommitState},
   @Eq.{1} Bool (Hibana.predecessorCoverage expected actual event) true →
