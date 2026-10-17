@@ -3,6 +3,72 @@ controllerVisit0ChoicesPublished : ((controllerImage.eventEffIndex? 3).bind fun 
     Hibana.publishedObservedChoices? (Hibana.canonicalProgramSource routeReentryChoreo) eff
       controllerVisit0.before.choices) =
   some controllerVisit0.after.choices
+controllerVisit0ContradictoryafterChoiceRejected : (have __src := controllerVisit0;
+      { pathIndex := __src.pathIndex, event := __src.event, view := __src.view, before := __src.before,
+        after :=
+          have __src := controllerVisit0.after;
+          { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
+            views := __src.views, steps := __src.steps,
+            choices :=
+              List.map
+                (fun x =>
+                  match x with
+                  | (scope, arm) =>
+                    (scope,
+                      if scope = 0 then
+                        some (if arm = some Hibana.RouteArm.left then Hibana.RouteArm.right else Hibana.RouteArm.left)
+                      else arm))
+                controllerVisit0.after.choices } }).check
+    controllerImage routeReentryChoreo =
+  false
+controllerVisit0ContradictorybeforeChoiceRejected : (have __src := controllerVisit0;
+      { pathIndex := __src.pathIndex, event := __src.event, view := __src.view,
+        before :=
+          have __src := controllerVisit0.before;
+          { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
+            views := __src.views, steps := __src.steps,
+            choices :=
+              List.map
+                (fun x =>
+                  match x with
+                  | (scope, arm) =>
+                    (scope,
+                      if scope = 0 then
+                        some (if arm = some Hibana.RouteArm.left then Hibana.RouteArm.right else Hibana.RouteArm.left)
+                      else arm))
+                controllerVisit0.before.choices },
+        after := __src.after }).check
+    controllerImage routeReentryChoreo =
+  false
+controllerVisit0ForgottenafterChoiceRejected : (have __src := controllerVisit0;
+      { pathIndex := __src.pathIndex, event := __src.event, view := __src.view, before := __src.before,
+        after :=
+          have __src := controllerVisit0.after;
+          { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
+            views := __src.views, steps := __src.steps,
+            choices :=
+              List.map
+                (fun x =>
+                  match x with
+                  | (scope, arm) => (scope, if scope = 0 then none else arm))
+                controllerVisit0.after.choices } }).check
+    controllerImage routeReentryChoreo =
+  false
+controllerVisit0ForgottenbeforeChoiceRejected : (have __src := controllerVisit0;
+      { pathIndex := __src.pathIndex, event := __src.event, view := __src.view,
+        before :=
+          have __src := controllerVisit0.before;
+          { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
+            views := __src.views, steps := __src.steps,
+            choices :=
+              List.map
+                (fun x =>
+                  match x with
+                  | (scope, arm) => (scope, if scope = 0 then none else arm))
+                controllerVisit0.before.choices },
+        after := __src.after }).check
+    controllerImage routeReentryChoreo =
+  false
 controllerVisit0MissingProgressRejected : (have __src := controllerVisit0;
       { pathIndex := __src.pathIndex, event := __src.event, view := __src.view, before := __src.before,
         after :=
@@ -318,6 +384,72 @@ observerVisit0ChoicesPublished : ((observerImage.eventEffIndex? 5).bind fun eff 
     Hibana.publishedObservedChoices? (Hibana.canonicalProgramSource routeReentryChoreo) eff
       observerVisit0.before.choices) =
   some observerVisit0.after.choices
+observerVisit0ContradictoryafterChoiceRejected : (have __src := observerVisit0;
+      { pathIndex := __src.pathIndex, event := __src.event, view := __src.view, before := __src.before,
+        after :=
+          have __src := observerVisit0.after;
+          { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
+            views := __src.views, steps := __src.steps,
+            choices :=
+              List.map
+                (fun x =>
+                  match x with
+                  | (scope, arm) =>
+                    (scope,
+                      if scope = 0 then
+                        some (if arm = some Hibana.RouteArm.left then Hibana.RouteArm.right else Hibana.RouteArm.left)
+                      else arm))
+                observerVisit0.after.choices } }).check
+    observerImage routeReentryChoreo =
+  false
+observerVisit0ContradictorybeforeChoiceRejected : (have __src := observerVisit0;
+      { pathIndex := __src.pathIndex, event := __src.event, view := __src.view,
+        before :=
+          have __src := observerVisit0.before;
+          { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
+            views := __src.views, steps := __src.steps,
+            choices :=
+              List.map
+                (fun x =>
+                  match x with
+                  | (scope, arm) =>
+                    (scope,
+                      if scope = 0 then
+                        some (if arm = some Hibana.RouteArm.left then Hibana.RouteArm.right else Hibana.RouteArm.left)
+                      else arm))
+                observerVisit0.before.choices },
+        after := __src.after }).check
+    observerImage routeReentryChoreo =
+  false
+observerVisit0ForgottenafterChoiceRejected : (have __src := observerVisit0;
+      { pathIndex := __src.pathIndex, event := __src.event, view := __src.view, before := __src.before,
+        after :=
+          have __src := observerVisit0.after;
+          { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
+            views := __src.views, steps := __src.steps,
+            choices :=
+              List.map
+                (fun x =>
+                  match x with
+                  | (scope, arm) => (scope, if scope = 0 then none else arm))
+                observerVisit0.after.choices } }).check
+    observerImage routeReentryChoreo =
+  false
+observerVisit0ForgottenbeforeChoiceRejected : (have __src := observerVisit0;
+      { pathIndex := __src.pathIndex, event := __src.event, view := __src.view,
+        before :=
+          have __src := observerVisit0.before;
+          { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
+            views := __src.views, steps := __src.steps,
+            choices :=
+              List.map
+                (fun x =>
+                  match x with
+                  | (scope, arm) => (scope, if scope = 0 then none else arm))
+                observerVisit0.before.choices },
+        after := __src.after }).check
+    observerImage routeReentryChoreo =
+  false
 observerVisit0MissingProgressRejected : (have __src := observerVisit0;
       { pathIndex := __src.pathIndex, event := __src.event, view := __src.view, before := __src.before,
         after :=

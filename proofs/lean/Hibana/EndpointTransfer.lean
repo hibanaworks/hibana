@@ -278,6 +278,7 @@ theorem EndpointTransfer.ordered_carrier_commit_preserves_unique_authority
     (resolved : carrier.resolve offered .commit = some committed)
     (queued : state.inFlight = frame :: rest) :
     ∃ next after, Step .receive state next ∧ next.usable.length ≤ 1 ∧
+      next.usable = fresh :: state.usable ∧ next.inFlight = rest ∧
       abstraction committed = .idle after ∧ before.delivered < after.delivered ∧
       frame.channel = before.channel ∧ frame.sequence = before.delivered := by
   have exactPoll := profile.2.1.pollExact current
@@ -306,7 +307,7 @@ theorem EndpointTransfer.ordered_carrier_commit_preserves_unique_authority
   have step := (observed_receipt_realizes_an_affine_transfer fresh observed).1
   have identity := wellFormed.2 before.delivered frame
     (transport_receive_is_fifo transportReceipt).1
-  exact ⟨next, after, step, bound, committedExact,
+  exact ⟨next, after, step, bound, rfl, rfl, committedExact,
     transport_receive_advances_affine_cursor transportReceipt, identity⟩
 
 end Hibana

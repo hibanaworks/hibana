@@ -209,7 +209,7 @@ can change arms while preserving the parent prefix. The complete nested trace
 runs twice. Before the parent suffix, both the completed arm and the unused
 alternative are rejected. These six kernel proofs replace seven lemmas about the removed
 route-only reset and its unused selector. Including the transfer model below,
-the static inventory is 789, with 420 using `propext` and `Quot.sound`,
+the static inventory is 791, with 422 using `propext` and `Quot.sound`,
 265 using only `propext`, and 104 axiom-free.
 The allowed axioms and inventory checks are unchanged. `RollBoundary.smt2`
 checks all completion masks of this six-event shape, including the difference
@@ -229,6 +229,28 @@ They do not establish that every Rust execution has that abstraction, that a
 deployment supplies a valid physical binding, or that its carrier refines the
 profile. Source/continuation correspondence and distributed progress remain
 separate obligations; public owned projection is still closed.
+
+`OwnedCommit.lean` connects the actor commit checker to that transfer model.
+It decodes the same source path and image as the observed actor, then checks
+the logical sender/receiver, physical actor, lane, wire label, session and exact
+three-byte resource/effect envelope. Its receive theorem issues the observed
+receiver view while preserving the ordered carrier's unique authority. It does
+not require the sender to have published its local completion first.
+
+The real two-runtime exchange copies each accepted frame before its receive,
+without consuming it or changing readiness. Its four observed commits generate
+48 checked claims, including rejection of a different resource, effect index,
+receiver, actor and session. Carrier generation and sequence are not invented
+from the core header; the general theorem obtains them from the carrier profile.
+These observations validate the exercised commits. Completeness of the
+implementation abstraction, fresh visits and distributed progress remain
+separate obligations.
+
+The ordinary actor commit checker also binds both copied choice histories to
+the selected source path and checks their exact canonical publication. The
+same definitions are used for the prepared base of a rolled commit. Generated
+regressions reverse or erase a known outer choice before and after a commit;
+they must be rejected without changing the observed progress or view records.
 
 The compiler scope memo, fork-input restoration, independent-sibling exclusion,
 and retained sequential joins have general model lemmas. Ingress-head

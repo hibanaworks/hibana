@@ -171,6 +171,22 @@ pub(super) fn write(
                      Hibana.publishedObservedChoices? (Hibana.canonicalProgramSource routeReentryChoreo) \
                      eff {sample}.before.choices) = some {sample}.after.choices := by\n  decide\n\n"
                 ));
+                for position in ["before", "after"] {
+                    source.push_str(&std::format!(
+                        "theorem {sample}Contradictory{position}ChoiceRejected :\n  \
+                         ({{ {sample} with {position} := {{ {sample}.{position} with choices := \
+                         {sample}.{position}.choices.map (fun (scope, arm) => \
+                         (scope, if scope = 0 then some (if arm = some .left then .right else .left) else arm)) }} }} : \
+                         Hibana.ActorCommitObservation).check {image_name} routeReentryChoreo = false := by\n  decide\n\n"
+                    ));
+                    source.push_str(&std::format!(
+                        "theorem {sample}Forgotten{position}ChoiceRejected :\n  \
+                         ({{ {sample} with {position} := {{ {sample}.{position} with choices := \
+                         {sample}.{position}.choices.map (fun (scope, arm) => \
+                         (scope, if scope = 0 then none else arm)) }} }} : \
+                         Hibana.ActorCommitObservation).check {image_name} routeReentryChoreo = false := by\n  decide\n\n"
+                    ));
+                }
             }
         }
     }

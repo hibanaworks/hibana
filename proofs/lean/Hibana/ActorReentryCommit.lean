@@ -15,14 +15,6 @@ structure ActorReentryCommitObservation where
   before : ActorProgressObservation
   after : ActorProgressObservation
 
-def observedChoicesAgree
-    (source : CanonicalProgramSource) (path : NormalizedPath)
-    (snapshot : ActorProgressObservation) : Bool :=
-  snapshot.choices.all fun (scope, selected) =>
-    match selected with
-    | none => true
-    | some arm => sourcePathArm? source.markers path scope == some arm
-
 def resetObservedActor
     (snapshot : ActorProgressObservation) (roll : DecodedRollRow)
     (choices : List (Nat × Option RouteArm)) : ActorProgressObservation :=
@@ -38,21 +30,6 @@ def resetObservedChoices?
   choices.mapM fun (route, arm) => do
     let reset ← sourceRollResetsRoute? source scope route
     pure (route, if reset then none else arm)
-
-def publishedObservedChoices?
-    (source : CanonicalProgramSource) (eff : Nat)
-    (choices : List (Nat × Option RouteArm)) : Option (List (Nat × Option RouteArm)) := do
-  let memberships ← canonicalEventRoutePath? source eff
-  choices.mapM fun (scope, previous) =>
-    match memberships.find? (fun member => member.1 == scope) with
-    | none => pure (scope, previous)
-    | some (_, arm) => do
-        let chosen ← match arm with
-          | 0 => some RouteArm.left
-          | 1 => some RouteArm.right
-          | _ => none
-        if previous.isSome && previous != some chosen then none
-        else pure (scope, some chosen)
 
 def ActorReentryCommitObservation.prepared?
     (sample : ActorReentryCommitObservation) (image : RustDescriptorImage)

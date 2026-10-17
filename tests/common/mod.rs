@@ -271,6 +271,31 @@ impl TestTransport {
             .all(|slot| slot.state.queue.len == 0)
     }
 
+    /// Copy accepted wire evidence without consuming, requeueing or waking it.
+    pub(crate) fn queued_frame(&self, role: u8) -> (FrameHeader, Vec<u8>) {
+        let state = self.state.borrow();
+        let queue = &state
+            .roles
+            .iter()
+            .find(|slot| slot.role == role)
+            .expect("observed receiver")
+            .state
+            .queue;
+        let frame = queue.items[queue.head]
+            .as_ref()
+            .expect("accepted frame to observe");
+        (
+            frame_header_from_parts(
+                frame.session_id,
+                frame.lane,
+                frame.source_role,
+                role,
+                frame.frame_label,
+            ),
+            frame.as_slice().to_vec(),
+        )
+    }
+
     pub(crate) fn truncate_next_payload(&self, role: u8, len: usize) {
         let mut state = self.state.borrow_mut();
         let frame = state
@@ -427,6 +452,7 @@ impl Clone for TestTransport {
 }
 
 const _: fn(&TestTransport) -> bool = TestTransport::queue_is_empty;
+const _: fn(&TestTransport, u8) -> (FrameHeader, Vec<u8>) = TestTransport::queued_frame;
 const _: fn(&TestTransport, u8, usize) = TestTransport::truncate_next_payload;
 const _: for<'a> fn(&'a TestTransport, SessionId, u8, u8) -> TestRx<'a> = TestTransport::open_rx;
 const _: fn(&TestTransport, &mut TestTx, SessionId, u8, u8, u8, &[u8]) =

@@ -73,7 +73,7 @@ fn owned_commits_publish_the_shared_actor_step_and_resource_view_together() {
                 .unwrap();
             let peer_rv = peer_storage
                 .init()
-                .rendezvous(&mut peer_slab, network)
+                .rendezvous(&mut peer_slab, network.clone())
                 .unwrap();
             let sid = SessionId::new(874);
             let mut owner = owner_rv.enter(sid, &owner_program).unwrap();
@@ -103,6 +103,8 @@ fn owned_commits_publish_the_shared_actor_step_and_resource_view_together() {
             assert_eq!(owner_sent.counter, owner_before.counter);
             assert_eq!(owner_sent.live_views + 1, owner_before.live_views);
             assert_eq!(resource(&owner_sent), (0, resource(&owner_before).1 + 1));
+            let loan_wire = network.queued_frame(1);
+            assert_eq!(loan_wire.1, [10, 0, 0]);
 
             // SAFETY: peer_rv attaches this actor with TestTransport.
             let worker_before = unsafe { actor_snapshot(&worker) };
@@ -150,6 +152,8 @@ fn owned_commits_publish_the_shared_actor_step_and_resource_view_together() {
                 resource(&worker_returned),
                 (0, resource(&worker_worked).1 + 1)
             );
+            let return_wire = network.queued_frame(0);
+            assert_eq!(return_wire.1, [10, 0, 3]);
             let db = owner.recv::<Loan>().await.unwrap();
             // SAFETY: owner retains its TestTransport-backed owner actor.
             let owner_received = unsafe { actor_snapshot(&owner) };
@@ -164,12 +168,39 @@ fn owned_commits_publish_the_shared_actor_step_and_resource_view_together() {
             assert_eq!(unsafe { actor_snapshot(&db) }, owner_received);
 
             #[cfg(not(miri))]
-            write_observations(&[
-                ("ownerLoan", 0, &owner_before, &owner_sent),
-                ("workerLoan", 1, &worker_before, &worker_received),
-                ("workerReturn", 1, &worker_worked, &worker_returned),
-                ("ownerReturn", 0, &owner_sent, &owner_received),
-            ]);
+            write_observations(
+                &[
+                    CommitObservation {
+                        name: "ownerLoan",
+                        view: 0,
+                        before: &owner_before,
+                        after: &owner_sent,
+                        wire: &loan_wire,
+                    },
+                    CommitObservation {
+                        name: "workerLoan",
+                        view: 1,
+                        before: &worker_before,
+                        after: &worker_received,
+                        wire: &loan_wire,
+                    },
+                    CommitObservation {
+                        name: "workerReturn",
+                        view: 1,
+                        before: &worker_worked,
+                        after: &worker_returned,
+                        wire: &return_wire,
+                    },
+                    CommitObservation {
+                        name: "ownerReturn",
+                        view: 0,
+                        before: &owner_sent,
+                        after: &owner_received,
+                        wire: &return_wire,
+                    },
+                ],
+                sid,
+            );
 
             let (auth_sent, observer_sent, auth_received, observer_received) = tokio::join!(
                 owner.send::<OtherLoan>(auth),
@@ -236,14 +267,23 @@ pub(super) fn observation_source(snapshot: &ActorSnapshot) -> std::string::Strin
     )
 }
 
-/// Serialize copied evidence only. All Endpoint operations remain above.
+/// Copied evidence only. All Endpoint operations remain above.
 #[cfg(not(miri))]
-fn write_observations(observations: &[(&str, u8, &ActorSnapshot, &ActorSnapshot)]) {
+struct CommitObservation<'a> {
+    name: &'static str,
+    view: u8,
+    before: &'a ActorSnapshot,
+    after: &'a ActorSnapshot,
+    wire: &'a (crate::transport::FrameHeader, Vec<u8>),
+}
+
+#[cfg(not(miri))]
+fn write_observations(observations: &[CommitObservation<'_>], sid: SessionId) {
     use crate::test_support::{lean_choreo::LeanChoreo, lean_descriptor::descriptor_source};
     let owner_image = &RoleProjection::<0, Steps, 16>::IMAGE_REF;
     let worker_image = &RoleProjection::<1, Steps, 16>::IMAGE_REF;
     let mut source = std::format!(
-        "import Hibana.ActorCommit\n\nset_option maxRecDepth 10000\n\n\
+        "import Hibana.OwnedCommit\n\nset_option maxRecDepth 10000\n\n\
          def actorCommitChoreo : Hibana.Choreo := {}\n\n\
          def ownerImage : Hibana.RustDescriptorImage := {}\n\n\
          def workerImage : Hibana.RustDescriptorImage := {}\n\n",
@@ -251,7 +291,14 @@ fn write_observations(observations: &[(&str, u8, &ActorSnapshot, &ActorSnapshot)
         descriptor_source(RoleDescriptorRef::from_resident(owner_image)),
         descriptor_source(RoleDescriptorRef::from_resident(worker_image)),
     );
-    for (name, view, before, after) in observations {
+    for CommitObservation {
+        name,
+        view,
+        before,
+        after,
+        wire: (header, payload),
+    } in observations
+    {
         let (image, image_name) = match before.actor {
             0 => (owner_image, "ownerImage"),
             1 => (worker_image, "workerImage"),
@@ -296,6 +343,62 @@ fn write_observations(observations: &[(&str, u8, &ActorSnapshot, &ActorSnapshot)
              {image_name} actorCommitChoreo = false := by\n  decide\n\n",
             observation_source(before), observation_source(after),
         ));
+        source.push_str(&std::format!(
+            "def {name}Wire : Hibana.OwnedWireObservation := {{\n  \
+             session := {}\n  lane := {}\n  sender := {}\n  receiver := {}\n  \
+             frameLabel := {}\n  payload := {:?}\n}}\n\n\
+             theorem {name}WireAccepted :\n  \
+             {name}.ownedCheck {image_name} actorCommitChoreo {name}Wire {} = true := by\n  decide\n\n\
+             theorem {name}WireHasExactSource :\n  \
+             ∃ facts, {name}.ownedFacts? {image_name} actorCommitChoreo = some facts ∧\n    \
+             {name}.SourceOrdered {image_name} actorCommitChoreo ∧\n    \
+             {name}Wire.payload = facts.envelope := by\n  \
+             obtain ⟨ordered, facts, decoded, fields⟩ :=\n    \
+             Hibana.accepted_owned_commit_binds_source_view_and_wire {name}WireAccepted\n  \
+             obtain ⟨_, _, _, _, _, _, _, _, _, envelope⟩ := fields\n  \
+             exact ⟨facts, decoded, ordered, envelope⟩\n\n",
+            header.session().raw(), header.lane(), header.source_role(), header.target_role(),
+            header.label().raw(), payload, sid.raw(),
+        ));
+        for (suffix, sample, wire, session) in [
+            (
+                "WrongResource",
+                std::string::String::from(*name),
+                std::format!("{{ {name}Wire with payload := [255, 0, 0] }}"),
+                sid.raw(),
+            ),
+            (
+                "WrongOrdinal",
+                std::string::String::from(*name),
+                std::format!("{{ {name}Wire with payload := [10, 255, 255] }}"),
+                sid.raw(),
+            ),
+            (
+                "WrongReceiver",
+                std::string::String::from(*name),
+                std::format!("{{ {name}Wire with receiver := {name}Wire.receiver + 1 }}"),
+                sid.raw(),
+            ),
+            (
+                "WrongActor",
+                std::format!(
+                    "({{ {name} with before := {{ {name}.before with actor := {name}.before.actor + 1 }} }} : Hibana.ActorCommitObservation)"
+                ),
+                std::format!("{name}Wire"),
+                sid.raw(),
+            ),
+            (
+                "WrongSession",
+                std::string::String::from(*name),
+                std::format!("{name}Wire"),
+                sid.raw() + 1,
+            ),
+        ] {
+            source.push_str(&std::format!(
+                "theorem {name}{suffix}Rejected :\n  \
+                 {sample}.ownedCheck {image_name} actorCommitChoreo ({wire}) {session} = false := by\n  decide\n\n",
+            ));
+        }
     }
     let directory = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/lean-proof");
     std::fs::create_dir_all(&directory).unwrap();

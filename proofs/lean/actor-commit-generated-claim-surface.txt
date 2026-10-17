@@ -16,11 +16,43 @@ ownerLoanMissingViewRejected : (have __src := ownerLoan;
     ownerImage actorCommitChoreo =
   false
 ownerLoanSourceOrdered : ownerLoan.SourceOrdered ownerImage actorCommitChoreo
+ownerLoanWireAccepted : ownerLoan.ownedCheck ownerImage actorCommitChoreo ownerLoanWire 874 = true
+ownerLoanWireHasExactSource : ∃ facts,
+  ownerLoan.ownedFacts? ownerImage actorCommitChoreo = some facts ∧
+    ownerLoan.SourceOrdered ownerImage actorCommitChoreo ∧ ownerLoanWire.payload = facts.envelope
+ownerLoanWrongActorRejected : (have __src := ownerLoan;
+      { pathIndex := __src.pathIndex, event := __src.event, view := __src.view,
+        before :=
+          have __src := ownerLoan.before;
+          { actor := ownerLoan.before.actor + 1, run := __src.run, counter := __src.counter,
+            liveViews := __src.liveViews, views := __src.views, steps := __src.steps, choices := __src.choices },
+        after := __src.after }).ownedCheck
+    ownerImage actorCommitChoreo ownerLoanWire 874 =
+  false
 ownerLoanWrongLocalRowRejected : (have __src := ownerLoan;
       { pathIndex := __src.pathIndex, event := 1, view := __src.view, before := __src.before,
         after := __src.after }).check
     ownerImage actorCommitChoreo =
   false
+ownerLoanWrongOrdinalRejected : ownerLoan.ownedCheck ownerImage actorCommitChoreo
+    (have __src := ownerLoanWire;
+    { session := __src.session, lane := __src.lane, sender := __src.sender, receiver := __src.receiver,
+      frameLabel := __src.frameLabel, payload := [10, 255, 255] })
+    874 =
+  false
+ownerLoanWrongReceiverRejected : ownerLoan.ownedCheck ownerImage actorCommitChoreo
+    (have __src := ownerLoanWire;
+    { session := __src.session, lane := __src.lane, sender := __src.sender, receiver := ownerLoanWire.receiver + 1,
+      frameLabel := __src.frameLabel, payload := __src.payload })
+    874 =
+  false
+ownerLoanWrongResourceRejected : ownerLoan.ownedCheck ownerImage actorCommitChoreo
+    (have __src := ownerLoanWire;
+    { session := __src.session, lane := __src.lane, sender := __src.sender, receiver := __src.receiver,
+      frameLabel := __src.frameLabel, payload := [255, 0, 0] })
+    874 =
+  false
+ownerLoanWrongSessionRejected : ownerLoan.ownedCheck ownerImage actorCommitChoreo ownerLoanWire 875 = false
 ownerReturnAccepted : ownerReturn.check ownerImage actorCommitChoreo = true
 ownerReturnMissingProgressRejected : (have __src := ownerReturn;
       { pathIndex := __src.pathIndex, event := __src.event, view := __src.view, before := __src.before,
@@ -39,11 +71,43 @@ ownerReturnMissingViewRejected : (have __src := ownerReturn;
     ownerImage actorCommitChoreo =
   false
 ownerReturnSourceOrdered : ownerReturn.SourceOrdered ownerImage actorCommitChoreo
+ownerReturnWireAccepted : ownerReturn.ownedCheck ownerImage actorCommitChoreo ownerReturnWire 874 = true
+ownerReturnWireHasExactSource : ∃ facts,
+  ownerReturn.ownedFacts? ownerImage actorCommitChoreo = some facts ∧
+    ownerReturn.SourceOrdered ownerImage actorCommitChoreo ∧ ownerReturnWire.payload = facts.envelope
+ownerReturnWrongActorRejected : (have __src := ownerReturn;
+      { pathIndex := __src.pathIndex, event := __src.event, view := __src.view,
+        before :=
+          have __src := ownerReturn.before;
+          { actor := ownerReturn.before.actor + 1, run := __src.run, counter := __src.counter,
+            liveViews := __src.liveViews, views := __src.views, steps := __src.steps, choices := __src.choices },
+        after := __src.after }).ownedCheck
+    ownerImage actorCommitChoreo ownerReturnWire 874 =
+  false
 ownerReturnWrongLocalRowRejected : (have __src := ownerReturn;
       { pathIndex := __src.pathIndex, event := 2, view := __src.view, before := __src.before,
         after := __src.after }).check
     ownerImage actorCommitChoreo =
   false
+ownerReturnWrongOrdinalRejected : ownerReturn.ownedCheck ownerImage actorCommitChoreo
+    (have __src := ownerReturnWire;
+    { session := __src.session, lane := __src.lane, sender := __src.sender, receiver := __src.receiver,
+      frameLabel := __src.frameLabel, payload := [10, 255, 255] })
+    874 =
+  false
+ownerReturnWrongReceiverRejected : ownerReturn.ownedCheck ownerImage actorCommitChoreo
+    (have __src := ownerReturnWire;
+    { session := __src.session, lane := __src.lane, sender := __src.sender, receiver := ownerReturnWire.receiver + 1,
+      frameLabel := __src.frameLabel, payload := __src.payload })
+    874 =
+  false
+ownerReturnWrongResourceRejected : ownerReturn.ownedCheck ownerImage actorCommitChoreo
+    (have __src := ownerReturnWire;
+    { session := __src.session, lane := __src.lane, sender := __src.sender, receiver := __src.receiver,
+      frameLabel := __src.frameLabel, payload := [255, 0, 0] })
+    874 =
+  false
+ownerReturnWrongSessionRejected : ownerReturn.ownedCheck ownerImage actorCommitChoreo ownerReturnWire 875 = false
 workerLoanAccepted : workerLoan.check workerImage actorCommitChoreo = true
 workerLoanMissingProgressRejected : (have __src := workerLoan;
       { pathIndex := __src.pathIndex, event := __src.event, view := __src.view, before := __src.before,
@@ -62,11 +126,43 @@ workerLoanMissingViewRejected : (have __src := workerLoan;
     workerImage actorCommitChoreo =
   false
 workerLoanSourceOrdered : workerLoan.SourceOrdered workerImage actorCommitChoreo
+workerLoanWireAccepted : workerLoan.ownedCheck workerImage actorCommitChoreo workerLoanWire 874 = true
+workerLoanWireHasExactSource : ∃ facts,
+  workerLoan.ownedFacts? workerImage actorCommitChoreo = some facts ∧
+    workerLoan.SourceOrdered workerImage actorCommitChoreo ∧ workerLoanWire.payload = facts.envelope
+workerLoanWrongActorRejected : (have __src := workerLoan;
+      { pathIndex := __src.pathIndex, event := __src.event, view := __src.view,
+        before :=
+          have __src := workerLoan.before;
+          { actor := workerLoan.before.actor + 1, run := __src.run, counter := __src.counter,
+            liveViews := __src.liveViews, views := __src.views, steps := __src.steps, choices := __src.choices },
+        after := __src.after }).ownedCheck
+    workerImage actorCommitChoreo workerLoanWire 874 =
+  false
 workerLoanWrongLocalRowRejected : (have __src := workerLoan;
       { pathIndex := __src.pathIndex, event := 1, view := __src.view, before := __src.before,
         after := __src.after }).check
     workerImage actorCommitChoreo =
   false
+workerLoanWrongOrdinalRejected : workerLoan.ownedCheck workerImage actorCommitChoreo
+    (have __src := workerLoanWire;
+    { session := __src.session, lane := __src.lane, sender := __src.sender, receiver := __src.receiver,
+      frameLabel := __src.frameLabel, payload := [10, 255, 255] })
+    874 =
+  false
+workerLoanWrongReceiverRejected : workerLoan.ownedCheck workerImage actorCommitChoreo
+    (have __src := workerLoanWire;
+    { session := __src.session, lane := __src.lane, sender := __src.sender, receiver := workerLoanWire.receiver + 1,
+      frameLabel := __src.frameLabel, payload := __src.payload })
+    874 =
+  false
+workerLoanWrongResourceRejected : workerLoan.ownedCheck workerImage actorCommitChoreo
+    (have __src := workerLoanWire;
+    { session := __src.session, lane := __src.lane, sender := __src.sender, receiver := __src.receiver,
+      frameLabel := __src.frameLabel, payload := [255, 0, 0] })
+    874 =
+  false
+workerLoanWrongSessionRejected : workerLoan.ownedCheck workerImage actorCommitChoreo workerLoanWire 875 = false
 workerReturnAccepted : workerReturn.check workerImage actorCommitChoreo = true
 workerReturnMissingProgressRejected : (have __src := workerReturn;
       { pathIndex := __src.pathIndex, event := __src.event, view := __src.view, before := __src.before,
@@ -85,8 +181,40 @@ workerReturnMissingViewRejected : (have __src := workerReturn;
     workerImage actorCommitChoreo =
   false
 workerReturnSourceOrdered : workerReturn.SourceOrdered workerImage actorCommitChoreo
+workerReturnWireAccepted : workerReturn.ownedCheck workerImage actorCommitChoreo workerReturnWire 874 = true
+workerReturnWireHasExactSource : ∃ facts,
+  workerReturn.ownedFacts? workerImage actorCommitChoreo = some facts ∧
+    workerReturn.SourceOrdered workerImage actorCommitChoreo ∧ workerReturnWire.payload = facts.envelope
+workerReturnWrongActorRejected : (have __src := workerReturn;
+      { pathIndex := __src.pathIndex, event := __src.event, view := __src.view,
+        before :=
+          have __src := workerReturn.before;
+          { actor := workerReturn.before.actor + 1, run := __src.run, counter := __src.counter,
+            liveViews := __src.liveViews, views := __src.views, steps := __src.steps, choices := __src.choices },
+        after := __src.after }).ownedCheck
+    workerImage actorCommitChoreo workerReturnWire 874 =
+  false
 workerReturnWrongLocalRowRejected : (have __src := workerReturn;
       { pathIndex := __src.pathIndex, event := 4, view := __src.view, before := __src.before,
         after := __src.after }).check
     workerImage actorCommitChoreo =
   false
+workerReturnWrongOrdinalRejected : workerReturn.ownedCheck workerImage actorCommitChoreo
+    (have __src := workerReturnWire;
+    { session := __src.session, lane := __src.lane, sender := __src.sender, receiver := __src.receiver,
+      frameLabel := __src.frameLabel, payload := [10, 255, 255] })
+    874 =
+  false
+workerReturnWrongReceiverRejected : workerReturn.ownedCheck workerImage actorCommitChoreo
+    (have __src := workerReturnWire;
+    { session := __src.session, lane := __src.lane, sender := __src.sender, receiver := workerReturnWire.receiver + 1,
+      frameLabel := __src.frameLabel, payload := __src.payload })
+    874 =
+  false
+workerReturnWrongResourceRejected : workerReturn.ownedCheck workerImage actorCommitChoreo
+    (have __src := workerReturnWire;
+    { session := __src.session, lane := __src.lane, sender := __src.sender, receiver := __src.receiver,
+      frameLabel := __src.frameLabel, payload := [255, 0, 0] })
+    874 =
+  false
+workerReturnWrongSessionRejected : workerReturn.ownedCheck workerImage actorCommitChoreo workerReturnWire 875 = false

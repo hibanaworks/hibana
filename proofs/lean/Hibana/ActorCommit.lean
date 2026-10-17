@@ -1,4 +1,5 @@
 import Hibana.ActorSourceProgress
+import Hibana.ActorRouting
 import Hibana.ViewGeneration
 
 namespace Hibana
@@ -32,8 +33,9 @@ structure ActorProgressObservation where
 def ActorProgressObservation.progress (snapshot : ActorProgressObservation) : List Bool :=
   snapshot.steps.map ActorStepObservation.done
 
-/-- Copy the existing done bits and committed choices. The commit theorem below
-uses done bits; reentry also binds the observed choices to a source visit. -/
+/-- Copy the existing done bits and committed choices. Commit checks bind both
+choice histories and their publication to the selected source visit; reentry
+first derives the fresh base for that same check. -/
 def ActorProgressObservation.doneState (snapshot : ActorProgressObservation) : CommitState := {
   done := fun event => snapshot.progress[event]?.getD false
   selected := fun scope =>
@@ -48,6 +50,29 @@ def ActorProgressObservation.choicesMatch
       match image.decodeRouteScope? slot with
       | none => false
       | some scope => snapshot.choices.any fun entry => entry.1 == scope
+
+def observedChoicesAgree
+    (source : CanonicalProgramSource) (path : NormalizedPath)
+    (snapshot : ActorProgressObservation) : Bool :=
+  snapshot.choices.all fun (scope, selected) =>
+    match selected with
+    | none => true
+    | some arm => sourcePathArm? source.markers path scope == some arm
+
+def publishedObservedChoices?
+    (source : CanonicalProgramSource) (eff : Nat)
+    (choices : List (Nat × Option RouteArm)) : Option (List (Nat × Option RouteArm)) := do
+  let memberships ← canonicalEventRoutePath? source eff
+  choices.mapM fun (scope, previous) =>
+    match memberships.find? (fun member => member.1 == scope) with
+    | none => pure (scope, previous)
+    | some (_, arm) => do
+        let chosen ← match arm with
+          | 0 => some RouteArm.left
+          | 1 => some RouteArm.right
+          | _ => none
+        if previous.isSome && previous != some chosen then none
+        else pure (scope, some chosen)
 
 def ActorProgressObservation.metadataMatches
     (snapshot : ActorProgressObservation) (image : RustDescriptorImage)
@@ -143,10 +168,15 @@ def ActorCommitObservation.check
   | some data =>
       match data.normalized.paths[sample.pathIndex]?, data.rows[sample.event]? with
       | some path, some row =>
-          (sample.before.metadataMatches image data.rows &&
+          ((sample.before.metadataMatches image data.rows &&
             sample.after.metadataMatches image data.rows &&
             sample.before.valid && sample.after.valid &&
             sample.after.actor == sample.before.actor && sample.after.run == sample.before.run) &&
+          (observedChoicesAgree (canonicalProgramSource choreo) path sample.before &&
+            (observedChoicesAgree (canonicalProgramSource choreo) path sample.after &&
+            decide ((image.eventEffIndex? sample.event).bind (fun eff =>
+              publishedObservedChoices? (canonicalProgramSource choreo) eff
+                sample.before.choices) = some sample.after.choices)))) &&
           ((row.eventId == sample.event &&
               (row.view == sample.view && decide (row ∈ data.activeRows path))) &&
           ((sample.before.progress[sample.event]? == some false &&
@@ -204,7 +234,12 @@ def ActorCommitObservation.SourceOrdered
     (∀ other, other ≠ sample.event →
       sample.after.doneState.done other = sample.before.doneState.done other) ∧
     observedViewCommitMatches sample.before sample.after binding.2.message.payload
-      row.actionId.side = true
+      row.actionId.side = true ∧
+    observedChoicesAgree (canonicalProgramSource choreo) path sample.before = true ∧
+    observedChoicesAgree (canonicalProgramSource choreo) path sample.after = true ∧
+    (image.eventEffIndex? sample.event).bind (fun eff =>
+      publishedObservedChoices? (canonicalProgramSource choreo) eff sample.before.choices) =
+        some sample.after.choices
 
 /-- Accepted observations connect the real actor-local done bits to the
 source order of the checked image. View publication and one exact progress
@@ -233,7 +268,7 @@ theorem accepted_actor_commit_matches_source_progress
               | none => simp [pathAt, rowAt, parentsAt, bindingAt] at checked
               | some binding =>
                   simp only [pathAt, rowAt, parentsAt, bindingAt, Bool.and_eq_true] at checked
-                  obtain ⟨_, ⟨⟨eventSame, viewSame, active⟩,
+                  obtain ⟨⟨_, beforeAgrees, afterAgrees, publication⟩, ⟨⟨eventSame, viewSame, active⟩,
                     ⟨⟨unfinished, exactStep⟩, closed, ready, viewCommit⟩⟩⟩ := checked
                   have same : row.eventId = sample.event := beq_iff_eq.mp eventSame
                   have member : row ∈ data.activeRows path := of_decide_eq_true active
@@ -267,6 +302,7 @@ theorem accepted_actor_commit_matches_source_progress
                     includingCurrent sourceDone completed unchanged
                   exact ⟨rowsAccepted, data, path, row, binding, decoded, pathAt, rowAt, same,
                     beq_iff_eq.mp viewSame, member, bindingAt, sourceDone, completed,
-                    nextPrefix, unchanged, viewCommit⟩
+                    nextPrefix, unchanged, viewCommit, beforeAgrees, afterAgrees,
+                    of_decide_eq_true publication⟩
 
 end Hibana
