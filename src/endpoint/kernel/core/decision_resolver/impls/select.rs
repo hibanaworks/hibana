@@ -443,7 +443,7 @@ where
         let delta = self
             .prepare_commit_delta(delta)
             .map_err(|_| RecvError::PhaseInvariant)?;
-        self.commit_prepared_delta(delta);
+        let _ = self.commit_prepared_delta(delta, None);
         if emit_poll_selection {
             self.emit_route_arm_selection(scope_id, resolved.route_token, selection.offer_lane);
         }

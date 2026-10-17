@@ -1,5 +1,5 @@
 use super::{
-    core::{OperationKernel, PreparedCommitDelta},
+    core::{OperationKernel, PreparedCommitDelta, PreparedViewCommit},
     lane_port,
     offer::BranchMeta,
 };
@@ -167,12 +167,12 @@ where
             delta,
             payload,
         } = plan;
-        let output = match issue {
-            Some(issue) => {
-                let _ = payload.into_payload();
-                crate::endpoint::transfer::RecvOutput::Endpoint(self.commit_received_view(issue))
-            }
-            None => crate::endpoint::transfer::RecvOutput::Payload(payload.into_payload()),
+        let payload = payload.into_payload();
+        let (committed, owner) =
+            self.commit_prepared_delta(delta, issue.map(PreparedViewCommit::Issue));
+        let output = match owner {
+            Some(owner) => crate::endpoint::transfer::RecvOutput::Endpoint(owner),
+            None => crate::endpoint::transfer::RecvOutput::Payload(payload),
         };
         match kind {
             RecvCommitPlanKind::Direct => {
@@ -182,11 +182,9 @@ where
                     self.public_header.role(),
                     event.label,
                 );
-                self.commit_prepared_delta(delta);
                 self.emit_endpoint_event(event.event_id, endpoint_meta, event.lane);
             }
             RecvCommitPlanKind::Branch { branch } => {
-                let committed = self.commit_prepared_delta(delta);
                 self.publish_branch_preview_commit_plan(branch, &committed);
                 let endpoint_meta = TapFrameMeta::new(
                     self.context.sid.raw(),

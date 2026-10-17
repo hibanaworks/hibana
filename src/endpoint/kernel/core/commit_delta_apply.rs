@@ -1,7 +1,8 @@
 use super::{
-    CommitEventRow, OperationKernel, PreparedRouteCommitRows, RelocatableResidentLaneStep,
-    SelectedRouteCommitRow, Transport, commit_delta::CommitDeltaApplyPermit,
-    commit_delta::CommittedCommitDelta, commit_delta::PreparedCommitDelta, state_index_to_usize,
+    CommitEventRow, OperationKernel, PreparedRouteCommitRows, PreparedViewCommit,
+    RelocatableResidentLaneStep, SelectedRouteCommitRow, Transport,
+    commit_delta::CommitDeltaApplyPermit, commit_delta::CommittedCommitDelta,
+    commit_delta::PreparedCommitDelta, state_index_to_usize,
 };
 use crate::global::const_dsl::{ReentryMark, ScopeId};
 
@@ -12,7 +13,12 @@ where
     pub(in crate::endpoint::kernel) fn commit_prepared_delta(
         &mut self,
         mut delta: PreparedCommitDelta,
-    ) -> CommittedCommitDelta {
+        view: Option<PreparedViewCommit>,
+    ) -> (
+        CommittedCommitDelta,
+        Option<crate::endpoint::owner::EndpointOwner>,
+    ) {
+        let owner = self.commit_prepared_view(delta.event(), view);
         let fresh_route_start = delta.fresh_route_start;
         let applies_route_completion =
             delta.event().is_some() || delta.selected_routes().len() != 0;
@@ -45,11 +51,12 @@ where
         if applies_route_completion {
             self.apply_prepared_route_completion_cursor(delta.selected_routes());
         }
-        CommittedCommitDelta::from_applied(
+        let committed = CommittedCommitDelta::from_applied(
             delta.event(),
             delta.take_selected_routes(),
             fresh_route_start,
-        )
+        );
+        (committed, owner)
     }
 
     #[inline]

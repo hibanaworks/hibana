@@ -485,7 +485,7 @@ where
             StateIndex::checked_from_usize(idx).ok_or(CursorInvariantError::INVARIANT)?;
         let delta = CommitDelta::cursor_only(cursor_after);
         let delta = self.prepare_commit_delta(delta)?;
-        self.commit_prepared_delta(delta);
+        let _ = self.commit_prepared_delta(delta, None);
         Ok(())
     }
 }

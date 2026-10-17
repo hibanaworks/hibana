@@ -117,8 +117,16 @@ where
     }
 
     #[inline(never)]
-    fn publish_send_progress_commit_plan(&mut self, plan: SendProgressCommitPlan) {
-        let committed = self.commit_prepared_delta(plan.delta);
+    fn publish_send_progress_commit_plan(
+        &mut self,
+        plan: SendProgressCommitPlan,
+        transfer: Option<crate::endpoint::transfer::EndpointTransfer>,
+    ) {
+        let (committed, owner) =
+            self.commit_prepared_delta(plan.delta, transfer.map(super::PreparedViewCommit::Retire));
+        if owner.is_some() {
+            crate::invariant();
+        }
         match plan.route_audit {
             SendRouteAudit::DirectPreview { start } => {
                 self.publish_send_resolver_success_audits_from(&committed, start)
@@ -299,10 +307,7 @@ where
                     _borrow: _,
                 },
         } = commit_plan;
-        if let Some(transfer) = transfer {
-            self.commit_transfer_out(transfer);
-        }
-        self.publish_send_progress_commit_plan(progress);
+        self.publish_send_progress_commit_plan(progress, transfer);
         SendCommitOutcome {
             _borrow: core::marker::PhantomData,
         }

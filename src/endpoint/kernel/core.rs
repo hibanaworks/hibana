@@ -352,6 +352,7 @@ pub(crate) use super::decision_state::{
 };
 pub(in crate::endpoint::kernel) use commit_delta::CommitDeltaApplyPermit;
 pub(crate) use commit_delta::{CommittedCommitDelta, PreparedCommitDelta};
+pub(in crate::endpoint::kernel) use owned::PreparedViewCommit;
 pub(crate) use public_operation::*;
 pub(crate) use public_types::*;
 pub(in crate::endpoint::kernel) use route_preview::IngressEvidenceState;
