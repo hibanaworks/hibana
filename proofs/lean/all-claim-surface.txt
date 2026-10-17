@@ -216,10 +216,52 @@ Hibana.abort_peer_is_well_formed : ∀ (state : Hibana.TransportState), state.ab
                               (data.sourcePredecessors path row.eventId) before →
                             @LT.lt.{0} Nat instLTNat before row.eventId)
                         (∀ (state : Hibana.CommitState),
-                          state.PrefixClosed (data.sourcePredecessors path) →
+                          state.PrefixClosed (data.sourcePredecessors path) (data.sourcePredecessors path row.eventId) →
                             Iff (@Eq.{1} Bool (@List.all.{0} Nat actual state.done) true)
                               (@Eq.{1} Bool (@List.all.{0} Nat (data.sourcePredecessors path row.eventId) state.done)
                                 true)))))
+@Hibana.accepted_actor_roll_reset_preserves_source_prefix : ∀ {image : Hibana.RustDescriptorImage}
+  {choreo : Hibana.Choreo} {data : Hibana.DecodedActorOrder} {path : Hibana.EndpointDelegation.NormalizedPath}
+  {rows : List.{0} Hibana.DecodedRollRow} {row : Hibana.DecodedRollRow} {state : Hibana.CommitState}
+  {roll : Hibana.RollInfo} {candidate : Nat},
+  @Eq.{1} Bool (image.actorOrderCheck choreo) true →
+    @Eq.{1} Bool (image.actorRollCheck choreo) true →
+      @Eq.{1} (Option.{0} Hibana.DecodedActorOrder) (image.decodeActorOrder? choreo)
+          (@some.{0} Hibana.DecodedActorOrder data) →
+        @Membership.mem.{0, 0} Hibana.EndpointDelegation.NormalizedPath
+            (List.{0} Hibana.EndpointDelegation.NormalizedPath)
+            (@List.instMembership.{0} Hibana.EndpointDelegation.NormalizedPath) data.normalized.paths path →
+          @Eq.{1} (Option.{0} (List.{0} Hibana.DecodedRollRow)) image.decodeRollRows?
+              (@some.{0} (List.{0} Hibana.DecodedRollRow) rows) →
+            @Membership.mem.{0, 0} Hibana.DecodedRollRow (List.{0} Hibana.DecodedRollRow)
+                (@List.instMembership.{0} Hibana.DecodedRollRow) rows row →
+              @Eq.{1} (List.{0} Nat) roll.events (Hibana.eventRange row.eventStart row.eventLength) →
+                @LT.lt.{0} Nat instLTNat candidate
+                    (@HAdd.hAdd.{0, 0, 0} Nat Nat Nat (@instHAdd.{0} Nat instAddNat) row.eventStart row.eventLength) →
+                  state.PrefixClosed (data.sourcePredecessors path)
+                      (@List.filter.{0} Nat
+                        (fun x => @decide (@LT.lt.{0} Nat instLTNat x row.eventStart) (x.decLt row.eventStart))
+                        (data.sourcePredecessors path candidate)) →
+                    @Exists.{1} (List.{0} Hibana.DecodedRollRow) fun sourceRows =>
+                      And
+                        (@Eq.{1} (Option.{0} (List.{0} Hibana.DecodedRollRow))
+                          (choreo.canonicalActorRollRows? image.role)
+                          (@some.{0} (List.{0} Hibana.DecodedRollRow) sourceRows))
+                        (And
+                          (@Membership.mem.{0, 0} Hibana.DecodedRollRow (List.{0} Hibana.DecodedRollRow)
+                            (@List.instMembership.{0} Hibana.DecodedRollRow) sourceRows row)
+                          ((Hibana.resetRoll state roll).PrefixClosed (data.sourcePredecessors path)
+                            (data.sourcePredecessors path candidate)))
+@Hibana.accepted_actor_rolls_bind_source_ranges : ∀ {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo},
+  @Eq.{1} Bool (image.actorRollCheck choreo) true →
+    And (@Eq.{1} Bool (image.actorRowsCheck choreo) true)
+      (And (@Eq.{1} Bool image.rollColumnsCoherent true)
+        (@Exists.{1} (List.{0} Hibana.DecodedRollRow) fun rows =>
+          And
+            (@Eq.{1} (Option.{0} (List.{0} Hibana.DecodedRollRow)) (choreo.canonicalActorRollRows? image.role)
+              (@some.{0} (List.{0} Hibana.DecodedRollRow) rows))
+            (@Eq.{1} (Option.{0} (List.{0} Hibana.DecodedRollRow)) image.decodeRollRows?
+              (@some.{0} (List.{0} Hibana.DecodedRollRow) rows))))
 @Hibana.accepted_actor_routes_bind_source_choice_filter : ∀ {image : Hibana.RustDescriptorImage}
   {choreo : Hibana.Choreo},
   @Eq.{1} Bool (image.actorRouteCheck choreo) true →
@@ -687,12 +729,12 @@ Hibana.active_offer_key_mem_iff_owned : ∀ (target : Hibana.ActiveOfferKey) (la
           (@List.instMembership.{0} Hibana.ActiveOfferLane) lanes owner)
         (@Eq.{1} Hibana.ActiveOfferKey owner.key target))
 @Hibana.actor_commit_delta_preserves_source_prefix : ∀ {predecessors : Nat → List.{0} Nat}
-  {base next : Hibana.CommitState} {event : Nat},
-  base.PrefixClosed predecessors →
+  {base next : Hibana.CommitState} {event : Nat} {cut : List.{0} Nat},
+  base.PrefixClosed predecessors cut →
     @Eq.{1} Bool (@List.all.{0} Nat (predecessors event) base.done) true →
       @Eq.{1} Bool (next.done event) true →
         (∀ (other : Nat), @Ne.{1} Nat other event → @Eq.{1} Bool (next.done other) (base.done other)) →
-          next.PrefixClosed predecessors
+          next.PrefixClosed predecessors cut
 @Hibana.admission_acceptance_iff_admissible : ∀ {graph : Hibana.EventGraph} {state : Hibana.CommitState}
   {request : Hibana.OperationRequest},
   Iff
@@ -1175,6 +1217,13 @@ Hibana.causal_flow_monotone : ∀ (flow : Hibana.CausalFlowExpr) {left right : H
         @Exists.{1} Nat fun actor =>
           And (@Eq.{1} (Option.{0} Nat) (columns.selectedActor? selected reference) (@some.{0} Nat actor))
             (@LT.lt.{0} Nat instLTNat actor roleCount)
+@Hibana.checked_actor_source_predecessors_are_backward : ∀ {data : Hibana.DecodedActorOrder}
+  {path : Hibana.EndpointDelegation.NormalizedPath},
+  @Eq.{1} Bool (data.pathOrderCheck path) true →
+    ∀ (event before : Nat),
+      @Membership.mem.{0, 0} Nat (List.{0} Nat) (@List.instMembership.{0} Nat) (data.sourcePredecessors path event)
+          before →
+        @LT.lt.{0} Nat instLTNat before event
 @Hibana.checked_descriptor_binds_active_lane_metadata : ∀ {image : Hibana.RustDescriptorImage},
   @Eq.{1} Bool image.check true → @Eq.{1} Bool image.activeLaneMetadataCoherent true
 @Hibana.checked_descriptor_binds_event_lane_column : ∀ {image : Hibana.RustDescriptorImage},
@@ -1460,7 +1509,7 @@ Hibana.constrained_parallel_lane_matching_uses_minimum_span : @Eq.{1} (List.{0} 
 @Hibana.covered_predecessors_have_equal_readiness : ∀ {expected : Nat → List.{0} Nat} {actual : List.{0} Nat}
   {event : Nat} {state : Hibana.CommitState},
   @Eq.{1} Bool (Hibana.predecessorCoverage expected actual event) true →
-    state.PrefixClosed expected →
+    state.PrefixClosed expected (expected event) →
       Iff (@Eq.{1} Bool (@List.all.{0} Nat actual state.done) true)
         (@Eq.{1} Bool (@List.all.{0} Nat (expected event) state.done) true)
 Hibana.cross_rendezvous_session_attach_rejected : ∀ (binding : Hibana.SessionBinding) (rendezvous : Nat),
@@ -2366,6 +2415,10 @@ Hibana.erased_cursor_target_predicate_has_exact_source : ∀ (predicate : Hibana
       @Eq.{1} (Option.{0} Hibana.RouteArm) (config.routeSelection membership.conflict)
           (@some.{0} Hibana.RouteArm selected) →
         @Ne.{1} Hibana.RouteArm selected membership.arm → @Eq.{1} Bool (config.eventExcluded globalId) true
+Hibana.event_range_membership : ∀ (start length event : Nat),
+  Iff (@Membership.mem.{0, 0} Nat (List.{0} Nat) (@List.instMembership.{0} Nat) (Hibana.eventRange start length) event)
+    (And (@LE.le.{0} Nat instLENat start event)
+      (@LT.lt.{0} Nat instLTNat event (@HAdd.hAdd.{0, 0, 0} Nat Nat Nat (@instHAdd.{0} Nat instAddNat) start length)))
 Hibana.exact_current_offer_observations_are_key_exact : ∀ (target : Hibana.ActiveOfferKey)
   (observations : List.{0} Hibana.ActiveOfferObservation) (observation : Hibana.ActiveOfferObservation),
   Iff
@@ -2779,8 +2832,8 @@ Hibana.initial_global_invariant : ∀ (session roleCount : Nat) (choreo : Hibana
     Hibana.GlobalProgramWellFormed roleCount choreo →
       Hibana.GlobalReachable (Hibana.GlobalConfig.initial session roleCount choreo) current →
         Hibana.GlobalInvariant current
-Hibana.initial_progress_is_source_prefix : ∀ (predecessors : Nat → List.{0} Nat),
-  Hibana.CommitState.initial.PrefixClosed predecessors
+Hibana.initial_progress_is_source_prefix : ∀ (predecessors : Nat → List.{0} Nat) (cut : List.{0} Nat),
+  Hibana.CommitState.initial.PrefixClosed predecessors cut
 Hibana.initial_route_selection_fidelity : ∀ (session roleCount : Nat) (choreo : Hibana.Choreo),
   Hibana.RouteSelectionFidelity (Hibana.GlobalConfig.initial session roleCount choreo)
 Hibana.initial_session_fidelity : ∀ (session roleCount : Nat) (choreo : Hibana.Choreo),
@@ -3466,6 +3519,24 @@ Hibana.poisoned_public_operation_remains_faulted : ∀ (edge : Hibana.PublicOper
       (Hibana.prepareLeaseAllocation state requiredTableSlots payloadBytes plannedImageFrontier payloadOffset)
       (@Except.ok.{0, 0} Hibana.LeaseAllocationFailure Hibana.LeaseAllocationPlan plan) →
     Hibana.endpointLeaseSlotCountRepresentable requiredTableSlots
+@Hibana.prepared_roll_is_source_prefix : ∀ {state : Hibana.CommitState} {roll : Hibana.RollInfo}
+  {predecessors : Nat → List.{0} Nat} {first stop candidate : Nat},
+  state.PrefixClosed predecessors
+      (@List.filter.{0} Nat (fun x => @decide (@LT.lt.{0} Nat instLTNat x first) (x.decLt first))
+        (predecessors candidate)) →
+    @LT.lt.{0} Nat instLTNat candidate stop →
+      (∀ (event : Nat),
+          @Membership.mem.{0, 0} Nat (List.{0} Nat) (@List.instMembership.{0} Nat) (predecessors candidate) event →
+            @LT.lt.{0} Nat instLTNat event candidate) →
+        (∀ (event : Nat),
+            @Membership.mem.{0, 0} Nat (List.{0} Nat) (@List.instMembership.{0} Nat) (predecessors candidate) event →
+              ∀ (before : Nat),
+                @Membership.mem.{0, 0} Nat (List.{0} Nat) (@List.instMembership.{0} Nat) (predecessors event) before →
+                  @LT.lt.{0} Nat instLTNat before event) →
+          (∀ (event : Nat),
+              Iff (@Membership.mem.{0, 0} Nat (List.{0} Nat) (@List.instMembership.{0} Nat) roll.events event)
+                (And (@LE.le.{0} Nat instLENat first event) (@LT.lt.{0} Nat instLTNat event stop))) →
+            (Hibana.resetRoll state roll).PrefixClosed predecessors (predecessors candidate)
 @Hibana.preview_route_choice_rejects_a_conflicting_path : ∀ {path : List.{0} (Prod.{0, 0} Nat Nat)}
   {selected preview : Nat → Option.{0} Hibana.RouteArm} {scope arm : Nat} {chosen : Hibana.RouteArm},
   @Membership.mem.{0, 0} (Prod.{0, 0} Nat Nat) (List.{0} (Prod.{0, 0} Nat Nat))

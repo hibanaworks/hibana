@@ -10,7 +10,7 @@ const TOOLCHAIN: &str = "leanprover/lean4:v4.30.0";
 fn markers(kind: &str) -> AuditResult<&'static [(&'static str, &'static str)]> {
     match kind {
         "static" => Ok(&[(
-            "Lean static theorem audit passed theorems=751 both=394 propext=256 free=101",
+            "Lean static theorem audit passed theorems=756 both=398 propext=257 free=101",
             "static theorem boundary",
         )]),
         "parallel" => Ok(&[(

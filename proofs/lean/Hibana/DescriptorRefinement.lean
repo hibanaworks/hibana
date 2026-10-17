@@ -1,5 +1,5 @@
 import Hibana.DescriptorTopology
-import Hibana.ActorIngress
+import Hibana.ActorReentry
 
 namespace Hibana
 
@@ -38,7 +38,8 @@ private def ExactDescriptorCertificate.ProgramImageMatches
     (certificate.choreo.hasOwnedPayload = true →
       certificate.image.actorOrderCheck certificate.choreo = true ∧
       certificate.image.actorRouteCheck certificate.choreo = true ∧
-      certificate.image.actorControllerCheck certificate.choreo = true)
+      certificate.image.actorControllerCheck certificate.choreo = true ∧
+      certificate.image.actorRollCheck certificate.choreo = true)
 
 private def ExactDescriptorCertificate.RoleEventImageMatches
     (certificate : ExactDescriptorCertificate) : Prop :=

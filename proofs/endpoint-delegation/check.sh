@@ -44,4 +44,6 @@ bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" lean "$EVIDENCE/lea
 bash "$ROOT/.github/scripts/check_smt2.sh" "$PROOFS/Ownership.smt2" > "$EVIDENCE/z3.log"
 bash "$ROOT/.github/scripts/check_smt2.sh" "$PROOFS/Issuance.smt2" > "$EVIDENCE/z3-issuance.log"
 bash "$ROOT/.github/scripts/check_smt2.sh" "$PROOFS/Causality.smt2" > "$EVIDENCE/z3-causality.log"
+bash "$ROOT/.github/scripts/check_smt2.sh" "$PROOFS/Reentry.smt2" > "$EVIDENCE/z3-reentry.log"
+printf 'Reentry dependency cut: Z3 1 UNSAT, 2 counterexample SAT. Evidence: %s\n' "$EVIDENCE/z3-reentry.log"
 printf 'Endpoint ownership projection: Rust tests passed; 17 projection/knowledge, 4 issuance and 4 causal-path general Lean theorems, 193 generated; ownership Z3 7 UNSAT, 2 counterexample SAT, 1 positive SAT; issuance Z3 3 UNSAT, 1 counterexample SAT, 1 positive SAT; causality Z3 3 UNSAT, 3 counterexample SAT, 1 independent-visit SAT. Evidence: %s\n' "$EVIDENCE"

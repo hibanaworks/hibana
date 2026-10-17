@@ -1,0 +1,139 @@
+nativeRollOwnerRustRanges : Option.map
+    (fun rows => List.map (fun row => (row.scope, row.eventStart, row.eventLength)) rows)
+    nativeRollOwnerImage.decodeRollRows? =
+  some [(1, 1, 2)]
+nativeRollOwnerSourceOrder : nativeRollOwnerImage.actorOrderCheck nativeRollOwnerChoreo = true
+nativeRollOwnerSourceRanges : nativeRollOwnerImage.actorRollCheck nativeRollOwnerChoreo = true
+nativeRollServiceRustRanges : Option.map
+    (fun rows => List.map (fun row => (row.scope, row.eventStart, row.eventLength)) rows)
+    nativeRollServiceImage.decodeRollRows? =
+  some [(1, 1, 4)]
+nativeRollServiceSourceOrder : nativeRollServiceImage.actorOrderCheck nativeRollServiceChoreo = true
+nativeRollServiceSourceRanges : nativeRollServiceImage.actorRollCheck nativeRollServiceChoreo = true
+nativeRollSidePeerRustRanges : Option.map
+    (fun rows => List.map (fun row => (row.scope, row.eventStart, row.eventLength)) rows)
+    nativeRollSidePeerImage.decodeRollRows? =
+  some [(3, 0, 2)]
+nativeRollSidePeerSourceOrder : nativeRollSidePeerImage.actorOrderCheck nativeRollSidePeerChoreo = true
+nativeRollSidePeerSourceRanges : nativeRollSidePeerImage.actorRollCheck nativeRollSidePeerChoreo = true
+nativeRollSideRustRanges : Option.map
+    (fun rows => List.map (fun row => (row.scope, row.eventStart, row.eventLength)) rows)
+    nativeRollSideImage.decodeRollRows? =
+  some [(3, 0, 2)]
+nativeRollSideSourceOrder : nativeRollSideImage.actorOrderCheck nativeRollSideChoreo = true
+nativeRollSideSourceRanges : nativeRollSideImage.actorRollCheck nativeRollSideChoreo = true
+nativeRollWorkerRustRanges : Option.map
+    (fun rows => List.map (fun row => (row.scope, row.eventStart, row.eventLength)) rows)
+    nativeRollWorkerImage.decodeRollRows? =
+  some [(1, 0, 6)]
+nativeRollWorkerSourceOrder : nativeRollWorkerImage.actorOrderCheck nativeRollWorkerChoreo = true
+nativeRollWorkerSourceRanges : nativeRollWorkerImage.actorRollCheck nativeRollWorkerChoreo = true
+nestedRollOwnerRustRanges : Option.map
+    (fun rows => List.map (fun row => (row.scope, row.eventStart, row.eventLength)) rows)
+    nestedRollOwnerImage.decodeRollRows? =
+  some [(0, 0, 2), (1, 0, 2)]
+nestedRollOwnerSourceOrder : nestedRollOwnerImage.actorOrderCheck nestedRollOwnerChoreo = true
+nestedRollOwnerSourceRanges : nestedRollOwnerImage.actorRollCheck nestedRollOwnerChoreo = true
+nestedRollServiceRustRanges : Option.map
+    (fun rows => List.map (fun row => (row.scope, row.eventStart, row.eventLength)) rows)
+    nestedRollServiceImage.decodeRollRows? =
+  some [(0, 0, 2), (1, 0, 2)]
+nestedRollServiceSourceOrder : nestedRollServiceImage.actorOrderCheck nestedRollServiceChoreo = true
+nestedRollServiceSourceRanges : nestedRollServiceImage.actorRollCheck nestedRollServiceChoreo = true
+nestedRollWorkerRustRanges : Option.map
+    (fun rows => List.map (fun row => (row.scope, row.eventStart, row.eventLength)) rows)
+    nestedRollWorkerImage.decodeRollRows? =
+  some [(0, 0, 4), (1, 0, 4)]
+nestedRollWorkerSourceOrder : nestedRollWorkerImage.actorOrderCheck nestedRollWorkerChoreo = true
+nestedRollWorkerSourceRanges : nestedRollWorkerImage.actorRollCheck nestedRollWorkerChoreo = true
+parallelRollOwnerRustRanges : Option.map
+    (fun rows => List.map (fun row => (row.scope, row.eventStart, row.eventLength)) rows)
+    parallelRollOwnerImage.decodeRollRows? =
+  some [(1, 0, 2), (2, 2, 2)]
+parallelRollOwnerSourceOrder : parallelRollOwnerImage.actorOrderCheck parallelRollOwnerChoreo = true
+parallelRollOwnerSourceRanges : parallelRollOwnerImage.actorRollCheck parallelRollOwnerChoreo = true
+parallelRollWorkerRustRanges : Option.map
+    (fun rows => List.map (fun row => (row.scope, row.eventStart, row.eventLength)) rows)
+    parallelRollWorkerImage.decodeRollRows? =
+  some [(1, 0, 4), (2, 4, 4)]
+parallelRollWorkerSourceOrder : parallelRollWorkerImage.actorOrderCheck parallelRollWorkerChoreo = true
+parallelRollWorkerSourceRanges : parallelRollWorkerImage.actorRollCheck parallelRollWorkerChoreo = true
+parallelTailCandidateCutIsClosed : (match parallelTailWorkerImage.decodeActorOrder? parallelTailWorkerChoreo with
+  | none => false
+  | some data =>
+    data.normalized.paths.all fun path =>
+      (data.sourcePredecessors path 5).all fun event =>
+        !parallelTailAfter.done event || (data.sourcePredecessors path event).all parallelTailAfter.done) =
+  true
+parallelTailOldPrefixIsNotClosed : (match parallelTailWorkerImage.decodeActorOrder? parallelTailWorkerChoreo with
+  | none => true
+  | some data =>
+    data.normalized.paths.all fun path =>
+      (List.range 5).all fun event =>
+        !parallelTailAfter.done event || (data.sourcePredecessors path event).all parallelTailAfter.done) =
+  false
+parallelTailOwnerRustRanges : Option.map
+    (fun rows => List.map (fun row => (row.scope, row.eventStart, row.eventLength)) rows)
+    parallelTailOwnerImage.decodeRollRows? =
+  some [(1, 0, 2), (2, 3, 2)]
+parallelTailOwnerSourceOrder : parallelTailOwnerImage.actorOrderCheck parallelTailOwnerChoreo = true
+parallelTailOwnerSourceRanges : parallelTailOwnerImage.actorRollCheck parallelTailOwnerChoreo = true
+parallelTailReadyAgreesWithSource : (match parallelTailWorkerImage.decodeActorOrder? parallelTailWorkerChoreo with
+  | none => false
+  | some data =>
+    (List.range 9).all fun event =>
+      parallelTailRustReady[event]?.getD false ==
+        (!parallelTailAfter.done event &&
+          data.normalized.paths.any fun path =>
+            ((data.activeRows path).any fun row => row.eventId == event) &&
+              (data.sourcePredecessors path event).all parallelTailAfter.done)) =
+  true
+parallelTailWorkerRustRanges : Option.map
+    (fun rows => List.map (fun row => (row.scope, row.eventStart, row.eventLength)) rows)
+    parallelTailWorkerImage.decodeRollRows? =
+  some [(1, 0, 4), (2, 5, 4)]
+parallelTailWorkerSourceOrder : parallelTailWorkerImage.actorOrderCheck parallelTailWorkerChoreo = true
+parallelTailWorkerSourceRanges : parallelTailWorkerImage.actorRollCheck parallelTailWorkerChoreo = true
+rollDoneResetAgreesWithRust : ((List.range 6).all fun event =>
+    (Hibana.resetRoll rollBefore preparedRoll).done event == rollAfter.done event) =
+  true
+rollIncludesContinuationPriorRowsAndOrder : (rollIncludesContinuationImage.actorRowsCheck rollWorkerChoreo &&
+    rollIncludesContinuationImage.actorOrderCheck rollWorkerChoreo) =
+  true
+rollIncludesContinuationSourceRejected : rollIncludesContinuationImage.actorRollCheck rollWorkerChoreo = false
+rollIncludesContinuationStructurallyCoherent : rollIncludesContinuationImage.rollColumnsCoherent = true
+rollOwnerRustRanges : Option.map (fun rows => List.map (fun row => (row.scope, row.eventStart, row.eventLength)) rows)
+    rollOwnerImage.decodeRollRows? =
+  some [(0, 0, 2)]
+rollOwnerSourceOrder : rollOwnerImage.actorOrderCheck rollOwnerChoreo = true
+rollOwnerSourceRanges : rollOwnerImage.actorRollCheck rollOwnerChoreo = true
+rollReadyAgreesWithSource : (match rollWorkerImage.decodeActorOrder? rollWorkerChoreo with
+  | none => false
+  | some data =>
+    (List.range 6).all fun event =>
+      rollRustReady[event]?.getD false ==
+        (!rollAfter.done event &&
+          data.normalized.paths.any fun path =>
+            ((data.activeRows path).any fun row => row.eventId == event) &&
+              (data.sourcePredecessors path event).all rollAfter.done)) =
+  true
+rollSkipsLoanPriorRowsAndOrder : (rollSkipsLoanImage.actorRowsCheck rollWorkerChoreo &&
+    rollSkipsLoanImage.actorOrderCheck rollWorkerChoreo) =
+  true
+rollSkipsLoanSourceRejected : rollSkipsLoanImage.actorRollCheck rollWorkerChoreo = false
+rollSkipsLoanStructurallyCoherent : rollSkipsLoanImage.rollColumnsCoherent = true
+rollTooShortPriorRowsAndOrder : (rollTooShortImage.actorRowsCheck rollWorkerChoreo &&
+    rollTooShortImage.actorOrderCheck rollWorkerChoreo) =
+  true
+rollTooShortSourceRejected : rollTooShortImage.actorRollCheck rollWorkerChoreo = false
+rollTooShortStructurallyCoherent : rollTooShortImage.rollColumnsCoherent = true
+rollWorkerRustRanges : Option.map (fun rows => List.map (fun row => (row.scope, row.eventStart, row.eventLength)) rows)
+    rollWorkerImage.decodeRollRows? =
+  some [(0, 0, 4)]
+rollWorkerSourceOrder : rollWorkerImage.actorOrderCheck rollWorkerChoreo = true
+rollWorkerSourceRanges : rollWorkerImage.actorRollCheck rollWorkerChoreo = true
+rollWrongScopePriorRowsAndOrder : (rollWrongScopeImage.actorRowsCheck rollWorkerChoreo &&
+    rollWrongScopeImage.actorOrderCheck rollWorkerChoreo) =
+  true
+rollWrongScopeSourceRejected : rollWrongScopeImage.actorRollCheck rollWorkerChoreo = false
+rollWrongScopeStructurallyCoherent : rollWrongScopeImage.rollColumnsCoherent = true

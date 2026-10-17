@@ -349,4 +349,5 @@ fn export_program_columns_for_lean() {
     .unwrap();
     controller_columns::export();
     ingress_columns::export();
+    reentry_columns::export();
 }
