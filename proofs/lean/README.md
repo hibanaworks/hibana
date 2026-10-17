@@ -209,7 +209,7 @@ can change arms while preserving the parent prefix. The complete nested trace
 runs twice. Before the parent suffix, both the completed arm and the unused
 alternative are rejected. These six kernel proofs replace seven lemmas about the removed
 route-only reset and its unused selector. Including the transfer model below,
-the static inventory is 791, with 422 using `propext` and `Quot.sound`,
+the static inventory is 796, with 427 using `propext` and `Quot.sound`,
 265 using only `propext`, and 104 axiom-free.
 The allowed axioms and inventory checks are unchanged. `RollBoundary.smt2`
 checks all completion masks of this six-event shape, including the difference
@@ -251,6 +251,15 @@ the selected source path and checks their exact canonical publication. The
 same definitions are used for the prepared base of a rolled commit. Generated
 regressions reverse or erase a known outer choice before and after a commit;
 they must be rejected without changing the observed progress or view records.
+
+`SourceResourceOrder.lean` proves five source properties for arbitrary accepted
+elaborations. Compiled occurrences retain their exact source message and index;
+transferred resources and endpoint uses belong to that source. In independent
+parallel branches, an actual transfer cannot alias a use in the other branch.
+This includes use as a peer or as another loan's carrier. The occurrence list
+is static enumeration, not a schedule for parallel execution. Availability of
+the corresponding live view/receipt and distributed progress remain to be
+connected to these properties.
 
 The compiler scope memo, fork-input restoration, independent-sibling exclusion,
 and retained sequential joins have general model lemmas. Ingress-head

@@ -868,6 +868,33 @@ Hibana.abort_peer_is_well_formed : ∀ (state : Hibana.TransportState), state.ab
                                   (@List.instMembership.{0} Hibana.EndpointDelegation.NormalizedPath) normalized.paths
                                   path →
                                 @Eq.{1} Bool (columns.sourcePathMatches markers path) true))))))
+@Hibana.accepted_parallel_elaborations_cannot_alias_transfer_and_use : ∀ {left right : Hibana.EndpointDelegation.Source}
+  {resources : List.{0} Hibana.EndpointDelegation.EndpointKey}
+  {leftOwners rightOwners : Hibana.EndpointDelegation.OwnerMap} {path : List.{0} Hibana.EndpointDelegation.Selection}
+  {leftStart rightStart leftEvent rightEvent : Nat} {leftRun rightRun : Hibana.EndpointDelegation.Elaboration}
+  {leftBinding rightBinding : Hibana.EndpointDelegation.SymbolicBinding} {key : Hibana.EndpointDelegation.EndpointKey},
+  @Eq.{1} Bool (Hibana.EndpointDelegation.incompatibleParallel left right) false →
+    @Eq.{1} (Option.{0} Hibana.EndpointDelegation.Elaboration)
+        (Hibana.EndpointDelegation.elaborate resources leftOwners path left leftStart)
+        (@some.{0} Hibana.EndpointDelegation.Elaboration leftRun) →
+      @Eq.{1} (Option.{0} Hibana.EndpointDelegation.Elaboration)
+          (Hibana.EndpointDelegation.elaborate resources rightOwners path right rightStart)
+          (@some.{0} Hibana.EndpointDelegation.Elaboration rightRun) →
+        @Membership.mem.{0, 0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding)
+            (List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding))
+            (@List.instMembership.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding)) leftRun.bindings
+            (@Prod.mk.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding leftEvent leftBinding) →
+          @Membership.mem.{0, 0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding)
+              (List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding))
+              (@List.instMembership.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding)) rightRun.bindings
+              (@Prod.mk.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding rightEvent rightBinding) →
+            @Eq.{1} Hibana.EndpointDelegation.Payload leftBinding.message.payload
+                (Hibana.EndpointDelegation.Payload.endpoint key) →
+              Or (@Eq.{1} Hibana.EndpointDelegation.EndpointKey rightBinding.message.sender key)
+                  (Or (@Eq.{1} Hibana.EndpointDelegation.EndpointKey rightBinding.message.receiver key)
+                    (@Eq.{1} Hibana.EndpointDelegation.Payload rightBinding.message.payload
+                      (Hibana.EndpointDelegation.Payload.endpoint key))) →
+                False
 @Hibana.accepted_production_kernel_artifact_combines_with_external_kernel_refinement : ∀
   {OwnerVerified : Hibana.ProductionKernelOwner → Hibana.PreparedKernelSemantics → Prop}
   {artifact : Hibana.ProductionKernelArtifact} {kernel : Hibana.PreparedKernelSemantics} {session roleCount : Nat}
@@ -2177,6 +2204,14 @@ Hibana.dynamic_route_outbound_observer_without_evidence_is_rejected : @Eq.{1} Bo
           (@OfNat.ofNat.{0} Nat (nat_lit 4) (instOfNatNat (nat_lit 4)))
           (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0)))))))
   false
+@Hibana.elaboration_retains_exact_source_message_occurrences : ∀ {source : Hibana.EndpointDelegation.Source}
+  {resources : List.{0} Hibana.EndpointDelegation.EndpointKey} {owners : Hibana.EndpointDelegation.OwnerMap}
+  {path : List.{0} Hibana.EndpointDelegation.Selection} {start : Nat} {run : Hibana.EndpointDelegation.Elaboration},
+  @Eq.{1} (Option.{0} Hibana.EndpointDelegation.Elaboration)
+      (Hibana.EndpointDelegation.elaborate resources owners path source start)
+      (@some.{0} Hibana.EndpointDelegation.Elaboration run) →
+    @List.Sublist.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Message) run.messageEntries
+      (source.messageEntries start)
 Hibana.elastic_admission_append_commutes_with_trace_erasure : ∀ (history : Hibana.ElasticAdmissionHistory)
   (globalId : Nat),
   @Eq.{1} (List.{0} Nat) (history.appendOccurrence globalId).erasedTrace
@@ -5295,6 +5330,14 @@ Hibana.selected_route_is_not_resolvable : ∀ (graph : Hibana.EventGraph) (state
       @Eq.{1} Hibana.EventPhase (config.phase globalId) Hibana.EventPhase.ready →
         @Eq.{1} (Option.{0} Hibana.AdmittedMessage) (config.queue globalId) (@some.{0} Hibana.AdmittedMessage message) →
           @Eq.{1} (Option.{0} Hibana.GlobalConfig) (config.sendStep? globalId) (@none.{0} Hibana.GlobalConfig)
+@Hibana.separated_parallel_forbids_transfer_use_overlap : ∀ {left right : Hibana.EndpointDelegation.Source}
+  {key : Hibana.EndpointDelegation.EndpointKey},
+  @Eq.{1} Bool (Hibana.EndpointDelegation.incompatibleParallel left right) false →
+    @Membership.mem.{0, 0} Hibana.EndpointDelegation.EndpointKey (List.{0} Hibana.EndpointDelegation.EndpointKey)
+        (@List.instMembership.{0} Hibana.EndpointDelegation.EndpointKey) left.resources key →
+      Not
+        (@Membership.mem.{0, 0} Hibana.EndpointDelegation.EndpointKey (List.{0} Hibana.EndpointDelegation.EndpointKey)
+          (@List.instMembership.{0} Hibana.EndpointDelegation.EndpointKey) right.uses key)
 Hibana.sequential_input_guards_both_parallel_arms : ∀ (entry split exit left right : Nat),
   @LE.le.{0} Nat instLENat entry left →
     @LT.lt.{0} Nat instLTNat left split →
@@ -5447,6 +5490,27 @@ Hibana.sequential_input_guards_both_parallel_arms : ∀ (entry split exit left r
                                                     (@Eq.{1} Nat frame.channel.sender facts.binding.message.sender.role)
                                                     (@Eq.{1} Nat frame.channel.receiver
                                                       facts.binding.message.receiver.role))))))))))
+@Hibana.source_message_transfer_is_a_source_resource : ∀ {source : Hibana.EndpointDelegation.Source} {start event : Nat}
+  {message : Hibana.EndpointDelegation.Message} {key : Hibana.EndpointDelegation.EndpointKey},
+  @Membership.mem.{0, 0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Message)
+      (List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Message))
+      (@List.instMembership.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Message)) (source.messageEntries start)
+      (@Prod.mk.{0, 0} Nat Hibana.EndpointDelegation.Message event message) →
+    @Eq.{1} Hibana.EndpointDelegation.Payload message.payload (Hibana.EndpointDelegation.Payload.endpoint key) →
+      @Membership.mem.{0, 0} Hibana.EndpointDelegation.EndpointKey (List.{0} Hibana.EndpointDelegation.EndpointKey)
+        (@List.instMembership.{0} Hibana.EndpointDelegation.EndpointKey) source.resources key
+@Hibana.source_message_use_is_a_source_use : ∀ {source : Hibana.EndpointDelegation.Source} {start event : Nat}
+  {message : Hibana.EndpointDelegation.Message} {key : Hibana.EndpointDelegation.EndpointKey},
+  @Membership.mem.{0, 0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Message)
+      (List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Message))
+      (@List.instMembership.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Message)) (source.messageEntries start)
+      (@Prod.mk.{0, 0} Nat Hibana.EndpointDelegation.Message event message) →
+    Or (@Eq.{1} Hibana.EndpointDelegation.EndpointKey message.sender key)
+        (Or (@Eq.{1} Hibana.EndpointDelegation.EndpointKey message.receiver key)
+          (@Eq.{1} Hibana.EndpointDelegation.Payload message.payload
+            (Hibana.EndpointDelegation.Payload.endpoint key))) →
+      @Membership.mem.{0, 0} Hibana.EndpointDelegation.EndpointKey (List.{0} Hibana.EndpointDelegation.EndpointKey)
+        (@List.instMembership.{0} Hibana.EndpointDelegation.EndpointKey) source.uses key
 @Hibana.source_order_strictly_increases_event : ∀ {source : Hibana.EndpointDelegation.Source} {before after : Nat},
   @Eq.{1} Bool (source.before before after) true → @LT.lt.{0} Nat instLTNat before after
 @Hibana.source_point_dependencies_have_no_cycle : ∀ {source : Hibana.EndpointDelegation.Source}
