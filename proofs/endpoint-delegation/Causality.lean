@@ -1,4 +1,4 @@
-import Projection
+import Hibana.EndpointOwnership
 
 namespace Hibana.EndpointDelegation
 

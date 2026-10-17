@@ -1,4 +1,4 @@
-import Std
+import Hibana.Syntax
 
 namespace Hibana.EndpointDelegation
 
@@ -88,13 +88,9 @@ structure Scope where
   stop : Nat
   deriving Repr, DecidableEq, BEq
 
-inductive Arm where
-  | left | right
-  deriving Repr, DecidableEq, BEq
-
 structure Selection where
   scope : Scope
-  arm : Arm
+  arm : RouteArm
   deriving Repr, DecidableEq, BEq
 
 def Source.scopes : Source → Nat → List Scope
@@ -114,7 +110,7 @@ def paths : List Scope → List (List Selection)
       (suffixes.map fun tail => { scope, arm := .left } :: tail) ++
         (suffixes.map fun tail => { scope, arm := .right } :: tail)
 
-def chosen? (path : List Selection) (scope : Scope) : Option Arm :=
+def chosen? (path : List Selection) (scope : Scope) : Option RouteArm :=
   (path.find? fun selection => selection.scope == scope).map Selection.arm
 
 structure Elaboration where
@@ -349,27 +345,6 @@ def orderEdges (source : Source) (bindings : List (Nat × Binding)) : List (Nat 
     if precedes source bindings (decodeActionId before) (decodeActionId after)
     then some (before, after) else none
 
-@[simp] theorem withOwner_same (owners : OwnerMap) (key : EndpointKey) (value : OwnerExpr) :
-    withOwner owners key value key = value := by simp [withOwner]
-
-theorem withOwner_other (owners : OwnerMap) (key other : EndpointKey) (value : OwnerExpr)
-    (different : other ≠ key) : withOwner owners key value other = owners other := by
-  simp [withOwner, different]
-
-theorem independent_owner_moves_commute
-    (owners : OwnerMap) (first second : EndpointKey) (left right : OwnerExpr)
-    (different : first ≠ second) :
-    withOwner (withOwner owners first left) second right =
-      withOwner (withOwner owners second right) first left := by
-  funext key
-  by_cases atFirst : key = first
-  · subst key
-    simp [withOwner, different]
-  · by_cases atSecond : key = second
-    · subst key
-      simp [withOwner, Ne.symm different]
-    · simp [withOwner, atFirst, atSecond]
-
 def OwnerExpr.eval (assignment : EndpointKey → Nat) : OwnerExpr → Nat
   | .actor value => value
   | .initial key => assignment key
@@ -385,7 +360,33 @@ inductive Connected (equations : List Equation) : OwnerExpr → OwnerExpr → Pr
   | step {start middle stop} : Connected equations start middle →
       Edge equations middle stop → Connected equations start stop
 
-theorem expand_preserves_connectivity (equations : List Equation) (seen : List OwnerExpr)
+end Hibana.EndpointDelegation
+
+namespace Hibana
+open EndpointDelegation
+
+@[simp] theorem EndpointDelegation.withOwner_same (owners : OwnerMap) (key : EndpointKey) (value : OwnerExpr) :
+    withOwner owners key value key = value := by simp [withOwner]
+
+theorem EndpointDelegation.withOwner_other (owners : OwnerMap) (key other : EndpointKey) (value : OwnerExpr)
+    (different : other ≠ key) : withOwner owners key value other = owners other := by
+  simp [withOwner, different]
+
+theorem EndpointDelegation.independent_owner_moves_commute
+    (owners : OwnerMap) (first second : EndpointKey) (left right : OwnerExpr)
+    (different : first ≠ second) :
+    withOwner (withOwner owners first left) second right =
+      withOwner (withOwner owners second right) first left := by
+  funext key
+  by_cases atFirst : key = first
+  · subst key
+    simp [withOwner, different]
+  · by_cases atSecond : key = second
+    · subst key
+      simp [withOwner, Ne.symm different]
+    · simp [withOwner, atFirst, atSecond]
+
+theorem EndpointDelegation.expand_preserves_connectivity (equations : List Equation) (seen : List OwnerExpr)
     (start : OwnerExpr)
     (connected : ∀ vertex ∈ seen, Connected equations start vertex) :
     ∀ vertex ∈ expand equations seen, Connected equations start vertex := by
@@ -407,7 +408,7 @@ theorem expand_preserves_connectivity (equations : List Equation) (seen : List O
         exact .step (connected equation.2 (by simpa using known)) (Or.inr inEquations)
       next => simp at backward
 
-theorem closure_contains_only_connected_vertices (equations : List Equation)
+theorem EndpointDelegation.closure_contains_only_connected_vertices (equations : List Equation)
     (start : OwnerExpr) (fuel : Nat) :
     ∀ vertex ∈ closure equations start fuel, Connected equations start vertex := by
   induction fuel with
@@ -419,7 +420,7 @@ theorem closure_contains_only_connected_vertices (equations : List Equation)
   | succ fuel inductionHypothesis =>
       exact expand_preserves_connectivity equations _ start inductionHypothesis
 
-theorem inferred_initial_actor_is_connected (equations : List Equation)
+theorem EndpointDelegation.inferred_initial_actor_is_connected (equations : List Equation)
     (key : EndpointKey) (actor : Nat) (accepted : initialActor? equations key = some actor) :
     Connected equations (.initial key) (.actor actor) := by
   have singleton_member : ∀ {values : List Nat}, singleActor? values = some actor →
@@ -441,7 +442,7 @@ theorem inferred_initial_actor_is_connected (equations : List Equation)
       subst value
       exact closure_contains_only_connected_vertices equations (.initial key) _ _ reached
 
-theorem connected_expressions_have_equal_owners
+theorem EndpointDelegation.connected_expressions_have_equal_owners
     {assignment : EndpointKey → Nat} {equations : List Equation}
     (solves : Solves assignment equations) {left right : OwnerExpr}
     (connected : Connected equations left right) :
@@ -453,21 +454,21 @@ theorem connected_expressions_have_equal_owners
       · exact inductionHypothesis.trans (solves _ forward)
       · exact inductionHypothesis.trans (solves _ backward).symm
 
-theorem rooted_initial_owner_is_forced_by_the_global
+theorem EndpointDelegation.rooted_initial_owner_is_forced_by_the_global
     {assignment : EndpointKey → Nat} {equations : List Equation}
     (solves : Solves assignment equations) {key : EndpointKey} {actor : Nat}
     (rooted : Connected equations (.initial key) (.actor actor)) :
     assignment key = actor := by
   simpa [OwnerExpr.eval] using connected_expressions_have_equal_owners solves rooted
 
-theorem inferred_initial_owner_is_forced_by_every_solution
+theorem EndpointDelegation.inferred_initial_owner_is_forced_by_every_solution
     {assignment : EndpointKey → Nat} {equations : List Equation}
     (solves : Solves assignment equations) {key : EndpointKey} {actor : Nat}
     (accepted : initialActor? equations key = some actor) : assignment key = actor := by
   exact rooted_initial_owner_is_forced_by_the_global solves
     (inferred_initial_actor_is_connected equations key actor accepted)
 
-theorem distinct_roots_reject_every_initial_assignment
+theorem EndpointDelegation.distinct_roots_reject_every_initial_assignment
     {equations : List Equation} {key : EndpointKey} {left right : Nat}
     (first : Connected equations (.initial key) (.actor left))
     (second : Connected equations (.initial key) (.actor right))
@@ -476,7 +477,7 @@ theorem distinct_roots_reject_every_initial_assignment
   exact different ((rooted_initial_owner_is_forced_by_the_global solves first).symm.trans
     (rooted_initial_owner_is_forced_by_the_global solves second))
 
-theorem binding_preserves_wire_identity
+theorem EndpointDelegation.binding_preserves_wire_identity
     {issuance : List Issuance} {symbolic : SymbolicBinding} {binding : Binding}
     (accepted : instantiateBinding issuance symbolic = some binding) :
     binding.message = symbolic.message := by
@@ -494,34 +495,19 @@ theorem binding_preserves_wire_identity
             exact (Option.some.inj (by simpa [senderCase, receiverCase] using accepted)).symm
           simp [exactBinding]
 
-theorem sequential_actor_work_precedes_its_continuation
+theorem EndpointDelegation.sequential_actor_work_precedes_its_continuation
     (left right : Source) {before after : Nat}
     (inLeft : before < left.eventCount) (inRight : left.eventCount ≤ after) :
     (Source.seq left right).before before after = true := by
   simp [Source.before, inLeft, Nat.not_lt.mpr inRight, Nat.not_le.mpr inLeft, inRight]
 
-theorem independent_parallel_siblings_have_no_local_order
+theorem EndpointDelegation.independent_parallel_siblings_have_no_local_order
     (left right : Source) {before after : Nat}
     (inLeft : before < left.eventCount) (inRight : left.eventCount ≤ after) :
     (Source.par left right).before before after = false := by
   simp [Source.before, inLeft, Nat.not_lt.mpr inRight, Nat.not_le.mpr inLeft, inRight]
 
-theorem roll_keeps_visit_local_order (body : Source) (before after : Nat) :
+theorem EndpointDelegation.roll_keeps_visit_local_order (body : Source) (before after : Nat) :
     (Source.roll body).before before after = body.before before after := rfl
 
-#print axioms withOwner_same
-#print axioms withOwner_other
-#print axioms independent_owner_moves_commute
-#print axioms expand_preserves_connectivity
-#print axioms closure_contains_only_connected_vertices
-#print axioms inferred_initial_actor_is_connected
-#print axioms connected_expressions_have_equal_owners
-#print axioms rooted_initial_owner_is_forced_by_the_global
-#print axioms inferred_initial_owner_is_forced_by_every_solution
-#print axioms distinct_roots_reject_every_initial_assignment
-#print axioms binding_preserves_wire_identity
-#print axioms sequential_actor_work_precedes_its_continuation
-#print axioms independent_parallel_siblings_have_no_local_order
-#print axioms roll_keeps_visit_local_order
-
-end Hibana.EndpointDelegation
+end Hibana

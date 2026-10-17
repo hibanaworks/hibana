@@ -102,12 +102,20 @@ MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_t
   --lib \
   g::role_projection::tests
 
-# This suite covers nested rework and delayed ingress across several complete
-# visits. Strict Miri takes over 300 seconds for the full regression matrix.
+# Keep nested rework and delayed ingress in the broad suite. The shared
+# parallel prefix has its own run with the same per-run deadline.
 MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \
   nested-resolver-reentry \
   -p hibana \
-  --test nested_resolver_reentry
+  --test nested_resolver_reentry \
+  -- --skip sequential_parallel_prefix::next_resolver_preserves_a_parallel_rolled_prefix
+
+MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \
+  sequential-parallel-resolver-prefix \
+  -p hibana \
+  --test nested_resolver_reentry \
+  sequential_parallel_prefix::next_resolver_preserves_a_parallel_rolled_prefix \
+  -- --exact
 
 run_miri_test \
   transport-requeue-owner \

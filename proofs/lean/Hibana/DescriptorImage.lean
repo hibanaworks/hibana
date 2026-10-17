@@ -1497,14 +1497,22 @@ def RustDescriptorImage.decodeAtomRow?
   let sender ← readByte? image.programBytes offset
   let receiver ← readByte? image.programBytes (offset + 1)
   let label ← readByte? image.programBytes (offset + 2)
-  let schema ← readU32LE? image.programBytes (offset + 3)
-  let origin ← readByte? image.programBytes (offset + 7)
+  let value ← readU32LE? image.programBytes (offset + 3)
+  let flags ← readByte? image.programBytes (offset + 7)
+  if 2 ≤ flags then
+    let columns ← image.decodeProgramColumns?
+    if columns.actorBindings.isEmpty then none else pure ()
+  else pure ()
+  let origin := flags % 2
+  -- The high selector bit is the same disjoint payload-kind tag used by Rust.
+  -- It is not a wire codec or a serialized Rust address.
+  let schema := if flags / 2 = 0 then value else 4294967296 + value
   let lane ← readByte? image.programBytes (offset + 8)
   if effIndex < productionEventIdentityCapacity ∧
       0 < image.roleCount ∧
       sender < image.roleCount ∧
       receiver < image.roleCount ∧
-      origin < 2 then
+      flags < 4 ∧ (flags < 2 ∨ value < image.roleCount) then
     pure { effIndex, sender, receiver, label, schema, origin, lane }
   else
     none

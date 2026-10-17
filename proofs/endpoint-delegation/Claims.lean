@@ -1,0 +1,16 @@
+import Hibana.EndpointOwnership
+
+#print axioms Hibana.EndpointDelegation.withOwner_same
+#print axioms Hibana.EndpointDelegation.withOwner_other
+#print axioms Hibana.EndpointDelegation.independent_owner_moves_commute
+#print axioms Hibana.EndpointDelegation.expand_preserves_connectivity
+#print axioms Hibana.EndpointDelegation.closure_contains_only_connected_vertices
+#print axioms Hibana.EndpointDelegation.inferred_initial_actor_is_connected
+#print axioms Hibana.EndpointDelegation.connected_expressions_have_equal_owners
+#print axioms Hibana.EndpointDelegation.rooted_initial_owner_is_forced_by_the_global
+#print axioms Hibana.EndpointDelegation.inferred_initial_owner_is_forced_by_every_solution
+#print axioms Hibana.EndpointDelegation.distinct_roots_reject_every_initial_assignment
+#print axioms Hibana.EndpointDelegation.binding_preserves_wire_identity
+#print axioms Hibana.EndpointDelegation.sequential_actor_work_precedes_its_continuation
+#print axioms Hibana.EndpointDelegation.independent_parallel_siblings_have_no_local_order
+#print axioms Hibana.EndpointDelegation.roll_keeps_visit_local_order

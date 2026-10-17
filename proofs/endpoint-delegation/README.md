@@ -5,6 +5,10 @@ boundary. The source tree and validator live in `src/g/source/`; the proof
 harness includes that implementation and adds read-only observations. There
 is no separate Rust source language or second implementation of its ownership
 rules. The Lean checker remains independent.
+Its source ownership model lives in
+[`../lean/Hibana/EndpointOwnership.lean`](../lean/Hibana/EndpointOwnership.lean)
+and is shared with the exact descriptor checker. `Claims.lean` audits its
+fourteen general laws; there is no second copy of those definitions.
 
 Typed `g::Msg<L, Endpoint<'static, R>>` records an owned endpoint, not a wire
 codec. Source projection checks its initial issuer, conflicting transfers,
@@ -106,7 +110,7 @@ The check runs Rust tests, including actual const-evaluated plans, strict
 Clippy, host and thumbv6m `no_std` builds, Lean, and Z3. Its evidence directory
 contains the actual Rust results and generated Lean source.
 
-`Projection.lean` independently executes each complete source path with a
+`EndpointOwnership.lean` independently executes each complete source path with a
 functional owner map, then solves the combined equations by graph closure.
 All paths share one initial issuance; they may have different later holders.
 It does not reuse Rust's source-prefix query or union/find implementation.

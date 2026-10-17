@@ -8,15 +8,7 @@ fn lean_usize_list(values: impl Iterator<Item = usize>) -> String {
     format!("[{body}]")
 }
 
-fn lean_byte_list(values: impl Iterator<Item = u8>) -> String {
-    let body = values
-        .map(|value| value.to_string())
-        .collect::<Vec<_>>()
-        .join(", ");
-    format!("[{body}]")
-}
-
-fn lean_local_action(action: crate::global::typestate::LocalAction, payload_schema: u32) -> String {
+fn lean_local_action(action: crate::global::typestate::LocalAction, payload_schema: u64) -> String {
     match action {
         crate::global::typestate::LocalAction::Send { peer, label, .. } => {
             format!(".send {peer} {label} {payload_schema}")
@@ -132,16 +124,9 @@ pub(super) fn projection_certificate_source<const ROLE: u8>(
     );
     let program = production.event_program.program_ref();
     let descriptor = production.descriptor;
-    let resident = descriptor.local_event_rows();
-    let footprint = resident.footprint();
     let program_columns = program.columns;
     let role_columns = descriptor.local_event_rows().columns();
-    let program_bytes =
-        lean_byte_list((0..program.proof_blob_len()).map(|offset| program.proof_byte_at(offset)));
-    let program_column_bytes = lean_byte_list(program_columns.proof_header_bytes().into_iter());
-    let role_bytes = lean_byte_list(
-        (0..descriptor.proof_blob_len()).map(|offset| descriptor.proof_byte_at(offset)),
-    );
+    let image_source = crate::test_support::lean_descriptor::descriptor_source(descriptor);
     assert_ne!(
         descriptor.local_len(),
         0,
@@ -149,10 +134,6 @@ pub(super) fn projection_certificate_source<const ROLE: u8>(
     );
     let first_lane_offset =
         descriptor.local_len() * crate::global::role_program::ROLE_IMAGE_EVENT_STRIDE;
-    let first_active_lane = match descriptor.first_active_lane() {
-        Some(lane) => lane,
-        None => u16::MAX as usize,
-    };
     let mismatched_first_lane = descriptor.proof_byte_at(first_lane_offset).wrapping_add(1);
     let exact_name = format!("{name}Exact");
     let lane_mismatch_name = format!("{exact_name}LaneMismatch");
@@ -386,16 +367,7 @@ pub(super) fn projection_certificate_source<const ROLE: u8>(
          topology := {topology}\n}}\n\n\
          theorem {name}Accepted : {name}.check = true := by\n  decide\n\n\
          theorem {name}RefinesTopology : {name}.RefinesTopology :=\n  Hibana.projection_certificate_sound {name}Accepted\n\n\
-         def {exact_name} : Hibana.ExactDescriptorCertificate := {{\n  image := {{\n    \
-         roleCount := {}\n    role := {ROLE}\n    logicalLaneCount := {}\n    activeLaneCount := {}\n    \
-         endpointLaneSlotCount := {}\n    maxRouteCommitCount := {}\n    firstActiveLane := {}\n    \
-         activeLaneStart := {}\n    activeLaneLength := {}\n    atomCount := {}\n    routeResolverCount := {}\n    \
-         routeParticipantCount := {}\n    scopeMarkerCount := {}\n    eventCount := {}\n    dependencyRowCount := {}\n    \
-         conflictRowCount := {}\n    routeScopeCount := {}\n    residentBoundaryCount := {}\n    \
-         laneBitCount := {}\n    routeArmLaneStepCount := {}\n    routeCommitRowCount := {}\n    \
-         rollScopeCount := {}\n    \
-         programColumnBytes := {program_column_bytes}\n    \
-         programBytes := {program_bytes}\n    roleBytes := {role_bytes}\n  }}\n  choreo := {choreo}\n}}\n\n\
+         def {exact_name} : Hibana.ExactDescriptorCertificate := {{\n  image := {image_source}\n  choreo := {choreo}\n}}\n\n\
          theorem {exact_name}Accepted : {exact_name}.check = true := by\n  decide\n\n\
          theorem {exact_name}Refines : {exact_name}.Refines :=\n  \
          Hibana.exact_descriptor_certificate_sound {exact_name}Accepted\n\n\
@@ -433,27 +405,6 @@ pub(super) fn projection_certificate_source<const ROLE: u8>(
          {exact_name}.image.programBytes.set 10 {mismatched_first_global_lane}\n  }}\n}}\n\n\
          theorem {global_lane_mismatch_name}Rejected : {global_lane_mismatch_name}.check = false := by\n  decide\
          {scope_marker_mismatch_source}{route_mismatch_source}{dependency_mismatch_source}{resident_mismatch_source}{lane_step_mismatch_source}{route_child_mismatch_source}{route_commit_mismatch_source}{resolver_mismatch_source}{roll_mismatch_source}\n",
-        program.role_count(),
-        descriptor.logical_lane_count(),
-        footprint.active_lane_count,
-        descriptor.endpoint_lane_slot_count(),
-        descriptor.max_route_commit_count(),
-        first_active_lane,
-        resident.active_lane_row().start(),
-        resident.active_lane_row().len(),
-        program.proof_atom_count(),
-        program_columns.route_resolver_count(),
-        program_columns.route_participant_count(),
-        program_columns.scope_marker_count(),
-        descriptor.local_len(),
-        role_columns.dependencies.len,
-        role_columns.conflicts.len,
-        role_columns.route_scopes.len,
-        role_columns.resident_boundaries.len,
-        role_columns.lane_bits.len,
-        role_columns.route_arm_lane_step_rows.len,
-        role_columns.route_commit_rows.len,
-        role_columns.roll_scopes.len,
         mismatched_first_event_scope as u8,
         (mismatched_first_event_scope >> 8) as u8,
     )

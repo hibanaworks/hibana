@@ -1,4 +1,4 @@
-import Projection
+import Hibana.EndpointOwnership
 
 namespace Hibana.EndpointDelegation
 
@@ -22,7 +22,7 @@ def participants (scope : Scope) (bindings : List (Nat × Binding)) : List Nat :
   (bindings.filter (fun row => scope.contains row.1)).flatMap fun row =>
     [row.2.senderActor, row.2.receiverActor]
 
-def otherArm : Arm → Arm
+def otherArm : RouteArm → RouteArm
   | .left => .right
   | .right => .left
 

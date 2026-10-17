@@ -111,11 +111,17 @@ The checked claim snapshots are:
   their corruption rejections, all checked with kernel evaluation;
 - `program-columns-generated-claim-surface.txt` for exact ordinary and owned
   program headers, actor bindings, conditional reference DAGs and initial
-  issuer rows, including malformed-header and suffix rejections.
+  issuer rows, including malformed-header and suffix rejections. It also binds
+  holders to the independently interpreted typed global source and rejects
+  incorrect actor bindings, issuers and swapped conditional holders.
 
 The ordinary exact descriptor certificate now binds its claimed counts to the
 actual eight-byte column header. The owned grammar decoder covers the header
-and immutable actor suffix. This format correspondence does not establish
+and immutable actor suffix. `EndpointOwnership.lean` is the shared independent
+source model; `OwnershipDescriptor.lean` connects its per-path holders and
+initial issuers to the decoded bytes. Unknown route choices authorize no
+holder. The descriptor-derived traversal bound is proved sufficient for every
+valid backward reference under total choices. This correspondence does not establish
 actor-local progress, ownership transfer commits, or continuation refinement.
 The ordinary certificate still rejects owned actor columns, and public owned
 projection remains closed until those semantic connections are verified.

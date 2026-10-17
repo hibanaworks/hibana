@@ -1,20 +1,19 @@
 use crate::{g, global::Message};
 use std::{format, string::String};
 
-pub(super) trait LeanChoreo {
+pub(crate) trait LeanChoreo {
     fn lean_source() -> String;
 }
 
 impl<const FROM: u8, const TO: u8, M> LeanChoreo for g::Send<FROM, TO, M>
 where
     M: Message,
-    M::Payload: crate::transport::wire::WireEncode + crate::transport::wire::WirePayload,
 {
     fn lean_source() -> String {
         format!(
             "Hibana.Choreo.send {FROM} {TO} {} {}",
             M::LOGICAL_LABEL,
-            crate::global::payload_kind::<M>().wire_schema()
+            crate::global::payload_kind::<M>().selector_bits()
         )
     }
 }

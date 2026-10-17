@@ -9,8 +9,6 @@ use std::{
     vec::Vec,
 };
 
-#[path = "lean_proof_export/choreo_source.rs"]
-mod choreo_source;
 #[path = "lean_proof_export/cyclic_roll_certificate.rs"]
 mod cyclic_roll_certificate;
 #[path = "lean_proof_export/parallel_certificate.rs"]
@@ -21,7 +19,7 @@ mod production_kernel_artifact;
 mod projection_certificate;
 #[path = "lean_proof_export/protocol_fixtures.rs"]
 mod protocol_fixtures;
-use choreo_source::LeanChoreo;
+use crate::test_support::lean_choreo::LeanChoreo;
 use projection_certificate::{
     progress_certificate_source, projectability_certificate_source, projection_certificate_source,
     verified_protocol_certificate_source,
@@ -41,7 +39,7 @@ struct ProofOperation {
     kind: ProofOperationKind,
     peer: Option<u8>,
     label: u8,
-    schema: u32,
+    schema: u64,
 }
 
 impl ProofOperation {
@@ -215,7 +213,7 @@ impl ProductionCursorTrace {
             kind,
             peer,
             label,
-            schema: atom.payload.wire_schema(),
+            schema: atom.payload.selector_bits(),
         })
     }
 

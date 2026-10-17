@@ -1,5 +1,7 @@
 ordinaryProgramColumnsDecoded : Hibana.decodeProgramColumns? ordinaryProgramColumnsHeader ordinaryProgramColumnsBytes =
   some ordinaryProgramColumnsColumns
+ordinaryProgramColumnsSourceOwnershipMatches : ordinaryProgramColumnsImage.ownershipCheck ordinaryProgramColumnsChoreo =
+  true
 ordinaryProgramColumnsTruncatedHeaderRejected : Hibana.decodeProgramColumns? (List.take 7 ordinaryProgramColumnsHeader)
     ordinaryProgramColumnsBytes =
   none
@@ -15,9 +17,59 @@ ownedConditionalColumnsOddIssuerTailRejected : Hibana.decodeProgramColumns?
 ownedConditionalColumnsOversizedDecisionsRejected : Hibana.decodeProgramColumns? ownedConditionalColumnsHeader
     ((ownedConditionalColumnsBytes.set 154 255).set 155 255) =
   none
+ownedConditionalColumnsSourceOwnershipMatches : ownedConditionalColumnsImage.ownershipCheck
+    ownedConditionalColumnsChoreo =
+  true
+ownedConditionalColumnsSwappedChoiceActorsRejected : (have __src := ownedConditionalColumnsImage;
+      { roleCount := __src.roleCount, role := __src.role, logicalLaneCount := __src.logicalLaneCount,
+        activeLaneCount := __src.activeLaneCount, endpointLaneSlotCount := __src.endpointLaneSlotCount,
+        maxRouteCommitCount := __src.maxRouteCommitCount, firstActiveLane := __src.firstActiveLane,
+        activeLaneStart := __src.activeLaneStart, activeLaneLength := __src.activeLaneLength,
+        atomCount := __src.atomCount, routeResolverCount := __src.routeResolverCount,
+        routeParticipantCount := __src.routeParticipantCount, scopeMarkerCount := __src.scopeMarkerCount,
+        eventCount := __src.eventCount, dependencyRowCount := __src.dependencyRowCount,
+        conflictRowCount := __src.conflictRowCount, routeScopeCount := __src.routeScopeCount,
+        residentBoundaryCount := __src.residentBoundaryCount, laneBitCount := __src.laneBitCount,
+        routeArmLaneStepCount := __src.routeArmLaneStepCount, routeCommitRowCount := __src.routeCommitRowCount,
+        rollScopeCount := __src.rollScopeCount, programColumnBytes := __src.programColumnBytes,
+        programBytes := (((ownedConditionalColumnsBytes.set 264 3).set 265 0).set 266 1).set 267 0,
+        roleBytes := __src.roleBytes }).ownershipCheck
+    ownedConditionalColumnsChoreo =
+  false
 ownedConditionalColumnsTruncatedHeaderRejected : Hibana.decodeProgramColumns?
     (List.take 7 ownedConditionalColumnsHeader) ownedConditionalColumnsBytes =
   none
+ownedConditionalColumnsUnqualifiedTopologyRejected : ownedConditionalColumnsImage.check = false
+ownedConditionalColumnsWrongActorBindingRejected : (have __src := ownedConditionalColumnsImage;
+      { roleCount := __src.roleCount, role := __src.role, logicalLaneCount := __src.logicalLaneCount,
+        activeLaneCount := __src.activeLaneCount, endpointLaneSlotCount := __src.endpointLaneSlotCount,
+        maxRouteCommitCount := __src.maxRouteCommitCount, firstActiveLane := __src.firstActiveLane,
+        activeLaneStart := __src.activeLaneStart, activeLaneLength := __src.activeLaneLength,
+        atomCount := __src.atomCount, routeResolverCount := __src.routeResolverCount,
+        routeParticipantCount := __src.routeParticipantCount, scopeMarkerCount := __src.scopeMarkerCount,
+        eventCount := __src.eventCount, dependencyRowCount := __src.dependencyRowCount,
+        conflictRowCount := __src.conflictRowCount, routeScopeCount := __src.routeScopeCount,
+        residentBoundaryCount := __src.residentBoundaryCount, laneBitCount := __src.laneBitCount,
+        routeArmLaneStepCount := __src.routeArmLaneStepCount, routeCommitRowCount := __src.routeCommitRowCount,
+        rollScopeCount := __src.rollScopeCount, programColumnBytes := __src.programColumnBytes,
+        programBytes := ownedConditionalColumnsBytes.set 206 1, roleBytes := __src.roleBytes }).ownershipCheck
+    ownedConditionalColumnsChoreo =
+  false
+ownedConditionalColumnsWrongInitialIssuerRejected : (have __src := ownedConditionalColumnsImage;
+      { roleCount := __src.roleCount, role := __src.role, logicalLaneCount := __src.logicalLaneCount,
+        activeLaneCount := __src.activeLaneCount, endpointLaneSlotCount := __src.endpointLaneSlotCount,
+        maxRouteCommitCount := __src.maxRouteCommitCount, firstActiveLane := __src.firstActiveLane,
+        activeLaneStart := __src.activeLaneStart, activeLaneLength := __src.activeLaneLength,
+        atomCount := __src.atomCount, routeResolverCount := __src.routeResolverCount,
+        routeParticipantCount := __src.routeParticipantCount, scopeMarkerCount := __src.scopeMarkerCount,
+        eventCount := __src.eventCount, dependencyRowCount := __src.dependencyRowCount,
+        conflictRowCount := __src.conflictRowCount, routeScopeCount := __src.routeScopeCount,
+        residentBoundaryCount := __src.residentBoundaryCount, laneBitCount := __src.laneBitCount,
+        routeArmLaneStepCount := __src.routeArmLaneStepCount, routeCommitRowCount := __src.routeCommitRowCount,
+        rollScopeCount := __src.rollScopeCount, programColumnBytes := __src.programColumnBytes,
+        programBytes := ownedConditionalColumnsBytes.set 271 1, roleBytes := __src.roleBytes }).ownershipCheck
+    ownedConditionalColumnsChoreo =
+  false
 ownedConditionalColumnsWrongLengthRejected : Hibana.decodeProgramColumns? (ownedConditionalColumnsHeader.set 6 17)
     ownedConditionalColumnsBytes =
   none
@@ -32,11 +84,92 @@ ownedLinearColumnsOddIssuerTailRejected : Hibana.decodeProgramColumns? ((ownedLi
 ownedLinearColumnsOversizedDecisionsRejected : Hibana.decodeProgramColumns? ownedLinearColumnsHeader
     ((ownedLinearColumnsBytes.set 56 255).set 57 255) =
   none
+ownedLinearColumnsSourceOwnershipMatches : ownedLinearColumnsImage.ownershipCheck ownedLinearColumnsChoreo = true
 ownedLinearColumnsTruncatedHeaderRejected : Hibana.decodeProgramColumns? (List.take 7 ownedLinearColumnsHeader)
     ownedLinearColumnsBytes =
   none
+ownedLinearColumnsUnqualifiedTopologyRejected : ownedLinearColumnsImage.check = false
+ownedLinearColumnsWrongActorBindingRejected : (have __src := ownedLinearColumnsImage;
+      { roleCount := __src.roleCount, role := __src.role, logicalLaneCount := __src.logicalLaneCount,
+        activeLaneCount := __src.activeLaneCount, endpointLaneSlotCount := __src.endpointLaneSlotCount,
+        maxRouteCommitCount := __src.maxRouteCommitCount, firstActiveLane := __src.firstActiveLane,
+        activeLaneStart := __src.activeLaneStart, activeLaneLength := __src.activeLaneLength,
+        atomCount := __src.atomCount, routeResolverCount := __src.routeResolverCount,
+        routeParticipantCount := __src.routeParticipantCount, scopeMarkerCount := __src.scopeMarkerCount,
+        eventCount := __src.eventCount, dependencyRowCount := __src.dependencyRowCount,
+        conflictRowCount := __src.conflictRowCount, routeScopeCount := __src.routeScopeCount,
+        residentBoundaryCount := __src.residentBoundaryCount, laneBitCount := __src.laneBitCount,
+        routeArmLaneStepCount := __src.routeArmLaneStepCount, routeCommitRowCount := __src.routeCommitRowCount,
+        rollScopeCount := __src.rollScopeCount, programColumnBytes := __src.programColumnBytes,
+        programBytes := ownedLinearColumnsBytes.set 58 1, roleBytes := __src.roleBytes }).ownershipCheck
+    ownedLinearColumnsChoreo =
+  false
+ownedLinearColumnsWrongInitialIssuerRejected : (have __src := ownedLinearColumnsImage;
+      { roleCount := __src.roleCount, role := __src.role, logicalLaneCount := __src.logicalLaneCount,
+        activeLaneCount := __src.activeLaneCount, endpointLaneSlotCount := __src.endpointLaneSlotCount,
+        maxRouteCommitCount := __src.maxRouteCommitCount, firstActiveLane := __src.firstActiveLane,
+        activeLaneStart := __src.activeLaneStart, activeLaneLength := __src.activeLaneLength,
+        atomCount := __src.atomCount, routeResolverCount := __src.routeResolverCount,
+        routeParticipantCount := __src.routeParticipantCount, scopeMarkerCount := __src.scopeMarkerCount,
+        eventCount := __src.eventCount, dependencyRowCount := __src.dependencyRowCount,
+        conflictRowCount := __src.conflictRowCount, routeScopeCount := __src.routeScopeCount,
+        residentBoundaryCount := __src.residentBoundaryCount, laneBitCount := __src.laneBitCount,
+        routeArmLaneStepCount := __src.routeArmLaneStepCount, routeCommitRowCount := __src.routeCommitRowCount,
+        rollScopeCount := __src.rollScopeCount, programColumnBytes := __src.programColumnBytes,
+        programBytes := ownedLinearColumnsBytes.set 83 1, roleBytes := __src.roleBytes }).ownershipCheck
+    ownedLinearColumnsChoreo =
+  false
 ownedLinearColumnsWrongLengthRejected : Hibana.decodeProgramColumns? (ownedLinearColumnsHeader.set 6 85)
     ownedLinearColumnsBytes =
+  none
+ownedNativeColumnsClearedTagRejected : Hibana.decodeProgramColumns? (ownedNativeColumnsHeader.set 1 0)
+    ownedNativeColumnsBytes =
+  none
+ownedNativeColumnsDecoded : Hibana.decodeProgramColumns? ownedNativeColumnsHeader ownedNativeColumnsBytes =
+  some ownedNativeColumnsColumns
+ownedNativeColumnsOddIssuerTailRejected : Hibana.decodeProgramColumns? ((ownedNativeColumnsHeader.set 6 228).set 7 0)
+    (List.take 228 ownedNativeColumnsBytes) =
+  none
+ownedNativeColumnsOversizedDecisionsRejected : Hibana.decodeProgramColumns? ownedNativeColumnsHeader
+    ((ownedNativeColumnsBytes.set 122 255).set 123 255) =
+  none
+ownedNativeColumnsSourceOwnershipMatches : ownedNativeColumnsImage.ownershipCheck ownedNativeColumnsChoreo = true
+ownedNativeColumnsTruncatedHeaderRejected : Hibana.decodeProgramColumns? (List.take 7 ownedNativeColumnsHeader)
+    ownedNativeColumnsBytes =
+  none
+ownedNativeColumnsUnqualifiedTopologyRejected : ownedNativeColumnsImage.check = false
+ownedNativeColumnsWrongActorBindingRejected : (have __src := ownedNativeColumnsImage;
+      { roleCount := __src.roleCount, role := __src.role, logicalLaneCount := __src.logicalLaneCount,
+        activeLaneCount := __src.activeLaneCount, endpointLaneSlotCount := __src.endpointLaneSlotCount,
+        maxRouteCommitCount := __src.maxRouteCommitCount, firstActiveLane := __src.firstActiveLane,
+        activeLaneStart := __src.activeLaneStart, activeLaneLength := __src.activeLaneLength,
+        atomCount := __src.atomCount, routeResolverCount := __src.routeResolverCount,
+        routeParticipantCount := __src.routeParticipantCount, scopeMarkerCount := __src.scopeMarkerCount,
+        eventCount := __src.eventCount, dependencyRowCount := __src.dependencyRowCount,
+        conflictRowCount := __src.conflictRowCount, routeScopeCount := __src.routeScopeCount,
+        residentBoundaryCount := __src.residentBoundaryCount, laneBitCount := __src.laneBitCount,
+        routeArmLaneStepCount := __src.routeArmLaneStepCount, routeCommitRowCount := __src.routeCommitRowCount,
+        rollScopeCount := __src.rollScopeCount, programColumnBytes := __src.programColumnBytes,
+        programBytes := ownedNativeColumnsBytes.set 179 3, roleBytes := __src.roleBytes }).ownershipCheck
+    ownedNativeColumnsChoreo =
+  false
+ownedNativeColumnsWrongInitialIssuerRejected : (have __src := ownedNativeColumnsImage;
+      { roleCount := __src.roleCount, role := __src.role, logicalLaneCount := __src.logicalLaneCount,
+        activeLaneCount := __src.activeLaneCount, endpointLaneSlotCount := __src.endpointLaneSlotCount,
+        maxRouteCommitCount := __src.maxRouteCommitCount, firstActiveLane := __src.firstActiveLane,
+        activeLaneStart := __src.activeLaneStart, activeLaneLength := __src.activeLaneLength,
+        atomCount := __src.atomCount, routeResolverCount := __src.routeResolverCount,
+        routeParticipantCount := __src.routeParticipantCount, scopeMarkerCount := __src.scopeMarkerCount,
+        eventCount := __src.eventCount, dependencyRowCount := __src.dependencyRowCount,
+        conflictRowCount := __src.conflictRowCount, routeScopeCount := __src.routeScopeCount,
+        residentBoundaryCount := __src.residentBoundaryCount, laneBitCount := __src.laneBitCount,
+        routeArmLaneStepCount := __src.routeArmLaneStepCount, routeCommitRowCount := __src.routeCommitRowCount,
+        rollScopeCount := __src.rollScopeCount, programColumnBytes := __src.programColumnBytes,
+        programBytes := ownedNativeColumnsBytes.set 228 3, roleBytes := __src.roleBytes }).ownershipCheck
+    ownedNativeColumnsChoreo =
+  false
+ownedNativeColumnsWrongLengthRejected : Hibana.decodeProgramColumns? (ownedNativeColumnsHeader.set 6 228)
+    ownedNativeColumnsBytes =
   none
 ownedParallelColumnsClearedTagRejected : Hibana.decodeProgramColumns? (ownedParallelColumnsHeader.set 1 0)
     ownedParallelColumnsBytes =
@@ -49,9 +182,41 @@ ownedParallelColumnsOddIssuerTailRejected : Hibana.decodeProgramColumns?
 ownedParallelColumnsOversizedDecisionsRejected : Hibana.decodeProgramColumns? ownedParallelColumnsHeader
     ((ownedParallelColumnsBytes.set 74 255).set 75 255) =
   none
+ownedParallelColumnsSourceOwnershipMatches : ownedParallelColumnsImage.ownershipCheck ownedParallelColumnsChoreo = true
 ownedParallelColumnsTruncatedHeaderRejected : Hibana.decodeProgramColumns? (List.take 7 ownedParallelColumnsHeader)
     ownedParallelColumnsBytes =
   none
+ownedParallelColumnsUnqualifiedTopologyRejected : ownedParallelColumnsImage.check = false
+ownedParallelColumnsWrongActorBindingRejected : (have __src := ownedParallelColumnsImage;
+      { roleCount := __src.roleCount, role := __src.role, logicalLaneCount := __src.logicalLaneCount,
+        activeLaneCount := __src.activeLaneCount, endpointLaneSlotCount := __src.endpointLaneSlotCount,
+        maxRouteCommitCount := __src.maxRouteCommitCount, firstActiveLane := __src.firstActiveLane,
+        activeLaneStart := __src.activeLaneStart, activeLaneLength := __src.activeLaneLength,
+        atomCount := __src.atomCount, routeResolverCount := __src.routeResolverCount,
+        routeParticipantCount := __src.routeParticipantCount, scopeMarkerCount := __src.scopeMarkerCount,
+        eventCount := __src.eventCount, dependencyRowCount := __src.dependencyRowCount,
+        conflictRowCount := __src.conflictRowCount, routeScopeCount := __src.routeScopeCount,
+        residentBoundaryCount := __src.residentBoundaryCount, laneBitCount := __src.laneBitCount,
+        routeArmLaneStepCount := __src.routeArmLaneStepCount, routeCommitRowCount := __src.routeCommitRowCount,
+        rollScopeCount := __src.rollScopeCount, programColumnBytes := __src.programColumnBytes,
+        programBytes := ownedParallelColumnsBytes.set 111 1, roleBytes := __src.roleBytes }).ownershipCheck
+    ownedParallelColumnsChoreo =
+  false
+ownedParallelColumnsWrongInitialIssuerRejected : (have __src := ownedParallelColumnsImage;
+      { roleCount := __src.roleCount, role := __src.role, logicalLaneCount := __src.logicalLaneCount,
+        activeLaneCount := __src.activeLaneCount, endpointLaneSlotCount := __src.endpointLaneSlotCount,
+        maxRouteCommitCount := __src.maxRouteCommitCount, firstActiveLane := __src.firstActiveLane,
+        activeLaneStart := __src.activeLaneStart, activeLaneLength := __src.activeLaneLength,
+        atomCount := __src.atomCount, routeResolverCount := __src.routeResolverCount,
+        routeParticipantCount := __src.routeParticipantCount, scopeMarkerCount := __src.scopeMarkerCount,
+        eventCount := __src.eventCount, dependencyRowCount := __src.dependencyRowCount,
+        conflictRowCount := __src.conflictRowCount, routeScopeCount := __src.routeScopeCount,
+        residentBoundaryCount := __src.residentBoundaryCount, laneBitCount := __src.laneBitCount,
+        routeArmLaneStepCount := __src.routeArmLaneStepCount, routeCommitRowCount := __src.routeCommitRowCount,
+        rollScopeCount := __src.rollScopeCount, programColumnBytes := __src.programColumnBytes,
+        programBytes := ownedParallelColumnsBytes.set 146 1, roleBytes := __src.roleBytes }).ownershipCheck
+    ownedParallelColumnsChoreo =
+  false
 ownedParallelColumnsWrongLengthRejected : Hibana.decodeProgramColumns? (ownedParallelColumnsHeader.set 6 146)
     ownedParallelColumnsBytes =
   none

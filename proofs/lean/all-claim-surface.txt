@@ -10,6 +10,90 @@ Hibana.Choreo.canonical_logical_lane_count_is_exact_endpoint_span : ∀ (choreo 
   @Eq.{1} Nat (choreo.canonicalLogicalLaneCount role) (choreo.canonicalEndpointLaneSlotCount role)
 Hibana.Choreo.routeAuthorities_length : ∀ (choreo : Hibana.Choreo),
   @Eq.{1} Nat (@List.length.{0} Hibana.RouteAuthority choreo.routeAuthorities) choreo.routeCount
+@Hibana.EndpointDelegation.binding_preserves_wire_identity : ∀ {issuance : List.{0} Hibana.EndpointDelegation.Issuance}
+  {symbolic : Hibana.EndpointDelegation.SymbolicBinding} {binding : Hibana.EndpointDelegation.Binding},
+  @Eq.{1} (Option.{0} Hibana.EndpointDelegation.Binding)
+      (Hibana.EndpointDelegation.instantiateBinding issuance symbolic)
+      (@some.{0} Hibana.EndpointDelegation.Binding binding) →
+    @Eq.{1} Hibana.EndpointDelegation.Message binding.message symbolic.message
+Hibana.EndpointDelegation.closure_contains_only_connected_vertices : ∀
+  (equations : List.{0} Hibana.EndpointDelegation.Equation) (start : Hibana.EndpointDelegation.OwnerExpr) (fuel : Nat)
+  (vertex : Hibana.EndpointDelegation.OwnerExpr),
+  @Membership.mem.{0, 0} Hibana.EndpointDelegation.OwnerExpr (List.{0} Hibana.EndpointDelegation.OwnerExpr)
+      (@List.instMembership.{0} Hibana.EndpointDelegation.OwnerExpr)
+      (Hibana.EndpointDelegation.closure equations start fuel) vertex →
+    Hibana.EndpointDelegation.Connected equations start vertex
+@Hibana.EndpointDelegation.connected_expressions_have_equal_owners : ∀
+  {assignment : Hibana.EndpointDelegation.EndpointKey → Nat} {equations : List.{0} Hibana.EndpointDelegation.Equation},
+  Hibana.EndpointDelegation.Solves assignment equations →
+    ∀ {left right : Hibana.EndpointDelegation.OwnerExpr},
+      Hibana.EndpointDelegation.Connected equations left right →
+        @Eq.{1} Nat (Hibana.EndpointDelegation.OwnerExpr.eval assignment left)
+          (Hibana.EndpointDelegation.OwnerExpr.eval assignment right)
+@Hibana.EndpointDelegation.distinct_roots_reject_every_initial_assignment : ∀
+  {equations : List.{0} Hibana.EndpointDelegation.Equation} {key : Hibana.EndpointDelegation.EndpointKey}
+  {left right : Nat},
+  Hibana.EndpointDelegation.Connected equations (Hibana.EndpointDelegation.OwnerExpr.initial key)
+      (Hibana.EndpointDelegation.OwnerExpr.actor left) →
+    Hibana.EndpointDelegation.Connected equations (Hibana.EndpointDelegation.OwnerExpr.initial key)
+        (Hibana.EndpointDelegation.OwnerExpr.actor right) →
+      @Ne.{1} Nat left right →
+        Not
+          (@Exists.{1} (Hibana.EndpointDelegation.EndpointKey → Nat) fun assignment =>
+            Hibana.EndpointDelegation.Solves assignment equations)
+Hibana.EndpointDelegation.expand_preserves_connectivity : ∀ (equations : List.{0} Hibana.EndpointDelegation.Equation)
+  (seen : List.{0} Hibana.EndpointDelegation.OwnerExpr) (start : Hibana.EndpointDelegation.OwnerExpr),
+  (∀ (vertex : Hibana.EndpointDelegation.OwnerExpr),
+      @Membership.mem.{0, 0} Hibana.EndpointDelegation.OwnerExpr (List.{0} Hibana.EndpointDelegation.OwnerExpr)
+          (@List.instMembership.{0} Hibana.EndpointDelegation.OwnerExpr) seen vertex →
+        Hibana.EndpointDelegation.Connected equations start vertex) →
+    ∀ (vertex : Hibana.EndpointDelegation.OwnerExpr),
+      @Membership.mem.{0, 0} Hibana.EndpointDelegation.OwnerExpr (List.{0} Hibana.EndpointDelegation.OwnerExpr)
+          (@List.instMembership.{0} Hibana.EndpointDelegation.OwnerExpr)
+          (Hibana.EndpointDelegation.expand equations seen) vertex →
+        Hibana.EndpointDelegation.Connected equations start vertex
+Hibana.EndpointDelegation.independent_owner_moves_commute : ∀ (owners : Hibana.EndpointDelegation.OwnerMap)
+  (first second : Hibana.EndpointDelegation.EndpointKey) (left right : Hibana.EndpointDelegation.OwnerExpr),
+  @Ne.{1} Hibana.EndpointDelegation.EndpointKey first second →
+    @Eq.{1} Hibana.EndpointDelegation.OwnerMap
+      (Hibana.EndpointDelegation.withOwner (Hibana.EndpointDelegation.withOwner owners first left) second right)
+      (Hibana.EndpointDelegation.withOwner (Hibana.EndpointDelegation.withOwner owners second right) first left)
+Hibana.EndpointDelegation.independent_parallel_siblings_have_no_local_order : ∀
+  (left right : Hibana.EndpointDelegation.Source) {before after : Nat},
+  @LT.lt.{0} Nat instLTNat before left.eventCount →
+    @LE.le.{0} Nat instLENat left.eventCount after → @Eq.{1} Bool ((left.par right).before before after) false
+Hibana.EndpointDelegation.inferred_initial_actor_is_connected : ∀
+  (equations : List.{0} Hibana.EndpointDelegation.Equation) (key : Hibana.EndpointDelegation.EndpointKey) (actor : Nat),
+  @Eq.{1} (Option.{0} Nat) (Hibana.EndpointDelegation.initialActor? equations key) (@some.{0} Nat actor) →
+    Hibana.EndpointDelegation.Connected equations (Hibana.EndpointDelegation.OwnerExpr.initial key)
+      (Hibana.EndpointDelegation.OwnerExpr.actor actor)
+@Hibana.EndpointDelegation.inferred_initial_owner_is_forced_by_every_solution : ∀
+  {assignment : Hibana.EndpointDelegation.EndpointKey → Nat} {equations : List.{0} Hibana.EndpointDelegation.Equation},
+  Hibana.EndpointDelegation.Solves assignment equations →
+    ∀ {key : Hibana.EndpointDelegation.EndpointKey} {actor : Nat},
+      @Eq.{1} (Option.{0} Nat) (Hibana.EndpointDelegation.initialActor? equations key) (@some.{0} Nat actor) →
+        @Eq.{1} Nat (assignment key) actor
+Hibana.EndpointDelegation.roll_keeps_visit_local_order : ∀ (body : Hibana.EndpointDelegation.Source)
+  (before after : Nat), @Eq.{1} Bool (body.roll.before before after) (body.before before after)
+@Hibana.EndpointDelegation.rooted_initial_owner_is_forced_by_the_global : ∀
+  {assignment : Hibana.EndpointDelegation.EndpointKey → Nat} {equations : List.{0} Hibana.EndpointDelegation.Equation},
+  Hibana.EndpointDelegation.Solves assignment equations →
+    ∀ {key : Hibana.EndpointDelegation.EndpointKey} {actor : Nat},
+      Hibana.EndpointDelegation.Connected equations (Hibana.EndpointDelegation.OwnerExpr.initial key)
+          (Hibana.EndpointDelegation.OwnerExpr.actor actor) →
+        @Eq.{1} Nat (assignment key) actor
+Hibana.EndpointDelegation.sequential_actor_work_precedes_its_continuation : ∀
+  (left right : Hibana.EndpointDelegation.Source) {before after : Nat},
+  @LT.lt.{0} Nat instLTNat before left.eventCount →
+    @LE.le.{0} Nat instLENat left.eventCount after → @Eq.{1} Bool ((left.seq right).before before after) true
+Hibana.EndpointDelegation.withOwner_other : ∀ (owners : Hibana.EndpointDelegation.OwnerMap)
+  (key other : Hibana.EndpointDelegation.EndpointKey) (value : Hibana.EndpointDelegation.OwnerExpr),
+  @Ne.{1} Hibana.EndpointDelegation.EndpointKey other key →
+    @Eq.{1} Hibana.EndpointDelegation.OwnerExpr (Hibana.EndpointDelegation.withOwner owners key value other)
+      (owners other)
+Hibana.EndpointDelegation.withOwner_same : ∀ (owners : Hibana.EndpointDelegation.OwnerMap)
+  (key : Hibana.EndpointDelegation.EndpointKey) (value : Hibana.EndpointDelegation.OwnerExpr),
+  @Eq.{1} Hibana.EndpointDelegation.OwnerExpr (Hibana.EndpointDelegation.withOwner owners key value key) value
 Hibana.abort_invalidates_outstanding_receipt : ∀ (before after : Hibana.TransportState) (frame : Hibana.TransportFrame)
   (resolution : Hibana.ReceiptResolution),
   @Eq.{1} (Option.{0} Hibana.TransportBoundaryState)
@@ -241,6 +325,41 @@ Hibana.abort_peer_is_well_formed : ∀ (state : Hibana.TransportState), state.ab
           @LT.lt.{0} Nat instLTNat role roleCount →
             Or (@Eq.{1} Nat role controller)
               (@Eq.{1} Bool (Hibana.Choreo.observerPathsMergeable role leftBase rightBase left right) true))
+@Hibana.accepted_owned_program_binds_source_ownership : ∀ {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo},
+  @Eq.{1} Bool (image.ownershipCheck choreo) true →
+    @Eq.{1} Bool choreo.hasOwnedPayload true →
+      @Exists.{1} Hibana.EndpointDelegation.Source fun source =>
+        @Exists.{1} Hibana.EndpointDelegation.Normalization fun normalized =>
+          @Exists.{1} Hibana.DecodedProgramColumns fun columns =>
+            @Exists.{1} (List.{0} Hibana.DecodedProgramAtom) fun atoms =>
+              @Exists.{1} (List.{0} Hibana.DecodedScopeMarker) fun markers =>
+                And
+                  (@Eq.{1} (Option.{0} Hibana.EndpointDelegation.Source) choreo.ownershipSource?
+                    (@some.{0} Hibana.EndpointDelegation.Source source))
+                  (And
+                    (@Eq.{1} (Option.{0} Hibana.EndpointDelegation.Normalization)
+                      (Hibana.EndpointDelegation.normalize source)
+                      (@some.{0} Hibana.EndpointDelegation.Normalization normalized))
+                    (And
+                      (@Eq.{1} (Option.{0} Hibana.DecodedProgramColumns) image.decodeProgramColumns?
+                        (@some.{0} Hibana.DecodedProgramColumns columns))
+                      (And
+                        (@Eq.{1} (Option.{0} (List.{0} Hibana.DecodedProgramAtom)) image.decodeAtoms?
+                          (@some.{0} (List.{0} Hibana.DecodedProgramAtom) atoms))
+                        (And
+                          (@Eq.{1} (Option.{0} (List.{0} Hibana.DecodedScopeMarker)) image.decodeScopeMarkers?
+                            (@some.{0} (List.{0} Hibana.DecodedScopeMarker) markers))
+                          (And
+                            (@Eq.{1} (List.{0} (Prod.{0, 0} Nat Nat)) columns.initialActors
+                              (@List.map.{0, 0} Hibana.EndpointDelegation.Issuance (Prod.{0, 0} Nat Nat)
+                                (fun issue => @Prod.mk.{0, 0} Nat Nat issue.endpoint.role issue.actor)
+                                normalized.issuance))
+                            (∀ (path : Hibana.EndpointDelegation.NormalizedPath),
+                              @Membership.mem.{0, 0} Hibana.EndpointDelegation.NormalizedPath
+                                  (List.{0} Hibana.EndpointDelegation.NormalizedPath)
+                                  (@List.instMembership.{0} Hibana.EndpointDelegation.NormalizedPath) normalized.paths
+                                  path →
+                                @Eq.{1} Bool (columns.sourcePathMatches markers path) true))))))
 @Hibana.accepted_production_kernel_artifact_combines_with_external_kernel_refinement : ∀
   {OwnerVerified : Hibana.ProductionKernelOwner → Hibana.PreparedKernelSemantics → Prop}
   {artifact : Hibana.ProductionKernelArtifact} {kernel : Hibana.PreparedKernelSemantics} {session roleCount : Nat}
@@ -769,6 +888,32 @@ Hibana.causal_flow_monotone : ∀ (flow : Hibana.CausalFlowExpr) {left right : H
   {before after : Hibana.CausalRoleTimes},
   Hibana.TimedCausalFlowRun origin flow before after →
     ∀ {facts : Hibana.CausalRoles}, facts.SoundAt origin before → (flow.eval facts).SoundAt origin after
+@Hibana.checked_actor_reference_resolves_within_its_descriptor_bound : ∀ {columns : Hibana.DecodedProgramColumns}
+  {selected : Nat → Option.{0} Hibana.RouteArm} {roleCount reference : Nat} {scopes : List.{0} Nat},
+  (∀ (index : Nat) (row : Hibana.DecodedActorDecision),
+      @Eq.{1} (Option.{0} Hibana.DecodedActorDecision)
+          (@getElem?.{0, 0, 0} (List.{0} Hibana.DecodedActorDecision) Nat Hibana.DecodedActorDecision
+            (fun as i => @LT.lt.{0} Nat instLTNat i (@List.length.{0} Hibana.DecodedActorDecision as))
+            (@List.instGetElem?NatLtLength.{0} Hibana.DecodedActorDecision) columns.actorDecisions index)
+          (@some.{0} Hibana.DecodedActorDecision row) →
+        @Eq.{1} Bool (row.check roleCount index scopes) true) →
+    (∀ (index : Nat) (row : Hibana.DecodedActorDecision),
+        @Eq.{1} (Option.{0} Hibana.DecodedActorDecision)
+            (@getElem?.{0, 0, 0} (List.{0} Hibana.DecodedActorDecision) Nat Hibana.DecodedActorDecision
+              (fun as i => @LT.lt.{0} Nat instLTNat i (@List.length.{0} Hibana.DecodedActorDecision as))
+              (@List.instGetElem?NatLtLength.{0} Hibana.DecodedActorDecision) columns.actorDecisions index)
+            (@some.{0} Hibana.DecodedActorDecision row) →
+          Or
+            (@Eq.{1} (Option.{0} Hibana.RouteArm) (selected row.scope) (@some.{0} Hibana.RouteArm Hibana.RouteArm.left))
+            (@Eq.{1} (Option.{0} Hibana.RouteArm) (selected row.scope)
+              (@some.{0} Hibana.RouteArm Hibana.RouteArm.right))) →
+      @Eq.{1} Bool
+          (Hibana.validActorReference roleCount (@List.length.{0} Hibana.DecodedActorDecision columns.actorDecisions)
+            reference)
+          true →
+        @Exists.{1} Nat fun actor =>
+          And (@Eq.{1} (Option.{0} Nat) (columns.selectedActor? selected reference) (@some.{0} Nat actor))
+            (@LT.lt.{0} Nat instLTNat actor roleCount)
 @Hibana.checked_descriptor_binds_active_lane_metadata : ∀ {image : Hibana.RustDescriptorImage},
   @Eq.{1} Bool image.check true → @Eq.{1} Bool image.activeLaneMetadataCoherent true
 @Hibana.checked_descriptor_binds_event_lane_column : ∀ {image : Hibana.RustDescriptorImage},
@@ -2550,6 +2695,27 @@ Hibana.matching_ready_arm_record_is_idempotent : ∀ (arm : Hibana.RouteArm),
 Hibana.matching_ready_evidence_consumption_is_exact : ∀ (arm : Hibana.RouteArm),
   @Eq.{1} Hibana.ScopeReadyEvidence (Hibana.consumeScopeReadyArm (Hibana.ScopeReadyEvidence.selected arm) arm)
     Hibana.ScopeReadyEvidence.empty
+@Hibana.matching_source_path_has_the_source_actors : ∀ {columns : Hibana.DecodedProgramColumns}
+  {markers : List.{0} Hibana.DecodedScopeMarker} {path : Hibana.EndpointDelegation.NormalizedPath} {event : Nat}
+  {binding : Hibana.EndpointDelegation.Binding},
+  @Eq.{1} Bool (columns.sourcePathMatches markers path) true →
+    @Membership.mem.{0, 0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)
+        (List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding))
+        (@List.instMembership.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)) path.bindings
+        (@Prod.mk.{0, 0} Nat Hibana.EndpointDelegation.Binding event binding) →
+      @Exists.{1} Nat fun sender =>
+        @Exists.{1} Nat fun receiver =>
+          And
+            (@Eq.{1} (Option.{0} (Prod.{0, 0} Nat Nat))
+              (@getElem?.{0, 0, 0} (List.{0} (Prod.{0, 0} Nat Nat)) Nat (Prod.{0, 0} Nat Nat)
+                (fun as i => @LT.lt.{0} Nat instLTNat i (@List.length.{0} (Prod.{0, 0} Nat Nat) as))
+                (@List.instGetElem?NatLtLength.{0} (Prod.{0, 0} Nat Nat)) columns.actorBindings event)
+              (@some.{0} (Prod.{0, 0} Nat Nat) (@Prod.mk.{0, 0} Nat Nat sender receiver)))
+            (And
+              (@Eq.{1} (Option.{0} Nat) (columns.selectedActor? (Hibana.sourcePathArm? markers path) sender)
+                (@some.{0} Nat binding.senderActor))
+              (@Eq.{1} (Option.{0} Nat) (columns.selectedActor? (Hibana.sourcePathArm? markers path) receiver)
+                (@some.{0} Nat binding.receiverActor)))
 Hibana.max_lease_generation_is_exhausted : @Eq.{1} (Option.{0} Nat)
   (Hibana.nextLeaseGeneration? Hibana.maxLeaseGeneration) (@none.{0} Nat)
 @Hibana.max_route_conflict_is_permutation_invariant : ∀ {left right : List.{0} Hibana.RouteInfo},
@@ -4699,6 +4865,18 @@ Hibana.trace_checker_sound : ∀ (graph : Hibana.EventGraph) (state : Hibana.Com
 @Hibana.unambiguous_ready_arm_mask_is_accepted : ∀ {mask : Nat},
   @LE.le.{0} Nat instLENat mask (@OfNat.ofNat.{0} Nat (nat_lit 2) (instOfNatNat (nat_lit 2))) →
     @Eq.{1} Bool (@Option.isSome.{0} (Option.{0} Hibana.RouteArm) (Hibana.decodeSingleReadyArmMask? mask)) true
+@Hibana.unknown_actor_choice_does_not_authorize_a_holder : ∀ {columns : Hibana.DecodedProgramColumns}
+  {selected : Nat → Option.{0} Hibana.RouteArm} {reference : Nat} {row : Hibana.DecodedActorDecision},
+  @LE.le.{0} Nat instLENat (@OfNat.ofNat.{0} Nat (nat_lit 256) (instOfNatNat (nat_lit 256))) reference →
+    @Eq.{1} (Option.{0} Hibana.DecodedActorDecision)
+        (@getElem?.{0, 0, 0} (List.{0} Hibana.DecodedActorDecision) Nat Hibana.DecodedActorDecision
+          (fun as i => @LT.lt.{0} Nat instLTNat i (@List.length.{0} Hibana.DecodedActorDecision as))
+          (@List.instGetElem?NatLtLength.{0} Hibana.DecodedActorDecision) columns.actorDecisions
+          (@HSub.hSub.{0, 0, 0} Nat Nat Nat (@instHSub.{0} Nat instSubNat) reference
+            (@OfNat.ofNat.{0} Nat (nat_lit 256) (instOfNatNat (nat_lit 256)))))
+        (@some.{0} Hibana.DecodedActorDecision row) →
+      @Eq.{1} (Option.{0} Hibana.RouteArm) (selected row.scope) (@none.{0} Hibana.RouteArm) →
+        @Eq.{1} (Option.{0} Nat) (columns.selectedActor? selected reference) (@none.{0} Nat)
 Hibana.unresolved_dynamic_commit_rejected : @Eq.{1} Bool
   (Hibana.checkProgramTrace Hibana.resolverProofChoreo✝ (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0)))
     (@List.cons.{0} Hibana.TraceFrame

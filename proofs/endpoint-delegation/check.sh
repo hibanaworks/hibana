@@ -3,14 +3,20 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 export TOOLCHAIN="${TOOLCHAIN:-stable}"
 PROOFS="$ROOT/proofs/endpoint-delegation"
+MODEL="$ROOT/proofs/lean/Hibana/EndpointOwnership.lean"
+MODEL_PATH="$ROOT/proofs/lean/.lake/build/lib/lean"
 EVIDENCE=${1:-$(mktemp -d /tmp/hibana-delegation-projection.XXXXXX)}
 mkdir -p "$EVIDENCE"
 EVIDENCE=$(cd "$EVIDENCE" && pwd)
 cd "$ROOT"
 export ELAN_TOOLCHAIN=leanprover/lean4:v4.30.0
+# The standalone model has its own tests. Core-only repository fixtures must
+# not be enabled in this independently compiled package.
+source "$ROOT/.github/scripts/repo_rustflags.sh"
+hibana_disable_repo_tests_cfg
 source "$ROOT/.github/scripts/lib/proof_audit.sh"
 FAILED=0
-check_trusted_proof_sources 'endpoint delegation projection' "$PROOFS/Projection.lean" "$PROOFS/Knowledge.lean" "$PROOFS/Issuance.lean" "$PROOFS/Causality.lean"
+check_trusted_proof_sources 'endpoint delegation projection' "$MODEL" "$PROOFS/Claims.lean" "$PROOFS/Knowledge.lean" "$PROOFS/Issuance.lean" "$PROOFS/Causality.lean"
 [[ "$FAILED" -eq 0 ]]
 lean --version | bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" version
 cargo +"$TOOLCHAIN" fmt --manifest-path "$PROOFS/compiler/Cargo.toml" --check
@@ -21,15 +27,19 @@ cargo +"$TOOLCHAIN" check --manifest-path "$PROOFS/compiler/Cargo.toml" --locked
 cargo +"$TOOLCHAIN" run --manifest-path "$PROOFS/compiler/Cargo.toml" --locked -- "$EVIDENCE/Generated.lean" > "$EVIDENCE/export.log" 2>&1
 check_trusted_proof_sources 'generated endpoint delegation projection' "$EVIDENCE/Generated.lean"
 [[ "$FAILED" -eq 0 ]]
-lean -o "$EVIDENCE/Projection.olean" "$PROOFS/Projection.lean" > "$EVIDENCE/lean-model.log" 2>&1
+(
+  cd "$ROOT/proofs/lean"
+  lake build Hibana.EndpointOwnership
+) > "$EVIDENCE/lean-model-build.log" 2>&1
+LEAN_PATH="$MODEL_PATH" lean "$PROOFS/Claims.lean" > "$EVIDENCE/lean-model.log" 2>&1
 bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" lean "$EVIDENCE/lean-model.log" 14
-LEAN_PATH="$EVIDENCE" lean -o "$EVIDENCE/Knowledge.olean" "$PROOFS/Knowledge.lean" > "$EVIDENCE/lean-knowledge.log" 2>&1
+LEAN_PATH="$EVIDENCE:$MODEL_PATH" lean -o "$EVIDENCE/Knowledge.olean" "$PROOFS/Knowledge.lean" > "$EVIDENCE/lean-knowledge.log" 2>&1
 bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" lean "$EVIDENCE/lean-knowledge.log" 3
-LEAN_PATH="$EVIDENCE" lean -o "$EVIDENCE/Causality.olean" "$PROOFS/Causality.lean" > "$EVIDENCE/lean-causality.log" 2>&1
+LEAN_PATH="$EVIDENCE:$MODEL_PATH" lean -o "$EVIDENCE/Causality.olean" "$PROOFS/Causality.lean" > "$EVIDENCE/lean-causality.log" 2>&1
 bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" lean "$EVIDENCE/lean-causality.log" 4
 lean -o "$EVIDENCE/Issuance.olean" "$PROOFS/Issuance.lean" > "$EVIDENCE/lean-issuance.log" 2>&1
 bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" lean "$EVIDENCE/lean-issuance.log" 4
-LEAN_PATH="$EVIDENCE" lean "$EVIDENCE/Generated.lean" > "$EVIDENCE/lean-generated.log" 2>&1
+LEAN_PATH="$EVIDENCE:$MODEL_PATH" lean "$EVIDENCE/Generated.lean" > "$EVIDENCE/lean-generated.log" 2>&1
 bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" lean "$EVIDENCE/lean-generated.log" 193
 bash "$ROOT/.github/scripts/check_smt2.sh" "$PROOFS/Ownership.smt2" > "$EVIDENCE/z3.log"
 bash "$ROOT/.github/scripts/check_smt2.sh" "$PROOFS/Issuance.smt2" > "$EVIDENCE/z3-issuance.log"
