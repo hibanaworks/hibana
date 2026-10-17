@@ -6,6 +6,7 @@ use crate::{
 
 #[test]
 fn dropping_a_completed_owned_send_does_not_retire_the_returned_resource_view() {
+    use crate::endpoint::proof_snapshot::view_tag;
     use core::{
         future::{Future, poll_fn},
         pin::Pin,
@@ -63,11 +64,18 @@ fn dropping_a_completed_owned_send_does_not_retire_the_returned_resource_view() 
         let mut service = peer_rv.enter(sid, &service_program).unwrap();
         let mut receiver = peer_rv.enter(sid, &receiver_program).unwrap();
 
+        let old_tag = view_tag(&db);
+        // SAFETY: owner_storage retains the observed pinned view record.
+        assert!(unsafe { old_tag.matches_header() });
         let mut loan = owner.send::<Loan>(db);
         poll_fn(|cx| Pin::new(&mut loan).poll(cx)).await.unwrap();
+        // SAFETY: successful transfer retains the original runtime storage.
+        assert!(!unsafe { old_tag.matches_header() });
         let db = worker.recv::<Loan>().await.unwrap();
         worker.send::<Loan>(db).await.unwrap();
         let mut db = auth.recv::<Loan>().await.unwrap();
+        // SAFETY: this return reuses the same pinned record, with a fresh tag.
+        assert!(!unsafe { old_tag.matches_header() });
         // The old send has completed, but its owned payload is only destroyed
         // here, after DB has been reissued at the original physical actor.
         drop(loan);

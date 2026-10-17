@@ -4,6 +4,29 @@ use super::{Endpoint, RouteBranch, kernel::ResidentActor};
 use crate::{global::typestate::LocalAction, test_support::transport::TestTransport};
 use std::vec::Vec;
 
+/// A copied header tag, not an Endpoint or a usable operation capability.
+#[derive(Clone, Copy)]
+pub(crate) struct ViewTagObservation {
+    ptr: core::ptr::NonNull<super::carrier::KernelEndpointHeader>,
+    handle: super::carrier::EndpointHandle,
+}
+
+impl ViewTagObservation {
+    /// # Safety
+    /// The observed Endpoint's pinned runtime allocation must remain alive.
+    pub(crate) unsafe fn matches_header(self) -> bool {
+        // SAFETY: the caller retains the original pinned view record.
+        self.handle.matches_header(unsafe { self.ptr.as_ref() })
+    }
+}
+
+pub(crate) fn view_tag<const ROLE: u8>(endpoint: &Endpoint<'_, ROLE>) -> ViewTagObservation {
+    ViewTagObservation {
+        ptr: endpoint.owner.ptr,
+        handle: endpoint.owner.handle,
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct StepSnapshot {
     pub(crate) view: u8,

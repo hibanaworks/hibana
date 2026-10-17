@@ -25,6 +25,7 @@ mod mailbox;
 use mailbox::{Mailboxes, NativeTransport};
 
 mod composed;
+mod preemption;
 
 type Queued = g::Msg<5, u32>;
 
