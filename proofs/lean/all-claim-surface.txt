@@ -751,6 +751,14 @@ Hibana.active_offer_key_mem_iff_owned : ∀ (target : Hibana.ActiveOfferKey) (la
       @Eq.{1} Bool (next.done event) true →
         (∀ (other : Nat), @Ne.{1} Nat other event → @Eq.{1} Bool (next.done other) (base.done other)) →
           next.PrefixClosed predecessors cut
+@Hibana.actor_order_has_source_order_or_message_halves : ∀ {source : Hibana.EndpointDelegation.Source}
+  {bindings : List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)}
+  {before after : Hibana.EndpointDelegation.ActionId},
+  @Eq.{1} Bool (Hibana.EndpointDelegation.precedes source bindings before after) true →
+    Or (@LT.lt.{0} Nat instLTNat before.event after.event)
+      (And (@Eq.{1} Nat before.event after.event)
+        (And (@Eq.{1} Hibana.EndpointDelegation.Side before.side Hibana.EndpointDelegation.Side.send)
+          (@Eq.{1} Hibana.EndpointDelegation.Side after.side Hibana.EndpointDelegation.Side.receive)))
 @Hibana.admission_acceptance_iff_admissible : ∀ {graph : Hibana.EventGraph} {state : Hibana.CommitState}
   {request : Hibana.OperationRequest},
   Iff
@@ -5128,6 +5136,14 @@ Hibana.sequential_input_guards_both_parallel_arms : ∀ (entry split exit left r
           (@Eq.{1} (Option.{0} Hibana.EndpointDelegation.Action) (Hibana.EndpointDelegation.action? path.bindings id)
             (@some.{0} Hibana.EndpointDelegation.Action action))
           (@Eq.{1} Nat action.actor actor))
+@Hibana.source_order_strictly_increases_event : ∀ {source : Hibana.EndpointDelegation.Source} {before after : Nat},
+  @Eq.{1} Bool (source.before before after) true → @LT.lt.{0} Nat instLTNat before after
+@Hibana.source_point_dependencies_have_no_cycle : ∀ {source : Hibana.EndpointDelegation.Source}
+  {bindings : List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)} (point : Hibana.SourcePoint),
+  Not (@Relation.TransGen.{1} Hibana.SourcePoint (Hibana.SourcePointEdge source bindings) point point)
+@Hibana.source_point_dependency_increases_rank : ∀ {source : Hibana.EndpointDelegation.Source}
+  {bindings : List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)} {before after : Hibana.SourcePoint},
+  Hibana.SourcePointEdge source bindings before after → @LT.lt.{0} Nat instLTNat before.rank after.rank
 Hibana.sparse_route_history_avoids_the_lane_depth_product : And
   (@Eq.{1} Nat (Hibana.productionRouteHistoryCapacity Hibana.sparseRouteHistoryExample)
     (@OfNat.ofNat.{0} Nat (nat_lit 17) (instOfNatNat (nat_lit 17))))
@@ -5466,6 +5482,28 @@ Hibana.trace_checker_sound : ∀ (graph : Hibana.EventGraph) (state : Hibana.Com
 @Hibana.unambiguous_ready_arm_mask_is_accepted : ∀ {mask : Nat},
   @LE.le.{0} Nat instLENat mask (@OfNat.ofNat.{0} Nat (nat_lit 2) (instOfNatNat (nat_lit 2))) →
     @Eq.{1} Bool (@Option.isSome.{0} (Option.{0} Hibana.RouteArm) (Hibana.decodeSingleReadyArmMask? mask)) true
+@Hibana.unfinished_source_visit_has_ready_point : ∀ {source : Hibana.EndpointDelegation.Source}
+  {bindings : List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)} {domain : List.{0} Hibana.SourcePoint}
+  {observed : Hibana.SourcePoint → Bool},
+  (∀ (before after : Hibana.SourcePoint),
+      @Membership.mem.{0, 0} Hibana.SourcePoint (List.{0} Hibana.SourcePoint)
+          (@List.instMembership.{0} Hibana.SourcePoint) domain after →
+        Hibana.SourcePointEdge source bindings before after →
+          @Eq.{1} Bool (observed before) false →
+            @Membership.mem.{0, 0} Hibana.SourcePoint (List.{0} Hibana.SourcePoint)
+              (@List.instMembership.{0} Hibana.SourcePoint) domain before) →
+    (@Exists.{1} Hibana.SourcePoint fun point =>
+        And
+          (@Membership.mem.{0, 0} Hibana.SourcePoint (List.{0} Hibana.SourcePoint)
+            (@List.instMembership.{0} Hibana.SourcePoint) domain point)
+          (@Eq.{1} Bool (observed point) false)) →
+      @Exists.{1} Hibana.SourcePoint fun point =>
+        And
+          (@Membership.mem.{0, 0} Hibana.SourcePoint (List.{0} Hibana.SourcePoint)
+            (@List.instMembership.{0} Hibana.SourcePoint) domain point)
+          (And (@Eq.{1} Bool (observed point) false)
+            (∀ (before : Hibana.SourcePoint),
+              Hibana.SourcePointEdge source bindings before point → @Eq.{1} Bool (observed before) true))
 @Hibana.unknown_actor_choice_does_not_authorize_a_holder : ∀ {columns : Hibana.DecodedProgramColumns}
   {selected : Nat → Option.{0} Hibana.RouteArm} {reference : Nat} {row : Hibana.DecodedActorDecision},
   @LE.le.{0} Nat instLENat (@OfNat.ofNat.{0} Nat (nat_lit 256) (instOfNatNat (nat_lit 256))) reference →

@@ -17,10 +17,10 @@ fn view_generation_never_wraps_reuses_or_loses_its_retirement_successor() {
 
 #[kani::proof]
 fn initial_view_issuance_is_exact_and_retirement_cannot_restore_it() {
-    let run: u32 = kani::any();
+    // This total constructor covers every nonzero run, including u32::MAX.
+    let run = kani::any::<u32>().max(1);
     let role: u8 = kani::any();
     let candidate: u32 = kani::any();
-    kani::assume(run != 0);
     // These checks use only the header's numeric identity methods. No actor
     // callback is invoked, so a non-dereferenced actor address is sufficient.
     let actor = core::ptr::NonNull::dangling();
@@ -52,13 +52,15 @@ fn initial_view_issuance_is_exact_and_retirement_cannot_restore_it() {
 
 #[kani::proof]
 fn received_view_reissue_keeps_the_run_and_rejects_the_old_handle() {
-    let run: u32 = kani::any();
+    let run = kani::any::<u32>().max(1);
     let role: u8 = kani::any();
     let counter: u32 = kani::any();
     let previously_issued: bool = kani::any();
-    kani::assume(run != 0);
-    kani::assume(counter % 2 == 1 && counter < u32::MAX - 2);
-    let next = super::next_view_generation(counter).expect("fresh actor nonce");
+    let next = super::next_view_generation(counter);
+    assert_eq!(next.is_some(), counter % 2 == 1 && counter < u32::MAX - 2);
+    let Some(next) = next else {
+        return;
+    };
     let actor = core::ptr::NonNull::dangling();
     let header = super::KernelEndpointHeader::new(actor, run, role);
     let old = super::EndpointHandle::new(run, counter);
@@ -97,13 +99,15 @@ fn received_view_reissue_keeps_the_run_and_rejects_the_old_handle() {
 
 #[kani::proof]
 fn retired_view_preflight_rejects_every_issued_handle() {
-    let run: u32 = kani::any();
+    let run = kani::any::<u32>().max(1);
     let role: u8 = kani::any();
     let counter: u32 = kani::any();
     let first_issuance: bool = kani::any();
-    kani::assume(run != 0);
-    kani::assume(counter % 2 == 1 && counter < u32::MAX - 2);
-    let next = super::next_view_generation(counter).expect("fresh actor nonce");
+    let next = super::next_view_generation(counter);
+    assert_eq!(next.is_some(), counter % 2 == 1 && counter < u32::MAX - 2);
+    let Some(next) = next else {
+        return;
+    };
     let header = super::KernelEndpointHeader::new(core::ptr::NonNull::dangling(), run, role);
     assert!(header.issue_initial(counter));
     header.retire_generation();
