@@ -35,7 +35,7 @@ type Work = g::Roll<
         702,
     >,
 >;
-type Steps = g::Seq<
+pub(super) type Steps = g::Seq<
     Choice,
     g::Seq<
         Work,

@@ -1708,7 +1708,7 @@ def RustDescriptorImage.check (image : RustDescriptorImage) : Bool :=
     image.logicalLaneCount ≤ 256 ∧
     image.routeParticipantCount ≤ packedU16Absent ∧
     (image.routeResolverCount = 0 ↔ image.routeParticipantCount = 0) ∧
-    image.programBytes.length = image.programBlobLen ∧
+    image.programColumnsCoherent = true ∧
     image.roleBytes.length = image.roleBlobLen ∧
     image.programBytes.all (· < 256) ∧
     image.roleBytes.all (· < 256)) &&
@@ -1718,6 +1718,14 @@ def RustDescriptorImage.check (image : RustDescriptorImage) : Bool :=
   image.decodeScopeMarkers?.isSome &&
   image.roleRuntimeColumnsCheck &&
   image.decodeProjectionShape?.isSome
+
+theorem checked_descriptor_binds_program_columns
+    {image : RustDescriptorImage}
+    (accepted : image.check = true) :
+    image.programColumnsCoherent = true := by
+  unfold RustDescriptorImage.check at accepted
+  simp only [Bool.and_eq_true, decide_eq_true_eq] at accepted
+  exact accepted.1.1.1.1.1.1.2.2.2.2.2.2.2.1
 
 theorem checked_descriptor_binds_route_arm_columns
     {image : RustDescriptorImage}

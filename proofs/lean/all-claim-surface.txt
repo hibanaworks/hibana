@@ -18,6 +18,16 @@ Hibana.abort_invalidates_outstanding_receipt : ∀ (before after : Hibana.Transp
 Hibana.abort_peer_is_immediately_observable : ∀ (state : Hibana.TransportState),
   @Eq.{1} Hibana.TransportPoll state.abortPeer.pollReceive Hibana.TransportPoll.peerClosed
 Hibana.abort_peer_is_well_formed : ∀ (state : Hibana.TransportState), state.abortPeer.WellFormed
+@Hibana.accepted_actor_decision_references_decrease : ∀ {row : Hibana.DecodedActorDecision} {roleCount index : Nat}
+  {routeScopes : List.{0} Nat},
+  @Eq.{1} Bool (row.check roleCount index routeScopes) true →
+    And
+      (@LT.lt.{0} Nat instLTNat row.left
+        (@HAdd.hAdd.{0, 0, 0} Nat Nat Nat (@instHAdd.{0} Nat instAddNat)
+          (@OfNat.ofNat.{0} Nat (nat_lit 256) (instOfNatNat (nat_lit 256))) index))
+      (@LT.lt.{0} Nat instLTNat row.right
+        (@HAdd.hAdd.{0, 0, 0} Nat Nat Nat (@instHAdd.{0} Nat instAddNat)
+          (@OfNat.ofNat.{0} Nat (nat_lit 256) (instOfNatNat (nat_lit 256))) index))
 @Hibana.accepted_causal_flow_has_must_handoff : ∀ {flow : Hibana.CausalFlowExpr} {sender : Nat},
   @Eq.{1} Bool (flow.eval (fun x => false) sender) true → Hibana.MustCausalHandoff flow sender
 @Hibana.accepted_channel_authority_checker_sound : ∀ {config : Hibana.AsyncCancellationConfig},
@@ -771,6 +781,8 @@ Hibana.causal_flow_monotone : ∀ (flow : Hibana.CausalFlowExpr) {left right : H
   @Eq.{1} Bool image.check true → @Eq.{1} Bool image.laneColumnsCoherent true
 @Hibana.checked_descriptor_binds_passive_child_columns : ∀ {image : Hibana.RustDescriptorImage},
   @Eq.{1} Bool image.check true → @Eq.{1} Bool image.passiveChildColumnsCoherent true
+@Hibana.checked_descriptor_binds_program_columns : ∀ {image : Hibana.RustDescriptorImage},
+  @Eq.{1} Bool image.check true → @Eq.{1} Bool image.programColumnsCoherent true
 @Hibana.checked_descriptor_binds_roll_columns : ∀ {image : Hibana.RustDescriptorImage},
   @Eq.{1} Bool image.check true → @Eq.{1} Bool image.rollColumnsCoherent true
 @Hibana.checked_descriptor_binds_route_arm_columns : ∀ {image : Hibana.RustDescriptorImage},

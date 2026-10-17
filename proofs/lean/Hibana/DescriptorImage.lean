@@ -1,16 +1,9 @@
 import Hibana.Refinement
 import Hibana.OperationAdmission
 import Hibana.DescriptorParticipants
+import Hibana.ProgramImageColumns
 
 namespace Hibana
-
-def productionProgramAtomStride : Nat := 9
-
-def productionProgramRouteResolverStride : Nat := 8
-
-def productionProgramRouteParticipantStride : Nat := 1
-
-def productionProgramScopeMarkerStride : Nat := 5
 
 def productionRoleEventStride : Nat := 10
 
@@ -33,11 +26,6 @@ def productionRoleRouteArmLaneStepStride : Nat := 5
 def productionRoleRollScopeStride : Nat := 6
 
 def productionEventIdentityCapacity : Nat := 65535
-
-def productionDescriptorByteCapacity : Nat := 65535
-
-def productionAtomOnlyEventCapacity : Nat :=
-  productionDescriptorByteCapacity / productionProgramAtomStride
 
 theorem production_atom_only_event_capacity_exact :
     productionAtomOnlyEventCapacity = 7281 := by
@@ -1409,30 +1397,10 @@ structure RustDescriptorImage where
   routeArmLaneStepCount : Nat
   routeCommitRowCount : Nat
   rollScopeCount : Nat
+  programColumnBytes : List Nat
   programBytes : List Nat
   roleBytes : List Nat
   deriving Repr, DecidableEq
-
-def readByte? (bytes : List Nat) (offset : Nat) : Option Nat :=
-  match bytes[offset]? with
-  | some byte => if byte < 256 then some byte else none
-  | none => none
-
-def readU16LE? (bytes : List Nat) (offset : Nat) : Option Nat := do
-  let low ← readByte? bytes offset
-  let high ← readByte? bytes (offset + 1)
-  pure (low + high * 256)
-
-def readU32LE? (bytes : List Nat) (offset : Nat) : Option Nat := do
-  let low ← readU16LE? bytes offset
-  let high ← readU16LE? bytes (offset + 2)
-  pure (low + high * 65536)
-
-def readByteRange?
-    (bytes : List Nat) (offset start finish : Nat) : Option (List Nat) := do
-  if start ≤ finish then pure () else none
-  (List.range (finish - start)).mapM fun index =>
-    readByte? bytes (offset + start + index)
 
 def RustDescriptorImage.programRouteResolverOffset (image : RustDescriptorImage) : Nat :=
   image.atomCount * productionProgramAtomStride
@@ -1442,13 +1410,23 @@ def RustDescriptorImage.programRouteParticipantOffset
   image.programRouteResolverOffset +
     image.routeResolverCount * productionProgramRouteResolverStride
 
-def RustDescriptorImage.programScopeMarkerOffset (image : RustDescriptorImage) : Nat :=
-  image.programRouteParticipantOffset +
-    image.routeParticipantCount * productionProgramRouteParticipantStride
+def RustDescriptorImage.decodeProgramColumns?
+    (image : RustDescriptorImage) : Option DecodedProgramColumns :=
+  Hibana.decodeProgramColumns? image.programColumnBytes image.programBytes
 
-def RustDescriptorImage.programBlobLen (image : RustDescriptorImage) : Nat :=
-  image.programScopeMarkerOffset +
-    image.scopeMarkerCount * productionProgramScopeMarkerStride
+/-- Bind all claimed counts to the actual resident header. Actor-aware topology
+qualification is separate: the existing ordinary descriptor certificate must
+not silently admit an owned suffix before that extension is proved. -/
+def RustDescriptorImage.programColumnsCoherent (image : RustDescriptorImage) : Bool :=
+  match image.decodeProgramColumns? with
+  | none => false
+  | some columns =>
+      columns.atomCount == image.atomCount &&
+        columns.routeResolverCount == image.routeResolverCount &&
+        columns.routeParticipantCount == image.routeParticipantCount &&
+        columns.scopeMarkerCount == image.scopeMarkerCount &&
+        columns.actorBindings.isEmpty && columns.actorDecisions.isEmpty &&
+        columns.initialActors.isEmpty
 
 def RustDescriptorImage.roleLaneOffset (image : RustDescriptorImage) : Nat :=
   image.eventCount * productionRoleEventStride
@@ -2341,25 +2319,20 @@ def RustDescriptorImage.decodeRouteAuthorities?
 def validScopeMarkerTag (tag : Nat) : Bool :=
   tag = 0 || tag = 1 || tag = 2 || tag = 4 || tag = 5 || tag = 6
 
-def RustDescriptorImage.decodeScopeMarkerRow?
-    (image : RustDescriptorImage) (row : Nat) : Option DecodedScopeMarker := do
-  if row < image.scopeMarkerCount then pure () else none
-  let offset := image.programScopeMarkerOffset +
-    row * productionProgramScopeMarkerStride
-  let atomOffset ← readU16LE? image.programBytes offset
-  let scope ← readU16LE? image.programBytes (offset + 2)
-  let tag ← readByte? image.programBytes (offset + 4)
-  if atomOffset ≤ image.atomCount ∧
-      scope < 3 * productionScopeCapacity ∧
-      scope % productionScopeCapacity < productionScopeCapacity ∧
-      validScopeMarkerTag tag then
-    pure { offset := atomOffset, scope, tag }
-  else
-    none
-
 def RustDescriptorImage.decodeScopeMarkers?
-    (image : RustDescriptorImage) : Option (List DecodedScopeMarker) :=
-  (List.range image.scopeMarkerCount).mapM image.decodeScopeMarkerRow?
+    (image : RustDescriptorImage) : Option (List DecodedScopeMarker) := do
+  let columns ← image.decodeProgramColumns?
+  (List.range image.scopeMarkerCount).mapM fun row => do
+    let offset := columns.scopeMarkerOffset + row * productionProgramScopeMarkerStride
+    let atomOffset ← readU16LE? image.programBytes offset
+    let scope ← readU16LE? image.programBytes (offset + 2)
+    let tag ← readByte? image.programBytes (offset + 4)
+    if atomOffset ≤ image.atomCount ∧
+        scope < 3 * productionScopeCapacity ∧
+        scope % productionScopeCapacity < productionScopeCapacity ∧
+        validScopeMarkerTag tag then
+      pure { offset := atomOffset, scope, tag }
+    else none
 
 def EventGraph.routeAuthoritiesByConflict (graph : EventGraph) : List RouteAuthority :=
   normalizeProjectionRoutes (graph.routes.map fun route => {

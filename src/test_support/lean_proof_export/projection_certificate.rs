@@ -138,6 +138,7 @@ pub(super) fn projection_certificate_source<const ROLE: u8>(
     let role_columns = descriptor.local_event_rows().columns();
     let program_bytes =
         lean_byte_list((0..program.proof_blob_len()).map(|offset| program.proof_byte_at(offset)));
+    let program_column_bytes = lean_byte_list(program_columns.proof_header_bytes().into_iter());
     let role_bytes = lean_byte_list(
         (0..descriptor.proof_blob_len()).map(|offset| descriptor.proof_byte_at(offset)),
     );
@@ -185,7 +186,7 @@ pub(super) fn projection_certificate_source<const ROLE: u8>(
             "\n\ndef {mismatch_name} : Hibana.ExactDescriptorCertificate := {{\n  \
              {exact_name} with\n  image := {{ {exact_name}.image with\n    programBytes := \
              {exact_name}.image.programBytes.set \
-             ({exact_name}.image.programScopeMarkerOffset + 4) {mismatched_tag}\n  }}\n}}\n\n\
+             {tag_offset} {mismatched_tag}\n  }}\n}}\n\n\
              theorem {mismatch_name}Rejected : {mismatch_name}.check = false := by\n  decide"
         )
     };
@@ -393,6 +394,7 @@ pub(super) fn projection_certificate_source<const ROLE: u8>(
          conflictRowCount := {}\n    routeScopeCount := {}\n    residentBoundaryCount := {}\n    \
          laneBitCount := {}\n    routeArmLaneStepCount := {}\n    routeCommitRowCount := {}\n    \
          rollScopeCount := {}\n    \
+         programColumnBytes := {program_column_bytes}\n    \
          programBytes := {program_bytes}\n    roleBytes := {role_bytes}\n  }}\n  choreo := {choreo}\n}}\n\n\
          theorem {exact_name}Accepted : {exact_name}.check = true := by\n  decide\n\n\
          theorem {exact_name}Refines : {exact_name}.Refines :=\n  \

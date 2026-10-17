@@ -1,0 +1,57 @@
+ordinaryProgramColumnsDecoded : Hibana.decodeProgramColumns? ordinaryProgramColumnsHeader ordinaryProgramColumnsBytes =
+  some ordinaryProgramColumnsColumns
+ordinaryProgramColumnsTruncatedHeaderRejected : Hibana.decodeProgramColumns? (List.take 7 ordinaryProgramColumnsHeader)
+    ordinaryProgramColumnsBytes =
+  none
+ownedConditionalColumnsClearedTagRejected : Hibana.decodeProgramColumns? (ownedConditionalColumnsHeader.set 1 0)
+    ownedConditionalColumnsBytes =
+  none
+ownedConditionalColumnsDecoded : Hibana.decodeProgramColumns? ownedConditionalColumnsHeader
+    ownedConditionalColumnsBytes =
+  some ownedConditionalColumnsColumns
+ownedConditionalColumnsOddIssuerTailRejected : Hibana.decodeProgramColumns?
+    ((ownedConditionalColumnsHeader.set 6 15).set 7 1) (List.take 271 ownedConditionalColumnsBytes) =
+  none
+ownedConditionalColumnsOversizedDecisionsRejected : Hibana.decodeProgramColumns? ownedConditionalColumnsHeader
+    ((ownedConditionalColumnsBytes.set 154 255).set 155 255) =
+  none
+ownedConditionalColumnsTruncatedHeaderRejected : Hibana.decodeProgramColumns?
+    (List.take 7 ownedConditionalColumnsHeader) ownedConditionalColumnsBytes =
+  none
+ownedConditionalColumnsWrongLengthRejected : Hibana.decodeProgramColumns? (ownedConditionalColumnsHeader.set 6 17)
+    ownedConditionalColumnsBytes =
+  none
+ownedLinearColumnsClearedTagRejected : Hibana.decodeProgramColumns? (ownedLinearColumnsHeader.set 1 0)
+    ownedLinearColumnsBytes =
+  none
+ownedLinearColumnsDecoded : Hibana.decodeProgramColumns? ownedLinearColumnsHeader ownedLinearColumnsBytes =
+  some ownedLinearColumnsColumns
+ownedLinearColumnsOddIssuerTailRejected : Hibana.decodeProgramColumns? ((ownedLinearColumnsHeader.set 6 83).set 7 0)
+    (List.take 83 ownedLinearColumnsBytes) =
+  none
+ownedLinearColumnsOversizedDecisionsRejected : Hibana.decodeProgramColumns? ownedLinearColumnsHeader
+    ((ownedLinearColumnsBytes.set 56 255).set 57 255) =
+  none
+ownedLinearColumnsTruncatedHeaderRejected : Hibana.decodeProgramColumns? (List.take 7 ownedLinearColumnsHeader)
+    ownedLinearColumnsBytes =
+  none
+ownedLinearColumnsWrongLengthRejected : Hibana.decodeProgramColumns? (ownedLinearColumnsHeader.set 6 85)
+    ownedLinearColumnsBytes =
+  none
+ownedParallelColumnsClearedTagRejected : Hibana.decodeProgramColumns? (ownedParallelColumnsHeader.set 1 0)
+    ownedParallelColumnsBytes =
+  none
+ownedParallelColumnsDecoded : Hibana.decodeProgramColumns? ownedParallelColumnsHeader ownedParallelColumnsBytes =
+  some ownedParallelColumnsColumns
+ownedParallelColumnsOddIssuerTailRejected : Hibana.decodeProgramColumns?
+    ((ownedParallelColumnsHeader.set 6 146).set 7 0) (List.take 146 ownedParallelColumnsBytes) =
+  none
+ownedParallelColumnsOversizedDecisionsRejected : Hibana.decodeProgramColumns? ownedParallelColumnsHeader
+    ((ownedParallelColumnsBytes.set 74 255).set 75 255) =
+  none
+ownedParallelColumnsTruncatedHeaderRejected : Hibana.decodeProgramColumns? (List.take 7 ownedParallelColumnsHeader)
+    ownedParallelColumnsBytes =
+  none
+ownedParallelColumnsWrongLengthRejected : Hibana.decodeProgramColumns? (ownedParallelColumnsHeader.set 6 146)
+    ownedParallelColumnsBytes =
+  none

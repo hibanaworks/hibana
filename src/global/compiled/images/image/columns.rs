@@ -82,6 +82,25 @@ pub(super) struct OwnershipColumns {
 }
 
 impl ProgramImageColumns {
+    /// Little-endian encoding of the four actual resident column values.
+    #[cfg(all(test, hibana_repo_tests))]
+    pub(crate) const fn proof_header_bytes(self) -> [u8; 8] {
+        let atoms = self.atom_len.to_le_bytes();
+        let resolvers = self.route_resolver_len.to_le_bytes();
+        let participants = self.route_participant_len.to_le_bytes();
+        let tail = self.tail.to_le_bytes();
+        [
+            atoms[0],
+            atoms[1],
+            resolvers[0],
+            resolvers[1],
+            participants[0],
+            participants[1],
+            tail[0],
+            tail[1],
+        ]
+    }
+
     // Atom counts fit below 8192. This tag selects the owned image grammar;
     // its final word is the total length and its four-byte tail header stores
     // scope/decision counts. Ordinary columns and resident refs stay unchanged.
