@@ -4,7 +4,6 @@
 # compile-pressure-observations.md. Keep the existing headroom, not the missed
 # 1MiB/4MiB process samples from the original local baseline.
 label	observed_seconds	observed_rss_mib	seconds_headroom	rss_headroom_mib
-final_form_gate	134	903	46	57
 cold_parallel_route_nesting	9	834	31	190
 offer_branch_recv_evidence	2	228	30	256
 parallel_route_nesting	2	228	30	256

@@ -66,7 +66,9 @@ jobs:
           rm -rf "${ELAN_TMP}"
           echo "${HOME}/.elan/bin" >> "${GITHUB_PATH}"
       - name: Run final-form gates
-        run: bash ./.github/scripts/run_final_form_gates.sh
+        run: >-
+          bash .github/scripts/lib/resource_guard.sh
+          bash ./.github/scripts/run_final_form_gates.sh
       - name: Check elastic roll endpoint selectors with Lean and Z3
         run: bash proofs/roll-reentry-selectors/check.sh
       - name: Check conditional roll continuation dependencies with Lean and Z3

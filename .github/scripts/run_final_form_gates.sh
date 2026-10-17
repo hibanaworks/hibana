@@ -9,18 +9,6 @@ export TOOLCHAIN="${TOOLCHAIN:-stable}"
 export CARGO_PROFILE_DEV_DEBUG=line-tables-only
 export CARGO_PROFILE_TEST_DEBUG=line-tables-only
 
-if [[ "${HIBANA_FINAL_FORM_COMPILE_PRESSURE_GUARD:-1}" != "0" \
-  && "${HIBANA_FINAL_FORM_COMPILE_PRESSURE_GUARD_ACTIVE:-0}" != "1" ]]; then
-  source "${ROOT_DIR}/.github/scripts/lib/compile_pressure_guard.sh"
-  HIBANA_FINAL_FORM_COMPILE_PRESSURE_GUARD_ACTIVE=1 \
-    HIBANA_COMPILE_PRESSURE_LABEL=final_form_gate \
-    HIBANA_COMPILE_PRESSURE_CRATE_NAME=hibana \
-    run_with_compile_pressure_guard \
-      "final-form gate" \
-      env HIBANA_FINAL_FORM_COMPILE_PRESSURE_GUARD_ACTIVE=1 bash "$0" "$@"
-  exit "$?"
-fi
-
 source "${ROOT_DIR}/.github/scripts/repo_rustflags.sh"
 hibana_enable_repo_tests_cfg
 
