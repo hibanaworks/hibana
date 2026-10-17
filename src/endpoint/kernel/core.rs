@@ -73,7 +73,7 @@ pub(crate) trait BranchRecvKernelEndpoint<'r> {
         &mut self,
         logical_label: u8,
         payload_kind: crate::eff::EventPayload,
-    ) -> RecvResult<Option<RecvMeta>>;
+    ) -> Poll<RecvResult<Option<RecvMeta>>>;
 
     fn poll_branch_recv_kernel_transport_payload(
         &mut self,
@@ -162,15 +162,13 @@ pub(crate) fn kernel_branch_recv<'r>(
     if !endpoint.has_branch_recv_kernel_branch() {
         return Poll::Ready(Err(RecvError::PhaseInvariant));
     }
-    if state.prepared_meta().is_none() {
-        let prepared =
-            match endpoint.prepare_branch_recv_kernel_transport_wait(logical_label, payload_kind) {
-                Ok(meta) => meta,
-                Err(err) => return Poll::Ready(Err(err)),
-            };
-        state.set_prepared_meta(prepared);
-    }
-    if let Some(meta) = state.prepared_meta() {
+    let prepared_meta =
+        match endpoint.prepare_branch_recv_kernel_transport_wait(logical_label, payload_kind) {
+            Poll::Ready(Ok(meta)) => meta,
+            Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
+            Poll::Pending => return Poll::Pending,
+        };
+    if let Some(meta) = prepared_meta {
         let frame = match endpoint.poll_branch_recv_kernel_transport_payload(
             meta,
             state.pending_recv_mut(),
@@ -178,17 +176,12 @@ pub(crate) fn kernel_branch_recv<'r>(
         ) {
             Poll::Pending => return Poll::Pending,
             Poll::Ready(Ok(payload)) => payload,
-            Poll::Ready(Err(err)) => {
-                state.set_prepared_meta(None);
-                return Poll::Ready(Err(err));
-            }
+            Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
         };
         if let Err(err) = endpoint.stage_branch_recv_kernel_transport_payload(frame) {
-            state.set_prepared_meta(None);
             return Poll::Ready(Err(err));
         }
     }
-    let prepared_meta = state.prepared_meta();
     let result =
         endpoint.finish_branch_recv_kernel(logical_label, payload_kind, prepared_meta, validate);
     match result {

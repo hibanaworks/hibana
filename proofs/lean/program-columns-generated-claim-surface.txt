@@ -12,7 +12,8 @@ coLocatedRowsCannotBecomeSelfSend : (have __src := coLocatedRowsImage;
         conflictRowCount := __src.conflictRowCount, routeScopeCount := __src.routeScopeCount,
         residentBoundaryCount := __src.residentBoundaryCount, laneBitCount := __src.laneBitCount,
         routeArmLaneStepCount := __src.routeArmLaneStepCount, routeCommitRowCount := __src.routeCommitRowCount,
-        rollScopeCount := __src.rollScopeCount, programColumnBytes := __src.programColumnBytes,
+        rollScopeCount := __src.rollScopeCount, rollEntryViewCount := __src.rollEntryViewCount,
+        ownedReceiptCount := __src.ownedReceiptCount, programColumnBytes := __src.programColumnBytes,
         programBytes := __src.programBytes, roleBytes := coLocatedRowsImage.roleBytes.set 19 0 }).actorRowsCheck
     coLocatedRowsChoreo =
   false
@@ -27,7 +28,8 @@ coLocatedRowsInvalidDirectionRejected : (have __src := coLocatedRowsImage;
         conflictRowCount := __src.conflictRowCount, routeScopeCount := __src.routeScopeCount,
         residentBoundaryCount := __src.residentBoundaryCount, laneBitCount := __src.laneBitCount,
         routeArmLaneStepCount := __src.routeArmLaneStepCount, routeCommitRowCount := __src.routeCommitRowCount,
-        rollScopeCount := __src.rollScopeCount, programColumnBytes := __src.programColumnBytes,
+        rollScopeCount := __src.rollScopeCount, rollEntryViewCount := __src.rollEntryViewCount,
+        ownedReceiptCount := __src.ownedReceiptCount, programColumnBytes := __src.programColumnBytes,
         programBytes := __src.programBytes, roleBytes := coLocatedRowsImage.roleBytes.set 9 6 }).actorRowsCheck
     coLocatedRowsChoreo =
   false
@@ -42,6 +44,7 @@ coLocatedRowsMissingOperationsRejected : (have __src := coLocatedRowsImage;
         routeScopeCount := __src.routeScopeCount, residentBoundaryCount := __src.residentBoundaryCount,
         laneBitCount := __src.laneBitCount, routeArmLaneStepCount := __src.routeArmLaneStepCount,
         routeCommitRowCount := __src.routeCommitRowCount, rollScopeCount := __src.rollScopeCount,
+        rollEntryViewCount := __src.rollEntryViewCount, ownedReceiptCount := __src.ownedReceiptCount,
         programColumnBytes := __src.programColumnBytes, programBytes := __src.programBytes,
         roleBytes := __src.roleBytes }).actorRowsCheck
     coLocatedRowsChoreo =
@@ -83,7 +86,8 @@ nestedActorOrderInvalidDirectionRejected : (have __src := nestedActorOrderImage;
         conflictRowCount := __src.conflictRowCount, routeScopeCount := __src.routeScopeCount,
         residentBoundaryCount := __src.residentBoundaryCount, laneBitCount := __src.laneBitCount,
         routeArmLaneStepCount := __src.routeArmLaneStepCount, routeCommitRowCount := __src.routeCommitRowCount,
-        rollScopeCount := __src.rollScopeCount, programColumnBytes := __src.programColumnBytes,
+        rollScopeCount := __src.rollScopeCount, rollEntryViewCount := __src.rollEntryViewCount,
+        ownedReceiptCount := __src.ownedReceiptCount, programColumnBytes := __src.programColumnBytes,
         programBytes := __src.programBytes, roleBytes := nestedActorOrderImage.roleBytes.set 9 6 }).actorRowsCheck
     nestedActorOrderChoreo =
   false
@@ -98,6 +102,7 @@ nestedActorOrderMissingOperationsRejected : (have __src := nestedActorOrderImage
         routeScopeCount := __src.routeScopeCount, residentBoundaryCount := __src.residentBoundaryCount,
         laneBitCount := __src.laneBitCount, routeArmLaneStepCount := __src.routeArmLaneStepCount,
         routeCommitRowCount := __src.routeCommitRowCount, rollScopeCount := __src.rollScopeCount,
+        rollEntryViewCount := __src.rollEntryViewCount, ownedReceiptCount := __src.ownedReceiptCount,
         programColumnBytes := __src.programColumnBytes, programBytes := __src.programBytes,
         roleBytes := __src.roleBytes }).actorRowsCheck
     nestedActorOrderChoreo =
@@ -116,7 +121,8 @@ nestedActorRoutesInvalidDirectionRejected : (have __src := nestedActorRoutesImag
         conflictRowCount := __src.conflictRowCount, routeScopeCount := __src.routeScopeCount,
         residentBoundaryCount := __src.residentBoundaryCount, laneBitCount := __src.laneBitCount,
         routeArmLaneStepCount := __src.routeArmLaneStepCount, routeCommitRowCount := __src.routeCommitRowCount,
-        rollScopeCount := __src.rollScopeCount, programColumnBytes := __src.programColumnBytes,
+        rollScopeCount := __src.rollScopeCount, rollEntryViewCount := __src.rollEntryViewCount,
+        ownedReceiptCount := __src.ownedReceiptCount, programColumnBytes := __src.programColumnBytes,
         programBytes := __src.programBytes, roleBytes := nestedActorRoutesImage.roleBytes.set 9 6 }).actorRowsCheck
     nestedActorRoutesChoreo =
   false
@@ -131,6 +137,7 @@ nestedActorRoutesMissingOperationsRejected : (have __src := nestedActorRoutesIma
         routeScopeCount := __src.routeScopeCount, residentBoundaryCount := __src.residentBoundaryCount,
         laneBitCount := __src.laneBitCount, routeArmLaneStepCount := __src.routeArmLaneStepCount,
         routeCommitRowCount := __src.routeCommitRowCount, rollScopeCount := __src.rollScopeCount,
+        rollEntryViewCount := __src.rollEntryViewCount, ownedReceiptCount := __src.ownedReceiptCount,
         programColumnBytes := __src.programColumnBytes, programBytes := __src.programBytes,
         roleBytes := __src.roleBytes }).actorRowsCheck
     nestedActorRoutesChoreo =
@@ -165,7 +172,8 @@ ordinaryReceiverRowsInvalidDirectionRejected : (have __src := ordinaryReceiverRo
         conflictRowCount := __src.conflictRowCount, routeScopeCount := __src.routeScopeCount,
         residentBoundaryCount := __src.residentBoundaryCount, laneBitCount := __src.laneBitCount,
         routeArmLaneStepCount := __src.routeArmLaneStepCount, routeCommitRowCount := __src.routeCommitRowCount,
-        rollScopeCount := __src.rollScopeCount, programColumnBytes := __src.programColumnBytes,
+        rollScopeCount := __src.rollScopeCount, rollEntryViewCount := __src.rollEntryViewCount,
+        ownedReceiptCount := __src.ownedReceiptCount, programColumnBytes := __src.programColumnBytes,
         programBytes := __src.programBytes, roleBytes := ordinaryReceiverRowsImage.roleBytes.set 9 6 }).actorRowsCheck
     ordinaryReceiverRowsChoreo =
   false
@@ -180,6 +188,7 @@ ordinaryReceiverRowsMissingOperationsRejected : (have __src := ordinaryReceiverR
         routeScopeCount := __src.routeScopeCount, residentBoundaryCount := __src.residentBoundaryCount,
         laneBitCount := __src.laneBitCount, routeArmLaneStepCount := __src.routeArmLaneStepCount,
         routeCommitRowCount := __src.routeCommitRowCount, rollScopeCount := __src.rollScopeCount,
+        rollEntryViewCount := __src.rollEntryViewCount, ownedReceiptCount := __src.ownedReceiptCount,
         programColumnBytes := __src.programColumnBytes, programBytes := __src.programBytes,
         roleBytes := __src.roleBytes }).actorRowsCheck
     ordinaryReceiverRowsChoreo =
@@ -219,7 +228,8 @@ ownedConditionalColumnsSwappedChoiceActorsRejected : (have __src := ownedConditi
         conflictRowCount := __src.conflictRowCount, routeScopeCount := __src.routeScopeCount,
         residentBoundaryCount := __src.residentBoundaryCount, laneBitCount := __src.laneBitCount,
         routeArmLaneStepCount := __src.routeArmLaneStepCount, routeCommitRowCount := __src.routeCommitRowCount,
-        rollScopeCount := __src.rollScopeCount, programColumnBytes := __src.programColumnBytes,
+        rollScopeCount := __src.rollScopeCount, rollEntryViewCount := __src.rollEntryViewCount,
+        ownedReceiptCount := __src.ownedReceiptCount, programColumnBytes := __src.programColumnBytes,
         programBytes := (((ownedConditionalColumnsBytes.set 264 3).set 265 0).set 266 1).set 267 0,
         roleBytes := __src.roleBytes }).ownershipCheck
     ownedConditionalColumnsChoreo =
@@ -239,7 +249,8 @@ ownedConditionalColumnsWrongActorBindingRejected : (have __src := ownedCondition
         conflictRowCount := __src.conflictRowCount, routeScopeCount := __src.routeScopeCount,
         residentBoundaryCount := __src.residentBoundaryCount, laneBitCount := __src.laneBitCount,
         routeArmLaneStepCount := __src.routeArmLaneStepCount, routeCommitRowCount := __src.routeCommitRowCount,
-        rollScopeCount := __src.rollScopeCount, programColumnBytes := __src.programColumnBytes,
+        rollScopeCount := __src.rollScopeCount, rollEntryViewCount := __src.rollEntryViewCount,
+        ownedReceiptCount := __src.ownedReceiptCount, programColumnBytes := __src.programColumnBytes,
         programBytes := ownedConditionalColumnsBytes.set 206 1, roleBytes := __src.roleBytes }).ownershipCheck
     ownedConditionalColumnsChoreo =
   false
@@ -254,7 +265,8 @@ ownedConditionalColumnsWrongInitialIssuerRejected : (have __src := ownedConditio
         conflictRowCount := __src.conflictRowCount, routeScopeCount := __src.routeScopeCount,
         residentBoundaryCount := __src.residentBoundaryCount, laneBitCount := __src.laneBitCount,
         routeArmLaneStepCount := __src.routeArmLaneStepCount, routeCommitRowCount := __src.routeCommitRowCount,
-        rollScopeCount := __src.rollScopeCount, programColumnBytes := __src.programColumnBytes,
+        rollScopeCount := __src.rollScopeCount, rollEntryViewCount := __src.rollEntryViewCount,
+        ownedReceiptCount := __src.ownedReceiptCount, programColumnBytes := __src.programColumnBytes,
         programBytes := ownedConditionalColumnsBytes.set 271 1, roleBytes := __src.roleBytes }).ownershipCheck
     ownedConditionalColumnsChoreo =
   false
@@ -281,7 +293,8 @@ ownedConditionalFirstRowsInvalidDirectionRejected : (have __src := ownedConditio
         conflictRowCount := __src.conflictRowCount, routeScopeCount := __src.routeScopeCount,
         residentBoundaryCount := __src.residentBoundaryCount, laneBitCount := __src.laneBitCount,
         routeArmLaneStepCount := __src.routeArmLaneStepCount, routeCommitRowCount := __src.routeCommitRowCount,
-        rollScopeCount := __src.rollScopeCount, programColumnBytes := __src.programColumnBytes,
+        rollScopeCount := __src.rollScopeCount, rollEntryViewCount := __src.rollEntryViewCount,
+        ownedReceiptCount := __src.ownedReceiptCount, programColumnBytes := __src.programColumnBytes,
         programBytes := __src.programBytes,
         roleBytes := ownedConditionalFirstRowsImage.roleBytes.set 9 6 }).actorRowsCheck
     ownedConditionalFirstRowsChoreo =
@@ -297,6 +310,7 @@ ownedConditionalFirstRowsMissingOperationsRejected : (have __src := ownedConditi
         routeScopeCount := __src.routeScopeCount, residentBoundaryCount := __src.residentBoundaryCount,
         laneBitCount := __src.laneBitCount, routeArmLaneStepCount := __src.routeArmLaneStepCount,
         routeCommitRowCount := __src.routeCommitRowCount, rollScopeCount := __src.rollScopeCount,
+        rollEntryViewCount := __src.rollEntryViewCount, ownedReceiptCount := __src.ownedReceiptCount,
         programColumnBytes := __src.programColumnBytes, programBytes := __src.programBytes,
         roleBytes := __src.roleBytes }).actorRowsCheck
     ownedConditionalFirstRowsChoreo =
@@ -321,7 +335,8 @@ ownedConditionalSecondRowsInvalidDirectionRejected : (have __src := ownedConditi
         conflictRowCount := __src.conflictRowCount, routeScopeCount := __src.routeScopeCount,
         residentBoundaryCount := __src.residentBoundaryCount, laneBitCount := __src.laneBitCount,
         routeArmLaneStepCount := __src.routeArmLaneStepCount, routeCommitRowCount := __src.routeCommitRowCount,
-        rollScopeCount := __src.rollScopeCount, programColumnBytes := __src.programColumnBytes,
+        rollScopeCount := __src.rollScopeCount, rollEntryViewCount := __src.rollEntryViewCount,
+        ownedReceiptCount := __src.ownedReceiptCount, programColumnBytes := __src.programColumnBytes,
         programBytes := __src.programBytes,
         roleBytes := ownedConditionalSecondRowsImage.roleBytes.set 9 6 }).actorRowsCheck
     ownedConditionalSecondRowsChoreo =
@@ -337,6 +352,7 @@ ownedConditionalSecondRowsMissingOperationsRejected : (have __src := ownedCondit
         routeScopeCount := __src.routeScopeCount, residentBoundaryCount := __src.residentBoundaryCount,
         laneBitCount := __src.laneBitCount, routeArmLaneStepCount := __src.routeArmLaneStepCount,
         routeCommitRowCount := __src.routeCommitRowCount, rollScopeCount := __src.rollScopeCount,
+        rollEntryViewCount := __src.rollEntryViewCount, ownedReceiptCount := __src.ownedReceiptCount,
         programColumnBytes := __src.programColumnBytes, programBytes := __src.programBytes,
         roleBytes := __src.roleBytes }).actorRowsCheck
     ownedConditionalSecondRowsChoreo =
@@ -371,7 +387,8 @@ ownedLinearColumnsWrongActorBindingRejected : (have __src := ownedLinearColumnsI
         conflictRowCount := __src.conflictRowCount, routeScopeCount := __src.routeScopeCount,
         residentBoundaryCount := __src.residentBoundaryCount, laneBitCount := __src.laneBitCount,
         routeArmLaneStepCount := __src.routeArmLaneStepCount, routeCommitRowCount := __src.routeCommitRowCount,
-        rollScopeCount := __src.rollScopeCount, programColumnBytes := __src.programColumnBytes,
+        rollScopeCount := __src.rollScopeCount, rollEntryViewCount := __src.rollEntryViewCount,
+        ownedReceiptCount := __src.ownedReceiptCount, programColumnBytes := __src.programColumnBytes,
         programBytes := ownedLinearColumnsBytes.set 58 1, roleBytes := __src.roleBytes }).ownershipCheck
     ownedLinearColumnsChoreo =
   false
@@ -386,7 +403,8 @@ ownedLinearColumnsWrongInitialIssuerRejected : (have __src := ownedLinearColumns
         conflictRowCount := __src.conflictRowCount, routeScopeCount := __src.routeScopeCount,
         residentBoundaryCount := __src.residentBoundaryCount, laneBitCount := __src.laneBitCount,
         routeArmLaneStepCount := __src.routeArmLaneStepCount, routeCommitRowCount := __src.routeCommitRowCount,
-        rollScopeCount := __src.rollScopeCount, programColumnBytes := __src.programColumnBytes,
+        rollScopeCount := __src.rollScopeCount, rollEntryViewCount := __src.rollEntryViewCount,
+        ownedReceiptCount := __src.ownedReceiptCount, programColumnBytes := __src.programColumnBytes,
         programBytes := ownedLinearColumnsBytes.set 83 1, roleBytes := __src.roleBytes }).ownershipCheck
     ownedLinearColumnsChoreo =
   false
@@ -423,7 +441,8 @@ ownedNativeColumnsWrongActorBindingRejected : (have __src := ownedNativeColumnsI
         conflictRowCount := __src.conflictRowCount, routeScopeCount := __src.routeScopeCount,
         residentBoundaryCount := __src.residentBoundaryCount, laneBitCount := __src.laneBitCount,
         routeArmLaneStepCount := __src.routeArmLaneStepCount, routeCommitRowCount := __src.routeCommitRowCount,
-        rollScopeCount := __src.rollScopeCount, programColumnBytes := __src.programColumnBytes,
+        rollScopeCount := __src.rollScopeCount, rollEntryViewCount := __src.rollEntryViewCount,
+        ownedReceiptCount := __src.ownedReceiptCount, programColumnBytes := __src.programColumnBytes,
         programBytes := ownedNativeColumnsBytes.set 179 3, roleBytes := __src.roleBytes }).ownershipCheck
     ownedNativeColumnsChoreo =
   false
@@ -438,7 +457,8 @@ ownedNativeColumnsWrongInitialIssuerRejected : (have __src := ownedNativeColumns
         conflictRowCount := __src.conflictRowCount, routeScopeCount := __src.routeScopeCount,
         residentBoundaryCount := __src.residentBoundaryCount, laneBitCount := __src.laneBitCount,
         routeArmLaneStepCount := __src.routeArmLaneStepCount, routeCommitRowCount := __src.routeCommitRowCount,
-        rollScopeCount := __src.rollScopeCount, programColumnBytes := __src.programColumnBytes,
+        rollScopeCount := __src.rollScopeCount, rollEntryViewCount := __src.rollEntryViewCount,
+        ownedReceiptCount := __src.ownedReceiptCount, programColumnBytes := __src.programColumnBytes,
         programBytes := ownedNativeColumnsBytes.set 228 3, roleBytes := __src.roleBytes }).ownershipCheck
     ownedNativeColumnsChoreo =
   false
@@ -465,7 +485,8 @@ ownedNativeParallelPeerRowsInvalidDirectionRejected : (have __src := ownedNative
         conflictRowCount := __src.conflictRowCount, routeScopeCount := __src.routeScopeCount,
         residentBoundaryCount := __src.residentBoundaryCount, laneBitCount := __src.laneBitCount,
         routeArmLaneStepCount := __src.routeArmLaneStepCount, routeCommitRowCount := __src.routeCommitRowCount,
-        rollScopeCount := __src.rollScopeCount, programColumnBytes := __src.programColumnBytes,
+        rollScopeCount := __src.rollScopeCount, rollEntryViewCount := __src.rollEntryViewCount,
+        ownedReceiptCount := __src.ownedReceiptCount, programColumnBytes := __src.programColumnBytes,
         programBytes := __src.programBytes,
         roleBytes := ownedNativeParallelPeerRowsImage.roleBytes.set 9 6 }).actorRowsCheck
     ownedNativeParallelPeerRowsChoreo =
@@ -481,6 +502,7 @@ ownedNativeParallelPeerRowsMissingOperationsRejected : (have __src := ownedNativ
         routeScopeCount := __src.routeScopeCount, residentBoundaryCount := __src.residentBoundaryCount,
         laneBitCount := __src.laneBitCount, routeArmLaneStepCount := __src.routeArmLaneStepCount,
         routeCommitRowCount := __src.routeCommitRowCount, rollScopeCount := __src.rollScopeCount,
+        rollEntryViewCount := __src.rollEntryViewCount, ownedReceiptCount := __src.ownedReceiptCount,
         programColumnBytes := __src.programColumnBytes, programBytes := __src.programBytes,
         roleBytes := __src.roleBytes }).actorRowsCheck
     ownedNativeParallelPeerRowsChoreo =
@@ -505,7 +527,8 @@ ownedNativeParallelRowsInvalidDirectionRejected : (have __src := ownedNativePara
         conflictRowCount := __src.conflictRowCount, routeScopeCount := __src.routeScopeCount,
         residentBoundaryCount := __src.residentBoundaryCount, laneBitCount := __src.laneBitCount,
         routeArmLaneStepCount := __src.routeArmLaneStepCount, routeCommitRowCount := __src.routeCommitRowCount,
-        rollScopeCount := __src.rollScopeCount, programColumnBytes := __src.programColumnBytes,
+        rollScopeCount := __src.rollScopeCount, rollEntryViewCount := __src.rollEntryViewCount,
+        ownedReceiptCount := __src.ownedReceiptCount, programColumnBytes := __src.programColumnBytes,
         programBytes := __src.programBytes,
         roleBytes := ownedNativeParallelRowsImage.roleBytes.set 9 6 }).actorRowsCheck
     ownedNativeParallelRowsChoreo =
@@ -521,6 +544,7 @@ ownedNativeParallelRowsMissingOperationsRejected : (have __src := ownedNativePar
         routeScopeCount := __src.routeScopeCount, residentBoundaryCount := __src.residentBoundaryCount,
         laneBitCount := __src.laneBitCount, routeArmLaneStepCount := __src.routeArmLaneStepCount,
         routeCommitRowCount := __src.routeCommitRowCount, rollScopeCount := __src.rollScopeCount,
+        rollEntryViewCount := __src.rollEntryViewCount, ownedReceiptCount := __src.ownedReceiptCount,
         programColumnBytes := __src.programColumnBytes, programBytes := __src.programBytes,
         roleBytes := __src.roleBytes }).actorRowsCheck
     ownedNativeParallelRowsChoreo =
@@ -544,7 +568,8 @@ ownedNativeServiceRowsInvalidDirectionRejected : (have __src := ownedNativeServi
         conflictRowCount := __src.conflictRowCount, routeScopeCount := __src.routeScopeCount,
         residentBoundaryCount := __src.residentBoundaryCount, laneBitCount := __src.laneBitCount,
         routeArmLaneStepCount := __src.routeArmLaneStepCount, routeCommitRowCount := __src.routeCommitRowCount,
-        rollScopeCount := __src.rollScopeCount, programColumnBytes := __src.programColumnBytes,
+        rollScopeCount := __src.rollScopeCount, rollEntryViewCount := __src.rollEntryViewCount,
+        ownedReceiptCount := __src.ownedReceiptCount, programColumnBytes := __src.programColumnBytes,
         programBytes := __src.programBytes, roleBytes := ownedNativeServiceRowsImage.roleBytes.set 9 6 }).actorRowsCheck
     ownedNativeServiceRowsChoreo =
   false
@@ -559,6 +584,7 @@ ownedNativeServiceRowsMissingOperationsRejected : (have __src := ownedNativeServ
         routeScopeCount := __src.routeScopeCount, residentBoundaryCount := __src.residentBoundaryCount,
         laneBitCount := __src.laneBitCount, routeArmLaneStepCount := __src.routeArmLaneStepCount,
         routeCommitRowCount := __src.routeCommitRowCount, rollScopeCount := __src.rollScopeCount,
+        rollEntryViewCount := __src.rollEntryViewCount, ownedReceiptCount := __src.ownedReceiptCount,
         programColumnBytes := __src.programColumnBytes, programBytes := __src.programBytes,
         roleBytes := __src.roleBytes }).actorRowsCheck
     ownedNativeServiceRowsChoreo =
@@ -579,7 +605,8 @@ ownedNativeWorkerRowsInvalidDirectionRejected : (have __src := ownedNativeWorker
         conflictRowCount := __src.conflictRowCount, routeScopeCount := __src.routeScopeCount,
         residentBoundaryCount := __src.residentBoundaryCount, laneBitCount := __src.laneBitCount,
         routeArmLaneStepCount := __src.routeArmLaneStepCount, routeCommitRowCount := __src.routeCommitRowCount,
-        rollScopeCount := __src.rollScopeCount, programColumnBytes := __src.programColumnBytes,
+        rollScopeCount := __src.rollScopeCount, rollEntryViewCount := __src.rollEntryViewCount,
+        ownedReceiptCount := __src.ownedReceiptCount, programColumnBytes := __src.programColumnBytes,
         programBytes := __src.programBytes, roleBytes := ownedNativeWorkerRowsImage.roleBytes.set 9 6 }).actorRowsCheck
     ownedNativeWorkerRowsChoreo =
   false
@@ -594,6 +621,7 @@ ownedNativeWorkerRowsMissingOperationsRejected : (have __src := ownedNativeWorke
         routeScopeCount := __src.routeScopeCount, residentBoundaryCount := __src.residentBoundaryCount,
         laneBitCount := __src.laneBitCount, routeArmLaneStepCount := __src.routeArmLaneStepCount,
         routeCommitRowCount := __src.routeCommitRowCount, rollScopeCount := __src.rollScopeCount,
+        rollEntryViewCount := __src.rollEntryViewCount, ownedReceiptCount := __src.ownedReceiptCount,
         programColumnBytes := __src.programColumnBytes, programBytes := __src.programBytes,
         roleBytes := __src.roleBytes }).actorRowsCheck
     ownedNativeWorkerRowsChoreo =
@@ -629,7 +657,8 @@ ownedParallelColumnsWrongActorBindingRejected : (have __src := ownedParallelColu
         conflictRowCount := __src.conflictRowCount, routeScopeCount := __src.routeScopeCount,
         residentBoundaryCount := __src.residentBoundaryCount, laneBitCount := __src.laneBitCount,
         routeArmLaneStepCount := __src.routeArmLaneStepCount, routeCommitRowCount := __src.routeCommitRowCount,
-        rollScopeCount := __src.rollScopeCount, programColumnBytes := __src.programColumnBytes,
+        rollScopeCount := __src.rollScopeCount, rollEntryViewCount := __src.rollEntryViewCount,
+        ownedReceiptCount := __src.ownedReceiptCount, programColumnBytes := __src.programColumnBytes,
         programBytes := ownedParallelColumnsBytes.set 111 1, roleBytes := __src.roleBytes }).ownershipCheck
     ownedParallelColumnsChoreo =
   false
@@ -644,7 +673,8 @@ ownedParallelColumnsWrongInitialIssuerRejected : (have __src := ownedParallelCol
         conflictRowCount := __src.conflictRowCount, routeScopeCount := __src.routeScopeCount,
         residentBoundaryCount := __src.residentBoundaryCount, laneBitCount := __src.laneBitCount,
         routeArmLaneStepCount := __src.routeArmLaneStepCount, routeCommitRowCount := __src.routeCommitRowCount,
-        rollScopeCount := __src.rollScopeCount, programColumnBytes := __src.programColumnBytes,
+        rollScopeCount := __src.rollScopeCount, rollEntryViewCount := __src.rollEntryViewCount,
+        ownedReceiptCount := __src.ownedReceiptCount, programColumnBytes := __src.programColumnBytes,
         programBytes := ownedParallelColumnsBytes.set 146 1, roleBytes := __src.roleBytes }).ownershipCheck
     ownedParallelColumnsChoreo =
   false
@@ -671,7 +701,8 @@ ownedParallelWorkerRowsInvalidDirectionRejected : (have __src := ownedParallelWo
         conflictRowCount := __src.conflictRowCount, routeScopeCount := __src.routeScopeCount,
         residentBoundaryCount := __src.residentBoundaryCount, laneBitCount := __src.laneBitCount,
         routeArmLaneStepCount := __src.routeArmLaneStepCount, routeCommitRowCount := __src.routeCommitRowCount,
-        rollScopeCount := __src.rollScopeCount, programColumnBytes := __src.programColumnBytes,
+        rollScopeCount := __src.rollScopeCount, rollEntryViewCount := __src.rollEntryViewCount,
+        ownedReceiptCount := __src.ownedReceiptCount, programColumnBytes := __src.programColumnBytes,
         programBytes := __src.programBytes,
         roleBytes := ownedParallelWorkerRowsImage.roleBytes.set 9 6 }).actorRowsCheck
     ownedParallelWorkerRowsChoreo =
@@ -687,6 +718,7 @@ ownedParallelWorkerRowsMissingOperationsRejected : (have __src := ownedParallelW
         routeScopeCount := __src.routeScopeCount, residentBoundaryCount := __src.residentBoundaryCount,
         laneBitCount := __src.laneBitCount, routeArmLaneStepCount := __src.routeArmLaneStepCount,
         routeCommitRowCount := __src.routeCommitRowCount, rollScopeCount := __src.rollScopeCount,
+        rollEntryViewCount := __src.rollEntryViewCount, ownedReceiptCount := __src.ownedReceiptCount,
         programColumnBytes := __src.programColumnBytes, programBytes := __src.programBytes,
         roleBytes := __src.roleBytes }).actorRowsCheck
     ownedParallelWorkerRowsChoreo =
@@ -705,7 +737,8 @@ ownedServiceRowsInvalidDirectionRejected : (have __src := ownedServiceRowsImage;
         conflictRowCount := __src.conflictRowCount, routeScopeCount := __src.routeScopeCount,
         residentBoundaryCount := __src.residentBoundaryCount, laneBitCount := __src.laneBitCount,
         routeArmLaneStepCount := __src.routeArmLaneStepCount, routeCommitRowCount := __src.routeCommitRowCount,
-        rollScopeCount := __src.rollScopeCount, programColumnBytes := __src.programColumnBytes,
+        rollScopeCount := __src.rollScopeCount, rollEntryViewCount := __src.rollEntryViewCount,
+        ownedReceiptCount := __src.ownedReceiptCount, programColumnBytes := __src.programColumnBytes,
         programBytes := __src.programBytes, roleBytes := ownedServiceRowsImage.roleBytes.set 9 6 }).actorRowsCheck
     ownedServiceRowsChoreo =
   false
@@ -720,6 +753,7 @@ ownedServiceRowsMissingOperationsRejected : (have __src := ownedServiceRowsImage
         routeScopeCount := __src.routeScopeCount, residentBoundaryCount := __src.residentBoundaryCount,
         laneBitCount := __src.laneBitCount, routeArmLaneStepCount := __src.routeArmLaneStepCount,
         routeCommitRowCount := __src.routeCommitRowCount, rollScopeCount := __src.rollScopeCount,
+        rollEntryViewCount := __src.rollEntryViewCount, ownedReceiptCount := __src.ownedReceiptCount,
         programColumnBytes := __src.programColumnBytes, programBytes := __src.programBytes,
         roleBytes := __src.roleBytes }).actorRowsCheck
     ownedServiceRowsChoreo =
@@ -738,7 +772,8 @@ ownedWorkerRowsInvalidDirectionRejected : (have __src := ownedWorkerRowsImage;
         conflictRowCount := __src.conflictRowCount, routeScopeCount := __src.routeScopeCount,
         residentBoundaryCount := __src.residentBoundaryCount, laneBitCount := __src.laneBitCount,
         routeArmLaneStepCount := __src.routeArmLaneStepCount, routeCommitRowCount := __src.routeCommitRowCount,
-        rollScopeCount := __src.rollScopeCount, programColumnBytes := __src.programColumnBytes,
+        rollScopeCount := __src.rollScopeCount, rollEntryViewCount := __src.rollEntryViewCount,
+        ownedReceiptCount := __src.ownedReceiptCount, programColumnBytes := __src.programColumnBytes,
         programBytes := __src.programBytes, roleBytes := ownedWorkerRowsImage.roleBytes.set 9 6 }).actorRowsCheck
     ownedWorkerRowsChoreo =
   false
@@ -753,6 +788,7 @@ ownedWorkerRowsMissingOperationsRejected : (have __src := ownedWorkerRowsImage;
         routeScopeCount := __src.routeScopeCount, residentBoundaryCount := __src.residentBoundaryCount,
         laneBitCount := __src.laneBitCount, routeArmLaneStepCount := __src.routeArmLaneStepCount,
         routeCommitRowCount := __src.routeCommitRowCount, rollScopeCount := __src.rollScopeCount,
+        rollEntryViewCount := __src.rollEntryViewCount, ownedReceiptCount := __src.ownedReceiptCount,
         programColumnBytes := __src.programColumnBytes, programBytes := __src.programBytes,
         roleBytes := __src.roleBytes }).actorRowsCheck
     ownedWorkerRowsChoreo =

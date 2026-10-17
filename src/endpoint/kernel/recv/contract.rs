@@ -1,11 +1,11 @@
 use crate::{
-    endpoint::kernel::core::OperationKernel,
+    endpoint::kernel::core::{CommitEventRow, CommitRow, OperationKernel},
     endpoint::{RecvError, RecvResult},
     global::{
         role_program::{
             LANE_SET_VIEW_WORDS, LaneSetView, LaneWord, lane_word_count, lane_word_index,
         },
-        typestate::{EventAdmissionError, EventCommitMeta},
+        typestate::{EnabledEventCommit, EventAdmissionError, EventCommitMeta, RecvMeta},
     },
     transport::Transport,
 };
@@ -14,6 +14,27 @@ impl<'r, T> OperationKernel<'_, 'r, T>
 where
     T: Transport + 'r,
 {
+    pub(in crate::endpoint::kernel) fn recv_event_enabled(
+        &self,
+        index: usize,
+        meta: RecvMeta,
+    ) -> Result<EnabledEventCommit, EventAdmissionError> {
+        let conflict = self.progress.cursor.event_conflict_for_index(index);
+        let enabled = self.progress.cursor.event_enabled(
+            index,
+            EventCommitMeta::from(meta),
+            &mut |scope, view| self.selected_arm_for_recv_event(conflict, scope, view),
+        )?;
+        self.preflight_roll_entry_views(Some(CommitEventRow::new(
+            meta.eff_index,
+            meta.label,
+            meta.origin,
+            CommitRow::from_recv_meta(meta),
+            enabled.progress_step(),
+        )))?;
+        Ok(enabled)
+    }
+
     pub(in crate::endpoint::kernel::recv) fn live_recv_lanes<'lanes>(
         &self,
         target_label: u8,
@@ -30,14 +51,7 @@ where
                 && meta.label == target_label
                 && !meta.origin.is_session()
             {
-                let preview_conflict = self.progress.cursor.event_conflict_for_index(idx);
-                let mut selected_arm =
-                    |scope, view| self.selected_arm_for_recv_event(preview_conflict, scope, view);
-                let admission = self.progress.cursor.event_enabled(
-                    idx,
-                    EventCommitMeta::from(meta),
-                    &mut selected_arm,
-                );
+                let admission = self.recv_event_enabled(idx, meta);
                 if matches!(admission, Err(EventAdmissionError::OtherViewPending))
                     && meta.payload_kind == target_payload
                 {

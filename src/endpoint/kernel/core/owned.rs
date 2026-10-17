@@ -25,7 +25,7 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
     /// A completed visit does not restore an Endpoint transferred by a later
     /// continuation. Entry owners are immutable source-prefix facts; live
     /// issuance is read from the existing affine headers, not a holder table.
-    pub(in crate::endpoint::kernel::core) fn preflight_roll_entry_views(
+    pub(in crate::endpoint::kernel) fn preflight_roll_entry_views(
         &self,
         event: Option<CommitEventRow>,
     ) -> Result<(), EventAdmissionError> {
@@ -57,7 +57,7 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
             .roll_entry_views(scope)
             .ok_or(EventAdmissionError::Invariant)?;
         let mut verdict = Ok(());
-        for (role, owner) in rows {
+        for (role, owner, receipts) in rows {
             let view = actor.views.get(role);
             if let Some(view) = view {
                 // SAFETY: the actor operation lease excludes another kernel;
@@ -80,7 +80,24 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
                 Some(expected) if expected != self.progress.cursor.role() => {
                     view.is_none_or(|view| view.public_header.generation() == 0)
                 }
-                Some(_) => view.is_some_and(|view| view.public_header.generation() != 0),
+                Some(_) => {
+                    if view.is_some_and(|view| view.public_header.generation() != 0) {
+                        true
+                    } else {
+                        match self.progress.cursor.resource_receipt_wait(
+                            receipts,
+                            (self.public_header.role(), sent),
+                            &mut |scope| self.selected_arm_for_scope(scope),
+                        ) {
+                            EventAdmissionError::OtherViewPending => {
+                                verdict = Err(EventAdmissionError::OtherViewPending);
+                                continue;
+                            }
+                            error @ (EventAdmissionError::Invariant
+                            | EventAdmissionError::PredecessorPending) => return Err(error),
+                        }
+                    }
+                }
                 None => false,
             };
             if !available {

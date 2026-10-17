@@ -23,12 +23,14 @@ mod owned;
 mod partial_choice;
 mod pending_reentry;
 mod program_columns;
+mod recovery_image;
 mod reentry;
 mod reentry_choice;
 mod reentry_columns;
 #[cfg(not(miri))]
 mod reentry_commit;
 mod reentry_parallel;
+mod return_reentry;
 mod roll_exit;
 mod routing;
 mod send_wait;

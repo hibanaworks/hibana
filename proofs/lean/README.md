@@ -209,7 +209,7 @@ can change arms while preserving the parent prefix. The complete nested trace
 runs twice. Before the parent suffix, both the completed arm and the unused
 alternative are rejected. These six kernel proofs replace seven lemmas about the removed
 route-only reset and its unused selector. Including the transfer model below,
-the static inventory is 816, with 440 using `propext` and `Quot.sound`,
+the static inventory is 818, with 442 using `propext` and `Quot.sound`,
 270 using only `propext`, and 106 axiom-free. The three additional
 `PublicOperationKernel.lean` claims cover the owned-send payload borrow:
 other resource-dependent work waits, that payload's own transfer may finish,
@@ -297,6 +297,21 @@ closure for resources that the continuation does not restore to their entry
 owner. An initial prefix outside the roll cannot authorize another visit.
 These three general lemmas specify that construction obligation; they do not
 complete the owned runtime's pending-I/O or distributed progress refinement.
+
+`OwnedRecovery.lean` independently derives incoming owned-receive rows from the
+serialized directions and global payload kinds. It checks the complete receipt
+catalog and the exact receipt slice of every declared roll-entry resource. Its
+two general lemmas establish catalog equality and completeness of those slices.
+The kernel checks one real generated image and four malformed versions: an
+out-of-bounds row, a wire-only receive, a missing entry slice, and a missing
+catalog. These claims do not establish that the set of entry resources itself
+is complete for an arbitrary source, or prove all distributed waiting paths.
+
+Runtime admission uses this immutable index with existing affine view headers,
+completion, and route choices. A temporarily absent resource may return through
+a different view while a rolled send, receive, or offered wire receive waits.
+No owner ledger or application progress flag is added. Real Tokio tests retain
+independent parallel work and reject waits that borrow their own prerequisite.
 
 The compiler scope memo, fork-input restoration, independent-sibling exclusion,
 and retained sequential joins have general model lemmas. Ingress-head

@@ -1,5 +1,6 @@
 import Hibana.OwnershipDescriptor
 import Hibana.DescriptorTopology
+import Hibana.OwnedRecovery
 
 namespace Hibana
 
@@ -124,6 +125,7 @@ structure DecodedActorOrder where
 
 def RustDescriptorImage.decodeActorOrder? (image : RustDescriptorImage) (choreo : Choreo) :
     Option DecodedActorOrder := do
+  if image.ownedRecoveryIndexCheck then pure () else none
   let source ← choreo.ownershipSource?
   let normalized ← EndpointDelegation.normalize source
   let columns ← image.decodeProgramColumns?

@@ -320,6 +320,30 @@ impl<'a> RoleLaneImage<'a> {
         (self.byte_at(offset), self.read_u16_at(offset + 1))
     }
 
+    pub(crate) const fn roll_entry_receipts(&self, index: usize) -> PackedLaneRange {
+        let Some(offset) = self.column_offset(
+            self.columns.roll_entry_views(),
+            index,
+            ROLE_IMAGE_ROLL_ENTRY_STRIDE,
+        ) else {
+            invalid_resident_descriptor();
+        };
+        let range = PackedLaneRange::from_raw(self.read_u32_at(offset + 3));
+        if range.is_empty() || range.end() > self.columns.owned_receipt_count as usize {
+            invalid_resident_descriptor();
+        }
+        range
+    }
+
+    pub(crate) const fn owned_receipt(&self, index: usize) -> u16 {
+        let Some(offset) =
+            self.column_offset(self.columns.owned_receipts(), index, ROLE_IMAGE_U16_STRIDE)
+        else {
+            invalid_resident_descriptor();
+        };
+        self.read_u16_at(offset)
+    }
+
     #[inline(always)]
     const fn route_scope_row(&self, slot: usize) -> Option<ScopeId> {
         match self.column_offset(

@@ -221,6 +221,17 @@ impl LocalEventProgram {
         self.rows().roll_entry_view(index)
     }
 
+    pub(crate) fn roll_entry_receipts(
+        &self,
+        index: usize,
+    ) -> crate::global::role_program::PackedLaneRange {
+        self.rows().roll_entry_receipts(index)
+    }
+
+    pub(crate) fn owned_receipt(&self, index: usize) -> u16 {
+        self.rows().owned_receipt(index)
+    }
+
     #[inline(always)]
     pub(crate) fn route_scope_rows(&self, scope_id: ScopeId) -> Option<RouteScopeRows> {
         let slot = self.route_scope_slot(scope_id)?;

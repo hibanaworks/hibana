@@ -881,6 +881,20 @@ Hibana.abort_peer_is_well_formed : ∀ (state : Hibana.TransportState), state.ab
                                   (@List.instMembership.{0} Hibana.EndpointDelegation.NormalizedPath) normalized.paths
                                   path →
                                 @Eq.{1} Bool (columns.sourcePathMatches markers path) true))))))
+@Hibana.accepted_owned_recovery_catalog_is_exact : ∀ {image : Hibana.RustDescriptorImage},
+  @Eq.{1} Bool image.ownedRecoveryIndexCheck true →
+    @Eq.{1} (Option.{0} (List.{0} Nat)) image.decodeOwnedReceipts?
+      (@Option.map.{0, 0} (List.{0} (Prod.{0, 0} Nat Nat)) (List.{0} Nat)
+        (@List.map.{0, 0} (Prod.{0, 0} Nat Nat) Nat (@Prod.snd.{0, 0} Nat Nat)) image.expectedOwnedReceipts?)
+@Hibana.accepted_owned_recovery_entries_are_complete : ∀ {image : Hibana.RustDescriptorImage}
+  {expected : List.{0} (Prod.{0, 0} Nat Nat)} {actual : List.{0} Nat},
+  @Eq.{1} (Option.{0} (List.{0} (Prod.{0, 0} Nat Nat))) image.expectedOwnedReceipts?
+      (@some.{0} (List.{0} (Prod.{0, 0} Nat Nat)) expected) →
+    @Eq.{1} (Option.{0} (List.{0} Nat)) image.decodeOwnedReceipts? (@some.{0} (List.{0} Nat) actual) →
+      @Eq.{1} Bool image.ownedRecoveryIndexCheck true →
+        ∀ (entry : Nat),
+          @LT.lt.{0} Nat instLTNat entry image.rollEntryViewCount →
+            @Eq.{1} Bool (image.ownedEntryReceiptsCheck expected actual entry) true
 @Hibana.accepted_parallel_elaborations_cannot_alias_transfer_and_use : ∀ {left right : Hibana.EndpointDelegation.Source}
   {resources : List.{0} Hibana.EndpointDelegation.EndpointKey}
   {leftOwners rightOwners : Hibana.EndpointDelegation.OwnerMap} {path : List.{0} Hibana.EndpointDelegation.Selection}

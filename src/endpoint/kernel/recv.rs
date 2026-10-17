@@ -14,8 +14,8 @@ use crate::{
     endpoint::{RecvError, RecvResult},
     global::role_program::LANE_SET_VIEW_WORDS,
     global::typestate::{
-        CursorInvariantError, DeterministicInboundKey, EventArmView, EventCommitMeta,
-        InboundFrameKey, PackedEventConflict, state_index_to_usize,
+        CursorInvariantError, DeterministicInboundKey, EventArmView, InboundFrameKey,
+        PackedEventConflict, state_index_to_usize,
     },
     runtime_core::UniqueMatchFailure,
     transport::{
@@ -251,13 +251,7 @@ where
         }
         let cursor_index = state_index_to_usize(desc.cursor_index);
         let preview_conflict = self.progress.cursor.event_conflict_for_index(cursor_index);
-        let mut selected_arm =
-            |scope, view| self.selected_arm_for_recv_event(preview_conflict, scope, view);
-        let enabled = match self.progress.cursor.event_enabled(
-            cursor_index,
-            EventCommitMeta::from(meta),
-            &mut selected_arm,
-        ) {
+        let enabled = match self.recv_event_enabled(cursor_index, meta) {
             Ok(enabled) => enabled,
             Err(_) => {
                 return Err(RecvError::PhaseInvariant);

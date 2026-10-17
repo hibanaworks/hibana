@@ -17,6 +17,7 @@ pub(super) struct RoleImageColumnCounts {
     pub(super) route_commit_rows: usize,
     pub(super) roll_scopes: usize,
     pub(super) roll_entry_views: usize,
+    pub(super) owned_receipts: usize,
 }
 
 struct RouteImagePlanRouteFacts {
@@ -89,8 +90,8 @@ impl RoleImageColumnCounts {
             self.roll_scopes,
             ROLE_IMAGE_ROLL_SCOPE_STRIDE,
         );
-        if self.roll_entry_views > u16::MAX as usize {
-            panic!("roll entry view count overflow");
+        if self.roll_entry_views > u16::MAX as usize || self.owned_receipts > u16::MAX as usize {
+            panic!("role resource index count overflow");
         }
         RoleImageColumns {
             events,
@@ -109,6 +110,7 @@ impl RoleImageColumnCounts {
             route_commit_rows,
             roll_scopes,
             roll_entry_view_count: self.roll_entry_views as u16,
+            owned_receipt_count: self.owned_receipts as u16,
         }
     }
 }
@@ -160,6 +162,28 @@ impl RoleImageColumnCounts {
         let route_facts = Self::route_facts(source, rows);
         let roll_scopes = Self::roll_scope_count(eff_list, rows);
         let roll_entry_views = Self::roll_entry_view_count(eff_list, rows);
+        let mut owned_receipts = 0;
+        if roll_entry_views != 0 {
+            let mut event = 0;
+            while event < eff_list.len() {
+                if matches!(
+                    eff_list.atom_at(event).payload,
+                    crate::eff::EventPayload::Endpoint(_)
+                ) {
+                    let mut side = 0;
+                    while side < rows.count(eff_list, event) {
+                        if matches!(
+                            rows.direction(eff_list, event, side),
+                            super::event_rows::RoleLocalDirection::Recv
+                        ) {
+                            owned_receipts += 1;
+                        }
+                        side += 1;
+                    }
+                }
+                event += 1;
+            }
+        }
         let active_lane_bits = lane_byte_count(max_lane_plus_one);
         let resident_boundaries = if resident_rows == 0 {
             0
@@ -175,6 +199,7 @@ impl RoleImageColumnCounts {
             route_commit_rows: route_facts.route_commit_rows,
             roll_scopes,
             roll_entry_views,
+            owned_receipts,
         }
     }
 

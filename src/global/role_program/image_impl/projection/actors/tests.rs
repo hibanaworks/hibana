@@ -215,6 +215,7 @@ fn resident_actor_image_checks_both_sides_before_publication() {
         route_commit_rows: 0,
         roll_scopes: 0,
         roll_entry_views: 0,
+        owned_receipts: 0,
     }
     .columns(facts);
     let image = RoleImageRef::new(&PROGRAM, 1, facts, columns, &LOCAL);

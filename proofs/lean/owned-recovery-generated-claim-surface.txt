@@ -1,0 +1,5 @@
+generatedOwnedRecoveryCatalogAccepted : generatedOwnedRecoveryImage.ownedRecoveryIndexCheck = true
+generatedOwnedRecoveryMutant0Rejected : generatedOwnedRecoveryMutant0.ownedRecoveryIndexCheck = false
+generatedOwnedRecoveryMutant1Rejected : generatedOwnedRecoveryMutant1.ownedRecoveryIndexCheck = false
+generatedOwnedRecoveryMutant2Rejected : generatedOwnedRecoveryMutant2.ownedRecoveryIndexCheck = false
+generatedOwnedRecoveryMutant3Rejected : generatedOwnedRecoveryMutant3.ownedRecoveryIndexCheck = false

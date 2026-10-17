@@ -4,12 +4,14 @@ impl EventCursor {
     pub(crate) fn roll_entry_views(
         &self,
         scope: ScopeId,
-    ) -> Option<impl Iterator<Item = (u8, u16)> + '_> {
+    ) -> Option<impl Iterator<Item = (u8, u16, crate::global::role_program::PackedLaneRange)> + '_>
+    {
         let range = self.machine().event_program().roll_entry_range(scope)?;
-        Some(
-            (range.start()..range.end())
-                .map(|index| self.machine().event_program().roll_entry_view(index)),
-        )
+        Some((range.start()..range.end()).map(|index| {
+            let program = self.machine().event_program();
+            let (role, actor) = program.roll_entry_view(index);
+            (role, actor, program.roll_entry_receipts(index))
+        }))
     }
 
     /// A completed ancestor is retained when this event enters only a child

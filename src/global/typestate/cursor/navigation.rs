@@ -129,6 +129,15 @@ impl EventCursor {
         Some(if receiving { atom.to } else { atom.from })
     }
 
+    /// An operation borrows its carrier view; an owned send also consumes its
+    /// payload view. Waiting while holding either prerequisite cannot progress.
+    pub(super) fn uses_view_at(&self, idx: usize, role: u8) -> bool {
+        self.logical_role_at(idx) == Some(role)
+            || self.try_send_meta_at(idx).is_some_and(|meta| {
+                matches!(meta.payload_kind, crate::eff::EventPayload::Endpoint(key) if key == role)
+            })
+    }
+
     /// Select an immutable actor binding through the existing route decisions.
     /// An undecided binding is not an operation right or a completed event.
     pub(super) fn event_actor_is_local(

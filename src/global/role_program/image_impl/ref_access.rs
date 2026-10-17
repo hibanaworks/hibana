@@ -290,6 +290,14 @@ impl RoleImageRef {
         self.lanes().roll_entry_view(index)
     }
 
+    pub(crate) const fn roll_entry_receipts(&self, index: usize) -> PackedLaneRange {
+        self.lanes().roll_entry_receipts(index)
+    }
+
+    pub(crate) const fn owned_receipt(&self, index: usize) -> u16 {
+        self.lanes().owned_receipt(index)
+    }
+
     #[inline(always)]
     pub(crate) const fn route_scope_by_slot(
         &self,

@@ -105,6 +105,7 @@ impl RoleImageColumnCounts {
             route_commit_rows,
             roll_scopes,
             roll_entry_view_count: 0,
+            owned_receipt_count: 0,
         }
     }
 }

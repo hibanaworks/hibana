@@ -14,6 +14,7 @@ use crate::global::typestate::{PackedEventConflict, PackedLocalDependency};
 
 mod lanes;
 mod layout;
+mod receipts;
 use layout::validate_role_image_layout;
 
 impl RoleImagePlan {
@@ -420,6 +421,7 @@ impl<const N: usize> RoleImageBytes<N> {
 
         let mut roll_scope = 0usize;
         let mut roll_entry = 0usize;
+        let receipt_ranges = out.write_owned_receipts(eff_list, rows, columns);
         marker_idx = 0;
         while marker_idx < markers.len() {
             let marker = markers.at(marker_idx);
@@ -448,6 +450,7 @@ impl<const N: usize> RoleImageBytes<N> {
                             );
                             out.write_u8(offset, role as u8);
                             out.write_u16(offset + 1, actor);
+                            out.write_u32(offset + 3, receipt_ranges[role].raw());
                             roll_entry += 1;
                         }
                         role += 1;

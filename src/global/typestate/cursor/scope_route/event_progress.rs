@@ -5,6 +5,8 @@ use super::super::{
 };
 use crate::global::typestate::EventCommitMeta;
 
+mod recovery;
+
 /// Completion belongs to the committed visit; conflict preview belongs to the
 /// candidate visit. A prospective arm must never rewrite completion history.
 pub(crate) enum EventArmView {
@@ -85,7 +87,7 @@ impl EventCursor {
         progress_step: RelocatableResidentLaneStep,
         event: EventCommitMeta,
         arm_for_scope: &mut dyn FnMut(ScopeId, EventArmView) -> Option<u8>,
-    ) -> Result<(), CursorInvariantError> {
+    ) -> Result<(), EventAdmissionError> {
         // Unchosen events keep a clear completion bit even after lane progress
         // has passed their region. They need a fresh roll visit just as consumed
         // events do; a previous visit's prefix cannot authorize a past suffix.
@@ -107,14 +109,14 @@ impl EventCursor {
                 ) {
                     Ok(())
                 } else {
-                    Err(CursorInvariantError::INVARIANT)
+                    Err(EventAdmissionError::Invariant)
                 };
             }
         }
         if !self.has_reentry_scopes()
             || !self.roll_reentry_event_allows_index(idx, event.lane, arm_for_scope)
         {
-            return Err(CursorInvariantError::INVARIANT);
+            return Err(self.reentry_view_wait(idx, event, arm_for_scope));
         }
         Ok(())
     }
@@ -204,9 +206,8 @@ impl EventCursor {
                 || self
                     .pending_event_steps(rows.start()..rows.end())
                     .any(|prior| {
-                        (self.logical_role_at(prior) == Some(role)
-                            || moved_role
-                                .is_some_and(|moved| self.logical_role_at(prior) == Some(moved)))
+                        (self.uses_view_at(prior, role)
+                            || moved_role.is_some_and(|moved| self.uses_view_at(prior, moved)))
                             && self.event_actor_is_local(prior, &mut |scope| {
                                 arm_for_scope(scope, EventArmView::Preview)
                             }) != Some(false)

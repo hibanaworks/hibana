@@ -114,6 +114,7 @@ fn lane_column_fixture() -> ([u8; 64], RoleImageColumns, RuntimeRoleFootprint) {
         route_commit_rows: empty,
         roll_scopes: empty,
         roll_entry_view_count: 0,
+        owned_receipt_count: 0,
     };
     let footprint = RuntimeRoleFootprint {
         max_route_commit_count: 0,
@@ -467,6 +468,7 @@ fn empty_columns() -> RoleImageColumns {
         route_commit_rows: empty,
         roll_scopes: empty,
         roll_entry_view_count: 0,
+        owned_receipt_count: 0,
     }
 }
 

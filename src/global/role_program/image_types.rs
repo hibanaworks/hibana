@@ -11,7 +11,7 @@ pub(crate) const ROLE_IMAGE_ROUTE_ARM_STRIDE: usize = 8;
 pub(crate) const ROLE_IMAGE_LANE_RANGE_STRIDE: usize = 4;
 pub(crate) const ROLE_IMAGE_ROUTE_ARM_LANE_STEP_STRIDE: usize = 5;
 pub(crate) const ROLE_IMAGE_ROLL_SCOPE_STRIDE: usize = 6;
-pub(crate) const ROLE_IMAGE_ROLL_ENTRY_STRIDE: usize = 3;
+pub(crate) const ROLE_IMAGE_ROLL_ENTRY_STRIDE: usize = 7;
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct PackedLaneRange(u32);
@@ -426,13 +426,22 @@ pub(crate) struct RoleImageColumns {
     pub(crate) route_commit_rows: ColumnRange,
     pub(crate) roll_scopes: ColumnRange,
     pub(crate) roll_entry_view_count: u16,
+    pub(crate) owned_receipt_count: u16,
 }
 
 impl RoleImageColumns {
     #[inline(always)]
     pub(crate) const fn blob_len(&self) -> usize {
-        self.roll_entry_views()
-            .end_offset(ROLE_IMAGE_ROLL_ENTRY_STRIDE)
+        self.owned_receipts().end_offset(ROLE_IMAGE_U16_STRIDE)
+    }
+
+    pub(crate) const fn owned_receipts(&self) -> ColumnRange {
+        ColumnRange::new(
+            self.roll_entry_views()
+                .end_offset(ROLE_IMAGE_ROLL_ENTRY_STRIDE),
+            self.owned_receipt_count as usize,
+            ROLE_IMAGE_U16_STRIDE,
+        )
     }
 
     pub(crate) const fn roll_entry_ranges(&self) -> ColumnRange {
@@ -462,6 +471,7 @@ impl RoleImageColumns {
         let columns = [
             (self.roll_entry_ranges(), ROLE_IMAGE_LANE_RANGE_STRIDE),
             (self.roll_entry_views(), ROLE_IMAGE_ROLL_ENTRY_STRIDE),
+            (self.owned_receipts(), ROLE_IMAGE_U16_STRIDE),
             (self.events, ROLE_IMAGE_EVENT_STRIDE),
             (self.lanes, ROLE_IMAGE_LANE_STRIDE),
             (self.dependencies, ROLE_IMAGE_DEPENDENCY_STRIDE),

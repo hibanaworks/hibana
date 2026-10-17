@@ -70,7 +70,7 @@ impl EventCursor {
                     .machine()
                     .state_for_step_index(step_idx)
                     .map(state_index_to_usize)
-                && role.is_none_or(|role| self.logical_role_at(pending_idx) == Some(role))
+                && role.is_none_or(|role| self.uses_view_at(pending_idx, role))
                 && self.event_actor_is_local(pending_idx, selected_arm_for_scope) != Some(false)
                 && self.event_conflict_row_allows_with_preview(
                     self.machine().event_conflict_for_index(pending_idx),

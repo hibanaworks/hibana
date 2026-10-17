@@ -20,28 +20,26 @@ where
         &mut self,
         logical_label: u8,
         payload_kind: crate::eff::EventPayload,
-    ) -> RecvResult<Option<crate::global::typestate::RecvMeta>> {
+    ) -> Poll<RecvResult<Option<crate::global::typestate::RecvMeta>>> {
         let Some(branch) = self.io.public_route_branch.as_ref() else {
-            return Err(branch_recv_phase_invariant());
+            return Poll::Ready(Err(branch_recv_phase_invariant()));
         };
         let expected = logical_label;
         if branch.branch_meta.label != expected {
-            return Err(RecvError::LabelMismatch {
+            return Poll::Ready(Err(RecvError::LabelMismatch {
                 expected,
                 actual: branch.branch_meta.label,
-            });
+            }));
         }
         let expected_payload = self.branch_recv_payload_kind(branch.branch_meta)?;
         if expected_payload != payload_kind {
-            return Err(RecvError::PayloadMismatch {
+            return Poll::Ready(Err(RecvError::PayloadMismatch {
                 expected: expected_payload,
                 actual: payload_kind,
-            });
+            }));
         }
-        if !matches!(branch.branch_meta.kind, BranchKind::WireRecv)
-            || branch.offered_frame.is_some()
-        {
-            return Ok(None);
+        if branch.branch_meta.kind != BranchKind::WireRecv {
+            return Poll::Ready(Ok(None));
         }
         let meta = self
             .progress
@@ -49,12 +47,19 @@ where
             .try_recv_meta_at(state_index_to_usize(branch.branch_meta.cursor_index))
             .ok_or_else(branch_recv_phase_invariant)?;
         if meta.origin.is_session() {
-            return Err(branch_recv_phase_invariant());
+            return Poll::Ready(Err(branch_recv_phase_invariant()));
         }
         if branch.branch_meta.frame_label != meta.frame_label {
-            return Err(branch_recv_phase_invariant());
+            return Poll::Ready(Err(branch_recv_phase_invariant()));
         }
-        Ok(Some(meta))
+        // A preview may retain the next visit's frame while its entry resource
+        // is still returning through a distinct view. Admission is shared with
+        // ordinary recv and consumes neither the preview nor the frame.
+        match self.recv_event_enabled(state_index_to_usize(branch.branch_meta.cursor_index), meta) {
+            Ok(_) => Poll::Ready(Ok(branch.offered_frame.is_none().then_some(meta))),
+            Err(crate::global::typestate::EventAdmissionError::OtherViewPending) => Poll::Pending,
+            Err(_) => Poll::Ready(Err(branch_recv_phase_invariant())),
+        }
     }
 
     fn branch_recv_payload_kind(
@@ -467,7 +472,7 @@ where
         &mut self,
         logical_label: u8,
         payload_kind: crate::eff::EventPayload,
-    ) -> RecvResult<Option<crate::global::typestate::RecvMeta>> {
+    ) -> Poll<RecvResult<Option<crate::global::typestate::RecvMeta>>> {
         self.prepare_branch_recv_transport_wait(logical_label, payload_kind)
     }
 

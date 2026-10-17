@@ -19,6 +19,7 @@ impl RoleImageRef {
             invalid_resident_descriptor();
         }
         self.validate_actor_event_projection();
+        self.validate_owned_receipts();
         self.validate_roll_entry_views();
         let lanes = self.lanes();
         let mut slot = 0;
@@ -106,6 +107,64 @@ impl RoleImageRef {
         }
     }
 
+    const fn validate_owned_receipts(&self) {
+        let count = self.columns.owned_receipt_count as usize;
+        if self.columns.roll_entry_view_count == 0 && count != 0 {
+            invalid_resident_descriptor();
+        }
+        let mut previous = None;
+        let mut index = 0;
+        while index < count {
+            let step = self.owned_receipt(index) as usize;
+            let node = match self.local_step_node(step) {
+                Some(node) => node,
+                None => invalid_resident_descriptor(),
+            };
+            let crate::global::typestate::LocalAction::Recv { eff_index, .. } = node.action()
+            else {
+                invalid_resident_descriptor();
+            };
+            let crate::eff::EventPayload::Endpoint(role) = self
+                .program
+                .event_atom_at(eff_index.dense_ordinal())
+                .payload
+            else {
+                invalid_resident_descriptor();
+            };
+            if let Some((prior_role, prior_step)) = previous
+                && (role < prior_role || (role == prior_role && step <= prior_step))
+            {
+                invalid_resident_descriptor();
+            }
+            previous = Some((role, step));
+            index += 1;
+        }
+        if self.columns.roll_entry_view_count != 0 {
+            let mut expected = 0;
+            let mut step = 0;
+            while step < self.local_step_count() {
+                let node = match self.local_step_node(step) {
+                    Some(node) => node,
+                    None => invalid_resident_descriptor(),
+                };
+                if let crate::global::typestate::LocalAction::Recv { eff_index, .. } = node.action()
+                    && matches!(
+                        self.program
+                            .event_atom_at(eff_index.dense_ordinal())
+                            .payload,
+                        crate::eff::EventPayload::Endpoint(_)
+                    )
+                {
+                    expected += 1;
+                }
+                step += 1;
+            }
+            if expected != count {
+                invalid_resident_descriptor();
+            }
+        }
+    }
+
     const fn validate_roll_entry_views(&self) {
         let columns = self.columns;
         if columns.roll_entry_view_count == 0 {
@@ -140,6 +199,30 @@ impl RoleImageRef {
                             .actor_decision_at(owner as usize - 256)
                             .is_none())
                 {
+                    invalid_resident_descriptor();
+                }
+                let receipts = self.roll_entry_receipts(index);
+                let mut receipt = receipts.start();
+                let mut step = 0;
+                while step < self.local_step_count() {
+                    let node = match self.local_step_node(step) {
+                        Some(node) => node,
+                        None => invalid_resident_descriptor(),
+                    };
+                    if let crate::global::typestate::LocalAction::Recv { eff_index, .. } =
+                        node.action()
+                        && matches!(self.program.event_atom_at(eff_index.dense_ordinal()).payload,
+                            crate::eff::EventPayload::Endpoint(key) if key == role)
+                    {
+                        if receipt == receipts.end() || self.owned_receipt(receipt) as usize != step
+                        {
+                            invalid_resident_descriptor();
+                        }
+                        receipt += 1;
+                    }
+                    step += 1;
+                }
+                if receipt != receipts.end() {
                     invalid_resident_descriptor();
                 }
                 let mut found = false;

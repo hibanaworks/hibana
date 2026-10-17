@@ -24,7 +24,7 @@ def productionRoleLaneRangeStride : Nat := 4
 def productionRoleRouteArmLaneStepStride : Nat := 5
 
 def productionRoleRollScopeStride : Nat := 6
-def productionRoleRollEntryStride : Nat := 3
+def productionRoleRollEntryStride : Nat := 7
 
 def productionEventIdentityCapacity : Nat := 65535
 
@@ -1401,6 +1401,7 @@ structure RustDescriptorImage where
   routeCommitRowCount : Nat
   rollScopeCount : Nat
   rollEntryViewCount : Nat
+  ownedReceiptCount : Nat
   programColumnBytes : List Nat
   programBytes : List Nat
   roleBytes : List Nat
@@ -1497,8 +1498,11 @@ def RustDescriptorImage.roleRollEntryViewOffset (image : RustDescriptorImage) : 
   image.roleRollEntryRangeOffset +
     (if image.rollEntryViewCount = 0 then 0 else image.rollScopeCount) * productionRoleLaneRangeStride
 
-def RustDescriptorImage.roleBlobLen (image : RustDescriptorImage) : Nat :=
+def RustDescriptorImage.roleOwnedReceiptOffset (image : RustDescriptorImage) : Nat :=
   image.roleRollEntryViewOffset + image.rollEntryViewCount * productionRoleRollEntryStride
+
+def RustDescriptorImage.roleBlobLen (image : RustDescriptorImage) : Nat :=
+  image.roleOwnedReceiptOffset + image.ownedReceiptCount * productionRoleU16Stride
 
 def RustDescriptorImage.decodeAtomRow?
     (image : RustDescriptorImage) (row : Nat) : Option DecodedProgramAtom := do

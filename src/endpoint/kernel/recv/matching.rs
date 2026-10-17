@@ -2,7 +2,7 @@ use super::evidence::{RecvCandidate, RecvDescriptor};
 use crate::{
     endpoint::kernel::{core::OperationKernel, lane_port},
     endpoint::{RecvError, RecvResult},
-    global::typestate::{DeterministicInboundKey, EventCommitMeta, InboundFrameKey, StateIndex},
+    global::typestate::{DeterministicInboundKey, InboundFrameKey, StateIndex},
     runtime_core::{UniqueMatch, UniqueMatchFailure},
     transport::Transport,
 };
@@ -41,13 +41,7 @@ where
         if !observed.matches_recv(meta) {
             return Ok(None);
         }
-        let preview_conflict = self.progress.cursor.event_conflict_for_index(idx);
-        let mut selected_arm =
-            |scope, view| self.selected_arm_for_recv_event(preview_conflict, scope, view);
-        let enabled =
-            self.progress
-                .cursor
-                .event_enabled(idx, EventCommitMeta::from(meta), &mut selected_arm);
+        let enabled = self.recv_event_enabled(idx, meta);
         if enabled.is_err() {
             return Ok(None);
         }
@@ -85,13 +79,7 @@ where
         if !key.matches_recv(meta) {
             return Ok(None);
         }
-        let preview_conflict = self.progress.cursor.event_conflict_for_index(idx);
-        let mut selected_arm =
-            |scope, view| self.selected_arm_for_recv_event(preview_conflict, scope, view);
-        let enabled =
-            self.progress
-                .cursor
-                .event_enabled(idx, EventCommitMeta::from(meta), &mut selected_arm);
+        let enabled = self.recv_event_enabled(idx, meta);
         if enabled.is_err() {
             return Ok(None);
         }
