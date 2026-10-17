@@ -15,6 +15,44 @@ structure ActorReentryCommitObservation where
   before : ActorProgressObservation
   after : ActorProgressObservation
 
+def observedEntryHeaderMatches
+    (snapshot : ActorProgressObservation) (role owner : Nat) : Bool :=
+  if owner = snapshot.actor then snapshot.viewIssued role else
+    match observedActorView? snapshot role with
+    | none => true
+    | some view => view.run == 0 && view.nonce % 2 == 0
+
+def observedEntryHeadersMatch
+    (snapshot : ActorProgressObservation) (columns : DecodedProgramColumns)
+    (entries : List (Nat × Nat)) : Bool :=
+  entries.all fun (role, reference) =>
+    match columns.selectedActor? snapshot.doneState.selected reference with
+    | none => false
+    | some owner => observedEntryHeaderMatches snapshot role owner
+
+/-- Entry references are checked against the complete source-derived table by
+decodeActorOrder?. Inspect the existing headers before clearing this visit. -/
+def observedRollEntryHeadersMatch
+    (snapshot : ActorProgressObservation) (image : RustDescriptorImage) (scope : Nat) : Bool :=
+  match image.decodeProgramColumns?, image.decodeRollEntryResources? with
+  | some columns, some rows =>
+    match resolveUnique? (rows.filter fun row => row.1.scope == scope) with
+    | none => false
+    | some (_, entries) => observedEntryHeadersMatch snapshot columns entries
+  | _, _ => false
+
+theorem observed_entry_header_requires_issued_resource
+    {snapshot : ActorProgressObservation} {columns : DecodedProgramColumns}
+    {entries : List (Nat × Nat)} {role reference : Nat}
+    (checked : observedEntryHeadersMatch snapshot columns entries = true)
+    (member : (role, reference) ∈ entries)
+    (resolved : columns.selectedActor? snapshot.doneState.selected reference = some snapshot.actor) :
+    ∃ view, observedActorView? snapshot role = some view ∧
+      view.run = snapshot.run ∧ view.nonce % 2 = 1 := by
+  have one := List.all_eq_true.mp checked (role, reference) member
+  apply observed_issued_view_has_current_header
+  simpa only [resolved, observedEntryHeaderMatches, if_pos rfl] using one
+
 def resetObservedActor
     (snapshot : ActorProgressObservation) (roll : DecodedRollRow)
     (choices : List (Nat × Option RouteArm)) : ActorProgressObservation :=
@@ -33,31 +71,33 @@ def resetObservedChoices?
 
 def ActorReentryCommitObservation.prepared?
     (sample : ActorReentryCommitObservation) (image : RustDescriptorImage)
-    (choreo : Choreo) : Option (DecodedRollRow × ActorCommitObservation) := do
-  let data ← image.decodeActorOrder? choreo
-  let previous ← data.normalized.paths[sample.previousPath]?
-  let next ← data.normalized.paths[sample.nextPath]?
-  let rolls ← image.decodeRollRows?
-  let roll ← resolveUnique? (rolls.filter fun row => row.scope == sample.scope)
-  let source := canonicalProgramSource choreo
-  let choices ← resetObservedChoices? source sample.scope sample.before.choices
-  let base := resetObservedActor sample.before roll choices
-  let eff ← image.eventEffIndex? sample.event
-  let published ← publishedObservedChoices? source eff choices
-  if image.actorOrderCheck choreo && image.actorRollCheck choreo &&
-      image.actorRouteCheck choreo && sample.before.metadataMatches image data.rows &&
-      sample.before.valid &&
-      roll.eventStart ≤ sample.event && sample.event < roll.eventStart + roll.eventLength &&
-      observedChoicesAgree source previous sample.before &&
-      observedChoicesAgree source next base &&
-      (data.activeRows previous).all (fun row =>
-        if roll.eventStart ≤ row.eventId && row.eventId < roll.eventStart + roll.eventLength
-        then sample.before.doneState.done row.eventId else true) &&
-      observedSourcePrefixCheck data next sample.before sample.event &&
-      decide (sample.after.choices = published) then
-    some (roll, {
-      pathIndex := sample.nextPath, event := sample.event, view := sample.view,
-      before := base, after := sample.after })
+    (choreo : Choreo) : Option (DecodedRollRow × ActorCommitObservation) :=
+  if observedRollEntryHeadersMatch sample.before image sample.scope then do
+    let data ← image.decodeActorOrder? choreo
+    let previous ← data.normalized.paths[sample.previousPath]?
+    let next ← data.normalized.paths[sample.nextPath]?
+    let rolls ← image.decodeRollRows?
+    let roll ← resolveUnique? (rolls.filter fun row => row.scope == sample.scope)
+    let source := canonicalProgramSource choreo
+    let choices ← resetObservedChoices? source sample.scope sample.before.choices
+    let base := resetObservedActor sample.before roll choices
+    let eff ← image.eventEffIndex? sample.event
+    let published ← publishedObservedChoices? source eff choices
+    if image.actorOrderCheck choreo && image.actorRollCheck choreo &&
+        image.actorRouteCheck choreo && sample.before.metadataMatches image data.rows &&
+        sample.before.valid &&
+        roll.eventStart ≤ sample.event && sample.event < roll.eventStart + roll.eventLength &&
+        observedChoicesAgree source previous sample.before &&
+        observedChoicesAgree source next base &&
+        (data.activeRows previous).all (fun row =>
+          if roll.eventStart ≤ row.eventId && row.eventId < roll.eventStart + roll.eventLength
+          then sample.before.doneState.done row.eventId else true) &&
+        observedSourcePrefixCheck data next sample.before sample.event &&
+        decide (sample.after.choices = published) then
+      some (roll, {
+        pathIndex := sample.nextPath, event := sample.event, view := sample.view,
+        before := base, after := sample.after })
+    else none
   else none
 
 def ActorReentryCommitObservation.check
@@ -82,9 +122,15 @@ private theorem prepared_reentry_facts
     {roll : DecodedRollRow} {step : ActorCommitObservation}
     (prepared : sample.prepared? image choreo = some (roll, step)) :
     image.actorRollCheck choreo = true ∧
+      observedRollEntryHeadersMatch sample.before image sample.scope = true ∧
       ∃ rows choices, image.decodeRollRows? = some rows ∧ roll ∈ rows ∧
         step.before = resetObservedActor sample.before roll choices := by
   unfold ActorReentryCommitObservation.prepared? at prepared
+  have issued : observedRollEntryHeadersMatch sample.before image sample.scope = true := by
+    cases flag : observedRollEntryHeadersMatch sample.before image sample.scope with
+    | false => simp [flag] at prepared
+    | true => rfl
+  simp only [issued, if_true] at prepared
   change (image.decodeActorOrder? choreo).bind _ = some (roll, step) at prepared
   obtain ⟨data, _, prepared⟩ := Option.bind_eq_some_iff.mp prepared
   change data.normalized.paths[sample.previousPath]?.bind _ = some (roll, step) at prepared
@@ -120,8 +166,35 @@ private theorem prepared_reentry_facts
       exact (List.mem_filter.mp filtered).1
     simp only [Bool.and_eq_true] at guarded
     obtain ⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨_, ranges⟩, _⟩, _⟩, _⟩, _⟩, _⟩, _⟩, _⟩, _⟩, _⟩, _⟩ := guarded
-    exact ⟨ranges, rows, choices, rowsAt, member, rfl⟩
+    exact ⟨ranges, issued, rows, choices, rowsAt, member, rfl⟩
   next rejected => simp at allowed
+
+theorem accepted_body_reentry_requires_entry_headers
+    {sample : ActorReentryCommitObservation} {image : RustDescriptorImage} {choreo : Choreo}
+    (accepted : sample.check image choreo = true) :
+    observedRollEntryHeadersMatch sample.before image sample.scope = true := by
+  unfold ActorReentryCommitObservation.check at accepted
+  cases found : sample.prepared? image choreo with
+  | none => simp [found] at accepted
+  | some entry => exact (prepared_reentry_facts found).2.1
+
+theorem accepted_body_reentry_uses_issued_entry_resource
+    {sample : ActorReentryCommitObservation} {image : RustDescriptorImage} {choreo : Choreo}
+    {columns : DecodedProgramColumns} {rows : OwnedEntryResources}
+    {roll : DecodedRollRow} {entries : List (Nat × Nat)} {role reference : Nat}
+    (accepted : sample.check image choreo = true)
+    (columnsAt : image.decodeProgramColumns? = some columns)
+    (rowsAt : image.decodeRollEntryResources? = some rows)
+    (scopeAt : resolveUnique? (rows.filter fun row => row.1.scope == sample.scope) =
+      some (roll, entries))
+    (member : (role, reference) ∈ entries)
+    (resolved : columns.selectedActor? sample.before.doneState.selected reference =
+      some sample.before.actor) :
+    ∃ view, observedActorView? sample.before role = some view ∧
+      view.run = sample.before.run ∧ view.nonce % 2 = 1 := by
+  have checked := accepted_body_reentry_requires_entry_headers accepted
+  simp only [observedRollEntryHeadersMatch, columnsAt, rowsAt, scopeAt] at checked
+  exact observed_entry_header_requires_issued_resource checked member resolved
 
 def ActorReentryCommitObservation.SourceOrdered
     (sample : ActorReentryCommitObservation) (image : RustDescriptorImage) (choreo : Choreo) : Prop :=
@@ -147,7 +220,7 @@ theorem accepted_body_reentry_restores_source_progress
   | some entry =>
       rcases entry with ⟨roll, step⟩
       have checked : step.check image choreo = true := by simpa [found] using accepted
-      obtain ⟨ranges, actual, choices, actualAt, member, base⟩ := prepared_reentry_facts found
+      obtain ⟨ranges, _, actual, choices, actualAt, member, base⟩ := prepared_reentry_facts found
       obtain ⟨_, _, rows, rowsAt, decoded⟩ := accepted_actor_rolls_bind_source_ranges ranges
       have same : actual = rows := Option.some.inj (actualAt.symm.trans decoded)
       refine ⟨roll, step, rows, rfl, rowsAt, by simpa only [← same] using member, ?_,

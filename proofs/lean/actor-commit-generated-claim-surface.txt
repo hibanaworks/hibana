@@ -1,4 +1,7 @@
 ownerLoanAccepted : ownerLoan.check ownerImage actorCommitChoreo = true
+ownerLoanMissingCarrierRejected : ownerLoanMissingCarrier.check ownerImage actorCommitChoreo = false
+ownerLoanMissingCarrierSnapshotsValid : (ownerLoanMissingCarrier.before.valid && ownerLoanMissingCarrier.after.valid) =
+  true
 ownerLoanMissingProgressRejected : (have __src := ownerLoan;
       { pathIndex := __src.pathIndex, event := __src.event, view := __src.view, before := __src.before,
         after :=
@@ -54,6 +57,10 @@ ownerLoanWrongResourceRejected : ownerLoan.ownedCheck ownerImage actorCommitChor
   false
 ownerLoanWrongSessionRejected : ownerLoan.ownedCheck ownerImage actorCommitChoreo ownerLoanWire 875 = false
 ownerReturnAccepted : ownerReturn.check ownerImage actorCommitChoreo = true
+ownerReturnMissingCarrierRejected : ownerReturnMissingCarrier.check ownerImage actorCommitChoreo = false
+ownerReturnMissingCarrierSnapshotsValid : (ownerReturnMissingCarrier.before.valid &&
+    ownerReturnMissingCarrier.after.valid) =
+  true
 ownerReturnMissingProgressRejected : (have __src := ownerReturn;
       { pathIndex := __src.pathIndex, event := __src.event, view := __src.view, before := __src.before,
         after :=
@@ -109,6 +116,10 @@ ownerReturnWrongResourceRejected : ownerReturn.ownedCheck ownerImage actorCommit
   false
 ownerReturnWrongSessionRejected : ownerReturn.ownedCheck ownerImage actorCommitChoreo ownerReturnWire 875 = false
 workerLoanAccepted : workerLoan.check workerImage actorCommitChoreo = true
+workerLoanMissingCarrierRejected : workerLoanMissingCarrier.check workerImage actorCommitChoreo = false
+workerLoanMissingCarrierSnapshotsValid : (workerLoanMissingCarrier.before.valid &&
+    workerLoanMissingCarrier.after.valid) =
+  true
 workerLoanMissingProgressRejected : (have __src := workerLoan;
       { pathIndex := __src.pathIndex, event := __src.event, view := __src.view, before := __src.before,
         after :=
@@ -164,6 +175,10 @@ workerLoanWrongResourceRejected : workerLoan.ownedCheck workerImage actorCommitC
   false
 workerLoanWrongSessionRejected : workerLoan.ownedCheck workerImage actorCommitChoreo workerLoanWire 875 = false
 workerReturnAccepted : workerReturn.check workerImage actorCommitChoreo = true
+workerReturnMissingCarrierRejected : workerReturnMissingCarrier.check workerImage actorCommitChoreo = false
+workerReturnMissingCarrierSnapshotsValid : (workerReturnMissingCarrier.before.valid &&
+    workerReturnMissingCarrier.after.valid) =
+  true
 workerReturnMissingProgressRejected : (have __src := workerReturn;
       { pathIndex := __src.pathIndex, event := __src.event, view := __src.view, before := __src.before,
         after :=

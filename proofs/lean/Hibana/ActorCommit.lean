@@ -97,6 +97,26 @@ def observedActorView? (snapshot : ActorProgressObservation) (role : Nat) :
     Option ActorViewObservation :=
   resolveUnique? (snapshot.views.filter fun view => view.role == role)
 
+/-- Existing affine header issuance, not a second owner ledger. Issuance is
+necessary but does not by itself exclude a pending owned-payload borrow. -/
+def ActorProgressObservation.viewIssued (snapshot : ActorProgressObservation) (role : Nat) : Bool :=
+  match observedActorView? snapshot role with
+  | none => false
+  | some view => view.run == snapshot.run && view.nonce % 2 == 1
+
+theorem observed_issued_view_has_current_header
+    {snapshot : ActorProgressObservation} {role : Nat}
+    (issued : snapshot.viewIssued role = true) :
+    ∃ view, observedActorView? snapshot role = some view ∧
+      view.run = snapshot.run ∧ view.nonce % 2 = 1 := by
+  unfold ActorProgressObservation.viewIssued at issued
+  cases found : observedActorView? snapshot role with
+  | none => simp [found] at issued
+  | some view =>
+      have parts : view.run = snapshot.run ∧ view.nonce % 2 = 1 := by
+        simpa only [found, Bool.and_eq_true, beq_iff_eq] using issued
+      exact ⟨view, rfl, parts⟩
+
 def replaceObservedActorView
     (snapshot : ActorProgressObservation) (role run nonce : Nat) : List ActorViewObservation :=
   snapshot.views.map fun view =>
@@ -162,7 +182,7 @@ structure ActorCommitObservation where
 
 def ActorCommitObservation.check
     (sample : ActorCommitObservation) (image : RustDescriptorImage) (choreo : Choreo) : Bool :=
-  image.actorOrderCheck choreo &&
+  sample.before.viewIssued sample.view && (image.actorOrderCheck choreo &&
   match image.decodeActorOrder? choreo with
   | none => false
   | some data =>
@@ -189,7 +209,14 @@ def ActorCommitObservation.check
               observedViewCommitMatches sample.before sample.after binding.message.payload
                 row.actionId.side
           | _, _ => false))))
-      | _, _ => false
+      | _, _ => false)
+
+theorem accepted_actor_commit_uses_issued_view
+    {sample : ActorCommitObservation} {image : RustDescriptorImage} {choreo : Choreo}
+    (accepted : sample.check image choreo = true) :
+    ∃ view, observedActorView? sample.before sample.view = some view ∧
+      view.run = sample.before.run ∧ view.nonce % 2 = 1 :=
+  observed_issued_view_has_current_header (Bool.and_eq_true_iff.mp accepted).1
 
 private theorem one_observed_step_is_exact
     {before after : List Bool} {event : Nat}
@@ -248,6 +275,7 @@ it is not source extraction or a distributed ownership/liveness theorem. -/
 theorem accepted_actor_commit_matches_source_progress
     {sample : ActorCommitObservation} {image : RustDescriptorImage} {choreo : Choreo}
     (accepted : sample.check image choreo = true) : sample.SourceOrdered image choreo := by
+  have accepted := (Bool.and_eq_true_iff.mp accepted).2
   have actorAccepted : image.actorOrderCheck choreo = true :=
     (Bool.and_eq_true_iff.mp accepted).1
   obtain ⟨rowsAccepted, data, decoded, readiness⟩ :=

@@ -332,6 +332,14 @@ fn write_observations(observations: &[CommitObservation<'_>], sid: SessionId) {
              theorem {name}SourceOrdered :\n  \
              {name}.SourceOrdered {image_name} actorCommitChoreo :=\n  \
              Hibana.accepted_actor_commit_matches_source_progress {name}Accepted\n\n\
+             def {name}MissingCarrier : Hibana.ActorCommitObservation :=\n  \
+             {{ {name} with\n    \
+             before := {{ {name}.before with views := {name}.before.views.filter (fun header => header.role != {name}.view) }}\n    \
+             after := {{ {name}.after with views := {name}.after.views.filter (fun header => header.role != {name}.view) }} }}\n\n\
+             theorem {name}MissingCarrierSnapshotsValid :\n  \
+             ({name}MissingCarrier.before.valid && {name}MissingCarrier.after.valid) = true := by\n  decide\n\n\
+             theorem {name}MissingCarrierRejected :\n  \
+             {name}MissingCarrier.check {image_name} actorCommitChoreo = false := by\n  decide\n\n\
              theorem {name}MissingProgressRejected :\n  \
              ({{ {name} with after := {{ {name}.after with steps := {name}.before.steps }} }} : \
              Hibana.ActorCommitObservation).check {image_name} actorCommitChoreo = false := by\n  decide\n\n\

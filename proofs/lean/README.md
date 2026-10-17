@@ -154,7 +154,10 @@ each successful send before the completed future is dropped. For each of four
 commits, the generated kernel proof checks the exact source row, its causal
 predecessors, one done-bit update, and the matching view retirement or issuance.
 It rejects unchanged progress, unchanged view headers, and a different local
-row. The observations never control execution and add no production state.
+row. Each accepted operation also requires an issued carrier header with the
+current session run and an odd live generation. Four copied observations lose
+their carrier headers while retaining valid metadata and progress; the commit
+checker rejects all four. The observations never control execution and add no production state.
 This is translation validation of successful commits in one selected visit.
 It does not establish ownership across in-flight transport frames, prepared
 bases after reentry, resource binding, closure, or general distributed progress.
@@ -166,6 +169,15 @@ inside the body, publication of the current operation's source route, and the
 ordinary commit check on that fresh base. Its general theorem binds the reset
 to a canonical source range, preserves every outside done bit, and reuses the
 source-order and local view-publication theorem for the successful operation.
+Before reset, the checker also resolves each source-derived entry-resource
+reference against the existing view headers. The entry owner must have an
+issued header; a different actor cannot retain an issued header for it. Five
+general lemmas connect accepted commits and reentry to these header facts.
+The local-return fixture retires the required DB header in both copied states,
+preserving their validity and the progress delta, and the reentry checker rejects it.
+Issuance alone does not establish that a view is free from a pending owned-send
+borrow or that its next frame is available. Those remaining correspondence and
+distributed-progress obligations are not discharged by this check.
 No second runtime cursor or progress table is added.
 
 One fixture emits six commits from both arms of an enclosing choice across
@@ -209,7 +221,7 @@ can change arms while preserving the parent prefix. The complete nested trace
 runs twice. Before the parent suffix, both the completed arm and the unused
 alternative are rejected. These six kernel proofs replace seven lemmas about the removed
 route-only reset and its unused selector. Including the transfer model below,
-the static inventory is 820, with 444 using `propext` and `Quot.sound`,
+the static inventory is 825, with 449 using `propext` and `Quot.sound`,
 270 using only `propext`, and 106 axiom-free. The three additional
 `PublicOperationKernel.lean` claims cover the owned-send payload borrow:
 other resource-dependent work waits, that payload's own transfer may finish,

@@ -206,6 +206,23 @@ fn a_local_branch_waits_for_another_view_to_receive_its_entry_resource() {
                      {{ localReturnCommit with after := {{ localAfterResume with liveViews := localAfterResume.liveViews + 1 }} }}\n\n\
                      theorem localWrongViewCountRejected : localWrongViewCount.check localReturnImage localReturnChoreo = false := by decide\n"
                 ));
+                source.push_str(
+                    "\n\
+                     theorem localEntryHeadersAccepted :\n  \
+                     Hibana.observedRollEntryHeadersMatch localBeforeResume localReturnImage localReturnCommit.scope = true := by decide\n\n\
+                     def localWithoutEntryHeader (snapshot : Hibana.ActorProgressObservation) : Hibana.ActorProgressObservation :=\n  \
+                     { snapshot with\n    \
+                     liveViews := snapshot.liveViews - 1\n    \
+                     views := snapshot.views.map fun header =>\n      \
+                     if header.role = 10 then { header with run := 0, nonce := Hibana.retireViewGeneration header.nonce } else header }\n\n\
+                     def localMissingEntryHeader : Hibana.ActorReentryCommitObservation :=\n  \
+                     { localReturnCommit with\n    \
+                     before := localWithoutEntryHeader localBeforeResume\n    \
+                     after := localWithoutEntryHeader localAfterResume }\n\n\
+                     theorem localMissingEntryBeforeValid : localMissingEntryHeader.before.valid = true := by decide\n\n\
+                     theorem localMissingEntryAfterValid : localMissingEntryHeader.after.valid = true := by decide\n\n\
+                     theorem localMissingEntryHeaderRejected : localMissingEntryHeader.check localReturnImage localReturnChoreo = false := by decide\n",
+                );
                 let output = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/lean-proof");
                 std::fs::create_dir_all(&output).unwrap();
                 std::fs::write(output.join("LocalReturnGenerated.lean"), source).unwrap();

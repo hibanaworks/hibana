@@ -1,4 +1,10 @@
 localDropPreservesProgress : localAfterDrop = localBeforeWait
+localEntryHeadersAccepted : Hibana.observedRollEntryHeadersMatch localBeforeResume localReturnImage
+    localReturnCommit.scope =
+  true
+localMissingEntryAfterValid : localMissingEntryHeader.after.valid = true
+localMissingEntryBeforeValid : localMissingEntryHeader.before.valid = true
+localMissingEntryHeaderRejected : localMissingEntryHeader.check localReturnImage localReturnChoreo = false
 localMissingResetRejected : localMissingReset.check localReturnImage localReturnChoreo = false
 localPendingPreservesProgress : localAfterPending = localBeforeWait
 localReceiptIndexAccepted : localReturnImage.ownedRecoveryIndexCheck = true
