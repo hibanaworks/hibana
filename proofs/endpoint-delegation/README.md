@@ -256,6 +256,16 @@ authenticated distributed handoff.
 
 ## Remaining qualification
 
+Repetition uses only the source's explicit roll boundaries. An inherited
+reentrant route mark is not an independent loop. The public Rust regressions
+and `Hibana.RollBoundary` cover rejection of an implicit child restart and
+acceptance of an explicit child's repeated, alternating arms under a retained
+parent prefix. An unused arm's clear completion bit does not bypass the
+committed choice before an explicit roll completes. `RollBoundary.smt2`
+checks six invariants and retains three
+witnesses for this projected six-event shape. Old completion is evaluated
+against committed choices, before the new preview chooses its arm.
+
 - Complete the actor-aware source checks and independently qualify accepted
   actor-local images, including branch knowledge and conditional holders.
 - Qualify general continuation across route/roll/par combinations. Ordinary

@@ -1,5 +1,4 @@
 use super::super::super::{EventCursor, RelocatableResidentLaneStep, ScopeId};
-use super::RollLaneAdmission;
 
 impl EventCursor {
     /// A completed ancestor is retained when this event enters only a child
@@ -9,16 +8,16 @@ impl EventCursor {
         scope: ScopeId,
         idx: usize,
         lane: u8,
-        selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
+        arm_for_scope: &mut dyn FnMut(ScopeId, super::super::EventArmView) -> Option<u8>,
     ) -> bool {
+        let mut committed = |scope| arm_for_scope(scope, super::super::EventArmView::Committed);
+        let Some(body) = self.complete_roll_body_scope_for_index(idx, &mut committed) else {
+            return false;
+        };
+        let mut preview = |scope| arm_for_scope(scope, super::super::EventArmView::Preview);
         self.route_scope_reentry(scope)
-            && self.roll_scope_lane_allows_index(
-                scope,
-                idx,
-                lane,
-                RollLaneAdmission::Head,
-                selected_arm_for_scope,
-            )
+            && self.route_scope_contained_in_roll_scope(scope, body)
+            && self.roll_scope_lane_allows_index(body, idx, lane, &mut preview)
     }
 
     #[inline(never)]
@@ -35,13 +34,7 @@ impl EventCursor {
             .machine()
             .event_program()
             .local_step_lane(target.0.step_idx as usize)?;
-        let scope = self.complete_roll_scope_for_index(idx, &mut *selected_arm_for_scope)?;
-        if !matches!(
-            scope.kind(),
-            Some(crate::global::const_dsl::ScopeKind::Roll)
-        ) {
-            return None;
-        }
+        let scope = self.complete_roll_body_scope_for_index(idx, &mut *selected_arm_for_scope)?;
         // Completion uses the committed visit above. Head admission uses the
         // candidate's conflict so an old alternative cannot block the new head.
         let preview_conflict = self.machine().event_conflict_for_index(idx);
@@ -52,7 +45,7 @@ impl EventCursor {
                 selected_arm_for_scope,
             )
         };
-        self.roll_scope_lane_allows_index(scope, idx, lane, RollLaneAdmission::Head, &mut preview)
+        self.roll_scope_lane_allows_index(scope, idx, lane, &mut preview)
             .then_some(scope)
     }
 

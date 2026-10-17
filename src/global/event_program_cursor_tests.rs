@@ -153,6 +153,27 @@ fn production_cursor_reenters_completed_rolled_seq_head() {
 }
 
 #[test]
+fn completed_rolled_body_exposes_both_fresh_route_candidates() {
+    let program = crate::g::seq(
+        crate::g::route(
+            crate::g::send::<0, 1, crate::g::Msg<41, ()>>(),
+            crate::g::send::<0, 1, crate::g::Msg<42, ()>>(),
+        ),
+        crate::g::send::<0, 1, crate::g::Msg<43, ()>>(),
+    )
+    .roll();
+    let mut trace = ProductionCursorTrace::new::<0>(&program);
+    trace.commit_label(41);
+    assert_sorted_eq(trace.enabled_labels(), &[43]);
+    trace.commit_label(43);
+    assert_sorted_eq(trace.enabled_labels(), &[41, 42]);
+    trace.commit_label(42);
+    assert_sorted_eq(trace.enabled_labels(), &[43]);
+    trace.commit_label(43);
+    assert_sorted_eq(trace.enabled_labels(), &[41, 42]);
+}
+
+#[test]
 fn production_cursor_pipelines_rolled_send_before_remote_receive() {
     let program = crate::g::send::<0, 1, crate::g::Msg<94, ()>>().roll();
     let mut runtime = ProductionCursorTrace::new::<0>(&program);
@@ -1504,7 +1525,7 @@ impl ProductionCursorTrace {
     }
 
     fn enabled_commit_at(&self, idx: usize) -> Option<(u8, usize, RelocatableResidentLaneStep)> {
-        self.event_program.event_row_at(idx)?;
+        let row = self.event_program.event_row_at(idx)?;
         let lane = self.event_program.local_step_lane(idx)?;
         let node = self.event_program.node(idx);
         let (eff_index, label, origin) = match node.action() {
@@ -1528,8 +1549,13 @@ impl ProductionCursorTrace {
             } => (eff_index, label, origin),
             LocalAction::Terminate => return None,
         };
-        let selected = &self.selected;
-        let mut selected_arm_for_scope = |scope, _view| selected_arm(selected, scope);
+        let mut committed = |scope| selected_arm(&self.selected, scope);
+        let mut selected_arm_for_scope = |scope, view| match view {
+            crate::global::typestate::EventArmView::Committed => committed(scope),
+            crate::global::typestate::EventArmView::Preview => self
+                .cursor()
+                .selected_arm_for_reentry_preview_conflict(scope, row.conflict(), &mut committed),
+        };
         self.cursor()
             .event_enabled(
                 idx,

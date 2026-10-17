@@ -135,7 +135,7 @@ source-closed shared `CommitState`, both allow exactly the same next operation.
 Initial progress and the commit done-bit delta preserve that property. Concrete
 mutations with an extra parallel wait or a missing join are rejected even when
 their operation rows and lane format still pass. This does not yet establish
-the property for a prepared base after route or roll reentry. Route authority,
+the property for a prepared base before the explicit roll reset below. Route authority,
 ownership transfer commits and continuation refinement remain open.
 `ActorRouting.lean` binds event conflict paths and route-parent/reentry columns
 to the source, including nested choices. The same committed history and
@@ -174,9 +174,9 @@ with AUTH and a sequential continuation already complete. The generated checks
 reject missing resets, erased outside progress or choices, a different body,
 and an incorrect live-view update. The Rust snapshots read the existing cursor
 and committed route history; they never schedule or authorize operations.
-These checks cover successful body reentry observations. General fresh route
-reentry, interleaved distributed ownership, physical resource binding and
-transport closure still need their complete correspondence.
+These checks cover successful body reentry observations. Passive route
+materialization, interleaved distributed ownership, physical resource binding
+and transport closure still need their complete correspondence.
 
 The conditional-controller fixture also records five visits of an inner
 choice, including both same-arm repetitions and both changes of arm. Its
@@ -194,6 +194,26 @@ mistake a fresh controller decision for a receive continuation and wait for a
 frame the protocol never sends. Repositioning the offer cache changes no done
 bits, committed choices, view generations, or public operations. A separate
 regression uses public projection without any owned payload.
+
+Repetition authority belongs to an explicit `roll` body. A route's inherited
+reentry metadata does not authorize repeating that child while its enclosing
+body is unfinished. The runtime and `Commit.lean` both reject that implicit
+loop. Old completion uses the committed choice; admission of a new head uses
+the candidate choice. Rechecking old completion under the new choice would
+incorrectly reject a legal change of arm.
+
+`RollBoundary.lean` checks both projected roles of the same public Rust
+regressions: an unrolled child cannot repeat before its parent's suffix, a
+completed parent can restart at its prefix, and an explicitly rolled child
+can change arms while preserving the parent prefix. The complete nested trace
+runs twice. Before the parent suffix, both the completed arm and the unused
+alternative are rejected. These six kernel proofs replace seven lemmas about the removed
+route-only reset and its unused selector. The static inventory is 777, with
+412 using `propext` and `Quot.sound`, 264 using only `propext`, and 101 axiom-free.
+The allowed axioms and inventory checks are unchanged. `RollBoundary.smt2`
+checks all completion masks of this six-event shape, including the difference
+between old committed and new preview choices and preservation outside the
+explicit child. It is a shape-specific check, not a distributed progress proof.
 
 The compiler scope memo, fork-input restoration, independent-sibling exclusion,
 and retained sequential joins have general model lemmas. Ingress-head

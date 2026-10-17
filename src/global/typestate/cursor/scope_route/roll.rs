@@ -4,19 +4,6 @@ use super::super::{EventCursor, ScopeId};
 mod nesting;
 mod reentry;
 
-#[derive(Clone, Copy)]
-enum ReentrantRouteCompletion {
-    Outside,
-    Incomplete,
-    Complete(ScopeId),
-}
-
-#[derive(Clone, Copy)]
-enum RollLaneAdmission {
-    Head,
-    Progress { current_step: Option<usize> },
-}
-
 impl EventCursor {
     #[inline(always)]
     fn same_scope(left: ScopeId, right: ScopeId) -> bool {
@@ -219,71 +206,11 @@ impl EventCursor {
     }
 
     #[inline(never)]
-    fn reentrant_route_completion_for_index(
-        &self,
-        idx: usize,
-        selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
-    ) -> ReentrantRouteCompletion {
-        let mut contains_reentrant_route = false;
-        let mut selected = None;
-        let mut slot = 0usize;
-        while slot < self.machine().route_scope_slot_count() {
-            if let Some(region) = self.machine().route_scope_rows_by_slot(slot) {
-                let scope = region.scope();
-                if region.start() <= idx
-                    && idx < region.end()
-                    && self.route_scope_reentry(scope)
-                    && self.roll_scope_contains_index(scope, idx)
-                {
-                    contains_reentrant_route = true;
-                    if selected_arm_for_scope(scope).is_some_and(|arm| {
-                        self.selected_route_arm_event_row_done(
-                            scope,
-                            arm,
-                            &mut *selected_arm_for_scope,
-                        )
-                    }) {
-                        selected = Some(match selected {
-                            Some(current) => self.deeper_route_scope(current, scope),
-                            None => scope,
-                        });
-                    }
-                }
-            }
-            slot += 1;
-        }
-        match selected {
-            Some(scope) => ReentrantRouteCompletion::Complete(scope),
-            None if contains_reentrant_route => ReentrantRouteCompletion::Incomplete,
-            None => ReentrantRouteCompletion::Outside,
-        }
-    }
-
-    #[inline(never)]
-    fn complete_roll_scope_for_index(
-        &self,
-        idx: usize,
-        selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
-    ) -> Option<ScopeId> {
-        if let Some(scope) =
-            self.complete_roll_body_scope_for_index(idx, &mut *selected_arm_for_scope)
-        {
-            return Some(scope);
-        }
-        match self.reentrant_route_completion_for_index(idx, &mut *selected_arm_for_scope) {
-            ReentrantRouteCompletion::Complete(scope) => Some(scope),
-            ReentrantRouteCompletion::Incomplete => None,
-            ReentrantRouteCompletion::Outside => None,
-        }
-    }
-
-    #[inline(never)]
     fn roll_scope_lane_allows_index(
         &self,
         scope: ScopeId,
         idx: usize,
         lane: u8,
-        admission: RollLaneAdmission,
         selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
     ) -> bool {
         if !self.roll_scope_contains_index(scope, idx) {
@@ -305,13 +232,6 @@ impl EventCursor {
                 && let Some(prior_lane) = self.event_lane_at(scan)
                 && prior_lane == lane
             {
-                if let RollLaneAdmission::Progress { current_step } = admission
-                    && self.node_event_done_for_lane(scan, prior_lane)
-                    && self.event_step_is_before(scan, prior_lane, current_step)
-                {
-                    scan += 1;
-                    continue;
-                }
                 let prior_conflict = self.machine().event_conflict_for_index(scan);
                 if self.event_conflict_row_allows_with_preview(
                     prior_conflict,
@@ -353,33 +273,12 @@ impl EventCursor {
             return false;
         }
         let mut committed = |scope| arm_for_scope(scope, super::EventArmView::Committed);
-        let Some(scope) = self.complete_roll_scope_for_index(idx, &mut committed) else {
+        let Some(scope) = self.complete_roll_body_scope_for_index(idx, &mut committed) else {
             return false;
         };
         let mut selected_arm_for_scope = |scope| arm_for_scope(scope, super::EventArmView::Preview);
-        // A completed body admits a new visit only at its head. A lane parked
-        // on an old suffix is not evidence of progress in that new visit.
-        if matches!(
-            scope.kind(),
-            Some(crate::global::const_dsl::ScopeKind::Roll)
-        ) || self.event_is_before_lane_cursor(idx, lane)
-        {
-            return self.roll_scope_lane_allows_index(
-                scope,
-                idx,
-                lane,
-                RollLaneAdmission::Head,
-                &mut selected_arm_for_scope,
-            );
-        }
-        self.roll_scope_lane_allows_index(
-            scope,
-            idx,
-            lane,
-            RollLaneAdmission::Progress {
-                current_step: self.step_index_at_lane(lane as usize),
-            },
-            &mut selected_arm_for_scope,
-        )
+        // Only an explicit completed roll admits a new visit, at its head.
+        // An inherited route mark cannot create an independent loop.
+        self.roll_scope_lane_allows_index(scope, idx, lane, &mut selected_arm_for_scope)
     }
 }

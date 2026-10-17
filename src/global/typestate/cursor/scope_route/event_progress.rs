@@ -91,14 +91,24 @@ impl EventCursor {
         // events do; a previous visit's prefix cannot authorize a past suffix.
         if !self.relocatable_step_done(progress_step) && !self.event_progress_passed(progress_step)
         {
-            // An unchosen suffix can lie ahead of a rewound lane head. Its
-            // clear bit is not a fresh visit when the enclosing body is done.
+            // A clear bit can belong to an unchosen arm at the lane head.
+            // Without a completed explicit roll, committed choices still own
+            // this visit. A candidate preview cannot replace that authority.
             let mut committed = |scope| arm_for_scope(scope, EventArmView::Committed);
             if self
                 .complete_roll_body_scope_for_index(idx, &mut committed)
                 .is_none()
             {
-                return Ok(());
+                let conflict = self.machine().event_conflict_for_index(idx);
+                return if self.event_conflict_row_allows_with_preview(
+                    conflict,
+                    conflict,
+                    &mut committed,
+                ) {
+                    Ok(())
+                } else {
+                    Err(CursorInvariantError::INVARIANT)
+                };
             }
         }
         if !self.has_reentry_scopes()

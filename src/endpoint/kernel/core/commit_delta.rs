@@ -305,7 +305,11 @@ where
                     self.progress.cursor.route_scope_reentry(scope)
                         && self.reentrant_selected_arm_complete(scope, selected)
                         && {
-                            let mut preview = |candidate| {
+                            let mut preview = |candidate, view| {
+                                if matches!(view, crate::global::typestate::EventArmView::Committed)
+                                {
+                                    return self.selected_arm_for_scope(candidate);
+                                }
                                 let mut row_idx = 0;
                                 while row_idx < routes.len() {
                                     let row = crate::invariant_some(

@@ -46,11 +46,6 @@ def resetRoll (state : CommitState) (roll : RollInfo) : CommitState := {
     if roll.conflicts.contains conflict then none else state.selected conflict
 }
 
-def resetRouteArm (state : CommitState) (events : List Nat) : CommitState := {
-  done := fun event => if events.contains event then false else state.done event
-  selected := state.selected
-}
-
 private def eventReady (graph : EventGraph) (state : CommitState) (event : Event) : Bool :=
   event.conflicts.all (conflictAllows graph state) &&
   event.deps.all fun dep => state.done dep || eventExcluded graph state dep
@@ -62,19 +57,6 @@ private def eventCommitReady
 
 private def rollComplete (graph : EventGraph) (state : CommitState) (roll : RollInfo) : Bool :=
   roll.events.all fun event => state.done event || eventExcluded graph state event
-
-private def selectedRouteEvents?
-    (state : CommitState) (route : RouteInfo) : Option (List Nat) :=
-  match state.selected route.conflict with
-  | none => none
-  | some .left => some route.leftEvents
-  | some .right => some route.rightEvents
-
-private def routeComplete
-    (graph : EventGraph) (state : CommitState) (route : RouteInfo) : Bool :=
-  match selectedRouteEvents? state route with
-  | none => false
-  | some events => events.all fun event => state.done event || eventExcluded graph state event
 
 private def hasLaterSequentialDone
     (graph : EventGraph)
@@ -107,91 +89,15 @@ private def rollReentryState?
   match completedRollForEvent? graph state event with
   | none => none
   | some roll =>
-      if eventReady graph state event then
-        let reset := resetRoll state roll
-        if eventReady graph reset event then some reset else none
-      else
-        none
-
-/-- Conflict identifiers follow choreography preorder, so the greatest
-candidate conflict is the innermost route containing one event. Maximal-key
-duplicates are malformed and fail closed through `resolveUnique?`. -/
-def maxRouteConflict (routes : List RouteInfo) : Nat :=
-  routes.foldl (fun current route => max current route.conflict) 0
-
-def selectInnermostReentryRoute? (routes : List RouteInfo) : Option RouteInfo :=
-  let innermostConflict := maxRouteConflict routes
-  resolveUnique? (routes.filter fun route => Nat.beq route.conflict innermostConflict)
-
-theorem max_route_conflict_is_permutation_invariant
-    {left right : List RouteInfo}
-    (permutation : left.Perm right) :
-    maxRouteConflict left = maxRouteConflict right := by
-  unfold maxRouteConflict
-  apply permutation.foldl_eq'
-  intro first _ second _ current
-  omega
-
-theorem select_innermost_reentry_route_eq_some_iff
-    {routes : List RouteInfo} {route : RouteInfo} :
-    selectInnermostReentryRoute? routes = some route ↔
-      routes.filter (fun candidate =>
-        Nat.beq candidate.conflict (maxRouteConflict routes)) = [route] := by
-  exact resolveUnique?_eq_some_iff
-
-/-- Route reentry authority depends on the canonical conflict key and singleton
-evidence, never on candidate traversal order. -/
-theorem select_innermost_reentry_route_is_permutation_invariant
-    {left right : List RouteInfo} {route : RouteInfo}
-    (permutation : left.Perm right)
-    (selected : selectInnermostReentryRoute? left = some route) :
-    selectInnermostReentryRoute? right = some route := by
-  have maxEq := max_route_conflict_is_permutation_invariant permutation
-  have exactLeft := select_innermost_reentry_route_eq_some_iff.mp selected
-  apply select_innermost_reentry_route_eq_some_iff.mpr
-  have filtered := permutation.filter fun candidate =>
-    Nat.beq candidate.conflict (maxRouteConflict left)
-  rw [maxEq] at filtered exactLeft
-  exact List.Perm.eq_singleton (exactLeft ▸ filtered).symm
-
-theorem select_innermost_reentry_route_pair_is_order_independent
-    (outer inner : RouteInfo)
-    (nested : outer.conflict < inner.conflict) :
-    selectInnermostReentryRoute? [outer, inner] = some inner ∧
-      selectInnermostReentryRoute? [inner, outer] = some inner := by
-  have outerNeInner : outer.conflict ≠ inner.conflict := Nat.ne_of_lt nested
-  simp [selectInnermostReentryRoute?, maxRouteConflict, resolveUnique?,
-    Nat.max_eq_right (Nat.le_of_lt nested), Nat.max_eq_left (Nat.le_of_lt nested),
-    outerNeInner, Nat.beq_refl]
-
-private def routeReentryState?
-    (graph : EventGraph) (state : CommitState) (event : Event) : Option CommitState :=
-  let candidates := graph.routes.filter fun route =>
-    route.reentry == .rolled && routeComplete graph state route &&
-      match selectedRouteEvents? state route with
-      | none => false
-      | some events => events.contains event.id
-  match selectInnermostReentryRoute? candidates with
-  | none => none
-  | some route =>
-      match selectedRouteEvents? state route with
-      | none => none
-      | some events =>
-          let reset := resetRouteArm state events
-          if eventReady graph reset event then some reset else none
-
-private def reentryState?
-    (graph : EventGraph) (state : CommitState) (event : Event) : Option CommitState :=
-  match rollReentryState? graph state event with
-  | some reset => some reset
-  | none => routeReentryState? graph state event
+      let reset := resetRoll state roll
+      if eventReady graph reset event then some reset else none
 
 private def eventCandidateBaseState?
     (graph : EventGraph) (state : CommitState) (event : Event) : Option CommitState :=
   if !state.done event.id && eventReady graph state event then
     some state
   else
-    reentryState? graph state event
+    rollReentryState? graph state event
 
 private def eventBaseState?
     (graph : EventGraph) (state : CommitState) (event : Event) : Option CommitState :=
@@ -622,26 +528,6 @@ theorem reset_roll_clears_selection
     (inside : conflict ∈ roll.conflicts) :
     (resetRoll state roll).selected conflict = none := by
   simp [resetRoll, inside]
-
-/-- Route-arm reentry cannot change any route authority. -/
-theorem reset_route_arm_preserves_selection
-    (state : CommitState) (events : List Nat) (conflict : Nat) :
-    (resetRouteArm state events).selected conflict = state.selected conflict := by
-  rfl
-
-/-- Route-arm reentry cannot change completion outside the selected arm. -/
-theorem reset_route_arm_preserves_outside_done
-    (state : CommitState) (events : List Nat) (event : Nat)
-    (outside : event ∉ events) :
-    (resetRouteArm state events).done event = state.done event := by
-  simp [resetRouteArm, outside]
-
-/-- Route-arm reentry clears completion for every event in that arm. -/
-theorem reset_route_arm_clears_done
-    (state : CommitState) (events : List Nat) (event : Nat)
-    (inside : event ∈ events) :
-    (resetRouteArm state events).done event = false := by
-  simp [resetRouteArm, inside]
 
 def checkProgramTrace (choreo : Choreo) (role : Nat) (trace : List TraceFrame) : Bool :=
   let graph := projectGraph role choreo

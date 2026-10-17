@@ -1467,6 +1467,23 @@ Hibana.completed_event_word_count_covers_events : ∀ (eventCount : Nat),
 @Hibana.completed_event_word_index_in_bounds : ∀ {step eventCount : Nat},
   @LT.lt.{0} Nat instLTNat step eventCount →
     @LT.lt.{0} Nat instLTNat (Hibana.completedEventWordIndex step) (Hibana.completedEventWordCount eventCount)
+Hibana.completed_parent_roll_can_restart_at_its_prefix : @Eq.{1} Bool
+  (@List.all.{0} Nat
+    (@List.cons.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0)))
+      (@List.cons.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1))) (@List.nil.{0} Nat)))
+    fun role =>
+    @Option.isSome.{0} Hibana.CommitState
+      (@Option.bind.{0, 0} Hibana.CommitState Hibana.CommitState
+        (Hibana.rollBoundaryRun Hibana.rollBoundaryOuter role
+          (@List.cons.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0)))
+            (@List.cons.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1)))
+              (@List.cons.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 2) (instOfNatNat (nat_lit 2)))
+                (@List.cons.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 5) (instOfNatNat (nat_lit 5)))
+                  (@List.nil.{0} Nat))))))
+        fun state =>
+        Hibana.commitEvent (Hibana.projectGraph role Hibana.rollBoundaryOuter) state
+          (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0)))))
+  true
 @Hibana.completed_roll_has_global_logical_progress : ∀ {config : Hibana.GlobalConfig} {rollId : Nat}
   {globalRoll : Hibana.GlobalRoll},
   @Eq.{1} Hibana.GlobalSessionStatus config.status Hibana.GlobalSessionStatus.live →
@@ -2531,6 +2548,37 @@ Hibana.excluded_exact_current_offer_cannot_authorize_retention : ∀ (target : H
       (@some.{0} (Prod.{0, 0} Hibana.GlobalOperation Hibana.GlobalConfig)
         (@Prod.mk.{0, 0} Hibana.GlobalOperation Hibana.GlobalConfig operation next)) →
     @Eq.{1} (Option.{0} Hibana.GlobalConfig) (config.step? operation) (@some.{0} Hibana.GlobalConfig next)
+Hibana.explicit_child_roll_can_change_arm_before_its_parent_suffix : @Eq.{1} Bool
+  (@List.all.{0} Nat
+    (@List.cons.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0)))
+      (@List.cons.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1))) (@List.nil.{0} Nat)))
+    fun role =>
+    @Option.isSome.{0} Hibana.CommitState
+      (@Option.bind.{0, 0} Hibana.CommitState Hibana.CommitState
+        (Hibana.rollBoundaryRun Hibana.rollBoundaryNested role
+          (@List.cons.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0)))
+            (@List.cons.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1)))
+              (@List.cons.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 2) (instOfNatNat (nat_lit 2))) (@List.nil.{0} Nat)))))
+        fun state =>
+        Hibana.commitEvent (Hibana.projectGraph role Hibana.rollBoundaryNested) state
+          (@OfNat.ofNat.{0} Nat (nat_lit 3) (instOfNatNat (nat_lit 3)))))
+  true
+Hibana.explicit_child_roll_keeps_its_parent_prefix : @Eq.{1} Bool
+  (@List.all.{0} Nat
+    (@List.cons.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0)))
+      (@List.cons.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1))) (@List.nil.{0} Nat)))
+    fun role =>
+    @Option.getD.{0} Bool
+      (@Option.map.{0, 0} Hibana.CommitState Bool
+        (fun state => state.done (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0))))
+        (Hibana.rollBoundaryRun Hibana.rollBoundaryNested role
+          (@List.cons.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0)))
+            (@List.cons.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1)))
+              (@List.cons.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 2) (instOfNatNat (nat_lit 2)))
+                (@List.cons.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 3) (instOfNatNat (nat_lit 3)))
+                  (@List.nil.{0} Nat)))))))
+      false)
+  true
 @Hibana.failed_lease_allocation_preserves_state : ∀ {state : Hibana.LeaseAllocatorState}
   {requiredTableSlots payloadBytes : Nat} {plannedImageFrontier payloadOffset : Option.{0} Nat} {publishReady : Bool}
   {failure : Hibana.LeaseAllocationFailure},
@@ -3187,9 +3235,6 @@ Hibana.matching_ready_evidence_consumption_is_exact : ∀ (arm : Hibana.RouteArm
                 (@some.{0} Nat binding.receiverActor)))
 Hibana.max_lease_generation_is_exhausted : @Eq.{1} (Option.{0} Nat)
   (Hibana.nextLeaseGeneration? Hibana.maxLeaseGeneration) (@none.{0} Nat)
-@Hibana.max_route_conflict_is_permutation_invariant : ∀ {left right : List.{0} Hibana.RouteInfo},
-  @List.Perm.{0} Hibana.RouteInfo left right →
-    @Eq.{1} Nat (Hibana.maxRouteConflict left) (Hibana.maxRouteConflict right)
 Hibana.maximum_issuable_view_generation_exhausts_the_counter : @Eq.{1} (Option.{0} Nat)
   (Hibana.nextViewGeneration?
     (@HSub.hSub.{0, 0, 0} Nat Nat Nat (@instHSub.{0} Nat instSubNat) Hibana.maxViewGeneration
@@ -3233,6 +3278,31 @@ Hibana.mixed_program_session_attach_rejected : ∀ (binding : Hibana.SessionBind
   Hibana.MustCausalHandoff flow sender →
     Hibana.TimedCausalFlowRun origin flow before after →
       @LT.lt.{0} Nat instLTNat (after sender) sent → @LT.lt.{0} Nat instLTNat origin sent
+Hibana.nested_roll_boundary_trace_can_run_twice : @Eq.{1} Bool
+  (@List.all.{0} Nat
+    (@List.cons.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0)))
+      (@List.cons.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1))) (@List.nil.{0} Nat)))
+    fun role =>
+    @Option.isSome.{0} Hibana.CommitState
+      (Hibana.rollBoundaryRun Hibana.rollBoundaryNested role
+        (@List.cons.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0)))
+          (@List.cons.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1)))
+            (@List.cons.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 2) (instOfNatNat (nat_lit 2)))
+              (@List.cons.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 3) (instOfNatNat (nat_lit 3)))
+                (@List.cons.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 4) (instOfNatNat (nat_lit 4)))
+                  (@List.cons.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 3) (instOfNatNat (nat_lit 3)))
+                    (@List.cons.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 4) (instOfNatNat (nat_lit 4)))
+                      (@List.cons.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 5) (instOfNatNat (nat_lit 5)))
+                        (@List.cons.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0)))
+                          (@List.cons.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1)))
+                            (@List.cons.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 2) (instOfNatNat (nat_lit 2)))
+                              (@List.cons.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 3) (instOfNatNat (nat_lit 3)))
+                                (@List.cons.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 4) (instOfNatNat (nat_lit 4)))
+                                  (@List.cons.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 3) (instOfNatNat (nat_lit 3)))
+                                    (@List.cons.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 4) (instOfNatNat (nat_lit 4)))
+                                      (@List.cons.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 5) (instOfNatNat (nat_lit 5)))
+                                        (@List.nil.{0} Nat)))))))))))))))))))
+  true
 @Hibana.next_lease_generation_stays_in_domain : ∀ {current next : Nat},
   @Eq.{1} (Option.{0} Nat) (Hibana.nextLeaseGeneration? current) (@some.{0} Nat next) →
     @LE.le.{0} Nat instLENat next Hibana.maxLeaseGeneration
@@ -4230,14 +4300,6 @@ Hibana.reset_roll_preserves_outside_selection : ∀ (state : Hibana.CommitState)
   (conflict : Nat),
   Not (@Membership.mem.{0, 0} Nat (List.{0} Nat) (@List.instMembership.{0} Nat) roll.conflicts conflict) →
     @Eq.{1} (Option.{0} Hibana.RouteArm) ((Hibana.resetRoll state roll).selected conflict) (state.selected conflict)
-Hibana.reset_route_arm_clears_done : ∀ (state : Hibana.CommitState) (events : List.{0} Nat) (event : Nat),
-  @Membership.mem.{0, 0} Nat (List.{0} Nat) (@List.instMembership.{0} Nat) events event →
-    @Eq.{1} Bool ((Hibana.resetRouteArm state events).done event) false
-Hibana.reset_route_arm_preserves_outside_done : ∀ (state : Hibana.CommitState) (events : List.{0} Nat) (event : Nat),
-  Not (@Membership.mem.{0, 0} Nat (List.{0} Nat) (@List.instMembership.{0} Nat) events event) →
-    @Eq.{1} Bool ((Hibana.resetRouteArm state events).done event) (state.done event)
-Hibana.reset_route_arm_preserves_selection : ∀ (state : Hibana.CommitState) (events : List.{0} Nat) (conflict : Nat),
-  @Eq.{1} (Option.{0} Hibana.RouteArm) ((Hibana.resetRouteArm state events).selected conflict) (state.selected conflict)
 @Hibana.resolveUnique?_eq_some_iff : ∀ {α : Type} {values : List.{0} α} {value : α},
   Iff (@Eq.{1} (Option.{0} α) (@Hibana.resolveUnique? α values) (@some.{0} α value))
     (@Eq.{1} (List.{0} α) values (@List.cons.{0} α value (@List.nil.{0} α)))
@@ -4496,6 +4558,14 @@ Hibana.role_event_bytes_dominate_local_step_field : @LT.lt.{0} Nat instLTNat Hib
             Hibana.StaticRollIteration.current left)
           (Hibana.StaticGlobalOccurrence.inRollIteration (@List.length.{0} Hibana.GlobalEvent body.globalEvents)
             Hibana.StaticRollIteration.next right)
+Hibana.roll_boundary_sources_have_valid_projections : @Eq.{1} Bool
+  (@List.all.{0} Nat
+    (@List.cons.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0)))
+      (@List.cons.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1))) (@List.nil.{0} Nat)))
+    fun role =>
+    (Hibana.projectGraph role Hibana.rollBoundaryOuter).check.and
+      (Hibana.projectGraph role Hibana.rollBoundaryNested).check)
+  true
 Hibana.roll_causal_flow_composes_fresh_visits : ∀ (body : Hibana.Choreo) (earlier later roleCount : Nat)
   (facts : Hibana.CausalRoles),
   @Eq.{1} Hibana.CausalRoles ((body.rollCausalFlow earlier later roleCount).eval facts)
@@ -4976,34 +5046,6 @@ Hibana.scope_topology_difference_has_distinct_registration_keys : ∀ (left righ
 Hibana.sealed_local_membership_rejects_late_attach : ∀ (membership : Hibana.LocalMembership) (role : Nat),
   @Eq.{1} (Option.{0} Hibana.LocalMembership) (Hibana.attachLocalRole? (Hibana.sealLocalMembership membership) role)
     (@none.{0} Hibana.LocalMembership)
-@Hibana.select_innermost_reentry_route_eq_some_iff : ∀ {routes : List.{0} Hibana.RouteInfo} {route : Hibana.RouteInfo},
-  Iff
-    (@Eq.{1} (Option.{0} Hibana.RouteInfo) (Hibana.selectInnermostReentryRoute? routes)
-      (@some.{0} Hibana.RouteInfo route))
-    (@Eq.{1} (List.{0} Hibana.RouteInfo)
-      (@List.filter.{0} Hibana.RouteInfo (fun candidate => candidate.conflict.beq (Hibana.maxRouteConflict routes))
-        routes)
-      (@List.cons.{0} Hibana.RouteInfo route (@List.nil.{0} Hibana.RouteInfo)))
-@Hibana.select_innermost_reentry_route_is_permutation_invariant : ∀ {left right : List.{0} Hibana.RouteInfo}
-  {route : Hibana.RouteInfo},
-  @List.Perm.{0} Hibana.RouteInfo left right →
-    @Eq.{1} (Option.{0} Hibana.RouteInfo) (Hibana.selectInnermostReentryRoute? left)
-        (@some.{0} Hibana.RouteInfo route) →
-      @Eq.{1} (Option.{0} Hibana.RouteInfo) (Hibana.selectInnermostReentryRoute? right)
-        (@some.{0} Hibana.RouteInfo route)
-Hibana.select_innermost_reentry_route_pair_is_order_independent : ∀ (outer inner : Hibana.RouteInfo),
-  @LT.lt.{0} Nat instLTNat outer.conflict inner.conflict →
-    And
-      (@Eq.{1} (Option.{0} Hibana.RouteInfo)
-        (Hibana.selectInnermostReentryRoute?
-          (@List.cons.{0} Hibana.RouteInfo outer
-            (@List.cons.{0} Hibana.RouteInfo inner (@List.nil.{0} Hibana.RouteInfo))))
-        (@some.{0} Hibana.RouteInfo inner))
-      (@Eq.{1} (Option.{0} Hibana.RouteInfo)
-        (Hibana.selectInnermostReentryRoute?
-          (@List.cons.{0} Hibana.RouteInfo inner
-            (@List.cons.{0} Hibana.RouteInfo outer (@List.nil.{0} Hibana.RouteInfo))))
-        (@some.{0} Hibana.RouteInfo inner))
 Hibana.select_innermost_route_arm_equal_range_uses_source_preorder : ∀ (outer inner arm start stop : Nat),
   @LT.lt.{0} Nat instLTNat
       (@HMod.hMod.{0, 0, 0} Nat Nat Nat (@instHMod.{0} Nat Nat.instMod) outer
@@ -5552,6 +5594,24 @@ Hibana.unresolved_dynamic_commit_rejected : @Eq.{1} Bool
       @Eq.{1} Hibana.RouteAuthority route.authority (Hibana.RouteAuthority.dynamic resolver) →
         @Eq.{1} (Option.{0} Hibana.RouteArm) (state.selected membership.conflict) (@none.{0} Hibana.RouteArm) →
           @Eq.{1} Bool (Hibana.eventCommitReady✝ graph state event) false
+Hibana.unrolled_child_cannot_repeat_before_its_parent_suffix : @Eq.{1} Bool
+  (@List.all.{0} Nat
+    (@List.cons.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0)))
+      (@List.cons.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1))) (@List.nil.{0} Nat)))
+    fun role =>
+    @List.all.{0} Nat
+      (@List.cons.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1)))
+        (@List.cons.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 3) (instOfNatNat (nat_lit 3))) (@List.nil.{0} Nat)))
+      fun event =>
+      (@Option.isSome.{0} Hibana.CommitState
+          (@Option.bind.{0, 0} Hibana.CommitState Hibana.CommitState
+            (Hibana.rollBoundaryRun Hibana.rollBoundaryOuter role
+              (@List.cons.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0)))
+                (@List.cons.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1)))
+                  (@List.cons.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 2) (instOfNatNat (nat_lit 2)))
+                    (@List.nil.{0} Nat)))))
+            fun state => Hibana.commitEvent (Hibana.projectGraph role Hibana.rollBoundaryOuter) state event)).not)
+  true
 @Hibana.valid_route_arm_publication_is_exact : ∀ {state : Hibana.RouteAuthorityPublication} {raw : Nat}
   {arm : Hibana.RouteArm},
   @Eq.{1} (Option.{0} Hibana.RouteArm) (Hibana.decodeRouteArm? raw) (@some.{0} Hibana.RouteArm arm) →
