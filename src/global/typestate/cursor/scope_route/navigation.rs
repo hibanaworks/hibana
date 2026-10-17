@@ -2,7 +2,7 @@ use super::super::{
     ARM_SHARED, CursorInvariantError, EventCursor, InboundFrameKey, LocalAction,
     PackedEventConflict, RouteScopeRows, ScopeId, StateIndex, state_index_to_usize,
 };
-use crate::global::{const_dsl::ScopeKind, typestate::LocalConflict};
+use crate::global::typestate::LocalConflict;
 
 impl EventCursor {
     pub(crate) fn deeper_route_scope(&self, current: ScopeId, candidate: ScopeId) -> ScopeId {
@@ -259,32 +259,9 @@ impl EventCursor {
     /// controller here. Kernel entry must also check its active logical view.
     #[inline]
     pub(crate) fn contains_route_controller(&self, scope_id: ScopeId) -> bool {
-        if !matches!(scope_id.kind(), Some(ScopeKind::Route)) {
-            return false;
-        }
-        let Some(slot) = self.route_scope_slot_inner(scope_id) else {
-            return false;
-        };
-        let controller = self.machine().route_controller_role(scope_id);
-        for arm in 0..=1 {
-            let Some(row) = self
-                .machine()
-                .event_program()
-                .route_arm_event_row_by_slot(slot, arm)
-            else {
-                continue;
-            };
-            if row.start() < row.end()
-                && matches!(
-                    self.action_at(row.start()),
-                    LocalAction::Send { .. } | LocalAction::Local { .. }
-                )
-                && self.logical_role_at(row.start()) == Some(controller)
-            {
-                return true;
-            }
-        }
-        false
+        self.machine()
+            .event_program()
+            .contains_route_controller(scope_id)
     }
 
     /// Scope ID stored on the current node (no parent traversal).

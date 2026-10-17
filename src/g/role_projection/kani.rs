@@ -1,13 +1,10 @@
-//! Query production cursor navigation over the actual owned role images.
+//! Query the production cursor's immutable controller facts on real role images.
 use super::RoleProjection;
+use crate::global::event_program::LocalEventProgram;
 use crate::global::{
-    compiled::images::RoleDescriptorRef,
-    const_dsl::ScopeId,
-    role_program::RoleImageRef,
-    typestate::{EventCursor, EventCursorState},
+    compiled::images::RoleDescriptorRef, const_dsl::ScopeId, role_program::RoleImageRef,
 };
 use crate::{Endpoint, g};
-use core::mem::MaybeUninit;
 
 type Loan = g::Msg<1, Endpoint<'static, 10>>;
 type Read = g::Msg<2, u32>;
@@ -36,29 +33,18 @@ fn controls(rows: &'static RoleImageRef, raw_scope: u16) -> bool {
     };
     let descriptor = RoleDescriptorRef::from_resident(rows);
     assert_eq!(descriptor.logical_lane_count(), 1);
-    assert!(descriptor.local_len() <= 32);
-    let mut state = MaybeUninit::<EventCursorState>::uninit();
-    let mut cursor = MaybeUninit::<EventCursor>::uninit();
-    let mut heads = [0; 1];
-    let mut labels = [0; 1];
-    let mut completed = [0; 1];
-    // SAFETY: disjoint backing columns stay stationary through the query and
-    // have the descriptor's exact lane domain and sufficient completion bits.
-    unsafe {
-        EventCursor::init_from_compiled(
-            cursor.as_mut_ptr(),
-            state.as_mut_ptr(),
-            heads.as_mut_ptr(),
-            labels.as_mut_ptr(),
-            completed.as_mut_ptr(),
-            descriptor,
-        );
-        cursor.assume_init_ref().contains_route_controller(scope)
-    }
+    assert!(descriptor.local_len() <= 6);
+    // The cursor delegates to this same production query. Mutable progress
+    // initialization cannot affect controller membership and is not fabricated
+    // as part of this read-only obligation.
+    LocalEventProgram::from_rows(rows).contains_route_controller(scope)
 }
 
 #[kani::proof]
-#[kani::unwind(32)]
+// These exact images have at most six local rows and one route. The largest
+// loop copies a nine-byte atom; ten includes its terminating iteration.
+// All scope values remain symbolic and unwinding assertions stay enabled.
+#[kani::unwind(10)]
 fn initial_resource_issuance_cannot_confer_later_route_control() {
     let raw_scope: u16 = kani::any();
     assert!(!controls(
@@ -68,7 +54,7 @@ fn initial_resource_issuance_cannot_confer_later_route_control() {
 }
 
 #[kani::proof]
-#[kani::unwind(32)]
+#[kani::unwind(10)]
 fn received_controller_view_has_only_its_projected_route() {
     let raw_scope: u16 = kani::any();
     assert_eq!(

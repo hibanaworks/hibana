@@ -131,6 +131,32 @@ impl LocalEventProgram {
         self.rows().route_scope_slot(scope_id)
     }
 
+    /// Immutable controller membership. Live issuance and the caller's active
+    /// logical view remain separate kernel checks.
+    pub(crate) fn contains_route_controller(&self, scope: ScopeId) -> bool {
+        let Some(slot) = self.route_scope_slot(scope) else {
+            return false;
+        };
+        let controller = self.program_ref().route_controller_role(scope);
+        for arm in 0..=1 {
+            let Some(row) = self.route_arm_event_row_by_slot(slot, arm) else {
+                continue;
+            };
+            if row.start() < row.end() {
+                let eff = match self.node(row.start()).action() {
+                    LocalAction::Send { eff_index, .. } | LocalAction::Local { eff_index, .. } => {
+                        eff_index
+                    }
+                    LocalAction::Recv { .. } | LocalAction::Terminate => continue,
+                };
+                if self.program_ref().event_atom_at(eff.dense_ordinal()).from == controller {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
     #[inline(always)]
     pub(crate) fn route_scope_reentry(&self, scope_id: ScopeId) -> bool {
         self.route_scope_slot(scope_id)
