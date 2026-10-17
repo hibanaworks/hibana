@@ -262,8 +262,8 @@ can change arms while preserving the parent prefix. The complete nested trace
 runs twice. Before the parent suffix, both the completed arm and the unused
 alternative are rejected. These six kernel proofs replace seven lemmas about the removed
 route-only reset and its unused selector. Including the transfer model below,
-the static inventory is 865, with 481 using `propext` and `Quot.sound`,
-278 using only `propext`, and 106 axiom-free. The three additional
+the static inventory is 875, with 489 using `propext` and `Quot.sound`,
+280 using only `propext`, and 106 axiom-free. The three additional
 `PublicOperationKernel.lean` claims cover the owned-send payload borrow:
 other resource-dependent work waits, that payload's own transfer may finish,
 and an unborrowed view gains no extra dependency. The generated Rust table
@@ -293,7 +293,7 @@ the issued view and progress unchanged, and that returned Endpoint performs
 the next request and reply. Independent final transfers are driven with
 `join!`; the observations do not schedule them.
 
-Its 57 kernel claims check all eleven snapshots, four source-ordered owned
+Its 63 kernel claims check all eleven snapshots, four source-ordered owned
 commits, exact issued and retired view tags, and the nine-step transfer
 execution. The existing conservation
 theorems then distinguish the two private sender witnesses from the single
@@ -301,6 +301,20 @@ application authority. Treating the unpolled payload as another application
 value is inconsistent with that execution. Value placement is observed at
 the Rust move/drop boundaries; this concrete correspondence is not an
 extraction of every possible Rust execution or a proof of source readiness.
+
+`SourceResourceAvailability.lean` preserves the exact received value across
+arbitrary finite suffixes of the existing affine transfer model, including
+unpolled/pending private futures and completed sender witnesses. It either
+locates that value in application code/private future, or exhibits a concrete
+later handoff or retirement while that value was still present. An accepted
+frame likewise remains the exact receipt until consumption or carrier fencing.
+The source-checked send/receive theorems apply these results to the projected
+physical actor and the ordered carrier. The send theorem explicitly binds the
+observation's inserted frame to the carrier's accepted frame. The actual
+two-runtime fixture applies both general suffix results to its loan and return
+and checks both receiver actor identities. These results do not yet establish
+all source-ready admission, fresh visits, observable terminal faults or general
+distributed progress. No predicate here is a runtime ownership/progress store.
 
 The twelve general transfer theorems assume execution follows the stated steps.
 They do not establish that every Rust execution has that abstraction, that a

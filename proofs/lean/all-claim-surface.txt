@@ -238,8 +238,18 @@ Hibana.EndpointDelegation.withOwner_same : ∀ (owners : Hibana.EndpointDelegati
                                 (@List.cons.{0} Hibana.TransportFrame frame (@List.nil.{0} Hibana.TransportFrame))))
                             (And (@Eq.{1} Hibana.TransportChannel frame.channel before.channel)
                               (And (@Eq.{1} Nat frame.sequence (@List.length.{0} Hibana.TransportFrame before.frames))
-                                (@Eq.{1} (Fin (@OfNat.ofNat.{0} Nat (nat_lit 256) (instOfNatNat (nat_lit 256))))
-                                  frame.frameLabel label))))))
+                                (And
+                                  (@Eq.{1} (Fin (@OfNat.ofNat.{0} Nat (nat_lit 256) (instOfNatNat (nat_lit 256))))
+                                    frame.frameLabel label)
+                                  (@Eq.{1} (List.{0} Hibana.TransportFrame)
+                                    (@Hibana.EndpointTransfer.Observation.inFlight View Hibana.TransportFrame next)
+                                    (@HAppend.hAppend.{0, 0, 0} (List.{0} Hibana.TransportFrame)
+                                      (List.{0} Hibana.TransportFrame) (List.{0} Hibana.TransportFrame)
+                                      (@instHAppendOfAppend.{0} (List.{0} Hibana.TransportFrame)
+                                        (@List.instAppend.{0} Hibana.TransportFrame))
+                                      (@Hibana.EndpointTransfer.Observation.inFlight View Hibana.TransportFrame state)
+                                      (@List.cons.{0} Hibana.TransportFrame frame
+                                        (@List.nil.{0} Hibana.TransportFrame))))))))))
 @Hibana.EndpointTransfer.receive_does_not_require_sender_publication : ∀ {View Frame : Type} (sender receiver : View)
   (frame : Frame),
   @Exists.{1} (Hibana.EndpointTransfer.Observation View Frame) fun state =>
@@ -1814,6 +1824,10 @@ Hibana.causal_flow_monotone : ∀ (flow : Hibana.CausalFlowExpr) {left right : H
   {before after : Hibana.CausalRoleTimes},
   Hibana.TimedCausalFlowRun origin flow before after →
     ∀ {facts : Hibana.CausalRoles}, facts.SoundAt origin before → (flow.eval facts).SoundAt origin after
+@Hibana.checked_actor_commit_preserves_actor_and_run : ∀ {sample : Hibana.ActorCommitObservation}
+  {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo},
+  @Eq.{1} Bool (sample.check image choreo) true →
+    And (@Eq.{1} Nat sample.after.actor sample.before.actor) (@Eq.{1} Nat sample.after.run sample.before.run)
 @Hibana.checked_actor_reference_resolves_within_its_descriptor_bound : ∀ {columns : Hibana.DecodedProgramColumns}
   {selected : Nat → Option.{0} Hibana.RouteArm} {roleCount reference : Nat} {scopes : List.{0} Nat},
   (∀ (index : Nat) (row : Hibana.DecodedActorDecision),
@@ -1882,6 +1896,14 @@ Hibana.causal_flow_monotone : ∀ (flow : Hibana.CausalFlowExpr) {left right : H
           @Eq.{1} (List.{0} Nat) sent.payload received.payload →
             And (@Eq.{1} Hibana.EndpointDelegation.EndpointKey senderFacts.resource receiverFacts.resource)
               (@Eq.{1} Nat senderFacts.effIndex receiverFacts.effIndex)
+@Hibana.checked_owned_receive_publishes_its_projected_actor : ∀ {sample : Hibana.ActorCommitObservation}
+  {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo} {wire : Hibana.OwnedWireObservation} {session : Nat}
+  {facts : Hibana.OwnedCommitFacts},
+  @Eq.{1} Bool (sample.ownedCheck image choreo wire session) true →
+    @Eq.{1} (Option.{0} Hibana.OwnedCommitFacts) (sample.ownedFacts? image choreo)
+        (@some.{0} Hibana.OwnedCommitFacts facts) →
+      @Eq.{1} Hibana.EndpointDelegation.Side facts.side Hibana.EndpointDelegation.Side.receive →
+        @Eq.{1} Nat sample.after.actor facts.binding.receiverActor
 @Hibana.checked_pairs_have_equal_source_readiness : ∀ {expected : Nat → List.{0} Nat} {actual : List.{0} Nat}
   {event : Nat} {state : Hibana.CommitState},
   @Eq.{1} Bool
@@ -4435,6 +4457,27 @@ Hibana.offered_receipt_blocks_second_poll : ∀ (before after : Hibana.Transport
             (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1)))))
         (@some.{0} Nat final) →
       @Eq.{1} Bool (Hibana.viewHandleMatches run issued headerRun final) false
+@Hibana.one_queued_authority_is_the_exact_frame : ∀ {Frame View : Type} {frame : Frame}
+  {state : Hibana.EndpointTransfer.Observation View Frame},
+  @LE.le.{0} Nat instLENat (@Hibana.EndpointTransfer.Observation.authorityCount View Frame state)
+      (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1))) →
+    @Membership.mem.{0, 0} Frame (List.{0} Frame) (@List.instMembership.{0} Frame)
+        (@Hibana.EndpointTransfer.Observation.inFlight View Frame state) frame →
+      @Hibana.TransferFrameLocated Frame View frame state
+@Hibana.one_usable_authority_is_the_exact_value : ∀ {View Frame : Type} {value : View}
+  {state : Hibana.EndpointTransfer.Observation View Frame},
+  @LE.le.{0} Nat instLENat (@Hibana.EndpointTransfer.Observation.authorityCount View Frame state)
+      (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1))) →
+    @Membership.mem.{0, 0} View (List.{0} View) (@List.instMembership.{0} View)
+        (@Hibana.EndpointTransfer.Observation.usable View Frame state) value →
+      And
+        (@Eq.{1} (List.{0} View) (@Hibana.EndpointTransfer.Observation.usable View Frame state)
+          (@List.cons.{0} View value (@List.nil.{0} View)))
+        (And
+          (@Eq.{1} (List.{0} View) (@Hibana.EndpointTransfer.Observation.preparing View Frame state)
+            (@List.nil.{0} View))
+          (@Eq.{1} (List.{0} Frame) (@Hibana.EndpointTransfer.Observation.inFlight View Frame state)
+            (@List.nil.{0} Frame)))
 Hibana.optional_packed_u16_index_acceptance_is_exact : ∀ (row : Nat),
   Iff (@Eq.{1} Bool (@Option.isSome.{0} Nat (Hibana.encodeOptionalPackedU16Index? row)) true)
     (@LT.lt.{0} Nat instLTNat row Hibana.packedU16Absent)
@@ -6437,6 +6480,213 @@ Hibana.sequential_input_guards_both_parallel_arms : ∀ (entry split exit left r
                                 (@Prod.mk.{0, 0} Nat Hibana.EndpointDelegation.Binding event binding))
                         run.bindings)
                       (@some.{0} (List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)) path.bindings)))))
+@Hibana.source_checked_receipt_keeps_the_exact_value_until_its_next_boundary : ∀
+  {sample : Hibana.ActorCommitObservation} {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo}
+  {wire : Hibana.OwnedWireObservation} {session : Nat} {facts : Hibana.OwnedCommitFacts},
+  @Eq.{1} Bool (sample.ownedCheck image choreo wire session) true →
+    @Eq.{1} (Option.{0} Hibana.OwnedCommitFacts) (sample.ownedFacts? image choreo)
+        (@some.{0} Hibana.OwnedCommitFacts facts) →
+      @Eq.{1} Hibana.EndpointDelegation.Side facts.side Hibana.EndpointDelegation.Side.receive →
+        ∀ {carrier : Hibana.CarrierSemantics} {abstraction : carrier.State → Hibana.TransportBoundaryState}
+          {Fairness : Prop},
+          Hibana.CarrierProfile.ordered.Holds carrier abstraction Fairness →
+            ∀ {current offered committed : carrier.State} {frame : Hibana.TransportFrame}
+              {before : Hibana.TransportState}
+              {state :
+                Hibana.EndpointTransfer.Observation (Prod.{0, 0} Nat Hibana.ActorViewObservation) Hibana.TransportFrame}
+              {rest : List.{0} Hibana.TransportFrame} (initialView : Prod.{0, 0} Nat Hibana.ActorViewObservation),
+              @Hibana.EndpointTransfer.Execution (Prod.{0, 0} Nat Hibana.ActorViewObservation) Hibana.TransportFrame
+                  (@Hibana.EndpointTransfer.initial (Prod.{0, 0} Nat Hibana.ActorViewObservation) Hibana.TransportFrame
+                    initialView)
+                  state →
+                @Eq.{1} Hibana.TransportBoundaryState (abstraction current)
+                    (Hibana.TransportBoundaryState.idle before) →
+                  before.WellFormed →
+                    @Eq.{1} (Hibana.CarrierPoll carrier.State) (carrier.pollReceive current)
+                        (@Hibana.CarrierPoll.delivered carrier.State frame offered) →
+                      @Eq.{1} (Option.{0} carrier.State) (carrier.resolve offered Hibana.ReceiptResolution.commit)
+                          (@some.{0} carrier.State committed) →
+                        wire.identifies frame →
+                          @Eq.{1} (List.{0} Hibana.TransportFrame)
+                              (@Hibana.EndpointTransfer.Observation.inFlight
+                                (Prod.{0, 0} Nat Hibana.ActorViewObservation) Hibana.TransportFrame state)
+                              (@List.cons.{0} Hibana.TransportFrame frame rest) →
+                            And (@Eq.{1} Nat sample.after.actor facts.binding.receiverActor)
+                              (And (sample.SourceOrdered image choreo)
+                                (@Exists.{1}
+                                  (Hibana.EndpointTransfer.Observation (Prod.{0, 0} Nat Hibana.ActorViewObservation)
+                                    Hibana.TransportFrame)
+                                  fun next =>
+                                  @Exists.{1} Hibana.TransportState fun after =>
+                                    And
+                                      (@Hibana.EndpointTransfer.Step (Prod.{0, 0} Nat Hibana.ActorViewObservation)
+                                        Hibana.TransportFrame Hibana.EndpointTransfer.Action.receive state next)
+                                      (And
+                                        (@Hibana.TransferValueLocated (Prod.{0, 0} Nat Hibana.ActorViewObservation)
+                                          Hibana.TransportFrame
+                                          (@Prod.mk.{0, 0} Nat Hibana.ActorViewObservation sample.after.actor
+                                            facts.afterView)
+                                          next)
+                                        (And
+                                          (@Eq.{1} Hibana.TransportBoundaryState (abstraction committed)
+                                            (Hibana.TransportBoundaryState.idle after))
+                                          (And (@LT.lt.{0} Nat instLTNat before.delivered after.delivered)
+                                            (∀
+                                              (final :
+                                                Hibana.EndpointTransfer.Observation
+                                                  (Prod.{0, 0} Nat Hibana.ActorViewObservation) Hibana.TransportFrame),
+                                              @Hibana.EndpointTransfer.Execution
+                                                  (Prod.{0, 0} Nat Hibana.ActorViewObservation) Hibana.TransportFrame
+                                                  next final →
+                                                Or
+                                                  (@Hibana.TransferValueLocated
+                                                    (Prod.{0, 0} Nat Hibana.ActorViewObservation) Hibana.TransportFrame
+                                                    (@Prod.mk.{0, 0} Nat Hibana.ActorViewObservation sample.after.actor
+                                                      facts.afterView)
+                                                    final)
+                                                  (@Exists.{1}
+                                                    (Hibana.EndpointTransfer.Observation
+                                                      (Prod.{0, 0} Nat Hibana.ActorViewObservation)
+                                                      Hibana.TransportFrame)
+                                                    fun prior =>
+                                                    @Exists.{1}
+                                                      (Hibana.EndpointTransfer.Observation
+                                                        (Prod.{0, 0} Nat Hibana.ActorViewObservation)
+                                                        Hibana.TransportFrame)
+                                                      fun following =>
+                                                      @Exists.{1} Hibana.EndpointTransfer.Action fun action =>
+                                                        And
+                                                          (@Hibana.EndpointTransfer.Execution
+                                                            (Prod.{0, 0} Nat Hibana.ActorViewObservation)
+                                                            Hibana.TransportFrame next prior)
+                                                          (And
+                                                            (@Hibana.EndpointTransfer.Step
+                                                              (Prod.{0, 0} Nat Hibana.ActorViewObservation)
+                                                              Hibana.TransportFrame action prior following)
+                                                            (And
+                                                              (@Hibana.TransferValueLocated
+                                                                (Prod.{0, 0} Nat Hibana.ActorViewObservation)
+                                                                Hibana.TransportFrame
+                                                                (@Prod.mk.{0, 0} Nat Hibana.ActorViewObservation
+                                                                  sample.after.actor facts.afterView)
+                                                                prior)
+                                                              (And
+                                                                (Or
+                                                                  (@Eq.{1} Hibana.EndpointTransfer.Action action
+                                                                    Hibana.EndpointTransfer.Action.accept)
+                                                                  (Or
+                                                                    (@Eq.{1} Hibana.EndpointTransfer.Action action
+                                                                      Hibana.EndpointTransfer.Action.abandonPreparation)
+                                                                    (@Eq.{1} Hibana.EndpointTransfer.Action action
+                                                                      Hibana.EndpointTransfer.Action.dropValue)))
+                                                                (@Hibana.EndpointTransfer.Execution
+                                                                  (Prod.{0, 0} Nat Hibana.ActorViewObservation)
+                                                                  Hibana.TransportFrame following final)))))))))))
+@Hibana.source_checked_send_keeps_the_exact_frame_until_receive_or_fence : ∀ {sample : Hibana.ActorCommitObservation}
+  {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo} {wire : Hibana.OwnedWireObservation} {session : Nat}
+  {facts : Hibana.OwnedCommitFacts},
+  @Eq.{1} Bool (sample.ownedCheck image choreo wire session) true →
+    @Eq.{1} (Option.{0} Hibana.OwnedCommitFacts) (sample.ownedFacts? image choreo)
+        (@some.{0} Hibana.OwnedCommitFacts facts) →
+      @Eq.{1} Hibana.EndpointDelegation.Side facts.side Hibana.EndpointDelegation.Side.send →
+        ∀ {carrier : Hibana.CarrierSemantics} {abstraction : carrier.State → Hibana.TransportBoundaryState}
+          {Fairness : Prop},
+          Hibana.CarrierProfile.ordered.Holds carrier abstraction Fairness →
+            ∀ {current accepted : carrier.State} {before : Hibana.TransportState}
+              {state :
+                Hibana.EndpointTransfer.Observation (Prod.{0, 0} Nat Hibana.ActorViewObservation) Hibana.TransportFrame}
+              {left right : List.{0} (Prod.{0, 0} Nat Hibana.ActorViewObservation)}
+              (initialView sending : Prod.{0, 0} Nat Hibana.ActorViewObservation)
+              (label : Fin (@OfNat.ofNat.{0} Nat (nat_lit 256) (instOfNatNat (nat_lit 256)))),
+              @Eq.{1} (Option.{0} (Prod.{0, 0} Nat Hibana.ActorViewObservation))
+                  (@Option.map.{0, 0} Hibana.ActorViewObservation (Prod.{0, 0} Nat Hibana.ActorViewObservation)
+                    (fun view => @Prod.mk.{0, 0} Nat Hibana.ActorViewObservation sample.before.actor view)
+                    (Hibana.observedActorView? sample.before facts.resource.role))
+                  (@some.{0} (Prod.{0, 0} Nat Hibana.ActorViewObservation) sending) →
+                @Hibana.EndpointTransfer.Execution (Prod.{0, 0} Nat Hibana.ActorViewObservation) Hibana.TransportFrame
+                    (@Hibana.EndpointTransfer.initial (Prod.{0, 0} Nat Hibana.ActorViewObservation)
+                      Hibana.TransportFrame initialView)
+                    state →
+                  @Eq.{1} (List.{0} (Prod.{0, 0} Nat Hibana.ActorViewObservation))
+                      (@Hibana.EndpointTransfer.Observation.preparing (Prod.{0, 0} Nat Hibana.ActorViewObservation)
+                        Hibana.TransportFrame state)
+                      (@HAppend.hAppend.{0, 0, 0} (List.{0} (Prod.{0, 0} Nat Hibana.ActorViewObservation))
+                        (List.{0} (Prod.{0, 0} Nat Hibana.ActorViewObservation))
+                        (List.{0} (Prod.{0, 0} Nat Hibana.ActorViewObservation))
+                        (@instHAppendOfAppend.{0} (List.{0} (Prod.{0, 0} Nat Hibana.ActorViewObservation))
+                          (@List.instAppend.{0} (Prod.{0, 0} Nat Hibana.ActorViewObservation)))
+                        left (@List.cons.{0} (Prod.{0, 0} Nat Hibana.ActorViewObservation) sending right)) →
+                    @Eq.{1} Hibana.TransportBoundaryState (abstraction current)
+                        (Hibana.TransportBoundaryState.idle before) →
+                      @Eq.{1} (Option.{0} carrier.State) (carrier.send current label)
+                          (@some.{0} carrier.State accepted) →
+                        wire.identifies
+                            { channel := before.channel,
+                              sequence := @List.length.{0} Hibana.TransportFrame before.frames, frameLabel := label } →
+                          And
+                            (@Eq.{1} Nat (@Prod.fst.{0, 0} Nat Hibana.ActorViewObservation sending)
+                              facts.binding.senderActor)
+                            (And (sample.SourceOrdered image choreo)
+                              (And (@Eq.{1} (List.{0} Nat) wire.payload facts.envelope)
+                                (@Exists.{1}
+                                  (Hibana.EndpointTransfer.Observation (Prod.{0, 0} Nat Hibana.ActorViewObservation)
+                                    Hibana.TransportFrame)
+                                  fun next =>
+                                  @Exists.{1} Hibana.TransportFrame fun frame =>
+                                    @Exists.{1} Hibana.TransportState fun after =>
+                                      And
+                                        (@Hibana.EndpointTransfer.Step (Prod.{0, 0} Nat Hibana.ActorViewObservation)
+                                          Hibana.TransportFrame Hibana.EndpointTransfer.Action.accept state next)
+                                        (And
+                                          (@Hibana.TransferFrameLocated Hibana.TransportFrame
+                                            (Prod.{0, 0} Nat Hibana.ActorViewObservation) frame next)
+                                          (And
+                                            (@Eq.{1} Hibana.TransportBoundaryState (abstraction accepted)
+                                              (Hibana.TransportBoundaryState.idle after))
+                                            (And (wire.identifies frame)
+                                              (∀
+                                                (final :
+                                                  Hibana.EndpointTransfer.Observation
+                                                    (Prod.{0, 0} Nat Hibana.ActorViewObservation)
+                                                    Hibana.TransportFrame),
+                                                @Hibana.EndpointTransfer.Execution
+                                                    (Prod.{0, 0} Nat Hibana.ActorViewObservation) Hibana.TransportFrame
+                                                    next final →
+                                                  Or
+                                                    (@Hibana.TransferFrameLocated Hibana.TransportFrame
+                                                      (Prod.{0, 0} Nat Hibana.ActorViewObservation) frame final)
+                                                    (@Exists.{1}
+                                                      (Hibana.EndpointTransfer.Observation
+                                                        (Prod.{0, 0} Nat Hibana.ActorViewObservation)
+                                                        Hibana.TransportFrame)
+                                                      fun prior =>
+                                                      @Exists.{1}
+                                                        (Hibana.EndpointTransfer.Observation
+                                                          (Prod.{0, 0} Nat Hibana.ActorViewObservation)
+                                                          Hibana.TransportFrame)
+                                                        fun following =>
+                                                        @Exists.{1} Hibana.EndpointTransfer.Action fun action =>
+                                                          And
+                                                            (@Hibana.EndpointTransfer.Execution
+                                                              (Prod.{0, 0} Nat Hibana.ActorViewObservation)
+                                                              Hibana.TransportFrame next prior)
+                                                            (And
+                                                              (@Hibana.EndpointTransfer.Step
+                                                                (Prod.{0, 0} Nat Hibana.ActorViewObservation)
+                                                                Hibana.TransportFrame action prior following)
+                                                              (And
+                                                                (@Hibana.TransferFrameLocated Hibana.TransportFrame
+                                                                  (Prod.{0, 0} Nat Hibana.ActorViewObservation) frame
+                                                                  prior)
+                                                                (And
+                                                                  (Or
+                                                                    (@Eq.{1} Hibana.EndpointTransfer.Action action
+                                                                      Hibana.EndpointTransfer.Action.receive)
+                                                                    (@Eq.{1} Hibana.EndpointTransfer.Action action
+                                                                      Hibana.EndpointTransfer.Action.fenceFrame))
+                                                                  (@Hibana.EndpointTransfer.Execution
+                                                                    (Prod.{0, 0} Nat Hibana.ActorViewObservation)
+                                                                    Hibana.TransportFrame following final))))))))))))
 @Hibana.source_complete_row_has_no_pending_view_requirement : ∀ {snapshot : Hibana.ActorProgressObservation}
   {role : Nat} {path : Hibana.EndpointDelegation.NormalizedPath} {row : Hibana.DecodedActorRow},
   @Eq.{1} (Option.{0} Bool) (Hibana.sourceRetirementRowComplete? snapshot role path row) (@some.{0} Bool true) →
@@ -6843,6 +7093,39 @@ Hibana.terminal_public_operation_clear_is_exact : ∀ (current : Hibana.PublicOp
 Hibana.trace_checker_sound : ∀ (graph : Hibana.EventGraph) (state : Hibana.CommitState)
   (trace : List.{0} Hibana.TraceFrame),
   @Eq.{1} Bool (Hibana.checkTrace graph state trace) true → Hibana.ValidTrace graph state trace
+@Hibana.transfer_execution_keeps_the_frame_until_receive_or_fence : ∀ {Frame View : Type} {frame : Frame}
+  {before after : Hibana.EndpointTransfer.Observation View Frame},
+  @Hibana.EndpointTransfer.Execution View Frame before after →
+    @Hibana.TransferFrameLocated Frame View frame before →
+      Or (@Hibana.TransferFrameLocated Frame View frame after)
+        (@Exists.{1} (Hibana.EndpointTransfer.Observation View Frame) fun prior =>
+          @Exists.{1} (Hibana.EndpointTransfer.Observation View Frame) fun next =>
+            @Exists.{1} Hibana.EndpointTransfer.Action fun action =>
+              And (@Hibana.EndpointTransfer.Execution View Frame before prior)
+                (And (@Hibana.EndpointTransfer.Step View Frame action prior next)
+                  (And (@Hibana.TransferFrameLocated Frame View frame prior)
+                    (And
+                      (Or (@Eq.{1} Hibana.EndpointTransfer.Action action Hibana.EndpointTransfer.Action.receive)
+                        (@Eq.{1} Hibana.EndpointTransfer.Action action Hibana.EndpointTransfer.Action.fenceFrame))
+                      (@Hibana.EndpointTransfer.Execution View Frame next after)))))
+@Hibana.transfer_execution_keeps_the_value_until_handoff_or_retirement : ∀ {View Frame : Type} {value : View}
+  {before after : Hibana.EndpointTransfer.Observation View Frame},
+  @Hibana.EndpointTransfer.Execution View Frame before after →
+    @Hibana.TransferValueLocated View Frame value before →
+      Or (@Hibana.TransferValueLocated View Frame value after)
+        (@Exists.{1} (Hibana.EndpointTransfer.Observation View Frame) fun prior =>
+          @Exists.{1} (Hibana.EndpointTransfer.Observation View Frame) fun next =>
+            @Exists.{1} Hibana.EndpointTransfer.Action fun action =>
+              And (@Hibana.EndpointTransfer.Execution View Frame before prior)
+                (And (@Hibana.EndpointTransfer.Step View Frame action prior next)
+                  (And (@Hibana.TransferValueLocated View Frame value prior)
+                    (And
+                      (Or (@Eq.{1} Hibana.EndpointTransfer.Action action Hibana.EndpointTransfer.Action.accept)
+                        (Or
+                          (@Eq.{1} Hibana.EndpointTransfer.Action action
+                            Hibana.EndpointTransfer.Action.abandonPreparation)
+                          (@Eq.{1} Hibana.EndpointTransfer.Action action Hibana.EndpointTransfer.Action.dropValue)))
+                      (@Hibana.EndpointTransfer.Execution View Frame next after)))))
 @Hibana.transfer_execution_loss_has_retirement_boundary : ∀ {View Frame : Type}
   {before after : Hibana.EndpointTransfer.Observation View Frame},
   @Hibana.EndpointTransfer.Execution View Frame before after →
@@ -6858,6 +7141,21 @@ Hibana.trace_checker_sound : ∀ (graph : Hibana.EventGraph) (state : Hibana.Com
                     (Or (@Eq.{1} Hibana.EndpointTransfer.Action action Hibana.EndpointTransfer.Action.dropValue)
                       (@Eq.{1} Hibana.EndpointTransfer.Action action Hibana.EndpointTransfer.Action.fenceFrame)))
                   (@Hibana.EndpointTransfer.Execution View Frame following after)))
+@Hibana.transfer_step_keeps_the_frame_or_consumes_it : ∀ {Frame View : Type} {frame : Frame}
+  {before after : Hibana.EndpointTransfer.Observation View Frame} {action : Hibana.EndpointTransfer.Action},
+  @Hibana.EndpointTransfer.Step View Frame action before after →
+    @Hibana.TransferFrameLocated Frame View frame before →
+      Or (@Hibana.TransferFrameLocated Frame View frame after)
+        (Or (@Eq.{1} Hibana.EndpointTransfer.Action action Hibana.EndpointTransfer.Action.receive)
+          (@Eq.{1} Hibana.EndpointTransfer.Action action Hibana.EndpointTransfer.Action.fenceFrame))
+@Hibana.transfer_step_keeps_the_value_or_crosses_its_boundary : ∀ {View Frame : Type} {value : View}
+  {before after : Hibana.EndpointTransfer.Observation View Frame} {action : Hibana.EndpointTransfer.Action},
+  @Hibana.EndpointTransfer.Step View Frame action before after →
+    @Hibana.TransferValueLocated View Frame value before →
+      Or (@Hibana.TransferValueLocated View Frame value after)
+        (Or (@Eq.{1} Hibana.EndpointTransfer.Action action Hibana.EndpointTransfer.Action.accept)
+          (Or (@Eq.{1} Hibana.EndpointTransfer.Action action Hibana.EndpointTransfer.Action.abandonPreparation)
+            (@Eq.{1} Hibana.EndpointTransfer.Action action Hibana.EndpointTransfer.Action.dropValue)))
 @Hibana.transfer_step_preserves_authority_without_retirement : ∀ {View Frame : Type}
   {action : Hibana.EndpointTransfer.Action} {before after : Hibana.EndpointTransfer.Observation View Frame},
   @Hibana.EndpointTransfer.Step View Frame action before after →

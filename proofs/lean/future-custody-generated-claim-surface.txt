@@ -9,6 +9,9 @@ custodyInitialValueMatchesPendingHeader : Option.map (fun view => (ownerPending.
   some initialValue
 custodyLoanRecvAccepted : custodyLoanRecv.ownedCheck workerImage custodyChoreo loanWire 873 = true
 custodyLoanRecvSourceOrdered : custodyLoanRecv.SourceOrdered workerImage custodyChoreo
+custodyLoanRecvValueBelongsToProjectedActor : Option.map (fun facts => facts.binding.receiverActor)
+    (custodyLoanRecv.ownedFacts? workerImage custodyChoreo) =
+  some custodyLoanRecv.after.actor
 custodyLoanSendAccepted : custodyLoanSend.ownedCheck ownerImage custodyChoreo loanWire 873 = true
 custodyLoanSendSourceOrdered : custodyLoanSend.SourceOrdered ownerImage custodyChoreo
 custodyOldFutureDropUnchanged : ownerRetired = ownerReturned
@@ -24,6 +27,15 @@ custodyPendingProgressUnchanged : ownerPending.progress = ownerBefore.progress
 custodyPendingStep : Step Action.unchanged custodySealed custodyPending
 custodyReceiveStep : Step Action.receive custodySent custodyReceived
 custodyReceivedExecution : Execution custodyInitial custodyReceived
+custodyReceivedKeepsItsExactValueUntilBoundary : ∀ (final : Custody),
+  Execution custodyReceived final →
+    Hibana.TransferValueLocated receivedValue final ∨
+      ∃ prior next action,
+        Execution custodyReceived prior ∧
+          Step action prior next ∧
+            Hibana.TransferValueLocated receivedValue prior ∧
+              (action = Action.accept ∨ action = Action.abandonPreparation ∨ action = Action.dropValue) ∧
+                Execution next final
 custodyReceivedValueMatchesSourceCommit : Option.map
     (fun facts => (custodyLoanRecv.after.actor, facts.afterView.role, facts.afterView.run, facts.afterView.nonce))
     (custodyLoanRecv.ownedFacts? workerImage custodyChoreo) =
@@ -37,6 +49,9 @@ custodyReturnFutureDropUnchanged : workerRetired = workerSent
 custodyReturnReceiveStep : Step Action.receive custodyReturnSent custodyReturned
 custodyReturnRecvAccepted : custodyReturnRecv.ownedCheck ownerImage custodyChoreo returnWire 873 = true
 custodyReturnRecvSourceOrdered : custodyReturnRecv.SourceOrdered ownerImage custodyChoreo
+custodyReturnRecvValueBelongsToProjectedActor : Option.map (fun facts => facts.binding.receiverActor)
+    (custodyReturnRecv.ownedFacts? ownerImage custodyChoreo) =
+  some custodyReturnRecv.after.actor
 custodyReturnRetireStep : Step Action.retireAcceptedFuture custodyReturned custodyReturnRetired
 custodyReturnRetiredExecution : Execution custodyInitial custodyReturnRetired
 custodyReturnSealStep : Step Action.seal custodyReceived custodyReturnSealed
@@ -44,8 +59,25 @@ custodyReturnSealedExecution : Execution custodyInitial custodyReturnSealed
 custodyReturnSendAccepted : custodyReturnSend.ownedCheck workerImage custodyChoreo returnWire 873 = true
 custodyReturnSendSourceOrdered : custodyReturnSend.SourceOrdered workerImage custodyChoreo
 custodyReturnSentExecution : Execution custodyInitial custodyReturnSent
+custodyReturnSentKeepsItsExactFrameUntilReceipt : ∀ (final : Custody),
+  Execution custodyReturnSent final →
+    Hibana.TransferFrameLocated returnWire final ∨
+      ∃ prior next action,
+        Execution custodyReturnSent prior ∧
+          Step action prior next ∧
+            Hibana.TransferFrameLocated returnWire prior ∧
+              (action = Action.receive ∨ action = Action.fenceFrame) ∧ Execution next final
 custodyReturnUnpolledRuntimeUnchanged : workerSealed = workerReceived
 custodyReturnedExecution : Execution custodyInitial custodyReturned
+custodyReturnedKeepsItsExactValueUntilBoundary : ∀ (final : Custody),
+  Execution custodyReturned final →
+    Hibana.TransferValueLocated returnedValue final ∨
+      ∃ prior next action,
+        Execution custodyReturned prior ∧
+          Step action prior next ∧
+            Hibana.TransferValueLocated returnedValue prior ∧
+              (action = Action.accept ∨ action = Action.abandonPreparation ∨ action = Action.dropValue) ∧
+                Execution next final
 custodyReturnedTagFresh : returnedValue ≠ initialValue
 custodyReturnedValueMatchesSourceCommit : Option.map
     (fun facts => (custodyReturnRecv.after.actor, facts.afterView.role, facts.afterView.run, facts.afterView.nonce))
@@ -54,6 +86,14 @@ custodyReturnedValueMatchesSourceCommit : Option.map
 custodySealStep : Step Action.seal custodyInitial custodySealed
 custodySealedExecution : Execution custodyInitial custodySealed
 custodySentExecution : Execution custodyInitial custodySent
+custodySentKeepsItsExactFrameUntilReceipt : ∀ (final : Custody),
+  Execution custodySent final →
+    Hibana.TransferFrameLocated loanWire final ∨
+      ∃ prior next action,
+        Execution custodySent prior ∧
+          Step action prior next ∧
+            Hibana.TransferFrameLocated loanWire prior ∧
+              (action = Action.receive ∨ action = Action.fenceFrame) ∧ Execution next final
 custodyTwoPrivateFuturesAreNotTwoAuthorities : custodyReturned.acceptedFutures.length = 2 ∧
   Observation.authorityCount custodyReturned ≤ 1
 custodyUnpolledRuntimeUnchanged : ownerSealed = ownerBefore

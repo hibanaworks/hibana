@@ -228,7 +228,7 @@ theorem EndpointTransfer.ordered_carrier_send_preserves_unique_authority
     ∃ next frame after, Step .accept state next ∧ next.authorityCount ≤ 1 ∧
       abstraction accepted = .idle after ∧ after.frames = before.frames ++ [frame] ∧
       frame.channel = before.channel ∧ frame.sequence = before.frames.length ∧
-      frame.frameLabel = label := by
+      frame.frameLabel = label ∧ next.inFlight = state.inFlight ++ [frame] := by
   have exactSend := profile.2.2.sendExact current label
   rw [sent, currentExact] at exactSend
   cases result : before.send label with
@@ -255,7 +255,7 @@ theorem EndpointTransfer.ordered_carrier_send_preserves_unique_authority
         have step := Step.accept state left right sending frame
         rw [input] at step
         have bound := one_binding_has_at_most_one_transferable_authority (.tail execution step)
-        refine ⟨next, frame, after, step, bound, acceptedExact, ?_, rfl, rfl, rfl⟩
+        refine ⟨next, frame, after, step, bound, acceptedExact, ?_, rfl, rfl, rfl, rfl⟩
         rw [← afterEq]
 
 /-- Connect an actual carrier receipt to the same authority conservation

@@ -12,7 +12,7 @@ pub(super) fn write(
     wires: &[(&str, &(FrameHeader, Vec<u8>))],
 ) {
     let mut source = std::format!(
-        "import Hibana.OwnedCommit\n\nset_option maxRecDepth 10000\n\n\
+        "import Hibana.SourceResourceAvailability\n\nset_option maxRecDepth 10000\n\n\
          def custodyChoreo : Hibana.Choreo := {choreography}\n\n\
          def ownerImage : Hibana.RustDescriptorImage := {}\n\n\
          def workerImage : Hibana.RustDescriptorImage := {}\n\n",
@@ -214,6 +214,56 @@ theorem custodyCannotTreatTheUnpolledPayloadAsAnApplicationValue :
   have bound := one_binding_has_at_most_one_transferable_authority execution
   simp [Observation.authorityCount, custodySealed] at bound
 "#);
+    for (name, value) in [
+        ("custodyReceived", "receivedValue"),
+        ("custodyReturned", "returnedValue"),
+    ] {
+        source.push_str(&std::format!(
+            "\ntheorem {name}KeepsItsExactValueUntilBoundary\n    \
+             (final : Custody) (history : Execution {name} final) :\n  \
+             Hibana.TransferValueLocated {value} final ∨\n    \
+             ∃ prior next action, Execution {name} prior ∧ Step action prior next ∧\n      \
+             Hibana.TransferValueLocated {value} prior ∧\n      \
+             (action = .accept ∨ action = .abandonPreparation ∨ action = .dropValue) ∧\n      \
+             Execution next final :=\n  \
+             Hibana.transfer_execution_keeps_the_value_until_handoff_or_retirement\n    \
+             history (.inl ⟨rfl, rfl, rfl⟩)\n",
+        ));
+    }
+    for (name, frame) in [
+        ("custodySent", "loanWire"),
+        ("custodyReturnSent", "returnWire"),
+    ] {
+        source.push_str(&std::format!(
+            "\ntheorem {name}KeepsItsExactFrameUntilReceipt\n    \
+             (final : Custody) (history : Execution {name} final) :\n  \
+             Hibana.TransferFrameLocated {frame} final ∨\n    \
+             ∃ prior next action, Execution {name} prior ∧ Step action prior next ∧\n      \
+             Hibana.TransferFrameLocated {frame} prior ∧\n      \
+             (action = .receive ∨ action = .fenceFrame) ∧ Execution next final :=\n  \
+             Hibana.transfer_execution_keeps_the_frame_until_receive_or_fence\n    \
+             history ⟨rfl, rfl, rfl⟩\n",
+        ));
+    }
+    for (name, image) in [
+        ("custodyLoanRecv", "workerImage"),
+        ("custodyReturnRecv", "ownerImage"),
+    ] {
+        source.push_str(&std::format!(
+            "\ntheorem {name}ValueBelongsToProjectedActor :\n  \
+             ({name}.ownedFacts? {image} custodyChoreo).map\n    \
+             (fun facts => facts.binding.receiverActor) = some {name}.after.actor := by\n  \
+             have receiving : ({name}.ownedFacts? {image} custodyChoreo).map\n    \
+             (fun facts => facts.side) = some Hibana.EndpointDelegation.Side.receive := by decide\n  \
+             cases factsAt : {name}.ownedFacts? {image} custodyChoreo with\n  \
+             | none => simp [factsAt] at receiving\n  \
+             | some facts =>\n      \
+             simp only [factsAt, Option.map_some, Option.some.injEq] at receiving\n      \
+             have actor := Hibana.checked_owned_receive_publishes_its_projected_actor\n        \
+             {name}Accepted factsAt receiving\n      \
+             simpa only [factsAt, Option.map_some, Option.some.injEq] using actor.symm\n",
+        ));
+    }
     let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/lean-proof");
     std::fs::create_dir_all(&directory).unwrap();
     std::fs::write(directory.join("FutureCustodyGenerated.lean"), source).unwrap();

@@ -9,6 +9,7 @@ import Hibana.ActorSourceProgress
 import Hibana.ActorCommit
 import Hibana.OwnedCommit
 import Hibana.OwnedRetirement
+import Hibana.SourceResourceAvailability
 import Hibana.ActorReentryCommit
 import Hibana.GlobalSemantics
 import Hibana.GlobalAllocationCorrectness
