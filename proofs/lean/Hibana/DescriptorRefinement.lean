@@ -36,7 +36,7 @@ private def ExactDescriptorCertificate.ProgramImageMatches
     certificate.image.decodeScopeMarkers? =
       some certificate.choreo.canonicalScopeMarkers ∧
     (certificate.choreo.hasOwnedPayload = true →
-      certificate.image.ownershipCheck certificate.choreo = true)
+      certificate.image.actorRowsCheck certificate.choreo = true)
 
 private def ExactDescriptorCertificate.RoleEventImageMatches
     (certificate : ExactDescriptorCertificate) : Prop :=

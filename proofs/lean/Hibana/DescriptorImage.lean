@@ -1942,16 +1942,64 @@ theorem decoded_event_atom_is_unique
           exact resolveUnique?_eq_some_iff.mp
             (by simpa [effIndexCase, atomsCase] using decoded)
 
+private def DecodedProgramAtom.viewForFlags?
+    (atom : DecodedProgramAtom) (flags : Nat) : Option Nat :=
+  if flags < 6 then
+    if atom.sender = atom.receiver then
+      if flags / 2 = 0 then some atom.sender else none
+    else
+      match flags / 2 with
+      | 1 => some atom.sender
+      | 2 => some atom.receiver
+      | _ => none
+  else none
+
+/-- A resident row's direction identifies its logical Endpoint. With delegation,
+the image role is the physical actor and may differ from this logical role.
+Ordinary images still require the row to belong to their single role. -/
+def RustDescriptorImage.eventView?
+    (image : RustDescriptorImage) (eventId : Nat) : Option Nat := do
+  if image.role < image.roleCount then pure () else none
+  let atom ← image.eventAtom? eventId
+  let flags ← image.eventFlags? eventId
+  let view ← atom.viewForFlags? flags
+  let columns ← image.decodeProgramColumns?
+  if view < image.roleCount && (!columns.actorBindings.isEmpty || view == image.role) then
+    pure view
+  else none
+
+theorem ordinary_event_view_preserves_role_binding
+    {image : RustDescriptorImage} {eventId view : Nat} {columns : DecodedProgramColumns}
+    (decoded : image.eventView? eventId = some view)
+    (columnsAt : image.decodeProgramColumns? = some columns)
+    (ordinary : columns.actorBindings = []) : view = image.role := by
+  unfold RustDescriptorImage.eventView? at decoded
+  by_cases roleValid : image.role < image.roleCount
+  · simp only [roleValid, ↓reduceIte, Option.bind_eq_bind] at decoded
+    cases atomAt : image.eventAtom? eventId with
+    | none => simp [atomAt] at decoded
+    | some atom =>
+        cases flagsAt : image.eventFlags? eventId with
+        | none => simp [atomAt, flagsAt] at decoded
+        | some flags =>
+            cases viewAt : atom.viewForFlags? flags with
+            | none => simp [atomAt, flagsAt, viewAt] at decoded
+            | some candidate =>
+                by_cases belongs : candidate = image.role
+                · have same : candidate = view := by
+                    simpa [atomAt, flagsAt, viewAt, columnsAt, ordinary, belongs, roleValid]
+                      using decoded
+                  exact same ▸ belongs
+                · simp [atomAt, flagsAt, viewAt, columnsAt, ordinary, belongs] at decoded
+  · simp [roleValid] at decoded
+
 def RustDescriptorImage.eventAction?
     (image : RustDescriptorImage) (eventId : Nat) : Option LocalAction := do
-  if image.role < image.roleCount then pure () else none
   let atom ← image.eventAtom? eventId
   let lane ← image.eventLane? eventId
   if lane = atom.lane then
-    let flags ← image.eventFlags? eventId
-    let direction := if atom.sender = atom.receiver then 0
-      else if atom.sender = image.role then 1 else 2
-    if flags < 6 && flags / 2 = direction then atom.localAction? image.role else none
+    let view ← image.eventView? eventId
+    atom.localAction? view
   else none
 
 /-- Complete resident identity of one descriptor operation. `eventId` is the
@@ -2259,18 +2307,43 @@ theorem decoded_event_action_binds_exact_lane
       image.eventLane? eventId = some lane ∧
       lane = atom.lane := by
   unfold RustDescriptorImage.eventAction? at decoded
-  by_cases roleValid : image.role < image.roleCount
-  · simp only [roleValid, ↓reduceIte, Option.bind_eq_bind] at decoded
-    cases atomCase : image.eventAtom? eventId with
-    | none => simp [atomCase] at decoded
-    | some atom =>
-        cases laneCase : image.eventLane? eventId with
-        | none => simp [atomCase, laneCase] at decoded
-        | some lane =>
-            by_cases sameLane : lane = atom.lane
-            · exact ⟨atom, lane, rfl, rfl, sameLane⟩
-            · simp [atomCase, laneCase, sameLane] at decoded
-  · simp [roleValid] at decoded
+  cases atomCase : image.eventAtom? eventId with
+  | none => simp [atomCase] at decoded
+  | some atom =>
+      cases laneCase : image.eventLane? eventId with
+      | none => simp [atomCase, laneCase] at decoded
+      | some lane =>
+          by_cases sameLane : lane = atom.lane
+          · exact ⟨atom, lane, rfl, rfl, sameLane⟩
+          · simp [atomCase, laneCase, sameLane] at decoded
+
+/-- Moving a logical role between physical actors does not change the wire
+peer, label or payload selector of that role's local action. -/
+theorem decoded_event_action_binds_logical_view
+    {image : RustDescriptorImage} {eventId : Nat} {action : LocalAction}
+    (decoded : image.eventAction? eventId = some action) :
+    ∃ atom view,
+      image.eventAtom? eventId = some atom ∧ image.eventView? eventId = some view ∧
+      Choreo.localAction? view atom.sender atom.receiver atom.label atom.schema = some action ∧
+      action.label = atom.label ∧ action.schema = atom.schema := by
+  unfold RustDescriptorImage.eventAction? at decoded
+  cases atomCase : image.eventAtom? eventId with
+  | none => simp [atomCase] at decoded
+  | some atom =>
+      cases laneCase : image.eventLane? eventId with
+      | none => simp [atomCase, laneCase] at decoded
+      | some lane =>
+          by_cases sameLane : lane = atom.lane
+          · cases viewCase : image.eventView? eventId with
+            | none => simp [atomCase, laneCase, sameLane, viewCase] at decoded
+            | some view =>
+                have projected : Choreo.localAction? view atom.sender atom.receiver
+                    atom.label atom.schema = some action := by
+                  simpa [atomCase, laneCase, sameLane, viewCase,
+                    DecodedProgramAtom.localAction?] using decoded
+                exact ⟨atom, view, rfl, rfl, projected,
+                  local_action_preserves_label projected, local_action_preserves_schema projected⟩
+          · simp [atomCase, laneCase, sameLane] at decoded
 
 def RustDescriptorImage.decodeRouteResolverRow?
     (image : RustDescriptorImage) (row : Nat) : Option DecodedRouteResolver := do

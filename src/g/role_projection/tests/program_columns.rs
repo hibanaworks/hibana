@@ -1,5 +1,6 @@
 //! Export actual ordinary and owned column headers for independent decoding.
-//! This verifies the byte grammar, not actor progress or public qualification.
+//! This verifies byte grammar, source ownership and actor operation rows.
+//! Progress, reentry and public qualification remain separate obligations.
 use super::*;
 use crate::test_support::{lean_choreo::LeanChoreo, lean_descriptor::descriptor_source};
 use std::{format, fs, path::PathBuf, string::String, vec::Vec};
@@ -67,6 +68,10 @@ fn certificate<Steps: g::ProgramShape + LeanChoreo, const CAPACITY: usize>(name:
          theorem {name}SourceOwnershipMatches :\n  \
          {name}Image.ownershipCheck {name}Choreo = true := by\n  decide\n\n",
     ));
+    source.push_str(&format!(
+        "theorem {name}ActorRowsMatchSource :\n  \
+         {name}Image.actorRowsCheck {name}Choreo = true := by\n  decide\n\n",
+    ));
     if !bindings.is_empty() {
         let wrong_length = columns.proof_header_bytes()[6] ^ 1;
         let untagged = columns.proof_header_bytes()[1] & 0x7f;
@@ -123,6 +128,29 @@ fn certificate<Steps: g::ProgramShape + LeanChoreo, const CAPACITY: usize>(name:
     source
 }
 
+fn actor_certificate<const ROLE: u8, Steps: g::ProgramShape + LeanChoreo, const CAPACITY: usize>(
+    name: &str,
+) -> String {
+    let () = g::ProgramProjection::<Steps, CAPACITY>::VALIDATION;
+    let descriptor =
+        RoleDescriptorRef::from_resident(&RoleProjection::<ROLE, Steps, CAPACITY>::IMAGE_REF);
+    assert!(descriptor.local_len() > 0);
+    let choreo = Steps::lean_source();
+    let image = descriptor_source(descriptor);
+    format!(
+        "def {name}Choreo : Hibana.Choreo := {choreo}\n\n\
+         def {name}Image : Hibana.RustDescriptorImage := {image}\n\n\
+         theorem {name}ActorRowsMatchSource :\n  \
+         {name}Image.actorRowsCheck {name}Choreo = true := by\n  decide\n\n\
+         theorem {name}InvalidDirectionRejected :\n  \
+         ({{ {name}Image with roleBytes := {name}Image.roleBytes.set 9 6 }} : \
+         Hibana.RustDescriptorImage).actorRowsCheck {name}Choreo = false := by\n  decide\n\n\
+         theorem {name}MissingOperationsRejected :\n  \
+         ({{ {name}Image with eventCount := 0 }} : \
+         Hibana.RustDescriptorImage).actorRowsCheck {name}Choreo = false := by\n  decide\n\n",
+    )
+}
+
 #[test]
 #[ignore = "host-only exact program-column proof artifact export"]
 fn export_program_columns_for_lean() {
@@ -137,6 +165,46 @@ fn export_program_columns_for_lean() {
         "ownedConditionalColumns",
     ));
     source.push_str(&certificate::<composed::Global, 32>("ownedNativeColumns"));
+    source.push_str(&actor_certificate::<1, Ordinary, 8>("ordinaryReceiverRows"));
+    source.push_str(&actor_certificate::<1, Linear, 8>("ownedWorkerRows"));
+    source.push_str(&actor_certificate::<3, Linear, 8>("ownedServiceRows"));
+    source.push_str(&actor_certificate::<1, Parallel, 16>(
+        "ownedParallelWorkerRows",
+    ));
+    source.push_str(&actor_certificate::<1, conditional_controller::Steps, 32>(
+        "ownedConditionalFirstRows",
+    ));
+    source.push_str(&actor_certificate::<3, conditional_controller::Steps, 32>(
+        "ownedConditionalSecondRows",
+    ));
+    source.push_str(&actor_certificate::<1, composed::Global, 32>(
+        "ownedNativeWorkerRows",
+    ));
+    source.push_str(&actor_certificate::<2, composed::Global, 32>(
+        "ownedNativeServiceRows",
+    ));
+    source.push_str(&actor_certificate::<3, composed::Global, 32>(
+        "ownedNativeParallelRows",
+    ));
+    source.push_str(&actor_certificate::<4, composed::Global, 32>(
+        "ownedNativeParallelPeerRows",
+    ));
+    type CoLocated = g::Seq<g::Send<0, 1, Loan>, g::Send<10, 1, Read>>;
+    source.push_str(&actor_certificate::<1, CoLocated, 8>("coLocatedRows"));
+    let loan_schema = 0x1_0000_0000u64 + 10;
+    let read_schema = <u32 as crate::transport::wire::WirePayload>::SCHEMA_ID;
+    source.push_str(&format!(
+        "theorem coLocatedRowsRetainBothLogicalFacets :\n  \
+         coLocatedRowsImage.decodeActions? = some \
+         [.recv 0 1 {loan_schema}, .send 1 3 {read_schema}, .recv 10 3 {read_schema}] := by\n  \
+         decide\n\n\
+         theorem coLocatedRowsRetainLogicalViews :\n  \
+         [coLocatedRowsImage.eventView? 0, coLocatedRowsImage.eventView? 1, \
+         coLocatedRowsImage.eventView? 2] = [some 1, some 10, some 1] := by\n  decide\n\n\
+         theorem coLocatedRowsCannotBecomeSelfSend :\n  \
+         ({{ coLocatedRowsImage with roleBytes := coLocatedRowsImage.roleBytes.set 19 0 }} : \
+         Hibana.RustDescriptorImage).actorRowsCheck coLocatedRowsChoreo = false := by\n  decide\n\n",
+    ));
     let output = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("target/lean-proof/ProgramColumnsGenerated.lean");
     fs::create_dir_all(output.parent().unwrap()).unwrap();

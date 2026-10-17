@@ -123,6 +123,13 @@ initial issuers to the decoded bytes. Unknown route choices authorize no
 holder. The descriptor-derived traversal bound is proved sufficient for every
 valid backward reference under total choices. This correspondence does not establish
 actor-local progress, ownership transfer commits, or continuation refinement.
+The action decoder now derives the logical Endpoint role from each resident
+row's direction and its global atom, keeping the physical actor separate. The
+actor-row component checks all active operations against each independent source
+path, including both wire facets when two logical roles share one actor.
+It rejects missing operations and malformed directions. A general theorem binds
+accepted rows to source operations; ordinary rows still belong to their single
+image role. Dependency, route admission and roll reentry refinement remain open.
 The ordinary certificate still rejects owned actor columns, and public owned
 projection remains closed until those semantic connections are verified.
 
