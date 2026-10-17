@@ -20,6 +20,7 @@ fn an_inner_route_cannot_repeat_before_its_rolled_body_finishes() {
 
     tokio::runtime::Builder::new_current_thread()
         .enable_time()
+        .start_paused(true)
         .build()
         .unwrap()
         .block_on(async {
@@ -92,6 +93,7 @@ fn an_explicit_inner_roll_repeats_without_restarting_its_parent() {
 
     tokio::runtime::Builder::new_current_thread()
         .enable_time()
+        .start_paused(true)
         .build()
         .unwrap()
         .block_on(async {
@@ -176,6 +178,7 @@ fn a_loan_reenters_after_its_sequential_continuation_without_reusing_old_work() 
     );
     tokio::runtime::Builder::new_current_thread()
         .enable_time()
+        .start_paused(true)
         .build()
         .unwrap()
         .block_on(async {

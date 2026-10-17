@@ -115,11 +115,37 @@ MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_t
   --skip g::role_projection::tests::local_return:: \
   --skip g::role_projection::tests::recovery_image:: \
   --skip g::role_projection::tests::entry_image:: \
+  --skip g::role_projection::tests::reentry:: \
+  --skip g::role_projection::tests::composed:: \
   --skip g::role_projection::tests::shared_holder_can_finish_either_parallel_loan_first_and_join_requires_both \
   --skip g::role_projection::tests::reentry_choice::an_enclosing_choice_survives_two_delegated_roll_visits \
   --skip g::role_projection::tests::reentry_parallel::parallel_loan_reentry_preserves_the_other_body_and_completed_tail \
   --skip g::role_projection::tests::conditional_controller::a_completed_right_arm_reopens_the_public_route_without_receiving \
   --skip g::role_projection::tests::conditional_controller::a_conditional_controller_does_not_take_authority_from_its_co_resident_observer
+
+MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \
+  actor-explicit-inner-roll \
+  -p hibana --lib \
+  g::role_projection::tests::reentry::an_explicit_inner_roll_repeats_without_restarting_its_parent \
+  -- --exact
+
+MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \
+  actor-inner-route-boundary \
+  -p hibana --lib \
+  g::role_projection::tests::reentry::an_inner_route_cannot_repeat_before_its_rolled_body_finishes \
+  -- --exact
+
+MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \
+  actor-loan-after-continuation \
+  -p hibana --lib \
+  g::role_projection::tests::reentry::a_loan_reenters_after_its_sequential_continuation_without_reusing_old_work \
+  -- --exact
+
+MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \
+  actor-composed-service \
+  -p hibana --lib \
+  g::role_projection::tests::composed::service_grants_a_resource_then_observes_choices_in_parallel_rolled_loans \
+  -- --exact
 
 MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \
   actor-independent-loan-join \
