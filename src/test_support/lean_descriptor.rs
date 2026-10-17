@@ -35,7 +35,7 @@ pub(crate) fn descriptor_source(descriptor: RoleDescriptorRef) -> String {
          routeParticipantCount := {}\n  scopeMarkerCount := {}\n  eventCount := {}\n  dependencyRowCount := {}\n  \
          conflictRowCount := {}\n  routeScopeCount := {}\n  residentBoundaryCount := {}\n  \
          laneBitCount := {}\n  routeArmLaneStepCount := {}\n  routeCommitRowCount := {}\n  \
-         rollScopeCount := {}\n  programColumnBytes := {program_column_bytes}\n  \
+         rollScopeCount := {}\n  rollEntryViewCount := {}\n  programColumnBytes := {program_column_bytes}\n  \
          programBytes := {program_bytes}\n  roleBytes := {role_bytes}\n}}",
         program.role_count(),
         descriptor.role(),
@@ -59,5 +59,6 @@ pub(crate) fn descriptor_source(descriptor: RoleDescriptorRef) -> String {
         columns.route_arm_lane_step_rows.len,
         columns.route_commit_rows.len,
         columns.roll_scopes.len,
+        columns.roll_entry_view_count,
     )
 }

@@ -14,6 +14,8 @@ const CONTEXT_BYTES: usize = (ScopeId::LOCAL_CAPACITY as usize).div_ceil(8);
 
 pub(crate) struct ActorLocalRows<const E: usize> {
     actor: u8,
+    program: CompiledProgramRef,
+    resources: [u8; 32],
     directions: [u8; E],
     starts: [u16; E],
     events: usize,
@@ -28,6 +30,8 @@ impl<const E: usize> ActorLocalRows<E> {
         }
         let mut rows = Self {
             actor,
+            program: *program,
+            resources: [0; 32],
             directions: [0; E],
             starts: [0; E],
             events: program.columns.atom_count(),
@@ -43,6 +47,9 @@ impl<const E: usize> ActorLocalRows<E> {
         }
         let mut event = 0;
         while event < rows.events {
+            if let crate::eff::EventPayload::Endpoint(role) = program.event_atom_at(event).payload {
+                rows.resources[role as usize / 8] |= 1 << (role % 8);
+            }
             rows.starts[event] = rows.len;
             let count = rows.directions[event].count_ones() as u16;
             rows.len = match rows.len.checked_add(count) {
@@ -122,6 +129,56 @@ pub(crate) enum LocalRows<'a, const E: usize> {
 }
 
 impl<const E: usize> LocalRows<'_, E> {
+    /// The first source occurrence reads the resource's entry owner: no
+    /// preceding occurrence in this fragment could have transferred it.
+    /// Enumeration here constructs immutable facts, never an execution order.
+    pub(in crate::global::role_program::image_impl) const fn roll_entry_actor(
+        self,
+        effects: &EffList<E>,
+        start: usize,
+        end: usize,
+        role: u8,
+    ) -> Option<u16> {
+        let Self::Actor(rows) = self else {
+            return None;
+        };
+        if rows.resources[role as usize / 8] & (1 << (role % 8)) == 0 {
+            return None;
+        }
+        let mut event = start;
+        while event < end {
+            let atom = effects.atom_at(event);
+            let side = if atom.from == role
+                || matches!(atom.payload,
+                crate::eff::EventPayload::Endpoint(key) if key == role)
+            {
+                0
+            } else if atom.to == role {
+                1
+            } else {
+                event += 1;
+                continue;
+            };
+            let Some(bindings) = rows.program.actor_binding_at(event) else {
+                crate::invariant();
+            };
+            let direction = if atom.from == atom.to {
+                RoleLocalDirection::Local
+            } else if side == 0 {
+                RoleLocalDirection::Send
+            } else {
+                RoleLocalDirection::Recv
+            };
+            // The existing actor projection already computed exact possible
+            // membership. Another actor's entry view is not a local obligation.
+            if rows.directions[event] & (1 << direction as u8) == 0 {
+                return None;
+            }
+            return Some(bindings[side]);
+        }
+        None
+    }
+
     pub(crate) const fn retains_context(self, scope: ScopeId) -> bool {
         if !matches!(scope.kind(), Some(ScopeKind::Route)) {
             return false;

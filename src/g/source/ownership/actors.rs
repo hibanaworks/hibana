@@ -14,6 +14,9 @@ use super::{
 #[path = "actors/knowledge.rs"]
 mod knowledge;
 
+#[path = "actors/reentry.rs"]
+mod reentry;
+
 #[cfg(kani)]
 #[path = "actors/kani.rs"]
 mod kani;
@@ -132,6 +135,12 @@ impl<const E: usize, const D: usize> ActorImage<E, D> {
     /// does not certify route shape, framing, codecs or distributed execution.
     pub const fn has_branch_knowledge(&self, source: &Source<'_>) -> bool {
         knowledge::check(source, self)
+    }
+
+    /// A resource-changing continuation cannot leave a remote reentry sender
+    /// able to initiate another visit without the entry owner's permission.
+    pub const fn has_reentry_knowledge(&self, source: &Source<'_>) -> bool {
+        reentry::check(source, self)
     }
 
     pub const fn decision_count(&self) -> usize {

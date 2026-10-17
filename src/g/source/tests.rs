@@ -2,6 +2,7 @@ use super::{ProgramShape, ownership, tree};
 use crate::{Endpoint, g};
 
 mod receive_causality;
+mod reentry_knowledge;
 
 const P: u8 = 0;
 const A: u8 = 1;

@@ -14,6 +14,8 @@ pub enum ProjectionProblem {
     ParallelSelector,
     /// Rolled reentry selectors overlap.
     ReentrySelector,
+    /// A reentry sender cannot learn that the entry resource has left.
+    ReentryResourceKnowledge,
     /// A route is ambiguous or cannot be projected.
     UnprojectableRoute,
     /// A non-controller cannot distinguish or merge the route arms.
@@ -92,6 +94,9 @@ impl ProjectionDiagnostic {
             ProgramSourceError::ReentryAmbiguousEndpointSelector => {
                 ProjectionProblem::ReentrySelector
             }
+            ProgramSourceError::ReentryResourceKnowledge => {
+                ProjectionProblem::ReentryResourceKnowledge
+            }
             ProgramSourceError::ProjectionRouteUnprojectable => {
                 ProjectionProblem::UnprojectableRoute
             }
@@ -118,6 +123,9 @@ impl ProjectionDiagnostic {
             ProjectionProblem::ParallelSelector => "make parallel endpoint selectors distinct",
             ProjectionProblem::ReentrySelector => {
                 "make rolled continuation and reentry endpoint selectors distinct"
+            }
+            ProjectionProblem::ReentryResourceKnowledge => {
+                "let the resource's entry owner authorize each visit inside the roll"
             }
             ProjectionProblem::MissingBranchKnowledge => {
                 "notify the affected role of the branch, or make its local paths mergeable; keep terminal acknowledgments within the selected arm"

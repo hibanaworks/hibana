@@ -180,6 +180,21 @@ impl LocalEventProgram {
         None
     }
 
+    pub(crate) fn roll_entry_range(&self, scope: ScopeId) -> Option<PackedLaneRange> {
+        let mut slot = 0;
+        while let Some((candidate, _)) = self.roll_scope_row_by_slot(slot) {
+            if candidate == scope {
+                return Some(self.rows().roll_entry_range(slot));
+            }
+            slot += 1;
+        }
+        None
+    }
+
+    pub(crate) fn roll_entry_view(&self, index: usize) -> (u8, u16) {
+        self.rows().roll_entry_view(index)
+    }
+
     #[inline(always)]
     pub(crate) fn route_scope_rows(&self, scope_id: ScopeId) -> Option<RouteScopeRows> {
         let slot = self.route_scope_slot(scope_id)?;

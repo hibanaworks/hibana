@@ -25,7 +25,6 @@ pub(crate) struct RoleImageRef {
     facts: RuntimeRoleFacts,
     columns: RoleImageColumns,
     blob: BlobPtr,
-    active_lane_row: PackedLaneRange,
     first_active_lane: u16,
     route_lookup_index: u8,
 }
@@ -39,6 +38,18 @@ const fn compact_count(value: usize) -> u16 {
 }
 
 impl RuntimeRoleFacts {
+    const fn active_lane_row(self) -> PackedLaneRange {
+        let footprint = self.footprint();
+        PackedLaneRange::new(
+            0,
+            if footprint.active_lane_count == 0 {
+                0
+            } else {
+                lane_byte_count(footprint.logical_lane_count)
+            },
+        )
+    }
+
     const MAX_ROUTE_COMMIT_COUNT: usize = 0;
     const LOCAL_STEP_COUNT: usize = 1;
     const ROUTE_SCOPE_COUNT: usize = 2;
@@ -88,11 +99,7 @@ impl RoleImageRef {
         columns.validate_blob_bound();
         let blob = BlobPtr::from_array(bytes, columns.blob_len());
         let footprint = facts.footprint();
-        let active_lane_row = if footprint.active_lane_count == 0 {
-            PackedLaneRange::new(0, 0)
-        } else {
-            PackedLaneRange::new(0, lane_byte_count(footprint.logical_lane_count))
-        };
+        let active_lane_row = facts.active_lane_row();
         let metadata = match derive_active_lane_metadata(bytes, columns.lane_bits, active_lane_row)
         {
             Some(metadata) => metadata,
@@ -113,7 +120,6 @@ impl RoleImageRef {
             facts,
             columns,
             blob,
-            active_lane_row,
             first_active_lane: metadata.first_active_lane,
             route_lookup_index,
         };
@@ -167,9 +173,8 @@ impl RoleImageRef {
         self.blob
     }
 
-    #[cfg(all(test, hibana_repo_tests))]
     pub(crate) const fn active_lane_row(&self) -> PackedLaneRange {
-        self.active_lane_row
+        self.facts.active_lane_row()
     }
 
     #[inline(always)]
@@ -203,7 +208,7 @@ impl RoleImageRef {
     pub(crate) const fn active_lane_set(&self) -> LaneSetView<'static> {
         let footprint = self.footprint();
         self.lanes()
-            .lane_bit_view(self.active_lane_row, footprint.lane_word_count())
+            .lane_bit_view(self.active_lane_row(), footprint.lane_word_count())
     }
 
     #[inline(always)]
@@ -275,6 +280,14 @@ impl RoleImageRef {
     #[inline(always)]
     pub(crate) const fn roll_scope_row(&self, slot: usize) -> Option<PackedRollScopeRow> {
         self.lanes().roll_scope_row(slot)
+    }
+
+    pub(crate) const fn roll_entry_range(&self, slot: usize) -> PackedLaneRange {
+        self.lanes().roll_entry_range(slot)
+    }
+
+    pub(crate) const fn roll_entry_view(&self, index: usize) -> (u8, u16) {
+        self.lanes().roll_entry_view(index)
     }
 
     #[inline(always)]

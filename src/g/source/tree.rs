@@ -44,6 +44,42 @@ pub enum Source<'a> {
 }
 
 impl Source<'_> {
+    /// Source occurrence lookup; its ordinal does not impose execution order.
+    pub const fn message_at(&self, event: usize) -> Message {
+        match self {
+            Self::Send(message) if event == 0 => *message,
+            Self::Send(_) => panic!("source event outside fragment"),
+            Self::Seq(left, right) | Self::Par(left, right) | Self::Route { left, right, .. } => {
+                let split = left.event_count();
+                if event < split {
+                    left.message_at(event)
+                } else {
+                    right.message_at(event - split)
+                }
+            }
+            Self::Roll(body) => body.message_at(event),
+        }
+    }
+
+    /// Strict order comes from seq, never from enumeration, par, or two
+    /// different route arms. Roll contributes its single-visit body order.
+    pub const fn before(&self, first: usize, second: usize) -> bool {
+        match self {
+            Self::Send(_) => false,
+            Self::Seq(left, right) | Self::Par(left, right) | Self::Route { left, right, .. } => {
+                let split = left.event_count();
+                if first < split && second < split {
+                    left.before(first, second)
+                } else if first >= split && second >= split {
+                    right.before(first - split, second - split)
+                } else {
+                    matches!(self, Self::Seq(_, _)) && first < split && second >= split
+                }
+            }
+            Self::Roll(body) => body.before(first, second),
+        }
+    }
+
     pub const fn has_delegation(&self) -> bool {
         match self {
             Self::Send(message) => matches!(message.payload, Payload::Endpoint(_)),

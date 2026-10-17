@@ -3,7 +3,7 @@ use super::{
         BlobPtr, ColumnRange, LaneSetView, PackedLaneRange, PackedLocalEventRow,
         PackedRollScopeRow, PackedRouteArmRow, ROLE_IMAGE_CONFLICT_STRIDE,
         ROLE_IMAGE_DEPENDENCY_STRIDE, ROLE_IMAGE_EVENT_STRIDE, ROLE_IMAGE_LANE_RANGE_STRIDE,
-        ROLE_IMAGE_LANE_STRIDE, ROLE_IMAGE_ROLL_SCOPE_STRIDE,
+        ROLE_IMAGE_LANE_STRIDE, ROLE_IMAGE_ROLL_ENTRY_STRIDE, ROLE_IMAGE_ROLL_SCOPE_STRIDE,
         ROLE_IMAGE_ROUTE_ARM_LANE_STEP_STRIDE, ROLE_IMAGE_ROUTE_ARM_STRIDE,
         ROLE_IMAGE_ROUTE_SCOPE_STRIDE, ROLE_IMAGE_U16_STRIDE, RoleLaneImage, RouteArmLaneStepRow,
     },
@@ -289,6 +289,35 @@ impl<'a> RoleLaneImage<'a> {
             }
             None => None,
         }
+    }
+
+    pub(crate) const fn roll_entry_range(&self, slot: usize) -> PackedLaneRange {
+        if self.columns.roll_entry_ranges().len == 0 {
+            return PackedLaneRange::new(0, 0);
+        }
+        let Some(offset) = self.column_offset(
+            self.columns.roll_entry_ranges(),
+            slot,
+            ROLE_IMAGE_LANE_RANGE_STRIDE,
+        ) else {
+            invalid_resident_descriptor();
+        };
+        let range = PackedLaneRange::from_raw(self.read_u32_at(offset));
+        if range.is_empty() || range.end() > self.columns.roll_entry_view_count as usize {
+            invalid_resident_descriptor();
+        }
+        range
+    }
+
+    pub(crate) const fn roll_entry_view(&self, index: usize) -> (u8, u16) {
+        let Some(offset) = self.column_offset(
+            self.columns.roll_entry_views(),
+            index,
+            ROLE_IMAGE_ROLL_ENTRY_STRIDE,
+        ) else {
+            invalid_resident_descriptor();
+        };
+        (self.byte_at(offset), self.read_u16_at(offset + 1))
     }
 
     #[inline(always)]

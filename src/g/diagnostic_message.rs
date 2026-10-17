@@ -48,6 +48,7 @@ pub(super) const fn panic_diagnostic(d: ProjectionDiagnostic) -> ! {
         ProjectionProblem::ReceiveLaneCausality => "receive lane sender change requires a causal handoff or exclusive route arms",
         ProjectionProblem::ParallelSelector => "parallel endpoint operations must be unambiguous",
         ProjectionProblem::ReentrySelector => "rolled reentry endpoint operations must be unambiguous",
+        ProjectionProblem::ReentryResourceKnowledge => "rolled reentry requires permission from the resource's entry owner",
         ProjectionProblem::UnprojectableRoute | ProjectionProblem::MissingBranchKnowledge => "Route unprojectable for this role: invalid, ambiguous endpoint operation, or ambiguous first-visible endpoint operation",
     });
     if let Some(role) = d.role {

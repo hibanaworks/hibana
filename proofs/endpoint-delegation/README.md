@@ -256,6 +256,18 @@ authenticated distributed handoff.
 
 ## Remaining qualification
 
+Owned reentry also requires the source's resource-entry ownership. The runtime
+reads immutable entry actor references and existing affine view headers before
+clearing completed-body state. A source whose continuation permanently hands a
+resource away must root that resource's next-visit causal origins at its entry
+owner, or at recipients informed within that visit. A one-time prefix is not
+enough. `ReentryKnowledge.smt2` checks the induction step, the missing-permit
+counterexample, a sequential permit, rejection of a parallel pseudo-permit,
+and independent work. `Hibana.ReentryKnowledge` proves the general causal-origin
+property. The real Tokio Endpoint fixture keeps an unrelated roll live after
+the guarded resource work exits. These checks leave pending-I/O and general
+distributed implementation refinement below as explicit obligations.
+
 Repetition uses only the source's explicit roll boundaries. An inherited
 reentrant route mark is not an independent loop. The public Rust regressions
 and `Hibana.RollBoundary` cover rejection of an implicit child restart and

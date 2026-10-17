@@ -209,8 +209,8 @@ can change arms while preserving the parent prefix. The complete nested trace
 runs twice. Before the parent suffix, both the completed arm and the unused
 alternative are rejected. These six kernel proofs replace seven lemmas about the removed
 route-only reset and its unused selector. Including the transfer model below,
-the static inventory is 796, with 427 using `propext` and `Quot.sound`,
-265 using only `propext`, and 104 axiom-free.
+the static inventory is 813, with 440 using `propext` and `Quot.sound`,
+267 using only `propext`, and 106 axiom-free.
 The allowed axioms and inventory checks are unchanged. `RollBoundary.smt2`
 checks all completion masks of this six-event shape, including the difference
 between old committed and new preview choices and preservation outside the
@@ -260,6 +260,38 @@ This includes use as a peer or as another loan's carrier. The occurrence list
 is static enumeration, not a schedule for parallel execution. Availability of
 the corresponding live view/receipt and distributed progress remain to be
 connected to these properties.
+
+`SourceResourceCausality.lean` establishes that an emitted resource transfer and
+a use of that same endpoint are either the same occurrence or ordered by the
+source's `before` relation. This covers arbitrary accepted compositions and
+selected route arms within one visit. Numeric positions only orient that
+already-established causal relation; they add no dependency between independent
+resources. `SymbolicResourceFlow.lean` proves that the normalizer's owner
+expression is exactly the fold of the declared transfers for that resource.
+Untouched resources retain their owner expression. This is compile-time
+symbolic flow, not a runtime ownership ledger or a schedule for parallel work.
+Actual view/receipt availability and the complete distributed progress argument
+remain separate obligations.
+
+`SourceResourcePrefix.lean` checks every emitted binding against its exact
+source prefix. Sender and receiver references read the corresponding owner
+expressions. A loan emits the equation that equates its resource's previous
+owner to its sender. If issuance solves those equations, the instantiated
+sender is that resource's owner before the transfer and the receiver is its
+owner afterward. Parallel composition uses the established separation law to
+preserve these references without adding execution order. This is a general
+normalizer result; it does not by itself establish that every Rust execution
+supplies the corresponding live view/receipt or has distributed progress.
+
+`ReentryKnowledge.lean` proves that the causal origins of a resource-dependent
+fresh visit trace back to its entry owner when the needed-action set is closed
+under wire predecessors and each origin follows an incoming message or belongs
+to that owner. Strict `Source.before` supplies well-foundedness; a parallel
+sibling supplies no permission edge. The Rust projection check constructs this
+closure for resources that the continuation does not restore to their entry
+owner. An initial prefix outside the roll cannot authorize another visit.
+These three general lemmas specify that construction obligation; they do not
+complete the owned runtime's pending-I/O or distributed progress refinement.
 
 The compiler scope memo, fork-input restoration, independent-sibling exclusion,
 and retained sequential joins have general model lemmas. Ingress-head

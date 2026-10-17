@@ -19,6 +19,7 @@ impl RoleImageRef {
             invalid_resident_descriptor();
         }
         self.validate_actor_event_projection();
+        self.validate_roll_entry_views();
         let lanes = self.lanes();
         let mut slot = 0;
         while slot < scopes {
@@ -102,6 +103,68 @@ impl RoleImageRef {
                 }
             }
             idx += 1;
+        }
+    }
+
+    const fn validate_roll_entry_views(&self) {
+        let columns = self.columns;
+        if columns.roll_entry_view_count == 0 {
+            return;
+        }
+        if columns.roll_entry_ranges().len != columns.roll_scopes.len {
+            invalid_resident_descriptor();
+        }
+        let mut expected = 0;
+        let mut slot = 0;
+        while slot < columns.roll_scopes.len as usize {
+            let range = self.roll_entry_range(slot);
+            if range.start() != expected {
+                invalid_resident_descriptor();
+            }
+            let mut previous = None;
+            let mut index = range.start();
+            while index < range.end() {
+                let (role, owner) = self.roll_entry_view(index);
+                if role > self.program.facts.max_role {
+                    invalid_resident_descriptor();
+                }
+                if let Some(prior) = previous
+                    && role <= prior
+                {
+                    invalid_resident_descriptor();
+                }
+                if (owner < 256 && owner > self.program.facts.max_role as u16)
+                    || (owner >= 256
+                        && self
+                            .program
+                            .actor_decision_at(owner as usize - 256)
+                            .is_none())
+                {
+                    invalid_resident_descriptor();
+                }
+                let mut found = false;
+                let mut event = 0;
+                while event < self.program.columns.atom_count() {
+                    if let crate::eff::EventPayload::Endpoint(key) =
+                        self.program.event_atom_at(event).payload
+                        && key == role
+                    {
+                        found = true;
+                        break;
+                    }
+                    event += 1;
+                }
+                if !found {
+                    invalid_resident_descriptor();
+                }
+                previous = Some(role);
+                index += 1;
+            }
+            expected = range.end();
+            slot += 1;
+        }
+        if expected != columns.roll_entry_view_count as usize {
+            invalid_resident_descriptor();
         }
     }
 

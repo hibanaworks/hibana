@@ -1,6 +1,20 @@
 use super::super::super::{EventCursor, RelocatableResidentLaneStep, ScopeId};
 
 impl EventCursor {
+    pub(crate) fn roll_entry_views_are_available(
+        &self,
+        scope: ScopeId,
+        mut available: impl FnMut(u8, u16) -> bool,
+    ) -> bool {
+        let Some(range) = self.machine().event_program().roll_entry_range(scope) else {
+            return false;
+        };
+        (range.start()..range.end()).all(|index| {
+            let (role, owner) = self.machine().event_program().roll_entry_view(index);
+            available(role, owner)
+        })
+    }
+
     /// A completed ancestor is retained when this event enters only a child
     /// visit. Completion alone never permits erasing a required prefix.
     pub(crate) fn route_reentry_head_allows_index(

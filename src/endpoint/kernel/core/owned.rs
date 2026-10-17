@@ -20,6 +20,50 @@ pub(in crate::endpoint::kernel) enum PreparedViewCommit {
 }
 
 impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
+    /// A completed visit does not restore an Endpoint transferred by a later
+    /// continuation. Entry owners are immutable source-prefix facts; live
+    /// issuance is read from the existing affine headers, not a holder table.
+    pub(in crate::endpoint::kernel::core) fn preflight_roll_entry_views(
+        &self,
+        event: Option<CommitEventRow>,
+    ) -> Result<(), CursorInvariantError> {
+        let Some(scope) = self.prepared_body_reentry_scope(event) else {
+            return Ok(());
+        };
+        // SAFETY: the current kernel retains this pinned actor allocation.
+        let actor = unsafe {
+            self.public_header
+                .actor()
+                .cast::<ResidentActor<'r, T>>()
+                .as_ref()
+        };
+        let available =
+            self.progress
+                .cursor
+                .roll_entry_views_are_available(scope, |role, owner| {
+                    match self
+                        .context
+                        .program
+                        .selected_actor(owner, &mut |scope| self.selected_arm_for_scope(scope))
+                    {
+                        Some(expected) if expected != self.progress.cursor.role() => actor
+                            .views
+                            .get(role)
+                            .is_none_or(|view| view.public_header.generation() == 0),
+                        Some(_) => actor
+                            .views
+                            .get(role)
+                            .is_some_and(|view| view.public_header.generation() != 0),
+                        None => false,
+                    }
+                });
+        if available {
+            Ok(())
+        } else {
+            Err(CursorInvariantError::INVARIANT)
+        }
+    }
+
     pub(in crate::endpoint::kernel::core) fn preflight_transfer_out(
         &self,
         transfer: EndpointTransfer,

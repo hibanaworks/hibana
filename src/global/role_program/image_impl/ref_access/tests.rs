@@ -54,7 +54,8 @@ fn assert_lane_validation_dominates_raw_arm_reads(rows: &RoleImageRef) {
         for value in [0, 1, 7, 0x7f, 0x80, 0xff] {
             let mut bytes = copy(rows);
             bytes[offset] = value;
-            if !lane_columns_are_coherent(&bytes, columns, rows.active_lane_row, rows.footprint()) {
+            if !lane_columns_are_coherent(&bytes, columns, rows.active_lane_row(), rows.footprint())
+            {
                 rejected += 1;
                 continue;
             }

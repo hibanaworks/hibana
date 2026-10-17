@@ -11,6 +11,7 @@ pub(crate) const ROLE_IMAGE_ROUTE_ARM_STRIDE: usize = 8;
 pub(crate) const ROLE_IMAGE_LANE_RANGE_STRIDE: usize = 4;
 pub(crate) const ROLE_IMAGE_ROUTE_ARM_LANE_STEP_STRIDE: usize = 5;
 pub(crate) const ROLE_IMAGE_ROLL_SCOPE_STRIDE: usize = 6;
+pub(crate) const ROLE_IMAGE_ROLL_ENTRY_STRIDE: usize = 3;
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct PackedLaneRange(u32);
@@ -424,18 +425,43 @@ pub(crate) struct RoleImageColumns {
     pub(crate) route_commit_ranges: ColumnRange,
     pub(crate) route_commit_rows: ColumnRange,
     pub(crate) roll_scopes: ColumnRange,
+    pub(crate) roll_entry_view_count: u16,
 }
 
 impl RoleImageColumns {
     #[inline(always)]
     pub(crate) const fn blob_len(&self) -> usize {
-        self.roll_scopes.end_offset(ROLE_IMAGE_ROLL_SCOPE_STRIDE)
+        self.roll_entry_views()
+            .end_offset(ROLE_IMAGE_ROLL_ENTRY_STRIDE)
+    }
+
+    pub(crate) const fn roll_entry_ranges(&self) -> ColumnRange {
+        ColumnRange::new(
+            self.roll_scopes.end_offset(ROLE_IMAGE_ROLL_SCOPE_STRIDE),
+            if self.roll_entry_view_count == 0 {
+                0
+            } else {
+                self.roll_scopes.len as usize
+            },
+            ROLE_IMAGE_LANE_RANGE_STRIDE,
+        )
+    }
+
+    pub(crate) const fn roll_entry_views(&self) -> ColumnRange {
+        ColumnRange::new(
+            self.roll_entry_ranges()
+                .end_offset(ROLE_IMAGE_LANE_RANGE_STRIDE),
+            self.roll_entry_view_count as usize,
+            ROLE_IMAGE_ROLL_ENTRY_STRIDE,
+        )
     }
 
     // The terminal column already owns the packed image's complete extent.
     // Validate all earlier spans once before publishing its immutable pointer.
     pub(crate) const fn validate_blob_bound(&self) {
         let columns = [
+            (self.roll_entry_ranges(), ROLE_IMAGE_LANE_RANGE_STRIDE),
+            (self.roll_entry_views(), ROLE_IMAGE_ROLL_ENTRY_STRIDE),
             (self.events, ROLE_IMAGE_EVENT_STRIDE),
             (self.lanes, ROLE_IMAGE_LANE_STRIDE),
             (self.dependencies, ROLE_IMAGE_DEPENDENCY_STRIDE),

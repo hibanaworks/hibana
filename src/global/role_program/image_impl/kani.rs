@@ -55,6 +55,7 @@ fn one_event_role_image_plan() -> RoleImagePlan {
             route_commit_ranges: empty,
             route_commit_rows: empty,
             roll_scopes: empty,
+            roll_entry_view_count: 0,
         },
     }
 }
@@ -288,6 +289,7 @@ fn lane_column_coherence_is_exact_for_one_binary_route() {
         route_commit_ranges: empty,
         route_commit_rows: empty,
         roll_scopes: empty,
+        roll_entry_view_count: 0,
     };
     let footprint = super::super::RuntimeRoleFootprint {
         max_route_commit_count: 0,

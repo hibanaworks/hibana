@@ -16,6 +16,7 @@ pub(super) struct RoleImageColumnCounts {
     pub(super) route_arm_lane_steps: usize,
     pub(super) route_commit_rows: usize,
     pub(super) roll_scopes: usize,
+    pub(super) roll_entry_views: usize,
 }
 
 struct RouteImagePlanRouteFacts {
@@ -88,6 +89,9 @@ impl RoleImageColumnCounts {
             self.roll_scopes,
             ROLE_IMAGE_ROLL_SCOPE_STRIDE,
         );
+        if self.roll_entry_views > u16::MAX as usize {
+            panic!("roll entry view count overflow");
+        }
         RoleImageColumns {
             events,
             lanes,
@@ -104,6 +108,7 @@ impl RoleImageColumnCounts {
             route_commit_ranges,
             route_commit_rows,
             roll_scopes,
+            roll_entry_view_count: self.roll_entry_views as u16,
         }
     }
 }
@@ -154,6 +159,7 @@ impl RoleImageColumnCounts {
         let resident_rows = Self::resident_row_count(eff_list, rows);
         let route_facts = Self::route_facts(source, rows);
         let roll_scopes = Self::roll_scope_count(eff_list, rows);
+        let roll_entry_views = Self::roll_entry_view_count(eff_list, rows);
         let active_lane_bits = lane_byte_count(max_lane_plus_one);
         let resident_boundaries = if resident_rows == 0 {
             0
@@ -168,7 +174,45 @@ impl RoleImageColumnCounts {
             route_arm_lane_steps: route_facts.route_arm_lane_steps,
             route_commit_rows: route_facts.route_commit_rows,
             roll_scopes,
+            roll_entry_views,
         }
+    }
+
+    const fn roll_entry_view_count<const E: usize>(
+        eff_list: &EffList<E>,
+        rows: projection::LocalRows<'_, E>,
+    ) -> usize {
+        let markers = eff_list.scope_markers();
+        let mut count = 0;
+        let mut marker_idx = 0;
+        while marker_idx < markers.len() {
+            let marker = markers.at(marker_idx);
+            if markers.is_first_enter(marker_idx)
+                && matches!(marker.scope_id.kind(), Some(ScopeKind::Roll))
+            {
+                let end = projection::scope_segment_end(markers, marker_idx, Some(eff_list.len()));
+                let row = projection::local_step_range_for_eff_range(
+                    eff_list,
+                    marker.offset(),
+                    end,
+                    rows,
+                );
+                if !row.is_absent_or_zero_len() {
+                    let mut role = 0usize;
+                    while role < 256 {
+                        if rows
+                            .roll_entry_actor(eff_list, marker.offset(), end, role as u8)
+                            .is_some()
+                        {
+                            count += 1;
+                        }
+                        role += 1;
+                    }
+                }
+            }
+            marker_idx += 1;
+        }
+        count
     }
 
     const fn resident_row_count<const E: usize>(

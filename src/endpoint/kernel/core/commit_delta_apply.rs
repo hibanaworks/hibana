@@ -60,7 +60,10 @@ where
     }
 
     #[inline]
-    fn prepared_body_reentry_scope(&self, event: Option<CommitEventRow>) -> Option<ScopeId> {
+    pub(super) fn prepared_body_reentry_scope(
+        &self,
+        event: Option<CommitEventRow>,
+    ) -> Option<ScopeId> {
         let event = event?;
         let mut selected_arm_for_scope = |scope| self.selected_arm_for_scope(scope);
         self.progress

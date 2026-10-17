@@ -16,6 +16,10 @@ import Hibana.GlobalFidelity
 import Hibana.DescriptorRefinement
 import Hibana.EndpointOwnership
 import Hibana.SourceResourceOrder
+import Hibana.SourceResourceCausality
+import Hibana.SymbolicResourceFlow
+import Hibana.SourceResourcePrefix
+import Hibana.ReentryKnowledge
 import Hibana.Cancellation
 import Hibana.TransportContract
 import Hibana.AsyncCancellationTermination

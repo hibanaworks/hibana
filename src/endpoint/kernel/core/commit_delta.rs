@@ -140,6 +140,7 @@ where
         delta: &CommitDelta,
     ) -> Result<(), CursorInvariantError> {
         if let Some(event) = delta.event() {
+            self.preflight_roll_entry_views(Some(event))?;
             let idx = self
                 .progress
                 .cursor
@@ -458,6 +459,7 @@ where
         enabled: EnabledEventCommit,
     ) -> Result<PreparedCommitDelta, CursorInvariantError> {
         let event = delta.event().ok_or(CursorInvariantError::INVARIANT)?;
+        self.preflight_roll_entry_views(Some(event))?;
         if event.progress_step() != enabled.progress_step()
             || delta.cursor_after() != enabled.cursor_after()
         {

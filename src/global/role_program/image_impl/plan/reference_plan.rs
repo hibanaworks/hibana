@@ -104,6 +104,7 @@ impl RoleImageColumnCounts {
             route_commit_ranges,
             route_commit_rows,
             roll_scopes,
+            roll_entry_view_count: 0,
         }
     }
 }

@@ -5,6 +5,130 @@ use crate::{
 };
 
 #[test]
+fn a_rolled_body_cannot_restart_after_its_resource_has_left_in_the_continuation() {
+    use crate::endpoint::proof_snapshot::actor_snapshot;
+    type Tick = g::Msg<39, ()>;
+    type Steps =
+        g::Seq<g::Roll<g::Seq<g::Send<0, 2, Tick>, g::Send<10, 3, Read>>>, g::Send<0, 1, Loan>>;
+    let () = g::ProgramProjection::<Steps, 8>::VALIDATION;
+    let owner_program = crate::global::role_program::role_program_from_image::<0>(
+        &RoleProjection::<0, Steps, 8>::IMAGE_REF,
+    );
+    let db_program = crate::global::role_program::role_program_from_image::<10>(
+        &RoleProjection::<10, Steps, 8>::IMAGE_REF,
+    );
+    let worker_program = crate::global::role_program::role_program_from_image::<1>(
+        &RoleProjection::<1, Steps, 8>::IMAGE_REF,
+    );
+    let ticker_program = crate::global::role_program::role_program_from_image::<2>(
+        &RoleProjection::<2, Steps, 8>::IMAGE_REF,
+    );
+    let reader_program = crate::global::role_program::role_program_from_image::<3>(
+        &RoleProjection::<3, Steps, 8>::IMAGE_REF,
+    );
+    tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let mut slab = [0u8; 48 * 1024];
+            let mut storage = SessionKitStorage::<TestTransport>::uninit();
+            let rv = storage
+                .init()
+                .rendezvous(&mut slab, TestTransport::new())
+                .unwrap();
+            let sid = SessionId::new(9027);
+            let mut owner = rv.enter(sid, &owner_program).unwrap();
+            let mut db = rv.enter(sid, &db_program).unwrap();
+            let mut worker = rv.enter(sid, &worker_program).unwrap();
+            let mut ticker = rv.enter(sid, &ticker_program).unwrap();
+            let mut reader = rv.enter(sid, &reader_program).unwrap();
+
+            owner.send::<Tick>(&()).await.unwrap();
+            db.send::<Read>(&7).await.unwrap();
+            ticker.recv::<Tick>().await.unwrap();
+            assert_eq!(reader.recv::<Read>().await.unwrap(), 7);
+            owner.send::<Loan>(db).await.unwrap();
+            let transferred_db = worker.recv::<Loan>().await.unwrap();
+
+            // SAFETY: this actor was attached through TestTransport above.
+            let before = unsafe { actor_snapshot(&owner) };
+            let result = tokio::time::timeout(
+                std::time::Duration::from_millis(100),
+                owner.send::<Tick>(&()),
+            )
+            .await;
+            // SAFETY: the same pinned TestTransport actor remains alive.
+            let after = unsafe { actor_snapshot(&owner) };
+            assert!(
+                !matches!(result, Ok(Ok(()))),
+                "a later handoff must not admit a new body that needs the transferred view: before={before:?}, after={after:?}"
+            );
+            assert_eq!(before.counter, after.counter);
+            assert!(before.steps.iter().map(|step| step.done)
+                .eq(after.steps.iter().map(|step| step.done)));
+            drop(transferred_db);
+        });
+}
+
+#[test]
+fn a_rolled_body_can_restart_after_its_resource_returns_from_the_continuation() {
+    type Tick = g::Msg<39, ()>;
+    type Steps = g::Seq<
+        g::Roll<g::Seq<g::Send<0, 2, Tick>, g::Send<10, 3, Read>>>,
+        g::Seq<g::Send<0, 1, Loan>, g::Send<1, 0, Loan>>,
+    >;
+    let () = g::ProgramProjection::<Steps, 8>::VALIDATION;
+    let owner_program = crate::global::role_program::role_program_from_image::<0>(
+        &RoleProjection::<0, Steps, 8>::IMAGE_REF,
+    );
+    let db_program = crate::global::role_program::role_program_from_image::<10>(
+        &RoleProjection::<10, Steps, 8>::IMAGE_REF,
+    );
+    let worker_program = crate::global::role_program::role_program_from_image::<1>(
+        &RoleProjection::<1, Steps, 8>::IMAGE_REF,
+    );
+    let ticker_program = crate::global::role_program::role_program_from_image::<2>(
+        &RoleProjection::<2, Steps, 8>::IMAGE_REF,
+    );
+    let reader_program = crate::global::role_program::role_program_from_image::<3>(
+        &RoleProjection::<3, Steps, 8>::IMAGE_REF,
+    );
+    tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let mut slab = [0u8; 48 * 1024];
+            let mut storage = SessionKitStorage::<TestTransport>::uninit();
+            let rv = storage
+                .init()
+                .rendezvous(&mut slab, TestTransport::new())
+                .unwrap();
+            let sid = SessionId::new(9028);
+            let mut owner = rv.enter(sid, &owner_program).unwrap();
+            let mut db = rv.enter(sid, &db_program).unwrap();
+            let mut worker = rv.enter(sid, &worker_program).unwrap();
+            let mut ticker = rv.enter(sid, &ticker_program).unwrap();
+            let mut reader = rv.enter(sid, &reader_program).unwrap();
+
+            owner.send::<Tick>(&()).await.unwrap();
+            db.send::<Read>(&7).await.unwrap();
+            ticker.recv::<Tick>().await.unwrap();
+            assert_eq!(reader.recv::<Read>().await.unwrap(), 7);
+            owner.send::<Loan>(db).await.unwrap();
+            let db = worker.recv::<Loan>().await.unwrap();
+            worker.send::<Loan>(db).await.unwrap();
+            let mut db = owner.recv::<Loan>().await.unwrap();
+
+            owner.send::<Tick>(&()).await.unwrap();
+            db.send::<Read>(&9).await.unwrap();
+            ticker.recv::<Tick>().await.unwrap();
+            assert_eq!(reader.recv::<Read>().await.unwrap(), 9);
+        });
+}
+
+#[test]
 fn dropping_a_completed_owned_send_does_not_retire_the_returned_resource_view() {
     use crate::endpoint::proof_snapshot::view_tag;
     use core::{

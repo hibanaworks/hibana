@@ -126,6 +126,12 @@
       "g::source::ownership::actors::knowledge::kani::equal_candidate_unions_cannot_erase_an_actual_participation_difference",
       "g::source::ownership::actors::knowledge::kani::leaf_participation_is_exact_including_collapsed_choice_inputs"
     ],
+    "../../src/g/source/ownership/actors/reentry/kani.rs": [
+      "g::source::ownership::actors::reentry::kani::a_fresh_permit_authorizes_the_dependent_sender",
+      "g::source::ownership::actors::reentry::kani::a_parallel_permit_does_not_authorize_an_independently_enabled_send",
+      "g::source::ownership::actors::reentry::kani::a_remote_origin_without_a_fresh_permit_is_rejected",
+      "g::source::ownership::actors::reentry::kani::an_unrelated_parallel_sender_needs_no_resource_permit"
+    ],
     "../../src/global/compiled/images/image/program_ref/actors/kani.rs": [
       "global::compiled::images::image::program_ref::actors::kani::actor_row_lookups_reject_every_out_of_range_index",
       "global::compiled::images::image::program_ref::actors::kani::initial_issuance_lookup_preserves_the_complete_role_domain",
@@ -371,7 +377,7 @@
   "contract-harnesses": {},
   "contracts": [],
   "totals": {
-    "standard-harnesses": 257,
+    "standard-harnesses": 261,
     "contract-harnesses": 0,
     "functions-under-contract": 0
   }

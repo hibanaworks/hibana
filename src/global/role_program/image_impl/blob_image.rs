@@ -1,11 +1,11 @@
 use super::super::{
     ColumnRange, PackedLaneRange, PackedLocalEventRow, PackedRollScopeRow,
     ROLE_IMAGE_CONFLICT_STRIDE, ROLE_IMAGE_DEPENDENCY_STRIDE, ROLE_IMAGE_EVENT_STRIDE,
-    ROLE_IMAGE_LANE_RANGE_STRIDE, ROLE_IMAGE_LANE_STRIDE, ROLE_IMAGE_ROLL_SCOPE_STRIDE,
-    ROLE_IMAGE_ROUTE_ARM_LANE_STEP_STRIDE, ROLE_IMAGE_ROUTE_ARM_STRIDE,
-    ROLE_IMAGE_ROUTE_SCOPE_STRIDE, ROLE_IMAGE_U16_STRIDE, RoleImageBuild, RoleImageBytes,
-    RoleImageColumns, RoleImagePlan, RoleImageRef, RouteArmLaneStepRow, RuntimeRoleFacts,
-    ScopeKind,
+    ROLE_IMAGE_LANE_RANGE_STRIDE, ROLE_IMAGE_LANE_STRIDE, ROLE_IMAGE_ROLL_ENTRY_STRIDE,
+    ROLE_IMAGE_ROLL_SCOPE_STRIDE, ROLE_IMAGE_ROUTE_ARM_LANE_STEP_STRIDE,
+    ROLE_IMAGE_ROUTE_ARM_STRIDE, ROLE_IMAGE_ROUTE_SCOPE_STRIDE, ROLE_IMAGE_U16_STRIDE,
+    RoleImageBuild, RoleImageBytes, RoleImageColumns, RoleImagePlan, RoleImageRef,
+    RouteArmLaneStepRow, RuntimeRoleFacts, ScopeKind,
 };
 use super::{projection, route_arm_row_index};
 use crate::global::compiled::images::CompiledProgramRef;
@@ -419,6 +419,7 @@ impl<const N: usize> RoleImageBytes<N> {
         }
 
         let mut roll_scope = 0usize;
+        let mut roll_entry = 0usize;
         marker_idx = 0;
         while marker_idx < markers.len() {
             let marker = markers.at(marker_idx);
@@ -434,6 +435,31 @@ impl<const N: usize> RoleImageBytes<N> {
                     rows,
                 );
                 if !row.is_absent_or_zero_len() {
+                    let first_entry = roll_entry;
+                    let mut role = 0usize;
+                    while role < 256 {
+                        if let Some(actor) =
+                            rows.roll_entry_actor(eff_list, marker.offset(), end_eff, role as u8)
+                        {
+                            let offset = Self::column_offset(
+                                columns.roll_entry_views(),
+                                roll_entry,
+                                ROLE_IMAGE_ROLL_ENTRY_STRIDE,
+                            );
+                            out.write_u8(offset, role as u8);
+                            out.write_u16(offset + 1, actor);
+                            roll_entry += 1;
+                        }
+                        role += 1;
+                    }
+                    if columns.roll_entry_ranges().len != 0 {
+                        out.w32(
+                            columns.roll_entry_ranges(),
+                            roll_scope,
+                            ROLE_IMAGE_LANE_RANGE_STRIDE,
+                            PackedLaneRange::new(first_entry, roll_entry - first_entry).raw(),
+                        );
+                    }
                     out.write_roll_scope_row(
                         columns.roll_scopes,
                         roll_scope,
@@ -452,6 +478,7 @@ impl<const N: usize> RoleImageBytes<N> {
             || route_arm_lane_step_row != columns.route_arm_lane_step_rows.len as usize
             || route_commit_row != columns.route_commit_rows.len as usize
             || roll_scope != columns.roll_scopes.len as usize
+            || roll_entry != columns.roll_entry_view_count as usize
         {
             panic!("role image plan mismatch");
         }
