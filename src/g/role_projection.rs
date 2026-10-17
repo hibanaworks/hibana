@@ -5,6 +5,7 @@ use crate::global::compiled::images::COMPACT_DESCRIPTOR_BYTE_CAPACITY;
 
 #[cfg(kani)]
 mod kani;
+mod source_order;
 #[cfg(all(test, hibana_repo_tests))]
 mod tests;
 
@@ -143,11 +144,15 @@ where
             Some(build) => build,
             None => panic!("role bucket selection"),
         };
-        build.image_ref(
+        let image = build.image_ref(
             &ProgramProjection::<Steps, CAPACITY>::PROGRAM_REF,
             Self::ACTOR,
             Self::FACTS,
-        )
+        );
+        if !source_order::check::<Steps, CAPACITY>(&image) {
+            panic!("actor projection does not preserve source operation dependencies");
+        }
+        image
     }
 
     const IMAGE_REF: crate::global::role_program::RoleImageRef = if Self::BLOB_LEN <= 32 {

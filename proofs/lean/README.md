@@ -137,6 +137,17 @@ mutations with an extra parallel wait or a missing join are rejected even when
 their operation rows and lane format still pass. This does not yet establish
 the property for a prepared base before the explicit roll reset below. Route authority,
 ownership transfer commits and continuation refinement remain open.
+Typed owned projection also checks source order against every emitted local
+image during const evaluation. It splits only the unknown choices needed for
+an individual edge obligation, validates active actors against the source's
+conditional references, and rejects either a missing source predecessor or a
+guard that orders independent work. Immutable row decoding uses compiler
+scratch and adds no runtime progress state. The pair-check equivalence and
+source-prefix theorem in `ActorProgress.lean` state why direct predecessor
+coverage preserves exactly the same ready operations. `SourceOrderGenerated`
+checks the valid Rust image and two byte-level counterexamples with the
+independent Lean decoder. This connects the dependency check at the typed
+boundary; it does not by itself establish distributed execution refinement.
 `ActorRouting.lean` binds event conflict paths and route-parent/reentry columns
 to the source, including nested choices. The same committed history and
 candidate preview therefore produce the same conflict filter on both paths.
@@ -243,7 +254,7 @@ can change arms while preserving the parent prefix. The complete nested trace
 runs twice. Before the parent suffix, both the completed arm and the unused
 alternative are rejected. These six kernel proofs replace seven lemmas about the removed
 route-only reset and its unused selector. Including the transfer model below,
-the static inventory is 846, with 463 using `propext` and `Quot.sound`,
+the static inventory is 848, with 465 using `propext` and `Quot.sound`,
 277 using only `propext`, and 106 axiom-free. The three additional
 `PublicOperationKernel.lean` claims cover the owned-send payload borrow:
 other resource-dependent work waits, that payload's own transfer may finish,

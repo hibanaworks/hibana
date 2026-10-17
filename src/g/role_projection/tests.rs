@@ -37,6 +37,7 @@ mod return_reentry;
 mod roll_exit;
 mod routing;
 mod send_wait;
+mod source_order;
 
 #[test]
 fn initial_resource_views_share_progress_and_park_independent_receives() {

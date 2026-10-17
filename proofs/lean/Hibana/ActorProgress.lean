@@ -17,6 +17,72 @@ def predecessorCoverage (expected : Nat → List Nat) (actual : List Nat) (event
     (expected event).all fun before =>
       actual.any fun middle => middle == before || (expected middle).contains before
 
+/-- One source/local edge obligation, as checked at the typed Rust projection
+boundary. A missing direct edge can be covered by an actual predecessor whose
+source prefix already contains the required action. -/
+def predecessorPairCheck
+    (expected : Nat → List Nat) (actual : List Nat) (event before : Nat) : Bool :=
+  if actual.contains before then (expected event).contains before
+  else if (expected event).contains before then
+    actual.any fun middle => (expected middle).contains before
+  else true
+
+theorem pair_validation_is_exact_predecessor_coverage
+    (expected : Nat → List Nat) (actual : List Nat) (event : Nat) :
+    (actual ++ expected event).all (predecessorPairCheck expected actual event) = true ↔
+      predecessorCoverage expected actual event = true := by
+  constructor
+  · intro checked
+    have each := List.all_eq_true.mp checked
+    apply Bool.and_eq_true_iff.mpr
+    constructor
+    · apply List.all_eq_true.mpr
+      intro before member
+      have present : actual.contains before = true := by simpa using member
+      simpa only [predecessorPairCheck, present, Bool.true_eq, ite_true] using
+        each before (List.mem_append.mpr (.inl member))
+    · apply List.all_eq_true.mpr
+      intro before member
+      by_cases direct : before ∈ actual
+      · have same : (before == before) = true := decide_eq_true rfl
+        exact List.any_eq_true.mpr ⟨before, direct, Bool.or_eq_true_iff.mpr (.inl same)⟩
+      · have absent : actual.contains before = false := by simpa using direct
+        have needed : (expected event).contains before = true := by simpa using member
+        have ancestors : actual.any (fun middle => (expected middle).contains before) = true := by
+          simpa only [predecessorPairCheck, absent, needed,
+            Bool.false_eq_true, Bool.true_eq, ite_false, ite_true] using
+            each before (List.mem_append.mpr (.inr member))
+        obtain ⟨middle, belongs, ancestor⟩ := List.any_eq_true.mp ancestors
+        exact List.any_eq_true.mpr ⟨middle, belongs, Bool.or_eq_true_iff.mpr (.inr ancestor)⟩
+  · intro checked
+    have fields := Bool.and_eq_true_iff.mp checked
+    apply List.all_eq_true.mpr
+    intro before _
+    cases direct : actual.contains before with
+    | true =>
+        have belongs : before ∈ actual := by simpa using direct
+        have needed := List.all_eq_true.mp fields.1 before belongs
+        simpa only [predecessorPairCheck, direct, Bool.true_eq, ite_true] using needed
+    | false =>
+        cases needed : (expected event).contains before with
+        | false => simp only [predecessorPairCheck, direct, needed,
+            Bool.false_eq_true, ite_false]
+        | true =>
+            have belongs : before ∈ expected event := by simpa using needed
+            obtain ⟨middle, member, covers⟩ :=
+              List.any_eq_true.mp (List.all_eq_true.mp fields.2 before belongs)
+            have ancestor : (expected middle).contains before = true := by
+              rcases Bool.or_eq_true_iff.mp covers with same | previous
+              · have equal : middle = before := beq_iff_eq.mp same
+                have present : actual.contains before = true := by simpa [equal] using member
+                rw [direct] at present
+                contradiction
+              · exact previous
+            have covered : actual.any (fun middle => (expected middle).contains before) = true :=
+              List.any_eq_true.mpr ⟨middle, member, ancestor⟩
+            simpa only [predecessorPairCheck, direct, needed,
+              Bool.false_eq_true, Bool.true_eq, ite_false, ite_true] using covered
+
 /-- A compact dependency may require an intermediate operation instead of all
 its ancestors. On a source-closed prefix this preserves exactly the same next
 operations, without serializing independent source operations. -/
@@ -45,6 +111,18 @@ theorem covered_predecessors_have_equal_readiness
     have belongs : before ∈ expected event := by
       simpa using List.all_eq_true.mp coverage.1 before member
     exact List.all_eq_true.mp ready before belongs
+
+/-- Accepted pair obligations preserve exactly the source-enabled operations
+on the existing source-closed progress. This does not require another cursor
+or serialize independent parallel operations. -/
+theorem checked_pairs_have_equal_source_readiness
+    {expected : Nat → List Nat} {actual : List Nat} {event : Nat} {state : CommitState}
+    (checked : (actual ++ expected event).all
+      (predecessorPairCheck expected actual event) = true)
+    (closed : state.PrefixClosed expected (expected event)) :
+    actual.all state.done = true ↔ (expected event).all state.done = true :=
+  covered_predecessors_have_equal_readiness
+    ((pair_validation_is_exact_predecessor_coverage expected actual event).mp checked) closed
 
 theorem initial_progress_is_source_prefix (predecessors : Nat → List Nat) (cut : List Nat) :
     CommitState.initial.PrefixClosed predecessors cut := by

@@ -1,0 +1,5 @@
+sourceOrderExtraOrderRejected : sourceOrderExtraOrder.actorRowsCheck sourceOrderChoreo = true ∧
+  sourceOrderExtraOrder.actorOrderCheck sourceOrderChoreo = false
+sourceOrderMissingJoinRejected : sourceOrderMissingJoin.actorRowsCheck sourceOrderChoreo = true ∧
+  sourceOrderMissingJoin.actorOrderCheck sourceOrderChoreo = false
+sourceOrderValidAccepted : sourceOrderValid.actorOrderCheck sourceOrderChoreo = true

@@ -1757,6 +1757,17 @@ Hibana.causal_flow_monotone : ∀ (flow : Hibana.CausalFlowExpr) {left right : H
   @Eq.{1} Bool image.check true → @Eq.{1} Bool image.routeCommitColumnsCoherent true
 @Hibana.checked_descriptor_binds_strict_atom_order : ∀ {image : Hibana.RustDescriptorImage},
   @Eq.{1} Bool image.check true → @Eq.{1} Bool image.atomEffIndicesStrict true
+@Hibana.checked_pairs_have_equal_source_readiness : ∀ {expected : Nat → List.{0} Nat} {actual : List.{0} Nat}
+  {event : Nat} {state : Hibana.CommitState},
+  @Eq.{1} Bool
+      (@List.all.{0} Nat
+        (@HAppend.hAppend.{0, 0, 0} (List.{0} Nat) (List.{0} Nat) (List.{0} Nat)
+          (@instHAppendOfAppend.{0} (List.{0} Nat) (@List.instAppend.{0} Nat)) actual (expected event))
+        (Hibana.predecessorPairCheck expected actual event))
+      true →
+    state.PrefixClosed expected (expected event) →
+      Iff (@Eq.{1} Bool (@List.all.{0} Nat actual state.done) true)
+        (@Eq.{1} Bool (@List.all.{0} Nat (expected event) state.done) true)
 Hibana.close_and_receipt_requeue_commute : ∀ (before after : Hibana.TransportState) (frame : Hibana.TransportFrame),
   @Eq.{1} (Option.{0} Hibana.TransportBoundaryState)
     ((Hibana.TransportBoundaryState.offered before frame after).closePeer.resolve Hibana.ReceiptResolution.requeue)
@@ -4271,6 +4282,16 @@ Hibana.packed_route_authority_intrinsic_is_canonical : ∀ (scope resolver : Nat
         (@some.{0} (Prod.{0, 0} Nat Hibana.RouteAuthority)
           (@Prod.mk.{0, 0} Nat Hibana.RouteAuthority scope Hibana.RouteAuthority.intrinsic)))
       (@Eq.{1} Nat resolver (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0))))
+Hibana.pair_validation_is_exact_predecessor_coverage : ∀ (expected : Nat → List.{0} Nat) (actual : List.{0} Nat)
+  (event : Nat),
+  Iff
+    (@Eq.{1} Bool
+      (@List.all.{0} Nat
+        (@HAppend.hAppend.{0, 0, 0} (List.{0} Nat) (List.{0} Nat) (List.{0} Nat)
+          (@instHAppendOfAppend.{0} (List.{0} Nat) (@List.instAppend.{0} Nat)) actual (expected event))
+        (Hibana.predecessorPairCheck expected actual event))
+      true)
+    (@Eq.{1} Bool (Hibana.predecessorCoverage expected actual event) true)
 Hibana.parallel_arms_cannot_relay_facts : @Eq.{1} Bool
   (((Hibana.Choreo.send (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0)))
             (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1)))
