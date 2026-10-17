@@ -1,0 +1,86 @@
+completedStepReplayRejected : (have __src := received;
+      { snapshot := __src.snapshot, pathIndex := __src.pathIndex, admitted := received.admitted.set 0 true }).check
+    admissionImage admissionChoreo =
+  false
+dbDoneChecked : dbDone.check admissionImage admissionChoreo = true
+dbDoneSourceReadiness : ∃ data path,
+  admissionImage.decodeActorOrder? admissionChoreo = some data ∧
+    data.normalized.paths[dbDone.pathIndex]? = some path ∧
+      ∀ (row : Hibana.DecodedActorRow),
+        row ∈ data.activeRows path →
+          dbDone.snapshot.doneState.PrefixClosed (data.sourcePredecessors path)
+              (data.sourcePredecessors path row.eventId) ∧
+            dbDone.admitted[row.eventId]? = some (Hibana.sourceRowReady data path dbDone.snapshot row) ∧
+              (Hibana.sourceRowReady data path dbDone.snapshot row = true →
+                Hibana.sourceRowViewsIssued path dbDone.snapshot row = true)
+initialChecked : initial.check admissionImage admissionChoreo = true
+initialSourceReadiness : ∃ data path,
+  admissionImage.decodeActorOrder? admissionChoreo = some data ∧
+    data.normalized.paths[initial.pathIndex]? = some path ∧
+      ∀ (row : Hibana.DecodedActorRow),
+        row ∈ data.activeRows path →
+          initial.snapshot.doneState.PrefixClosed (data.sourcePredecessors path)
+              (data.sourcePredecessors path row.eventId) ∧
+            initial.admitted[row.eventId]? = some (Hibana.sourceRowReady data path initial.snapshot row) ∧
+              (Hibana.sourceRowReady data path initial.snapshot row = true →
+                Hibana.sourceRowViewsIssued path initial.snapshot row = true)
+joinedChecked : joined.check admissionImage admissionChoreo = true
+joinedSourceReadiness : ∃ data path,
+  admissionImage.decodeActorOrder? admissionChoreo = some data ∧
+    data.normalized.paths[joined.pathIndex]? = some path ∧
+      ∀ (row : Hibana.DecodedActorRow),
+        row ∈ data.activeRows path →
+          joined.snapshot.doneState.PrefixClosed (data.sourcePredecessors path)
+              (data.sourcePredecessors path row.eventId) ∧
+            joined.admitted[row.eventId]? = some (Hibana.sourceRowReady data path joined.snapshot row) ∧
+              (Hibana.sourceRowReady data path joined.snapshot row = true →
+                Hibana.sourceRowViewsIssued path joined.snapshot row = true)
+lostParallelReadinessRejected : (have __src := received;
+      { snapshot := __src.snapshot, pathIndex := __src.pathIndex, admitted := received.admitted.set 1 false }).check
+    admissionImage admissionChoreo =
+  false
+missingAdmissionRowRejected : (have __src := received;
+      { snapshot := __src.snapshot, pathIndex := __src.pathIndex, admitted := List.take 3 received.admitted }).check
+    admissionImage admissionChoreo =
+  false
+missingPayloadViewRejected : missingPayloadView.check admissionImage admissionChoreo = false
+missingPayloadViewSnapshotValid : missingPayloadView.snapshot.valid = true
+prematureReturnRejected : (have __src := received;
+      { snapshot := __src.snapshot, pathIndex := __src.pathIndex, admitted := received.admitted.set 3 true }).check
+    admissionImage admissionChoreo =
+  false
+receivedChecked : received.check admissionImage admissionChoreo = true
+receivedSourceReadiness : ∃ data path,
+  admissionImage.decodeActorOrder? admissionChoreo = some data ∧
+    data.normalized.paths[received.pathIndex]? = some path ∧
+      ∀ (row : Hibana.DecodedActorRow),
+        row ∈ data.activeRows path →
+          received.snapshot.doneState.PrefixClosed (data.sourcePredecessors path)
+              (data.sourcePredecessors path row.eventId) ∧
+            received.admitted[row.eventId]? = some (Hibana.sourceRowReady data path received.snapshot row) ∧
+              (Hibana.sourceRowReady data path received.snapshot row = true →
+                Hibana.sourceRowViewsIssued path received.snapshot row = true)
+receiverViewIssuedOnlyAfterReceipt : initial.snapshot.viewIssued 10 = false ∧
+  received.snapshot.viewIssued 10 = true ∧ returned.snapshot.viewIssued 10 = false
+returnedChecked : returned.check admissionImage admissionChoreo = true
+returnedSourceReadiness : ∃ data path,
+  admissionImage.decodeActorOrder? admissionChoreo = some data ∧
+    data.normalized.paths[returned.pathIndex]? = some path ∧
+      ∀ (row : Hibana.DecodedActorRow),
+        row ∈ data.activeRows path →
+          returned.snapshot.doneState.PrefixClosed (data.sourcePredecessors path)
+              (data.sourcePredecessors path row.eventId) ∧
+            returned.admitted[row.eventId]? = some (Hibana.sourceRowReady data path returned.snapshot row) ∧
+              (Hibana.sourceRowReady data path returned.snapshot row = true →
+                Hibana.sourceRowViewsIssued path returned.snapshot row = true)
+workerDoneChecked : workerDone.check admissionImage admissionChoreo = true
+workerDoneSourceReadiness : ∃ data path,
+  admissionImage.decodeActorOrder? admissionChoreo = some data ∧
+    data.normalized.paths[workerDone.pathIndex]? = some path ∧
+      ∀ (row : Hibana.DecodedActorRow),
+        row ∈ data.activeRows path →
+          workerDone.snapshot.doneState.PrefixClosed (data.sourcePredecessors path)
+              (data.sourcePredecessors path row.eventId) ∧
+            workerDone.admitted[row.eventId]? = some (Hibana.sourceRowReady data path workerDone.snapshot row) ∧
+              (Hibana.sourceRowReady data path workerDone.snapshot row = true →
+                Hibana.sourceRowViewsIssued path workerDone.snapshot row = true)

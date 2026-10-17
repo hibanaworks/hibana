@@ -7,6 +7,7 @@ import Hibana.Generation
 import Hibana.ViewGeneration
 import Hibana.ActorSourceProgress
 import Hibana.ActorCommit
+import Hibana.ActorAdmission
 import Hibana.OwnedCommit
 import Hibana.OwnedRetirement
 import Hibana.SourceResourceAvailability

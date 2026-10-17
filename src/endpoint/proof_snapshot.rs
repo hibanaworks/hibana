@@ -200,3 +200,53 @@ pub(crate) unsafe fn actor_snapshot<const ROLE: u8>(
         }
     })
 }
+
+/// Observe the production cursor's admission for every descriptor row without
+/// choosing a route, polling I/O, or advancing progress. These queries describe
+/// descriptor readiness, not ownership of a Rust value or transport readiness.
+///
+/// # Safety
+/// The Endpoint must belong to a pinned actor created with `TestTransport`.
+pub(crate) unsafe fn actor_admissions<const ROLE: u8>(endpoint: &Endpoint<'_, ROLE>) -> Vec<bool> {
+    // SAFETY: the caller fixes the erased transport and retains the actor.
+    let actor = unsafe {
+        let header = endpoint.owner.ptr.as_ref();
+        assert!(endpoint.owner.handle.matches_header(header));
+        header
+            .actor()
+            .cast::<ResidentActor<'_, TestTransport>>()
+            .as_ref()
+    };
+    let mut operation = actor
+        .context
+        .try_operation_lease()
+        .expect("observation lease");
+    actor.with_kernel(&mut operation, actor.views.get(ROLE).unwrap(), |kernel| {
+        let cursor = &kernel.progress.cursor;
+        (0..cursor.local_steps_len())
+            .map(|index| {
+                let meta = match cursor.action_at(index) {
+                    LocalAction::Send { .. } => cursor.try_send_meta_at(index).unwrap().into(),
+                    LocalAction::Recv { .. } => cursor.try_recv_meta_at(index).unwrap().into(),
+                    LocalAction::Local { .. } => {
+                        let meta = cursor.try_local_meta_at(index).unwrap();
+                        crate::global::typestate::EventCommitMeta::new(
+                            meta.eff_index,
+                            meta.label,
+                            meta.origin,
+                            meta.scope,
+                            meta.route_arm,
+                            meta.lane,
+                        )
+                    }
+                    LocalAction::Terminate => crate::invariant(),
+                };
+                cursor
+                    .event_enabled(index, meta, &mut |scope, _| {
+                        kernel.selected_arm_for_scope(scope)
+                    })
+                    .is_ok()
+            })
+            .collect()
+    })
+}

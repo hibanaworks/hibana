@@ -113,6 +113,7 @@ MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_t
   --lib \
   g::role_projection::tests \
   -- --skip g::role_projection::tests::owned:: \
+  --skip g::role_projection::tests::admission:: \
   --skip g::role_projection::tests::pending_reentry:: \
   --skip g::role_projection::tests::order:: \
   --skip g::role_projection::tests::routing:: \
@@ -129,6 +130,11 @@ MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_t
   --skip g::role_projection::tests::conditional_controller::a_completed_right_arm_reopens_the_public_route_without_receiving \
   --skip g::role_projection::tests::conditional_controller::remote_controller:: \
   --skip g::role_projection::tests::conditional_controller::co_resident_controller::
+
+MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \
+  actor-source-admission \
+  -p hibana --lib \
+  g::role_projection::tests::admission::
 
 MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \
   actor-explicit-inner-roll \

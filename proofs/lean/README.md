@@ -68,6 +68,18 @@ cover self-references retained from those calls and retained outgoing payloads;
 under Miri. These checks support this Rust boundary; the Lean model and Kani do
 not by themselves prove Rust aliasing soundness for arbitrary carrier code.
 
+`ActorAdmission.lean` checks read-only admission observations from the actual
+shared actor cursor. For each active row it compares the recorded result with
+the dependencies decoded independently from the source, including blocked and
+already completed rows. Ready rows also require issued carrier and owned-payload
+view headers. The Tokio fixture transfers an Endpoint between two runtimes and
+executes its independent work with `join!`; its snapshots become kernel-checked
+Lean inputs. Missing rows, premature return, lost parallel readiness, completed
+step replay and a missing payload view are rejected. This checks the observed
+selected visit. It does not derive actual Rust value availability from a header,
+nor establish fresh rolled visits, carrier delivery or general distributed
+progress. The public owned-projection guard remains closed.
+
 Schema equality means equality of the canonical wire contract identified by
 `SCHEMA_ID`; it does not prove cross-binary Rust nominal type equality.
 
