@@ -140,6 +140,29 @@ Hibana.abort_peer_is_well_formed : ∀ (state : Hibana.TransportState), state.ab
                             Iff (@Eq.{1} Bool (@List.all.{0} Nat actual state.done) true)
                               (@Eq.{1} Bool (@List.all.{0} Nat (data.sourcePredecessors path row.eventId) state.done)
                                 true)))))
+@Hibana.accepted_actor_routes_bind_source_choice_filter : ∀ {image : Hibana.RustDescriptorImage}
+  {choreo : Hibana.Choreo},
+  @Eq.{1} Bool (image.actorRouteCheck choreo) true →
+    And (@Eq.{1} Bool (image.actorRowsCheck choreo) true)
+      (∀ (event : Nat),
+        @Membership.mem.{0, 0} Nat (List.{0} Nat) (@List.instMembership.{0} Nat) (List.range image.eventCount) event →
+          @Exists.{1} Nat fun effIndex =>
+            @Exists.{1} (List.{0} (Prod.{0, 0} Nat Nat)) fun actual =>
+              And (@Eq.{1} (Option.{0} Nat) (image.eventEffIndex? event) (@some.{0} Nat effIndex))
+                (And
+                  (@Eq.{1} (Option.{0} (List.{0} (Prod.{0, 0} Nat Nat))) (image.eventRoutePath? event)
+                    (@some.{0} (List.{0} (Prod.{0, 0} Nat Nat)) actual))
+                  (And
+                    (@Eq.{1} (Option.{0} (List.{0} (Prod.{0, 0} Nat Nat)))
+                      (Hibana.canonicalEventRoutePath? (Hibana.canonicalProgramSource choreo) effIndex)
+                      (@some.{0} (List.{0} (Prod.{0, 0} Nat Nat)) actual))
+                    (∀ (selected preview : Nat → Option.{0} Hibana.RouteArm)
+                      (expected : List.{0} (Prod.{0, 0} Nat Nat)),
+                      @Eq.{1} (Option.{0} (List.{0} (Prod.{0, 0} Nat Nat)))
+                          (Hibana.canonicalEventRoutePath? (Hibana.canonicalProgramSource choreo) effIndex)
+                          (@some.{0} (List.{0} (Prod.{0, 0} Nat Nat)) expected) →
+                        @Eq.{1} Bool (Hibana.routePathAllows actual selected preview)
+                          (Hibana.routePathAllows expected selected preview)))))
 @Hibana.accepted_actor_rows_bind_source_operations : ∀ {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo},
   @Eq.{1} Bool (image.actorRowsCheck choreo) true →
     @Exists.{1} Hibana.EndpointDelegation.Source fun source =>
@@ -1102,6 +1125,14 @@ Hibana.close_and_receipt_requeue_commute : ∀ (before after : Hibana.TransportS
           And (@Eq.{1} Hibana.TransportBoundaryState current (Hibana.TransportBoundaryState.idle before))
             (And (@Eq.{1} Hibana.TransportBoundaryState committed (Hibana.TransportBoundaryState.idle after))
               (@LT.lt.{0} Nat instLTNat before.delivered after.delivered))
+@Hibana.committed_route_choice_cannot_be_overridden_by_preview : ∀ {path : List.{0} (Prod.{0, 0} Nat Nat)}
+  {selected : Nat → Option.{0} Hibana.RouteArm} {scope arm : Nat} {chosen : Hibana.RouteArm},
+  @Membership.mem.{0, 0} (Prod.{0, 0} Nat Nat) (List.{0} (Prod.{0, 0} Nat Nat))
+      (@List.instMembership.{0} (Prod.{0, 0} Nat Nat)) path (@Prod.mk.{0, 0} Nat Nat scope arm) →
+    @Eq.{1} (Option.{0} Hibana.RouteArm) (selected scope) (@some.{0} Hibana.RouteArm chosen) →
+      @Ne.{1} Nat (Hibana.encodeRouteArm chosen) arm →
+        ∀ (preview : Nat → Option.{0} Hibana.RouteArm),
+          @Eq.{1} Bool (Hibana.routePathAllows path selected preview) false
 @Hibana.compact_distributed_successor_is_model_step : ∀ {state next : Hibana.CompactDistributedState}
   {session roleCount : Nat} {choreo : Hibana.Choreo},
   @Membership.mem.{0, 0} Hibana.CompactDistributedState (List.{0} Hibana.CompactDistributedState)
@@ -2768,6 +2799,17 @@ Hibana.local_action_unit_self_send_projects_local : ∀ (role label : Nat),
     @Eq.{1} Hibana.GlobalProtocolIdentity next.protocolIdentity config.protocolIdentity
 @Hibana.logical_progress_checker_sound : ∀ {graph : Hibana.EventGraph} {state : Hibana.CompactCommitState},
   @Eq.{1} Bool (Hibana.checkLogicalProgress graph state) true → Hibana.LogicalProgress graph state
+@Hibana.matching_choice_history_allows_route_path : ∀ {path : List.{0} (Prod.{0, 0} Nat Nat)}
+  {selected preview : Nat → Option.{0} Hibana.RouteArm},
+  (∀ (scope arm : Nat),
+      @Membership.mem.{0, 0} (Prod.{0, 0} Nat Nat) (List.{0} (Prod.{0, 0} Nat Nat))
+          (@List.instMembership.{0} (Prod.{0, 0} Nat Nat)) path (@Prod.mk.{0, 0} Nat Nat scope arm) →
+        ∀ (chosen : Hibana.RouteArm),
+          @Eq.{1} (Option.{0} Hibana.RouteArm)
+              (@Option.orElse.{0} Hibana.RouteArm (selected scope) fun x => preview scope)
+              (@some.{0} Hibana.RouteArm chosen) →
+            @Eq.{1} Nat (Hibana.encodeRouteArm chosen) arm) →
+    @Eq.{1} Bool (Hibana.routePathAllows path selected preview) true
 Hibana.matching_live_public_operation_transitions_exactly : ∀ (edge : Hibana.PublicOperationEdge),
   @Eq.{1} Hibana.PublicOperationTransition (Hibana.transitionPublicOperation edge.expected edge)
     { lease := Hibana.PublicOperationLease.held, phase := edge.next }
@@ -3209,6 +3251,14 @@ Hibana.poisoned_public_operation_remains_faulted : ∀ (edge : Hibana.PublicOper
       (Hibana.prepareLeaseAllocation state requiredTableSlots payloadBytes plannedImageFrontier payloadOffset)
       (@Except.ok.{0, 0} Hibana.LeaseAllocationFailure Hibana.LeaseAllocationPlan plan) →
     Hibana.endpointLeaseSlotCountRepresentable requiredTableSlots
+@Hibana.preview_route_choice_rejects_a_conflicting_path : ∀ {path : List.{0} (Prod.{0, 0} Nat Nat)}
+  {selected preview : Nat → Option.{0} Hibana.RouteArm} {scope arm : Nat} {chosen : Hibana.RouteArm},
+  @Membership.mem.{0, 0} (Prod.{0, 0} Nat Nat) (List.{0} (Prod.{0, 0} Nat Nat))
+      (@List.instMembership.{0} (Prod.{0, 0} Nat Nat)) path (@Prod.mk.{0, 0} Nat Nat scope arm) →
+    @Eq.{1} (Option.{0} Hibana.RouteArm) (selected scope) (@none.{0} Hibana.RouteArm) →
+      @Eq.{1} (Option.{0} Hibana.RouteArm) (preview scope) (@some.{0} Hibana.RouteArm chosen) →
+        @Ne.{1} Nat (Hibana.encodeRouteArm chosen) arm →
+          @Eq.{1} Bool (Hibana.routePathAllows path selected preview) false
 Hibana.production_atom_only_event_capacity_exact : @Eq.{1} Nat Hibana.productionAtomOnlyEventCapacity
   (@OfNat.ofNat.{0} Nat (nat_lit 7281) (instOfNatNat (nat_lit 7281)))
 Hibana.production_cursor_accepts_terminal_event_count : Hibana.productionCursorPositionRepresentable

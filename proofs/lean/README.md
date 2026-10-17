@@ -137,6 +137,13 @@ mutations with an extra parallel wait or a missing join are rejected even when
 their operation rows and lane format still pass. This does not yet establish
 the property for a prepared base after route or roll reentry. Route authority,
 ownership transfer commits and continuation refinement remain open.
+`ActorRouting.lean` binds event conflict paths and route-parent/reentry columns
+to the source, including nested choices. The same committed history and
+candidate preview therefore produce the same conflict filter on both paths.
+A committed choice takes precedence over preview. This filter permits unknown
+choices and is not a substitute for controller, ingress or reentry authority.
+Forged single-pass routes marked as reenterable and self-parent cycles are
+rejected even when their actor order and earlier route-column checks pass.
 The ordinary certificate still rejects owned actor columns, and public owned
 projection remains closed until those semantic connections are verified.
 

@@ -272,6 +272,8 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     /// This is a preview operation. It returns a [`RouteBranch`] whose
     /// [`RouteBranch::label`] is the selected arm's first logical label.
     /// Dropping the future before completion leaves endpoint progress unchanged.
+    /// Consume ordinary receive steps with [`Endpoint::recv`]; they are not
+    /// returned as route previews, even when they precede a later choice.
     /// Dynamic branches must be selected by an explicit resolver decision at a
     /// projected route point; transport observations and payload labels are demux
     /// evidence only.

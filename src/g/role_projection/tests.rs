@@ -17,6 +17,7 @@ mod native;
 mod order;
 mod owned;
 mod program_columns;
+mod routing;
 mod send_wait;
 
 #[test]

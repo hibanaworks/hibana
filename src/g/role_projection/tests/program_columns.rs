@@ -1,6 +1,6 @@
 //! Export actual ordinary and owned column headers for independent decoding.
-//! This verifies byte grammar, source ownership and actor operation rows.
-//! Progress, reentry and public qualification remain separate obligations.
+//! Check grammar, source ownership, actor operations, dependency order and routes.
+//! Complete progress, reentry and public qualification remain separate obligations.
 use super::*;
 use crate::test_support::{lean_choreo::LeanChoreo, lean_descriptor::descriptor_source};
 use std::{format, fs, path::PathBuf, string::String, vec::Vec};
@@ -72,7 +72,9 @@ fn certificate<Steps: g::ProgramShape + LeanChoreo, const CAPACITY: usize>(name:
         "theorem {name}ActorRowsMatchSource :\n  \
          {name}Image.actorRowsCheck {name}Choreo = true := by\n  decide\n\n\
          theorem {name}ActorOrderMatchesSource :\n  \
-         {name}Image.actorOrderCheck {name}Choreo = true := by\n  decide\n\n",
+         {name}Image.actorOrderCheck {name}Choreo = true := by\n  decide\n\n\
+         theorem {name}ActorRoutesMatchSource :\n  \
+         {name}Image.actorRouteCheck {name}Choreo = true := by\n  decide\n\n",
     ));
     if !bindings.is_empty() {
         let wrong_length = columns.proof_header_bytes()[6] ^ 1;
@@ -146,6 +148,8 @@ fn actor_certificate<const ROLE: u8, Steps: g::ProgramShape + LeanChoreo, const 
          {name}Image.actorRowsCheck {name}Choreo = true := by\n  decide\n\n\
          theorem {name}ActorOrderMatchesSource :\n  \
          {name}Image.actorOrderCheck {name}Choreo = true := by\n  decide\n\n\
+         theorem {name}ActorRoutesMatchSource :\n  \
+         {name}Image.actorRouteCheck {name}Choreo = true := by\n  decide\n\n\
          theorem {name}InvalidDirectionRejected :\n  \
          ({{ {name}Image with roleBytes := {name}Image.roleBytes.set 9 6 }} : \
          Hibana.RustDescriptorImage).actorRowsCheck {name}Choreo = false := by\n  decide\n\n\
@@ -198,6 +202,32 @@ fn export_program_columns_for_lean() {
     source.push_str(&actor_certificate::<1, order::Steps, 16>(
         "nestedActorOrder",
     ));
+    source.push_str(&actor_certificate::<1, routing::Steps, 32>(
+        "nestedActorRoutes",
+    ));
+    let routed = &RoleProjection::<1, routing::Steps, 32>::IMAGE_REF;
+    assert_eq!(routed.footprint().route_scope_count, 2);
+    let root = routed.route_scope_by_slot(0).unwrap();
+    for (name, raw) in [
+        ("falseRouteReentry", 0xc000),
+        ("cyclicRouteParent", root.raw() * 2),
+    ] {
+        let low = raw & 255;
+        let high = raw >> 8;
+        source.push_str(&format!(
+            "def {name}Image : Hibana.RustDescriptorImage := \
+             {{ nestedActorRoutesImage with roleBytes := \
+             (nestedActorRoutesImage.roleBytes.set nestedActorRoutesImage.roleRouteScopeConflictOffset {low}).set \
+             (nestedActorRoutesImage.roleRouteScopeConflictOffset + 1) {high} }}\n\n\
+             theorem {name}OrderStillMatches :\n  \
+             {name}Image.actorOrderCheck nestedActorRoutesChoreo = true := by\n  decide\n\n\
+             theorem {name}PriorRouteColumnsStillCoherent :\n  \
+             ({name}Image.routeArmColumnsCoherent && {name}Image.routeCommitColumnsCoherent &&\n  \
+             {name}Image.passiveChildColumnsCoherent) = true := by\n  decide\n\n\
+             theorem {name}SourceRouteRejected :\n  \
+             {name}Image.actorRouteCheck nestedActorRoutesChoreo = false := by\n  decide\n\n",
+        ));
+    }
     let nested =
         RoleDescriptorRef::from_resident(&RoleProjection::<1, order::Steps, 16>::IMAGE_REF);
     assert_eq!(nested.local_len(), 5);

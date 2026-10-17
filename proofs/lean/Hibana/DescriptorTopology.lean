@@ -1094,7 +1094,7 @@ private def RustDescriptorImage.decodedRouteMembershipsAt?
           none
     | _, _ => none)
 
-private def RustDescriptorImage.eventConflictMembership?
+def RustDescriptorImage.eventConflictMembership?
     (image : RustDescriptorImage)
     (eventId : Nat) : Option (Option (Nat × Nat)) := do
   let event ← image.decodeRoleEventRow? eventId
@@ -1112,7 +1112,7 @@ private def packedConflictMembership? (raw : Nat) : Option (Option (Nat × Nat))
   else
     none
 
-private def RustDescriptorImage.routeParentMembership?
+def RustDescriptorImage.routeParentMembership?
     (image : RustDescriptorImage) (scope : Nat) : Option (Option (Nat × Nat)) := do
   let scopes ← image.decodeRouteScopeRows?
   let slot ← (List.range scopes.length).find? fun index =>
@@ -1145,7 +1145,9 @@ def RustDescriptorImage.passiveChildColumnsCoherent
         | _, _ => false
   | _, _ => false
 
-private def RustDescriptorImage.runtimeRouteParentMembership?
+/-- Match Rust's `route_commit_parent` when checking precomputed commit rows.
+The event conflict walk uses the raw parent and must not erase a self-edge. -/
+private def RustDescriptorImage.routeCommitParentMembership?
     (image : RustDescriptorImage) (scope : Nat) : Option (Option (Nat × Nat)) := do
   let parent ← image.routeParentMembership? scope
   match parent with
@@ -1160,7 +1162,7 @@ private def RustDescriptorImage.routeCommitChainMatches
       match packedConflictMembership? current with
       | some (some membership) =>
           membership = expected &&
-            match image.runtimeRouteParentMembership? membership.1, rest with
+            match image.routeCommitParentMembership? membership.1, rest with
             | some none, [] => true
             | some (some parent), _ :: _ =>
                 image.routeCommitChainMatches rest parent
