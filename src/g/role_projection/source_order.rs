@@ -45,6 +45,12 @@ pub(super) const fn check<Steps: ProgramShape, const E: usize>(image: &RoleImage
     while after < image.local_step_count() {
         let mut before = 0;
         while before < image.local_step_count() {
+            let (first, _) = SourceOrder::<E>::coordinates(check.operation(before));
+            let (second, _) = SourceOrder::<E>::coordinates(check.operation(after));
+            if image.program().source_precedes(first, second) != check.source.before(first, second)
+            {
+                return false;
+            }
             if !check.every_selection(before, after, &SourceContext::new(&[])) {
                 return false;
             }

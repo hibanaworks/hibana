@@ -152,7 +152,7 @@ Run the pinned fail-closed gate:
 bash .github/scripts/check_kani.sh
 ```
 
-The reviewed Kani inventory contains 261 harnesses, including two production
+The reviewed Kani inventory contains 262 harnesses, including two production
 cursor checks for route control after an Endpoint handoff. The final-form gate also
 runs the production route-correlation query exhaustively over every u8
 receiver, first holder and second holder, and both direct/swapped choices:
@@ -167,6 +167,12 @@ the actual closure algorithm without stubs. Prefix ownership is a separate
 source-query obligation, covered by the source models and actual projection
 regressions; these four bounded checks do not establish arbitrary-source or
 distributed runtime soundness.
+
+The immutable source-order query is also checked on actual compiled par,
+route and roll markers over the full symbolic usize index domain. It retains
+the sequential dependencies while excluding independent or alternative arms.
+This finite-shape query check complements the typed const boundary, which
+compares the query with the original source for every pair of local operations.
 
 Inventory, code generation, recursion-bound extraction and solver execution
 share one fresh compiler directory owned by that gate invocation. Old build

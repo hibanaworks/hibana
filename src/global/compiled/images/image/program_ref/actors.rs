@@ -59,6 +59,60 @@ impl CompiledProgramRef {
         }
     }
 
+    /// Strict single-visit source order. Enumeration orders sequential terms,
+    /// except for operations separated by parallel or alternative arms.
+    /// Read the existing immutable markers; do not create a dependency ledger.
+    pub(crate) const fn source_precedes(&self, before: usize, after: usize) -> bool {
+        if before >= after || after >= self.columns.atom_count() {
+            return false;
+        }
+        let markers = self
+            .columns
+            .scope_markers_for(self.source_scope_marker_count());
+        let mut marker = 0;
+        while marker < markers.len as usize {
+            let offset = markers.offset as usize + marker * PROGRAM_IMAGE_SCOPE_MARKER_STRIDE;
+            let split = self.read_u16_at(offset) as usize;
+            if before < split && split <= after {
+                let raw_scope = self.read_u16_at(offset + 2);
+                let Some(scope) = ScopeId::decode_raw(raw_scope) else {
+                    crate::invariant();
+                };
+                let tag = self.byte_at(offset + 4) & 3;
+                // Par has a Split marker. Route closes its left arm and
+                // enters its right arm at the same offset instead.
+                if matches!(
+                    (scope.kind(), tag),
+                    (Some(ScopeKind::Parallel), 1) | (Some(ScopeKind::Route), 2)
+                ) {
+                    let mut start = None;
+                    let mut stop = None;
+                    let mut bound = 0;
+                    while bound < markers.len as usize {
+                        let at =
+                            markers.offset as usize + bound * PROGRAM_IMAGE_SCOPE_MARKER_STRIDE;
+                        if self.read_u16_at(at + 2) == raw_scope {
+                            match self.byte_at(at + 4) & 3 {
+                                0 if start.is_none() => start = Some(self.read_u16_at(at) as usize),
+                                2 => stop = Some(self.read_u16_at(at) as usize),
+                                _ => (),
+                            }
+                        }
+                        bound += 1;
+                    }
+                    let (Some(start), Some(stop)) = (start, stop) else {
+                        crate::invariant();
+                    };
+                    if start <= before && after < stop {
+                        return false;
+                    }
+                }
+            }
+            marker += 1;
+        }
+        true
+    }
+
     /// Read a roll enter at this source marker and its global atom interval.
     /// A local table cannot hide a source scope by omitting its own roll row.
     pub(crate) const fn source_roll_at(&self, marker: usize) -> Option<(ScopeId, usize, usize)> {

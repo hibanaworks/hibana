@@ -124,6 +124,24 @@ theorem checked_pairs_have_equal_source_readiness
   covered_predecessors_have_equal_readiness
     ((pair_validation_is_exact_predecessor_coverage expected actual event).mp checked) closed
 
+/-- A pending source ancestor still blocks a compact guard that covers it
+through another join. A future holding that ancestor's view cannot classify
+the wait as work that an independent view can finish. -/
+theorem a_pending_source_ancestor_blocks_covered_local_guards
+    {expected : Nat → List Nat} {actual : List Nat} {event before : Nat} {state : CommitState}
+    (coverage : predecessorCoverage expected actual event = true)
+    (closed : state.PrefixClosed expected (expected event))
+    (ancestor : before ∈ expected event)
+    (pending : state.done before = false) :
+    actual.all state.done = false := by
+  cases ready : actual.all state.done with
+  | false => rfl
+  | true =>
+      have sourceReady := (covered_predecessors_have_equal_readiness coverage closed).mp ready
+      have completed := List.all_eq_true.mp sourceReady before ancestor
+      rw [pending] at completed
+      contradiction
+
 theorem initial_progress_is_source_prefix (predecessors : Nat → List Nat) (cut : List Nat) :
     CommitState.initial.PrefixClosed predecessors cut := by
   intro event _ completed

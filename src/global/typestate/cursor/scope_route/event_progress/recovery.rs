@@ -100,29 +100,8 @@ impl EventCursor {
             if role == blocked.0 || blocked.1 == Some(role) {
                 return EventAdmissionError::PredecessorPending;
             }
-            for role in [Some(blocked.0), blocked.1].into_iter().flatten() {
-                if !self.event_lane_head_allows_view(progress, conflict, Some(role), selected) {
-                    return EventAdmissionError::PredecessorPending;
-                }
-            }
-            let row = crate::invariant_some(self.machine().event_program().event_row_at(index));
-            if let Some(dependency) = row.dependency() {
-                let rows = self
-                    .machine()
-                    .event_program()
-                    .dependency_row_set(dependency);
-                for prior in self.pending_event_steps(rows.start()..rows.end()) {
-                    if self.uses_blocked_view(prior, blocked)
-                        && self.event_actor_is_local(prior, selected) != Some(false)
-                        && self.event_conflict_row_allows_with_preview(
-                            self.machine().event_conflict_for_index(prior),
-                            conflict,
-                            selected,
-                        )
-                    {
-                        return EventAdmissionError::PredecessorPending;
-                    }
-                }
+            if self.pending_source_predecessor_uses(index, blocked, conflict, selected) {
+                return EventAdmissionError::PredecessorPending;
             }
             return EventAdmissionError::OtherViewPending;
         }

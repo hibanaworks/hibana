@@ -65,3 +65,38 @@ fn owned_image_construction_rejects_a_self_referencing_decision() {
     };
     let _ = CompiledProgramRef::compact(PROGRAM.facts, COLUMNS, &BYTES);
 }
+
+#[kani::proof]
+// Four source events, nine markers and the two-byte marker fields. The full
+// usize index domain stays symbolic; out-of-range indices must return false.
+#[kani::unwind(16)]
+fn source_order_keeps_parallel_and_route_arms_independent_through_roll() {
+    use crate::global::compiled::{
+        images::{ProgramImageBytes, ProgramImagePlan},
+        lowering::CompiledProgramImage,
+    };
+    use crate::{Endpoint, g};
+    type Grant = g::Msg<1, Endpoint<'static, 255>>;
+    type Work = g::Msg<2, ()>;
+    type Alternative = g::Msg<3, ()>;
+    type Steps = g::Seq<
+        g::Par<g::Send<0, 1, Grant>, g::Send<2, 3, Work>>,
+        g::Roll<g::Route<g::Send<1, 2, Work>, g::Send<1, 2, Alternative>>>,
+    >;
+    // Four atoms plus nine scope markers fit the sixteen-row source bucket.
+    const SOURCE: g::ProgramSourceData<16> = g::ProgramSourceData::lower::<Steps>();
+    const PLAN: ProgramImagePlan = ProgramImagePlan::from_source(&SOURCE);
+    const SUMMARY: CompiledProgramImage = CompiledProgramImage::scan_const(SOURCE.eff_list());
+    static BYTES: ProgramImageBytes<256> =
+        match ProgramImageBytes::from_source_if_fits(&SOURCE, PLAN.columns()) {
+            Some(bytes) => bytes,
+            None => panic!("source order fixture storage"),
+        };
+    const IMAGE: CompiledProgramRef = BYTES.compiled_ref(&SUMMARY, PLAN.columns());
+    let before: usize = kani::any();
+    let after: usize = kani::any();
+    assert_eq!(
+        IMAGE.source_precedes(before, after),
+        before < 2 && (after == 2 || after == 3)
+    );
+}

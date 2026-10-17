@@ -148,6 +148,14 @@ coverage preserves exactly the same ready operations. `SourceOrderGenerated`
 checks the valid Rust image and two byte-level counterexamples with the
 independent Lean decoder. This connects the dependency check at the typed
 boundary; it does not by itself establish distributed execution refinement.
+Blocked-operation classification also reads source order from the existing
+immutable par/route/roll markers. The typed const check compares that query
+with `Source.before` for every local operation pair. It must follow transitive
+source ancestors rather than just the last compact join: a future holding an
+ancestor's carrier or payload cannot wait for that same view to do the work.
+The pending-ancestor theorem shows that source-closed progress cannot hide such
+an unfinished prerequisite behind completed compact guards. Runtime waiting for
+another independent view adds no ownership or progress authority.
 `ActorRouting.lean` binds event conflict paths and route-parent/reentry columns
 to the source, including nested choices. The same committed history and
 candidate preview therefore produce the same conflict filter on both paths.
@@ -254,7 +262,7 @@ can change arms while preserving the parent prefix. The complete nested trace
 runs twice. Before the parent suffix, both the completed arm and the unused
 alternative are rejected. These six kernel proofs replace seven lemmas about the removed
 route-only reset and its unused selector. Including the transfer model below,
-the static inventory is 848, with 465 using `propext` and `Quot.sound`,
+the static inventory is 849, with 466 using `propext` and `Quot.sound`,
 277 using only `propext`, and 106 axiom-free. The three additional
 `PublicOperationKernel.lean` claims cover the owned-send payload borrow:
 other resource-dependent work waits, that payload's own transfer may finish,

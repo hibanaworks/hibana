@@ -48,6 +48,7 @@ bash "$ROOT/.github/scripts/check_smt2.sh" "$PROOFS/Reentry.smt2" > "$EVIDENCE/z
 bash "$ROOT/.github/scripts/check_smt2.sh" "$PROOFS/ReentryKnowledge.smt2" > "$EVIDENCE/z3-reentry-knowledge.log"
 bash "$ROOT/.github/scripts/check_smt2.sh" "$PROOFS/PendingSend.smt2" > "$EVIDENCE/z3-pending-send.log"
 bash "$ROOT/.github/scripts/check_smt2.sh" "$PROOFS/OwnedEntry.smt2" > "$EVIDENCE/z3-owned-entry.log"
+bash "$ROOT/.github/scripts/check_smt2.sh" "$PROOFS/BorrowedPredecessor.smt2" > "$EVIDENCE/z3-borrowed-predecessor.log"
 bash "$ROOT/.github/scripts/check_smt2.sh" "$PROOFS/RollBoundary.smt2" > "$EVIDENCE/z3-roll-boundary.log"
 bash "$ROOT/.github/scripts/check_smt2.sh" "$PROOFS/ViewGeneration.smt2" > "$EVIDENCE/z3-view-generation.log"
 printf 'Actor view generations: Z3 4 UNSAT, 1 rejected-rule SAT, 1 positive SAT. Evidence: %s\n' "$EVIDENCE/z3-view-generation.log"

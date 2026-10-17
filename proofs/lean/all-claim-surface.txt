@@ -275,6 +275,12 @@ Hibana.a_payloads_own_transfer_can_finish : ∀ (current : Hibana.PublicOperatio
 Hibana.a_pending_payload_requires_its_own_send : ∀ (resource : Nat) (sent : Option.{0} Nat),
   @Eq.{1} Bool (Hibana.checkSendPayloadBorrow Hibana.PublicOperationPhase.sendPayload resource sent) true →
     @Eq.{1} (Option.{0} Nat) sent (@some.{0} Nat resource)
+@Hibana.a_pending_source_ancestor_blocks_covered_local_guards : ∀ {expected : Nat → List.{0} Nat}
+  {actual : List.{0} Nat} {event before : Nat} {state : Hibana.CommitState},
+  @Eq.{1} Bool (Hibana.predecessorCoverage expected actual event) true →
+    state.PrefixClosed expected (expected event) →
+      @Membership.mem.{0, 0} Nat (List.{0} Nat) (@List.instMembership.{0} Nat) (expected event) before →
+        @Eq.{1} Bool (state.done before) false → @Eq.{1} Bool (@List.all.{0} Nat actual state.done) false
 Hibana.abort_invalidates_outstanding_receipt : ∀ (before after : Hibana.TransportState) (frame : Hibana.TransportFrame)
   (resolution : Hibana.ReceiptResolution),
   @Eq.{1} (Option.{0} Hibana.TransportBoundaryState)

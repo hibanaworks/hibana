@@ -1,7 +1,8 @@
 use super::super::super::facts::LocalDependencyState;
 use super::super::{
-    CursorInvariantError, EnabledEventCommit, EventCursor, LocalDependency,
-    RelocatableResidentLaneStep, ResidentLaneStep, ScopeId, StateIndex,
+    CursorInvariantError, EnabledEventCommit, EventCursor, LocalAction, LocalDependency,
+    PackedEventConflict, RelocatableResidentLaneStep, ResidentLaneStep, ScopeId, StateIndex,
+    state_index_to_usize,
 };
 use crate::global::typestate::EventCommitMeta;
 
@@ -36,6 +37,60 @@ impl From<EventAdmissionError> for CursorInvariantError {
 }
 
 impl EventCursor {
+    /// Compact guards can cover an ancestor through another join. Classifying
+    /// a blocked future must still see that ancestor if it needs a view held by
+    /// the future itself. Independent parallel siblings are never ancestors.
+    fn pending_source_predecessor_uses(
+        &self,
+        index: usize,
+        blocked: (u8, Option<u8>),
+        conflict: PackedEventConflict,
+        selected: &mut dyn FnMut(ScopeId) -> Option<u8>,
+    ) -> bool {
+        let after = match self.action_at(index) {
+            LocalAction::Send { eff_index, .. }
+            | LocalAction::Recv { eff_index, .. }
+            | LocalAction::Local { eff_index, .. } => eff_index.dense_ordinal(),
+            LocalAction::Terminate => crate::invariant(),
+        };
+        for step in self.pending_event_steps(0..self.local_steps_len()) {
+            let Some(prior) = self
+                .machine()
+                .state_for_step_index(step)
+                .map(state_index_to_usize)
+            else {
+                crate::invariant();
+            };
+            if !(self.uses_view_at(prior, blocked.0)
+                || blocked.1.is_some_and(|role| self.uses_view_at(prior, role)))
+            {
+                continue;
+            }
+            let before = match self.action_at(prior) {
+                LocalAction::Send { eff_index, .. }
+                | LocalAction::Recv { eff_index, .. }
+                | LocalAction::Local { eff_index, .. } => eff_index.dense_ordinal(),
+                LocalAction::Terminate => crate::invariant(),
+            };
+            let precedes = if before == after {
+                self.is_send_at(prior) && self.is_recv_at(index)
+            } else {
+                self.program_ref().source_precedes(before, after)
+            };
+            if precedes
+                && self.event_actor_is_local(prior, selected) != Some(false)
+                && self.event_conflict_row_allows_with_preview(
+                    self.machine().event_conflict_for_index(prior),
+                    conflict,
+                    selected,
+                )
+            {
+                return true;
+            }
+        }
+        false
+    }
+
     #[inline]
     pub(crate) fn parallel_scope_root(&self, scope_id: ScopeId) -> Option<ScopeId> {
         self.machine().parallel_root(scope_id)
@@ -187,36 +242,13 @@ impl EventCursor {
         // A valid future event need not be a current lane head. Its projected
         // predecessor must commit before that head can become available.
         if dependency_state.is_some_and(|state| !state.allows_event()) {
-            let dependency = crate::invariant_some(row.dependency());
-            let rows = self
-                .machine()
-                .event_program()
-                .dependency_row_set(dependency);
             let role = crate::invariant_some(self.logical_role_at(idx));
-            let mut view_pending = |role| {
-                !self.event_lane_head_allows_view(
-                    progress_step,
-                    preview_conflict,
-                    Some(role),
-                    &mut |scope| arm_for_scope(scope, EventArmView::Preview),
-                )
-            };
-            let own_lane_pending = view_pending(role) || moved_role.is_some_and(&mut view_pending);
-            let own_pending = own_lane_pending
-                || self
-                    .pending_event_steps(rows.start()..rows.end())
-                    .any(|prior| {
-                        (self.uses_view_at(prior, role)
-                            || moved_role.is_some_and(|moved| self.uses_view_at(prior, moved)))
-                            && self.event_actor_is_local(prior, &mut |scope| {
-                                arm_for_scope(scope, EventArmView::Preview)
-                            }) != Some(false)
-                            && self.event_conflict_row_allows_with_preview(
-                                self.machine().event_conflict_for_index(prior),
-                                preview_conflict,
-                                &mut |scope| arm_for_scope(scope, EventArmView::Preview),
-                            )
-                    });
+            let own_pending = self.pending_source_predecessor_uses(
+                idx,
+                (role, moved_role),
+                preview_conflict,
+                &mut |scope| arm_for_scope(scope, EventArmView::Preview),
+            );
             return Err(if own_pending {
                 EventAdmissionError::PredecessorPending
             } else {
@@ -225,21 +257,17 @@ impl EventCursor {
         }
         let mut preview = |scope| arm_for_scope(scope, EventArmView::Preview);
         if !self.event_lane_head_allows(progress_step, preview_conflict, &mut preview) {
-            let mut view_ready = |role| {
-                self.event_lane_head_allows_view(
-                    progress_step,
-                    preview_conflict,
-                    Some(role),
-                    &mut preview,
-                )
-            };
+            let role = crate::invariant_some(self.logical_role_at(idx));
             return Err(
-                if self.logical_role_at(idx).is_none_or(&mut view_ready)
-                    && moved_role.is_none_or(&mut view_ready)
-                {
-                    EventAdmissionError::OtherViewPending
+                if self.pending_source_predecessor_uses(
+                    idx,
+                    (role, moved_role),
+                    preview_conflict,
+                    &mut preview,
+                ) {
+                    EventAdmissionError::PredecessorPending
                 } else {
-                    EventAdmissionError::Invariant
+                    EventAdmissionError::OtherViewPending
                 },
             );
         }
