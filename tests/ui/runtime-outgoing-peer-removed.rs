@@ -13,24 +13,22 @@ impl Transport for Carrier {
         ((), ())
     }
 
-    fn poll_send<'a, 'f>(
+    fn poll_send<'f>(
         &self,
-        _tx: &'a mut Self::Tx<'a>,
+        _tx: &mut Self::Tx<'_>,
         outgoing: Outgoing<'f>,
         _cx: &mut Context<'_>,
     ) -> Poll<Result<(), TransportError>>
-    where
-        'a: 'f,
     {
         let _ = outgoing.peer();
         Poll::Ready(Ok(()))
     }
 
-    fn cancel_send<'a>(&self, _tx: &'a mut Self::Tx<'a>) {}
+    fn cancel_send(&self, _tx: &mut Self::Tx<'_>) {}
 
     fn poll_recv<'a>(
         &'a self,
-        _rx: &'a mut Self::Rx<'a>,
+        _rx: &'a mut Self::Rx<'_>,
         _cx: &mut Context<'_>,
     ) -> Poll<Result<ReceivedFrame<'a>, TransportError>> {
         loop {}

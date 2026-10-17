@@ -115,15 +115,12 @@ impl Transport for InMemoryTransport {
         )
     }
 
-    fn poll_send<'a, 'f>(
+    fn poll_send<'f>(
         &self,
-        tx: &'a mut Self::Tx<'a>,
+        tx: &mut Self::Tx<'_>,
         outgoing: Outgoing<'f>,
         _context: &mut Context<'_>,
-    ) -> Poll<Result<(), TransportError>>
-    where
-        'a: 'f,
-    {
+    ) -> Poll<Result<(), TransportError>> {
         if outgoing.lane() != tx.lane {
             return Poll::Ready(Err(TransportError::Failed));
         }
@@ -151,13 +148,13 @@ impl Transport for InMemoryTransport {
         Poll::Ready(Ok(()))
     }
 
-    fn cancel_send<'a>(&self, _tx: &'a mut Self::Tx<'a>) {
+    fn cancel_send(&self, _tx: &mut Self::Tx<'_>) {
         // Sends complete atomically and never retain pending payload state.
     }
 
     fn poll_recv<'a>(
         &'a self,
-        rx: &'a mut Self::Rx<'a>,
+        rx: &'a mut Self::Rx<'_>,
         context: &mut Context<'_>,
     ) -> Poll<Result<ReceivedFrame<'a>, TransportError>> {
         rx.current = None;

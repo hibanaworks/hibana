@@ -292,14 +292,12 @@ impl Transport for UnixDatagramCarrier {
         )
     }
 
-    fn poll_send<'a, 'f>(
+    fn poll_send(
         &self,
-        tx: &'a mut Self::Tx<'a>,
-        outgoing: Outgoing<'f>,
+        tx: &mut Self::Tx<'_>,
+        outgoing: Outgoing<'_>,
         _cx: &mut Context<'_>,
     ) -> Poll<Result<(), TransportError>>
-    where
-        'a: 'f,
     {
         if lock(&self.inner.inbox).health == InboxHealth::Failed {
             return Poll::Ready(Err(TransportError::Failed));
@@ -333,13 +331,13 @@ impl Transport for UnixDatagramCarrier {
         }
     }
 
-    fn cancel_send<'a>(&self, _tx: &'a mut Self::Tx<'a>) {
+    fn cancel_send(&self, _tx: &mut Self::Tx<'_>) {
         // `poll_send` never retains payload state and never returns `Pending`.
     }
 
     fn poll_recv<'a>(
         &'a self,
-        rx: &'a mut Self::Rx<'a>,
+        rx: &'a mut Self::Rx<'_>,
         cx: &mut Context<'_>,
     ) -> Poll<Result<ReceivedFrame<'a>, TransportError>> {
         let visibility = rx.current.as_ref().map(|current| current.visibility);

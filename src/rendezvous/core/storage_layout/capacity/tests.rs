@@ -29,23 +29,20 @@ impl Transport for FailingTransport {
         (FailingTx, FailingRx)
     }
 
-    fn poll_send<'a, 'f>(
+    fn poll_send<'f>(
         &self,
-        _tx: &'a mut Self::Tx<'a>,
+        _tx: &mut Self::Tx<'_>,
         _outgoing: Outgoing<'f>,
         _cx: &mut Context<'_>,
-    ) -> Poll<Result<(), TransportError>>
-    where
-        'a: 'f,
-    {
+    ) -> Poll<Result<(), TransportError>> {
         Poll::Ready(Err(TransportError::Failed))
     }
 
-    fn cancel_send<'a>(&self, _tx: &'a mut Self::Tx<'a>) {}
+    fn cancel_send(&self, _tx: &mut Self::Tx<'_>) {}
 
     fn poll_recv<'a>(
         &'a self,
-        _rx: &'a mut Self::Rx<'a>,
+        _rx: &'a mut Self::Rx<'_>,
         _cx: &mut Context<'_>,
     ) -> Poll<Result<ReceivedFrame<'a>, TransportError>> {
         Poll::Ready(Err(TransportError::Failed))

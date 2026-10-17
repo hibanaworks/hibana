@@ -60,6 +60,11 @@ run_miri_test \
   --test miri_runtime_owner
 
 run_miri_test \
+  borrowed-transport-handles \
+  -p hibana \
+  --test transport_borrow
+
+run_miri_test \
   endpoint-owner-move \
   -p hibana \
   --lib \

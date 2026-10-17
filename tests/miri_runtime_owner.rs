@@ -62,23 +62,20 @@ impl Transport for CountedMalformedTransport {
         )
     }
 
-    fn poll_send<'a, 'f>(
+    fn poll_send<'f>(
         &self,
-        _: &'a mut Self::Tx<'a>,
+        _: &mut Self::Tx<'_>,
         _: Outgoing<'f>,
         _: &mut Context<'_>,
-    ) -> Poll<Result<(), TransportError>>
-    where
-        'a: 'f,
-    {
+    ) -> Poll<Result<(), TransportError>> {
         Poll::Ready(Ok(()))
     }
 
-    fn cancel_send<'a>(&self, _: &'a mut Self::Tx<'a>) {}
+    fn cancel_send(&self, _: &mut Self::Tx<'_>) {}
 
     fn poll_recv<'a>(
         &'a self,
-        _: &'a mut Self::Rx<'a>,
+        _: &'a mut Self::Rx<'_>,
         _: &mut Context<'_>,
     ) -> Poll<Result<ReceivedFrame<'a>, TransportError>> {
         Poll::Ready(Ok(ReceivedFrame::deterministic(Payload::new(&[]))))
@@ -180,23 +177,20 @@ impl Transport for ReentrantHandleDropTransport {
         )
     }
 
-    fn poll_send<'a, 'f>(
+    fn poll_send<'f>(
         &self,
-        _: &'a mut Self::Tx<'a>,
+        _: &mut Self::Tx<'_>,
         _: Outgoing<'f>,
         _: &mut Context<'_>,
-    ) -> Poll<Result<(), TransportError>>
-    where
-        'a: 'f,
-    {
+    ) -> Poll<Result<(), TransportError>> {
         Poll::Ready(Ok(()))
     }
 
-    fn cancel_send<'a>(&self, _: &'a mut Self::Tx<'a>) {}
+    fn cancel_send(&self, _: &mut Self::Tx<'_>) {}
 
     fn poll_recv<'a>(
         &'a self,
-        _: &'a mut Self::Rx<'a>,
+        _: &'a mut Self::Rx<'_>,
         _: &mut Context<'_>,
     ) -> Poll<Result<ReceivedFrame<'a>, TransportError>> {
         Poll::Pending
@@ -215,23 +209,20 @@ impl Transport for NoopTransport {
         (NoopTx, NoopRx)
     }
 
-    fn poll_send<'a, 'f>(
+    fn poll_send<'f>(
         &self,
-        _: &'a mut Self::Tx<'a>,
+        _: &mut Self::Tx<'_>,
         _: Outgoing<'f>,
         _: &mut Context<'_>,
-    ) -> Poll<Result<(), TransportError>>
-    where
-        'a: 'f,
-    {
+    ) -> Poll<Result<(), TransportError>> {
         Poll::Ready(Ok(()))
     }
 
-    fn cancel_send<'a>(&self, _: &'a mut Self::Tx<'a>) {}
+    fn cancel_send(&self, _: &mut Self::Tx<'_>) {}
 
     fn poll_recv<'a>(
         &'a self,
-        _: &'a mut Self::Rx<'a>,
+        _: &'a mut Self::Rx<'_>,
         _: &mut Context<'_>,
     ) -> Poll<Result<ReceivedFrame<'a>, TransportError>> {
         Poll::Pending
@@ -674,23 +665,20 @@ impl Transport for ReceiveTransport {
         (NoopTx, ReceiveRx { delivered: false })
     }
 
-    fn poll_send<'a, 'f>(
+    fn poll_send<'f>(
         &self,
-        _: &'a mut Self::Tx<'a>,
+        _: &mut Self::Tx<'_>,
         _: Outgoing<'f>,
         _: &mut Context<'_>,
-    ) -> Poll<Result<(), TransportError>>
-    where
-        'a: 'f,
-    {
+    ) -> Poll<Result<(), TransportError>> {
         Poll::Ready(Ok(()))
     }
 
-    fn cancel_send<'a>(&self, _: &'a mut Self::Tx<'a>) {}
+    fn cancel_send(&self, _: &mut Self::Tx<'_>) {}
 
     fn poll_recv<'a>(
         &'a self,
-        rx: &'a mut Self::Rx<'a>,
+        rx: &'a mut Self::Rx<'_>,
         _: &mut Context<'_>,
     ) -> Poll<Result<ReceivedFrame<'a>, TransportError>> {
         self.state.polls.set(self.state.polls.get() + 1);
@@ -813,15 +801,12 @@ impl Transport for DeferredTransport {
         )
     }
 
-    fn poll_send<'a, 'f>(
+    fn poll_send<'f>(
         &self,
-        tx: &'a mut Self::Tx<'a>,
+        tx: &mut Self::Tx<'_>,
         outgoing: Outgoing<'f>,
         _: &mut Context<'_>,
-    ) -> Poll<Result<(), TransportError>>
-    where
-        'a: 'f,
-    {
+    ) -> Poll<Result<(), TransportError>> {
         if !self.state.ready.get() {
             return Poll::Pending;
         }
@@ -838,11 +823,11 @@ impl Transport for DeferredTransport {
         Poll::Ready(Ok(()))
     }
 
-    fn cancel_send<'a>(&self, _: &'a mut Self::Tx<'a>) {}
+    fn cancel_send(&self, _: &mut Self::Tx<'_>) {}
 
     fn poll_recv<'a>(
         &'a self,
-        _: &'a mut Self::Rx<'a>,
+        _: &'a mut Self::Rx<'_>,
         _: &mut Context<'_>,
     ) -> Poll<Result<ReceivedFrame<'a>, TransportError>> {
         Poll::Pending
@@ -1135,23 +1120,20 @@ impl Transport for ReentrantRecvTransport {
         (NoopTx, NoopRx)
     }
 
-    fn poll_send<'a, 'f>(
+    fn poll_send<'f>(
         &self,
-        _: &'a mut Self::Tx<'a>,
+        _: &mut Self::Tx<'_>,
         _: Outgoing<'f>,
         _: &mut Context<'_>,
-    ) -> Poll<Result<(), TransportError>>
-    where
-        'a: 'f,
-    {
+    ) -> Poll<Result<(), TransportError>> {
         Poll::Ready(Ok(()))
     }
 
-    fn cancel_send<'a>(&self, _: &'a mut Self::Tx<'a>) {}
+    fn cancel_send(&self, _: &mut Self::Tx<'_>) {}
 
     fn poll_recv<'a>(
         &'a self,
-        _: &'a mut Self::Rx<'a>,
+        _: &'a mut Self::Rx<'_>,
         _: &mut Context<'_>,
     ) -> Poll<Result<ReceivedFrame<'a>, TransportError>> {
         self.state.fire();

@@ -1,0 +1,14 @@
+error: lifetime may not live long enough
+  --> tests/ui/transport-payload-borrow-escape.rs:17:9
+   |
+15 |     fn poll_send<'f>(&self, tx: &mut Self::Tx<'_>, frame: Outgoing<'f>, _: &mut Context<'_>)
+   |                  --         -- has type `&mut <Carrier as Transport>::Tx<'1>`
+   |                  |
+   |                  lifetime `'f` defined here
+16 |         -> Poll<Result<(), TransportError>> {
+17 |         tx.stash.set(Some(frame.payload().as_bytes()));
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ argument requires that `'f` must outlive `'1`
+   |
+   = note: requirement occurs because of the type `Cell<Option<&[u8]>>`, which makes the generic argument `Option<&[u8]>` invariant
+   = note: the struct `Cell<T>` is invariant over the parameter `T`
+   = help: see <https://doc.rust-lang.org/nomicon/subtyping.html> for more information about variance

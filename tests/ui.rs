@@ -181,6 +181,10 @@ fn g_compile_fails() {
     compile_fail(&t, "tests/ui/g-route-unprojectable.rs");
     compile_fail(&t, "tests/ui/g-typed-route-duplicate-label-project.rs");
     compile_fail(&t, "tests/ui/g-message-without-wire-contract.rs");
+    compile_fail(&t, "tests/ui/transport-send-borrow-escape.rs");
+    compile_fail(&t, "tests/ui/transport-cancel-borrow-escape.rs");
+    compile_fail(&t, "tests/ui/transport-recv-borrow-escape.rs");
+    compile_fail(&t, "tests/ui/transport-payload-borrow-escape.rs");
     compile_fail(&t, "tests/ui/g-owned-parallel-use.rs");
     compile_fail(&t, "tests/ui/g-owned-second-issuer.rs");
     compile_fail(&t, "tests/ui/g-owned-roll-reissue.rs");

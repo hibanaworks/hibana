@@ -22,19 +22,13 @@ note: erroneous constant encountered
   |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 note: erroneous constant encountered
- --> src/g.rs
+ --> src/global/role_program/program.rs
   |
-  |       let image = const {
-  |  _________________^
-  | |         let required_rows = <Steps as ProgramShape>::SOURCE_ROW_COUNT;
-  | |         if required_rows <= 8 {
-  | |             role_projection::role_projection_image_for::<ROLE, Steps, 8>()
-... |
-  | |     };
-  | |_____^
+  |     crate::global::program::bind_projection(program, const { crate::g::project_image::<ROLE, _>() })
+  |                                                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-note: the above error was encountered while instantiating `fn g::project::<2, Seq<Roll<Seq<hibana::g::Send<0, 1, Msg<10, ()>>, hibana::g::Send<2, 3, Msg<3, ()>>>>, Seq<hibana::g::Send<0, 1, Msg<20, ()>>, hibana::g::Send<2, 3, Msg<3, ()>>>>>`
- --> src/global/program.rs
-  |
-  |         crate::g::project(self)
-  |         ^^^^^^^^^^^^^^^^^^^^^^^
+note: the above error was encountered while instantiating `fn project::<2, Program<Seq<Roll<Seq<hibana::g::Send<0, 1, Msg<10, ()>>, hibana::g::Send<2, 3, Msg<3, ()>>>>, Seq<hibana::g::Send<0, 1, Msg<20, ()>>, hibana::g::Send<2, 3, Msg<3, ()>>>>>>`
+  --> tests/ui/g-roll-role-erased-prefix.rs:15:13
+   |
+15 |     let _ = project::<2>(&protocol);
+   |             ^^^^^^^^^^^^^^^^^^^^^^^

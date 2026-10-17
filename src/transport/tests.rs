@@ -69,22 +69,19 @@ impl Transport for WakerAwareTransport {
         ((), ())
     }
 
-    fn poll_send<'a, 'f>(
+    fn poll_send<'f>(
         &self,
-        tx: &'a mut Self::Tx<'a>,
+        tx: &mut Self::Tx<'_>,
         outgoing: Outgoing<'f>,
         cx: &mut Context<'_>,
-    ) -> Poll<Result<(), TransportError>>
-    where
-        'a: 'f,
-    {
+    ) -> Poll<Result<(), TransportError>> {
         core::hint::black_box((tx, outgoing, cx.waker()));
         Poll::Ready(Ok(()))
     }
 
     fn poll_recv<'a>(
         &'a self,
-        rx: &'a mut Self::Rx<'a>,
+        rx: &'a mut Self::Rx<'_>,
         cx: &mut Context<'_>,
     ) -> Poll<Result<ReceivedFrame<'a>, TransportError>> {
         static PAYLOAD: [u8; 0] = [];
@@ -97,7 +94,7 @@ impl Transport for WakerAwareTransport {
         }
     }
 
-    fn cancel_send<'a>(&self, tx: &'a mut Self::Tx<'a>) {
+    fn cancel_send(&self, tx: &mut Self::Tx<'_>) {
         core::hint::black_box(tx);
     }
 

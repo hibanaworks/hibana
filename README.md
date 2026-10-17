@@ -179,6 +179,13 @@ Projection constructs and validates this data through Rust's const evaluation.
 The implementation uses associated constants, so the calls above do not need
 to appear in a `const` declaration.
 
+These checks run when Rust generates code for a projection. Use `cargo build`
+or `cargo test` after changing a global protocol. `cargo check` alone can accept
+a protocol that code generation will reject, and editor diagnostics may miss
+it. `g::diagnose(&protocol)` returns the role, events and help for a projection
+error without creating an endpoint. The main error can point into Hibana's
+projection code. Rust's instantiation note also shows the call to `project`.
+
 Each `RoleProgram` records sends and receives, peers, message labels, payload
 schemas, dependencies, and branch membership. It also records which
 communication channels can progress independently. The transport API calls
@@ -341,6 +348,12 @@ Pending I/O state must therefore belong to the transport, not the temporary
 payload buffer. Dropping a send must not leave bytes that a later send can
 transmit.
 
+`Tx` and `Rx` may borrow storage from the transport. Their internal lifetimes
+are separate from each call's mutable handle borrow. A send or cancellation
+cannot keep that handle borrow after returning. A receive may return a frame
+borrowed for its current call. That frame must be released before the same
+receive handle is used again.
+
 A framed receive uses this eight-byte header:
 
 ```text
@@ -362,6 +375,15 @@ and prevent unsolicited replay and messages from earlier session runs from
 entering the current run. It must not duplicate incoming messages. Returning
 an uncommitted frame through `requeue` must not make it count as a second
 message.
+
+Frame validation rejects structural mismatches. It does not establish data
+integrity or detect every replay. Ordered messages can reuse a frame label,
+and schema IDs are not sent in the header. For example, a `bool` encoded as
+`[1]` is also a valid `u8`. If the carrier duplicates that bool frame before a
+following u8 message with the same wire label, the u8 receive can accept `1`.
+It cannot recover the intended value from these bytes. The carrier must provide
+replay exclusion and any sequence numbers, authentication or end-to-end
+protection required by the deployment.
 
 An accepted frame must eventually arrive, or closure of its direction must
 become observable. After accepted frames have been drained or isolated,

@@ -300,15 +300,12 @@ impl Transport for LargeChoreographyTransport {
         )
     }
 
-    fn poll_send<'a, 'f>(
+    fn poll_send<'f>(
         &self,
-        _tx: &'a mut Self::Tx<'a>,
+        _tx: &mut Self::Tx<'_>,
         outgoing: Outgoing<'f>,
         _cx: &mut core::task::Context<'_>,
-    ) -> core::task::Poll<Result<(), TransportError>>
-    where
-        'a: 'f,
-    {
+    ) -> core::task::Poll<Result<(), TransportError>> {
         self.with_state(|state| {
             let target_role = outgoing.target_role();
             state
@@ -321,7 +318,7 @@ impl Transport for LargeChoreographyTransport {
 
     fn poll_recv<'a>(
         &'a self,
-        rx: &'a mut Self::Rx<'a>,
+        rx: &'a mut Self::Rx<'_>,
         _: &mut core::task::Context<'_>,
     ) -> core::task::Poll<Result<ReceivedFrame<'a>, TransportError>> {
         let frame = self.with_state(|state| {
@@ -352,7 +349,7 @@ impl Transport for LargeChoreographyTransport {
         )))
     }
 
-    fn cancel_send<'a>(&self, _: &'a mut Self::Tx<'a>) {}
+    fn cancel_send(&self, _: &mut Self::Tx<'_>) {}
 
     fn requeue<'a>(&self, rx: &mut Self::Rx<'a>) -> Result<(), TransportError> {
         if rx.current {

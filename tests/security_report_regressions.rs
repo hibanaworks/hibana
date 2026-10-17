@@ -2,6 +2,8 @@
 //! The final test deliberately violates carrier provenance. It records the
 //! documented limit; it is not a claim of Byzantine agreement enforcement.
 mod common;
+#[path = "security_report_regressions/payload_replay.rs"]
+mod payload_replay;
 #[path = "security_report_regressions/reentry_colors.rs"]
 mod reentry_colors;
 #[path = "security_report_regressions/rolled_routes.rs"]
@@ -52,15 +54,12 @@ impl Transport for RecordingCarrier {
     fn open<'a>(&'a self, port: PortOpen) -> (Self::Tx<'a>, Self::Rx<'a>) {
         self.inner.open(port)
     }
-    fn poll_send<'a, 'f>(
+    fn poll_send<'f>(
         &self,
-        tx: &'a mut Self::Tx<'a>,
+        tx: &mut Self::Tx<'_>,
         frame: Outgoing<'f>,
         cx: &mut Context<'_>,
-    ) -> Poll<Result<(), TransportError>>
-    where
-        'a: 'f,
-    {
+    ) -> Poll<Result<(), TransportError>> {
         let result = self.inner.poll_send(tx, frame, cx);
         if matches!(result, Poll::Ready(Ok(()))) {
             self.frames.borrow_mut().push(Captured {
@@ -72,12 +71,12 @@ impl Transport for RecordingCarrier {
         }
         result
     }
-    fn cancel_send<'a>(&self, tx: &'a mut Self::Tx<'a>) {
+    fn cancel_send(&self, tx: &mut Self::Tx<'_>) {
         self.inner.cancel_send(tx);
     }
     fn poll_recv<'a>(
         &'a self,
-        rx: &'a mut Self::Rx<'a>,
+        rx: &'a mut Self::Rx<'_>,
         cx: &mut Context<'_>,
     ) -> Poll<Result<ReceivedFrame<'a>, TransportError>> {
         self.inner.poll_recv(rx, cx)

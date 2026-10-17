@@ -16,19 +16,18 @@ where
     Steps: crate::g::ProgramShape,
 {
     type Steps = Steps;
-
-    #[inline(always)]
-    fn project<const ROLE: u8>(&self) -> crate::global::role_program::RoleProgram<ROLE> {
-        crate::g::project(self)
-    }
 }
 
 #[inline(always)]
-pub(crate) fn project_unnamed<const ROLE: u8, P>(
-    program: &P,
+pub(crate) fn bind_projection<const ROLE: u8, P>(
+    _program: &P,
+    (_, projected): (
+        core::marker::PhantomData<P::Steps>,
+        crate::global::role_program::RoleProgram<ROLE>,
+    ),
 ) -> crate::global::role_program::RoleProgram<ROLE>
 where
     P: projection::seal::Sealed,
 {
-    <P as projection::seal::Sealed>::project(program)
+    projected
 }

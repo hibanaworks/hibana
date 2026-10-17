@@ -61,27 +61,24 @@ impl Transport for CapacitySendTransport {
         ((), ())
     }
 
-    fn poll_send<'a, 'f>(
+    fn poll_send<'f>(
         &self,
-        _tx: &'a mut Self::Tx<'a>,
+        _tx: &mut Self::Tx<'_>,
         _outgoing: hibana::runtime::transport::Outgoing<'f>,
         _context: &mut Context<'_>,
-    ) -> Poll<Result<(), TransportError>>
-    where
-        'a: 'f,
-    {
+    ) -> Poll<Result<(), TransportError>> {
         Poll::Ready(Err(CarrierSendFault::QueueFull.transport_error()))
     }
 
     fn poll_recv<'a>(
         &'a self,
-        _rx: &'a mut Self::Rx<'a>,
+        _rx: &'a mut Self::Rx<'_>,
         _context: &mut Context<'_>,
     ) -> Poll<Result<ReceivedFrame<'a>, TransportError>> {
         Poll::Pending
     }
 
-    fn cancel_send<'a>(&self, _tx: &'a mut Self::Tx<'a>) {}
+    fn cancel_send(&self, _tx: &mut Self::Tx<'_>) {}
 
     fn requeue<'a>(&self, _rx: &mut Self::Rx<'a>) -> Result<(), TransportError> {
         Ok(())

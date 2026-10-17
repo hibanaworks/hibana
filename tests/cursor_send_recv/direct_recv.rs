@@ -35,21 +35,18 @@ impl Transport for DeadlineRecvTransport {
         )
     }
 
-    fn poll_send<'a, 'f>(
+    fn poll_send<'f>(
         &self,
-        _tx: &'a mut Self::Tx<'a>,
+        _tx: &mut Self::Tx<'_>,
         _outgoing: hibana::runtime::transport::Outgoing<'f>,
         _context: &mut Context<'_>,
-    ) -> Poll<Result<(), TransportError>>
-    where
-        'a: 'f,
-    {
+    ) -> Poll<Result<(), TransportError>> {
         Poll::Ready(Ok(()))
     }
 
     fn poll_recv<'a>(
         &'a self,
-        rx: &'a mut Self::Rx<'a>,
+        rx: &'a mut Self::Rx<'_>,
         context: &mut Context<'_>,
     ) -> Poll<Result<ReceivedFrame<'a>, TransportError>> {
         core::hint::black_box(context.waker());
@@ -57,7 +54,7 @@ impl Transport for DeadlineRecvTransport {
         Poll::Ready(Err(self.error))
     }
 
-    fn cancel_send<'a>(&self, tx: &'a mut Self::Tx<'a>) {
+    fn cancel_send(&self, tx: &mut Self::Tx<'_>) {
         core::hint::black_box(tx);
     }
 
@@ -96,21 +93,18 @@ impl Transport for MalformedRecvTransport {
         ((), MalformedRx { delivered: false })
     }
 
-    fn poll_send<'a, 'f>(
+    fn poll_send<'f>(
         &self,
-        _tx: &'a mut Self::Tx<'a>,
+        _tx: &mut Self::Tx<'_>,
         _outgoing: hibana::runtime::transport::Outgoing<'f>,
         _context: &mut Context<'_>,
-    ) -> Poll<Result<(), TransportError>>
-    where
-        'a: 'f,
-    {
+    ) -> Poll<Result<(), TransportError>> {
         Poll::Ready(Ok(()))
     }
 
     fn poll_recv<'a>(
         &'a self,
-        rx: &'a mut Self::Rx<'a>,
+        rx: &'a mut Self::Rx<'_>,
         context: &mut Context<'_>,
     ) -> Poll<Result<ReceivedFrame<'a>, TransportError>> {
         core::hint::black_box(context.waker());
@@ -124,7 +118,7 @@ impl Transport for MalformedRecvTransport {
         )))
     }
 
-    fn cancel_send<'a>(&self, tx: &'a mut Self::Tx<'a>) {
+    fn cancel_send(&self, tx: &mut Self::Tx<'_>) {
         core::hint::black_box(tx);
     }
 
@@ -171,21 +165,18 @@ impl Transport for DeterministicRecvTransport {
         self.inner.open(port)
     }
 
-    fn poll_send<'a, 'f>(
+    fn poll_send<'f>(
         &self,
-        tx: &'a mut Self::Tx<'a>,
+        tx: &mut Self::Tx<'_>,
         outgoing: hibana::runtime::transport::Outgoing<'f>,
         cx: &mut Context<'_>,
-    ) -> Poll<Result<(), TransportError>>
-    where
-        'a: 'f,
-    {
+    ) -> Poll<Result<(), TransportError>> {
         self.inner.poll_send(tx, outgoing, cx)
     }
 
     fn poll_recv<'a>(
         &'a self,
-        rx: &'a mut Self::Rx<'a>,
+        rx: &'a mut Self::Rx<'_>,
         cx: &mut Context<'_>,
     ) -> Poll<Result<ReceivedFrame<'a>, TransportError>> {
         match self.inner.poll_recv(rx, cx) {
@@ -197,7 +188,7 @@ impl Transport for DeterministicRecvTransport {
         }
     }
 
-    fn cancel_send<'a>(&self, tx: &'a mut Self::Tx<'a>) {
+    fn cancel_send(&self, tx: &mut Self::Tx<'_>) {
         self.inner.cancel_send(tx);
     }
 

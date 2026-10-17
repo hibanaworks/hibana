@@ -1,7 +1,6 @@
 pub(crate) mod seal {
     pub trait Sealed: Copy {
         type Steps: crate::g::ProgramShape;
-        fn project<const ROLE: u8>(&self) -> crate::global::role_program::RoleProgram<ROLE>;
     }
 }
 

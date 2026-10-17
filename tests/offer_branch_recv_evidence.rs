@@ -71,25 +71,22 @@ impl Transport for DeterministicRecvTransport {
         self.0.open(port)
     }
 
-    fn poll_send<'a, 'f>(
+    fn poll_send<'f>(
         &self,
-        tx: &'a mut Self::Tx<'a>,
+        tx: &mut Self::Tx<'_>,
         outgoing: hibana::runtime::transport::Outgoing<'f>,
         cx: &mut Context<'_>,
-    ) -> Poll<Result<(), TransportError>>
-    where
-        'a: 'f,
-    {
+    ) -> Poll<Result<(), TransportError>> {
         self.0.poll_send(tx, outgoing, cx)
     }
 
-    fn cancel_send<'a>(&self, tx: &'a mut Self::Tx<'a>) {
+    fn cancel_send(&self, tx: &mut Self::Tx<'_>) {
         self.0.cancel_send(tx);
     }
 
     fn poll_recv<'a>(
         &'a self,
-        rx: &'a mut Self::Rx<'a>,
+        rx: &'a mut Self::Rx<'_>,
         cx: &mut Context<'_>,
     ) -> Poll<Result<ReceivedFrame<'a>, TransportError>> {
         match self.0.poll_recv(rx, cx) {
@@ -161,25 +158,22 @@ impl Transport for LabelRewriteTransport {
         )
     }
 
-    fn poll_send<'a, 'f>(
+    fn poll_send<'f>(
         &self,
-        tx: &'a mut Self::Tx<'a>,
+        tx: &mut Self::Tx<'_>,
         outgoing: hibana::runtime::transport::Outgoing<'f>,
         cx: &mut Context<'_>,
-    ) -> Poll<Result<(), TransportError>>
-    where
-        'a: 'f,
-    {
+    ) -> Poll<Result<(), TransportError>> {
         self.inner.poll_send(tx, outgoing, cx)
     }
 
-    fn cancel_send<'a>(&self, tx: &'a mut Self::Tx<'a>) {
+    fn cancel_send(&self, tx: &mut Self::Tx<'_>) {
         self.inner.cancel_send(tx);
     }
 
     fn poll_recv<'a>(
         &'a self,
-        rx: &'a mut Self::Rx<'a>,
+        rx: &'a mut Self::Rx<'_>,
         cx: &mut Context<'_>,
     ) -> Poll<Result<ReceivedFrame<'a>, TransportError>> {
         match self.inner.poll_recv(&mut rx.inner, cx) {

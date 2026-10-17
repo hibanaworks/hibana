@@ -100,23 +100,20 @@ impl Transport for ReentrantRequeueTransport {
         )
     }
 
-    fn poll_send<'a, 'f>(
+    fn poll_send<'f>(
         &self,
-        _: &'a mut Self::Tx<'a>,
+        _: &mut Self::Tx<'_>,
         _: Outgoing<'f>,
         _: &mut Context<'_>,
-    ) -> Poll<Result<(), TransportError>>
-    where
-        'a: 'f,
-    {
+    ) -> Poll<Result<(), TransportError>> {
         Poll::Ready(Ok(()))
     }
 
-    fn cancel_send<'a>(&self, _: &'a mut Self::Tx<'a>) {}
+    fn cancel_send(&self, _: &mut Self::Tx<'_>) {}
 
     fn poll_recv<'a>(
         &'a self,
-        rx: &'a mut Self::Rx<'a>,
+        rx: &'a mut Self::Rx<'_>,
         _: &mut Context<'_>,
     ) -> Poll<Result<ReceivedFrame<'a>, TransportError>> {
         if rx.delivered {

@@ -22,19 +22,13 @@ note: erroneous constant encountered
   |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 note: erroneous constant encountered
- --> src/g.rs
+ --> src/global/role_program/program.rs
   |
-  |       let image = const {
-  |  _________________^
-  | |         let required_rows = <Steps as ProgramShape>::SOURCE_ROW_COUNT;
-  | |         if required_rows <= 8 {
-  | |             role_projection::role_projection_image_for::<ROLE, Steps, 8>()
-... |
-  | |     };
-  | |_____^
+  |     crate::global::program::bind_projection(program, const { crate::g::project_image::<ROLE, _>() })
+  |                                                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-note: the above error was encountered while instantiating `fn g::project::<0, Route<hibana::g::Send<0, 0, Msg<5, ()>>, hibana::g::Send<0, 0, Msg<5, ()>>>>`
- --> src/global/program.rs
+note: the above error was encountered while instantiating `fn project::<0, Program<Route<hibana::g::Send<0, 0, Msg<5, ()>>, hibana::g::Send<0, 0, Msg<5, ()>>>>>`
+ --> tests/ui/g-typed-route-duplicate-label-project.rs:7:55
   |
-  |         crate::g::project(self)
-  |         ^^^^^^^^^^^^^^^^^^^^^^^
+7 |     let projected: runtime::program::RoleProgram<0> = runtime::program::project(&route);
+  |                                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

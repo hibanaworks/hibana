@@ -362,6 +362,9 @@ pub trait Transport {
     }
 
     /// Open Tx/Rx handles bound to the lifetime of this transport reference.
+    /// Their internal borrows may last for the handle's lifetime. Each poll or
+    /// cancellation separately borrows that handle for only its own operation;
+    /// it does not lend a reference for the handle's internal lifetime.
     ///
     /// `port` carries the projected role/session/lane fact for the returned Tx/Rx
     /// handles. Carriers backed by a shared physical medium must preserve this
@@ -379,14 +382,14 @@ pub trait Transport {
     /// After returning [`Poll::Pending`], implementations may retain progress in
     /// `tx` but must not retain the payload pointer. A later poll provides the
     /// same encoded content from scratch storage whose address may differ.
-    fn poll_send<'a, 'f>(
+    /// The handle borrow and payload borrow are independent of each other and
+    /// of any storage borrowed inside `Tx`. Neither can be retained in `Tx`.
+    fn poll_send<'f>(
         &self,
-        tx: &'a mut Self::Tx<'a>,
+        tx: &mut Self::Tx<'_>,
         outgoing: Outgoing<'f>,
         cx: &mut Context<'_>,
-    ) -> Poll<Result<(), TransportError>>
-    where
-        'a: 'f;
+    ) -> Poll<Result<(), TransportError>>;
 
     /// Cancel any transport-owned pending send state bound to `tx`.
     ///
@@ -398,21 +401,23 @@ pub trait Transport {
     /// irrevocable, cancellation must retire that logical direction so a later
     /// send reports a terminal [`TransportError`]; it must not resume after a
     /// partial frame or publish the cancelled frame.
-    fn cancel_send<'a>(&self, tx: &'a mut Self::Tx<'a>);
+    /// The mutable handle borrow ends when this call returns.
+    fn cancel_send(&self, tx: &mut Self::Tx<'_>);
 
     /// Progress a receive operation using the provided Rx handle.
     ///
     /// The returned [`ReceivedFrame`] view is borrowed from the
     /// transport-managed receive slab and carries any carrier-observed frame
-    /// header together with the payload. Borrowing ties the lifetime `'a` to the
-    /// mutable borrow of `rx`, allowing higher layers such as [`crate::Endpoint`]
+    /// header together with the payload. Borrowing ties the lifetime `'a` to
+    /// this mutable borrow of `rx`, independently of `Rx`'s internal lifetime,
+    /// allowing higher layers such as [`crate::Endpoint`]
     /// to enforce that the view is released before the next receive.
     /// Implementations should store the current waker whenever the poll parks so
     /// that hardware interrupts or other I/O notifications can wake the task
     /// directly instead of relying on polling loops.
     fn poll_recv<'a>(
         &'a self,
-        rx: &'a mut Self::Rx<'a>,
+        rx: &'a mut Self::Rx<'_>,
         cx: &mut Context<'_>,
     ) -> Poll<Result<ReceivedFrame<'a>, TransportError>>;
 

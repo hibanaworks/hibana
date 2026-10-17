@@ -50,15 +50,12 @@ impl Transport for PendingCancelTransport {
         self.inner.open(port)
     }
 
-    fn poll_send<'a, 'f>(
+    fn poll_send<'f>(
         &self,
-        tx: &'a mut Self::Tx<'a>,
+        tx: &mut Self::Tx<'_>,
         outgoing: Outgoing<'f>,
         _context: &mut Context<'_>,
-    ) -> Poll<Result<(), TransportError>>
-    where
-        'a: 'f,
-    {
+    ) -> Poll<Result<(), TransportError>> {
         self.inner.stage_send(
             tx,
             outgoing.target_role(),
@@ -69,14 +66,14 @@ impl Transport for PendingCancelTransport {
         Poll::Pending
     }
 
-    fn cancel_send<'a>(&self, tx: &'a mut Self::Tx<'a>) {
+    fn cancel_send(&self, tx: &mut Self::Tx<'_>) {
         self.cancel_count.set(self.cancel_count.get() + 1);
         self.inner.cancel_send_staged(tx);
     }
 
     fn poll_recv<'a>(
         &'a self,
-        rx: &'a mut Self::Rx<'a>,
+        rx: &'a mut Self::Rx<'_>,
         context: &mut Context<'_>,
     ) -> Poll<Result<ReceivedFrame<'a>, TransportError>> {
         self.inner.poll_recv(rx, context)

@@ -91,15 +91,12 @@ impl Transport for DeferredCaptureTransport {
         self.inner.open(port)
     }
 
-    fn poll_send<'a, 'f>(
+    fn poll_send<'f>(
         &self,
-        tx: &'a mut Self::Tx<'a>,
+        tx: &mut Self::Tx<'_>,
         outgoing: Outgoing<'f>,
         _cx: &mut Context<'_>,
-    ) -> Poll<Result<(), TransportError>>
-    where
-        'a: 'f,
-    {
+    ) -> Poll<Result<(), TransportError>> {
         self.state.polls.set(self.state.polls.get().wrapping_add(1));
         if !self.state.ready.get() {
             return Poll::Pending;
@@ -114,13 +111,13 @@ impl Transport for DeferredCaptureTransport {
         self.inner.poll_send_staged(tx)
     }
 
-    fn cancel_send<'a>(&self, tx: &'a mut Self::Tx<'a>) {
+    fn cancel_send(&self, tx: &mut Self::Tx<'_>) {
         self.inner.cancel_send(tx);
     }
 
     fn poll_recv<'a>(
         &'a self,
-        rx: &'a mut Self::Rx<'a>,
+        rx: &'a mut Self::Rx<'_>,
         cx: &mut Context<'_>,
     ) -> Poll<Result<ReceivedFrame<'a>, TransportError>> {
         self.inner.poll_recv_current(rx, cx)
@@ -148,15 +145,12 @@ impl Transport for PendingSendTransport {
         self.inner.open(port)
     }
 
-    fn poll_send<'a, 'f>(
+    fn poll_send<'f>(
         &self,
-        tx: &'a mut Self::Tx<'a>,
+        tx: &mut Self::Tx<'_>,
         outgoing: Outgoing<'f>,
         _cx: &mut Context<'_>,
-    ) -> Poll<Result<(), TransportError>>
-    where
-        'a: 'f,
-    {
+    ) -> Poll<Result<(), TransportError>> {
         self.state.polls.set(self.state.polls.get().wrapping_add(1));
         self.inner.stage_send(
             tx,
@@ -172,13 +166,13 @@ impl Transport for PendingSendTransport {
         self.inner.poll_send_staged(tx)
     }
 
-    fn cancel_send<'a>(&self, tx: &'a mut Self::Tx<'a>) {
+    fn cancel_send(&self, tx: &mut Self::Tx<'_>) {
         self.inner.cancel_send(tx);
     }
 
     fn poll_recv<'a>(
         &'a self,
-        rx: &'a mut Self::Rx<'a>,
+        rx: &'a mut Self::Rx<'_>,
         cx: &mut Context<'_>,
     ) -> Poll<Result<ReceivedFrame<'a>, TransportError>> {
         self.inner.poll_recv_current(rx, cx)

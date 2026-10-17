@@ -390,7 +390,8 @@ where
     let poll = unsafe {
         // SAFETY: the scoped scratch lease keeps `outgoing` stable for this call,
         // and `Port` owns the lane-local Tx handle. The transport signature cannot
-        // retain the shorter outgoing borrow in its longer-lived Tx state.
+        // retain this mutable handle borrow or the independent outgoing borrow
+        // in its longer-lived Tx state. A later poll starts a fresh borrow.
         transport.poll_send(&mut *tx_ptr, outgoing, cx)
     };
     match poll {

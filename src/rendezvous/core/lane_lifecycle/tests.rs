@@ -18,23 +18,20 @@ impl Transport for LayoutTransport {
         ((), ())
     }
 
-    fn poll_send<'a, 'f>(
+    fn poll_send<'f>(
         &self,
-        _tx: &'a mut Self::Tx<'a>,
+        _tx: &mut Self::Tx<'_>,
         _outgoing: Outgoing<'_>,
         _cx: &mut core::task::Context<'_>,
-    ) -> core::task::Poll<Result<(), TransportError>>
-    where
-        'a: 'f,
-    {
+    ) -> core::task::Poll<Result<(), TransportError>> {
         core::task::Poll::Ready(Ok(()))
     }
 
-    fn cancel_send<'a>(&self, _tx: &'a mut Self::Tx<'a>) {}
+    fn cancel_send(&self, _tx: &mut Self::Tx<'_>) {}
 
     fn poll_recv<'a>(
         &'a self,
-        _rx: &'a mut Self::Rx<'a>,
+        _rx: &'a mut Self::Rx<'_>,
         _cx: &mut core::task::Context<'_>,
     ) -> core::task::Poll<Result<ReceivedFrame<'a>, TransportError>> {
         core::task::Poll::Ready(Err(TransportError::Failed))

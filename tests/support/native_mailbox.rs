@@ -207,15 +207,12 @@ impl Transport for NativeTransport<'_> {
         )
     }
 
-    fn poll_send<'a, 'f>(
+    fn poll_send<'f>(
         &self,
-        tx: &'a mut Tx<'a>,
+        tx: &mut Tx<'_>,
         outgoing: Outgoing<'f>,
         cx: &mut Context<'_>,
-    ) -> Poll<Result<(), TransportError>>
-    where
-        'a: 'f,
-    {
+    ) -> Poll<Result<(), TransportError>> {
         if outgoing.lane() != tx.lane {
             return Poll::Ready(Err(TransportError::Failed));
         }
@@ -252,14 +249,14 @@ impl Transport for NativeTransport<'_> {
         }
     }
 
-    fn cancel_send<'a>(&self, tx: &'a mut Tx<'a>) {
+    fn cancel_send(&self, tx: &mut Tx<'_>) {
         // Atomic datagram publication: Pending retained no bytes or pointer.
         tx.wait.0 = None;
     }
 
     fn poll_recv<'a>(
         &'a self,
-        rx: &'a mut Self::Rx<'a>,
+        rx: &'a mut Rx<'_>,
         cx: &mut Context<'_>,
     ) -> Poll<Result<ReceivedFrame<'a>, TransportError>> {
         if rx.receipt != Receipt::Requeued {

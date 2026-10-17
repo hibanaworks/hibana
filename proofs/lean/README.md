@@ -58,6 +58,16 @@ These are explicit premises. Lean does not infer remote installation agreement,
 transport authentication, delivery, failure detection, or scheduler fairness
 from the `Transport` trait.
 
+Rust handle borrowing is also an implementation boundary, not a consequence of
+the carrier model. `Transport` borrows each Tx only for a send/cancel call, and
+each Rx for the returned frame's lifetime, independently of the handle's internal
+borrowed storage. The safe trait must not promise a handle-lifetime mutable
+borrow that the kernel then recreates on every poll. Compiler rejection tests
+cover self-references retained from those calls and retained outgoing payloads;
+`transport_borrow` drives legitimate borrowed handles through actual Endpoints
+under Miri. These checks support this Rust boundary; the Lean model and Kani do
+not by themselves prove Rust aliasing soundness for arbitrary carrier code.
+
 Schema equality means equality of the canonical wire contract identified by
 `SCHEMA_ID`; it does not prove cross-binary Rust nominal type equality.
 

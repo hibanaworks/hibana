@@ -1,0 +1,17 @@
+error: lifetime may not live long enough
+  --> tests/ui/transport-cancel-borrow-escape.rs:21:9
+   |
+20 |     fn cancel_send(&self, tx: &mut Self::Tx<'_>) {
+   |                           --  - let's call the lifetime of this reference `'1`
+   |                           |
+   |                           has type `&mut <Carrier as Transport>::Tx<'2>`
+21 |         tx.stash.set(Some(&tx.buf));
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^ argument requires that `'1` must outlive `'2`
+   |
+   = note: requirement occurs because of the type `Cell<Option<&[u8; 1]>>`, which makes the generic argument `Option<&[u8; 1]>` invariant
+   = note: the struct `Cell<T>` is invariant over the parameter `T`
+   = help: see <https://doc.rust-lang.org/nomicon/subtyping.html> for more information about variance
+help: consider introducing a named lifetime parameter and update trait if needed
+   |
+20 |     fn cancel_send<'a>(&self, tx: &'a mut Self::Tx<'_>) {
+   |                   ++++             ++

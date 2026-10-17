@@ -286,14 +286,14 @@ pub struct Resolve<Inner, const RESOLVER_ID: u16>(PhantomData<Inner>);
 /// Reentry-scope witness.
 pub struct Roll<Inner>(PhantomData<Inner>);
 
-pub(crate) fn project<const ROLE: u8, Steps>(
-    program: &Program<Steps>,
-) -> crate::global::role_program::RoleProgram<ROLE>
+pub(crate) const fn project_image<const ROLE: u8, Steps>() -> (
+    PhantomData<Steps>,
+    crate::global::role_program::RoleProgram<ROLE>,
+)
 where
     Steps: ProgramShape,
 {
-    let _ = program;
-    let image = const {
+    let image = {
         let required_rows = <Steps as ProgramShape>::SOURCE_ROW_COUNT;
         if required_rows <= 8 {
             role_projection::role_projection_image_for::<ROLE, Steps, 8>()
@@ -315,5 +315,8 @@ where
             panic!("choreography source exceeds compact descriptor domain")
         }
     };
-    crate::global::role_program::role_program_from_image(image)
+    (
+        PhantomData,
+        crate::global::role_program::role_program_from_image(image),
+    )
 }

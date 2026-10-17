@@ -143,25 +143,22 @@ impl crate::transport::Transport for RejectTransportAccess {
         panic!("stale release reached transport open");
     }
 
-    fn poll_send<'a, 'f>(
+    fn poll_send<'f>(
         &self,
-        _: &'a mut Self::Tx<'a>,
+        _: &mut Self::Tx<'_>,
         _: crate::transport::Outgoing<'f>,
         _: &mut core::task::Context<'_>,
-    ) -> core::task::Poll<Result<(), crate::transport::TransportError>>
-    where
-        'a: 'f,
-    {
+    ) -> core::task::Poll<Result<(), crate::transport::TransportError>> {
         panic!("stale release reached transport send");
     }
 
-    fn cancel_send<'a>(&self, _: &'a mut Self::Tx<'a>) {
+    fn cancel_send(&self, _: &mut Self::Tx<'_>) {
         panic!("stale release reached transport cancellation");
     }
 
     fn poll_recv<'a>(
         &'a self,
-        _: &'a mut Self::Rx<'a>,
+        _: &'a mut Self::Rx<'_>,
         _: &mut core::task::Context<'_>,
     ) -> core::task::Poll<
         Result<crate::transport::ReceivedFrame<'a>, crate::transport::TransportError>,

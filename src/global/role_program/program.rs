@@ -33,8 +33,17 @@ impl<const ROLE: u8> RoleProgramView<ROLE> for RoleProgram<ROLE> {
 }
 
 /// Project a typed program into the local view for `ROLE`.
+///
+/// Projection validates associated constants during code generation. Use
+/// `cargo build` or `cargo test` to check a changed choreography; `cargo check`
+/// alone need not evaluate this validation. [`crate::g::diagnose`] exposes a
+/// projection diagnostic without attaching an Endpoint. Participant functions
+/// still have their sends and receives checked at runtime.
 pub fn project<const ROLE: u8>(
     program: &impl crate::global::program::Projectable,
 ) -> RoleProgram<ROLE> {
-    crate::global::program::project_unnamed(program)
+    // Keep the evaluated constant in this public entry point so rustc's
+    // instantiation note reaches the user's project call. The PhantomData in
+    // its result lets the input infer Steps without another public type argument.
+    crate::global::program::bind_projection(program, const { crate::g::project_image::<ROLE, _>() })
 }
