@@ -137,12 +137,18 @@ impl EventCursor {
             self.relocatable_resident_lane_step_at_index(idx, event.lane as usize)?;
         // An owned send holds the resource view in its future. Work that still
         // requires that view cannot complete while the send waits.
-        let moved_role = self
-            .try_send_meta_at(idx)
-            .and_then(|meta| match meta.payload_kind {
-                crate::eff::EventPayload::Endpoint(role) => Some(role),
-                crate::eff::EventPayload::Wire(_) => None,
-            });
+        // The row already matched this effect. Ownership needs only its
+        // payload kind, not another complete send descriptor.
+        let moved_role = if self.is_send_at(idx)
+            && let crate::eff::EventPayload::Endpoint(role) = self
+                .program_ref()
+                .event_atom_at(event.eff_index.dense_ordinal())
+                .payload
+        {
+            Some(role)
+        } else {
+            None
+        };
         let cursor_after = row.next();
         let preview_conflict = row.conflict();
         let dependency_state = {
@@ -175,14 +181,15 @@ impl EventCursor {
                 .event_program()
                 .dependency_row_set(dependency);
             let role = crate::invariant_some(self.logical_role_at(idx));
-            let own_lane_pending = [Some(role), moved_role].into_iter().flatten().any(|role| {
+            let mut view_pending = |role| {
                 !self.event_lane_head_allows_view(
                     progress_step,
                     preview_conflict,
                     Some(role),
                     &mut |scope| arm_for_scope(scope, EventArmView::Preview),
                 )
-            });
+            };
+            let own_lane_pending = view_pending(role) || moved_role.is_some_and(&mut view_pending);
             let own_pending = own_lane_pending
                 || self
                     .pending_event_steps(rows.start()..rows.end())
@@ -207,18 +214,17 @@ impl EventCursor {
         }
         let mut preview = |scope| arm_for_scope(scope, EventArmView::Preview);
         if !self.event_lane_head_allows(progress_step, preview_conflict, &mut preview) {
+            let mut view_ready = |role| {
+                self.event_lane_head_allows_view(
+                    progress_step,
+                    preview_conflict,
+                    Some(role),
+                    &mut preview,
+                )
+            };
             return Err(
-                if [self.logical_role_at(idx), moved_role]
-                    .into_iter()
-                    .flatten()
-                    .all(|role| {
-                        self.event_lane_head_allows_view(
-                            progress_step,
-                            preview_conflict,
-                            Some(role),
-                            &mut preview,
-                        )
-                    })
+                if self.logical_role_at(idx).is_none_or(&mut view_ready)
+                    && moved_role.is_none_or(&mut view_ready)
                 {
                     EventAdmissionError::OtherViewPending
                 } else {
