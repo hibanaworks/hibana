@@ -27,6 +27,33 @@ pub(crate) fn view_tag<const ROLE: u8>(endpoint: &Endpoint<'_, ROLE>) -> ViewTag
     }
 }
 
+/// Copy the existing first fault without an Endpoint operation or progress.
+///
+/// # Safety
+/// The Endpoint must belong to a pinned actor created with `TestTransport`.
+pub(crate) unsafe fn actor_fault<const ROLE: u8>(
+    endpoint: &Endpoint<'_, ROLE>,
+) -> Option<crate::rendezvous::SessionFaultKind> {
+    // SAFETY: the caller establishes the erased transport and actor lifetime.
+    let actor = unsafe {
+        let header = endpoint.owner.ptr.as_ref();
+        assert!(endpoint.owner.handle.matches_header(header));
+        header
+            .actor()
+            .cast::<ResidentActor<'_, TestTransport>>()
+            .as_ref()
+    };
+    let _operation = actor
+        .context
+        .try_operation_lease()
+        .expect("observation lease");
+    actor
+        .context
+        .session
+        .rendezvous()
+        .session_fault(actor.context.sid)
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct StepSnapshot {
     pub(crate) view: u8,

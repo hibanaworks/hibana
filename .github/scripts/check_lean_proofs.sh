@@ -17,6 +17,8 @@ OWNED_RECOVERY_GENERATED="${ROOT_DIR}/target/lean-proof/OwnedRecoveryGenerated.l
 LOCAL_RETURN_GENERATED="${ROOT_DIR}/target/lean-proof/LocalReturnGenerated.lean"
 PENDING_BORROW_GENERATED="${ROOT_DIR}/target/lean-proof/PendingBorrowGenerated.lean"
 FUTURE_CUSTODY_GENERATED="${ROOT_DIR}/target/lean-proof/FutureCustodyGenerated.lean"
+OWNED_DROP_GENERATED="${ROOT_DIR}/target/lean-proof/OwnedDropGenerated.lean"
+COMPLETED_RETIREMENT_GENERATED="${ROOT_DIR}/target/lean-proof/CompletedViewRetirementGenerated.lean"
 OWNED_ENTRY_GENERATED="${ROOT_DIR}/target/lean-proof/OwnedEntryGenerated.lean"
 ACTOR_COMMIT_GENERATED="${ROOT_DIR}/target/lean-proof/ActorCommitGenerated.lean"
 ACTOR_REENTRY_COMMIT_GENERATED="${ROOT_DIR}/target/lean-proof/ActorReentryCommitGenerated.lean"
@@ -50,7 +52,7 @@ bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" build-serial "${PROOF_
 bash "${ROOT_DIR}/.github/scripts/check_lean_claim_surface.sh"
 static_audit_output="$(run_audit \
   theorem-inventory \
-  --static "${PROOF_DIR}" "${STATIC_CLAIM_SNAPSHOT}" 828 452 270 106)"
+  --static "${PROOF_DIR}" "${STATIC_CLAIM_SNAPSHOT}" 841 459 276 106)"
 printf '%s\n' "${static_audit_output}"
 printf '%s\n' "${static_audit_output}" | bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard markers static
 bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" theorem-inventory \
@@ -64,6 +66,7 @@ rm -f "${OWNED_RECOVERY_GENERATED}"
 rm -f "${LOCAL_RETURN_GENERATED}"
 rm -f "${PENDING_BORROW_GENERATED}"
 rm -f "${FUTURE_CUSTODY_GENERATED}"
+rm -f "${OWNED_DROP_GENERATED}" "${COMPLETED_RETIREMENT_GENERATED}"
 rm -f "${OWNED_ENTRY_GENERATED}"
 CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib \
   g::role_projection::tests::entry_image::missing_wrong_owner_and_unrelated_roll_entry_resources_are_rejected \
@@ -95,6 +98,15 @@ CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --li
 bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${FUTURE_CUSTODY_GENERATED}" "future and frame custody"
 run_audit generated-axioms --kernel "${FUTURE_CUSTODY_GENERATED}" "${PROOF_DIR}" \
   "${PROOF_DIR}/future-custody-generated-claim-surface.txt" 57
+CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib -- \
+  g::role_projection::tests::send_wait::dropping_an_owned_send_cancels_the_run_before_or_during_preparation \
+  g::role_projection::tests::retirement::a_completed_view_retires_without_cancelling_independent_work --exact
+bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${OWNED_DROP_GENERATED}" "owned future drop"
+bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${COMPLETED_RETIREMENT_GENERATED}" "completed view retirement"
+run_audit generated-axioms --kernel "${OWNED_DROP_GENERATED}" "${PROOF_DIR}" \
+  "${PROOF_DIR}/owned-drop-generated-claim-surface.txt" 45
+run_audit generated-axioms --kernel "${COMPLETED_RETIREMENT_GENERATED}" "${PROOF_DIR}" \
+  "${PROOF_DIR}/completed-retirement-generated-claim-surface.txt" 15
 CARGO_BUILD_JOBS=1 \
   RUST_TEST_THREADS=1 \
 cargo +"${TOOLCHAIN}" test -p hibana --lib \
@@ -191,4 +203,4 @@ public_operation_lean_output="$(run_audit \
 printf '%s\n' "${public_operation_lean_output}"
 printf '%s\n' "${public_operation_lean_output}" | bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard markers public-operation
 
-echo "Lean proof gate passed toolchain=v4.30.0 traces=14 frames=66 projections=22 exact-descriptors=22 progress=4 projectability=8 distributed-progress=8 verified-protocols=8 static-theorems=828 owned-entry-correspondence=5 owned-recovery-correspondence=5 local-return-correspondence=12 pending-borrow-correspondence=11 future-custody-correspondence=57 actor-commit-correspondence=56 actor-body-reentry-correspondence=36 actor-parallel-reentry-correspondence=12 actor-route-reentry-correspondence=168 program-column-correspondence=139 partial-choice-correspondence=30 controller-correspondence=57 actor-ingress-correspondence=16 actor-reentry-correspondence=97 parallel-descriptors=10 parallel-correspondence=182 causal-correspondence=36 anonymous-regressions=36 generated-theorems=506 generated-obligations=458 production-transitions=7 production-operations=6 production-owners=8 verified-codecs=3 verified-family=8 static-deployments=8 deployment-rejections=3 capabilities=6 runtime-regions=4 atomic-failures=4 public-operation-edges=18 public-operation-transitions=180 native-regressions=32"
+echo "Lean proof gate passed toolchain=v4.30.0 traces=14 frames=66 projections=22 exact-descriptors=22 progress=4 projectability=8 distributed-progress=8 verified-protocols=8 static-theorems=841 owned-entry-correspondence=5 owned-recovery-correspondence=5 local-return-correspondence=12 pending-borrow-correspondence=11 future-custody-correspondence=57 owned-drop-correspondence=45 completed-retirement-correspondence=15 actor-commit-correspondence=56 actor-body-reentry-correspondence=36 actor-parallel-reentry-correspondence=12 actor-route-reentry-correspondence=168 program-column-correspondence=139 partial-choice-correspondence=30 controller-correspondence=57 actor-ingress-correspondence=16 actor-reentry-correspondence=97 parallel-descriptors=10 parallel-correspondence=182 causal-correspondence=36 anonymous-regressions=36 generated-theorems=506 generated-obligations=458 production-transitions=7 production-operations=6 production-owners=8 verified-codecs=3 verified-family=8 static-deployments=8 deployment-rejections=3 capabilities=6 runtime-regions=4 atomic-failures=4 public-operation-edges=18 public-operation-transitions=180 native-regressions=32"

@@ -32,6 +32,7 @@ mod reentry_columns;
 #[cfg(not(miri))]
 mod reentry_commit;
 mod reentry_parallel;
+mod retirement;
 mod return_reentry;
 mod roll_exit;
 mod routing;

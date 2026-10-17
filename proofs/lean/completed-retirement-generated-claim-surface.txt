@@ -1,0 +1,52 @@
+completedAccepted : completed.check retirementImage retirementChoreo = true
+completedAfterValid : completed.after.valid = true
+completedAuthorityRetirement : Step Action.dropValue completedBeforeAuthority completedAfterAuthority
+completedBeforeValid : completed.before.valid = true
+completedGenerationRealized : ∃ complete current,
+  Hibana.sourceViewComplete? completed.before retirementImage retirementChoreo 10 = some complete ∧
+    Hibana.observedActorView? completed.before 10 = some current ∧
+      Hibana.applySessionGenerationAction (Hibana.observedGeneration completed.beforeFault)
+          (Hibana.retirementGenerationAction current.operation complete) =
+        some (Hibana.observedGeneration completed.afterFault)
+completedGhostProgressRejected : (have __src := completed;
+      { view := __src.view, before := __src.before,
+        after :=
+          have __src := completed.after;
+          { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
+            views := __src.views,
+            steps :=
+              List.map (fun step => { effIndex := step.effIndex, view := step.view, side := step.side, done := true })
+                completed.after.steps,
+            choices := __src.choices },
+        beforeFault := __src.beforeFault, afterFault := __src.afterFault }).check
+    retirementImage retirementChoreo =
+  false
+completedLiveSourceCompleted : Hibana.sourceViewComplete? completed.before retirementImage retirementChoreo 10 =
+    some true ∧
+  ∃ current,
+    Hibana.observedActorView? completed.before 10 = some current ∧ current.operation = Hibana.PublicOperationPhase.idle
+completedMissingRetirementRejected : (have __src := completed;
+      { view := __src.view, before := __src.before,
+        after :=
+          have __src := completed.after;
+          { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
+            views := completed.before.views, steps := __src.steps, choices := __src.choices },
+        beforeFault := __src.beforeFault, afterFault := __src.afterFault }).check
+    retirementImage retirementChoreo =
+  false
+completedMissingSourceRowsRejected : Hibana.sourceViewComplete?
+    (have __src := completed.before;
+    { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
+      views := __src.views, steps := [], choices := __src.choices })
+    retirementImage retirementChoreo 10 =
+  none
+completedNoAuthorityRestored : Observation.authorityCount completedAfterAuthority = 0
+completedProgressPreserved : completed.progressMatches = true
+completedPublicationPermitted : (Hibana.observedGeneration completed.afterFault).publicationPermitted = true
+completedRetired : completed.after.viewIssued 10 = false
+completedSourceCompletion : Hibana.sourceViewComplete? completed.before retirementImage retirementChoreo 10 = some true
+completedSpuriousFaultRejected : (have __src := completed;
+      { view := __src.view, before := __src.before, after := __src.after, beforeFault := __src.beforeFault,
+        afterFault := some Hibana.SessionFault.endpointDropped }).check
+    retirementImage retirementChoreo =
+  false

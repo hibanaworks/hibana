@@ -270,6 +270,8 @@ fn a_waiting_send_does_not_run_its_resolver_before_the_predecessor() {
 
 #[test]
 fn dropping_an_owned_send_cancels_the_run_before_or_during_preparation() {
+    use crate::endpoint::proof_snapshot::{actor_fault, actor_snapshot, view_tag};
+    use crate::rendezvous::SessionFaultKind;
     type Steps = g::Seq<
         g::Send<11, 3, Read>,
         g::Seq<
@@ -287,22 +289,41 @@ fn dropping_an_owned_send_cancels_the_run_before_or_during_preparation() {
     let auth_program = crate::global::role_program::role_program_from_image::<11>(
         &RoleProjection::<11, Steps, 8>::IMAGE_REF,
     );
+    let service_program = crate::global::role_program::role_program_from_image::<3>(
+        &RoleProjection::<3, Steps, 8>::IMAGE_REF,
+    );
     let runtime = tokio::runtime::Builder::new_current_thread()
         .build()
         .unwrap();
     runtime.block_on(async {
-        for poll_before_drop in [false, true] {
+        #[cfg(not(miri))]
+        let mut retirement_observations = std::vec::Vec::new();
+        // Test stimuli, not application progress: unpolled, waiting for the
+        // other view, and prepared while the transport is paused.
+        for (name, poll_before_drop, finish_predecessor) in [
+            ("unpolled", false, false),
+            ("predecessor", true, false),
+            ("transport", true, true),
+        ] {
+            let network = TestTransport::new();
             let mut slab = std::vec![0; 64 * 1024];
             let mut storage = SessionKitStorage::uninit();
             let rv = storage
                 .init()
-                .rendezvous(&mut slab, TestTransport::new())
+                .rendezvous(&mut slab, network.clone())
                 .unwrap();
             let sid = SessionId::new(853);
             let mut owner = rv.enter(sid, &owner_program).unwrap();
             let db = rv.enter(sid, &db_program).unwrap();
             let mut auth = rv.enter(sid, &auth_program).unwrap();
-            {
+            let mut service = rv.enter(sid, &service_program).unwrap();
+            if finish_predecessor {
+                auth.send::<Read>(&17).await.unwrap();
+                assert_eq!(service.recv::<Read>().await.unwrap(), 17);
+                network.pause_send(0);
+            }
+            let tag = view_tag(&db);
+            let (before, before_fault) = {
                 let mut send = pin!(owner.send::<Loan>(db));
                 if poll_before_drop {
                     assert!(
@@ -311,8 +332,73 @@ fn dropping_an_owned_send_cancels_the_run_before_or_during_preparation() {
                             .is_pending()
                     );
                 }
+                // SAFETY: AUTH is distinct from the future's borrowed carrier
+                // and payload; the poll released its actor mutation lease.
+                (unsafe { actor_snapshot(&auth) }, unsafe {
+                    actor_fault(&auth)
+                })
+            };
+            assert_eq!(before_fault, None, "{name}");
+            // SAFETY: AUTH still owns its distinct view in the original actor.
+            let after = unsafe { actor_snapshot(&auth) };
+            assert_eq!(before.steps, after.steps);
+            assert_eq!(before.choices, after.choices);
+            assert_eq!(before.counter, after.counter);
+            assert_eq!(before.live_views, after.live_views + 1);
+            // SAFETY: the original DB header remains allocated by storage.
+            assert!(!unsafe { tag.matches_header() });
+            // SAFETY: AUTH retains the same TestTransport actor and registry.
+            let after_fault = unsafe { actor_fault(&auth) };
+            assert_eq!(
+                after_fault,
+                Some(SessionFaultKind::EndpointDropped),
+                "{name}"
+            );
+            assert!(network.queue_is_empty());
+            assert!(rv.enter(sid, &db_program).is_err());
+            if finish_predecessor {
+                network.resume_send();
             }
             assert!(auth.send::<Read>(&17).await.is_err());
+            // SAFETY: the failed operation cannot replace the first fault.
+            assert_eq!(
+                unsafe { actor_fault(&auth) },
+                Some(SessionFaultKind::EndpointDropped)
+            );
+            // SAFETY: observing a fault does not destroy AUTH's pinned actor.
+            let rejected = unsafe { actor_snapshot(&auth) };
+            assert_eq!(after.steps, rejected.steps);
+            assert_eq!(after.choices, rejected.choices);
+            assert_eq!(after.counter, rejected.counter);
+            assert_eq!(after.live_views, rejected.live_views);
+            assert!(after.view_headers().eq(rejected.view_headers()));
+            assert!(network.queue_is_empty());
+            #[cfg(not(miri))]
+            retirement_observations.push(super::retirement::RetirementSample {
+                name,
+                before,
+                after,
+                before_fault,
+                after_fault,
+                origin: super::retirement::RetirementOrigin::Future,
+                complete: false,
+            });
+        }
+        #[cfg(not(miri))]
+        {
+            use crate::test_support::{
+                lean_choreo::LeanChoreo, lean_descriptor::descriptor_source,
+            };
+            super::retirement::write_retirements(
+                "OwnedDropGenerated",
+                Steps::lean_source(),
+                descriptor_source(
+                    crate::global::compiled::images::RoleDescriptorRef::from_resident(
+                        &RoleProjection::<0, Steps, 8>::IMAGE_REF,
+                    ),
+                ),
+                &retirement_observations,
+            );
         }
     });
 }

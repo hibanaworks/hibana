@@ -243,8 +243,8 @@ can change arms while preserving the parent prefix. The complete nested trace
 runs twice. Before the parent suffix, both the completed arm and the unused
 alternative are rejected. These six kernel proofs replace seven lemmas about the removed
 route-only reset and its unused selector. Including the transfer model below,
-the static inventory is 828, with 452 using `propext` and `Quot.sound`,
-270 using only `propext`, and 106 axiom-free. The three additional
+the static inventory is 841, with 459 using `propext` and `Quot.sound`,
+276 using only `propext`, and 106 axiom-free. The three additional
 `PublicOperationKernel.lean` claims cover the owned-send payload borrow:
 other resource-dependent work waits, that payload's own transfer may finish,
 and an unborrowed view gains no extra dependency. The generated Rust table
@@ -288,6 +288,26 @@ They do not establish that every Rust execution has that abstraction, that a
 deployment supplies a valid physical binding, or that its carrier refines the
 profile. Source/continuation correspondence and distributed progress remain
 separate obligations; public owned projection is still closed.
+
+`OwnedRetirement.lean` checks retirement against the global source for the
+current selected visit. It considers every path compatible with the committed
+choices. A view is needed for its own send/receive or as the owned payload of
+a later send; a missing source binding or row fails closed. Thirteen general
+theorems connect this check to the existing first-fault/generation model,
+prove that a nonfaulting retirement removes no pending required source action,
+and show that transfer authority decreases only at explicit retirement steps.
+This is not a proof about all future rolled visits or distributed termination.
+
+The real Tokio tests cover an owned future dropped before polling, while
+awaiting another view, and while transport readiness is paused. All three
+preserve progress, retire the payload, reject reattachment, and retain the
+first EndpointDropped fault after another failed operation. A separate test
+drops a completed resource view, then runs independent co-resident work with
+one send deliberately delayed. Its delay is a test stimulus, not measured
+benchmark overlap. The two generated artifacts have 45 and 15 kernel claims,
+including source completion, generation transitions, explicit authority loss,
+and rejection of missing faults, spurious faults, source rows and header deltas.
+The observations never authorize execution and add no production runtime state.
 
 `OwnedCommit.lean` connects the actor commit checker to that transfer model.
 It decodes the same source path and image as the observed actor, then checks

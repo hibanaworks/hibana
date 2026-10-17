@@ -8,6 +8,7 @@ import Hibana.ViewGeneration
 import Hibana.ActorSourceProgress
 import Hibana.ActorCommit
 import Hibana.OwnedCommit
+import Hibana.OwnedRetirement
 import Hibana.ActorReentryCommit
 import Hibana.GlobalSemantics
 import Hibana.GlobalAllocationCorrectness

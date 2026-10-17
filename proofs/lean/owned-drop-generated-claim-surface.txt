@@ -1,0 +1,154 @@
+predecessorAccepted : predecessor.check retirementImage retirementChoreo = true
+predecessorAfterValid : predecessor.after.valid = true
+predecessorAuthorityRetirement : Step Action.abandonPreparation predecessorBeforeAuthority predecessorAfterAuthority
+predecessorBeforeValid : predecessor.before.valid = true
+predecessorGenerationRealized : ∃ complete current,
+  Hibana.sourceViewComplete? predecessor.before retirementImage retirementChoreo 10 = some complete ∧
+    Hibana.observedActorView? predecessor.before 10 = some current ∧
+      Hibana.applySessionGenerationAction (Hibana.observedGeneration predecessor.beforeFault)
+          (Hibana.retirementGenerationAction current.operation complete) =
+        some (Hibana.observedGeneration predecessor.afterFault)
+predecessorGhostProgressRejected : (have __src := predecessor;
+      { view := __src.view, before := __src.before,
+        after :=
+          have __src := predecessor.after;
+          { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
+            views := __src.views,
+            steps :=
+              List.map (fun step => { effIndex := step.effIndex, view := step.view, side := step.side, done := true })
+                predecessor.after.steps,
+            choices := __src.choices },
+        beforeFault := __src.beforeFault, afterFault := __src.afterFault }).check
+    retirementImage retirementChoreo =
+  false
+predecessorMissingFaultRejected : (have __src := predecessor;
+      { view := __src.view, before := __src.before, after := __src.after, beforeFault := __src.beforeFault,
+        afterFault := none }).check
+    retirementImage retirementChoreo =
+  false
+predecessorMissingRetirementRejected : (have __src := predecessor;
+      { view := __src.view, before := __src.before,
+        after :=
+          have __src := predecessor.after;
+          { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
+            views := predecessor.before.views, steps := __src.steps, choices := __src.choices },
+        beforeFault := __src.beforeFault, afterFault := __src.afterFault }).check
+    retirementImage retirementChoreo =
+  false
+predecessorMissingSourceRowsRejected : Hibana.sourceViewComplete?
+    (have __src := predecessor.before;
+    { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
+      views := __src.views, steps := [], choices := __src.choices })
+    retirementImage retirementChoreo 10 =
+  none
+predecessorNoAuthorityRestored : Observation.authorityCount predecessorAfterAuthority = 0
+predecessorProgressPreserved : predecessor.progressMatches = true
+predecessorPublicationBlocked : (Hibana.observedGeneration predecessor.afterFault).publicationPermitted = false
+predecessorReattachmentBlocked : Hibana.applySessionGenerationAction (Hibana.observedGeneration predecessor.afterFault)
+    Hibana.SessionGenerationAction.attach =
+  none
+predecessorRetired : predecessor.after.viewIssued 10 = false
+predecessorSourceCompletion : Hibana.sourceViewComplete? predecessor.before retirementImage retirementChoreo 10 =
+  some false
+transportAccepted : transport.check retirementImage retirementChoreo = true
+transportAfterValid : transport.after.valid = true
+transportAuthorityRetirement : Step Action.abandonPreparation transportBeforeAuthority transportAfterAuthority
+transportBeforeValid : transport.before.valid = true
+transportGenerationRealized : ∃ complete current,
+  Hibana.sourceViewComplete? transport.before retirementImage retirementChoreo 10 = some complete ∧
+    Hibana.observedActorView? transport.before 10 = some current ∧
+      Hibana.applySessionGenerationAction (Hibana.observedGeneration transport.beforeFault)
+          (Hibana.retirementGenerationAction current.operation complete) =
+        some (Hibana.observedGeneration transport.afterFault)
+transportGhostProgressRejected : (have __src := transport;
+      { view := __src.view, before := __src.before,
+        after :=
+          have __src := transport.after;
+          { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
+            views := __src.views,
+            steps :=
+              List.map (fun step => { effIndex := step.effIndex, view := step.view, side := step.side, done := true })
+                transport.after.steps,
+            choices := __src.choices },
+        beforeFault := __src.beforeFault, afterFault := __src.afterFault }).check
+    retirementImage retirementChoreo =
+  false
+transportMissingFaultRejected : (have __src := transport;
+      { view := __src.view, before := __src.before, after := __src.after, beforeFault := __src.beforeFault,
+        afterFault := none }).check
+    retirementImage retirementChoreo =
+  false
+transportMissingRetirementRejected : (have __src := transport;
+      { view := __src.view, before := __src.before,
+        after :=
+          have __src := transport.after;
+          { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
+            views := transport.before.views, steps := __src.steps, choices := __src.choices },
+        beforeFault := __src.beforeFault, afterFault := __src.afterFault }).check
+    retirementImage retirementChoreo =
+  false
+transportMissingSourceRowsRejected : Hibana.sourceViewComplete?
+    (have __src := transport.before;
+    { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
+      views := __src.views, steps := [], choices := __src.choices })
+    retirementImage retirementChoreo 10 =
+  none
+transportNoAuthorityRestored : Observation.authorityCount transportAfterAuthority = 0
+transportProgressPreserved : transport.progressMatches = true
+transportPublicationBlocked : (Hibana.observedGeneration transport.afterFault).publicationPermitted = false
+transportReattachmentBlocked : Hibana.applySessionGenerationAction (Hibana.observedGeneration transport.afterFault)
+    Hibana.SessionGenerationAction.attach =
+  none
+transportRetired : transport.after.viewIssued 10 = false
+transportSourceCompletion : Hibana.sourceViewComplete? transport.before retirementImage retirementChoreo 10 = some false
+unpolledAccepted : unpolled.check retirementImage retirementChoreo = true
+unpolledAfterValid : unpolled.after.valid = true
+unpolledAuthorityRetirement : Step Action.abandonPreparation unpolledBeforeAuthority unpolledAfterAuthority
+unpolledBeforeValid : unpolled.before.valid = true
+unpolledGenerationRealized : ∃ complete current,
+  Hibana.sourceViewComplete? unpolled.before retirementImage retirementChoreo 10 = some complete ∧
+    Hibana.observedActorView? unpolled.before 10 = some current ∧
+      Hibana.applySessionGenerationAction (Hibana.observedGeneration unpolled.beforeFault)
+          (Hibana.retirementGenerationAction current.operation complete) =
+        some (Hibana.observedGeneration unpolled.afterFault)
+unpolledGhostProgressRejected : (have __src := unpolled;
+      { view := __src.view, before := __src.before,
+        after :=
+          have __src := unpolled.after;
+          { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
+            views := __src.views,
+            steps :=
+              List.map (fun step => { effIndex := step.effIndex, view := step.view, side := step.side, done := true })
+                unpolled.after.steps,
+            choices := __src.choices },
+        beforeFault := __src.beforeFault, afterFault := __src.afterFault }).check
+    retirementImage retirementChoreo =
+  false
+unpolledMissingFaultRejected : (have __src := unpolled;
+      { view := __src.view, before := __src.before, after := __src.after, beforeFault := __src.beforeFault,
+        afterFault := none }).check
+    retirementImage retirementChoreo =
+  false
+unpolledMissingRetirementRejected : (have __src := unpolled;
+      { view := __src.view, before := __src.before,
+        after :=
+          have __src := unpolled.after;
+          { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
+            views := unpolled.before.views, steps := __src.steps, choices := __src.choices },
+        beforeFault := __src.beforeFault, afterFault := __src.afterFault }).check
+    retirementImage retirementChoreo =
+  false
+unpolledMissingSourceRowsRejected : Hibana.sourceViewComplete?
+    (have __src := unpolled.before;
+    { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
+      views := __src.views, steps := [], choices := __src.choices })
+    retirementImage retirementChoreo 10 =
+  none
+unpolledNoAuthorityRestored : Observation.authorityCount unpolledAfterAuthority = 0
+unpolledProgressPreserved : unpolled.progressMatches = true
+unpolledPublicationBlocked : (Hibana.observedGeneration unpolled.afterFault).publicationPermitted = false
+unpolledReattachmentBlocked : Hibana.applySessionGenerationAction (Hibana.observedGeneration unpolled.afterFault)
+    Hibana.SessionGenerationAction.attach =
+  none
+unpolledRetired : unpolled.after.viewIssued 10 = false
+unpolledSourceCompletion : Hibana.sourceViewComplete? unpolled.before retirementImage retirementChoreo 10 = some false

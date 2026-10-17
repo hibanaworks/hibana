@@ -1063,6 +1063,26 @@ Hibana.abort_peer_is_well_formed : ∀ (state : Hibana.TransportState), state.ab
                 (And (@Eq.{1} Bool (source.before earlier event) true)
                   (@Eq.{1} Nat (receiver earlier) (sender event))))) →
       ∀ (event : Nat), neededSend event → Hibana.ReentryAuthority source sender receiver owner event
+@Hibana.accepted_retirement_has_checked_source_and_headers : ∀ {sample : Hibana.ViewRetirementObservation}
+  {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo},
+  @Eq.{1} Bool (sample.check image choreo) true →
+    @Exists.{1} Bool fun complete =>
+      @Exists.{1} Hibana.ActorViewObservation fun current =>
+        And
+          (@Eq.{1} (Option.{0} Bool) (Hibana.sourceViewComplete? sample.before image choreo sample.view)
+            (@some.{0} Bool complete))
+          (And
+            (@Eq.{1} (Option.{0} Hibana.ActorViewObservation) (Hibana.observedActorView? sample.before sample.view)
+              (@some.{0} Hibana.ActorViewObservation current))
+            (And (@Eq.{1} Bool sample.progressMatches true)
+              (And (@Eq.{1} Bool (sample.headersMatch current) true)
+                (@Eq.{1} (Option.{0} Hibana.SessionFault) sample.afterFault
+                  (Hibana.retirementFirstFault sample.beforeFault current.operation complete)))))
+@Hibana.accepted_retirement_preserves_first_fault : ∀ {sample : Hibana.ViewRetirementObservation}
+  {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo} {cause : Hibana.SessionFault},
+  @Eq.{1} Bool (sample.check image choreo) true →
+    @Eq.{1} (Option.{0} Hibana.SessionFault) sample.beforeFault (@some.{0} Hibana.SessionFault cause) →
+      @Eq.{1} (Option.{0} Hibana.SessionFault) sample.afterFault (@some.{0} Hibana.SessionFault cause)
 @Hibana.accepted_session_reattach_is_exact : ∀ {binding next : Hibana.SessionBinding} {rendezvous : Nat}
   {program : Hibana.ProgramImageIdentity},
   @Eq.{1} (Option.{0} Hibana.SessionBinding)
@@ -1259,6 +1279,11 @@ Hibana.active_offer_key_mem_iff_owned : ∀ (target : Hibana.ActiveOfferKey) (la
 @Hibana.affine_carrier_refinement_supports_closing_profile : ∀ {carrier : Hibana.CarrierSemantics}
   {abstraction : carrier.State → Hibana.TransportBoundaryState},
   Hibana.AffineCarrierRefinement carrier abstraction → Hibana.CarrierProfile.closing.Holds carrier abstraction True
+@Hibana.all_present_true_checks_every_member : ∀ {α : Type} {test : α → Option.{0} Bool} {items : List.{0} α},
+  @Eq.{1} (Option.{0} Bool) (@Hibana.allPresentTrue? α test items) (@some.{0} Bool true) →
+    ∀ (item : α),
+      @Membership.mem.{0, 0} α (List.{0} α) (@List.instMembership.{0} α) items item →
+        @Eq.{1} (Option.{0} Bool) (test item) (@some.{0} Bool true)
 Hibana.alternative_cursor_observations_have_distinct_entry : ∀ (current : Hibana.ActiveOfferKey)
   (observations : List.{0} Hibana.ActiveOfferObservation) (observation : Hibana.ActiveOfferObservation),
   Iff
@@ -3706,6 +3731,59 @@ Hibana.lane_ingress_head_preserved_by_other_lane_progress : ∀ (events : List.{
                   transports)
                 retired)
               retired.fullyRetired
+@Hibana.live_retirement_removes_no_pending_source_action : ∀ {sample : Hibana.ViewRetirementObservation}
+  {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo},
+  @Eq.{1} Bool (sample.check image choreo) true →
+    @Eq.{1} (Option.{0} Hibana.SessionFault) sample.afterFault (@none.{0} Hibana.SessionFault) →
+      @Exists.{1} Hibana.DecodedActorOrder fun data =>
+        And
+          (@Eq.{1} (Option.{0} Hibana.DecodedActorOrder) (image.decodeActorOrder? choreo)
+            (@some.{0} Hibana.DecodedActorOrder data))
+          (∀ (path : Hibana.EndpointDelegation.NormalizedPath),
+            @Membership.mem.{0, 0} Hibana.EndpointDelegation.NormalizedPath
+                (List.{0} Hibana.EndpointDelegation.NormalizedPath)
+                (@List.instMembership.{0} Hibana.EndpointDelegation.NormalizedPath) data.normalized.paths path →
+              @Eq.{1} Bool (Hibana.observedChoicesAgree (Hibana.canonicalProgramSource choreo) path sample.before)
+                  true →
+                ∀ (row : Hibana.DecodedActorRow),
+                  @Membership.mem.{0, 0} Hibana.DecodedActorRow (List.{0} Hibana.DecodedActorRow)
+                      (@List.instMembership.{0} Hibana.DecodedActorRow) (data.activeRows path) row →
+                    @Exists.{1} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding) fun entry =>
+                      @Exists.{1} Hibana.ActorStepObservation fun step =>
+                        And
+                          (@Eq.{1} (Option.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding))
+                            (@List.find?.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)
+                              (fun entry =>
+                                @BEq.beq.{0} Nat (@instBEqOfDecidableEq.{0} Nat instDecidableEqNat)
+                                  (@Prod.fst.{0, 0} Nat Hibana.EndpointDelegation.Binding entry) row.actionId.event)
+                              path.bindings)
+                            (@some.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding) entry))
+                          (And
+                            (@Eq.{1} (Option.{0} Hibana.ActorStepObservation)
+                              (@getElem?.{0, 0, 0} (List.{0} Hibana.ActorStepObservation) Nat
+                                Hibana.ActorStepObservation
+                                (fun as i =>
+                                  @LT.lt.{0} Nat instLTNat i (@List.length.{0} Hibana.ActorStepObservation as))
+                                (@List.instGetElem?NatLtLength.{0} Hibana.ActorStepObservation) sample.before.steps
+                                row.eventId)
+                              (@some.{0} Hibana.ActorStepObservation step))
+                            (@Eq.{1} Bool
+                                (Hibana.sourceActionRequiresView sample.view
+                                  (@Prod.snd.{0, 0} Nat Hibana.EndpointDelegation.Binding entry) row.actionId.side)
+                                true →
+                              @Eq.{1} Bool step.done true)))
+@Hibana.live_retirement_requires_source_completion : ∀ {sample : Hibana.ViewRetirementObservation}
+  {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo},
+  @Eq.{1} Bool (sample.check image choreo) true →
+    @Eq.{1} (Option.{0} Hibana.SessionFault) sample.afterFault (@none.{0} Hibana.SessionFault) →
+      And
+        (@Eq.{1} (Option.{0} Bool) (Hibana.sourceViewComplete? sample.before image choreo sample.view)
+          (@some.{0} Bool true))
+        (@Exists.{1} Hibana.ActorViewObservation fun current =>
+          And
+            (@Eq.{1} (Option.{0} Hibana.ActorViewObservation) (Hibana.observedActorView? sample.before sample.view)
+              (@some.{0} Hibana.ActorViewObservation current))
+            (@Eq.{1} Hibana.PublicOperationPhase current.operation Hibana.PublicOperationPhase.idle))
 @Hibana.local_action_payload_self_send_rejected : ∀ {role label schema : Nat},
   @Ne.{1} Nat schema (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0))) →
     @Eq.{1} (Option.{0} Hibana.LocalAction) (Hibana.Choreo.localAction? role role role label schema)
@@ -3773,6 +3851,14 @@ Hibana.local_action_unit_self_send_projects_local : ∀ (role label : Nat),
     @Eq.{1} Hibana.GlobalProtocolIdentity next.protocolIdentity config.protocolIdentity
 @Hibana.logical_progress_checker_sound : ∀ {graph : Hibana.EventGraph} {state : Hibana.CompactCommitState},
   @Eq.{1} Bool (Hibana.checkLogicalProgress graph state) true → Hibana.LogicalProgress graph state
+@Hibana.lost_transfer_authority_requires_explicit_retirement : ∀ {View Frame : Type}
+  {action : Hibana.EndpointTransfer.Action} {before after : Hibana.EndpointTransfer.Observation View Frame},
+  @Hibana.EndpointTransfer.Step View Frame action before after →
+    @LT.lt.{0} Nat instLTNat (@Hibana.EndpointTransfer.Observation.authorityCount View Frame after)
+        (@Hibana.EndpointTransfer.Observation.authorityCount View Frame before) →
+      Or (@Eq.{1} Hibana.EndpointTransfer.Action action Hibana.EndpointTransfer.Action.abandonPreparation)
+        (Or (@Eq.{1} Hibana.EndpointTransfer.Action action Hibana.EndpointTransfer.Action.dropValue)
+          (@Eq.{1} Hibana.EndpointTransfer.Action action Hibana.EndpointTransfer.Action.fenceFrame))
 @Hibana.matching_choice_history_allows_route_path : ∀ {path : List.{0} (Prod.{0, 0} Nat Nat)}
   {selected preview : Nat → Option.{0} Hibana.RouteArm},
   (∀ (scope arm : Nat),
@@ -5161,6 +5247,13 @@ Hibana.resolver_select_never_rejects : ∀ (graph : Hibana.EventGraph) (state : 
     ∀ (candidate : Nat),
       @Eq.{1} (Option.{0} Nat) (Hibana.initialViewGeneration? (Hibana.retireViewGeneration current) candidate)
         (@none.{0} Nat)
+Hibana.retirement_fault_matches_existing_generation_model : ∀ (before : Option.{0} Hibana.SessionFault)
+  (operation : Hibana.PublicOperationPhase) (complete : Bool),
+  @Eq.{1} (Option.{0} Hibana.SessionGenerationState)
+    (Hibana.applySessionGenerationAction (Hibana.observedGeneration before)
+      (Hibana.retirementGenerationAction operation complete))
+    (@some.{0} Hibana.SessionGenerationState
+      (Hibana.observedGeneration (Hibana.retirementFirstFault before operation complete)))
 @Hibana.retirement_ready_has_logical_progress : ∀ {config : Hibana.AsyncCancellationConfig},
   config.RetirementReady →
     Or config.fullyRetired
@@ -5169,6 +5262,27 @@ Hibana.resolver_select_never_rejects : ∀ (graph : Hibana.EventGraph) (state : 
   config.RetirementReady →
     @Exists.{1} Hibana.AsyncCancellationConfig fun retired =>
       And (Hibana.AsyncCancellationReachable config retired) retired.fullyRetired
+@Hibana.retirement_realizes_existing_generation_action : ∀ {sample : Hibana.ViewRetirementObservation}
+  {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo},
+  @Eq.{1} Bool (sample.check image choreo) true →
+    @Exists.{1} Bool fun complete =>
+      @Exists.{1} Hibana.ActorViewObservation fun current =>
+        And
+          (@Eq.{1} (Option.{0} Bool) (Hibana.sourceViewComplete? sample.before image choreo sample.view)
+            (@some.{0} Bool complete))
+          (And
+            (@Eq.{1} (Option.{0} Hibana.ActorViewObservation) (Hibana.observedActorView? sample.before sample.view)
+              (@some.{0} Hibana.ActorViewObservation current))
+            (@Eq.{1} (Option.{0} Hibana.SessionGenerationState)
+              (Hibana.applySessionGenerationAction (Hibana.observedGeneration sample.beforeFault)
+                (Hibana.retirementGenerationAction current.operation complete))
+              (@some.{0} Hibana.SessionGenerationState (Hibana.observedGeneration sample.afterFault))))
+@Hibana.retirement_with_pending_source_disables_publication : ∀ {sample : Hibana.ViewRetirementObservation}
+  {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo},
+  @Eq.{1} Bool (sample.check image choreo) true →
+    @Eq.{1} (Option.{0} Bool) (Hibana.sourceViewComplete? sample.before image choreo sample.view)
+        (@some.{0} Bool false) →
+      @Eq.{1} Bool (Hibana.observedGeneration sample.afterFault).publicationPermitted false
 @Hibana.reused_session_on_new_carrier_generation_excludes_old_frame : ∀ {oldFrame newFrame : Hibana.TransportFrame},
   @Ne.{1} Nat oldFrame.channel.generation newFrame.channel.generation → @Ne.{1} Hibana.TransportFrame oldFrame newFrame
 Hibana.role_event_bytes_dominate_local_step_field : @LT.lt.{0} Nat instLTNat Hibana.productionRoleEventOnlyCapacity
@@ -5930,6 +6044,84 @@ Hibana.sequential_input_guards_both_parallel_arms : ∀ (entry split exit left r
                                                     (@Eq.{1} Nat frame.channel.sender facts.binding.message.sender.role)
                                                     (@Eq.{1} Nat frame.channel.receiver
                                                       facts.binding.message.receiver.role))))))))))
+@Hibana.source_complete_row_has_no_pending_view_requirement : ∀ {snapshot : Hibana.ActorProgressObservation}
+  {role : Nat} {path : Hibana.EndpointDelegation.NormalizedPath} {row : Hibana.DecodedActorRow},
+  @Eq.{1} (Option.{0} Bool) (Hibana.sourceRetirementRowComplete? snapshot role path row) (@some.{0} Bool true) →
+    @Exists.{1} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding) fun entry =>
+      @Exists.{1} Hibana.ActorStepObservation fun step =>
+        And
+          (@Eq.{1} (Option.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding))
+            (@List.find?.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)
+              (fun entry =>
+                @BEq.beq.{0} Nat (@instBEqOfDecidableEq.{0} Nat instDecidableEqNat)
+                  (@Prod.fst.{0, 0} Nat Hibana.EndpointDelegation.Binding entry) row.actionId.event)
+              path.bindings)
+            (@some.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding) entry))
+          (And
+            (@Eq.{1} (Option.{0} Hibana.ActorStepObservation)
+              (@getElem?.{0, 0, 0} (List.{0} Hibana.ActorStepObservation) Nat Hibana.ActorStepObservation
+                (fun as i => @LT.lt.{0} Nat instLTNat i (@List.length.{0} Hibana.ActorStepObservation as))
+                (@List.instGetElem?NatLtLength.{0} Hibana.ActorStepObservation) snapshot.steps row.eventId)
+              (@some.{0} Hibana.ActorStepObservation step))
+            (@Eq.{1} Bool
+                (Hibana.sourceActionRequiresView role (@Prod.snd.{0, 0} Nat Hibana.EndpointDelegation.Binding entry)
+                  row.actionId.side)
+                true →
+              @Eq.{1} Bool step.done true))
+@Hibana.source_completed_view_has_no_pending_action : ∀ {snapshot : Hibana.ActorProgressObservation}
+  {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo} {role : Nat},
+  @Eq.{1} (Option.{0} Bool) (Hibana.sourceViewComplete? snapshot image choreo role) (@some.{0} Bool true) →
+    @Exists.{1} Hibana.DecodedActorOrder fun data =>
+      And
+        (@Eq.{1} (Option.{0} Hibana.DecodedActorOrder) (image.decodeActorOrder? choreo)
+          (@some.{0} Hibana.DecodedActorOrder data))
+        (∀ (path : Hibana.EndpointDelegation.NormalizedPath),
+          @Membership.mem.{0, 0} Hibana.EndpointDelegation.NormalizedPath
+              (List.{0} Hibana.EndpointDelegation.NormalizedPath)
+              (@List.instMembership.{0} Hibana.EndpointDelegation.NormalizedPath) data.normalized.paths path →
+            @Eq.{1} Bool (Hibana.observedChoicesAgree (Hibana.canonicalProgramSource choreo) path snapshot) true →
+              ∀ (row : Hibana.DecodedActorRow),
+                @Membership.mem.{0, 0} Hibana.DecodedActorRow (List.{0} Hibana.DecodedActorRow)
+                    (@List.instMembership.{0} Hibana.DecodedActorRow) (data.activeRows path) row →
+                  @Exists.{1} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding) fun entry =>
+                    @Exists.{1} Hibana.ActorStepObservation fun step =>
+                      And
+                        (@Eq.{1} (Option.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding))
+                          (@List.find?.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)
+                            (fun entry =>
+                              @BEq.beq.{0} Nat (@instBEqOfDecidableEq.{0} Nat instDecidableEqNat)
+                                (@Prod.fst.{0, 0} Nat Hibana.EndpointDelegation.Binding entry) row.actionId.event)
+                            path.bindings)
+                          (@some.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding) entry))
+                        (And
+                          (@Eq.{1} (Option.{0} Hibana.ActorStepObservation)
+                            (@getElem?.{0, 0, 0} (List.{0} Hibana.ActorStepObservation) Nat Hibana.ActorStepObservation
+                              (fun as i => @LT.lt.{0} Nat instLTNat i (@List.length.{0} Hibana.ActorStepObservation as))
+                              (@List.instGetElem?NatLtLength.{0} Hibana.ActorStepObservation) snapshot.steps
+                              row.eventId)
+                            (@some.{0} Hibana.ActorStepObservation step))
+                          (@Eq.{1} Bool
+                              (Hibana.sourceActionRequiresView role
+                                (@Prod.snd.{0, 0} Nat Hibana.EndpointDelegation.Binding entry) row.actionId.side)
+                              true →
+                            @Eq.{1} Bool step.done true)))
+@Hibana.source_completion_checks_every_compatible_path : ∀ {snapshot : Hibana.ActorProgressObservation}
+  {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo} {role : Nat},
+  @Eq.{1} (Option.{0} Bool) (Hibana.sourceViewComplete? snapshot image choreo role) (@some.{0} Bool true) →
+    @Exists.{1} Hibana.DecodedActorOrder fun data =>
+      And
+        (@Eq.{1} (Option.{0} Hibana.DecodedActorOrder) (image.decodeActorOrder? choreo)
+          (@some.{0} Hibana.DecodedActorOrder data))
+        (∀ (path : Hibana.EndpointDelegation.NormalizedPath),
+          @Membership.mem.{0, 0} Hibana.EndpointDelegation.NormalizedPath
+              (List.{0} Hibana.EndpointDelegation.NormalizedPath)
+              (@List.instMembership.{0} Hibana.EndpointDelegation.NormalizedPath) data.normalized.paths path →
+            @Eq.{1} Bool (Hibana.observedChoicesAgree (Hibana.canonicalProgramSource choreo) path snapshot) true →
+              ∀ (row : Hibana.DecodedActorRow),
+                @Membership.mem.{0, 0} Hibana.DecodedActorRow (List.{0} Hibana.DecodedActorRow)
+                    (@List.instMembership.{0} Hibana.DecodedActorRow) (data.activeRows path) row →
+                  @Eq.{1} (Option.{0} Bool) (Hibana.sourceRetirementRowComplete? snapshot role path row)
+                    (@some.{0} Bool true))
 @Hibana.source_message_transfer_is_a_source_resource : ∀ {source : Hibana.EndpointDelegation.Source} {start event : Nat}
   {message : Hibana.EndpointDelegation.Message} {key : Hibana.EndpointDelegation.EndpointKey},
   @Membership.mem.{0, 0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Message)
@@ -6128,6 +6320,14 @@ Hibana.terminal_public_operation_clear_is_exact : ∀ (current : Hibana.PublicOp
 Hibana.trace_checker_sound : ∀ (graph : Hibana.EventGraph) (state : Hibana.CommitState)
   (trace : List.{0} Hibana.TraceFrame),
   @Eq.{1} Bool (Hibana.checkTrace graph state trace) true → Hibana.ValidTrace graph state trace
+@Hibana.transfer_step_preserves_authority_without_retirement : ∀ {View Frame : Type}
+  {action : Hibana.EndpointTransfer.Action} {before after : Hibana.EndpointTransfer.Observation View Frame},
+  @Hibana.EndpointTransfer.Step View Frame action before after →
+    @Ne.{1} Hibana.EndpointTransfer.Action action Hibana.EndpointTransfer.Action.abandonPreparation →
+      @Ne.{1} Hibana.EndpointTransfer.Action action Hibana.EndpointTransfer.Action.dropValue →
+        @Ne.{1} Hibana.EndpointTransfer.Action action Hibana.EndpointTransfer.Action.fenceFrame →
+          @Eq.{1} Nat (@Hibana.EndpointTransfer.Observation.authorityCount View Frame after)
+            (@Hibana.EndpointTransfer.Observation.authorityCount View Frame before)
 @Hibana.transport_admission_binds_exact_descriptor_occurrence : ∀ {choreo : Hibana.Choreo}
   {frame : Hibana.TransportFrame} {globalId : Nat} {event : Hibana.GlobalEvent},
   Hibana.TransportAdmission choreo frame globalId event →
