@@ -1,0 +1,630 @@
+controllerVisit0Accepted : controllerVisit0.check controllerImage routeReentryChoreo = true
+controllerVisit0ChoicesPublished : ((controllerImage.eventEffIndex? 3).bind fun eff =>
+    Hibana.publishedObservedChoices? (Hibana.canonicalProgramSource routeReentryChoreo) eff
+      controllerVisit0.before.choices) =
+  some controllerVisit0.after.choices
+controllerVisit0MissingProgressRejected : (have __src := controllerVisit0;
+      { pathIndex := __src.pathIndex, event := __src.event, view := __src.view, before := __src.before,
+        after :=
+          have __src := controllerVisit0.after;
+          { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
+            views := __src.views, steps := controllerVisit0.before.steps, choices := __src.choices } }).check
+    controllerImage routeReentryChoreo =
+  false
+controllerVisit0SourceOrdered : controllerVisit0.SourceOrdered controllerImage routeReentryChoreo
+controllerVisit0WrongViewCountRejected : (have __src := controllerVisit0;
+      { pathIndex := __src.pathIndex, event := __src.event, view := __src.view, before := __src.before,
+        after :=
+          have __src := controllerVisit0.after;
+          { actor := __src.actor, run := __src.run, counter := __src.counter,
+            liveViews := controllerVisit0.after.liveViews + 1, views := __src.views, steps := __src.steps,
+            choices := __src.choices } }).check
+    controllerImage routeReentryChoreo =
+  false
+controllerVisit1Accepted : controllerVisit1.check controllerImage routeReentryChoreo = true
+controllerVisit1IncompleteVisitRejected : (have __src := controllerVisit1;
+      { previousPath := __src.previousPath, nextPath := __src.nextPath, scope := __src.scope, event := __src.event,
+        view := __src.view,
+        before :=
+          have __src := controllerVisit1.before;
+          { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
+            views := __src.views,
+            steps :=
+              List.mapIdx
+                (fun event step =>
+                  if event = 3 then { effIndex := step.effIndex, view := step.view, side := step.side, done := false }
+                  else step)
+                controllerVisit1.before.steps,
+            choices := __src.choices },
+        after := __src.after }).check
+    controllerImage routeReentryChoreo =
+  false
+controllerVisit1LostOuterChoiceRejected : (have __src := controllerVisit1;
+      { previousPath := __src.previousPath, nextPath := __src.nextPath, scope := __src.scope, event := __src.event,
+        view := __src.view, before := __src.before,
+        after :=
+          have __src := controllerVisit1.after;
+          { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
+            views := __src.views, steps := __src.steps,
+            choices :=
+              List.map
+                (fun x =>
+                  match x with
+                  | (scope, arm) => (scope, if scope = 0 then none else arm))
+                controllerVisit1.after.choices } }).check
+    controllerImage routeReentryChoreo =
+  false
+controllerVisit1MissingFreshChoiceRejected : (have __src := controllerVisit1;
+      { previousPath := __src.previousPath, nextPath := __src.nextPath, scope := __src.scope, event := __src.event,
+        view := __src.view, before := __src.before,
+        after :=
+          have __src := controllerVisit1.after;
+          { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
+            views := __src.views, steps := __src.steps,
+            choices :=
+              List.map
+                (fun x =>
+                  match x with
+                  | (scope, arm) => (scope, if scope = 2 then none else arm))
+                controllerVisit1.after.choices } }).check
+    controllerImage routeReentryChoreo =
+  false
+controllerVisit1MissingResetRejected : (have __src := controllerVisit1;
+      { previousPath := __src.previousPath, nextPath := __src.nextPath, scope := __src.scope, event := __src.event,
+        view := __src.view, before := __src.before,
+        after :=
+          have __src := controllerVisit1.after;
+          { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
+            views := __src.views, steps := controllerVisit1.before.steps, choices := __src.choices } }).check
+    controllerImage routeReentryChoreo =
+  false
+controllerVisit1SourceOrdered : controllerVisit1.SourceOrdered controllerImage routeReentryChoreo
+controllerVisit1WrongScopeRejected : (have __src := controllerVisit1;
+      { previousPath := __src.previousPath, nextPath := __src.nextPath, scope := 0, event := __src.event,
+        view := __src.view, before := __src.before, after := __src.after }).check
+    controllerImage routeReentryChoreo =
+  false
+controllerVisit1WrongViewCountRejected : (have __src := controllerVisit1;
+      { previousPath := __src.previousPath, nextPath := __src.nextPath, scope := __src.scope, event := __src.event,
+        view := __src.view, before := __src.before,
+        after :=
+          have __src := controllerVisit1.after;
+          { actor := __src.actor, run := __src.run, counter := __src.counter,
+            liveViews := controllerVisit1.after.liveViews + 1, views := __src.views, steps := __src.steps,
+            choices := __src.choices } }).check
+    controllerImage routeReentryChoreo =
+  false
+controllerVisit2Accepted : controllerVisit2.check controllerImage routeReentryChoreo = true
+controllerVisit2IncompleteVisitRejected : (have __src := controllerVisit2;
+      { previousPath := __src.previousPath, nextPath := __src.nextPath, scope := __src.scope, event := __src.event,
+        view := __src.view,
+        before :=
+          have __src := controllerVisit2.before;
+          { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
+            views := __src.views,
+            steps :=
+              List.mapIdx
+                (fun event step =>
+                  if event = 3 then { effIndex := step.effIndex, view := step.view, side := step.side, done := false }
+                  else step)
+                controllerVisit2.before.steps,
+            choices := __src.choices },
+        after := __src.after }).check
+    controllerImage routeReentryChoreo =
+  false
+controllerVisit2LostOuterChoiceRejected : (have __src := controllerVisit2;
+      { previousPath := __src.previousPath, nextPath := __src.nextPath, scope := __src.scope, event := __src.event,
+        view := __src.view, before := __src.before,
+        after :=
+          have __src := controllerVisit2.after;
+          { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
+            views := __src.views, steps := __src.steps,
+            choices :=
+              List.map
+                (fun x =>
+                  match x with
+                  | (scope, arm) => (scope, if scope = 0 then none else arm))
+                controllerVisit2.after.choices } }).check
+    controllerImage routeReentryChoreo =
+  false
+controllerVisit2MissingFreshChoiceRejected : (have __src := controllerVisit2;
+      { previousPath := __src.previousPath, nextPath := __src.nextPath, scope := __src.scope, event := __src.event,
+        view := __src.view, before := __src.before,
+        after :=
+          have __src := controllerVisit2.after;
+          { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
+            views := __src.views, steps := __src.steps,
+            choices :=
+              List.map
+                (fun x =>
+                  match x with
+                  | (scope, arm) => (scope, if scope = 2 then none else arm))
+                controllerVisit2.after.choices } }).check
+    controllerImage routeReentryChoreo =
+  false
+controllerVisit2MissingResetRejected : (have __src := controllerVisit2;
+      { previousPath := __src.previousPath, nextPath := __src.nextPath, scope := __src.scope, event := __src.event,
+        view := __src.view, before := __src.before,
+        after :=
+          have __src := controllerVisit2.after;
+          { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
+            views := __src.views, steps := controllerVisit2.before.steps, choices := __src.choices } }).check
+    controllerImage routeReentryChoreo =
+  false
+controllerVisit2SourceOrdered : controllerVisit2.SourceOrdered controllerImage routeReentryChoreo
+controllerVisit2WrongScopeRejected : (have __src := controllerVisit2;
+      { previousPath := __src.previousPath, nextPath := __src.nextPath, scope := 0, event := __src.event,
+        view := __src.view, before := __src.before, after := __src.after }).check
+    controllerImage routeReentryChoreo =
+  false
+controllerVisit2WrongViewCountRejected : (have __src := controllerVisit2;
+      { previousPath := __src.previousPath, nextPath := __src.nextPath, scope := __src.scope, event := __src.event,
+        view := __src.view, before := __src.before,
+        after :=
+          have __src := controllerVisit2.after;
+          { actor := __src.actor, run := __src.run, counter := __src.counter,
+            liveViews := controllerVisit2.after.liveViews + 1, views := __src.views, steps := __src.steps,
+            choices := __src.choices } }).check
+    controllerImage routeReentryChoreo =
+  false
+controllerVisit3Accepted : controllerVisit3.check controllerImage routeReentryChoreo = true
+controllerVisit3IncompleteVisitRejected : (have __src := controllerVisit3;
+      { previousPath := __src.previousPath, nextPath := __src.nextPath, scope := __src.scope, event := __src.event,
+        view := __src.view,
+        before :=
+          have __src := controllerVisit3.before;
+          { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
+            views := __src.views,
+            steps :=
+              List.mapIdx
+                (fun event step =>
+                  if event = 5 then { effIndex := step.effIndex, view := step.view, side := step.side, done := false }
+                  else step)
+                controllerVisit3.before.steps,
+            choices := __src.choices },
+        after := __src.after }).check
+    controllerImage routeReentryChoreo =
+  false
+controllerVisit3LostOuterChoiceRejected : (have __src := controllerVisit3;
+      { previousPath := __src.previousPath, nextPath := __src.nextPath, scope := __src.scope, event := __src.event,
+        view := __src.view, before := __src.before,
+        after :=
+          have __src := controllerVisit3.after;
+          { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
+            views := __src.views, steps := __src.steps,
+            choices :=
+              List.map
+                (fun x =>
+                  match x with
+                  | (scope, arm) => (scope, if scope = 0 then none else arm))
+                controllerVisit3.after.choices } }).check
+    controllerImage routeReentryChoreo =
+  false
+controllerVisit3MissingFreshChoiceRejected : (have __src := controllerVisit3;
+      { previousPath := __src.previousPath, nextPath := __src.nextPath, scope := __src.scope, event := __src.event,
+        view := __src.view, before := __src.before,
+        after :=
+          have __src := controllerVisit3.after;
+          { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
+            views := __src.views, steps := __src.steps,
+            choices :=
+              List.map
+                (fun x =>
+                  match x with
+                  | (scope, arm) => (scope, if scope = 2 then none else arm))
+                controllerVisit3.after.choices } }).check
+    controllerImage routeReentryChoreo =
+  false
+controllerVisit3MissingResetRejected : (have __src := controllerVisit3;
+      { previousPath := __src.previousPath, nextPath := __src.nextPath, scope := __src.scope, event := __src.event,
+        view := __src.view, before := __src.before,
+        after :=
+          have __src := controllerVisit3.after;
+          { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
+            views := __src.views, steps := controllerVisit3.before.steps, choices := __src.choices } }).check
+    controllerImage routeReentryChoreo =
+  false
+controllerVisit3SourceOrdered : controllerVisit3.SourceOrdered controllerImage routeReentryChoreo
+controllerVisit3WrongScopeRejected : (have __src := controllerVisit3;
+      { previousPath := __src.previousPath, nextPath := __src.nextPath, scope := 0, event := __src.event,
+        view := __src.view, before := __src.before, after := __src.after }).check
+    controllerImage routeReentryChoreo =
+  false
+controllerVisit3WrongViewCountRejected : (have __src := controllerVisit3;
+      { previousPath := __src.previousPath, nextPath := __src.nextPath, scope := __src.scope, event := __src.event,
+        view := __src.view, before := __src.before,
+        after :=
+          have __src := controllerVisit3.after;
+          { actor := __src.actor, run := __src.run, counter := __src.counter,
+            liveViews := controllerVisit3.after.liveViews + 1, views := __src.views, steps := __src.steps,
+            choices := __src.choices } }).check
+    controllerImage routeReentryChoreo =
+  false
+controllerVisit4Accepted : controllerVisit4.check controllerImage routeReentryChoreo = true
+controllerVisit4IncompleteVisitRejected : (have __src := controllerVisit4;
+      { previousPath := __src.previousPath, nextPath := __src.nextPath, scope := __src.scope, event := __src.event,
+        view := __src.view,
+        before :=
+          have __src := controllerVisit4.before;
+          { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
+            views := __src.views,
+            steps :=
+              List.mapIdx
+                (fun event step =>
+                  if event = 5 then { effIndex := step.effIndex, view := step.view, side := step.side, done := false }
+                  else step)
+                controllerVisit4.before.steps,
+            choices := __src.choices },
+        after := __src.after }).check
+    controllerImage routeReentryChoreo =
+  false
+controllerVisit4LostOuterChoiceRejected : (have __src := controllerVisit4;
+      { previousPath := __src.previousPath, nextPath := __src.nextPath, scope := __src.scope, event := __src.event,
+        view := __src.view, before := __src.before,
+        after :=
+          have __src := controllerVisit4.after;
+          { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
+            views := __src.views, steps := __src.steps,
+            choices :=
+              List.map
+                (fun x =>
+                  match x with
+                  | (scope, arm) => (scope, if scope = 0 then none else arm))
+                controllerVisit4.after.choices } }).check
+    controllerImage routeReentryChoreo =
+  false
+controllerVisit4MissingFreshChoiceRejected : (have __src := controllerVisit4;
+      { previousPath := __src.previousPath, nextPath := __src.nextPath, scope := __src.scope, event := __src.event,
+        view := __src.view, before := __src.before,
+        after :=
+          have __src := controllerVisit4.after;
+          { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
+            views := __src.views, steps := __src.steps,
+            choices :=
+              List.map
+                (fun x =>
+                  match x with
+                  | (scope, arm) => (scope, if scope = 2 then none else arm))
+                controllerVisit4.after.choices } }).check
+    controllerImage routeReentryChoreo =
+  false
+controllerVisit4MissingResetRejected : (have __src := controllerVisit4;
+      { previousPath := __src.previousPath, nextPath := __src.nextPath, scope := __src.scope, event := __src.event,
+        view := __src.view, before := __src.before,
+        after :=
+          have __src := controllerVisit4.after;
+          { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
+            views := __src.views, steps := controllerVisit4.before.steps, choices := __src.choices } }).check
+    controllerImage routeReentryChoreo =
+  false
+controllerVisit4SourceOrdered : controllerVisit4.SourceOrdered controllerImage routeReentryChoreo
+controllerVisit4WrongScopeRejected : (have __src := controllerVisit4;
+      { previousPath := __src.previousPath, nextPath := __src.nextPath, scope := 0, event := __src.event,
+        view := __src.view, before := __src.before, after := __src.after }).check
+    controllerImage routeReentryChoreo =
+  false
+controllerVisit4WrongViewCountRejected : (have __src := controllerVisit4;
+      { previousPath := __src.previousPath, nextPath := __src.nextPath, scope := __src.scope, event := __src.event,
+        view := __src.view, before := __src.before,
+        after :=
+          have __src := controllerVisit4.after;
+          { actor := __src.actor, run := __src.run, counter := __src.counter,
+            liveViews := controllerVisit4.after.liveViews + 1, views := __src.views, steps := __src.steps,
+            choices := __src.choices } }).check
+    controllerImage routeReentryChoreo =
+  false
+observerVisit0Accepted : observerVisit0.check observerImage routeReentryChoreo = true
+observerVisit0ChoicesPublished : ((observerImage.eventEffIndex? 5).bind fun eff =>
+    Hibana.publishedObservedChoices? (Hibana.canonicalProgramSource routeReentryChoreo) eff
+      observerVisit0.before.choices) =
+  some observerVisit0.after.choices
+observerVisit0MissingProgressRejected : (have __src := observerVisit0;
+      { pathIndex := __src.pathIndex, event := __src.event, view := __src.view, before := __src.before,
+        after :=
+          have __src := observerVisit0.after;
+          { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
+            views := __src.views, steps := observerVisit0.before.steps, choices := __src.choices } }).check
+    observerImage routeReentryChoreo =
+  false
+observerVisit0SourceOrdered : observerVisit0.SourceOrdered observerImage routeReentryChoreo
+observerVisit0WrongViewCountRejected : (have __src := observerVisit0;
+      { pathIndex := __src.pathIndex, event := __src.event, view := __src.view, before := __src.before,
+        after :=
+          have __src := observerVisit0.after;
+          { actor := __src.actor, run := __src.run, counter := __src.counter,
+            liveViews := observerVisit0.after.liveViews + 1, views := __src.views, steps := __src.steps,
+            choices := __src.choices } }).check
+    observerImage routeReentryChoreo =
+  false
+observerVisit1Accepted : observerVisit1.check observerImage routeReentryChoreo = true
+observerVisit1IncompleteVisitRejected : (have __src := observerVisit1;
+      { previousPath := __src.previousPath, nextPath := __src.nextPath, scope := __src.scope, event := __src.event,
+        view := __src.view,
+        before :=
+          have __src := observerVisit1.before;
+          { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
+            views := __src.views,
+            steps :=
+              List.mapIdx
+                (fun event step =>
+                  if event = 5 then { effIndex := step.effIndex, view := step.view, side := step.side, done := false }
+                  else step)
+                observerVisit1.before.steps,
+            choices := __src.choices },
+        after := __src.after }).check
+    observerImage routeReentryChoreo =
+  false
+observerVisit1LostOuterChoiceRejected : (have __src := observerVisit1;
+      { previousPath := __src.previousPath, nextPath := __src.nextPath, scope := __src.scope, event := __src.event,
+        view := __src.view, before := __src.before,
+        after :=
+          have __src := observerVisit1.after;
+          { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
+            views := __src.views, steps := __src.steps,
+            choices :=
+              List.map
+                (fun x =>
+                  match x with
+                  | (scope, arm) => (scope, if scope = 0 then none else arm))
+                observerVisit1.after.choices } }).check
+    observerImage routeReentryChoreo =
+  false
+observerVisit1MissingFreshChoiceRejected : (have __src := observerVisit1;
+      { previousPath := __src.previousPath, nextPath := __src.nextPath, scope := __src.scope, event := __src.event,
+        view := __src.view, before := __src.before,
+        after :=
+          have __src := observerVisit1.after;
+          { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
+            views := __src.views, steps := __src.steps,
+            choices :=
+              List.map
+                (fun x =>
+                  match x with
+                  | (scope, arm) => (scope, if scope = 2 then none else arm))
+                observerVisit1.after.choices } }).check
+    observerImage routeReentryChoreo =
+  false
+observerVisit1MissingResetRejected : (have __src := observerVisit1;
+      { previousPath := __src.previousPath, nextPath := __src.nextPath, scope := __src.scope, event := __src.event,
+        view := __src.view, before := __src.before,
+        after :=
+          have __src := observerVisit1.after;
+          { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
+            views := __src.views, steps := observerVisit1.before.steps, choices := __src.choices } }).check
+    observerImage routeReentryChoreo =
+  false
+observerVisit1SourceOrdered : observerVisit1.SourceOrdered observerImage routeReentryChoreo
+observerVisit1WrongScopeRejected : (have __src := observerVisit1;
+      { previousPath := __src.previousPath, nextPath := __src.nextPath, scope := 0, event := __src.event,
+        view := __src.view, before := __src.before, after := __src.after }).check
+    observerImage routeReentryChoreo =
+  false
+observerVisit1WrongViewCountRejected : (have __src := observerVisit1;
+      { previousPath := __src.previousPath, nextPath := __src.nextPath, scope := __src.scope, event := __src.event,
+        view := __src.view, before := __src.before,
+        after :=
+          have __src := observerVisit1.after;
+          { actor := __src.actor, run := __src.run, counter := __src.counter,
+            liveViews := observerVisit1.after.liveViews + 1, views := __src.views, steps := __src.steps,
+            choices := __src.choices } }).check
+    observerImage routeReentryChoreo =
+  false
+observerVisit2Accepted : observerVisit2.check observerImage routeReentryChoreo = true
+observerVisit2IncompleteVisitRejected : (have __src := observerVisit2;
+      { previousPath := __src.previousPath, nextPath := __src.nextPath, scope := __src.scope, event := __src.event,
+        view := __src.view,
+        before :=
+          have __src := observerVisit2.before;
+          { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
+            views := __src.views,
+            steps :=
+              List.mapIdx
+                (fun event step =>
+                  if event = 5 then { effIndex := step.effIndex, view := step.view, side := step.side, done := false }
+                  else step)
+                observerVisit2.before.steps,
+            choices := __src.choices },
+        after := __src.after }).check
+    observerImage routeReentryChoreo =
+  false
+observerVisit2LostOuterChoiceRejected : (have __src := observerVisit2;
+      { previousPath := __src.previousPath, nextPath := __src.nextPath, scope := __src.scope, event := __src.event,
+        view := __src.view, before := __src.before,
+        after :=
+          have __src := observerVisit2.after;
+          { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
+            views := __src.views, steps := __src.steps,
+            choices :=
+              List.map
+                (fun x =>
+                  match x with
+                  | (scope, arm) => (scope, if scope = 0 then none else arm))
+                observerVisit2.after.choices } }).check
+    observerImage routeReentryChoreo =
+  false
+observerVisit2MissingFreshChoiceRejected : (have __src := observerVisit2;
+      { previousPath := __src.previousPath, nextPath := __src.nextPath, scope := __src.scope, event := __src.event,
+        view := __src.view, before := __src.before,
+        after :=
+          have __src := observerVisit2.after;
+          { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
+            views := __src.views, steps := __src.steps,
+            choices :=
+              List.map
+                (fun x =>
+                  match x with
+                  | (scope, arm) => (scope, if scope = 2 then none else arm))
+                observerVisit2.after.choices } }).check
+    observerImage routeReentryChoreo =
+  false
+observerVisit2MissingResetRejected : (have __src := observerVisit2;
+      { previousPath := __src.previousPath, nextPath := __src.nextPath, scope := __src.scope, event := __src.event,
+        view := __src.view, before := __src.before,
+        after :=
+          have __src := observerVisit2.after;
+          { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
+            views := __src.views, steps := observerVisit2.before.steps, choices := __src.choices } }).check
+    observerImage routeReentryChoreo =
+  false
+observerVisit2SourceOrdered : observerVisit2.SourceOrdered observerImage routeReentryChoreo
+observerVisit2WrongScopeRejected : (have __src := observerVisit2;
+      { previousPath := __src.previousPath, nextPath := __src.nextPath, scope := 0, event := __src.event,
+        view := __src.view, before := __src.before, after := __src.after }).check
+    observerImage routeReentryChoreo =
+  false
+observerVisit2WrongViewCountRejected : (have __src := observerVisit2;
+      { previousPath := __src.previousPath, nextPath := __src.nextPath, scope := __src.scope, event := __src.event,
+        view := __src.view, before := __src.before,
+        after :=
+          have __src := observerVisit2.after;
+          { actor := __src.actor, run := __src.run, counter := __src.counter,
+            liveViews := observerVisit2.after.liveViews + 1, views := __src.views, steps := __src.steps,
+            choices := __src.choices } }).check
+    observerImage routeReentryChoreo =
+  false
+observerVisit3Accepted : observerVisit3.check observerImage routeReentryChoreo = true
+observerVisit3IncompleteVisitRejected : (have __src := observerVisit3;
+      { previousPath := __src.previousPath, nextPath := __src.nextPath, scope := __src.scope, event := __src.event,
+        view := __src.view,
+        before :=
+          have __src := observerVisit3.before;
+          { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
+            views := __src.views,
+            steps :=
+              List.mapIdx
+                (fun event step =>
+                  if event = 9 then { effIndex := step.effIndex, view := step.view, side := step.side, done := false }
+                  else step)
+                observerVisit3.before.steps,
+            choices := __src.choices },
+        after := __src.after }).check
+    observerImage routeReentryChoreo =
+  false
+observerVisit3LostOuterChoiceRejected : (have __src := observerVisit3;
+      { previousPath := __src.previousPath, nextPath := __src.nextPath, scope := __src.scope, event := __src.event,
+        view := __src.view, before := __src.before,
+        after :=
+          have __src := observerVisit3.after;
+          { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
+            views := __src.views, steps := __src.steps,
+            choices :=
+              List.map
+                (fun x =>
+                  match x with
+                  | (scope, arm) => (scope, if scope = 0 then none else arm))
+                observerVisit3.after.choices } }).check
+    observerImage routeReentryChoreo =
+  false
+observerVisit3MissingFreshChoiceRejected : (have __src := observerVisit3;
+      { previousPath := __src.previousPath, nextPath := __src.nextPath, scope := __src.scope, event := __src.event,
+        view := __src.view, before := __src.before,
+        after :=
+          have __src := observerVisit3.after;
+          { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
+            views := __src.views, steps := __src.steps,
+            choices :=
+              List.map
+                (fun x =>
+                  match x with
+                  | (scope, arm) => (scope, if scope = 2 then none else arm))
+                observerVisit3.after.choices } }).check
+    observerImage routeReentryChoreo =
+  false
+observerVisit3MissingResetRejected : (have __src := observerVisit3;
+      { previousPath := __src.previousPath, nextPath := __src.nextPath, scope := __src.scope, event := __src.event,
+        view := __src.view, before := __src.before,
+        after :=
+          have __src := observerVisit3.after;
+          { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
+            views := __src.views, steps := observerVisit3.before.steps, choices := __src.choices } }).check
+    observerImage routeReentryChoreo =
+  false
+observerVisit3SourceOrdered : observerVisit3.SourceOrdered observerImage routeReentryChoreo
+observerVisit3WrongScopeRejected : (have __src := observerVisit3;
+      { previousPath := __src.previousPath, nextPath := __src.nextPath, scope := 0, event := __src.event,
+        view := __src.view, before := __src.before, after := __src.after }).check
+    observerImage routeReentryChoreo =
+  false
+observerVisit3WrongViewCountRejected : (have __src := observerVisit3;
+      { previousPath := __src.previousPath, nextPath := __src.nextPath, scope := __src.scope, event := __src.event,
+        view := __src.view, before := __src.before,
+        after :=
+          have __src := observerVisit3.after;
+          { actor := __src.actor, run := __src.run, counter := __src.counter,
+            liveViews := observerVisit3.after.liveViews + 1, views := __src.views, steps := __src.steps,
+            choices := __src.choices } }).check
+    observerImage routeReentryChoreo =
+  false
+observerVisit4Accepted : observerVisit4.check observerImage routeReentryChoreo = true
+observerVisit4IncompleteVisitRejected : (have __src := observerVisit4;
+      { previousPath := __src.previousPath, nextPath := __src.nextPath, scope := __src.scope, event := __src.event,
+        view := __src.view,
+        before :=
+          have __src := observerVisit4.before;
+          { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
+            views := __src.views,
+            steps :=
+              List.mapIdx
+                (fun event step =>
+                  if event = 9 then { effIndex := step.effIndex, view := step.view, side := step.side, done := false }
+                  else step)
+                observerVisit4.before.steps,
+            choices := __src.choices },
+        after := __src.after }).check
+    observerImage routeReentryChoreo =
+  false
+observerVisit4LostOuterChoiceRejected : (have __src := observerVisit4;
+      { previousPath := __src.previousPath, nextPath := __src.nextPath, scope := __src.scope, event := __src.event,
+        view := __src.view, before := __src.before,
+        after :=
+          have __src := observerVisit4.after;
+          { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
+            views := __src.views, steps := __src.steps,
+            choices :=
+              List.map
+                (fun x =>
+                  match x with
+                  | (scope, arm) => (scope, if scope = 0 then none else arm))
+                observerVisit4.after.choices } }).check
+    observerImage routeReentryChoreo =
+  false
+observerVisit4MissingFreshChoiceRejected : (have __src := observerVisit4;
+      { previousPath := __src.previousPath, nextPath := __src.nextPath, scope := __src.scope, event := __src.event,
+        view := __src.view, before := __src.before,
+        after :=
+          have __src := observerVisit4.after;
+          { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
+            views := __src.views, steps := __src.steps,
+            choices :=
+              List.map
+                (fun x =>
+                  match x with
+                  | (scope, arm) => (scope, if scope = 2 then none else arm))
+                observerVisit4.after.choices } }).check
+    observerImage routeReentryChoreo =
+  false
+observerVisit4MissingResetRejected : (have __src := observerVisit4;
+      { previousPath := __src.previousPath, nextPath := __src.nextPath, scope := __src.scope, event := __src.event,
+        view := __src.view, before := __src.before,
+        after :=
+          have __src := observerVisit4.after;
+          { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
+            views := __src.views, steps := observerVisit4.before.steps, choices := __src.choices } }).check
+    observerImage routeReentryChoreo =
+  false
+observerVisit4SourceOrdered : observerVisit4.SourceOrdered observerImage routeReentryChoreo
+observerVisit4WrongScopeRejected : (have __src := observerVisit4;
+      { previousPath := __src.previousPath, nextPath := __src.nextPath, scope := 0, event := __src.event,
+        view := __src.view, before := __src.before, after := __src.after }).check
+    observerImage routeReentryChoreo =
+  false
+observerVisit4WrongViewCountRejected : (have __src := observerVisit4;
+      { previousPath := __src.previousPath, nextPath := __src.nextPath, scope := __src.scope, event := __src.event,
+        view := __src.view, before := __src.before,
+        after :=
+          have __src := observerVisit4.after;
+          { actor := __src.actor, run := __src.run, counter := __src.counter,
+            liveViews := observerVisit4.after.liveViews + 1, views := __src.views, steps := __src.steps,
+            choices := __src.choices } }).check
+    observerImage routeReentryChoreo =
+  false

@@ -1,5 +1,6 @@
 //! The same inner route can be controlled remotely or through a co-resident view.
 use super::*;
+use crate::endpoint::proof_snapshot::{actor_snapshot, branch_snapshot};
 use crate::runtime::{
     SessionKitStorage,
     ids::SessionId,
@@ -7,6 +8,7 @@ use crate::runtime::{
 };
 use crate::test_support::transport::TestTransport;
 use core::cell::Cell;
+use std::vec::Vec;
 
 type Notice = g::Msg<8, ()>;
 type ServiceReady = g::Msg<12, ()>;
@@ -49,6 +51,95 @@ pub(super) type LocalSteps = g::Seq<
 >;
 
 #[test]
+fn a_completed_right_arm_reopens_the_public_route_without_receiving() {
+    use crate::runtime::program::project;
+
+    let global = g::seq(
+        g::route(
+            g::seq(g::send::<10, 3, Read>(), g::send::<3, 10, Value>()),
+            g::seq(g::send::<10, 3, OtherRead>(), g::send::<3, 10, Value>()),
+        )
+        .resolve::<702>()
+        .roll(),
+        g::seq(
+            g::send::<10, 3, AfterRead>(),
+            g::send::<3, 10, AfterValue>(),
+        ),
+    );
+    let db_program = project::<10>(&global);
+    let service_program = project::<3>(&global);
+    let network = TestTransport::new();
+    let mut db_slab = std::vec![0; 16 * 1024];
+    let mut service_slab = std::vec![0; 16 * 1024];
+    let number = Cell::new(41u32);
+    let mut db_storage = SessionKitStorage::uninit();
+    let mut service_storage = SessionKitStorage::uninit();
+    let db_rv = db_storage
+        .init()
+        .rendezvous(&mut db_slab, network.clone())
+        .unwrap();
+    let service_rv = service_storage
+        .init()
+        .rendezvous(&mut service_slab, network)
+        .unwrap();
+    db_rv
+        .set_resolver(
+            &db_program,
+            ResolverRef::<702>::decision_state(&number, |number| {
+                Ok(if number.get() % 2 == 1 {
+                    DecisionArm::Left
+                } else {
+                    DecisionArm::Right
+                })
+            }),
+        )
+        .unwrap();
+    let sid = SessionId::new(849);
+    let mut db = db_rv.enter(sid, &db_program).unwrap();
+    let mut service = service_rv.enter(sid, &service_program).unwrap();
+    tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .build()
+        .unwrap()
+        .block_on(async {
+            tokio::time::timeout(core::time::Duration::from_secs(240), async {
+                tokio::join!(
+                    async {
+                        for value in [41, 43, 42, 44, 45] {
+                            number.set(value);
+                            let branch = db.offer().await.unwrap();
+                            match branch.label() {
+                                3 => branch.send::<Read>(&value).await.unwrap(),
+                                6 => branch.send::<OtherRead>(&value).await.unwrap(),
+                                label => panic!("unexpected controller label {label}"),
+                            }
+                            assert_eq!(db.recv::<Value>().await.unwrap(), value + 1);
+                        }
+                        db.send::<AfterRead>(&47).await.unwrap();
+                        assert_eq!(db.recv::<AfterValue>().await.unwrap(), 48);
+                    },
+                    async {
+                        for expected in [41, 43, 42, 44, 45] {
+                            let branch = service.offer().await.unwrap();
+                            let value = match branch.label() {
+                                3 => branch.recv::<Read>().await.unwrap(),
+                                6 => branch.recv::<OtherRead>().await.unwrap(),
+                                label => panic!("unexpected observer label {label}"),
+                            };
+                            assert_eq!(value, expected);
+                            service.send::<Value>(&(value + 1)).await.unwrap();
+                        }
+                        assert_eq!(service.recv::<AfterRead>().await.unwrap(), 47);
+                        service.send::<AfterValue>(&48).await.unwrap();
+                    }
+                );
+            })
+            .await
+            .expect("a completed right arm must not wait for an incoming request");
+        });
+}
+
+#[test]
 fn a_conditional_controller_does_not_take_authority_from_its_co_resident_observer() {
     let () = g::ProgramProjection::<Steps, 32>::VALIDATION;
     let owner_program = crate::global::role_program::role_program_from_image::<0>(
@@ -67,10 +158,14 @@ fn a_conditional_controller_does_not_take_authority_from_its_co_resident_observe
         &RoleProjection::<11, Steps, 32>::IMAGE_REF,
     );
     let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_time()
         .build()
         .unwrap();
     for outer in [DecisionArm::Left, DecisionArm::Right] {
         runtime.block_on(async {
+            let mut a_observations = Vec::new();
+            let mut controller_observations = Vec::new();
+            let mut observer_observations = Vec::new();
             let network = TestTransport::new();
             let mut owner_slab = std::vec![0; 64 * 1024];
             let mut a_slab = std::vec![0; 64 * 1024];
@@ -129,6 +224,7 @@ fn a_conditional_controller_does_not_take_authority_from_its_co_resident_observe
             let auth = owner_rv.enter(sid, &auth_program).unwrap();
             let mut a = a_rv.enter(sid, &a_program).unwrap();
             let mut service = service_rv.enter(sid, &service_program).unwrap();
+            tokio::time::timeout(core::time::Duration::from_secs(240), async {
             tokio::join!(
                 async {
                     let branch = owner.offer().await.unwrap();
@@ -156,14 +252,21 @@ fn a_conditional_controller_does_not_take_authority_from_its_co_resident_observe
                         1 => {
                             let mut db = branch.recv::<Loan>().await.unwrap();
                             let mut auth = a.recv::<OtherLoan>().await.unwrap();
-                            for number in [41, 42] {
+                            for number in [41, 43, 42, 44, 45] {
                                 a_number.set(number);
+                                // SAFETY: a_rv was created with TestTransport.
+                                let before = unsafe { actor_snapshot(&db) };
                                 let branch = db.offer().await.unwrap();
+                                // SAFETY: this branch retains that same actor.
+                                let offered = unsafe { branch_snapshot(&branch) };
                                 match branch.label() {
                                     3 => branch.send::<Read>(&number).await.unwrap(),
                                     6 => branch.send::<OtherRead>(&number).await.unwrap(),
                                     label => panic!("unexpected DB branch {label}"),
                                 }
+                                // SAFETY: the live DB view still belongs to a_rv.
+                                let after = unsafe { actor_snapshot(&db) };
+                                a_observations.push((before, offered, after));
                                 assert_eq!(db.recv::<Value>().await.unwrap(), number + 1);
                             }
                             auth.send::<Loan>(db).await.unwrap();
@@ -183,13 +286,20 @@ fn a_conditional_controller_does_not_take_authority_from_its_co_resident_observe
                             tokio::join!(
                                 biased;
                                 async {
-                                    for expected in [41, 42] {
+                                    for expected in [41, 43, 42, 44, 45] {
+                                        // SAFETY: service_rv uses TestTransport.
+                                        let before = unsafe { actor_snapshot(&service) };
                                         let branch = service.offer().await.unwrap();
+                                        // SAFETY: the branch retains service_rv.
+                                        let offered = unsafe { branch_snapshot(&branch) };
                                         let number = match branch.label() {
                                             3 => branch.recv::<Read>().await.unwrap(),
                                             6 => branch.recv::<OtherRead>().await.unwrap(),
                                             label => panic!("unexpected service branch {label}"),
                                         };
+                                        // SAFETY: service remains attached to service_rv.
+                                        let after = unsafe { actor_snapshot(&service) };
+                                        observer_observations.push((before, offered, after));
                                         assert_eq!(number, expected);
                                         service.send::<Value>(&(number + 1)).await.unwrap();
                                     }
@@ -197,14 +307,21 @@ fn a_conditional_controller_does_not_take_authority_from_its_co_resident_observe
                                     service.send::<AfterValue>(&48).await.unwrap();
                                 },
                                 async {
-                                    for number in [41, 42] {
+                                    for number in [41, 43, 42, 44, 45] {
                                         service_number.set(number);
+                                        // SAFETY: the received view is issued by service_rv.
+                                        let before = unsafe { actor_snapshot(&db) };
                                         let branch = db.offer().await.unwrap();
+                                        // SAFETY: the branch retains that TestTransport actor.
+                                        let offered = unsafe { branch_snapshot(&branch) };
                                         match branch.label() {
                                             3 => branch.send::<Read>(&number).await.unwrap(),
                                             6 => branch.send::<OtherRead>(&number).await.unwrap(),
                                             label => panic!("unexpected local DB branch {label}"),
                                         }
+                                        // SAFETY: DB remains attached to service_rv.
+                                        let after = unsafe { actor_snapshot(&db) };
+                                        controller_observations.push((before, offered, after));
                                         assert_eq!(db.recv::<Value>().await.unwrap(), number + 1);
                                     }
                                     auth.send::<Loan>(db).await.unwrap();
@@ -214,13 +331,20 @@ fn a_conditional_controller_does_not_take_authority_from_its_co_resident_observe
                         8 => {
                             branch.recv::<Notice>().await.unwrap();
                             service.send::<ServiceReady>(&()).await.unwrap();
-                            for expected in [41, 42] {
+                            for expected in [41, 43, 42, 44, 45] {
+                                // SAFETY: service_rv uses TestTransport.
+                                let before = unsafe { actor_snapshot(&service) };
                                 let branch = service.offer().await.unwrap();
+                                // SAFETY: the branch retains service_rv.
+                                let offered = unsafe { branch_snapshot(&branch) };
                                 let number = match branch.label() {
                                     3 => branch.recv::<Read>().await.unwrap(),
                                     6 => branch.recv::<OtherRead>().await.unwrap(),
                                     label => panic!("unexpected remote DB branch {label}"),
                                 };
+                                // SAFETY: service remains attached to service_rv.
+                                let after = unsafe { actor_snapshot(&service) };
+                                observer_observations.push((before, offered, after));
                                 assert_eq!(number, expected);
                                 service.send::<Value>(&(number + 1)).await.unwrap();
                             }
@@ -231,6 +355,28 @@ fn a_conditional_controller_does_not_take_authority_from_its_co_resident_observe
                     }
                 }
             );
+            }).await.expect("five route visits must complete without an incoming controller frame");
+            for (before, offered, _) in a_observations.iter().chain(&controller_observations) {
+                assert_eq!(
+                    before, offered,
+                    "controller offer must not consume progress"
+                );
+            }
+            if matches!(outer, DecisionArm::Left) {
+                for (before, offered, _) in &observer_observations {
+                    assert_eq!(before, offered, "remote offer must not consume progress");
+                }
+            }
+            #[cfg(not(miri))]
+            observations::write(
+                outer,
+                &a_observations,
+                &controller_observations,
+                &observer_observations,
+            );
         });
     }
 }
+
+#[cfg(not(miri))]
+mod observations;

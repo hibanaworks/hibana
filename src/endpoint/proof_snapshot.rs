@@ -1,6 +1,6 @@
 //! Read-only qualification observations. These values never drive operations
 //! and are absent from the production library, including its public API.
-use super::{Endpoint, kernel::ResidentActor};
+use super::{Endpoint, RouteBranch, kernel::ResidentActor};
 use crate::{global::typestate::LocalAction, test_support::transport::TestTransport};
 use std::vec::Vec;
 
@@ -24,6 +24,18 @@ pub(crate) struct ActorSnapshot {
     pub(crate) steps: Vec<StepSnapshot>,
     /// Committed route history. Unknown choices remain unknown.
     pub(crate) choices: Vec<(u16, Option<u8>)>,
+}
+
+/// Observe an offered branch before consuming its first operation.
+///
+/// # Safety
+/// The branch must belong to an actor created with `TestTransport`.
+pub(crate) unsafe fn branch_snapshot<const ROLE: u8>(
+    branch: &RouteBranch<'_, '_, ROLE>,
+) -> ActorSnapshot {
+    // SAFETY: the live branch exclusively borrows its Endpoint, and the caller
+    // establishes the concrete transport required by actor_snapshot.
+    unsafe { actor_snapshot(&*branch.endpoint) }
 }
 
 /// Copy observations under the existing operation lease and kernel borrow.

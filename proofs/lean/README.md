@@ -178,6 +178,23 @@ These checks cover successful body reentry observations. General fresh route
 reentry, interleaved distributed ownership, physical resource binding and
 transport closure still need their complete correspondence.
 
+The conditional-controller fixture also records five visits of an inner
+choice, including both same-arm repetitions and both changes of arm. Its
+controller runs either remotely or beside the observer in the same actor.
+The latter observer is polled first with stale resolver input. Observations
+at the returned branch distinguish its own receive from the controller's
+intervening send. Twenty successful operations feed the ordinary or body
+reentry checker, retaining the enclosing choice. Generated negative cases
+remove the reset, erase choices, use an incomplete old visit, or forge the
+live-view count. These are observations of execution, not another scheduler.
+
+A completed visit must advertise its canonical offer entry even when the old
+cursor points to an arm head of that same scope. Retaining that old head can
+mistake a fresh controller decision for a receive continuation and wait for a
+frame the protocol never sends. Repositioning the offer cache changes no done
+bits, committed choices, view generations, or public operations. A separate
+regression uses public projection without any owned payload.
+
 The compiler scope memo, fork-input restoration, independent-sibling exclusion,
 and retained sequential joins have general model lemmas. Ingress-head
 preservation is conditional on progress outside the observed lane. Their

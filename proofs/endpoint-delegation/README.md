@@ -95,6 +95,12 @@ committing; missing actions of its own view still reject out-of-order use.
 `conditional_controller` exercises one common rolled route after either holder
 choice, including an observer polled before its co-resident controller. This
 fixture bypasses only public qualification, not source validation or admission.
+Five visits cover left-to-left, left-to-right, right-to-right and right-to-left
+decisions. The returned-branch observation excludes another view's intervening
+commit from the observer's own receive. The generated Lean checks bind all
+twenty observed operations to source order and preserve the enclosing choice.
+A separate regression exercises the same repeated route through ordinary
+public projection, without a delegated Endpoint.
 
 ## Verification
 
