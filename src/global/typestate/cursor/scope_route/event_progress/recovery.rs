@@ -56,55 +56,89 @@ impl EventCursor {
         EventAdmissionError::OtherViewPending
     }
 
+    fn pending_resource_receipt(
+        &self,
+        receipt: usize,
+        selected: &mut dyn FnMut(ScopeId) -> Option<u8>,
+    ) -> Option<(usize, EventCommitMeta)> {
+        let step = self.machine().event_program().owned_receipt(receipt) as usize;
+        let index = state_index_to_usize(crate::invariant_some(
+            self.machine().state_for_step_index(step),
+        ));
+        let meta = crate::invariant_some(self.try_recv_meta_at(index));
+        let progress = crate::invariant_ok(
+            self.relocatable_resident_lane_step_at_index(index, meta.lane as usize),
+        );
+        if self.relocatable_step_done(progress)
+            || self.event_actor_is_local(index, selected) == Some(false)
+        {
+            return None;
+        }
+        let conflict = self.machine().event_conflict_for_index(index);
+        if !self.event_conflict_row_allows_with_preview(conflict, conflict, selected) {
+            return None;
+        }
+        let meta = EventCommitMeta::from(meta);
+        if matches!(
+            self.event_enabled(index, meta, &mut |scope, _view: EventArmView| selected(
+                scope
+            )),
+            Err(EventAdmissionError::Invariant)
+        ) {
+            return None;
+        }
+        Some((index, meta))
+    }
+
+    /// A later receipt is not needed to restore this resource if another
+    /// pending receipt must already return it to this actor first. Source
+    /// causality, not catalog order, establishes that boundary.
+    fn receipt_has_prior_return(
+        &self,
+        receipts: PackedLaneRange,
+        event: EventCommitMeta,
+        selected: &mut dyn FnMut(ScopeId) -> Option<u8>,
+    ) -> bool {
+        for receipt in receipts.start()..receipts.end() {
+            let Some((index, prior)) = self.pending_resource_receipt(receipt, selected) else {
+                continue;
+            };
+            if self.event_actor_is_local(index, selected) == Some(true)
+                && self.program_ref().source_precedes(
+                    prior.eff_index.dense_ordinal(),
+                    event.eff_index.dense_ordinal(),
+                )
+            {
+                return true;
+            }
+        }
+        false
+    }
+
     pub(crate) fn resource_receipt_wait(
         &self,
         receipts: PackedLaneRange,
         blocked: (u8, Option<u8>),
         selected: &mut dyn FnMut(ScopeId) -> Option<u8>,
     ) -> EventAdmissionError {
+        let mut verdict = EventAdmissionError::Invariant;
         for receipt in receipts.start()..receipts.end() {
-            let step = self.machine().event_program().owned_receipt(receipt) as usize;
-            let Some(index) = self
-                .machine()
-                .state_for_step_index(step)
-                .map(state_index_to_usize)
-            else {
-                crate::invariant();
-            };
-            let Some(meta) = self.try_recv_meta_at(index) else {
-                crate::invariant();
-            };
-            let progress =
-                match self.relocatable_resident_lane_step_at_index(index, meta.lane as usize) {
-                    Ok(progress) => progress,
-                    Err(_) => crate::invariant(),
-                };
-            if self.relocatable_step_done(progress)
-                || self.event_actor_is_local(index, selected) == Some(false)
-            {
+            let Some((index, meta)) = self.pending_resource_receipt(receipt, selected) else {
                 continue;
-            }
+            };
             let conflict = self.machine().event_conflict_for_index(index);
-            if !self.event_conflict_row_allows_with_preview(conflict, conflict, selected) {
-                continue;
-            }
-            let enabled = self.event_enabled(
-                index,
-                EventCommitMeta::from(meta),
-                &mut |scope, _view: EventArmView| selected(scope),
-            );
-            if matches!(enabled, Err(EventAdmissionError::Invariant)) {
-                continue;
-            }
             let role = crate::invariant_some(self.logical_role_at(index));
-            if role == blocked.0 || blocked.1 == Some(role) {
+            if (role == blocked.0
+                || blocked.1 == Some(role)
+                || self.pending_source_predecessor_uses(index, blocked, conflict, selected))
+                && !self.receipt_has_prior_return(receipts, meta, selected)
+            {
                 return EventAdmissionError::PredecessorPending;
             }
-            if self.pending_source_predecessor_uses(index, blocked, conflict, selected) {
-                return EventAdmissionError::PredecessorPending;
-            }
-            return EventAdmissionError::OtherViewPending;
+            // An unknown branch can still require this borrowed view. Do not
+            // let an earlier independent alternative hide that self-wait.
+            verdict = EventAdmissionError::OtherViewPending;
         }
-        EventAdmissionError::Invariant
+        verdict
     }
 }

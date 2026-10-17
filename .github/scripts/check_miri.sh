@@ -114,6 +114,7 @@ MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_t
   --skip g::role_projection::tests::return_reentry:: \
   --skip g::role_projection::tests::local_return:: \
   --skip g::role_projection::tests::recovery_image:: \
+  --skip g::role_projection::tests::receipt_alternatives:: \
   --skip g::role_projection::tests::entry_image:: \
   --skip g::role_projection::tests::reentry:: \
   --skip g::role_projection::tests::composed:: \
@@ -163,6 +164,11 @@ MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_t
   actor-local-resource-return-reentry \
   -p hibana --lib \
   g::role_projection::tests::local_return::
+
+MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \
+  actor-resource-receipt-alternatives \
+  -p hibana --lib \
+  g::role_projection::tests::receipt_alternatives::
 
 run_miri_test \
   actor-resource-receipt-image \

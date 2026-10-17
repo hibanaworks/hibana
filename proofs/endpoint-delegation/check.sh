@@ -16,7 +16,7 @@ source "$ROOT/.github/scripts/repo_rustflags.sh"
 hibana_disable_repo_tests_cfg
 source "$ROOT/.github/scripts/lib/proof_audit.sh"
 FAILED=0
-check_trusted_proof_sources 'endpoint delegation projection' "$MODEL" "$PROOFS/Claims.lean" "$PROOFS/Knowledge.lean" "$PROOFS/Issuance.lean" "$PROOFS/Causality.lean"
+check_trusted_proof_sources 'endpoint delegation projection' "$MODEL" "$PROOFS/Claims.lean" "$PROOFS/Knowledge.lean" "$PROOFS/Issuance.lean" "$PROOFS/Causality.lean" "$PROOFS/ReceiptWait.lean"
 [[ "$FAILED" -eq 0 ]]
 lean --version | bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" version
 cargo +"$TOOLCHAIN" fmt --manifest-path "$PROOFS/compiler/Cargo.toml" --check
@@ -39,6 +39,8 @@ LEAN_PATH="$EVIDENCE:$MODEL_PATH" lean -o "$EVIDENCE/Causality.olean" "$PROOFS/C
 bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" lean "$EVIDENCE/lean-causality.log" 4
 lean -o "$EVIDENCE/Issuance.olean" "$PROOFS/Issuance.lean" > "$EVIDENCE/lean-issuance.log" 2>&1
 bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" lean "$EVIDENCE/lean-issuance.log" 4
+lean -j1 "$PROOFS/ReceiptWait.lean" > "$EVIDENCE/lean-receipt-wait.log" 2>&1
+bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" lean "$EVIDENCE/lean-receipt-wait.log" 3
 LEAN_PATH="$EVIDENCE:$MODEL_PATH" lean "$EVIDENCE/Generated.lean" > "$EVIDENCE/lean-generated.log" 2>&1
 bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" lean "$EVIDENCE/lean-generated.log" 193
 bash "$ROOT/.github/scripts/check_smt2.sh" "$PROOFS/Ownership.smt2" > "$EVIDENCE/z3.log"
@@ -50,9 +52,11 @@ bash "$ROOT/.github/scripts/check_smt2.sh" "$PROOFS/PendingSend.smt2" > "$EVIDEN
 bash "$ROOT/.github/scripts/check_smt2.sh" "$PROOFS/OwnedEntry.smt2" > "$EVIDENCE/z3-owned-entry.log"
 bash "$ROOT/.github/scripts/check_smt2.sh" "$PROOFS/BorrowedPredecessor.smt2" > "$EVIDENCE/z3-borrowed-predecessor.log"
 bash "$ROOT/.github/scripts/check_smt2.sh" "$PROOFS/OwnedEnvelope.smt2" > "$EVIDENCE/z3-owned-envelope.log"
+bash "$ROOT/.github/scripts/check_smt2.sh" "$PROOFS/ReceiptWait.smt2" > "$EVIDENCE/z3-receipt-wait.log"
 bash "$ROOT/.github/scripts/check_smt2.sh" "$PROOFS/RollBoundary.smt2" > "$EVIDENCE/z3-roll-boundary.log"
 bash "$ROOT/.github/scripts/check_smt2.sh" "$PROOFS/ViewGeneration.smt2" > "$EVIDENCE/z3-view-generation.log"
 printf 'Actor view generations: Z3 4 UNSAT, 1 rejected-rule SAT, 1 positive SAT. Evidence: %s\n' "$EVIDENCE/z3-view-generation.log"
+printf 'Receipt wait frontier: Lean 3 general rules; Z3 2 UNSAT, 1 rejected-rule SAT, 1 positive SAT. Evidence: %s\n' "$EVIDENCE/z3-receipt-wait.log"
 printf 'Reentry dependency cut and choice reset: Z3 2 UNSAT, 4 counterexample SAT. Evidence: %s\n' "$EVIDENCE/z3-reentry.log"
 printf 'Resource-dependent reentry origins: Z3 3 UNSAT, 2 witnesses. Evidence: %s\n' "$EVIDENCE/z3-reentry-knowledge.log"
 printf 'Pending-send admission boundary: Z3 3 UNSAT, 2 witnesses. Evidence: %s\n' "$EVIDENCE/z3-pending-send.log"

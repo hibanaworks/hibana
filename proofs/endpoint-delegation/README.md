@@ -104,6 +104,23 @@ public projection, without a delegated Endpoint.
 
 ## Verification
 
+Rolled entry admission checks every still-possible receipt before waiting for
+a missing resource. A first independent alternative cannot hide another arm
+that needs the waiting future's own borrowed Endpoint. A source-ordered return
+to the same actor can restore the resource before a later self-receipt, so that
+later receipt alone must not reject the wait. No mutable owner or progress
+state is added. Actual Tokio regressions cover both the rejected branch case
+and the legal earlier return, with its receive and rolled body running together.
+
+`ReceiptWait.lean` proves the read-only catalog classification rule for arbitrary
+lists, rejection of an uncovered self-dependency, and independence from catalog
+order. Its input predicates describe pending receipts, return actors and source
+causality; these three laws do not prove that every Rust admission supplies
+the correct predicates or establish general distributed progress.
+`ReceiptWait.smt2` checks two impossible admissions and witnesses both the old
+first-candidate defect and a legal earlier return. The source, projection and
+complete refinement obligations stated above still apply.
+
 Run from the Hibana root:
 
 ```sh
