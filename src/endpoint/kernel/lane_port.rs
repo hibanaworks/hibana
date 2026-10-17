@@ -51,9 +51,13 @@ impl SendInput {
                     crate::transport::wire::CodecError::Malformed,
                 ))?;
                 // SAFETY: the send future retains this affine owner until
-                // the operation commits or cancels. Only its role is encoded.
-                out[0] = unsafe { transfer.ptr.as_ref() }.role();
-                out[1..].copy_from_slice(&(eff.dense_ordinal() as u16).to_be_bytes());
+                // the operation commits or cancels. Only its role and static
+                // source occurrence are encoded; local addresses stay local.
+                let role = unsafe { transfer.ptr.as_ref() }.role();
+                out.copy_from_slice(&crate::endpoint::transfer::wire_envelope(
+                    role,
+                    eff.dense_ordinal() as u16,
+                ));
                 Ok(3)
             }
         }

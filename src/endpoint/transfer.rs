@@ -6,7 +6,17 @@ use super::{
 };
 use core::ptr::NonNull;
 mod futures;
+#[cfg(kani)]
+mod kani;
 mod payload;
+
+/// Resource and source occurrence in the existing three-byte owned payload.
+/// Actor identity, run isolation and affine delivery belong to the binding
+/// and carrier; local Endpoint addresses and generations stay local.
+pub(crate) const fn wire_envelope(resource: u8, event: u16) -> [u8; 3] {
+    let ordinal = event.to_be_bytes();
+    [resource, ordinal[0], ordinal[1]]
+}
 
 #[cfg(all(test, hibana_repo_tests))]
 mod tests {

@@ -262,8 +262,8 @@ can change arms while preserving the parent prefix. The complete nested trace
 runs twice. Before the parent suffix, both the completed arm and the unused
 alternative are rejected. These six kernel proofs replace seven lemmas about the removed
 route-only reset and its unused selector. Including the transfer model below,
-the static inventory is 849, with 466 using `propext` and `Quot.sound`,
-277 using only `propext`, and 106 axiom-free. The three additional
+the static inventory is 865, with 481 using `propext` and `Quot.sound`,
+278 using only `propext`, and 106 axiom-free. The three additional
 `PublicOperationKernel.lean` claims cover the owned-send payload borrow:
 other resource-dependent work waits, that payload's own transfer may finish,
 and an unborrowed view gains no extra dependency. The generated Rust table
@@ -343,12 +343,31 @@ not require the sender to have published its local completion first.
 
 The real two-runtime exchange copies each accepted frame before its receive,
 without consuming it or changing readiness. Its four observed commits generate
-56 checked claims, including rejection of a missing carrier, resource, effect index,
+64 checked claims, including rejection of a missing carrier, resource, effect index,
 receiver, actor and session. Carrier generation and sequence are not invented
 from the core header; the general theorem obtains them from the carrier profile.
 These observations validate the exercised commits. Completeness of the
 implementation abstraction, fresh visits and distributed progress remain
 separate obligations.
+
+`SourceResourceContinuation.lean` derives a resource continuation's physical
+actor from the last handoff in an arbitrary accepted selected source path.
+Unrelated communication between them cannot change that owner expression.
+The earlier handoff is causally before the use or next loan, and its receive
+is an edge in the same SourcePoint graph used by the progress model. Actor
+equality is derived from solved source equations rather than assumed.
+Successful normalization and the decoded actor image supply that source
+derivation; `OwnedCommit.lean` connects it to a checked owned wire observation.
+The four real handoff commits apply this derivation, and two further kernel
+claims check the worker's resource use and return depend on its loan receipt.
+These are single-visit source/receipt dependencies. Availability across all
+future phases, rolled visits and terminal outcomes remains a separate obligation.
+The shared three-byte owned-payload codec preserves the resource role and full
+u16 source identifier. Its Lean envelope is injective, and a checked send and
+receive with the same actual payload name the same resource and source event.
+The real loan and return observations each apply that result. Carrier ordering,
+run isolation and preservation of the accepted bytes remain explicit transport
+contracts; this does not identify rolled frame instances from the payload alone.
 
 The ordinary actor commit checker also binds both copied choice histories to
 the selected source path and checks their exact canonical publication. The

@@ -105,6 +105,10 @@
       "endpoint::kernel::offer::select_alignment::model::selection::verification::erased_candidate_can_only_request_distinct_realign",
       "endpoint::kernel::offer::select_alignment::model::selection::verification::exact_current_selection_never_becomes_realign"
     ],
+    "../../src/endpoint/transfer/kani.rs": [
+      "endpoint::transfer::kani::owned_envelope_cannot_alias_different_resources_or_events",
+      "endpoint::transfer::kani::owned_envelope_preserves_the_resource_and_full_event_identifier"
+    ],
     "../../src/g/role_projection/kani.rs": [
       "g::role_projection::kani::initial_resource_issuance_cannot_confer_later_route_control",
       "g::role_projection::kani::received_controller_view_has_only_its_projected_route"
@@ -378,7 +382,7 @@
   "contract-harnesses": {},
   "contracts": [],
   "totals": {
-    "standard-harnesses": 262,
+    "standard-harnesses": 264,
     "contract-harnesses": 0,
     "functions-under-contract": 0
   }

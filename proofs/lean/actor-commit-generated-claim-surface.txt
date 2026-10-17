@@ -1,3 +1,7 @@
+loanFrameHasOneResourceAndSource : ∃ senderFacts receiverFacts,
+  ownerLoan.ownedFacts? ownerImage actorCommitChoreo = some senderFacts ∧
+    workerLoan.ownedFacts? workerImage actorCommitChoreo = some receiverFacts ∧
+      senderFacts.resource = receiverFacts.resource ∧ senderFacts.effIndex = receiverFacts.effIndex
 ownerLoanAccepted : ownerLoan.check ownerImage actorCommitChoreo = true
 ownerLoanMissingCarrierRejected : ownerLoanMissingCarrier.check ownerImage actorCommitChoreo = false
 ownerLoanMissingCarrierSnapshotsValid : (ownerLoanMissingCarrier.before.valid && ownerLoanMissingCarrier.after.valid) =
@@ -23,6 +27,21 @@ ownerLoanWireAccepted : ownerLoan.ownedCheck ownerImage actorCommitChoreo ownerL
 ownerLoanWireHasExactSource : ∃ facts,
   ownerLoan.ownedFacts? ownerImage actorCommitChoreo = some facts ∧
     ownerLoan.SourceOrdered ownerImage actorCommitChoreo ∧ ownerLoanWire.payload = facts.envelope
+ownerLoanWireHasSolvedSourcePath : ∃ data path issuance run,
+  ownerImage.decodeActorOrder? actorCommitChoreo = some data ∧
+    data.normalized.paths[ownerLoan.pathIndex]? = some path ∧
+      Hibana.EndpointDelegation.elaborate data.source.resources
+            (Hibana.EndpointDelegation.initialOwners data.source.resources) path.selections data.source 0 =
+          some run ∧
+        run.equations.all (Hibana.EndpointDelegation.equationAccepted issuance) = true ∧
+          List.mapM
+              (fun x =>
+                match x with
+                | (event, symbolic) => do
+                  let binding ← Hibana.EndpointDelegation.instantiateBinding issuance symbolic
+                  some (event, binding))
+              run.bindings =
+            some path.bindings
 ownerLoanWrongActorRejected : (have __src := ownerLoan;
       { pathIndex := __src.pathIndex, event := __src.event, view := __src.view,
         before :=
@@ -82,6 +101,21 @@ ownerReturnWireAccepted : ownerReturn.ownedCheck ownerImage actorCommitChoreo ow
 ownerReturnWireHasExactSource : ∃ facts,
   ownerReturn.ownedFacts? ownerImage actorCommitChoreo = some facts ∧
     ownerReturn.SourceOrdered ownerImage actorCommitChoreo ∧ ownerReturnWire.payload = facts.envelope
+ownerReturnWireHasSolvedSourcePath : ∃ data path issuance run,
+  ownerImage.decodeActorOrder? actorCommitChoreo = some data ∧
+    data.normalized.paths[ownerReturn.pathIndex]? = some path ∧
+      Hibana.EndpointDelegation.elaborate data.source.resources
+            (Hibana.EndpointDelegation.initialOwners data.source.resources) path.selections data.source 0 =
+          some run ∧
+        run.equations.all (Hibana.EndpointDelegation.equationAccepted issuance) = true ∧
+          List.mapM
+              (fun x =>
+                match x with
+                | (event, symbolic) => do
+                  let binding ← Hibana.EndpointDelegation.instantiateBinding issuance symbolic
+                  some (event, binding))
+              run.bindings =
+            some path.bindings
 ownerReturnWrongActorRejected : (have __src := ownerReturn;
       { pathIndex := __src.pathIndex, event := __src.event, view := __src.view,
         before :=
@@ -115,6 +149,10 @@ ownerReturnWrongResourceRejected : ownerReturn.ownedCheck ownerImage actorCommit
     874 =
   false
 ownerReturnWrongSessionRejected : ownerReturn.ownedCheck ownerImage actorCommitChoreo ownerReturnWire 875 = false
+returnFrameHasOneResourceAndSource : ∃ senderFacts receiverFacts,
+  workerReturn.ownedFacts? workerImage actorCommitChoreo = some senderFacts ∧
+    ownerReturn.ownedFacts? ownerImage actorCommitChoreo = some receiverFacts ∧
+      senderFacts.resource = receiverFacts.resource ∧ senderFacts.effIndex = receiverFacts.effIndex
 workerLoanAccepted : workerLoan.check workerImage actorCommitChoreo = true
 workerLoanMissingCarrierRejected : workerLoanMissingCarrier.check workerImage actorCommitChoreo = false
 workerLoanMissingCarrierSnapshotsValid : (workerLoanMissingCarrier.before.valid &&
@@ -141,6 +179,21 @@ workerLoanWireAccepted : workerLoan.ownedCheck workerImage actorCommitChoreo wor
 workerLoanWireHasExactSource : ∃ facts,
   workerLoan.ownedFacts? workerImage actorCommitChoreo = some facts ∧
     workerLoan.SourceOrdered workerImage actorCommitChoreo ∧ workerLoanWire.payload = facts.envelope
+workerLoanWireHasSolvedSourcePath : ∃ data path issuance run,
+  workerImage.decodeActorOrder? actorCommitChoreo = some data ∧
+    data.normalized.paths[workerLoan.pathIndex]? = some path ∧
+      Hibana.EndpointDelegation.elaborate data.source.resources
+            (Hibana.EndpointDelegation.initialOwners data.source.resources) path.selections data.source 0 =
+          some run ∧
+        run.equations.all (Hibana.EndpointDelegation.equationAccepted issuance) = true ∧
+          List.mapM
+              (fun x =>
+                match x with
+                | (event, symbolic) => do
+                  let binding ← Hibana.EndpointDelegation.instantiateBinding issuance symbolic
+                  some (event, binding))
+              run.bindings =
+            some path.bindings
 workerLoanWrongActorRejected : (have __src := workerLoan;
       { pathIndex := __src.pathIndex, event := __src.event, view := __src.view,
         before :=
@@ -174,6 +227,18 @@ workerLoanWrongResourceRejected : workerLoan.ownedCheck workerImage actorCommitC
     874 =
   false
 workerLoanWrongSessionRejected : workerLoan.ownedCheck workerImage actorCommitChoreo workerLoanWire 875 = false
+workerResourceReturnRequiresLoanReceipt : ∃ data path,
+  workerImage.decodeActorOrder? actorCommitChoreo = some data ∧
+    data.normalized.paths[workerReturn.pathIndex]? = some path ∧
+      Hibana.SourcePointEdge data.source path.bindings
+        (Hibana.SourcePoint.committed { event := 0, side := Hibana.EndpointDelegation.Side.receive })
+        (Hibana.SourcePoint.accepted 3)
+workerResourceUseRequiresLoanReceipt : ∃ data path,
+  workerImage.decodeActorOrder? actorCommitChoreo = some data ∧
+    data.normalized.paths[workerLoan.pathIndex]? = some path ∧
+      Hibana.SourcePointEdge data.source path.bindings
+        (Hibana.SourcePoint.committed { event := 0, side := Hibana.EndpointDelegation.Side.receive })
+        (Hibana.SourcePoint.accepted 1)
 workerReturnAccepted : workerReturn.check workerImage actorCommitChoreo = true
 workerReturnMissingCarrierRejected : workerReturnMissingCarrier.check workerImage actorCommitChoreo = false
 workerReturnMissingCarrierSnapshotsValid : (workerReturnMissingCarrier.before.valid &&
@@ -200,6 +265,21 @@ workerReturnWireAccepted : workerReturn.ownedCheck workerImage actorCommitChoreo
 workerReturnWireHasExactSource : ∃ facts,
   workerReturn.ownedFacts? workerImage actorCommitChoreo = some facts ∧
     workerReturn.SourceOrdered workerImage actorCommitChoreo ∧ workerReturnWire.payload = facts.envelope
+workerReturnWireHasSolvedSourcePath : ∃ data path issuance run,
+  workerImage.decodeActorOrder? actorCommitChoreo = some data ∧
+    data.normalized.paths[workerReturn.pathIndex]? = some path ∧
+      Hibana.EndpointDelegation.elaborate data.source.resources
+            (Hibana.EndpointDelegation.initialOwners data.source.resources) path.selections data.source 0 =
+          some run ∧
+        run.equations.all (Hibana.EndpointDelegation.equationAccepted issuance) = true ∧
+          List.mapM
+              (fun x =>
+                match x with
+                | (event, symbolic) => do
+                  let binding ← Hibana.EndpointDelegation.instantiateBinding issuance symbolic
+                  some (event, binding))
+              run.bindings =
+            some path.bindings
 workerReturnWrongActorRejected : (have __src := workerReturn;
       { pathIndex := __src.pathIndex, event := __src.event, view := __src.view,
         before :=

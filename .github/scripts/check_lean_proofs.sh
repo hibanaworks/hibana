@@ -53,7 +53,7 @@ bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" build-serial "${PROOF_
 bash "${ROOT_DIR}/.github/scripts/check_lean_claim_surface.sh"
 static_audit_output="$(run_audit \
   theorem-inventory \
-  --static "${PROOF_DIR}" "${STATIC_CLAIM_SNAPSHOT}" 849 466 277 106)"
+  --static "${PROOF_DIR}" "${STATIC_CLAIM_SNAPSHOT}" 865 481 278 106)"
 printf '%s\n' "${static_audit_output}"
 printf '%s\n' "${static_audit_output}" | bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard markers static
 bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" theorem-inventory \
@@ -176,7 +176,7 @@ run_audit generated-axioms --kernel "${ACTOR_REENTRY_COMMIT_GENERATED}" "${PROOF
 run_audit generated-axioms --kernel "${ACTOR_PARALLEL_REENTRY_GENERATED}" "${PROOF_DIR}" \
   "${PROOF_DIR}/actor-parallel-reentry-generated-claim-surface.txt" 12
 run_audit generated-axioms --kernel "${ACTOR_COMMIT_GENERATED}" "${PROOF_DIR}" \
-  "${PROOF_DIR}/actor-commit-generated-claim-surface.txt" 56
+  "${PROOF_DIR}/actor-commit-generated-claim-surface.txt" 64
 run_audit generated-axioms --kernel "${PROGRAM_COLUMNS_GENERATED}" "${PROOF_DIR}" \
   "${PROOF_DIR}/program-columns-generated-claim-surface.txt" 139
 run_audit generated-axioms --kernel "${PARTIAL_CHOICE_GENERATED}" "${PROOF_DIR}" \
@@ -212,4 +212,4 @@ public_operation_lean_output="$(run_audit \
 printf '%s\n' "${public_operation_lean_output}"
 printf '%s\n' "${public_operation_lean_output}" | bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard markers public-operation
 
-echo "Lean proof gate passed toolchain=v4.30.0 traces=14 frames=66 projections=22 exact-descriptors=22 progress=4 projectability=8 distributed-progress=8 verified-protocols=8 static-theorems=849 source-order-correspondence=3 owned-entry-correspondence=5 owned-recovery-correspondence=5 local-return-correspondence=12 pending-borrow-correspondence=11 future-custody-correspondence=57 owned-drop-correspondence=54 completed-retirement-correspondence=18 actor-commit-correspondence=56 actor-body-reentry-correspondence=36 actor-parallel-reentry-correspondence=12 actor-route-reentry-correspondence=168 program-column-correspondence=139 partial-choice-correspondence=30 controller-correspondence=57 actor-ingress-correspondence=16 actor-reentry-correspondence=97 parallel-descriptors=10 parallel-correspondence=182 causal-correspondence=36 anonymous-regressions=36 generated-theorems=506 generated-obligations=458 production-transitions=7 production-operations=6 production-owners=8 verified-codecs=3 verified-family=8 static-deployments=8 deployment-rejections=3 capabilities=6 runtime-regions=4 atomic-failures=4 public-operation-edges=18 public-operation-transitions=180 native-regressions=32"
+echo "Lean proof gate passed toolchain=v4.30.0 traces=14 frames=66 projections=22 exact-descriptors=22 progress=4 projectability=8 distributed-progress=8 verified-protocols=8 static-theorems=865 source-order-correspondence=3 owned-entry-correspondence=5 owned-recovery-correspondence=5 local-return-correspondence=12 pending-borrow-correspondence=11 future-custody-correspondence=57 owned-drop-correspondence=54 completed-retirement-correspondence=18 actor-commit-correspondence=64 actor-body-reentry-correspondence=36 actor-parallel-reentry-correspondence=12 actor-route-reentry-correspondence=168 program-column-correspondence=139 partial-choice-correspondence=30 controller-correspondence=57 actor-ingress-correspondence=16 actor-reentry-correspondence=97 parallel-descriptors=10 parallel-correspondence=182 causal-correspondence=36 anonymous-regressions=36 generated-theorems=506 generated-obligations=458 production-transitions=7 production-operations=6 production-owners=8 verified-codecs=3 verified-family=8 static-deployments=8 deployment-rejections=3 capabilities=6 runtime-regions=4 atomic-failures=4 public-operation-edges=18 public-operation-transitions=180 native-regressions=32"

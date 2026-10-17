@@ -175,8 +175,8 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
         else {
             return Ok(None);
         };
-        let ordinal = (eff.dense_ordinal() as u16).to_be_bytes();
-        if payload.as_bytes() != [role, ordinal[0], ordinal[1]] {
+        let envelope = crate::endpoint::transfer::wire_envelope(role, eff.dense_ordinal() as u16);
+        if payload.as_bytes() != envelope {
             return Err(RecvError::PhaseInvariant);
         }
         // SAFETY: the current kernel retains this pinned actor allocation.

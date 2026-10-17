@@ -375,7 +375,19 @@ fn write_observations(observations: &[CommitObservation<'_>], sid: SessionId) {
              obtain ⟨ordered, facts, decoded, fields⟩ :=\n    \
              Hibana.accepted_owned_commit_binds_source_view_and_wire {name}WireAccepted\n  \
              obtain ⟨_, _, _, _, _, _, _, _, _, envelope⟩ := fields\n  \
-             exact ⟨facts, decoded, ordered, envelope⟩\n\n",
+             exact ⟨facts, decoded, ordered, envelope⟩\n\n\
+             theorem {name}WireHasSolvedSourcePath :\n  \
+             ∃ data path issuance run,\n    \
+             {image_name}.decodeActorOrder? actorCommitChoreo = some data ∧\n    \
+             data.normalized.paths[{name}.pathIndex]? = some path ∧\n    \
+             Hibana.EndpointDelegation.elaborate data.source.resources\n      \
+             (Hibana.EndpointDelegation.initialOwners data.source.resources)\n      \
+             path.selections data.source 0 = some run ∧\n    \
+             run.equations.all (Hibana.EndpointDelegation.equationAccepted issuance) = true ∧\n    \
+             (run.bindings.mapM fun (event, symbolic) => do\n      \
+             let binding ← Hibana.EndpointDelegation.instantiateBinding issuance symbolic\n      \
+             some (event, binding)) = some path.bindings :=\n  \
+             Hibana.source_checked_owned_commit_has_solved_source_derivation {name}WireAccepted\n\n",
             header.session().raw(), header.lane(), header.source_role(), header.target_role(),
             header.label().raw(), payload, sid.raw(),
         ));
@@ -418,6 +430,61 @@ fn write_observations(observations: &[CommitObservation<'_>], sid: SessionId) {
                  {sample}.ownedCheck {image_name} actorCommitChoreo ({wire}) {session} = false := by\n  decide\n\n",
             ));
         }
+    }
+    for (name, observation, next_event) in [
+        ("workerResourceUse", "workerLoan", 1),
+        ("workerResourceReturn", "workerReturn", 3),
+    ] {
+        source.push_str(&std::format!(
+            "theorem {name}RequiresLoanReceipt :\n  \
+             ∃ data path, workerImage.decodeActorOrder? actorCommitChoreo = some data ∧\n    \
+             data.normalized.paths[{observation}.pathIndex]? = some path ∧\n    \
+             Hibana.SourcePointEdge data.source path.bindings\n      \
+             (.committed ⟨0, .receive⟩) (.accepted {next_event}) := by\n  \
+             obtain ⟨data, path, _, _, decoded, pathAt, _⟩ := {observation}WireHasSolvedSourcePath\n  \
+             have checked : (do\n      \
+             let data ← workerImage.decodeActorOrder? actorCommitChoreo\n      \
+             let path ← data.normalized.paths[{observation}.pathIndex]?\n      \
+             some (Hibana.EndpointDelegation.precedes data.source path.bindings\n        \
+             ⟨0, .receive⟩ ⟨{next_event}, .send⟩)) = some true := by decide\n  \
+             have edge : Hibana.EndpointDelegation.precedes data.source path.bindings\n      \
+             ⟨0, .receive⟩ ⟨{next_event}, .send⟩ = true := by\n    \
+             simpa only [decoded, pathAt, Option.bind_eq_bind, Option.bind_some,\n      \
+             Option.some.injEq] using checked\n  \
+             exact ⟨data, path, decoded, pathAt, Hibana.SourcePointEdge.ordered edge⟩\n\n",
+        ));
+    }
+    for (name, sender, sender_image, receiver, receiver_image) in [
+        (
+            "loanFrame",
+            "ownerLoan",
+            "ownerImage",
+            "workerLoan",
+            "workerImage",
+        ),
+        (
+            "returnFrame",
+            "workerReturn",
+            "workerImage",
+            "ownerReturn",
+            "ownerImage",
+        ),
+    ] {
+        source.push_str(&std::format!(
+            "theorem {name}HasOneResourceAndSource :\n  \
+             ∃ senderFacts receiverFacts,\n    \
+             {sender}.ownedFacts? {sender_image} actorCommitChoreo = some senderFacts ∧\n    \
+             {receiver}.ownedFacts? {receiver_image} actorCommitChoreo = some receiverFacts ∧\n    \
+             senderFacts.resource = receiverFacts.resource ∧\n    \
+             senderFacts.effIndex = receiverFacts.effIndex := by\n  \
+             obtain ⟨_, senderFacts, senderAt, _⟩ :=\n    \
+             Hibana.accepted_owned_commit_binds_source_view_and_wire {sender}WireAccepted\n  \
+             obtain ⟨_, receiverFacts, receiverAt, _⟩ :=\n    \
+             Hibana.accepted_owned_commit_binds_source_view_and_wire {receiver}WireAccepted\n  \
+             exact ⟨senderFacts, receiverFacts, senderAt, receiverAt,\n    \
+             Hibana.checked_owned_frame_has_the_same_source_at_send_and_receive\n      \
+             {sender}WireAccepted {receiver}WireAccepted senderAt receiverAt (by decide)⟩\n\n",
+        ));
     }
     let directory = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/lean-proof");
     std::fs::create_dir_all(&directory).unwrap();
