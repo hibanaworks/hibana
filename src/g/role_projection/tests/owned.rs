@@ -5,6 +5,89 @@ use crate::{
 };
 
 #[test]
+fn dropping_a_completed_owned_send_does_not_retire_the_returned_resource_view() {
+    use core::{
+        future::{Future, poll_fn},
+        pin::Pin,
+    };
+
+    // AUTH is a second view at OWNER. Its later loan fixes that initial actor
+    // in the global, so it can receive DB while OWNER's completed send future
+    // still borrows the OWNER view and retains its stale DB payload value.
+    type Steps = g::Seq<
+        g::Send<0, 1, Loan>,
+        g::Seq<
+            g::Send<1, 11, Loan>,
+            g::Seq<g::Send<10, 3, Read>, g::Seq<g::Send<3, 10, Value>, g::Send<0, 2, OtherLoan>>>,
+        >,
+    >;
+    let () = crate::g::ProgramProjection::<Steps, 16>::VALIDATION;
+    let owner_program = crate::global::role_program::role_program_from_image::<0>(
+        &RoleProjection::<0, Steps, 16>::IMAGE_REF,
+    );
+    let worker_program = crate::global::role_program::role_program_from_image::<1>(
+        &RoleProjection::<1, Steps, 16>::IMAGE_REF,
+    );
+    let service_program = crate::global::role_program::role_program_from_image::<3>(
+        &RoleProjection::<3, Steps, 16>::IMAGE_REF,
+    );
+    let receiver_program = crate::global::role_program::role_program_from_image::<2>(
+        &RoleProjection::<2, Steps, 16>::IMAGE_REF,
+    );
+    let db_program = crate::global::role_program::role_program_from_image::<10>(
+        &RoleProjection::<10, Steps, 16>::IMAGE_REF,
+    );
+    let auth_program = crate::global::role_program::role_program_from_image::<11>(
+        &RoleProjection::<11, Steps, 16>::IMAGE_REF,
+    );
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let network = TestTransport::new();
+        let mut owner_slab = [0; 48 * 1024];
+        let mut peer_slab = [0; 48 * 1024];
+        let mut owner_storage = SessionKitStorage::<TestTransport>::uninit();
+        let mut peer_storage = SessionKitStorage::<TestTransport>::uninit();
+        let owner_kit = owner_storage.init();
+        let peer_kit = peer_storage.init();
+        let owner_rv = owner_kit
+            .rendezvous(&mut owner_slab, network.clone())
+            .unwrap();
+        let peer_rv = peer_kit.rendezvous(&mut peer_slab, network).unwrap();
+        let sid = SessionId::new(873);
+        let mut owner = owner_rv.enter(sid, &owner_program).unwrap();
+        let mut auth = owner_rv.enter(sid, &auth_program).unwrap();
+        let db = owner_rv.enter(sid, &db_program).unwrap();
+        let mut worker = peer_rv.enter(sid, &worker_program).unwrap();
+        let mut service = peer_rv.enter(sid, &service_program).unwrap();
+        let mut receiver = peer_rv.enter(sid, &receiver_program).unwrap();
+
+        let mut loan = owner.send::<Loan>(db);
+        poll_fn(|cx| Pin::new(&mut loan).poll(cx)).await.unwrap();
+        let db = worker.recv::<Loan>().await.unwrap();
+        worker.send::<Loan>(db).await.unwrap();
+        let mut db = auth.recv::<Loan>().await.unwrap();
+        // The old send has completed, but its owned payload is only destroyed
+        // here, after DB has been reissued at the original physical actor.
+        drop(loan);
+        let (value, ()) = tokio::join!(
+            async {
+                db.send::<Read>(&42).await.unwrap();
+                db.recv::<Value>().await.unwrap()
+            },
+            async {
+                let key = service.recv::<Read>().await.unwrap();
+                service.send::<Value>(&(key + 1)).await.unwrap();
+            },
+        );
+        assert_eq!(value, 43);
+        owner.send::<OtherLoan>(auth).await.unwrap();
+        drop(receiver.recv::<OtherLoan>().await.unwrap());
+    });
+}
+
+#[test]
 fn a_message_between_co_resident_views_consumes_both_local_halves_before_handoff() {
     type Steps = g::Seq<g::Send<0, 10, Read>, g::Seq<g::Send<0, 1, Loan>, g::Send<1, 0, Loan>>>;
     let () = crate::g::ProgramProjection::<Steps, 8>::VALIDATION;

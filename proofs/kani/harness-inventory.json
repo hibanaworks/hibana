@@ -3,6 +3,9 @@
   "file-version": "0.1",
   "standard-harnesses": {
     "../../src/endpoint/carrier/kani.rs": [
+      "endpoint::carrier::proofs::initial_view_issuance_is_exact_and_retirement_cannot_restore_it",
+      "endpoint::carrier::proofs::received_view_reissue_keeps_the_run_and_rejects_the_old_handle",
+      "endpoint::carrier::proofs::retired_view_preflight_rejects_every_issued_handle",
       "endpoint::carrier::proofs::view_generation_never_wraps_reuses_or_loses_its_retirement_successor"
     ],
     "../../src/endpoint/kernel/authority/kani.rs": [
@@ -368,7 +371,7 @@
   "contract-harnesses": {},
   "contracts": [],
   "totals": {
-    "standard-harnesses": 254,
+    "standard-harnesses": 257,
     "contract-harnesses": 0,
     "functions-under-contract": 0
   }

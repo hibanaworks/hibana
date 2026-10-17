@@ -2,6 +2,7 @@ import Hibana.Allocation
 import Hibana.Authority
 import Hibana.Commit
 import Hibana.Generation
+import Hibana.ViewGeneration
 import Hibana.GlobalSemantics
 import Hibana.GlobalAllocationCorrectness
 import Hibana.GlobalMessageTransitions

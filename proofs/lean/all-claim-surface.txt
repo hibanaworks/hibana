@@ -2700,6 +2700,37 @@ Hibana.fresh_alignment_source_is_recorded_exactly : ∀ (source : Nat) (visited 
 Hibana.fresh_alignment_source_preserves_no_duplicates : ∀ (source : Nat) (visited : List.{0} Nat),
   Not (@Membership.mem.{0, 0} Nat (List.{0} Nat) (@List.instMembership.{0} Nat) visited source) →
     @List.Nodup.{0} Nat visited → @List.Nodup.{0} Nat (@List.cons.{0} Nat source visited)
+@Hibana.fresh_view_generation_is_exact : ∀ {current next : Nat},
+  @Eq.{1} (Option.{0} Nat) (Hibana.nextViewGeneration? current) (@some.{0} Nat next) →
+    And
+      (@Eq.{1} Nat
+        (@HMod.hMod.{0, 0, 0} Nat Nat Nat (@instHMod.{0} Nat Nat.instMod) current
+          (@OfNat.ofNat.{0} Nat (nat_lit 2) (instOfNatNat (nat_lit 2))))
+        (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1))))
+      (And
+        (@Eq.{1} Nat next
+          (@HAdd.hAdd.{0, 0, 0} Nat Nat Nat (@instHAdd.{0} Nat instAddNat) current
+            (@OfNat.ofNat.{0} Nat (nat_lit 2) (instOfNatNat (nat_lit 2)))))
+        (@LT.lt.{0} Nat instLTNat next Hibana.maxViewGeneration))
+@Hibana.fresh_view_generation_is_live : ∀ {current next : Nat},
+  @Eq.{1} (Option.{0} Nat) (Hibana.nextViewGeneration? current) (@some.{0} Nat next) →
+    @Eq.{1} Nat
+      (@HMod.hMod.{0, 0, 0} Nat Nat Nat (@instHMod.{0} Nat Nat.instMod) next
+        (@OfNat.ofNat.{0} Nat (nat_lit 2) (instOfNatNat (nat_lit 2))))
+      (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1)))
+@Hibana.fresh_view_generation_reserves_retirement : ∀ {current next : Nat},
+  @Eq.{1} (Option.{0} Nat) (Hibana.nextViewGeneration? current) (@some.{0} Nat next) →
+    And
+      (@Eq.{1} Nat (Hibana.retireViewGeneration next)
+        (@HAdd.hAdd.{0, 0, 0} Nat Nat Nat (@instHAdd.{0} Nat instAddNat) next
+          (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1)))))
+      (@LT.lt.{0} Nat instLTNat
+        (@HAdd.hAdd.{0, 0, 0} Nat Nat Nat (@instHAdd.{0} Nat instAddNat) next
+          (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1))))
+        Hibana.maxViewGeneration)
+@Hibana.fresh_view_generation_strictly_increases : ∀ {current next : Nat},
+  @Eq.{1} (Option.{0} Nat) (Hibana.nextViewGeneration? current) (@some.{0} Nat next) →
+    @LT.lt.{0} Nat instLTNat current next
 Hibana.global_atomic_roll_cannot_model_pipelined_single_send_reentry : @Eq.{1} Bool
   Hibana.globalAtomicRollBlocksPipelinedReentry✝ true
 Hibana.global_event_conflicts_from_length : ∀ (choreo : Hibana.Choreo) (conflictBase : Nat),
@@ -3145,6 +3176,11 @@ Hibana.max_lease_generation_is_exhausted : @Eq.{1} (Option.{0} Nat)
 @Hibana.max_route_conflict_is_permutation_invariant : ∀ {left right : List.{0} Hibana.RouteInfo},
   @List.Perm.{0} Hibana.RouteInfo left right →
     @Eq.{1} Nat (Hibana.maxRouteConflict left) (Hibana.maxRouteConflict right)
+Hibana.maximum_issuable_view_generation_exhausts_the_counter : @Eq.{1} (Option.{0} Nat)
+  (Hibana.nextViewGeneration?
+    (@HSub.hSub.{0, 0, 0} Nat Nat Nat (@instHSub.{0} Nat instSubNat) Hibana.maxViewGeneration
+      (@OfNat.ofNat.{0} Nat (nat_lit 2) (instOfNatNat (nat_lit 2)))))
+  (@none.{0} Nat)
 Hibana.mediated_profile_does_not_imply_closing_profile : Not
   (@Exists.{1} (Hibana.droppingCarrierSemantics.State → Hibana.TransportBoundaryState) fun abstraction =>
     Hibana.CarrierProfile.closing.Holds Hibana.droppingCarrierSemantics abstraction True)
@@ -3208,6 +3244,13 @@ Hibana.non_controller_resolve_is_rejected : ∀ (config : Hibana.GlobalConfig) {
   @Ne.{1} Hibana.GlobalSessionStatus config.status Hibana.GlobalSessionStatus.live →
     ∀ (operation : Hibana.GlobalOperation),
       @Eq.{1} (Option.{0} Hibana.GlobalConfig) (config.step? operation) (@none.{0} Hibana.GlobalConfig)
+@Hibana.nonempty_view_generation_sequence_is_fresh : ∀ {current count final : Nat},
+  @Eq.{1} (Option.{0} Nat)
+      (Hibana.viewGenerationSequence? current
+        (@HAdd.hAdd.{0, 0, 0} Nat Nat Nat (@instHAdd.{0} Nat instAddNat) count
+          (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1)))))
+      (@some.{0} Nat final) →
+    @LT.lt.{0} Nat instLTNat current final
 @Hibana.nontrivial_async_cancellation_reach_strictly_decreases : ∀ {start finish : Hibana.AsyncCancellationConfig},
   Hibana.AsyncCancellationReachable start finish →
     @Ne.{1} Hibana.AsyncCancellationConfig start finish →
@@ -3240,6 +3283,15 @@ Hibana.offered_receipt_blocks_second_poll : ∀ (before after : Hibana.Transport
   @Eq.{1} (Hibana.CarrierPoll Hibana.TransportBoundaryState)
     (Hibana.TransportBoundaryState.offered before frame after).pollReceive
     (@Hibana.CarrierPoll.unavailable Hibana.TransportBoundaryState)
+@Hibana.old_view_handle_rejected_after_any_nonempty_issuance_sequence : ∀ {current count final issued : Nat}
+  (run headerRun : Nat),
+  @LE.le.{0} Nat instLENat issued current →
+    @Eq.{1} (Option.{0} Nat)
+        (Hibana.viewGenerationSequence? current
+          (@HAdd.hAdd.{0, 0, 0} Nat Nat Nat (@instHAdd.{0} Nat instAddNat) count
+            (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1)))))
+        (@some.{0} Nat final) →
+      @Eq.{1} Bool (Hibana.viewHandleMatches run issued headerRun final) false
 Hibana.optional_packed_u16_index_acceptance_is_exact : ∀ (row : Nat),
   Iff (@Eq.{1} Bool (@Option.isSome.{0} Nat (Hibana.encodeOptionalPackedU16Index? row)) true)
     (@LT.lt.{0} Nat instLTNat row Hibana.packedU16Absent)
@@ -4360,6 +4412,14 @@ Hibana.resolver_select_never_rejects : ∀ (graph : Hibana.EventGraph) (state : 
   @Eq.{1} (Option.{0} Hibana.SessionPool) (pool.retire? sessionId) (@some.{0} Hibana.SessionPool retiredPool) →
     @Eq.{1} (Option.{0} Hibana.SessionPool) (retiredPool.attachInitial? sessionId roleCount choreo)
       (@some.{0} Hibana.SessionPool (retiredPool.withInitial sessionId roleCount choreo))
+@Hibana.retired_view_cannot_issue_initial_again : ∀ {current : Nat},
+  @Eq.{1} Nat
+      (@HMod.hMod.{0, 0, 0} Nat Nat Nat (@instHMod.{0} Nat Nat.instMod) current
+        (@OfNat.ofNat.{0} Nat (nat_lit 2) (instOfNatNat (nat_lit 2))))
+      (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1))) →
+    ∀ (candidate : Nat),
+      @Eq.{1} (Option.{0} Nat) (Hibana.initialViewGeneration? (Hibana.retireViewGeneration current) candidate)
+        (@none.{0} Nat)
 @Hibana.retirement_ready_has_logical_progress : ∀ {config : Hibana.AsyncCancellationConfig},
   config.RetirementReady →
     Or config.fullyRetired
@@ -5595,6 +5655,17 @@ Hibana.verified_protocol_family_member_has_execution_guarantees : ∀ (member : 
                 (@some.{0} (Prod.{0, 0} Nat Hibana.GlobalEvent)
                   (@Prod.mk.{0, 0} Nat Hibana.GlobalEvent rightId rightEvent)) →
               And (@Eq.{1} Nat leftId rightId) (@Eq.{1} Hibana.GlobalEvent leftEvent rightEvent)
+@Hibana.view_generation_sequence_does_not_decrease : ∀ {current count final : Nat},
+  @Eq.{1} (Option.{0} Nat) (Hibana.viewGenerationSequence? current count) (@some.{0} Nat final) →
+    @LE.le.{0} Nat instLENat current final
+Hibana.view_retirement_invalidates_its_handle : ∀ (run headerRun current : Nat),
+  @Eq.{1} Nat
+      (@HMod.hMod.{0, 0, 0} Nat Nat Nat (@instHMod.{0} Nat Nat.instMod) current
+        (@OfNat.ofNat.{0} Nat (nat_lit 2) (instOfNatNat (nat_lit 2))))
+      (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1))) →
+    @Eq.{1} Bool (Hibana.viewHandleMatches run current headerRun (Hibana.retireViewGeneration current)) false
+Hibana.view_retirement_is_idempotent : ∀ (current : Nat),
+  @Eq.{1} Nat (Hibana.retireViewGeneration (Hibana.retireViewGeneration current)) (Hibana.retireViewGeneration current)
 Hibana.visited_entry_is_not_frontier_progress_admissible : ∀ (currentScope currentEntry : Nat)
   (currentParallelRoot : Option.{0} Nat) (visitedEntries : List.{0} Nat)
   (candidate : Hibana.FrontierProgressCandidateIdentity),
