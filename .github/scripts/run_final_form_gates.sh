@@ -12,6 +12,8 @@ export CARGO_PROFILE_TEST_DEBUG=line-tables-only
 source "${ROOT_DIR}/.github/scripts/repo_rustflags.sh"
 hibana_enable_repo_tests_cfg
 
+cargo +"${TOOLCHAIN}" test --locked --manifest-path .github/ci-tests/Cargo.toml \
+  --bin resource-guard
 bash ./.github/scripts/check_rust_stable.sh
 bash ./.github/scripts/check_no_std_build.sh
 cargo +"${TOOLCHAIN}" clippy --workspace --all-targets -- -D warnings

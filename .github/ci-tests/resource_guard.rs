@@ -58,7 +58,9 @@ mod macos {
 
 struct Process {
     parent: i32,
-    group: i32,
+    // ps can expose a 32-bit all-ones group value as unsigned decimal.
+    // Keep that observation without confusing it with our signed child PID.
+    group: i64,
     rss: u64,
 }
 
@@ -88,7 +90,7 @@ fn parse_processes(text: &str) -> Result<BTreeMap<i32, Process>> {
             .parse::<i32>()
             .map_err(|e| format!("invalid process parent in {line:?}: {e}"))?;
         let group = values[2]
-            .parse::<i32>()
+            .parse::<i64>()
             .map_err(|e| format!("invalid process group in {line:?}: {e}"))?;
         let rss = values[3]
             .parse::<u64>()
@@ -111,7 +113,7 @@ fn owned_processes(table: &BTreeMap<i32, Process>, root: i32) -> BTreeSet<i32> {
         let before = owned.len();
         for (&pid, process) in table {
             // The private group also retains children reparented after exit.
-            if process.group == root || owned.contains(&process.parent) {
+            if process.group == i64::from(root) || owned.contains(&process.parent) {
                 owned.insert(pid);
             }
         }
@@ -151,10 +153,11 @@ fn stop(child: &mut Child) -> Result<()> {
         kill(-root, 9);
     }
     if let Ok(table) = table {
-        for pid in owned_processes(&table, root)
-            .into_iter()
-            .filter(|pid| table.get(pid).is_some_and(|process| process.group != root))
-        {
+        for pid in owned_processes(&table, root).into_iter().filter(|pid| {
+            table
+                .get(pid)
+                .is_some_and(|process| process.group != i64::from(root))
+        }) {
             // SAFETY: these process identities belonged to the owned workload
             // in the immediately preceding snapshot, including nested groups.
             unsafe {
@@ -246,7 +249,8 @@ mod tests {
         for (line, field) in [
             ("2147483648 1 1 1", "pid"),
             ("1 2147483648 1 1", "parent"),
-            ("1 1 2147483648 1", "group"),
+            ("1 1 9223372036854775808 1", "group"),
+            ("1 1 -9223372036854775809 1", "group"),
             ("1 1 1 18446744073709551616", "RSS"),
         ] {
             let error = parse_processes(line).err().unwrap();
@@ -262,6 +266,30 @@ mod tests {
         ] {
             assert!(parse_processes(invalid).is_err(), "accepted {invalid:?}");
         }
+    }
+
+    #[test]
+    fn unsigned_group_observations_keep_nested_and_reparented_children_in_the_budget() {
+        let table = parse_processes(
+            "4238 0 4294967295 0\n\
+             101 1 101 7\n\
+             102 101 202 11\n\
+             103 102 103 13\n\
+             104 1 101 17\n\
+             105 102 4294967295 19\n\
+             999 1 999 100\n",
+        )
+        .unwrap();
+        assert_eq!(table[&4238].group, i64::from(u32::MAX));
+        assert_eq!(
+            owned_processes(&table, 101),
+            BTreeSet::from([101, 102, 103, 104, 105])
+        );
+        let rss: u64 = owned_processes(&table, 101)
+            .into_iter()
+            .map(|pid| table[&pid].rss)
+            .sum();
+        assert_eq!(rss, (7 + 11 + 13 + 17 + 19) * 1024);
     }
 
     fn test_lock() -> PathBuf {
