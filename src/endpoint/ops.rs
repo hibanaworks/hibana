@@ -6,7 +6,6 @@
 // endpoint borrow keeps role-local aliasing exclusive; this fragment must not
 // cache raw kernel pointers or publish progress without the carrier operation.
 
-use super::send;
 use super::{
     Endpoint, EndpointError, RecvResult, RouteBranch, SendResult, carrier, futures::OfferFuture,
     kernel,
@@ -68,31 +67,6 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     }
 
     #[inline]
-    #[must_use]
-    fn call_send_init_op(
-        &mut self,
-        op: unsafe fn(
-            core::ptr::NonNull<()>,
-            carrier::EndpointHandle,
-            *const kernel::SendInit,
-        ) -> kernel::PublicOpLease,
-        init: &kernel::SendInit,
-    ) -> kernel::PublicOpLease {
-        unsafe {
-            /* SAFETY: send-init carrier calls use this endpoint's
-            rendezvous-installed
-            `KernelEndpointHeader`, `self.owner.handle` is the issued carrier tag for
-            the same generation, and `init` is a caller-owned initialized
-            `SendInit` slot read only during this carrier callback. */
-            op(
-                self.erased_ptr(),
-                self.owner.handle,
-                core::ptr::from_ref(init),
-            )
-        }
-    }
-
-    #[inline]
     pub(crate) fn from_handle(
         ptr: core::ptr::NonNull<carrier::KernelEndpointHeader>,
         handle: carrier::EndpointHandle,
@@ -117,34 +91,20 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     }
 
     #[inline]
-    #[must_use]
-    pub(super) fn init_public_send_state(
-        &mut self,
-        init: &kernel::SendInit,
-    ) -> kernel::PublicOpLease {
-        self.call_send_init_op(self.ops().init_public_send_state, init)
-    }
-
-    #[inline]
     pub(super) fn begin_public_send_state(
         &mut self,
         logical_label: u8,
         payload_kind: crate::eff::EventPayload,
     ) -> SendResult<()> {
-        let mut preview = core::mem::MaybeUninit::<kernel::SendPreview>::uninit();
-        self.preview_send(logical_label, payload_kind, preview.as_mut_ptr())?;
-        let preview = /* SAFETY: `preview_send` returned `Ok`, so the carrier
-        callback wrote one `SendPreview` into this local `MaybeUninit` slot
-        before return. */ unsafe { preview.assume_init() };
-        let desc = send::send_runtime_desc(
-            logical_label,
-            crate::transport::FrameLabel::new(preview.frame_label()),
-        );
-        let init = kernel::SendInit::new(desc, preview);
-        match self.init_public_send_state(&init) {
-            kernel::PublicOpLease::Held => Ok(()),
-            kernel::PublicOpLease::Rejected => Err(crate::endpoint::SendError::PhaseInvariant),
-            kernel::PublicOpLease::Faulted => crate::invariant(),
+        // SAFETY: the issued handle and pinned carrier belong to this uniquely
+        // borrowed Endpoint. The callback stores the message contract by value.
+        unsafe {
+            (self.ops().init_public_send_state)(
+                self.erased_ptr(),
+                self.owner.handle,
+                logical_label,
+                payload_kind,
+            )
         }
     }
 
@@ -174,27 +134,6 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     pub(super) fn reset_public_branch_recv_state(&mut self) {
         self.call_handle_op(self.ops().reset_public_branch_recv_state);
     }
-    #[inline]
-    pub(super) fn preview_send(
-        &mut self,
-        logical_label: u8,
-        payload_kind: crate::eff::EventPayload,
-        out: *mut kernel::SendPreview,
-    ) -> SendResult<()> {
-        /* SAFETY: `self.owner.ptr` identifies this endpoint's carrier header and
-        `self.owner.handle` names the same generation; `out` is the caller-owned
-        `SendPreview` slot that `preview_send` writes before returning `Ok`. */
-        unsafe {
-            (self.ops().preview_send)(
-                self.erased_ptr(),
-                self.owner.handle,
-                logical_label,
-                payload_kind,
-                out,
-            )
-        }
-    }
-
     #[inline]
     pub(super) fn poll_recv(
         &mut self,

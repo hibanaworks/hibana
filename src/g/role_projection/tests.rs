@@ -15,6 +15,7 @@ mod conditional_controller;
 #[cfg(all(unix, not(miri)))]
 mod native;
 mod owned;
+mod send_wait;
 
 #[test]
 fn initial_resource_views_share_progress_and_park_independent_receives() {

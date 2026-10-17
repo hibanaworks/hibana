@@ -1,4 +1,5 @@
-use super::super::{EventCursor, ScopeId};
+use super::super::{EventCursor, ScopeId, SendPreviewError};
+use super::EventAdmissionError;
 use crate::global::typestate::{EventArmView, EventCommitMeta};
 
 impl EventCursor {
@@ -32,7 +33,8 @@ impl EventCursor {
         target_label: u8,
         target_payload: crate::eff::EventPayload,
         committed_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
-    ) -> Option<usize> {
+    ) -> Result<Option<usize>, SendPreviewError> {
+        let mut other_view_pending = false;
         for idx in 0..self.local_steps_len() {
             let Some((event, schema)) = self.send_preview_outbound_event_at(idx) else {
                 continue;
@@ -52,11 +54,17 @@ impl EventCursor {
                     committed_arm_for_scope,
                 ),
             };
-            if self.event_enabled(idx, event, &mut arms).is_ok() {
-                return Some(idx);
+            match self.event_enabled(idx, event, &mut arms) {
+                Ok(_) => return Ok(Some(idx)),
+                Err(EventAdmissionError::OtherViewPending) => other_view_pending = true,
+                Err(EventAdmissionError::Invariant | EventAdmissionError::PredecessorPending) => {}
             }
         }
-        None
+        if other_view_pending {
+            Err(SendPreviewError::OtherViewPending)
+        } else {
+            Ok(None)
+        }
     }
 
     #[inline]
@@ -66,21 +74,21 @@ impl EventCursor {
         target_label: u8,
         target_payload: crate::eff::EventPayload,
         selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
-    ) -> Option<usize> {
+    ) -> Result<usize, SendPreviewError> {
         if let Some(idx) = self.send_preview_progress_start_index_for_contract(
             role,
             target_label,
             target_payload,
             selected_arm_for_scope,
-        ) {
-            return Some(idx);
+        )? {
+            return Ok(idx);
         }
         if self.enclosing_route_scope_rows_at(self.index()).is_some() {
-            return Some(self.index());
+            return Ok(self.index());
         }
         if let Some(idx) = self.first_pending_step_index() {
-            return Some(idx);
+            return Ok(idx);
         }
-        Some(self.index())
+        Ok(self.index())
     }
 }

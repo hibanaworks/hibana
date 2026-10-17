@@ -273,8 +273,9 @@ pub(crate) struct EndpointOps {
     pub(crate) init_public_send_state: unsafe fn(
         ptr: NonNull<()>,
         handle: EndpointHandle,
-        init: *const crate::endpoint::kernel::SendInit,
-    ) -> crate::endpoint::kernel::PublicOpLease,
+        logical_label: u8,
+        payload_kind: crate::eff::EventPayload,
+    ) -> crate::endpoint::SendResult<()>,
     pub(crate) reset_public_send_state: unsafe fn(ptr: NonNull<()>, handle: EndpointHandle),
     pub(crate) init_public_recv_state: unsafe fn(
         ptr: NonNull<()>,
@@ -287,13 +288,6 @@ pub(crate) struct EndpointOps {
     )
         -> crate::endpoint::kernel::PublicOpLease,
     pub(crate) reset_public_branch_recv_state: unsafe fn(ptr: NonNull<()>, handle: EndpointHandle),
-    pub(crate) preview_send: unsafe fn(
-        ptr: NonNull<()>,
-        handle: EndpointHandle,
-        logical_label: u8,
-        payload_kind: crate::eff::EventPayload,
-        out: *mut crate::endpoint::kernel::SendPreview,
-    ) -> crate::endpoint::SendResult<()>,
     pub(crate) poll_recv: for<'a, 'cx> unsafe fn(RecvPollRequest<'a, 'cx>),
     pub(crate) poll_offer: unsafe fn(
         ptr: NonNull<()>,
@@ -413,6 +407,25 @@ where
         result
     }
 
+    /// A successful communication commit can enable another logical view.
+    /// No kernel borrow or actor operation lease may span a wake callback.
+    unsafe fn wake_public_actor_waiters(ptr: NonNull<()>, handle: EndpointHandle) {
+        let (rv, lease_slot, generation, role) = {
+            // SAFETY: the caller retains the carrier Endpoint across this
+            // callback; generation preflight excludes a retired view.
+            let Some(actor) = (unsafe { Self::resident_actor_from_header(ptr, handle) }) else {
+                return;
+            };
+            (
+                actor.context.session.rendezvous(),
+                actor.context.public_slot,
+                actor.context.public_generation.get(),
+                unsafe { ptr.cast::<KernelEndpointHeader>().as_ref() }.role(),
+            )
+        };
+        rv.wake_actor_endpoint_waiters(lease_slot, generation, role);
+    }
+
     pub(crate) const fn endpoint_ops() -> EndpointOps {
         EndpointOps {
             drop_endpoint: Self::drop_public_endpoint_raw,
@@ -425,7 +438,6 @@ where
             reset_public_recv_state: Self::reset_public_recv_state_raw,
             begin_public_branch_recv_state: Self::begin_public_branch_recv_state_raw,
             reset_public_branch_recv_state: Self::reset_public_branch_recv_state_raw,
-            preview_send: Self::preview_public_send,
             poll_recv: Self::poll_recv_public_endpoint,
             poll_offer: Self::poll_offer_public_endpoint,
             poll_branch_recv: Self::poll_branch_recv_public_endpoint,

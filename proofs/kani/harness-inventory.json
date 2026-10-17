@@ -15,6 +15,9 @@
     "../../src/endpoint/kernel/core/public_operation/kani.rs": [
       "endpoint::kernel::core::public_operation::kani::public_operation_transition_classifier_is_exact"
     ],
+    "../../src/endpoint/kernel/core/send_wait_kani.rs": [
+      "endpoint::kernel::core::send_wait_kani::a_pending_preview_retains_the_input_without_io_or_commit"
+    ],
     "../../src/endpoint/kernel/decision_state/kani.rs": [
       "endpoint::kernel::decision_state::kani::existing_route_reselection_preserves_exact_reference_count",
       "endpoint::kernel::decision_state::kani::selected_arm_release_is_exact_and_never_underflows",
@@ -365,7 +368,7 @@
   "contract-harnesses": {},
   "contracts": [],
   "totals": {
-    "standard-harnesses": 253,
+    "standard-harnesses": 254,
     "contract-harnesses": 0,
     "functions-under-contract": 0
   }

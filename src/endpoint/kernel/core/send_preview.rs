@@ -1,24 +1,24 @@
-use core::cell::Cell;
+use core::{cell::Cell, task::Poll};
 
 use super::{
     OperationKernel, PublicActiveOp, SendError, SendPreviewError, SendResult, Transport,
     state_index_to_usize,
 };
-use crate::endpoint::carrier::WaiterTransfer;
 
 impl<'r, T> OperationKernel<'_, 'r, T>
 where
     T: Transport + 'r,
 {
     #[inline]
-    fn map_send_preview_error(error: SendPreviewError) -> SendError {
+    fn map_send_preview_error(error: SendPreviewError) -> Poll<SendError> {
         match error {
-            SendPreviewError::Invariant => SendError::PhaseInvariant,
+            SendPreviewError::OtherViewPending => Poll::Pending,
+            SendPreviewError::Invariant => Poll::Ready(SendError::PhaseInvariant),
             SendPreviewError::LabelMismatch { expected, actual } => {
-                SendError::LabelMismatch { expected, actual }
+                Poll::Ready(SendError::LabelMismatch { expected, actual })
             }
             SendPreviewError::PayloadMismatch { expected, actual } => {
-                SendError::PayloadMismatch { expected, actual }
+                Poll::Ready(SendError::PayloadMismatch { expected, actual })
             }
         }
     }
@@ -28,28 +28,29 @@ where
     /// A failed public preview is terminal. In particular, resolver rejection
     /// cannot be retried as a different route decision for the same session.
     #[inline(never)]
-    pub(crate) fn preview_send_meta(
+    pub(crate) fn poll_send_preview(
         &mut self,
         target_label: u8,
         target_payload: crate::eff::EventPayload,
-        waiters: &mut WaiterTransfer,
-    ) -> SendResult<crate::endpoint::kernel::SendPreview> {
+    ) -> Poll<SendResult<crate::endpoint::kernel::SendPreview>> {
         let mut result = (|| {
             if let Some(kind) = self.session_fault() {
-                return Err(SendError::SessionFault(kind));
+                return Poll::Ready(Err(SendError::SessionFault(kind)));
             }
             match self.io.public_active_op {
-                PublicActiveOp::Idle => {}
-                PublicActiveOp::RouteBranch => {
-                    return self.preview_branch_send_meta(target_label, target_payload);
+                PublicActiveOp::Send => {}
+                PublicActiveOp::BranchSend => {
+                    return Poll::Ready(
+                        self.preview_branch_send_meta(target_label, target_payload),
+                    );
                 }
                 PublicActiveOp::Poisoned
-                | PublicActiveOp::Send
+                | PublicActiveOp::Idle
                 | PublicActiveOp::Recv
                 | PublicActiveOp::Offer
+                | PublicActiveOp::RouteBranch
                 | PublicActiveOp::RestoredRouteBranch
-                | PublicActiveOp::BranchRecv
-                | PublicActiveOp::BranchSend => return Err(SendError::PhaseInvariant),
+                | PublicActiveOp::BranchRecv => return Poll::Ready(Err(SendError::PhaseInvariant)),
             }
             let preview_error = Cell::new(None::<SendError>);
             let preview_result = {
@@ -90,33 +91,37 @@ where
                 )
             };
             if let Some(error) = preview_error.get() {
-                return Err(error);
+                return Poll::Ready(Err(error));
             }
-            let (meta, cursor_index) = preview_result.map_err(Self::map_send_preview_error)?;
+            let (meta, cursor_index) = match preview_result {
+                Ok(preview) => preview,
+                Err(error) => match Self::map_send_preview_error(error) {
+                    Poll::Pending => return Poll::Pending,
+                    Poll::Ready(error) => return Poll::Ready(Err(error)),
+                },
+            };
             if meta.payload_kind != target_payload {
-                return Err(SendError::PayloadMismatch {
+                return Poll::Ready(Err(SendError::PayloadMismatch {
                     expected: meta.payload_kind,
                     actual: target_payload,
-                });
+                }));
             }
             let route_authority = self.prepare_send_route_authority(
                 &meta,
                 target_label,
                 state_index_to_usize(cursor_index),
             )?;
-            Ok(crate::endpoint::kernel::SendPreview::with_route_authority(
-                meta,
-                cursor_index,
-                route_authority,
+            Poll::Ready(Ok(
+                crate::endpoint::kernel::SendPreview::with_route_authority(
+                    meta,
+                    cursor_index,
+                    route_authority,
+                ),
             ))
         })();
         self.reconcile_retired_views();
         if let Some(kind) = self.session_fault() {
-            result = Err(SendError::SessionFault(kind));
-        }
-        if let Err(error) = &result {
-            self.clear_endpoint_waiter(waiters);
-            self.poison_for_send_error(error);
+            result = Poll::Ready(Err(SendError::SessionFault(kind)));
         }
         result
     }

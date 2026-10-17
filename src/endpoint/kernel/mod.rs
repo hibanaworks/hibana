@@ -175,9 +175,7 @@ mod recv_commit_plan;
 
 pub(crate) use self::core::actor_storage_layout;
 pub(super) use self::core::*;
-pub(crate) use self::core::{
-    OperationKernel, PublicSlotOwnership, ResidentActor, SendInit, SendPreview, SendRuntimeDesc,
-};
+pub(crate) use self::core::{OperationKernel, PublicSlotOwnership, ResidentActor, SendPreview};
 pub(crate) use self::frontier::FrontierScratchLayout;
 pub(crate) use self::lane_port::RawSendPayload;
 pub(crate) use self::layout::EndpointArenaLayout;

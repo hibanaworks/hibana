@@ -208,24 +208,31 @@ theorem a_selected_foreign_actor_is_excluded
     actorMayRemain actor (some holder) = false := by
   simp [actorMayRemain, different]
 
-def waitsForAnotherView (view : Nat) (pending : List Nat) : Bool :=
-  !pending.isEmpty && !(pending.any fun role => decide (role = view))
+def waitsForOtherViews (held pending : List Nat) : Bool :=
+  !pending.isEmpty && !(pending.any fun role => held.contains role)
 
 theorem a_pending_own_operation_cannot_be_waited_out
-    (view : Nat) (pending : List Nat) (own : view ∈ pending) :
-    waitsForAnotherView view pending = false := by
-  have present : (pending.any fun role => decide (role = view)) = true :=
-    List.any_eq_true.mpr ⟨view, own, decide_eq_true rfl⟩
-  simp [waitsForAnotherView, present]
+    (held pending : List Nat) (view : Nat) (owned : view ∈ held) (own : view ∈ pending) :
+    waitsForOtherViews held pending = false := by
+  have present : (pending.any fun role => held.contains role) = true :=
+    List.any_eq_true.mpr ⟨view, own, by simp [owned]⟩
+  unfold waitsForOtherViews
+  rw [present]
+  cases pending.isEmpty <;> rfl
+
+theorem a_pending_payload_operation_cannot_be_waited_out
+    (view resource : Nat) (pending : List Nat) (own : resource ∈ pending) :
+    waitsForOtherViews [view, resource] pending = false :=
+  a_pending_own_operation_cannot_be_waited_out _ _ resource (by simp) own
 
 theorem waiting_for_another_view_never_authorizes_a_commit
-    (view : Nat) (pending : List Nat)
-    (waiting : waitsForAnotherView view pending = true) :
+    (held pending : List Nat)
+    (waiting : waitsForOtherViews held pending = true) :
     pending.isEmpty = false := by
-  cases empty : pending.isEmpty <;> simp_all [waitsForAnotherView]
+  cases empty : pending.isEmpty <;> simp_all [waitsForOtherViews]
 
-theorem a_finished_predecessor_set_does_not_wait (view : Nat) :
-    waitsForAnotherView view [] = false := rfl
+theorem a_finished_predecessor_set_does_not_wait (held : List Nat) :
+    waitsForOtherViews held [] = false := rfl
 
 theorem old_first_label_is_an_unchosen_descendant :
     firstLabel (.route 102 (.leaf 2) (.leaf 3)) = 2 := rfl
@@ -257,6 +264,7 @@ theorem nested_right_decisions_select_the_actual_leaf :
 #print axioms the_selected_local_actor_is_not_excluded
 #print axioms a_selected_foreign_actor_is_excluded
 #print axioms a_pending_own_operation_cannot_be_waited_out
+#print axioms a_pending_payload_operation_cannot_be_waited_out
 #print axioms waiting_for_another_view_never_authorizes_a_commit
 #print axioms a_finished_predecessor_set_does_not_wait
 end ControllerOffer

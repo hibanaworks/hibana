@@ -13,7 +13,7 @@ use core::{
 
 use crate::{
     endpoint::{EndpointError, EndpointOp, SendError, SendResult, kernel},
-    transport::{FrameLabel, wire::WireEncode},
+    transport::wire::WireEncode,
 };
 
 #[derive(Clone, Copy)]
@@ -36,14 +36,6 @@ struct RawSendFuture<'a, 'e, 'r, const ROLE: u8> {
 
 pub(crate) struct SendFuture<'a, 'e, 'r, const ROLE: u8> {
     raw: RawSendFuture<'a, 'e, 'r, ROLE>,
-}
-
-#[inline]
-pub(crate) const fn send_runtime_desc(
-    logical_label: u8,
-    frame_label: FrameLabel,
-) -> kernel::SendRuntimeDesc {
-    kernel::SendRuntimeDesc::new(logical_label, frame_label)
 }
 
 impl<'a, 'e, 'r, const ROLE: u8> SendFuture<'a, 'e, 'r, ROLE> {

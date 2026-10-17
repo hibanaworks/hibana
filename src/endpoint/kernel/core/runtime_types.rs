@@ -1,7 +1,6 @@
 use super::commit_delta::PreparedCommitDelta;
 use super::{
-    Lane, LaneGuard, Port, ResidentActor, SendMeta, SendPreview, SendResult, SendRouteAudit,
-    SendRouteAuthority, StateIndex, Transport, lane_port,
+    Lane, LaneGuard, Port, ResidentActor, SendResult, SendRouteAudit, Transport, lane_port,
 };
 
 pub(in crate::endpoint::kernel::core) struct SendProgressCommitPlan {
@@ -102,28 +101,11 @@ impl SendRuntimeDesc {
     }
 }
 
-#[derive(Clone, Copy)]
-pub(crate) struct SendInit {
-    pub(in crate::endpoint::kernel) descriptor: SendRuntimeDesc,
-    pub(in crate::endpoint::kernel) preview: SendPreview,
-}
-
-impl SendInit {
-    #[inline]
-    pub(crate) const fn new(descriptor: SendRuntimeDesc, preview: SendPreview) -> Self {
-        Self {
-            descriptor,
-            preview,
-        }
-    }
-}
-
 pub(crate) enum SendState<'r> {
-    Init {
-        descriptor: SendRuntimeDesc,
-        meta: SendMeta,
-        preview_cursor_index: Option<StateIndex>,
-        route_authority: SendRouteAuthority,
+    Preparing {
+        logical_label: u8,
+        payload_kind: crate::eff::EventPayload,
+        input: Option<lane_port::SendInput>,
     },
     Sending {
         pending: PendingSendIo<'r>,

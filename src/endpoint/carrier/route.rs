@@ -133,6 +133,11 @@ where
                 },
             )
         };
+        if matches!(&poll, Poll::Ready(Ok(_))) {
+            // SAFETY: branch receive has committed and released its kernel
+            // borrow; the consumed branch still retains the carrier Endpoint.
+            unsafe { Self::wake_public_actor_waiters(ptr, handle) };
+        }
         OutSlot::new(out).write(poll);
     }
 }

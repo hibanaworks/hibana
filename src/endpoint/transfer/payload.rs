@@ -66,32 +66,11 @@ impl<P: WireEncode + WirePayload> PayloadSpec for P {
         let endpoint = branch.endpoint;
         let logical_label = <M as crate::g::Message>::LOGICAL_LABEL;
         let payload_kind = crate::global::payload_kind::<M>();
-        let mut preview = core::mem::MaybeUninit::<crate::endpoint::kernel::SendPreview>::uninit();
-        if let Err(error) =
-            /* SAFETY: consuming the branch transfers its unique endpoint borrow into the returned future or a terminal ready error. */
-            unsafe {
-                (&mut *endpoint).preview_send(logical_label, payload_kind, preview.as_mut_ptr())
-            }
-        {
+        let result = /* SAFETY: the consumed branch owns the in-flight kernel borrow until the returned future completes or drops. */ unsafe {
+            (&mut *endpoint).begin_public_send_state(logical_label, payload_kind)
+        };
+        if let Err(error) = result {
             return SendFuture::ready_error(error);
-        }
-        let preview = /* SAFETY: preview_send returned Ok and initialized the out slot. */ unsafe {
-            preview.assume_init()
-        };
-        let desc = crate::endpoint::send::send_runtime_desc(
-            logical_label,
-            crate::transport::FrameLabel::new(preview.frame_label()),
-        );
-        let init = crate::endpoint::kernel::SendInit::new(desc, preview);
-        let lease = /* SAFETY: the consumed branch owns the in-flight kernel borrow until the returned future completes or drops. */ unsafe {
-            (&mut *endpoint).init_public_send_state(&init)
-        };
-        match lease {
-            crate::endpoint::kernel::PublicOpLease::Held => {}
-            crate::endpoint::kernel::PublicOpLease::Rejected => {
-                return SendFuture::ready_error(crate::endpoint::SendError::PhaseInvariant);
-            }
-            crate::endpoint::kernel::PublicOpLease::Faulted => crate::invariant(),
         }
         SendFuture::pending_armed(endpoint, payload)
     }

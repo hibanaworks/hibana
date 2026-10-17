@@ -4,6 +4,10 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${ROOT_DIR}"
 export TOOLCHAIN="${TOOLCHAIN:-stable}"
+# Retain source locations without full type/value DWARF for the projection
+# test matrix. Debug assertions and overflow checks remain enabled.
+export CARGO_PROFILE_DEV_DEBUG=line-tables-only
+export CARGO_PROFILE_TEST_DEBUG=line-tables-only
 
 if [[ "${HIBANA_FINAL_FORM_COMPILE_PRESSURE_GUARD:-1}" != "0" \
   && "${HIBANA_FINAL_FORM_COMPILE_PRESSURE_GUARD_ACTIVE:-0}" != "1" ]]; then

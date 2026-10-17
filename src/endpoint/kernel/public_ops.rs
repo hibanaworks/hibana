@@ -1,7 +1,7 @@
 //! Public endpoint operation lifecycle: preview reset, terminal clear, and waiter ownership.
 
 use super::{
-    core::{OperationKernel, PublicActiveOp, PublicOpEdge, SendInit, SendState},
+    core::{OperationKernel, PublicActiveOp, PublicOpEdge, SendState},
     lane_port,
     offer::OfferState,
 };
@@ -146,11 +146,14 @@ where
     }
 
     #[inline]
-    #[must_use]
     pub(in crate::endpoint) fn init_public_send_state(
         &mut self,
-        init: &SendInit,
-    ) -> super::core::PublicOpLease {
+        logical_label: u8,
+        payload_kind: crate::eff::EventPayload,
+    ) -> crate::endpoint::SendResult<()> {
+        if let Some(kind) = self.session_fault() {
+            return Err(crate::endpoint::SendError::SessionFault(kind));
+        }
         let lease = match self.io.public_active_op {
             PublicActiveOp::Idle => self.transition_public_op(PublicOpEdge::BeginSend),
             PublicActiveOp::RouteBranch if self.io.public_route_branch.is_some() => {
@@ -173,18 +176,21 @@ where
         };
         match lease {
             super::core::PublicOpLease::Held => {}
-            super::core::PublicOpLease::Rejected | super::core::PublicOpLease::Faulted => {
-                return lease;
+            super::core::PublicOpLease::Rejected => {
+                return Err(crate::endpoint::SendError::PhaseInvariant);
+            }
+            super::core::PublicOpLease::Faulted => {
+                return Err(crate::endpoint::SendError::SessionFault(
+                    crate::invariant_some(self.session_fault()),
+                ));
             }
         }
-        let (meta, preview_cursor_index, route_authority) = init.preview.into_parts();
-        self.io.public_send_state = SendState::Init {
-            descriptor: init.descriptor,
-            meta,
-            preview_cursor_index: Some(preview_cursor_index),
-            route_authority,
+        self.io.public_send_state = SendState::Preparing {
+            logical_label,
+            payload_kind,
+            input: None,
         };
-        lease
+        Ok(())
     }
 
     #[inline]

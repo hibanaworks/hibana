@@ -97,6 +97,12 @@ pub(crate) trait BranchRecvKernelEndpoint<'r> {
 }
 
 pub(crate) trait SendKernelEndpoint<'r> {
+    fn poll_send_preview_kernel(
+        &mut self,
+        logical_label: u8,
+        payload_kind: crate::eff::EventPayload,
+    ) -> Poll<SendResult<SendPreview>>;
+
     fn poll_send_init_kernel(
         &mut self,
         descriptor: SendRuntimeDesc,
@@ -204,26 +210,46 @@ pub(crate) fn kernel_send<'r>(
 ) -> Poll<SendResult<SendCommitOutcome<'r>>> {
     loop {
         match state {
-            SendState::Init {
-                descriptor,
-                meta,
-                preview_cursor_index,
-                route_authority,
-            } => match endpoint.poll_send_init_kernel(
-                *descriptor,
-                *meta,
-                *preview_cursor_index,
-                *route_authority,
-                payload.take(),
-            ) {
-                SendInitOutcome::Ready(result) => {
-                    *state = SendState::Done;
-                    return Poll::Ready(result);
+            SendState::Preparing {
+                logical_label,
+                payload_kind,
+                input,
+            } => {
+                if let Some(payload) = payload.take()
+                    && input.replace(payload).is_some()
+                {
+                    crate::invariant();
                 }
-                SendInitOutcome::Pending { pending } => {
-                    *state = SendState::Sending { pending };
+                let preview = match endpoint.poll_send_preview_kernel(*logical_label, *payload_kind)
+                {
+                    Poll::Pending => return Poll::Pending,
+                    Poll::Ready(Err(error)) => {
+                        *state = SendState::Done;
+                        return Poll::Ready(Err(error));
+                    }
+                    Poll::Ready(Ok(preview)) => preview,
+                };
+                let descriptor = SendRuntimeDesc::new(
+                    *logical_label,
+                    crate::transport::FrameLabel::new(preview.frame_label()),
+                );
+                let (meta, cursor_index, route_authority) = preview.into_parts();
+                match endpoint.poll_send_init_kernel(
+                    descriptor,
+                    meta,
+                    Some(cursor_index),
+                    route_authority,
+                    input.take(),
+                ) {
+                    SendInitOutcome::Ready(result) => {
+                        *state = SendState::Done;
+                        return Poll::Ready(result);
+                    }
+                    SendInitOutcome::Pending { pending } => {
+                        *state = SendState::Sending { pending };
+                    }
                 }
-            },
+            }
             SendState::Sending { pending } => {
                 match endpoint.poll_send_pending_kernel(pending, cx) {
                     Poll::Pending => return Poll::Pending,
@@ -247,6 +273,15 @@ impl<'r, T> SendKernelEndpoint<'r> for OperationKernel<'_, 'r, T>
 where
     T: Transport + 'r,
 {
+    #[inline]
+    fn poll_send_preview_kernel(
+        &mut self,
+        logical_label: u8,
+        payload_kind: crate::eff::EventPayload,
+    ) -> Poll<SendResult<SendPreview>> {
+        self.poll_send_preview(logical_label, payload_kind)
+    }
+
     #[inline]
     fn poll_send_init_kernel(
         &mut self,
@@ -309,6 +344,8 @@ mod send_ops;
 mod send_preview;
 mod send_preview_authority;
 mod send_route_authority;
+#[cfg(kani)]
+mod send_wait_kani;
 
 pub(crate) use super::decision_state::{
     PreparedRouteCommitRows, SelectedRouteCommitRow, SelectedRouteCommitRowsRef,

@@ -68,6 +68,11 @@ where
                 },
             )
         };
+        if matches!(&poll, Poll::Ready(Ok(_))) {
+            // SAFETY: the kernel borrow ended; this receive still retains its
+            // carrier Endpoint while other logical views are notified.
+            unsafe { Self::wake_public_actor_waiters(ptr, handle) };
+        }
         OutSlot::new(out).write(poll);
     }
 }

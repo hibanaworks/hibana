@@ -21,10 +21,22 @@ the receive or touching its transport early. Its own missing predecessor still
 rejects out-of-order use. The runtime fixture runs both holder choices and both
 inner choices, with the observer polled before its co-resident controller.
 
-The current supplemental model has 25 general Lean theorems and Z3 checks
-20 UNSAT obligations plus 4 SAT witnesses. The new claims concern projected
+The current supplemental model has 26 general Lean theorems and Z3 checks
+21 UNSAT obligations plus 5 SAT witnesses. The new claims concern projected
 first-operation membership, logical-view authority, conditional event exclusion
-and waiting without commit authority. They do not prove the full Rust compiler or distributed executor.
+and waiting without commit authority. An owned send also holds its payload
+view, so a missing operation of that resource cannot be waited out. A distinct
+live view may still enable the send. These claims do not prove the full Rust
+compiler or distributed executor.
+
+Send preparation now stays inside the shared non-generic send poll. While
+another view's prerequisite is pending, it retains the input without touching
+transport or invoking a premature resolver. Dropping this preparation releases
+the operation lease without advancing. Successful send and receive commits
+wake the actor's other views after releasing the kernel borrow and operation
+lease. Runtime tests check actual wake delivery, cancellation, an early owned
+return, resolver ordering, and a Tokio join with the waiting operation polled
+first. The public `send`/`recv`/`offer` API is unchanged.
 Two Kani harnesses query the actual production cursor and owned role images
 over every raw u16 scope identity. Runtime regressions remain necessary.
 An additional Kani harness interprets the actual compact actor reference for

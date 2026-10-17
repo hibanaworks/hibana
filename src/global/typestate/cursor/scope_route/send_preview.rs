@@ -252,42 +252,6 @@ impl EventCursor {
         self.route_scope_end_by_id(scope_id)
     }
 
-    fn send_preview_contract_at_index(&self, idx: usize) -> Option<(u8, crate::eff::EventPayload)> {
-        if let Some(meta) = self.try_recv_meta_at(idx) {
-            return Some((meta.label, meta.payload_kind));
-        }
-        if let Some(meta) = self.try_send_meta_at(idx) {
-            return Some((meta.label, meta.payload_kind));
-        }
-        if let Some(meta) = self.try_local_meta_at(idx) {
-            return Some((meta.label, meta.payload_kind));
-        }
-        None
-    }
-
-    fn send_preview_missing_start_error(
-        &self,
-        target_label: u8,
-        target_payload: crate::eff::EventPayload,
-    ) -> SendPreviewError {
-        if let Some(idx) = self.first_pending_step_index()
-            && let Some((expected_label, expected_payload)) =
-                self.send_preview_contract_at_index(idx)
-        {
-            if expected_label == target_label {
-                return SendPreviewError::PayloadMismatch {
-                    expected: expected_payload,
-                    actual: target_payload,
-                };
-            }
-            return SendPreviewError::LabelMismatch {
-                expected: expected_label,
-                actual: target_label,
-            };
-        }
-        SendPreviewError::Invariant
-    }
-
     #[inline(never)]
     fn send_preview_apply_controller_route_decision_for_contract(
         &self,
@@ -617,7 +581,11 @@ impl EventCursor {
                 EventCommitMeta::from(current_meta),
                 &mut arm_for_scope,
             )
-            .map_err(|_| SendPreviewError::Invariant)?;
+            .map_err(|error| match error {
+                super::EventAdmissionError::OtherViewPending => SendPreviewError::OtherViewPending,
+                super::EventAdmissionError::Invariant
+                | super::EventAdmissionError::PredecessorPending => SendPreviewError::Invariant,
+            })?;
             return Ok(Some((current_meta, StateIndex::from_usize(*idx))));
         }
 
@@ -655,14 +623,12 @@ impl EventCursor {
     ) -> Result<(SendMeta, StateIndex), SendPreviewError> {
         let target_label = selector.label;
         let target_payload = selector.payload_kind;
-        let mut idx = self
-            .send_preview_start_index_for_contract(
-                selector.role,
-                target_label,
-                target_payload,
-                committed_arm_for_scope,
-            )
-            .ok_or_else(|| self.send_preview_missing_start_error(target_label, target_payload))?;
+        let mut idx = self.send_preview_start_index_for_contract(
+            selector.role,
+            target_label,
+            target_payload,
+            committed_arm_for_scope,
+        )?;
         let mut preview_route_arm: Option<SendPreviewRouteArm> = None;
 
         {

@@ -63,6 +63,7 @@ impl CursorInvariantError {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SendPreviewError {
     Invariant,
+    OtherViewPending,
     LabelMismatch {
         expected: u8,
         actual: u8,

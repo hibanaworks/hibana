@@ -130,48 +130,61 @@ where
                 actor_index += 1;
                 continue;
             }
-            let generation = slot.generation;
-            let mut view_index = 0;
-            while let Some(current) = self.endpoint_lease_slot_by_index(actor_index) {
-                // A wake can destroy another view or actor and relocate the
-                // record table. Reload and validate before every view access.
-                if !current.is_published() || current.generation != generation || current.sid != sid
-                {
-                    break;
-                }
-                let (slab, slab_len) = self.slab_ptr_and_len();
-                let offset = current.offset as usize;
-                let len = current.len as usize;
-                if offset.checked_add(len).is_none_or(|end| end > slab_len)
-                    || len < core::mem::size_of::<crate::endpoint::kernel::ResidentActor<'_, T>>()
-                {
-                    crate::invariant();
-                }
-                let waiter = {
-                    // SAFETY: only a published slot addresses an initialized
-                    // pinned actor. No actor/view reference spans wake().
-                    let actor = unsafe {
-                        &*slab
-                            .add(offset)
-                            .cast::<crate::endpoint::kernel::ResidentActor<'_, T>>()
-                    };
-                    let Some(view) = actor.views.as_slice().get(view_index) else {
-                        break;
-                    };
-                    if view.public_header.generation() != 0
-                        && view.public_header.role() != excluded_role
-                    {
-                        view.waiter.take()
-                    } else {
-                        None
-                    }
-                };
-                view_index += 1;
-                if let Some(waiter) = waiter {
-                    waiter.wake();
-                }
-            }
+            self.wake_actor_endpoint_waiters(
+                crate::invariant_some(EndpointLeaseId::try_from(actor_index).ok()),
+                slot.generation,
+                excluded_role,
+            );
             actor_index += 1;
+        }
+    }
+
+    /// Consume wake owners only after the actor's operation lease is released.
+    /// Reload the published allocation after every arbitrary Waker callback.
+    pub(crate) fn wake_actor_endpoint_waiters(
+        &self,
+        lease_slot: EndpointLeaseId,
+        generation: u32,
+        excluded_role: u8,
+    ) {
+        let mut view_index = 0;
+        while let Some(current) = self.endpoint_lease_slot_by_index(usize::from(lease_slot)) {
+            // A wake can destroy another view or actor and relocate the
+            // record table. Reload and validate before every view access.
+            if !current.is_published() || current.generation != generation {
+                break;
+            }
+            let (slab, slab_len) = self.slab_ptr_and_len();
+            let offset = current.offset as usize;
+            let len = current.len as usize;
+            if offset.checked_add(len).is_none_or(|end| end > slab_len)
+                || len < core::mem::size_of::<crate::endpoint::kernel::ResidentActor<'_, T>>()
+            {
+                crate::invariant();
+            }
+            let waiter = {
+                // SAFETY: only a published slot addresses an initialized
+                // pinned actor. No actor/view reference spans wake().
+                let actor = unsafe {
+                    &*slab
+                        .add(offset)
+                        .cast::<crate::endpoint::kernel::ResidentActor<'_, T>>()
+                };
+                let Some(view) = actor.views.as_slice().get(view_index) else {
+                    break;
+                };
+                if view.public_header.generation() != 0
+                    && view.public_header.role() != excluded_role
+                {
+                    view.waiter.take()
+                } else {
+                    None
+                }
+            };
+            view_index += 1;
+            if let Some(waiter) = waiter {
+                waiter.wake();
+            }
         }
     }
 
