@@ -99,6 +99,7 @@ fn a_completed_right_arm_reopens_the_public_route_without_receiving() {
     let mut service = service_rv.enter(sid, &service_program).unwrap();
     tokio::runtime::Builder::new_current_thread()
         .enable_time()
+        .start_paused(true)
         .build()
         .unwrap()
         .block_on(async {
@@ -159,6 +160,7 @@ fn a_conditional_controller_does_not_take_authority_from_its_co_resident_observe
     );
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_time()
+        .start_paused(true)
         .build()
         .unwrap();
     for outer in [DecisionArm::Left, DecisionArm::Right] {

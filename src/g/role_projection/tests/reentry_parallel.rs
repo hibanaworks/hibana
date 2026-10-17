@@ -35,6 +35,7 @@ fn parallel_loan_reentry_preserves_the_other_body_and_completed_tail() {
     );
     tokio::runtime::Builder::new_current_thread()
         .enable_time()
+        .start_paused(true)
         .build()
         .unwrap()
         .block_on(async {

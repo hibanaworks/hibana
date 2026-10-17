@@ -97,11 +97,18 @@ run_miri_test \
 
 # Shared views include both conditional holders and independent rolled routes.
 MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \
+  actor-owned-progress \
+  -p hibana \
+  --lib \
+  g::role_projection::tests::owned::
+
+MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \
   actor-local-progress \
   -p hibana \
   --lib \
   g::role_projection::tests \
-  -- --skip g::role_projection::tests::reentry_choice::an_enclosing_choice_survives_two_delegated_roll_visits \
+  -- --skip g::role_projection::tests::owned:: \
+  --skip g::role_projection::tests::reentry_choice::an_enclosing_choice_survives_two_delegated_roll_visits \
   --skip g::role_projection::tests::reentry_parallel::parallel_loan_reentry_preserves_the_other_body_and_completed_tail \
   --skip g::role_projection::tests::conditional_controller::a_completed_right_arm_reopens_the_public_route_without_receiving \
   --skip g::role_projection::tests::conditional_controller::a_conditional_controller_does_not_take_authority_from_its_co_resident_observer

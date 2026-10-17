@@ -35,6 +35,7 @@ fn an_enclosing_choice_survives_two_delegated_roll_visits() {
     );
     tokio::runtime::Builder::new_current_thread()
         .enable_time()
+        .start_paused(true)
         .build()
         .unwrap()
         .block_on(async {

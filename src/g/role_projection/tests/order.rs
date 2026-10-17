@@ -37,6 +37,7 @@ fn nested_parallel_actor_work_keeps_a_sibling_free_while_the_join_waits() {
     );
     tokio::runtime::Builder::new_current_thread()
         .enable_time()
+        .start_paused(true)
         .build()
         .unwrap()
         .block_on(async {

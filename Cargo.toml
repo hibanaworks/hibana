@@ -57,7 +57,7 @@ futures = "0.3"
 libc = "0.2"
 static_assertions = "1.1"
 trybuild = "1.0"
-tokio = { version = "1", features = ["macros", "rt", "sync", "time", "net", "io-util"] }
+tokio = { version = "1", features = ["macros", "rt", "sync", "time", "net", "io-util", "test-util"] }
 
 [[test]]
 name = "affine_progression"
