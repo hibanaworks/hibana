@@ -38,6 +38,12 @@ def ActorProgressObservation.progress (snapshot : ActorProgressObservation) : Li
 def ActorViewObservation.header (view : ActorViewObservation) : Nat × Nat × Nat :=
   (view.role, view.run, view.nonce)
 
+/-- An Endpoint value carries this stable tag. Its actor's temporary operation
+phase is observed separately and can change while that same value is in a future. -/
+theorem operation_phase_preserves_endpoint_value_identity
+    (view : ActorViewObservation) (phase : PublicOperationPhase) :
+    ({ view with operation := phase } : ActorViewObservation).header = view.header := rfl
+
 def ActorProgressObservation.viewHeaders (snapshot : ActorProgressObservation) : List (Nat × Nat × Nat) :=
   snapshot.views.map ActorViewObservation.header
 

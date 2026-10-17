@@ -159,6 +159,16 @@ theorem custodyPendingHeadersUnchanged : ownerPending.viewHeaders = ownerBefore.
 theorem custodyPendingProgressUnchanged : ownerPending.progress = ownerBefore.progress := by decide
 theorem custodyPendingPayloadBorrowed :
     (Hibana.observedActorView? ownerPending 10).map (·.operation) = some .sendPayload := by decide
+theorem custodyPendingChangesTheViewObservation :
+    Hibana.observedActorView? ownerPending 10 ≠ Hibana.observedActorView? ownerBefore 10 := by decide
+theorem custodyPendingPreservesTheEndpointValueIdentity :
+    (Hibana.observedActorView? ownerPending 10).map (fun view => (ownerPending.actor, view.header)) =
+      (Hibana.observedActorView? ownerBefore 10).map (fun view => (ownerBefore.actor, view.header)) := by decide
+theorem custodyActualPendingSendUsesTheSamePrivateValue :
+    ∃ sending : Nat × Nat × Nat × Nat, sending = initialValue ∧
+      (Hibana.observedActorView? ownerPending 10).map (fun view => (ownerPending.actor, view.header)) = some sending ∧
+      custodyPending.preparing = [sending] := by
+  exact ⟨initialValue, rfl, by decide, by decide⟩
 theorem custodyReturnUnpolledRuntimeUnchanged : workerSealed = workerReceived := by decide
 theorem custodyReturnFutureDropUnchanged : workerRetired = workerSent := by decide
 theorem custodyOldFutureDropUnchanged : ownerRetired = ownerReturned := by decide

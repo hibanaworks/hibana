@@ -5,7 +5,7 @@ import Init.Data.List.Nat.Pairwise
 namespace Hibana
 open EndpointDelegation
 
-private theorem successful_option_mapM_has_input
+theorem successful_option_mapM_has_input
     {α β : Type} {f : α → Option β} {inputs : List α} {outputs : List β}
     (accepted : inputs.mapM f = some outputs) :
     ∀ output ∈ outputs, ∃ input ∈ inputs, f input = some output := by

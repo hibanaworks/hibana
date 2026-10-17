@@ -1,4 +1,9 @@
 custodyAcceptStep : Step Action.accept custodyPending custodySent
+custodyActualPendingSendUsesTheSamePrivateValue : ∃ sending,
+  sending = initialValue ∧
+    Option.map (fun view => (ownerPending.actor, view.header)) (Hibana.observedActorView? ownerPending 10) =
+        some sending ∧
+      custodyPending.preparing = [sending]
 custodyCannotTreatTheUnpolledPayloadAsAnApplicationValue : ¬Execution custodyInitial
     (have __src := custodySealed;
     { usable := [initialValue], preparing := __src.preparing, acceptedFutures := __src.acceptedFutures,
@@ -19,10 +24,15 @@ custodyOldRetireStep : Step Action.retireAcceptedFuture custodyReturnRetired cus
 custodyOriginalTagRetired : Option.map (fun view => (ownerSent.actor, view.role, view.run, view.nonce))
     (Hibana.observedActorView? ownerSent 10) ≠
   some initialValue
+custodyPendingChangesTheViewObservation : Hibana.observedActorView? ownerPending 10 ≠
+  Hibana.observedActorView? ownerBefore 10
 custodyPendingExecution : Execution custodyInitial custodyPending
 custodyPendingHeadersUnchanged : ownerPending.viewHeaders = ownerBefore.viewHeaders
 custodyPendingPayloadBorrowed : Option.map (fun x => x.operation) (Hibana.observedActorView? ownerPending 10) =
   some Hibana.PublicOperationPhase.sendPayload
+custodyPendingPreservesTheEndpointValueIdentity : Option.map (fun view => (ownerPending.actor, view.header))
+    (Hibana.observedActorView? ownerPending 10) =
+  Option.map (fun view => (ownerBefore.actor, view.header)) (Hibana.observedActorView? ownerBefore 10)
 custodyPendingProgressUnchanged : ownerPending.progress = ownerBefore.progress
 custodyPendingStep : Step Action.unchanged custodySealed custodyPending
 custodyReceiveStep : Step Action.receive custodySent custodyReceived

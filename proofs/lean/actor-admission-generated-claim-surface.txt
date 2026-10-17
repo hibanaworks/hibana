@@ -1,3 +1,14 @@
+@arbitraryLiveReadSuffixKeepsTheExactValue : ∀ {View Frame : Type} {value : View}
+  {first final : Hibana.EndpointTransfer.Observation View Frame},
+  Hibana.EndpointTransfer.Execution first final →
+    Hibana.TransferValueLocated value first →
+      (∀ (prior next : Hibana.EndpointTransfer.Observation View Frame) (action : Hibana.EndpointTransfer.Action),
+          Hibana.EndpointTransfer.Execution first prior →
+            Hibana.EndpointTransfer.Step action prior next →
+              Hibana.EndpointTransfer.Execution next final →
+                Hibana.SourceUseBoundaryEvidence admissionImage admissionChoreo useData usePath resourceKey readRow
+                  action) →
+        Hibana.TransferValueLocated value final
 completedStepReplayRejected : (have __src := received;
       { snapshot := __src.snapshot, pathIndex := __src.pathIndex, admitted := received.admitted.set 0 true }).check
     admissionImage admissionChoreo =
@@ -13,6 +24,8 @@ dbDoneSourceReadiness : ∃ data path,
             dbDone.admitted[row.eventId]? = some (Hibana.sourceRowReady data path dbDone.snapshot row) ∧
               (Hibana.sourceRowReady data path dbDone.snapshot row = true →
                 Hibana.sourceRowViewsIssued path dbDone.snapshot row = true)
+independentWorkCanRemainReadyAlongsideTheRead : Hibana.sourceRowReady useData usePath received.snapshot readRow = true ∧
+  Hibana.sourceRowReady useData usePath received.snapshot (useData.rows[2]?.get ⋯) = true
 initialChecked : initial.check admissionImage admissionChoreo = true
 initialSourceReadiness : ∃ data path,
   admissionImage.decodeActorOrder? admissionChoreo = some data ∧
@@ -49,6 +62,9 @@ prematureReturnRejected : (have __src := received;
       { snapshot := __src.snapshot, pathIndex := __src.pathIndex, admitted := received.admitted.set 3 true }).check
     admissionImage admissionChoreo =
   false
+readyReadExcludesReturnInEverySnapshot : ∀ (snapshot : Hibana.ActorProgressObservation),
+  Hibana.sourceRowReady useData usePath snapshot readRow = true →
+    Hibana.sourceRowReady useData usePath snapshot returnRow = false
 receivedChecked : received.check admissionImage admissionChoreo = true
 receivedSourceReadiness : ∃ data path,
   admissionImage.decodeActorOrder? admissionChoreo = some data ∧

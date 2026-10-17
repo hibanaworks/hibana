@@ -181,11 +181,11 @@ theorem source_checked_send_keeps_the_exact_frame_until_receive_or_fence
     {abstraction : carrier.State → TransportBoundaryState} {Fairness : Prop}
     (profile : CarrierProfile.ordered.Holds carrier abstraction Fairness)
     {current accepted : carrier.State} {before : TransportState}
-    {state : Observation (Nat × ActorViewObservation) TransportFrame}
-    {left right : List (Nat × ActorViewObservation)}
-    (initialView sending : Nat × ActorViewObservation) (label : Fin 256)
+    {state : Observation (Nat × Nat × Nat × Nat) TransportFrame}
+    {left right : List (Nat × Nat × Nat × Nat)}
+    (initialView sending : Nat × Nat × Nat × Nat) (label : Fin 256)
     (held : (observedActorView? sample.before facts.resource.role).map
-      (fun view => (sample.before.actor, view)) = some sending)
+      (fun view => (sample.before.actor, view.header)) = some sending)
     (execution : Execution (initial initialView) state)
     (preparing : state.preparing = left ++ sending :: right)
     (currentExact : abstraction current = .idle before)
@@ -245,8 +245,8 @@ theorem source_checked_receipt_keeps_the_exact_value_until_its_next_boundary
     (profile : CarrierProfile.ordered.Holds carrier abstraction Fairness)
     {current offered committed : carrier.State} {frame : TransportFrame}
     {before : TransportState}
-    {state : Observation (Nat × ActorViewObservation) TransportFrame}
-    {rest : List TransportFrame} (initialView : Nat × ActorViewObservation)
+    {state : Observation (Nat × Nat × Nat × Nat) TransportFrame}
+    {rest : List TransportFrame} (initialView : Nat × Nat × Nat × Nat)
     (execution : Execution (initial initialView) state)
     (currentExact : abstraction current = .idle before)
     (wellFormed : before.WellFormed)
@@ -256,22 +256,22 @@ theorem source_checked_receipt_keeps_the_exact_value_until_its_next_boundary
     (queued : state.inFlight = frame :: rest) :
     sample.after.actor = facts.binding.receiverActor ∧ sample.SourceOrdered image choreo ∧
       ∃ next after, Step .receive state next ∧
-        TransferValueLocated (sample.after.actor, facts.afterView) next ∧
+        TransferValueLocated (sample.after.actor, facts.afterView.header) next ∧
         abstraction committed = .idle after ∧ before.delivered < after.delivered ∧
         ∀ final, Execution next final →
-          TransferValueLocated (sample.after.actor, facts.afterView) final ∨
+          TransferValueLocated (sample.after.actor, facts.afterView.header) final ∨
           ∃ prior following action, Execution next prior ∧ Step action prior following ∧
-            TransferValueLocated (sample.after.actor, facts.afterView) prior ∧
+            TransferValueLocated (sample.after.actor, facts.afterView.header) prior ∧
             (action = .accept ∨ action = .abandonPreparation ∨ action = .dropValue) ∧
             Execution following final := by
   obtain ⟨ordered, _, _, next, after, step, _, issued, carrierAt, advances, _⟩ :=
     source_checked_carrier_receive_preserves_unique_authority checked decoded receiving profile
       initialView execution currentExact wellFormed received resolved identity queued
   have bound := one_binding_has_at_most_one_transferable_authority (.tail execution step)
-  have member : (sample.after.actor, facts.afterView) ∈ next.usable := by
+  have member : (sample.after.actor, facts.afterView.header) ∈ next.usable := by
     rw [issued]
     exact List.mem_cons_self
-  have located : TransferValueLocated (sample.after.actor, facts.afterView) next :=
+  have located : TransferValueLocated (sample.after.actor, facts.afterView.header) next :=
     .inl (one_usable_authority_is_the_exact_value bound member)
   refine ⟨checked_owned_receive_publishes_its_projected_actor checked decoded receiving,
     ordered, next, after, step, located, carrierAt, advances, ?_⟩

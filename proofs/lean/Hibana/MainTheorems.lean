@@ -11,6 +11,7 @@ import Hibana.ActorAdmission
 import Hibana.OwnedCommit
 import Hibana.OwnedRetirement
 import Hibana.SourceResourceAvailability
+import Hibana.SourceTransferAvailability
 import Hibana.ActorReentryCommit
 import Hibana.GlobalSemantics
 import Hibana.GlobalAllocationCorrectness

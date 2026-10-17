@@ -191,8 +191,8 @@ theorem source_checked_carrier_receive_preserves_unique_authority
     (profile : CarrierProfile.ordered.Holds carrier abstraction Fairness)
     {current offered committed : carrier.State} {frame : TransportFrame}
     {before : TransportState}
-    {state : EndpointTransfer.Observation (Nat × ActorViewObservation) TransportFrame}
-    {rest : List TransportFrame} (initialView : Nat × ActorViewObservation)
+    {state : EndpointTransfer.Observation (Nat × Nat × Nat × Nat) TransportFrame}
+    {rest : List TransportFrame} (initialView : Nat × Nat × Nat × Nat)
     (execution : EndpointTransfer.Execution (EndpointTransfer.initial initialView) state)
     (currentExact : abstraction current = .idle before)
     (wellFormed : before.WellFormed)
@@ -204,7 +204,7 @@ theorem source_checked_carrier_receive_preserves_unique_authority
       sample.before.actor = facts.binding.receiverActor ∧ wire.payload = facts.envelope ∧
       ∃ next after,
         EndpointTransfer.Step .receive state next ∧ next.usable.length ≤ 1 ∧
-        next.usable = (sample.after.actor, facts.afterView) :: state.usable ∧
+        next.usable = (sample.after.actor, facts.afterView.header) :: state.usable ∧
         abstraction committed = .idle after ∧ before.delivered < after.delivered ∧
         frame.channel.session = session ∧
         frame.channel.sender = facts.binding.message.sender.role ∧
@@ -219,7 +219,7 @@ theorem source_checked_carrier_receive_preserves_unique_authority
     exact (Option.some.inj actor).symm
   obtain ⟨next, after, step, bound, issued, _, committedExact, advances, _⟩ :=
     EndpointTransfer.ordered_carrier_commit_preserves_unique_authority profile
-      initialView (sample.after.actor, facts.afterView) execution currentExact wellFormed
+      initialView (sample.after.actor, facts.afterView.header) execution currentExact wellFormed
       received resolved queued
   exact ⟨sourceOrdered, receiverActor, envelope, next, after, step, bound, issued,
     committedExact, advances, identity.1.symm.trans sessionSame,

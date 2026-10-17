@@ -80,6 +80,22 @@ selected visit. It does not derive actual Rust value availability from a header,
 nor establish fresh rolled visits, carrier delivery or general distributed
 progress. The public owned-projection guard remains closed.
 
+`SourceTransferAvailability.lean` derives the causal order between a resource
+use and any distinct transfer from accepted source elaboration and the exact
+decoded actor rows. Consequently, a source-ready use excludes another handoff
+of that resource. A checked drop of a still-needed view records a fault. These
+results preserve the exact received value in application code or a private
+future across any finite live source-use interval, while allowing independent
+parallel work. The carrier composition binds this value to the checked receipt's
+projected actor and view. The interval still needs boundary observations that
+pass the independent checker; extracting these for every Rust execution,
+realizing pending futures, and fresh rolled visits remain separate obligations.
+
+The transferred value is identified by its actor and `(role, run, nonce)` header.
+The temporary operation phase belongs to the actor's I/O state, rather than the
+Endpoint value, and remains checked separately. The actual custody observations
+show an unchanged value identity while its view changes to `SendPayload`.
+
 Schema equality means equality of the canonical wire contract identified by
 `SCHEMA_ID`; it does not prove cross-binary Rust nominal type equality.
 
