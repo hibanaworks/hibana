@@ -1125,27 +1125,27 @@ def DecodedScopeMarker.rebase
     tag := if markRouteEnters && routeEnter then marker.tag % 4 + 4 else marker.tag
   }
 
-/-- Insert with the stable ordering used by `EffList::push_scope_marker_full_mut`:
-equal-offset rows already present remain before the new row. -/
-def insertScopeMarkerAfterEquals
-    (marker : DecodedScopeMarker) : List DecodedScopeMarker -> List DecodedScopeMarker
+/-- Match the source arena's backward insertion. At an equal offset an enter
+may cross a split or a later-preorder enter, but never an existing exit. Such
+an exit is a barrier even when an earlier child enter lies before it. -/
+private def insertReversedScopeMarker
+    (marker : DecodedScopeMarker) : List DecodedScopeMarker → List DecodedScopeMarker
   | [] => [marker]
-  | head :: tail =>
-      if marker.offset < head.offset then marker :: head :: tail
-      else head :: insertScopeMarkerAfterEquals marker tail
+  | previous :: rest =>
+      let beforeEqual := marker.tag % 4 == 0 && previous.offset == marker.offset &&
+        (previous.tag % 4 == 1 ||
+          (previous.tag % 4 == 0 && marker.scope % 8192 < previous.scope % 8192))
+      if marker.offset < previous.offset || beforeEqual then
+        previous :: insertReversedScopeMarker marker rest
+      else marker :: previous :: rest
 
-/-- Insert with the outer-enter ordering used by
-`EffList::push_scope_enter_marker_mut`. -/
-def insertScopeMarkerBeforeEquals
-    (marker : DecodedScopeMarker) : List DecodedScopeMarker -> List DecodedScopeMarker
-  | [] => [marker]
-  | head :: tail =>
-      if marker.offset ≤ head.offset then marker :: head :: tail
-      else head :: insertScopeMarkerBeforeEquals marker tail
+def insertScopeMarker
+    (marker : DecodedScopeMarker) (markers : List DecodedScopeMarker) : List DecodedScopeMarker :=
+  (insertReversedScopeMarker marker markers.reverse).reverse
 
-def insertScopeMarkersAfterEquals
+def insertScopeMarkers
     (markers additions : List DecodedScopeMarker) : List DecodedScopeMarker :=
-  additions.foldl (fun current marker => insertScopeMarkerAfterEquals marker current) markers
+  additions.foldl (fun current marker => insertScopeMarker marker current) markers
 
 def rebaseControlSource
     (source : CanonicalControlSource)
@@ -1169,7 +1169,7 @@ def canonicalControlSource : Choreo -> CanonicalControlSource
         left.eventCount leftSource.scopeBudget false
       {
         resolvers := leftSource.resolvers ++ rightSource.resolvers
-        markers := insertScopeMarkersAfterEquals leftSource.markers rightSource.markers
+        markers := insertScopeMarkers leftSource.markers rightSource.markers
         scopeBudget := leftSource.scopeBudget + rightSource.scopeBudget
       }
   | .par left right =>
@@ -1178,12 +1178,12 @@ def canonicalControlSource : Choreo -> CanonicalControlSource
       let leftSource := rebaseControlSource leftOriginal 0 1 false
       let rightSource := rebaseControlSource rightOriginal
         left.eventCount (1 + leftOriginal.scopeBudget) false
-      let nestedMarkers := insertScopeMarkersAfterEquals leftSource.markers rightSource.markers
-      let entered := insertScopeMarkerBeforeEquals
+      let nestedMarkers := insertScopeMarkers leftSource.markers rightSource.markers
+      let entered := insertScopeMarker
         { offset := 0, scope := 16384, tag := 0 } nestedMarkers
-      let split := insertScopeMarkerAfterEquals
+      let split := insertScopeMarker
         { offset := left.eventCount, scope := 16384, tag := 1 } entered
-      let exited := insertScopeMarkerAfterEquals
+      let exited := insertScopeMarker
         { offset := left.eventCount + right.eventCount,
           scope := 16384, tag := 2 } split
       {
@@ -1197,16 +1197,18 @@ def canonicalControlSource : Choreo -> CanonicalControlSource
       let leftSource := rebaseControlSource leftOriginal 0 1 false
       let rightSource := rebaseControlSource rightOriginal
         left.eventCount (1 + leftOriginal.scopeBudget) false
-      let enteredLeft := insertScopeMarkerBeforeEquals
-        { offset := 0, scope := 0, tag := 0 } leftSource.markers
-      let exitedLeft := insertScopeMarkerAfterEquals
+      -- SourceLowering emits both children before inserting the parent's four
+      -- markers. At the split, a right-child enter may precede the left exit.
+      let nestedMarkers := insertScopeMarkers leftSource.markers rightSource.markers
+      let enteredLeft := insertScopeMarker
+        { offset := 0, scope := 0, tag := 0 } nestedMarkers
+      let exitedLeft := insertScopeMarker
         { offset := left.eventCount, scope := 0, tag := 2 } enteredLeft
-      let enteredRight := insertScopeMarkerAfterEquals
+      let enteredRight := insertScopeMarker
         { offset := left.eventCount, scope := 0, tag := 0 } exitedLeft
-      let nestedMarkers := insertScopeMarkersAfterEquals enteredRight rightSource.markers
-      let exitedRight := insertScopeMarkerAfterEquals
+      let exitedRight := insertScopeMarker
         { offset := left.eventCount + right.eventCount,
-          scope := 0, tag := 2 } nestedMarkers
+          scope := 0, tag := 2 } enteredRight
       let controller := uniqueController
         ((left.firstVisibleSenders ++ right.firstVisibleSenders).eraseDups)
       {
@@ -1224,9 +1226,9 @@ def canonicalControlSource : Choreo -> CanonicalControlSource
   | .roll body =>
       let original := canonicalControlSource body
       let source := rebaseControlSource original 0 1 true
-      let entered := insertScopeMarkerBeforeEquals
+      let entered := insertScopeMarker
         { offset := 0, scope := 8192, tag := 0 } source.markers
-      let exited := insertScopeMarkerAfterEquals
+      let exited := insertScopeMarker
         { offset := body.eventCount, scope := 8192, tag := 2 } entered
       {
         source with

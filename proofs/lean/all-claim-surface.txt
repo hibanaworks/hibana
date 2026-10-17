@@ -220,6 +220,22 @@ Hibana.abort_peer_is_well_formed : ∀ (state : Hibana.TransportState), state.ab
                             Iff (@Eq.{1} Bool (@List.all.{0} Nat actual state.done) true)
                               (@Eq.{1} Bool (@List.all.{0} Nat (data.sourcePredecessors path row.eventId) state.done)
                                 true)))))
+@Hibana.accepted_actor_roll_reset_binds_source_choices : ∀ {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo}
+  {rows : List.{0} Hibana.DecodedRollRow} {roll : Hibana.DecodedRollRow} {slot : Nat},
+  @Eq.{1} Bool (image.actorRollCheck choreo) true →
+    @Eq.{1} (Option.{0} (List.{0} Hibana.DecodedRollRow)) image.decodeRollRows?
+        (@some.{0} (List.{0} Hibana.DecodedRollRow) rows) →
+      @Membership.mem.{0, 0} Hibana.DecodedRollRow (List.{0} Hibana.DecodedRollRow)
+          (@List.instMembership.{0} Hibana.DecodedRollRow) rows roll →
+        @Membership.mem.{0, 0} Nat (List.{0} Nat) (@List.instMembership.{0} Nat) (List.range image.routeScopeCount)
+            slot →
+          @Exists.{1} Nat fun scope =>
+            @Exists.{1} Bool fun actual =>
+              And (@Eq.{1} (Option.{0} Nat) (image.decodeRouteScope? slot) (@some.{0} Nat scope))
+                (And (@Eq.{1} (Option.{0} Bool) (image.rollResetsRoute? roll slot) (@some.{0} Bool actual))
+                  (@Eq.{1} (Option.{0} Bool)
+                    (Hibana.sourceRollResetsRoute? (Hibana.canonicalProgramSource choreo) roll.scope scope)
+                    (@some.{0} Bool actual)))
 @Hibana.accepted_actor_roll_reset_preserves_source_prefix : ∀ {image : Hibana.RustDescriptorImage}
   {choreo : Hibana.Choreo} {data : Hibana.DecodedActorOrder} {path : Hibana.EndpointDelegation.NormalizedPath}
   {rows : List.{0} Hibana.DecodedRollRow} {row : Hibana.DecodedRollRow} {state : Hibana.CommitState}
@@ -3989,6 +4005,39 @@ Hibana.recolor_roll_source_actions : ∀ (role : Nat) (source : Hibana.CompiledO
               (@some.{0} Hibana.AdmittedMessage message) →
             @Ne.{1} Hibana.AdmittedMessage message (config.expectedMessage globalId event) →
               @Eq.{1} (Option.{0} Hibana.GlobalConfig) (config.recvStep? globalId) (@none.{0} Hibana.GlobalConfig)
+@Hibana.reentered_source_path_binds_partially_known_actors : ∀ {columns : Hibana.DecodedProgramColumns}
+  {markers : List.{0} Hibana.DecodedScopeMarker} {previous next : Hibana.EndpointDelegation.NormalizedPath}
+  {state : Hibana.CommitState} {roll : Hibana.RollInfo} {event : Nat} {binding : Hibana.EndpointDelegation.Binding},
+  @Eq.{1} Bool (columns.sourcePathMatches markers next) true →
+    (∀ (scope : Nat) (arm : Hibana.RouteArm),
+        @Eq.{1} (Option.{0} Hibana.RouteArm) (state.selected scope) (@some.{0} Hibana.RouteArm arm) →
+          @Eq.{1} (Option.{0} Hibana.RouteArm) (Hibana.sourcePathArm? markers previous scope)
+            (@some.{0} Hibana.RouteArm arm)) →
+      (∀ (scope : Nat),
+          Not (@Membership.mem.{0, 0} Nat (List.{0} Nat) (@List.instMembership.{0} Nat) roll.conflicts scope) →
+            @Eq.{1} (Option.{0} Hibana.RouteArm) (Hibana.sourcePathArm? markers previous scope)
+              (Hibana.sourcePathArm? markers next scope)) →
+        @Membership.mem.{0, 0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)
+            (List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding))
+            (@List.instMembership.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)) next.bindings
+            (@Prod.mk.{0, 0} Nat Hibana.EndpointDelegation.Binding event binding) →
+          @Exists.{1} Nat fun sender =>
+            @Exists.{1} Nat fun receiver =>
+              And
+                (@Eq.{1} (Option.{0} (Prod.{0, 0} Nat Nat))
+                  (@getElem?.{0, 0, 0} (List.{0} (Prod.{0, 0} Nat Nat)) Nat (Prod.{0, 0} Nat Nat)
+                    (fun as i => @LT.lt.{0} Nat instLTNat i (@List.length.{0} (Prod.{0, 0} Nat Nat) as))
+                    (@List.instGetElem?NatLtLength.{0} (Prod.{0, 0} Nat Nat)) columns.actorBindings event)
+                  (@some.{0} (Prod.{0, 0} Nat Nat) (@Prod.mk.{0, 0} Nat Nat sender receiver)))
+                (And
+                  (∀ (actor : Nat),
+                    @Eq.{1} (Option.{0} Nat) (columns.selectedActor? (Hibana.resetRoll state roll).selected sender)
+                        (@some.{0} Nat actor) →
+                      @Eq.{1} Nat actor binding.senderActor)
+                  (∀ (actor : Nat),
+                    @Eq.{1} (Option.{0} Nat) (columns.selectedActor? (Hibana.resetRoll state roll).selected receiver)
+                        (@some.{0} Nat actor) →
+                      @Eq.{1} Nat actor binding.receiverActor))
 Hibana.reference_carrier_refines_affine_boundary : Hibana.AffineCarrierRefinement Hibana.referenceCarrierSemantics
   (@id.{1} Hibana.referenceCarrierSemantics.State)
 Hibana.reference_carrier_satisfies_mediated_contract : Hibana.MediatedCarrierContract Hibana.referenceCarrierSemantics
@@ -4083,6 +4132,21 @@ Hibana.repeated_alignment_source_is_rejected : ∀ (source : Nat) (visited : Lis
         (And (@Eq.{1} (List.{0} Nat) projectedRoll.conflicts globalRoll.conflicts)
           (@Eq.{1} Hibana.CommitState (config.resetLocalRoll rollId role)
             (Hibana.resetRoll (config.localState role) projectedRoll)))
+@Hibana.reset_roll_choices_match_next_source_path : ∀ {markers : List.{0} Hibana.DecodedScopeMarker}
+  {previous next : Hibana.EndpointDelegation.NormalizedPath} {state : Hibana.CommitState} {roll : Hibana.RollInfo},
+  (∀ (scope : Nat) (arm : Hibana.RouteArm),
+      @Eq.{1} (Option.{0} Hibana.RouteArm) (state.selected scope) (@some.{0} Hibana.RouteArm arm) →
+        @Eq.{1} (Option.{0} Hibana.RouteArm) (Hibana.sourcePathArm? markers previous scope)
+          (@some.{0} Hibana.RouteArm arm)) →
+    (∀ (scope : Nat),
+        Not (@Membership.mem.{0, 0} Nat (List.{0} Nat) (@List.instMembership.{0} Nat) roll.conflicts scope) →
+          @Eq.{1} (Option.{0} Hibana.RouteArm) (Hibana.sourcePathArm? markers previous scope)
+            (Hibana.sourcePathArm? markers next scope)) →
+      ∀ (scope : Nat) (arm : Hibana.RouteArm),
+        @Eq.{1} (Option.{0} Hibana.RouteArm) ((Hibana.resetRoll state roll).selected scope)
+            (@some.{0} Hibana.RouteArm arm) →
+          @Eq.{1} (Option.{0} Hibana.RouteArm) (Hibana.sourcePathArm? markers next scope)
+            (@some.{0} Hibana.RouteArm arm)
 Hibana.reset_roll_clears_done : ∀ (state : Hibana.CommitState) (roll : Hibana.RollInfo) (event : Nat),
   @Membership.mem.{0, 0} Nat (List.{0} Nat) (@List.instMembership.{0} Nat) roll.events event →
     @Eq.{1} Bool ((Hibana.resetRoll state roll).done event) false

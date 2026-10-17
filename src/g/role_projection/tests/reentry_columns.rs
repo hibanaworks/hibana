@@ -23,6 +23,24 @@ fn certificate<const ROLE: u8, Steps: g::ProgramShape + LeanChoreo, const CAPACI
         .join(", ");
     let descriptor = descriptor_source(RoleDescriptorRef::from_resident(image));
     let choreo = Steps::lean_source();
+    let mut choice_resets = Vec::new();
+    with_cursor(image, |cursor| {
+        for slot in 0..usize::from(image.columns().roll_scopes.len) {
+            let roll = image.roll_scope_row(slot).unwrap().scope();
+            let choices = (0..usize::from(image.columns().route_scopes.len))
+                .map(|route_slot| {
+                    let route = image.route_scope_by_slot(route_slot).unwrap();
+                    format!(
+                        "some {}",
+                        cursor.route_scope_contained_in_roll_scope(route, roll)
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            choice_resets.push(format!("[{choices}]"));
+        }
+    });
+    let choice_resets = choice_resets.join(", ");
     format!(
         "def {name}Choreo : Hibana.Choreo := {choreo}\n\n\
          def {name}Image : Hibana.RustDescriptorImage := {descriptor}\n\n\
@@ -33,7 +51,11 @@ fn certificate<const ROLE: u8, Steps: g::ProgramShape + LeanChoreo, const CAPACI
          theorem {name}RustRanges :\n  \
          ({name}Image.decodeRollRows?).map\n    \
          (fun rows => rows.map fun row => (row.scope, row.eventStart, row.eventLength)) =\n    \
-         some [{rows}] := by\n  decide\n\n",
+         some [{rows}] := by\n  decide\n\n\
+         theorem {name}RustChoiceReset :\n  \
+         ({name}Image.decodeRollRows?).map (fun rows => rows.map fun roll =>\n    \
+         (List.range {name}Image.routeScopeCount).map\n      \
+         ({name}Image.rollResetsRoute? roll)) = some [{choice_resets}] := by\n  decide\n\n",
     )
 }
 
@@ -59,6 +81,24 @@ pub(super) fn export() {
     source.push_str(&certificate::<3, composed::Global, 32>("nativeRollSide"));
     source.push_str(&certificate::<4, composed::Global, 32>(
         "nativeRollSidePeer",
+    ));
+    source.push_str(&certificate::<0, conditional_controller::Steps, 32>(
+        "conditionalRollOwner",
+    ));
+    source.push_str(&certificate::<1, conditional_controller::Steps, 32>(
+        "conditionalRollWorker",
+    ));
+    source.push_str(&certificate::<3, conditional_controller::Steps, 32>(
+        "conditionalRollService",
+    ));
+    source.push_str(&certificate::<0, reentry_choice::Steps, 32>(
+        "enclosedRollOwner",
+    ));
+    source.push_str(&certificate::<1, reentry_choice::Steps, 32>(
+        "enclosedRollWorker",
+    ));
+    source.push_str(&certificate::<3, reentry_choice::Steps, 32>(
+        "enclosedRollService",
     ));
     for (name, offset, value) in [
         ("rollTooShort", 2, 2),

@@ -24,6 +24,43 @@
 (check-sat)
 (pop)
 
+; One arbitrary route scope suffices to witness incompatible retained
+; knowledge. -1 is unknown and 0/1 are the two arms. The source-range checker
+; determines whether this scope belongs to the reset body.
+(declare-const reset_choice Bool)
+(declare-const old_choice Int)
+(declare-const previous_path Int)
+(declare-const next_path Int)
+(assert (and (<= (- 1) old_choice) (<= old_choice 1)
+  (<= (- 1) previous_path) (<= previous_path 1)
+  (<= (- 1) next_path) (<= next_path 1)))
+(define-fun fresh_choice () Int (ite reset_choice (- 1) old_choice))
+
+(push)
+(assert (=> (<= 0 old_choice) (= old_choice previous_path)))
+(assert (=> (not reset_choice) (= previous_path next_path)))
+(assert (and (<= 0 fresh_choice) (not (= fresh_choice next_path))))
+; EXPECT: unsat
+(check-sat)
+(pop)
+
+; An old inner choice must not constrain the next visit's different branch.
+(push)
+(assert (and reset_choice (= old_choice 0) (= previous_path 0) (= next_path 1)))
+(assert (and (<= 0 old_choice) (not (= old_choice next_path))))
+; EXPECT: sat
+(check-sat)
+(pop)
+
+; Changing an outer choice without a corresponding outer reset is invalid.
+; Body reset alone cannot make incompatible outside history agree.
+(push)
+(assert (and (not reset_choice) (= old_choice 0) (= previous_path 0) (= next_path 1)))
+(assert (and (<= 0 fresh_choice) (not (= fresh_choice next_path))))
+; EXPECT: sat
+(check-sat)
+(pop)
+
 ; A numerical prefix includes unrelated parallel history. An old continuation
 ; can stay complete while its own rolled body is fresh. The independent
 ; candidate must not acquire that continuation as a new source dependency.

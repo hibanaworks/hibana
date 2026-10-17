@@ -1,57 +1,225 @@
+conditionalRollOwnerRustChoiceReset : Option.map
+    (fun rows =>
+      List.map
+        (fun roll =>
+          List.map (conditionalRollOwnerImage.rollResetsRoute? roll)
+            (List.range conditionalRollOwnerImage.routeScopeCount))
+        rows)
+    conditionalRollOwnerImage.decodeRollRows? =
+  some []
+conditionalRollOwnerRustRanges : Option.map
+    (fun rows => List.map (fun row => (row.scope, row.eventStart, row.eventLength)) rows)
+    conditionalRollOwnerImage.decodeRollRows? =
+  some []
+conditionalRollOwnerSourceOrder : conditionalRollOwnerImage.actorOrderCheck conditionalRollOwnerChoreo = true
+conditionalRollOwnerSourceRanges : conditionalRollOwnerImage.actorRollCheck conditionalRollOwnerChoreo = true
+conditionalRollServiceRustChoiceReset : Option.map
+    (fun rows =>
+      List.map
+        (fun roll =>
+          List.map (conditionalRollServiceImage.rollResetsRoute? roll)
+            (List.range conditionalRollServiceImage.routeScopeCount))
+        rows)
+    conditionalRollServiceImage.decodeRollRows? =
+  some [[some false, some true]]
+conditionalRollServiceRustRanges : Option.map
+    (fun rows => List.map (fun row => (row.scope, row.eventStart, row.eventLength)) rows)
+    conditionalRollServiceImage.decodeRollRows? =
+  some [(1, 4, 8)]
+conditionalRollServiceSourceOrder : conditionalRollServiceImage.actorOrderCheck conditionalRollServiceChoreo = true
+conditionalRollServiceSourceRanges : conditionalRollServiceImage.actorRollCheck conditionalRollServiceChoreo = true
+conditionalRollWorkerRustChoiceReset : Option.map
+    (fun rows =>
+      List.map
+        (fun roll =>
+          List.map (conditionalRollWorkerImage.rollResetsRoute? roll)
+            (List.range conditionalRollWorkerImage.routeScopeCount))
+        rows)
+    conditionalRollWorkerImage.decodeRollRows? =
+  some [[some false, some true]]
+conditionalRollWorkerRustRanges : Option.map
+    (fun rows => List.map (fun row => (row.scope, row.eventStart, row.eventLength)) rows)
+    conditionalRollWorkerImage.decodeRollRows? =
+  some [(1, 3, 4)]
+conditionalRollWorkerSourceOrder : conditionalRollWorkerImage.actorOrderCheck conditionalRollWorkerChoreo = true
+conditionalRollWorkerSourceRanges : conditionalRollWorkerImage.actorRollCheck conditionalRollWorkerChoreo = true
+enclosedRollOwnerRustChoiceReset : Option.map
+    (fun rows =>
+      List.map
+        (fun roll =>
+          List.map (enclosedRollOwnerImage.rollResetsRoute? roll) (List.range enclosedRollOwnerImage.routeScopeCount))
+        rows)
+    enclosedRollOwnerImage.decodeRollRows? =
+  some [[some false], [some false]]
+enclosedRollOwnerRustRanges : Option.map
+    (fun rows => List.map (fun row => (row.scope, row.eventStart, row.eventLength)) rows)
+    enclosedRollOwnerImage.decodeRollRows? =
+  some [(1, 0, 2), (2, 2, 2)]
+enclosedRollOwnerSourceOrder : enclosedRollOwnerImage.actorOrderCheck enclosedRollOwnerChoreo = true
+enclosedRollOwnerSourceRanges : enclosedRollOwnerImage.actorRollCheck enclosedRollOwnerChoreo = true
+enclosedRollServiceRustChoiceReset : Option.map
+    (fun rows =>
+      List.map
+        (fun roll =>
+          List.map (enclosedRollServiceImage.rollResetsRoute? roll)
+            (List.range enclosedRollServiceImage.routeScopeCount))
+        rows)
+    enclosedRollServiceImage.decodeRollRows? =
+  some [[some false], [some false]]
+enclosedRollServiceRustRanges : Option.map
+    (fun rows => List.map (fun row => (row.scope, row.eventStart, row.eventLength)) rows)
+    enclosedRollServiceImage.decodeRollRows? =
+  some [(1, 0, 2), (2, 2, 2)]
+enclosedRollServiceSourceOrder : enclosedRollServiceImage.actorOrderCheck enclosedRollServiceChoreo = true
+enclosedRollServiceSourceRanges : enclosedRollServiceImage.actorRollCheck enclosedRollServiceChoreo = true
+enclosedRollWorkerRustChoiceReset : Option.map
+    (fun rows =>
+      List.map
+        (fun roll =>
+          List.map (enclosedRollWorkerImage.rollResetsRoute? roll) (List.range enclosedRollWorkerImage.routeScopeCount))
+        rows)
+    enclosedRollWorkerImage.decodeRollRows? =
+  some [[some false], [some false]]
+enclosedRollWorkerRustRanges : Option.map
+    (fun rows => List.map (fun row => (row.scope, row.eventStart, row.eventLength)) rows)
+    enclosedRollWorkerImage.decodeRollRows? =
+  some [(1, 0, 4), (2, 4, 4)]
+enclosedRollWorkerSourceOrder : enclosedRollWorkerImage.actorOrderCheck enclosedRollWorkerChoreo = true
+enclosedRollWorkerSourceRanges : enclosedRollWorkerImage.actorRollCheck enclosedRollWorkerChoreo = true
+nativeRollOwnerRustChoiceReset : Option.map
+    (fun rows =>
+      List.map
+        (fun roll =>
+          List.map (nativeRollOwnerImage.rollResetsRoute? roll) (List.range nativeRollOwnerImage.routeScopeCount))
+        rows)
+    nativeRollOwnerImage.decodeRollRows? =
+  some [[]]
 nativeRollOwnerRustRanges : Option.map
     (fun rows => List.map (fun row => (row.scope, row.eventStart, row.eventLength)) rows)
     nativeRollOwnerImage.decodeRollRows? =
   some [(1, 1, 2)]
 nativeRollOwnerSourceOrder : nativeRollOwnerImage.actorOrderCheck nativeRollOwnerChoreo = true
 nativeRollOwnerSourceRanges : nativeRollOwnerImage.actorRollCheck nativeRollOwnerChoreo = true
+nativeRollServiceRustChoiceReset : Option.map
+    (fun rows =>
+      List.map
+        (fun roll =>
+          List.map (nativeRollServiceImage.rollResetsRoute? roll) (List.range nativeRollServiceImage.routeScopeCount))
+        rows)
+    nativeRollServiceImage.decodeRollRows? =
+  some [[some true]]
 nativeRollServiceRustRanges : Option.map
     (fun rows => List.map (fun row => (row.scope, row.eventStart, row.eventLength)) rows)
     nativeRollServiceImage.decodeRollRows? =
   some [(1, 1, 4)]
 nativeRollServiceSourceOrder : nativeRollServiceImage.actorOrderCheck nativeRollServiceChoreo = true
 nativeRollServiceSourceRanges : nativeRollServiceImage.actorRollCheck nativeRollServiceChoreo = true
+nativeRollSidePeerRustChoiceReset : Option.map
+    (fun rows =>
+      List.map
+        (fun roll =>
+          List.map (nativeRollSidePeerImage.rollResetsRoute? roll) (List.range nativeRollSidePeerImage.routeScopeCount))
+        rows)
+    nativeRollSidePeerImage.decodeRollRows? =
+  some [[]]
 nativeRollSidePeerRustRanges : Option.map
     (fun rows => List.map (fun row => (row.scope, row.eventStart, row.eventLength)) rows)
     nativeRollSidePeerImage.decodeRollRows? =
   some [(3, 0, 2)]
 nativeRollSidePeerSourceOrder : nativeRollSidePeerImage.actorOrderCheck nativeRollSidePeerChoreo = true
 nativeRollSidePeerSourceRanges : nativeRollSidePeerImage.actorRollCheck nativeRollSidePeerChoreo = true
+nativeRollSideRustChoiceReset : Option.map
+    (fun rows =>
+      List.map
+        (fun roll =>
+          List.map (nativeRollSideImage.rollResetsRoute? roll) (List.range nativeRollSideImage.routeScopeCount))
+        rows)
+    nativeRollSideImage.decodeRollRows? =
+  some [[]]
 nativeRollSideRustRanges : Option.map
     (fun rows => List.map (fun row => (row.scope, row.eventStart, row.eventLength)) rows)
     nativeRollSideImage.decodeRollRows? =
   some [(3, 0, 2)]
 nativeRollSideSourceOrder : nativeRollSideImage.actorOrderCheck nativeRollSideChoreo = true
 nativeRollSideSourceRanges : nativeRollSideImage.actorRollCheck nativeRollSideChoreo = true
+nativeRollWorkerRustChoiceReset : Option.map
+    (fun rows =>
+      List.map
+        (fun roll =>
+          List.map (nativeRollWorkerImage.rollResetsRoute? roll) (List.range nativeRollWorkerImage.routeScopeCount))
+        rows)
+    nativeRollWorkerImage.decodeRollRows? =
+  some [[some true]]
 nativeRollWorkerRustRanges : Option.map
     (fun rows => List.map (fun row => (row.scope, row.eventStart, row.eventLength)) rows)
     nativeRollWorkerImage.decodeRollRows? =
   some [(1, 0, 6)]
 nativeRollWorkerSourceOrder : nativeRollWorkerImage.actorOrderCheck nativeRollWorkerChoreo = true
 nativeRollWorkerSourceRanges : nativeRollWorkerImage.actorRollCheck nativeRollWorkerChoreo = true
+nestedRollOwnerRustChoiceReset : Option.map
+    (fun rows =>
+      List.map
+        (fun roll =>
+          List.map (nestedRollOwnerImage.rollResetsRoute? roll) (List.range nestedRollOwnerImage.routeScopeCount))
+        rows)
+    nestedRollOwnerImage.decodeRollRows? =
+  some [[], []]
 nestedRollOwnerRustRanges : Option.map
     (fun rows => List.map (fun row => (row.scope, row.eventStart, row.eventLength)) rows)
     nestedRollOwnerImage.decodeRollRows? =
   some [(0, 0, 2), (1, 0, 2)]
 nestedRollOwnerSourceOrder : nestedRollOwnerImage.actorOrderCheck nestedRollOwnerChoreo = true
 nestedRollOwnerSourceRanges : nestedRollOwnerImage.actorRollCheck nestedRollOwnerChoreo = true
+nestedRollServiceRustChoiceReset : Option.map
+    (fun rows =>
+      List.map
+        (fun roll =>
+          List.map (nestedRollServiceImage.rollResetsRoute? roll) (List.range nestedRollServiceImage.routeScopeCount))
+        rows)
+    nestedRollServiceImage.decodeRollRows? =
+  some [[], []]
 nestedRollServiceRustRanges : Option.map
     (fun rows => List.map (fun row => (row.scope, row.eventStart, row.eventLength)) rows)
     nestedRollServiceImage.decodeRollRows? =
   some [(0, 0, 2), (1, 0, 2)]
 nestedRollServiceSourceOrder : nestedRollServiceImage.actorOrderCheck nestedRollServiceChoreo = true
 nestedRollServiceSourceRanges : nestedRollServiceImage.actorRollCheck nestedRollServiceChoreo = true
+nestedRollWorkerRustChoiceReset : Option.map
+    (fun rows =>
+      List.map
+        (fun roll =>
+          List.map (nestedRollWorkerImage.rollResetsRoute? roll) (List.range nestedRollWorkerImage.routeScopeCount))
+        rows)
+    nestedRollWorkerImage.decodeRollRows? =
+  some [[], []]
 nestedRollWorkerRustRanges : Option.map
     (fun rows => List.map (fun row => (row.scope, row.eventStart, row.eventLength)) rows)
     nestedRollWorkerImage.decodeRollRows? =
   some [(0, 0, 4), (1, 0, 4)]
 nestedRollWorkerSourceOrder : nestedRollWorkerImage.actorOrderCheck nestedRollWorkerChoreo = true
 nestedRollWorkerSourceRanges : nestedRollWorkerImage.actorRollCheck nestedRollWorkerChoreo = true
+parallelRollOwnerRustChoiceReset : Option.map
+    (fun rows =>
+      List.map
+        (fun roll =>
+          List.map (parallelRollOwnerImage.rollResetsRoute? roll) (List.range parallelRollOwnerImage.routeScopeCount))
+        rows)
+    parallelRollOwnerImage.decodeRollRows? =
+  some [[], []]
 parallelRollOwnerRustRanges : Option.map
     (fun rows => List.map (fun row => (row.scope, row.eventStart, row.eventLength)) rows)
     parallelRollOwnerImage.decodeRollRows? =
   some [(1, 0, 2), (2, 2, 2)]
 parallelRollOwnerSourceOrder : parallelRollOwnerImage.actorOrderCheck parallelRollOwnerChoreo = true
 parallelRollOwnerSourceRanges : parallelRollOwnerImage.actorRollCheck parallelRollOwnerChoreo = true
+parallelRollWorkerRustChoiceReset : Option.map
+    (fun rows =>
+      List.map
+        (fun roll =>
+          List.map (parallelRollWorkerImage.rollResetsRoute? roll) (List.range parallelRollWorkerImage.routeScopeCount))
+        rows)
+    parallelRollWorkerImage.decodeRollRows? =
+  some [[], []]
 parallelRollWorkerRustRanges : Option.map
     (fun rows => List.map (fun row => (row.scope, row.eventStart, row.eventLength)) rows)
     parallelRollWorkerImage.decodeRollRows? =
@@ -72,6 +240,14 @@ parallelTailOldPrefixIsNotClosed : (match parallelTailWorkerImage.decodeActorOrd
       (List.range 5).all fun event =>
         !parallelTailAfter.done event || (data.sourcePredecessors path event).all parallelTailAfter.done) =
   false
+parallelTailOwnerRustChoiceReset : Option.map
+    (fun rows =>
+      List.map
+        (fun roll =>
+          List.map (parallelTailOwnerImage.rollResetsRoute? roll) (List.range parallelTailOwnerImage.routeScopeCount))
+        rows)
+    parallelTailOwnerImage.decodeRollRows? =
+  some [[], []]
 parallelTailOwnerRustRanges : Option.map
     (fun rows => List.map (fun row => (row.scope, row.eventStart, row.eventLength)) rows)
     parallelTailOwnerImage.decodeRollRows? =
@@ -88,6 +264,14 @@ parallelTailReadyAgreesWithSource : (match parallelTailWorkerImage.decodeActorOr
             ((data.activeRows path).any fun row => row.eventId == event) &&
               (data.sourcePredecessors path event).all parallelTailAfter.done)) =
   true
+parallelTailWorkerRustChoiceReset : Option.map
+    (fun rows =>
+      List.map
+        (fun roll =>
+          List.map (parallelTailWorkerImage.rollResetsRoute? roll) (List.range parallelTailWorkerImage.routeScopeCount))
+        rows)
+    parallelTailWorkerImage.decodeRollRows? =
+  some [[], []]
 parallelTailWorkerRustRanges : Option.map
     (fun rows => List.map (fun row => (row.scope, row.eventStart, row.eventLength)) rows)
     parallelTailWorkerImage.decodeRollRows? =
@@ -102,6 +286,12 @@ rollIncludesContinuationPriorRowsAndOrder : (rollIncludesContinuationImage.actor
   true
 rollIncludesContinuationSourceRejected : rollIncludesContinuationImage.actorRollCheck rollWorkerChoreo = false
 rollIncludesContinuationStructurallyCoherent : rollIncludesContinuationImage.rollColumnsCoherent = true
+rollOwnerRustChoiceReset : Option.map
+    (fun rows =>
+      List.map (fun roll => List.map (rollOwnerImage.rollResetsRoute? roll) (List.range rollOwnerImage.routeScopeCount))
+        rows)
+    rollOwnerImage.decodeRollRows? =
+  some [[]]
 rollOwnerRustRanges : Option.map (fun rows => List.map (fun row => (row.scope, row.eventStart, row.eventLength)) rows)
     rollOwnerImage.decodeRollRows? =
   some [(0, 0, 2)]
@@ -127,6 +317,13 @@ rollTooShortPriorRowsAndOrder : (rollTooShortImage.actorRowsCheck rollWorkerChor
   true
 rollTooShortSourceRejected : rollTooShortImage.actorRollCheck rollWorkerChoreo = false
 rollTooShortStructurallyCoherent : rollTooShortImage.rollColumnsCoherent = true
+rollWorkerRustChoiceReset : Option.map
+    (fun rows =>
+      List.map
+        (fun roll => List.map (rollWorkerImage.rollResetsRoute? roll) (List.range rollWorkerImage.routeScopeCount))
+        rows)
+    rollWorkerImage.decodeRollRows? =
+  some [[]]
 rollWorkerRustRanges : Option.map (fun rows => List.map (fun row => (row.scope, row.eventStart, row.eventLength)) rows)
     rollWorkerImage.decodeRollRows? =
   some [(0, 0, 4)]
