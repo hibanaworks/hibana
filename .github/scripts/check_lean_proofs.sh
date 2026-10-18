@@ -55,7 +55,7 @@ bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" build-serial "${PROOF_
 bash "${ROOT_DIR}/.github/scripts/check_lean_claim_surface.sh"
 static_audit_output="$(run_audit \
   theorem-inventory \
-  --static "${PROOF_DIR}" "${STATIC_CLAIM_SNAPSHOT}" 937 539 286 112)"
+  --static "${PROOF_DIR}" "${STATIC_CLAIM_SNAPSHOT}" 943 544 287 112)"
 printf '%s\n' "${static_audit_output}"
 printf '%s\n' "${static_audit_output}" | bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard markers static
 bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" theorem-inventory \
@@ -192,7 +192,7 @@ run_audit generated-axioms --kernel "${ACTOR_REENTRY_COMMIT_GENERATED}" "${PROOF
 run_audit generated-axioms --kernel "${ACTOR_PARALLEL_REENTRY_GENERATED}" "${PROOF_DIR}" \
   "${PROOF_DIR}/actor-parallel-reentry-generated-claim-surface.txt" 26
 run_audit generated-axioms --kernel "${ACTOR_COMMIT_GENERATED}" "${PROOF_DIR}" \
-  "${PROOF_DIR}/actor-commit-generated-claim-surface.txt" 64
+  "${PROOF_DIR}/actor-commit-generated-claim-surface.txt" 69
 run_audit generated-axioms --kernel "${PROGRAM_COLUMNS_GENERATED}" "${PROOF_DIR}" \
   "${PROOF_DIR}/program-columns-generated-claim-surface.txt" 139
 run_audit generated-axioms --kernel "${PARTIAL_CHOICE_GENERATED}" "${PROOF_DIR}" \

@@ -11,12 +11,48 @@ pub(crate) struct ViewTagObservation {
     handle: super::carrier::EndpointHandle,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ActorCallCut {
+    pub(crate) lease_available: bool,
+    pub(crate) fault: Option<crate::rendezvous::SessionFaultKind>,
+}
+
 impl ViewTagObservation {
     /// # Safety
     /// The observed Endpoint's pinned runtime allocation must remain alive.
     pub(crate) unsafe fn matches_header(self) -> bool {
         // SAFETY: the caller retains the original pinned view record.
         self.handle.matches_header(unsafe { self.ptr.as_ref() })
+    }
+
+    /// Observe the existing public-call lease and first fault without borrowing
+    /// progress. This is also valid inside the transport callback, where an
+    /// actor snapshot cannot acquire its required mutation lease.
+    ///
+    /// # Safety
+    /// The pinned actor must remain alive, and `T` must be the concrete
+    /// transport used to create it. Endpoint erasure does not establish `T`.
+    pub(crate) unsafe fn actor_call_cut<T: crate::transport::Transport>(self) -> ActorCallCut {
+        // SAFETY: the caller fixes the erased transport and retains the
+        // original pinned actor, even when this copied view tag is retired.
+        let actor = unsafe {
+            self.ptr
+                .as_ref()
+                .actor()
+                .cast::<ResidentActor<'_, T>>()
+                .as_ref()
+        };
+        let operation = actor.context.try_operation_lease();
+        let cut = ActorCallCut {
+            lease_available: operation.is_some(),
+            fault: actor
+                .context
+                .session
+                .rendezvous()
+                .session_fault(actor.context.sid),
+        };
+        drop(operation);
+        cut
     }
 }
 

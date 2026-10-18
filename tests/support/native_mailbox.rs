@@ -87,7 +87,7 @@ pub struct NativeTransport<'binding> {
     directory: PathBuf,
     sockets: BTreeMap<(u8, u8), AsyncDatagram>,
     initial: Option<(u8, &'binding EndpointBinding)>,
-    accepted: Option<&'binding dyn Fn(FrameHeader)>,
+    accepted: Option<&'binding dyn Fn(FrameHeader) -> Result<(), TransportError>>,
 }
 
 impl<'binding> NativeTransport<'binding> {
@@ -116,9 +116,13 @@ impl<'binding> NativeTransport<'binding> {
         })
     }
 
-    /// Test observation after the OS accepted a datagram, before poll_send
-    /// returns. It never selects a branch, changes bytes, or retains a frame.
-    pub fn observe_send_acceptance(&mut self, observer: &'binding dyn Fn(FrameHeader)) {
+    /// Test hook after the OS accepted a datagram, before poll_send returns.
+    /// It can observe preemption or inject an uncertain-delivery error. It
+    /// never selects a branch, changes bytes, or duplicates a frame.
+    pub fn after_send_acceptance(
+        &mut self,
+        observer: &'binding dyn Fn(FrameHeader) -> Result<(), TransportError>,
+    ) {
         self.accepted = Some(observer);
     }
 }
@@ -235,9 +239,9 @@ impl Transport for NativeTransport<'_> {
             Poll::Ready(Ok(sent)) if sent == packet.len() => {
                 tx.wait.0 = None;
                 if let Some(observer) = self.accepted {
-                    observer(FrameHeader::from_bytes(
+                    return Poll::Ready(observer(FrameHeader::from_bytes(
                         packet[..HEADER].try_into().unwrap(),
-                    ));
+                    )));
                 }
                 Poll::Ready(Ok(()))
             }

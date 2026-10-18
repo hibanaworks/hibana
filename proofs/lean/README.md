@@ -476,6 +476,36 @@ the sender completes publication in that same poll. It may still wait before
 acceptance. Arbitrary callback termination and executor fairness are execution
 assumptions; a completed observation is not a liveness proof for a stuck callback.
 
+`PublicAdmissionCustody.lean` separates a live public admission from an internal
+transport callback. Every retained sender witness has an acceptance origin in
+the same complete transfer history. At a later cut, its originating public call
+is either still protected by its mutation lease, has published its checked
+source commit, or has faulted the run. Publication retires the exact old tag;
+the subsequent nonce history prevents that tag from reappearing when the
+resource returns, even if the old completed future remains alive. Other views
+may advance the actor's nonce counter independently.
+
+Under that public-call correspondence, a live actor with an available lease
+cannot use a retained accepted witness to justify an issued header. Composing
+this exclusion with the complete header/transfer history gives actual custody
+in application code or a preparing future. The call correspondence must cover
+each acceptance origin; the proof does not assume source-ready value
+availability, add an admission predicate, or require sender publication before
+the remote receiver proceeds. Establishing readiness of the intended operation
+from that custody remains part of the distributed progress obligation.
+
+Five additional claims in `ActorCommitGenerated.lean` apply the publication
+connection to both actual sender commits and the owner's returned continuation.
+The native receiver-first fixture checks the real lease inside the accepted
+send callback and its release after publication. An uncertain-delivery fixture
+has the OS accept a frame and the transport then report an error: the sender
+releases only a faulted actor, while the other runtime can receive, use and
+return the sole resource. The carrier reentry test checks the same observation
+boundary under Miri; Kani checks the existing lease's exclusion and release.
+These tests qualify their concrete schedules. General originating-call and
+complete-history correspondence are still explicit implementation contracts,
+not a claim of Rust source extraction or completed global progress.
+
 `OwnedRetirement.lean` checks retirement against the global source for the
 current selected visit. It considers every path compatible with the committed
 choices. A view is needed for its own send/receive or as the owned payload of

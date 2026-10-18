@@ -22,12 +22,17 @@ fn reentrant_carrier_entry_is_rejected_before_mutable_actor_borrow() {
         .expect("client");
     let ptr = client.owner.ptr.cast();
     let handle = client.owner.handle;
+    let tag = crate::endpoint::proof_snapshot::view_tag(&client);
     let mut nested_entered = false;
     // SAFETY: the live client is the only public owner. This deliberately
     // reenters the raw carrier to test its aliasing boundary, while leaving
     // the outer cursor borrow live across the rejected nested invocation.
     let outer_entered = unsafe {
         SessionKit::<TestTransport>::with_public_endpoint_mut(ptr, handle, false, |kernel| {
+            // SAFETY: this test created the live pinned actor with TestTransport.
+            let cut = tag.actor_call_cut::<TestTransport>();
+            assert!(!cut.lease_available);
+            assert_eq!(cut.fault, None);
             let cursor = &mut kernel.progress.cursor;
             let before = cursor.index();
             let nested_result =
@@ -42,6 +47,10 @@ fn reentrant_carrier_entry_is_rejected_before_mutable_actor_borrow() {
     };
     assert!(outer_entered);
     assert!(!nested_entered);
+    // SAFETY: the same actor remains pinned and the client is still live.
+    let cut = unsafe { tag.actor_call_cut::<TestTransport>() };
+    assert!(cut.lease_available);
+    assert_eq!(cut.fault, None);
     // The rejected entry did not hold a lease or retire the live generation.
     let header = unsafe {
         // SAFETY: the affine client still owns this pinned immutable header.

@@ -1,8 +1,14 @@
+a_returned_resource_does_not_resurrect_the_completed_send_tag : (Hibana.resourceNonceCut ownerReturn.after 10).issued ≠
+  some ownerLoanTag.snd.snd.snd
 loanFrameHasOneResourceAndSource : ∃ senderFacts receiverFacts,
   ownerLoan.ownedFacts? ownerImage actorCommitChoreo = some senderFacts ∧
     workerLoan.ownedFacts? workerImage actorCommitChoreo = some receiverFacts ∧
       senderFacts.resource = receiverFacts.resource ∧ senderFacts.effIndex = receiverFacts.effIndex
 ownerLoanAccepted : ownerLoan.check ownerImage actorCommitChoreo = true
+ownerLoanAcceptedCallPublished : Hibana.AcceptedSendCallEvidence ownerLoanTag.snd.snd.snd
+  (Hibana.resourceNonceCut ownerLoan.after 10) False False
+ownerLoanLiveAdmissionRejectsOldTag : (Hibana.resourceNonceCut ownerLoan.after 10).issued ≠
+  some ownerLoanTag.snd.snd.snd
 ownerLoanMissingCarrierRejected : ownerLoanMissingCarrier.check ownerImage actorCommitChoreo = false
 ownerLoanMissingCarrierSnapshotsValid : (ownerLoanMissingCarrier.before.valid && ownerLoanMissingCarrier.after.valid) =
   true
@@ -240,6 +246,10 @@ workerResourceUseRequiresLoanReceipt : ∃ data path,
         (Hibana.SourcePoint.committed { event := 0, side := Hibana.EndpointDelegation.Side.receive })
         (Hibana.SourcePoint.accepted 1)
 workerReturnAccepted : workerReturn.check workerImage actorCommitChoreo = true
+workerReturnAcceptedCallPublished : Hibana.AcceptedSendCallEvidence workerReturnTag.snd.snd.snd
+  (Hibana.resourceNonceCut workerReturn.after 10) False False
+workerReturnLiveAdmissionRejectsOldTag : (Hibana.resourceNonceCut workerReturn.after 10).issued ≠
+  some workerReturnTag.snd.snd.snd
 workerReturnMissingCarrierRejected : workerReturnMissingCarrier.check workerImage actorCommitChoreo = false
 workerReturnMissingCarrierSnapshotsValid : (workerReturnMissingCarrier.before.valid &&
     workerReturnMissingCarrier.after.valid) =

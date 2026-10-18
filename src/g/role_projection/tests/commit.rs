@@ -294,7 +294,7 @@ fn write_observations(observations: &[CommitObservation<'_>], sid: SessionId) {
     let owner_image = &RoleProjection::<0, Steps, 16>::IMAGE_REF;
     let worker_image = &RoleProjection::<1, Steps, 16>::IMAGE_REF;
     let mut source = std::format!(
-        "import Hibana.OwnedCommit\n\nset_option maxRecDepth 10000\n\n\
+        "import Hibana.PublicAdmissionCustody\n\nset_option maxRecDepth 10000\n\n\
          def actorCommitChoreo : Hibana.Choreo := {}\n\n\
          def ownerImage : Hibana.RustDescriptorImage := {}\n\n\
          def workerImage : Hibana.RustDescriptorImage := {}\n\n",
@@ -454,6 +454,47 @@ fn write_observations(observations: &[CommitObservation<'_>], sid: SessionId) {
              exact ⟨data, path, decoded, pathAt, Hibana.SourcePointEdge.ordered edge⟩\n\n",
         ));
     }
+    for (name, image) in [("ownerLoan", "ownerImage"), ("workerReturn", "workerImage")] {
+        source.push_str(&std::format!(
+            r#"def {name}Facts : Hibana.OwnedCommitFacts :=
+  ({name}.ownedFacts? {image} actorCommitChoreo).get (by decide)
+
+def {name}Tag : Nat × Nat × Nat × Nat :=
+  (Hibana.observedResourceTag? {name}.before 10).get (by decide)
+
+theorem {name}AcceptedCallPublished :
+  Hibana.AcceptedSendCallEvidence {name}Tag.2.2.2
+    (Hibana.resourceNonceCut {name}.after 10) False False :=
+  Hibana.checked_owned_publication_supplies_its_accepted_call_evidence
+    {name}WireAccepted
+    (show {name}.ownedFacts? {image} actorCommitChoreo = some {name}Facts from (Option.some_get (by decide)).symm)
+    (by decide) (by decide) (by decide) (.refl _)
+
+theorem {name}LiveAdmissionRejectsOldTag :
+  (Hibana.resourceNonceCut {name}.after 10).issued ≠ some {name}Tag.2.2.2 :=
+  Hibana.a_live_public_cut_cannot_issue_an_accepted_sender_tag
+    {name}AcceptedCallPublished (fun h => h) (fun h => h)
+
+"#
+        ));
+    }
+    source.push_str(
+        r#"theorem a_returned_resource_does_not_resurrect_the_completed_send_tag :
+  (Hibana.resourceNonceCut ownerReturn.after 10).issued ≠ some ownerLoanTag.2.2.2 := by
+  have suffix : Hibana.ViewNonceHistory
+      (Hibana.resourceNonceCut ownerLoan.after 10)
+      (Hibana.resourceNonceCut ownerReturn.after 10) :=
+    .tail (.refl _) (.issuance (by decide))
+  have origin : Hibana.AcceptedSendCallEvidence ownerLoanTag.2.2.2
+      (Hibana.resourceNonceCut ownerReturn.after 10) False False :=
+    Hibana.checked_owned_publication_supplies_its_accepted_call_evidence
+      ownerLoanWireAccepted
+      (show ownerLoan.ownedFacts? ownerImage actorCommitChoreo = some ownerLoanFacts from (Option.some_get (by decide)).symm)
+      (by decide) (by decide) (by decide) suffix
+  exact Hibana.a_live_public_cut_cannot_issue_an_accepted_sender_tag origin (fun h => h) (fun h => h)
+
+"#,
+    );
     for (name, sender, sender_image, receiver, receiver_image) in [
         (
             "loanFrame",
