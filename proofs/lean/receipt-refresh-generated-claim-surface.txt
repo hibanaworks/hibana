@@ -1,8 +1,16 @@
+actualCompletedBodyHasFreshRawAdmission : current.doneState.done bodyEntry.eventId = true ∧
+  currentCandidates.admitted[bodyEntry.eventId]? = some true
 actualContinuationIsAdmitted : refreshAdmissions[readRow.eventId]? = some true
+actualCurrentEntryIsNotReadyWithoutPreparation : sourceRowReady refreshData refreshPath current bodyEntry = false
 actualCurrentHeaderComesFromFreshReceipt : observedResourceTag? current 10 = observedResourceTag? freshReceipt.after 10
 actualCurrentHeaderIsFresh : (resourceNonceCut current 10).issued = some current.counter ∧
   outsideAfter.counter < current.counter
 actualDoneBitsAreTheSameAfterFreshReceipt : outsideAfter.doneState.done = current.doneState.done
+actualFreshEntryUsesSourcePreparation : ActorSourceCandidateBase currentCandidates refreshImage refreshChoreo 0
+  refreshPath bodyEntry bodyBase
+actualFreshSourceReadinessGivesAdmission : currentCandidates.admitted[bodyEntry.eventId]? = some true
+actualLaterSourcePointHasRealAdmission : sourceRowReady refreshData refreshPath current readRow = true ∧
+  currentCandidates.admitted[readRow.eventId]? = some true
 actualOldReceiptHeaderIsNoLongerCurrent : observedResourceTag? current 10 ≠ observedResourceTag? outsideAfter 10
 actualReceiptsNameTheSameResource : outsideFacts.resource = freshFacts.resource
 actualRepeatedBodyRestoresItsResourceOwner : EndpointDelegation.instantiate refreshData.normalized.issuance
@@ -11,6 +19,7 @@ actualRepeatedBodyRestoresItsResourceOwner : EndpointDelegation.instantiate refr
     (EndpointDelegation.initialOwners refreshData.source.resources freshFacts.resource)
 actualSourceBeginsWithThisClosedBody : ∃ tail, refreshData.source = refreshBody.roll.seq tail
 actualSourceContinuationIsReady : sourceRowReady refreshData refreshPath current readRow = true
+currentCandidateDomainIsChecked : currentCandidates.candidateCheck refreshImage refreshChoreo 0 = true
 @currentSourceReadyCutUsesActualReceiptProvenance : ∀ {Frame : Type} {first : Nat × Nat × Nat × Nat → Prop}
   {state : EndpointTransfer.Observation (Nat × Nat × Nat × Nat) Frame},
   ResourceHeaderExecution first (EndpointTransfer.initial initialTag) actualIssued state →
@@ -30,6 +39,25 @@ actualSourceContinuationIsReady : sourceRowReady refreshData refreshPath current
                     ResourceHeaderStepEvidence EndpointTransfer.Action.receive before after beforeIssued afterIssued ∧
                       currentTag ∈ List.take 1 after.usable ∧
                         HeaderSuffixWithoutReceipt currentTag afterIssued after actualIssued state
+fabricatedBlockedAdmissionIsRejected : (have __src := freshBeforeCandidates;
+      { snapshot := __src.snapshot, pathIndex := __src.pathIndex,
+        admitted := freshBeforeCandidates.admitted.set readRow.eventId true }).candidateCheck
+    refreshImage refreshChoreo 0 =
+  false
 freshActualReceiptIsChecked : freshReceipt.ownedCheck refreshImage refreshChoreo freshWire 9058 = true
+freshBeforeCandidateDomainIsChecked : freshBeforeCandidates.candidateCheck refreshImage refreshChoreo 0 = true
+initialCandidateDomainIsChecked : initialCandidates.candidateCheck refreshImage refreshChoreo 0 = true
 latestActualReceiptHasAnEarlierSourceEvent : freshFacts.effIndex < outsideFacts.effIndex
+missingFreshAdmissionIsRejected : (have __src := currentCandidates;
+      { snapshot := __src.snapshot, pathIndex := __src.pathIndex,
+        admitted := currentCandidates.admitted.set bodyEntry.eventId false }).candidateCheck
+    refreshImage refreshChoreo 0 =
+  false
+omittedCandidateRowIsRejected : (have __src := currentCandidates;
+      { snapshot := __src.snapshot, pathIndex := __src.pathIndex,
+        admitted := List.drop 1 currentCandidates.admitted }).candidateCheck
+    refreshImage refreshChoreo 0 =
+  false
 outsideActualReceiptIsChecked : outsideReceipt.ownedCheck refreshImage refreshChoreo outsideWire 9058 = true
+outsideAfterCandidateDomainIsChecked : outsideAfterCandidates.candidateCheck refreshImage refreshChoreo 0 = true
+outsideBeforeCandidateDomainIsChecked : outsideBeforeCandidates.candidateCheck refreshImage refreshChoreo 0 = true

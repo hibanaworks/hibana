@@ -328,7 +328,7 @@ theorem checked_actor_visit_committed_observation_is_its_actual_row
   simp only [actorVisitObserved, a_covered_member_is_its_unique_lookup checked inFamily decoded rowMember,
     Option.map_some, Option.getD_some]
 
-private theorem a_source_predecessor_has_its_exact_actor_row
+theorem a_source_predecessor_has_its_exact_actor_row
     {image : RustDescriptorImage} {choreo : Choreo} {data : DecodedActorOrder}
     {path : NormalizedPath} {row : DecodedActorRow} {event : Nat}
     (decoded : image.decodeActorOrder? choreo = some data)

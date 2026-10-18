@@ -39,6 +39,9 @@ development establishes:
 The principal externally relevant claim types are listed in
 [`ClaimSurface.lean`](ClaimSurface.lean). The complete elaborated theorem
 inventories are machine-checked snapshots, not prose maintained in this file.
+The theorem inventory checks the exact census, claim types and allowed axiom
+groups. The launcher checks one complete, consistent successful census line;
+it does not maintain a second hard-coded theorem count.
 
 ## Required evidence
 
@@ -79,6 +82,21 @@ step replay and a missing payload view are rejected. This checks the observed
 selected visit. It does not derive actual Rust value availability from a header,
 nor establish fresh rolled visits, carrier delivery or general distributed
 progress. The public owned-projection guard remains closed.
+
+`ActorCandidateAdmission.lean` extends raw cursor qualification to current
+and fresh bodies without weakening the selected-visit checker. It derives
+roll ranges from the complete source scope domain and prepares a fresh base
+from the pre-operation cut alone. The successful-commit checker uses that same
+preparation, then checks entry resources and the actual publication separately.
+For every active source row, the recorded raw result must equal current or
+fresh source readiness, including false results. Recorded choices need only
+agree where known. Source dependency edges then imply actual raw admission
+in either derived base. This links structural source readiness to the cursor;
+it does not make raw admission prove payload custody, I/O availability, or
+coherence of a complete distributed occurrence cut. The real receipt-refresh
+fixture supplies five complete actor-row observations across late reentry;
+missing, fabricated and omitted admissions are rejected. Its current and fresh
+source points instantiate the general dependency-to-admission theorem.
 
 `ResourceHeaderOrigin.lean` derives an issued tag's initial or latest actual
 receive origin from the complete transfer/header history. Static source event

@@ -110,32 +110,43 @@ def resetObservedChoices?
     let reset ← sourceRollResetsRoute? source scope route
     pure (route, if reset then none else arm)
 
+/-- Derive a prospective body's source base before any successful operation
+or publication. No post-operation snapshot, frame, or guessed ready bit is an
+input. Resource headers and public-call borrows are separate checks. -/
+def prepareObservedActorBody?
+    (image : RustDescriptorImage) (choreo : Choreo) (before : ActorProgressObservation)
+    (previousPath nextPath scope event : Nat) : Option (DecodedRollRow × ActorProgressObservation) := do
+    let data ← image.decodeActorOrder? choreo
+    let previous ← data.normalized.paths[previousPath]?
+    let next ← data.normalized.paths[nextPath]?
+    let rolls ← image.decodeRollRows?
+    let roll ← resolveUnique? (rolls.filter fun row => row.scope == scope)
+    let source := canonicalProgramSource choreo
+    let choices ← resetObservedChoices? source scope before.choices
+    let base := resetObservedActor before roll choices
+    if image.actorOrderCheck choreo && image.actorRollCheck choreo &&
+        image.actorRouteCheck choreo && before.metadataMatches image data.rows &&
+        before.valid &&
+        roll.eventStart ≤ event && event < roll.eventStart + roll.eventLength &&
+        observedChoicesAgree source previous before &&
+        observedChoicesAgree source next base &&
+        (data.activeRows previous).all (fun row =>
+          if roll.eventStart ≤ row.eventId && row.eventId < roll.eventStart + roll.eventLength
+          then before.doneState.done row.eventId else true) &&
+        observedSourcePrefixCheck data next before event then
+      some (roll, base)
+    else none
+
 def ActorReentryCommitObservation.prepared?
     (sample : ActorReentryCommitObservation) (image : RustDescriptorImage)
     (choreo : Choreo) : Option (DecodedRollRow × ActorCommitObservation) :=
   if observedRollEntryHeadersMatch sample.before image sample.scope &&
       observedRollEntryBorrowMatches sample.before image sample.scope sample.event sample.view then do
-    let data ← image.decodeActorOrder? choreo
-    let previous ← data.normalized.paths[sample.previousPath]?
-    let next ← data.normalized.paths[sample.nextPath]?
-    let rolls ← image.decodeRollRows?
-    let roll ← resolveUnique? (rolls.filter fun row => row.scope == sample.scope)
-    let source := canonicalProgramSource choreo
-    let choices ← resetObservedChoices? source sample.scope sample.before.choices
-    let base := resetObservedActor sample.before roll choices
+    let (roll, base) ← prepareObservedActorBody? image choreo sample.before
+      sample.previousPath sample.nextPath sample.scope sample.event
     let eff ← image.eventEffIndex? sample.event
-    let published ← publishedObservedChoices? source eff choices
-    if image.actorOrderCheck choreo && image.actorRollCheck choreo &&
-        image.actorRouteCheck choreo && sample.before.metadataMatches image data.rows &&
-        sample.before.valid &&
-        roll.eventStart ≤ sample.event && sample.event < roll.eventStart + roll.eventLength &&
-        observedChoicesAgree source previous sample.before &&
-        observedChoicesAgree source next base &&
-        (data.activeRows previous).all (fun row =>
-          if roll.eventStart ≤ row.eventId && row.eventId < roll.eventStart + roll.eventLength
-          then sample.before.doneState.done row.eventId else true) &&
-        observedSourcePrefixCheck data next sample.before sample.event &&
-        decide (sample.after.choices = published) then
+    let published ← publishedObservedChoices? (canonicalProgramSource choreo) eff base.choices
+    if decide (sample.after.choices = published) then
       some (roll, {
         pathIndex := sample.nextPath, event := sample.event, view := sample.view,
         before := base, after := sample.after })
@@ -190,6 +201,63 @@ private theorem reset_observed_actor_done
     ActorProgressObservation.progress, List.getElem?_map, List.getElem?_zipIdx, Nat.zero_add]
   cases snapshot.steps[event]? <;> simp
 
+/-- A checked fresh commit uses a base derived from its pre-operation cut.
+The same derivation can therefore justify a prospective candidate without
+assuming that the candidate has already committed. -/
+theorem prepared_body_reentry_is_derived_before_commit
+    {sample : ActorReentryCommitObservation} {image : RustDescriptorImage} {choreo : Choreo}
+    {roll : DecodedRollRow} {step : ActorCommitObservation}
+    (prepared : sample.prepared? image choreo = some (roll, step)) :
+    ∃ base, prepareObservedActorBody? image choreo sample.before
+        sample.previousPath sample.nextPath sample.scope sample.event = some (roll, base) ∧
+      step.before = base ∧ step.event = sample.event ∧ step.after = sample.after := by
+  unfold ActorReentryCommitObservation.prepared? at prepared
+  split at prepared
+  next qualified =>
+    obtain ⟨⟨actualRoll, base⟩, baseAt, prepared⟩ := Option.bind_eq_some_iff.mp prepared
+    obtain ⟨eff, _, prepared⟩ := Option.bind_eq_some_iff.mp prepared
+    obtain ⟨published, _, written⟩ := Option.bind_eq_some_iff.mp prepared
+    split at written
+    next accepted =>
+      have same := Option.some.inj written
+      cases same
+      exact ⟨base, baseAt, rfl, rfl, rfl⟩
+    next rejected => simp at written
+  next rejected => simp at prepared
+
+private theorem source_body_base_facts
+    {image : RustDescriptorImage} {choreo : Choreo} {before base : ActorProgressObservation}
+    {previousPath nextPath scope event : Nat} {roll : DecodedRollRow}
+    (prepared : prepareObservedActorBody? image choreo before
+      previousPath nextPath scope event = some (roll, base)) :
+    image.actorRollCheck choreo = true ∧
+      ∃ rows choices, image.decodeRollRows? = some rows ∧ roll ∈ rows ∧
+        base = resetObservedActor before roll choices ∧
+        roll.eventStart ≤ event ∧ event < roll.eventStart + roll.eventLength := by
+  unfold prepareObservedActorBody? at prepared
+  obtain ⟨data, _, prepared⟩ := Option.bind_eq_some_iff.mp prepared
+  obtain ⟨previous, _, prepared⟩ := Option.bind_eq_some_iff.mp prepared
+  obtain ⟨nextPath, _, prepared⟩ := Option.bind_eq_some_iff.mp prepared
+  obtain ⟨rows, rowsAt, prepared⟩ := Option.bind_eq_some_iff.mp prepared
+  obtain ⟨chosen, chosenAt, prepared⟩ := Option.bind_eq_some_iff.mp prepared
+  obtain ⟨choices, _, allowed⟩ := Option.bind_eq_some_iff.mp prepared
+  dsimp only at allowed
+  split at allowed
+  next guarded =>
+    have same := Option.some.inj allowed
+    cases same
+    have member : roll ∈ rows := by
+      have singleton := resolveUnique?_eq_some_iff.mp chosenAt
+      have filtered : roll ∈ rows.filter (fun row => row.scope == scope) := by
+        rw [singleton]
+        simp
+      exact (List.mem_filter.mp filtered).1
+    simp only [Bool.and_eq_true, and_assoc] at guarded
+    obtain ⟨_, ranges, _, _, _, start, stop, _, _, _, _⟩ := guarded
+    exact ⟨ranges, rows, choices, rowsAt, member, rfl,
+      of_decide_eq_true start, of_decide_eq_true stop⟩
+  next rejected => simp at allowed
+
 private theorem prepared_reentry_facts
     {sample : ActorReentryCommitObservation} {image : RustDescriptorImage} {choreo : Choreo}
     {roll : DecodedRollRow} {step : ActorCommitObservation}
@@ -201,53 +269,19 @@ private theorem prepared_reentry_facts
         step.before = resetObservedActor sample.before roll choices ∧
         step.event = sample.event ∧ step.after = sample.after ∧
         roll.eventStart ≤ step.event ∧ step.event < roll.eventStart + roll.eventLength := by
-  unfold ActorReentryCommitObservation.prepared? at prepared
   have qualified : (observedRollEntryHeadersMatch sample.before image sample.scope &&
       observedRollEntryBorrowMatches sample.before image sample.scope sample.event sample.view) = true := by
+    unfold ActorReentryCommitObservation.prepared? at prepared
     cases flag : (observedRollEntryHeadersMatch sample.before image sample.scope &&
         observedRollEntryBorrowMatches sample.before image sample.scope sample.event sample.view) with
     | false => simp [flag] at prepared
     | true => rfl
-  simp only [qualified, if_true] at prepared
-  change (image.decodeActorOrder? choreo).bind _ = some (roll, step) at prepared
-  obtain ⟨data, _, prepared⟩ := Option.bind_eq_some_iff.mp prepared
-  change data.normalized.paths[sample.previousPath]?.bind _ = some (roll, step) at prepared
-  obtain ⟨previous, _, prepared⟩ := Option.bind_eq_some_iff.mp prepared
-  change data.normalized.paths[sample.nextPath]?.bind _ = some (roll, step) at prepared
-  obtain ⟨nextPath, _, prepared⟩ := Option.bind_eq_some_iff.mp prepared
-  change image.decodeRollRows?.bind _ = some (roll, step) at prepared
-  obtain ⟨rows, rowsAt, prepared⟩ := Option.bind_eq_some_iff.mp prepared
-  change (resolveUnique? (rows.filter fun row => row.scope == sample.scope)).bind _ =
-    some (roll, step) at prepared
-  obtain ⟨chosen, chosenAt, prepared⟩ := Option.bind_eq_some_iff.mp prepared
-  change (resetObservedChoices? (canonicalProgramSource choreo) sample.scope
-    sample.before.choices).bind _ = some (roll, step) at prepared
-  obtain ⟨choices, _, prepared⟩ := Option.bind_eq_some_iff.mp prepared
-  change (image.eventEffIndex? sample.event).bind _ = some (roll, step) at prepared
-  obtain ⟨eff, _, prepared⟩ := Option.bind_eq_some_iff.mp prepared
-  change (publishedObservedChoices? (canonicalProgramSource choreo) eff choices).bind _ =
-    some (roll, step) at prepared
-  obtain ⟨published, _, allowed⟩ := Option.bind_eq_some_iff.mp prepared
-  split at allowed
-  next guarded =>
-    have same := Option.some.inj allowed
-    have sameRoll := congrArg Prod.fst same
-    have sameStep := congrArg Prod.snd same
-    dsimp only at sameRoll sameStep
-    subst roll
-    subst step
-    have member : chosen ∈ rows := by
-      have singleton := resolveUnique?_eq_some_iff.mp chosenAt
-      have filtered : chosen ∈ rows.filter (fun row => row.scope == sample.scope) := by
-        rw [singleton]
-        simp
-      exact (List.mem_filter.mp filtered).1
-    simp only [Bool.and_eq_true] at guarded
-    obtain ⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨_, ranges⟩, _⟩, _⟩, _⟩, start⟩, stop⟩, _⟩, _⟩, _⟩, _⟩, _⟩ := guarded
-    exact ⟨ranges, (Bool.and_eq_true_iff.mp qualified).1,
-      (Bool.and_eq_true_iff.mp qualified).2, rows, choices, rowsAt, member, rfl,
-      rfl, rfl, of_decide_eq_true start, of_decide_eq_true stop⟩
-  next rejected => simp at allowed
+  obtain ⟨base, baseAt, beforeAt, eventAt, afterAt⟩ :=
+    prepared_body_reentry_is_derived_before_commit prepared
+  obtain ⟨ranges, rows, choices, rowsAt, member, reset, start, stop⟩ := source_body_base_facts baseAt
+  exact ⟨ranges, (Bool.and_eq_true_iff.mp qualified).1, (Bool.and_eq_true_iff.mp qualified).2,
+    rows, choices, rowsAt, member, beforeAt.trans reset, eventAt, afterAt,
+    eventAt.symm ▸ start, eventAt.symm ▸ stop⟩
 
 /-- Reset changes progress and choices, not the retained Endpoint tags or
 temporary borrow phases. This alone is not evidence of Rust value availability. -/

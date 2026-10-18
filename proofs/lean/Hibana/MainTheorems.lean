@@ -26,6 +26,7 @@ import Hibana.MeasuredResourceAvailability
 import Hibana.ActorMutationCoverage
 import Hibana.ActorMeasuredExecution
 import Hibana.ActorReentryCommit
+import Hibana.ActorCandidateAdmission
 import Hibana.GlobalSemantics
 import Hibana.GlobalAllocationCorrectness
 import Hibana.GlobalMessageTransitions

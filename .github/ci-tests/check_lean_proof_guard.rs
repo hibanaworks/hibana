@@ -7,12 +7,9 @@ use std::{
     process::Command,
 };
 const TOOLCHAIN: &str = "leanprover/lean4:v4.30.0";
+const STATIC_PREFIX: &str = "Lean static theorem audit passed ";
 fn markers(kind: &str) -> AuditResult<&'static [(&'static str, &'static str)]> {
     match kind {
-        "static" => Ok(&[(
-            "Lean static theorem audit passed theorems=875 both=489 propext=280 free=106",
-            "static theorem boundary",
-        )]),
         "parallel" => Ok(&[(
             "Generated Lean kernel artifact audit passed artifact=ParallelGenerated theorems=182 claims=182",
             "parallel descriptor correspondence",
@@ -58,7 +55,61 @@ fn markers(kind: &str) -> AuditResult<&'static [(&'static str, &'static str)]> {
         _ => Err(format!("unknown Lean audit marker group: {kind}")),
     }
 }
+/// The theorem inventory owns the exact expected counts and claim types.
+/// This boundary checks its successful output, without a second stale census.
+fn check_static_marker(output: &str) -> AuditResult<()> {
+    let mut lines = output
+        .lines()
+        .filter(|line| line.starts_with(STATIC_PREFIX));
+    let line = lines
+        .next()
+        .ok_or("Lean proof gate static theorem boundary missing")?;
+    require(
+        lines.next().is_none(),
+        "Lean proof gate duplicate static theorem boundary",
+    )?;
+    let fields: Vec<_> = line[STATIC_PREFIX.len()..]
+        .split_ascii_whitespace()
+        .collect();
+    require(
+        fields.len() == 4,
+        "Lean proof gate malformed static theorem totals",
+    )?;
+    let mut counts = [0usize; 4];
+    for ((count, key), field) in counts
+        .iter_mut()
+        .zip(["theorems", "both", "propext", "free"])
+        .zip(fields)
+    {
+        let prefix = format!("{key}=");
+        let digits = field
+            .strip_prefix(&prefix)
+            .ok_or("Lean proof gate static theorem field mismatch")?;
+        require(
+            !digits.is_empty() && digits.bytes().all(|byte| byte.is_ascii_digit()),
+            "Lean proof gate malformed static theorem count",
+        )?;
+        *count = digits
+            .parse()
+            .map_err(|_| "Lean proof gate static theorem count overflow")?;
+        require(
+            count.to_string() == digits,
+            "Lean proof gate noncanonical static theorem count",
+        )?;
+    }
+    let covered = counts[1]
+        .checked_add(counts[2])
+        .and_then(|value| value.checked_add(counts[3]))
+        .ok_or("Lean proof gate static theorem total overflow")?;
+    require(
+        counts[0] > 0 && counts[0] == covered,
+        "Lean proof gate inconsistent static theorem totals",
+    )
+}
 fn check_markers(kind: &str, output: &str) -> AuditResult<()> {
+    if kind == "static" {
+        return check_static_marker(output);
+    }
     for (marker, label) in markers(kind)? {
         require(
             output.contains(marker),
@@ -172,7 +223,6 @@ mod tests {
     #[test]
     fn every_marker_is_required() {
         for kind in [
-            "static",
             "parallel",
             "causal",
             "generated",
@@ -193,5 +243,45 @@ mod tests {
             }
         }
         assert!(check_markers("unknown", "").is_err());
+    }
+    #[test]
+    fn static_marker_uses_the_audited_totals() {
+        for counts in [
+            "theorems=13 both=5 propext=5 free=3",
+            "theorems=993 both=588 propext=293 free=112",
+        ] {
+            assert!(check_markers("static", &format!("{STATIC_PREFIX}{counts}\n")).is_ok());
+        }
+    }
+    #[test]
+    fn static_marker_rejects_missing_malformed_duplicate_and_inconsistent_totals() {
+        let valid = format!("{STATIC_PREFIX}theorems=13 both=5 propext=5 free=3\n");
+        for output in [
+            String::new(),
+            STATIC_PREFIX.to_owned(),
+            format!("{STATIC_PREFIX}theorems=13 both=5 propext=5 free=2\n"),
+            format!("{STATIC_PREFIX}theorems=0 both=0 propext=0 free=0\n"),
+            format!("{STATIC_PREFIX}theorems=13 both=5 propext=5 free=3 extra=1\n"),
+            format!("{STATIC_PREFIX}theorems=13 both=5 propext=5\n"),
+            format!("{STATIC_PREFIX}theorems=13 both=5 free=3 propext=5\n"),
+            format!("{STATIC_PREFIX}theorems=13 both=05 propext=5 free=3\n"),
+            format!("{STATIC_PREFIX}theorems=13 both=+5 propext=5 free=3\n"),
+            format!("{STATIC_PREFIX}theorems=13 both=-5 propext=5 free=3\n"),
+            format!(
+                "{STATIC_PREFIX}theorems={} both={} propext=1 free=0\n",
+                usize::MAX,
+                usize::MAX
+            ),
+            format!(
+                "{STATIC_PREFIX}theorems={}0 both=5 propext=5 free=3\n",
+                usize::MAX
+            ),
+            format!("{valid}{valid}"),
+        ] {
+            assert!(
+                check_markers("static", &output).is_err(),
+                "accepted {output:?}"
+            );
+        }
     }
 }

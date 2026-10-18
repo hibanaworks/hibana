@@ -68,20 +68,24 @@ fn a_reentered_earlier_body_refreshes_the_value_after_a_later_source_receipt() {
                         async {
                             // SAFETY: OWNER and DB use owner_rv's pinned actor.
                             let initial = unsafe { actor_snapshot(&owner) };
+                            let initial_admitted = unsafe { actor_admissions(&owner) };
                             owner.send::<Loan>(db).await.unwrap();
                             let db = owner.recv::<Loan>().await.unwrap();
                             owner.send::<OutsideLoan>(db).await.unwrap();
                             // SAFETY: OWNER retains this pinned TestTransport actor.
                             let outside_before = unsafe { actor_snapshot(&owner) };
+                            let outside_before_admitted = unsafe { actor_admissions(&owner) };
                             let db = owner.recv::<OutsideLoan>().await.unwrap();
                             // SAFETY: OWNER retains this pinned TestTransport actor.
                             let later_receipt = unsafe { actor_snapshot(&owner) };
+                            let outside_after_admitted = unsafe { actor_admissions(&owner) };
                             let old_tag = view_tag(&db);
                             assert!(unsafe { old_tag.matches_header() });
 
                             owner.send::<Loan>(db).await.unwrap();
                             // SAFETY: the same actor remains pinned after the new send.
                             let fresh_before = unsafe { actor_snapshot(&owner) };
+                            let fresh_before_admitted = unsafe { actor_admissions(&owner) };
                             let mut db = owner.recv::<Loan>().await.unwrap();
                             // SAFETY: the same actor remains pinned after the fresh body.
                             let refreshed = unsafe { actor_snapshot(&owner) };
@@ -112,7 +116,13 @@ fn a_reentered_earlier_body_refreshes_the_value_after_a_later_source_receipt() {
                                     fresh_before,
                                     refreshed,
                                 ],
-                                admitted,
+                                [
+                                    initial_admitted,
+                                    outside_before_admitted,
+                                    outside_after_admitted,
+                                    fresh_before_admitted,
+                                    admitted,
+                                ],
                             )
                         },
                         async {
@@ -158,7 +168,7 @@ fn a_reentered_earlier_body_refreshes_the_value_after_a_later_source_receipt() {
                 .iter()
                 .position(|step| matches!(step.action, LocalAction::Send { label: 30, .. }))
                 .unwrap();
-            assert!(observed.1[read]);
+            assert!(observed.1[4][read]);
             #[cfg(not(miri))]
             write_observations(&observed.0, &observed.1, &outside_wire, &loop_wires[1]);
         });
@@ -167,13 +177,14 @@ fn a_reentered_earlier_body_refreshes_the_value_after_a_later_source_receipt() {
 #[cfg(not(miri))]
 fn write_observations(
     snapshots: &[ActorSnapshot; 5],
-    admitted: &[bool],
+    admitted: &[std::vec::Vec<bool>; 5],
     outside_wire: &(crate::transport::FrameHeader, std::vec::Vec<u8>),
     loop_wire: &(crate::transport::FrameHeader, std::vec::Vec<u8>),
 ) {
     use crate::test_support::{lean_choreo::LeanChoreo, lean_descriptor::descriptor_source};
     let mut source = std::format!(
-        "import Hibana.ResourceHeaderOrigin\nimport Hibana.SourceResourceContinuation\n\nset_option maxRecDepth 10000\n\n\
+        "import Hibana.ResourceHeaderOrigin\nimport Hibana.SourceResourceContinuation\n\
+         import Hibana.ActorCandidateAdmission\n\nset_option maxRecDepth 10000\n\n\
          def refreshChoreo : Hibana.Choreo := {}\n\n\
          def refreshBodyChoreo : Hibana.Choreo := {}\n\n\
          def refreshImage : Hibana.RustDescriptorImage := {}\n\n",
@@ -222,8 +233,26 @@ fn write_observations(
         ));
     }
     source.push_str(&std::format!(
-        "def refreshAdmissions : List Bool := {admitted:?}\n\n",
+        "def refreshAdmissions : List Bool := {:?}\n\n",
+        admitted[4],
     ));
+    for (name, candidates) in [
+        "initial",
+        "outsideBefore",
+        "outsideAfter",
+        "freshBefore",
+        "current",
+    ]
+    .into_iter()
+    .zip(admitted)
+    {
+        source.push_str(&std::format!(
+            "def {name}Candidates : Hibana.ActorAdmissionObservation := {{ snapshot := {name}, \
+             pathIndex := 0, admitted := {candidates:?} }}\n\n\
+             theorem {name}CandidateDomainIsChecked : \
+             {name}Candidates.candidateCheck refreshImage refreshChoreo 0 = true := by decide\n\n",
+        ));
+    }
     source.push_str(r#"
 open Hibana
 
@@ -267,6 +296,72 @@ theorem actualSourceContinuationIsReady : sourceRowReady refreshData refreshPath
 theorem actualContinuationIsAdmitted : refreshAdmissions[readRow.eventId]? = some true := by decide
 theorem actualCurrentHeaderIsFresh :
     (resourceNonceCut current 10).issued = some current.counter ∧ outsideAfter.counter < current.counter := by decide
+
+def bodyEntry := (refreshData.rows[0]?).get (by decide)
+def bodyRoll := (((refreshChoreo.canonicalActorRollRows? refreshImage.role).get (by decide))[0]?).get (by decide)
+def bodyBase := (prepareObservedActorBody? refreshImage refreshChoreo current 0 0 bodyRoll.scope bodyEntry.eventId).get (by decide) |>.2
+
+theorem actualCompletedBodyHasFreshRawAdmission :
+    current.doneState.done bodyEntry.eventId = true ∧ currentCandidates.admitted[bodyEntry.eventId]? = some true := by decide
+theorem actualCurrentEntryIsNotReadyWithoutPreparation :
+    sourceRowReady refreshData refreshPath current bodyEntry = false := by decide
+theorem actualFreshEntryUsesSourcePreparation :
+    ActorSourceCandidateBase currentCandidates refreshImage refreshChoreo 0 refreshPath bodyEntry bodyBase := by
+  exact .fresh (roll := bodyRoll)
+    (rolls := (refreshChoreo.canonicalActorRollRows? refreshImage.role).get (by decide))
+    (by decide) (by decide) (by decide)
+theorem actualFreshSourceReadinessGivesAdmission : currentCandidates.admitted[bodyEntry.eventId]? = some true := by
+  have admitted : sourceRowReady refreshData refreshPath bodyBase bodyEntry = true ∧
+      currentCandidates.admitted[bodyEntry.eventId]? = some true := by
+    refine a_structurally_ready_source_point_has_actual_candidate_admission
+      (observed := fun point => match point with
+        | .committed id => (refreshData.activeRows refreshPath).any fun row =>
+            decide (row.actionId = id) && bodyBase.doneState.done row.eventId
+        | .accepted _ => false)
+      currentCandidateDomainIsChecked
+      ((Option.some_get (x := refreshImage.decodeActorOrder? refreshChoreo) (by decide)).symm)
+      ((Option.some_get (x := refreshData.normalized.paths[0]?) (by decide)).symm)
+      (by decide) actualFreshEntryUsesSourcePreparation ?_ (by decide) ?_
+    · intro prior member
+      have rows : (refreshData.activeRows refreshPath).all (fun prior => decide (
+          ((refreshData.activeRows refreshPath).any fun row =>
+            decide (row.actionId = prior.actionId) && bodyBase.doneState.done row.eventId) =
+          bodyBase.doneState.done prior.eventId)) = true := by decide
+      exact of_decide_eq_true (List.all_eq_true.mp rows prior member)
+    · intro before edge
+      have earlier := source_point_dependency_increases_rank edge
+      have first : bodyEntry.actionId.entryPoint.rank = 0 := by decide
+      rw [first] at earlier
+      omega
+  exact admitted.2
+theorem actualLaterSourcePointHasRealAdmission :
+    sourceRowReady refreshData refreshPath current readRow = true ∧ currentCandidates.admitted[readRow.eventId]? = some true := by
+  refine a_structurally_ready_source_point_has_actual_candidate_admission
+    (observed := fun point => decide (point.rank < readRow.actionId.entryPoint.rank))
+    currentCandidateDomainIsChecked
+    ((Option.some_get (x := refreshImage.decodeActorOrder? refreshChoreo) (by decide)).symm)
+    ((Option.some_get (x := refreshData.normalized.paths[0]?) (by decide)).symm)
+    (by decide) (.current (by decide)) ?_ (by decide) ?_
+  · intro prior member
+    have rows : (refreshData.activeRows refreshPath).all (fun prior =>
+        decide (decide ((.committed prior.actionId : SourcePoint).rank < readRow.actionId.entryPoint.rank) =
+          current.doneState.done prior.eventId)) = true := by decide
+    exact of_decide_eq_true (List.all_eq_true.mp rows prior member)
+  · intro before edge
+    exact decide_eq_true (source_point_dependency_increases_rank edge)
+
+theorem missingFreshAdmissionIsRejected :
+    ActorAdmissionObservation.candidateCheck
+      ({ currentCandidates with admitted := currentCandidates.admitted.set bodyEntry.eventId false })
+      refreshImage refreshChoreo 0 = false := by decide
+theorem fabricatedBlockedAdmissionIsRejected :
+    ActorAdmissionObservation.candidateCheck
+      ({ freshBeforeCandidates with admitted := freshBeforeCandidates.admitted.set readRow.eventId true })
+      refreshImage refreshChoreo 0 = false := by decide
+theorem omittedCandidateRowIsRejected :
+    ActorAdmissionObservation.candidateCheck
+      ({ currentCandidates with admitted := currentCandidates.admitted.drop 1 })
+      refreshImage refreshChoreo 0 = false := by decide
 
 def initialTag := (observedResourceTag? initial 10).get (by decide)
 def currentTag := (observedResourceTag? current 10).get (by decide)
