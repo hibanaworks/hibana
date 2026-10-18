@@ -1,6 +1,6 @@
 mod lean_audit;
 use lean_audit::*;
-use std::{collections::BTreeMap, path::Path};
+use std::{collections::BTreeMap, fs::OpenOptions, io::Write, path::Path};
 const BEGIN: &str = "HIBANA_GENERATED_CLAIM_SURFACE_BEGIN";
 const END: &str = "HIBANA_GENERATED_CLAIM_SURFACE_END";
 const FAMILIES: &[&str] = &[
@@ -233,11 +233,20 @@ fn audit(
     root: &Path,
     snapshot: &Path,
     kernel_count: Option<usize>,
+    write_snapshot: bool,
 ) -> AuditResult<i32> {
     let source = checked_source(generated, if kernel_count.is_some() { 0 } else { 16 })?;
     let theorems = theorem_names(&source)?;
-    let expected = read(snapshot)?;
-    let expected_names = claim_names(&expected, false)?;
+    let expected = if write_snapshot {
+        require(!snapshot.exists(), "refusing to overwrite a claim snapshot")?;
+        None
+    } else {
+        Some(read(snapshot)?)
+    };
+    let expected_names = match &expected {
+        Some(surface) => claim_names(surface, false)?,
+        None => theorems.clone(),
+    };
     let count = kernel_count.unwrap_or(506);
     require(
         expected_names.len() == count,
@@ -267,12 +276,27 @@ fn audit(
         return Ok(output.status.code().unwrap_or(1));
     }
     let stdout = String::from_utf8(output.stdout).map_err(|e| e.to_string())?;
-    validate_surface(
-        &extract_claim_surface(&stdout, BEGIN, END)?,
-        &expected,
+    let actual = extract_claim_surface(&stdout, BEGIN, END)?;
+    same_inventory(
+        "generated claim surface",
+        &claim_names(&actual, false)?,
         &theorems,
     )?;
     validate_axioms(&parse_generated_axioms(&stdout)?, &kernel, &native)?;
+    let expected = match expected {
+        Some(expected) => expected,
+        None => {
+            OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(snapshot)
+                .map_err(|error| error.to_string())?
+                .write_all(actual.as_bytes())
+                .map_err(|error| error.to_string())?;
+            read(snapshot)?
+        }
+    };
+    validate_surface(&actual, &expected, &theorems)?;
     if kernel_count.is_some() {
         println!(
             "Generated Lean kernel artifact audit passed artifact={} theorems={} claims={}",
@@ -421,25 +445,31 @@ fn main_result(args: &[String]) -> AuditResult<i32> {
             println!("Generated Lean axiom audit self-test passed");
             Ok(0)
         }
-        [mode, generated, root, snapshot, count] if mode == "--kernel" => audit(
-            Path::new(generated),
-            Path::new(root),
-            Path::new(snapshot),
-            Some(
-                count
-                    .parse()
-                    .map_err(|_| format!("invalid theorem count: {count}"))?,
-            ),
-        ),
+        [mode, generated, root, snapshot, count]
+            if mode == "--kernel" || mode == "--write-kernel" =>
+        {
+            audit(
+                Path::new(generated),
+                Path::new(root),
+                Path::new(snapshot),
+                Some(
+                    count
+                        .parse()
+                        .map_err(|_| format!("invalid theorem count: {count}"))?,
+                ),
+                mode == "--write-kernel",
+            )
+        }
         [generated, root, snapshot] => audit(
             Path::new(generated),
             Path::new(root),
             Path::new(snapshot),
             None,
+            false,
         ),
         _ => {
             eprintln!(
-                "usage: check-generated-lean-axioms --self-test | GENERATED PROOF_DIR CLAIM_SNAPSHOT | --kernel GENERATED PROOF_DIR CLAIM_SNAPSHOT EXPECTED_THEOREMS"
+                "usage: check-generated-lean-axioms --self-test | GENERATED PROOF_DIR CLAIM_SNAPSHOT | --kernel|--write-kernel GENERATED PROOF_DIR CLAIM_SNAPSHOT EXPECTED_THEOREMS"
             );
             Ok(2)
         }

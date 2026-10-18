@@ -1,4 +1,5 @@
 //! One actual FIFO receipt carries a branch choice through changing rolled visits.
+use super::distributed_source::{FrameBoundary, OperationObservation};
 use super::*;
 #[cfg(not(miri))]
 use crate::endpoint::proof_snapshot::ActorSnapshot;
@@ -11,7 +12,7 @@ use crate::{
     },
     test_support::transport::TestTransport,
 };
-use core::cell::Cell;
+use core::cell::{Cell, RefCell};
 
 type LeftNotice = g::Msg<8, ()>;
 type RightNotice = g::Msg<9, ()>;
@@ -104,6 +105,14 @@ fn changing_rolled_loans_teach_only_the_received_occurrences_choices() {
             let mut db = owner_rv.enter(session, &db_program).unwrap();
             let mut worker = worker_rv.enter(session, &worker_program).unwrap();
             let mut service = service_rv.enter(session, &service_program).unwrap();
+            let initial = unsafe {
+                [
+                    actor_snapshot(&owner),
+                    actor_snapshot(&worker),
+                    actor_snapshot(&service),
+                ]
+            };
+            let operations = RefCell::new(std::vec::Vec::new());
             let (sends, (_notice_before, _notice_after, receipts), ()) =
                 tokio::time::timeout(core::time::Duration::from_secs(30), async {
                     tokio::join!(
@@ -113,26 +122,71 @@ fn changing_rolled_loans_teach_only_the_received_occurrences_choices() {
                             let branch = owner.offer().await.unwrap();
                             assert_eq!(branch.label(), 8);
                             branch.send::<LeftNotice>(&()).await.unwrap();
+                            operations.borrow_mut().push(OperationObservation {
+                                view: 0,
+                                label: 8,
+                                before: before.clone(),
+                                after: unsafe { actor_snapshot(&owner) },
+                                frame: FrameBoundary::Sent(network.accepted_frame(1, 0)),
+                            });
                             let mut sends = std::vec![(before, network.queued_frame(1))];
                             for (visit, value) in [7, 8, 9, 9].into_iter().enumerate() {
                                 number.set(value);
                                 let before = unsafe { actor_snapshot(&owner) };
                                 let branch = owner.offer().await.unwrap();
-                                match branch.label() {
+                                let label = branch.label();
+                                match label {
                                     1 => branch.send::<LeftLoan>(db).await.unwrap(),
                                     2 => branch.send::<RightLoan>(db).await.unwrap(),
                                     label => panic!("unexpected loan label {label}"),
                                 }
+                                operations.borrow_mut().push(OperationObservation {
+                                    view: 0,
+                                    label,
+                                    before: before.clone(),
+                                    after: unsafe { actor_snapshot(&owner) },
+                                    frame: FrameBoundary::Sent(
+                                        network.accepted_frame(1, usize::from(visit == 0)),
+                                    ),
+                                });
                                 // The ordinary notice precedes the first loan in this
                                 // actual FIFO; observing it does not consume either frame.
                                 sends.push((
                                     before,
                                     network.queued_frame_at(1, usize::from(visit == 0)),
                                 ));
+                                let before = unsafe { actor_snapshot(&owner) };
                                 db = owner.recv::<Return>().await.unwrap();
+                                operations.borrow_mut().push(OperationObservation {
+                                    view: 0,
+                                    label: 5,
+                                    before,
+                                    after: unsafe { actor_snapshot(&owner) },
+                                    frame: FrameBoundary::Received(
+                                        network.received_frame(0, session, 0),
+                                    ),
+                                });
                             }
+                            let before = unsafe { actor_snapshot(&db) };
                             db.send::<Read>(&41).await.unwrap();
+                            operations.borrow_mut().push(OperationObservation {
+                                view: 10,
+                                label: 3,
+                                before,
+                                after: unsafe { actor_snapshot(&db) },
+                                frame: FrameBoundary::Sent(network.accepted_frame(3, 0)),
+                            });
+                            let before = unsafe { actor_snapshot(&db) };
                             assert_eq!(db.recv::<Value>().await.unwrap(), 42);
+                            operations.borrow_mut().push(OperationObservation {
+                                view: 10,
+                                label: 4,
+                                before,
+                                after: unsafe { actor_snapshot(&db) },
+                                frame: FrameBoundary::Received(
+                                    network.received_frame(10, session, 0),
+                                ),
+                            });
                             sends
                         },
                         async {
@@ -141,6 +195,15 @@ fn changing_rolled_loans_teach_only_the_received_occurrences_choices() {
                             assert_eq!(branch.label(), 8);
                             branch.recv::<LeftNotice>().await.unwrap();
                             let notice_after = unsafe { actor_snapshot(&worker) };
+                            operations.borrow_mut().push(OperationObservation {
+                                view: 1,
+                                label: 8,
+                                before: notice_before.clone(),
+                                after: notice_after.clone(),
+                                frame: FrameBoundary::Received(
+                                    network.received_frame(1, session, 0),
+                                ),
+                            });
                             let mut receipts = std::vec::Vec::new();
                             for expected in [1, 2, 1, 1] {
                                 // SAFETY: this receiver has its own pinned TestTransport actor.
@@ -153,16 +216,50 @@ fn changing_rolled_loans_teach_only_the_received_occurrences_choices() {
                                     label => panic!("unexpected received loan label {label}"),
                                 };
                                 let after = unsafe { actor_snapshot(&worker) };
+                                operations.borrow_mut().push(OperationObservation {
+                                    view: 1,
+                                    label: expected,
+                                    before: before.clone(),
+                                    after: after.clone(),
+                                    frame: FrameBoundary::Received(
+                                        network.received_frame(1, session, 0),
+                                    ),
+                                });
                                 worker.send::<Return>(db).await.unwrap();
                                 let return_wire = network.queued_frame(0);
                                 let returned = unsafe { actor_snapshot(&worker) };
+                                operations.borrow_mut().push(OperationObservation {
+                                    view: 1,
+                                    label: 5,
+                                    before: after.clone(),
+                                    after: returned.clone(),
+                                    frame: FrameBoundary::Sent(network.accepted_frame(0, 0)),
+                                });
                                 receipts.push((before, after, returned, return_wire));
                             }
                             (notice_before, notice_after, receipts)
                         },
                         async {
+                            let before = unsafe { actor_snapshot(&service) };
                             let number = service.recv::<Read>().await.unwrap();
+                            operations.borrow_mut().push(OperationObservation {
+                                view: 3,
+                                label: 3,
+                                before,
+                                after: unsafe { actor_snapshot(&service) },
+                                frame: FrameBoundary::Received(
+                                    network.received_frame(3, session, 0),
+                                ),
+                            });
+                            let before = unsafe { actor_snapshot(&service) };
                             service.send::<Value>(&(number + 1)).await.unwrap();
+                            operations.borrow_mut().push(OperationObservation {
+                                view: 3,
+                                label: 4,
+                                before,
+                                after: unsafe { actor_snapshot(&service) },
+                                frame: FrameBoundary::Sent(network.accepted_frame(10, 0)),
+                            });
                         },
                     )
                 })
@@ -180,9 +277,122 @@ fn changing_rolled_loans_teach_only_the_received_occurrences_choices() {
             assert_eq!(sends[3].1.1, sends[4].1.1);
             assert_eq!(receipts[3].0.choices, receipts[3].1.choices);
             assert!(receipts[3].0.completion_mutations < receipts[3].1.completion_mutations);
+            let operations = operations.into_inner();
+            assert_eq!(operations.len(), 22);
+            super::distributed_source::check_observations(&operations);
+            for actor in &initial {
+                assert_eq!(
+                    &operations
+                        .iter()
+                        .find(|op| op.before.actor == actor.actor)
+                        .unwrap()
+                        .before,
+                    actor
+                );
+            }
             #[cfg(not(miri))]
-            write_observations(&sends, &receipts, (&_notice_before, &_notice_after));
+            {
+                write_observations(&sends, &receipts, (&_notice_before, &_notice_after));
+                write_distributed(&initial, &operations);
+            }
         });
+}
+
+/// Choose compatible complete witnesses from the copied local knowledge.
+/// Role 1 deliberately chooses the opposite unentered sibling from role 0.
+/// This runs only after execution and cannot decide a route or an operation.
+#[cfg(not(miri))]
+fn write_distributed(initial: &[ActorSnapshot; 3], operations: &[OperationObservation]) {
+    let path = |snapshot: &ActorSnapshot| {
+        let selected = snapshot
+            .choices
+            .iter()
+            .find(|(scope, _)| *scope == 2)
+            .and_then(|(_, arm)| *arm);
+        usize::from(selected == Some(1)) * 2 + usize::from(snapshot.actor == 1)
+    };
+    let paths = operations
+        .iter()
+        .map(|operation| (path(&operation.before), path(&operation.after)))
+        .collect::<std::vec::Vec<_>>();
+    let mut source =
+        super::distributed_source::execution_source::<Steps, 32>(initial, operations, &paths);
+    source.insert_str(0, "import Hibana.DistributedChoiceHistory\n");
+    source.push_str(r#"
+theorem distributedCurrentChoice2HasItsActualGlobalOrigin :
+  ∃ before after prior later record cleared,
+    DistributedSourceExecution distributedImages distributedChoreo 9063 (distributedCut0, distributedEntries0) before prior ∧
+    DistributedSourceStep distributedImages distributedChoreo 9063 before after (some (1, record)) ∧
+    ActorMeasuredCommit distributedImage1 distributedChoreo 9063 (before.1.actors 1) (after.1.actors 1) cleared record ∧
+    record.IntroducesChoice distributedImage1 distributedChoreo 2 .left ∧
+    DistributedSourceExecution distributedImages distributedChoreo 9063 after (distributedCut33, distributedEntries33) later ∧
+    ActorChoiceUnresetHistory distributedImage1 distributedChoreo 9063 2 (after.1.actors 1) (distributedCut33.actors 1) :=
+  a_current_distributed_choice_has_its_unreset_actual_boundary distributedActualExecution (by decide) (by decide)
+
+theorem distributedCurrentChoice0HasItsActualGlobalOrigin :
+  ∃ before after prior later record cleared,
+    DistributedSourceExecution distributedImages distributedChoreo 9063 (distributedCut0, distributedEntries0) before prior ∧
+    DistributedSourceStep distributedImages distributedChoreo 9063 before after (some (1, record)) ∧
+    ActorMeasuredCommit distributedImage1 distributedChoreo 9063 (before.1.actors 1) (after.1.actors 1) cleared record ∧
+    record.IntroducesChoice distributedImage1 distributedChoreo 0 .left ∧
+    DistributedSourceExecution distributedImages distributedChoreo 9063 after (distributedCut33, distributedEntries33) later ∧
+    ActorChoiceUnresetHistory distributedImage1 distributedChoreo 9063 0 (after.1.actors 1) (distributedCut33.actors 1) :=
+  a_current_distributed_choice_has_its_unreset_actual_boundary distributedActualExecution (by decide) (by decide)
+
+theorem distributedPartialWitnessesAreIndependent :
+    distributedSend14.pathIndex = 0 ∧ distributedCommit15.step.pathIndex = 1 ∧
+    distributedSend14.pathIndex ≠ distributedCommit15.step.pathIndex := by decide
+
+theorem distributedUnenteredSiblingRemainsUnknown :
+    (distributedCut33.actors 0).1.doneState.selected 4 = none ∧
+    (distributedCut33.actors 1).1.doneState.selected 4 = none := by decide
+
+theorem distributedSameArmStillHasAFreshIntroducingReceive :
+distributedBefore15.choices = distributedAfter15.choices ∧
+    distributedCommit15.IntroducesChoice distributedImage1 distributedChoreo 2 .left := by
+  constructor
+  · decide
+  · exact ⟨by decide, by decide, 1, [(2, 0), (0, 0)], by decide, by decide, by decide⟩
+
+theorem distributedCurrentChoiceReceiptHasItsActualHead :
+    distributedWire1 = distributedWire14 ∧ distributedWire14 = distributedWire15 ∧
+    (sourceChannelEntries distributedEntries23 distributedChannel15)[
+      (distributedCut23.carriers distributedChannel15).delivered]? = some distributedEntry14 ∧
+    distributedEntry14.carrierWitness ≠ distributedEntry1.carrierWitness :=
+  ⟨by decide, by decide, by rfl, by decide⟩
+
+theorem distributedChoiceAfterReturnDoesNotAssertValueCustody :
+    distributedAfter16.doneState.selected 2 = some .left ∧
+    distributedAfter16.viewIssued 10 = false := by decide
+
+def distributedCurrentSource := (distributedSend14.ownedFacts? distributedChoreo).get (by decide)
+def distributedCurrentReceipt :=
+  (distributedCommit15.step.ownedFacts? distributedImage1 distributedChoreo).get (by decide)
+def distributedCurrentMemberships :=
+  (canonicalEventRoutePath? (canonicalProgramSource distributedChoreo) distributedCurrentSource.effIndex).get (by decide)
+
+private theorem distributedActualPostReceiptChoiceSuffix :
+    ActorChoiceUnresetHistory distributedImage1 distributedChoreo 9063 2
+      (distributedCommit15.step.after, 20) (distributedCut33.actors 1) :=
+  .commit (record := { commit := distributedCommit16, before := 20, after := 21 })
+    .refl (by decide) (by decide)
+
+theorem distributedCurrentChoiceComesFromItsActualAcceptedFrame :
+    distributedCommit15.step.after.actor = distributedCurrentReceipt.binding.receiverActor ∧
+    (distributedCut33.actors 1).1.doneState.selected 2 = some .left :=
+  a_received_choice_stays_tied_to_its_accepted_source_occurrence
+    (sender := distributedSend14) (receivedFacts := distributedCurrentReceipt)
+    (sentFacts := distributedCurrentSource) (memberships := distributedCurrentMemberships)
+    (receiver := distributedCommit15.step) (wire := distributedWire15)
+    (receiverImage := distributedImage1) (choreo := distributedChoreo) (session := 9063)
+    (scope := 2) (arm := .left) (previous := none) (count := 20) (final := distributedCut33.actors 1)
+    (by decide) (Option.some_get (by decide)).symm
+    (by decide) (Option.some_get (by decide)).symm (by decide) (by decide)
+    (Option.some_get (by decide)).symm (by decide) (by decide) distributedActualPostReceiptChoiceSuffix
+"#);
+    let directory = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/lean-proof");
+    std::fs::create_dir_all(&directory).unwrap();
+    std::fs::write(directory.join("DistributedChoiceGenerated.lean"), source).unwrap();
 }
 
 #[cfg(not(miri))]

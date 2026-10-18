@@ -165,6 +165,26 @@ unfolded-source progress argument and composition with actual value custody,
 active-call and fault/closure histories remain required. The public owned
 projection guard stays closed.
 
+`DistributedChoiceHistory.lean` recovers a current local choice's introducing
+record in that same distributed execution. Its suffix cannot reset this route;
+independent actors and other routes can still restart. A fresh receive may
+introduce the same arm that was visible before preparation, so equality of the
+two visible choice lists cannot substitute an old receipt. The shared actor
+boundary theorem distinguishes unchanged state, checked quiet observation and
+the exact logged commit; actor, row and choice projections use that one split.
+
+The nested-choice fixture now records all twenty-two operations in three
+runtimes, including the ordinary notice, four changing loans and returns,
+and the final resource continuation. Source witnesses retain all eight paths.
+The sender and receiver choose different witnesses for an unentered sibling,
+whose local slot stays unknown. The complete FIFO histories and current outer
+and inner choice origins are checked against the same chronological record.
+Retained knowledge after the return is distinguished from value custody.
+
+Finite acceptance-log scans compare only actor/write-count stamps and physical
+channel/witness pairs. Their equivalence to the membership predicates is proved;
+they do not compare full source images to decide these scalar conditions.
+
 `OccurrenceChoiceKnowledge.lean` relates the actual accepted owned frame to
 the receiver's committed branch knowledge. It derives the matching source
 effect from checked bytes, then applies that occurrence's canonical route

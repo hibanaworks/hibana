@@ -27,7 +27,7 @@ inductive ActorChoiceUnresetHistory
       (outside : sourceRollResetsRoute? (canonicalProgramSource choreo) sample.scope scope = some false) :
       ActorChoiceUnresetHistory image choreo session scope first (sample.after, after)
 
-private theorem unreset_choice_histories_compose
+theorem unreset_source_choice_histories_compose
     {image : RustDescriptorImage} {choreo : Choreo} {session scope : Nat}
     {first middle final : ActorProgressObservation × Nat}
     (earlier : ActorChoiceUnresetHistory image choreo session scope first middle)
@@ -99,6 +99,34 @@ theorem an_unreset_source_choice_survives_its_measured_suffix
     rw [beforeAt, afterAt] at publication
     exact a_source_publication_preserves_existing_choice publication baseKnows
 
+/-- Retain the exact recorded boundary when a choice is introduced. This lets
+a distributed history recover its own introducing record without substituting
+a separately compatible local history. -/
+theorem a_measured_commit_preserves_or_introduces_its_selected_choice
+    {image : RustDescriptorImage} {choreo : Choreo} {session scope : Nat} {arm : RouteArm}
+    {before after : ActorProgressObservation × Nat} {cleared : List Nat} {record : ActorCommitRecord}
+    (commit : ActorMeasuredCommit image choreo session before after cleared record)
+    (known : after.1.choices.find? (fun row => row.1 == scope) = some (scope, some arm)) :
+    (before.1.choices.find? (fun row => row.1 == scope) = some (scope, some arm) ∧
+      ActorChoiceUnresetHistory image choreo session scope before after) ∨
+    record.IntroducesChoice image choreo scope arm := by
+  cases commit with
+  | ordinary checked written =>
+    rcases a_checked_record_preserves_or_introduces_the_selected_choice checked known with old | new
+    · exact .inl ⟨old, .commit .refl checked written⟩
+    · exact .inr new
+  | fresh checked prepared =>
+    have commit := a_measured_commit_retains_its_checked_source_and_wire
+      (ActorMeasuredCommit.fresh checked prepared)
+    obtain ⟨base, resetAt, beforeAt, _, afterAt⟩ := prepared_body_reentry_is_derived_before_commit prepared
+    have actualKnown := afterAt.symm ▸ known
+    rcases a_checked_record_preserves_or_introduces_the_selected_choice commit.1 actualKnown with old | new
+    · rw [beforeAt] at old
+      have reset := a_prepared_body_has_its_source_choice_reset resetAt
+      obtain ⟨outside, previous⟩ := a_source_choice_reset_only_retains_unreset_knowledge reset old
+      exact .inl ⟨previous, .fresh .refl checked prepared outside⟩
+    · exact .inr new
+
 private theorem a_measured_step_preserves_or_introduces_the_selected_choice
     {image : RustDescriptorImage} {choreo : Choreo} {session scope : Nat} {arm : RouteArm}
     {before after : ActorProgressObservation × Nat} {cleared : List Nat} {commits : Nat}
@@ -113,20 +141,15 @@ private theorem a_measured_step_preserves_or_introduces_the_selected_choice
     have same := a_zero_write_measured_gap_preserves_committed_choices checked
     exact .inl ⟨by simpa only [same] using known, .quiet .refl checked⟩
   | commit checked written =>
-    rcases a_checked_record_preserves_or_introduces_the_selected_choice checked known with old | new
-    · exact .inl ⟨old, .commit .refl checked written⟩
-    · exact .inr ⟨_, .ordinary checked written, new⟩
+    have actual := ActorMeasuredCommit.ordinary checked written
+    rcases a_measured_commit_preserves_or_introduces_its_selected_choice actual known with old | new
+    · exact .inl old
+    · exact .inr ⟨_, actual, new⟩
   | reentry checked prepared =>
-    have commit := a_measured_commit_retains_its_checked_source_and_wire
-      (ActorMeasuredCommit.fresh checked prepared)
-    obtain ⟨base, resetAt, beforeAt, _, afterAt⟩ := prepared_body_reentry_is_derived_before_commit prepared
-    have actualKnown := afterAt.symm ▸ known
-    rcases a_checked_record_preserves_or_introduces_the_selected_choice commit.1 actualKnown with old | new
-    · rw [beforeAt] at old
-      have reset := a_prepared_body_has_its_source_choice_reset resetAt
-      obtain ⟨outside, previous⟩ := a_source_choice_reset_only_retains_unreset_knowledge reset old
-      exact .inl ⟨previous, .fresh .refl checked prepared outside⟩
-    · exact .inr ⟨_, .fresh checked prepared, new⟩
+    have actual := ActorMeasuredCommit.fresh checked prepared
+    rcases a_measured_commit_preserves_or_introduces_its_selected_choice actual known with old | new
+    · exact .inl old
+    · exact .inr ⟨_, actual, new⟩
 
 private theorem a_measured_history_choice_has_its_initial_or_latest_source_origin
     {image : RustDescriptorImage} {choreo : Choreo} {session scope : Nat} {arm : RouteArm}
@@ -147,9 +170,9 @@ private theorem a_measured_history_choice_has_its_initial_or_latest_source_origi
       ⟨old, retained⟩ | ⟨record, committed, introduced⟩
     · rcases ih old with ⟨initial, whole⟩ |
         ⟨before, after, prior, marked, priorCommits, record, earlierHistory, committed, introduced, suffix⟩
-      · exact .inl ⟨initial, unreset_choice_histories_compose whole retained⟩
+      · exact .inl ⟨initial, unreset_source_choice_histories_compose whole retained⟩
       · exact .inr ⟨before, after, prior, marked, priorCommits, record, earlierHistory, committed,
-          introduced, unreset_choice_histories_compose suffix retained⟩
+          introduced, unreset_source_choice_histories_compose suffix retained⟩
     · exact .inr ⟨middle, final, earlier, more, count, record, history, committed, introduced, .refl⟩
 
 /-- Recover the current local choice's actual introducing commit through

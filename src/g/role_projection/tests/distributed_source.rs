@@ -38,8 +38,10 @@ pub(super) fn check_observations(operations: &[OperationObservation]) {
         let event = before
             .steps
             .iter()
-            .position(|step| {
-                step.view == operation.view
+            .enumerate()
+            .position(|(index, step)| {
+                operation.after.steps[index].done
+                    && step.view == operation.view
                     && match (&operation.frame, step.action) {
                         (FrameBoundary::Sent(_), super::LocalAction::Send { label, .. })
                         | (FrameBoundary::Received(_), super::LocalAction::Recv { label, .. }) => {
@@ -69,21 +71,26 @@ pub(super) fn check_observations(operations: &[OperationObservation]) {
             }
         }
     }
-    assert_eq!(accepted.len(), 8);
+
     assert_eq!(delivered.len(), accepted.len());
-    assert_eq!(operations.len(), 16);
+    assert_eq!(operations.len(), accepted.len() * 2);
 }
 
 /// Serialize the already completed execution. No endpoint operation reads
 /// these records, and no source identity is inferred from a frame label.
 #[cfg(not(miri))]
-pub(super) fn write_observations(
+pub(super) fn execution_source<Steps, const CAPACITY: usize>(
     initial: &[ActorSnapshot; 3],
     operations: &[OperationObservation],
-) {
-    use super::{RoleDescriptorRef, RoleProjection, mixed_send_admission::Steps};
-    use crate::test_support::{lean_choreo::LeanChoreo, lean_descriptor::descriptor_source};
+    paths: &[(usize, usize)],
+) -> std::string::String
+where
+    Steps: crate::g::ProgramShape + crate::test_support::lean_choreo::LeanChoreo,
+{
+    use super::{RoleDescriptorRef, RoleProjection};
+    use crate::test_support::lean_descriptor::descriptor_source;
     use std::{collections::BTreeMap, fmt::Write};
+    let session = operations[0].frame().header.session().raw();
     let mut source = std::format!(
         "import Hibana.DistributedSourceExecution\n\nset_option maxRecDepth 10000\n\
          set_option maxHeartbeats 0\n\nopen Hibana Hibana.EndpointDelegation\n\n\
@@ -91,9 +98,9 @@ pub(super) fn write_observations(
         Steps::lean_source()
     );
     for (actor, image) in [
-        (0, &RoleProjection::<0, Steps, 16>::IMAGE_REF),
-        (1, &RoleProjection::<1, Steps, 16>::IMAGE_REF),
-        (3, &RoleProjection::<3, Steps, 16>::IMAGE_REF),
+        (0, &RoleProjection::<0, Steps, CAPACITY>::IMAGE_REF),
+        (1, &RoleProjection::<1, Steps, CAPACITY>::IMAGE_REF),
+        (3, &RoleProjection::<3, Steps, CAPACITY>::IMAGE_REF),
     ] {
         writeln!(
             source,
@@ -119,6 +126,7 @@ pub(super) fn write_observations(
     let mut stage = 0;
     let mut records = std::vec::Vec::new();
     for (index, operation) in operations.iter().enumerate() {
+        let (previous_path, next_path) = paths[index];
         let before = &operation.before;
         let after = &operation.after;
         let actor = before.actor;
@@ -127,8 +135,10 @@ pub(super) fn write_observations(
         let event = before
             .steps
             .iter()
-            .position(|step| {
-                step.view == operation.view
+            .enumerate()
+            .position(|(index, step)| {
+                operation.after.steps[index].done
+                    && step.view == operation.view
                     && match (&operation.frame, step.action) {
                         (FrameBoundary::Sent(_), super::LocalAction::Send { label, .. })
                         | (FrameBoundary::Received(_), super::LocalAction::Recv { label, .. }) => {
@@ -146,7 +156,7 @@ pub(super) fn write_observations(
             header.session().raw(), header.lane(), header.source_role(), header.target_role(), header.label().raw(), frame.payload(),
             header.session().raw(), header.lane(), header.source_role(), header.target_role()).unwrap();
         let (base, commit, measurement) = if let Some(scope) = before.steps[event].reentry_scope {
-            writeln!(source, "def distributedReentry{index} : ActorReentryCommitObservation := {{ previousPath := 0, nextPath := 0, scope := {scope}, event := {event}, view := {}, before := distributedBefore{index}, after := distributedAfter{index} }}\n\n\
+            writeln!(source, "def distributedReentry{index} : ActorReentryCommitObservation := {{ previousPath := {previous_path}, nextPath := {next_path}, scope := {scope}, event := {event}, view := {}, before := distributedBefore{index}, after := distributedAfter{index} }}\n\n\
                 private theorem distributedPrepared{index} : (distributedReentry{index}.prepared? distributedImage{actor} distributedChoreo).isSome = true := by decide\n\n\
                 def distributedPreparedPair{index} := (distributedReentry{index}.prepared? distributedImage{actor} distributedChoreo).get distributedPrepared{index}\n",
                 operation.view).unwrap();
@@ -154,14 +164,14 @@ pub(super) fn write_observations(
                 std::format!("distributedPreparedPair{index}.2.before"),
                 std::format!("distributedPreparedPair{index}.2"),
                 std::format!(
-                    ".fresh (sample := distributedReentry{index}) (by decide) (Option.some_get distributedPrepared{index})"
+                    ".fresh (sample := distributedReentry{index}) (by decide) (Option.some_get distributedPrepared{index}).symm"
                 ),
             )
         } else {
             (
                 std::format!("distributedBefore{index}"),
                 std::format!(
-                    "{{ pathIndex := 0, event := {event}, view := {}, before := distributedBefore{index}, after := distributedAfter{index} }}",
+                    "{{ pathIndex := {next_path}, event := {event}, view := {}, before := distributedBefore{index}, after := distributedAfter{index} }}",
                     operation.view
                 ),
                 std::format!(
@@ -172,14 +182,14 @@ pub(super) fn write_observations(
             )
         };
         writeln!(source, "def distributedCommit{index} : ActorCommitRecord := {{ step := {commit}, wire := distributedWire{index} }}\n\n\
-            private theorem distributedMeasurement{index} : ActorMeasuredCommit distributedImage{actor} distributedChoreo 9062\n  (distributedBefore{index}, {}) (distributedAfter{index}, {}) {} distributedCommit{index} :=\n  {measurement}\n",
+            private theorem distributedMeasurement{index} : ActorMeasuredCommit distributedImage{actor} distributedChoreo {session}\n  (distributedBefore{index}, {}) (distributedAfter{index}, {}) {} distributedCommit{index} :=\n  {measurement}\n",
             before.completion_mutations, after.completion_mutations,
             if before.steps[event].reentry_scope.is_some() {
                 std::format!("((List.range distributedPreparedPair{index}.1.eventLength).map (distributedPreparedPair{index}.1.eventStart + ·))")
             } else { "[]".into() }).unwrap();
         if matches!(operation.frame, FrameBoundary::Sent(_)) {
             accepted.insert(frame.witness, index);
-            writeln!(source, "def distributedSend{index} : SourceSendAdmission := {{ image := distributedImage{actor}, base := {base}, pathIndex := 0, event := {event}, wire := distributedWire{index} }}\n\n\
+            writeln!(source, "def distributedSend{index} : SourceSendAdmission := {{ image := distributedImage{actor}, base := {base}, pathIndex := {next_path}, event := {event}, wire := distributedWire{index} }}\n\n\
                 def distributedEntry{index} : SourceAcceptance := {{ sample := distributedSend{index}, channel := distributedChannel{index}, event := {}, mutation := {}, carrierWitness := {} }}\n\n\
                 def distributedTransport{} : TransportState := ((distributedCut{stage}.carriers distributedChannel{index}).send ⟨{}, by decide⟩).get (by decide)\n\n\
                 def distributedCut{} : DistributedSourceCut := distributedCut{stage}.carrierAt distributedChannel{index} distributedTransport{}\n\n\
@@ -196,29 +206,42 @@ pub(super) fn write_observations(
             } else {
                 ".current (by decide)".into()
             };
-            writeln!(source, "private theorem distributedStep{} : DistributedSourceStep distributedImages distributedChoreo 9062\n  (distributedCut{stage}, distributedEntries{stage}) (distributedCut{}, distributedEntries{}) none := by\n  apply DistributedSourceStep.accept (sample := distributedSend{index}) (previousPath := 0) (witness := {}) (label := ⟨{frame_label}, by decide⟩)\n    (data := (distributedImage{actor}.decodeActorOrder? distributedChoreo).get (by decide))\n    (path := ((distributedImage{actor}.decodeActorOrder? distributedChoreo).get (by decide)).normalized.paths[0])\n    (row := ((distributedImage{actor}.decodeActorOrder? distributedChoreo).get (by decide)).rows[{event}])\n  · rfl\n  · decide\n  · exact Option.some_get (x := distributedImage{actor}.decodeActorOrder? distributedChoreo) (by decide)\n  · decide\n  · decide\n  · exact {preparation}\n  · decide\n  · decide\n  · decide\n  · decide\n  · unfold OwnedWireObservation.identifies; decide\n",
+            writeln!(source, "private theorem distributedStep{} : DistributedSourceStep distributedImages distributedChoreo {session}\n  (distributedCut{stage}, distributedEntries{stage}) (distributedCut{}, distributedEntries{}) none := by\n  apply DistributedSourceStep.accept (sample := distributedSend{index}) (previousPath := {previous_path}) (witness := {}) (label := ⟨{frame_label}, by decide⟩)\n    (data := (distributedImage{actor}.decodeActorOrder? distributedChoreo).get (by decide))\n    (path := ((distributedImage{actor}.decodeActorOrder? distributedChoreo).get (by decide)).normalized.paths[{next_path}])\n    (row := ((distributedImage{actor}.decodeActorOrder? distributedChoreo).get (by decide)).rows[{event}])\n  · rfl\n  · decide\n  · exact (Option.some_get (x := distributedImage{actor}.decodeActorOrder? distributedChoreo) (by decide)).symm\n  · exact getElem?_pos _ _ (by decide)\n  · exact getElem?_pos _ _ (by decide)\n  · exact {preparation}\n  · decide\n  · decide\n  · decide\n  · decide\n  · unfold OwnedWireObservation.identifies; decide\n",
                 stage+1,stage+1,stage+1,frame.witness, frame_label = header.label().raw()).unwrap();
             stage += 1;
             writeln!(source, "def distributedCut{} : DistributedSourceCut := distributedCut{stage}.actorAt {actor} (distributedAfter{index}, {})\n\n\
                 def distributedEntries{} := distributedEntries{stage}\n\n\
-                private theorem distributedStep{} : DistributedSourceStep distributedImages distributedChoreo 9062\n  (distributedCut{stage}, distributedEntries{stage}) (distributedCut{}, distributedEntries{}) (some ({actor}, distributedCommit{index})) := by\n  exact .publish (entry := distributedEntry{index}) (by decide) (by decide) (by decide) distributedMeasurement{index}\n",
+                private theorem distributedStep{} : DistributedSourceStep distributedImages distributedChoreo {session}\n  (distributedCut{stage}, distributedEntries{stage}) (distributedCut{}, distributedEntries{}) (some ({actor}, distributedCommit{index})) := by\n  exact .publish (entry := distributedEntry{index}) (List.mem_append_right _ (List.mem_singleton_self _)) (by decide) (by decide) distributedMeasurement{index}\n",
                 stage+1,after.completion_mutations,stage+1,stage+1,stage+1,stage+1).unwrap();
         } else {
             let sent_index = accepted[&frame.witness];
             writeln!(source, "def distributedTransport{} : TransportState := {{ distributedCut{stage}.carriers distributedChannel{index} with delivered := (distributedCut{stage}.carriers distributedChannel{index}).delivered + 1 }}\n\n\
                 def distributedCut{} : DistributedSourceCut := (distributedCut{stage}.actorAt {actor} (distributedAfter{index}, {})).carrierAt distributedChannel{index} distributedTransport{}\n\n\
                 def distributedEntries{} := distributedEntries{stage}\n\n\
-                private theorem distributedStep{} : DistributedSourceStep distributedImages distributedChoreo 9062\n  (distributedCut{stage}, distributedEntries{stage}) (distributedCut{}, distributedEntries{}) (some ({actor}, distributedCommit{index})) := by\n  exact .receive (frame := ((distributedCut{stage}.carriers distributedChannel{index}).frames[(distributedCut{stage}.carriers distributedChannel{index}).delivered]?).get (by decide)) (entry := distributedEntry{sent_index}) (witness := {}) (by decide) (by decide) (by decide) (by decide) (by decide) (by decide) distributedMeasurement{index}\n",
+                private theorem distributedStep{} : DistributedSourceStep distributedImages distributedChoreo {session}\n  (distributedCut{stage}, distributedEntries{stage}) (distributedCut{}, distributedEntries{}) (some ({actor}, distributedCommit{index})) := by\n  exact .receive (frame := ((distributedCut{stage}.carriers distributedChannel{index}).frames[(distributedCut{stage}.carriers distributedChannel{index}).delivered]?).get (by decide)) (entry := distributedEntry{sent_index}) (witness := {}) (by decide) (by decide) (by rfl) (by decide) (by decide) (by decide) distributedMeasurement{index}\n",
                 stage+1,stage+1,after.completion_mutations,stage+1,stage+1,stage+1,stage+1,stage+1,frame.witness).unwrap();
         }
         stage += 1;
         records.push(std::format!("({actor}, distributedCommit{index})"));
     }
     writeln!(source, "def distributedRecords : List (Nat × ActorCommitRecord) := [{}]\n\n\
-        theorem distributedActualExecution : DistributedSourceExecution distributedImages distributedChoreo 9062\n  (distributedCut0, distributedEntries0) (distributedCut{stage}, distributedEntries{stage}) distributedRecords := by\n  exact {}\n\n\
-        theorem distributedActorHistories (actor : Nat) : ∃ cleared commits, ActorMeasuredHistory (distributedImages actor) distributedChoreo 9062\n  (distributedCut0.actors actor) (distributedCut{stage}.actors actor) cleared commits :=\n  a_distributed_source_execution_projects_each_actual_actor_history distributedActualExecution actor\n\n\
-        theorem distributedFifoHistories (channel : TransportChannel) : ∃ history, SendAdmissionTrace distributedChoreo 9062\n  (distributedCut{stage}.carriers channel) history (sourceChannelRecords distributedEntries{stage} channel) :=\n  a_distributed_source_execution_projects_its_complete_fifo_histories distributedActualExecution channel\n",
+        theorem distributedActualExecution : DistributedSourceExecution distributedImages distributedChoreo {session}\n  (distributedCut0, distributedEntries0) (distributedCut{stage}, distributedEntries{stage}) distributedRecords := by\n  exact {}\n\n\
+        theorem distributedActorHistories (actor : Nat) : ∃ cleared commits, ActorMeasuredHistory (distributedImages actor) distributedChoreo {session}\n  (distributedCut0.actors actor) (distributedCut{stage}.actors actor) cleared commits :=\n  a_distributed_source_execution_projects_each_actual_actor_history distributedActualExecution actor\n\n\
+        theorem distributedFifoHistories (channel : TransportChannel) : ∃ history, SendAdmissionTrace distributedChoreo {session}\n  (distributedCut{stage}.carriers channel) history (sourceChannelRecords distributedEntries{stage} channel) :=\n  a_distributed_source_execution_projects_its_complete_fifo_histories distributedActualExecution channel\n",
         records.join(", "), (1..=stage).fold(".refl".into(), |proof, boundary| std::format!("(.tail {proof} distributedStep{boundary})"))).unwrap();
+    source
+}
+
+#[cfg(not(miri))]
+pub(super) fn write_observations(
+    initial: &[ActorSnapshot; 3],
+    operations: &[OperationObservation],
+) {
+    let mut source = execution_source::<super::mixed_send_admission::Steps, 16>(
+        initial,
+        operations,
+        &std::vec![(0, 0); operations.len()],
+    );
     source.push_str(r#"
 theorem distributedMixedCutKeepsIndependentActorVisits :
     (distributedCut13.actors 0).2 = 8 ∧

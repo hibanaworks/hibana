@@ -75,6 +75,50 @@ instance (entry : SourceAcceptance) (actor mutation : Nat) :
     Decidable (entry.stamps actor mutation) :=
   inferInstanceAs (Decidable (entry.sample.image.role = actor ∧ entry.mutation = mutation))
 
+/-- Finite scalar checks are exactly the original membership predicates.
+They avoid asking a decision procedure to compare complete source images. -/
+theorem source_acceptance_observation_checks_are_exact
+    (entries : List SourceAcceptance) (actor mutation witness : Nat) (channel : TransportChannel) :
+    ((entries.all (fun entry => !(entry.sample.image.role == actor && entry.mutation == mutation)) = true) ↔
+      ∀ entry ∈ entries, ¬ entry.stamps actor mutation) ∧
+    ((entries.all (fun entry => entry.channel != channel || entry.carrierWitness != witness) = true) ↔
+      ∀ entry ∈ entries, entry.channel = channel → entry.carrierWitness ≠ witness) := by
+  constructor
+  · constructor
+    · intro checked entry member matched
+      have one := List.all_eq_true.mp checked entry member
+      have both : (entry.sample.image.role == actor && entry.mutation == mutation) = true :=
+        Bool.and_eq_true_iff.mpr ⟨beq_iff_eq.mpr matched.1, beq_iff_eq.mpr matched.2⟩
+      rw [both] at one
+      cases one
+    · intro checked
+      apply List.all_eq_true.mpr
+      intro entry member
+      cases matched : (entry.sample.image.role == actor && entry.mutation == mutation) with
+      | false => rfl
+      | true =>
+        have fields := Bool.and_eq_true_iff.mp matched
+        exact False.elim (checked entry member ⟨beq_iff_eq.mp fields.1, beq_iff_eq.mp fields.2⟩)
+  · constructor
+    · intro checked entry member same equal
+      have one := List.all_eq_true.mp checked entry member
+      have channelAt : (entry.channel == channel) = true := beq_iff_eq.mpr same
+      have witnessAt : (entry.carrierWitness == witness) = true := beq_iff_eq.mpr equal
+      change (!(entry.channel == channel) || !(entry.carrierWitness == witness)) = true at one
+      rw [channelAt, witnessAt] at one
+      cases one
+    · intro checked
+      apply List.all_eq_true.mpr
+      intro entry member
+      change (!(entry.channel == channel) || !(entry.carrierWitness == witness)) = true
+      cases channelAt : entry.channel == channel with
+      | false => rfl
+      | true =>
+        cases witnessAt : entry.carrierWitness == witness with
+        | false => rfl
+        | true =>
+          exact False.elim (checked entry member (beq_iff_eq.mp channelAt) (beq_iff_eq.mp witnessAt))
+
 def sourceChannelEntries (entries : List SourceAcceptance) (channel : TransportChannel) :
     List SourceAcceptance := entries.filter fun entry => decide (entry.channel = channel)
 
@@ -135,8 +179,9 @@ inductive DistributedSourceStep
       (prepared : ActorSourceCandidateBase
         { snapshot := (cut.actors sample.image.role).1, pathIndex := sample.pathIndex, admitted := [] }
         sample.image choreo previousPath path row sample.base)
-      (available : ∀ entry ∈ entries, ¬ entry.stamps sample.image.role (cut.actors sample.image.role).2)
-      (freshWitness : ∀ entry ∈ entries, entry.channel = channel → entry.carrierWitness ≠ witness)
+      (available : entries.all (fun entry => !(entry.sample.image.role == sample.image.role &&
+        entry.mutation == (cut.actors sample.image.role).2)) = true)
+      (freshWitness : entries.all (fun entry => entry.channel != channel || entry.carrierWitness != witness) = true)
       (sourceAt : sample.effIndex? = some event)
       (accepted : (cut.carriers channel).send label = some sent)
       (identity : sample.wire.identifies {
@@ -161,7 +206,8 @@ inductive DistributedSourceStep
       (actorRole : (images actor).role = actor)
       (localAt : sourceOperationIdentity? (images actor) choreo record.step.pathIndex record.step.event =
         some (eff, binding, .local))
-      (available : ∀ entry ∈ entries, ¬ entry.stamps actor (cut.actors actor).2)
+      (available : entries.all (fun entry => !(entry.sample.image.role == actor &&
+        entry.mutation == (cut.actors actor).2)) = true)
       (committed : ActorMeasuredCommit (images actor) choreo session
         (cut.actors actor) after cleared record) :
       DistributedSourceStep images choreo session (cut, entries)
@@ -175,7 +221,8 @@ inductive DistributedSourceStep
       (entryAt : (sourceChannelEntries entries channel)[(cut.carriers channel).delivered]? = some entry)
       (identity : entry.carrierWitness = witness)
       (paired : sourceReceivePairCheck entry.sample record (images actor) choreo session = true)
-      (available : ∀ entry ∈ entries, ¬ entry.stamps actor (cut.actors actor).2)
+      (available : entries.all (fun entry => !(entry.sample.image.role == actor &&
+        entry.mutation == (cut.actors actor).2)) = true)
       (committed : ActorMeasuredCommit (images actor) choreo session
         (cut.actors actor) after cleared record) :
       DistributedSourceStep images choreo session (cut, entries)
@@ -213,6 +260,69 @@ private theorem source_channel_records_append
     List.filter_nil, List.map_append]
   split <;> simp_all
 
+/-- Project the actual record of this boundary at one actor. Carrier changes
+and foreign actor commits preserve its state. Zero-write observations are
+checked separately; a real local commit retains its exact global log record. -/
+theorem a_distributed_step_preserves_or_measures_its_actor
+    {images : Nat → RustDescriptorImage} {choreo : Choreo} {session : Nat}
+    {first last : DistributedSourceCut × List SourceAcceptance}
+    {logged : Option (Nat × ActorCommitRecord)}
+    (step : DistributedSourceStep images choreo session first last logged) (actor : Nat) :
+    first.1.actors actor = last.1.actors actor ∨
+    actorCommitMutationHistoryCheck (images actor) choreo session
+      (first.1.actors actor).1 (first.1.actors actor).2
+      (last.1.actors actor).1 (last.1.actors actor).2 [] = true ∨
+    ∃ record cleared, logged = some (actor, record) ∧
+      ActorMeasuredCommit (images actor) choreo session
+        (first.1.actors actor) (last.1.actors actor) cleared record := by
+  cases step with
+  | @quiet cut entries changed after checked =>
+    by_cases same : actor = changed
+    · subst changed
+      right; left
+      simpa only [DistributedSourceCut.actorAt, if_pos rfl] using checked
+    · left
+      simp only [DistributedSourceCut.actorAt, if_neg same]
+  | accept imageAt checked decoded pathAt rowAt prepared available freshWitness sourceAt accepted identity =>
+    exact .inl rfl
+  | @publish cut entries changed after cleared record entry member stamp paired committed =>
+    by_cases same : actor = changed
+    · subst changed
+      right; right
+      exact ⟨record, cleared, rfl, by simpa only [DistributedSourceCut.actorAt, if_pos rfl] using committed⟩
+    · left
+      simp only [DistributedSourceCut.actorAt, if_neg same]
+  | @localCommit cut entries changed after cleared record eff binding actorRole localAt available committed =>
+    by_cases same : actor = changed
+    · subst changed
+      right; right
+      exact ⟨record, cleared, rfl, by simpa only [DistributedSourceCut.actorAt, if_pos rfl] using committed⟩
+    · left
+      simp only [DistributedSourceCut.actorAt, if_neg same]
+  | @receive cut entries changed channel next frame after cleared record entry witness
+      actorRole received entryAt identity paired available committed =>
+    by_cases same : actor = changed
+    · subst changed
+      right; right
+      exact ⟨record, cleared, rfl, by simpa only [DistributedSourceCut.carrierAt,
+        DistributedSourceCut.actorAt, if_pos rfl] using committed⟩
+    · left
+      simp only [DistributedSourceCut.carrierAt, DistributedSourceCut.actorAt, if_neg same]
+
+private theorem a_quiet_actor_interval_is_its_measured_step
+    {image : RustDescriptorImage} {choreo : Choreo} {session : Nat}
+    {before after : ActorProgressObservation × Nat}
+    (checked : actorCommitMutationHistoryCheck image choreo session
+      before.1 before.2 after.1 after.2 [] = true) :
+    ActorMeasuredStep image choreo session before after [] 0 := by
+  rcases before with ⟨before, count⟩
+  rcases after with ⟨after, next⟩
+  have same : next = count := by
+    simpa only [List.length_nil, Nat.add_zero] using
+      checked_mutation_history_accounts_for_every_observed_write checked
+  subst next
+  exact .quiet checked
+
 private theorem a_distributed_source_step_projects_each_actor
     {images : Nat → RustDescriptorImage} {choreo : Choreo} {session : Nat}
     {first last : DistributedSourceCut × List SourceAcceptance}
@@ -220,54 +330,11 @@ private theorem a_distributed_source_step_projects_each_actor
     (step : DistributedSourceStep images choreo session first last record) (actor : Nat) :
     ∃ cleared commits, ActorMeasuredHistory (images actor) choreo session
       (first.1.actors actor) (last.1.actors actor) cleared commits := by
-  cases step with
-  | @quiet cut entries changed after checked =>
-    cases same : actor == changed with
-    | true =>
-      have identical : actor = changed := beq_iff_eq.mp same
-      subst changed
-      exact ⟨_, _, by simpa only [DistributedSourceCut.actorAt, if_pos rfl] using
-        ActorMeasuredHistory.tail .refl (ActorMeasuredStep.quiet checked)⟩
-    | false =>
-      have different : actor ≠ changed := beq_eq_false_iff_ne.mp same
-      refine ⟨[], 0, ?_⟩
-      simpa only [DistributedSourceCut.actorAt, if_neg different] using ActorMeasuredHistory.refl
-  | accept imageAt checked decoded pathAt rowAt prepared available freshWitness sourceAt accepted identity =>
-    exact ⟨[], 0, .refl⟩
-  | @publish cut entries changed after cleared record entry member stamp paired committed =>
-    cases same : actor == changed with
-    | true =>
-      have identical : actor = changed := beq_iff_eq.mp same
-      subst changed
-      exact ⟨_, _, by simpa only [DistributedSourceCut.actorAt, if_pos rfl] using
-        ActorMeasuredHistory.tail .refl (a_measured_commit_is_its_actual_step committed)⟩
-    | false =>
-      have different : actor ≠ changed := beq_eq_false_iff_ne.mp same
-      refine ⟨[], 0, ?_⟩
-      simpa only [DistributedSourceCut.actorAt, if_neg different] using ActorMeasuredHistory.refl
-  | @localCommit cut entries changed after cleared record eff binding actorRole localAt available committed =>
-    cases same : actor == changed with
-    | true =>
-      have identical : actor = changed := beq_iff_eq.mp same
-      subst changed
-      exact ⟨_, _, by simpa only [DistributedSourceCut.actorAt, if_pos rfl] using
-        ActorMeasuredHistory.tail .refl (a_measured_commit_is_its_actual_step committed)⟩
-    | false =>
-      have different : actor ≠ changed := beq_eq_false_iff_ne.mp same
-      refine ⟨[], 0, ?_⟩
-      simpa only [DistributedSourceCut.actorAt, if_neg different] using ActorMeasuredHistory.refl
-  | @receive cut entries changed channel next frame after cleared record entry witness actorRole received entryAt identity paired available committed =>
-    cases same : actor == changed with
-    | true =>
-      have identical : actor = changed := beq_iff_eq.mp same
-      subst changed
-      exact ⟨_, _, by simpa only [DistributedSourceCut.carrierAt, DistributedSourceCut.actorAt, if_pos rfl] using
-        ActorMeasuredHistory.tail .refl (a_measured_commit_is_its_actual_step committed)⟩
-    | false =>
-      have different : actor ≠ changed := beq_eq_false_iff_ne.mp same
-      refine ⟨[], 0, ?_⟩
-      simpa only [DistributedSourceCut.carrierAt, DistributedSourceCut.actorAt, if_neg different]
-        using ActorMeasuredHistory.refl
+  rcases a_distributed_step_preserves_or_measures_its_actor step actor with
+    same | quiet | ⟨record, cleared, logged, committed⟩
+  · exact ⟨[], 0, by rw [← same]; exact .refl⟩
+  · exact ⟨[], 0, .tail .refl (a_quiet_actor_interval_is_its_measured_step quiet)⟩
+  · exact ⟨cleared, 1, .tail .refl (a_measured_commit_is_its_actual_step committed)⟩
 
 /-- Every actor's complete measured history is derived from the same global
 boundary history. Foreign actors and carrier acceptance are genuine stutters;
@@ -398,74 +465,17 @@ private theorem a_distributed_step_marks_or_preserves_the_completed_actor_row
     (∃ cleared commits, ActorMeasuredHistory (images actor) choreo session
       (first.1.actors actor) (last.1.actors actor) cleared commits ∧
       event ∉ cleared ∧ (first.1.actors actor).1.doneState.done event = true) := by
-  cases step with
-  | @quiet cut entries changed after checked =>
-    by_cases same : actor = changed
-    · subst changed
-      simp only [DistributedSourceCut.actorAt] at completed ⊢
-      have actual : ActorMeasuredHistory (images actor) choreo session
-          (cut.actors actor) (after, (cut.actors actor).2) [] 0 :=
-        .tail .refl (.quiet checked)
-      have progressAt := beq_iff_eq.mp
-        (Bool.and_eq_true_iff.mp (Bool.and_eq_true_iff.mp checked).2).1
-      right
-      refine ⟨[], 0, actual, by simp, ?_⟩
-      simpa only [DistributedSourceCut.actorAt, if_pos rfl,
-        ActorProgressObservation.doneState, progressAt] using completed
-    · right
-      refine ⟨[], 0, ?_, by simp, ?_⟩
-      · simpa only [DistributedSourceCut.actorAt, if_neg same] using
-          (ActorMeasuredHistory.refl (image := images actor) (choreo := choreo) (session := session)
-            (state := cut.actors actor))
-      · simpa only [DistributedSourceCut.actorAt, if_neg same] using completed
-  | accept imageAt checked decoded pathAt rowAt prepared available freshWitness sourceAt accepted identity =>
-    exact .inr ⟨[], 0, .refl, by simp, completed⟩
-  | @publish cut entries changed after cleared record entry member stamp paired committed =>
-    by_cases same : actor = changed
-    · subst changed
-      simp only [DistributedSourceCut.actorAt] at completed ⊢
-      change after.1.doneState.done event = true at completed
-      rcases a_measured_commit_marks_or_preserves_a_completed_row committed completed with marked | preserved
-      · exact .inl ⟨record, cleared, rfl, committed, marked⟩
-      · exact .inr ⟨cleared, 1, .tail .refl
-          (a_measured_commit_is_its_actual_step committed), preserved.2, preserved.1⟩
-    · right
-      refine ⟨[], 0, ?_, by simp, ?_⟩
-      · simpa only [DistributedSourceCut.actorAt, if_neg same] using
-          (ActorMeasuredHistory.refl (image := images actor) (choreo := choreo) (session := session)
-            (state := cut.actors actor))
-      · simpa only [DistributedSourceCut.actorAt, if_neg same] using completed
-  | @localCommit cut entries changed after cleared record eff binding actorRole localAt available committed =>
-    by_cases same : actor = changed
-    · subst changed
-      simp only [DistributedSourceCut.actorAt] at completed ⊢
-      change after.1.doneState.done event = true at completed
-      rcases a_measured_commit_marks_or_preserves_a_completed_row committed completed with marked | preserved
-      · exact .inl ⟨record, cleared, rfl, committed, marked⟩
-      · exact .inr ⟨cleared, 1, .tail .refl
-          (a_measured_commit_is_its_actual_step committed), preserved.2, preserved.1⟩
-    · right
-      refine ⟨[], 0, ?_, by simp, ?_⟩
-      · simpa only [DistributedSourceCut.actorAt, if_neg same] using
-          (ActorMeasuredHistory.refl (image := images actor) (choreo := choreo) (session := session)
-            (state := cut.actors actor))
-      · simpa only [DistributedSourceCut.actorAt, if_neg same] using completed
-  | @receive cut entries changed channel next frame after cleared record entry witness
-      actorRole received entryAt identity paired available committed =>
-    by_cases same : actor = changed
-    · subst changed
-      simp only [DistributedSourceCut.actorAt, DistributedSourceCut.carrierAt] at completed ⊢
-      change after.1.doneState.done event = true at completed
-      rcases a_measured_commit_marks_or_preserves_a_completed_row committed completed with marked | preserved
-      · exact .inl ⟨record, cleared, rfl, committed, marked⟩
-      · exact .inr ⟨cleared, 1, .tail .refl
-          (a_measured_commit_is_its_actual_step committed), preserved.2, preserved.1⟩
-    · right
-      refine ⟨[], 0, ?_, by simp, ?_⟩
-      · simpa only [DistributedSourceCut.carrierAt, DistributedSourceCut.actorAt, if_neg same] using
-          (ActorMeasuredHistory.refl (image := images actor) (choreo := choreo) (session := session)
-            (state := cut.actors actor))
-      · simpa only [DistributedSourceCut.carrierAt, DistributedSourceCut.actorAt, if_neg same] using completed
+  rcases a_distributed_step_preserves_or_measures_its_actor step actor with
+    same | quiet | ⟨record, cleared, loggedAt, committed⟩
+  · exact .inr ⟨[], 0, by rw [← same]; exact .refl, by simp, by rw [same]; exact completed⟩
+  · have progressAt := beq_iff_eq.mp
+      (Bool.and_eq_true_iff.mp (Bool.and_eq_true_iff.mp quiet).2).1
+    exact .inr ⟨[], 0, .tail .refl (a_quiet_actor_interval_is_its_measured_step quiet), by simp,
+      by simpa only [ActorProgressObservation.doneState, progressAt] using completed⟩
+  · rcases a_measured_commit_marks_or_preserves_a_completed_row committed completed with marked | preserved
+    · exact .inl ⟨record, cleared, loggedAt, committed, marked⟩
+    · exact .inr ⟨cleared, 1, .tail .refl (a_measured_commit_is_its_actual_step committed),
+        preserved.2, preserved.1⟩
 
 /-- Recover a current row's origin in the one distributed execution itself.
 The suffix retains that row's completion, while other actors and unrelated

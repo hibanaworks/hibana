@@ -118,6 +118,44 @@ fn lean_auditors_fail_closed_on_mutants_and_process_failures() {
     }
     fs::write(&generated,"theorem fixture : True := by trivial\n-- axiom hidden : False\n/- example : False /- nested -/ -/\ndef quoted : String := \"native_decide axiom example\"\n").unwrap();
     assert!(run().status.success());
+    let created = root.join("new-claims.txt");
+    let create = || {
+        Command::new(binary)
+            .arg("--write-kernel")
+            .arg(&generated)
+            .arg(&root)
+            .arg(&created)
+            .arg("1")
+            .env("PATH", root.join("bin"))
+            .output()
+            .unwrap()
+    };
+    install(
+        &good.replace(
+            "does not depend on any axioms",
+            "depends on axioms: [Classical.choice]",
+        ),
+        0,
+    );
+    assert!(!create().status.success());
+    assert!(
+        !created.exists(),
+        "rejected proof created a frozen claim snapshot"
+    );
+    install(good, 17);
+    assert_eq!(create().status.code(), Some(17));
+    assert!(
+        !created.exists(),
+        "failed compiler created a claim snapshot"
+    );
+    install(good, 0);
+    assert!(create().status.success());
+    assert_eq!(fs::read_to_string(&created).unwrap(), "fixture : True\n");
+    assert!(
+        !create().status.success(),
+        "overwrote an existing claim snapshot"
+    );
+    assert_eq!(fs::read_to_string(&created).unwrap(), "fixture : True\n");
     fs::remove_file(root.join("bin/lake")).unwrap();
     assert!(!run().status.success());
     // Both tools reject missing or malformed command-line inputs.

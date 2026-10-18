@@ -1,0 +1,49 @@
+distributedActorHistories : ∀ (actor : Nat),
+  ∃ cleared commits,
+    ActorMeasuredHistory (distributedImages actor) distributedChoreo 9063 (distributedCut0.actors actor)
+      (distributedCut33.actors actor) cleared commits
+distributedActualExecution : DistributedSourceExecution distributedImages distributedChoreo 9063
+  (distributedCut0, distributedEntries0) (distributedCut33, distributedEntries33) distributedRecords
+distributedChoiceAfterReturnDoesNotAssertValueCustody : distributedAfter16.doneState.selected 2 = some RouteArm.left ∧
+  distributedAfter16.viewIssued 10 = false
+distributedCurrentChoice0HasItsActualGlobalOrigin : ∃ before after prior later record cleared,
+  DistributedSourceExecution distributedImages distributedChoreo 9063 (distributedCut0, distributedEntries0) before
+      prior ∧
+    DistributedSourceStep distributedImages distributedChoreo 9063 before after (some (1, record)) ∧
+      ActorMeasuredCommit distributedImage1 distributedChoreo 9063 (before.fst.actors 1) (after.fst.actors 1) cleared
+          record ∧
+        record.IntroducesChoice distributedImage1 distributedChoreo 0 RouteArm.left ∧
+          DistributedSourceExecution distributedImages distributedChoreo 9063 after
+              (distributedCut33, distributedEntries33) later ∧
+            ActorChoiceUnresetHistory distributedImage1 distributedChoreo 9063 0 (after.fst.actors 1)
+              (distributedCut33.actors 1)
+distributedCurrentChoice2HasItsActualGlobalOrigin : ∃ before after prior later record cleared,
+  DistributedSourceExecution distributedImages distributedChoreo 9063 (distributedCut0, distributedEntries0) before
+      prior ∧
+    DistributedSourceStep distributedImages distributedChoreo 9063 before after (some (1, record)) ∧
+      ActorMeasuredCommit distributedImage1 distributedChoreo 9063 (before.fst.actors 1) (after.fst.actors 1) cleared
+          record ∧
+        record.IntroducesChoice distributedImage1 distributedChoreo 2 RouteArm.left ∧
+          DistributedSourceExecution distributedImages distributedChoreo 9063 after
+              (distributedCut33, distributedEntries33) later ∧
+            ActorChoiceUnresetHistory distributedImage1 distributedChoreo 9063 2 (after.fst.actors 1)
+              (distributedCut33.actors 1)
+distributedCurrentChoiceComesFromItsActualAcceptedFrame : distributedCommit15.step.after.actor =
+    distributedCurrentReceipt.binding.receiverActor ∧
+  (distributedCut33.actors 1).fst.doneState.selected 2 = some RouteArm.left
+distributedCurrentChoiceReceiptHasItsActualHead : distributedWire1 = distributedWire14 ∧
+  distributedWire14 = distributedWire15 ∧
+    (sourceChannelEntries distributedEntries23
+            distributedChannel15)[(distributedCut23.carriers distributedChannel15).delivered]? =
+        some distributedEntry14 ∧
+      distributedEntry14.carrierWitness ≠ distributedEntry1.carrierWitness
+distributedFifoHistories : ∀ (channel : TransportChannel),
+  ∃ history,
+    SendAdmissionTrace distributedChoreo 9063 (distributedCut33.carriers channel) history
+      (sourceChannelRecords distributedEntries33 channel)
+distributedPartialWitnessesAreIndependent : distributedSend14.pathIndex = 0 ∧
+  distributedCommit15.step.pathIndex = 1 ∧ distributedSend14.pathIndex ≠ distributedCommit15.step.pathIndex
+distributedSameArmStillHasAFreshIntroducingReceive : distributedBefore15.choices = distributedAfter15.choices ∧
+  distributedCommit15.IntroducesChoice distributedImage1 distributedChoreo 2 RouteArm.left
+distributedUnenteredSiblingRemainsUnknown : (distributedCut33.actors 0).fst.doneState.selected 4 = none ∧
+  (distributedCut33.actors 1).fst.doneState.selected 4 = none

@@ -18,6 +18,7 @@ mod conditional_controller;
 mod controller_columns;
 mod distributed_source;
 mod entry_image;
+mod fifo_origin;
 mod handoff_interval;
 mod ingress;
 mod ingress_columns;
