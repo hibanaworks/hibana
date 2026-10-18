@@ -614,6 +614,29 @@ Hibana.EndpointDelegation.withOwner_same : ∀ (owners : Hibana.EndpointDelegati
         (And (@Eq.{1} Nat sample.polls (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1))))
           (And (@Eq.{1} Nat sample.publications (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1))))
             (And (@Eq.{1} Bool sample.done true) (@Eq.{1} Bool sample.retained false))))
+@Hibana.a_completed_mixed_history_row_has_its_actual_commit_origin : ∀ {image : Hibana.RustDescriptorImage}
+  {choreo : Hibana.Choreo} {session event : Nat} {first final : Prod.{0, 0} Hibana.ActorProgressObservation Nat}
+  {cleared : List.{0} Nat} {commits : Nat},
+  Hibana.ActorMeasuredHistory image choreo session first final cleared commits →
+    @Eq.{1} Bool ((@Prod.fst.{0, 0} Hibana.ActorProgressObservation Nat final).doneState.done event) true →
+      Or
+        (And (@Eq.{1} Bool ((@Prod.fst.{0, 0} Hibana.ActorProgressObservation Nat first).doneState.done event) true)
+          (Not (@Membership.mem.{0, 0} Nat (List.{0} Nat) (@List.instMembership.{0} Nat) cleared event)))
+        (@Exists.{1} (Prod.{0, 0} Hibana.ActorProgressObservation Nat) fun before =>
+          @Exists.{1} (Prod.{0, 0} Hibana.ActorProgressObservation Nat) fun after =>
+            @Exists.{1} (List.{0} Nat) fun prior =>
+              @Exists.{1} (List.{0} Nat) fun marked =>
+                @Exists.{1} (List.{0} Nat) fun later =>
+                  @Exists.{1} Nat fun priorCommits =>
+                    @Exists.{1} Nat fun laterCommits =>
+                      @Exists.{1} Hibana.ActorCommitRecord fun record =>
+                        And (Hibana.ActorMeasuredHistory image choreo session first before prior priorCommits)
+                          (And (Hibana.ActorMeasuredCommit image choreo session before after marked record)
+                            (And (Hibana.ActorMeasuredHistory image choreo session after final later laterCommits)
+                              (And (@Eq.{1} Nat record.step.event event)
+                                (Not
+                                  (@Membership.mem.{0, 0} Nat (List.{0} Nat) (@List.instMembership.{0} Nat) later
+                                    event))))))
 @Hibana.a_fresh_live_public_header_has_actual_custody_and_receive_origin : ∀ {Frame : Type}
   {first last : Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)) → Prop}
   {initialValue value : Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))}
@@ -764,6 +787,11 @@ Hibana.EndpointDelegation.withOwner_same : ∀ (owners : Hibana.EndpointDelegati
     Not (@Membership.mem.{0, 0} Nat (List.{0} Nat) (@List.instMembership.{0} Nat) cleared event) →
       @Eq.{1} Bool ((@Prod.fst.{0, 0} Hibana.ActorProgressObservation Nat before).doneState.done event) true →
         @Eq.{1} Bool ((@Prod.fst.{0, 0} Hibana.ActorProgressObservation Nat after).doneState.done event) true
+@Hibana.a_measured_commit_retains_its_checked_source_and_wire : ∀ {image : Hibana.RustDescriptorImage}
+  {choreo : Hibana.Choreo} {session : Nat} {before after : Prod.{0, 0} Hibana.ActorProgressObservation Nat}
+  {cleared : List.{0} Nat} {record : Hibana.ActorCommitRecord},
+  Hibana.ActorMeasuredCommit image choreo session before after cleared record →
+    And (@Eq.{1} Bool (record.check image choreo session) true) (record.step.SourceOrdered image choreo)
 @Hibana.a_measured_history_preserves_completed_events : ∀ {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo}
   {session event : Nat} {first final : Hibana.ActorProgressObservation} {firstMutation finalMutation : Nat}
   {records : List.{0} Hibana.ActorCommitMutationRecord},
@@ -1154,6 +1182,19 @@ Hibana.a_pending_payload_requires_its_own_send : ∀ (resource : Nat) (sent : Op
       before.eventId →
     @Eq.{1} Bool (snapshot.doneState.done before.eventId) false →
       @Eq.{1} Bool (Hibana.sourceRowReady data path snapshot after) false
+@Hibana.a_prepared_source_base_only_retains_existing_completion : ∀ {image : Hibana.RustDescriptorImage}
+  {choreo : Hibana.Choreo} {before base : Hibana.ActorProgressObservation}
+  {previousPath nextPath scope event required : Nat} {roll : Hibana.DecodedRollRow},
+  @Eq.{1} (Option.{0} (Prod.{0, 0} Hibana.DecodedRollRow Hibana.ActorProgressObservation))
+      (Hibana.prepareObservedActorBody? image choreo before previousPath nextPath scope event)
+      (@some.{0} (Prod.{0, 0} Hibana.DecodedRollRow Hibana.ActorProgressObservation)
+        (@Prod.mk.{0, 0} Hibana.DecodedRollRow Hibana.ActorProgressObservation roll base)) →
+    @Eq.{1} Bool (base.doneState.done required) true →
+      And (@Eq.{1} Bool (before.doneState.done required) true)
+        (Not
+          (And (@LE.le.{0} Nat instLENat roll.eventStart required)
+            (@LT.lt.{0} Nat instLTNat required
+              (@HAdd.hAdd.{0, 0, 0} Nat Nat Nat (@instHAdd.{0} Nat instAddNat) roll.eventStart roll.eventLength))))
 @Hibana.a_ready_admitted_row_has_its_actual_carrier_custody : ∀ {sample : Hibana.ActorAdmissionObservation}
   {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo} {data : Hibana.DecodedActorOrder}
   {path : Hibana.EndpointDelegation.NormalizedPath} {row : Hibana.DecodedActorRow} {Frame : Type}
@@ -1210,6 +1251,42 @@ Hibana.a_pending_payload_requires_its_own_send : ∀ (resource : Nat) (sent : Op
                               (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) Frame state)
                             (@Prod.mk.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)) sample.snapshot.actor
                               view.header))))
+@Hibana.a_ready_candidate_predecessor_has_its_mixed_history_origin : ∀ {image : Hibana.RustDescriptorImage}
+  {choreo : Hibana.Choreo} {session previousPath event : Nat} {sample : Hibana.ActorAdmissionObservation}
+  {data : Hibana.DecodedActorOrder} {path : Hibana.EndpointDelegation.NormalizedPath} {row : Hibana.DecodedActorRow}
+  {base first : Hibana.ActorProgressObservation} {firstCount finalCount commits : Nat} {cleared : List.{0} Nat},
+  Hibana.ActorMeasuredHistory image choreo session
+      (@Prod.mk.{0, 0} Hibana.ActorProgressObservation Nat first firstCount)
+      (@Prod.mk.{0, 0} Hibana.ActorProgressObservation Nat sample.snapshot finalCount) cleared commits →
+    @Eq.{1} Bool (first.doneState.done event) false →
+      Hibana.ActorSourceCandidateBase sample image choreo previousPath path row base →
+        @Membership.mem.{0, 0} Nat (List.{0} Nat) (@List.instMembership.{0} Nat)
+            (data.sourcePredecessors path row.eventId) event →
+          @Eq.{1} Bool (Hibana.sourceRowReady data path base row) true →
+            @Exists.{1} (Prod.{0, 0} Hibana.ActorProgressObservation Nat) fun before =>
+              @Exists.{1} (Prod.{0, 0} Hibana.ActorProgressObservation Nat) fun after =>
+                @Exists.{1} (List.{0} Nat) fun prior =>
+                  @Exists.{1} (List.{0} Nat) fun marked =>
+                    @Exists.{1} (List.{0} Nat) fun later =>
+                      @Exists.{1} Nat fun priorCommits =>
+                        @Exists.{1} Nat fun laterCommits =>
+                          @Exists.{1} Hibana.ActorCommitRecord fun record =>
+                            And
+                              (Hibana.ActorMeasuredHistory image choreo session
+                                (@Prod.mk.{0, 0} Hibana.ActorProgressObservation Nat first firstCount) before prior
+                                priorCommits)
+                              (And (Hibana.ActorMeasuredCommit image choreo session before after marked record)
+                                (And
+                                  (Hibana.ActorMeasuredHistory image choreo session after
+                                    (@Prod.mk.{0, 0} Hibana.ActorProgressObservation Nat sample.snapshot finalCount)
+                                    later laterCommits)
+                                  (And (@Eq.{1} Nat record.step.event event)
+                                    (And
+                                      (Not
+                                        (@Membership.mem.{0, 0} Nat (List.{0} Nat) (@List.instMembership.{0} Nat) later
+                                          event))
+                                      (And (@Eq.{1} Bool (record.check image choreo session) true)
+                                        (record.step.SourceOrdered image choreo))))))
 @Hibana.a_ready_owned_admitted_row_has_its_actual_payload_custody : ∀ {sample : Hibana.ActorAdmissionObservation}
   {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo} {data : Hibana.DecodedActorOrder}
   {path : Hibana.EndpointDelegation.NormalizedPath} {row : Hibana.DecodedActorRow}

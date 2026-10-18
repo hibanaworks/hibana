@@ -258,6 +258,22 @@ private theorem source_body_base_facts
       of_decide_eq_true start, of_decide_eq_true stop⟩
   next rejected => simp at allowed
 
+/-- A prospective reset can erase an old completion, but cannot invent one.
+This statement uses no successful operation or post-operation observation. -/
+theorem a_prepared_source_base_only_retains_existing_completion
+    {image : RustDescriptorImage} {choreo : Choreo} {before base : ActorProgressObservation}
+    {previousPath nextPath scope event required : Nat} {roll : DecodedRollRow}
+    (prepared : prepareObservedActorBody? image choreo before
+      previousPath nextPath scope event = some (roll, base))
+    (completed : base.doneState.done required = true) :
+    before.doneState.done required = true ∧
+      ¬(roll.eventStart ≤ required ∧ required < roll.eventStart + roll.eventLength) := by
+  obtain ⟨_, _, choices, _, _, reset, _, _⟩ := source_body_base_facts prepared
+  rw [reset, reset_observed_actor_done] at completed
+  split at completed
+  next inside => contradiction
+  next outside => exact ⟨completed, by simpa only [Bool.and_eq_true, decide_eq_true_eq] using outside⟩
+
 private theorem prepared_reentry_facts
     {sample : ActorReentryCommitObservation} {image : RustDescriptorImage} {choreo : Choreo}
     {roll : DecodedRollRow} {step : ActorCommitObservation}

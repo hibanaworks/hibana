@@ -70,10 +70,15 @@ fn a_reentered_earlier_body_refreshes_the_value_after_a_later_source_receipt() {
                             let initial = unsafe { actor_snapshot(&owner) };
                             let initial_admitted = unsafe { actor_admissions(&owner) };
                             owner.send::<Loan>(db).await.unwrap();
+                            // SAFETY: every copied cut belongs to owner_rv's pinned actor.
+                            let first_send = unsafe { actor_snapshot(&owner) };
+                            let first_send_wire = network.queued_frame(1);
                             let db = owner.recv::<Loan>().await.unwrap();
+                            let first_receipt = unsafe { actor_snapshot(&owner) };
                             owner.send::<OutsideLoan>(db).await.unwrap();
                             // SAFETY: OWNER retains this pinned TestTransport actor.
                             let outside_before = unsafe { actor_snapshot(&owner) };
+                            let outside_send_wire = network.queued_frame(2);
                             let outside_before_admitted = unsafe { actor_admissions(&owner) };
                             let db = owner.recv::<OutsideLoan>().await.unwrap();
                             // SAFETY: OWNER retains this pinned TestTransport actor.
@@ -85,6 +90,7 @@ fn a_reentered_earlier_body_refreshes_the_value_after_a_later_source_receipt() {
                             owner.send::<Loan>(db).await.unwrap();
                             // SAFETY: the same actor remains pinned after the new send.
                             let fresh_before = unsafe { actor_snapshot(&owner) };
+                            let fresh_send_wire = network.queued_frame(1);
                             let fresh_before_admitted = unsafe { actor_admissions(&owner) };
                             let mut db = owner.recv::<Loan>().await.unwrap();
                             // SAFETY: the same actor remains pinned after the fresh body.
@@ -111,6 +117,8 @@ fn a_reentered_earlier_body_refreshes_the_value_after_a_later_source_receipt() {
                             (
                                 [
                                     initial,
+                                    first_send,
+                                    first_receipt,
                                     outside_before,
                                     later_receipt,
                                     fresh_before,
@@ -123,6 +131,7 @@ fn a_reentered_earlier_body_refreshes_the_value_after_a_later_source_receipt() {
                                     fresh_before_admitted,
                                     admitted,
                                 ],
+                                [first_send_wire, outside_send_wire, fresh_send_wire],
                             )
                         },
                         async {
@@ -159,32 +168,39 @@ fn a_reentered_earlier_body_refreshes_the_value_after_a_later_source_receipt() {
                 .await
                 .expect("a legal closed body could not refresh its resource");
             assert!(network.queue_is_empty());
-            assert_eq!(observed.0[4].counter, observed.0[2].counter + 2);
+            assert_eq!(observed.0[6].counter, observed.0[4].counter + 2);
             assert_eq!(loop_wires.len(), 2);
             assert_eq!(loop_wires[1].1[0], 10);
             assert_eq!(outside_wire.1[0], 10);
-            let read = observed.0[4]
+            let read = observed.0[6]
                 .steps
                 .iter()
                 .position(|step| matches!(step.action, LocalAction::Send { label: 30, .. }))
                 .unwrap();
             assert!(observed.1[4][read]);
             #[cfg(not(miri))]
-            write_observations(&observed.0, &observed.1, &outside_wire, &loop_wires[1]);
+            write_observations(
+                &observed.0,
+                &observed.1,
+                &outside_wire,
+                &loop_wires,
+                &observed.2,
+            );
         });
 }
 
 #[cfg(not(miri))]
 fn write_observations(
-    snapshots: &[ActorSnapshot; 5],
+    snapshots: &[ActorSnapshot; 7],
     admitted: &[std::vec::Vec<bool>; 5],
     outside_wire: &(crate::transport::FrameHeader, std::vec::Vec<u8>),
-    loop_wire: &(crate::transport::FrameHeader, std::vec::Vec<u8>),
+    loop_wires: &[(crate::transport::FrameHeader, std::vec::Vec<u8>)],
+    sent: &[(crate::transport::FrameHeader, std::vec::Vec<u8>); 3],
 ) {
     use crate::test_support::{lean_choreo::LeanChoreo, lean_descriptor::descriptor_source};
     let mut source = std::format!(
         "import Hibana.ResourceHeaderOrigin\nimport Hibana.SourceResourceContinuation\n\
-         import Hibana.ActorCandidateAdmission\n\nset_option maxRecDepth 10000\n\n\
+         import Hibana.ActorOccurrenceHistory\n\nset_option maxRecDepth 10000\n\n\
          def refreshChoreo : Hibana.Choreo := {}\n\n\
          def refreshBodyChoreo : Hibana.Choreo := {}\n\n\
          def refreshImage : Hibana.RustDescriptorImage := {}\n\n",
@@ -196,6 +212,8 @@ fn write_observations(
     );
     for (name, snapshot) in [
         "initial",
+        "firstSend",
+        "firstReceipt",
         "outsideBefore",
         "outsideAfter",
         "freshBefore",
@@ -210,8 +228,8 @@ fn write_observations(
         ));
     }
     for (name, label, before, after, (header, payload)) in [
-        ("outside", 6, &snapshots[1], &snapshots[2], outside_wire),
-        ("fresh", 1, &snapshots[3], &snapshots[4], loop_wire),
+        ("outside", 6, &snapshots[3], &snapshots[4], outside_wire),
+        ("fresh", 1, &snapshots[5], &snapshots[6], &loop_wires[1]),
     ] {
         let event = before
             .steps
@@ -393,6 +411,111 @@ theorem currentSourceReadyCutUsesActualReceiptProvenance
   · exact (Option.some_get (x := observedResourceTag? current 10) (by decide)).symm
   · decide
   · decide
+"#);
+    // Serialize every owner commit in its actual order. These observations
+    // never select an operation or supply a value to the running localsides.
+    let cut_names = [
+        "initial",
+        "firstSend",
+        "firstReceipt",
+        "outsideBefore",
+        "outsideAfter",
+        "freshBefore",
+        "current",
+    ];
+    let mut history = std::string::String::from(".refl");
+    for (index, label, sending, wire) in [
+        (0, 1, true, &sent[0]),
+        (1, 1, false, &loop_wires[0]),
+        (2, 6, true, &sent[1]),
+        (3, 6, false, outside_wire),
+        (4, 1, true, &sent[2]),
+        (5, 1, false, &loop_wires[1]),
+    ] {
+        let before = &snapshots[index];
+        let after = &snapshots[index + 1];
+        let event = before
+            .steps
+            .iter()
+            .position(|step| match step.action {
+                LocalAction::Send { label: found, .. } => sending && found == label,
+                LocalAction::Recv { label: found, .. } => !sending && found == label,
+                LocalAction::Local { .. } | LocalAction::Terminate => false,
+            })
+            .unwrap();
+        let before_name = cut_names[index];
+        let after_name = cut_names[index + 1];
+        let (header, payload) = wire;
+        source.push_str(&std::format!(
+            "def mixedWire{index} : Hibana.OwnedWireObservation := {{ session := {}, lane := {}, \
+             sender := {}, receiver := {}, frameLabel := {}, payload := {payload:?} }}\n\n",
+            header.session().raw(),
+            header.lane(),
+            header.source_role(),
+            header.target_role(),
+            header.label().raw(),
+        ));
+        let step = if index == 4 {
+            let scope = before.steps[event].reentry_scope.unwrap();
+            source.push_str(&std::format!(
+                "def mixedFresh : Hibana.ActorReentryCommitObservation := {{ previousPath := 0, nextPath := 0, \
+                 scope := {scope}, event := {event}, view := 0, before := {before_name}, after := {after_name} }}\n\n\
+                 def mixedFreshPrepared := (mixedFresh.prepared? refreshImage refreshChoreo).get (by decide)\n\n\
+                 def mixedCleared := (List.range mixedFreshPrepared.1.eventLength).map (mixedFreshPrepared.1.eventStart + ·)\n\n\
+                 theorem mixedFreshWritesChecked : Hibana.actorReentryMutationCheck mixedFresh mixedWire4 \
+                 refreshImage refreshChoreo {} {} {} = true := by decide\n\n\
+                 theorem mixedFreshOmittedClearsRejected : Hibana.actorReentryMutationCheck mixedFresh mixedWire4 \
+                 refreshImage refreshChoreo {} {} ({} + 1) = false := by decide\n\n",
+                header.session().raw(), before.completion_mutations, after.completion_mutations,
+                header.session().raw(), before.completion_mutations, before.completion_mutations,
+            ));
+            std::string::String::from(
+                ".reentry mixedFreshWritesChecked ((Option.some_get (x := mixedFresh.prepared? refreshImage refreshChoreo) (by decide)).symm)",
+            )
+        } else {
+            source.push_str(&std::format!(
+                "def mixedRecord{index} : Hibana.ActorCommitRecord := {{ wire := mixedWire{index}, \
+                 step := {{ pathIndex := 0, event := {event}, view := 0, before := {before_name}, after := {after_name} }} }}\n\n\
+                 theorem mixedRecord{index}Checked : mixedRecord{index}.check refreshImage refreshChoreo {} = true := by decide\n\n",
+                header.session().raw(),
+            ));
+            std::format!(
+                ".commit (record := {{ commit := mixedRecord{index}, before := {}, after := {} }}) \
+                mixedRecord{index}Checked (by decide)",
+                before.completion_mutations,
+                after.completion_mutations
+            )
+        };
+        history = std::format!(".tail ({history}) ({step})");
+    }
+    source.push_str(&std::format!(
+        "theorem actualCompleteOwnerMixedHistory : Hibana.ActorMeasuredHistory refreshImage refreshChoreo {} \
+         (initial, {}) (current, {}) mixedCleared 6 :=\n  {history}\n\n",
+        outside_wire.0.session().raw(), snapshots[0].completion_mutations, snapshots[6].completion_mutations,
+    ));
+    source.push_str(r#"
+theorem everyCurrentReadPrerequisiteHasItsActualMixedCommitOrigin
+    (event : Nat) (required : event ∈ refreshData.sourcePredecessors refreshPath readRow.eventId) :
+    ∃ before after prior marked later priorCommits laterCommits record,
+      ActorMeasuredHistory refreshImage refreshChoreo 9058 (initial, 0) before prior priorCommits ∧
+      ActorMeasuredCommit refreshImage refreshChoreo 9058 before after marked record ∧
+      ActorMeasuredHistory refreshImage refreshChoreo 9058 after (current, 8) later laterCommits ∧
+      record.step.event = event ∧ event ∉ later ∧
+      record.check refreshImage refreshChoreo 9058 = true ∧ record.step.SourceOrdered refreshImage refreshChoreo := by
+  have allInitial : (refreshData.sourcePredecessors refreshPath readRow.eventId).all
+      (fun required => !initial.doneState.done required) = true := by decide
+  have initiallyPending : initial.doneState.done event = false := by
+    have pending := List.all_eq_true.mp allInitial event required
+    cases doneAt : initial.doneState.done event with
+    | false => rfl
+    | true => simp only [doneAt, Bool.not_true, Bool.false_eq_true] at pending
+  exact a_ready_candidate_predecessor_has_its_mixed_history_origin
+    (sample := currentCandidates) (previousPath := 0) actualCompleteOwnerMixedHistory initiallyPending
+    (.current (by decide)) required actualSourceContinuationIsReady
+
+theorem actualMixedHistoryCountsEveryClearAndMark :
+    8 = 0 + mixedCleared.length + 6 :=
+  a_measured_actor_history_accounts_for_every_mark_and_clear actualCompleteOwnerMixedHistory
 "#);
     let directory = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/lean-proof");
     std::fs::create_dir_all(&directory).unwrap();

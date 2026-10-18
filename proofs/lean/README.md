@@ -98,6 +98,18 @@ fixture supplies five complete actor-row observations across late reentry;
 missing, fabricated and omitted admissions are rejected. Its current and fresh
 source points instantiate the general dependency-to-admission theorem.
 
+`ActorOccurrenceHistory.lean` recovers each completed row's actual marking
+boundary from a measured history containing ordinary commits and arbitrary
+independent or nested resets. The recovered suffix has not reset that row;
+other bodies may restart freely. A fresh candidate's prepared base can retain
+old completions but cannot manufacture a prerequisite. Each ready prerequisite
+therefore has its actual source-and-wire-checked commit in that same history,
+without assuming an available Endpoint or one common distributed iteration.
+The complete six-commit owner trace in `receipt_refresh` instantiates this
+result: eight writes include two body clears and six marks. Omitting those
+clears is rejected. These per-row origins still need correspondence across
+different actors and actual FIFO frame occurrences for distributed progress.
+
 `ResourceHeaderOrigin.lean` derives an issued tag's initial or latest actual
 receive origin from the complete transfer/header history. Static source event
 order cannot choose this origin: a closed earlier roll body can execute again

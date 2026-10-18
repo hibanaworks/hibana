@@ -1,3 +1,5 @@
+actualCompleteOwnerMixedHistory : ActorMeasuredHistory refreshImage refreshChoreo 9058 (initial, 0) (current, 8)
+  mixedCleared 6
 actualCompletedBodyHasFreshRawAdmission : current.doneState.done bodyEntry.eventId = true ∧
   currentCandidates.admitted[bodyEntry.eventId]? = some true
 actualContinuationIsAdmitted : refreshAdmissions[readRow.eventId]? = some true
@@ -11,6 +13,7 @@ actualFreshEntryUsesSourcePreparation : ActorSourceCandidateBase currentCandidat
 actualFreshSourceReadinessGivesAdmission : currentCandidates.admitted[bodyEntry.eventId]? = some true
 actualLaterSourcePointHasRealAdmission : sourceRowReady refreshData refreshPath current readRow = true ∧
   currentCandidates.admitted[readRow.eventId]? = some true
+actualMixedHistoryCountsEveryClearAndMark : 8 = 0 + mixedCleared.length + 6
 actualOldReceiptHeaderIsNoLongerCurrent : observedResourceTag? current 10 ≠ observedResourceTag? outsideAfter 10
 actualReceiptsNameTheSameResource : outsideFacts.resource = freshFacts.resource
 actualRepeatedBodyRestoresItsResourceOwner : EndpointDelegation.instantiate refreshData.normalized.issuance
@@ -39,6 +42,16 @@ currentCandidateDomainIsChecked : currentCandidates.candidateCheck refreshImage 
                     ResourceHeaderStepEvidence EndpointTransfer.Action.receive before after beforeIssued afterIssued ∧
                       currentTag ∈ List.take 1 after.usable ∧
                         HeaderSuffixWithoutReceipt currentTag afterIssued after actualIssued state
+everyCurrentReadPrerequisiteHasItsActualMixedCommitOrigin : ∀ (event : Nat),
+  event ∈ refreshData.sourcePredecessors refreshPath readRow.eventId →
+    ∃ before after prior marked later priorCommits laterCommits record,
+      ActorMeasuredHistory refreshImage refreshChoreo 9058 (initial, 0) before prior priorCommits ∧
+        ActorMeasuredCommit refreshImage refreshChoreo 9058 before after marked record ∧
+          ActorMeasuredHistory refreshImage refreshChoreo 9058 after (current, 8) later laterCommits ∧
+            record.step.event = event ∧
+              ¬event ∈ later ∧
+                record.check refreshImage refreshChoreo 9058 = true ∧
+                  record.step.SourceOrdered refreshImage refreshChoreo
 fabricatedBlockedAdmissionIsRejected : (have __src := freshBeforeCandidates;
       { snapshot := __src.snapshot, pathIndex := __src.pathIndex,
         admitted := freshBeforeCandidates.admitted.set readRow.eventId true }).candidateCheck
@@ -53,6 +66,15 @@ missingFreshAdmissionIsRejected : (have __src := currentCandidates;
         admitted := currentCandidates.admitted.set bodyEntry.eventId false }).candidateCheck
     refreshImage refreshChoreo 0 =
   false
+mixedFreshOmittedClearsRejected : actorReentryMutationCheck mixedFresh mixedWire4 refreshImage refreshChoreo 9058 4
+    (4 + 1) =
+  false
+mixedFreshWritesChecked : actorReentryMutationCheck mixedFresh mixedWire4 refreshImage refreshChoreo 9058 4 7 = true
+mixedRecord0Checked : mixedRecord0.check refreshImage refreshChoreo 9058 = true
+mixedRecord1Checked : mixedRecord1.check refreshImage refreshChoreo 9058 = true
+mixedRecord2Checked : mixedRecord2.check refreshImage refreshChoreo 9058 = true
+mixedRecord3Checked : mixedRecord3.check refreshImage refreshChoreo 9058 = true
+mixedRecord5Checked : mixedRecord5.check refreshImage refreshChoreo 9058 = true
 omittedCandidateRowIsRejected : (have __src := currentCandidates;
       { snapshot := __src.snapshot, pathIndex := __src.pathIndex,
         admitted := List.drop 1 currentCandidates.admitted }).candidateCheck
