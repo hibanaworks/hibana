@@ -1,5 +1,7 @@
 actualBranchAndOutsidePathsDoNotAlias : bodyRecolored[0].frameLabel ≠ bodyRecolored[2].frameLabel ∧
   bodyRecolored[0].frameLabel ≠ bodyRecolored[4].frameLabel ∧ bodyRecolored[2].frameLabel ≠ bodyRecolored[4].frameLabel
+actualConditionalTwoLetterClassKeepsBothSourcePaths : ∃ group,
+  (branchWordImage.frameClassRows group.key).length = 2 ∧ group.data.normalized.paths.length = 2
 actualInnerAndOuterDomainsRemainDistinct : elasticFrameOwner (canonicalControlSource nestedChoreo).markers 0 ≠
     elasticFrameOwner (canonicalControlSource nestedChoreo).markers 1 ∧
   nestedAfter[0].frameLabel ≠ nestedAfter[1].frameLabel

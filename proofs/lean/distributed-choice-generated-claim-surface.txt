@@ -1,3 +1,21 @@
+distributedActor0AllFrameClassesFollowTheirSourceWords : ∀ (event : Nat),
+  event ∈ List.range distributedImage0.eventCount →
+    ∀ (key : SourceFrameKey),
+      distributedImage0.frameKey? event = some key →
+        sourceFrameWord (distributedImage0.frameClassRows key)
+          (committedFrameClassWord (distributedImage0.frameClassRows key) 0 distributedRecords)
+distributedActor1AllFrameClassesFollowTheirSourceWords : ∀ (event : Nat),
+  event ∈ List.range distributedImage1.eventCount →
+    ∀ (key : SourceFrameKey),
+      distributedImage1.frameKey? event = some key →
+        sourceFrameWord (distributedImage1.frameClassRows key)
+          (committedFrameClassWord (distributedImage1.frameClassRows key) 1 distributedRecords)
+distributedActor3AllFrameClassesFollowTheirSourceWords : ∀ (event : Nat),
+  event ∈ List.range distributedImage3.eventCount →
+    ∀ (key : SourceFrameKey),
+      distributedImage3.frameKey? event = some key →
+        sourceFrameWord (distributedImage3.frameClassRows key)
+          (committedFrameClassWord (distributedImage3.frameClassRows key) 3 distributedRecords)
 distributedActorHistories : ∀ (actor : Nat),
   ∃ cleared commits,
     ActorMeasuredHistory (distributedImages actor) distributedChoreo 9063 (distributedCut0.actors actor)

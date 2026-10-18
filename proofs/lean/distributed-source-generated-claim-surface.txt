@@ -1,3 +1,21 @@
+distributedActor0AllFrameClassesFollowTheirSourceWords : ∀ (event : Nat),
+  event ∈ List.range distributedImage0.eventCount →
+    ∀ (key : SourceFrameKey),
+      distributedImage0.frameKey? event = some key →
+        sourceFrameWord (distributedImage0.frameClassRows key)
+          (committedFrameClassWord (distributedImage0.frameClassRows key) 0 distributedRecords)
+distributedActor1AllFrameClassesFollowTheirSourceWords : ∀ (event : Nat),
+  event ∈ List.range distributedImage1.eventCount →
+    ∀ (key : SourceFrameKey),
+      distributedImage1.frameKey? event = some key →
+        sourceFrameWord (distributedImage1.frameClassRows key)
+          (committedFrameClassWord (distributedImage1.frameClassRows key) 1 distributedRecords)
+distributedActor3AllFrameClassesFollowTheirSourceWords : ∀ (event : Nat),
+  event ∈ List.range distributedImage3.eventCount →
+    ∀ (key : SourceFrameKey),
+      distributedImage3.frameKey? event = some key →
+        sourceFrameWord (distributedImage3.frameClassRows key)
+          (committedFrameClassWord (distributedImage3.frameClassRows key) 3 distributedRecords)
 distributedActorHistories : ∀ (actor : Nat),
   ∃ cleared commits,
     ActorMeasuredHistory (distributedImages actor) distributedChoreo 9062 (distributedCut0.actors actor)
@@ -33,6 +51,11 @@ distributedFifoHistories : ∀ (channel : TransportChannel),
   ∃ history,
     SendAdmissionTrace distributedChoreo 9062 (distributedCut24.carriers channel) history
       (sourceChannelRecords distributedEntries24 channel)
+distributedFirstAcceptedSendHasItsUnpublishedPrefix : ∃ pending,
+  actorAcceptedSends distributedEntries1 0 = pending ∧
+    pending.length = 1 ∧ ∀ (entry : SourceAcceptance), entry ∈ pending → entry.stamps 0 (distributedCut1.actors 0).snd
+distributedFreshMixedSourceIdentityBeforeItsNewReceivePair : distributedEntry6.sample.effIndex? =
+  distributedImage1.eventEffIndex? distributedCommit8.step.event
 distributedFreshReceiptAlsoFitsOldBytes : sourceReceivePairCheck distributedSend0 distributedCommit8 distributedImage1
     distributedChoreo 9062 =
   true

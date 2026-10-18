@@ -229,7 +229,70 @@ where
         theorem distributedActorHistories (actor : Nat) : ∃ cleared commits, ActorMeasuredHistory (distributedImages actor) distributedChoreo {session}\n  (distributedCut0.actors actor) (distributedCut{stage}.actors actor) cleared commits :=\n  a_distributed_source_execution_projects_each_actual_actor_history distributedActualExecution actor\n\n\
         theorem distributedFifoHistories (channel : TransportChannel) : ∃ history, SendAdmissionTrace distributedChoreo {session}\n  (distributedCut{stage}.carriers channel) history (sourceChannelRecords distributedEntries{stage} channel) :=\n  a_distributed_source_execution_projects_its_complete_fifo_histories distributedActualExecution channel\n",
         records.join(", "), (1..=stage).fold(".refl".into(), |proof, boundary| std::format!("(.tail {proof} distributedStep{boundary})"))).unwrap();
+    write_frame_words(initial, &mut source);
     source
+}
+
+/// Derive every remote row's complete wire class from the captured image.
+/// No row/selector is chosen to make the source-word check pass. This only
+/// serializes proof data after the Endpoint execution has completed.
+#[cfg(not(miri))]
+fn write_frame_words(initial: &[ActorSnapshot; 3], source: &mut std::string::String) {
+    use std::fmt::Write;
+    source.insert_str(0, "import Hibana.SourceFrameWord\n");
+    for snapshot in initial {
+        let actor = snapshot.actor;
+        writeln!(source, "private def distributedWordData{actor} := (distributedImage{actor}.decodeActorOrder? distributedChoreo).get (by decide)\n\
+            private def distributedWordRolls{actor} := distributedImage{actor}.decodeRollRows?.get (by decide)\n").unwrap();
+        for (event, step) in snapshot.steps.iter().enumerate() {
+            if matches!(step.action, super::LocalAction::Local { .. }) {
+                continue;
+            }
+            let name = std::format!("distributedFrameClass{actor}_{event}");
+            writeln!(source, "private def {name} : SourceFrameClass distributedImage{actor} distributedChoreo := {{\n\
+              key := (distributedImage{actor}.frameKey? {event}).get (by decide)\n\
+              data := distributedWordData{actor}\n\
+              rolls := distributedWordRolls{actor}\n\
+              choices := (distributedImage{actor}.frameClassChoices? distributedChoreo\n\
+                ((distributedImage{actor}.frameKey? {event}).get (by decide))).get (by decide)\n\
+              decoded := (Option.some_get _).symm\n\
+              decodedRolls := (Option.some_get _).symm\n\
+              nonempty := by decide\n\
+              paths := by decide\n\
+              choiceMembers := by decide\n\
+              slots := by decide\n\
+              active := by decide\n\
+              ordered := by decide\n\
+              uniformReset := by decide\n\
+              outsideChoices := by decide\n\
+            }}\n").unwrap();
+        }
+        writeln!(source, r#"theorem distributedActor{actor}AllFrameClassesFollowTheirSourceWords
+    (event : Nat) (bounded : event ∈ List.range distributedImage{actor}.eventCount)
+    (key : SourceFrameKey) (keyAt : distributedImage{actor}.frameKey? event = some key) :
+    sourceFrameWord (distributedImage{actor}.frameClassRows key)
+      (committedFrameClassWord (distributedImage{actor}.frameClassRows key) {actor} distributedRecords) := by
+  have count : distributedImage{actor}.eventCount = {} := by decide
+  have bound := List.mem_range.mp bounded
+  rw [count] at bound
+  have alternatives : {} := by omega
+  rcases alternatives with {}"#,
+            snapshot.steps.len(),
+            (0..snapshot.steps.len()).map(|event| std::format!("event = {event}")).collect::<std::vec::Vec<_>>().join(" ∨ "),
+            (0..snapshot.steps.len()).map(|event| std::format!("at{event}")).collect::<std::vec::Vec<_>>().join(" | ")).unwrap();
+        for (event, step) in snapshot.steps.iter().enumerate() {
+            writeln!(source, "  · subst event").unwrap();
+            if matches!(step.action, super::LocalAction::Local { .. }) {
+                writeln!(source, "    have absent : distributedImage{actor}.frameKey? {event} = none := by decide\n    rw [absent] at keyAt\n    cases keyAt").unwrap();
+            } else {
+                writeln!(source, r#"    have actual : distributedImage{actor}.frameKey? {event} = some distributedFrameClass{actor}_{event}.key := by decide
+    have same := Option.some.inj (keyAt.symm.trans actual)
+    subst key
+    exact (a_measured_distributed_class_has_its_source_word_and_exact_prefix
+      (actor := {actor}) (group := distributedFrameClass{actor}_{event}) distributedActualExecution (by decide)).1"#).unwrap();
+            }
+        }
+    }
 }
 
 #[cfg(not(miri))]
@@ -242,7 +305,10 @@ pub(super) fn write_observations(
         operations,
         &std::vec![(0, 0); operations.len()],
     );
-    source.insert_str(0, "import Hibana.FifoOccurrenceOrigin\n");
+    source.insert_str(
+        0,
+        "import Hibana.FifoOccurrenceOrigin\nimport Hibana.SourcePublicationPrefix\n",
+    );
     use std::fmt::Write;
     writeln!(source, "private theorem distributedBeforeFreshReceiptExecution : DistributedSourceExecution distributedImages distributedChoreo 9062\n  (distributedCut0, distributedEntries0) (distributedCut13, distributedEntries13) (distributedRecords.take 8) := by\n  exact {}\n",
         (1..=13).fold(".refl".into(), |proof, boundary| std::format!("(.tail {proof} distributedStep{boundary})"))).unwrap();
@@ -335,6 +401,50 @@ theorem distributedProspectiveReceiptHasItsSourceInstanceBeforePairValidation :
     (by decide)
     ((Option.some_get (x := distributedCommit8.step.ownedFacts? distributedImage1 distributedChoreo) (by decide)).symm)
     rfl
+
+theorem distributedFirstAcceptedSendHasItsUnpublishedPrefix :
+    ∃ pending,
+      actorAcceptedSends distributedEntries1 0 = pending ∧ pending.length = 1 ∧
+      ∀ entry ∈ pending, entry.stamps 0 (distributedCut1.actors 0).2 := by
+  obtain ⟨pairs, pending, accepted, published, _, _, stamped⟩ :=
+    a_distributed_actors_acceptances_lead_publications_by_at_most_one
+      (actor := 0) (DistributedSourceExecution.tail .refl distributedStep1) rfl
+  have lengths := congrArg List.length published
+  have empty : pairs = [] := List.eq_nil_of_length_eq_zero (by
+    simpa [actorPublishedSends] using lengths.symm)
+  have equal : actorAcceptedSends distributedEntries1 0 = pending := by
+    simpa only [empty, List.map_nil, List.nil_append] using accepted
+  have count : (actorAcceptedSends distributedEntries1 0).length = 1 := by decide
+  rw [equal] at count
+  exact ⟨pending, equal, count, stamped⟩
+
+private theorem distributedFreshPreparationExists :
+    (prepareObservedActorBody? distributedImage1 distributedChoreo distributedBefore8 0 0 0 0).isSome = true := by decide
+
+private def distributedFreshPreparation :=
+  (prepareObservedActorBody? distributedImage1 distributedChoreo distributedBefore8 0 0 0 0).get distributedFreshPreparationExists
+
+theorem distributedFreshMixedSourceIdentityBeforeItsNewReceivePair :
+    distributedEntry6.sample.effIndex? = distributedImage1.eventEffIndex? distributedCommit8.step.event := by
+  have sender := (a_measured_distributed_class_has_its_source_word_and_exact_prefix
+    (actor := 0) (group := distributedFrameClass0_0) distributedBeforeFreshReceiptExecution (by decide)).1
+  have receiver := (a_prepared_wire_operation_extends_its_actors_measured_source_word
+    (actor := 1) (group := distributedFrameClass1_0) (previousPath := 0) (pathIndex := 0) (event := 0)
+    (base := distributedFreshPreparation.2) (data := distributedWordData1)
+    (path := distributedWordData1.normalized.paths[0]) (row := distributedWordData1.rows[0])
+    distributedBeforeFreshReceiptExecution (by decide)
+    ((Option.some_get (x := distributedImage1.decodeActorOrder? distributedChoreo) (by decide)).symm)
+    (getElem?_pos _ _ (by decide)) (getElem?_pos _ _ (by decide))
+    (by decide) (by decide)
+    (.fresh
+      (rolls := (distributedChoreo.canonicalActorRollRows? distributedImage1.role).get (by decide))
+      (roll := distributedFreshPreparation.1) (by decide) (by decide)
+      (Option.some_get distributedFreshPreparationExists).symm)
+    (by decide)).1
+  exact source_frame_words_match_at_each_common_class_position
+    (sentSource := distributedImage0.eventEffIndex?) (receivedSource := distributedImage1.eventEffIndex?)
+    (index := 2) (sent := distributedEntry6.sample.event) (received := distributedCommit8.step.event)
+    (by decide) sender receiver (by decide) (by decide)
 "#);
     let directory = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/lean-proof");
     std::fs::create_dir_all(&directory).unwrap();

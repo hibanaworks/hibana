@@ -546,6 +546,24 @@ theorem decoded_actor_row_is_at_its_own_index
   have same := Option.some.inj identity
   simpa only [same] using located
 
+/-- The position used before I/O is the decoded row's own immutable ID.
+Unlike membership alone, this also identifies an arbitrary supplied lookup. -/
+theorem decoded_actor_row_lookup_preserves_its_index
+    {image : RustDescriptorImage} {rows : List DecodedActorRow} {row : DecodedActorRow} {event : Nat}
+    (decoded : image.decodeActorRows? = some rows) (located : rows[event]? = some row) :
+    row.eventId = event := by
+  unfold RustDescriptorImage.decodeActorRows? at decoded
+  simp only [Option.bind_eq_bind, Option.bind_eq_some_iff] at decoded
+  obtain ⟨atoms, _, columns, _, mapped⟩ := decoded
+  have indices := decoded_actor_row_indices mapped
+  have bound := (List.getElem?_eq_some_iff.mp located).1
+  have lengths := congrArg List.length indices
+  simp only [List.length_map, List.length_range] at lengths
+  have identity := congrArg (fun entries => entries[event]?) indices
+  simp only [List.getElem?_map, located, Option.map_some] at identity
+  rw [List.getElem?_range (i := event) (n := image.eventCount) (by omega)] at identity
+  exact Option.some.inj identity
+
 /-- Source action identities retain both send and receive when two different
 logical roles share one physical actor. No runtime holder state is synthesized. -/
 def EndpointDelegation.Source.actorActions

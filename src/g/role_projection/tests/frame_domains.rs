@@ -1,6 +1,6 @@
 //! Replay the actual compiler's colors against the proved allocation functions.
 use super::*;
-use crate::test_support::lean_choreo::LeanChoreo;
+use crate::test_support::{lean_choreo::LeanChoreo, lean_descriptor::descriptor_source};
 use std::{
     fmt::Write,
     string::{String, ToString},
@@ -61,11 +61,46 @@ fn actual_rolled_colors_refine_route_paths_and_elastic_owners() {
     let parallel = &g::ProgramProjection::<Parallel, 32>::SOURCE_EFF_LIST;
     assert_ne!(parallel.atom_at(0).lane, parallel.atom_at(2).lane);
     let mut source = String::from(
-        "import Hibana.ElasticFrameDomains\nimport Hibana.RollFrameDomains\n\nset_option maxRecDepth 10000\nopen Hibana\n\n",
+        "import Hibana.ElasticFrameDomains\nimport Hibana.RollFrameDomains\nimport Hibana.SourceFrameWord\n\nset_option maxRecDepth 10000\nopen Hibana\n\n",
     );
     actual_colors::<Nested>("nested", &mut source);
     actual_colors::<Branch>("branch", &mut source);
     actual_colors::<Parallel>("parallel", &mut source);
+    writeln!(
+        source,
+        "def branchWordImage : RustDescriptorImage := {}\n",
+        descriptor_source(RoleDescriptorRef::from_resident(
+            &RoleProjection::<0, Branch, 32>::IMAGE_REF
+        ))
+    )
+    .unwrap();
+    source.push_str(
+        r#"
+private def conditionalPairClass : SourceFrameClass branchWordImage branchChoreo := {
+  key := (branchWordImage.frameKey? 0).get (by decide)
+  data := (branchWordImage.decodeActorOrder? branchChoreo).get (by decide)
+  rolls := branchWordImage.decodeRollRows?.get (by decide)
+  choices := (branchWordImage.frameClassChoices? branchChoreo
+    ((branchWordImage.frameKey? 0).get (by decide))).get (by decide)
+  decoded := (Option.some_get _).symm
+  decodedRolls := (Option.some_get _).symm
+  nonempty := by decide
+  paths := by decide
+  choiceMembers := by decide
+  slots := by decide
+  active := by decide
+  ordered := by decide
+  uniformReset := by decide
+  outsideChoices := by decide
+}
+
+theorem actualConditionalTwoLetterClassKeepsBothSourcePaths :
+    ∃ group : SourceFrameClass branchWordImage branchChoreo,
+      (branchWordImage.frameClassRows group.key).length = 2 ∧
+      group.data.normalized.paths.length = 2 :=
+  ⟨conditionalPairClass, by decide, by decide⟩
+"#,
+    );
     writeln!(
         source,
         "def bodyChoreo : Choreo := {}\n",

@@ -173,6 +173,48 @@ mixed ordinary/owned receive, and agreement of its physical actor bindings,
 remain part of the source-word refinement. The earlier boundaries in the joint
 execution still carry their stated receive-pair obligations.
 
+`SourceFrameWord.lean` derives a complete wire class's operation sequence from
+the actual distributed commit/reset history. A class includes every actor-local
+row with the same direction, logical view/peer, lane and wire color. Logical
+message labels and schemas are excluded, so ordinary and owned operations can
+share a class. Each checked commit consumes its next unfinished row. Its source
+choice publication prevents a partially completed selected class from being
+mistaken for an absent branch at reentry. A checked reset can therefore clear
+the whole class only at an empty or completed boundary. Independent actors,
+other classes, nested bodies and absent-branch visits remain free to advance.
+
+The general theorem obtains a prefix of the cyclic source word and its exact
+existing completion-bit prefix. A second theorem qualifies a prospective raw
+measured commit before adding its receive-pair step. The prepared-operation
+theorem also identifies the next send or receive directly from its current or
+fresh source base, without a successful post-operation snapshot. The mixed
+fixture uses this result before its second loan receipt; its new source identity
+does not depend on that receipt's measured commit or receive-pair check.
+Equal immutable source cycles identify letters at the same class position. Cycle counts are
+erased conclusions, not new runtime fields. `SourceFrameClass` supplies finite
+static projection facts about route membership, actor-local source order,
+reset ranges and local choice slots; it does not assume the desired word.
+The order condition applies when the later row is active on that path. A
+two-letter branch class is checked against both its present and absent paths.
+Uniform class membership is a proof condition, not a new projectability rule:
+unrolled classes with optional prefixes need a branch-dependent word argument
+rather than extra wire colors or rejection of legal protocols.
+
+`SourcePublicationPrefix.lean` derives the relation between all actual remote
+acceptances and sender publications in the same distributed execution. Each
+actor's acceptance sequence consists of the exactly paired publication prefix
+and at most one unpublished acceptance at its existing mutation stamp. The
+proof uses the actual short mutation lease and checked publication pair; it
+adds no runtime queue, pending field or ownership ledger. The bound concerns
+only accepted frames inside that lease. Independent futures may wait before
+acceptance, and other actors can receive, return and continue before publication.
+The mixed fixture checks its first accepted loan while the publication prefix
+is still empty.
+
+Composition of these results across different physical holders and
+branch-dependent classes remains required. Static class facts are not yet
+proved for every image emitted by Rust projection.
+
 This is a joint successful-boundary refinement and concrete qualification.
 Receive-pair correspondence is an explicit obligation of the relation, not
 a proof that every possible Rust history already satisfies it. The general
@@ -202,8 +244,9 @@ directly for `canonicalProgramSource`. These are static allocation results,
 not a proof that equal owner IDs establish full ancestry for arbitrary marker
 lists, nor that every receive already has its matching source occurrence.
 The generated Rust fixture checks nested rolls, branch/outside paths and
-independent parallel lanes against these exact functions. Deriving the
-per-class execution order and composing it with custody remain necessary.
+independent parallel lanes against these exact functions. The measured-word
+theorem uses checked class projection facts; deriving all such facts from
+arbitrary source lowering and composing the words with custody remain necessary.
 
 A separate public-API probe uses `seq(roll(A → B; B → A), B → A Finish)`.
 Projection accepts it. After one exchange, A can wait for `Finish` while B
