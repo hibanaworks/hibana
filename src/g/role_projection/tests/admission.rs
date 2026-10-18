@@ -171,7 +171,7 @@ fn source_ready_rows_match_actual_admission_across_a_parallel_owned_visit() {
                     &RoleProjection::<1, Steps, 8>::IMAGE_REF,
                 ));
                 let mut source = std::format!(
-                    "import Hibana.ActorCommitHistory\nimport Hibana.ResourceValueCorrespondence\n\nset_option maxRecDepth 10000\n\n\
+                    "import Hibana.ActorCommitHistory\nimport Hibana.ResourceValueCorrespondence\nimport Hibana.SourceReadyReceipt\n\nset_option maxRecDepth 10000\n\n\
                      def admissionChoreo : Hibana.Choreo := {choreo}\n\n\
                      def admissionImage : Hibana.RustDescriptorImage := {image}\n\n"
                 );
@@ -442,6 +442,70 @@ theorem observedReadyReadHasTheWireCheckedReceipt :
       ∀ next ∈ later, next.step.before.doneState.done receiptRow.eventId = true ∧
         next.step.after.doneState.done receiptRow.eventId = true :=
   everyReadyReadHistoryContainsTheWireCheckedReceipt observedReceiptHistoryChecked (by decide) (by decide)
+
+def actualReceiptFacts : Hibana.OwnedCommitFacts :=
+  (observedCommit0.step.ownedFacts? admissionImage admissionChoreo).get (by decide)
+
+theorem actualReceiptHasTheSourceResourceAndSide :
+    actualReceiptFacts.resource = resourceKey ∧ actualReceiptFacts.side = .receive :=
+  Hibana.checked_owned_source_row_has_its_exact_resource_and_side
+    (image := admissionImage) (choreo := admissionChoreo) (data := useData)
+    (path := usePath) (row := receiptRow) (binding := receiptBinding)
+    ((Option.some_get (x := admissionImage.decodeActorOrder? admissionChoreo) (by decide)).symm)
+    (by decide) (by decide) (by decide) (by decide) (by decide)
+    ((Option.some_get (x := observedCommit0.step.ownedFacts? admissionImage admissionChoreo) (by decide)).symm)
+
+-- These applications derive the receipt from source readiness and the real
+-- commit history. They do not take an admission observation or issued view.
+theorem actualSourceReadyReadDerivesItsReceipt :
+    Hibana.SourceReadyReceiptEvidence admissionImage admissionChoreo 9053 useData usePath
+      readRow readBinding resourceKey [observedCommit0] received.snapshot :=
+  Hibana.source_ready_resource_has_initial_issuer_or_current_wire_receipt
+    (image := admissionImage) (choreo := admissionChoreo) (data := useData)
+    (path := usePath) (row := readRow) (binding := readBinding) (key := resourceKey)
+    (first := initial.snapshot) (final := received.snapshot) (records := [observedCommit0])
+    (by decide)
+    ((Option.some_get (x := admissionImage.decodeActorOrder? admissionChoreo) (by decide)).symm)
+    (by decide) (by decide) (by decide)
+    (by
+      change readBinding.message.sender = resourceKey ∨ readBinding.message.payload = .endpoint resourceKey
+      exact .inl (by decide))
+    (by decide) observedReceiptHistoryChecked
+    (by
+      intro receipt member _ _ _ _
+      have pending := List.all_eq_true.mp
+        (show (useData.activeRows usePath).all
+          (fun row => !initial.snapshot.doneState.done row.eventId) = true from by decide)
+        receipt member
+      simpa using pending)
+
+theorem actualReadyReturnCommitHistoryChecked :
+    Hibana.actorCommitHistoryCheck admissionImage admissionChoreo 9053
+      initial.snapshot joined.snapshot [observedCommit0, observedCommit1, observedCommit2] = true := by decide
+
+theorem actualSourceReadyReturnDerivesItsReceipt :
+    Hibana.SourceReadyReceiptEvidence admissionImage admissionChoreo 9053 useData usePath
+      returnRow returnBinding resourceKey [observedCommit0, observedCommit1, observedCommit2]
+      joined.snapshot :=
+  Hibana.source_ready_resource_has_initial_issuer_or_current_wire_receipt
+    (image := admissionImage) (choreo := admissionChoreo) (data := useData)
+    (path := usePath) (row := returnRow) (binding := returnBinding) (key := resourceKey)
+    (first := initial.snapshot) (final := joined.snapshot)
+    (records := [observedCommit0, observedCommit1, observedCommit2])
+    (by decide)
+    ((Option.some_get (x := admissionImage.decodeActorOrder? admissionChoreo) (by decide)).symm)
+    (by decide) (by decide) (by decide)
+    (by
+      change returnBinding.message.sender = resourceKey ∨ returnBinding.message.payload = .endpoint resourceKey
+      exact .inr (by decide))
+    (by decide) actualReadyReturnCommitHistoryChecked
+    (by
+      intro receipt member _ _ _ _
+      have pending := List.all_eq_true.mp
+        (show (useData.activeRows usePath).all
+          (fun row => !initial.snapshot.doneState.done row.eventId) = true from by decide)
+        receipt member
+      simpa using pending)
 
 "#);
                 let owner_image = descriptor_source(RoleDescriptorRef::from_resident(

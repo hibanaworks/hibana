@@ -56,7 +56,7 @@ bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" build-serial "${PROOF_
 bash "${ROOT_DIR}/.github/scripts/check_lean_claim_surface.sh"
 static_audit_output="$(run_audit \
   theorem-inventory \
-  --static "${PROOF_DIR}" "${STATIC_CLAIM_SNAPSHOT}" 954 555 287 112)"
+  --static "${PROOF_DIR}" "${STATIC_CLAIM_SNAPSHOT}" 956 557 287 112)"
 printf '%s\n' "${static_audit_output}"
 printf '%s\n' "${static_audit_output}" | bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard markers static
 bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" theorem-inventory \
@@ -81,7 +81,7 @@ CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --li
   -- --exact
 bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${ACTOR_ADMISSION_GENERATED}" "source and actual cursor admission"
 run_audit generated-axioms --kernel "${ACTOR_ADMISSION_GENERATED}" "${PROOF_DIR}" \
-  "${PROOF_DIR}/actor-admission-generated-claim-surface.txt" 46
+  "${PROOF_DIR}/actor-admission-generated-claim-surface.txt" 50
 CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib \
   g::role_projection::tests::visit_progress::a_complete_actor_visit_exposes_real_parallel_admissions_and_completion \
   -- --exact

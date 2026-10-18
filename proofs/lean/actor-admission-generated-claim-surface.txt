@@ -2,11 +2,20 @@ actualReadyReadHasItsCarrierValueFromTheHeaderTransferHistory : ∃ view,
   Hibana.observedActorView? received.snapshot readRow.view = some view ∧
     Hibana.observedResourceTag? received.snapshot readRow.view = some (received.snapshot.actor, view.header) ∧
       Hibana.TransferValueLocated (received.snapshot.actor, view.header) dbAtWorker
+actualReadyReturnCommitHistoryChecked : Hibana.actorCommitHistoryCheck admissionImage admissionChoreo 9053
+    initial.snapshot joined.snapshot [observedCommit0, observedCommit1, observedCommit2] =
+  true
 actualReadyReturnHasItsPayloadValueFromTheHeaderTransferHistory : ∃ view,
   Hibana.observedActorView? joined.snapshot resourceKey.role = some view ∧
     Hibana.observedResourceTag? joined.snapshot resourceKey.role = some (joined.snapshot.actor, view.header) ∧
       Hibana.TransferValueLocated (joined.snapshot.actor, view.header) dbAtWorker
+actualReceiptHasTheSourceResourceAndSide : actualReceiptFacts.resource = resourceKey ∧
+  actualReceiptFacts.side = Hibana.EndpointDelegation.Side.receive
 actualReturnedHeaderRealizesItsExactValue : Hibana.TransferValueLocated returnedDbTag dbAtOwner
+actualSourceReadyReadDerivesItsReceipt : Hibana.SourceReadyReceiptEvidence admissionImage admissionChoreo 9053 useData
+  usePath readRow readBinding resourceKey [observedCommit0] received.snapshot
+actualSourceReadyReturnDerivesItsReceipt : Hibana.SourceReadyReceiptEvidence admissionImage admissionChoreo 9053 useData
+  usePath returnRow returnBinding resourceKey [observedCommit0, observedCommit1, observedCommit2] joined.snapshot
 @arbitraryLiveReadSuffixKeepsTheExactValue : ∀ {View Frame : Type} {value : View}
   {first final : Hibana.EndpointTransfer.Observation View Frame},
   Hibana.EndpointTransfer.Execution first final →

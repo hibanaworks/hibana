@@ -80,6 +80,24 @@ selected visit. It does not derive actual Rust value availability from a header,
 nor establish fresh rolled visits, carrier delivery or general distributed
 progress. The public owned-projection guard remains closed.
 
+The public guard rejects owned choreography before returning its projected
+image. Private qualification tests obtain the image from the same production
+actor lowering and then attach and drive actual Endpoints, including owned
+encoding, receive validation, view publication, and shared actor progress.
+They do not replace the owned kernel with a mock or treat the guard's rejection
+as a successful runtime test. This still leaves public-path qualification as a
+separate release obligation.
+
+`carrier_contract::replaying_an_owned_frame_breaks_uniqueness_without_affine_delivery`
+is an explicit counterexample outside the carrier assumptions. It copies one
+accepted loan frame without moving another Endpoint, preserves FIFO, and feeds
+the duplicate to a subsequent roll visit. Two runtimes then hold live resource
+views, and the genuine next loan still has the same envelope. The test must not
+be counted as a conforming uniqueness run. It makes the load-bearing no-replay
+assumption visible: the core's three-byte envelope alone is not replay
+protection. A reusable binding or a `One` token name would not establish that
+property without actual consumption/replay enforcement and physical fencing.
+
 `SourceTransferAvailability.lean` derives the causal order between a resource
 use and any distinct transfer from accepted source elaboration and the exact
 decoded actor rows. Consequently, a source-ready use excludes another handoff
@@ -539,6 +557,27 @@ are rejected, as is a fabricated empty source domain. Three explicitly model-onl
 claims admit acceptance and receipt before sender publication using copied
 progress. They are not presented as
 additional observations from a real callback cut.
+
+`SourceReadyReceipt.lean` connects readiness to the current actual receipt for
+the source-derived resource. It starts from the accepted source and complete
+commit history, without assuming an admission result, an issued-header bit or
+an available value. It derives the initial source issuer or the most recent
+wire-checked resource receipt, its exact resource and receive side, published
+tag, and a checked suffix in which that receipt remains complete. Identity
+comes from the immutable source occurrence even if recorded route selections
+differ. Its baseline concerns receipts for this resource only; it does not
+reset independent parallel work or outside continuations. The actual admission
+fixture applies the general theorem to both the read and the later return.
+This establishes the receipt boundary, not possession at the final cut; that
+still requires its subsequent transfer/fault history and visit correspondence.
+
+The prepared-send Kani harness calls the production non-generic send loop with
+a boundary double. Its publication count proves that successful loop completion
+invokes publication exactly once. The double does not execute the real commit
+body or record every reset. It cannot discharge complete observation of all
+runtime histories merely by incrementing a harness-side counter. Those claims
+need actual mutation-boundary correspondence, rather than a successful table
+audit or matching endpoint snapshots alone.
 
 `OwnedRetirement.lean` checks retirement against the global source for the
 current selected visit. It considers every path compatible with the committed
