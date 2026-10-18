@@ -1,0 +1,27 @@
+peerWitnessPair1CompatibleChecked : sourceReceivePairCheck peerWitnessSender1 (peerWitnessReceiver1 0) peerWitnessImage4
+    peerWitnessChoreo 9071 =
+  true
+peerWitnessPair1OtherPathRejected : sourceReceivePairCheck peerWitnessSender1 (peerWitnessReceiver1 1) peerWitnessImage4
+    peerWitnessChoreo 9071 =
+  false
+peerWitnessPair2CompatibleChecked : sourceReceivePairCheck peerWitnessSender2 (peerWitnessReceiver2 1) peerWitnessImage4
+    peerWitnessChoreo 9072 =
+  true
+peerWitnessPair2OtherPathRejected : sourceReceivePairCheck peerWitnessSender2 (peerWitnessReceiver2 0) peerWitnessImage4
+    peerWitnessChoreo 9072 =
+  false
+peerWitnessPair3CompatibleChecked : sourceReceivePairCheck peerWitnessSender3 (peerWitnessReceiver3 2) peerWitnessImage4
+    peerWitnessChoreo 9073 =
+  true
+peerWitnessPair3OtherPathRejected : sourceReceivePairCheck peerWitnessSender3 (peerWitnessReceiver3 0) peerWitnessImage4
+    peerWitnessChoreo 9073 =
+  false
+peerWitnessReceiver1CompatibleChecked : (peerWitnessReceiver1 0).check peerWitnessImage4 peerWitnessChoreo 9071 = true
+peerWitnessReceiver1OtherPathChecked : (peerWitnessReceiver1 1).check peerWitnessImage4 peerWitnessChoreo 9071 = true
+peerWitnessReceiver2CompatibleChecked : (peerWitnessReceiver2 1).check peerWitnessImage4 peerWitnessChoreo 9072 = true
+peerWitnessReceiver2OtherPathChecked : (peerWitnessReceiver2 0).check peerWitnessImage4 peerWitnessChoreo 9072 = true
+peerWitnessReceiver3CompatibleChecked : (peerWitnessReceiver3 2).check peerWitnessImage4 peerWitnessChoreo 9073 = true
+peerWitnessReceiver3OtherPathChecked : (peerWitnessReceiver3 0).check peerWitnessImage4 peerWitnessChoreo 9073 = true
+peerWitnessSender1Checked : peerWitnessSender1.check peerWitnessChoreo 9071 = true
+peerWitnessSender2Checked : peerWitnessSender2.check peerWitnessChoreo 9072 = true
+peerWitnessSender3Checked : peerWitnessSender3.check peerWitnessChoreo 9073 = true

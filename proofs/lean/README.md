@@ -1170,6 +1170,19 @@ is static enumeration, not a schedule for parallel execution. Availability of
 the corresponding live view/receipt and distributed progress remain to be
 connected to these properties.
 
+`PeerWitnessGenerated.lean` follows the existing nested choice with three
+possible holders of one delegated endpoint. Five Tokio localsides complete
+each case using ordinary endpoint operations. The common service retains
+unknown choices throughout its request and reply. Its copied observation
+includes every allocated choice slot, including slots with no local events in
+either arm; filtering those slots would reject a valid actual commit.
+The fifteen kernel-checked claims validate each sender, the receiver under two
+locally compatible source paths, and the pair under its matching path. The
+other path fails full physical-binding equality despite passing the receiver's
+local check. Thus an arbitrary completion of unknown local choices cannot
+establish receive-pair correspondence. This is a witness-selection obligation,
+not a runtime error or a proof of distributed progress for all protocols.
+
 `SourceResourceCausality.lean` establishes that an emitted resource transfer and
 a use of that same endpoint are either the same occurrence or ordered by the
 source's `before` relation. This covers arbitrary accepted compositions and

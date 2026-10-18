@@ -230,8 +230,12 @@ pub(crate) unsafe fn actor_snapshot<const ROLE: u8>(
                         .program
                         .route_resolver_authority_at_row(row)
                         .unwrap();
+                    // A retained slot can have no local events in either
+                    // arm. It still has an allocated choice cell, whose
+                    // unknown value is part of this actor's copied state.
                     cursor
-                        .has_route_scope(scope)
+                        .route_scope_slot(scope)
+                        .is_some()
                         .then(|| (scope.raw() % 8192, kernel.selected_arm_for_scope(scope)))
                 })
                 .collect(),

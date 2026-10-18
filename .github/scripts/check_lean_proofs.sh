@@ -10,6 +10,7 @@ CAUSAL_GENERATED="${ROOT_DIR}/target/lean-proof/CausalGenerated.lean"
 PARALLEL_GENERATED="${ROOT_DIR}/target/lean-proof/ParallelGenerated.lean"
 PROGRAM_COLUMNS_GENERATED="${ROOT_DIR}/target/lean-proof/ProgramColumnsGenerated.lean"
 PARTIAL_CHOICE_GENERATED="${ROOT_DIR}/target/lean-proof/PartialChoiceGenerated.lean"
+PEER_WITNESS_GENERATED="${ROOT_DIR}/target/lean-proof/PeerWitnessGenerated.lean"
 CONTROLLER_GENERATED="${ROOT_DIR}/target/lean-proof/ControllerGenerated.lean"
 INGRESS_GENERATED="${ROOT_DIR}/target/lean-proof/IngressGenerated.lean"
 REENTRY_GENERATED="${ROOT_DIR}/target/lean-proof/ReentryGenerated.lean"
@@ -95,6 +96,7 @@ rm -f "${FUTURE_CUSTODY_GENERATED}"
 rm -f "${OWNED_DROP_GENERATED}" "${COMPLETED_RETIREMENT_GENERATED}"
 rm -f "${SOURCE_ORDER_GENERATED}"
 rm -f "${OWNED_ENTRY_GENERATED}"
+rm -f "${PEER_WITNESS_GENERATED}"
 CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib \
   g::role_projection::tests::frame_domains::actual_rolled_colors_refine_route_paths_and_elastic_owners \
   -- --exact
@@ -258,6 +260,12 @@ CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --li
 bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${LOGICAL_VIEW_WORD_GENERATED}" "logical source words across physical holders"
 run_audit generated-axioms --kernel "${LOGICAL_VIEW_WORD_GENERATED}" "${PROOF_DIR}" \
   "${PROOF_DIR}/logical-view-word-generated-claim-surface.txt" 27
+CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib \
+  g::role_projection::tests::partial_choice::a_service_uses_the_delegated_peer_without_knowing_its_physical_holder \
+  -- --exact
+bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${PEER_WITNESS_GENERATED}" "unknown peer holder source witnesses"
+run_audit generated-axioms --kernel "${PEER_WITNESS_GENERATED}" "${PROOF_DIR}" \
+  "${PROOF_DIR}/peer-witness-generated-claim-surface.txt" 15
 CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib -- \
   g::role_projection::tests::conditional_controller::remote_controller::a_conditional_controller_does_not_take_authority_from_its_co_resident_observer \
   g::role_projection::tests::conditional_controller::co_resident_controller::a_conditional_controller_does_not_take_authority_from_its_co_resident_observer \

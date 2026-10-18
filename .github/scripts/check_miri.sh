@@ -178,6 +178,7 @@ MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_t
   --skip g::role_projection::tests::reentry_parallel::parallel_loan_reentry_preserves_the_other_body_and_completed_tail \
   --skip g::role_projection::tests::mixed_send_admission:: \
   --skip g::role_projection::tests::occurrence_choice:: \
+  --skip g::role_projection::tests::partial_choice::a_service_uses_the_delegated_peer_without_knowing_its_physical_holder \
   --skip g::role_projection::tests::conditional_controller::a_completed_right_arm_reopens_the_public_route_without_receiving \
   --skip g::role_projection::tests::conditional_controller::remote_controller:: \
   --skip g::role_projection::tests::conditional_controller::co_resident_controller::
@@ -303,6 +304,12 @@ MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_t
   occurrence-choice \
   -p hibana --lib \
   g::role_projection::tests::occurrence_choice::changing_rolled_loans_teach_only_the_received_occurrences_choices \
+  -- --exact
+
+MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \
+  unknown-peer-holder \
+  -p hibana --lib \
+  g::role_projection::tests::partial_choice::a_service_uses_the_delegated_peer_without_knowing_its_physical_holder \
   -- --exact
 
 MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \
