@@ -39,14 +39,20 @@ run_miri_test() {
   shift
   local output
   output="$(mktemp "${TMPDIR:-/tmp}/hibana-miri.XXXXXX")"
-  if ! timeout --kill-after="${MIRI_TIMEOUT_GRACE_SECONDS}s" "${MIRI_TIMEOUT_SECONDS}s" \
+  if timeout --kill-after="${MIRI_TIMEOUT_GRACE_SECONDS}s" "${MIRI_TIMEOUT_SECONDS}s" \
     cargo +"${MIRI_TOOLCHAIN}" miri test "$@" >"${output}" 2>&1; then
+    cat "${output}"
+  else
+    local status=$?
     cat "${output}" >&2
     rm -f "${output}"
-    echo "miri gate failed: ${label}" >&2
-    return 1
+    if [[ "${status}" == 124 ]]; then
+      echo "miri gate timed out after ${MIRI_TIMEOUT_SECONDS}s: ${label}" >&2
+    else
+      echo "miri gate failed (exit ${status}): ${label}" >&2
+    fi
+    return "${status}"
   fi
-  cat "${output}"
   if ! TOOLCHAIN="${MIRI_TOOLCHAIN}" bash "${ROOT_DIR}/.github/scripts/lib/test_result_tool.sh" miri "${output}" "${label}" "${miri_totals}" 0; then
     rm -f "${output}"
     return 1
@@ -64,7 +70,7 @@ run_miri_test \
   -p hibana \
   --test transport_borrow
 
-run_miri_test \
+MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \
   endpoint-owner-move \
   -p hibana \
   --lib \
