@@ -305,14 +305,28 @@ MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_t
   g::role_projection::tests::occurrence_choice::changing_rolled_loans_teach_only_the_received_occurrences_choices \
   -- --exact
 
-# Keep every nested rework, delayed ingress and shared parallel prefix case.
-# Separate the two larger cases without changing their per-run deadline.
+# Each nested choice case gets the same bounded run independently.
+# Retain rework, delayed ingress and the shared parallel prefix in full.
 MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \
-  nested-resolver-reentry \
+  nested-resolver-future-local-choice \
   -p hibana \
   --test nested_resolver_reentry \
-  -- --skip sequential_parallel_prefix::next_resolver_preserves_a_parallel_rolled_prefix \
-  --skip rolled_service_requests_resume_after_review_rework_while_another_flow_is_idle
+  future_rolled_choice::future_outer_arm_preserves_the_current_nested_local_choice \
+  -- --exact
+
+MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \
+  nested-resolver-containing-choice \
+  -p hibana \
+  --test nested_resolver_reentry \
+  inner_reentry_does_not_restart_completed_containing_resolver \
+  -- --exact
+
+MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \
+  nested-resolver-visible-receive-prefix \
+  -p hibana \
+  --test nested_resolver_reentry \
+  offer_preserves_visible_prefix_before_nested_receive \
+  -- --exact
 
 MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \
   rolled-service-review-rework \
