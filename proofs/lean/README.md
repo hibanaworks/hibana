@@ -604,6 +604,24 @@ their corresponding execution boundaries. The SMT countermodels retain the
 need for receipt prefix closure and an unreset measured suffix, rather than
 hiding those premises behind a value-availability assumption.
 
+`MeasuredResourceAvailability.lean` connects this interval to a finite transfer
+execution. A source-checked ordered receipt derives the actual first value.
+Subsequent matching source observations and measured histories then establish
+that the exact value remains in application code or a private future, or that
+the required global message is accepted, or that retirement reports a checked
+fault. An ordinary resource use cannot accept an unrelated loan. For a sending
+target, acceptance identifies its exact source handoff. Intermediate cuts need
+not have the target ready, and acceptance is separate from sender publication.
+
+The same two-runtime fixture supplies both read and return interval origins
+from its actual second receipt. Its generated receipt application universally
+quantifies the carrier and matching transfer history; it does not fabricate
+that history from a header or assume an available value at the final cut.
+Correspondence to the same physical binding and run remains an implementation
+contract. Custody in a private future is not yet callable availability:
+eventual polling, causal prefix correspondence across independent route/roll
+visits, and their composition into distributed progress remain open.
+
 `ActorMutationCoverage.lean` strengthens selected-visit history observations
 with measurements at the actual completion-bit writes. Qualification builds
 increment one checked counter in the existing mark/clear functions, including

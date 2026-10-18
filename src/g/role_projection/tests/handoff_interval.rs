@@ -151,7 +151,7 @@ fn a_last_receipt_keeps_past_and_future_handoffs_outside_pending_parallel_work()
                     &RoleProjection::<0, Steps, 16>::IMAGE_REF,
                 ));
                 let mut source = std::format!(
-                    "import Hibana.SourceHandoffInterval\n\nset_option maxRecDepth 10000\n\
+                    "import Hibana.MeasuredResourceAvailability\n\nset_option maxRecDepth 10000\n\
                      def intervalChoreo : Hibana.Choreo := {choreo}\n\
                      def intervalImage : Hibana.RustDescriptorImage := {image}\n\
                      def intervalOwnerImage : Hibana.RustDescriptorImage := {owner_image}\n"
@@ -208,6 +208,7 @@ def previousBinding := ((intervalPath.bindings.find? fun entry => entry.1 == pre
 def nextBinding := ((intervalPath.bindings.find? fun entry => entry.1 == nextReturn.actionId.event).get (by decide)).2
 def readSymbolic := (intervalRun.bindings[5]?).get (by decide) |>.2
 def previousSymbolic := (intervalRun.bindings[2]?).get (by decide) |>.2
+def returnSymbolic := (intervalRun.bindings[6]?).get (by decide) |>.2
 
 theorem actualActorRowsAreChecked : intervalImage.actorRowsCheck intervalChoreo = true := by decide
 theorem actualCompleteHistoryIsMeasured : actorCommitMutationHistoryCheck intervalImage intervalChoreo 9057
@@ -285,6 +286,88 @@ theorem actualReadyReadHasItsLastWireCheckedReceipt :
       have allPending : (intervalData.activeRows intervalPath).all
           (fun row => !initial.doneState.done row.eventId) = true := by decide
       simpa using List.all_eq_true.mp allPending receipt member)
+
+theorem actualReadHasItsReceiptIntervalOrigin :
+    SourceIntervalOrigin intervalData intervalPath readRow readBinding resource current := by
+  refine ⟨intervalIssuance, intervalRun, 5, readSymbolic,
+    (Option.some_get (x := elaborate intervalData.source.resources
+      (initialOwners intervalData.source.resources) intervalPath.selections intervalData.source 0)
+      (by decide)).symm,
+    (by decide), (by decide), (by decide), .inr ?_⟩
+  exact ⟨receiptRow, previousSymbolic, intervalRun.bindings.take 2,
+    (intervalRun.bindings.drop 3).take 2, (by decide), (by decide), (by decide),
+    (by decide), (by decide), actualReceiptClosesItsSelectedSourcePrefix⟩
+
+theorem actualReturnHasItsReceiptIntervalOrigin :
+    SourceIntervalOrigin intervalData intervalPath nextReturn nextBinding resource current := by
+  refine ⟨intervalIssuance, intervalRun, 6, returnSymbolic,
+    (Option.some_get (x := elaborate intervalData.source.resources
+      (initialOwners intervalData.source.resources) intervalPath.selections intervalData.source 0)
+      (by decide)).symm,
+    (by decide), (by decide), (by decide), .inr ?_⟩
+  exact ⟨receiptRow, previousSymbolic, intervalRun.bindings.take 2,
+    (intervalRun.bindings.drop 3).take 3, (by decide), (by decide), (by decide),
+    (by decide), (by decide), actualReceiptClosesItsSelectedSourcePrefix⟩
+
+def actualReceiptFacts : OwnedCommitFacts :=
+  (actual2.commit.step.ownedFacts? intervalImage intervalChoreo).get (by decide)
+
+-- The carrier and complete transfer suffix are universally quantified here.
+-- Their correspondence to this binding remains an implementation contract;
+-- they are not fabricated from the copied endpoint header or an assumed value.
+theorem actualCheckedReceiptKeepsItsValueUntilTheMeasuredReadBoundary
+    {carrier : CarrierSemantics} {abstraction : carrier.State → TransportBoundaryState}
+    {Fairness : Prop} (profile : CarrierProfile.ordered.Holds carrier abstraction Fairness)
+    {currentCarrier offered committed : carrier.State} {frame : TransportFrame}
+    {before : TransportState}
+    {state : EndpointTransfer.Observation (Nat × Nat × Nat × Nat) TransportFrame}
+    {rest : List TransportFrame} (initialView : Nat × Nat × Nat × Nat)
+    (execution : EndpointTransfer.Execution (EndpointTransfer.initial initialView) state)
+    (currentExact : abstraction currentCarrier = .idle before) (wellFormed : before.WellFormed)
+    (received : carrier.pollReceive currentCarrier = .delivered frame offered)
+    (resolved : carrier.resolve offered .commit = some committed)
+    (identity : actual2.commit.wire.identifies frame) (queued : state.inFlight = frame :: rest) :
+    current.actor = actualReceiptFacts.binding.receiverActor ∧
+      actual2.commit.step.SourceOrdered intervalImage intervalChoreo ∧
+      ∃ next after, EndpointTransfer.Step .receive state next ∧
+        TransferValueLocated (current.actor, actualReceiptFacts.afterView.header) next ∧
+        abstraction committed = .idle after ∧ before.delivered < after.delivered ∧
+        ∀ final, EndpointTransfer.Execution next final →
+          (∀ prior following action, EndpointTransfer.Execution next prior →
+            TransferValueLocated (current.actor, actualReceiptFacts.afterView.header) prior →
+            EndpointTransfer.Step action prior following → EndpointTransfer.Execution following final →
+            MeasuredResourceBoundaryEvidence intervalImage intervalChoreo 9057 intervalData intervalPath resource
+              current currentCount joined joinedCount action) →
+          TransferValueLocated (current.actor, actualReceiptFacts.afterView.header) final ∨
+          ∃ prior following action, EndpointTransfer.Execution next prior ∧
+            EndpointTransfer.Step action prior following ∧
+            TransferValueLocated (current.actor, actualReceiptFacts.afterView.header) prior ∧
+            EndpointTransfer.Execution following final ∧
+            SourceMessageBoundaryOutcome intervalImage intervalChoreo intervalData intervalPath resource readRow action ∧
+            (action = .accept → ∃ acceptedFrame, TransferFrameLocated acceptedFrame following) := by
+  exact a_checked_receipt_retains_its_value_until_a_measured_source_boundary
+    (sample := actual2.commit.step) (session := 9057) (facts := actualReceiptFacts)
+    (data := intervalData) (path := intervalPath) (target := readRow) (binding := readBinding)
+    (firstCount := currentCount) (finalCount := joinedCount) (finalProgress := joined)
+    (by decide)
+    (Option.some_get (x := actual2.commit.step.ownedFacts? intervalImage intervalChoreo) (by decide)).symm
+    (by decide)
+    ((Option.some_get (x := intervalImage.decodeActorOrder? intervalChoreo) (by decide)).symm)
+    (by decide) (by decide) (by decide) (Or.inl (by decide)) (by decide)
+    actualReadHasItsReceiptIntervalOrigin actualTargetBecomesReadyAfterTheParallelWork
+    profile initialView execution currentExact wellFormed received resolved identity queued
+
+theorem actualOrdinaryReadCanOnlyRetireWithFault {action : EndpointTransfer.Action}
+    (outcome : SourceMessageBoundaryOutcome intervalImage intervalChoreo intervalData intervalPath resource readRow action) :
+    (action = .abandonPreparation ∨ action = .dropValue) ∧
+      ∃ sample : ViewRetirementObservation, sample.check intervalImage intervalChoreo = true ∧
+        sample.view = resource.role ∧ sample.afterFault ≠ none :=
+  the_measured_boundary_of_an_ordinary_use_is_a_fault (binding := readBinding) (by decide) (by decide) outcome
+
+theorem actualSendingReturnBoundaryKeepsItsExactSourceAction {action : EndpointTransfer.Action}
+    (outcome : SourceMessageBoundaryOutcome intervalImage intervalChoreo intervalData intervalPath resource nextReturn action) :
+    SourceHandoffBoundaryOutcome intervalImage intervalChoreo intervalData intervalPath resource nextReturn action :=
+  the_measured_boundary_of_a_sending_target_is_its_exact_handoff_or_fault (by decide) outcome
 
 def initialData : DecodedActorOrder := (intervalOwnerImage.decodeActorOrder? intervalChoreo).get (by decide)
 def initialPath : NormalizedPath := (initialData.normalized.paths[0]?).get (by decide)
