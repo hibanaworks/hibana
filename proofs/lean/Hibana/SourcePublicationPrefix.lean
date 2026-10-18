@@ -48,21 +48,10 @@ private theorem publication_is_send
 private theorem receipt_is_not_send
     {sample : SourceSendAdmission} {record : ActorCommitRecord}
     {image : RustDescriptorImage} {choreo : Choreo} {session : Nat}
-    (paired : sourceReceivePairCheck sample record image choreo session = true) :
+    (paired : SourceReceivePair sample record image choreo session) :
     sourceSendRecord image choreo record = false := by
-  unfold sourceReceivePairCheck at paired
-  have matched := (Bool.and_eq_true_iff.mp paired).2
-  cases leftAt : sourceOperationIdentity? sample.image choreo sample.pathIndex sample.event with
-  | none => simp [leftAt] at matched
-  | some left =>
-    rcases left with ⟨eff, binding, side⟩
-    cases side <;> simp only [leftAt] at matched
-    all_goals
-      cases rightAt : sourceOperationIdentity? image choreo record.step.pathIndex record.step.event with
-      | none => simp [rightAt] at matched
-      | some right =>
-        rcases right with ⟨eff', binding', side'⟩
-        cases side' <;> simp_all [sourceSendRecord]
+  obtain ⟨_, _, _, _, received⟩ := a_corresponding_receive_pair_has_its_original_source_halves paired
+  simp only [sourceSendRecord, received]
 
 private theorem a_commit_increases_the_existing_mutation_stamp
     {image : RustDescriptorImage} {choreo : Choreo} {session : Nat}

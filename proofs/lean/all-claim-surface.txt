@@ -824,6 +824,88 @@ Hibana.EndpointDelegation.withOwner_same : ∀ (owners : Hibana.EndpointDelegati
                                 (Not
                                   (@Membership.mem.{0, 0} Nat (List.{0} Nat) (@List.instMembership.{0} Nat) later
                                     event))))))
+@Hibana.a_concrete_receive_pair_has_coherent_local_witnesses : ∀ {sent : Hibana.SourceSendAdmission}
+  {received : Hibana.ActorCommitRecord} {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo} {session : Nat},
+  @Eq.{1} Bool (Hibana.sourceReceivePairCheck sent received image choreo session) true →
+    Hibana.SourceReceivePair sent received image choreo session
+@Hibana.a_corresponding_receive_pair_has_its_original_source_halves : ∀ {sent : Hibana.SourceSendAdmission}
+  {received : Hibana.ActorCommitRecord} {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo} {session : Nat},
+  Hibana.SourceReceivePair sent received image choreo session →
+    @Exists.{1} Nat fun eff =>
+      @Exists.{1} Hibana.EndpointDelegation.Binding fun sentBinding =>
+        @Exists.{1} Hibana.EndpointDelegation.Binding fun receivedBinding =>
+          And
+            (@Eq.{1}
+              (Option.{0}
+                (Prod.{0, 0} Nat (Prod.{0, 0} Hibana.EndpointDelegation.Binding Hibana.EndpointDelegation.Side)))
+              (Hibana.sourceOperationIdentity? sent.image choreo sent.pathIndex sent.event)
+              (@some.{0}
+                (Prod.{0, 0} Nat (Prod.{0, 0} Hibana.EndpointDelegation.Binding Hibana.EndpointDelegation.Side))
+                (@Prod.mk.{0, 0} Nat (Prod.{0, 0} Hibana.EndpointDelegation.Binding Hibana.EndpointDelegation.Side) eff
+                  (@Prod.mk.{0, 0} Hibana.EndpointDelegation.Binding Hibana.EndpointDelegation.Side sentBinding
+                    Hibana.EndpointDelegation.Side.send))))
+            (@Eq.{1}
+              (Option.{0}
+                (Prod.{0, 0} Nat (Prod.{0, 0} Hibana.EndpointDelegation.Binding Hibana.EndpointDelegation.Side)))
+              (Hibana.sourceOperationIdentity? image choreo received.step.pathIndex received.step.event)
+              (@some.{0}
+                (Prod.{0, 0} Nat (Prod.{0, 0} Hibana.EndpointDelegation.Binding Hibana.EndpointDelegation.Side))
+                (@Prod.mk.{0, 0} Nat (Prod.{0, 0} Hibana.EndpointDelegation.Binding Hibana.EndpointDelegation.Side) eff
+                  (@Prod.mk.{0, 0} Hibana.EndpointDelegation.Binding Hibana.EndpointDelegation.Side receivedBinding
+                    Hibana.EndpointDelegation.Side.receive))))
+@Hibana.a_corresponding_receive_pair_has_one_physical_binding : ∀ {sent : Hibana.SourceSendAdmission}
+  {received : Hibana.ActorCommitRecord} {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo} {session : Nat},
+  Hibana.SourceReceivePair sent received image choreo session →
+    @Exists.{1} Nat fun sendPath =>
+      @Exists.{1} Nat fun receivePath =>
+        @Exists.{1} Nat fun eff =>
+          @Exists.{1} Hibana.EndpointDelegation.Binding fun binding =>
+            And
+              (@Eq.{1} Bool
+                ({ image := sent.image, base := sent.base, pathIndex := sendPath, event := sent.event,
+                      wire := sent.wire }.check
+                  choreo session)
+                true)
+              (And
+                (@Eq.{1} Bool
+                  ({
+                        step :=
+                          have __src := received.step;
+                          { pathIndex := receivePath, event := __src.event, view := __src.view, before := __src.before,
+                            after := __src.after },
+                        wire := received.wire }.check
+                    image choreo session)
+                  true)
+                (And
+                  (@Eq.{1}
+                    (Option.{0}
+                      (Prod.{0, 0} Nat (Prod.{0, 0} Hibana.EndpointDelegation.Binding Hibana.EndpointDelegation.Side)))
+                    (Hibana.sourceOperationIdentity? sent.image choreo sendPath sent.event)
+                    (@some.{0}
+                      (Prod.{0, 0} Nat (Prod.{0, 0} Hibana.EndpointDelegation.Binding Hibana.EndpointDelegation.Side))
+                      (@Prod.mk.{0, 0} Nat
+                        (Prod.{0, 0} Hibana.EndpointDelegation.Binding Hibana.EndpointDelegation.Side) eff
+                        (@Prod.mk.{0, 0} Hibana.EndpointDelegation.Binding Hibana.EndpointDelegation.Side binding
+                          Hibana.EndpointDelegation.Side.send))))
+                  (And
+                    (@Eq.{1}
+                      (Option.{0}
+                        (Prod.{0, 0} Nat
+                          (Prod.{0, 0} Hibana.EndpointDelegation.Binding Hibana.EndpointDelegation.Side)))
+                      (Hibana.sourceOperationIdentity? image choreo receivePath received.step.event)
+                      (@some.{0}
+                        (Prod.{0, 0} Nat (Prod.{0, 0} Hibana.EndpointDelegation.Binding Hibana.EndpointDelegation.Side))
+                        (@Prod.mk.{0, 0} Nat
+                          (Prod.{0, 0} Hibana.EndpointDelegation.Binding Hibana.EndpointDelegation.Side) eff
+                          (@Prod.mk.{0, 0} Hibana.EndpointDelegation.Binding Hibana.EndpointDelegation.Side binding
+                            Hibana.EndpointDelegation.Side.receive))))
+                    (@Eq.{1} Nat image.role binding.receiverActor))))
+@Hibana.a_corresponding_receive_pair_preserves_its_observed_boundaries : ∀ {sent : Hibana.SourceSendAdmission}
+  {received : Hibana.ActorCommitRecord} {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo} {session : Nat},
+  Hibana.SourceReceivePair sent received image choreo session →
+    And (@Eq.{1} Bool (sent.check choreo session) true)
+      (And (@Eq.{1} Bool (received.check image choreo session) true)
+        (@Eq.{1} Hibana.OwnedWireObservation sent.wire received.wire))
 @Hibana.a_current_choice_has_its_latest_actual_source_origin : ∀ {image : Hibana.RustDescriptorImage}
   {choreo : Hibana.Choreo} {session scope : Nat} {arm : Hibana.RouteArm}
   {first final : Prod.{0, 0} Hibana.ActorProgressObservation Nat} {cleared : List.{0} Nat} {commits : Nat},
@@ -1550,11 +1632,7 @@ Hibana.EndpointDelegation.withOwner_same : ∀ (owners : Hibana.EndpointDelegati
                                           channel).delivered)
                                     (@some.{0} Hibana.SourceAcceptance entry))
                                   (And (@Eq.{1} Nat entry.carrierWitness witness)
-                                    (And
-                                      (@Eq.{1} Bool
-                                        (Hibana.sourceReceivePairCheck entry.sample record (images actor) choreo
-                                          session)
-                                        true)
+                                    (And (Hibana.SourceReceivePair entry.sample record (images actor) choreo session)
                                       (Hibana.DistributedSourceExecution images choreo session after last later))))))
 @Hibana.a_logged_receive_has_its_prior_actual_transport_acceptance : ∀ {images : Nat → Hibana.RustDescriptorImage}
   {choreo : Hibana.Choreo} {session actor eff : Nat}
@@ -1636,10 +1714,8 @@ Hibana.EndpointDelegation.withOwner_same : ∀ (owners : Hibana.EndpointDelegati
                                                   (@some.{0} Hibana.SourceAcceptance entry))
                                                 (And (@Eq.{1} Nat entry.carrierWitness witness)
                                                   (And
-                                                    (@Eq.{1} Bool
-                                                      (Hibana.sourceReceivePairCheck entry.sample record (images actor)
-                                                        choreo session)
-                                                      true)
+                                                    (Hibana.SourceReceivePair entry.sample record (images actor) choreo
+                                                      session)
                                                     (Hibana.DistributedSourceExecution images choreo session received
                                                       last later)))))))))
 @Hibana.a_matched_owned_receive_recovers_its_accepted_sender : ∀ {sender : Hibana.SourceSendAdmission}
@@ -2957,6 +3033,32 @@ Hibana.a_pending_payload_requires_its_own_send : ∀ (resource : Nat) (sent : Op
                   (fun as i => @LT.lt.{0} Nat instLTNat i (@List.length.{0} Bool as))
                   (@List.instGetElem?NatLtLength.{0} Bool) sample.admitted row.eventId)
                 (@some.{0} Bool true)
+@Hibana.a_receive_pair_keeps_its_coherence_under_local_witness_changes : ∀ {sent : Hibana.SourceSendAdmission}
+  {received : Hibana.ActorCommitRecord} {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo}
+  {session sendPath receivePath : Nat},
+  Hibana.SourceReceivePair sent received image choreo session →
+    @Eq.{1} Bool
+        ({ image := sent.image, base := sent.base, pathIndex := sendPath, event := sent.event, wire := sent.wire }.check
+          choreo session)
+        true →
+      @Eq.{1} Bool
+          ({
+                step :=
+                  have __src := received.step;
+                  { pathIndex := receivePath, event := __src.event, view := __src.view, before := __src.before,
+                    after := __src.after },
+                wire := received.wire }.check
+            image choreo session)
+          true →
+        Hibana.SourceReceivePair
+          { image := sent.image, base := sent.base, pathIndex := sendPath, event := sent.event, wire := sent.wire }
+          {
+            step :=
+              have __src := received.step;
+              { pathIndex := receivePath, event := __src.event, view := __src.view, before := __src.before,
+                after := __src.after },
+            wire := received.wire }
+          image choreo session
 @Hibana.a_received_choice_stays_tied_to_its_accepted_source_occurrence : ∀ {sender : Hibana.SourceSendAdmission}
   {receiver : Hibana.ActorCommitObservation} {receiverImage : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo}
   {session scope : Nat} {sentFacts : Hibana.OwnedSourceFacts} {receivedFacts : Hibana.OwnedCommitFacts}
@@ -6192,6 +6294,19 @@ Hibana.causal_flow_monotone : ∀ (flow : Hibana.CausalFlowExpr) {left right : H
                           @Eq.{1} Bool (Hibana.sourceRowReady data path snapshot target) true →
                             And (@Eq.{1} Hibana.EndpointDelegation.ActionId transfer.actionId target.actionId)
                               (@Eq.{1} Hibana.EndpointDelegation.Binding loan intended)
+@Hibana.checked_record_has_its_source_identity : ∀ {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo}
+  {session : Nat} {record : Hibana.ActorCommitRecord},
+  @Eq.{1} Bool (record.check image choreo session) true →
+    @Exists.{1} Nat fun eff =>
+      @Exists.{1} Hibana.EndpointDelegation.Binding fun binding =>
+        @Exists.{1} Hibana.EndpointDelegation.Side fun side =>
+          @Eq.{1}
+            (Option.{0}
+              (Prod.{0, 0} Nat (Prod.{0, 0} Hibana.EndpointDelegation.Binding Hibana.EndpointDelegation.Side)))
+            (Hibana.sourceOperationIdentity? image choreo record.step.pathIndex record.step.event)
+            (@some.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Hibana.EndpointDelegation.Binding Hibana.EndpointDelegation.Side))
+              (@Prod.mk.{0, 0} Nat (Prod.{0, 0} Hibana.EndpointDelegation.Binding Hibana.EndpointDelegation.Side) eff
+                (@Prod.mk.{0, 0} Hibana.EndpointDelegation.Binding Hibana.EndpointDelegation.Side binding side)))
 @Hibana.checked_record_is_a_checked_commit : ∀ {record : Hibana.ActorCommitRecord} {image : Hibana.RustDescriptorImage}
   {choreo : Hibana.Choreo} {session : Nat},
   @Eq.{1} Bool (record.check image choreo session) true → @Eq.{1} Bool (record.step.check image choreo) true
@@ -12414,6 +12529,22 @@ Hibana.source_acceptance_observation_checks_are_exact : ∀ (entries : List.{0} 
                 (@List.instGetElem?NatLtLength.{0} Nat) receivedWord index)
               (@some.{0} Nat received) →
             @Eq.{1} (Option.{0} Nat) (sentSource sent) (receivedSource received)
+@Hibana.source_identity_paths_keep_source_and_side : ∀ {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo}
+  {leftPath rightPath event leftEff rightEff : Nat} {leftBinding rightBinding : Hibana.EndpointDelegation.Binding}
+  {leftSide rightSide : Hibana.EndpointDelegation.Side},
+  @Eq.{1} (Option.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Hibana.EndpointDelegation.Binding Hibana.EndpointDelegation.Side)))
+      (Hibana.sourceOperationIdentity? image choreo leftPath event)
+      (@some.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Hibana.EndpointDelegation.Binding Hibana.EndpointDelegation.Side))
+        (@Prod.mk.{0, 0} Nat (Prod.{0, 0} Hibana.EndpointDelegation.Binding Hibana.EndpointDelegation.Side) leftEff
+          (@Prod.mk.{0, 0} Hibana.EndpointDelegation.Binding Hibana.EndpointDelegation.Side leftBinding leftSide))) →
+    @Eq.{1}
+        (Option.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Hibana.EndpointDelegation.Binding Hibana.EndpointDelegation.Side)))
+        (Hibana.sourceOperationIdentity? image choreo rightPath event)
+        (@some.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Hibana.EndpointDelegation.Binding Hibana.EndpointDelegation.Side))
+          (@Prod.mk.{0, 0} Nat (Prod.{0, 0} Hibana.EndpointDelegation.Binding Hibana.EndpointDelegation.Side) rightEff
+            (@Prod.mk.{0, 0} Hibana.EndpointDelegation.Binding Hibana.EndpointDelegation.Side rightBinding
+              rightSide))) →
+      And (@Eq.{1} Nat leftEff rightEff) (@Eq.{1} Hibana.EndpointDelegation.Side leftSide rightSide)
 @Hibana.source_matched_operations_have_the_same_logical_message : ∀
   {sentImage receivedImage : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo}
   {sentPath receivedPath sentEvent receivedEvent source : Nat}

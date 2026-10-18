@@ -361,12 +361,16 @@ fn a_service_uses_the_delegated_peer_without_knowing_its_physical_holder() {
                         theorem peerWitnessReceiver{holder}CompatibleChecked : (peerWitnessReceiver{holder} {path}).check peerWitnessImage4 peerWitnessChoreo {} = true := by decide\n\n\
                         theorem peerWitnessReceiver{holder}OtherPathChecked : (peerWitnessReceiver{holder} {other_path}).check peerWitnessImage4 peerWitnessChoreo {} = true := by decide\n\n\
                         theorem peerWitnessPair{holder}CompatibleChecked : sourceReceivePairCheck peerWitnessSender{holder} (peerWitnessReceiver{holder} {path}) peerWitnessImage4 peerWitnessChoreo {} = true := by decide\n\n\
-                        theorem peerWitnessPair{holder}OtherPathRejected : sourceReceivePairCheck peerWitnessSender{holder} (peerWitnessReceiver{holder} {other_path}) peerWitnessImage4 peerWitnessChoreo {} = false := by decide\n",
+                        theorem peerWitnessPair{holder}OtherPathRejected : sourceReceivePairCheck peerWitnessSender{holder} (peerWitnessReceiver{holder} {other_path}) peerWitnessImage4 peerWitnessChoreo {} = false := by decide\n\n\
+                        theorem peerWitnessPair{holder}UnknownPeerHasCoherentWitness : SourceReceivePair peerWitnessSender{holder} (peerWitnessReceiver{holder} {other_path}) peerWitnessImage4 peerWitnessChoreo {} :=\n  \
+                          a_receive_pair_keeps_its_coherence_under_local_witness_changes\n    \
+                            (sendPath := {path}) (receivePath := {other_path})\n    \
+                            (a_concrete_receive_pair_has_coherent_local_witnesses peerWitnessPair{holder}CompatibleChecked) peerWitnessSender{holder}Checked peerWitnessReceiver{holder}OtherPathChecked\n",
                         super::commit::observation_source(&sent.before),
                         super::commit::observation_source(&received.before),
                         super::commit::observation_source(&received.after),
                         sid.raw(), header.lane(), header.source_role(), header.target_role(), header.label().raw(), sent.frame().payload(),
-                        sid.raw(), sid.raw(), sid.raw(), sid.raw(), sid.raw(),
+                        sid.raw(), sid.raw(), sid.raw(), sid.raw(), sid.raw(), sid.raw(),
                     ).unwrap();
                 }
             }

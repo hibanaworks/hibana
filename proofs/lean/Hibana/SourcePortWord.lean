@@ -4,35 +4,6 @@ import Hibana.SourceHandoffWord
 namespace Hibana
 open EndpointDelegation
 
-/-- The accepted bytes retain their exact source binding and static wire
-columns. This extracts existing checks; it is not an additional admission
-condition or a comparison with a prospective receive. -/
-theorem checked_source_send_has_its_bound_wire_columns
-    {sample : SourceSendAdmission} {choreo : Choreo} {session : Nat}
-    (checked : sample.check choreo session = true) :
-    ∃ eff binding,
-      sourceOperationIdentity? sample.image choreo sample.pathIndex sample.event =
-        some (eff, binding, .send) ∧
-      sample.effIndex? = some eff ∧ sample.wire.session = session ∧
-      sample.base.actor = binding.senderActor ∧
-      sample.wire.sender = binding.message.sender.role ∧
-      sample.wire.receiver = binding.message.receiver.role ∧
-      sample.image.eventLane? sample.event = some sample.wire.lane ∧
-      sample.image.eventFrameLabel? sample.event = some sample.wire.frameLabel := by
-  obtain ⟨data, path, row, entry, decoded, pathAt, rowAt, entryAt, _, side, _, _⟩ :=
-    checked_source_send_has_its_ready_source_row checked
-  unfold SourceSendAdmission.check at checked
-  have rest := (Bool.and_eq_true_iff.mp checked).2
-  simp only [decoded, pathAt, rowAt, entryAt, Bool.and_eq_true, and_assoc] at rest
-  obtain ⟨_, _, _, _, _, _, _, someEff, sessionAt, actorAt, senderAt, receiverAt,
-    laneAt, colorAt, _⟩ := rest
-  obtain ⟨eff, effectAt⟩ := Option.isSome_iff_exists.mp someEff
-  refine ⟨eff, entry.2, ?_, effectAt, beq_iff_eq.mp sessionAt, beq_iff_eq.mp actorAt,
-    beq_iff_eq.mp senderAt, beq_iff_eq.mp receiverAt, beq_iff_eq.mp laneAt, beq_iff_eq.mp colorAt⟩
-  change sample.image.eventEffIndex? sample.event = some eff at effectAt
-  simp only [sourceOperationIdentity?, Option.bind_eq_bind, decoded, pathAt, rowAt, entryAt,
-    effectAt, side, Option.bind_some, Option.pure_def]
-
 private theorem a_source_execution_preserves_each_opened_direction
     {images : Nat → RustDescriptorImage} {choreo : Choreo} {session : Nat}
     {initial : Nat → ActorProgressObservation × Nat}

@@ -218,7 +218,7 @@ where
             writeln!(source, "def distributedTransport{} : TransportState := {{ distributedCut{stage}.carriers distributedChannel{index} with delivered := (distributedCut{stage}.carriers distributedChannel{index}).delivered + 1 }}\n\n\
                 def distributedCut{} : DistributedSourceCut := (distributedCut{stage}.actorAt {actor} (distributedAfter{index}, {})).carrierAt distributedChannel{index} distributedTransport{}\n\n\
                 def distributedEntries{} := distributedEntries{stage}\n\n\
-                private theorem distributedStep{} : DistributedSourceStep distributedImages distributedChoreo {session}\n  (distributedCut{stage}, distributedEntries{stage}) (distributedCut{}, distributedEntries{}) (some ({actor}, distributedCommit{index})) := by\n  exact .receive (frame := ((distributedCut{stage}.carriers distributedChannel{index}).frames[(distributedCut{stage}.carriers distributedChannel{index}).delivered]?).get (by decide)) (entry := distributedEntry{sent_index}) (witness := {}) (by decide) (by decide) (by rfl) (by decide) (by decide) (by decide) distributedMeasurement{index}\n",
+                private theorem distributedStep{} : DistributedSourceStep distributedImages distributedChoreo {session}\n  (distributedCut{stage}, distributedEntries{stage}) (distributedCut{}, distributedEntries{}) (some ({actor}, distributedCommit{index})) := by\n  exact .receive (frame := ((distributedCut{stage}.carriers distributedChannel{index}).frames[(distributedCut{stage}.carriers distributedChannel{index}).delivered]?).get (by decide)) (entry := distributedEntry{sent_index}) (witness := {}) (by decide) (by decide) (by rfl) (by decide) (a_concrete_receive_pair_has_coherent_local_witnesses (by decide)) (by decide) distributedMeasurement{index}\n",
                 stage+1,stage+1,after.completion_mutations,stage+1,stage+1,stage+1,stage+1,stage+1,frame.witness).unwrap();
         }
         stage += 1;
@@ -372,7 +372,7 @@ theorem distributedActualReceiveBoundaries
       (before.1.carriers channel).pollReceive = .delivered frame next ∧
       (sourceChannelEntries before.2 channel)[(before.1.carriers channel).delivered]? = some entry ∧
       entry.carrierWitness = witness ∧
-      sourceReceivePairCheck entry.sample record (distributedImages actor) distributedChoreo 9062 = true ∧
+      SourceReceivePair entry.sample record (distributedImages actor) distributedChoreo 9062 ∧
       DistributedSourceExecution distributedImages distributedChoreo 9062
         after (distributedCut24, distributedEntries24) later :=
   a_logged_receive_has_its_exact_fifo_acceptance distributedActualExecution member receiveAt

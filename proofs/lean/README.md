@@ -149,6 +149,18 @@ suffix that has not reset it. A recorded receive names its exact physical
 FIFO head, source send and carrier witness; accepted records also have an
 actual earlier acceptance boundary.
 
+Receive correspondence retains both original local checks. `SourceReceivePair`
+also requires checked completions of
+their unknown path choices with one identical physical binding. Completing a
+path changes neither snapshot, event, image nor byte. The source position and
+direction come from the unchanged row, and exact wire equality comes from the
+coherent pair. Neither is supplied again as a separate correspondence premise.
+The general lemmas construct and reindex the relation and recover its original
+boundaries, source halves and common physical binding. The measured-history and
+FIFO-word proofs use these derived results.
+Constructing its witnesses for every real history remains a refinement
+obligation; existential witnesses are not supplied by a runtime oracle.
+
 The Tokio mixed-message fixture records all sixteen completed operations,
 eight acceptances and eight receives across three separate runtimes. At one
 cut the owner has entered its second visit while the worker still retains
@@ -1176,12 +1188,13 @@ each case using ordinary endpoint operations. The common service retains
 unknown choices throughout its request and reply. Its copied observation
 includes every allocated choice slot, including slots with no local events in
 either arm; filtering those slots would reject a valid actual commit.
-The fifteen kernel-checked claims validate each sender, the receiver under two
+The eighteen kernel-checked claims validate each sender, the receiver under two
 locally compatible source paths, and the pair under its matching path. The
 other path fails full physical-binding equality despite passing the receiver's
-local check. Thus an arbitrary completion of unknown local choices cannot
-establish receive-pair correspondence. This is a witness-selection obligation,
-not a runtime error or a proof of distributed progress for all protocols.
+local check. The coherent relation still holds using the matching completion,
+without changing either actual boundary. Thus correspondence does not depend
+on an arbitrary completion of unknown choices. This does not establish
+distributed progress for all protocols or add a Rust admission rule.
 
 `SourceResourceCausality.lean` establishes that an emitted resource transfer and
 a use of that same endpoint are either the same occurrence or ordered by the

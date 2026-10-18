@@ -15,10 +15,74 @@ def sourceOperationIdentity? (image : RustDescriptorImage) (choreo : Choreo)
   let eff ← image.eventEffIndex? event
   pure (eff, binding, row.actionId.side)
 
-/-- Translation validation of an actual receive against the record selected
-by its physical FIFO position. This checks source identity even for ordinary
-bytes. It is not a new Rust admission guard, nor a claim that matching headers
-alone establishes this correspondence. -/
+/-- Source position and direction come from the immutable row, not its path
+completion. Peer holders may differ between the two valid identities. -/
+theorem source_identity_paths_keep_source_and_side
+    {image : RustDescriptorImage} {choreo : Choreo} {leftPath rightPath event leftEff rightEff : Nat}
+    {leftBinding rightBinding : Binding} {leftSide rightSide : Side}
+    (left : sourceOperationIdentity? image choreo leftPath event = some (leftEff, leftBinding, leftSide))
+    (right : sourceOperationIdentity? image choreo rightPath event = some (rightEff, rightBinding, rightSide)) :
+    leftEff = rightEff ∧ leftSide = rightSide := by
+  unfold sourceOperationIdentity? at left right
+  simp only [Option.bind_eq_bind, Option.bind_eq_some_iff, Option.pure_def, Option.some.injEq] at left right
+  obtain ⟨leftData, leftAt, _, _, leftRow, leftRowAt, _, _, actualLeft, leftEffAt, leftSame⟩ := left
+  obtain ⟨rightData, rightAt, _, _, rightRow, rightRowAt, _, _, actualRight, rightEffAt, rightSame⟩ := right
+  have sameData := Option.some.inj (leftAt.symm.trans rightAt)
+  subst rightData
+  have sameRow := Option.some.inj (leftRowAt.symm.trans rightRowAt)
+  subst rightRow
+  exact ⟨(congrArg Prod.fst leftSame).symm.trans
+      ((Option.some.inj (leftEffAt.symm.trans rightEffAt)).trans (congrArg Prod.fst rightSame)),
+    (congrArg (fun triple : Nat × Binding × Side => triple.2.2) leftSame).symm.trans
+      (congrArg (fun triple : Nat × Binding × Side => triple.2.2) rightSame)⟩
+
+/-- The accepted bytes retain their exact source binding and static wire
+columns. This extracts existing checks; it is not an additional admission
+condition or a comparison with a prospective receive. -/
+theorem checked_source_send_has_its_bound_wire_columns
+    {sample : SourceSendAdmission} {choreo : Choreo} {session : Nat}
+    (checked : sample.check choreo session = true) :
+    ∃ eff binding,
+      sourceOperationIdentity? sample.image choreo sample.pathIndex sample.event =
+        some (eff, binding, .send) ∧
+      sample.effIndex? = some eff ∧ sample.wire.session = session ∧
+      sample.base.actor = binding.senderActor ∧
+      sample.wire.sender = binding.message.sender.role ∧
+      sample.wire.receiver = binding.message.receiver.role ∧
+      sample.image.eventLane? sample.event = some sample.wire.lane ∧
+      sample.image.eventFrameLabel? sample.event = some sample.wire.frameLabel := by
+  obtain ⟨data, path, row, entry, decoded, pathAt, rowAt, entryAt, _, side, _, _⟩ :=
+    checked_source_send_has_its_ready_source_row checked
+  unfold SourceSendAdmission.check at checked
+  have rest := (Bool.and_eq_true_iff.mp checked).2
+  simp only [decoded, pathAt, rowAt, entryAt, Bool.and_eq_true, and_assoc] at rest
+  obtain ⟨_, _, _, _, _, _, _, someEff, sessionAt, actorAt, senderAt, receiverAt,
+    laneAt, colorAt, _⟩ := rest
+  obtain ⟨eff, effectAt⟩ := Option.isSome_iff_exists.mp someEff
+  refine ⟨eff, entry.2, ?_, effectAt, beq_iff_eq.mp sessionAt, beq_iff_eq.mp actorAt,
+    beq_iff_eq.mp senderAt, beq_iff_eq.mp receiverAt, beq_iff_eq.mp laneAt, beq_iff_eq.mp colorAt⟩
+  change sample.image.eventEffIndex? sample.event = some eff at effectAt
+  simp only [sourceOperationIdentity?, Option.bind_eq_bind, decoded, pathAt, rowAt, entryAt,
+    effectAt, side, Option.bind_some, Option.pure_def]
+
+theorem checked_record_has_its_source_identity
+    {image : RustDescriptorImage} {choreo : Choreo} {session : Nat} {record : ActorCommitRecord}
+    (checked : record.check image choreo session = true) :
+    ∃ eff binding side, sourceOperationIdentity? image choreo record.step.pathIndex record.step.event =
+      some (eff, binding, side) := by
+  obtain ⟨_, data, path, row, entry, decoded, pathAt, rowAt, _, _, _, entryAt,
+    _, _, _, _, _, _, _, publication⟩ :=
+    accepted_actor_commit_matches_source_progress (checked_record_is_a_checked_commit checked)
+  obtain ⟨eff, effectAt, _⟩ := Option.bind_eq_some_iff.mp publication
+  refine ⟨eff, entry.2, row.actionId.side, ?_⟩
+  simp only [sourceOperationIdentity?, Option.bind_eq_bind, decoded, pathAt, rowAt, entryAt,
+    effectAt, Option.bind_some, Option.pure_def]
+
+/-- Check one supplied pair of source-path witnesses for the actual FIFO
+receive. Source identity and the full physical binding must match, including
+for ordinary bytes. `SourceReceivePair` below retains the original local
+checks while allowing a different compatible completion of unknown choices.
+Neither this checker nor that relation is a Rust admission guard. -/
 def sourceReceivePairCheck (sent : SourceSendAdmission) (received : ActorCommitRecord)
     (image : RustDescriptorImage) (choreo : Choreo) (session : Nat) : Bool :=
   sent.check choreo session && received.check image choreo session &&
@@ -29,6 +93,119 @@ def sourceReceivePairCheck (sent : SourceSendAdmission) (received : ActorCommitR
         sendEff == recvEff && decide (sendBinding = recvBinding) &&
           image.role == sendBinding.receiverActor
     | _, _ => false
+
+/-- Correspondence of the same actual boundaries. Local observations retain
+their original witnesses. Completing only unknown choices must also admit
+one pair of locally checked witnesses with the exact same physical binding.
+Only proof witnesses change: images, events, bytes and both runtime cuts stay
+fixed. No search, notification or choice publication is added to the runtime. -/
+structure SourceReceivePair (sent : SourceSendAdmission) (received : ActorCommitRecord)
+    (image : RustDescriptorImage) (choreo : Choreo) (session : Nat) : Prop where
+  accepted : sent.check choreo session = true
+  committed : received.check image choreo session = true
+  coherent : ∃ sendPath receivePath,
+    sourceReceivePairCheck { sent with pathIndex := sendPath }
+      { received with step := { received.step with pathIndex := receivePath } }
+      image choreo session = true
+
+theorem a_concrete_receive_pair_has_coherent_local_witnesses
+    {sent : SourceSendAdmission} {received : ActorCommitRecord}
+    {image : RustDescriptorImage} {choreo : Choreo} {session : Nat}
+    (checked : sourceReceivePairCheck sent received image choreo session = true) :
+    SourceReceivePair sent received image choreo session := by
+  have header := (Bool.and_eq_true_iff.mp checked).1
+  have localChecks := (Bool.and_eq_true_iff.mp header).1
+  exact ⟨(Bool.and_eq_true_iff.mp localChecks).1,
+    (Bool.and_eq_true_iff.mp localChecks).2,
+    sent.pathIndex, received.step.pathIndex, checked⟩
+
+/-- Reindexing a local proof does not discard physical coherence. The new
+local observations must still check, including their exact bytes and source
+columns; the original coherent completion remains available unchanged. -/
+theorem a_receive_pair_keeps_its_coherence_under_local_witness_changes
+    {sent : SourceSendAdmission} {received : ActorCommitRecord}
+    {image : RustDescriptorImage} {choreo : Choreo} {session sendPath receivePath : Nat}
+    (paired : SourceReceivePair sent received image choreo session)
+    (accepted : ({ sent with pathIndex := sendPath } : SourceSendAdmission).check choreo session = true)
+    (committed : ({ received with step := { received.step with pathIndex := receivePath } } :
+      ActorCommitRecord).check image choreo session = true) :
+    SourceReceivePair { sent with pathIndex := sendPath }
+      { received with step := { received.step with pathIndex := receivePath } }
+      image choreo session := by
+  refine ⟨accepted, committed, ?_⟩
+  obtain ⟨left, right, coherent⟩ := paired.coherent
+  exact ⟨left, right, coherent⟩
+
+theorem a_corresponding_receive_pair_preserves_its_observed_boundaries
+    {sent : SourceSendAdmission} {received : ActorCommitRecord}
+    {image : RustDescriptorImage} {choreo : Choreo} {session : Nat}
+    (paired : SourceReceivePair sent received image choreo session) :
+    sent.check choreo session = true ∧ received.check image choreo session = true ∧
+      sent.wire = received.wire := by
+  obtain ⟨_, _, coherent⟩ := paired.coherent
+  have header := (Bool.and_eq_true_iff.mp coherent).1
+  exact ⟨paired.accepted, paired.committed,
+    of_decide_eq_true (Bool.and_eq_true_iff.mp header).2⟩
+
+/-- The relational boundary still requires one exact physical binding, not
+merely equal logical message labels. Both witnesses check the same original
+runtime snapshots, events and bytes. Only their path indices may differ. -/
+theorem a_corresponding_receive_pair_has_one_physical_binding
+    {sent : SourceSendAdmission} {received : ActorCommitRecord}
+    {image : RustDescriptorImage} {choreo : Choreo} {session : Nat}
+    (paired : SourceReceivePair sent received image choreo session) :
+    ∃ sendPath receivePath eff binding,
+      ({ sent with pathIndex := sendPath } : SourceSendAdmission).check choreo session = true ∧
+      ({ received with step := { received.step with pathIndex := receivePath } } :
+        ActorCommitRecord).check image choreo session = true ∧
+      sourceOperationIdentity? sent.image choreo sendPath sent.event = some (eff, binding, .send) ∧
+      sourceOperationIdentity? image choreo receivePath received.step.event = some (eff, binding, .receive) ∧
+      image.role = binding.receiverActor := by
+  obtain ⟨sendPath, receivePath, checked⟩ := paired.coherent
+  unfold sourceReceivePairCheck at checked
+  have header := (Bool.and_eq_true_iff.mp checked).1
+  have localChecks := (Bool.and_eq_true_iff.mp header).1
+  have matched := (Bool.and_eq_true_iff.mp checked).2
+  cases leftAt : sourceOperationIdentity? sent.image choreo sendPath sent.event with
+  | none => simp [leftAt] at matched
+  | some left =>
+    rcases left with ⟨eff, binding, side⟩
+    cases side with
+    | receive | «local» => simp [leftAt] at matched
+    | send =>
+      cases rightAt : sourceOperationIdentity? image choreo receivePath received.step.event with
+      | none => simp [leftAt, rightAt] at matched
+      | some right =>
+        rcases right with ⟨otherEff, otherBinding, otherSide⟩
+        cases otherSide with
+        | send | «local» => simp [leftAt, rightAt] at matched
+        | receive =>
+          have fields : eff = otherEff ∧ binding = otherBinding ∧ image.role = binding.receiverActor := by
+            simpa only [leftAt, rightAt, Bool.and_eq_true, beq_iff_eq, decide_eq_true_eq, and_assoc] using matched
+          exact ⟨sendPath, receivePath, eff, binding,
+            (Bool.and_eq_true_iff.mp localChecks).1, (Bool.and_eq_true_iff.mp localChecks).2,
+            leftAt, by simpa only [← fields.1, ← fields.2.1] using rightAt, fields.2.2⟩
+
+/-- Reindexing only unknown choices cannot change either actual operation's
+source position or direction. Their original source correspondence is derived
+from checked rows and the coherent witness, rather than supplied again. -/
+theorem a_corresponding_receive_pair_has_its_original_source_halves
+    {sent : SourceSendAdmission} {received : ActorCommitRecord}
+    {image : RustDescriptorImage} {choreo : Choreo} {session : Nat}
+    (paired : SourceReceivePair sent received image choreo session) :
+    ∃ eff sentBinding receivedBinding,
+      sourceOperationIdentity? sent.image choreo sent.pathIndex sent.event = some (eff, sentBinding, .send) ∧
+      sourceOperationIdentity? image choreo received.step.pathIndex received.step.event =
+        some (eff, receivedBinding, .receive) := by
+  obtain ⟨eff, sentBinding, sendAt, _⟩ := checked_source_send_has_its_bound_wire_columns paired.accepted
+  obtain ⟨receivedEff, receivedBinding, side, receiveAt⟩ := checked_record_has_its_source_identity paired.committed
+  obtain ⟨sendPath, receivePath, coherentEff, coherentBinding, _, _, coherentSend, coherentReceive, _⟩ :=
+    a_corresponding_receive_pair_has_one_physical_binding paired
+  have sentColumns := source_identity_paths_keep_source_and_side sendAt coherentSend
+  have receivedColumns := source_identity_paths_keep_source_and_side receiveAt coherentReceive
+  have sameEff : receivedEff = eff := receivedColumns.1.trans sentColumns.1.symm
+  exact ⟨eff, sentBinding, receivedBinding, sendAt,
+    by simpa only [sameEff, receivedColumns.2] using receiveAt⟩
 
 def sourcePublicationPairCheck (sent : SourceSendAdmission) (published : ActorCommitRecord)
     (image : RustDescriptorImage) (choreo : Choreo) (session : Nat) : Bool :=
@@ -220,7 +397,7 @@ inductive DistributedSourceStep
       (received : (cut.carriers channel).pollReceive = .delivered frame next)
       (entryAt : (sourceChannelEntries entries channel)[(cut.carriers channel).delivered]? = some entry)
       (identity : entry.carrierWitness = witness)
-      (paired : sourceReceivePairCheck entry.sample record (images actor) choreo session = true)
+      (paired : SourceReceivePair entry.sample record (images actor) choreo session)
       (available : entries.all (fun entry => !(entry.sample.image.role == actor &&
         entry.mutation == (cut.actors actor).2)) = true)
       (committed : ActorMeasuredCommit (images actor) choreo session
@@ -592,7 +769,7 @@ theorem a_logged_receive_has_its_exact_fifo_acceptance
       (before.1.carriers channel).pollReceive = .delivered frame next ∧
       (sourceChannelEntries before.2 channel)[(before.1.carriers channel).delivered]? = some entry ∧
       entry.carrierWitness = witness ∧
-      sourceReceivePairCheck entry.sample record (images actor) choreo session = true ∧
+      SourceReceivePair entry.sample record (images actor) choreo session ∧
       DistributedSourceExecution images choreo session after last later := by
   obtain ⟨before, after, prior, later, prefixHistory, boundary, suffixHistory⟩ :=
     a_logged_distributed_source_commit_has_its_exact_boundary execution member
@@ -634,7 +811,7 @@ theorem a_logged_receive_has_its_prior_actual_transport_acceptance
       (receiving.1.carriers channel).pollReceive = .delivered frame next ∧
       (sourceChannelEntries receiving.2 channel)[(receiving.1.carriers channel).delivered]? = some entry ∧
       entry.carrierWitness = witness ∧
-      sourceReceivePairCheck entry.sample record (images actor) choreo session = true ∧
+      SourceReceivePair entry.sample record (images actor) choreo session ∧
       DistributedSourceExecution images choreo session received last later := by
   obtain ⟨receiving, received, _, later, channel, entry, witness, next, frame,
       prefixHistory, receipt, polled, head, identity, paired, suffixHistory⟩ :=

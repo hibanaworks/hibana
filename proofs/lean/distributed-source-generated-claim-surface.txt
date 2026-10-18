@@ -33,7 +33,7 @@ distributedActualReceiveBoundaries : ∀ (actor eff : Nat) (record : ActorCommit
             (before.fst.carriers channel).pollReceive = TransportPoll.delivered frame next ∧
               (sourceChannelEntries before.snd channel)[(before.fst.carriers channel).delivered]? = some entry ∧
                 entry.carrierWitness = witness ∧
-                  sourceReceivePairCheck entry.sample record (distributedImages actor) distributedChoreo 9062 = true ∧
+                  SourceReceivePair entry.sample record (distributedImages actor) distributedChoreo 9062 ∧
                     DistributedSourceExecution distributedImages distributedChoreo 9062 after
                       (distributedCut24, distributedEntries24) later
 distributedCurrentReceiptHasItsActualUnresetGlobalOrigin : ∃ before after prior later record marked untouched commits,

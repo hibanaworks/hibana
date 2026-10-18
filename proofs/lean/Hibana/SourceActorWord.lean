@@ -58,19 +58,6 @@ private theorem a_source_identity_has_its_actual_row_columns
   · simp only [RustDescriptorImage.sourceRowSide?, ← ownIndex, actionAt, Option.map_some]
     exact congrArg some (sideAt.symm.trans sideSame)
 
-private theorem a_checked_record_has_its_source_identity
-    {image : RustDescriptorImage} {choreo : Choreo} {session : Nat} {record : ActorCommitRecord}
-    (checked : record.check image choreo session = true) :
-    ∃ eff binding side, sourceOperationIdentity? image choreo record.step.pathIndex record.step.event =
-      some (eff, binding, side) := by
-  obtain ⟨_, data, path, row, entry, decoded, pathAt, rowAt, _, _, _, entryAt,
-    _, _, _, _, _, _, _, publication⟩ :=
-    accepted_actor_commit_matches_source_progress (checked_record_is_a_checked_commit checked)
-  obtain ⟨eff, effectAt, _⟩ := Option.bind_eq_some_iff.mp publication
-  refine ⟨eff, entry.2, row.actionId.side, ?_⟩
-  simp only [sourceOperationIdentity?, Option.bind_eq_bind, decoded, pathAt, rowAt, entryAt,
-    effectAt, Option.bind_some, Option.pure_def]
-
 private theorem a_publication_uses_the_same_row
     {sample : SourceSendAdmission} {record : ActorCommitRecord}
     {image : RustDescriptorImage} {choreo : Choreo} {session : Nat}
@@ -171,7 +158,7 @@ private theorem a_send_row_has_the_same_count_in_publications
   by_cases owns : owner = actor
   · subst owner
     by_cases same : record.step.event = event
-    · obtain ⟨eff, binding, side, identity⟩ := a_checked_record_has_its_source_identity (checked _ present)
+    · obtain ⟨eff, binding, side, identity⟩ := checked_record_has_its_source_identity (checked _ present)
       have columns := a_source_identity_has_its_actual_row_columns identity
       have sideSame : side = .send := Option.some.inj (columns.2.2.symm.trans (same ▸ sending))
       subst side
@@ -311,7 +298,7 @@ theorem a_distributed_receiving_row_is_counted_by_the_source_receipt_word
   by_cases owns : owner = actor
   · subst owner
     by_cases same : record.step.event = row
-    · obtain ⟨actual, binding, side, identity⟩ := a_checked_record_has_its_source_identity (checks _ present)
+    · obtain ⟨actual, binding, side, identity⟩ := checked_record_has_its_source_identity (checks _ present)
       have columns := a_source_identity_has_its_actual_row_columns identity
       have sideSame : side = .receive := Option.some.inj (columns.2.2.symm.trans (same ▸ receiving))
       have effectSame : actual = effect := Option.some.inj (columns.2.1.symm.trans (same ▸ effectAt))
@@ -398,7 +385,7 @@ theorem a_distributed_receipt_source_count_has_its_static_row_classification
   simp only [receivedSourceWord, List.countP_filterMap]
   apply List.countP_congr
   intro entry present
-  obtain ⟨eff, binding, side, identity⟩ := a_checked_record_has_its_source_identity (checks entry present)
+  obtain ⟨eff, binding, side, identity⟩ := checked_record_has_its_source_identity (checks entry present)
   have columns := a_source_identity_has_its_actual_row_columns identity
   have classified := classifies entry.1 entry.2.step.event eff side (roles entry present)
     columns.1 columns.2.1 columns.2.2

@@ -64,25 +64,12 @@ private theorem a_publication_adds_no_receipt_letter
 private theorem a_paired_receipt_adds_its_accepted_effect
     {sample : SourceSendAdmission} {record : ActorCommitRecord}
     {images : Nat → RustDescriptorImage} {choreo : Choreo} {session actor event : Nat}
-    (paired : sourceReceivePairCheck sample record (images actor) choreo session = true)
+    (paired : SourceReceivePair sample record (images actor) choreo session)
     (sourceAt : sample.effIndex? = some event) :
     receivedSourceWord images choreo [(actor, record)] = [event] := by
-  unfold sourceReceivePairCheck at paired
-  have matched := (Bool.and_eq_true_iff.mp paired).2
-  cases leftAt : sourceOperationIdentity? sample.image choreo sample.pathIndex sample.event with
-  | none => simp [leftAt] at matched
-  | some left =>
-    rcases left with ⟨eff, binding, side⟩
-    have effect := a_source_identity_retains_its_effect leftAt
-    have same : eff = event := Option.some.inj (effect.symm.trans sourceAt)
-    subst eff
-    cases side <;> simp only [leftAt] at matched
-    all_goals
-      cases rightAt : sourceOperationIdentity? (images actor) choreo record.step.pathIndex record.step.event with
-      | none => simp [rightAt] at matched
-      | some right =>
-        rcases right with ⟨other, binding', side'⟩
-        cases side' <;> simp_all [receivedSourceWord, beq_iff_eq]
+  obtain ⟨eff, _, _, sent, received⟩ := a_corresponding_receive_pair_has_its_original_source_halves paired
+  have same : eff = event := Option.some.inj ((a_source_identity_retains_its_effect sent).symm.trans sourceAt)
+  simp only [receivedSourceWord, List.filterMap_cons, List.filterMap_nil, received, same]
 
 private theorem an_execution_keeps_each_acceptances_actual_source_effect
     {images : Nat → RustDescriptorImage} {choreo : Choreo} {session : Nat}
