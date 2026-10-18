@@ -100,7 +100,7 @@ fn source_ready_rows_match_actual_admission_across_a_parallel_owned_visit() {
                     &RoleProjection::<1, Steps, 8>::IMAGE_REF,
                 ));
                 let mut source = std::format!(
-                    "import Hibana.SourceTransferAvailability\n\nset_option maxRecDepth 10000\n\n\
+                    "import Hibana.SourceHandoffAvailability\n\nset_option maxRecDepth 10000\n\n\
                      def admissionChoreo : Hibana.Choreo := {choreo}\n\n\
                      def admissionImage : Hibana.RustDescriptorImage := {image}\n\n"
                 );
@@ -197,6 +197,48 @@ theorem arbitraryLiveReadSuffixKeepsTheExactValue
     (by decide) ((Option.some_get (x := admissionImage.decodeActorOrder? admissionChoreo) (by decide)).symm)
     (by decide) (by decide) (by decide)
     (Or.inl (by decide)) (by decide) (by decide) history present observed
+
+theorem readyReturnIsAnObservedSourceCut :
+    joined.snapshot.viewIssued 10 = true ∧
+      Hibana.sourceRowReady useData usePath joined.snapshot returnRow = true := by decide
+
+theorem readyReturnOnlyAcceptsItsSourceAction
+    {transfer : Hibana.DecodedActorRow} {loan : Hibana.EndpointDelegation.Binding}
+    {snapshot : Hibana.ActorProgressObservation}
+    (member : transfer ∈ useData.activeRows usePath)
+    (located : usePath.bindings.find? (fun entry => entry.1 == transfer.actionId.event) =
+      some (transfer.actionId.event, loan))
+    (payload : loan.message.payload = .endpoint resourceKey)
+    (sending : transfer.actionId.side = .send)
+    (ready : Hibana.sourceRowReady useData usePath snapshot transfer = true)
+    (returnReady : Hibana.sourceRowReady useData usePath snapshot returnRow = true) :
+    transfer.actionId = returnRow.actionId ∧ loan = returnBinding :=
+  Hibana.checked_ready_owned_send_and_acceptance_name_the_same_action
+    (image := admissionImage) (choreo := admissionChoreo)
+    (intended := returnBinding) (key := resourceKey)
+    (by decide) ((Option.some_get (x := admissionImage.decodeActorOrder? admissionChoreo) (by decide)).symm)
+    (by decide) member (by decide) located (by decide) payload (by decide) sending (by decide) ready returnReady
+
+theorem arbitraryReadyReturnKeepsValueOrItsRequiredBoundary
+    {View Frame : Type} {value : View}
+    {first final : Hibana.EndpointTransfer.Observation View Frame}
+    (history : Hibana.EndpointTransfer.Execution first final)
+    (present : Hibana.TransferValueLocated value first)
+    (observed : ∀ prior next action,
+      Hibana.EndpointTransfer.Execution first prior → Hibana.TransferValueLocated value prior →
+      Hibana.EndpointTransfer.Step action prior next → Hibana.EndpointTransfer.Execution next final →
+      Hibana.SourceHandoffBoundaryEvidence admissionImage admissionChoreo useData usePath resourceKey returnRow action) :
+    Hibana.TransferValueLocated value final ∨
+      ∃ prior next action, Hibana.EndpointTransfer.Execution first prior ∧
+        Hibana.EndpointTransfer.Step action prior next ∧ Hibana.TransferValueLocated value prior ∧
+        Hibana.EndpointTransfer.Execution next final ∧
+        Hibana.SourceHandoffBoundaryOutcome admissionImage admissionChoreo useData usePath resourceKey returnRow action ∧
+        (action = .accept → ∃ frame, Hibana.TransferFrameLocated frame next) :=
+  Hibana.ready_source_handoff_keeps_its_value_or_takes_its_required_boundary
+    (image := admissionImage) (choreo := admissionChoreo)
+    (data := useData) (path := usePath) (key := resourceKey) (target := returnRow) (intended := returnBinding)
+    (by decide) ((Option.some_get (x := admissionImage.decodeActorOrder? admissionChoreo) (by decide)).symm)
+    (by decide) (by decide) (by decide) (by decide) (by decide) (by decide) history present observed
 
 "#);
                 let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))

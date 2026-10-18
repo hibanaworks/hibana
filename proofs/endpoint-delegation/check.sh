@@ -58,7 +58,7 @@ bash "$ROOT/.github/scripts/check_smt2.sh" "$PROOFS/RollBoundary.smt2" > "$EVIDE
 bash "$ROOT/.github/scripts/check_smt2.sh" "$PROOFS/ViewGeneration.smt2" > "$EVIDENCE/z3-view-generation.log"
 printf 'Actor view generations: Z3 4 UNSAT, 1 rejected-rule SAT, 1 positive SAT. Evidence: %s\n' "$EVIDENCE/z3-view-generation.log"
 printf 'Receipt wait frontier: Lean 3 general rules; Z3 2 UNSAT, 1 rejected-rule SAT, 1 positive SAT. Evidence: %s\n' "$EVIDENCE/z3-receipt-wait.log"
-printf 'Source resource use cut: Z3 2 UNSAT, 2 positive SAT witnesses. Evidence: %s\n' "$EVIDENCE/z3-source-use-cut.log"
+printf 'Source resource use cut: Z3 3 UNSAT, 3 positive SAT witnesses. Evidence: %s\n' "$EVIDENCE/z3-source-use-cut.log"
 printf 'Reentry dependency cut and choice reset: Z3 2 UNSAT, 4 counterexample SAT. Evidence: %s\n' "$EVIDENCE/z3-reentry.log"
 printf 'Resource-dependent reentry origins: Z3 3 UNSAT, 2 witnesses. Evidence: %s\n' "$EVIDENCE/z3-reentry-knowledge.log"
 printf 'Pending-send admission boundary: Z3 3 UNSAT, 2 witnesses. Evidence: %s\n' "$EVIDENCE/z3-pending-send.log"

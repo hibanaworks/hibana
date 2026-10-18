@@ -106,6 +106,18 @@ They reject a different resource payload, sender or session. This envelope has
 no visit tag: FIFO, replay exclusion and run isolation still come from the
 carrier. General fresh-visit availability and distributed progress remain open.
 
+`SourceHandoffAvailability.lean` covers a ready owned send without excluding
+its own required acceptance. Checked boundaries either retain the exact value
+in application code or a private future, accept that same source send action,
+or report a checked retirement fault. Acceptance moves the sole held authority
+to one queued frame; completed sender witnesses do not add an authority.
+The result applies to arbitrary finite
+suffixes and only asks for boundary observations while that exact value is
+held. Its carrier composition starts from the actual checked receiver/view
+tag, without requiring sender publication. This is a source-boundary and
+value-location classification, not eventual admission, polling or delivery,
+nor a proof of complete Rust correspondence or distributed progress.
+
 Schema equality means equality of the canonical wire contract identified by
 `SCHEMA_ID`; it does not prove cross-binary Rust nominal type equality.
 

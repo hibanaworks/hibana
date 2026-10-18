@@ -5,6 +5,7 @@
 (declare-const transfer-done Bool)
 (declare-const use-before-transfer Bool)
 (declare-const transfer-before-use Bool)
+(declare-const same-occurrence Bool)
 (define-fun use-ready () Bool
   (and (not use-done) (=> transfer-before-use transfer-done)))
 (define-fun transfer-ready () Bool
@@ -16,6 +17,27 @@
 (assert use-ready)
 (assert transfer-ready)
 ; EXPECT: unsat
+(check-sat)
+(pop)
+
+; At a ready owned handoff, a different source occurrence cannot also accept.
+(push)
+(assert (or same-occurrence use-before-transfer transfer-before-use))
+(assert (not same-occurrence))
+(assert use-ready)
+(assert transfer-ready)
+; EXPECT: unsat
+(check-sat)
+(pop)
+
+; Accepting the intended source occurrence is permitted progress.
+(push)
+(assert same-occurrence)
+(assert (not use-before-transfer))
+(assert (not transfer-before-use))
+(assert use-ready)
+(assert transfer-ready)
+; EXPECT: sat
 (check-sat)
 (pop)
 
