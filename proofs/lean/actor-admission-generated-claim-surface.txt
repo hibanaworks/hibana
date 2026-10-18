@@ -44,6 +44,45 @@ dbDoneSourceReadiness : ∃ data path,
             dbDone.admitted[row.eventId]? = some (Hibana.sourceRowReady data path dbDone.snapshot row) ∧
               (Hibana.sourceRowReady data path dbDone.snapshot row = true →
                 Hibana.sourceRowViewsIssued path dbDone.snapshot row = true)
+@everyReadyRowHasItsSourceDerivedInitialIssueOrReceipt : ∀ {row : Hibana.DecodedActorRow}
+  {binding : Hibana.EndpointDelegation.Binding} {key : Hibana.EndpointDelegation.EndpointKey}
+  {snapshot : Hibana.ActorProgressObservation},
+  row ∈ useData.activeRows usePath →
+    List.find? (fun entry => entry.fst == row.actionId.event) usePath.bindings = some (row.actionId.event, binding) →
+      (match row.actionId.side with
+        | Hibana.EndpointDelegation.Side.receive => binding.message.receiver = key
+        | Hibana.EndpointDelegation.Side.send =>
+          binding.message.sender = key ∨ binding.message.payload = Hibana.EndpointDelegation.Payload.endpoint key
+        | Hibana.EndpointDelegation.Side.local => binding.message.sender = key) →
+        Hibana.sourceRowReady useData usePath snapshot row = true →
+          ∃ issuance run index symbolic,
+            Hibana.EndpointDelegation.elaborate useData.source.resources
+                  (Hibana.EndpointDelegation.initialOwners useData.source.resources) usePath.selections useData.source
+                  0 =
+                some run ∧
+              run.bindings[index]? = some (row.actionId.event, symbolic) ∧
+                Hibana.EndpointDelegation.instantiateBinding issuance symbolic = some binding ∧
+                  run.equations.all (Hibana.EndpointDelegation.equationAccepted issuance) = true ∧
+                    List.mapM
+                          (fun x =>
+                            match x with
+                            | (event, symbolic) => do
+                              let binding ← Hibana.EndpointDelegation.instantiateBinding issuance symbolic
+                              some (event, binding))
+                          run.bindings =
+                        some usePath.bindings ∧
+                      (Hibana.EndpointDelegation.instantiate issuance
+                            (Hibana.EndpointDelegation.initialOwners useData.source.resources key) =
+                          some useData.actor ∨
+                        ∃ previousRow previousBinding,
+                          previousRow ∈ useData.activeRows usePath ∧
+                            previousRow.actionId.side = Hibana.EndpointDelegation.Side.receive ∧
+                              List.find? (fun entry => entry.fst == previousRow.actionId.event) usePath.bindings =
+                                  some (previousRow.actionId.event, previousBinding) ∧
+                                previousBinding.message.payload = Hibana.EndpointDelegation.Payload.endpoint key ∧
+                                  previousBinding.receiverActor = useData.actor ∧
+                                    previousRow.eventId ∈ useData.sourcePredecessors usePath row.eventId ∧
+                                      snapshot.doneState.done previousRow.eventId = true)
 independentWorkCanRemainReadyAlongsideTheRead : Hibana.sourceRowReady useData usePath received.snapshot readRow = true ∧
   Hibana.sourceRowReady useData usePath received.snapshot (useData.rows[2]?.get ⋯) = true
 initialChecked : initial.check admissionImage admissionChoreo = true

@@ -100,7 +100,7 @@ fn source_ready_rows_match_actual_admission_across_a_parallel_owned_visit() {
                     &RoleProjection::<1, Steps, 8>::IMAGE_REF,
                 ));
                 let mut source = std::format!(
-                    "import Hibana.SourceHandoffAvailability\n\nset_option maxRecDepth 10000\n\n\
+                    "import Hibana.SourceReceiptDependency\n\nset_option maxRecDepth 10000\n\n\
                      def admissionChoreo : Hibana.Choreo := {choreo}\n\n\
                      def admissionImage : Hibana.RustDescriptorImage := {image}\n\n"
                 );
@@ -239,6 +239,43 @@ theorem arbitraryReadyReturnKeepsValueOrItsRequiredBoundary
     (data := useData) (path := usePath) (key := resourceKey) (target := returnRow) (intended := returnBinding)
     (by decide) ((Option.some_get (x := admissionImage.decodeActorOrder? admissionChoreo) (by decide)).symm)
     (by decide) (by decide) (by decide) (by decide) (by decide) (by decide) history present observed
+
+theorem everyReadyRowHasItsSourceDerivedInitialIssueOrReceipt
+    {row : Hibana.DecodedActorRow} {binding : Hibana.EndpointDelegation.Binding}
+    {key : Hibana.EndpointDelegation.EndpointKey} {snapshot : Hibana.ActorProgressObservation}
+    (member : row ∈ useData.activeRows usePath)
+    (located : usePath.bindings.find? (fun entry => entry.1 == row.actionId.event) =
+      some (row.actionId.event, binding))
+    (required : match row.actionId.side with
+      | .receive => binding.message.receiver = key
+      | .send => binding.message.sender = key ∨ binding.message.payload = .endpoint key
+      | .local => binding.message.sender = key)
+    (ready : Hibana.sourceRowReady useData usePath snapshot row = true) :
+    ∃ (issuance : List Hibana.EndpointDelegation.Issuance)
+      (run : Hibana.EndpointDelegation.Elaboration) (index : Nat)
+      (symbolic : Hibana.EndpointDelegation.SymbolicBinding),
+      Hibana.EndpointDelegation.elaborate useData.source.resources
+        (Hibana.EndpointDelegation.initialOwners useData.source.resources)
+        usePath.selections useData.source 0 = some run ∧
+      run.bindings[index]? = some (row.actionId.event, symbolic) ∧
+      Hibana.EndpointDelegation.instantiateBinding issuance symbolic = some binding ∧
+      run.equations.all (Hibana.EndpointDelegation.equationAccepted issuance) = true ∧
+      (run.bindings.mapM fun (event, symbolic) => do
+        let binding ← Hibana.EndpointDelegation.instantiateBinding issuance symbolic
+        some (event, binding)) = some usePath.bindings ∧
+      (Hibana.EndpointDelegation.instantiate issuance
+        ((Hibana.EndpointDelegation.initialOwners useData.source.resources) key) = some useData.actor ∨
+        ∃ previousRow previousBinding,
+          previousRow ∈ useData.activeRows usePath ∧ previousRow.actionId.side = .receive ∧
+          usePath.bindings.find? (fun entry => entry.1 == previousRow.actionId.event) =
+            some (previousRow.actionId.event, previousBinding) ∧
+          previousBinding.message.payload = .endpoint key ∧ previousBinding.receiverActor = useData.actor ∧
+          previousRow.eventId ∈ useData.sourcePredecessors usePath row.eventId ∧
+          snapshot.doneState.done previousRow.eventId = true) :=
+  Hibana.source_ready_resource_row_has_initial_authority_or_a_completed_receipt
+    (image := admissionImage) (choreo := admissionChoreo)
+    (by decide) ((Option.some_get (x := admissionImage.decodeActorOrder? admissionChoreo) (by decide)).symm)
+    (by decide) member located required ready
 
 "#);
                 let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))

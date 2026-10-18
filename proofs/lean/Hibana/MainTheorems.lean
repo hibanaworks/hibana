@@ -13,6 +13,7 @@ import Hibana.OwnedRetirement
 import Hibana.SourceResourceAvailability
 import Hibana.SourceTransferAvailability
 import Hibana.SourceHandoffAvailability
+import Hibana.SourceReceiptDependency
 import Hibana.ActorReentryCommit
 import Hibana.GlobalSemantics
 import Hibana.GlobalAllocationCorrectness

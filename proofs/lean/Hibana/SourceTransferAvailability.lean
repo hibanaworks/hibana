@@ -42,16 +42,16 @@ private theorem member_actor_action_is_decoded
         exact ⟨atAction, belongs⟩
       · simp [atAction, belongs] at found
 
-/-- Every active decoded row has the source action at this same actor.
-The actor equality is derived from exact translation validation, rather than
-postulated as a resource holder table. -/
-theorem active_decoded_row_has_its_exact_source_action
+/-- The active decoded rows cover exactly the selected source actions at this
+actor, in both directions. This is immutable translation validation. -/
+theorem checked_active_rows_are_exactly_the_source_actions
     {image : RustDescriptorImage} {choreo : Choreo} {data : DecodedActorOrder}
-    {path : NormalizedPath} {row : DecodedActorRow}
+    {path : NormalizedPath}
     (checked : image.actorRowsCheck choreo = true)
     (decoded : image.decodeActorOrder? choreo = some data)
-    (selected : path ∈ data.normalized.paths) (member : row ∈ data.activeRows path) :
-    action? path.bindings row.actionId = some (row.sourceAction data.actor).2 := by
+    (selected : path ∈ data.normalized.paths) :
+    ((data.activeRows path).map (·.sourceAction data.actor)) =
+      data.source.actorActions path data.actor := by
   obtain ⟨sourceAt, normalizedAt, columnsAt, markersAt, rowsAt, actorAt⟩ :=
     decoded_actor_order_fields decoded
   obtain ⟨source, normalized, columns, atoms, markers, rows,
@@ -68,9 +68,22 @@ theorem active_decoded_row_has_its_exact_source_action
   have rowsSame := Option.some.inj (rowsFound.symm.trans rowsAt)
   subst rows
   have identities := exactRows path selected
+  simpa only [DecodedActorOrder.activeRows, actorAt] using identities
+
+/-- Every active decoded row has the source action at this same actor.
+The actor equality is derived from exact translation validation, rather than
+postulated as a resource holder table. -/
+theorem active_decoded_row_has_its_exact_source_action
+    {image : RustDescriptorImage} {choreo : Choreo} {data : DecodedActorOrder}
+    {path : NormalizedPath} {row : DecodedActorRow}
+    (checked : image.actorRowsCheck choreo = true)
+    (decoded : image.decodeActorOrder? choreo = some data)
+    (selected : path ∈ data.normalized.paths) (member : row ∈ data.activeRows path) :
+    action? path.bindings row.actionId = some (row.sourceAction data.actor).2 := by
+  have identities := checked_active_rows_are_exactly_the_source_actions checked decoded selected
   have present : row.sourceAction data.actor ∈ data.source.actorActions path data.actor := by
-    rw [actorAt, ← identities]
-    exact List.mem_map.mpr ⟨row, by simpa only [DecodedActorOrder.activeRows, actorAt] using member, rfl⟩
+    rw [← identities]
+    exact List.mem_map.mpr ⟨row, member, rfl⟩
   exact (member_actor_action_is_decoded present).1
 
 private theorem instantiated_path_binding_has_source_input

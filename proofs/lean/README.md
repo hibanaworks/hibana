@@ -126,6 +126,19 @@ its receiver. The last handoff is derived from the immutable source prefix;
 it is not an availability assumption or a runtime ownership table. This
 source result still needs its runtime value and fresh-visit correspondence.
 
+`SourceReceiptDependency.lean` derives the last handoff's receive operation,
+binding lookup, actual actor and dependency from the accepted source. Exact
+row coverage maps that source receive back to the decoded actor program.
+Every source-ready required-resource row either has its derived initial
+issuer or marks that receive complete among its actual source predecessors.
+This result does not assume an issued header or a value-availability oracle.
+The actual admission fixture applies it to every ready row of its generated
+source and descriptor. It remains a selected-visit completion-bit result,
+not evidence by itself that the Endpoint value still exists in application
+code, a private future or an accepted frame. That history correspondence and
+independently advancing fresh visits remain progress obligations. Comparison
+proofs use explicit decidable equalities without extending the axiom policy.
+
 The native remote-loss test executes the same owned global with a worker
 process that exits before or after receiving its Endpoint. The survivor's
 carrier deadline ends both pending roles, later operations retain the first
