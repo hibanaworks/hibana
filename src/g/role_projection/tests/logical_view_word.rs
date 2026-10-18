@@ -364,9 +364,10 @@ theorem logicalSecondHolderHeadGetsItsOrdinalBeforePublication
   · exact globalAt.trans eventSame
   · exact sampleSame ▸ identity
 "#);
-                source.insert_str(0, "import Hibana.SourceHandoffWord\nimport Hibana.SourcePortWord\n");
+                source.insert_str(0, "import Hibana.SourceHandoffWord\nimport Hibana.SourcePortWord\nimport Hibana.SourceOwnedReceive\n");
                 source.push_str(include_str!("logical_handoff_word.lean"));
                 source.push_str(include_str!("logical_port_word.lean"));
+                source.push_str(include_str!("logical_source_message.lean"));
                 let directory =
                     std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/lean-proof");
                 std::fs::create_dir_all(&directory).unwrap();

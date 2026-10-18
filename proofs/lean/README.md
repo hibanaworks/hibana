@@ -167,9 +167,10 @@ receiver's local visit nor the sender's publication is a premise. The Tokio
 fixture instantiates this result at the cut with owner count eight and worker
 count three; identical loan bytes cannot make its second receipt the first.
 
-This result requires that the accepted source frame is owned and that the
-transport preserves its payload bytes. Deriving source kind and order for every
-mixed ordinary/owned receive, and agreement of its physical actor bindings,
+The occurrence-origin result takes the accepted source frame's owned kind
+and transport payload preservation explicitly. The source-kind proof below
+derives the owned kind once actual source correspondence is established.
+Source order and physical actor binding for every mixed ordinary/owned receive
 remain part of the source-word refinement. The earlier boundaries in the joint
 execution still carry their stated receive-pair obligations.
 
@@ -309,12 +310,29 @@ are still checked local projection facts. No application value is inferred
 from a raw header. The earlier public theorem retains its exact type and uses
 the same wire-check proof.
 
+`source_matched_operations_have_the_same_logical_message` also applies when
+neither operation's payload kind has been preselected. Matching source offsets
+and the common immutable atom table derive the whole logical message on the
+two independently selected paths. Its logical sender, receiver, label and
+payload specification agree; equality of speculative physical peer holders
+is not concluded.
+
+`a_matched_owned_receive_recovers_its_accepted_sender` starts with a general
+accepted send, without an owned-facts witness for it. The shared source table
+fixes the logical message for ordinary and owned operations alike. An owned
+receive at that source position therefore determines the sender's payload
+kind. The existing source-send check then supplies its decoded owned facts
+and checked envelope. The result retains this witness, resource and sending
+side together with the exact receive-wire check for arbitrary candidate bytes.
+It adds no admission guard and does not classify a frame by its payload bytes.
+
 The nested-choice fixture applies this result to all four accepted loans,
 including left/right changes and equal-arm reentry. Each candidate byte list
 is checked using the immutable receive row and actual accepted frame. The
 receiver's successful commit, after-snapshot and fresh tag are absent. These
 are qualifications of the actual observed source pairs, not a derivation of
-source order for every branch-dependent history.
+source order for every branch-dependent history. Their preflight proofs now
+derive the sender's owned kind from its general accepted source operation.
 
 The mixed ordinary/owned fixture applies this result at the next loan after a
 completed visit. Its fresh base and source row are derived before that receive;
@@ -324,6 +342,22 @@ owned envelope, not eventual view issuance: the dormant view slot, nonce space,
 actual value custody and fault/closure obligations remain separate. It does
 not add replay protection to the carrier contract. The fixture proof source is
 `src/g/role_projection/tests/distributed_owned_receive.lean`.
+The before-receive source word also determines this head's owned kind; the
+proof does not separately assume its decoded sender-owned facts. Its earlier
+public wire-check statement is unchanged, with an additional generated claim
+retaining the derived sender-kind witness.
+
+The logical-view fixture applies the payload-neutral result to its request
+direction for every finite measured history. The existing source-word and
+FIFO-prefix theorem first identifies the raw head from the independently
+prepared service row. The new claim then recovers the head's actual sender
+image from that same acceptance record and obtains its logical message from
+the shared atom table. The local identity supplied by the caller is immutable
+receive-row data, not an assumption about the head or its kind. The resulting
+claim retains the complete admission trace, indexed key, actual sender binding
+and logical message equality before the receive. It permits sender publication
+to lag. Its source is `src/g/role_projection/tests/logical_source_message.lean`.
+Actual value custody and transport/actor binding remain separate obligations.
 
 General correspondence for other holder-changing and branch-dependent
 classes remains required. Static class facts are not yet proved for every

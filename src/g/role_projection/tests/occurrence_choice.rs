@@ -815,7 +815,7 @@ private def choiceBeforeReceiveFacts{visit} :=
 private theorem choiceBeforeReceiveMetadata{visit} :
     choiceBeforeReceiveFacts{visit}.side = .receive ∧
       choiceBeforeReceiveFacts{visit}.binding.receiverActor = occurrenceWorkerImage.role ∧
-      choiceSourceFacts{visit}.effIndex = choiceBeforeReceiveFacts{visit}.effIndex := by decide
+      choiceSend{index}.effIndex? = some choiceBeforeReceiveFacts{visit}.effIndex := by decide
 
 private def choiceAcceptedBeforeReceiveFrame{visit} :=
   (choiceCarrier{accepted}.frames[{index}]?).get (by decide)
@@ -831,7 +831,8 @@ private theorem choiceBeforeReceiveWireColumns{visit} :
 
 /-- Only immutable source rows and the accepted frame are used here. The
 receiver's after-snapshot, issued tag and current receive-pair are absent.
-The four calls cover changing arms and equal-arm reentry with unknown siblings. -/
+The sender's owned kind is derived from the source. The four calls cover
+changing arms and equal-arm reentry with unknown siblings. -/
 theorem choicePrepared{visit}ChecksAcceptedBytesBeforeReceipt (bytes : List Nat) :
     choiceBeforeReceiveFacts{visit}.wireMatches 1
         {{ choiceWire{index} with payload := bytes }} 9063 = true ↔
@@ -839,17 +840,18 @@ theorem choicePrepared{visit}ChecksAcceptedBytesBeforeReceipt (bytes : List Nat)
   have receiverAt := (Option.some_get
     (x := occurrenceWorkerImage.ownedSourceFacts? occurrenceChoiceChoreo {path} {event}) (by decide)).symm
   have atomsAt := (Option.some_get (x := occurrenceOwnerImage.decodeAtoms?) (by decide)).symm
-  exact (Hibana.a_source_matched_owned_head_checks_bytes_on_independent_paths
+  obtain ⟨_, _, _, _, checked⟩ := Hibana.a_matched_owned_receive_recovers_its_accepted_sender
     (sender := choiceSend{index}) (receiverImage := occurrenceWorkerImage)
     (choreo := occurrenceChoiceChoreo) (session := 9063) (pathIndex := {path}) (event := {event})
-    (sentFacts := choiceSourceFacts{visit}) (receivedFacts := choiceBeforeReceiveFacts{visit})
+    (receivedFacts := choiceBeforeReceiveFacts{visit})
     (atoms := choiceSharedSourceAtoms) (wire := {{ choiceWire{index} with payload := bytes }})
     (frame := choiceAcceptedBeforeReceiveFrame{visit})
-    choiceSend{index}Checked choiceSourceAt{visit} receiverAt atomsAt
+    choiceSend{index}Checked receiverAt atomsAt
     choiceWorkerSharesSourceAtoms choiceBeforeReceiveMetadata{visit}.2.2
     choiceBeforeReceiveMetadata{visit}.1 choiceBeforeReceiveMetadata{visit}.2.1
     choiceAcceptedBeforeReceiveIdentity{visit} choiceAcceptedBeforeReceiveIdentity{visit}
-    choiceBeforeReceiveWireColumns{visit}.1 choiceBeforeReceiveWireColumns{visit}.2).2
+    choiceBeforeReceiveWireColumns{visit}.1 choiceBeforeReceiveWireColumns{visit}.2
+  exact checked
 "#,
         ));
     }

@@ -175,6 +175,39 @@ logicalDeliveredRequestWordKeepsBothHolders : ∃ receipts,
                   List.count 0 (List.map (fun entry => entry.sample.event) (actorAcceptedSends entries 0)) ∧
                 List.count 1 workerWord =
                   List.count 1 (List.map (fun entry => entry.sample.event) (actorAcceptedSends entries 1))
+@logicalProspectiveRequestMessageMatchesBeforeReceive : ∀ {cut : DistributedSourceCut} {entries : List SourceAcceptance}
+  {records : List (Nat × ActorCommitRecord)} {previousPath pathIndex event localSource : Nat}
+  {base : ActorProgressObservation} {data : DecodedActorOrder} {path : NormalizedPath} {row : DecodedActorRow}
+  {next : TransportState} {frame : TransportFrame} {receiverBinding : Binding},
+  DistributedSourceExecution distributedImages distributedChoreo 9064 (distributedCut0, distributedEntries0)
+      (cut, entries) records →
+    (∀ (entry : SourceAcceptance), entry ∈ entries → entry.channel.generation = 0) →
+      distributedImage3.decodeActorOrder? distributedChoreo = some data →
+        data.normalized.paths[pathIndex]? = some path →
+          data.rows[event]? = some row →
+            row ∈ data.activeRows path →
+              sourceRowReady data path base row = true →
+                ActorSourceCandidateBase { snapshot := (cut.actors 3).fst, pathIndex := pathIndex, admitted := [] }
+                    distributedImage3 distributedChoreo previousPath path row base →
+                  distributedImage3.frameKey? event =
+                      some { side := Side.receive, view := 3, peer := 10, lane := 0, color := 0 } →
+                    (cut.carriers logicalRequestPort).pollReceive = TransportPoll.delivered frame next →
+                      sourceOperationIdentity? distributedImage3 distributedChoreo pathIndex event =
+                          some (localSource, receiverBinding, Side.receive) →
+                        ∃ sample senderBinding fifo key,
+                          SendAdmissionTrace distributedChoreo 9064 (cut.carriers logicalRequestPort) fifo
+                              (sourceChannelRecords entries logicalRequestPort) ∧
+                            fifo.accepted[(cut.carriers logicalRequestPort).delivered]? = some key ∧
+                              (sourceChannelRecords entries
+                                      logicalRequestPort)[(cut.carriers logicalRequestPort).delivered]? =
+                                  some (sample, localSource) ∧
+                                sample.check distributedChoreo 9064 = true ∧
+                                  key.globalId = localSource ∧
+                                    sample.wire.identifies frame ∧
+                                      sourceOperationIdentity? sample.image distributedChoreo sample.pathIndex
+                                            sample.event =
+                                          some (localSource, senderBinding, Side.send) ∧
+                                        senderBinding.message = receiverBinding.message
 @logicalProspectiveRequestSourceMatchesBeforeReceive : ∀ {cut : DistributedSourceCut} {entries : List SourceAcceptance}
   {records : List (Nat × ActorCommitRecord)} {previousPath pathIndex event : Nat} {base : ActorProgressObservation}
   {data : DecodedActorOrder} {path : NormalizedPath} {row : DecodedActorRow} {next : TransportState}

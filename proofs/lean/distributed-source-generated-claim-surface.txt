@@ -56,6 +56,9 @@ distributedFirstAcceptedSendHasItsUnpublishedPrefix : ∃ pending,
     pending.length = 1 ∧ ∀ (entry : SourceAcceptance), entry ∈ pending → entry.stamps 0 (distributedCut1.actors 0).snd
 distributedFreshMixedSourceIdentityBeforeItsNewReceivePair : distributedEntry6.sample.effIndex? =
   distributedImage1.eventEffIndex? distributedCommit8.step.event
+distributedFreshOwnedHeadKindComesFromItsPreparedSource : ∃ sentFacts,
+  distributedEntry6.sample.ownedFacts? distributedChoreo = some sentFacts ∧
+    sentFacts.resource = distributedPreparedReceivedSourceFacts.resource ∧ sentFacts.side = Side.send
 distributedFreshOwnedReceiveChecksActualAcceptedBytesBeforeCommit : ∀ (bytes : List Nat),
   distributedPreparedReceivedSourceFacts.wireMatches 1
         (have __src := distributedEntry6.sample.wire;

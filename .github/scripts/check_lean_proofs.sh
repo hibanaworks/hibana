@@ -66,7 +66,7 @@ bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" build-serial "${PROOF_
 bash "${ROOT_DIR}/.github/scripts/check_lean_claim_surface.sh"
 static_audit_output="$(run_audit \
   theorem-inventory \
-  --static "${PROOF_DIR}" "${STATIC_CLAIM_SNAPSHOT}" 1070 656 302 112)"
+  --static "${PROOF_DIR}" "${STATIC_CLAIM_SNAPSHOT}" 1072 658 302 112)"
 printf '%s\n' "${static_audit_output}"
 printf '%s\n' "${static_audit_output}" | bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard markers static
 bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" theorem-inventory \
@@ -242,7 +242,7 @@ run_audit generated-axioms --kernel "${MIXED_SEND_ADMISSION_GENERATED}" "${PROOF
   "${PROOF_DIR}/mixed-send-admission-generated-claim-surface.txt" 22
 bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${DISTRIBUTED_SOURCE_GENERATED}" "joint distributed source boundaries"
 run_audit generated-axioms --kernel "${DISTRIBUTED_SOURCE_GENERATED}" "${PROOF_DIR}" \
-  "${PROOF_DIR}/distributed-source-generated-claim-surface.txt" 18
+  "${PROOF_DIR}/distributed-source-generated-claim-surface.txt" 19
 CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib \
   g::role_projection::tests::occurrence_choice::changing_rolled_loans_teach_only_the_received_occurrences_choices \
   -- --exact
@@ -257,7 +257,7 @@ CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --li
   -- --exact
 bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${LOGICAL_VIEW_WORD_GENERATED}" "logical source words across physical holders"
 run_audit generated-axioms --kernel "${LOGICAL_VIEW_WORD_GENERATED}" "${PROOF_DIR}" \
-  "${PROOF_DIR}/logical-view-word-generated-claim-surface.txt" 26
+  "${PROOF_DIR}/logical-view-word-generated-claim-surface.txt" 27
 CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib -- \
   g::role_projection::tests::conditional_controller::remote_controller::a_conditional_controller_does_not_take_authority_from_its_co_resident_observer \
   g::role_projection::tests::conditional_controller::co_resident_controller::a_conditional_controller_does_not_take_authority_from_its_co_resident_observer \

@@ -1642,6 +1642,35 @@ Hibana.EndpointDelegation.withOwner_same : ∀ (owners : Hibana.EndpointDelegati
                                                       true)
                                                     (Hibana.DistributedSourceExecution images choreo session received
                                                       last later)))))))))
+@Hibana.a_matched_owned_receive_recovers_its_accepted_sender : ∀ {sender : Hibana.SourceSendAdmission}
+  {receiverImage : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo} {session pathIndex event : Nat}
+  {receivedFacts : Hibana.OwnedSourceFacts} {atoms : List.{0} Hibana.DecodedProgramAtom}
+  {wire : Hibana.OwnedWireObservation} {frame : Hibana.TransportFrame},
+  @Eq.{1} Bool (sender.check choreo session) true →
+    @Eq.{1} (Option.{0} Hibana.OwnedSourceFacts) (receiverImage.ownedSourceFacts? choreo pathIndex event)
+        (@some.{0} Hibana.OwnedSourceFacts receivedFacts) →
+      @Eq.{1} (Option.{0} (List.{0} Hibana.DecodedProgramAtom)) sender.image.decodeAtoms?
+          (@some.{0} (List.{0} Hibana.DecodedProgramAtom) atoms) →
+        @Eq.{1} (Option.{0} (List.{0} Hibana.DecodedProgramAtom)) receiverImage.decodeAtoms?
+            (@some.{0} (List.{0} Hibana.DecodedProgramAtom) atoms) →
+          @Eq.{1} (Option.{0} Nat) sender.effIndex? (@some.{0} Nat receivedFacts.effIndex) →
+            @Eq.{1} Hibana.EndpointDelegation.Side receivedFacts.side Hibana.EndpointDelegation.Side.receive →
+              @Eq.{1} Nat receivedFacts.binding.receiverActor receiverImage.role →
+                sender.wire.identifies frame →
+                  wire.identifies frame →
+                    @Eq.{1} (Option.{0} Nat) (receiverImage.eventLane? event) (@some.{0} Nat wire.lane) →
+                      @Eq.{1} (Option.{0} Nat) (receiverImage.eventFrameLabel? event) (@some.{0} Nat wire.frameLabel) →
+                        @Exists.{1} Hibana.OwnedSourceFacts fun sentFacts =>
+                          And
+                            (@Eq.{1} (Option.{0} Hibana.OwnedSourceFacts) (sender.ownedFacts? choreo)
+                              (@some.{0} Hibana.OwnedSourceFacts sentFacts))
+                            (And
+                              (@Eq.{1} Hibana.EndpointDelegation.EndpointKey sentFacts.resource receivedFacts.resource)
+                              (And
+                                (@Eq.{1} Hibana.EndpointDelegation.Side sentFacts.side
+                                  Hibana.EndpointDelegation.Side.send)
+                                (Iff (@Eq.{1} Bool (receivedFacts.wireMatches receiverImage.role wire session) true)
+                                  (@Eq.{1} (List.{0} Nat) wire.payload sender.wire.payload))))
 @Hibana.a_measured_actor_history_accounts_for_every_mark_and_clear : ∀ {image : Hibana.RustDescriptorImage}
   {choreo : Hibana.Choreo} {session : Nat} {before after : Prod.{0, 0} Hibana.ActorProgressObservation Nat}
   {cleared : List.{0} Nat} {commits : Nat},
@@ -12385,6 +12414,28 @@ Hibana.source_acceptance_observation_checks_are_exact : ∀ (entries : List.{0} 
                 (@List.instGetElem?NatLtLength.{0} Nat) receivedWord index)
               (@some.{0} Nat received) →
             @Eq.{1} (Option.{0} Nat) (sentSource sent) (receivedSource received)
+@Hibana.source_matched_operations_have_the_same_logical_message : ∀
+  {sentImage receivedImage : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo}
+  {sentPath receivedPath sentEvent receivedEvent source : Nat}
+  {sentBinding receivedBinding : Hibana.EndpointDelegation.Binding}
+  {sentSide receivedSide : Hibana.EndpointDelegation.Side} {atoms : List.{0} Hibana.DecodedProgramAtom},
+  @Eq.{1} (Option.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Hibana.EndpointDelegation.Binding Hibana.EndpointDelegation.Side)))
+      (Hibana.sourceOperationIdentity? sentImage choreo sentPath sentEvent)
+      (@some.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Hibana.EndpointDelegation.Binding Hibana.EndpointDelegation.Side))
+        (@Prod.mk.{0, 0} Nat (Prod.{0, 0} Hibana.EndpointDelegation.Binding Hibana.EndpointDelegation.Side) source
+          (@Prod.mk.{0, 0} Hibana.EndpointDelegation.Binding Hibana.EndpointDelegation.Side sentBinding sentSide))) →
+    @Eq.{1}
+        (Option.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Hibana.EndpointDelegation.Binding Hibana.EndpointDelegation.Side)))
+        (Hibana.sourceOperationIdentity? receivedImage choreo receivedPath receivedEvent)
+        (@some.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Hibana.EndpointDelegation.Binding Hibana.EndpointDelegation.Side))
+          (@Prod.mk.{0, 0} Nat (Prod.{0, 0} Hibana.EndpointDelegation.Binding Hibana.EndpointDelegation.Side) source
+            (@Prod.mk.{0, 0} Hibana.EndpointDelegation.Binding Hibana.EndpointDelegation.Side receivedBinding
+              receivedSide))) →
+      @Eq.{1} (Option.{0} (List.{0} Hibana.DecodedProgramAtom)) sentImage.decodeAtoms?
+          (@some.{0} (List.{0} Hibana.DecodedProgramAtom) atoms) →
+        @Eq.{1} (Option.{0} (List.{0} Hibana.DecodedProgramAtom)) receivedImage.decodeAtoms?
+            (@some.{0} (List.{0} Hibana.DecodedProgramAtom) atoms) →
+          @Eq.{1} Hibana.EndpointDelegation.Message sentBinding.message receivedBinding.message
 @Hibana.source_matched_owned_halves_have_the_same_logical_message : ∀
   {sentImage receivedImage : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo}
   {sentPath receivedPath sentEvent receivedEvent : Nat} {sentFacts receivedFacts : Hibana.OwnedSourceFacts}

@@ -18,27 +18,28 @@ private theorem owned_source_facts_retain_identity_and_payload
       entryAt, effAt, Option.bind_some, Option.pure_def, sideAt, ← bindingAt]
   · exact bindingAt ▸ payloadAt
 
-/-- Matching offsets in the shared immutable source table determine the
-logical message on independently selected paths. Physical holders, unknown
-sibling choices and repetition histories need not agree. This is a source
-translation result; it does not assert possession at either actor. -/
-theorem source_matched_owned_halves_have_the_same_logical_message
+/-- The common source table fixes the logical message of matched operations,
+including ordinary payloads. Only immutable row identities are compared;
+physical holders, selected paths and visit histories need not be equal. -/
+theorem source_matched_operations_have_the_same_logical_message
     {sentImage receivedImage : RustDescriptorImage} {choreo : Choreo}
-    {sentPath receivedPath sentEvent receivedEvent : Nat}
-    {sentFacts receivedFacts : OwnedSourceFacts} {atoms : List DecodedProgramAtom}
-    (sentAt : sentImage.ownedSourceFacts? choreo sentPath sentEvent = some sentFacts)
-    (receivedAt : receivedImage.ownedSourceFacts? choreo receivedPath receivedEvent = some receivedFacts)
+    {sentPath receivedPath sentEvent receivedEvent source : Nat}
+    {sentBinding receivedBinding : Binding} {sentSide receivedSide : Side}
+    {atoms : List DecodedProgramAtom}
+    (sentIdentity : sourceOperationIdentity? sentImage choreo sentPath sentEvent =
+      some (source, sentBinding, sentSide))
+    (receivedIdentity : sourceOperationIdentity? receivedImage choreo receivedPath receivedEvent =
+      some (source, receivedBinding, receivedSide))
     (sentAtoms : sentImage.decodeAtoms? = some atoms)
-    (receivedAtoms : receivedImage.decodeAtoms? = some atoms)
-    (sameEffect : sentFacts.effIndex = receivedFacts.effIndex) :
-    sentFacts.binding.message = receivedFacts.binding.message ∧
-      sentFacts.resource = receivedFacts.resource := by
-  obtain ⟨leftData, leftPath, leftRow, leftEntry, leftAt, leftPathAt, leftRowAt,
-    leftEntryAt, leftPayload, _, leftBinding⟩ :=
-    decoded_owned_source_facts_retain_the_exact_source_row sentAt
-  obtain ⟨rightData, rightPath, rightRow, rightEntry, rightAt, rightPathAt, rightRowAt,
-    rightEntryAt, rightPayload, _, rightBinding⟩ :=
-    decoded_owned_source_facts_retain_the_exact_source_row receivedAt
+    (receivedAtoms : receivedImage.decodeAtoms? = some atoms) :
+    sentBinding.message = receivedBinding.message := by
+  unfold sourceOperationIdentity? at sentIdentity receivedIdentity
+  simp only [Option.bind_eq_bind, Option.bind_eq_some_iff, Option.pure_def,
+    Option.some.injEq] at sentIdentity receivedIdentity
+  obtain ⟨leftData, leftAt, leftPath, leftPathAt, leftRow, leftRowAt,
+    leftEntry, leftEntryAt, sentEff, sentEffAt, leftSame⟩ := sentIdentity
+  obtain ⟨rightData, rightAt, rightPath, rightPathAt, rightRow, rightRowAt,
+    rightEntry, rightEntryAt, receivedEff, receivedEffAt, rightSame⟩ := receivedIdentity
   have leftRows := (decoded_actor_order_fields leftAt).2.2.2.2.1
   have rightRows := (decoded_actor_order_fields rightAt).2.2.2.2.1
   have leftIndex := decoded_actor_row_lookup_preserves_its_index leftRows leftRowAt
@@ -49,11 +50,11 @@ theorem source_matched_owned_halves_have_the_same_logical_message
     decoded_actor_row_retains_its_unique_source_position rightRows receivedAtoms (List.mem_of_getElem? rightRowAt)
   rw [leftIndex] at leftEffAt
   rw [rightIndex] at rightEffAt
-  have leftEffect : leftEff = sentFacts.effIndex := Option.some.inj
-    (leftEffAt.symm.trans (decoded_owned_source_facts_bind_wire_columns sentAt).1)
-  have rightEffect : rightEff = receivedFacts.effIndex := Option.some.inj
-    (rightEffAt.symm.trans (decoded_owned_source_facts_bind_wire_columns receivedAt).1)
-  have sameOffset : leftEff = rightEff := leftEffect.trans (sameEffect.trans rightEffect.symm)
+  have leftEffect : leftEff = source :=
+    (Option.some.inj (leftEffAt.symm.trans sentEffAt)).trans (congrArg Prod.fst leftSame)
+  have rightEffect : rightEff = source :=
+    (Option.some.inj (rightEffAt.symm.trans receivedEffAt)).trans (congrArg Prod.fst rightSame)
+  have sameOffset : leftEff = rightEff := leftEffect.trans rightEffect.symm
   rw [sameOffset] at leftSource
   have sameOccurrence : leftRow.actionId.event = rightRow.actionId.event :=
     congrArg Prod.snd (Option.some.inj (leftSource.symm.trans rightSource))
@@ -78,9 +79,59 @@ theorem source_matched_owned_halves_have_the_same_logical_message
     exact List.mem_of_getElem? leftPathAt
   have message := normalized_paths_agree_on_a_shared_source_message rightOrigin.2
     selectedLeft (List.mem_of_getElem? rightPathAt) leftMember rightMember
+  have leftBinding : leftEntry.2 = sentBinding :=
+    congrArg (fun triple : Nat × Binding × Side => triple.2.1) leftSame
+  have rightBinding : rightEntry.2 = receivedBinding :=
+    congrArg (fun triple : Nat × Binding × Side => triple.2.1) rightSame
+  simpa only [leftBinding, rightBinding] using message
+
+/-- Matching offsets in the shared immutable source table determine the
+logical message on independently selected paths. Physical holders, unknown
+sibling choices and repetition histories need not agree. This is a source
+translation result; it does not assert possession at either actor. -/
+theorem source_matched_owned_halves_have_the_same_logical_message
+    {sentImage receivedImage : RustDescriptorImage} {choreo : Choreo}
+    {sentPath receivedPath sentEvent receivedEvent : Nat}
+    {sentFacts receivedFacts : OwnedSourceFacts} {atoms : List DecodedProgramAtom}
+    (sentAt : sentImage.ownedSourceFacts? choreo sentPath sentEvent = some sentFacts)
+    (receivedAt : receivedImage.ownedSourceFacts? choreo receivedPath receivedEvent = some receivedFacts)
+    (sentAtoms : sentImage.decodeAtoms? = some atoms)
+    (receivedAtoms : receivedImage.decodeAtoms? = some atoms)
+    (sameEffect : sentFacts.effIndex = receivedFacts.effIndex) :
+    sentFacts.binding.message = receivedFacts.binding.message ∧
+      sentFacts.resource = receivedFacts.resource := by
+  have sent := owned_source_facts_retain_identity_and_payload sentAt
+  have received := owned_source_facts_retain_identity_and_payload receivedAt
+  rw [sameEffect] at sent
+  have message := source_matched_operations_have_the_same_logical_message
+    sent.1 received.1 sentAtoms receivedAtoms
   have payloadSame : Payload.endpoint sentFacts.resource = .endpoint receivedFacts.resource :=
-    leftPayload.symm.trans ((congrArg Message.payload message).trans rightPayload)
-  exact ⟨by simpa only [leftBinding, rightBinding] using message, Payload.endpoint.inj payloadSame⟩
+    sent.2.symm.trans ((congrArg Message.payload message).trans received.2)
+  exact ⟨message, Payload.endpoint.inj payloadSame⟩
+
+private theorem a_checked_sender_with_owned_message_has_its_source_facts
+    {sender : SourceSendAdmission} {choreo : Choreo} {session source : Nat}
+    {binding : Binding} {side : Side} {resource : EndpointKey}
+    (accepted : sender.check choreo session = true)
+    (identity : sourceOperationIdentity? sender.image choreo sender.pathIndex sender.event =
+      some (source, binding, side))
+    (payload : binding.message.payload = .endpoint resource) :
+    ∃ facts, sender.ownedFacts? choreo = some facts := by
+  unfold sourceOperationIdentity? at identity
+  simp only [Option.bind_eq_bind, Option.bind_eq_some_iff, Option.pure_def,
+    Option.some.injEq] at identity
+  obtain ⟨data, decoded, path, pathAt, row, rowAt, entry, entryAt, eff, _, same⟩ := identity
+  have bindingSame : entry.2 = binding :=
+    congrArg (fun triple : Nat × Binding × Side => triple.2.1) same
+  have sourcePayload : entry.2.message.payload = .endpoint resource := bindingSame ▸ payload
+  unfold SourceSendAdmission.check at accepted
+  have rest := (Bool.and_eq_true_iff.mp accepted).2
+  simp only [decoded, pathAt, rowAt, entryAt] at rest
+  have payloadChecked := (Bool.and_eq_true_iff.mp rest).2
+  simp only [SourceSendAdmission.payloadMatches, sourcePayload] at payloadChecked
+  cases factsAt : sender.ownedFacts? choreo with
+  | none => simp only [factsAt, Bool.false_eq_true] at payloadChecked
+  | some facts => exact ⟨facts, rfl⟩
 
 private theorem owned_wire_check_from_its_source_message
     {sender : SourceSendAdmission} {receiverImage : RustDescriptorImage}
@@ -209,5 +260,48 @@ theorem a_source_matched_owned_head_checks_bytes_on_independent_paths
     simp only [OwnedSourceFacts.actor?, receiving, physical]
   exact ⟨resourceSame.symm, owned_wire_check_from_its_source_message accepted sentAt receivedAt
     resourceSame.symm sameEffect.symm messageSame.symm actorAt acceptedFrame receivedFrame laneAt colorAt⟩
+
+/-- A prospective owned receive derives the accepted sender's payload kind
+from their source correspondence. The sender initially carries an ordinary
+or owned frame; no sender owned-facts witness is an input. Classification
+comes from the shared source message, never from received payload bytes.
+The same result supplies the exact wire check before the receive commits. -/
+theorem a_matched_owned_receive_recovers_its_accepted_sender
+    {sender : SourceSendAdmission} {receiverImage : RustDescriptorImage}
+    {choreo : Choreo} {session pathIndex event : Nat}
+    {receivedFacts : OwnedSourceFacts} {atoms : List DecodedProgramAtom}
+    {wire : OwnedWireObservation} {frame : TransportFrame}
+    (accepted : sender.check choreo session = true)
+    (receivedAt : receiverImage.ownedSourceFacts? choreo pathIndex event = some receivedFacts)
+    (sentAtoms : sender.image.decodeAtoms? = some atoms)
+    (receivedAtoms : receiverImage.decodeAtoms? = some atoms)
+    (sourceAt : sender.effIndex? = some receivedFacts.effIndex)
+    (receiving : receivedFacts.side = .receive)
+    (physical : receivedFacts.binding.receiverActor = receiverImage.role)
+    (acceptedFrame : sender.wire.identifies frame) (receivedFrame : wire.identifies frame)
+    (laneAt : receiverImage.eventLane? event = some wire.lane)
+    (colorAt : receiverImage.eventFrameLabel? event = some wire.frameLabel) :
+    ∃ sentFacts, sender.ownedFacts? choreo = some sentFacts ∧
+      sentFacts.resource = receivedFacts.resource ∧ sentFacts.side = .send ∧
+      (receivedFacts.wireMatches receiverImage.role wire session = true ↔
+        wire.payload = sender.wire.payload) := by
+  obtain ⟨source, binding, identity, effectAt, _⟩ :=
+    checked_source_send_has_its_bound_wire_columns accepted
+  have sameSource := Option.some.inj (effectAt.symm.trans sourceAt)
+  rw [sameSource] at identity
+  have receiver := owned_source_facts_retain_identity_and_payload receivedAt
+  have message := source_matched_operations_have_the_same_logical_message
+    identity receiver.1 sentAtoms receivedAtoms
+  have payload : binding.message.payload = .endpoint receivedFacts.resource :=
+    (congrArg Message.payload message).trans receiver.2
+  obtain ⟨sentFacts, sentAt⟩ := a_checked_sender_with_owned_message_has_its_source_facts
+    accepted identity payload
+  have sameEffect : sentFacts.effIndex = receivedFacts.effIndex := Option.some.inj
+    ((decoded_owned_source_facts_bind_wire_columns sentAt).1.symm.trans sourceAt)
+  have checked := a_source_matched_owned_head_checks_bytes_on_independent_paths
+    accepted sentAt receivedAt sentAtoms receivedAtoms sameEffect receiving physical
+    acceptedFrame receivedFrame laneAt colorAt
+  exact ⟨sentFacts, sentAt, checked.1.symm,
+    (checked_source_send_has_its_owned_payload accepted sentAt).1, checked.2⟩
 
 end Hibana
