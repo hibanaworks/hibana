@@ -89,6 +89,12 @@ run_miri_test \
   --lib \
   endpoint::carrier::tests
 
+run_miri_test \
+  owned-future-prerequisite \
+  -p hibana --lib \
+  g::role_projection::tests::send_wait::an_owned_send_rejects_a_predecessor_that_needs_its_payload_view \
+  -- --exact
+
 MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \
   complete-actor-visit-progress \
   -p hibana \
@@ -141,6 +147,7 @@ MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_t
   -- --skip g::role_projection::tests::owned:: \
   --skip g::role_projection::tests::mutation_coverage:: \
   --skip g::role_projection::tests::handoff_interval:: \
+  --skip g::role_projection::tests::send_wait::an_owned_send_rejects_a_predecessor_that_needs_its_payload_view \
   --skip g::role_projection::tests::admission:: \
   --skip g::role_projection::tests::parallel_pending:: \
   --skip g::role_projection::tests::pending_reentry:: \

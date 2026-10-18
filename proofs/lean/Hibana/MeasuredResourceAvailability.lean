@@ -3,6 +3,99 @@ import Hibana.SourceHandoffInterval
 namespace Hibana
 open EndpointDelegation
 
+/-- Source-derived prerequisite using a view held by a pending call. This is
+erased proof evidence for the production classifier, not an owner table. -/
+def sourceHeldViewPending (data : DecodedActorOrder) (path : NormalizedPath)
+    (snapshot : ActorProgressObservation) (target : DecodedActorRow) (role : Nat) : Bool :=
+  (data.activeRows path).any fun prior =>
+    !snapshot.doneState.done prior.eventId &&
+      decide (prior.eventId ∈ data.sourcePredecessors path target.eventId) &&
+        match path.bindings.find? (fun entry => entry.1 == prior.actionId.event) with
+        | none => false
+        | some (_, binding) => sourceActionRequiresView role binding prior.actionId.side
+
+theorem a_source_held_view_wait_has_an_unfinished_required_predecessor
+    {data : DecodedActorOrder} {path : NormalizedPath} {snapshot : ActorProgressObservation}
+    {target : DecodedActorRow} {role : Nat}
+    (blocked : sourceHeldViewPending data path snapshot target role = true) :
+    ∃ prior binding, prior ∈ data.activeRows path ∧
+      snapshot.doneState.done prior.eventId = false ∧
+      prior.eventId ∈ data.sourcePredecessors path target.eventId ∧
+      path.bindings.find? (fun entry => entry.1 == prior.actionId.event) =
+        some (prior.actionId.event, binding) ∧
+      sourceActionRequiresView role binding prior.actionId.side = true := by
+  obtain ⟨prior, member, fields⟩ := List.any_eq_true.mp blocked
+  have outside := Bool.and_eq_true_iff.mp fields
+  have first := Bool.and_eq_true_iff.mp outside.1
+  have pending : snapshot.doneState.done prior.eventId = false := by
+    simpa using first.1
+  have parent := of_decide_eq_true first.2
+  cases located : path.bindings.find? (fun entry => entry.1 == prior.actionId.event) with
+  | none => simp [located] at fields
+  | some entry =>
+      have eventAt : (entry.1 == prior.actionId.event) = true :=
+        List.find?_some (p := fun pair : Nat × Binding => pair.1 == prior.actionId.event) located
+      refine ⟨prior, entry.2, member, pending, parent, ?_, ?_⟩
+      · exact located.trans (congrArg some (Prod.ext (beq_iff_eq.mp eventAt) rfl))
+      · simpa only [located] using outside.2
+
+/-- If a required use is ready, every distinct unfinished loan is after it.
+The event coordinates do not order independent work: the order is recovered
+from accepted resource ownership and the source dependency relation. -/
+theorem a_ready_resource_use_precedes_every_pending_conflicting_handoff
+    {image : RustDescriptorImage} {choreo : Choreo} {data : DecodedActorOrder}
+    {path : NormalizedPath} {transfer useRow : DecodedActorRow}
+    {loan useBinding : Binding} {key : EndpointKey} {snapshot : ActorProgressObservation}
+    (checked : image.actorRowsCheck choreo = true)
+    (decoded : image.decodeActorOrder? choreo = some data)
+    (selected : path ∈ data.normalized.paths)
+    (transferMember : transfer ∈ data.activeRows path) (useMember : useRow ∈ data.activeRows path)
+    (loanAt : path.bindings.find? (fun entry => entry.1 == transfer.actionId.event) =
+      some (transfer.actionId.event, loan))
+    (useAt : path.bindings.find? (fun entry => entry.1 == useRow.actionId.event) =
+      some (useRow.actionId.event, useBinding))
+    (payload : loan.message.payload = .endpoint key)
+    (used : useBinding.message.sender = key ∨ useBinding.message.receiver = key ∨
+      useBinding.message.payload = .endpoint key)
+    (different : transfer.actionId.event ≠ useRow.actionId.event)
+    (pending : snapshot.doneState.done transfer.eventId = false)
+    (ready : sourceRowReady data path snapshot useRow = true) :
+    useRow.eventId ∈ data.sourcePredecessors path transfer.eventId := by
+  rcases accepted_resource_transfer_and_use_have_local_causal_order checked decoded selected
+    transferMember useMember loanAt useAt payload used different with before | after
+  · have done := List.all_eq_true.mp (Bool.and_eq_true_iff.mp ready).2 transfer.eventId before
+    rw [pending] at done
+    contradiction
+  · exact after
+
+theorem a_ready_resource_use_blocks_a_pending_handoff_with_its_held_payload
+    {image : RustDescriptorImage} {choreo : Choreo} {data : DecodedActorOrder}
+    {path : NormalizedPath} {transfer useRow : DecodedActorRow}
+    {loan useBinding : Binding} {key : EndpointKey} {snapshot : ActorProgressObservation}
+    (checked : image.actorRowsCheck choreo = true)
+    (decoded : image.decodeActorOrder? choreo = some data)
+    (selected : path ∈ data.normalized.paths)
+    (transferMember : transfer ∈ data.activeRows path) (useMember : useRow ∈ data.activeRows path)
+    (loanAt : path.bindings.find? (fun entry => entry.1 == transfer.actionId.event) =
+      some (transfer.actionId.event, loan))
+    (useAt : path.bindings.find? (fun entry => entry.1 == useRow.actionId.event) =
+      some (useRow.actionId.event, useBinding))
+    (payload : loan.message.payload = .endpoint key)
+    (used : useBinding.message.sender = key ∨ useBinding.message.receiver = key ∨
+      useBinding.message.payload = .endpoint key)
+    (required : sourceActionRequiresView key.role useBinding useRow.actionId.side = true)
+    (different : transfer.actionId.event ≠ useRow.actionId.event)
+    (pending : snapshot.doneState.done transfer.eventId = false)
+    (ready : sourceRowReady data path snapshot useRow = true) :
+    sourceHeldViewPending data path snapshot transfer key.role = true := by
+  have parent := a_ready_resource_use_precedes_every_pending_conflicting_handoff checked decoded
+    selected transferMember useMember loanAt useAt payload used different pending ready
+  apply List.any_eq_true.mpr
+  refine ⟨useRow, useMember, ?_⟩
+  have unfinished : (!snapshot.doneState.done useRow.eventId) = true :=
+    (Bool.and_eq_true_iff.mp ready).1
+  simp only [unfinished, Bool.true_and, decide_eq_true parent, useAt, required]
+
 /-- Immutable source facts at an initial issuance or actual receipt boundary.
 This proposition is erased proof evidence, not a runtime owner ledger. The
 receipt's current-path prefix closure remains an explicit source obligation. -/

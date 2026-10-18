@@ -1138,6 +1138,88 @@ Hibana.a_pending_payload_requires_its_own_send : ∀ (resource : Nat) (sent : Op
                                     (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) Frame state)
                                   (@Prod.mk.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)) sample.snapshot.actor
                                     view.header))))
+@Hibana.a_ready_resource_use_blocks_a_pending_handoff_with_its_held_payload : ∀ {image : Hibana.RustDescriptorImage}
+  {choreo : Hibana.Choreo} {data : Hibana.DecodedActorOrder} {path : Hibana.EndpointDelegation.NormalizedPath}
+  {transfer useRow : Hibana.DecodedActorRow} {loan useBinding : Hibana.EndpointDelegation.Binding}
+  {key : Hibana.EndpointDelegation.EndpointKey} {snapshot : Hibana.ActorProgressObservation},
+  @Eq.{1} Bool (image.actorRowsCheck choreo) true →
+    @Eq.{1} (Option.{0} Hibana.DecodedActorOrder) (image.decodeActorOrder? choreo)
+        (@some.{0} Hibana.DecodedActorOrder data) →
+      @Membership.mem.{0, 0} Hibana.EndpointDelegation.NormalizedPath
+          (List.{0} Hibana.EndpointDelegation.NormalizedPath)
+          (@List.instMembership.{0} Hibana.EndpointDelegation.NormalizedPath) data.normalized.paths path →
+        @Membership.mem.{0, 0} Hibana.DecodedActorRow (List.{0} Hibana.DecodedActorRow)
+            (@List.instMembership.{0} Hibana.DecodedActorRow) (data.activeRows path) transfer →
+          @Membership.mem.{0, 0} Hibana.DecodedActorRow (List.{0} Hibana.DecodedActorRow)
+              (@List.instMembership.{0} Hibana.DecodedActorRow) (data.activeRows path) useRow →
+            @Eq.{1} (Option.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding))
+                (@List.find?.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)
+                  (fun entry =>
+                    @BEq.beq.{0} Nat (@instBEqOfDecidableEq.{0} Nat instDecidableEqNat)
+                      (@Prod.fst.{0, 0} Nat Hibana.EndpointDelegation.Binding entry) transfer.actionId.event)
+                  path.bindings)
+                (@some.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)
+                  (@Prod.mk.{0, 0} Nat Hibana.EndpointDelegation.Binding transfer.actionId.event loan)) →
+              @Eq.{1} (Option.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding))
+                  (@List.find?.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)
+                    (fun entry =>
+                      @BEq.beq.{0} Nat (@instBEqOfDecidableEq.{0} Nat instDecidableEqNat)
+                        (@Prod.fst.{0, 0} Nat Hibana.EndpointDelegation.Binding entry) useRow.actionId.event)
+                    path.bindings)
+                  (@some.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)
+                    (@Prod.mk.{0, 0} Nat Hibana.EndpointDelegation.Binding useRow.actionId.event useBinding)) →
+                @Eq.{1} Hibana.EndpointDelegation.Payload loan.message.payload
+                    (Hibana.EndpointDelegation.Payload.endpoint key) →
+                  Or (@Eq.{1} Hibana.EndpointDelegation.EndpointKey useBinding.message.sender key)
+                      (Or (@Eq.{1} Hibana.EndpointDelegation.EndpointKey useBinding.message.receiver key)
+                        (@Eq.{1} Hibana.EndpointDelegation.Payload useBinding.message.payload
+                          (Hibana.EndpointDelegation.Payload.endpoint key))) →
+                    @Eq.{1} Bool (Hibana.sourceActionRequiresView key.role useBinding useRow.actionId.side) true →
+                      @Ne.{1} Nat transfer.actionId.event useRow.actionId.event →
+                        @Eq.{1} Bool (snapshot.doneState.done transfer.eventId) false →
+                          @Eq.{1} Bool (Hibana.sourceRowReady data path snapshot useRow) true →
+                            @Eq.{1} Bool (Hibana.sourceHeldViewPending data path snapshot transfer key.role) true
+@Hibana.a_ready_resource_use_precedes_every_pending_conflicting_handoff : ∀ {image : Hibana.RustDescriptorImage}
+  {choreo : Hibana.Choreo} {data : Hibana.DecodedActorOrder} {path : Hibana.EndpointDelegation.NormalizedPath}
+  {transfer useRow : Hibana.DecodedActorRow} {loan useBinding : Hibana.EndpointDelegation.Binding}
+  {key : Hibana.EndpointDelegation.EndpointKey} {snapshot : Hibana.ActorProgressObservation},
+  @Eq.{1} Bool (image.actorRowsCheck choreo) true →
+    @Eq.{1} (Option.{0} Hibana.DecodedActorOrder) (image.decodeActorOrder? choreo)
+        (@some.{0} Hibana.DecodedActorOrder data) →
+      @Membership.mem.{0, 0} Hibana.EndpointDelegation.NormalizedPath
+          (List.{0} Hibana.EndpointDelegation.NormalizedPath)
+          (@List.instMembership.{0} Hibana.EndpointDelegation.NormalizedPath) data.normalized.paths path →
+        @Membership.mem.{0, 0} Hibana.DecodedActorRow (List.{0} Hibana.DecodedActorRow)
+            (@List.instMembership.{0} Hibana.DecodedActorRow) (data.activeRows path) transfer →
+          @Membership.mem.{0, 0} Hibana.DecodedActorRow (List.{0} Hibana.DecodedActorRow)
+              (@List.instMembership.{0} Hibana.DecodedActorRow) (data.activeRows path) useRow →
+            @Eq.{1} (Option.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding))
+                (@List.find?.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)
+                  (fun entry =>
+                    @BEq.beq.{0} Nat (@instBEqOfDecidableEq.{0} Nat instDecidableEqNat)
+                      (@Prod.fst.{0, 0} Nat Hibana.EndpointDelegation.Binding entry) transfer.actionId.event)
+                  path.bindings)
+                (@some.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)
+                  (@Prod.mk.{0, 0} Nat Hibana.EndpointDelegation.Binding transfer.actionId.event loan)) →
+              @Eq.{1} (Option.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding))
+                  (@List.find?.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)
+                    (fun entry =>
+                      @BEq.beq.{0} Nat (@instBEqOfDecidableEq.{0} Nat instDecidableEqNat)
+                        (@Prod.fst.{0, 0} Nat Hibana.EndpointDelegation.Binding entry) useRow.actionId.event)
+                    path.bindings)
+                  (@some.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)
+                    (@Prod.mk.{0, 0} Nat Hibana.EndpointDelegation.Binding useRow.actionId.event useBinding)) →
+                @Eq.{1} Hibana.EndpointDelegation.Payload loan.message.payload
+                    (Hibana.EndpointDelegation.Payload.endpoint key) →
+                  Or (@Eq.{1} Hibana.EndpointDelegation.EndpointKey useBinding.message.sender key)
+                      (Or (@Eq.{1} Hibana.EndpointDelegation.EndpointKey useBinding.message.receiver key)
+                        (@Eq.{1} Hibana.EndpointDelegation.Payload useBinding.message.payload
+                          (Hibana.EndpointDelegation.Payload.endpoint key))) →
+                    @Ne.{1} Nat transfer.actionId.event useRow.actionId.event →
+                      @Eq.{1} Bool (snapshot.doneState.done transfer.eventId) false →
+                        @Eq.{1} Bool (Hibana.sourceRowReady data path snapshot useRow) true →
+                          @Membership.mem.{0, 0} Nat (List.{0} Nat) (@List.instMembership.{0} Nat)
+                            (data.sourcePredecessors path transfer.eventId) useRow.eventId
 @Hibana.a_receiver_can_return_before_sender_header_publication : ∀ {View Frame : Type} (sender receiver : View)
   (outgoing returned : Frame),
   @Exists.{1} (Hibana.EndpointTransfer.Observation View Frame) fun state =>
@@ -1249,6 +1331,29 @@ Hibana.a_pending_payload_requires_its_own_send : ∀ (resource : Nat) (sent : Op
                   Or (@Eq.{1} Bool (source.before transfer previousEvent) true)
                     (Or (@Eq.{1} Nat transfer previousEvent)
                       (Or (@Eq.{1} Nat transfer target) (@Eq.{1} Bool (source.before target transfer) true)))
+@Hibana.a_source_held_view_wait_has_an_unfinished_required_predecessor : ∀ {data : Hibana.DecodedActorOrder}
+  {path : Hibana.EndpointDelegation.NormalizedPath} {snapshot : Hibana.ActorProgressObservation}
+  {target : Hibana.DecodedActorRow} {role : Nat},
+  @Eq.{1} Bool (Hibana.sourceHeldViewPending data path snapshot target role) true →
+    @Exists.{1} Hibana.DecodedActorRow fun prior =>
+      @Exists.{1} Hibana.EndpointDelegation.Binding fun binding =>
+        And
+          (@Membership.mem.{0, 0} Hibana.DecodedActorRow (List.{0} Hibana.DecodedActorRow)
+            (@List.instMembership.{0} Hibana.DecodedActorRow) (data.activeRows path) prior)
+          (And (@Eq.{1} Bool (snapshot.doneState.done prior.eventId) false)
+            (And
+              (@Membership.mem.{0, 0} Nat (List.{0} Nat) (@List.instMembership.{0} Nat)
+                (data.sourcePredecessors path target.eventId) prior.eventId)
+              (And
+                (@Eq.{1} (Option.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding))
+                  (@List.find?.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)
+                    (fun entry =>
+                      @BEq.beq.{0} Nat (@instBEqOfDecidableEq.{0} Nat instDecidableEqNat)
+                        (@Prod.fst.{0, 0} Nat Hibana.EndpointDelegation.Binding entry) prior.actionId.event)
+                    path.bindings)
+                  (@some.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)
+                    (@Prod.mk.{0, 0} Nat Hibana.EndpointDelegation.Binding prior.actionId.event binding)))
+                (@Eq.{1} Bool (Hibana.sourceActionRequiresView role binding prior.actionId.side) true))))
 @Hibana.a_valid_issued_resource_nonce_is_bounded : ∀ {snapshot : Hibana.ActorProgressObservation} {role : Nat}
   {tag : Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))},
   @Eq.{1} Bool snapshot.valid true →

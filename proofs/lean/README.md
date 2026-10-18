@@ -284,6 +284,14 @@ ancestor's carrier or payload cannot wait for that same view to do the work.
 The pending-ancestor theorem shows that source-closed progress cannot hide such
 an unfinished prerequisite behind completed compact guards. Runtime waiting for
 another independent view adds no ownership or progress authority.
+The held-view lemmas in `MeasuredResourceAvailability.lean` recover an
+unfinished source predecessor that requires an owned send's payload. They do
+not infer availability from an idle header: the unpolled future already owns
+the Rust value. `OwnedFuturePredecessorGenerated` applies them to a real
+pre-poll actor snapshot. Its Tokio test checks that the first poll records a
+fault before the future is dropped, with no frame or progress committed.
+The source lemmas and this concrete execution are separate evidence; neither
+establishes all future schedules or the full distributed progress result.
 `ActorRouting.lean` binds event conflict paths and route-parent/reentry columns
 to the source, including nested choices. The same committed history and
 candidate preview therefore produce the same conflict filter on both paths.

@@ -1,0 +1,13 @@
+actualPendingReturnHasAConcreteRequiredPredecessor : ∃ prior binding,
+  prior ∈ futureData.activeRows futurePath ∧
+    beforePoll.doneState.done prior.eventId = false ∧
+      prior.eventId ∈ futureData.sourcePredecessors futurePath transfer.eventId ∧
+        List.find? (fun entry => entry.fst == prior.actionId.event) futurePath.bindings =
+            some (prior.actionId.event, binding) ∧
+          sourceActionRequiresView resource.role binding prior.actionId.side = true
+actualPendingReturnHasItsHeldPayloadPredecessor : sourceHeldViewPending futureData futurePath beforePoll transfer
+    resource.role =
+  true
+actualResourceUseIsReadyBeforeThePrematureReturn : sourceRowReady futureData futurePath beforePoll useRow = true
+actualUnpolledPayloadHasAnIdleIssuedHeader : beforePoll.viewIssued resource.role = true ∧
+  Option.map (fun x => x.operation) (observedActorView? beforePoll resource.role) = some PublicOperationPhase.idle

@@ -26,6 +26,7 @@ ACTOR_ADMISSION_GENERATED="${ROOT_DIR}/target/lean-proof/ActorAdmissionGenerated
 ACTOR_VISIT_GENERATED="${ROOT_DIR}/target/lean-proof/ActorVisitProgressGenerated.lean"
 ACTOR_MUTATION_GENERATED="${ROOT_DIR}/target/lean-proof/ActorMutationCoverageGenerated.lean"
 SOURCE_INTERVAL_GENERATED="${ROOT_DIR}/target/lean-proof/SourceHandoffIntervalGenerated.lean"
+FUTURE_PREDECESSOR_GENERATED="${ROOT_DIR}/target/lean-proof/OwnedFuturePredecessorGenerated.lean"
 SEND_COMPLETION_GENERATED="${ROOT_DIR}/target/lean-proof/SendCompletionGenerated.lean"
 ACTOR_REENTRY_COMMIT_GENERATED="${ROOT_DIR}/target/lean-proof/ActorReentryCommitGenerated.lean"
 ACTOR_PARALLEL_REENTRY_GENERATED="${ROOT_DIR}/target/lean-proof/ActorParallelReentryGenerated.lean"
@@ -58,7 +59,7 @@ bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" build-serial "${PROOF_
 bash "${ROOT_DIR}/.github/scripts/check_lean_claim_surface.sh"
 static_audit_output="$(run_audit \
   theorem-inventory \
-  --static "${PROOF_DIR}" "${STATIC_CLAIM_SNAPSHOT}" 975 573 290 112)"
+  --static "${PROOF_DIR}" "${STATIC_CLAIM_SNAPSHOT}" 978 576 290 112)"
 printf '%s\n' "${static_audit_output}"
 printf '%s\n' "${static_audit_output}" | bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard markers static
 bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" theorem-inventory \
@@ -73,6 +74,7 @@ rm -f "${ACTOR_ADMISSION_GENERATED}"
 rm -f "${ACTOR_VISIT_GENERATED}"
 rm -f "${ACTOR_MUTATION_GENERATED}"
 rm -f "${SOURCE_INTERVAL_GENERATED}"
+rm -f "${FUTURE_PREDECESSOR_GENERATED}"
 rm -f "${SEND_COMPLETION_GENERATED}"
 rm -f "${LOCAL_RETURN_GENERATED}"
 rm -f "${PENDING_BORROW_GENERATED}"
@@ -98,6 +100,12 @@ CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --li
 bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${SOURCE_INTERVAL_GENERATED}" "measured source handoff interval"
 run_audit generated-axioms --kernel "${SOURCE_INTERVAL_GENERATED}" "${PROOF_DIR}" \
   "${PROOF_DIR}/source-interval-generated-claim-surface.txt" 19
+CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib \
+  g::role_projection::tests::send_wait::an_owned_send_rejects_a_predecessor_that_needs_its_payload_view \
+  -- --exact
+bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${FUTURE_PREDECESSOR_GENERATED}" "actual owned future prerequisite"
+run_audit generated-axioms --kernel "${FUTURE_PREDECESSOR_GENERATED}" "${PROOF_DIR}" \
+  "${PROOF_DIR}/owned-future-predecessor-generated-claim-surface.txt" 4
 CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib \
   g::role_projection::tests::visit_progress::a_complete_actor_visit_exposes_real_parallel_admissions_and_completion \
   -- --exact

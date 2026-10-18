@@ -102,6 +102,7 @@ fn a_send_waits_for_another_views_predecessor_without_sending_early() {
 
 #[test]
 fn an_owned_send_rejects_a_predecessor_that_needs_its_payload_view() {
+    use crate::endpoint::proof_snapshot::{actor_snapshot, view_tag};
     let () = g::ProgramProjection::<DbLoan, 8>::VALIDATION;
     let owner_program = crate::global::role_program::role_program_from_image::<0>(
         &RoleProjection::<0, DbLoan, 8>::IMAGE_REF,
@@ -118,9 +119,10 @@ fn an_owned_send_rejects_a_predecessor_that_needs_its_payload_view() {
     runtime.block_on(async {
         let mut slab = std::vec![0; 64 * 1024];
         let mut storage = SessionKitStorage::uninit();
+        let network = TestTransport::new();
         let rv = storage
             .init()
-            .rendezvous(&mut slab, TestTransport::new())
+            .rendezvous(&mut slab, network.clone())
             .unwrap();
         let sid = SessionId::new(850);
         let mut owner = rv.enter(sid, &owner_program).unwrap();
@@ -128,14 +130,90 @@ fn an_owned_send_rejects_a_predecessor_that_needs_its_payload_view() {
         let mut worker = rv.enter(sid, &worker_program).unwrap();
         owner.send::<Loan>(db).await.unwrap();
         let db = worker.recv::<Loan>().await.unwrap();
+        // SAFETY: these views retain the same pinned TestTransport actor.
+        let before = unsafe { actor_snapshot(&worker) };
+        let tag = view_tag(&db);
+        assert_eq!(before.views.iter().find(|view| view.role == 10).unwrap().operation,
+            "Idle");
         // DB still has Read/Value work. This future owns DB, so that work
         // cannot run elsewhere and waiting would hide a localside mistake.
+        {
         let mut early = pin!(worker.send::<Loan>(db));
+        // SAFETY: the future owns DB and retains the same pinned actor. No
+        // reference to its borrowed carrier or private payload is fabricated.
+        let sealed = unsafe { tag.actor_call_cut::<TestTransport>() };
+        assert!(sealed.lease_available);
+        assert_eq!(sealed.fault, None);
+        assert!(unsafe { tag.matches_header() });
         let poll = early.as_mut().poll(&mut Context::from_waker(Waker::noop()));
         assert!(
             matches!(poll, core::task::Poll::Ready(Err(_))),
             "an early return must fail: {poll:?}"
         );
+        // Observe the first fault while the future still owns DB. A later
+        // payload Drop must not be the reason this call appears to have failed.
+        let rejected = unsafe { tag.actor_call_cut::<TestTransport>() };
+        assert!(rejected.lease_available);
+        assert!(rejected.fault.is_some());
+        assert!(network.queue_is_empty());
+        }
+        // SAFETY: WORKER still retains the original pinned actor after the
+        // rejected future and its payload have been dropped.
+        let after = unsafe { actor_snapshot(&worker) };
+        assert_eq!(before.counter, after.counter);
+        assert_eq!(before.completion_mutations, after.completion_mutations);
+        assert!(before.steps.iter().map(|step| step.done)
+            .eq(after.steps.iter().map(|step| step.done)));
+        assert_eq!(before.choices, after.choices);
+
+        #[cfg(not(miri))]
+        {
+            use crate::test_support::{lean_choreo::LeanChoreo, lean_descriptor::descriptor_source};
+            let choreo = DbLoan::lean_source();
+            let image = descriptor_source(RoleDescriptorRef::from_resident(
+                &RoleProjection::<1, DbLoan, 8>::IMAGE_REF,
+            ));
+            let source = std::format!(r#"import Hibana.MeasuredResourceAvailability
+open Hibana Hibana.EndpointDelegation
+def futureChoreo : Choreo := {choreo}
+def futureImage : RustDescriptorImage := {image}
+def beforePoll : ActorProgressObservation := {snapshot}
+def futureData := (futureImage.decodeActorOrder? futureChoreo).get (by decide)
+def futurePath := (futureData.normalized.paths[0]?).get (by decide)
+def useRow := (futureData.rows[1]?).get (by decide)
+def transfer := (futureData.rows[3]?).get (by decide)
+def useBinding := ((futurePath.bindings.find? fun entry => entry.1 == useRow.actionId.event).get (by decide)).2
+def loan := ((futurePath.bindings.find? fun entry => entry.1 == transfer.actionId.event).get (by decide)).2
+def resource : EndpointKey := {{ component := 0, role := 10 }}
+
+theorem actualUnpolledPayloadHasAnIdleIssuedHeader :
+    beforePoll.viewIssued resource.role = true ∧
+      (observedActorView? beforePoll resource.role).map (·.operation) = some .idle := by decide
+theorem actualResourceUseIsReadyBeforeThePrematureReturn :
+    sourceRowReady futureData futurePath beforePoll useRow = true := by decide
+theorem actualPendingReturnHasItsHeldPayloadPredecessor :
+    sourceHeldViewPending futureData futurePath beforePoll transfer resource.role = true :=
+  a_ready_resource_use_blocks_a_pending_handoff_with_its_held_payload
+    (image := futureImage) (choreo := futureChoreo) (key := resource)
+    (data := futureData) (path := futurePath) (transfer := transfer)
+    (useRow := useRow) (snapshot := beforePoll)
+    (loan := loan) (useBinding := useBinding)
+    (by decide) (Option.some_get (x := futureImage.decodeActorOrder? futureChoreo) (by decide)).symm
+    (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+    (Or.inl (by decide)) (by decide) (by decide) (by decide) (by decide)
+theorem actualPendingReturnHasAConcreteRequiredPredecessor :
+    ∃ prior binding, prior ∈ futureData.activeRows futurePath ∧
+      beforePoll.doneState.done prior.eventId = false ∧
+      prior.eventId ∈ futureData.sourcePredecessors futurePath transfer.eventId ∧
+      futurePath.bindings.find? (fun entry => entry.1 == prior.actionId.event) =
+        some (prior.actionId.event, binding) ∧
+      sourceActionRequiresView resource.role binding prior.actionId.side = true :=
+  a_source_held_view_wait_has_an_unfinished_required_predecessor actualPendingReturnHasItsHeldPayloadPredecessor
+"#, snapshot = super::commit::observation_source(&before));
+            let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/lean-proof");
+            std::fs::create_dir_all(&directory).unwrap();
+            std::fs::write(directory.join("OwnedFuturePredecessorGenerated.lean"), source).unwrap();
+        }
     });
 }
 
