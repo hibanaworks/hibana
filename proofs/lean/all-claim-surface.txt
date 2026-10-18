@@ -1017,6 +1017,25 @@ Hibana.EndpointDelegation.withOwner_same : ∀ (owners : Hibana.EndpointDelegati
                         (@Prod.snd.{0, 0} Hibana.ActorProgressObservation Nat
                           ((@Prod.fst.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance) last).actors
                             actor))))))
+@Hibana.a_distributed_receipt_word_is_the_exact_accepted_fifo_prefix : ∀ {images : Nat → Hibana.RustDescriptorImage}
+  {choreo : Hibana.Choreo} {session : Nat} {initial : Nat → Prod.{0, 0} Hibana.ActorProgressObservation Nat}
+  {last : Prod.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance)}
+  {records : List.{0} (Prod.{0, 0} Nat Hibana.ActorCommitRecord)},
+  Hibana.DistributedSourceExecution images choreo session
+      (@Prod.mk.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance)
+        (Hibana.DistributedSourceCut.initial initial) (@List.nil.{0} Hibana.SourceAcceptance))
+      last records →
+    @Exists.{1} (List.{0} Hibana.SourceAcceptance) fun receipts =>
+      And
+        (@Eq.{1} (List.{0} Nat) (Hibana.receivedSourceWord images choreo records)
+          (@List.map.{0, 0} Hibana.SourceAcceptance Nat Hibana.SourceAcceptance.event receipts))
+        (∀ (channel : Hibana.TransportChannel),
+          @Eq.{1} (List.{0} Hibana.SourceAcceptance) (Hibana.sourceChannelEntries receipts channel)
+            (@List.take.{0} Hibana.SourceAcceptance
+              ((@Prod.fst.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance) last).carriers
+                  channel).delivered
+              (Hibana.sourceChannelEntries
+                (@Prod.snd.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance) last) channel)))
 @Hibana.a_distributed_source_execution_projects_each_actual_actor_history : ∀
   {images : Nat → Hibana.RustDescriptorImage} {choreo : Hibana.Choreo} {session : Nat}
   {first last : Prod.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance)}
@@ -2108,6 +2127,76 @@ Hibana.a_pending_payload_requires_its_own_send : ∀ (resource : Nat) (sent : Op
                       records))
                   (@List.length.{0} Nat (@Hibana.SourceOrderGroup.rows (images actor) choreo group))))
               (@some.{0} Nat record.step.event))
+@Hibana.a_prospective_fifo_head_has_its_actual_receipt_word_ordinal : ∀ {images : Nat → Hibana.RustDescriptorImage}
+  {choreo : Hibana.Choreo} {session : Nat} {initial : Nat → Prod.{0, 0} Hibana.ActorProgressObservation Nat}
+  {last : Prod.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance)}
+  {records : List.{0} (Prod.{0, 0} Nat Hibana.ActorCommitRecord)} {channel : Hibana.TransportChannel}
+  {next : Hibana.TransportState} {frame : Hibana.TransportFrame},
+  Hibana.DistributedSourceExecution images choreo session
+      (@Prod.mk.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance)
+        (Hibana.DistributedSourceCut.initial initial) (@List.nil.{0} Hibana.SourceAcceptance))
+      last records →
+    @Eq.{1} Hibana.TransportPoll
+        ((@Prod.fst.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance) last).carriers
+            channel).pollReceive
+        (Hibana.TransportPoll.delivered frame next) →
+      @Exists.{1} (List.{0} Hibana.SourceAcceptance) fun receipts =>
+        @Exists.{1} Hibana.ElasticAdmissionHistory fun history =>
+          @Exists.{1} Hibana.SourceSendAdmission fun sample =>
+            @Exists.{1} Nat fun event =>
+              @Exists.{1} Hibana.ElasticOccurrenceKey fun key =>
+                And
+                  (@Eq.{1} (List.{0} Nat) (Hibana.receivedSourceWord images choreo records)
+                    (@List.map.{0, 0} Hibana.SourceAcceptance Nat Hibana.SourceAcceptance.event receipts))
+                  (And
+                    (@Eq.{1} (List.{0} Hibana.SourceAcceptance) (Hibana.sourceChannelEntries receipts channel)
+                      (@List.take.{0} Hibana.SourceAcceptance
+                        ((@Prod.fst.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance) last).carriers
+                            channel).delivered
+                        (Hibana.sourceChannelEntries
+                          (@Prod.snd.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance) last)
+                          channel)))
+                    (And
+                      (Hibana.SendAdmissionTrace choreo session
+                        ((@Prod.fst.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance) last).carriers
+                          channel)
+                        history
+                        (Hibana.sourceChannelRecords
+                          (@Prod.snd.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance) last)
+                          channel))
+                      (And
+                        (@Eq.{1} (Option.{0} Hibana.ElasticOccurrenceKey)
+                          (@getElem?.{0, 0, 0} (List.{0} Hibana.ElasticOccurrenceKey) Nat Hibana.ElasticOccurrenceKey
+                            (fun as i => @LT.lt.{0} Nat instLTNat i (@List.length.{0} Hibana.ElasticOccurrenceKey as))
+                            (@List.instGetElem?NatLtLength.{0} Hibana.ElasticOccurrenceKey) history.accepted
+                            ((@Prod.fst.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance)
+                                    last).carriers
+                                channel).delivered)
+                          (@some.{0} Hibana.ElasticOccurrenceKey key))
+                        (And
+                          (@Eq.{1} (Option.{0} (Prod.{0, 0} Hibana.SourceSendAdmission Nat))
+                            (@getElem?.{0, 0, 0} (List.{0} (Prod.{0, 0} Hibana.SourceSendAdmission Nat)) Nat
+                              (Prod.{0, 0} Hibana.SourceSendAdmission Nat)
+                              (fun as i =>
+                                @LT.lt.{0} Nat instLTNat i
+                                  (@List.length.{0} (Prod.{0, 0} Hibana.SourceSendAdmission Nat) as))
+                              (@List.instGetElem?NatLtLength.{0} (Prod.{0, 0} Hibana.SourceSendAdmission Nat))
+                              (Hibana.sourceChannelRecords
+                                (@Prod.snd.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance) last)
+                                channel)
+                              ((@Prod.fst.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance)
+                                      last).carriers
+                                  channel).delivered)
+                            (@some.{0} (Prod.{0, 0} Hibana.SourceSendAdmission Nat)
+                              (@Prod.mk.{0, 0} Hibana.SourceSendAdmission Nat sample event)))
+                          (And (@Eq.{1} Bool (sample.check choreo session) true)
+                            (And (@Eq.{1} (Option.{0} Nat) sample.effIndex? (@some.{0} Nat event))
+                              (And (sample.wire.identifies frame)
+                                (And (@Eq.{1} Nat key.globalId event)
+                                  (@Eq.{1} Nat key.iteration
+                                    (@List.count.{0} Nat (@instBEqOfDecidableEq.{0} Nat instDecidableEqNat) event
+                                      (@List.map.{0, 0} Hibana.SourceAcceptance Nat Hibana.SourceAcceptance.event
+                                        (Hibana.sourceChannelEntries receipts channel))))))))))))
 @Hibana.a_prospective_owned_receipt_has_its_distributed_fifo_source_instance : ∀
   {images : Nat → Hibana.RustDescriptorImage} {choreo : Hibana.Choreo} {session : Nat}
   {initial : Nat → Prod.{0, 0} Hibana.ActorProgressObservation Nat}

@@ -77,8 +77,29 @@ logicalClassIsLargerThanEitherPhysicalSenderClass : List.map distributedImage0.e
   List.map distributedImage1.eventEffIndex? (distributedImage1.frameClassRows distributedFrameKey1_1) = [some 3] ∧
     List.map distributedImage3.eventEffIndex? (distributedImage3.frameClassRows distributedFrameKey3_0) =
       [some 0, some 3]
+logicalDeliveredRequestWordKeepsBothHolders : ∃ receipts,
+  receivedSourceWord distributedImages distributedChoreo distributedRecords = List.map SourceAcceptance.event receipts ∧
+    List.map SourceAcceptance.event (sourceChannelEntries receipts distributedChannel0) = [0, 3, 0, 3]
+@logicalReceiptPrefixesAtEveryBoundary : ∀ {cut : DistributedSourceCut} {entries : List SourceAcceptance}
+  {records : List (Nat × ActorCommitRecord)},
+  DistributedSourceExecution distributedImages distributedChoreo 9064 (distributedCut0, distributedEntries0)
+      (cut, entries) records →
+    ∃ receipts,
+      receivedSourceWord distributedImages distributedChoreo records = List.map SourceAcceptance.event receipts ∧
+        ∀ (channel : TransportChannel),
+          sourceChannelEntries receipts channel =
+            List.take (cut.carriers channel).delivered (sourceChannelEntries entries channel)
 logicalRequestsHaveBothPhysicalSenders : List.map (fun entry => entry.sample.image.role)
       (sourceChannelEntries distributedEntries36 distributedChannel0) =
     [0, 1, 0, 1] ∧
   List.map (fun entry => entry.fst.effIndex?) (sourceChannelRecords distributedEntries36 distributedChannel0) =
     [some 0, some 3, some 0, some 3]
+@logicalSecondHolderHeadGetsItsOrdinalBeforePublication : ∀ {frame : TransportFrame} {next : TransportState},
+  (distributedCut28.carriers distributedChannel0).pollReceive = TransportPoll.delivered frame next →
+    ∃ receipts history key,
+      receivedSourceWord distributedImages distributedChoreo (List.take 18 distributedRecords) =
+          List.map SourceAcceptance.event receipts ∧
+        SendAdmissionTrace distributedChoreo 9064 (distributedCut28.carriers distributedChannel0) history
+            (sourceChannelRecords distributedEntries28 distributedChannel0) ∧
+          history.accepted[3]? = some key ∧
+            key.globalId = 3 ∧ key.iteration = 1 ∧ distributedSend18.wire.identifies frame

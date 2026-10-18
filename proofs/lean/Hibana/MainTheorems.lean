@@ -38,6 +38,7 @@ import Hibana.DistributedSourceExecution
 import Hibana.DistributedChoiceHistory
 import Hibana.SourceFrameWord
 import Hibana.SourceAcceptedWord
+import Hibana.SourceReceiptWord
 import Hibana.SourcePublicationPrefix
 import Hibana.GlobalSemantics
 import Hibana.GlobalAllocationCorrectness

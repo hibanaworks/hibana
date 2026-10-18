@@ -237,7 +237,7 @@ fn a_logical_wire_word_keeps_its_order_when_the_sender_changes_holder() {
                     &operations,
                     &std::vec![(0, 0); operations.len()],
                 );
-                source.insert_str(0, "import Hibana.SourceAcceptedWord\n");
+                source.insert_str(0, "import Hibana.SourceReceiptWord\n");
                 for actor in [0, 1, 3] {
                     writeln!(source, r#"
 private def logicalActorGroup{actor} : SourceOrderGroup distributedImage{actor} distributedChoreo := {{
@@ -282,6 +282,28 @@ theorem logicalActor{actor}OutstandingSourceClock
 "#).unwrap();
                 }
                 source.push_str(r#"
+theorem logicalReceiptPrefixesAtEveryBoundary
+    {cut : DistributedSourceCut} {entries : List SourceAcceptance}
+    {records : List (Nat × ActorCommitRecord)}
+    (history : DistributedSourceExecution distributedImages distributedChoreo 9064
+      (distributedCut0, distributedEntries0) (cut, entries) records) :
+    ∃ receipts : List SourceAcceptance,
+      receivedSourceWord distributedImages distributedChoreo records = receipts.map SourceAcceptance.event ∧
+      ∀ channel, sourceChannelEntries receipts channel =
+        (sourceChannelEntries entries channel).take (cut.carriers channel).delivered :=
+  a_distributed_receipt_word_is_the_exact_accepted_fifo_prefix history
+
+theorem logicalDeliveredRequestWordKeepsBothHolders :
+    ∃ receipts : List SourceAcceptance,
+      receivedSourceWord distributedImages distributedChoreo distributedRecords =
+        receipts.map SourceAcceptance.event ∧
+      (sourceChannelEntries receipts distributedChannel0).map SourceAcceptance.event = [0, 3, 0, 3] := by
+  obtain ⟨receipts, word, prefixes⟩ :=
+    a_distributed_receipt_word_is_the_exact_accepted_fifo_prefix distributedActualExecution
+  refine ⟨receipts, word, ?_⟩
+  rw [prefixes distributedChannel0]
+  decide
+
 theorem logicalRequestsHaveBothPhysicalSenders :
     ((sourceChannelEntries distributedEntries36 distributedChannel0).map
       (fun entry => entry.sample.image.role)) = [0, 1, 0, 1] ∧
@@ -292,6 +314,34 @@ theorem logicalClassIsLargerThanEitherPhysicalSenderClass :
     (distributedImage0.frameClassRows distributedFrameKey0_0).map distributedImage0.eventEffIndex? = [some 0] ∧
     (distributedImage1.frameClassRows distributedFrameKey1_1).map distributedImage1.eventEffIndex? = [some 3] ∧
     (distributedImage3.frameClassRows distributedFrameKey3_0).map distributedImage3.eventEffIndex? = [some 0, some 3] := by decide
+"#);
+                writeln!(source, "\nprivate theorem logicalBeforeSecondHolderReceipt : DistributedSourceExecution distributedImages distributedChoreo 9064\n  (distributedCut0, distributedEntries0) (distributedCut28, distributedEntries28) (distributedRecords.take 18) := by\n  exact {}\n",
+                    (1..=28).fold(".refl".into(), |proof, boundary| std::format!("(.tail {proof} distributedStep{boundary})"))).unwrap();
+                source.push_str(r#"
+theorem logicalSecondHolderHeadGetsItsOrdinalBeforePublication
+    {frame : TransportFrame} {next : TransportState}
+    (received : (distributedCut28.carriers distributedChannel0).pollReceive = .delivered frame next) :
+    ∃ receipts : List SourceAcceptance, ∃ history : ElasticAdmissionHistory, ∃ key : ElasticOccurrenceKey,
+      receivedSourceWord distributedImages distributedChoreo (distributedRecords.take 18) =
+        receipts.map SourceAcceptance.event ∧
+      SendAdmissionTrace distributedChoreo 9064 (distributedCut28.carriers distributedChannel0)
+        history (sourceChannelRecords distributedEntries28 distributedChannel0) ∧
+      history.accepted[3]? = some key ∧ key.globalId = 3 ∧ key.iteration = 1 ∧
+      distributedSend18.wire.identifies frame := by
+  obtain ⟨receipts, history, sample, event, key, word, deliveredPrefix, trace, keyAt, recordAt,
+    checked, sourceAt, identity, globalAt, ordinal⟩ :=
+    a_prospective_fifo_head_has_its_actual_receipt_word_ordinal logicalBeforeSecondHolderReceipt received
+  have actualAt : (sourceChannelRecords distributedEntries28 distributedChannel0)[
+      (distributedCut28.carriers distributedChannel0).delivered]? = some (distributedSend18, 3) := by decide
+  have same := Option.some.inj (recordAt.symm.trans actualAt)
+  have sampleSame : sample = distributedSend18 := congrArg Prod.fst same
+  have eventSame : event = 3 := congrArg Prod.snd same
+  have pastCount : ((sourceChannelEntries receipts distributedChannel0).map SourceAcceptance.event).count event = 1 := by
+    rw [deliveredPrefix, eventSame]
+    decide
+  refine ⟨receipts, history, key, word, trace, keyAt, ?_, ordinal.trans pastCount, ?_⟩
+  · exact globalAt.trans eventSame
+  · exact sampleSame ▸ identity
 "#);
                 let directory =
                     std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/lean-proof");

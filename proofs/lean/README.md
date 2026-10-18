@@ -224,6 +224,17 @@ extends this current word before publication. No successful post-operation
 snapshot or callable-value premise is needed. Together with the publication
 prefix theorem, this covers the one outstanding accepted operation.
 
+`SourceReceiptWord.lean` reconstructs the complete source receipt word from
+that same distributed execution. Its projection on each physical direction
+is exactly the delivered prefix of the full acceptance list. The proof retains
+ordinary frames and owned transfers together, and permits changes of physical
+holder and independent branch and repetition histories. For a new raw FIFO head,
+its occurrence ordinal is the count of that source occurrence in the actual
+past receipt word. The corresponding admission trace and indexed occurrence
+are retained in the result. No current receive-pair check, successful receiver
+snapshot or sender-publication barrier is an input. The earlier receive-pair
+checks remain an explicit correspondence obligation in the shared history.
+
 The logical-view fixture drives two rounds of a six-message body over three
 separate runtimes, with all 24 Endpoint operations written directly. Its
 resource requests have byte-identical headers while their physical senders
@@ -235,6 +246,10 @@ Checked local source groups cover each participant's request/reply/loan/return
 sequence for arbitrary successful-boundary prefixes, including an unpublished
 acceptance. They provide the local pieces for handoff composition; the finite
 observed sequence alone is not a general theorem of logical-resource progress.
+The receipt-word proof is also instantiated for arbitrary prefixes of this
+protocol. At the second worker-held request, before that sender's publication,
+the prospective FIFO head gets ordinal one from the three preceding request
+receipts. This qualification does not use that head's eventual receive commit.
 
 Composition of these results across different physical holders and
 branch-dependent classes remains required. Static class facts are not yet
