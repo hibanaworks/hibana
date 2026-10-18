@@ -1,3 +1,12 @@
+actualReadyReadHasItsCarrierValueFromTheHeaderTransferHistory : ∃ view,
+  Hibana.observedActorView? received.snapshot readRow.view = some view ∧
+    Hibana.observedResourceTag? received.snapshot readRow.view = some (received.snapshot.actor, view.header) ∧
+      Hibana.TransferValueLocated (received.snapshot.actor, view.header) dbAtWorker
+actualReadyReturnHasItsPayloadValueFromTheHeaderTransferHistory : ∃ view,
+  Hibana.observedActorView? joined.snapshot resourceKey.role = some view ∧
+    Hibana.observedResourceTag? joined.snapshot resourceKey.role = some (joined.snapshot.actor, view.header) ∧
+      Hibana.TransferValueLocated (joined.snapshot.actor, view.header) dbAtWorker
+actualReturnedHeaderRealizesItsExactValue : Hibana.TransferValueLocated returnedDbTag dbAtOwner
 @arbitraryLiveReadSuffixKeepsTheExactValue : ∀ {View Frame : Type} {value : View}
   {first final : Hibana.EndpointTransfer.Observation View Frame},
   Hibana.EndpointTransfer.Execution first final →
@@ -151,6 +160,10 @@ missingPayloadViewSnapshotValid : missingPayloadView.snapshot.valid = true
 observedCommitHistoryChecked : Hibana.actorCommitHistoryCheck admissionImage admissionChoreo 9053 initial.snapshot
     returned.snapshot observedCommits =
   true
+observedFirstLoanHasItsCheckedHeaderTransferHistory : Hibana.ResourceHeaderExecution dbHeaders0 dbStart dbHeaders2
+  dbAtWorker
+observedInitialHeadersIdentifyTheSoleInitialTag : ∀ (value : Nat × Nat × Nat × Nat),
+  dbHeaders0 value ↔ value = initialDbTag
 observedReadyReadHasTheWireCheckedReceipt : ∃ earlier record later,
   [observedCommit0] = earlier ++ record :: later ∧
     record.step.event = receiptRow.eventId ∧
@@ -164,16 +177,27 @@ observedReadyReadHasTheWireCheckedReceipt : ∃ earlier record later,
                   next ∈ later →
                     next.step.before.doneState.done receiptRow.eventId = true ∧
                       next.step.after.doneState.done receiptRow.eventId = true
+observedReadyReturnKeepsThatHeaderTransferHistory : Hibana.ResourceHeaderExecution dbHeaders0 dbStart dbHeaders3
+  dbAtWorker
 observedReceiptHistoryChecked : Hibana.actorCommitHistoryCheck admissionImage admissionChoreo 9053 initial.snapshot
     received.snapshot [observedCommit0] =
   true
+observedReturnLoanHasItsCheckedHeaderTransferHistory : Hibana.ResourceHeaderExecution dbHeaders0 dbStart dbHeaders5
+  dbAtOwner
 omittedReceiptCommitRejected : Hibana.actorCommitHistoryCheck admissionImage admissionChoreo 9053 initial.snapshot
     returned.snapshot observedCommits.tail =
   false
+ownerAcceptChecked : ownerAccept.ownedCheck ownerImage admissionChoreo observedCommit0.wire 9053 = true
+ownerReturnChecked : ownerReturn.ownedCheck ownerImage admissionChoreo observedCommit3.wire 9053 = true
 prematureReturnRejected : (have __src := received;
       { snapshot := __src.snapshot, pathIndex := __src.pathIndex, admitted := received.admitted.set 3 true }).check
     admissionImage admissionChoreo =
   false
+privatePayloadAndAcceptedFramesRemainDistinctFromApplicationValues : dbOwnerSealed.usable = [] ∧
+  dbOwnerSealed.preparing = [initialDbTag] ∧
+    dbOwnerAccepted.usable = [] ∧
+      dbOwnerAccepted.inFlight = [observedCommit0.wire] ∧
+        initialDbTag ≠ receivedDbTag ∧ receivedDbTag ≠ returnedDbTag ∧ initialDbTag ≠ returnedDbTag
 readyReadExcludesReturnInEverySnapshot : ∀ (snapshot : Hibana.ActorProgressObservation),
   Hibana.sourceRowReady useData usePath snapshot readRow = true →
     Hibana.sourceRowReady useData usePath snapshot returnRow = false
@@ -213,6 +237,15 @@ returnedSourceReadiness : ∃ data path,
             returned.admitted[row.eventId]? = some (Hibana.sourceRowReady data path returned.snapshot row) ∧
               (Hibana.sourceRowReady data path returned.snapshot row = true →
                 Hibana.sourceRowViewsIssued path returned.snapshot row = true)
+theHeaderModelPermitsTheNativePreemptionSchedule : ∃ state,
+  Hibana.ResourceHeaderExecution (fun value => value = initialDbTag) dbStart (fun value => value = initialDbTag) state ∧
+    state.usable = [] ∧
+      state.preparing = [] ∧
+        state.inFlight = [observedCommit3.wire] ∧ state.acceptedFutures = [initialDbTag] ∧ state.authorityCount = 1
+theModelPreemptionCutHasOnlyFrameAuthority : ∃ state,
+  Hibana.ResourceHeaderExecution (fun value => value = initialDbTag) dbStart (fun value => value = initialDbTag) state ∧
+    Hibana.TransferFrameLocated observedCommit3.wire state ∧
+      initialDbTag ∈ state.acceptedFutures ∧ ¬Hibana.TransferValueLocated initialDbTag state
 unrecordedGapCompletionRejected : Hibana.actorCommitHistoryCheck admissionImage admissionChoreo 9053 initial.snapshot
     received.snapshot [] =
   false

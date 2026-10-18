@@ -428,6 +428,38 @@ deployment supplies a valid physical binding, or that its carrier refines the
 profile. Source/continuation correspondence and distributed progress remain
 separate obligations; public owned projection is still closed.
 
+`ResourceHeaderTransfer.lean` derives the exact raw header changes from checked
+owned commits and retirement. It also shows that the actual prepared reentry
+base preserves these tags. Tags include the actor and existing role/run/nonce
+header. They exclude temporary operation phases: an unpolled send future
+already owns its payload while that phase can still be idle.
+
+`ResourceValueCorrespondence.lean` connects complete header/transfer histories
+to actual custody. An issued raw header can name an application value, a
+private preparing value, or an accepted sender witness. That last case has
+zero operation authority. Transport acceptance and sender local publication
+are separate boundaries. The receiver can use, return and retire its future
+before the sender publishes its commit; the old sender header remains live
+while the returned frame carries the sole authority. A general counterexample
+theorem rejects the stronger claim that every live header names local authority.
+
+Source-ready admission supplies the exact observed tag and this custody
+alternative. At a cut with no accepted witness for that tag, the complete
+history derives its actual value. Witness absence is obtained from the
+execution, not added to runtime admission or assumed for all schedules. The
+two-runtime admission artifact checks both transfers, their local publication
+and the resulting carrier/payload values. The existing native preemption test
+checks the legal receiver-first schedule with a separate process. A second
+native test uses OS queues between two local runtimes: a completed resource
+retires, independent communication succeeds, and a peer's next rolled receive
+ends at the carrier deadline with the first fault preserved. That fixture
+qualifies a deadline profile, not instantaneous peer closure.
+
+These proofs still require complete implementation observations, affine
+carrier delivery and the physical binding contract. They do not turn local
+header existence into general source progress, or complete the distributed
+delegation qualification. Public owned projection remains closed.
+
 `OwnedRetirement.lean` checks retirement against the global source for the
 current selected visit. It considers every path compatible with the committed
 choices. A view is needed for its own send/receive or as the owned payload of

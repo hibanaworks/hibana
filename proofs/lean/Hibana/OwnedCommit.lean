@@ -94,6 +94,42 @@ def ActorCommitObservation.ownedCheck
     | none => false
     | some facts => facts.wireMatches sample wire session
 
+/-- Owned facts retain the same decoded source row and the actual after-view.
+This connects a checked wire boundary to its header update without selecting
+an unrelated binding or inventing a receiver tag. -/
+theorem decoded_owned_facts_retain_the_source_row_and_view
+    {sample : ActorCommitObservation} {image : RustDescriptorImage} {choreo : Choreo}
+    {facts : OwnedCommitFacts}
+    (decoded : sample.ownedFacts? image choreo = some facts) :
+    ∃ data path row entry,
+      image.decodeActorOrder? choreo = some data ∧
+      data.normalized.paths[sample.pathIndex]? = some path ∧
+      data.rows[sample.event]? = some row ∧
+      path.bindings.find? (fun entry => entry.1 == row.actionId.event) = some entry ∧
+      entry.2.message.payload = .endpoint facts.resource ∧ row.actionId.side = facts.side ∧
+      facts.binding = entry.2 ∧
+      observedActorView? sample.after facts.resource.role = some facts.afterView := by
+  change (image.decodeActorOrder? choreo).bind _ = some facts at decoded
+  obtain ⟨data, dataAt, remaining⟩ := Option.bind_eq_some_iff.mp decoded
+  change data.normalized.paths[sample.pathIndex]?.bind _ = some facts at remaining
+  obtain ⟨path, pathAt, remaining⟩ := Option.bind_eq_some_iff.mp remaining
+  change data.rows[sample.event]?.bind _ = some facts at remaining
+  obtain ⟨row, rowAt, remaining⟩ := Option.bind_eq_some_iff.mp remaining
+  change (path.bindings.find? (fun entry => entry.1 == row.actionId.event)).bind _ =
+    some facts at remaining
+  obtain ⟨entry, entryAt, remaining⟩ := Option.bind_eq_some_iff.mp remaining
+  cases payloadAt : entry.2.message.payload with
+  | wire schema => simp only [payloadAt] at remaining; contradiction
+  | endpoint resource =>
+      simp only [payloadAt] at remaining
+      obtain ⟨eff, _, remaining⟩ := Option.bind_eq_some_iff.mp remaining
+      obtain ⟨lane, _, remaining⟩ := Option.bind_eq_some_iff.mp remaining
+      obtain ⟨label, _, remaining⟩ := Option.bind_eq_some_iff.mp remaining
+      obtain ⟨view, viewAt, written⟩ := Option.bind_eq_some_iff.mp remaining
+      have same := Option.some.inj written
+      subst facts
+      exact ⟨data, path, row, entry, dataAt, pathAt, rowAt, entryAt, payloadAt, rfl, rfl, viewAt⟩
+
 /-- Successful observations connect source ordering and view publication to
 the exact accepted wire identity and envelope. Completeness of observations
 and physical binding/carrier correctness remain implementation premises. -/

@@ -295,6 +295,155 @@ Hibana.EndpointDelegation.withOwner_same : ∀ (owners : Hibana.EndpointDelegati
           (@List.take.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding) index run.bindings)
           (@Prod.mk.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding previousEvent previous) →
         @LT.lt.{0} Nat instLTNat previousEvent event
+@Hibana.a_checked_owned_receive_supplies_its_transfer_header_evidence : ∀ {sample : Hibana.ActorCommitObservation}
+  {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo} {wire : Hibana.OwnedWireObservation} {session : Nat}
+  {facts : Hibana.OwnedCommitFacts} {Frame : Type},
+  @Eq.{1} Bool (sample.ownedCheck image choreo wire session) true →
+    @Eq.{1} (Option.{0} Hibana.OwnedCommitFacts) (sample.ownedFacts? image choreo)
+        (@some.{0} Hibana.OwnedCommitFacts facts) →
+      @Eq.{1} Hibana.EndpointDelegation.Side facts.side Hibana.EndpointDelegation.Side.receive →
+        ∀ (other : Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)) → Prop)
+          (state : Hibana.EndpointTransfer.Observation (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) Frame)
+          (rest : List.{0} Frame) (frame : Frame),
+          have fresh :=
+            @Prod.mk.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)) sample.after.actor facts.afterView.header;
+          have before :=
+            @Hibana.EndpointTransfer.Observation.mk (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) Frame
+              (@Hibana.EndpointTransfer.Observation.usable (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)))
+                Frame state)
+              (@Hibana.EndpointTransfer.Observation.preparing (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)))
+                Frame state)
+              (@Hibana.EndpointTransfer.Observation.acceptedFutures
+                (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) Frame state)
+              (@List.cons.{0} Frame frame rest);
+          have after :=
+            @Hibana.EndpointTransfer.Observation.mk (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) Frame
+              (@List.cons.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) fresh
+                (@Hibana.EndpointTransfer.Observation.usable (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)))
+                  Frame state))
+              (@Hibana.EndpointTransfer.Observation.preparing (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)))
+                Frame state)
+              (@Hibana.EndpointTransfer.Observation.acceptedFutures
+                (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) Frame state)
+              rest;
+          And
+            (@Hibana.EndpointTransfer.Step (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) Frame
+              Hibana.EndpointTransfer.Action.receive before after)
+            (@Hibana.ResourceHeaderStepEvidence (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) Frame
+              Hibana.EndpointTransfer.Action.receive before after
+              (fun value =>
+                Or
+                  (@Eq.{1} (Option.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))))
+                    (Hibana.observedResourceTag? sample.before facts.resource.role)
+                    (@some.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) value))
+                  (other value))
+              fun value =>
+              Or
+                (@Eq.{1} (Option.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))))
+                  (Hibana.observedResourceTag? sample.after facts.resource.role)
+                  (@some.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) value))
+                (other value))
+@Hibana.a_checked_owned_send_supplies_its_local_publication_header_evidence : ∀ {sample : Hibana.ActorCommitObservation}
+  {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo} {wire : Hibana.OwnedWireObservation} {session : Nat}
+  {facts : Hibana.OwnedCommitFacts} {Frame : Type},
+  @Eq.{1} Bool (sample.ownedCheck image choreo wire session) true →
+    @Eq.{1} (Option.{0} Hibana.OwnedCommitFacts) (sample.ownedFacts? image choreo)
+        (@some.{0} Hibana.OwnedCommitFacts facts) →
+      @Eq.{1} Hibana.EndpointDelegation.Side facts.side Hibana.EndpointDelegation.Side.send →
+        ∀ (other : Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)) → Prop)
+          (state : Hibana.EndpointTransfer.Observation (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) Frame),
+          @Hibana.ResourceHeaderStepEvidence (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) Frame
+            Hibana.EndpointTransfer.Action.unchanged state state
+            (fun value =>
+              Or
+                (@Eq.{1} (Option.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))))
+                  (Hibana.observedResourceTag? sample.before facts.resource.role)
+                  (@some.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) value))
+                (other value))
+            fun value =>
+            Or
+              (@Eq.{1} (Option.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))))
+                (Hibana.observedResourceTag? sample.after facts.resource.role)
+                (@some.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) value))
+              (other value)
+@Hibana.a_checked_retirement_supplies_its_transfer_header_evidence : ∀ {sample : Hibana.ViewRetirementObservation}
+  {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo} {Frame : Type}
+  {other : Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)) → Prop},
+  @Eq.{1} Bool (sample.check image choreo) true →
+    (∀ (value : Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))),
+        other value →
+          @Ne.{1} Nat (@Prod.fst.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)) value) sample.before.actor) →
+      @Exists.{1} Hibana.ActorViewObservation fun view =>
+        And
+          (@Eq.{1} (Option.{0} Hibana.ActorViewObservation) (Hibana.observedActorView? sample.before sample.view)
+            (@some.{0} Hibana.ActorViewObservation view))
+          (∀
+            (state :
+              Hibana.EndpointTransfer.Observation (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) Frame),
+            have moved := @Prod.mk.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)) sample.before.actor view.header;
+            And
+              (@Hibana.ResourceHeaderStepEvidence (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) Frame
+                Hibana.EndpointTransfer.Action.dropValue
+                (@Hibana.EndpointTransfer.Observation.mk (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) Frame
+                  (@List.cons.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) moved
+                    (@List.nil.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)))))
+                  (@Hibana.EndpointTransfer.Observation.preparing
+                    (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) Frame state)
+                  (@Hibana.EndpointTransfer.Observation.acceptedFutures
+                    (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) Frame state)
+                  (@Hibana.EndpointTransfer.Observation.inFlight
+                    (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) Frame state))
+                (@Hibana.EndpointTransfer.Observation.mk (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) Frame
+                  (@List.nil.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))))
+                  (@Hibana.EndpointTransfer.Observation.preparing
+                    (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) Frame state)
+                  (@Hibana.EndpointTransfer.Observation.acceptedFutures
+                    (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) Frame state)
+                  (@Hibana.EndpointTransfer.Observation.inFlight
+                    (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) Frame state))
+                (fun value =>
+                  Or
+                    (@Eq.{1} (Option.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))))
+                      (Hibana.observedResourceTag? sample.before sample.view)
+                      (@some.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) value))
+                    (other value))
+                fun value =>
+                Or
+                  (@Eq.{1} (Option.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))))
+                    (Hibana.observedResourceTag? sample.after sample.view)
+                    (@some.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) value))
+                  (other value))
+              (@Hibana.ResourceHeaderStepEvidence (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) Frame
+                Hibana.EndpointTransfer.Action.abandonPreparation
+                (@Hibana.EndpointTransfer.Observation.mk (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) Frame
+                  (@Hibana.EndpointTransfer.Observation.usable (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)))
+                    Frame state)
+                  (@List.cons.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) moved
+                    (@List.nil.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)))))
+                  (@Hibana.EndpointTransfer.Observation.acceptedFutures
+                    (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) Frame state)
+                  (@Hibana.EndpointTransfer.Observation.inFlight
+                    (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) Frame state))
+                (@Hibana.EndpointTransfer.Observation.mk (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) Frame
+                  (@Hibana.EndpointTransfer.Observation.usable (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)))
+                    Frame state)
+                  (@List.nil.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))))
+                  (@Hibana.EndpointTransfer.Observation.acceptedFutures
+                    (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) Frame state)
+                  (@Hibana.EndpointTransfer.Observation.inFlight
+                    (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) Frame state))
+                (fun value =>
+                  Or
+                    (@Eq.{1} (Option.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))))
+                      (Hibana.observedResourceTag? sample.before sample.view)
+                      (@some.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) value))
+                    (other value))
+                fun value =>
+                Or
+                  (@Eq.{1} (Option.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))))
+                    (Hibana.observedResourceTag? sample.after sample.view)
+                    (@some.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) value))
+                  (other value)))
 Hibana.a_non_payload_view_adds_no_borrow_dependency : ∀ (current : Hibana.PublicOperationPhase) (resource : Nat)
   (sent : Option.{0} Nat),
   @Ne.{1} Hibana.PublicOperationPhase current Hibana.PublicOperationPhase.sendPayload →
@@ -314,6 +463,150 @@ Hibana.a_pending_payload_requires_its_own_send : ∀ (resource : Nat) (sent : Op
     state.PrefixClosed expected (expected event) →
       @Membership.mem.{0, 0} Nat (List.{0} Nat) (@List.instMembership.{0} Nat) (expected event) before →
         @Eq.{1} Bool (state.done before) false → @Eq.{1} Bool (@List.all.{0} Nat actual state.done) false
+@Hibana.a_ready_admitted_row_has_its_actual_carrier_custody : ∀ {sample : Hibana.ActorAdmissionObservation}
+  {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo} {data : Hibana.DecodedActorOrder}
+  {path : Hibana.EndpointDelegation.NormalizedPath} {row : Hibana.DecodedActorRow} {Frame : Type}
+  {first : Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)) → Prop}
+  {initialValue : Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))}
+  {state : Hibana.EndpointTransfer.Observation (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) Frame},
+  @Eq.{1} Bool (sample.check image choreo) true →
+    @Eq.{1} (Option.{0} Hibana.DecodedActorOrder) (image.decodeActorOrder? choreo)
+        (@some.{0} Hibana.DecodedActorOrder data) →
+      @Eq.{1} (Option.{0} Hibana.EndpointDelegation.NormalizedPath)
+          (@getElem?.{0, 0, 0} (List.{0} Hibana.EndpointDelegation.NormalizedPath) Nat
+            Hibana.EndpointDelegation.NormalizedPath
+            (fun as i => @LT.lt.{0} Nat instLTNat i (@List.length.{0} Hibana.EndpointDelegation.NormalizedPath as))
+            (@List.instGetElem?NatLtLength.{0} Hibana.EndpointDelegation.NormalizedPath) data.normalized.paths
+            sample.pathIndex)
+          (@some.{0} Hibana.EndpointDelegation.NormalizedPath path) →
+        @Membership.mem.{0, 0} Hibana.DecodedActorRow (List.{0} Hibana.DecodedActorRow)
+            (@List.instMembership.{0} Hibana.DecodedActorRow) (data.activeRows path) row →
+          @Eq.{1} Bool (Hibana.sourceRowReady data path sample.snapshot row) true →
+            ∀ (other : Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)) → Prop),
+              @Hibana.ResourceHeaderExecution (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) Frame first
+                  (@Hibana.EndpointTransfer.initial (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) Frame
+                    initialValue)
+                  (fun value =>
+                    Or
+                      (@Eq.{1} (Option.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))))
+                        (Hibana.observedResourceTag? sample.snapshot row.view)
+                        (@some.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) value))
+                      (other value))
+                  state →
+                (∀ (value : Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))),
+                    Iff (first value)
+                      (@Eq.{1} (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) value initialValue)) →
+                  @Exists.{1} Hibana.ActorViewObservation fun view =>
+                    And
+                      (@Eq.{1} (Option.{0} Hibana.ActorViewObservation)
+                        (Hibana.observedActorView? sample.snapshot row.view)
+                        (@some.{0} Hibana.ActorViewObservation view))
+                      (And
+                        (@Eq.{1} (Option.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))))
+                          (Hibana.observedResourceTag? sample.snapshot row.view)
+                          (@some.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)))
+                            (@Prod.mk.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)) sample.snapshot.actor
+                              view.header)))
+                        (Or
+                          (@Hibana.TransferValueLocated (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) Frame
+                            (@Prod.mk.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)) sample.snapshot.actor
+                              view.header)
+                            state)
+                          (@Membership.mem.{0, 0} (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)))
+                            (List.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))))
+                            (@List.instMembership.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))))
+                            (@Hibana.EndpointTransfer.Observation.acceptedFutures
+                              (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) Frame state)
+                            (@Prod.mk.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)) sample.snapshot.actor
+                              view.header))))
+@Hibana.a_ready_owned_admitted_row_has_its_actual_payload_custody : ∀ {sample : Hibana.ActorAdmissionObservation}
+  {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo} {data : Hibana.DecodedActorOrder}
+  {path : Hibana.EndpointDelegation.NormalizedPath} {row : Hibana.DecodedActorRow}
+  {binding : Hibana.EndpointDelegation.Binding} {key : Hibana.EndpointDelegation.EndpointKey} {Frame : Type}
+  {first : Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)) → Prop}
+  {initialValue : Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))}
+  {state : Hibana.EndpointTransfer.Observation (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) Frame},
+  @Eq.{1} Bool (sample.check image choreo) true →
+    @Eq.{1} (Option.{0} Hibana.DecodedActorOrder) (image.decodeActorOrder? choreo)
+        (@some.{0} Hibana.DecodedActorOrder data) →
+      @Eq.{1} (Option.{0} Hibana.EndpointDelegation.NormalizedPath)
+          (@getElem?.{0, 0, 0} (List.{0} Hibana.EndpointDelegation.NormalizedPath) Nat
+            Hibana.EndpointDelegation.NormalizedPath
+            (fun as i => @LT.lt.{0} Nat instLTNat i (@List.length.{0} Hibana.EndpointDelegation.NormalizedPath as))
+            (@List.instGetElem?NatLtLength.{0} Hibana.EndpointDelegation.NormalizedPath) data.normalized.paths
+            sample.pathIndex)
+          (@some.{0} Hibana.EndpointDelegation.NormalizedPath path) →
+        @Membership.mem.{0, 0} Hibana.DecodedActorRow (List.{0} Hibana.DecodedActorRow)
+            (@List.instMembership.{0} Hibana.DecodedActorRow) (data.activeRows path) row →
+          @Eq.{1} (Option.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding))
+              (@List.find?.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)
+                (fun entry =>
+                  @BEq.beq.{0} Nat (@instBEqOfDecidableEq.{0} Nat instDecidableEqNat)
+                    (@Prod.fst.{0, 0} Nat Hibana.EndpointDelegation.Binding entry) row.actionId.event)
+                path.bindings)
+              (@some.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)
+                (@Prod.mk.{0, 0} Nat Hibana.EndpointDelegation.Binding row.actionId.event binding)) →
+            @Eq.{1} Hibana.EndpointDelegation.Payload binding.message.payload
+                (Hibana.EndpointDelegation.Payload.endpoint key) →
+              @Eq.{1} Hibana.EndpointDelegation.Side row.actionId.side Hibana.EndpointDelegation.Side.send →
+                @Eq.{1} Bool (Hibana.sourceRowReady data path sample.snapshot row) true →
+                  ∀ (other : Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)) → Prop),
+                    @Hibana.ResourceHeaderExecution (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) Frame
+                        first
+                        (@Hibana.EndpointTransfer.initial (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)))
+                          Frame initialValue)
+                        (fun value =>
+                          Or
+                            (@Eq.{1} (Option.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))))
+                              (Hibana.observedResourceTag? sample.snapshot key.role)
+                              (@some.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) value))
+                            (other value))
+                        state →
+                      (∀ (value : Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))),
+                          Iff (first value)
+                            (@Eq.{1} (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) value initialValue)) →
+                        @Exists.{1} Hibana.ActorViewObservation fun view =>
+                          And
+                            (@Eq.{1} (Option.{0} Hibana.ActorViewObservation)
+                              (Hibana.observedActorView? sample.snapshot key.role)
+                              (@some.{0} Hibana.ActorViewObservation view))
+                            (And
+                              (@Eq.{1} (Option.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))))
+                                (Hibana.observedResourceTag? sample.snapshot key.role)
+                                (@some.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)))
+                                  (@Prod.mk.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)) sample.snapshot.actor
+                                    view.header)))
+                              (Or
+                                (@Hibana.TransferValueLocated (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)))
+                                  Frame
+                                  (@Prod.mk.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)) sample.snapshot.actor
+                                    view.header)
+                                  state)
+                                (@Membership.mem.{0, 0} (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)))
+                                  (List.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))))
+                                  (@List.instMembership.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))))
+                                  (@Hibana.EndpointTransfer.Observation.acceptedFutures
+                                    (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) Frame state)
+                                  (@Prod.mk.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)) sample.snapshot.actor
+                                    view.header))))
+@Hibana.a_receiver_can_return_before_sender_header_publication : ∀ {View Frame : Type} (sender receiver : View)
+  (outgoing returned : Frame),
+  @Exists.{1} (Hibana.EndpointTransfer.Observation View Frame) fun state =>
+    And
+      (@Hibana.ResourceHeaderExecution View Frame (fun value => @Eq.{1} View value sender)
+        (@Hibana.EndpointTransfer.initial View Frame sender) (fun value => @Eq.{1} View value sender) state)
+      (And (@Eq.{1} (List.{0} View) (@Hibana.EndpointTransfer.Observation.usable View Frame state) (@List.nil.{0} View))
+        (And
+          (@Eq.{1} (List.{0} View) (@Hibana.EndpointTransfer.Observation.preparing View Frame state)
+            (@List.nil.{0} View))
+          (And
+            (@Eq.{1} (List.{0} Frame) (@Hibana.EndpointTransfer.Observation.inFlight View Frame state)
+              (@List.cons.{0} Frame returned (@List.nil.{0} Frame)))
+            (And
+              (@Eq.{1} (List.{0} View) (@Hibana.EndpointTransfer.Observation.acceptedFutures View Frame state)
+                (@List.cons.{0} View sender (@List.nil.{0} View)))
+              (@Eq.{1} Nat (@Hibana.EndpointTransfer.Observation.authorityCount View Frame state)
+                (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1))))))))
 @Hibana.a_resource_continuation_follows_its_last_handoff : ∀ {source : Hibana.EndpointDelegation.Source}
   {resources : List.{0} Hibana.EndpointDelegation.EndpointKey} {owners : Hibana.EndpointDelegation.OwnerMap}
   {path : List.{0} Hibana.EndpointDelegation.Selection} {start : Nat} {run : Hibana.EndpointDelegation.Elaboration}
@@ -1801,6 +2094,42 @@ Hibana.ambiguous_receive_fails_closed : ∀ (before : Hibana.CompactGlobalState)
                 (source.before (@HSub.hSub.{0, 0, 0} Nat Nat Nat (@instHSub.{0} Nat instSubNat) first start)
                   (@HSub.hSub.{0, 0, 0} Nat Nat Nat (@instHSub.{0} Nat instSubNat) second start))
                 true
+@Hibana.an_issued_header_in_a_checked_trace_has_its_actual_custody : ∀ {View Frame : Type} {first last : View → Prop}
+  {initialValue value : View} {state : Hibana.EndpointTransfer.Observation View Frame},
+  @Hibana.ResourceHeaderExecution View Frame first (@Hibana.EndpointTransfer.initial View Frame initialValue) last
+      state →
+    (∀ (value : View), Iff (first value) (@Eq.{1} View value initialValue)) →
+      last value →
+        Or (@Hibana.TransferValueLocated View Frame value state)
+          (@Membership.mem.{0, 0} View (List.{0} View) (@List.instMembership.{0} View)
+            (@Hibana.EndpointTransfer.Observation.acceptedFutures View Frame state) value)
+@Hibana.an_issued_header_without_an_accepted_witness_has_its_actual_value : ∀ {View Frame : Type}
+  {first last : View → Prop} {initialValue value : View} {state : Hibana.EndpointTransfer.Observation View Frame},
+  @Hibana.ResourceHeaderExecution View Frame first (@Hibana.EndpointTransfer.initial View Frame initialValue) last
+      state →
+    (∀ (value : View), Iff (first value) (@Eq.{1} View value initialValue)) →
+      last value →
+        Not
+            (@Membership.mem.{0, 0} View (List.{0} View) (@List.instMembership.{0} View)
+              (@Hibana.EndpointTransfer.Observation.acceptedFutures View Frame state) value) →
+          @Hibana.TransferValueLocated View Frame value state
+@Hibana.an_issued_resource_header_has_its_exact_observed_tag : ∀ {snapshot : Hibana.ActorProgressObservation}
+  {role : Nat},
+  @Eq.{1} Bool (snapshot.viewIssued role) true →
+    @Exists.{1} Hibana.ActorViewObservation fun view =>
+      And
+        (@Eq.{1} (Option.{0} Hibana.ActorViewObservation) (Hibana.observedActorView? snapshot role)
+          (@some.{0} Hibana.ActorViewObservation view))
+        (And (@Eq.{1} Nat view.run snapshot.run)
+          (And
+            (@Eq.{1} Nat
+              (@HMod.hMod.{0, 0, 0} Nat Nat Nat (@instHMod.{0} Nat Nat.instMod) view.nonce
+                (@OfNat.ofNat.{0} Nat (nat_lit 2) (instOfNatNat (nat_lit 2))))
+              (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1))))
+            (@Eq.{1} (Option.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))))
+              (Hibana.observedResourceTag? snapshot role)
+              (@some.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)))
+                (@Prod.mk.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)) snapshot.actor view.header)))))
 @Hibana.an_uninformed_reentry_origin_is_the_entry_owner : ∀ {source : Hibana.EndpointDelegation.Source}
   {sender receiver : Nat → Nat} {owner event : Nat},
   Or (@Eq.{1} Nat (sender event) owner)
@@ -1809,6 +2138,17 @@ Hibana.ambiguous_receive_fails_closed : ∀ (before : Hibana.CompactGlobalState)
     (∀ (earlier : Nat),
         @Eq.{1} Bool (source.before earlier event) true → @Ne.{1} Nat (receiver earlier) (sender event)) →
       @Eq.{1} Nat (sender event) owner
+@Hibana.an_unpublished_sender_header_need_not_name_local_authority : ∀ {View Frame : Type} (sender receiver : View)
+  (outgoing returned : Frame),
+  @Exists.{1} (Hibana.EndpointTransfer.Observation View Frame) fun state =>
+    And
+      (@Hibana.ResourceHeaderExecution View Frame (fun value => @Eq.{1} View value sender)
+        (@Hibana.EndpointTransfer.initial View Frame sender) (fun value => @Eq.{1} View value sender) state)
+      (And (@Hibana.TransferFrameLocated Frame View returned state)
+        (And
+          (@Membership.mem.{0, 0} View (List.{0} View) (@List.instMembership.{0} View)
+            (@Hibana.EndpointTransfer.Observation.acceptedFutures View Frame state) sender)
+          (Not (@Hibana.TransferValueLocated View Frame sender state))))
 @Hibana.artifact_checker_sound : ∀ {graph : Hibana.EventGraph}, @Eq.{1} Bool graph.check true → graph.WellFormed
 @Hibana.assumption_indexed_deployment_duplicate_receipt_resolution_rejected : ∀ {profile : Hibana.CarrierProfile}
   {Fairness : Prop} {certificate : Hibana.VerifiedProtocolCertificate} {session roleCount : Nat}
@@ -2288,6 +2628,27 @@ Hibana.causal_flow_monotone : ∀ (flow : Hibana.CausalFlowExpr) {left right : H
                               @Hibana.EndpointTransfer.Execution View Frame next final →
                                 Hibana.SourceUseBoundaryEvidence image choreo data path key useRow action) →
                         @Hibana.TransferValueLocated View Frame value final
+@Hibana.checked_owned_commit_has_its_exact_resource_header_change : ∀ {sample : Hibana.ActorCommitObservation}
+  {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo} {wire : Hibana.OwnedWireObservation} {session : Nat}
+  {facts : Hibana.OwnedCommitFacts},
+  @Eq.{1} Bool (sample.ownedCheck image choreo wire session) true →
+    @Eq.{1} (Option.{0} Hibana.OwnedCommitFacts) (sample.ownedFacts? image choreo)
+        (@some.{0} Hibana.OwnedCommitFacts facts) →
+      And (@Eq.{1} Nat sample.after.actor sample.before.actor)
+        (And (@Eq.{1} Nat sample.after.run sample.before.run)
+          (@Eq.{1} Bool
+            (Hibana.observedViewCommitMatches sample.before sample.after
+              (Hibana.EndpointDelegation.Payload.endpoint facts.resource) facts.side)
+            true))
+@Hibana.checked_owned_commit_preserves_other_resource_tags : ∀ {sample : Hibana.ActorCommitObservation}
+  {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo} {wire : Hibana.OwnedWireObservation}
+  {session query : Nat} {facts : Hibana.OwnedCommitFacts},
+  @Eq.{1} Bool (sample.ownedCheck image choreo wire session) true →
+    @Eq.{1} (Option.{0} Hibana.OwnedCommitFacts) (sample.ownedFacts? image choreo)
+        (@some.{0} Hibana.OwnedCommitFacts facts) →
+      @Ne.{1} Nat query facts.resource.role →
+        @Eq.{1} (Option.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))))
+          (Hibana.observedResourceTag? sample.after query) (Hibana.observedResourceTag? sample.before query)
 @Hibana.checked_owned_frame_has_the_same_source_at_send_and_receive : ∀
   {sender receiver : Hibana.ActorCommitObservation} {senderImage receiverImage : Hibana.RustDescriptorImage}
   {choreo : Hibana.Choreo} {sent received : Hibana.OwnedWireObservation} {session : Nat}
@@ -2301,6 +2662,21 @@ Hibana.causal_flow_monotone : ∀ (flow : Hibana.CausalFlowExpr) {left right : H
           @Eq.{1} (List.{0} Nat) sent.payload received.payload →
             And (@Eq.{1} Hibana.EndpointDelegation.EndpointKey senderFacts.resource receiverFacts.resource)
               (@Eq.{1} Nat senderFacts.effIndex receiverFacts.effIndex)
+@Hibana.checked_owned_receive_publishes_its_exact_observed_tag : ∀ {sample : Hibana.ActorCommitObservation}
+  {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo} {wire : Hibana.OwnedWireObservation} {session : Nat}
+  {facts : Hibana.OwnedCommitFacts},
+  @Eq.{1} Bool (sample.ownedCheck image choreo wire session) true →
+    @Eq.{1} (Option.{0} Hibana.OwnedCommitFacts) (sample.ownedFacts? image choreo)
+        (@some.{0} Hibana.OwnedCommitFacts facts) →
+      @Eq.{1} Hibana.EndpointDelegation.Side facts.side Hibana.EndpointDelegation.Side.receive →
+        And
+          (@Eq.{1} (Option.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))))
+            (Hibana.observedResourceTag? sample.before facts.resource.role)
+            (@none.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)))))
+          (@Eq.{1} (Option.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))))
+            (Hibana.observedResourceTag? sample.after facts.resource.role)
+            (@some.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)))
+              (@Prod.mk.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)) sample.after.actor facts.afterView.header)))
 @Hibana.checked_owned_receive_publishes_its_projected_actor : ∀ {sample : Hibana.ActorCommitObservation}
   {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo} {wire : Hibana.OwnedWireObservation} {session : Nat}
   {facts : Hibana.OwnedCommitFacts},
@@ -2339,6 +2715,26 @@ Hibana.causal_flow_monotone : ∀ (flow : Hibana.CausalFlowExpr) {left right : H
                 (@Prod.snd.{0, 0} Nat Hibana.EndpointDelegation.Binding entry).message.payload
                 (Hibana.EndpointDelegation.Payload.endpoint key) →
               @Eq.{1} Bool (record.step.ownedCheck image choreo record.wire session) true
+@Hibana.checked_owned_send_retires_its_exact_observed_tag : ∀ {sample : Hibana.ActorCommitObservation}
+  {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo} {wire : Hibana.OwnedWireObservation} {session : Nat}
+  {facts : Hibana.OwnedCommitFacts},
+  @Eq.{1} Bool (sample.ownedCheck image choreo wire session) true →
+    @Eq.{1} (Option.{0} Hibana.OwnedCommitFacts) (sample.ownedFacts? image choreo)
+        (@some.{0} Hibana.OwnedCommitFacts facts) →
+      @Eq.{1} Hibana.EndpointDelegation.Side facts.side Hibana.EndpointDelegation.Side.send →
+        @Exists.{1} Hibana.ActorViewObservation fun view =>
+          And
+            (@Eq.{1} (Option.{0} Hibana.ActorViewObservation)
+              (Hibana.observedActorView? sample.before facts.resource.role)
+              (@some.{0} Hibana.ActorViewObservation view))
+            (And
+              (@Eq.{1} (Option.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))))
+                (Hibana.observedResourceTag? sample.before facts.resource.role)
+                (@some.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)))
+                  (@Prod.mk.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)) sample.before.actor view.header)))
+              (@Eq.{1} (Option.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))))
+                (Hibana.observedResourceTag? sample.after facts.resource.role)
+                (@none.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))))))
 @Hibana.checked_pairs_have_equal_source_readiness : ∀ {expected : Nat → List.{0} Nat} {actual : List.{0} Nat}
   {event : Nat} {state : Hibana.CommitState},
   @Eq.{1} Bool
@@ -2390,6 +2786,26 @@ Hibana.causal_flow_monotone : ∀ (flow : Hibana.CausalFlowExpr) {left right : H
                           @Eq.{1} Bool (Hibana.sourceRowReady data path snapshot target) true →
                             And (@Eq.{1} Hibana.EndpointDelegation.ActionId transfer.actionId target.actionId)
                               (@Eq.{1} Hibana.EndpointDelegation.Binding loan intended)
+@Hibana.checked_retirement_invalidates_its_exact_observed_tag : ∀ {sample : Hibana.ViewRetirementObservation}
+  {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo},
+  @Eq.{1} Bool (sample.check image choreo) true →
+    @Exists.{1} Hibana.ActorViewObservation fun view =>
+      And
+        (@Eq.{1} (Option.{0} Hibana.ActorViewObservation) (Hibana.observedActorView? sample.before sample.view)
+          (@some.{0} Hibana.ActorViewObservation view))
+        (And
+          (@Eq.{1} (Option.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))))
+            (Hibana.observedResourceTag? sample.before sample.view)
+            (@some.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)))
+              (@Prod.mk.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)) sample.before.actor view.header)))
+          (And
+            (@Eq.{1} (Option.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))))
+              (Hibana.observedResourceTag? sample.after sample.view)
+              (@none.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)))))
+            (∀ (query : Nat),
+              @Ne.{1} Nat query sample.view →
+                @Eq.{1} (Option.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))))
+                  (Hibana.observedResourceTag? sample.after query) (Hibana.observedResourceTag? sample.before query))))
 @Hibana.checked_source_handoff_boundary_is_its_own_acceptance_or_a_fault : ∀ {image : Hibana.RustDescriptorImage}
   {choreo : Hibana.Choreo} {data : Hibana.DecodedActorOrder} {path : Hibana.EndpointDelegation.NormalizedPath}
   {key : Hibana.EndpointDelegation.EndpointKey} {target : Hibana.DecodedActorRow}
@@ -3029,6 +3445,51 @@ Hibana.decode_packed_lane_range_accepts_bounded : ∀ (raw capacity : Nat),
         (@List.instMembership.{0} Hibana.DescriptorOperation) operations operation →
       @Eq.{1} (Option.{0} Hibana.DescriptorOperation) (image.eventOperation? operation.eventId)
         (@some.{0} Hibana.DescriptorOperation operation)
+@Hibana.decoded_owned_facts_retain_the_source_row_and_view : ∀ {sample : Hibana.ActorCommitObservation}
+  {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo} {facts : Hibana.OwnedCommitFacts},
+  @Eq.{1} (Option.{0} Hibana.OwnedCommitFacts) (sample.ownedFacts? image choreo)
+      (@some.{0} Hibana.OwnedCommitFacts facts) →
+    @Exists.{1} Hibana.DecodedActorOrder fun data =>
+      @Exists.{1} Hibana.EndpointDelegation.NormalizedPath fun path =>
+        @Exists.{1} Hibana.DecodedActorRow fun row =>
+          @Exists.{1} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding) fun entry =>
+            And
+              (@Eq.{1} (Option.{0} Hibana.DecodedActorOrder) (image.decodeActorOrder? choreo)
+                (@some.{0} Hibana.DecodedActorOrder data))
+              (And
+                (@Eq.{1} (Option.{0} Hibana.EndpointDelegation.NormalizedPath)
+                  (@getElem?.{0, 0, 0} (List.{0} Hibana.EndpointDelegation.NormalizedPath) Nat
+                    Hibana.EndpointDelegation.NormalizedPath
+                    (fun as i =>
+                      @LT.lt.{0} Nat instLTNat i (@List.length.{0} Hibana.EndpointDelegation.NormalizedPath as))
+                    (@List.instGetElem?NatLtLength.{0} Hibana.EndpointDelegation.NormalizedPath) data.normalized.paths
+                    sample.pathIndex)
+                  (@some.{0} Hibana.EndpointDelegation.NormalizedPath path))
+                (And
+                  (@Eq.{1} (Option.{0} Hibana.DecodedActorRow)
+                    (@getElem?.{0, 0, 0} (List.{0} Hibana.DecodedActorRow) Nat Hibana.DecodedActorRow
+                      (fun as i => @LT.lt.{0} Nat instLTNat i (@List.length.{0} Hibana.DecodedActorRow as))
+                      (@List.instGetElem?NatLtLength.{0} Hibana.DecodedActorRow) data.rows sample.event)
+                    (@some.{0} Hibana.DecodedActorRow row))
+                  (And
+                    (@Eq.{1} (Option.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding))
+                      (@List.find?.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)
+                        (fun entry =>
+                          @BEq.beq.{0} Nat (@instBEqOfDecidableEq.{0} Nat instDecidableEqNat)
+                            (@Prod.fst.{0, 0} Nat Hibana.EndpointDelegation.Binding entry) row.actionId.event)
+                        path.bindings)
+                      (@some.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding) entry))
+                    (And
+                      (@Eq.{1} Hibana.EndpointDelegation.Payload
+                        (@Prod.snd.{0, 0} Nat Hibana.EndpointDelegation.Binding entry).message.payload
+                        (Hibana.EndpointDelegation.Payload.endpoint facts.resource))
+                      (And (@Eq.{1} Hibana.EndpointDelegation.Side row.actionId.side facts.side)
+                        (And
+                          (@Eq.{1} Hibana.EndpointDelegation.Binding facts.binding
+                            (@Prod.snd.{0, 0} Nat Hibana.EndpointDelegation.Binding entry))
+                          (@Eq.{1} (Option.{0} Hibana.ActorViewObservation)
+                            (Hibana.observedActorView? sample.after facts.resource.role)
+                            (@some.{0} Hibana.ActorViewObservation facts.afterView))))))))
 @Hibana.decoded_projection_shape_binds_action_column : ∀ {image : Hibana.RustDescriptorImage}
   {shape : Hibana.ProjectionShape},
   @Eq.{1} (Option.{0} Hibana.ProjectionShape) image.decodeProjectionShape? (@some.{0} Hibana.ProjectionShape shape) →
@@ -5105,6 +5566,12 @@ Hibana.non_controller_resolve_is_rejected : ∀ (config : Hibana.GlobalConfig) {
                 (@HMod.hMod.{0, 0, 0} Nat Nat Nat (@instHMod.{0} Nat Nat.instMod) view.nonce
                   (@OfNat.ofNat.{0} Nat (nat_lit 2) (instOfNatNat (nat_lit 2))))
                 (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1)))))
+@Hibana.observed_header_step_preserves_value_custody : ∀ {View Frame : Type} {action : Hibana.EndpointTransfer.Action}
+  {before after : Hibana.EndpointTransfer.Observation View Frame} {first last : View → Prop},
+  @Hibana.EndpointTransfer.Step View Frame action before after →
+    @Hibana.ResourceHeaderStepEvidence View Frame action before after first last →
+      @Hibana.ResourceHeadersHaveCustody View Frame first before →
+        @Hibana.ResourceHeadersHaveCustody View Frame last after
 @Hibana.observed_issued_view_has_current_header : ∀ {snapshot : Hibana.ActorProgressObservation} {role : Nat},
   @Eq.{1} Bool (snapshot.viewIssued role) true →
     @Exists.{1} Hibana.ActorViewObservation fun view =>
@@ -5523,6 +5990,37 @@ Hibana.poisoned_public_operation_remains_faulted : ∀ (edge : Hibana.PublicOper
       (Hibana.prepareLeaseAllocation state requiredTableSlots payloadBytes plannedImageFrontier payloadOffset)
       (@Except.ok.{0, 0} Hibana.LeaseAllocationFailure Hibana.LeaseAllocationPlan plan) →
     Hibana.endpointLeaseSlotCountRepresentable requiredTableSlots
+@Hibana.prepared_reentry_preserves_all_observed_resource_tags : ∀ {sample : Hibana.ActorReentryCommitObservation}
+  {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo} {roll : Hibana.DecodedRollRow}
+  {step : Hibana.ActorCommitObservation},
+  @Eq.{1} (Option.{0} (Prod.{0, 0} Hibana.DecodedRollRow Hibana.ActorCommitObservation)) (sample.prepared? image choreo)
+      (@some.{0} (Prod.{0, 0} Hibana.DecodedRollRow Hibana.ActorCommitObservation)
+        (@Prod.mk.{0, 0} Hibana.DecodedRollRow Hibana.ActorCommitObservation roll step)) →
+    ∀ (role : Nat),
+      @Eq.{1} (Option.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))))
+        (Hibana.observedResourceTag? step.before role) (Hibana.observedResourceTag? sample.before role)
+@Hibana.prepared_reentry_supplies_unchanged_value_header_evidence : ∀ {sample : Hibana.ActorReentryCommitObservation}
+  {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo} {roll : Hibana.DecodedRollRow}
+  {step : Hibana.ActorCommitObservation} {Frame : Type},
+  @Eq.{1} (Option.{0} (Prod.{0, 0} Hibana.DecodedRollRow Hibana.ActorCommitObservation)) (sample.prepared? image choreo)
+      (@some.{0} (Prod.{0, 0} Hibana.DecodedRollRow Hibana.ActorCommitObservation)
+        (@Prod.mk.{0, 0} Hibana.DecodedRollRow Hibana.ActorCommitObservation roll step)) →
+    ∀ (state : Hibana.EndpointTransfer.Observation (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) Frame)
+      (role : Nat) (other : Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)) → Prop),
+      @Hibana.ResourceHeaderStepEvidence (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) Frame
+        Hibana.EndpointTransfer.Action.unchanged state state
+        (fun value =>
+          Or
+            (@Eq.{1} (Option.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))))
+              (Hibana.observedResourceTag? sample.before role)
+              (@some.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) value))
+            (other value))
+        fun value =>
+        Or
+          (@Eq.{1} (Option.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))))
+            (Hibana.observedResourceTag? step.before role)
+            (@some.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) value))
+          (other value)
 @Hibana.prepared_roll_is_source_prefix : ∀ {state : Hibana.CommitState} {roll : Hibana.RollInfo}
   {predecessors : Nat → List.{0} Nat} {first stop candidate : Nat},
   state.PrefixClosed predecessors
@@ -8759,6 +9257,13 @@ Hibana.trace_checker_sound : ∀ (graph : Hibana.EventGraph) (state : Hibana.Com
 @Hibana.unambiguous_ready_arm_mask_is_accepted : ∀ {mask : Nat},
   @LE.le.{0} Nat instLENat mask (@OfNat.ofNat.{0} Nat (nat_lit 2) (instOfNatNat (nat_lit 2))) →
     @Eq.{1} Bool (@Option.isSome.{0} (Option.{0} Hibana.RouteArm) (Hibana.decodeSingleReadyArmMask? mask)) true
+@Hibana.unchanged_headers_preserve_resource_tags : ∀ {before after : Hibana.ActorProgressObservation},
+  @Eq.{1} Nat after.actor before.actor →
+    @Eq.{1} Nat after.run before.run →
+      @Eq.{1} (List.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) after.viewHeaders before.viewHeaders →
+        ∀ (role : Nat),
+          @Eq.{1} (Option.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))))
+            (Hibana.observedResourceTag? after role) (Hibana.observedResourceTag? before role)
 @Hibana.unfinished_source_visit_has_ready_point : ∀ {source : Hibana.EndpointDelegation.Source}
   {bindings : List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)} {domain : List.{0} Hibana.SourcePoint}
   {observed : Hibana.SourcePoint → Bool},

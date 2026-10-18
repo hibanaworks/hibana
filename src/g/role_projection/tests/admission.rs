@@ -1,7 +1,7 @@
 //! Compare actual shared-cursor admission with independently decoded source order.
 use super::*;
 use crate::{
-    endpoint::proof_snapshot::{actor_admissions, actor_snapshot},
+    endpoint::proof_snapshot::{actor_admissions, actor_snapshot, view_tag},
     runtime::{SessionKitStorage, ids::SessionId},
     test_support::transport::TestTransport,
 };
@@ -51,6 +51,10 @@ fn source_ready_rows_match_actual_admission_across_a_parallel_owned_visit() {
             let mut worker = peer_rv.enter(sid, &worker_program).unwrap();
             let mut reader = peer_rv.enter(sid, &reader_program).unwrap();
             let mut peer = peer_rv.enter(sid, &peer_program).unwrap();
+            let initial_db_tag = view_tag(&db);
+            // SAFETY: OWNER retains this pinned TestTransport actor.
+            #[cfg(not(miri))]
+            let owner_initial = unsafe { actor_snapshot(&owner) };
 
             // Append-only qualification evidence. Endpoint operations never
             // inspect this log or use it to decide what may run next.
@@ -61,9 +65,17 @@ fn source_ready_rows_match_actual_admission_across_a_parallel_owned_visit() {
             let initial = unsafe { (actor_snapshot(&worker), actor_admissions(&worker)) };
             assert_eq!(initial.1, [true, false, false, false]);
             owner.send::<Loan>(db).await.unwrap();
+            // SAFETY: OWNER keeps the original resident DB header pinned.
+            assert!(!unsafe { initial_db_tag.matches_header() });
+            // SAFETY: the completed send has released its kernel borrow.
+            #[cfg(not(miri))]
+            let owner_sent = unsafe { actor_snapshot(&owner) };
             #[cfg(not(miri))]
             let received_wire = network.queued_frame(1);
             let mut db = worker.recv::<Loan>().await.unwrap();
+            let received_db_tag = view_tag(&db);
+            // SAFETY: DB's actual received value retains this issued header.
+            assert!(unsafe { received_db_tag.matches_header() });
             // SAFETY: the same actor remains pinned and has no active kernel call.
             let received = unsafe { (actor_snapshot(&worker), actor_admissions(&worker)) };
             assert_eq!(received.1, [false, true, true, false]);
@@ -119,6 +131,8 @@ fn source_ready_rows_match_actual_admission_across_a_parallel_owned_visit() {
             let joined = unsafe { (actor_snapshot(&worker), actor_admissions(&worker)) };
             assert_eq!(joined.1, [false, false, false, true]);
             worker.send::<Loan>(db).await.unwrap();
+            // SAFETY: WORKER retains the same actor after moving DB.
+            assert!(!unsafe { received_db_tag.matches_header() });
             // SAFETY: returning DB leaves WORKER's own view alive.
             let returned = unsafe { (actor_snapshot(&worker), actor_admissions(&worker)) };
             assert_eq!(returned.1, [false, false, false, false]);
@@ -130,7 +144,21 @@ fn source_ready_rows_match_actual_admission_across_a_parallel_owned_visit() {
                 returned.0.clone(),
                 network.queued_frame(0),
             ));
+            // SAFETY: OWNER's live view pins the receiving actor.
+            #[cfg(not(miri))]
+            let owner_before_return = unsafe { actor_snapshot(&owner) };
             let db = owner.recv::<Loan>().await.unwrap();
+            let returned_db_tag = view_tag(&db);
+            // SAFETY: both actor allocations remain pinned. Reissuance
+            // must not resurrect either consumed Rust value's old handle.
+            unsafe {
+                assert!(returned_db_tag.matches_header());
+                assert!(!initial_db_tag.matches_header());
+                assert!(!received_db_tag.matches_header());
+            }
+            // SAFETY: the actual returned DB value pins its new owner actor.
+            #[cfg(not(miri))]
+            let owner_returned = unsafe { actor_snapshot(&db) };
             assert!(network.queue_is_empty());
 
             #[cfg(not(miri))]
@@ -143,7 +171,7 @@ fn source_ready_rows_match_actual_admission_across_a_parallel_owned_visit() {
                     &RoleProjection::<1, Steps, 8>::IMAGE_REF,
                 ));
                 let mut source = std::format!(
-                    "import Hibana.ActorCommitHistory\n\nset_option maxRecDepth 10000\n\n\
+                    "import Hibana.ActorCommitHistory\nimport Hibana.ResourceValueCorrespondence\n\nset_option maxRecDepth 10000\n\n\
                      def admissionChoreo : Hibana.Choreo := {choreo}\n\n\
                      def admissionImage : Hibana.RustDescriptorImage := {image}\n\n"
                 );
@@ -414,6 +442,251 @@ theorem observedReadyReadHasTheWireCheckedReceipt :
       ∀ next ∈ later, next.step.before.doneState.done receiptRow.eventId = true ∧
         next.step.after.doneState.done receiptRow.eventId = true :=
   everyReadyReadHistoryContainsTheWireCheckedReceipt observedReceiptHistoryChecked (by decide) (by decide)
+
+"#);
+                let owner_image = descriptor_source(RoleDescriptorRef::from_resident(
+                    &RoleProjection::<0, Steps, 8>::IMAGE_REF,
+                ));
+                source.push_str(&std::format!(
+                    "def ownerImage : Hibana.RustDescriptorImage := {owner_image}\n\n"
+                ));
+                for (name, snapshot) in [
+                    ("ownerInitial", &owner_initial),
+                    ("ownerSent", &owner_sent),
+                    ("ownerBeforeReturn", &owner_before_return),
+                    ("ownerReturned", &owner_returned),
+                ] {
+                    source.push_str(&std::format!(
+                        "def {name} : Hibana.ActorProgressObservation := {}\n\n",
+                        super::commit::observation_source(snapshot),
+                    ));
+                }
+                let owner_send_event = owner_initial
+                    .steps
+                    .iter()
+                    .position(|step| {
+                        matches!(step.action, LocalAction::Send { eff_index, .. } if eff_index.dense_ordinal() == 0)
+                    })
+                    .unwrap();
+                let owner_return_event = owner_before_return
+                    .steps
+                    .iter()
+                    .position(|step| {
+                        matches!(step.action, LocalAction::Recv { eff_index, .. } if eff_index.dense_ordinal() == 3)
+                    })
+                    .unwrap();
+                for (name, event, before, after, wire) in [
+                    (
+                        "ownerAccept",
+                        owner_send_event,
+                        "ownerInitial",
+                        "ownerSent",
+                        "observedCommit0.wire",
+                    ),
+                    (
+                        "ownerReturn",
+                        owner_return_event,
+                        "ownerBeforeReturn",
+                        "ownerReturned",
+                        "observedCommit3.wire",
+                    ),
+                ] {
+                    source.push_str(&std::format!(
+                        "def {name} : Hibana.ActorCommitObservation := {{\n  \
+                         pathIndex := 0\n  event := {event}\n  view := 0\n  \
+                         before := {before}\n  after := {after}\n}}\n\n\
+                         theorem {name}Checked : {name}.ownedCheck ownerImage admissionChoreo {wire} 9053 = true := by decide\n\n"
+                    ));
+                }
+                source.push_str(r#"
+def ownerAcceptFacts : Hibana.OwnedCommitFacts :=
+  (ownerAccept.ownedFacts? ownerImage admissionChoreo).get (by decide)
+def workerReceiveFacts : Hibana.OwnedCommitFacts :=
+  (observedCommit0.step.ownedFacts? admissionImage admissionChoreo).get (by decide)
+def workerAcceptFacts : Hibana.OwnedCommitFacts :=
+  (observedCommit3.step.ownedFacts? admissionImage admissionChoreo).get (by decide)
+def ownerReturnFacts : Hibana.OwnedCommitFacts :=
+  (ownerReturn.ownedFacts? ownerImage admissionChoreo).get (by decide)
+def initialDbView : Hibana.ActorViewObservation :=
+  (Hibana.observedActorView? ownerInitial 10).get (by decide)
+def initialDbTag : Nat × Nat × Nat × Nat := (ownerInitial.actor, initialDbView.header)
+def receivedDbTag : Nat × Nat × Nat × Nat := (received.snapshot.actor, workerReceiveFacts.afterView.header)
+def returnedDbTag : Nat × Nat × Nat × Nat := (ownerReturned.actor, ownerReturnFacts.afterView.header)
+
+def dbHeaders0 (value : Nat × Nat × Nat × Nat) : Prop :=
+  Hibana.observedResourceTag? ownerInitial 10 = some value ∨
+    Hibana.observedResourceTag? initial.snapshot 10 = some value
+def dbHeaders1 (value : Nat × Nat × Nat × Nat) : Prop :=
+  Hibana.observedResourceTag? ownerSent 10 = some value ∨
+    Hibana.observedResourceTag? initial.snapshot 10 = some value
+def dbHeaders2 (value : Nat × Nat × Nat × Nat) : Prop :=
+  Hibana.observedResourceTag? received.snapshot 10 = some value ∨
+    Hibana.observedResourceTag? ownerSent 10 = some value
+def dbHeaders3 (value : Nat × Nat × Nat × Nat) : Prop :=
+  Hibana.observedResourceTag? joined.snapshot 10 = some value ∨
+    Hibana.observedResourceTag? ownerBeforeReturn 10 = some value
+def dbHeaders4 (value : Nat × Nat × Nat × Nat) : Prop :=
+  Hibana.observedResourceTag? returned.snapshot 10 = some value ∨
+    Hibana.observedResourceTag? ownerBeforeReturn 10 = some value
+def dbHeaders5 (value : Nat × Nat × Nat × Nat) : Prop :=
+  Hibana.observedResourceTag? ownerReturned 10 = some value ∨
+    Hibana.observedResourceTag? returned.snapshot 10 = some value
+
+def dbStart : Hibana.EndpointTransfer.Observation (Nat × Nat × Nat × Nat) Hibana.OwnedWireObservation :=
+  Hibana.EndpointTransfer.initial initialDbTag
+def dbOwnerSealed : Hibana.EndpointTransfer.Observation (Nat × Nat × Nat × Nat) Hibana.OwnedWireObservation := { dbStart with usable := [], preparing := [initialDbTag] }
+def dbOwnerAccepted : Hibana.EndpointTransfer.Observation (Nat × Nat × Nat × Nat) Hibana.OwnedWireObservation := { dbOwnerSealed with
+  preparing := []
+  acceptedFutures := [initialDbTag]
+  inFlight := [observedCommit0.wire] }
+def dbOwnerReleased : Hibana.EndpointTransfer.Observation (Nat × Nat × Nat × Nat) Hibana.OwnedWireObservation := { dbOwnerAccepted with acceptedFutures := [] }
+def dbAtWorker : Hibana.EndpointTransfer.Observation (Nat × Nat × Nat × Nat) Hibana.OwnedWireObservation := { dbOwnerReleased with inFlight := [], usable := [receivedDbTag] }
+def dbWorkerSealed : Hibana.EndpointTransfer.Observation (Nat × Nat × Nat × Nat) Hibana.OwnedWireObservation := { dbAtWorker with usable := [], preparing := [receivedDbTag] }
+def dbWorkerAccepted : Hibana.EndpointTransfer.Observation (Nat × Nat × Nat × Nat) Hibana.OwnedWireObservation := { dbWorkerSealed with
+  preparing := []
+  acceptedFutures := [receivedDbTag]
+  inFlight := [observedCommit3.wire] }
+def dbWorkerReleased : Hibana.EndpointTransfer.Observation (Nat × Nat × Nat × Nat) Hibana.OwnedWireObservation := { dbWorkerAccepted with acceptedFutures := [] }
+def dbAtOwner : Hibana.EndpointTransfer.Observation (Nat × Nat × Nat × Nat) Hibana.OwnedWireObservation := { dbWorkerReleased with inFlight := [], usable := [returnedDbTag] }
+
+theorem observedInitialHeadersIdentifyTheSoleInitialTag :
+    ∀ value, dbHeaders0 value ↔ value = initialDbTag := by
+  have ownerAt : Hibana.observedResourceTag? ownerInitial 10 = some initialDbTag := by decide
+  have workerAt : Hibana.observedResourceTag? initial.snapshot 10 = none := by decide
+  intro value
+  simp only [dbHeaders0, ownerAt, workerAt, Option.some.injEq, reduceCtorEq, or_false, eq_comm]
+
+theorem observedFirstLoanHasItsCheckedHeaderTransferHistory :
+    Hibana.ResourceHeaderExecution dbHeaders0 dbStart dbHeaders2 dbAtWorker := by
+  have sealed : Hibana.ResourceHeaderExecution dbHeaders0 dbStart dbHeaders0 dbOwnerSealed :=
+    .tail (.refl _ _) (.seal dbStart [] [] initialDbTag) (fun _ present => present)
+  have accepted : Hibana.ResourceHeaderExecution dbHeaders0 dbStart dbHeaders0 dbOwnerAccepted :=
+    .tail sealed (.accept dbOwnerSealed [] [] initialDbTag observedCommit0.wire) (fun _ present => present)
+  have publication := Hibana.a_checked_owned_send_supplies_its_local_publication_header_evidence
+    (facts := ownerAcceptFacts) (Frame := Hibana.OwnedWireObservation)
+    ownerAcceptChecked ((Option.some_get (x := ownerAccept.ownedFacts? ownerImage admissionChoreo) (by decide)).symm) (by decide)
+    (fun value => Hibana.observedResourceTag? initial.snapshot 10 = some value) dbOwnerAccepted
+  have published : Hibana.ResourceHeaderExecution dbHeaders0 dbStart dbHeaders1 dbOwnerAccepted :=
+    .tail accepted (.unchanged dbOwnerAccepted) publication
+  have released : Hibana.ResourceHeaderExecution dbHeaders0 dbStart dbHeaders1 dbOwnerReleased :=
+    .tail published (.retireAcceptedFuture dbOwnerAccepted [] [] initialDbTag) (by
+      intro value present
+      have ownerGone : Hibana.observedResourceTag? ownerSent 10 = none := by decide
+      have workerAbsent : Hibana.observedResourceTag? initial.snapshot 10 = none := by decide
+      simp only [dbHeaders1, ownerGone, workerAbsent, reduceCtorEq, or_self] at present)
+  have receiving := Hibana.a_checked_owned_receive_supplies_its_transfer_header_evidence
+    (facts := workerReceiveFacts) (Frame := Hibana.OwnedWireObservation)
+    (by decide : observedCommit0.step.ownedCheck admissionImage admissionChoreo observedCommit0.wire 9053 = true)
+    ((Option.some_get (x := observedCommit0.step.ownedFacts? admissionImage admissionChoreo) (by decide)).symm) (by decide)
+    (fun value => Hibana.observedResourceTag? ownerSent 10 = some value)
+    dbOwnerReleased [] observedCommit0.wire
+  refine .tail released receiving.1 ?_
+  intro value
+  have observed : dbHeaders2 value →
+      (Hibana.observedResourceTag? initial.snapshot 10 = some value ∨
+        Hibana.observedResourceTag? ownerSent 10 = some value) ∨ value ∈ dbAtWorker.usable.take 1 := receiving.2 value
+  intro present
+  exact (observed present).elim (fun old => .inl old.symm) Or.inr
+
+theorem observedReadyReturnKeepsThatHeaderTransferHistory :
+    Hibana.ResourceHeaderExecution dbHeaders0 dbStart dbHeaders3 dbAtWorker := by
+  apply Hibana.ResourceHeaderExecution.tail observedFirstLoanHasItsCheckedHeaderTransferHistory
+    (Hibana.EndpointTransfer.Step.unchanged dbAtWorker)
+  intro value present
+  have workerSame : Hibana.observedResourceTag? joined.snapshot 10 =
+      Hibana.observedResourceTag? received.snapshot 10 :=
+    Hibana.unchanged_headers_preserve_resource_tags (by decide) (by decide) (by decide) 10
+  have ownerSame : Hibana.observedResourceTag? ownerBeforeReturn 10 =
+      Hibana.observedResourceTag? ownerSent 10 :=
+    Hibana.unchanged_headers_preserve_resource_tags (by decide) (by decide) (by decide) 10
+  simpa only [dbHeaders3, dbHeaders2, workerSame, ownerSame] using present
+
+theorem actualReadyReadHasItsCarrierValueFromTheHeaderTransferHistory :
+    ∃ view, Hibana.observedActorView? received.snapshot readRow.view = some view ∧
+      Hibana.observedResourceTag? received.snapshot readRow.view = some (received.snapshot.actor, view.header) ∧
+      Hibana.TransferValueLocated (received.snapshot.actor, view.header) dbAtWorker := by
+  obtain ⟨view, found, tagAt, custody⟩ := Hibana.a_ready_admitted_row_has_its_actual_carrier_custody
+    (sample := received) (data := useData) (path := usePath) (row := readRow)
+    receivedChecked ((Option.some_get (x := admissionImage.decodeActorOrder? admissionChoreo) (by decide)).symm) (by decide) (by decide) (by decide)
+    (fun value => Hibana.observedResourceTag? ownerSent 10 = some value)
+    observedFirstLoanHasItsCheckedHeaderTransferHistory observedInitialHeadersIdentifyTheSoleInitialTag
+  exact ⟨view, found, tagAt, custody.resolve_right (by
+    simp only [dbAtWorker, dbOwnerReleased, List.mem_nil_iff, not_false_eq_true])⟩
+
+theorem actualReadyReturnHasItsPayloadValueFromTheHeaderTransferHistory :
+    ∃ view, Hibana.observedActorView? joined.snapshot resourceKey.role = some view ∧
+      Hibana.observedResourceTag? joined.snapshot resourceKey.role = some (joined.snapshot.actor, view.header) ∧
+      Hibana.TransferValueLocated (joined.snapshot.actor, view.header) dbAtWorker := by
+  obtain ⟨view, found, tagAt, custody⟩ := Hibana.a_ready_owned_admitted_row_has_its_actual_payload_custody
+    (sample := joined) (data := useData) (path := usePath) (row := returnRow)
+    (binding := returnBinding) (key := resourceKey)
+    joinedChecked ((Option.some_get (x := admissionImage.decodeActorOrder? admissionChoreo) (by decide)).symm) (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+    (fun value => Hibana.observedResourceTag? ownerBeforeReturn 10 = some value)
+    observedReadyReturnKeepsThatHeaderTransferHistory observedInitialHeadersIdentifyTheSoleInitialTag
+  exact ⟨view, found, tagAt, custody.resolve_right (by
+    simp only [dbAtWorker, dbOwnerReleased, List.mem_nil_iff, not_false_eq_true])⟩
+
+theorem observedReturnLoanHasItsCheckedHeaderTransferHistory :
+    Hibana.ResourceHeaderExecution dbHeaders0 dbStart dbHeaders5 dbAtOwner := by
+  have sealed : Hibana.ResourceHeaderExecution dbHeaders0 dbStart dbHeaders3 dbWorkerSealed :=
+    .tail observedReadyReturnKeepsThatHeaderTransferHistory
+      (.seal dbAtWorker [] [] receivedDbTag) (fun _ present => present)
+  have accepted : Hibana.ResourceHeaderExecution dbHeaders0 dbStart dbHeaders3 dbWorkerAccepted :=
+    .tail sealed (.accept dbWorkerSealed [] [] receivedDbTag observedCommit3.wire) (fun _ present => present)
+  have publication := Hibana.a_checked_owned_send_supplies_its_local_publication_header_evidence
+    (facts := workerAcceptFacts) (Frame := Hibana.OwnedWireObservation)
+    (by decide : observedCommit3.step.ownedCheck admissionImage admissionChoreo observedCommit3.wire 9053 = true)
+    ((Option.some_get (x := observedCommit3.step.ownedFacts? admissionImage admissionChoreo) (by decide)).symm) (by decide)
+    (fun value => Hibana.observedResourceTag? ownerBeforeReturn 10 = some value) dbWorkerAccepted
+  have published : Hibana.ResourceHeaderExecution dbHeaders0 dbStart dbHeaders4 dbWorkerAccepted :=
+    .tail accepted (.unchanged dbWorkerAccepted) publication
+  have released : Hibana.ResourceHeaderExecution dbHeaders0 dbStart dbHeaders4 dbWorkerReleased :=
+    .tail published (.retireAcceptedFuture dbWorkerAccepted [] [] receivedDbTag) (by
+      intro value present
+      have workerGone : Hibana.observedResourceTag? returned.snapshot 10 = none := by decide
+      have ownerAbsent : Hibana.observedResourceTag? ownerBeforeReturn 10 = none := by decide
+      simp only [dbHeaders4, workerGone, ownerAbsent, reduceCtorEq, or_self] at present)
+  have receiving := Hibana.a_checked_owned_receive_supplies_its_transfer_header_evidence
+    (facts := ownerReturnFacts) (Frame := Hibana.OwnedWireObservation)
+    ownerReturnChecked ((Option.some_get (x := ownerReturn.ownedFacts? ownerImage admissionChoreo) (by decide)).symm) (by decide)
+    (fun value => Hibana.observedResourceTag? returned.snapshot 10 = some value)
+    dbWorkerReleased [] observedCommit3.wire
+  refine .tail released receiving.1 ?_
+  intro value
+  have observed : dbHeaders5 value →
+      (Hibana.observedResourceTag? ownerBeforeReturn 10 = some value ∨
+        Hibana.observedResourceTag? returned.snapshot 10 = some value) ∨ value ∈ dbAtOwner.usable.take 1 := receiving.2 value
+  intro present
+  exact (observed present).elim (fun old => .inl old.symm) Or.inr
+
+theorem actualReturnedHeaderRealizesItsExactValue :
+    Hibana.TransferValueLocated returnedDbTag dbAtOwner :=
+  Hibana.an_issued_header_without_an_accepted_witness_has_its_actual_value
+    observedReturnLoanHasItsCheckedHeaderTransferHistory observedInitialHeadersIdentifyTheSoleInitialTag
+    (by left; decide) (by simp only [dbAtOwner, dbWorkerReleased, List.mem_nil_iff, not_false_eq_true])
+
+theorem theHeaderModelPermitsTheNativePreemptionSchedule :
+    ∃ state : Hibana.EndpointTransfer.Observation (Nat × Nat × Nat × Nat) Hibana.OwnedWireObservation,
+      Hibana.ResourceHeaderExecution (fun value => value = initialDbTag) dbStart
+        (fun value => value = initialDbTag) state ∧
+      state.usable = [] ∧ state.preparing = [] ∧ state.inFlight = [observedCommit3.wire] ∧
+      state.acceptedFutures = [initialDbTag] ∧ state.authorityCount = 1 :=
+  Hibana.a_receiver_can_return_before_sender_header_publication
+    initialDbTag receivedDbTag observedCommit0.wire observedCommit3.wire
+
+theorem theModelPreemptionCutHasOnlyFrameAuthority :
+    ∃ state : Hibana.EndpointTransfer.Observation (Nat × Nat × Nat × Nat) Hibana.OwnedWireObservation,
+      Hibana.ResourceHeaderExecution (fun value => value = initialDbTag) dbStart
+        (fun value => value = initialDbTag) state ∧
+      Hibana.TransferFrameLocated observedCommit3.wire state ∧
+      initialDbTag ∈ state.acceptedFutures ∧ ¬ Hibana.TransferValueLocated initialDbTag state :=
+  Hibana.an_unpublished_sender_header_need_not_name_local_authority
+    initialDbTag receivedDbTag observedCommit0.wire observedCommit3.wire
+
+theorem privatePayloadAndAcceptedFramesRemainDistinctFromApplicationValues :
+    dbOwnerSealed.usable = [] ∧ dbOwnerSealed.preparing = [initialDbTag] ∧
+      dbOwnerAccepted.usable = [] ∧ dbOwnerAccepted.inFlight = [observedCommit0.wire] ∧
+      initialDbTag ≠ receivedDbTag ∧ receivedDbTag ≠ returnedDbTag ∧ initialDbTag ≠ returnedDbTag := by decide
 
 "#);
                 let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))

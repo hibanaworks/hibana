@@ -15,6 +15,7 @@ import Hibana.SourceTransferAvailability
 import Hibana.SourceHandoffAvailability
 import Hibana.SourceReceiptDependency
 import Hibana.ActorCommitHistory
+import Hibana.ResourceValueCorrespondence
 import Hibana.ActorReentryCommit
 import Hibana.GlobalSemantics
 import Hibana.GlobalAllocationCorrectness
