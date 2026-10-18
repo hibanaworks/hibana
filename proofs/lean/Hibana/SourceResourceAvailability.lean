@@ -164,7 +164,7 @@ theorem checked_owned_receive_publishes_its_projected_actor
   obtain ⟨_, _, _, actor, _⟩ := fields
   have current := (checked_actor_commit_preserves_actor_and_run
     (Bool.and_eq_true_iff.mp checked).1).1
-  simp only [OwnedCommitFacts.actor?, receiving, Option.some.injEq] at actor
+  simp only [OwnedCommitFacts.actor?, OwnedCommitFacts.sourceFacts, OwnedSourceFacts.actor?, receiving, Option.some.injEq] at actor
   exact current.trans actor.symm
 
 /-- At an actual source-checked send, the private value belongs to the
@@ -210,7 +210,7 @@ theorem source_checked_send_keeps_the_exact_frame_until_receive_or_fence
     | some header =>
         simp only [headerAt, Option.map_some, Option.some.injEq] at held
         exact (congrArg Prod.fst held).symm
-  simp only [OwnedCommitFacts.actor?, sendingSide, Option.some.injEq] at actor
+  simp only [OwnedCommitFacts.actor?, OwnedCommitFacts.sourceFacts, OwnedSourceFacts.actor?, sendingSide, Option.some.injEq] at actor
   obtain ⟨next, frame, after, step, bound, acceptedAt, _, channelAt, sequenceAt, labelAt, queued⟩ :=
     ordered_carrier_send_preserves_unique_authority profile initialView sending label
       execution preparing currentExact sent

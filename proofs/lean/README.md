@@ -107,8 +107,34 @@ therefore has its actual source-and-wire-checked commit in that same history,
 without assuming an available Endpoint or one common distributed iteration.
 The complete six-commit owner trace in `receipt_refresh` instantiates this
 result: eight writes include two body clears and six marks. Omitting those
-clears is rejected. These per-row origins still need correspondence across
-different actors and actual FIFO frame occurrences for distributed progress.
+clears is rejected.
+
+`SendAdmission.lean` connects those origins to actual transport acceptance,
+before sender publication. Its source record uses the current or fresh base
+derived from the pre-operation cut. Every required completed row has its real
+source-and-wire-checked marking boundary and a suffix that did not reset that
+row. An authenticated FIFO direction contains records for **all** accepted
+messages, including ordinary payloads between Endpoint transfers. The generic
+trace theorem recovers the accepted source record and its erased occurrence
+from an actual receive position. Omitting an ordinary message cannot qualify
+the same carrier history. The received owned envelope then identifies the same
+resource and static source event as its accepted send, without a successful
+sender snapshot, a common actor iteration, or an acknowledgement. Given the
+complete transfer history and conforming ordered carrier, that pre-publication
+source acceptance moves the sole authority to its exact frame; subsequent
+transfer steps retain it until a receive or an explicit fence.
+
+The mixed-message Tokio fixture accepts a loan and an ordinary message before
+polling their receiver, repeats the loan, and then uses the returned Endpoint
+for its continuation. Its complete four-frame direction instantiates the FIFO
+theorem and rejects an omitted ordinary record. The parallel reentry fixture
+also instantiates it across late reentry while another rolled body remains
+independent. Occurrence ordinals exist only in erased proof histories; no
+runtime field, wire byte, or coordination authority was added. Ordinary byte
+formats still rely on the existing codec-conformance contract. These results
+connect per-actor origins to individual FIFO receipts; coherence of a complete
+distributed cut across partial choices, custody, pending calls and failures
+still needs composition before the public guard can be opened.
 
 `ResourceHeaderOrigin.lean` derives an issued tag's initial or latest actual
 receive origin from the complete transfer/header history. Static source event

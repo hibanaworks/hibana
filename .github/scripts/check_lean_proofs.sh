@@ -30,6 +30,7 @@ FUTURE_PREDECESSOR_GENERATED="${ROOT_DIR}/target/lean-proof/OwnedFuturePredecess
 SEND_COMPLETION_GENERATED="${ROOT_DIR}/target/lean-proof/SendCompletionGenerated.lean"
 ACTOR_REENTRY_COMMIT_GENERATED="${ROOT_DIR}/target/lean-proof/ActorReentryCommitGenerated.lean"
 ACTOR_PARALLEL_REENTRY_GENERATED="${ROOT_DIR}/target/lean-proof/ActorParallelReentryGenerated.lean"
+MIXED_SEND_ADMISSION_GENERATED="${ROOT_DIR}/target/lean-proof/MixedSendAdmissionGenerated.lean"
 RECEIPT_REFRESH_GENERATED="${ROOT_DIR}/target/lean-proof/ReceiptRefreshGenerated.lean"
 ACTOR_ROUTE_LEFT_REENTRY_GENERATED="${ROOT_DIR}/target/lean-proof/ActorRouteLeftReentryGenerated.lean"
 ACTOR_ROUTE_RIGHT_REENTRY_GENERATED="${ROOT_DIR}/target/lean-proof/ActorRouteRightReentryGenerated.lean"
@@ -60,7 +61,7 @@ bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" build-serial "${PROOF_
 bash "${ROOT_DIR}/.github/scripts/check_lean_claim_surface.sh"
 static_audit_output="$(run_audit \
   theorem-inventory \
-  --static "${PROOF_DIR}" "${STATIC_CLAIM_SNAPSHOT}" 997 592 293 112)"
+  --static "${PROOF_DIR}" "${STATIC_CLAIM_SNAPSHOT}" 1007 601 294 112)"
 printf '%s\n' "${static_audit_output}"
 printf '%s\n' "${static_audit_output}" | bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard markers static
 bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" theorem-inventory \
@@ -78,6 +79,7 @@ rm -f "${SOURCE_INTERVAL_GENERATED}"
 rm -f "${FUTURE_PREDECESSOR_GENERATED}"
 rm -f "${SEND_COMPLETION_GENERATED}"
 rm -f "${RECEIPT_REFRESH_GENERATED}"
+rm -f "${MIXED_SEND_ADMISSION_GENERATED}"
 rm -f "${LOCAL_RETURN_GENERATED}"
 rm -f "${PENDING_BORROW_GENERATED}"
 rm -f "${FUTURE_CUSTODY_GENERATED}"
@@ -217,6 +219,12 @@ CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --li
   g::role_projection::tests::reentry_parallel::parallel_loan_reentry_preserves_the_other_body_and_completed_tail \
   -- --exact
 bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${ACTOR_PARALLEL_REENTRY_GENERATED}" "actor parallel reentry commits"
+CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib \
+  g::role_projection::tests::mixed_send_admission::ordinary_and_owned_acceptances_keep_the_same_fifo_through_reentry \
+  -- --exact
+bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${MIXED_SEND_ADMISSION_GENERATED}" "ordinary and owned source acceptances"
+run_audit generated-axioms --kernel "${MIXED_SEND_ADMISSION_GENERATED}" "${PROOF_DIR}" \
+  "${PROOF_DIR}/mixed-send-admission-generated-claim-surface.txt" 19
 CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib -- \
   g::role_projection::tests::conditional_controller::remote_controller::a_conditional_controller_does_not_take_authority_from_its_co_resident_observer \
   g::role_projection::tests::conditional_controller::co_resident_controller::a_conditional_controller_does_not_take_authority_from_its_co_resident_observer \
@@ -230,7 +238,7 @@ run_audit generated-axioms --kernel "${ACTOR_ROUTE_RIGHT_REENTRY_GENERATED}" "${
 run_audit generated-axioms --kernel "${ACTOR_REENTRY_COMMIT_GENERATED}" "${PROOF_DIR}" \
   "${PROOF_DIR}/actor-reentry-commit-generated-claim-surface.txt" 36
 run_audit generated-axioms --kernel "${ACTOR_PARALLEL_REENTRY_GENERATED}" "${PROOF_DIR}" \
-  "${PROOF_DIR}/actor-parallel-reentry-generated-claim-surface.txt" 38
+  "${PROOF_DIR}/actor-parallel-reentry-generated-claim-surface.txt" 44
 run_audit generated-axioms --kernel "${ACTOR_COMMIT_GENERATED}" "${PROOF_DIR}" \
   "${PROOF_DIR}/actor-commit-generated-claim-surface.txt" 69
 run_audit generated-axioms --kernel "${PROGRAM_COLUMNS_GENERATED}" "${PROOF_DIR}" \

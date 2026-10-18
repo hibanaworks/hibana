@@ -59,11 +59,14 @@ fn parallel_loan_reentry_preserves_the_other_body_and_completed_tail() {
             let mut worker = worker_rv.enter(sid, &worker_program).unwrap();
             let mut db_service = worker_rv.enter(sid, &db_service_program).unwrap();
             let mut auth_service = worker_rv.enter(sid, &auth_service_program).unwrap();
-            let ((owner_before, owner_after, wire), worker_commit, (), ()) =
+            let ((owner_before, owner_after, wire, initial, first_wire), worker_commit, (), ()) =
                 tokio::time::timeout(Duration::from_secs(30), async {
                     tokio::join!(
                         async {
+                            // SAFETY: owner_rv retains this pinned TestTransport actor.
+                            let initial = unsafe { actor_snapshot(&owner) };
                             owner.send::<Loan>(db).await.unwrap();
+                            let first_wire = network.queued_frame(1);
                             owner.send::<OtherLoan>(auth).await.unwrap();
                             let db = owner.recv::<Loan>().await.unwrap();
                             let auth = owner.recv::<OtherLoan>().await.unwrap();
@@ -78,7 +81,7 @@ fn parallel_loan_reentry_preserves_the_other_body_and_completed_tail() {
                             let wire = network.queued_frame(1);
                             drop(owner.recv::<Loan>().await.unwrap());
                             drop(auth);
-                            (before, after, wire)
+                            (before, after, wire, initial, first_wire)
                         },
                         async {
                             let mut db = worker.recv::<Loan>().await.unwrap();
@@ -123,6 +126,20 @@ fn parallel_loan_reentry_preserves_the_other_body_and_completed_tail() {
                 .await
                 .expect("parallel loan reentry stopped progressing");
             let observations = [(owner_before, owner_after), worker_commit];
+            assert!(initial.steps.iter().all(|step| !step.done));
+            assert_eq!(first_wire.0.lane(), wire.0.lane());
+            let auth_lane = initial
+                .steps
+                .iter()
+                .find_map(|step| match step.action {
+                    LocalAction::Send { label: 2, lane, .. } => Some(lane),
+                    LocalAction::Send { .. }
+                    | LocalAction::Recv { .. }
+                    | LocalAction::Local { .. }
+                    | LocalAction::Terminate => None,
+                })
+                .expect("AUTH loan source lane");
+            assert_ne!(auth_lane, wire.0.lane());
             for ((before, after), image) in observations.iter().zip([
                 &RoleProjection::<0, Steps, 32>::IMAGE_REF,
                 &RoleProjection::<1, Steps, 32>::IMAGE_REF,
@@ -156,7 +173,7 @@ fn parallel_loan_reentry_preserves_the_other_body_and_completed_tail() {
                     == (!(first..stop).contains(&index) || index == event)));
             }
             #[cfg(not(miri))]
-            write_observations(&observations, &wire);
+            write_observations(&observations, &[first_wire, wire], &initial);
             #[cfg(miri)]
             assert_eq!(wire.1[0], 10);
         });
@@ -165,15 +182,17 @@ fn parallel_loan_reentry_preserves_the_other_body_and_completed_tail() {
 #[cfg(not(miri))]
 fn write_observations(
     observations: &[(ActorSnapshot, ActorSnapshot)],
-    wire: &(crate::transport::FrameHeader, std::vec::Vec<u8>),
+    wires: &[(crate::transport::FrameHeader, std::vec::Vec<u8>); 2],
+    initial: &ActorSnapshot,
 ) {
     use crate::test_support::{lean_choreo::LeanChoreo, lean_descriptor::descriptor_source};
+    let wire = &wires[1];
     let images = [
         &RoleProjection::<0, Steps, 32>::IMAGE_REF,
         &RoleProjection::<1, Steps, 32>::IMAGE_REF,
     ];
     let mut source = std::format!(
-        "import Hibana.ActorMeasuredExecution\n\nset_option maxRecDepth 10000\n\n\
+        "import Hibana.ActorMeasuredExecution\nimport Hibana.SendAdmission\n\nset_option maxRecDepth 10000\n\n\
          def parallelReentryChoreo : Hibana.Choreo := {}\n\n",
         Steps::lean_source(),
     );
@@ -337,6 +356,96 @@ theorem parallelReentryReceiverPublishesItsActualActor :
 
 "#,
     );
+    source.push_str(&std::format!(
+        "\ndef parallelInitial : Hibana.ActorProgressObservation := {}\n\n\
+         def parallelFirstWire : Hibana.OwnedWireObservation := {{ session := {}, lane := {}, sender := {}, \
+         receiver := {}, frameLabel := {}, payload := {:?} }}\n\n",
+        super::commit::observation_source(initial), wires[0].0.session().raw(), wires[0].0.lane(),
+        wires[0].0.source_role(), wires[0].0.target_role(), wires[0].0.label().raw(), wires[0].1,
+    ));
+    source.push_str(r#"
+def parallelFirstAdmission : Hibana.SourceSendAdmission := {
+  image := parallelReentryImage0, base := parallelInitial, pathIndex := 0,
+  event := parallelReentryActor0.event, wire := parallelFirstWire }
+def parallelFreshAdmission : Hibana.SourceSendAdmission := {
+  image := parallelReentryImage0,
+  base := ((Hibana.prepareObservedActorBody? parallelReentryImage0 parallelReentryChoreo
+    parallelReentryActor0.before 0 0 parallelReentryActor0.scope parallelReentryActor0.event).get (by decide)).2,
+  pathIndex := 0, event := parallelReentryActor0.event, wire := parallelReentryWire }
+
+theorem parallelFirstAcceptanceIsSourceChecked : parallelFirstAdmission.check parallelReentryChoreo 875 = true := by decide
+theorem parallelFreshAcceptanceIsSourceChecked : parallelFreshAdmission.check parallelReentryChoreo 875 = true := by decide
+
+def parallelFirstSource := (parallelFirstAdmission.ownedFacts? parallelReentryChoreo).get (by decide)
+def parallelFreshSource := (parallelFreshAdmission.ownedFacts? parallelReentryChoreo).get (by decide)
+def parallelChannel : Hibana.TransportChannel := {
+  session := 875, generation := 0, lane := parallelFirstWire.lane,
+  sender := parallelFirstWire.sender, receiver := parallelFirstWire.receiver }
+def parallelCarrier0 := Hibana.TransportState.initial parallelChannel
+def parallelGhost0 := Hibana.ElasticAdmissionHistory.initial parallelChannel
+def parallelCarrier1 := (parallelCarrier0.send ⟨parallelFirstWire.frameLabel, by decide⟩).get (by decide)
+def parallelGhost1 := parallelGhost0.appendOccurrence parallelFirstSource.effIndex
+def parallelCarrierAfterFirst := { parallelCarrier1 with delivered := 1 }
+def parallelGhostAfterFirst := { parallelGhost1 with delivered := 1 }
+def parallelCarrier2 := (parallelCarrierAfterFirst.send ⟨parallelReentryWire.frameLabel, by decide⟩).get (by decide)
+def parallelGhost2 := parallelGhostAfterFirst.appendOccurrence parallelFreshSource.effIndex
+def parallelAcceptedRecords := [(parallelFirstAdmission, parallelFirstSource.effIndex), (parallelFreshAdmission, parallelFreshSource.effIndex)]
+
+theorem parallelActualAcceptancesKeepTheirFIFOInstances :
+    Hibana.SendAdmissionTrace parallelReentryChoreo 875 parallelCarrier2 parallelGhost2 parallelAcceptedRecords := by
+  apply Hibana.SendAdmissionTrace.accept
+    (choreo := parallelReentryChoreo) (session := 875)
+    (transport := parallelCarrierAfterFirst) (history := parallelGhostAfterFirst)
+    (records := [(parallelFirstAdmission, parallelFirstSource.effIndex)])
+    (sample := parallelFreshAdmission) (eventId := parallelFreshSource.effIndex)
+    (label := ⟨parallelReentryWire.frameLabel, by decide⟩)
+  · apply Hibana.SendAdmissionTrace.receive
+      (transport := parallelCarrier1) (history := parallelGhost1)
+      (records := [(parallelFirstAdmission, parallelFirstSource.effIndex)])
+      (frame := (parallelCarrier1.frames[0]?).get (by decide))
+      (key := (parallelGhost1.accepted[0]?).get (by decide))
+    · exact .accept (transport := parallelCarrier0) (sent := parallelCarrier1)
+        (history := parallelGhost0) (records := [])
+        (sample := parallelFirstAdmission) (eventId := parallelFirstSource.effIndex)
+        (label := ⟨parallelFirstWire.frameLabel, by decide⟩)
+        (.initial parallelChannel) parallelFirstAcceptanceIsSourceChecked
+        (by decide) (by decide) ⟨rfl, rfl, rfl, rfl, rfl⟩
+    · decide
+    · rfl
+  · exact parallelFreshAcceptanceIsSourceChecked
+  · decide
+  · decide
+  · exact ⟨rfl, rfl, rfl, rfl, rfl⟩
+
+theorem parallelFreshBytesBindTheActualReceiverWithoutSenderPublication :
+    parallelFreshSource.resource = parallelReentryRecvFacts.resource ∧
+      parallelFreshSource.effIndex = parallelReentryRecvFacts.effIndex :=
+  Hibana.accepted_owned_source_bytes_identify_the_checked_receiver
+    parallelFreshAcceptanceIsSourceChecked
+    ((Option.some_get (x := parallelFreshAdmission.ownedFacts? parallelReentryChoreo) (by decide)).symm)
+    parallelReentryActor1PreparedOwned
+    ((Option.some_get (x := parallelReentryActor1Prepared.2.ownedFacts? parallelReentryImage1 parallelReentryChoreo) (by decide)).symm)
+    rfl
+
+theorem parallelRepeatedEnvelopeHasDistinctFIFOInstances :
+    parallelFirstWire.payload = parallelReentryWire.payload ∧
+      parallelGhost2.accepted = [⟨parallelFreshSource.effIndex, 0⟩, ⟨parallelFreshSource.effIndex, 1⟩] ∧
+      parallelGhost2.delivered = 1 := by decide
+
+theorem parallelActualReceiveHasItsFreshAcceptedOccurrence :
+    ∃ sample eventId key following,
+      parallelAcceptedRecords[parallelCarrier2.delivered]? = some (sample, eventId) ∧
+      parallelGhost2.accepted[parallelCarrier2.delivered]? = some key ∧
+      sample.check parallelReentryChoreo 875 = true ∧ sample.effIndex? = some eventId ∧
+      sample.wire.identifies ((parallelCarrier2.frames[1]?).get (by decide)) ∧ key.globalId = eventId ∧
+      ((parallelCarrier2.frames[1]?).get (by decide)).sequence = parallelGhost2.delivered ∧
+      key.iteration < parallelGhost2.nextIteration key.globalId ∧
+      parallelGhost2.receive? = some (key, following) ∧
+      Hibana.SendAdmissionTrace parallelReentryChoreo 875
+        ({ parallelCarrier2 with delivered := 2 }) following parallelAcceptedRecords :=
+  Hibana.a_fifo_receive_has_its_actual_accepted_source_occurrence
+    parallelActualAcceptancesKeepTheirFIFOInstances (by decide)
+"#);
     let directory = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/lean-proof");
     std::fs::create_dir_all(&directory).unwrap();
     std::fs::write(directory.join("ActorParallelReentryGenerated.lean"), source).unwrap();

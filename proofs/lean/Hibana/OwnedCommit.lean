@@ -1,4 +1,5 @@
 import Hibana.ActorCommit
+import Hibana.OwnedSourceFacts
 import Hibana.EndpointTransfer
 import Hibana.SourceResourceContinuation
 
@@ -38,53 +39,49 @@ structure OwnedCommitFacts where
 def ActorCommitObservation.ownedFacts?
     (sample : ActorCommitObservation) (image : RustDescriptorImage) (choreo : Choreo) :
     Option OwnedCommitFacts := do
-  let data ← image.decodeActorOrder? choreo
-  let path ← data.normalized.paths[sample.pathIndex]?
-  let row ← data.rows[sample.event]?
-  let (_, binding) ← path.bindings.find? fun entry => entry.1 == row.actionId.event
-  let .endpoint resource := binding.message.payload | none
-  let effIndex ← image.eventEffIndex? sample.event
-  let lane ← image.eventLane? sample.event
-  let frameLabel ← image.eventFrameLabel? sample.event
-  let afterView ← observedActorView? sample.after resource.role
+  let source ← image.ownedSourceFacts? choreo sample.pathIndex sample.event
+  let afterView ← observedActorView? sample.after source.resource.role
   pure {
-    effIndex
-    resource
-    binding
-    side := row.actionId.side
-    lane
-    frameLabel
+    effIndex := source.effIndex
+    resource := source.resource
+    binding := source.binding
+    side := source.side
+    lane := source.lane
+    frameLabel := source.frameLabel
     afterView
   }
 
+def OwnedCommitFacts.sourceFacts (facts : OwnedCommitFacts) : OwnedSourceFacts := {
+  effIndex := facts.effIndex, resource := facts.resource, binding := facts.binding,
+  side := facts.side, lane := facts.lane, frameLabel := facts.frameLabel }
+
 def OwnedCommitFacts.actor? (facts : OwnedCommitFacts) : Option Nat :=
-  match facts.side with
-  | .send => some facts.binding.senderActor
-  | .receive => some facts.binding.receiverActor
-  | .local => none
+  facts.sourceFacts.actor?
 
 /-- The three-byte envelope matches the production encoder and receive guard.
 No source ordinal is truncated into a different accepted event. -/
 def OwnedCommitFacts.envelope (facts : OwnedCommitFacts) : List Nat :=
-  [facts.resource.role, facts.effIndex / 256, facts.effIndex % 256]
+  facts.sourceFacts.envelope
 
 theorem owned_envelope_identifies_resource_and_source_occurrence
     {first second : OwnedCommitFacts} (same : first.envelope = second.envelope) :
     first.resource.role = second.resource.role ∧ first.effIndex = second.effIndex := by
-  have resource := (List.cons.inj same).1
-  have high := (List.cons.inj (List.cons.inj same).2).1
-  have low := (List.cons.inj (List.cons.inj (List.cons.inj same).2).2).1
-  exact ⟨resource, by omega⟩
+  exact owned_source_envelope_identifies_resource_and_occurrence same
 
-def OwnedCommitFacts.wireMatches
-    (facts : OwnedCommitFacts) (sample : ActorCommitObservation)
+def OwnedSourceFacts.wireMatches
+    (facts : OwnedSourceFacts) (actor : Nat)
     (wire : OwnedWireObservation) (session : Nat) : Bool :=
   facts.resource.component == 0 && facts.resource.role < 256 && facts.effIndex < 65536 &&
-    facts.actor? == some sample.before.actor && wire.session == session &&
+    facts.actor? == some actor && wire.session == session &&
     wire.lane == facts.lane && wire.frameLabel == facts.frameLabel &&
     wire.sender == facts.binding.message.sender.role &&
     wire.receiver == facts.binding.message.receiver.role &&
     decide (wire.payload = facts.envelope)
+
+def OwnedCommitFacts.wireMatches
+    (facts : OwnedCommitFacts) (sample : ActorCommitObservation)
+    (wire : OwnedWireObservation) (session : Nat) : Bool :=
+  facts.sourceFacts.wireMatches sample.before.actor wire session
 
 def ActorCommitObservation.ownedCheck
     (sample : ActorCommitObservation) (image : RustDescriptorImage) (choreo : Choreo)
@@ -109,26 +106,13 @@ theorem decoded_owned_facts_retain_the_source_row_and_view
       entry.2.message.payload = .endpoint facts.resource ∧ row.actionId.side = facts.side ∧
       facts.binding = entry.2 ∧
       observedActorView? sample.after facts.resource.role = some facts.afterView := by
-  change (image.decodeActorOrder? choreo).bind _ = some facts at decoded
-  obtain ⟨data, dataAt, remaining⟩ := Option.bind_eq_some_iff.mp decoded
-  change data.normalized.paths[sample.pathIndex]?.bind _ = some facts at remaining
-  obtain ⟨path, pathAt, remaining⟩ := Option.bind_eq_some_iff.mp remaining
-  change data.rows[sample.event]?.bind _ = some facts at remaining
-  obtain ⟨row, rowAt, remaining⟩ := Option.bind_eq_some_iff.mp remaining
-  change (path.bindings.find? (fun entry => entry.1 == row.actionId.event)).bind _ =
-    some facts at remaining
-  obtain ⟨entry, entryAt, remaining⟩ := Option.bind_eq_some_iff.mp remaining
-  cases payloadAt : entry.2.message.payload with
-  | wire schema => simp only [payloadAt] at remaining; contradiction
-  | endpoint resource =>
-      simp only [payloadAt] at remaining
-      obtain ⟨eff, _, remaining⟩ := Option.bind_eq_some_iff.mp remaining
-      obtain ⟨lane, _, remaining⟩ := Option.bind_eq_some_iff.mp remaining
-      obtain ⟨label, _, remaining⟩ := Option.bind_eq_some_iff.mp remaining
-      obtain ⟨view, viewAt, written⟩ := Option.bind_eq_some_iff.mp remaining
-      have same := Option.some.inj written
-      subst facts
-      exact ⟨data, path, row, entry, dataAt, pathAt, rowAt, entryAt, payloadAt, rfl, rfl, viewAt⟩
+  unfold ActorCommitObservation.ownedFacts? at decoded
+  obtain ⟨source, sourceAt, remaining⟩ := Option.bind_eq_some_iff.mp decoded
+  obtain ⟨view, viewAt, written⟩ := Option.bind_eq_some_iff.mp remaining
+  cases Option.some.inj written
+  obtain ⟨data, path, row, entry, dataAt, pathAt, rowAt, entryAt, payload, side, binding⟩ :=
+    decoded_owned_source_facts_retain_the_exact_source_row sourceAt
+  exact ⟨data, path, row, entry, dataAt, pathAt, rowAt, entryAt, payload, side, binding, viewAt⟩
 
 /-- Successful observations connect source ordering and view publication to
 the exact accepted wire identity and envelope. Completeness of observations
@@ -151,7 +135,8 @@ theorem accepted_owned_commit_binds_source_view_and_wire
   | some facts =>
       have wireOk : facts.wireMatches sample wire session = true := by
         simpa [found] using checked'.2
-      simp only [OwnedCommitFacts.wireMatches, Bool.and_eq_true, beq_iff_eq,
+      simp only [OwnedCommitFacts.wireMatches, OwnedSourceFacts.wireMatches, OwnedCommitFacts.sourceFacts,
+        Bool.and_eq_true, beq_iff_eq,
         decide_eq_true_eq] at wireOk
       exact ⟨facts, rfl, by simpa only [and_assoc] using wireOk⟩
 
@@ -206,9 +191,8 @@ theorem source_checked_owned_commit_has_solved_source_derivation
         let binding ← instantiateBinding issuance symbolic
         some (event, binding)) = some path.bindings := by
   obtain ⟨_, facts, factsAt, _⟩ := accepted_owned_commit_binds_source_view_and_wire checked
-  change (image.decodeActorOrder? choreo).bind _ = some facts at factsAt
-  obtain ⟨data, decoded, remaining⟩ := Option.bind_eq_some_iff.mp factsAt
-  obtain ⟨path, pathAt, _⟩ := Option.bind_eq_some_iff.mp remaining
+  obtain ⟨data, path, _, _, decoded, pathAt, _⟩ :=
+    decoded_owned_facts_retain_the_source_row_and_view factsAt
   obtain ⟨issuance, run, sourceAt, solved, instantiated⟩ :=
     decoded_actor_path_has_a_solved_source_derivation decoded (List.mem_of_getElem? pathAt)
   exact ⟨data, path, issuance, run, decoded, pathAt, sourceAt, solved, instantiated⟩
@@ -251,7 +235,7 @@ theorem source_checked_carrier_receive_preserves_unique_authority
   subst actual
   obtain ⟨_, _, _, actor, sessionSame, _, _, sender, receiver, envelope⟩ := fields
   have receiverActor : sample.before.actor = facts.binding.receiverActor := by
-    simp only [OwnedCommitFacts.actor?, receiving] at actor
+    simp only [OwnedCommitFacts.actor?, OwnedCommitFacts.sourceFacts, OwnedSourceFacts.actor?, receiving] at actor
     exact (Option.some.inj actor).symm
   obtain ⟨next, after, step, bound, issued, _, committedExact, advances, _⟩ :=
     EndpointTransfer.ordered_carrier_commit_preserves_unique_authority profile

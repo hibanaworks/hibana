@@ -1,3 +1,25 @@
+parallelActualAcceptancesKeepTheirFIFOInstances : Hibana.SendAdmissionTrace parallelReentryChoreo 875 parallelCarrier2
+  parallelGhost2 parallelAcceptedRecords
+parallelActualReceiveHasItsFreshAcceptedOccurrence : ∃ sample eventId key following,
+  parallelAcceptedRecords[parallelCarrier2.delivered]? = some (sample, eventId) ∧
+    parallelGhost2.accepted[parallelCarrier2.delivered]? = some key ∧
+      sample.check parallelReentryChoreo 875 = true ∧
+        sample.effIndex? = some eventId ∧
+          sample.wire.identifies (parallelCarrier2.frames[1]?.get ⋯) ∧
+            key.globalId = eventId ∧
+              (parallelCarrier2.frames[1]?.get ⋯).sequence = parallelGhost2.delivered ∧
+                key.iteration < parallelGhost2.nextIteration key.globalId ∧
+                  parallelGhost2.receive? = some (key, following) ∧
+                    Hibana.SendAdmissionTrace parallelReentryChoreo 875
+                      (have __src := parallelCarrier2;
+                      { channel := __src.channel, frames := __src.frames, delivered := 2,
+                        peerClosed := __src.peerClosed })
+                      following parallelAcceptedRecords
+parallelFirstAcceptanceIsSourceChecked : parallelFirstAdmission.check parallelReentryChoreo 875 = true
+parallelFreshAcceptanceIsSourceChecked : parallelFreshAdmission.check parallelReentryChoreo 875 = true
+parallelFreshBytesBindTheActualReceiverWithoutSenderPublication : parallelFreshSource.resource =
+    parallelReentryRecvFacts.resource ∧
+  parallelFreshSource.effIndex = parallelReentryRecvFacts.effIndex
 parallelReentryActor0Accepted : parallelReentryActor0.check parallelReentryImage0 parallelReentryChoreo = true
 parallelReentryActor0ActualMeasuredFreshHistory : Hibana.ActorMeasuredHistory parallelReentryImage0
   parallelReentryChoreo 875 (parallelReentryActor0.before, 5) (parallelReentryActor0.after, 8)
@@ -188,3 +210,8 @@ parallelReentryFrameNamesTheSameContinuation : parallelReentrySendFacts.resource
   parallelReentrySendFacts.effIndex = parallelReentryRecvFacts.effIndex
 parallelReentryReceiverPublishesItsActualActor : parallelReentryActor1Prepared.snd.after.actor =
   parallelReentryRecvFacts.binding.receiverActor
+parallelRepeatedEnvelopeHasDistinctFIFOInstances : parallelFirstWire.payload = parallelReentryWire.payload ∧
+  parallelGhost2.accepted =
+      [{ globalId := parallelFreshSource.effIndex, iteration := 0 },
+        { globalId := parallelFreshSource.effIndex, iteration := 1 }] ∧
+    parallelGhost2.delivered = 1

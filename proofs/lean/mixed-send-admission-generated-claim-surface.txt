@@ -1,0 +1,42 @@
+mixedActualFreshReceiveHasItsExactAcceptedOccurrence : ∃ sample eventId key following,
+  mixedRecords4[mixedCarrier4.delivered]? = some (sample, eventId) ∧
+    mixedGhost4.accepted[mixedCarrier4.delivered]? = some key ∧
+      sample.check mixedSendChoreo 9062 = true ∧
+        sample.effIndex? = some eventId ∧
+          sample.wire.identifies (mixedCarrier4.frames[2]?.get ⋯) ∧
+            key.globalId = eventId ∧
+              (mixedCarrier4.frames[2]?.get ⋯).sequence = mixedGhost4.delivered ∧
+                key.iteration < mixedGhost4.nextIteration key.globalId ∧
+                  mixedGhost4.receive? = some (key, following) ∧
+                    Hibana.SendAdmissionTrace mixedSendChoreo 9062
+                      (have __src := mixedCarrier4;
+                      { channel := __src.channel, frames := __src.frames, delivered := 3,
+                        peerClosed := __src.peerClosed })
+                      following mixedRecords4
+mixedFirstLoanWasDelivered : Hibana.SendAdmissionTrace mixedSendChoreo 9062 mixedCarrierFirstLoanReceived
+  mixedGhostFirstLoanReceived mixedRecords2
+mixedFirstVisitWasDelivered : Hibana.SendAdmissionTrace mixedSendChoreo 9062 mixedCarrierFirstComplete
+  mixedGhostFirstComplete mixedRecords2
+mixedFreshBytesBindTheActualReceiverWithoutSenderPublication : mixedFreshSource.resource =
+    mixedFreshReceiptFacts.resource ∧
+  mixedFreshSource.effIndex = mixedFreshReceiptFacts.effIndex
+mixedOrdinaryFrameCannotBeOmitted : ¬Hibana.SendAdmissionTrace mixedSendChoreo 9062 mixedCarrier4 mixedGhost4
+    [(mixedSend0, mixedEvent0), (mixedSend2, mixedEvent2), (mixedSend3, mixedEvent3)]
+mixedOrdinaryFramesHaveNoOwnedResource : mixedSend1.ownedFacts? mixedSendChoreo = none ∧
+  mixedSend3.ownedFacts? mixedSendChoreo = none
+mixedPrefix0 : Hibana.SendAdmissionTrace mixedSendChoreo 9062 mixedCarrier0 mixedGhost0 mixedRecords0
+mixedPrefix1 : Hibana.SendAdmissionTrace mixedSendChoreo 9062 mixedCarrier1 mixedGhost1 mixedRecords1
+mixedPrefix2 : Hibana.SendAdmissionTrace mixedSendChoreo 9062 mixedCarrier2 mixedGhost2 mixedRecords2
+mixedPrefix3 : Hibana.SendAdmissionTrace mixedSendChoreo 9062 mixedCarrier3 mixedGhost3 mixedRecords3
+mixedPrefix4 : Hibana.SendAdmissionTrace mixedSendChoreo 9062 mixedCarrier4 mixedGhost4 mixedRecords4
+mixedReceipt0IsSourceChecked : mixedReceipt0.ownedCheck mixedWorkerImage mixedSendChoreo mixedWire0 9062 = true
+mixedReceipt1IsSourceChecked : mixedReceipt1.ownedCheck mixedWorkerImage mixedSendChoreo mixedWire2 9062 = true
+mixedSend0IsSourceChecked : mixedSend0.check mixedSendChoreo 9062 = true
+mixedSend1IsSourceChecked : mixedSend1.check mixedSendChoreo 9062 = true
+mixedSend2IsSourceChecked : mixedSend2.check mixedSendChoreo 9062 = true
+mixedSend3IsSourceChecked : mixedSend3.check mixedSendChoreo 9062 = true
+mixedSourceInstancesIncludeTheOrdinaryFrames : mixedGhost4.accepted =
+    [{ globalId := mixedEvent0, iteration := 0 }, { globalId := mixedEvent1, iteration := 0 },
+      { globalId := mixedEvent0, iteration := 1 }, { globalId := mixedEvent1, iteration := 1 }] ∧
+  mixedGhost4.delivered = 2
+mixedTraceCoversAllFourActualAcceptedFrames : mixedRecords4.length = mixedCarrier4.frames.length

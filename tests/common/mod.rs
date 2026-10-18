@@ -297,6 +297,11 @@ impl TestTransport {
 
     /// Copy accepted wire evidence without consuming, requeueing or waking it.
     pub(crate) fn queued_frame(&self, role: u8) -> (FrameHeader, Vec<u8>) {
+        self.queued_frame_at(role, 0)
+    }
+
+    /// Inspect a pipeline without changing the transport's receive position.
+    pub(crate) fn queued_frame_at(&self, role: u8, offset: usize) -> (FrameHeader, Vec<u8>) {
         let state = self.state.borrow();
         let queue = &state
             .roles
@@ -305,7 +310,8 @@ impl TestTransport {
             .expect("observed receiver")
             .state
             .queue;
-        let frame = queue.items[queue.head]
+        assert!(offset < queue.len, "accepted frame ordinal to observe");
+        let frame = queue.items[(queue.head + offset) % TEST_QUEUE_CAPACITY]
             .as_ref()
             .expect("accepted frame to observe");
         (
@@ -480,6 +486,7 @@ const _: fn(&TestTransport) -> bool = TestTransport::queue_is_empty;
 const _: fn(&TestTransport, u8) = TestTransport::pause_send;
 const _: fn(&TestTransport) = TestTransport::resume_send;
 const _: fn(&TestTransport, u8) -> (FrameHeader, Vec<u8>) = TestTransport::queued_frame;
+const _: fn(&TestTransport, u8, usize) -> (FrameHeader, Vec<u8>) = TestTransport::queued_frame_at;
 const _: fn(&TestTransport, u8, usize) = TestTransport::truncate_next_payload;
 const _: for<'a> fn(&'a TestTransport, SessionId, u8, u8) -> TestRx<'a> = TestTransport::open_rx;
 const _: fn(&TestTransport, &mut TestTx, SessionId, u8, u8, u8, &[u8]) =
