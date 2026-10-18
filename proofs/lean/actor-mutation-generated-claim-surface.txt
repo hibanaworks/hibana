@@ -1,11 +1,24 @@
+aFabricatedClearBeforeARecommitIsRejected : Hibana.actorCommitMutationHistoryCheck mutationImage mutationChoreo 9056
+    first 1 first (1 + 1) [forgedRecommit] =
+  false
+aFabricatedZeroWriteClearIsRejected : Hibana.actorCommitMutationHistoryCheck mutationImage mutationChoreo 9056 first 1
+    forgedCleared 1 [] =
+  false
 actualCommitHasMutationCoverage : Hibana.actorCommitMutationHistoryCheck mutationImage mutationChoreo 9056 initial 0
     first 1 [observedCommit] =
   true
+actualCompletedTickSurvivesAZeroWriteGap : first.doneState.done 0 = true ∧
+  ∀ (record : Hibana.ActorCommitMutationRecord),
+    record ∈ [] → record.commit.step.before.doneState.done 0 = true ∧ record.commit.step.after.doneState.done 0 = true
 actualCoveredHistoryAccountsForEveryWrite : 1 = 0 + [observedCommit].length
 actualOmittedResetAndCommitAreRejected : Hibana.actorCommitMutationHistoryCheck mutationImage mutationChoreo 9056 first
     1 second 3 [] =
   false
 actualOrdinarySnapshotsAreEqual : first = second
+actualPendingLoanWasPendingAtEveryCoveredCommit : initial.doneState.done 1 = false ∧
+  ∀ (record : Hibana.ActorCommitMutationRecord),
+    record ∈ [observedCommit] →
+      record.commit.step.before.doneState.done 1 = false ∧ record.commit.step.after.doneState.done 1 = false
 actualSourceCommitIsChecked : actualCommit.check mutationImage mutationChoreo 9056 = true
 coveredCommitHasItsSourceHistory : Hibana.actorCommitHistoryCheck mutationImage mutationChoreo 9056 initial first
     [actualCommit] =

@@ -582,7 +582,21 @@ qualification before a write rather than wrapping into apparently fresh data.
 Each recorded source commit includes the measured counters at its real before
 and after cuts. The checker requires a single mark for that commit and no
 unrecorded completion write in a gap. It recovers the existing checked source
-history and accounts for every measured write. The real Tokio reset/recommit
+history and accounts for every measured write. A zero-write gap must preserve
+the observed progress exactly; unchanged counters alone do not validate a
+snapshot that silently clears a bit. Deliberately inconsistent observations
+are rejected both at the final gap and before another checked commit.
+
+The checked commit and measured-history theorems derive that completed events
+remain complete throughout such an interval. Conversely, an event pending at
+the final cut was pending at every measured commit boundary. These are facts
+about actual source progress within the qualified interval, not assumptions
+that a future target was ready throughout earlier independent parallel work.
+They do not establish that its Endpoint value is still available: the exact
+resource receipt and subsequent transfer/fault boundaries must still connect
+to that progress history.
+
+The real Tokio reset/recommit
 fixture has equal ordinary endpoint snapshots after successive visits, but
 counts1 and3. The old gap check accepts that omitted pair; the measured check
 rejects it. The actual loan/par/return fixture also supplies the measurements

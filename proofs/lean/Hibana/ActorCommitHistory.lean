@@ -93,6 +93,21 @@ private theorem checked_record_is_a_checked_commit
         · exact (Bool.and_eq_true_iff.mp checked).1
     · contradiction
 
+/-- A checked source commit only completes its own event. It cannot clear an
+already completed event; visit resets are separate from this boundary. -/
+theorem a_checked_source_commit_preserves_completed_events
+    {record : ActorCommitRecord} {image : RustDescriptorImage} {choreo : Choreo}
+    {session event : Nat}
+    (checked : record.check image choreo session = true)
+    (completed : record.step.before.doneState.done event = true) :
+    record.step.after.doneState.done event = true := by
+  have ordered := accepted_actor_commit_matches_source_progress
+    (checked_record_is_a_checked_commit checked)
+  obtain ⟨_, data, path, row, binding, _, _, _, _, _, _, _, _, afterDone, _, unchanged, _⟩ := ordered
+  by_cases same : event = record.step.event
+  · simpa only [same] using afterDone
+  · exact (unchanged event same).trans completed
+
 /-- Owned records never pass using only an ordinary completion check. The
 payload kind comes from the decoded source binding, before wire validation. -/
 theorem checked_owned_record_has_a_checked_wire

@@ -25,6 +25,16 @@
 (check-sat)
 (pop)
 
+; A fabricated zero-write clear is rejected by progress equality, even when
+; its supplied counters agree. This consistency check does not prove that
+; observations are authentic or replace actual write-boundary measurements.
+(push)
+(assert (= (bvor before_word bit) before_word))
+(assert (= before_word cleared))
+; EXPECT: unsat
+(check-sat)
+(pop)
+
 ; Equal ordinary progress cannot erase these two actual writes from a gap.
 (push)
 (assert clear_allowed)

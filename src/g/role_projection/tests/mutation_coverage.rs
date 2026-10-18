@@ -94,6 +94,37 @@ theorem actualOmittedResetAndCommitAreRejected :
 theorem actualCoveredHistoryAccountsForEveryWrite :
     {first_count} = {initial_count} + ([observedCommit] : List Hibana.ActorCommitMutationRecord).length :=
   Hibana.checked_mutation_history_accounts_for_every_observed_write actualCommitHasMutationCoverage
+
+-- Deliberately inconsistent observations: progress was cleared but the write
+-- count claims no change. These are not additional runtime executions.
+def forgedCleared : Hibana.ActorProgressObservation :=
+  {{ first with steps := first.steps.map fun step => {{ step with done := false }} }}
+def forgedRecommit : Hibana.ActorCommitMutationRecord := {{
+  commit := {{ actualCommit with step := {{ actualCommit.step with before := forgedCleared }} }}
+  before := {first_count}, after := {first_count} + 1
+}}
+theorem aFabricatedZeroWriteClearIsRejected :
+    Hibana.actorCommitMutationHistoryCheck mutationImage mutationChoreo 9056
+      first {first_count} forgedCleared {first_count} [] = false := by decide
+theorem aFabricatedClearBeforeARecommitIsRejected :
+    Hibana.actorCommitMutationHistoryCheck mutationImage mutationChoreo 9056
+      first {first_count} first ({first_count} + 1) [forgedRecommit] = false := by decide
+theorem actualPendingLoanWasPendingAtEveryCoveredCommit :
+    initial.doneState.done 1 = false ∧
+      ∀ record ∈ [observedCommit], record.commit.step.before.doneState.done 1 = false ∧
+        record.commit.step.after.doneState.done 1 = false :=
+  Hibana.a_pending_final_event_was_pending_at_every_measured_commit
+    actualCommitHasMutationCoverage (by decide)
+theorem actualCompletedTickSurvivesAZeroWriteGap :
+    first.doneState.done 0 = true ∧
+      ∀ record ∈ ([] : List Hibana.ActorCommitMutationRecord),
+        record.commit.step.before.doneState.done 0 = true ∧
+          record.commit.step.after.doneState.done 0 = true :=
+  Hibana.a_measured_history_preserves_completed_events
+    (image := mutationImage) (choreo := mutationChoreo) (session := 9056)
+    (first := first) (final := first)
+    (firstMutation := {first_count}) (finalMutation := {first_count})
+    (by decide) (by decide)
 "#,
                     initial_source = super::commit::observation_source(&initial),
                     first_source = super::commit::observation_source(&first),
