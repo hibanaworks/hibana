@@ -565,11 +565,44 @@ an available value. It derives the initial source issuer or the most recent
 wire-checked resource receipt, its exact resource and receive side, published
 tag, and a checked suffix in which that receipt remains complete. Identity
 comes from the immutable source occurrence even if recorded route selections
-differ. Its baseline concerns receipts for this resource only; it does not
+differ. The result retains the source prefix: either no prior handoff of this
+resource exists, or the actual last handoff is followed by no further handoff
+before the target. It does not discard that witness after recovering the
+receipt. Its baseline concerns receipts for this resource only; it does not
 reset independent parallel work or outside continuations. The actual admission
 fixture applies the general theorem to both the read and the later return.
 This establishes the receipt boundary, not possession at the final cut; that
 still requires its subsequent transfer/fault history and visit correspondence.
+
+`SourceHandoffInterval.lean` connects that static interval to measured progress.
+For an accepted source, every competing handoff of the same resource is before
+the last receipt, that receipt itself, the intended target, or causally after
+the target. The occurrence coordinates orient a causal relation already
+established for the same resource; they do not impose an order on unrelated
+parallel work. A zero-write measured interval preserves completion before the
+receipt and pending progress before the final target. Consequently a distinct
+handoff cannot become ready at an intermediate cut. The target need not have
+been ready at earlier cuts. Its own handoff is not excluded by this result.
+
+The last-receipt result requires prefix closure at that receipt for the current
+selected source path. The new two-runtime Tokio fixture derives this from its
+wire-checked receipt. It performs a loan, return and second loan, holds one
+parallel send pending in the carrier while another actually commits, then
+executes a post-join resource operation and returns the resource. Its generated
+proof applies the interval theorem to both the already completed old return
+and the future return. The post-join target is not ready when its resource
+arrives, and becomes ready only after the parallel work. Another application
+covers actual initial issuance and a later loan.
+
+This proves source-admission exclusion over the qualified interval, not yet
+current value availability or general distributed progress. A receipt checked
+under another full route path must still be connected to the current causal
+prefix without requiring unrelated future choices to be known. Immutable
+message identity alone does not supply that prefix closure. Actual transfer,
+future custody, retirement/fault and independently fresh visits still need
+their corresponding execution boundaries. The SMT countermodels retain the
+need for receipt prefix closure and an unreset measured suffix, rather than
+hiding those premises behind a value-availability assumption.
 
 `ActorMutationCoverage.lean` strengthens selected-visit history observations
 with measurements at the actual completion-bit writes. Qualification builds

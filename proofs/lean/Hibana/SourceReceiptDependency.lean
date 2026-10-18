@@ -135,7 +135,8 @@ theorem accepted_resource_action_has_initial_authority_or_a_receipt_dependency
       | .send => symbolic.message.sender = key ∨ symbolic.message.payload = .endpoint key
       | .local => symbolic.message.sender = key)
     (decoded : action? bindings ⟨event, side⟩ = some action) :
-    (∃ initialActor, instantiate issuance (owners key) = some initialActor ∧ action.actor = initialActor) ∨
+    (∃ initialActor, instantiate issuance (owners key) = some initialActor ∧ action.actor = initialActor ∧
+      ∀ entry ∈ run.bindings.take index, entry.2.message.payload ≠ .endpoint key) ∨
     ∃ previousEvent previousBinding beforeAction,
       bindings.find? (fun entry => entry.1 == previousEvent) = some (previousEvent, previousBinding) ∧
       previousBinding.message.payload = .endpoint key ∧
@@ -144,7 +145,12 @@ theorem accepted_resource_action_has_initial_authority_or_a_receipt_dependency
       previousEvent < source.eventCount ∧
       precedes source bindings ⟨previousEvent, .receive⟩ ⟨event, side⟩ = true ∧
       SourcePointEdge source bindings (.committed ⟨previousEvent, .receive⟩)
-        (ActionId.entryPoint ⟨event, side⟩) := by
+        (ActionId.entryPoint ⟨event, side⟩) ∧
+      ∃ earlierRows previous laterRows,
+        run.bindings.take index = earlierRows ++ (previousEvent, previous) :: laterRows ∧
+        previous.message.payload = .endpoint key ∧
+        (∀ entry ∈ laterRows, entry.2.message.payload ≠ .endpoint key) ∧
+        instantiateBinding issuance previous = some previousBinding := by
   have used : symbolic.message.sender = key ∨ symbolic.message.receiver = key ∨
       symbolic.message.payload = .endpoint key := by
     cases side with
@@ -161,12 +167,12 @@ theorem accepted_resource_action_has_initial_authority_or_a_receipt_dependency
     ⟨earlierRows, previousEvent, previous, laterRows, previousBinding,
       shape, transferred, untouched, previousAt, sender, receiver, payload, causal⟩
   · cases side with
-    | receive => exact .inl ⟨binding.receiverActor, receiver required, actualActor⟩
+    | receive => exact .inl ⟨binding.receiverActor, receiver required, actualActor, untouched⟩
     | send =>
         rcases required with sending | sending
-        · exact .inl ⟨binding.senderActor, sender sending, actualActor⟩
-        · exact .inl ⟨binding.senderActor, payload sending, actualActor⟩
-    | «local» => exact .inl ⟨binding.senderActor, sender required, actualActor⟩
+        · exact .inl ⟨binding.senderActor, sender sending, actualActor, untouched⟩
+        · exact .inl ⟨binding.senderActor, payload sending, actualActor, untouched⟩
+    | «local» => exact .inl ⟨binding.senderActor, sender required, actualActor, untouched⟩
   · have previousMember : (previousEvent, previous) ∈ run.bindings := by
       apply List.mem_of_mem_take
       rw [shape]
@@ -208,7 +214,8 @@ theorem accepted_resource_action_has_initial_authority_or_a_receipt_dependency
     exact .inr ⟨previousEvent, previousBinding, beforeAction, previousLocated,
       by simpa only [fields.1] using transferred,
       beforeDecoded, sameActor, by simpa only [Nat.zero_add] using beforeBound,
-      before, SourcePointEdge.ordered before⟩
+      before, SourcePointEdge.ordered before,
+      earlierRows, previous, laterRows, shape, transferred, untouched, previousAt⟩
 
 /-- Structural readiness therefore entails the actual source receipt of the
 last handoff at this actor, rather than a guessed earlier event or a header's
@@ -241,8 +248,9 @@ theorem ready_resource_action_has_initial_authority_or_an_observed_receipt
       beforeAction.actor = action.actor ∧ observed (.committed ⟨previousEvent, .receive⟩) = true := by
   rcases accepted_resource_action_has_initial_authority_or_a_receipt_dependency
       accepted present instantiated solved mapped required decoded with
-    initial | ⟨previousEvent, previousBinding, beforeAction, located, payload, decodedBefore, sameActor, bound, before, edge⟩
-  · exact .inl initial
+    ⟨initialActor, issued, atActor, _⟩ |
+    ⟨previousEvent, previousBinding, beforeAction, located, payload, decodedBefore, sameActor, bound, before, edge, _⟩
+  · exact .inl ⟨initialActor, issued, atActor⟩
   · exact .inr ⟨previousEvent, previousBinding, beforeAction, located, payload, decodedBefore,
       sameActor, ready _ edge⟩
 
@@ -289,14 +297,20 @@ theorem source_ready_resource_row_has_initial_authority_or_a_completed_receipt
       (run.bindings.mapM fun (event, symbolic) => do
         let binding ← instantiateBinding issuance symbolic
         some (event, binding)) = some path.bindings ∧
-      (instantiate issuance ((initialOwners data.source.resources) key) = some data.actor ∨
+      ((instantiate issuance ((initialOwners data.source.resources) key) = some data.actor ∧
+          ∀ entry ∈ run.bindings.take index, entry.2.message.payload ≠ .endpoint key) ∨
         ∃ previousRow previousBinding,
           previousRow ∈ data.activeRows path ∧ previousRow.actionId.side = .receive ∧
           path.bindings.find? (fun entry => entry.1 == previousRow.actionId.event) =
             some (previousRow.actionId.event, previousBinding) ∧
           previousBinding.message.payload = .endpoint key ∧ previousBinding.receiverActor = data.actor ∧
           previousRow.eventId ∈ data.sourcePredecessors path row.eventId ∧
-          snapshot.doneState.done previousRow.eventId = true) := by
+          snapshot.doneState.done previousRow.eventId = true ∧
+          ∃ earlierRows previous laterRows,
+            run.bindings.take index = earlierRows ++ (previousRow.actionId.event, previous) :: laterRows ∧
+            previous.message.payload = .endpoint key ∧
+            (∀ entry ∈ laterRows, entry.2.message.payload ≠ .endpoint key) ∧
+            instantiateBinding issuance previous = some previousBinding) := by
   obtain ⟨issuance, run, accepted, solved, mapped⟩ :=
     decoded_actor_path_has_a_solved_source_derivation decoded selected
   obtain ⟨⟨occurrence, symbolic⟩, sourceMember, lowered⟩ := successful_option_mapM_has_input
@@ -321,11 +335,11 @@ theorem source_ready_resource_row_has_initial_authority_or_a_completed_receipt
       rcases accepted_resource_action_has_initial_authority_or_a_receipt_dependency
           (key := key) (side := row.actionId.side) (action := (row.sourceAction data.actor).2)
           accepted present bindingAt solved mapped sourceRequired actionAt with
-        ⟨initialActor, initialAt, actorAt⟩ |
+        ⟨initialActor, initialAt, actorAt, untouched⟩ |
         ⟨previousEvent, previousBinding, beforeAction, beforeLocated, payload,
-          beforeDecoded, sameActor, beforeBound, before, edge⟩
+          beforeDecoded, sameActor, beforeBound, before, edge, handoffPrefix⟩
       · have same : data.actor = initialActor := actorAt
-        exact .inl (by simpa only [← same] using initialAt)
+        exact .inl ⟨by simpa only [← same] using initialAt, untouched⟩
       · have atActor : beforeAction.actor = data.actor := sameActor
         have beforeMember := decoded_receipt_is_an_actor_source_action beforeBound beforeDecoded atActor
         have coverage := checked_active_rows_are_exactly_the_source_actions checked decoded selected
@@ -339,6 +353,7 @@ theorem source_ready_resource_row_has_initial_authority_or_a_completed_receipt
         have previousActor : previousBinding.receiverActor = data.actor :=
           (source_action_lookup_uses_the_instantiated_actor beforeLocated beforeDecoded).symm.trans atActor
         exact .inr ⟨previousRow, previousBinding, previousMember, congrArg ActionId.side actionIdentity,
-          by simpa only [actionIdentity] using beforeLocated, payload, previousActor, predecessor, done⟩
+          by simpa only [actionIdentity] using beforeLocated, payload, previousActor, predecessor, done,
+          by simpa only [actionIdentity] using handoffPrefix⟩
 
 end Hibana

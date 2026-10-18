@@ -59,7 +59,8 @@ def SourceReadyReceiptEvidence (image : RustDescriptorImage) (choreo : Choreo) (
     (run.bindings.mapM fun (event, symbolic) => do
       let binding ← instantiateBinding issuance symbolic
       some (event, binding)) = some path.bindings ∧
-    (instantiate issuance ((initialOwners data.source.resources) key) = some data.actor ∨
+    ((instantiate issuance ((initialOwners data.source.resources) key) = some data.actor ∧
+        ∀ entry ∈ run.bindings.take index, entry.2.message.payload ≠ .endpoint key) ∨
       ∃ receipt loan earlier record later facts,
         receipt ∈ data.activeRows path ∧ receipt.actionId.side = .receive ∧
         path.bindings.find? (fun entry => entry.1 == receipt.actionId.event) =
@@ -77,7 +78,12 @@ def SourceReadyReceiptEvidence (image : RustDescriptorImage) (choreo : Choreo) (
         record.step.after.doneState.done receipt.eventId = true ∧
         (∀ next ∈ later, next.step.before.doneState.done receipt.eventId = true ∧
           next.step.after.doneState.done receipt.eventId = true) ∧
-        final.doneState.done receipt.eventId = true)
+        final.doneState.done receipt.eventId = true ∧
+        ∃ earlierRows previous laterRows,
+          run.bindings.take index = earlierRows ++ (receipt.actionId.event, previous) :: laterRows ∧
+          previous.message.payload = .endpoint key ∧
+          (∀ entry ∈ laterRows, entry.2.message.payload ≠ .endpoint key) ∧
+          instantiateBinding issuance previous = some loan)
 
 /-- Source readiness derives either the initial source issuer, or the actual
 latest checked receipt for the required resource in this visit. The receipt's
@@ -118,7 +124,7 @@ theorem source_ready_resource_has_initial_issuer_or_current_wire_receipt
       checked decoded selected member located required ready
   refine ⟨issuance, run, index, symbolic, elaborated, sourceRow, instantiated, solved, mapped, ?_⟩
   rcases origin with initial | ⟨receipt, loan, receiptMember, receiving, loanAt,
-    payload, actorAt, predecessor, completed⟩
+    payload, actorAt, predecessor, completed, handoffPrefix⟩
   · exact .inl initial
   · obtain ⟨earlier, record, later, recordsAt, eventAt, wireChecked, _, suffix,
       lastRecord, afterDone, retained⟩ :=
@@ -133,6 +139,6 @@ theorem source_ready_resource_has_initial_issuer_or_current_wire_receipt
     exact .inr ⟨receipt, loan, earlier, record, later, facts,
       receiptMember, receiving, loanAt, payload, actorAt, predecessor, recordsAt, eventAt,
       wireChecked, factsAt, resourceAt, receiveAt, tagAt, suffix, lastRecord,
-      afterDone, retained, completed⟩
+      afterDone, retained, completed, handoffPrefix⟩
 
 end Hibana

@@ -579,6 +579,212 @@ Hibana.EndpointDelegation.withOwner_same : ∀ (owners : Hibana.EndpointDelegati
               (@List.instMembership.{0} Hibana.ActorCommitMutationRecord) records record →
             And (@Eq.{1} Bool (record.commit.step.before.doneState.done event) true)
               (@Eq.{1} Bool (record.commit.step.after.doneState.done event) true))
+@Hibana.a_measured_initial_resource_interval_excludes_a_distinct_handoff : ∀ {image : Hibana.RustDescriptorImage}
+  {choreo : Hibana.Choreo} {session : Nat} {data : Hibana.DecodedActorOrder}
+  {path : Hibana.EndpointDelegation.NormalizedPath} {target transfer : Hibana.DecodedActorRow}
+  {targetBinding loan : Hibana.EndpointDelegation.Binding} {key : Hibana.EndpointDelegation.EndpointKey}
+  {issuance : List.{0} Hibana.EndpointDelegation.Issuance} {run : Hibana.EndpointDelegation.Elaboration} {index : Nat}
+  {targetSymbolic : Hibana.EndpointDelegation.SymbolicBinding} {cut final : Hibana.ActorProgressObservation}
+  {cutCount finalCount : Nat} {later : List.{0} Hibana.ActorCommitMutationRecord},
+  @Eq.{1} Bool (image.actorRowsCheck choreo) true →
+    @Eq.{1} (Option.{0} Hibana.DecodedActorOrder) (image.decodeActorOrder? choreo)
+        (@some.{0} Hibana.DecodedActorOrder data) →
+      @Membership.mem.{0, 0} Hibana.EndpointDelegation.NormalizedPath
+          (List.{0} Hibana.EndpointDelegation.NormalizedPath)
+          (@List.instMembership.{0} Hibana.EndpointDelegation.NormalizedPath) data.normalized.paths path →
+        @Membership.mem.{0, 0} Hibana.DecodedActorRow (List.{0} Hibana.DecodedActorRow)
+            (@List.instMembership.{0} Hibana.DecodedActorRow) (data.activeRows path) target →
+          @Membership.mem.{0, 0} Hibana.DecodedActorRow (List.{0} Hibana.DecodedActorRow)
+              (@List.instMembership.{0} Hibana.DecodedActorRow) (data.activeRows path) transfer →
+            @Eq.{1} (Option.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding))
+                (@List.find?.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)
+                  (fun entry =>
+                    @BEq.beq.{0} Nat (@instBEqOfDecidableEq.{0} Nat instDecidableEqNat)
+                      (@Prod.fst.{0, 0} Nat Hibana.EndpointDelegation.Binding entry) transfer.actionId.event)
+                  path.bindings)
+                (@some.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)
+                  (@Prod.mk.{0, 0} Nat Hibana.EndpointDelegation.Binding transfer.actionId.event loan)) →
+              @Eq.{1} Hibana.EndpointDelegation.Payload loan.message.payload
+                  (Hibana.EndpointDelegation.Payload.endpoint key) →
+                Or (@Eq.{1} Hibana.EndpointDelegation.EndpointKey targetBinding.message.sender key)
+                    (Or (@Eq.{1} Hibana.EndpointDelegation.EndpointKey targetBinding.message.receiver key)
+                      (@Eq.{1} Hibana.EndpointDelegation.Payload targetBinding.message.payload
+                        (Hibana.EndpointDelegation.Payload.endpoint key))) →
+                  @Ne.{1} Nat transfer.actionId.event target.actionId.event →
+                    @Eq.{1} (Option.{0} Hibana.EndpointDelegation.Elaboration)
+                        (Hibana.EndpointDelegation.elaborate data.source.resources
+                          (Hibana.EndpointDelegation.initialOwners data.source.resources) path.selections data.source
+                          (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0))))
+                        (@some.{0} Hibana.EndpointDelegation.Elaboration run) →
+                      @Eq.{1} (Option.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding))
+                          (@getElem?.{0, 0, 0} (List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding))
+                            Nat (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding)
+                            (fun as i =>
+                              @LT.lt.{0} Nat instLTNat i
+                                (@List.length.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding) as))
+                            (@List.instGetElem?NatLtLength.{0}
+                              (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding))
+                            run.bindings index)
+                          (@some.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding)
+                            (@Prod.mk.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding target.actionId.event
+                              targetSymbolic)) →
+                        @Eq.{1} (Option.{0} Hibana.EndpointDelegation.Binding)
+                            (Hibana.EndpointDelegation.instantiateBinding issuance targetSymbolic)
+                            (@some.{0} Hibana.EndpointDelegation.Binding targetBinding) →
+                          @Eq.{1} (Option.{0} (List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)))
+                              (@List.mapM.{0, 0, 0} Option.{0} instMonadOption.{0}
+                                (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding)
+                                (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)
+                                (fun x =>
+                                  Hibana.a_measured_initial_resource_interval_excludes_a_distinct_handoff.match_1.{1}
+                                    (fun x => Option.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)) x
+                                    fun event symbolic =>
+                                    @bind.{0, 0} Option.{0} (@Monad.toBind.{0, 0} Option.{0} instMonadOption.{0})
+                                      Hibana.EndpointDelegation.Binding
+                                      (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)
+                                      (Hibana.EndpointDelegation.instantiateBinding issuance symbolic) fun binding =>
+                                      @some.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)
+                                        (@Prod.mk.{0, 0} Nat Hibana.EndpointDelegation.Binding event binding))
+                                run.bindings)
+                              (@some.{0} (List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)) path.bindings) →
+                            (∀ (entry : Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding),
+                                @Membership.mem.{0, 0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding)
+                                    (List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding))
+                                    (@List.instMembership.{0}
+                                      (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding))
+                                    (@List.take.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding) index
+                                      run.bindings)
+                                    entry →
+                                  @Ne.{1} Hibana.EndpointDelegation.Payload
+                                    (@Prod.snd.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding
+                                          entry).message.payload
+                                    (Hibana.EndpointDelegation.Payload.endpoint key)) →
+                              @Eq.{1} Bool
+                                  (Hibana.actorCommitMutationHistoryCheck image choreo session cut cutCount final
+                                    finalCount later)
+                                  true →
+                                @Eq.{1} Bool (final.doneState.done target.eventId) false →
+                                  @Eq.{1} Bool (Hibana.sourceRowReady data path cut transfer) false
+@Hibana.a_measured_last_receipt_interval_excludes_a_distinct_handoff : ∀ {image : Hibana.RustDescriptorImage}
+  {choreo : Hibana.Choreo} {session : Nat} {data : Hibana.DecodedActorOrder}
+  {path : Hibana.EndpointDelegation.NormalizedPath} {target transfer receipt : Hibana.DecodedActorRow}
+  {targetBinding loan : Hibana.EndpointDelegation.Binding} {key : Hibana.EndpointDelegation.EndpointKey}
+  {issuance : List.{0} Hibana.EndpointDelegation.Issuance} {run : Hibana.EndpointDelegation.Elaboration} {index : Nat}
+  {targetSymbolic previous : Hibana.EndpointDelegation.SymbolicBinding}
+  {earlierRows laterRows : List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding)}
+  {first cut final : Hibana.ActorProgressObservation} {firstCount cutCount finalCount : Nat}
+  {prior later : List.{0} Hibana.ActorCommitMutationRecord},
+  @Eq.{1} Bool (image.actorRowsCheck choreo) true →
+    @Eq.{1} (Option.{0} Hibana.DecodedActorOrder) (image.decodeActorOrder? choreo)
+        (@some.{0} Hibana.DecodedActorOrder data) →
+      @Membership.mem.{0, 0} Hibana.EndpointDelegation.NormalizedPath
+          (List.{0} Hibana.EndpointDelegation.NormalizedPath)
+          (@List.instMembership.{0} Hibana.EndpointDelegation.NormalizedPath) data.normalized.paths path →
+        @Membership.mem.{0, 0} Hibana.DecodedActorRow (List.{0} Hibana.DecodedActorRow)
+            (@List.instMembership.{0} Hibana.DecodedActorRow) (data.activeRows path) target →
+          @Membership.mem.{0, 0} Hibana.DecodedActorRow (List.{0} Hibana.DecodedActorRow)
+              (@List.instMembership.{0} Hibana.DecodedActorRow) (data.activeRows path) transfer →
+            @Membership.mem.{0, 0} Hibana.DecodedActorRow (List.{0} Hibana.DecodedActorRow)
+                (@List.instMembership.{0} Hibana.DecodedActorRow) (data.activeRows path) receipt →
+              @Eq.{1} (Option.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding))
+                  (@List.find?.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)
+                    (fun entry =>
+                      @BEq.beq.{0} Nat (@instBEqOfDecidableEq.{0} Nat instDecidableEqNat)
+                        (@Prod.fst.{0, 0} Nat Hibana.EndpointDelegation.Binding entry) transfer.actionId.event)
+                    path.bindings)
+                  (@some.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)
+                    (@Prod.mk.{0, 0} Nat Hibana.EndpointDelegation.Binding transfer.actionId.event loan)) →
+                @Eq.{1} Hibana.EndpointDelegation.Payload loan.message.payload
+                    (Hibana.EndpointDelegation.Payload.endpoint key) →
+                  Or (@Eq.{1} Hibana.EndpointDelegation.EndpointKey targetBinding.message.sender key)
+                      (Or (@Eq.{1} Hibana.EndpointDelegation.EndpointKey targetBinding.message.receiver key)
+                        (@Eq.{1} Hibana.EndpointDelegation.Payload targetBinding.message.payload
+                          (Hibana.EndpointDelegation.Payload.endpoint key))) →
+                    @Eq.{1} Hibana.EndpointDelegation.Side transfer.actionId.side Hibana.EndpointDelegation.Side.send →
+                      @Eq.{1} Hibana.EndpointDelegation.Side receipt.actionId.side
+                          Hibana.EndpointDelegation.Side.receive →
+                        @Ne.{1} Nat transfer.actionId.event target.actionId.event →
+                          @Eq.{1} (Option.{0} Hibana.EndpointDelegation.Elaboration)
+                              (Hibana.EndpointDelegation.elaborate data.source.resources
+                                (Hibana.EndpointDelegation.initialOwners data.source.resources) path.selections
+                                data.source (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0))))
+                              (@some.{0} Hibana.EndpointDelegation.Elaboration run) →
+                            @Eq.{1} (Option.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding))
+                                (@getElem?.{0, 0, 0}
+                                  (List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding)) Nat
+                                  (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding)
+                                  (fun as i =>
+                                    @LT.lt.{0} Nat instLTNat i
+                                      (@List.length.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding) as))
+                                  (@List.instGetElem?NatLtLength.{0}
+                                    (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding))
+                                  run.bindings index)
+                                (@some.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding)
+                                  (@Prod.mk.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding target.actionId.event
+                                    targetSymbolic)) →
+                              @Eq.{1} (Option.{0} Hibana.EndpointDelegation.Binding)
+                                  (Hibana.EndpointDelegation.instantiateBinding issuance targetSymbolic)
+                                  (@some.{0} Hibana.EndpointDelegation.Binding targetBinding) →
+                                @Eq.{1} (Option.{0} (List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)))
+                                    (@List.mapM.{0, 0, 0} Option.{0} instMonadOption.{0}
+                                      (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding)
+                                      (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)
+                                      (fun x =>
+                                        Hibana.a_measured_initial_resource_interval_excludes_a_distinct_handoff.match_1.{1}
+                                          (fun x => Option.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)) x
+                                          fun event symbolic =>
+                                          @bind.{0, 0} Option.{0} (@Monad.toBind.{0, 0} Option.{0} instMonadOption.{0})
+                                            Hibana.EndpointDelegation.Binding
+                                            (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)
+                                            (Hibana.EndpointDelegation.instantiateBinding issuance symbolic)
+                                            fun binding =>
+                                            @some.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)
+                                              (@Prod.mk.{0, 0} Nat Hibana.EndpointDelegation.Binding event binding))
+                                      run.bindings)
+                                    (@some.{0} (List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding))
+                                      path.bindings) →
+                                  @Eq.{1} (List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding))
+                                      (@List.take.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding) index
+                                        run.bindings)
+                                      (@HAppend.hAppend.{0, 0, 0}
+                                        (List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding))
+                                        (List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding))
+                                        (List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding))
+                                        (@instHAppendOfAppend.{0}
+                                          (List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding))
+                                          (@List.instAppend.{0}
+                                            (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding)))
+                                        earlierRows
+                                        (@List.cons.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding)
+                                          (@Prod.mk.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding
+                                            receipt.actionId.event previous)
+                                          laterRows)) →
+                                    @Eq.{1} Hibana.EndpointDelegation.Payload previous.message.payload
+                                        (Hibana.EndpointDelegation.Payload.endpoint key) →
+                                      (∀ (entry : Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding),
+                                          @Membership.mem.{0, 0}
+                                              (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding)
+                                              (List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding))
+                                              (@List.instMembership.{0}
+                                                (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding))
+                                              laterRows entry →
+                                            @Ne.{1} Hibana.EndpointDelegation.Payload
+                                              (@Prod.snd.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding
+                                                    entry).message.payload
+                                              (Hibana.EndpointDelegation.Payload.endpoint key)) →
+                                        @Eq.{1} Bool (first.doneState.done receipt.eventId) true →
+                                          first.doneState.PrefixClosed (data.sourcePredecessors path)
+                                              (@List.cons.{0} Nat receipt.eventId (@List.nil.{0} Nat)) →
+                                            @Eq.{1} Bool
+                                                (Hibana.actorCommitMutationHistoryCheck image choreo session first
+                                                  firstCount cut cutCount prior)
+                                                true →
+                                              @Eq.{1} Bool
+                                                  (Hibana.actorCommitMutationHistoryCheck image choreo session cut
+                                                    cutCount final finalCount later)
+                                                  true →
+                                                @Eq.{1} Bool (final.doneState.done target.eventId) false →
+                                                  @Eq.{1} Bool (Hibana.sourceRowReady data path cut transfer) false
 Hibana.a_non_payload_view_adds_no_borrow_dependency : ∀ (current : Hibana.PublicOperationPhase) (resource : Nat)
   (sent : Option.{0} Nat),
   @Ne.{1} Hibana.PublicOperationPhase current Hibana.PublicOperationPhase.sendPayload →
@@ -611,6 +817,13 @@ Hibana.a_pending_payload_requires_its_own_send : ∀ (resource : Nat) (sent : Op
     state.PrefixClosed expected (expected event) →
       @Membership.mem.{0, 0} Nat (List.{0} Nat) (@List.instMembership.{0} Nat) (expected event) before →
         @Eq.{1} Bool (state.done before) false → @Eq.{1} Bool (@List.all.{0} Nat actual state.done) false
+@Hibana.a_pending_source_predecessor_blocks_its_successor : ∀ {data : Hibana.DecodedActorOrder}
+  {path : Hibana.EndpointDelegation.NormalizedPath} {before after : Hibana.DecodedActorRow}
+  {snapshot : Hibana.ActorProgressObservation},
+  @Membership.mem.{0, 0} Nat (List.{0} Nat) (@List.instMembership.{0} Nat) (data.sourcePredecessors path after.eventId)
+      before.eventId →
+    @Eq.{1} Bool (snapshot.doneState.done before.eventId) false →
+      @Eq.{1} Bool (Hibana.sourceRowReady data path snapshot after) false
 @Hibana.a_ready_admitted_row_has_its_actual_carrier_custody : ∀ {sample : Hibana.ActorAdmissionObservation}
   {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo} {data : Hibana.DecodedActorOrder}
   {path : Hibana.EndpointDelegation.NormalizedPath} {row : Hibana.DecodedActorRow} {Frame : Type}
@@ -794,6 +1007,60 @@ Hibana.a_pending_payload_requires_its_own_send : ∀ (resource : Nat) (sent : Op
               (source.before (@HSub.hSub.{0, 0, 0} Nat Nat Nat (@instHSub.{0} Nat instSubNat) previousEvent start)
                 (@HSub.hSub.{0, 0, 0} Nat Nat Nat (@instHSub.{0} Nat instSubNat) event start))
               true
+@Hibana.a_resource_handoff_is_outside_its_last_receipt_to_target_interval : ∀
+  {source : Hibana.EndpointDelegation.Source} {resources : List.{0} Hibana.EndpointDelegation.EndpointKey}
+  {owners : Hibana.EndpointDelegation.OwnerMap} {path : List.{0} Hibana.EndpointDelegation.Selection}
+  {run : Hibana.EndpointDelegation.Elaboration} {index target transfer previousEvent : Nat}
+  {targetBinding transferBinding previous : Hibana.EndpointDelegation.SymbolicBinding}
+  {key : Hibana.EndpointDelegation.EndpointKey}
+  {earlierRows laterRows : List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding)},
+  @Eq.{1} (Option.{0} Hibana.EndpointDelegation.Elaboration)
+      (Hibana.EndpointDelegation.elaborate resources owners path source
+        (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0))))
+      (@some.{0} Hibana.EndpointDelegation.Elaboration run) →
+    @Eq.{1} (Option.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding))
+        (@getElem?.{0, 0, 0} (List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding)) Nat
+          (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding)
+          (fun as i =>
+            @LT.lt.{0} Nat instLTNat i
+              (@List.length.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding) as))
+          (@List.instGetElem?NatLtLength.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding)) run.bindings
+          index)
+        (@some.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding)
+          (@Prod.mk.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding target targetBinding)) →
+      @Eq.{1} (List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding))
+          (@List.take.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding) index run.bindings)
+          (@HAppend.hAppend.{0, 0, 0} (List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding))
+            (List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding))
+            (List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding))
+            (@instHAppendOfAppend.{0} (List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding))
+              (@List.instAppend.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding)))
+            earlierRows
+            (@List.cons.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding)
+              (@Prod.mk.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding previousEvent previous) laterRows)) →
+        @Eq.{1} Hibana.EndpointDelegation.Payload previous.message.payload
+            (Hibana.EndpointDelegation.Payload.endpoint key) →
+          (∀ (entry : Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding),
+              @Membership.mem.{0, 0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding)
+                  (List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding))
+                  (@List.instMembership.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding)) laterRows
+                  entry →
+                @Ne.{1} Hibana.EndpointDelegation.Payload
+                  (@Prod.snd.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding entry).message.payload
+                  (Hibana.EndpointDelegation.Payload.endpoint key)) →
+            @Membership.mem.{0, 0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding)
+                (List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding))
+                (@List.instMembership.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding)) run.bindings
+                (@Prod.mk.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding transfer transferBinding) →
+              @Eq.{1} Hibana.EndpointDelegation.Payload transferBinding.message.payload
+                  (Hibana.EndpointDelegation.Payload.endpoint key) →
+                Or (@Eq.{1} Hibana.EndpointDelegation.EndpointKey targetBinding.message.sender key)
+                    (Or (@Eq.{1} Hibana.EndpointDelegation.EndpointKey targetBinding.message.receiver key)
+                      (@Eq.{1} Hibana.EndpointDelegation.Payload targetBinding.message.payload
+                        (Hibana.EndpointDelegation.Payload.endpoint key))) →
+                  Or (@Eq.{1} Bool (source.before transfer previousEvent) true)
+                    (Or (@Eq.{1} Nat transfer previousEvent)
+                      (Or (@Eq.{1} Nat transfer target) (@Eq.{1} Bool (source.before target transfer) true)))
 @Hibana.a_valid_issued_resource_nonce_is_bounded : ∀ {snapshot : Hibana.ActorProgressObservation} {role : Nat}
   {tag : Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))},
   @Eq.{1} Bool snapshot.valid true →
@@ -1741,7 +2008,17 @@ Hibana.abort_peer_is_well_formed : ∀ (state : Hibana.TransportState), state.ab
                     And
                       (@Eq.{1} (Option.{0} Nat) (Hibana.EndpointDelegation.instantiate issuance (owners key))
                         (@some.{0} Nat initialActor))
-                      (@Eq.{1} Nat action.actor initialActor))
+                      (And (@Eq.{1} Nat action.actor initialActor)
+                        (∀ (entry : Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding),
+                          @Membership.mem.{0, 0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding)
+                              (List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding))
+                              (@List.instMembership.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding))
+                              (@List.take.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding) index
+                                run.bindings)
+                              entry →
+                            @Ne.{1} Hibana.EndpointDelegation.Payload
+                              (@Prod.snd.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding entry).message.payload
+                              (Hibana.EndpointDelegation.Payload.endpoint key))))
                   (@Exists.{1} Nat fun previousEvent =>
                     @Exists.{1} Hibana.EndpointDelegation.Binding fun previousBinding =>
                       @Exists.{1} Hibana.EndpointDelegation.Action fun beforeAction =>
@@ -1770,10 +2047,60 @@ Hibana.abort_peer_is_well_formed : ∀ (state : Hibana.TransportState), state.ab
                                         { event := previousEvent, side := Hibana.EndpointDelegation.Side.receive }
                                         { event := event, side := side })
                                       true)
-                                    (Hibana.SourcePointEdge source bindings
-                                      (Hibana.SourcePoint.committed
-                                        { event := previousEvent, side := Hibana.EndpointDelegation.Side.receive })
-                                      { event := event, side := side }.entryPoint)))))))
+                                    (And
+                                      (Hibana.SourcePointEdge source bindings
+                                        (Hibana.SourcePoint.committed
+                                          { event := previousEvent, side := Hibana.EndpointDelegation.Side.receive })
+                                        { event := event, side := side }.entryPoint)
+                                      (@Exists.{1}
+                                        (List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding))
+                                        fun earlierRows =>
+                                        @Exists.{1} Hibana.EndpointDelegation.SymbolicBinding fun previous =>
+                                          @Exists.{1}
+                                            (List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding))
+                                            fun laterRows =>
+                                            And
+                                              (@Eq.{1}
+                                                (List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding))
+                                                (@List.take.{0}
+                                                  (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding) index
+                                                  run.bindings)
+                                                (@HAppend.hAppend.{0, 0, 0}
+                                                  (List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding))
+                                                  (List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding))
+                                                  (List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding))
+                                                  (@instHAppendOfAppend.{0}
+                                                    (List.{0}
+                                                      (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding))
+                                                    (@List.instAppend.{0}
+                                                      (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding)))
+                                                  earlierRows
+                                                  (@List.cons.{0}
+                                                    (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding)
+                                                    (@Prod.mk.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding
+                                                      previousEvent previous)
+                                                    laterRows)))
+                                              (And
+                                                (@Eq.{1} Hibana.EndpointDelegation.Payload previous.message.payload
+                                                  (Hibana.EndpointDelegation.Payload.endpoint key))
+                                                (And
+                                                  (∀
+                                                    (entry : Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding),
+                                                    @Membership.mem.{0, 0}
+                                                        (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding)
+                                                        (List.{0}
+                                                          (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding))
+                                                        (@List.instMembership.{0}
+                                                          (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding))
+                                                        laterRows entry →
+                                                      @Ne.{1} Hibana.EndpointDelegation.Payload
+                                                        (@Prod.snd.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding
+                                                              entry).message.payload
+                                                        (Hibana.EndpointDelegation.Payload.endpoint key))
+                                                  (@Eq.{1} (Option.{0} Hibana.EndpointDelegation.Binding)
+                                                    (Hibana.EndpointDelegation.instantiateBinding issuance previous)
+                                                    (@some.{0} Hibana.EndpointDelegation.Binding
+                                                      previousBinding))))))))))))
 @Hibana.accepted_resource_transfer_and_use_have_local_causal_order : ∀ {image : Hibana.RustDescriptorImage}
   {choreo : Hibana.Choreo} {data : Hibana.DecodedActorOrder} {path : Hibana.EndpointDelegation.NormalizedPath}
   {transfer useRow : Hibana.DecodedActorRow} {loan useBinding : Hibana.EndpointDelegation.Binding}
@@ -2226,6 +2553,33 @@ Hibana.ambiguous_receive_fails_closed : ∀ (before : Hibana.CompactGlobalState)
                 (source.before (@HSub.hSub.{0, 0, 0} Nat Nat Nat (@instHSub.{0} Nat instSubNat) second start)
                   (@HSub.hSub.{0, 0, 0} Nat Nat Nat (@instHSub.{0} Nat instSubNat) first start))
                 true
+@Hibana.an_earlier_source_binding_is_in_the_source_prefix : ∀ {source : Hibana.EndpointDelegation.Source}
+  {resources : List.{0} Hibana.EndpointDelegation.EndpointKey} {owners : Hibana.EndpointDelegation.OwnerMap}
+  {path : List.{0} Hibana.EndpointDelegation.Selection} {start : Nat} {run : Hibana.EndpointDelegation.Elaboration}
+  {index event previousEvent : Nat} {symbolic previous : Hibana.EndpointDelegation.SymbolicBinding},
+  @Eq.{1} (Option.{0} Hibana.EndpointDelegation.Elaboration)
+      (Hibana.EndpointDelegation.elaborate resources owners path source start)
+      (@some.{0} Hibana.EndpointDelegation.Elaboration run) →
+    @Eq.{1} (Option.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding))
+        (@getElem?.{0, 0, 0} (List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding)) Nat
+          (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding)
+          (fun as i =>
+            @LT.lt.{0} Nat instLTNat i
+              (@List.length.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding) as))
+          (@List.instGetElem?NatLtLength.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding)) run.bindings
+          index)
+        (@some.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding)
+          (@Prod.mk.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding event symbolic)) →
+      @Membership.mem.{0, 0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding)
+          (List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding))
+          (@List.instMembership.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding)) run.bindings
+          (@Prod.mk.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding previousEvent previous) →
+        @LT.lt.{0} Nat instLTNat previousEvent event →
+          @Membership.mem.{0, 0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding)
+            (List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding))
+            (@List.instMembership.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding))
+            (@List.take.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding) index run.bindings)
+            (@Prod.mk.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding previousEvent previous)
 @Hibana.an_earlier_transfer_causally_precedes_a_resource_use : ∀ {source : Hibana.EndpointDelegation.Source}
   {resources : List.{0} Hibana.EndpointDelegation.EndpointKey} {owners : Hibana.EndpointDelegation.OwnerMap}
   {path : List.{0} Hibana.EndpointDelegation.Selection} {start first second : Nat}
@@ -2253,6 +2607,44 @@ Hibana.ambiguous_receive_fails_closed : ∀ (before : Hibana.CompactGlobalState)
                 (source.before (@HSub.hSub.{0, 0, 0} Nat Nat Nat (@instHSub.{0} Nat instSubNat) first start)
                   (@HSub.hSub.{0, 0, 0} Nat Nat Nat (@instHSub.{0} Nat instSubNat) second start))
                 true
+@Hibana.an_initial_resource_has_no_handoff_before_its_target : ∀ {source : Hibana.EndpointDelegation.Source}
+  {resources : List.{0} Hibana.EndpointDelegation.EndpointKey} {owners : Hibana.EndpointDelegation.OwnerMap}
+  {path : List.{0} Hibana.EndpointDelegation.Selection} {run : Hibana.EndpointDelegation.Elaboration}
+  {index target transfer : Nat} {targetBinding transferBinding : Hibana.EndpointDelegation.SymbolicBinding}
+  {key : Hibana.EndpointDelegation.EndpointKey},
+  @Eq.{1} (Option.{0} Hibana.EndpointDelegation.Elaboration)
+      (Hibana.EndpointDelegation.elaborate resources owners path source
+        (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0))))
+      (@some.{0} Hibana.EndpointDelegation.Elaboration run) →
+    @Eq.{1} (Option.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding))
+        (@getElem?.{0, 0, 0} (List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding)) Nat
+          (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding)
+          (fun as i =>
+            @LT.lt.{0} Nat instLTNat i
+              (@List.length.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding) as))
+          (@List.instGetElem?NatLtLength.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding)) run.bindings
+          index)
+        (@some.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding)
+          (@Prod.mk.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding target targetBinding)) →
+      (∀ (entry : Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding),
+          @Membership.mem.{0, 0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding)
+              (List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding))
+              (@List.instMembership.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding))
+              (@List.take.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding) index run.bindings) entry →
+            @Ne.{1} Hibana.EndpointDelegation.Payload
+              (@Prod.snd.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding entry).message.payload
+              (Hibana.EndpointDelegation.Payload.endpoint key)) →
+        @Membership.mem.{0, 0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding)
+            (List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding))
+            (@List.instMembership.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding)) run.bindings
+            (@Prod.mk.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding transfer transferBinding) →
+          @Eq.{1} Hibana.EndpointDelegation.Payload transferBinding.message.payload
+              (Hibana.EndpointDelegation.Payload.endpoint key) →
+            Or (@Eq.{1} Hibana.EndpointDelegation.EndpointKey targetBinding.message.sender key)
+                (Or (@Eq.{1} Hibana.EndpointDelegation.EndpointKey targetBinding.message.receiver key)
+                  (@Eq.{1} Hibana.EndpointDelegation.Payload targetBinding.message.payload
+                    (Hibana.EndpointDelegation.Payload.endpoint key))) →
+              Or (@Eq.{1} Nat transfer target) (@Eq.{1} Bool (source.before target transfer) true)
 @Hibana.an_issued_header_in_a_checked_trace_has_its_actual_custody : ∀ {View Frame : Type} {first last : View → Prop}
   {initialValue value : View} {state : Hibana.EndpointTransfer.Observation View Frame},
   @Hibana.ResourceHeaderExecution View Frame first (@Hibana.EndpointTransfer.initial View Frame initialValue) last
@@ -5320,6 +5712,40 @@ Hibana.insert_erased_cursor_observation_preserves_entry_order : ∀ (incoming : 
                                 (@Prod.mk.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding event symbolic)
                                 (@List.nil.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding))))))
                         (@some.{0} Nat binding.receiverActor)))))
+@Hibana.instantiated_path_binding_has_source_input : ∀ {run : Hibana.EndpointDelegation.Elaboration}
+  {issuance : List.{0} Hibana.EndpointDelegation.Issuance}
+  {bindings : List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)} {event : Nat}
+  {binding : Hibana.EndpointDelegation.Binding},
+  @Eq.{1} (Option.{0} (List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)))
+      (@List.mapM.{0, 0, 0} Option.{0} instMonadOption.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding)
+        (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)
+        (fun x =>
+          Hibana.instantiated_path_binding_has_source_input.match_1.{1}
+            (fun x => Option.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)) x fun event symbolic =>
+            @bind.{0, 0} Option.{0} (@Monad.toBind.{0, 0} Option.{0} instMonadOption.{0})
+              Hibana.EndpointDelegation.Binding (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)
+              (Hibana.EndpointDelegation.instantiateBinding issuance symbolic) fun binding =>
+              @some.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)
+                (@Prod.mk.{0, 0} Nat Hibana.EndpointDelegation.Binding event binding))
+        run.bindings)
+      (@some.{0} (List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)) bindings) →
+    @Eq.{1} (Option.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding))
+        (@List.find?.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)
+          (fun entry =>
+            @BEq.beq.{0} Nat (@instBEqOfDecidableEq.{0} Nat instDecidableEqNat)
+              (@Prod.fst.{0, 0} Nat Hibana.EndpointDelegation.Binding entry) event)
+          bindings)
+        (@some.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)
+          (@Prod.mk.{0, 0} Nat Hibana.EndpointDelegation.Binding event binding)) →
+      @Exists.{1} Hibana.EndpointDelegation.SymbolicBinding fun symbolic =>
+        And
+          (@Membership.mem.{0, 0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding)
+            (List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding))
+            (@List.instMembership.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding)) run.bindings
+            (@Prod.mk.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding event symbolic))
+          (@Eq.{1} (Option.{0} Hibana.EndpointDelegation.Binding)
+            (Hibana.EndpointDelegation.instantiateBinding issuance symbolic)
+            (@some.{0} Hibana.EndpointDelegation.Binding binding))
 @Hibana.invalid_optional_route_arm_rejected : ∀ {raw : Nat},
   @LE.le.{0} Nat instLENat (@OfNat.ofNat.{0} Nat (nat_lit 2) (instOfNatNat (nat_lit 2))) raw →
     @LT.lt.{0} Nat instLTNat raw (@OfNat.ofNat.{0} Nat (nat_lit 255) (instOfNatNat (nat_lit 255))) →
@@ -8951,6 +9377,20 @@ Hibana.source_occurrence_enumeration_increases : ∀ (source : Hibana.EndpointDe
     And (@LE.le.{0} Nat instLENat start event)
       (@LT.lt.{0} Nat instLTNat event
         (@HAdd.hAdd.{0, 0, 0} Nat Nat Nat (@instHAdd.{0} Nat instAddNat) start source.eventCount))
+@Hibana.source_order_gives_actor_precedence : ∀ {data : Hibana.DecodedActorOrder}
+  {path : Hibana.EndpointDelegation.NormalizedPath} {before after : Hibana.DecodedActorRow},
+  @Eq.{1} (Option.{0} Hibana.EndpointDelegation.Action)
+      (Hibana.EndpointDelegation.action? path.bindings before.actionId)
+      (@some.{0} Hibana.EndpointDelegation.Action
+        (@Prod.snd.{0, 0} Hibana.EndpointDelegation.ActionId Hibana.EndpointDelegation.Action
+          (before.sourceAction data.actor))) →
+    @Eq.{1} (Option.{0} Hibana.EndpointDelegation.Action)
+        (Hibana.EndpointDelegation.action? path.bindings after.actionId)
+        (@some.{0} Hibana.EndpointDelegation.Action
+          (@Prod.snd.{0, 0} Hibana.EndpointDelegation.ActionId Hibana.EndpointDelegation.Action
+            (after.sourceAction data.actor))) →
+      @Eq.{1} Bool (data.source.before before.actionId.event after.actionId.event) true →
+        @Eq.{1} Bool (Hibana.EndpointDelegation.precedes data.source path.bindings before.actionId after.actionId) true
 @Hibana.source_order_strictly_increases_event : ∀ {source : Hibana.EndpointDelegation.Source} {before after : Nat},
   @Eq.{1} Bool (source.before before after) true → @LT.lt.{0} Nat instLTNat before after
 @Hibana.source_point_dependencies_have_no_cycle : ∀ {source : Hibana.EndpointDelegation.Source}
@@ -9089,10 +9529,24 @@ Hibana.source_occurrence_enumeration_increases : ∀ (source : Hibana.EndpointDe
                                     (@some.{0} (List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding))
                                       path.bindings))
                                   (Or
-                                    (@Eq.{1} (Option.{0} Nat)
-                                      (Hibana.EndpointDelegation.instantiate issuance
-                                        (Hibana.EndpointDelegation.initialOwners data.source.resources key))
-                                      (@some.{0} Nat data.actor))
+                                    (And
+                                      (@Eq.{1} (Option.{0} Nat)
+                                        (Hibana.EndpointDelegation.instantiate issuance
+                                          (Hibana.EndpointDelegation.initialOwners data.source.resources key))
+                                        (@some.{0} Nat data.actor))
+                                      (∀ (entry : Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding),
+                                        @Membership.mem.{0, 0}
+                                            (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding)
+                                            (List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding))
+                                            (@List.instMembership.{0}
+                                              (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding))
+                                            (@List.take.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding)
+                                              index run.bindings)
+                                            entry →
+                                          @Ne.{1} Hibana.EndpointDelegation.Payload
+                                            (@Prod.snd.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding
+                                                  entry).message.payload
+                                            (Hibana.EndpointDelegation.Payload.endpoint key)))
                                     (@Exists.{1} Hibana.DecodedActorRow fun previousRow =>
                                       @Exists.{1} Hibana.EndpointDelegation.Binding fun previousBinding =>
                                         And
@@ -9123,8 +9577,84 @@ Hibana.source_occurrence_enumeration_increases : ∀ (source : Hibana.EndpointDe
                                                     (@Membership.mem.{0, 0} Nat (List.{0} Nat)
                                                       (@List.instMembership.{0} Nat)
                                                       (data.sourcePredecessors path row.eventId) previousRow.eventId)
-                                                    (@Eq.{1} Bool (snapshot.doneState.done previousRow.eventId)
-                                                      true))))))))))))
+                                                    (And
+                                                      (@Eq.{1} Bool (snapshot.doneState.done previousRow.eventId) true)
+                                                      (@Exists.{1}
+                                                        (List.{0}
+                                                          (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding))
+                                                        fun earlierRows =>
+                                                        @Exists.{1} Hibana.EndpointDelegation.SymbolicBinding
+                                                          fun previous =>
+                                                          @Exists.{1}
+                                                            (List.{0}
+                                                              (Prod.{0, 0} Nat
+                                                                Hibana.EndpointDelegation.SymbolicBinding))
+                                                            fun laterRows =>
+                                                            And
+                                                              (@Eq.{1}
+                                                                (List.{0}
+                                                                  (Prod.{0, 0} Nat
+                                                                    Hibana.EndpointDelegation.SymbolicBinding))
+                                                                (@List.take.{0}
+                                                                  (Prod.{0, 0} Nat
+                                                                    Hibana.EndpointDelegation.SymbolicBinding)
+                                                                  index run.bindings)
+                                                                (@HAppend.hAppend.{0, 0, 0}
+                                                                  (List.{0}
+                                                                    (Prod.{0, 0} Nat
+                                                                      Hibana.EndpointDelegation.SymbolicBinding))
+                                                                  (List.{0}
+                                                                    (Prod.{0, 0} Nat
+                                                                      Hibana.EndpointDelegation.SymbolicBinding))
+                                                                  (List.{0}
+                                                                    (Prod.{0, 0} Nat
+                                                                      Hibana.EndpointDelegation.SymbolicBinding))
+                                                                  (@instHAppendOfAppend.{0}
+                                                                    (List.{0}
+                                                                      (Prod.{0, 0} Nat
+                                                                        Hibana.EndpointDelegation.SymbolicBinding))
+                                                                    (@List.instAppend.{0}
+                                                                      (Prod.{0, 0} Nat
+                                                                        Hibana.EndpointDelegation.SymbolicBinding)))
+                                                                  earlierRows
+                                                                  (@List.cons.{0}
+                                                                    (Prod.{0, 0} Nat
+                                                                      Hibana.EndpointDelegation.SymbolicBinding)
+                                                                    (@Prod.mk.{0, 0} Nat
+                                                                      Hibana.EndpointDelegation.SymbolicBinding
+                                                                      previousRow.actionId.event previous)
+                                                                    laterRows)))
+                                                              (And
+                                                                (@Eq.{1} Hibana.EndpointDelegation.Payload
+                                                                  previous.message.payload
+                                                                  (Hibana.EndpointDelegation.Payload.endpoint key))
+                                                                (And
+                                                                  (∀
+                                                                    (entry :
+                                                                      Prod.{0, 0} Nat
+                                                                        Hibana.EndpointDelegation.SymbolicBinding),
+                                                                    @Membership.mem.{0, 0}
+                                                                        (Prod.{0, 0} Nat
+                                                                          Hibana.EndpointDelegation.SymbolicBinding)
+                                                                        (List.{0}
+                                                                          (Prod.{0, 0} Nat
+                                                                            Hibana.EndpointDelegation.SymbolicBinding))
+                                                                        (@List.instMembership.{0}
+                                                                          (Prod.{0, 0} Nat
+                                                                            Hibana.EndpointDelegation.SymbolicBinding))
+                                                                        laterRows entry →
+                                                                      @Ne.{1} Hibana.EndpointDelegation.Payload
+                                                                        (@Prod.snd.{0, 0} Nat
+                                                                              Hibana.EndpointDelegation.SymbolicBinding
+                                                                              entry).message.payload
+                                                                        (Hibana.EndpointDelegation.Payload.endpoint
+                                                                          key))
+                                                                  (@Eq.{1}
+                                                                    (Option.{0} Hibana.EndpointDelegation.Binding)
+                                                                    (Hibana.EndpointDelegation.instantiateBinding
+                                                                      issuance previous)
+                                                                    (@some.{0} Hibana.EndpointDelegation.Binding
+                                                                      previousBinding)))))))))))))))))
 @Hibana.source_ready_row_is_admitted_by_a_checked_cursor_observation : ∀ {sample : Hibana.ActorAdmissionObservation}
   {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo} {data : Hibana.DecodedActorOrder}
   {path : Hibana.EndpointDelegation.NormalizedPath} {row : Hibana.DecodedActorRow},

@@ -102,6 +102,12 @@ MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_t
   g::role_projection::tests::mutation_coverage::actual_reset_and_recommit_cannot_disappear_between_equal_snapshots \
   -- --exact
 
+MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \
+  measured-source-handoff-interval \
+  -p hibana --lib \
+  g::role_projection::tests::handoff_interval::a_last_receipt_keeps_past_and_future_handoffs_outside_pending_parallel_work \
+  -- --exact
+
 run_miri_test \
   actor-shared-workspace \
   -p hibana \
@@ -134,6 +140,7 @@ MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_t
   g::role_projection::tests \
   -- --skip g::role_projection::tests::owned:: \
   --skip g::role_projection::tests::mutation_coverage:: \
+  --skip g::role_projection::tests::handoff_interval:: \
   --skip g::role_projection::tests::admission:: \
   --skip g::role_projection::tests::parallel_pending:: \
   --skip g::role_projection::tests::pending_reentry:: \

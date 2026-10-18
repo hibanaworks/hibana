@@ -338,15 +338,21 @@ theorem everyReadyRowHasItsSourceDerivedInitialIssueOrReceipt
       (run.bindings.mapM fun (event, symbolic) => do
         let binding ← Hibana.EndpointDelegation.instantiateBinding issuance symbolic
         some (event, binding)) = some usePath.bindings ∧
-      (Hibana.EndpointDelegation.instantiate issuance
-        ((Hibana.EndpointDelegation.initialOwners useData.source.resources) key) = some useData.actor ∨
+      ((Hibana.EndpointDelegation.instantiate issuance
+        ((Hibana.EndpointDelegation.initialOwners useData.source.resources) key) = some useData.actor ∧
+          ∀ entry ∈ run.bindings.take index, entry.2.message.payload ≠ .endpoint key) ∨
         ∃ previousRow previousBinding,
           previousRow ∈ useData.activeRows usePath ∧ previousRow.actionId.side = .receive ∧
           usePath.bindings.find? (fun entry => entry.1 == previousRow.actionId.event) =
             some (previousRow.actionId.event, previousBinding) ∧
           previousBinding.message.payload = .endpoint key ∧ previousBinding.receiverActor = useData.actor ∧
           previousRow.eventId ∈ useData.sourcePredecessors usePath row.eventId ∧
-          snapshot.doneState.done previousRow.eventId = true) :=
+          snapshot.doneState.done previousRow.eventId = true ∧
+          ∃ earlierRows previous laterRows,
+            run.bindings.take index = earlierRows ++ (previousRow.actionId.event, previous) :: laterRows ∧
+            previous.message.payload = .endpoint key ∧
+            (∀ entry ∈ laterRows, entry.2.message.payload ≠ .endpoint key) ∧
+            Hibana.EndpointDelegation.instantiateBinding issuance previous = some previousBinding) :=
   Hibana.source_ready_resource_row_has_initial_authority_or_a_completed_receipt
     (image := admissionImage) (choreo := admissionChoreo)
     (by decide) ((Option.some_get (x := admissionImage.decodeActorOrder? admissionChoreo) (by decide)).symm)

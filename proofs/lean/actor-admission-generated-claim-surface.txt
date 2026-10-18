@@ -120,9 +120,12 @@ dbDoneSourceReadiness : ∃ data path,
                               some (event, binding))
                           run.bindings =
                         some usePath.bindings ∧
-                      (Hibana.EndpointDelegation.instantiate issuance
-                            (Hibana.EndpointDelegation.initialOwners useData.source.resources key) =
-                          some useData.actor ∨
+                      ((Hibana.EndpointDelegation.instantiate issuance
+                              (Hibana.EndpointDelegation.initialOwners useData.source.resources key) =
+                            some useData.actor ∧
+                          ∀ (entry : Nat × Hibana.EndpointDelegation.SymbolicBinding),
+                            entry ∈ List.take index run.bindings →
+                              entry.snd.message.payload ≠ Hibana.EndpointDelegation.Payload.endpoint key) ∨
                         ∃ previousRow previousBinding,
                           previousRow ∈ useData.activeRows usePath ∧
                             previousRow.actionId.side = Hibana.EndpointDelegation.Side.receive ∧
@@ -131,7 +134,17 @@ dbDoneSourceReadiness : ∃ data path,
                                 previousBinding.message.payload = Hibana.EndpointDelegation.Payload.endpoint key ∧
                                   previousBinding.receiverActor = useData.actor ∧
                                     previousRow.eventId ∈ useData.sourcePredecessors usePath row.eventId ∧
-                                      snapshot.doneState.done previousRow.eventId = true)
+                                      snapshot.doneState.done previousRow.eventId = true ∧
+                                        ∃ earlierRows previous laterRows,
+                                          List.take index run.bindings =
+                                              earlierRows ++ (previousRow.actionId.event, previous) :: laterRows ∧
+                                            previous.message.payload = Hibana.EndpointDelegation.Payload.endpoint key ∧
+                                              (∀ (entry : Nat × Hibana.EndpointDelegation.SymbolicBinding),
+                                                  entry ∈ laterRows →
+                                                    entry.snd.message.payload ≠
+                                                      Hibana.EndpointDelegation.Payload.endpoint key) ∧
+                                                Hibana.EndpointDelegation.instantiateBinding issuance previous =
+                                                  some previousBinding)
 independentWorkCanRemainReadyAlongsideTheRead : Hibana.sourceRowReady useData usePath received.snapshot readRow = true ∧
   Hibana.sourceRowReady useData usePath received.snapshot (useData.rows[2]?.get ⋯) = true
 initialChecked : initial.check admissionImage admissionChoreo = true

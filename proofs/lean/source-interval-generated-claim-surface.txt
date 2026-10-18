@@ -1,0 +1,31 @@
+actualActorRowsAreChecked : intervalImage.actorRowsCheck intervalChoreo = true
+actualCompleteHistoryIsMeasured : actorCommitMutationHistoryCheck intervalImage intervalChoreo 9057 initial initialCount
+    returned returnedCount [actual0, actual1, actual2, actual3, actual4, actual5, actual6] =
+  true
+actualEarlierReturnCannotBeRepeatedAtThisCut : sourceRowReady intervalData intervalPath cut previousReturn = false
+actualIndependentWorkCompletedWhileReadWasPending : cut.doneState.done 3 = false ∧ cut.doneState.done 4 = true
+actualInitialOwnerAgreesWithTheSourceIssuer : ownerInitial.viewIssued resource.role = true ∧
+  instantiate initialData.normalized.issuance (initialOwners initialData.source.resources resource) =
+    some initialData.actor
+actualInitialOwnerExcludesTheLaterLoan : sourceRowReady initialData initialPath ownerInitial laterLoan = false
+actualLaterReturnCannotTakeThePendingResource : sourceRowReady intervalData intervalPath cut nextReturn = false
+actualMeasuredMiddleInterval : actorCommitMutationHistoryCheck intervalImage intervalChoreo 9057 current currentCount
+      cut cutCount [actual3] =
+    true ∧
+  actorCommitMutationHistoryCheck intervalImage intervalChoreo 9057 cut cutCount joined joinedCount [actual4] = true
+actualOwnReturnBecomesReadyAfterTheTarget : sourceRowReady intervalData intervalPath afterRead nextReturn = true
+actualReadyReadHasItsLastWireCheckedReceipt : SourceReadyReceiptEvidence intervalImage intervalChoreo 9057 intervalData
+  intervalPath readRow readBinding resource
+  [actual0.commit, actual1.commit, actual2.commit, actual3.commit, actual4.commit] joined
+actualReceiptClosesItsSelectedSourcePrefix : current.doneState.done receiptRow.eventId = true ∧
+  current.doneState.PrefixClosed (intervalData.sourcePredecessors intervalPath) [receiptRow.eventId]
+actualTargetBecomesReadyAfterTheParallelWork : sourceRowReady intervalData intervalPath joined readRow = true
+actualTargetWasNotReadyAtTheReceipt : sourceRowReady intervalData intervalPath current readRow = false
+everyDistinctHandoffIsBlockedAtThisActualCut : ∀ (transfer : DecodedActorRow) (loan : Binding),
+  transfer ∈ intervalData.activeRows intervalPath →
+    List.find? (fun entry => entry.fst == transfer.actionId.event) intervalPath.bindings =
+        some (transfer.actionId.event, loan) →
+      loan.message.payload = Payload.endpoint resource →
+        transfer.actionId.side = Side.send →
+          transfer.actionId.event ≠ readRow.actionId.event →
+            sourceRowReady intervalData intervalPath cut transfer = false

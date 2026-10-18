@@ -20,6 +20,7 @@ import Hibana.SendCompletion
 import Hibana.PublicAdmissionCustody
 import Hibana.ActorVisitProgress
 import Hibana.SourceReadyReceipt
+import Hibana.SourceHandoffInterval
 import Hibana.ActorMutationCoverage
 import Hibana.ActorReentryCommit
 import Hibana.GlobalSemantics

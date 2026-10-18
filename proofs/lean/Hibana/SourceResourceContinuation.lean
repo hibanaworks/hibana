@@ -147,6 +147,102 @@ theorem a_binding_in_the_source_prefix_has_an_earlier_occurrence
     earlier index (by omega) bound (by omega)
   simpa only [currentAt, previousAt] using ordered
 
+/-- The converse concerns immutable occurrence identity only. Causal ordering
+of the same resource is established separately by the source checker. -/
+theorem an_earlier_source_binding_is_in_the_source_prefix
+    {source : Source} {resources : List EndpointKey} {owners : OwnerMap}
+    {path : List Selection} {start : Nat} {run : Elaboration}
+    {index event previousEvent : Nat} {symbolic previous : SymbolicBinding}
+    (accepted : elaborate resources owners path source start = some run)
+    (present : run.bindings[index]? = some (event, symbolic))
+    (previousMember : (previousEvent, previous) ∈ run.bindings)
+    (earlier : previousEvent < event) : (previousEvent, previous) ∈ run.bindings.take index := by
+  obtain ⟨bound, currentAt⟩ := List.getElem?_eq_some_iff.mp present
+  obtain ⟨otherIndex, otherBound, otherAt⟩ := List.mem_iff_getElem.mp previousMember
+  have indexBefore : otherIndex < index := by
+    by_cases less : otherIndex < index
+    · exact less
+    · by_cases same : otherIndex = index
+      · subst otherIndex
+        have equal := congrArg Prod.fst (otherAt.symm.trans currentAt)
+        dsimp only at equal
+        omega
+      · have ordered := List.pairwise_iff_getElem.mp
+          (accepted_binding_occurrence_enumeration_increases accepted)
+          index otherIndex bound otherBound (by omega)
+        simp only [currentAt, otherAt] at ordered
+        omega
+  exact List.mem_take_iff_getElem.mpr ⟨otherIndex, by omega, otherAt⟩
+
+/-- Before the first source handoff, any transfer of this same resource is
+the target itself or causally later. Unrelated parallel resources are not
+ordered by this result. -/
+theorem an_initial_resource_has_no_handoff_before_its_target
+    {source : Source} {resources : List EndpointKey} {owners : OwnerMap}
+    {path : List Selection} {run : Elaboration} {index target transfer : Nat}
+    {targetBinding transferBinding : SymbolicBinding} {key : EndpointKey}
+    (accepted : elaborate resources owners path source 0 = some run)
+    (targetAt : run.bindings[index]? = some (target, targetBinding))
+    (untouched : ∀ entry ∈ run.bindings.take index, entry.2.message.payload ≠ .endpoint key)
+    (transferMember : (transfer, transferBinding) ∈ run.bindings)
+    (transferred : transferBinding.message.payload = .endpoint key)
+    (used : targetBinding.message.sender = key ∨ targetBinding.message.receiver = key ∨
+      targetBinding.message.payload = .endpoint key) :
+    transfer = target ∨ source.before target transfer = true := by
+  by_cases same : transfer = target
+  · exact .inl same
+  · have notEarlier : ¬transfer < target := by
+      intro earlier
+      exact untouched _ (an_earlier_source_binding_is_in_the_source_prefix accepted targetAt
+        transferMember earlier) transferred
+    have causal := an_earlier_resource_use_causally_precedes_a_transfer accepted transferMember
+      (List.mem_of_getElem? targetAt) transferred used (by omega)
+    exact .inr (by simpa only [Nat.sub_zero] using causal)
+
+/-- A source's last handoff leaves no intervening handoff of that resource.
+Every other transfer is causally before the receipt, the same occurrence,
+the intended target, or causally after the target. Numeric coordinates only
+orient the same-resource causal relation; they do not schedule parallel work. -/
+theorem a_resource_handoff_is_outside_its_last_receipt_to_target_interval
+    {source : Source} {resources : List EndpointKey} {owners : OwnerMap}
+    {path : List Selection} {run : Elaboration} {index target transfer previousEvent : Nat}
+    {targetBinding transferBinding previous : SymbolicBinding} {key : EndpointKey}
+    {earlierRows laterRows : List (Nat × SymbolicBinding)}
+    (accepted : elaborate resources owners path source 0 = some run)
+    (targetAt : run.bindings[index]? = some (target, targetBinding))
+    (shape : run.bindings.take index = earlierRows ++ (previousEvent, previous) :: laterRows)
+    (previousPayload : previous.message.payload = .endpoint key)
+    (untouched : ∀ entry ∈ laterRows, entry.2.message.payload ≠ .endpoint key)
+    (transferMember : (transfer, transferBinding) ∈ run.bindings)
+    (transferred : transferBinding.message.payload = .endpoint key)
+    (used : targetBinding.message.sender = key ∨ targetBinding.message.receiver = key ∨
+      targetBinding.message.payload = .endpoint key) :
+    source.before transfer previousEvent = true ∨ transfer = previousEvent ∨
+      transfer = target ∨ source.before target transfer = true := by
+  by_cases earlier : transfer < target
+  · have member := an_earlier_source_binding_is_in_the_source_prefix accepted targetAt transferMember earlier
+    rw [shape] at member
+    rcases List.mem_append.mp member with left | right
+    · have increasing := (accepted_binding_occurrence_enumeration_increases accepted).sublist
+        (List.take_sublist index run.bindings)
+      rw [shape] at increasing
+      have before := (List.pairwise_append.mp increasing).2.2 _ left _ List.mem_cons_self
+      have previousMember : (previousEvent, previous) ∈ run.bindings := by
+        apply List.mem_of_mem_take
+        rw [shape]
+        exact List.mem_append.mpr (.inr List.mem_cons_self)
+      have causal := an_earlier_transfer_causally_precedes_a_resource_use accepted transferMember
+        previousMember transferred (.inr (.inr previousPayload)) before
+      exact .inl (by simpa only [Nat.sub_zero] using causal)
+    · rcases List.mem_cons.mp right with same | tail
+      · exact .inr (.inl (congrArg Prod.fst same))
+      · exact False.elim (untouched _ tail transferred)
+  · by_cases same : transfer = target
+    · exact .inr (.inr (.inl same))
+    · have causal := an_earlier_resource_use_causally_precedes_a_transfer accepted transferMember
+        (List.mem_of_getElem? targetAt) transferred used (by omega)
+      exact .inr (.inr (.inr (by simpa only [Nat.sub_zero] using causal)))
+
 /-- Unrelated communication after a handoff cannot change its receiver's
 resource continuation. This folds immutable source bindings, not runtime state. -/
 theorem symbolic_owner_after_last_handoff

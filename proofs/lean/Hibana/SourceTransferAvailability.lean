@@ -86,7 +86,7 @@ theorem active_decoded_row_has_its_exact_source_action
     exact List.mem_map.mpr ⟨row, member, rfl⟩
   exact (member_actor_action_is_decoded present).1
 
-private theorem instantiated_path_binding_has_source_input
+theorem instantiated_path_binding_has_source_input
     {run : Elaboration} {issuance : List Issuance} {bindings : List (Nat × Binding)}
     {event : Nat} {binding : Binding}
     (instantiated : (run.bindings.mapM fun (event, symbolic) => do
@@ -104,7 +104,7 @@ private theorem instantiated_path_binding_has_source_input
       cases same
       exact ⟨symbolic, member, bindingAt⟩
 
-private theorem source_order_gives_actor_precedence
+theorem source_order_gives_actor_precedence
     {data : DecodedActorOrder} {path : NormalizedPath} {before after : DecodedActorRow}
     (left : action? path.bindings before.actionId = some (before.sourceAction data.actor).2)
     (right : action? path.bindings after.actionId = some (after.sourceAction data.actor).2)
@@ -173,6 +173,21 @@ theorem accepted_resource_transfer_and_use_have_local_causal_order
   · exact .inr (actor_precedence_is_a_source_predecessor useMember transferMember
       (source_order_gives_actor_precedence useAction transferAction (by simpa using after)))
 
+/-- A later local step cannot be ready before one of its source predecessors
+completes. The predecessor need not itself already be ready. -/
+theorem a_pending_source_predecessor_blocks_its_successor
+    {data : DecodedActorOrder} {path : NormalizedPath} {before after : DecodedActorRow}
+    {snapshot : ActorProgressObservation}
+    (parent : before.eventId ∈ data.sourcePredecessors path after.eventId)
+    (pending : snapshot.doneState.done before.eventId = false) :
+    sourceRowReady data path snapshot after = false := by
+  cases ready : sourceRowReady data path snapshot after with
+  | false => rfl
+  | true =>
+      have done := List.all_eq_true.mp (Bool.and_eq_true_iff.mp ready).2 before.eventId parent
+      rw [pending] at done
+      contradiction
+
 theorem source_ready_use_excludes_a_distinct_resource_transfer
     {data : DecodedActorOrder} {path : NormalizedPath} {transfer useRow : DecodedActorRow}
     {snapshot : ActorProgressObservation}
@@ -185,13 +200,7 @@ theorem source_ready_use_excludes_a_distinct_resource_transfer
   rcases ordered with before | after
   · have completed := List.all_eq_true.mp useReady.2 transfer.eventId before
     simp [sourceRowReady, completed]
-  · cases transferReady : sourceRowReady data path snapshot transfer with
-    | false => rfl
-    | true =>
-        have completed := List.all_eq_true.mp (Bool.and_eq_true_iff.mp transferReady).2
-          useRow.eventId after
-        rw [pending] at completed
-        contradiction
+  · exact a_pending_source_predecessor_blocks_its_successor after pending
 
 theorem checked_source_ready_use_excludes_another_handoff
     {image : RustDescriptorImage} {choreo : Choreo} {data : DecodedActorOrder}
