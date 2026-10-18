@@ -271,10 +271,29 @@ protocol. At the second worker-held request, before that sender's publication,
 the prospective FIFO head gets ordinal one from the three preceding request
 receipts. This qualification does not use that head's eventual receive commit.
 
+`SourcePortWord.lean` extracts each acceptance's original source binding,
+wire columns and opened logical direction from that same history. It composes
+the complete accepted direction word with the receiver's independently
+prepared current/fresh word. An exact count of past receives supplies their
+common position; neither a common actor visit nor the prospective receive's
+pair-check or successful after-snapshot supplies it. These are erased proof
+observations, with no new runtime field or wire identifier.
+
+The logical-view fixture qualifies this composition for arbitrary histories
+of its six-message protocol. Its source-row tables include all actor rows and
+both request senders. Port classification is derived from those static source
+facts and checked wire columns. The deployment premise is that the run retains
+its opened carrier namespace, numbered zero in this fixture. This premise is
+not inferred from the eight-byte core header, which has no generation field.
+The receiver's selector includes every matching row, not just the row expected
+by the test. At the second worker-held request the proof is also applied to the
+actual cut before sender publication, using the service's existing before-cut.
+Its source identity is derived before adding that receive to the history.
+
 General correspondence for other holder-changing and branch-dependent
-classes remains required, as does matching a new receiver's actual local row
-and carrier binding to its accepted source word. Static class facts are not yet
-proved for every image emitted by Rust projection.
+classes remains required. Static class facts are not yet proved for every
+image emitted by Rust projection. The fixture proof source for the prospective
+match is `src/g/role_projection/tests/logical_port_word.lean`.
 
 This is a joint successful-boundary refinement and concrete qualification.
 Receive-pair correspondence is an explicit obligation of the relation, not

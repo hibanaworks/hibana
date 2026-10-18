@@ -348,4 +348,62 @@ theorem a_distributed_acceptance_source_count_has_its_static_row_classification
   change (entry.event == effect) = true ↔ selected entry.sample.image.role entry.sample.event = true
   rw [equal]
 
+private theorem a_source_execution_logs_only_its_actual_actor_images
+    {images : Nat → RustDescriptorImage} {choreo : Choreo} {session : Nat}
+    {first last : DistributedSourceCut × List SourceAcceptance}
+    {records : List (Nat × ActorCommitRecord)}
+    (execution : DistributedSourceExecution images choreo session first last records)
+    (initial : first.2 = []) :
+    ∀ entry ∈ records, (images entry.1).role = entry.1 := by
+  induction execution with
+  | refl => simp
+  | @tail middle finish records logged history step ih =>
+    intro entry present
+    rcases List.mem_append.mp present with old | new
+    · exact ih entry old
+    · cases step with
+      | quiet checked => simp at new
+      | accept imageAt checked decoded pathAt rowAt prepared available freshWitness sourceAt accepted identity => simp at new
+      | @publish cut entries actor after cleared record accepted member stamp paired committed =>
+        simp only [Option.toList_some, List.mem_singleton] at new
+        cases new
+        have imageAt := (a_source_execution_keeps_its_accepted_checks history initial accepted member).1
+        simpa only [stamp.1] using (congrArg RustDescriptorImage.role imageAt).symm
+      | localCommit actorRole localAt available committed =>
+        simp only [Option.toList_some, List.mem_singleton] at new
+        cases new
+        exact actorRole
+      | receive actorRole received entryAt identity paired available committed =>
+        simp only [Option.toList_some, List.mem_singleton] at new
+        cases new
+        exact actorRole
+
+/-- A complete immutable row classification counts exactly the corresponding
+past receives in the same execution. Non-receiving rows must classify false;
+ordinary and owned messages are counted together. This replaces a one-sided
+count bound when a prospective receive needs its exact FIFO position. -/
+theorem a_distributed_receipt_source_count_has_its_static_row_classification
+    {images : Nat → RustDescriptorImage} {choreo : Choreo} {session : Nat}
+    {first last : DistributedSourceCut × List SourceAcceptance}
+    {records : List (Nat × ActorCommitRecord)}
+    (execution : DistributedSourceExecution images choreo session first last records)
+    (initial : first.2 = []) (selectedSource : Nat → Bool) (selectedRow : Nat → Nat → Bool)
+    (classifies : ∀ actor row eff side, (images actor).role = actor → row < (images actor).eventCount →
+      (images actor).eventEffIndex? row = some eff → (images actor).sourceRowSide? row = some side →
+      (if side = .receive then selectedSource eff else false) = selectedRow actor row) :
+    (receivedSourceWord images choreo records).countP selectedSource =
+      records.countP (fun entry => selectedRow entry.1 entry.2.step.event) := by
+  have checks := a_source_execution_keeps_its_committed_checks execution
+  have roles := a_source_execution_logs_only_its_actual_actor_images execution initial
+  simp only [receivedSourceWord, List.countP_filterMap]
+  apply List.countP_congr
+  intro entry present
+  obtain ⟨eff, binding, side, identity⟩ := a_checked_record_has_its_source_identity (checks entry present)
+  have columns := a_source_identity_has_its_actual_row_columns identity
+  have classified := classifies entry.1 entry.2.step.event eff side (roles entry present)
+    columns.1 columns.2.1 columns.2.2
+  cases side <;> simp only [identity, reduceCtorEq, if_false, if_true, Option.map_none,
+    Option.map_some, Option.getD_none, Option.getD_some] at classified ⊢ <;>
+      simp only [← classified, Bool.false_eq_true, iff_self]
+
 end Hibana

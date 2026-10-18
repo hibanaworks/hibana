@@ -41,6 +41,7 @@ import Hibana.SourceAcceptedWord
 import Hibana.SourceActorWord
 import Hibana.SourceReceiptWord
 import Hibana.SourceHandoffWord
+import Hibana.SourcePortWord
 import Hibana.SourcePublicationPrefix
 import Hibana.GlobalSemantics
 import Hibana.GlobalAllocationCorrectness
