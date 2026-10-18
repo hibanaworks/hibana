@@ -3143,6 +3143,30 @@ Hibana.a_pending_payload_requires_its_own_send : ∀ (resource : Nat) (sent : Op
                   (@some.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)
                     (@Prod.mk.{0, 0} Nat Hibana.EndpointDelegation.Binding prior.actionId.event binding)))
                 (@Eq.{1} Bool (Hibana.sourceActionRequiresView role binding prior.actionId.side) true))))
+@Hibana.a_source_matched_owned_head_checks_bytes_on_independent_paths : ∀ {sender : Hibana.SourceSendAdmission}
+  {receiverImage : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo} {session pathIndex event : Nat}
+  {sentFacts receivedFacts : Hibana.OwnedSourceFacts} {atoms : List.{0} Hibana.DecodedProgramAtom}
+  {wire : Hibana.OwnedWireObservation} {frame : Hibana.TransportFrame},
+  @Eq.{1} Bool (sender.check choreo session) true →
+    @Eq.{1} (Option.{0} Hibana.OwnedSourceFacts) (sender.ownedFacts? choreo)
+        (@some.{0} Hibana.OwnedSourceFacts sentFacts) →
+      @Eq.{1} (Option.{0} Hibana.OwnedSourceFacts) (receiverImage.ownedSourceFacts? choreo pathIndex event)
+          (@some.{0} Hibana.OwnedSourceFacts receivedFacts) →
+        @Eq.{1} (Option.{0} (List.{0} Hibana.DecodedProgramAtom)) sender.image.decodeAtoms?
+            (@some.{0} (List.{0} Hibana.DecodedProgramAtom) atoms) →
+          @Eq.{1} (Option.{0} (List.{0} Hibana.DecodedProgramAtom)) receiverImage.decodeAtoms?
+              (@some.{0} (List.{0} Hibana.DecodedProgramAtom) atoms) →
+            @Eq.{1} Nat sentFacts.effIndex receivedFacts.effIndex →
+              @Eq.{1} Hibana.EndpointDelegation.Side receivedFacts.side Hibana.EndpointDelegation.Side.receive →
+                @Eq.{1} Nat receivedFacts.binding.receiverActor receiverImage.role →
+                  sender.wire.identifies frame →
+                    wire.identifies frame →
+                      @Eq.{1} (Option.{0} Nat) (receiverImage.eventLane? event) (@some.{0} Nat wire.lane) →
+                        @Eq.{1} (Option.{0} Nat) (receiverImage.eventFrameLabel? event)
+                            (@some.{0} Nat wire.frameLabel) →
+                          And (@Eq.{1} Hibana.EndpointDelegation.EndpointKey receivedFacts.resource sentFacts.resource)
+                            (Iff (@Eq.{1} Bool (receivedFacts.wireMatches receiverImage.role wire session) true)
+                              (@Eq.{1} (List.{0} Nat) wire.payload sender.wire.payload))
 @Hibana.a_source_matched_owned_head_has_its_exact_receive_wire_check : ∀ {sender : Hibana.SourceSendAdmission}
   {receiverImage : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo} {session source pathIndex event : Nat}
   {binding : Hibana.EndpointDelegation.Binding} {sentFacts receivedFacts : Hibana.OwnedSourceFacts}
@@ -6877,6 +6901,27 @@ Hibana.decode_packed_lane_range_accepts_bounded : ∀ (raw capacity : Nat),
           (@List.instGetElem?NatLtLength.{0} Hibana.DecodedActorRow) rows event)
         (@some.{0} Hibana.DecodedActorRow row) →
       @Eq.{1} Nat row.eventId event
+@Hibana.decoded_actor_row_retains_its_unique_source_position : ∀ {image : Hibana.RustDescriptorImage}
+  {atoms : List.{0} Hibana.DecodedProgramAtom} {rows : List.{0} Hibana.DecodedActorRow} {row : Hibana.DecodedActorRow},
+  @Eq.{1} (Option.{0} (List.{0} Hibana.DecodedActorRow)) image.decodeActorRows?
+      (@some.{0} (List.{0} Hibana.DecodedActorRow) rows) →
+    @Eq.{1} (Option.{0} (List.{0} Hibana.DecodedProgramAtom)) image.decodeAtoms?
+        (@some.{0} (List.{0} Hibana.DecodedProgramAtom) atoms) →
+      @Membership.mem.{0, 0} Hibana.DecodedActorRow (List.{0} Hibana.DecodedActorRow)
+          (@List.instMembership.{0} Hibana.DecodedActorRow) rows row →
+        @Exists.{1} Nat fun eff =>
+          @Exists.{1} Hibana.DecodedProgramAtom fun atom =>
+            And (@Eq.{1} (Option.{0} Nat) (image.eventEffIndex? row.eventId) (@some.{0} Nat eff))
+              (@Eq.{1} (Option.{0} (Prod.{0, 0} Hibana.DecodedProgramAtom Nat))
+                (@Hibana.resolveUnique? (Prod.{0, 0} Hibana.DecodedProgramAtom Nat)
+                  (@List.filter.{0} (Prod.{0, 0} Hibana.DecodedProgramAtom Nat)
+                    (fun entry =>
+                      @BEq.beq.{0} Nat (@instBEqOfDecidableEq.{0} Nat instDecidableEqNat)
+                        (@Prod.fst.{0, 0} Hibana.DecodedProgramAtom Nat entry).effIndex eff)
+                    (@List.zipIdx.{0} Hibana.DecodedProgramAtom atoms
+                      (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0))))))
+                (@some.{0} (Prod.{0, 0} Hibana.DecodedProgramAtom Nat)
+                  (@Prod.mk.{0, 0} Hibana.DecodedProgramAtom Nat atom row.actionId.event)))
 @Hibana.decoded_actor_rows_bind_operation_identity : ∀ {image : Hibana.RustDescriptorImage}
   {rows : List.{0} Hibana.DecodedActorRow} {row : Hibana.DecodedActorRow},
   @Eq.{1} (Option.{0} (List.{0} Hibana.DecodedActorRow)) image.decodeActorRows?
@@ -12340,6 +12385,21 @@ Hibana.source_acceptance_observation_checks_are_exact : ∀ (entries : List.{0} 
                 (@List.instGetElem?NatLtLength.{0} Nat) receivedWord index)
               (@some.{0} Nat received) →
             @Eq.{1} (Option.{0} Nat) (sentSource sent) (receivedSource received)
+@Hibana.source_matched_owned_halves_have_the_same_logical_message : ∀
+  {sentImage receivedImage : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo}
+  {sentPath receivedPath sentEvent receivedEvent : Nat} {sentFacts receivedFacts : Hibana.OwnedSourceFacts}
+  {atoms : List.{0} Hibana.DecodedProgramAtom},
+  @Eq.{1} (Option.{0} Hibana.OwnedSourceFacts) (sentImage.ownedSourceFacts? choreo sentPath sentEvent)
+      (@some.{0} Hibana.OwnedSourceFacts sentFacts) →
+    @Eq.{1} (Option.{0} Hibana.OwnedSourceFacts) (receivedImage.ownedSourceFacts? choreo receivedPath receivedEvent)
+        (@some.{0} Hibana.OwnedSourceFacts receivedFacts) →
+      @Eq.{1} (Option.{0} (List.{0} Hibana.DecodedProgramAtom)) sentImage.decodeAtoms?
+          (@some.{0} (List.{0} Hibana.DecodedProgramAtom) atoms) →
+        @Eq.{1} (Option.{0} (List.{0} Hibana.DecodedProgramAtom)) receivedImage.decodeAtoms?
+            (@some.{0} (List.{0} Hibana.DecodedProgramAtom) atoms) →
+          @Eq.{1} Nat sentFacts.effIndex receivedFacts.effIndex →
+            And (@Eq.{1} Hibana.EndpointDelegation.Message sentFacts.binding.message receivedFacts.binding.message)
+              (@Eq.{1} Hibana.EndpointDelegation.EndpointKey sentFacts.resource receivedFacts.resource)
 @Hibana.source_message_transfer_is_a_source_resource : ∀ {source : Hibana.EndpointDelegation.Source} {start event : Nat}
   {message : Hibana.EndpointDelegation.Message} {key : Hibana.EndpointDelegation.EndpointKey},
   @Membership.mem.{0, 0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Message)

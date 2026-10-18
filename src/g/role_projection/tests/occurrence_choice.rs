@@ -403,7 +403,7 @@ fn write_observations(
 ) {
     use crate::test_support::{lean_choreo::LeanChoreo, lean_descriptor::descriptor_source};
     let mut source = std::format!(
-        "import Hibana.OccurrenceChoiceKnowledge\nimport Hibana.ActorChoiceOrigin\n\nset_option maxRecDepth 10000\n\n\
+        "import Hibana.OccurrenceChoiceKnowledge\nimport Hibana.ActorChoiceOrigin\nimport Hibana.SourceOwnedReceive\n\nset_option maxRecDepth 10000\n\n\
          def occurrenceChoiceChoreo : Hibana.Choreo := {}\n\n",
         Steps::lean_source(),
     );
@@ -789,6 +789,70 @@ theorem choiceZeroWriteGapCannotForgetOuterKnowledge (count : Nat) :
   change some (0, none) = some (0, some Hibana.RouteArm.left) at atOuter
   cases atOuter
 "#);
+    source.push_str(
+        "\nprivate def choiceSharedSourceAtoms := (occurrenceOwnerImage.decodeAtoms?).get (by decide)\n\
+         private theorem choiceWorkerSharesSourceAtoms : occurrenceWorkerImage.decodeAtoms? = \
+         some choiceSharedSourceAtoms := by decide\n",
+    );
+    for (visit, (before, _, _, _)) in receipts.iter().enumerate() {
+        let index = visit + 1;
+        let accepted = index + 1;
+        let label = [1, 2, 1, 1][visit];
+        let event = before
+            .steps
+            .iter()
+            .position(|step| {
+                matches!(step.action,
+                    LocalAction::Recv { label: found, .. } if found == label)
+            })
+            .unwrap();
+        let path = if label == 2 { 3 } else { 1 };
+        source.push_str(&std::format!(
+            r#"
+private def choiceBeforeReceiveFacts{visit} :=
+  (occurrenceWorkerImage.ownedSourceFacts? occurrenceChoiceChoreo {path} {event}).get (by decide)
+
+private theorem choiceBeforeReceiveMetadata{visit} :
+    choiceBeforeReceiveFacts{visit}.side = .receive ∧
+      choiceBeforeReceiveFacts{visit}.binding.receiverActor = occurrenceWorkerImage.role ∧
+      choiceSourceFacts{visit}.effIndex = choiceBeforeReceiveFacts{visit}.effIndex := by decide
+
+private def choiceAcceptedBeforeReceiveFrame{visit} :=
+  (choiceCarrier{accepted}.frames[{index}]?).get (by decide)
+
+private theorem choiceAcceptedBeforeReceiveIdentity{visit} :
+    choiceWire{index}.identifies choiceAcceptedBeforeReceiveFrame{visit} := by
+  unfold Hibana.OwnedWireObservation.identifies
+  decide
+
+private theorem choiceBeforeReceiveWireColumns{visit} :
+    occurrenceWorkerImage.eventLane? {event} = some choiceWire{index}.lane ∧
+      occurrenceWorkerImage.eventFrameLabel? {event} = some choiceWire{index}.frameLabel := by decide
+
+/-- Only immutable source rows and the accepted frame are used here. The
+receiver's after-snapshot, issued tag and current receive-pair are absent.
+The four calls cover changing arms and equal-arm reentry with unknown siblings. -/
+theorem choicePrepared{visit}ChecksAcceptedBytesBeforeReceipt (bytes : List Nat) :
+    choiceBeforeReceiveFacts{visit}.wireMatches 1
+        {{ choiceWire{index} with payload := bytes }} 9063 = true ↔
+      bytes = choiceWire{index}.payload := by
+  have receiverAt := (Option.some_get
+    (x := occurrenceWorkerImage.ownedSourceFacts? occurrenceChoiceChoreo {path} {event}) (by decide)).symm
+  have atomsAt := (Option.some_get (x := occurrenceOwnerImage.decodeAtoms?) (by decide)).symm
+  exact (Hibana.a_source_matched_owned_head_checks_bytes_on_independent_paths
+    (sender := choiceSend{index}) (receiverImage := occurrenceWorkerImage)
+    (choreo := occurrenceChoiceChoreo) (session := 9063) (pathIndex := {path}) (event := {event})
+    (sentFacts := choiceSourceFacts{visit}) (receivedFacts := choiceBeforeReceiveFacts{visit})
+    (atoms := choiceSharedSourceAtoms) (wire := {{ choiceWire{index} with payload := bytes }})
+    (frame := choiceAcceptedBeforeReceiveFrame{visit})
+    choiceSend{index}Checked choiceSourceAt{visit} receiverAt atomsAt
+    choiceWorkerSharesSourceAtoms choiceBeforeReceiveMetadata{visit}.2.2
+    choiceBeforeReceiveMetadata{visit}.1 choiceBeforeReceiveMetadata{visit}.2.1
+    choiceAcceptedBeforeReceiveIdentity{visit} choiceAcceptedBeforeReceiveIdentity{visit}
+    choiceBeforeReceiveWireColumns{visit}.1 choiceBeforeReceiveWireColumns{visit}.2).2
+"#,
+        ));
+    }
     let directory = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/lean-proof");
     std::fs::create_dir_all(&directory).unwrap();
     std::fs::write(directory.join("OccurrenceChoiceGenerated.lean"), source).unwrap();

@@ -508,6 +508,63 @@ theorem decoded_actor_rows_bind_operation_identity
             simpa [atomsAt, columnsAt] using decoded
           exact actor_row_mapM_member_binds_view rowsAt member
 
+private theorem actor_row_from_retains_source_position
+    {image : RustDescriptorImage} {atoms : List DecodedProgramAtom}
+    {columns : DecodedProgramColumns} {event : Nat} {row : DecodedActorRow}
+    (decoded : image.actorRowFrom? atoms columns event = some row) :
+    ∃ eff atom, image.eventEffIndex? row.eventId = some eff ∧
+      resolveUnique? (atoms.zipIdx.filter fun entry => entry.1.effIndex == eff) =
+        some (atom, row.actionId.event) := by
+  unfold RustDescriptorImage.actorRowFrom? at decoded
+  simp only [Option.bind_eq_bind, Option.bind_eq_some_iff, Option.pure_def,
+    Option.some.injEq] at decoded
+  obtain ⟨eff, effAt, entry, entryAt, action, _, view, _, reference, _, same⟩ := decoded
+  cases same
+  exact ⟨eff, entry.1, effAt, entryAt⟩
+
+private theorem actor_row_mapM_retains_source_position
+    {image : RustDescriptorImage} {atoms : List DecodedProgramAtom}
+    {columns : DecodedProgramColumns} {indices : List Nat} {rows : List DecodedActorRow}
+    {row : DecodedActorRow}
+    (decoded : indices.mapM (image.actorRowFrom? atoms columns) = some rows)
+    (member : row ∈ rows) :
+    ∃ eff atom, image.eventEffIndex? row.eventId = some eff ∧
+      resolveUnique? (atoms.zipIdx.filter fun entry => entry.1.effIndex == eff) =
+        some (atom, row.actionId.event) := by
+  induction indices generalizing rows with
+  | nil => simp at decoded; subst rows; simp at member
+  | cons index rest ih =>
+      cases headAt : image.actorRowFrom? atoms columns index with
+      | none => simp [headAt] at decoded
+      | some head =>
+          cases tailAt : rest.mapM (image.actorRowFrom? atoms columns) with
+          | none => simp [headAt, tailAt] at decoded
+          | some tail =>
+              have same : rows = head :: tail :=
+                (Option.some.inj (by simpa [headAt, tailAt] using decoded)).symm
+              rw [same] at member
+              rcases List.mem_cons.mp member with equal | member
+              · subst row; exact actor_row_from_retains_source_position headAt
+              · exact ih tailAt member
+
+/-- A local operation's source occurrence is the unique atom at its encoded
+effect offset. Two actor images with the same immutable atom table therefore
+cannot interpret that offset as different source occurrences. Neither local
+route choices nor repetition history occurs in this translation fact. -/
+theorem decoded_actor_row_retains_its_unique_source_position
+    {image : RustDescriptorImage} {atoms : List DecodedProgramAtom}
+    {rows : List DecodedActorRow} {row : DecodedActorRow}
+    (decoded : image.decodeActorRows? = some rows)
+    (atomTable : image.decodeAtoms? = some atoms) (member : row ∈ rows) :
+    ∃ eff atom, image.eventEffIndex? row.eventId = some eff ∧
+      resolveUnique? (atoms.zipIdx.filter fun entry => entry.1.effIndex == eff) =
+        some (atom, row.actionId.event) := by
+  unfold RustDescriptorImage.decodeActorRows? at decoded
+  rw [atomTable] at decoded
+  simp only [Option.bind_eq_bind, Option.bind_some, Option.bind_eq_some_iff] at decoded
+  obtain ⟨columns, _, mapped⟩ := decoded
+  exact actor_row_mapM_retains_source_position mapped member
+
 private theorem decoded_actor_row_indices
     {image : RustDescriptorImage} {atoms : List DecodedProgramAtom}
     {columns : DecodedProgramColumns} {indices : List Nat} {rows : List DecodedActorRow}

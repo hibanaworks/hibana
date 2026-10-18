@@ -299,6 +299,23 @@ when those bytes equal the accepted sender's bytes. No successful receive,
 after-view, fresh receiver tag or current receive-pair check is an input.
 Matching header observations alone does not prove payload preservation.
 
+The independent-path theorem no longer requires identical physical bindings
+or a shared selected path. `OwnershipDescriptor.lean` proves that an effect
+offset has one source position in the shared decoded atom table. Normalized
+paths retain the same logical message at that position, even when their
+physical holders or knowledge of unrelated branches differ. The owned resource
+and message fields are derived from those facts. Receiver actor, lane and color
+are still checked local projection facts. No application value is inferred
+from a raw header. The earlier public theorem retains its exact type and uses
+the same wire-check proof.
+
+The nested-choice fixture applies this result to all four accepted loans,
+including left/right changes and equal-arm reentry. Each candidate byte list
+is checked using the immutable receive row and actual accepted frame. The
+receiver's successful commit, after-snapshot and fresh tag are absent. These
+are qualifications of the actual observed source pairs, not a derivation of
+source order for every branch-dependent history.
+
 The mixed ordinary/owned fixture applies this result at the next loan after a
 completed visit. Its fresh base and source row are derived before that receive;
 the source-row proof no longer obtains its row number from the later commit.

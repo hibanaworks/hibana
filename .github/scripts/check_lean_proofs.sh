@@ -66,7 +66,7 @@ bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" build-serial "${PROOF_
 bash "${ROOT_DIR}/.github/scripts/check_lean_claim_surface.sh"
 static_audit_output="$(run_audit \
   theorem-inventory \
-  --static "${PROOF_DIR}" "${STATIC_CLAIM_SNAPSHOT}" 1067 653 302 112)"
+  --static "${PROOF_DIR}" "${STATIC_CLAIM_SNAPSHOT}" 1070 656 302 112)"
 printf '%s\n' "${static_audit_output}"
 printf '%s\n' "${static_audit_output}" | bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard markers static
 bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" theorem-inventory \
@@ -248,7 +248,7 @@ CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --li
   -- --exact
 bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${OCCURRENCE_CHOICE_GENERATED}" "accepted occurrence branch knowledge"
 run_audit generated-axioms --kernel "${OCCURRENCE_CHOICE_GENERATED}" "${PROOF_DIR}" \
-  "${PROOF_DIR}/occurrence-choice-generated-claim-surface.txt" 47
+  "${PROOF_DIR}/occurrence-choice-generated-claim-surface.txt" 51
 bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${DISTRIBUTED_CHOICE_GENERATED}" "joint distributed choice origins"
 run_audit generated-axioms --kernel "${DISTRIBUTED_CHOICE_GENERATED}" "${PROOF_DIR}" \
   "${PROOF_DIR}/distributed-choice-generated-claim-surface.txt" 14

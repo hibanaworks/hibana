@@ -100,6 +100,38 @@ choiceOuterArm3KeepsItsActualOriginAcrossInnerResets : ∃ before after prior ma
             (choiceReceiverAfter3, 20) ∧
           record.check occurrenceWorkerImage occurrenceChoiceChoreo 9063 = true ∧
             record.step.SourceOrdered occurrenceWorkerImage occurrenceChoiceChoreo
+choicePrepared0ChecksAcceptedBytesBeforeReceipt : ∀ (bytes : List Nat),
+  choiceBeforeReceiveFacts0.wireMatches 1
+        (have __src := choiceWire1;
+        { session := __src.session, lane := __src.lane, sender := __src.sender, receiver := __src.receiver,
+          frameLabel := __src.frameLabel, payload := bytes })
+        9063 =
+      true ↔
+    bytes = choiceWire1.payload
+choicePrepared1ChecksAcceptedBytesBeforeReceipt : ∀ (bytes : List Nat),
+  choiceBeforeReceiveFacts1.wireMatches 1
+        (have __src := choiceWire2;
+        { session := __src.session, lane := __src.lane, sender := __src.sender, receiver := __src.receiver,
+          frameLabel := __src.frameLabel, payload := bytes })
+        9063 =
+      true ↔
+    bytes = choiceWire2.payload
+choicePrepared2ChecksAcceptedBytesBeforeReceipt : ∀ (bytes : List Nat),
+  choiceBeforeReceiveFacts2.wireMatches 1
+        (have __src := choiceWire3;
+        { session := __src.session, lane := __src.lane, sender := __src.sender, receiver := __src.receiver,
+          frameLabel := __src.frameLabel, payload := bytes })
+        9063 =
+      true ↔
+    bytes = choiceWire3.payload
+choicePrepared3ChecksAcceptedBytesBeforeReceipt : ∀ (bytes : List Nat),
+  choiceBeforeReceiveFacts3.wireMatches 1
+        (have __src := choiceWire4;
+        { session := __src.session, lane := __src.lane, sender := __src.sender, receiver := __src.receiver,
+          frameLabel := __src.frameLabel, payload := bytes })
+        9063 =
+      true ↔
+    bytes = choiceWire4.payload
 choiceReceipt0Checked : choiceReceipt0.ownedCheck occurrenceWorkerImage occurrenceChoiceChoreo choiceWire1 9063 = true
 choiceReceipt0LearnsFromItsAcceptedFrame : choiceReceipt0.after.actor = choiceReceiptFacts0.binding.receiverActor ∧
   choiceReceipt0.after.doneState.selected 2 = some Hibana.RouteArm.left
