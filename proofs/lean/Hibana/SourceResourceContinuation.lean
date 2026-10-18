@@ -365,4 +365,78 @@ theorem last_handoff_receipt_is_a_source_point_dependency
   simpa only [precedes, previousDecoded, decoded, actorSame, eventsDifferent,
     Bool.true_and, Bool.false_eq_true, ite_false, Nat.sub_zero] using causal
 
+private theorem successful_option_mapM_is_total_on_members
+    {α β : Type} {f : α → Option β} {inputs : List α} {outputs : List β}
+    (accepted : inputs.mapM f = some outputs) :
+    ∀ input ∈ inputs, ∃ output, f input = some output := by
+  induction inputs generalizing outputs with
+  | nil => simp
+  | cons head tail ih =>
+      cases headAt : f head with
+      | none => simp [headAt] at accepted
+      | some value =>
+          cases tailAt : tail.mapM f with
+          | none => simp [headAt, tailAt] at accepted
+          | some rest =>
+              intro input member
+              rcases List.mem_cons.mp member with same | member
+              · exact ⟨value, by simpa only [same] using headAt⟩
+              · exact ih tailAt input member
+
+/-- Every required resource has a source-derived origin at this use: either
+its initial issuer or the last handoff's receiver. The last handoff and its
+causal order are derived here, not supplied as an availability premise. This
+folds the immutable selected source prefix and adds no runtime owner map. -/
+theorem accepted_resource_use_derives_its_initial_or_last_receiver
+    {source : Source} {resources : List EndpointKey} {owners : OwnerMap}
+    {path : List Selection} {run : Elaboration} {issuance : List Issuance}
+    {index event : Nat} {symbolic : SymbolicBinding} {binding : Binding}
+    {bindings : List (Nat × Binding)} {key : EndpointKey}
+    (accepted : elaborate resources owners path source 0 = some run)
+    (present : run.bindings[index]? = some (event, symbolic))
+    (instantiated : instantiateBinding issuance symbolic = some binding)
+    (solved : run.equations.all (equationAccepted issuance) = true)
+    (mapped : (run.bindings.mapM fun (event, symbolic) => do
+      let binding ← instantiateBinding issuance symbolic
+      some (event, binding)) = some bindings)
+    (used : symbolic.message.sender = key ∨ symbolic.message.receiver = key ∨
+      symbolic.message.payload = .endpoint key) :
+    ((∀ entry ∈ run.bindings.take index, entry.2.message.payload ≠ .endpoint key) ∧
+      (symbolic.message.sender = key → instantiate issuance (owners key) = some binding.senderActor) ∧
+      (symbolic.message.receiver = key → instantiate issuance (owners key) = some binding.receiverActor) ∧
+      (symbolic.message.payload = .endpoint key → instantiate issuance (owners key) = some binding.senderActor)) ∨
+    ∃ earlierRows previousEvent previous laterRows previousBinding,
+      run.bindings.take index = earlierRows ++ (previousEvent, previous) :: laterRows ∧
+      previous.message.payload = .endpoint key ∧
+      (∀ entry ∈ laterRows, entry.2.message.payload ≠ .endpoint key) ∧
+      instantiateBinding issuance previous = some previousBinding ∧
+      (symbolic.message.sender = key → binding.senderActor = previousBinding.receiverActor) ∧
+      (symbolic.message.receiver = key → binding.receiverActor = previousBinding.receiverActor) ∧
+      (symbolic.message.payload = .endpoint key → binding.senderActor = previousBinding.receiverActor) ∧
+      source.before previousEvent event = true := by
+  rcases symbolic_owner_prefix_has_initial_or_last_handoff key (owners key) (run.bindings.take index) with
+    ⟨flow, untouched⟩ | ⟨earlierRows, previousEvent, previous, laterRows, shape, transferred, untouched, flow⟩
+  · have facts := instantiated_bindings_preserve_source_ownership_transfer accepted present instantiated solved
+    refine .inl ⟨untouched, ?_, ?_, ?_⟩
+    · intro sender
+      simpa only [sender, flow] using facts.2.1
+    · intro receiver
+      simpa only [receiver, flow] using facts.2.2.1
+    · intro payload
+      simpa only [flow] using (facts.2.2.2 key payload).1
+  · have member : (previousEvent, previous) ∈ run.bindings := by
+      apply List.mem_of_mem_take
+      rw [shape]
+      exact List.mem_append.mpr (.inr (List.mem_cons_self))
+    obtain ⟨output, outputAt⟩ := successful_option_mapM_is_total_on_members mapped _ member
+    cases previousAt : instantiateBinding issuance previous with
+    | none => simp [previousAt] at outputAt
+    | some previousBinding =>
+        have actors := source_resource_continuation_uses_previous_receiver accepted present
+          instantiated previousAt solved shape transferred untouched
+        have causal := a_resource_continuation_follows_its_last_handoff accepted present shape transferred used
+        exact .inr ⟨earlierRows, previousEvent, previous, laterRows, previousBinding,
+          shape, transferred, untouched, previousAt, actors.1, actors.2.1, actors.2.2,
+          by simpa only [Nat.sub_zero] using causal⟩
+
 end Hibana

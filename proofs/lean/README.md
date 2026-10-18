@@ -118,6 +118,23 @@ tag, without requiring sender publication. This is a source-boundary and
 value-location classification, not eventual admission, polling or delivery,
 nor a proof of complete Rust correspondence or distributed progress.
 
+`accepted_resource_use_derives_its_initial_or_last_receiver` derives the
+required resource's origin for every instantiated binding of an accepted
+source. It either retains the initial issuer or identifies the last earlier
+handoff, proves that handoff causally precedes the use, and binds the use to
+its receiver. The last handoff is derived from the immutable source prefix;
+it is not an availability assumption or a runtime ownership table. This
+source result still needs its runtime value and fresh-visit correspondence.
+
+The native remote-loss test executes the same owned global with a worker
+process that exits before or after receiving its Endpoint. The survivor's
+carrier deadline ends both pending roles, later operations retain the first
+fault, and neither the same nor a different SessionId can reissue the binding.
+The test observes one unread accepted frame before receipt and none after
+receipt, then fences the old namespace. These are actual OS observations for
+this carrier, not an automatic failure detector supplied by the core or a
+general distributed-progress theorem.
+
 Schema equality means equality of the canonical wire contract identified by
 `SCHEMA_ID`; it does not prove cross-binary Rust nominal type equality.
 
@@ -320,11 +337,7 @@ regressions: an unrolled child cannot repeat before its parent's suffix, a
 completed parent can restart at its prefix, and an explicitly rolled child
 can change arms while preserving the parent prefix. The complete nested trace
 runs twice. Before the parent suffix, both the completed arm and the unused
-alternative are rejected. These six kernel proofs replace seven lemmas about the removed
-route-only reset and its unused selector. Including the transfer model below,
-the static inventory is 875, with 489 using `propext` and `Quot.sound`,
-280 using only `propext`, and 106 axiom-free. The three additional
-`PublicOperationKernel.lean` claims cover the owned-send payload borrow:
+alternative are rejected. `PublicOperationKernel.lean` checks the owned-send payload borrow:
 other resource-dependent work waits, that payload's own transfer may finish,
 and an unborrowed view gains no extra dependency. The generated Rust table
 checks all 180 phase/edge combinations. `PendingSend.smt2` checks the abstract
@@ -353,10 +366,10 @@ the issued view and progress unchanged, and that returned Endpoint performs
 the next request and reply. Independent final transfers are driven with
 `join!`; the observations do not schedule them.
 
-Its 63 kernel claims check all eleven snapshots, four source-ordered owned
+Its kernel claims check all eleven snapshots, four source-ordered owned
 commits, exact issued and retired view tags, and the nine-step transfer
-execution. The existing conservation
-theorems then distinguish the two private sender witnesses from the single
+execution. They also apply the general value/frame suffix theorems to the
+received actor tags. The conservation theorems distinguish the two private sender witnesses from the single
 application authority. Treating the unpolled payload as another application
 value is inconsistent with that execution. Value placement is observed at
 the Rust move/drop boundaries; this concrete correspondence is not an
@@ -376,7 +389,7 @@ and checks both receiver actor identities. These results do not yet establish
 all source-ready admission, fresh visits, observable terminal faults or general
 distributed progress. No predicate here is a runtime ownership/progress store.
 
-The twelve general transfer theorems assume execution follows the stated steps.
+The general transfer theorems assume execution follows the stated steps.
 They do not establish that every Rust execution has that abstraction, that a
 deployment supplies a valid physical binding, or that its carrier refines the
 profile. Source/continuation correspondence and distributed progress remain
