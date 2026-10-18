@@ -23,6 +23,7 @@ mod local_return;
 mod native;
 mod order;
 mod owned;
+mod parallel_pending;
 mod partial_choice;
 mod pending_reentry;
 mod program_columns;

@@ -17,7 +17,7 @@ use std::{
     task::Wake,
 };
 
-struct WakeCount(AtomicUsize);
+pub(super) struct WakeCount(pub(super) AtomicUsize);
 
 impl Wake for WakeCount {
     fn wake(self: Arc<Self>) {

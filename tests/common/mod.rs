@@ -248,7 +248,7 @@ pub(crate) struct TestRx<'a> {
 pub(crate) struct TestTransport {
     state: Rc<RefCell<TestState>>,
     pub(crate) bindings: Option<Rc<[hibana::runtime::transport::EndpointBinding; 256]>>,
-    blocked_send: Rc<RefCell<Option<BlockedSend>>>,
+    blocked_sends: Rc<RefCell<Vec<BlockedSend>>>,
 }
 
 struct BlockedSend {
@@ -260,7 +260,7 @@ impl TestTransport {
     pub(crate) fn new() -> Self {
         Self {
             state: Rc::new(RefCell::new(TestState::new())),
-            blocked_send: Rc::new(RefCell::new(None)),
+            blocked_sends: Rc::new(RefCell::new(Vec::new())),
             bindings: Some(Rc::new(core::array::from_fn(|_| {
                 // SAFETY: each slot owns one isolated test resource. All
                 // transport clones share these same authorities, and the
@@ -272,18 +272,18 @@ impl TestTransport {
 
     /// Test I/O readiness only: no bytes enter the peer queue until resumed.
     pub(crate) fn pause_send(&self, role: u8) {
-        assert!(self.blocked_send.borrow().is_none());
-        *self.blocked_send.borrow_mut() = Some(BlockedSend { role, waker: None });
+        let mut blocked = self.blocked_sends.borrow_mut();
+        assert!(!blocked.iter().any(|entry| entry.role == role));
+        blocked.push(BlockedSend { role, waker: None });
     }
 
     pub(crate) fn resume_send(&self) {
-        let blocked = self
-            .blocked_send
-            .borrow_mut()
-            .take()
-            .expect("paused sender");
-        if let Some(waker) = blocked.waker {
-            waker.wake();
+        let blocked = core::mem::take(&mut *self.blocked_sends.borrow_mut());
+        assert!(!blocked.is_empty(), "paused sender");
+        for entry in blocked {
+            if let Some(waker) = entry.waker {
+                waker.wake();
+            }
         }
     }
 
@@ -471,7 +471,7 @@ impl Clone for TestTransport {
         Self {
             state: Rc::clone(&self.state),
             bindings: self.bindings.clone(),
-            blocked_send: Rc::clone(&self.blocked_send),
+            blocked_sends: Rc::clone(&self.blocked_sends),
         }
     }
 }
@@ -536,6 +536,32 @@ impl Transport for TestTransport {
         outgoing: hibana::runtime::transport::Outgoing<'f>,
         cx: &mut Context<'_>,
     ) -> Poll<Result<(), TransportError>> {
+        // Each repoll must encode the same frame, even after another view has
+        // used the runtime's temporary scratch buffer in between.
+        if let Some(frame) = &tx.pending_frame {
+            assert_eq!(
+                (
+                    tx.pending_role,
+                    frame.session_id,
+                    frame.lane,
+                    frame.source_role,
+                    frame.frame_label
+                ),
+                (
+                    Some(outgoing.target_role()),
+                    tx.session_id,
+                    outgoing.lane(),
+                    tx.local_role,
+                    outgoing.frame_label().raw()
+                ),
+                "pending frame header changed",
+            );
+            assert_eq!(
+                frame.as_slice(),
+                outgoing.payload().as_bytes(),
+                "pending payload changed"
+            );
+        }
         self.stage_send(
             tx,
             outgoing.target_role(),
@@ -543,8 +569,11 @@ impl Transport for TestTransport {
             outgoing.frame_label().raw(),
             outgoing.payload().as_bytes(),
         );
-        if let Some(blocked) = self.blocked_send.borrow_mut().as_mut()
-            && blocked.role == tx.local_role
+        if let Some(blocked) = self
+            .blocked_sends
+            .borrow_mut()
+            .iter_mut()
+            .find(|entry| entry.role == tx.local_role)
         {
             blocked.waker = Some(cx.waker().clone());
             return Poll::Pending;
