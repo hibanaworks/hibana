@@ -148,6 +148,10 @@ fn parallel_loan_reentry_preserves_the_other_body_and_completed_tail() {
                     .event_row();
                 let (first, stop) = (range.start(), range.end());
                 assert!(before.steps.len() > stop - first);
+                assert_eq!(
+                    after.completion_mutations,
+                    before.completion_mutations + (stop - first) as u64 + 1,
+                );
                 assert!(after.steps.iter().enumerate().all(|(index, step)| step.done
                     == (!(first..stop).contains(&index) || index == event)));
             }
@@ -169,7 +173,7 @@ fn write_observations(
         &RoleProjection::<1, Steps, 32>::IMAGE_REF,
     ];
     let mut source = std::format!(
-        "import Hibana.ActorReentryCommit\n\nset_option maxRecDepth 10000\n\n\
+        "import Hibana.ActorMeasuredExecution\n\nset_option maxRecDepth 10000\n\n\
          def parallelReentryChoreo : Hibana.Choreo := {}\n\n",
         Steps::lean_source(),
     );
@@ -263,8 +267,49 @@ theorem {name}WrongSessionRejected :
     {name}.ownedCheck parallelReentryImage{actor} parallelReentryChoreo
       ({{ parallelReentryWire with session := parallelReentryWire.session + 1 }}) {session} = false := by decide
 
+theorem {name}ActualResetWritesChecked :
+    Hibana.actorReentryMutationCheck {name} parallelReentryWire
+      parallelReentryImage{actor} parallelReentryChoreo {session} {before_count} {after_count} = true := by decide
+theorem {name}ActualResetWritesAndSource :
+    {name}.SourceOrdered parallelReentryImage{actor} parallelReentryChoreo ∧
+      ∃ roll step, {name}.prepared? parallelReentryImage{actor} parallelReentryChoreo = some (roll, step) ∧
+        ({{ step, wire := parallelReentryWire }} : Hibana.ActorCommitRecord).check
+          parallelReentryImage{actor} parallelReentryChoreo {session} = true ∧
+        {after_count} = {before_count} + roll.eventLength + 1 :=
+  Hibana.a_measured_reentry_has_its_source_reset_and_exact_writes {name}ActualResetWritesChecked
+theorem {name}OmittedResetWritesRejected :
+    Hibana.actorReentryMutationCheck {name} parallelReentryWire
+      parallelReentryImage{actor} parallelReentryChoreo {session} {before_count} ({before_count} + 1) = false := by decide
+
+def {name}MeasuredResetRows : List Nat :=
+  (List.range {name}Prepared.1.eventLength).map ({name}Prepared.1.eventStart + ·)
+
+theorem {name}ActualMeasuredFreshHistory :
+    Hibana.ActorMeasuredHistory parallelReentryImage{actor} parallelReentryChoreo {session}
+      ({name}.before, {before_count}) ({name}.after, {after_count})
+      {name}MeasuredResetRows 1 :=
+  .tail .refl (.reentry {name}ActualResetWritesChecked
+    ((Option.some_get (x := {name}.prepared? parallelReentryImage{actor} parallelReentryChoreo) (by decide)).symm))
+
+theorem {name}MeasuredHistoryAccountsForAllWrites :
+    {after_count} = {before_count} + {name}MeasuredResetRows.length + 1 :=
+  Hibana.a_measured_actor_history_accounts_for_every_mark_and_clear {name}ActualMeasuredFreshHistory
+
+theorem {name}RequiredProgressSurvivesEveryIndependentSuffix
+    {{final : Hibana.ActorProgressObservation × Nat}} {{cleared : List Nat}} {{commits event : Nat}}
+    (suffix : Hibana.ActorMeasuredHistory parallelReentryImage{actor} parallelReentryChoreo {session}
+      ({name}.after, {after_count}) final cleared commits)
+    (untouched : event ∉ {name}MeasuredResetRows ++ cleared)
+    (completed : {name}.before.doneState.done event = true) :
+    final.1.doneState.done event = true :=
+  Hibana.a_measured_actor_history_preserves_completion_outside_its_resets
+    (Hibana.measured_actor_histories_compose_at_the_same_boundary {name}ActualMeasuredFreshHistory suffix)
+    untouched completed
+
 "#,
             session = wire.0.session().raw(),
+            before_count = before.completion_mutations,
+            after_count = after.completion_mutations,
         ));
     }
     source.push_str(

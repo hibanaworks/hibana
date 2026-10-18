@@ -23,6 +23,7 @@ import Hibana.SourceReadyReceipt
 import Hibana.SourceHandoffInterval
 import Hibana.MeasuredResourceAvailability
 import Hibana.ActorMutationCoverage
+import Hibana.ActorMeasuredExecution
 import Hibana.ActorReentryCommit
 import Hibana.GlobalSemantics
 import Hibana.GlobalAllocationCorrectness

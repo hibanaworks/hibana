@@ -198,7 +198,9 @@ private theorem prepared_reentry_facts
       observedRollEntryHeadersMatch sample.before image sample.scope = true ∧
       observedRollEntryBorrowMatches sample.before image sample.scope sample.event sample.view = true ∧
       ∃ rows choices, image.decodeRollRows? = some rows ∧ roll ∈ rows ∧
-        step.before = resetObservedActor sample.before roll choices := by
+        step.before = resetObservedActor sample.before roll choices ∧
+        step.event = sample.event ∧ step.after = sample.after ∧
+        roll.eventStart ≤ step.event ∧ step.event < roll.eventStart + roll.eventLength := by
   unfold ActorReentryCommitObservation.prepared? at prepared
   have qualified : (observedRollEntryHeadersMatch sample.before image sample.scope &&
       observedRollEntryBorrowMatches sample.before image sample.scope sample.event sample.view) = true := by
@@ -241,9 +243,10 @@ private theorem prepared_reentry_facts
         simp
       exact (List.mem_filter.mp filtered).1
     simp only [Bool.and_eq_true] at guarded
-    obtain ⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨_, ranges⟩, _⟩, _⟩, _⟩, _⟩, _⟩, _⟩, _⟩, _⟩, _⟩, _⟩ := guarded
+    obtain ⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨_, ranges⟩, _⟩, _⟩, _⟩, start⟩, stop⟩, _⟩, _⟩, _⟩, _⟩, _⟩ := guarded
     exact ⟨ranges, (Bool.and_eq_true_iff.mp qualified).1,
-      (Bool.and_eq_true_iff.mp qualified).2, rows, choices, rowsAt, member, rfl⟩
+      (Bool.and_eq_true_iff.mp qualified).2, rows, choices, rowsAt, member, rfl,
+      rfl, rfl, of_decide_eq_true start, of_decide_eq_true stop⟩
   next rejected => simp at allowed
 
 /-- Reset changes progress and choices, not the retained Endpoint tags or
@@ -254,9 +257,20 @@ theorem prepared_body_reentry_preserves_value_identity
     (prepared : sample.prepared? image choreo = some (roll, step)) :
     step.before.actor = sample.before.actor ∧ step.before.run = sample.before.run ∧
       step.before.views = sample.before.views := by
-  obtain ⟨_, _, _, _, choices, _, _, base⟩ := prepared_reentry_facts prepared
+  obtain ⟨_, _, _, _, choices, _, _, base, _⟩ := prepared_reentry_facts prepared
   rw [base]
   exact ⟨rfl, rfl, rfl⟩
+
+/-- The derived base belongs to this actual operation and its post-poll cut,
+inside the exact reset body. It cannot substitute another event or snapshot. -/
+theorem prepared_body_reentry_keeps_its_actual_operation
+    {sample : ActorReentryCommitObservation} {image : RustDescriptorImage} {choreo : Choreo}
+    {roll : DecodedRollRow} {step : ActorCommitObservation}
+    (prepared : sample.prepared? image choreo = some (roll, step)) :
+    step.event = sample.event ∧ step.after = sample.after ∧
+      roll.eventStart ≤ step.event ∧ step.event < roll.eventStart + roll.eventLength := by
+  obtain ⟨_, _, _, _, _, _, _, _, actual⟩ := prepared_reentry_facts prepared
+  exact actual
 
 theorem accepted_body_reentry_requires_entry_headers
     {sample : ActorReentryCommitObservation} {image : RustDescriptorImage} {choreo : Choreo}
@@ -334,7 +348,7 @@ theorem accepted_body_reentry_restores_source_progress
   | some entry =>
       rcases entry with ⟨roll, step⟩
       have checked : step.check image choreo = true := by simpa [found] using accepted
-      obtain ⟨ranges, _, _, actual, choices, actualAt, member, base⟩ := prepared_reentry_facts found
+      obtain ⟨ranges, _, _, actual, choices, actualAt, member, base, _⟩ := prepared_reentry_facts found
       obtain ⟨_, _, rows, rowsAt, decoded⟩ := accepted_actor_rolls_bind_source_ranges ranges
       have same : actual = rows := Option.some.inj (actualAt.symm.trans decoded)
       refine ⟨roll, step, rows, rfl, rowsAt, by simpa only [← same] using member, ?_,

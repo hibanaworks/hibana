@@ -78,7 +78,7 @@ def ActorCommitRecord.check
               | .endpoint _ => record.step.ownedCheck image choreo record.wire session
       | _, _ => false
 
-private theorem checked_record_is_a_checked_commit
+theorem checked_record_is_a_checked_commit
     {record : ActorCommitRecord} {image : RustDescriptorImage} {choreo : Choreo} {session : Nat}
     (checked : record.check image choreo session = true) :
     record.step.check image choreo = true := by

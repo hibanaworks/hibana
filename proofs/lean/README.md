@@ -676,6 +676,27 @@ measures completion writes, not every field mutation, carrier delivery,
 ownership transfer or arbitrary callback. These measurements must not be used
 as a runtime owner table or as evidence of completed distributed progress.
 
+`actorReentryMutationCheck` joins that prepared-base evidence to the actual
+before/after mutation counts. The same source-selected ordinary or owned
+commit validates its payload; the measured poll accounts for one clear per
+projected body row and one successful mark. The prepared event and post-poll
+snapshot are the actual operation's, and every progress bit outside that
+source-validated body is preserved, whether complete or pending. It does not
+reset other actors or independent parallel bodies. The existing Tokio fixture
+checks owner counts5→8 and receiver counts9→14, including exact owned wire
+validation. Omitting the clears is rejected.
+
+`ActorMeasuredExecution.lean` composes those fresh boundaries, ordinary
+commits and zero-write gaps into finite measured histories. Every write is
+accounted for by a source-derived body clear or checked mark. A required row's
+completion survives if no actual reset contains it; unrelated bodies may
+restart any number of times. The real owner and receiver boundaries instantiate
+this history and its extension theorem for arbitrary checked independent
+suffixes. These are erased proof observations. They neither schedule work nor
+add runtime progress state. Applying this history to the source resource
+intervals and transfer/fault correspondence remains part of the distributed
+progress composition.
+
 The prepared-send Kani harness calls the production non-generic send loop with
 a boundary double. Its publication count proves that successful loop completion
 invokes publication exactly once. The double does not execute the real commit

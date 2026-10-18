@@ -1,6 +1,69 @@
 import Hibana.ActorCommitHistory
+import Hibana.ActorReentryCommit
 
 namespace Hibana
+
+/-- Measurements around an actual reentry poll. The reset range and prepared
+base are derived by the existing source checker. Counts are qualification
+observations, not a visit field or a runtime scheduling rule. -/
+def actorReentryMutationCheck
+    (sample : ActorReentryCommitObservation) (wire : OwnedWireObservation)
+    (image : RustDescriptorImage) (choreo : Choreo) (session before after : Nat) : Bool :=
+  match sample.prepared? image choreo with
+  | none => false
+  | some (roll, step) =>
+      ({ step, wire } : ActorCommitRecord).check image choreo session &&
+        after == before + roll.eventLength + 1
+
+/-- A measured fresh visit uses the same checked source commit and accounts
+for one clear of each projected body row and its one successful mark. No
+global drain or reset of an independent sibling is part of this boundary. -/
+theorem a_measured_reentry_has_its_source_reset_and_exact_writes
+    {sample : ActorReentryCommitObservation} {wire : OwnedWireObservation}
+    {image : RustDescriptorImage} {choreo : Choreo} {session before after : Nat}
+    (checked : actorReentryMutationCheck sample wire image choreo session before after = true) :
+    sample.SourceOrdered image choreo ∧
+      ∃ roll step, sample.prepared? image choreo = some (roll, step) ∧
+        ({ step, wire } : ActorCommitRecord).check image choreo session = true ∧
+        after = before + roll.eventLength + 1 := by
+  cases prepared : sample.prepared? image choreo with
+  | none => simp [actorReentryMutationCheck, prepared] at checked
+  | some entry =>
+      rcases entry with ⟨roll, step⟩
+      have fields : ({ step, wire } : ActorCommitRecord).check image choreo session = true ∧
+          after = before + roll.eventLength + 1 := by
+        simpa only [actorReentryMutationCheck, prepared, Bool.and_eq_true, beq_iff_eq] using checked
+      have ordinary : step.check image choreo = true := checked_record_is_a_checked_commit fields.1
+      have accepted : sample.check image choreo = true := by
+        simpa only [ActorReentryCommitObservation.check, prepared] using ordinary
+      exact ⟨accepted_body_reentry_restores_source_progress accepted,
+        roll, step, rfl, fields⟩
+
+/-- Retain actual progress outside the one source-validated reset range.
+This applies to completed siblings and to still-pending independent work. -/
+theorem a_measured_reentry_preserves_every_outside_progress_bit
+    {sample : ActorReentryCommitObservation} {wire : OwnedWireObservation}
+    {image : RustDescriptorImage} {choreo : Choreo} {session before after event : Nat}
+    (checked : actorReentryMutationCheck sample wire image choreo session before after = true) :
+    ∃ roll step rows,
+      sample.prepared? image choreo = some (roll, step) ∧
+      choreo.canonicalActorRollRows? image.role = some rows ∧ roll ∈ rows ∧
+      ((¬(roll.eventStart ≤ event ∧ event < roll.eventStart + roll.eventLength)) →
+        sample.after.doneState.done event = sample.before.doneState.done event) := by
+  obtain ⟨ordered, _⟩ := a_measured_reentry_has_its_source_reset_and_exact_writes checked
+  obtain ⟨roll, step, rows, prepared, sourceAt, member, reset, stepOrdered⟩ := ordered
+  refine ⟨roll, step, rows, prepared, sourceAt, member, ?_⟩
+  intro outside
+  obtain ⟨_, data, path, row, binding, _, _, _, _, _, _, _, _, _, _,
+    unchanged, _⟩ := stepOrdered
+  have actual := prepared_body_reentry_keeps_its_actual_operation prepared
+  have different : event ≠ step.event := by
+    intro same
+    exact outside (same.symm ▸ actual.2.2)
+  rw [← actual.2.1, unchanged event different, reset]
+  have notRange : ¬(roll.eventStart ≤ event &&
+      event < roll.eventStart + roll.eventLength) = true := by simpa using outside
+  simp only [if_neg notRange]
 
 /-- Proof-only measurements at the two actual boundaries of a source commit.
 The counters come from the cursor's qualification build, not from a harness
