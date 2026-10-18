@@ -177,6 +177,7 @@ MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_t
   --skip g::role_projection::tests::reentry_choice::an_enclosing_choice_survives_two_delegated_roll_visits \
   --skip g::role_projection::tests::reentry_parallel::parallel_loan_reentry_preserves_the_other_body_and_completed_tail \
   --skip g::role_projection::tests::mixed_send_admission:: \
+  --skip g::role_projection::tests::occurrence_choice:: \
   --skip g::role_projection::tests::conditional_controller::a_completed_right_arm_reopens_the_public_route_without_receiving \
   --skip g::role_projection::tests::conditional_controller::remote_controller:: \
   --skip g::role_projection::tests::conditional_controller::co_resident_controller::
@@ -296,6 +297,12 @@ MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_t
   mixed-send-admission \
   -p hibana --lib \
   g::role_projection::tests::mixed_send_admission::ordinary_and_owned_acceptances_keep_the_same_fifo_through_reentry \
+  -- --exact
+
+MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \
+  occurrence-choice \
+  -p hibana --lib \
+  g::role_projection::tests::occurrence_choice::changing_rolled_loans_teach_only_the_received_occurrences_choices \
   -- --exact
 
 # Keep every nested rework, delayed ingress and shared parallel prefix case.

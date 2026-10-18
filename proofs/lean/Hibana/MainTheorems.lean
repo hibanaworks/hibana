@@ -29,6 +29,7 @@ import Hibana.ActorReentryCommit
 import Hibana.ActorCandidateAdmission
 import Hibana.ActorOccurrenceHistory
 import Hibana.SendAdmission
+import Hibana.OccurrenceChoiceKnowledge
 import Hibana.GlobalSemantics
 import Hibana.GlobalAllocationCorrectness
 import Hibana.GlobalMessageTransitions

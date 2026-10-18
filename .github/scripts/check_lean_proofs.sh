@@ -31,6 +31,7 @@ SEND_COMPLETION_GENERATED="${ROOT_DIR}/target/lean-proof/SendCompletionGenerated
 ACTOR_REENTRY_COMMIT_GENERATED="${ROOT_DIR}/target/lean-proof/ActorReentryCommitGenerated.lean"
 ACTOR_PARALLEL_REENTRY_GENERATED="${ROOT_DIR}/target/lean-proof/ActorParallelReentryGenerated.lean"
 MIXED_SEND_ADMISSION_GENERATED="${ROOT_DIR}/target/lean-proof/MixedSendAdmissionGenerated.lean"
+OCCURRENCE_CHOICE_GENERATED="${ROOT_DIR}/target/lean-proof/OccurrenceChoiceGenerated.lean"
 RECEIPT_REFRESH_GENERATED="${ROOT_DIR}/target/lean-proof/ReceiptRefreshGenerated.lean"
 ACTOR_ROUTE_LEFT_REENTRY_GENERATED="${ROOT_DIR}/target/lean-proof/ActorRouteLeftReentryGenerated.lean"
 ACTOR_ROUTE_RIGHT_REENTRY_GENERATED="${ROOT_DIR}/target/lean-proof/ActorRouteRightReentryGenerated.lean"
@@ -61,7 +62,7 @@ bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" build-serial "${PROOF_
 bash "${ROOT_DIR}/.github/scripts/check_lean_claim_surface.sh"
 static_audit_output="$(run_audit \
   theorem-inventory \
-  --static "${PROOF_DIR}" "${STATIC_CLAIM_SNAPSHOT}" 1007 601 294 112)"
+  --static "${PROOF_DIR}" "${STATIC_CLAIM_SNAPSHOT}" 1015 607 296 112)"
 printf '%s\n' "${static_audit_output}"
 printf '%s\n' "${static_audit_output}" | bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard markers static
 bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" theorem-inventory \
@@ -80,6 +81,7 @@ rm -f "${FUTURE_PREDECESSOR_GENERATED}"
 rm -f "${SEND_COMPLETION_GENERATED}"
 rm -f "${RECEIPT_REFRESH_GENERATED}"
 rm -f "${MIXED_SEND_ADMISSION_GENERATED}"
+rm -f "${OCCURRENCE_CHOICE_GENERATED}"
 rm -f "${LOCAL_RETURN_GENERATED}"
 rm -f "${PENDING_BORROW_GENERATED}"
 rm -f "${FUTURE_CUSTODY_GENERATED}"
@@ -225,6 +227,12 @@ CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --li
 bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${MIXED_SEND_ADMISSION_GENERATED}" "ordinary and owned source acceptances"
 run_audit generated-axioms --kernel "${MIXED_SEND_ADMISSION_GENERATED}" "${PROOF_DIR}" \
   "${PROOF_DIR}/mixed-send-admission-generated-claim-surface.txt" 19
+CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib \
+  g::role_projection::tests::occurrence_choice::changing_rolled_loans_teach_only_the_received_occurrences_choices \
+  -- --exact
+bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${OCCURRENCE_CHOICE_GENERATED}" "accepted occurrence branch knowledge"
+run_audit generated-axioms --kernel "${OCCURRENCE_CHOICE_GENERATED}" "${PROOF_DIR}" \
+  "${PROOF_DIR}/occurrence-choice-generated-claim-surface.txt" 30
 CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib -- \
   g::role_projection::tests::conditional_controller::remote_controller::a_conditional_controller_does_not_take_authority_from_its_co_resident_observer \
   g::role_projection::tests::conditional_controller::co_resident_controller::a_conditional_controller_does_not_take_authority_from_its_co_resident_observer \

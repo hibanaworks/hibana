@@ -68,4 +68,27 @@ theorem owned_source_envelope_identifies_resource_and_occurrence
   have low := (List.cons.inj (List.cons.inj (List.cons.inj same).2).2).1
   exact ⟨resource, by omega⟩
 
+theorem decoded_owned_source_facts_bind_wire_columns
+    {image : RustDescriptorImage} {choreo : Choreo} {pathIndex event : Nat}
+    {facts : OwnedSourceFacts}
+    (decoded : image.ownedSourceFacts? choreo pathIndex event = some facts) :
+    image.eventEffIndex? event = some facts.effIndex ∧
+      image.eventLane? event = some facts.lane ∧
+      image.eventFrameLabel? event = some facts.frameLabel := by
+  unfold RustDescriptorImage.ownedSourceFacts? at decoded
+  obtain ⟨data, _, remaining⟩ := Option.bind_eq_some_iff.mp decoded
+  obtain ⟨path, _, remaining⟩ := Option.bind_eq_some_iff.mp remaining
+  obtain ⟨row, _, remaining⟩ := Option.bind_eq_some_iff.mp remaining
+  obtain ⟨entry, _, remaining⟩ := Option.bind_eq_some_iff.mp remaining
+  dsimp only at remaining
+  cases payloadAt : entry.2.message.payload with
+  | wire schema => simp only [payloadAt] at remaining; contradiction
+  | endpoint resource =>
+    simp only [payloadAt] at remaining
+    obtain ⟨eff, effAt, remaining⟩ := Option.bind_eq_some_iff.mp remaining
+    obtain ⟨lane, laneAt, remaining⟩ := Option.bind_eq_some_iff.mp remaining
+    obtain ⟨label, labelAt, written⟩ := Option.bind_eq_some_iff.mp remaining
+    cases Option.some.inj written
+    exact ⟨effAt, laneAt, labelAt⟩
+
 end Hibana

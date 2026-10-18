@@ -77,17 +77,19 @@ structure ActorCommitMutationRecord where
 between its boundaries. Each recorded source commit performs one actual mark;
 an intervening clear/reset must not be silently erased by equal snapshots.
 Fresh reentry needs its own reset evidence and is not accepted as a zero-write
-gap by this checker. A zero-write gap must also preserve the observed progress
-exactly. Authentic observations remain an implementation premise. -/
+gap by this checker. A zero-write gap must preserve both observed progress
+and committed choices exactly. Authentic observations remain an
+implementation premise; a counter alone does not establish either equality. -/
 def actorCommitMutationHistoryCheck
     (image : RustDescriptorImage) (choreo : Choreo) (session : Nat)
     (first : ActorProgressObservation) (firstMutation : Nat)
     (final : ActorProgressObservation) (finalMutation : Nat) :
     List ActorCommitMutationRecord → Bool
-  | [] => actorCommitGapCheck first final &&
+  | [] => (actorCommitGapCheck first final && decide (first.choices = final.choices)) &&
       (first.progress == final.progress && firstMutation == finalMutation)
   | record :: rest =>
-      actorCommitGapCheck first record.commit.step.before &&
+      (actorCommitGapCheck first record.commit.step.before &&
+        decide (first.choices = record.commit.step.before.choices)) &&
         (first.progress == record.commit.step.before.progress &&
           (firstMutation == record.before &&
             (record.after == record.before + 1 &&
@@ -103,11 +105,20 @@ theorem checked_mutation_history_has_its_checked_source_commits
       first firstMutation final finalMutation records = true) :
     actorCommitHistoryCheck image choreo session first final (records.map (·.commit)) = true := by
   induction records generalizing first firstMutation with
-  | nil => exact (Bool.and_eq_true_iff.mp checked).1
+  | nil => exact (Bool.and_eq_true_iff.mp (Bool.and_eq_true_iff.mp checked).1).1
   | cons record rest ih =>
       simp only [actorCommitMutationHistoryCheck, Bool.and_eq_true] at checked
-      exact Bool.and_eq_true_iff.mpr ⟨Bool.and_eq_true_iff.mpr ⟨checked.1, checked.2.2.2.2.1⟩,
+      exact Bool.and_eq_true_iff.mpr ⟨Bool.and_eq_true_iff.mpr ⟨checked.1.1, checked.2.2.2.2.1⟩,
         ih checked.2.2.2.2.2⟩
+
+/-- Quiet intervals cannot fabricate or forget branch knowledge. Genuine
+fresh visits retain their separate source-derived reset/commit evidence. -/
+theorem a_zero_write_measured_gap_preserves_committed_choices
+    {image : RustDescriptorImage} {choreo : Choreo} {session : Nat}
+    {first final : ActorProgressObservation} {before after : Nat}
+    (checked : actorCommitMutationHistoryCheck image choreo session
+      first before final after [] = true) : final.choices = first.choices := by
+  exact (of_decide_eq_true (Bool.and_eq_true_iff.mp (Bool.and_eq_true_iff.mp checked).1).2).symm
 
 theorem checked_mutation_history_accounts_for_every_observed_write
     {image : RustDescriptorImage} {choreo : Choreo} {session : Nat}

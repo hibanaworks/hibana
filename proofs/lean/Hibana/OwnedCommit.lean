@@ -55,6 +55,17 @@ def OwnedCommitFacts.sourceFacts (facts : OwnedCommitFacts) : OwnedSourceFacts :
   effIndex := facts.effIndex, resource := facts.resource, binding := facts.binding,
   side := facts.side, lane := facts.lane, frameLabel := facts.frameLabel }
 
+theorem decoded_owned_commit_retains_its_source_facts
+    {sample : ActorCommitObservation} {image : RustDescriptorImage} {choreo : Choreo}
+    {facts : OwnedCommitFacts}
+    (decoded : sample.ownedFacts? image choreo = some facts) :
+    image.ownedSourceFacts? choreo sample.pathIndex sample.event = some facts.sourceFacts := by
+  unfold ActorCommitObservation.ownedFacts? at decoded
+  obtain ⟨source, sourceAt, remaining⟩ := Option.bind_eq_some_iff.mp decoded
+  obtain ⟨view, _, written⟩ := Option.bind_eq_some_iff.mp remaining
+  cases Option.some.inj written
+  exact sourceAt
+
 def OwnedCommitFacts.actor? (facts : OwnedCommitFacts) : Option Nat :=
   facts.sourceFacts.actor?
 

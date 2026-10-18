@@ -136,6 +136,28 @@ connect per-actor origins to individual FIFO receipts; coherence of a complete
 distributed cut across partial choices, custody, pending calls and failures
 still needs composition before the public guard can be opened.
 
+`OccurrenceChoiceKnowledge.lean` relates the actual accepted owned frame to
+the receiver's committed branch knowledge. It derives the matching source
+effect from checked bytes, then applies that occurrence's canonical route
+memberships to the receiver's existing local choice slots. Unknown or known
+choices outside those memberships are preserved. Sender publication and
+equality of the actors' whole normalized paths are not premises.
+
+The nested-choice Tokio fixture keeps an outer left branch, borrows and returns
+the same Endpoint through inner left/right/left visits, and then uses its
+continuation. Sender and receiver witnesses intentionally disagree about the
+unentered sibling branch, which remains unknown at runtime. The ordinary
+prefix and every owned frame are included in the same FIFO trace.
+
+Quiet measured intervals now require exact committed-choice equality as well
+as progress and write-count equality. A copied real snapshot demonstrated that
+the previous rule accepted invented sibling knowledge without a write. The
+corrected checker rejects both invention and forgetting; genuine fresh visits
+still use their separate source-derived reset/commit evidence. This changes
+proof observation validation, not runtime admission. The current choice's
+origin through complete mixed histories and its composition with the global
+distributed cut remain separate obligations.
+
 `ResourceHeaderOrigin.lean` derives an issued tag's initial or latest actual
 receive origin from the complete transfer/header history. Static source event
 order cannot choose this origin: a closed earlier roll body can execute again

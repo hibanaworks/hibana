@@ -1,0 +1,52 @@
+choiceActualFreshSourceIsTheOneTeachingTheNewArm : Option.map (fun record => record.fst)
+      choiceRecords4[choiceCarrier4.delivered]? =
+    some choiceSend3 ∧
+  choiceReceipt2.after.doneState.selected 2 = some Hibana.RouteArm.left
+choiceActualOccurrenceKeysFollowTheFIFO : choiceGhost4.accepted =
+    [{ globalId := choiceEvent0, iteration := 0 }, { globalId := choiceEvent1, iteration := 0 },
+      { globalId := choiceEvent2, iteration := 0 }, { globalId := choiceEvent1, iteration := 1 }] ∧
+  choiceGhost4.delivered = 3
+choiceConsumed1 : Hibana.SendAdmissionTrace occurrenceChoiceChoreo 9063 choiceCarrierConsumed1 choiceGhostConsumed1
+  choiceRecords2
+choiceConsumed2 : Hibana.SendAdmissionTrace occurrenceChoiceChoreo 9063 choiceCarrierConsumed2 choiceGhostConsumed2
+  choiceRecords2
+choiceConsumed3 : Hibana.SendAdmissionTrace occurrenceChoiceChoreo 9063 choiceCarrierConsumed3 choiceGhostConsumed3
+  choiceRecords3
+choiceFreshReceiveHasItsActualAcceptedSource : ∃ sample eventId key,
+  choiceRecords4[choiceCarrier4.delivered]? = some (sample, eventId) ∧
+    choiceGhost4.accepted[choiceCarrier4.delivered]? = some key ∧
+      sample.check occurrenceChoiceChoreo 9063 = true ∧
+        sample.effIndex? = some eventId ∧ key.globalId = eventId ∧ sample.wire.identifies choiceFinalFrame
+choiceReceipt0Checked : choiceReceipt0.ownedCheck occurrenceWorkerImage occurrenceChoiceChoreo choiceWire1 9063 = true
+choiceReceipt0LearnsFromItsAcceptedFrame : choiceReceipt0.after.actor = choiceReceiptFacts0.binding.receiverActor ∧
+  choiceReceipt0.after.doneState.selected 2 = some Hibana.RouteArm.left
+choiceReceipt0NeedsNoCommonWholePath : choiceSend1.pathIndex ≠ choiceReceipt0.pathIndex
+choiceReceipt0PreservesUnknownSibling : choiceReceipt0.after.doneState.selected 4 = none
+choiceReceipt1Checked : choiceReceipt1.ownedCheck occurrenceWorkerImage occurrenceChoiceChoreo choiceWire2 9063 = true
+choiceReceipt1LearnsFromItsAcceptedFrame : choiceReceipt1.after.actor = choiceReceiptFacts1.binding.receiverActor ∧
+  choiceReceipt1.after.doneState.selected 2 = some Hibana.RouteArm.right
+choiceReceipt1NeedsNoCommonWholePath : choiceSend2.pathIndex ≠ choiceReceipt1.pathIndex
+choiceReceipt1PreservesUnknownSibling : choiceReceipt1.after.doneState.selected 4 = none
+choiceReceipt2Checked : choiceReceipt2.ownedCheck occurrenceWorkerImage occurrenceChoiceChoreo choiceWire3 9063 = true
+choiceReceipt2LearnsFromItsAcceptedFrame : choiceReceipt2.after.actor = choiceReceiptFacts2.binding.receiverActor ∧
+  choiceReceipt2.after.doneState.selected 2 = some Hibana.RouteArm.left
+choiceReceipt2NeedsNoCommonWholePath : choiceSend3.pathIndex ≠ choiceReceipt2.pathIndex
+choiceReceipt2PreservesUnknownSibling : choiceReceipt2.after.doneState.selected 4 = none
+choiceSend0Checked : choiceSend0.check occurrenceChoiceChoreo 9063 = true
+choiceSend1Checked : choiceSend1.check occurrenceChoiceChoreo 9063 = true
+choiceSend2Checked : choiceSend2.check occurrenceChoiceChoreo 9063 = true
+choiceSend3Checked : choiceSend3.check occurrenceChoiceChoreo 9063 = true
+choiceTrace0 : Hibana.SendAdmissionTrace occurrenceChoiceChoreo 9063 choiceCarrier0 choiceGhost0 choiceRecords0
+choiceTrace1 : Hibana.SendAdmissionTrace occurrenceChoiceChoreo 9063 choiceCarrier1 choiceGhost1 choiceRecords1
+choiceTrace2 : Hibana.SendAdmissionTrace occurrenceChoiceChoreo 9063 choiceCarrier2 choiceGhost2 choiceRecords2
+choiceTrace3 : Hibana.SendAdmissionTrace occurrenceChoiceChoreo 9063 choiceCarrier3 choiceGhost3 choiceRecords3
+choiceTrace4 : Hibana.SendAdmissionTrace occurrenceChoiceChoreo 9063 choiceCarrier4 choiceGhost4 choiceRecords4
+choiceTraceIncludesTheOrdinaryPrefixAndAllThreeLoans : choiceRecords4.length = choiceCarrier4.frames.length
+choiceZeroWriteGapCannotForgetOuterKnowledge : ∀ (count : Nat),
+  Hibana.actorCommitMutationHistoryCheck occurrenceWorkerImage occurrenceChoiceChoreo 9063 choiceReceiverBefore0 count
+      choiceForgottenOuter count [] =
+    false
+choiceZeroWriteGapCannotInventSiblingKnowledge : ∀ (count : Nat),
+  Hibana.actorCommitMutationHistoryCheck occurrenceWorkerImage occurrenceChoiceChoreo 9063 choiceReceiverBefore0 count
+      choiceInventedSibling count [] =
+    false

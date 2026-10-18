@@ -73,20 +73,27 @@ def observedChoicesAgree
     | none => true
     | some arm => sourcePathArm? source.markers path scope == some arm
 
+/-- Publish only the source occurrence's memberships into existing local
+choice slots. An unrelated or absent slot is not invented. -/
+def publishObservedChoice?
+    (memberships : List (Nat × Nat)) (entry : Nat × Option RouteArm) :
+    Option (Nat × Option RouteArm) :=
+  let (scope, previous) := entry
+  match memberships.find? (fun member => member.1 == scope) with
+  | none => pure (scope, previous)
+  | some (_, arm) => do
+      let chosen ← match arm with
+        | 0 => some RouteArm.left
+        | 1 => some RouteArm.right
+        | _ => none
+      if previous.isSome && previous != some chosen then none
+      else pure (scope, some chosen)
+
 def publishedObservedChoices?
     (source : CanonicalProgramSource) (eff : Nat)
     (choices : List (Nat × Option RouteArm)) : Option (List (Nat × Option RouteArm)) := do
   let memberships ← canonicalEventRoutePath? source eff
-  choices.mapM fun (scope, previous) =>
-    match memberships.find? (fun member => member.1 == scope) with
-    | none => pure (scope, previous)
-    | some (_, arm) => do
-        let chosen ← match arm with
-          | 0 => some RouteArm.left
-          | 1 => some RouteArm.right
-          | _ => none
-        if previous.isSome && previous != some chosen then none
-        else pure (scope, some chosen)
+  choices.mapM (publishObservedChoice? memberships)
 
 def ActorProgressObservation.metadataMatches
     (snapshot : ActorProgressObservation) (image : RustDescriptorImage)

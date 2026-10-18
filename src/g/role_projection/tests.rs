@@ -25,6 +25,7 @@ mod mixed_send_admission;
 mod mutation_coverage;
 #[cfg(all(unix, not(miri)))]
 mod native;
+mod occurrence_choice;
 mod order;
 mod owned;
 mod parallel_pending;
