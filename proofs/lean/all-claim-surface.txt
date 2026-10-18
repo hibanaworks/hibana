@@ -295,6 +295,13 @@ Hibana.EndpointDelegation.withOwner_same : ∀ (owners : Hibana.EndpointDelegati
           (@List.take.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding) index run.bindings)
           (@Prod.mk.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding previousEvent previous) →
         @LT.lt.{0} Nat instLTNat previousEvent event
+@Hibana.a_checked_failed_send_finishes_without_publication : ∀ {sample : Hibana.SendCompletionObservation},
+  @Eq.{1} Bool sample.check true →
+    @Eq.{1} Hibana.SendPollClass sample.boundary Hibana.SendPollClass.failure →
+      And (@Eq.{1} Hibana.SendPollClass sample.returned Hibana.SendPollClass.failure)
+        (And (@Eq.{1} Nat sample.polls (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1))))
+          (And (@Eq.{1} Nat sample.publications (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0))))
+            (And (@Eq.{1} Bool sample.done true) (@Eq.{1} Bool sample.retained false))))
 @Hibana.a_checked_owned_receive_supplies_its_transfer_header_evidence : ∀ {sample : Hibana.ActorCommitObservation}
   {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo} {wire : Hibana.OwnedWireObservation} {session : Nat}
   {facts : Hibana.OwnedCommitFacts} {Frame : Type},
@@ -366,6 +373,13 @@ Hibana.EndpointDelegation.withOwner_same : ∀ (owners : Hibana.EndpointDelegati
                 (Hibana.observedResourceTag? sample.after facts.resource.role)
                 (@some.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) value))
               (other value)
+@Hibana.a_checked_pending_send_retains_its_plan_without_publication : ∀ {sample : Hibana.SendCompletionObservation},
+  @Eq.{1} Bool sample.check true →
+    @Eq.{1} Hibana.SendPollClass sample.boundary Hibana.SendPollClass.pending →
+      And (@Eq.{1} Hibana.SendPollClass sample.returned Hibana.SendPollClass.pending)
+        (And (@Eq.{1} Nat sample.polls (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1))))
+          (And (@Eq.{1} Nat sample.publications (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0))))
+            (And (@Eq.{1} Bool sample.done false) (@Eq.{1} Bool sample.retained true))))
 @Hibana.a_checked_retirement_supplies_its_transfer_header_evidence : ∀ {sample : Hibana.ViewRetirementObservation}
   {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo} {Frame : Type}
   {other : Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)) → Prop},
@@ -444,6 +458,25 @@ Hibana.EndpointDelegation.withOwner_same : ∀ (owners : Hibana.EndpointDelegati
                     (Hibana.observedResourceTag? sample.after sample.view)
                     (@some.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) value))
                   (other value)))
+@Hibana.a_checked_send_can_park_only_while_its_boundary_is_pending : ∀ {sample : Hibana.SendCompletionObservation},
+  @Eq.{1} Bool sample.check true →
+    @Eq.{1} Hibana.SendPollClass sample.returned Hibana.SendPollClass.pending →
+      @Eq.{1} Hibana.SendPollClass sample.boundary Hibana.SendPollClass.pending
+@Hibana.a_checked_send_completion_table_covers_every_boundary : ∀ {samples : List.{0} Hibana.SendCompletionObservation},
+  @Eq.{1} Bool (Hibana.checkSendCompletionTable samples) true →
+    ∀ (boundary : Hibana.SendPollClass),
+      @Exists.{1} Hibana.SendCompletionObservation fun sample =>
+        And
+          (@Membership.mem.{0, 0} Hibana.SendCompletionObservation (List.{0} Hibana.SendCompletionObservation)
+            (@List.instMembership.{0} Hibana.SendCompletionObservation) samples sample)
+          (And (@Eq.{1} Hibana.SendPollClass sample.boundary boundary) (@Eq.{1} Bool sample.check true))
+@Hibana.a_checked_successful_send_publishes_before_returning : ∀ {sample : Hibana.SendCompletionObservation},
+  @Eq.{1} Bool sample.check true →
+    @Eq.{1} Hibana.SendPollClass sample.boundary Hibana.SendPollClass.success →
+      And (@Eq.{1} Hibana.SendPollClass sample.returned Hibana.SendPollClass.success)
+        (And (@Eq.{1} Nat sample.polls (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1))))
+          (And (@Eq.{1} Nat sample.publications (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1))))
+            (And (@Eq.{1} Bool sample.done true) (@Eq.{1} Bool sample.retained false))))
 Hibana.a_non_payload_view_adds_no_borrow_dependency : ∀ (current : Hibana.PublicOperationPhase) (resource : Nat)
   (sent : Option.{0} Nat),
   @Ne.{1} Hibana.PublicOperationPhase current Hibana.PublicOperationPhase.sendPayload →
@@ -2715,6 +2748,21 @@ Hibana.causal_flow_monotone : ∀ (flow : Hibana.CausalFlowExpr) {left right : H
                 (@Prod.snd.{0, 0} Nat Hibana.EndpointDelegation.Binding entry).message.payload
                 (Hibana.EndpointDelegation.Payload.endpoint key) →
               @Eq.{1} Bool (record.step.ownedCheck image choreo record.wire session) true
+@Hibana.checked_owned_send_publication_finishes_without_another_wait : ∀ {poll : Hibana.SendCompletionObservation}
+  {sample : Hibana.ActorCommitObservation} {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo}
+  {wire : Hibana.OwnedWireObservation} {session : Nat} {facts : Hibana.OwnedCommitFacts},
+  @Eq.{1} Bool poll.check true →
+    @Eq.{1} Hibana.SendPollClass poll.boundary Hibana.SendPollClass.success →
+      @Eq.{1} Bool (sample.ownedCheck image choreo wire session) true →
+        @Eq.{1} (Option.{0} Hibana.OwnedCommitFacts) (sample.ownedFacts? image choreo)
+            (@some.{0} Hibana.OwnedCommitFacts facts) →
+          @Eq.{1} Hibana.EndpointDelegation.Side facts.side Hibana.EndpointDelegation.Side.send →
+            And (@Eq.{1} Hibana.SendPollClass poll.returned Hibana.SendPollClass.success)
+              (And (@Eq.{1} Nat poll.publications (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1))))
+                (And (@Eq.{1} Bool poll.done true)
+                  (@Eq.{1} (Option.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))))
+                    (Hibana.observedResourceTag? sample.after facts.resource.role)
+                    (@none.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)))))))
 @Hibana.checked_owned_send_retires_its_exact_observed_tag : ∀ {sample : Hibana.ActorCommitObservation}
   {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo} {wire : Hibana.OwnedWireObservation} {session : Nat}
   {facts : Hibana.OwnedCommitFacts},
@@ -2806,6 +2854,8 @@ Hibana.causal_flow_monotone : ∀ (flow : Hibana.CausalFlowExpr) {left right : H
               @Ne.{1} Nat query sample.view →
                 @Eq.{1} (Option.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))))
                   (Hibana.observedResourceTag? sample.after query) (Hibana.observedResourceTag? sample.before query))))
+@Hibana.checked_send_completion_has_its_exact_boundary : ∀ {sample : Hibana.SendCompletionObservation},
+  @Eq.{1} Bool sample.check true → sample.Exact
 @Hibana.checked_source_handoff_boundary_is_its_own_acceptance_or_a_fault : ∀ {image : Hibana.RustDescriptorImage}
   {choreo : Hibana.Choreo} {data : Hibana.DecodedActorOrder} {path : Hibana.EndpointDelegation.NormalizedPath}
   {key : Hibana.EndpointDelegation.EndpointKey} {target : Hibana.DecodedActorRow}

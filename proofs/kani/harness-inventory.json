@@ -12,6 +12,9 @@
       "endpoint::kernel::authority::kani::route_arm_decoding_accepts_exact_binary_domain",
       "endpoint::kernel::authority::kani::single_ready_mask_decoding_is_exact"
     ],
+    "../../src/endpoint/kernel/core/commit_delta/send_completion.rs": [
+      "endpoint::kernel::core::commit_delta::send_completion::a_prepared_send_publishes_or_finishes_without_post_acceptance_pending"
+    ],
     "../../src/endpoint/kernel/core/frontier_observation.rs": [
       "endpoint::kernel::core::frontier_observation::tests::excluded_scope_never_supplies_progress_sibling_authority"
     ],
@@ -382,7 +385,7 @@
   "contract-harnesses": {},
   "contracts": [],
   "totals": {
-    "standard-harnesses": 264,
+    "standard-harnesses": 265,
     "contract-harnesses": 0,
     "functions-under-contract": 0
   }

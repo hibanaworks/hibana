@@ -152,12 +152,22 @@ Run the pinned fail-closed gate:
 bash .github/scripts/check_kani.sh
 ```
 
-The reviewed Kani inventory contains 264 harnesses, including two production
+The reviewed Kani inventory contains 265 harnesses, including two production
 cursor checks for route control after an Endpoint handoff. The final-form gate also
 runs the production route-correlation query exhaustively over every u8
 receiver, first holder and second holder, and both direct/swapped choices:
 33,554,432 cases. That native run enables debug assertions and overflow checks.
 Both CI jobs are required; the Kani result alone is not the full validation.
+
+The prepared-send completion harness executes the actual non-generic
+`kernel_send` loop with all three boundary results. A ready checked plan calls
+publication exactly once and returns success; failure finishes without
+publication; pending retains its plan. Its opaque test plan is never supplied
+to a real `OperationKernel`. This checks the loop after preparation, separately
+from source admission, physical carrier behavior and the publication body.
+The same boundary runs under ordinary tests and Miri, and its copied result
+table is checked by Lean. The native receiver-first test separately checks
+that actual OS acceptance is followed by publication in that same poll.
 
 Four additional harnesses check the production resource-dependent reentry
 closure: a remote origin without a fresh permit, a sequential permit, a

@@ -113,9 +113,18 @@ async fn receiver_finishes_before_the_sender_publishes_its_transfer() {
     sender_tag.set(Some(view_tag(&db)));
 
     let mut transfer = owner.send::<Loan>(db);
-    poll_fn(|cx| Pin::new(&mut transfer).poll(cx))
-        .await
-        .unwrap();
+    poll_fn(|cx| {
+        let result = Pin::new(&mut transfer).poll(cx);
+        if child.borrow().0.is_none() {
+            assert!(
+                result.is_ready(),
+                "a physically accepted send must finish its publication in this poll"
+            );
+        }
+        result
+    })
+    .await
+    .unwrap();
     assert!(
         child.borrow().0.is_none(),
         "the receiver must finish inside the transport's send poll"

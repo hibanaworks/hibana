@@ -1,0 +1,23 @@
+aMissingBoundaryCaseIsRejected : Hibana.checkSendCompletionTable observed.tail = false
+aSuccessThatParksInsteadIsRejected : (have __src := successful;
+    { boundary := __src.boundary, returned := Hibana.SendPollClass.pending, polls := __src.polls,
+      publications := __src.publications, done := __src.done, retained := __src.retained }).check =
+  false
+aSuccessWithoutPublicationIsRejected : (have __src := successful;
+    { boundary := __src.boundary, returned := __src.returned, polls := __src.polls, publications := 0,
+      done := __src.done, retained := __src.retained }).check =
+  false
+actualKernelCompletionTableIsExact : Hibana.checkSendCompletionTable observed = true
+@actualKernelSuccessPublishesItsCheckedOwnedSourceTag : ∀ {sample : Hibana.ActorCommitObservation}
+  {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo} {wire : Hibana.OwnedWireObservation} {session : Nat}
+  {facts : Hibana.OwnedCommitFacts},
+  sample.ownedCheck image choreo wire session = true →
+    sample.ownedFacts? image choreo = some facts →
+      facts.side = Hibana.EndpointDelegation.Side.send →
+        successful.returned = Hibana.SendPollClass.success ∧
+          successful.publications = 1 ∧
+            successful.done = true ∧ Hibana.observedResourceTag? sample.after facts.resource.role = none
+actualSuccessPublishesBeforeReturn : successful.returned = Hibana.SendPollClass.success ∧
+  successful.publications = 1 ∧ successful.done = true ∧ successful.retained = false
+actualTableCoversEveryAbstractBoundary : ∀ (boundary : Hibana.SendPollClass),
+  ∃ sample, sample ∈ observed ∧ sample.boundary = boundary ∧ sample.check = true

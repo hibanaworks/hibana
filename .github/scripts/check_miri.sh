@@ -77,6 +77,13 @@ run_miri_test \
   transport::binding::tests
 
 run_miri_test \
+  prepared-send-completion \
+  -p hibana \
+  --lib \
+  endpoint::kernel::core::commit_delta::send_completion::a_prepared_send_publishes_before_returning_success \
+  -- --exact
+
+run_miri_test \
   carrier-actor-borrow \
   -p hibana \
   --lib \

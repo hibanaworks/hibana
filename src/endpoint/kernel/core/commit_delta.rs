@@ -6,6 +6,9 @@ use super::{
 use crate::global::const_dsl::ReentryMark;
 use crate::global::typestate::{EnabledEventCommit, StateIndex};
 
+#[cfg(any(kani, all(test, hibana_repo_tests)))]
+mod send_completion;
+
 pub(crate) struct PreparedCommitDelta {
     event: Option<CommitEventRow>,
     selected_routes: PreparedRouteCommitRows,

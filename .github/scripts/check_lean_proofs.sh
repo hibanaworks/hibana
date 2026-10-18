@@ -23,6 +23,7 @@ SOURCE_ORDER_GENERATED="${ROOT_DIR}/target/lean-proof/SourceOrderGenerated.lean"
 OWNED_ENTRY_GENERATED="${ROOT_DIR}/target/lean-proof/OwnedEntryGenerated.lean"
 ACTOR_COMMIT_GENERATED="${ROOT_DIR}/target/lean-proof/ActorCommitGenerated.lean"
 ACTOR_ADMISSION_GENERATED="${ROOT_DIR}/target/lean-proof/ActorAdmissionGenerated.lean"
+SEND_COMPLETION_GENERATED="${ROOT_DIR}/target/lean-proof/SendCompletionGenerated.lean"
 ACTOR_REENTRY_COMMIT_GENERATED="${ROOT_DIR}/target/lean-proof/ActorReentryCommitGenerated.lean"
 ACTOR_PARALLEL_REENTRY_GENERATED="${ROOT_DIR}/target/lean-proof/ActorParallelReentryGenerated.lean"
 ACTOR_ROUTE_LEFT_REENTRY_GENERATED="${ROOT_DIR}/target/lean-proof/ActorRouteLeftReentryGenerated.lean"
@@ -54,7 +55,7 @@ bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" build-serial "${PROOF_
 bash "${ROOT_DIR}/.github/scripts/check_lean_claim_surface.sh"
 static_audit_output="$(run_audit \
   theorem-inventory \
-  --static "${PROOF_DIR}" "${STATIC_CLAIM_SNAPSHOT}" 930 537 286 107)"
+  --static "${PROOF_DIR}" "${STATIC_CLAIM_SNAPSHOT}" 937 539 286 112)"
 printf '%s\n' "${static_audit_output}"
 printf '%s\n' "${static_audit_output}" | bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard markers static
 bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" theorem-inventory \
@@ -66,6 +67,7 @@ mkdir -p "$(dirname "${GENERATED}")"
 rm -f "${GENERATED}" "${RUNTIME_GENERATED}" "${PUBLIC_OPERATION_GENERATED}" "${CAUSAL_GENERATED}" "${PARALLEL_GENERATED}" "${PROGRAM_COLUMNS_GENERATED}" "${PARTIAL_CHOICE_GENERATED}" "${CONTROLLER_GENERATED}" "${INGRESS_GENERATED}" "${REENTRY_GENERATED}" "${ACTOR_COMMIT_GENERATED}" "${ACTOR_REENTRY_COMMIT_GENERATED}" "${ACTOR_PARALLEL_REENTRY_GENERATED}" "${ACTOR_ROUTE_LEFT_REENTRY_GENERATED}" "${ACTOR_ROUTE_RIGHT_REENTRY_GENERATED}"
 rm -f "${OWNED_RECOVERY_GENERATED}"
 rm -f "${ACTOR_ADMISSION_GENERATED}"
+rm -f "${SEND_COMPLETION_GENERATED}"
 rm -f "${LOCAL_RETURN_GENERATED}"
 rm -f "${PENDING_BORROW_GENERATED}"
 rm -f "${FUTURE_CUSTODY_GENERATED}"
@@ -78,6 +80,12 @@ CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --li
 bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${ACTOR_ADMISSION_GENERATED}" "source and actual cursor admission"
 run_audit generated-axioms --kernel "${ACTOR_ADMISSION_GENERATED}" "${PROOF_DIR}" \
   "${PROOF_DIR}/actor-admission-generated-claim-surface.txt" 46
+CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib \
+  endpoint::kernel::core::commit_delta::send_completion::a_prepared_send_publishes_before_returning_success \
+  -- --exact
+bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${SEND_COMPLETION_GENERATED}" "prepared send completion"
+run_audit generated-axioms --kernel "${SEND_COMPLETION_GENERATED}" "${PROOF_DIR}" \
+  "${PROOF_DIR}/send-completion-generated-claim-surface.txt" 7
 CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib \
   g::role_projection::tests::source_order::source_order_rejects_a_missing_join_and_spurious_parallel_order \
   -- --exact

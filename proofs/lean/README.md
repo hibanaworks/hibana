@@ -460,6 +460,22 @@ carrier delivery and the physical binding contract. They do not turn local
 header existence into general source progress, or complete the distributed
 delegation qualification. Public owned projection remains closed.
 
+`SendCompletion.lean` checks copied observations from the actual non-generic
+`kernel_send` loop at its prepared-I/O boundary. A successful checked plan is
+published exactly once and returns success in that call; a failure finishes
+without publication; pending retains the plan without publishing. The complete
+three-case table and corrupted-result/publication cases are kernel-checked.
+The source-checked owned publication supplies the actual retired resource tag.
+
+The same production loop executes under ordinary tests, Miri and a symbolic
+Kani harness. Its boundary double supplies an opaque test plan and records
+calls; it does not establish source admission, the real publication body or
+physical transport correctness. The native receiver-first test separately
+checks that, once OS acceptance has allowed the child to complete its return,
+the sender completes publication in that same poll. It may still wait before
+acceptance. Arbitrary callback termination and executor fairness are execution
+assumptions; a completed observation is not a liveness proof for a stuck callback.
+
 `OwnedRetirement.lean` checks retirement against the global source for the
 current selected visit. It considers every path compatible with the committed
 choices. A view is needed for its own send/receive or as the owned payload of
