@@ -173,6 +173,9 @@ observedFirstLoanHasItsCheckedHeaderTransferHistory : Hibana.ResourceHeaderExecu
   dbAtWorker
 observedInitialHeadersIdentifyTheSoleInitialTag : ∀ (value : Nat × Nat × Nat × Nat),
   dbHeaders0 value ↔ value = initialDbTag
+observedMutationHistoryChecked : Hibana.actorCommitMutationHistoryCheck admissionImage admissionChoreo 9053
+    initial.snapshot initialMutationCount returned.snapshot returnedMutationCount observedMutationCommits =
+  true
 observedReadyReadHasTheWireCheckedReceipt : ∃ earlier record later,
   [observedCommit0] = earlier ++ record :: later ∧
     record.step.event = receiptRow.eventId ∧
@@ -191,8 +194,18 @@ observedReadyReturnKeepsThatHeaderTransferHistory : Hibana.ResourceHeaderExecuti
 observedReceiptHistoryChecked : Hibana.actorCommitHistoryCheck admissionImage admissionChoreo 9053 initial.snapshot
     received.snapshot [observedCommit0] =
   true
+observedReceiptMutationHistoryChecked : Hibana.actorCommitMutationHistoryCheck admissionImage admissionChoreo 9053
+    initial.snapshot initialMutationCount received.snapshot receivedMutationCount [observedMutationCommit0] =
+  true
+observedReceiptMutationHistoryProvidesSourceHistory : Hibana.actorCommitHistoryCheck admissionImage admissionChoreo 9053
+    initial.snapshot received.snapshot [observedCommit0] =
+  true
 observedReturnLoanHasItsCheckedHeaderTransferHistory : Hibana.ResourceHeaderExecution dbHeaders0 dbStart dbHeaders5
   dbAtOwner
+observedReturnMutationHistoryChecked : Hibana.actorCommitMutationHistoryCheck admissionImage admissionChoreo 9053
+    initial.snapshot initialMutationCount joined.snapshot joinedMutationCount
+    [observedMutationCommit0, observedMutationCommit1, observedMutationCommit2] =
+  true
 omittedReceiptCommitRejected : Hibana.actorCommitHistoryCheck admissionImage admissionChoreo 9053 initial.snapshot
     returned.snapshot observedCommits.tail =
   false

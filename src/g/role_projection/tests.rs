@@ -20,6 +20,7 @@ mod entry_image;
 mod ingress;
 mod ingress_columns;
 mod local_return;
+mod mutation_coverage;
 #[cfg(all(unix, not(miri)))]
 mod native;
 mod order;

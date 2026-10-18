@@ -1,0 +1,13 @@
+actualCommitHasMutationCoverage : Hibana.actorCommitMutationHistoryCheck mutationImage mutationChoreo 9056 initial 0
+    first 1 [observedCommit] =
+  true
+actualCoveredHistoryAccountsForEveryWrite : 1 = 0 + [observedCommit].length
+actualOmittedResetAndCommitAreRejected : Hibana.actorCommitMutationHistoryCheck mutationImage mutationChoreo 9056 first
+    1 second 3 [] =
+  false
+actualOrdinarySnapshotsAreEqual : first = second
+actualSourceCommitIsChecked : actualCommit.check mutationImage mutationChoreo 9056 = true
+coveredCommitHasItsSourceHistory : Hibana.actorCommitHistoryCheck mutationImage mutationChoreo 9056 initial first
+    [actualCommit] =
+  true
+theOldGapCheckAcceptsTheOmittedPair : Hibana.actorCommitGapCheck first second = true

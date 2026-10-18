@@ -96,6 +96,12 @@ MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_t
   g::role_projection::tests::visit_progress::a_complete_actor_visit_exposes_real_parallel_admissions_and_completion \
   -- --exact
 
+MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \
+  actual-completion-mutations \
+  -p hibana --lib \
+  g::role_projection::tests::mutation_coverage::actual_reset_and_recommit_cannot_disappear_between_equal_snapshots \
+  -- --exact
+
 run_miri_test \
   actor-shared-workspace \
   -p hibana \
@@ -127,6 +133,7 @@ MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_t
   --lib \
   g::role_projection::tests \
   -- --skip g::role_projection::tests::owned:: \
+  --skip g::role_projection::tests::mutation_coverage:: \
   --skip g::role_projection::tests::admission:: \
   --skip g::role_projection::tests::parallel_pending:: \
   --skip g::role_projection::tests::pending_reentry:: \

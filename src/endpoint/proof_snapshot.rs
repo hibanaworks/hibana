@@ -110,6 +110,7 @@ pub(crate) struct ViewSnapshot {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ActorSnapshot {
+    pub(crate) completion_mutations: u64,
     pub(crate) actor: u8,
     pub(crate) run: u32,
     pub(crate) counter: u32,
@@ -195,6 +196,7 @@ pub(crate) unsafe fn actor_snapshot<const ROLE: u8>(
         }
         assert_eq!(steps.len(), cursor.local_steps_len());
         ActorSnapshot {
+            completion_mutations: cursor.completion_mutations(),
             actor: cursor.role(),
             run: kernel.context.public_generation.get(),
             counter: kernel.context.view_generation.get(),

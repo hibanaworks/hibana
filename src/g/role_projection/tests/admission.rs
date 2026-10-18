@@ -171,7 +171,7 @@ fn source_ready_rows_match_actual_admission_across_a_parallel_owned_visit() {
                     &RoleProjection::<1, Steps, 8>::IMAGE_REF,
                 ));
                 let mut source = std::format!(
-                    "import Hibana.ActorCommitHistory\nimport Hibana.ResourceValueCorrespondence\nimport Hibana.SourceReadyReceipt\n\nset_option maxRecDepth 10000\n\n\
+                    "import Hibana.ActorCommitHistory\nimport Hibana.ResourceValueCorrespondence\nimport Hibana.SourceReadyReceipt\nimport Hibana.ActorMutationCoverage\n\nset_option maxRecDepth 10000\n\n\
                      def admissionChoreo : Hibana.Choreo := {choreo}\n\n\
                      def admissionImage : Hibana.RustDescriptorImage := {image}\n\n"
                 );
@@ -198,6 +198,10 @@ fn source_ready_rows_match_actual_admission_across_a_parallel_owned_visit() {
                          Hibana.sourceRowViewsIssued path {name}.snapshot row = true) :=\n  \
                          Hibana.accepted_actor_admission_has_exact_source_readiness {name}Checked\n\n",
                         super::commit::observation_source(&snapshot),
+                    ));
+                    source.push_str(&std::format!(
+                        "def {name}MutationCount : Nat := {}\n\n",
+                        snapshot.completion_mutations,
                     ));
                 }
                 source.push_str(
@@ -374,10 +378,36 @@ theorem everyReadyRowHasItsSourceDerivedInitialIssueOrReceipt
                         header.target_role(),
                         header.label().raw(),
                     ));
+                    source.push_str(&std::format!(
+                        "def observedMutationCommit{index} : Hibana.ActorCommitMutationRecord := {{\n  \
+                         commit := observedCommit{index}, before := {}, after := {}\n}}\n\n",
+                        before.completion_mutations, after.completion_mutations,
+                    ));
                 }
                 source.push_str(r#"
 def observedCommits : List Hibana.ActorCommitRecord :=
   [observedCommit0, observedCommit1, observedCommit2, observedCommit3]
+
+def observedMutationCommits : List Hibana.ActorCommitMutationRecord :=
+  [observedMutationCommit0, observedMutationCommit1, observedMutationCommit2, observedMutationCommit3]
+
+theorem observedMutationHistoryChecked :
+    Hibana.actorCommitMutationHistoryCheck admissionImage admissionChoreo 9053
+      initial.snapshot initialMutationCount returned.snapshot returnedMutationCount observedMutationCommits = true := by decide
+
+theorem observedReceiptMutationHistoryChecked :
+    Hibana.actorCommitMutationHistoryCheck admissionImage admissionChoreo 9053
+      initial.snapshot initialMutationCount received.snapshot receivedMutationCount [observedMutationCommit0] = true := by decide
+
+theorem observedReturnMutationHistoryChecked :
+    Hibana.actorCommitMutationHistoryCheck admissionImage admissionChoreo 9053
+      initial.snapshot initialMutationCount joined.snapshot joinedMutationCount
+      [observedMutationCommit0, observedMutationCommit1, observedMutationCommit2] = true := by decide
+
+theorem observedReceiptMutationHistoryProvidesSourceHistory :
+    Hibana.actorCommitHistoryCheck admissionImage admissionChoreo 9053
+      initial.snapshot received.snapshot [observedCommit0] = true :=
+  Hibana.checked_mutation_history_has_its_checked_source_commits observedReceiptMutationHistoryChecked
 
 theorem observedCommitHistoryChecked :
     Hibana.actorCommitHistoryCheck admissionImage admissionChoreo 9053
@@ -470,7 +500,7 @@ theorem actualSourceReadyReadDerivesItsReceipt :
     (by
       change readBinding.message.sender = resourceKey ∨ readBinding.message.payload = .endpoint resourceKey
       exact .inl (by decide))
-    (by decide) observedReceiptHistoryChecked
+    (by decide) observedReceiptMutationHistoryProvidesSourceHistory
     (by
       intro receipt member _ _ _ _
       have pending := List.all_eq_true.mp
@@ -481,7 +511,8 @@ theorem actualSourceReadyReadDerivesItsReceipt :
 
 theorem actualReadyReturnCommitHistoryChecked :
     Hibana.actorCommitHistoryCheck admissionImage admissionChoreo 9053
-      initial.snapshot joined.snapshot [observedCommit0, observedCommit1, observedCommit2] = true := by decide
+      initial.snapshot joined.snapshot [observedCommit0, observedCommit1, observedCommit2] = true :=
+  Hibana.checked_mutation_history_has_its_checked_source_commits observedReturnMutationHistoryChecked
 
 theorem actualSourceReadyReturnDerivesItsReceipt :
     Hibana.SourceReadyReceiptEvidence admissionImage admissionChoreo 9053 useData usePath

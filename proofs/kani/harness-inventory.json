@@ -286,6 +286,7 @@
       "global::role_program::lane_set::kani::nonempty_lane_set_view_rejects_null_storage"
     ],
     "../../src/global/typestate/cursor/kani.rs": [
+      "global::typestate::cursor::kani::actual_completion_writes_are_observed_even_when_the_bits_repeat",
       "global::typestate::cursor::kani::compact_cursor_position_covers_the_full_u16_value_domain",
       "global::typestate::cursor::kani::local_event_bit_exists_exactly_inside_the_local_step_domain"
     ],
@@ -385,7 +386,7 @@
   "contract-harnesses": {},
   "contracts": [],
   "totals": {
-    "standard-harnesses": 265,
+    "standard-harnesses": 266,
     "contract-harnesses": 0,
     "functions-under-contract": 0
   }

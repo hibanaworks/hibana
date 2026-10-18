@@ -407,6 +407,10 @@ pub(crate) struct EventCursorState {
     current_step_label_codes: *mut u16,
     /// Bitset of committed local event rows.
     completed_event_words: *mut u32,
+    /// Qualification-only observation. It never authorizes or schedules an
+    /// operation and is absent from production storage and generated images.
+    #[cfg(any(kani, all(test, hibana_repo_tests)))]
+    completion_mutations: u64,
 }
 
 const CURRENT_STEP_UNLABELED_CODE: u16 = u16::MAX;
@@ -452,6 +456,8 @@ impl EventCursorState {
             core::ptr::addr_of_mut!((*dst).current_step_label_codes)
                 .write(current_step_label_codes);
             core::ptr::addr_of_mut!((*dst).completed_event_words).write(completed_event_words);
+            #[cfg(any(kani, all(test, hibana_repo_tests)))]
+            core::ptr::addr_of_mut!((*dst).completion_mutations).write(0);
             let mut lane_idx = 0usize;
             while lane_idx < logical_lane_count {
                 lane_cursors.add(lane_idx).write(0);
@@ -619,6 +625,12 @@ impl EventCursor {
 
     #[inline(always)]
     fn clear_local_event_done(&mut self, step_idx: usize) {
+        #[cfg(any(kani, all(test, hibana_repo_tests)))]
+        let next_mutation = self
+            .state()
+            .completion_mutations
+            .checked_add(1)
+            .expect("qualification mutation count exhausted");
         let Some((word_idx, bit)) = local_event_bit(step_idx, self.local_steps_len()) else {
             crate::invariant();
         };
@@ -626,10 +638,20 @@ impl EventCursor {
             crate::invariant();
         };
         *word &= !bit;
+        #[cfg(any(kani, all(test, hibana_repo_tests)))]
+        {
+            self.state_mut().completion_mutations = next_mutation;
+        }
     }
 
     #[inline(always)]
     fn mark_local_event_done(&mut self, step_idx: usize) {
+        #[cfg(any(kani, all(test, hibana_repo_tests)))]
+        let next_mutation = self
+            .state()
+            .completion_mutations
+            .checked_add(1)
+            .expect("qualification mutation count exhausted");
         let Some((word_idx, bit)) = local_event_bit(step_idx, self.local_steps_len()) else {
             crate::invariant();
         };
@@ -637,6 +659,15 @@ impl EventCursor {
             crate::invariant();
         };
         *word |= bit;
+        #[cfg(any(kani, all(test, hibana_repo_tests)))]
+        {
+            self.state_mut().completion_mutations = next_mutation;
+        }
+    }
+
+    #[cfg(any(kani, all(test, hibana_repo_tests)))]
+    pub(crate) fn completion_mutations(&self) -> u64 {
+        self.state().completion_mutations
     }
 
     #[inline(always)]

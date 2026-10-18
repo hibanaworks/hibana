@@ -2277,6 +2277,13 @@ Hibana.ambiguous_receive_fails_closed : ∀ (before : Hibana.CompactGlobalState)
           (@Membership.mem.{0, 0} View (List.{0} View) (@List.instMembership.{0} View)
             (@Hibana.EndpointTransfer.Observation.acceptedFutures View Frame state) sender)
           (Not (@Hibana.TransferValueLocated View Frame sender state))))
+Hibana.an_unrecorded_mutation_interval_is_rejected : ∀ (image : Hibana.RustDescriptorImage) (choreo : Hibana.Choreo)
+  (session : Nat) (first final : Hibana.ActorProgressObservation) {firstMutation finalMutation : Nat},
+  @Ne.{1} Nat firstMutation finalMutation →
+    @Eq.{1} Bool
+      (Hibana.actorCommitMutationHistoryCheck image choreo session first firstMutation final finalMutation
+        (@List.nil.{0} Hibana.ActorCommitMutationRecord))
+      false
 @Hibana.artifact_checker_sound : ∀ {graph : Hibana.EventGraph}, @Eq.{1} Bool graph.check true → graph.WellFormed
 @Hibana.assumption_indexed_deployment_duplicate_receipt_resolution_rejected : ∀ {profile : Hibana.CarrierProfile}
   {Fairness : Prop} {certificate : Hibana.VerifiedProtocolCertificate} {session roleCount : Nat}
@@ -2815,6 +2822,25 @@ Hibana.causal_flow_monotone : ∀ (flow : Hibana.CausalFlowExpr) {left right : H
                               @Hibana.EndpointTransfer.Execution View Frame next final →
                                 Hibana.SourceUseBoundaryEvidence image choreo data path key useRow action) →
                         @Hibana.TransferValueLocated View Frame value final
+@Hibana.checked_mutation_history_accounts_for_every_observed_write : ∀ {image : Hibana.RustDescriptorImage}
+  {choreo : Hibana.Choreo} {session : Nat} {first final : Hibana.ActorProgressObservation}
+  {firstMutation finalMutation : Nat} {records : List.{0} Hibana.ActorCommitMutationRecord},
+  @Eq.{1} Bool
+      (Hibana.actorCommitMutationHistoryCheck image choreo session first firstMutation final finalMutation records)
+      true →
+    @Eq.{1} Nat finalMutation
+      (@HAdd.hAdd.{0, 0, 0} Nat Nat Nat (@instHAdd.{0} Nat instAddNat) firstMutation
+        (@List.length.{0} Hibana.ActorCommitMutationRecord records))
+@Hibana.checked_mutation_history_has_its_checked_source_commits : ∀ {image : Hibana.RustDescriptorImage}
+  {choreo : Hibana.Choreo} {session : Nat} {first final : Hibana.ActorProgressObservation}
+  {firstMutation finalMutation : Nat} {records : List.{0} Hibana.ActorCommitMutationRecord},
+  @Eq.{1} Bool
+      (Hibana.actorCommitMutationHistoryCheck image choreo session first firstMutation final finalMutation records)
+      true →
+    @Eq.{1} Bool
+      (Hibana.actorCommitHistoryCheck image choreo session first final
+        (@List.map.{0, 0} Hibana.ActorCommitMutationRecord Hibana.ActorCommitRecord (fun x => x.commit) records))
+      true
 @Hibana.checked_owned_commit_has_its_exact_resource_header_change : ∀ {sample : Hibana.ActorCommitObservation}
   {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo} {wire : Hibana.OwnedWireObservation} {session : Nat}
   {facts : Hibana.OwnedCommitFacts},

@@ -571,6 +571,38 @@ fixture applies the general theorem to both the read and the later return.
 This establishes the receipt boundary, not possession at the final cut; that
 still requires its subsequent transfer/fault history and visit correspondence.
 
+`ActorMutationCoverage.lean` strengthens selected-visit history observations
+with measurements at the actual completion-bit writes. Qualification builds
+increment one checked counter in the existing mark/clear functions, including
+when the written bit already has that value. Production builds contain neither
+the field nor the observation code. The counter never authorizes an operation,
+chooses a branch, or changes a cursor's semantic progress. Exhaustion stops
+qualification before a write rather than wrapping into apparently fresh data.
+
+Each recorded source commit includes the measured counters at its real before
+and after cuts. The checker requires a single mark for that commit and no
+unrecorded completion write in a gap. It recovers the existing checked source
+history and accounts for every measured write. The real Tokio reset/recommit
+fixture has equal ordinary endpoint snapshots after successive visits, but
+counts1 and3. The old gap check accepts that omitted pair; the measured check
+rejects it. The actual loan/par/return fixture also supplies the measurements
+for the receipt and return prefixes used by the source-ready receipt theorem.
+
+The new Kani harness executes the actual cursor initializer and mark/clear
+functions on a concrete two-event image with symbolic target and mutation kind
+for each of two writes. It checks both the real bitset and measurements, without
+a publication double. The same bit state with different write history is
+reachable. This is bounded verification of those real functions, alongside the
+existing full-domain bit-location checks; it is not every Rust execution.
+
+This checker deliberately qualifies histories without an unrecorded reset. It
+does not redefine fresh reentry as an error or impose that restriction on the
+runtime. Reentry uses its separate prepared-base/reset evidence. Authenticity
+and same-run correspondence of the observations remain required. The counter
+measures completion writes, not every field mutation, carrier delivery,
+ownership transfer or arbitrary callback. These measurements must not be used
+as a runtime owner table or as evidence of completed distributed progress.
+
 The prepared-send Kani harness calls the production non-generic send loop with
 a boundary double. Its publication count proves that successful loop completion
 invokes publication exactly once. The double does not execute the real commit
