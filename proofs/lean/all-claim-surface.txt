@@ -3143,6 +3143,45 @@ Hibana.a_pending_payload_requires_its_own_send : ∀ (resource : Nat) (sent : Op
                   (@some.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)
                     (@Prod.mk.{0, 0} Nat Hibana.EndpointDelegation.Binding prior.actionId.event binding)))
                 (@Eq.{1} Bool (Hibana.sourceActionRequiresView role binding prior.actionId.side) true))))
+@Hibana.a_source_matched_owned_head_has_its_exact_receive_wire_check : ∀ {sender : Hibana.SourceSendAdmission}
+  {receiverImage : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo} {session source pathIndex event : Nat}
+  {binding : Hibana.EndpointDelegation.Binding} {sentFacts receivedFacts : Hibana.OwnedSourceFacts}
+  {wire : Hibana.OwnedWireObservation} {frame : Hibana.TransportFrame},
+  @Eq.{1} Bool (sender.check choreo session) true →
+    @Eq.{1} (Option.{0} Hibana.OwnedSourceFacts) (sender.ownedFacts? choreo)
+        (@some.{0} Hibana.OwnedSourceFacts sentFacts) →
+      @Eq.{1} (Option.{0} Hibana.OwnedSourceFacts) (receiverImage.ownedSourceFacts? choreo pathIndex event)
+          (@some.{0} Hibana.OwnedSourceFacts receivedFacts) →
+        @Eq.{1}
+            (Option.{0}
+              (Prod.{0, 0} Nat (Prod.{0, 0} Hibana.EndpointDelegation.Binding Hibana.EndpointDelegation.Side)))
+            (Hibana.sourceOperationIdentity? sender.image choreo sender.pathIndex sender.event)
+            (@some.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Hibana.EndpointDelegation.Binding Hibana.EndpointDelegation.Side))
+              (@Prod.mk.{0, 0} Nat (Prod.{0, 0} Hibana.EndpointDelegation.Binding Hibana.EndpointDelegation.Side) source
+                (@Prod.mk.{0, 0} Hibana.EndpointDelegation.Binding Hibana.EndpointDelegation.Side binding
+                  Hibana.EndpointDelegation.Side.send))) →
+          @Eq.{1}
+              (Option.{0}
+                (Prod.{0, 0} Nat (Prod.{0, 0} Hibana.EndpointDelegation.Binding Hibana.EndpointDelegation.Side)))
+              (Hibana.sourceOperationIdentity? receiverImage choreo pathIndex event)
+              (@some.{0}
+                (Prod.{0, 0} Nat (Prod.{0, 0} Hibana.EndpointDelegation.Binding Hibana.EndpointDelegation.Side))
+                (@Prod.mk.{0, 0} Nat (Prod.{0, 0} Hibana.EndpointDelegation.Binding Hibana.EndpointDelegation.Side)
+                  source
+                  (@Prod.mk.{0, 0} Hibana.EndpointDelegation.Binding Hibana.EndpointDelegation.Side binding
+                    Hibana.EndpointDelegation.Side.receive))) →
+            @Eq.{1} Nat receiverImage.role binding.receiverActor →
+              sender.wire.identifies frame →
+                wire.identifies frame →
+                  @Eq.{1} (Option.{0} Nat) (receiverImage.eventLane? event) (@some.{0} Nat wire.lane) →
+                    @Eq.{1} (Option.{0} Nat) (receiverImage.eventFrameLabel? event) (@some.{0} Nat wire.frameLabel) →
+                      And (@Eq.{1} Hibana.EndpointDelegation.EndpointKey receivedFacts.resource sentFacts.resource)
+                        (And (@Eq.{1} Nat receivedFacts.effIndex sentFacts.effIndex)
+                          (And
+                            (@Eq.{1} Hibana.EndpointDelegation.Side receivedFacts.side
+                              Hibana.EndpointDelegation.Side.receive)
+                            (Iff (@Eq.{1} Bool (receivedFacts.wireMatches receiverImage.role wire session) true)
+                              (@Eq.{1} (List.{0} Nat) wire.payload sender.wire.payload))))
 @Hibana.a_source_occurrence_preserves_an_unrelated_local_choice : ∀ {source : Hibana.CanonicalProgramSource}
   {eff scope : Nat} {arm : Option.{0} Hibana.RouteArm} {memberships : List.{0} (Prod.{0, 0} Nat Nat)}
   {before after : List.{0} (Prod.{0, 0} Nat (Option.{0} Hibana.RouteArm))},

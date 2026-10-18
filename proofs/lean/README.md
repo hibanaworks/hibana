@@ -290,6 +290,24 @@ by the test. At the second worker-held request the proof is also applied to the
 actual cut before sender publication, using the service's existing before-cut.
 Its source identity is derived before adding that receive to the history.
 
+`SourceOwnedReceive.lean` carries source matching through the owned wire
+preflight. It takes the matched send/receive source identities, the receiver's
+static lane/color, and the actual frame-header observations. It derives the
+same resource and source occurrence in both envelopes. For arbitrary received
+payload bytes, the receiver's complete owned-wire check then succeeds exactly
+when those bytes equal the accepted sender's bytes. No successful receive,
+after-view, fresh receiver tag or current receive-pair check is an input.
+Matching header observations alone does not prove payload preservation.
+
+The mixed ordinary/owned fixture applies this result at the next loan after a
+completed visit. Its fresh base and source row are derived before that receive;
+the source-row proof no longer obtains its row number from the later commit.
+The generated claim quantifies over arbitrary candidate bytes. It checks the
+owned envelope, not eventual view issuance: the dormant view slot, nonce space,
+actual value custody and fault/closure obligations remain separate. It does
+not add replay protection to the carrier contract. The fixture proof source is
+`src/g/role_projection/tests/distributed_owned_receive.lean`.
+
 General correspondence for other holder-changing and branch-dependent
 classes remains required. Static class facts are not yet proved for every
 image emitted by Rust projection. The fixture proof source for the prospective

@@ -309,7 +309,7 @@ pub(super) fn write_observations(
     );
     source.insert_str(
         0,
-        "import Hibana.FifoOccurrenceOrigin\nimport Hibana.SourcePublicationPrefix\n",
+        "import Hibana.FifoOccurrenceOrigin\nimport Hibana.SourcePublicationPrefix\nimport Hibana.SourceOwnedReceive\n",
     );
     use std::fmt::Write;
     writeln!(source, "private theorem distributedBeforeFreshReceiptExecution : DistributedSourceExecution distributedImages distributedChoreo 9062\n  (distributedCut0, distributedEntries0) (distributedCut13, distributedEntries13) (distributedRecords.take 8) := by\n  exact {}\n",
@@ -426,8 +426,8 @@ private theorem distributedFreshPreparationExists :
 private def distributedFreshPreparation :=
   (prepareObservedActorBody? distributedImage1 distributedChoreo distributedBefore8 0 0 0 0).get distributedFreshPreparationExists
 
-theorem distributedFreshMixedSourceIdentityBeforeItsNewReceivePair :
-    distributedEntry6.sample.effIndex? = distributedImage1.eventEffIndex? distributedCommit8.step.event := by
+private theorem distributedFreshPreparedSourceIdentity :
+    distributedEntry6.sample.effIndex? = distributedImage1.eventEffIndex? 0 := by
   have sender := (a_measured_distributed_class_has_its_source_word_and_exact_prefix
     (actor := 0) (group := distributedFrameClass0_0) distributedBeforeFreshReceiptExecution (by decide)).1
   have receiver := (a_prepared_wire_operation_extends_its_actors_measured_source_word
@@ -445,9 +445,14 @@ theorem distributedFreshMixedSourceIdentityBeforeItsNewReceivePair :
     (by decide)).1
   exact source_frame_words_match_at_each_common_class_position
     (sentSource := distributedImage0.eventEffIndex?) (receivedSource := distributedImage1.eventEffIndex?)
-    (index := 2) (sent := distributedEntry6.sample.event) (received := distributedCommit8.step.event)
+    (index := 2) (sent := distributedEntry6.sample.event) (received := 0)
     (by decide) sender receiver (by decide) (by decide)
+
+theorem distributedFreshMixedSourceIdentityBeforeItsNewReceivePair :
+    distributedEntry6.sample.effIndex? = distributedImage1.eventEffIndex? distributedCommit8.step.event :=
+  distributedFreshPreparedSourceIdentity
 "#);
+    source.push_str(include_str!("distributed_owned_receive.lean"));
     let directory = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/lean-proof");
     std::fs::create_dir_all(&directory).unwrap();
     std::fs::write(directory.join("DistributedSourceGenerated.lean"), source).unwrap();

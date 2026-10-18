@@ -56,6 +56,14 @@ distributedFirstAcceptedSendHasItsUnpublishedPrefix : ∃ pending,
     pending.length = 1 ∧ ∀ (entry : SourceAcceptance), entry ∈ pending → entry.stamps 0 (distributedCut1.actors 0).snd
 distributedFreshMixedSourceIdentityBeforeItsNewReceivePair : distributedEntry6.sample.effIndex? =
   distributedImage1.eventEffIndex? distributedCommit8.step.event
+distributedFreshOwnedReceiveChecksActualAcceptedBytesBeforeCommit : ∀ (bytes : List Nat),
+  distributedPreparedReceivedSourceFacts.wireMatches 1
+        (have __src := distributedEntry6.sample.wire;
+        { session := __src.session, lane := __src.lane, sender := __src.sender, receiver := __src.receiver,
+          frameLabel := __src.frameLabel, payload := bytes })
+        9062 =
+      true ↔
+    bytes = distributedEntry6.sample.wire.payload
 distributedFreshReceiptAlsoFitsOldBytes : sourceReceivePairCheck distributedSend0 distributedCommit8 distributedImage1
     distributedChoreo 9062 =
   true
