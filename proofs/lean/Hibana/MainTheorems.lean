@@ -31,6 +31,7 @@ import Hibana.ActorReentryCommit
 import Hibana.ActorCandidateAdmission
 import Hibana.ActorOccurrenceHistory
 import Hibana.SendAdmission
+import Hibana.FifoOccurrenceOrigin
 import Hibana.OccurrenceChoiceKnowledge
 import Hibana.ActorChoiceOrigin
 import Hibana.DistributedSourceExecution

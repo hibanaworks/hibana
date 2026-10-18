@@ -231,7 +231,7 @@ fn write_observations(
 ) {
     use crate::test_support::{lean_choreo::LeanChoreo, lean_descriptor::descriptor_source};
     let mut source = std::format!(
-        "import Hibana.SendAdmission\nimport Hibana.ActorOccurrenceHistory\n\nset_option maxRecDepth 10000\n\n\
+        "import Hibana.FifoOccurrenceOrigin\nimport Hibana.ActorOccurrenceHistory\n\nset_option maxRecDepth 10000\n\n\
          def mixedSendChoreo : Hibana.Choreo := {}\n\n",
         Steps::lean_source(),
     );
@@ -412,6 +412,43 @@ theorem mixedActualFreshReceiveHasItsExactAcceptedOccurrence :
       mixedGhost4.receive? = some (key, following) ∧
       Hibana.SendAdmissionTrace mixedSendChoreo 9062 ({ mixedCarrier4 with delivered := 3 }) following mixedRecords4 :=
   Hibana.a_fifo_receive_has_its_actual_accepted_source_occurrence mixedPrefix4 (by decide)
+
+theorem mixedEveryOccurrenceHasItsPhysicalPrefixOrdinal :
+    ∀ index record key,
+      mixedRecords4[index]? = some record → mixedGhost4.accepted[index]? = some key →
+      key.globalId = record.2 ∧
+        key.iteration = Hibana.sourceOccurrenceOrdinal mixedRecords4 index record.2 :=
+  Hibana.an_accepted_source_occurrence_has_its_exact_fifo_prefix_ordinal mixedPrefix4
+
+theorem mixedCheckedFreshReceiptBindsItsActualSourceInstance :
+    ∃ key following,
+      mixedGhost4.accepted[mixedCarrier4.delivered]? = some key ∧
+      key.globalId = mixedEvent2 ∧
+      key.iteration = Hibana.sourceOccurrenceOrdinal mixedRecords4 mixedCarrier4.delivered mixedEvent2 ∧
+      mixedSend2.effIndex? = some mixedEvent2 ∧
+      mixedSend2.wire.identifies ((mixedCarrier4.frames[2]?).get (by decide)) ∧
+      mixedFreshSource.resource = mixedFreshReceiptFacts.resource ∧
+      mixedFreshSource.effIndex = mixedFreshReceiptFacts.effIndex ∧
+      mixedGhost4.receive? = some (key, following) ∧
+      Hibana.SendAdmissionTrace mixedSendChoreo 9062
+        ({ mixedCarrier4 with delivered := 3 }) following mixedRecords4 :=
+  Hibana.a_checked_owned_fifo_receipt_retains_its_actual_source_instance
+    mixedPrefix4 (by decide) (by decide)
+    ((Option.some_get (x := mixedSend2.ownedFacts? mixedSendChoreo) (by decide)).symm)
+    mixedReceipt1IsSourceChecked
+    ((Option.some_get (x := mixedReceipt1.ownedFacts? mixedWorkerImage mixedSendChoreo) (by decide)).symm)
+    rfl
+
+theorem mixedIdenticalLoanBytesDoNotIdentifyTheFreshReceiptAsTheFirstVisit :
+    mixedWire0.payload = mixedWire2.payload ∧
+      ¬∃ key, mixedGhost4.accepted[mixedCarrier4.delivered]? = some key ∧ key.iteration = 0 := by
+  constructor
+  · rfl
+  · rintro ⟨key, keyAt, old⟩
+    have ordinal := mixedEveryOccurrenceHasItsPhysicalPrefixOrdinal
+      mixedCarrier4.delivered (mixedSend2, mixedEvent2) key (by decide) keyAt
+    have exactOrdinal : key.iteration = 1 := ordinal.2
+    omega
 "#);
     let directory = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/lean-proof");
     std::fs::create_dir_all(&directory).unwrap();

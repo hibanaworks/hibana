@@ -389,6 +389,56 @@ Hibana.EndpointDelegation.withOwner_same : ∀ (owners : Hibana.EndpointDelegati
         (And (@Eq.{1} Nat sample.polls (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1))))
           (And (@Eq.{1} Nat sample.publications (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0))))
             (And (@Eq.{1} Bool sample.done true) (@Eq.{1} Bool sample.retained false))))
+@Hibana.a_checked_owned_fifo_receipt_retains_its_actual_source_instance : ∀ {choreo : Hibana.Choreo} {session : Nat}
+  {transport next : Hibana.TransportState} {history : Hibana.ElasticAdmissionHistory}
+  {records : List.{0} (Prod.{0, 0} Hibana.SourceSendAdmission Nat)} {frame : Hibana.TransportFrame}
+  {sender : Hibana.SourceSendAdmission} {event : Nat} {sentFacts : Hibana.OwnedSourceFacts}
+  {receiver : Hibana.ActorCommitObservation} {image : Hibana.RustDescriptorImage} {wire : Hibana.OwnedWireObservation}
+  {receivedFacts : Hibana.OwnedCommitFacts},
+  Hibana.SendAdmissionTrace choreo session transport history records →
+    @Eq.{1} Hibana.TransportPoll transport.pollReceive (Hibana.TransportPoll.delivered frame next) →
+      @Eq.{1} (Option.{0} (Prod.{0, 0} Hibana.SourceSendAdmission Nat))
+          (@getElem?.{0, 0, 0} (List.{0} (Prod.{0, 0} Hibana.SourceSendAdmission Nat)) Nat
+            (Prod.{0, 0} Hibana.SourceSendAdmission Nat)
+            (fun as i => @LT.lt.{0} Nat instLTNat i (@List.length.{0} (Prod.{0, 0} Hibana.SourceSendAdmission Nat) as))
+            (@List.instGetElem?NatLtLength.{0} (Prod.{0, 0} Hibana.SourceSendAdmission Nat)) records
+            transport.delivered)
+          (@some.{0} (Prod.{0, 0} Hibana.SourceSendAdmission Nat)
+            (@Prod.mk.{0, 0} Hibana.SourceSendAdmission Nat sender event)) →
+        @Eq.{1} (Option.{0} Hibana.OwnedSourceFacts) (sender.ownedFacts? choreo)
+            (@some.{0} Hibana.OwnedSourceFacts sentFacts) →
+          @Eq.{1} Bool (receiver.ownedCheck image choreo wire session) true →
+            @Eq.{1} (Option.{0} Hibana.OwnedCommitFacts) (receiver.ownedFacts? image choreo)
+                (@some.{0} Hibana.OwnedCommitFacts receivedFacts) →
+              @Eq.{1} Hibana.OwnedWireObservation sender.wire wire →
+                @Exists.{1} Hibana.ElasticOccurrenceKey fun key =>
+                  @Exists.{1} Hibana.ElasticAdmissionHistory fun following =>
+                    And
+                      (@Eq.{1} (Option.{0} Hibana.ElasticOccurrenceKey)
+                        (@getElem?.{0, 0, 0} (List.{0} Hibana.ElasticOccurrenceKey) Nat Hibana.ElasticOccurrenceKey
+                          (fun as i => @LT.lt.{0} Nat instLTNat i (@List.length.{0} Hibana.ElasticOccurrenceKey as))
+                          (@List.instGetElem?NatLtLength.{0} Hibana.ElasticOccurrenceKey) history.accepted
+                          transport.delivered)
+                        (@some.{0} Hibana.ElasticOccurrenceKey key))
+                      (And (@Eq.{1} Nat key.globalId event)
+                        (And
+                          (@Eq.{1} Nat key.iteration (Hibana.sourceOccurrenceOrdinal records transport.delivered event))
+                          (And (@Eq.{1} (Option.{0} Nat) sender.effIndex? (@some.{0} Nat event))
+                            (And (wire.identifies frame)
+                              (And
+                                (@Eq.{1} Hibana.EndpointDelegation.EndpointKey sentFacts.resource
+                                  receivedFacts.resource)
+                                (And (@Eq.{1} Nat sentFacts.effIndex receivedFacts.effIndex)
+                                  (And
+                                    (@Eq.{1}
+                                      (Option.{0}
+                                        (Prod.{0, 0} Hibana.ElasticOccurrenceKey Hibana.ElasticAdmissionHistory))
+                                      history.receive?
+                                      (@some.{0}
+                                        (Prod.{0, 0} Hibana.ElasticOccurrenceKey Hibana.ElasticAdmissionHistory)
+                                        (@Prod.mk.{0, 0} Hibana.ElasticOccurrenceKey Hibana.ElasticAdmissionHistory key
+                                          following)))
+                                    (Hibana.SendAdmissionTrace choreo session next following records))))))))
 @Hibana.a_checked_owned_frame_preserves_an_unrelated_local_choice : ∀ {sender : Hibana.SourceSendAdmission}
   {receiver : Hibana.ActorCommitObservation} {receiverImage : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo}
   {session scope : Nat} {sentFacts : Hibana.OwnedSourceFacts} {receivedFacts : Hibana.OwnedCommitFacts}
@@ -975,6 +1025,47 @@ Hibana.EndpointDelegation.withOwner_same : ∀ (owners : Hibana.EndpointDelegati
                   ((@Prod.fst.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance) first).actors actor)
                   ((@Prod.fst.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance) last).actors actor)
                   cleared record)))
+@Hibana.a_fifo_receipt_reconstructs_its_source_occurrence_without_a_shared_visit : ∀ {choreo : Hibana.Choreo}
+  {session : Nat} {transport next : Hibana.TransportState} {history : Hibana.ElasticAdmissionHistory}
+  {records : List.{0} (Prod.{0, 0} Hibana.SourceSendAdmission Nat)} {frame : Hibana.TransportFrame},
+  Hibana.SendAdmissionTrace choreo session transport history records →
+    @Eq.{1} Hibana.TransportPoll transport.pollReceive (Hibana.TransportPoll.delivered frame next) →
+      @Exists.{1} Hibana.SourceSendAdmission fun sample =>
+        @Exists.{1} Nat fun event =>
+          @Exists.{1} Hibana.ElasticOccurrenceKey fun key =>
+            @Exists.{1} Hibana.ElasticAdmissionHistory fun following =>
+              And
+                (@Eq.{1} (Option.{0} (Prod.{0, 0} Hibana.SourceSendAdmission Nat))
+                  (@getElem?.{0, 0, 0} (List.{0} (Prod.{0, 0} Hibana.SourceSendAdmission Nat)) Nat
+                    (Prod.{0, 0} Hibana.SourceSendAdmission Nat)
+                    (fun as i =>
+                      @LT.lt.{0} Nat instLTNat i (@List.length.{0} (Prod.{0, 0} Hibana.SourceSendAdmission Nat) as))
+                    (@List.instGetElem?NatLtLength.{0} (Prod.{0, 0} Hibana.SourceSendAdmission Nat)) records
+                    transport.delivered)
+                  (@some.{0} (Prod.{0, 0} Hibana.SourceSendAdmission Nat)
+                    (@Prod.mk.{0, 0} Hibana.SourceSendAdmission Nat sample event)))
+                (And
+                  (@Eq.{1} (Option.{0} Hibana.ElasticOccurrenceKey)
+                    (@getElem?.{0, 0, 0} (List.{0} Hibana.ElasticOccurrenceKey) Nat Hibana.ElasticOccurrenceKey
+                      (fun as i => @LT.lt.{0} Nat instLTNat i (@List.length.{0} Hibana.ElasticOccurrenceKey as))
+                      (@List.instGetElem?NatLtLength.{0} Hibana.ElasticOccurrenceKey) history.accepted
+                      transport.delivered)
+                    (@some.{0} Hibana.ElasticOccurrenceKey key))
+                  (And (@Eq.{1} Bool (sample.check choreo session) true)
+                    (And (@Eq.{1} (Option.{0} Nat) sample.effIndex? (@some.{0} Nat event))
+                      (And (sample.wire.identifies frame)
+                        (And (@Eq.{1} Nat key.globalId event)
+                          (And
+                            (@Eq.{1} Nat key.iteration
+                              (Hibana.sourceOccurrenceOrdinal records transport.delivered event))
+                            (And
+                              (@Eq.{1}
+                                (Option.{0} (Prod.{0, 0} Hibana.ElasticOccurrenceKey Hibana.ElasticAdmissionHistory))
+                                history.receive?
+                                (@some.{0} (Prod.{0, 0} Hibana.ElasticOccurrenceKey Hibana.ElasticAdmissionHistory)
+                                  (@Prod.mk.{0, 0} Hibana.ElasticOccurrenceKey Hibana.ElasticAdmissionHistory key
+                                    following)))
+                              (Hibana.SendAdmissionTrace choreo session next following records))))))))
 @Hibana.a_fifo_receive_has_its_actual_accepted_source_occurrence : ∀ {choreo : Hibana.Choreo} {session : Nat}
   {transport next : Hibana.TransportState} {history : Hibana.ElasticAdmissionHistory}
   {records : List.{0} (Prod.{0, 0} Hibana.SourceSendAdmission Nat)} {frame : Hibana.TransportFrame},
@@ -1779,6 +1870,90 @@ Hibana.a_pending_payload_requires_its_own_send : ∀ (resource : Nat) (sent : Op
           (And (@LE.le.{0} Nat instLENat roll.eventStart required)
             (@LT.lt.{0} Nat instLTNat required
               (@HAdd.hAdd.{0, 0, 0} Nat Nat Nat (@instHAdd.{0} Nat instAddNat) roll.eventStart roll.eventLength))))
+@Hibana.a_prospective_owned_receipt_has_its_distributed_fifo_source_instance : ∀
+  {images : Nat → Hibana.RustDescriptorImage} {choreo : Hibana.Choreo} {session : Nat}
+  {initial : Nat → Prod.{0, 0} Hibana.ActorProgressObservation Nat}
+  {last : Prod.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance)}
+  {records : List.{0} (Prod.{0, 0} Nat Hibana.ActorCommitRecord)} {channel : Hibana.TransportChannel}
+  {frame : Hibana.TransportFrame} {next : Hibana.TransportState} {entry : Hibana.SourceAcceptance}
+  {sentFacts : Hibana.OwnedSourceFacts} {receiver : Hibana.ActorCommitObservation} {image : Hibana.RustDescriptorImage}
+  {wire : Hibana.OwnedWireObservation} {receivedFacts : Hibana.OwnedCommitFacts},
+  Hibana.DistributedSourceExecution images choreo session
+      (@Prod.mk.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance)
+        (Hibana.DistributedSourceCut.initial initial) (@List.nil.{0} Hibana.SourceAcceptance))
+      last records →
+    @Eq.{1} Hibana.TransportPoll
+        ((@Prod.fst.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance) last).carriers
+            channel).pollReceive
+        (Hibana.TransportPoll.delivered frame next) →
+      @Eq.{1} (Option.{0} Hibana.SourceAcceptance)
+          (@getElem?.{0, 0, 0} (List.{0} Hibana.SourceAcceptance) Nat Hibana.SourceAcceptance
+            (fun as i => @LT.lt.{0} Nat instLTNat i (@List.length.{0} Hibana.SourceAcceptance as))
+            (@List.instGetElem?NatLtLength.{0} Hibana.SourceAcceptance)
+            (Hibana.sourceChannelEntries
+              (@Prod.snd.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance) last) channel)
+            ((@Prod.fst.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance) last).carriers
+                channel).delivered)
+          (@some.{0} Hibana.SourceAcceptance entry) →
+        @Eq.{1} (Option.{0} Hibana.OwnedSourceFacts) (entry.sample.ownedFacts? choreo)
+            (@some.{0} Hibana.OwnedSourceFacts sentFacts) →
+          @Eq.{1} Bool (receiver.ownedCheck image choreo wire session) true →
+            @Eq.{1} (Option.{0} Hibana.OwnedCommitFacts) (receiver.ownedFacts? image choreo)
+                (@some.{0} Hibana.OwnedCommitFacts receivedFacts) →
+              @Eq.{1} Hibana.OwnedWireObservation entry.sample.wire wire →
+                @Exists.{1} Hibana.ElasticAdmissionHistory fun history =>
+                  @Exists.{1} Hibana.ElasticOccurrenceKey fun key =>
+                    @Exists.{1} Hibana.ElasticAdmissionHistory fun following =>
+                      And
+                        (Hibana.SendAdmissionTrace choreo session
+                          ((@Prod.fst.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance)
+                                last).carriers
+                            channel)
+                          history
+                          (Hibana.sourceChannelRecords
+                            (@Prod.snd.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance) last)
+                            channel))
+                        (And
+                          (@Eq.{1} (Option.{0} Hibana.ElasticOccurrenceKey)
+                            (@getElem?.{0, 0, 0} (List.{0} Hibana.ElasticOccurrenceKey) Nat Hibana.ElasticOccurrenceKey
+                              (fun as i => @LT.lt.{0} Nat instLTNat i (@List.length.{0} Hibana.ElasticOccurrenceKey as))
+                              (@List.instGetElem?NatLtLength.{0} Hibana.ElasticOccurrenceKey) history.accepted
+                              ((@Prod.fst.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance)
+                                      last).carriers
+                                  channel).delivered)
+                            (@some.{0} Hibana.ElasticOccurrenceKey key))
+                          (And (@Eq.{1} Nat key.globalId entry.event)
+                            (And
+                              (@Eq.{1} Nat key.iteration
+                                (Hibana.sourceOccurrenceOrdinal
+                                  (Hibana.sourceChannelRecords
+                                    (@Prod.snd.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance)
+                                      last)
+                                    channel)
+                                  ((@Prod.fst.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance)
+                                          last).carriers
+                                      channel).delivered
+                                  entry.event))
+                              (And (@Eq.{1} (Option.{0} Nat) entry.sample.effIndex? (@some.{0} Nat entry.event))
+                                (And (wire.identifies frame)
+                                  (And
+                                    (@Eq.{1} Hibana.EndpointDelegation.EndpointKey sentFacts.resource
+                                      receivedFacts.resource)
+                                    (And (@Eq.{1} Nat sentFacts.effIndex receivedFacts.effIndex)
+                                      (And
+                                        (@Eq.{1}
+                                          (Option.{0}
+                                            (Prod.{0, 0} Hibana.ElasticOccurrenceKey Hibana.ElasticAdmissionHistory))
+                                          history.receive?
+                                          (@some.{0}
+                                            (Prod.{0, 0} Hibana.ElasticOccurrenceKey Hibana.ElasticAdmissionHistory)
+                                            (@Prod.mk.{0, 0} Hibana.ElasticOccurrenceKey Hibana.ElasticAdmissionHistory
+                                              key following)))
+                                        (Hibana.SendAdmissionTrace choreo session next following
+                                          (Hibana.sourceChannelRecords
+                                            (@Prod.snd.{0, 0} Hibana.DistributedSourceCut
+                                              (List.{0} Hibana.SourceAcceptance) last)
+                                            channel))))))))))
 @Hibana.a_published_occurrence_teaches_its_local_route_arm : ∀ {memberships : List.{0} (Prod.{0, 0} Nat Nat)}
   {scope : Nat} {previous : Option.{0} Hibana.RouteArm} {arm : Hibana.RouteArm}
   {result : Prod.{0, 0} Nat (Option.{0} Hibana.RouteArm)},
@@ -4089,6 +4264,25 @@ Hibana.ambiguous_receive_fails_closed : ∀ (before : Hibana.CompactGlobalState)
           (@List.instMembership.{0} Hibana.EndpointDelegation.EndpointKey) resources key →
         @Eq.{1} (Option.{0} Nat) (Hibana.EndpointDelegation.instantiate issuance (run.owners key))
           (Hibana.EndpointDelegation.instantiate issuance (owners key))
+@Hibana.an_accepted_source_occurrence_has_its_exact_fifo_prefix_ordinal : ∀ {choreo : Hibana.Choreo} {session : Nat}
+  {transport : Hibana.TransportState} {history : Hibana.ElasticAdmissionHistory}
+  {records : List.{0} (Prod.{0, 0} Hibana.SourceSendAdmission Nat)},
+  Hibana.SendAdmissionTrace choreo session transport history records →
+    ∀ (index : Nat) (record : Prod.{0, 0} Hibana.SourceSendAdmission Nat) (key : Hibana.ElasticOccurrenceKey),
+      @Eq.{1} (Option.{0} (Prod.{0, 0} Hibana.SourceSendAdmission Nat))
+          (@getElem?.{0, 0, 0} (List.{0} (Prod.{0, 0} Hibana.SourceSendAdmission Nat)) Nat
+            (Prod.{0, 0} Hibana.SourceSendAdmission Nat)
+            (fun as i => @LT.lt.{0} Nat instLTNat i (@List.length.{0} (Prod.{0, 0} Hibana.SourceSendAdmission Nat) as))
+            (@List.instGetElem?NatLtLength.{0} (Prod.{0, 0} Hibana.SourceSendAdmission Nat)) records index)
+          (@some.{0} (Prod.{0, 0} Hibana.SourceSendAdmission Nat) record) →
+        @Eq.{1} (Option.{0} Hibana.ElasticOccurrenceKey)
+            (@getElem?.{0, 0, 0} (List.{0} Hibana.ElasticOccurrenceKey) Nat Hibana.ElasticOccurrenceKey
+              (fun as i => @LT.lt.{0} Nat instLTNat i (@List.length.{0} Hibana.ElasticOccurrenceKey as))
+              (@List.instGetElem?NatLtLength.{0} Hibana.ElasticOccurrenceKey) history.accepted index)
+            (@some.{0} Hibana.ElasticOccurrenceKey key) →
+          And (@Eq.{1} Nat key.globalId (@Prod.snd.{0, 0} Hibana.SourceSendAdmission Nat record))
+            (@Eq.{1} Nat key.iteration
+              (Hibana.sourceOccurrenceOrdinal records index (@Prod.snd.{0, 0} Hibana.SourceSendAdmission Nat record)))
 @Hibana.an_accepted_source_send_has_actual_prerequisite_origins : ∀ {sample : Hibana.SourceSendAdmission}
   {choreo : Hibana.Choreo} {session previousPath event : Nat} {cut : Hibana.ActorAdmissionObservation}
   {data : Hibana.DecodedActorOrder} {path : Hibana.EndpointDelegation.NormalizedPath} {row : Hibana.DecodedActorRow}

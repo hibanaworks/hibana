@@ -52,4 +52,20 @@ distributedOldWitnessCannotIdentifyTheFreshFifoHead : ∀ (entry : SourceAccepta
           distributedChannel8)[(distributedCut13.carriers distributedChannel8).delivered]? =
       some entry →
     entry.carrierWitness ≠ distributedEntry0.carrierWitness
+distributedProspectiveReceiptHasItsSourceInstanceBeforePairValidation : ∃ history key following,
+  SendAdmissionTrace distributedChoreo 9062 (distributedCut13.carriers distributedChannel8) history
+      (sourceChannelRecords distributedEntries13 distributedChannel8) ∧
+    history.accepted[(distributedCut13.carriers distributedChannel8).delivered]? = some key ∧
+      key.globalId = distributedEntry6.event ∧
+        key.iteration =
+            sourceOccurrenceOrdinal (sourceChannelRecords distributedEntries13 distributedChannel8)
+              (distributedCut13.carriers distributedChannel8).delivered distributedEntry6.event ∧
+          distributedEntry6.sample.effIndex? = some distributedEntry6.event ∧
+            distributedEntry6.sample.wire.identifies
+                ((distributedCut13.carriers distributedChannel8).frames[2]?.get ⋯) ∧
+              distributedFreshSentFacts.resource = distributedFreshReceivedFacts.resource ∧
+                distributedFreshSentFacts.effIndex = distributedFreshReceivedFacts.effIndex ∧
+                  history.receive? = some (key, following) ∧
+                    SendAdmissionTrace distributedChoreo 9062 distributedTransport14 following
+                      (sourceChannelRecords distributedEntries13 distributedChannel8)
 distributedRepeatedLoanHasIdenticalBytes : distributedWire0 = distributedWire6 ∧ distributedWire6 = distributedWire8

@@ -65,7 +65,7 @@ bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" build-serial "${PROOF_
 bash "${ROOT_DIR}/.github/scripts/check_lean_claim_surface.sh"
 static_audit_output="$(run_audit \
   theorem-inventory \
-  --static "${PROOF_DIR}" "${STATIC_CLAIM_SNAPSHOT}" 1042 629 301 112)"
+  --static "${PROOF_DIR}" "${STATIC_CLAIM_SNAPSHOT}" 1046 633 301 112)"
 printf '%s\n' "${static_audit_output}"
 printf '%s\n' "${static_audit_output}" | bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard markers static
 bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" theorem-inventory \
@@ -238,10 +238,10 @@ CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --li
   -- --exact
 bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${MIXED_SEND_ADMISSION_GENERATED}" "ordinary and owned source acceptances"
 run_audit generated-axioms --kernel "${MIXED_SEND_ADMISSION_GENERATED}" "${PROOF_DIR}" \
-  "${PROOF_DIR}/mixed-send-admission-generated-claim-surface.txt" 19
+  "${PROOF_DIR}/mixed-send-admission-generated-claim-surface.txt" 22
 bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${DISTRIBUTED_SOURCE_GENERATED}" "joint distributed source boundaries"
 run_audit generated-axioms --kernel "${DISTRIBUTED_SOURCE_GENERATED}" "${PROOF_DIR}" \
-  "${PROOF_DIR}/distributed-source-generated-claim-surface.txt" 11
+  "${PROOF_DIR}/distributed-source-generated-claim-surface.txt" 12
 CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib \
   g::role_projection::tests::occurrence_choice::changing_rolled_loans_teach_only_the_received_occurrences_choices \
   -- --exact

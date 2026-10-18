@@ -13,6 +13,25 @@ mixedActualFreshReceiveHasItsExactAcceptedOccurrence : ∃ sample eventId key fo
                       { channel := __src.channel, frames := __src.frames, delivered := 3,
                         peerClosed := __src.peerClosed })
                       following mixedRecords4
+mixedCheckedFreshReceiptBindsItsActualSourceInstance : ∃ key following,
+  mixedGhost4.accepted[mixedCarrier4.delivered]? = some key ∧
+    key.globalId = mixedEvent2 ∧
+      key.iteration = Hibana.sourceOccurrenceOrdinal mixedRecords4 mixedCarrier4.delivered mixedEvent2 ∧
+        mixedSend2.effIndex? = some mixedEvent2 ∧
+          mixedSend2.wire.identifies (mixedCarrier4.frames[2]?.get ⋯) ∧
+            mixedFreshSource.resource = mixedFreshReceiptFacts.resource ∧
+              mixedFreshSource.effIndex = mixedFreshReceiptFacts.effIndex ∧
+                mixedGhost4.receive? = some (key, following) ∧
+                  Hibana.SendAdmissionTrace mixedSendChoreo 9062
+                    (have __src := mixedCarrier4;
+                    { channel := __src.channel, frames := __src.frames, delivered := 3,
+                      peerClosed := __src.peerClosed })
+                    following mixedRecords4
+mixedEveryOccurrenceHasItsPhysicalPrefixOrdinal : ∀ (index : Nat) (record : Hibana.SourceSendAdmission × Nat)
+  (key : Hibana.ElasticOccurrenceKey),
+  mixedRecords4[index]? = some record →
+    mixedGhost4.accepted[index]? = some key →
+      key.globalId = record.snd ∧ key.iteration = Hibana.sourceOccurrenceOrdinal mixedRecords4 index record.snd
 mixedFirstLoanWasDelivered : Hibana.SendAdmissionTrace mixedSendChoreo 9062 mixedCarrierFirstLoanReceived
   mixedGhostFirstLoanReceived mixedRecords2
 mixedFirstVisitWasDelivered : Hibana.SendAdmissionTrace mixedSendChoreo 9062 mixedCarrierFirstComplete
@@ -20,6 +39,8 @@ mixedFirstVisitWasDelivered : Hibana.SendAdmissionTrace mixedSendChoreo 9062 mix
 mixedFreshBytesBindTheActualReceiverWithoutSenderPublication : mixedFreshSource.resource =
     mixedFreshReceiptFacts.resource ∧
   mixedFreshSource.effIndex = mixedFreshReceiptFacts.effIndex
+mixedIdenticalLoanBytesDoNotIdentifyTheFreshReceiptAsTheFirstVisit : mixedWire0.payload = mixedWire2.payload ∧
+  ¬∃ key, mixedGhost4.accepted[mixedCarrier4.delivered]? = some key ∧ key.iteration = 0
 mixedOrdinaryFrameCannotBeOmitted : ¬Hibana.SendAdmissionTrace mixedSendChoreo 9062 mixedCarrier4 mixedGhost4
     [(mixedSend0, mixedEvent0), (mixedSend2, mixedEvent2), (mixedSend3, mixedEvent3)]
 mixedOrdinaryFramesHaveNoOwnedResource : mixedSend1.ownedFacts? mixedSendChoreo = none ∧

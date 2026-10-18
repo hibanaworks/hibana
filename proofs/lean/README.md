@@ -158,6 +158,21 @@ actual FIFO head and its transport observation distinguish the second loan.
 These identifiers belong only to the test carrier's copied observations;
 they are neither wire fields nor runtime admission authority.
 
+`FifoOccurrenceOrigin.lean` derives an occurrence's exact ordinal from the
+complete acceptance prefix. This works for an arbitrary number of independently
+advancing visits and retains ordinary messages between owned sends. A prospective
+owned receipt is tied to that exact accepted source instance and its checked
+resource/envelope before asserting the new receive-pair relation. Neither the
+receiver's local visit nor the sender's publication is a premise. The Tokio
+fixture instantiates this result at the cut with owner count eight and worker
+count three; identical loan bytes cannot make its second receipt the first.
+
+This result requires that the accepted source frame is owned and that the
+transport preserves its payload bytes. Deriving source kind and order for every
+mixed ordinary/owned receive, and agreement of its physical actor bindings,
+remain part of the source-word refinement. The earlier boundaries in the joint
+execution still carry their stated receive-pair obligations.
+
 This is a joint successful-boundary refinement and concrete qualification.
 Receive-pair correspondence is an explicit obligation of the relation, not
 a proof that every possible Rust history already satisfies it. The general
@@ -193,12 +208,15 @@ per-class execution order and composing it with custody remain necessary.
 A separate public-API probe uses `seq(roll(A → B; B → A), B → A Finish)`.
 Projection accepts it. After one exchange, A can wait for `Finish` while B
 waits for the next exchange; neither receive reports an error before the
-external watchdog expires. With B sending `Finish`, the same protocol completes.
+external watchdog expires. With B sending `Finish`, the same protocol completes,
+and both roles can then perform another rolled exchange. Thus `Finish` does
+not retire this elastic region. An explicit finite route between repeating and
+sending `Finish` is a different protocol and is rejected for controller mismatch.
 The source frontier still has enabled sends, so this is not a counterexample
 to the existing enabled-transition theorem. It shows why that theorem alone
-does not establish progress of the currently borrowed public calls. Loop-exit
-choice knowledge and the exact application/executor conditions must be resolved
-before claiming the stronger distributed public-call result. A source-ready
+does not establish progress of the currently borrowed public calls. Application
+operation scheduling must be distinguished from the existence of an enabled
+protocol transition before claiming a stronger distributed public-call result. A source-ready
 send must not be treated as an available callable Endpoint by assumption.
 
 The nested-choice fixture now records all twenty-two operations in three

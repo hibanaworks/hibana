@@ -242,6 +242,10 @@ pub(super) fn write_observations(
         operations,
         &std::vec![(0, 0); operations.len()],
     );
+    source.insert_str(0, "import Hibana.FifoOccurrenceOrigin\n");
+    use std::fmt::Write;
+    writeln!(source, "private theorem distributedBeforeFreshReceiptExecution : DistributedSourceExecution distributedImages distributedChoreo 9062\n  (distributedCut0, distributedEntries0) (distributedCut13, distributedEntries13) (distributedRecords.take 8) := by\n  exact {}\n",
+        (1..=13).fold(".refl".into(), |proof, boundary| std::format!("(.tail {proof} distributedStep{boundary})"))).unwrap();
     source.push_str(r#"
 theorem distributedMixedCutKeepsIndependentActorVisits :
     (distributedCut13.actors 0).2 = 8 ∧
@@ -304,6 +308,33 @@ theorem distributedActualReceiveBoundaries
       DistributedSourceExecution distributedImages distributedChoreo 9062
         after (distributedCut24, distributedEntries24) later :=
   a_logged_receive_has_its_exact_fifo_acceptance distributedActualExecution member receiveAt
+
+def distributedFreshSentFacts := (distributedEntry6.sample.ownedFacts? distributedChoreo).get (by decide)
+def distributedFreshReceivedFacts := (distributedCommit8.step.ownedFacts? distributedImage1 distributedChoreo).get (by decide)
+
+theorem distributedProspectiveReceiptHasItsSourceInstanceBeforePairValidation :
+    ∃ history key following,
+      SendAdmissionTrace distributedChoreo 9062 (distributedCut13.carriers distributedChannel8) history
+        (sourceChannelRecords distributedEntries13 distributedChannel8) ∧
+      history.accepted[(distributedCut13.carriers distributedChannel8).delivered]? = some key ∧
+      key.globalId = distributedEntry6.event ∧
+      key.iteration = sourceOccurrenceOrdinal
+        (sourceChannelRecords distributedEntries13 distributedChannel8)
+        (distributedCut13.carriers distributedChannel8).delivered distributedEntry6.event ∧
+      distributedEntry6.sample.effIndex? = some distributedEntry6.event ∧
+      distributedEntry6.sample.wire.identifies
+        (((distributedCut13.carriers distributedChannel8).frames[2]?).get (by decide)) ∧
+      distributedFreshSentFacts.resource = distributedFreshReceivedFacts.resource ∧
+      distributedFreshSentFacts.effIndex = distributedFreshReceivedFacts.effIndex ∧
+      history.receive? = some (key, following) ∧
+      SendAdmissionTrace distributedChoreo 9062 distributedTransport14 following
+        (sourceChannelRecords distributedEntries13 distributedChannel8) :=
+  a_prospective_owned_receipt_has_its_distributed_fifo_source_instance
+    distributedBeforeFreshReceiptExecution (by decide) distributedFreshReceiptHasItsActualFifoHead
+    ((Option.some_get (x := distributedEntry6.sample.ownedFacts? distributedChoreo) (by decide)).symm)
+    (by decide)
+    ((Option.some_get (x := distributedCommit8.step.ownedFacts? distributedImage1 distributedChoreo) (by decide)).symm)
+    rfl
 "#);
     let directory = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/lean-proof");
     std::fs::create_dir_all(&directory).unwrap();
