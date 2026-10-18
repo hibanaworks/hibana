@@ -8,17 +8,6 @@ private instance : ReflBEq Nat where
     change decide (a = a) = true
     exact decide_eq_true rfl
 
--- Keep the finite enumeration proof constructive, including witness extraction.
-private theorem class_range_has_no_duplicates : ∀ count : Nat, (List.range count).Nodup
-  | 0 => .nil
-  | count + 1 => by
-      rw [List.range_succ, List.nodup_append]
-      refine ⟨class_range_has_no_duplicates count, by simp, ?_⟩
-      intro left leftMember right rightMember
-      simp only [List.mem_singleton] at rightMember
-      subst right
-      exact Nat.ne_of_lt (List.mem_range.mp leftMember)
-
 /-- The actual wire selector of a remote actor-local operation. Logical
 message labels and payload schemas are deliberately absent: ordinary and
 owned operations sharing a wire selector belong to the same source word. -/
@@ -52,20 +41,23 @@ def RustDescriptorImage.frameClassChoices? (image : RustDescriptorImage) (choreo
     | 1 => some (scope, .right)
     | _ => none
 
-/-- Immutable source facts for one complete wire group. All quantifiers are
-over decoded rows/paths/scopes and can be checked on the generated image.
-These facts contain neither a trace word nor its desired order as an input.
+/-- Immutable source facts for an ordered group of local operations. All
+quantifiers range over decoded rows/paths/scopes in the generated image.
+A wire group uses every row with its selector. A causal group can include
+operations across selectors, such as the complete local fragment between
+resource handoffs. These facts contain no observed trace word.
 There is no runtime class cursor, epoch, holder map or additional admission
 rule. Conditional physical-holder changes require the separate custody link. -/
-structure SourceFrameClass (image : RustDescriptorImage) (choreo : Choreo) where
-  key : SourceFrameKey
+structure SourceOrderGroup (image : RustDescriptorImage) (choreo : Choreo) where
+  rows : List Nat
+  distinct : rows.Nodup
   data : DecodedActorOrder
   rolls : List DecodedRollRow
   choices : List (Nat × RouteArm)
   decoded : image.decodeActorOrder? choreo = some data
   decodedRolls : image.decodeRollRows? = some rolls
-  nonempty : image.frameClassRows key ≠ []
-  paths : ∀ event ∈ image.frameClassRows key,
+  nonempty : rows ≠ []
+  paths : ∀ event ∈ rows,
     (image.eventEffIndex? event).bind (canonicalEventRoutePath? (canonicalProgramSource choreo)) =
       some (choices.map fun entry => (entry.1, encodeRouteArm entry.2))
   choiceMembers : ∀ entry ∈ choices,
@@ -75,28 +67,28 @@ structure SourceFrameClass (image : RustDescriptorImage) (choreo : Choreo) where
     (fun slot => image.decodeRouteScope? slot == some entry.1) = true
   active : ∀ path ∈ data.normalized.paths,
     choices.all (fun entry => sourcePathArm? (canonicalProgramSource choreo).markers path entry.1 == some entry.2) = true →
-    ∀ event ∈ image.frameClassRows key, (data.activeRows path).any (fun row => row.eventId == event) = true
+    ∀ event ∈ rows, (data.activeRows path).any (fun row => row.eventId == event) = true
   ordered : ∀ path ∈ data.normalized.paths,
-    ∀ left ∈ (image.frameClassRows key).zipIdx, ∀ right ∈ (image.frameClassRows key).zipIdx,
+    ∀ left ∈ rows.zipIdx, ∀ right ∈ rows.zipIdx,
       (data.activeRows path).any (fun row => row.eventId == right.1) = true →
       left.2 < right.2 → left.1 ∈ data.sourcePredecessors path right.1
-  uniformReset : ∀ roll ∈ rolls, ∀ event ∈ image.frameClassRows key,
+  uniformReset : ∀ roll ∈ rolls, ∀ event ∈ rows,
     (event ∈ eventRange roll.eventStart roll.eventLength) ↔
-      (image.frameClassRows key).head nonempty ∈ eventRange roll.eventStart roll.eventLength
+      rows.head nonempty ∈ eventRange roll.eventStart roll.eventLength
   outsideChoices : ∀ roll ∈ rolls,
-    (image.frameClassRows key).head nonempty ∉ eventRange roll.eventStart roll.eventLength →
+    rows.head nonempty ∉ eventRange roll.eventStart roll.eventLength →
     ∀ entry ∈ choices,
       sourceRollResetsRoute? (canonicalProgramSource choreo) roll.scope entry.1 = some false
 
 /-- Position in a proof is derived from the existing completion bits. This
 predicate is not another implementation of progress. The completed rows must
-be exactly an initial segment of this one wire group. -/
+be exactly an initial segment of this ordered source group. -/
 def sourceFramePrefix (rows : List Nat) (snapshot : ActorProgressObservation) (position : Nat) : Prop :=
   position ≤ rows.length ∧ ∀ index event, rows[index]? = some event →
     (snapshot.doneState.done event = true ↔ index < position)
 
-def SourceFrameClass.Known {image : RustDescriptorImage} {choreo : Choreo}
-    (group : SourceFrameClass image choreo) (snapshot : ActorProgressObservation) : Prop :=
+def SourceOrderGroup.Known {image : RustDescriptorImage} {choreo : Choreo}
+    (group : SourceOrderGroup image choreo) (snapshot : ActorProgressObservation) : Prop :=
   ∀ entry ∈ group.choices,
     snapshot.choices.find? (fun row => row.1 == entry.1) = some (entry.1, some entry.2)
 
@@ -121,7 +113,7 @@ private theorem a_checked_frame_commit_was_unfinished
         rfl
 
 private theorem a_known_class_selects_its_source_path
-    {image : RustDescriptorImage} {choreo : Choreo} {group : SourceFrameClass image choreo}
+    {image : RustDescriptorImage} {choreo : Choreo} {group : SourceOrderGroup image choreo}
     {snapshot : ActorProgressObservation} {path : NormalizedPath}
     (known : group.Known snapshot)
     (agrees : observedChoicesAgree (canonicalProgramSource choreo) path snapshot = true) :
@@ -134,7 +126,7 @@ private theorem a_known_class_selects_its_source_path
   exact agreements
 
 private theorem a_checked_commit_retains_class_knowledge
-    {image : RustDescriptorImage} {choreo : Choreo} {group : SourceFrameClass image choreo}
+    {image : RustDescriptorImage} {choreo : Choreo} {group : SourceOrderGroup image choreo}
     {record : ActorCommitRecord} {session : Nat}
     (checked : record.check image choreo session = true)
     (known : group.Known record.step.before) : group.Known record.step.after := by
@@ -145,13 +137,13 @@ private theorem a_checked_commit_retains_class_knowledge
   exact a_source_publication_preserves_existing_choice published (known entry member)
 
 private theorem a_checked_commit_consumes_the_next_class_row
-    {image : RustDescriptorImage} {choreo : Choreo} {group : SourceFrameClass image choreo}
+    {image : RustDescriptorImage} {choreo : Choreo} {group : SourceOrderGroup image choreo}
     {record : ActorCommitRecord} {session position : Nat}
     (checked : record.check image choreo session = true)
-    (initialSegment : sourceFramePrefix (image.frameClassRows group.key) record.step.before position)
-    (member : record.step.event ∈ image.frameClassRows group.key) :
-    (image.frameClassRows group.key)[position]? = some record.step.event ∧
-      sourceFramePrefix (image.frameClassRows group.key) record.step.after (position + 1) := by
+    (initialSegment : sourceFramePrefix group.rows record.step.before position)
+    (member : record.step.event ∈ group.rows) :
+    group.rows[position]? = some record.step.event ∧
+      sourceFramePrefix group.rows record.step.after (position + 1) := by
   obtain ⟨_, data, path, row, binding, decoded, pathAt, rowAt, rowSame, _, active,
       _, parents, completed, _, unchanged, _⟩ :=
     accepted_actor_commit_matches_source_progress (checked_record_is_a_checked_commit checked)
@@ -171,9 +163,9 @@ private theorem a_checked_commit_consumes_the_next_class_row
     by_cases within : index ≤ position
     · exact within
     apply False.elim
-    have positionBound : position < (image.frameClassRows group.key).length := by omega
-    let before := (image.frameClassRows group.key)[position]
-    have beforeAt : (image.frameClassRows group.key)[position]? = some before :=
+    have positionBound : position < group.rows.length := by omega
+    let before := group.rows[position]
+    have beforeAt : group.rows[position]? = some before :=
       List.getElem?_eq_some_iff.mpr ⟨positionBound, rfl⟩
     have required := group.ordered path (List.mem_of_getElem? pathAt)
       (before, position) (List.mk_mem_zipIdx_iff_getElem?.mpr beforeAt)
@@ -188,9 +180,8 @@ private theorem a_checked_commit_consumes_the_next_class_row
   intro other event atOther
   by_cases same : event = record.step.event
   · have indexSame : other = position := by
-      have distinct : (image.frameClassRows group.key).Nodup := by
-        exact List.Pairwise.filter _ (class_range_has_no_duplicates image.eventCount)
-      have atSame : (image.frameClassRows group.key)[other]? = some record.step.event := by
+      have distinct : group.rows.Nodup := group.distinct
+      have atSame : group.rows[other]? = some record.step.event := by
         simpa only [same] using atOther
       exact (List.getElem?_inj (List.getElem?_eq_some_iff.mp atOther).1 distinct).mp
         (atSame.trans eventAt.symm)
@@ -219,7 +210,7 @@ private theorem a_checked_commit_has_its_class_metadata
       exact rest.1.1.1.1.1.1.1
 
 private theorem a_class_choice_has_its_observed_local_slot
-    {image : RustDescriptorImage} {choreo : Choreo} {group : SourceFrameClass image choreo}
+    {image : RustDescriptorImage} {choreo : Choreo} {group : SourceOrderGroup image choreo}
     {snapshot : ActorProgressObservation} {entry : Nat × RouteArm}
     (metadata : snapshot.metadataMatches image group.data.rows = true)
     (member : entry ∈ group.choices) :
@@ -243,10 +234,10 @@ private theorem a_class_choice_has_its_observed_local_slot
     exact ⟨result.2, congrArg some (Prod.ext key rfl)⟩
 
 private theorem a_class_commit_publishes_its_source_knowledge
-    {image : RustDescriptorImage} {choreo : Choreo} {group : SourceFrameClass image choreo}
+    {image : RustDescriptorImage} {choreo : Choreo} {group : SourceOrderGroup image choreo}
     {record : ActorCommitRecord} {session : Nat}
     (checked : record.check image choreo session = true)
-    (member : record.step.event ∈ image.frameClassRows group.key) : group.Known record.step.after := by
+    (member : record.step.event ∈ group.rows) : group.Known record.step.after := by
   have primitive := checked_record_is_a_checked_commit checked
   have metadata := a_checked_commit_has_its_class_metadata group.decoded primitive
   obtain ⟨_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, publication⟩ :=
@@ -261,24 +252,24 @@ private theorem a_class_commit_publishes_its_source_knowledge
     pathAt (group.choiceMembers entry inClass) atSlot published
 
 private theorem a_checked_class_commit_extends_its_word
-    {image : RustDescriptorImage} {choreo : Choreo} {group : SourceFrameClass image choreo}
+    {image : RustDescriptorImage} {choreo : Choreo} {group : SourceOrderGroup image choreo}
     {record : ActorCommitRecord} {session position cycles count : Nat}
     (checked : record.check image choreo session = true)
-    (initialSegment : sourceFramePrefix (image.frameClassRows group.key) record.step.before position)
+    (initialSegment : sourceFramePrefix group.rows record.step.before position)
     (known : 0 < position → group.Known record.step.before)
-    (balance : count = cycles * (image.frameClassRows group.key).length + position) :
+    (balance : count = cycles * group.rows.length + position) :
     ∃ nextCycles nextPosition,
-      sourceFramePrefix (image.frameClassRows group.key) record.step.after nextPosition ∧
+      sourceFramePrefix group.rows record.step.after nextPosition ∧
       (0 < nextPosition → group.Known record.step.after) ∧
-      count + (if record.step.event ∈ image.frameClassRows group.key then 1 else 0) =
-        nextCycles * (image.frameClassRows group.key).length + nextPosition ∧
-      (record.step.event ∈ image.frameClassRows group.key →
-        (image.frameClassRows group.key)[count % (image.frameClassRows group.key).length]? =
+      count + (if record.step.event ∈ group.rows then 1 else 0) =
+        nextCycles * group.rows.length + nextPosition ∧
+      (record.step.event ∈ group.rows →
+        group.rows[count % group.rows.length]? =
           some record.step.event) := by
-  by_cases member : record.step.event ∈ image.frameClassRows group.key
+  by_cases member : record.step.event ∈ group.rows
   · obtain ⟨atNext, nextSegment⟩ := a_checked_commit_consumes_the_next_class_row checked initialSegment member
     have bound := (List.getElem?_eq_some_iff.mp atNext).1
-    have residue : count % (image.frameClassRows group.key).length = position := by
+    have residue : count % group.rows.length = position := by
       simp only [balance, Nat.add_mod, Nat.mul_mod, Nat.mod_self, Nat.mul_zero,
         Nat.zero_mod, Nat.zero_add, Nat.mod_eq_of_lt bound]
     refine ⟨cycles, position + 1, nextSegment,
@@ -299,7 +290,7 @@ private theorem a_checked_class_commit_extends_its_word
     · exact fun impossible => False.elim (member impossible)
 
 private theorem a_class_reset_has_its_real_source_preflight
-    {image : RustDescriptorImage} {choreo : Choreo} {group : SourceFrameClass image choreo}
+    {image : RustDescriptorImage} {choreo : Choreo} {group : SourceOrderGroup image choreo}
     {before base : ActorProgressObservation} {previousPath nextPath scope event : Nat}
     {roll : DecodedRollRow}
     (prepared : prepareObservedActorBody? image choreo before
@@ -350,28 +341,28 @@ private theorem a_class_reset_changes_exactly_its_source_bits
   cases snapshot.steps[event]? <;> simp
 
 private theorem an_actual_class_reset_keeps_an_empty_or_complete_word_boundary
-    {image : RustDescriptorImage} {choreo : Choreo} {group : SourceFrameClass image choreo}
+    {image : RustDescriptorImage} {choreo : Choreo} {group : SourceOrderGroup image choreo}
     {before base : ActorProgressObservation} {previousPath nextPath scope event position : Nat}
     {roll : DecodedRollRow}
     (prepared : prepareObservedActorBody? image choreo before
       previousPath nextPath scope event = some (roll, base))
-    (initialSegment : sourceFramePrefix (image.frameClassRows group.key) before position)
+    (initialSegment : sourceFramePrefix group.rows before position)
     (known : 0 < position → group.Known before) :
-    (sourceFramePrefix (image.frameClassRows group.key) base position ∧
+    (sourceFramePrefix group.rows base position ∧
       (0 < position → group.Known base)) ∨
-    ((position = 0 ∨ position = (image.frameClassRows group.key).length) ∧
-      sourceFramePrefix (image.frameClassRows group.key) base 0) := by
+    ((position = 0 ∨ position = group.rows.length) ∧
+      sourceFramePrefix group.rows base 0) := by
   obtain ⟨previous, choices, previousAt, member, scopeAt, baseAt, choicesAt, agrees, complete⟩ :=
     a_class_reset_has_its_real_source_preflight prepared
-  by_cases inside : (image.frameClassRows group.key).head group.nonempty ∈ eventRange roll.eventStart roll.eventLength
+  by_cases inside : group.rows.head group.nonempty ∈ eventRange roll.eventStart roll.eventLength
   · right
-    have ends : position = 0 ∨ position = (image.frameClassRows group.key).length := by
+    have ends : position = 0 ∨ position = group.rows.length := by
       by_cases empty : position = 0
       · exact .inl empty
       right
       have active := group.active previous (List.mem_of_getElem? previousAt)
         (a_known_class_selects_its_source_path (known (by omega)) agrees)
-      have allDone : ∀ target ∈ image.frameClassRows group.key, before.doneState.done target = true := by
+      have allDone : ∀ target ∈ group.rows, before.doneState.done target = true := by
         intro target present
         obtain ⟨row, rowAt, eventAt⟩ := List.any_eq_true.mp (active target present)
         have done := List.all_eq_true.mp complete row rowAt
@@ -380,11 +371,11 @@ private theorem an_actual_class_reset_keeps_an_empty_or_complete_word_boundary
         have same : row.eventId = target := beq_iff_eq.mp eventAt
         simpa only [same, range.1, range.2, decide_true, Bool.true_and, if_true] using done
       have bound := initialSegment.1
-      by_cases equal : position = (image.frameClassRows group.key).length
+      by_cases equal : position = group.rows.length
       · exact equal
-      have indexBound : position < (image.frameClassRows group.key).length := by omega
-      have atRow : (image.frameClassRows group.key)[position]? =
-          some (image.frameClassRows group.key)[position] := List.getElem?_eq_some_iff.mpr ⟨indexBound, rfl⟩
+      have indexBound : position < group.rows.length := by omega
+      have atRow : group.rows[position]? =
+          some group.rows[position] := List.getElem?_eq_some_iff.mpr ⟨indexBound, rfl⟩
       have done := allDone _ (List.mem_of_getElem? atRow)
       have impossible := (initialSegment.2 _ _ atRow).1 done
       omega
@@ -407,20 +398,20 @@ private theorem an_actual_class_reset_keeps_an_empty_or_complete_word_boundary
       simpa only [baseAt, resetObservedActor] using retained
 
 private theorem a_measured_class_commit_extends_its_actual_word
-    {image : RustDescriptorImage} {choreo : Choreo} {group : SourceFrameClass image choreo}
+    {image : RustDescriptorImage} {choreo : Choreo} {group : SourceOrderGroup image choreo}
     {before after : ActorProgressObservation × Nat} {cleared : List Nat}
     {record : ActorCommitRecord} {session position cycles count : Nat}
     (committed : ActorMeasuredCommit image choreo session before after cleared record)
-    (initialSegment : sourceFramePrefix (image.frameClassRows group.key) before.1 position)
+    (initialSegment : sourceFramePrefix group.rows before.1 position)
     (known : 0 < position → group.Known before.1)
-    (balance : count = cycles * (image.frameClassRows group.key).length + position) :
+    (balance : count = cycles * group.rows.length + position) :
     ∃ nextCycles nextPosition,
-      sourceFramePrefix (image.frameClassRows group.key) after.1 nextPosition ∧
+      sourceFramePrefix group.rows after.1 nextPosition ∧
       (0 < nextPosition → group.Known after.1) ∧
-      count + (if record.step.event ∈ image.frameClassRows group.key then 1 else 0) =
-        nextCycles * (image.frameClassRows group.key).length + nextPosition ∧
-      (record.step.event ∈ image.frameClassRows group.key →
-        (image.frameClassRows group.key)[count % (image.frameClassRows group.key).length]? =
+      count + (if record.step.event ∈ group.rows then 1 else 0) =
+        nextCycles * group.rows.length + nextPosition ∧
+      (record.step.event ∈ group.rows →
+        group.rows[count % group.rows.length]? =
           some record.step.event) := by
   cases committed with
   | ordinary checked written =>
@@ -430,20 +421,20 @@ private theorem a_measured_class_commit_extends_its_actual_word
     have valid := (a_measured_commit_retains_its_checked_source_and_wire actualCommit).1
     obtain ⟨base, baseAt, beforeAt, _, afterAt⟩ := prepared_body_reentry_is_derived_before_commit prepared
     rcases an_actual_class_reset_keeps_an_empty_or_complete_word_boundary baseAt initialSegment known with kept | reset
-    · have operationPrefix : sourceFramePrefix (image.frameClassRows group.key) operation.before position := by
+    · have operationPrefix : sourceFramePrefix group.rows operation.before position := by
         simpa only [beforeAt] using kept.1
       have operationKnown : 0 < position → group.Known operation.before := by
         simpa only [beforeAt] using kept.2
       simpa only [afterAt] using a_checked_class_commit_extends_its_word valid operationPrefix operationKnown balance
-    · have operationPrefix : sourceFramePrefix (image.frameClassRows group.key) operation.before 0 := by
+    · have operationPrefix : sourceFramePrefix group.rows operation.before 0 := by
         simpa only [beforeAt] using reset.2
       have operationKnown : 0 < 0 → group.Known operation.before :=
         fun impossible => False.elim (Nat.lt_irrefl 0 impossible)
       rcases reset.1 with empty | full
-      · have startBalance : count = cycles * (image.frameClassRows group.key).length + 0 := by
+      · have startBalance : count = cycles * group.rows.length + 0 := by
           simpa only [empty] using balance
         simpa only [afterAt] using a_checked_class_commit_extends_its_word valid operationPrefix operationKnown startBalance
-      · have startBalance : count = (cycles + 1) * (image.frameClassRows group.key).length + 0 := by
+      · have startBalance : count = (cycles + 1) * group.rows.length + 0 := by
           simpa only [Nat.add_mul, Nat.one_mul, Nat.add_zero, full] using balance
         simpa only [afterAt] using a_checked_class_commit_extends_its_word valid operationPrefix operationKnown startBalance
 
@@ -477,34 +468,34 @@ private theorem a_source_word_extends_by_its_next_actual_letter
     have same : event = actual := by simpa using atIndex
     simpa only [same] using next
 
-private def SourceFrameClass.WordCut {image : RustDescriptorImage} {choreo : Choreo}
-    (group : SourceFrameClass image choreo) (snapshot : ActorProgressObservation) (word : List Nat) : Prop :=
+private def SourceOrderGroup.WordCut {image : RustDescriptorImage} {choreo : Choreo}
+    (group : SourceOrderGroup image choreo) (snapshot : ActorProgressObservation) (word : List Nat) : Prop :=
   ∃ cycles position,
-    sourceFramePrefix (image.frameClassRows group.key) snapshot position ∧
+    sourceFramePrefix group.rows snapshot position ∧
     (0 < position → group.Known snapshot) ∧
-    word.length = cycles * (image.frameClassRows group.key).length + position ∧
-    sourceFrameWord (image.frameClassRows group.key) word
+    word.length = cycles * group.rows.length + position ∧
+    sourceFrameWord group.rows word
 
 private theorem a_measured_class_boundary_extends_its_word_cut
-    {image : RustDescriptorImage} {choreo : Choreo} {group : SourceFrameClass image choreo}
+    {image : RustDescriptorImage} {choreo : Choreo} {group : SourceOrderGroup image choreo}
     {before after : ActorProgressObservation × Nat} {cleared : List Nat}
     {record : ActorCommitRecord} {session : Nat} {word : List Nat}
     (committed : ActorMeasuredCommit image choreo session before after cleared record)
     (cut : group.WordCut before.1 word) :
-    group.WordCut after.1 (word ++ if record.step.event ∈ image.frameClassRows group.key then [record.step.event] else []) := by
+    group.WordCut after.1 (word ++ if record.step.event ∈ group.rows then [record.step.event] else []) := by
   obtain ⟨cycles, position, initialSegment, known, balance, ordered⟩ := cut
   obtain ⟨nextCycles, nextPosition, nextSegment, nextKnown, nextBalance, nextLetter⟩ :=
     a_measured_class_commit_extends_its_actual_word committed initialSegment known balance
   refine ⟨nextCycles, nextPosition, nextSegment, nextKnown, ?_, ?_⟩
-  · by_cases member : record.step.event ∈ image.frameClassRows group.key
+  · by_cases member : record.step.event ∈ group.rows
     · simpa only [List.length_append, if_pos member, List.length_singleton] using nextBalance
     · simpa only [List.length_append, if_neg member, List.length_nil] using nextBalance
-  · by_cases member : record.step.event ∈ image.frameClassRows group.key
+  · by_cases member : record.step.event ∈ group.rows
     · simpa only [if_pos member] using a_source_word_extends_by_its_next_actual_letter ordered (nextLetter member)
     · simpa only [if_neg member, List.append_nil] using ordered
 
 private theorem a_quiet_boundary_preserves_its_word_cut
-    {image : RustDescriptorImage} {choreo : Choreo} {group : SourceFrameClass image choreo}
+    {image : RustDescriptorImage} {choreo : Choreo} {group : SourceOrderGroup image choreo}
     {before after : ActorProgressObservation} {count session : Nat} {word : List Nat}
     (checked : actorCommitMutationHistoryCheck image choreo session before count after count [] = true)
     (cut : group.WordCut before word) : group.WordCut after word := by
@@ -527,13 +518,13 @@ private theorem a_class_record_contributes_exactly_its_own_letter
 
 private theorem a_distributed_class_boundary_extends_its_word_cut
     {images : Nat → RustDescriptorImage} {choreo : Choreo} {session actor : Nat}
-    {group : SourceFrameClass (images actor) choreo}
+    {group : SourceOrderGroup (images actor) choreo}
     {first last : DistributedSourceCut × List SourceAcceptance}
     {logged : Option (Nat × ActorCommitRecord)} {word : List Nat}
     (step : DistributedSourceStep images choreo session first last logged)
     (cut : group.WordCut (first.1.actors actor).1 word) :
     group.WordCut (last.1.actors actor).1
-      (word ++ committedFrameClassWord ((images actor).frameClassRows group.key) actor logged.toList) := by
+      (word ++ committedFrameClassWord group.rows actor logged.toList) := by
   cases step with
   | @quiet source entries changed after checked =>
     by_cases same : actor = changed
@@ -570,38 +561,38 @@ private theorem a_distributed_class_boundary_extends_its_word_cut
     · simpa [DistributedSourceCut.actorAt, DistributedSourceCut.carrierAt,
         committedFrameClassWord, same, Ne.symm same] using cut
 
-/-- An actual measured actor history produces a prefix of its complete wire
-class's cyclic source word. The proof reads checked commits, source-derived
+/-- An actual measured actor history produces a prefix of its ordered
+group's cyclic source word. The proof reads checked commits, source-derived
 resets and committed branch knowledge from the same distributed execution.
 Independent classes/actors can advance or reset arbitrarily between letters.
 The cycles and position in the conclusion are erased witnesses derived from
 the real record word and done bits, not extra runtime progress fields.
 
-`SourceFrameClass` supplies finite static projection facts. Their derivation
+`SourceOrderGroup` supplies finite static projection facts. Their derivation
 for arbitrary generated images and class continuity across changing physical
 holders are separate obligations; this theorem does not replace them with
 an assumption that all actor paths/visits already agree. -/
 theorem a_measured_distributed_class_has_its_source_word_and_exact_prefix
     {images : Nat → RustDescriptorImage} {choreo : Choreo} {session actor : Nat}
-    {group : SourceFrameClass (images actor) choreo}
+    {group : SourceOrderGroup (images actor) choreo}
     {first last : DistributedSourceCut × List SourceAcceptance}
     {records : List (Nat × ActorCommitRecord)}
     (execution : DistributedSourceExecution images choreo session first last records)
-    (initial : ∀ event ∈ (images actor).frameClassRows group.key,
+    (initial : ∀ event ∈ group.rows,
       (first.1.actors actor).1.doneState.done event = false) :
-    sourceFrameWord ((images actor).frameClassRows group.key)
-        (committedFrameClassWord ((images actor).frameClassRows group.key) actor records) ∧
+    sourceFrameWord group.rows
+        (committedFrameClassWord group.rows actor records) ∧
       ∃ cycles position,
-        sourceFramePrefix ((images actor).frameClassRows group.key) (last.1.actors actor).1 position ∧
+        sourceFramePrefix group.rows (last.1.actors actor).1 position ∧
         (0 < position → group.Known (last.1.actors actor).1) ∧
-        (committedFrameClassWord ((images actor).frameClassRows group.key) actor records).length =
-          cycles * ((images actor).frameClassRows group.key).length + position := by
+        (committedFrameClassWord group.rows actor records).length =
+          cycles * group.rows.length + position := by
   have lift : ∀ {before after : DistributedSourceCut × List SourceAcceptance}
       {entries : List (Nat × ActorCommitRecord)},
       DistributedSourceExecution images choreo session before after entries →
       group.WordCut (before.1.actors actor).1 [] →
       group.WordCut (after.1.actors actor).1
-        (committedFrameClassWord ((images actor).frameClassRows group.key) actor entries) := by
+        (committedFrameClassWord group.rows actor entries) := by
     intro before after entries run
     induction run with
     | refl => intro cut; exact cut
@@ -625,24 +616,24 @@ real reset base; an old completed bit cannot substitute the previous letter.
 This proves source-word fidelity, not existence of a callable value or I/O. -/
 theorem a_prospective_class_commit_extends_its_measured_source_word
     {images : Nat → RustDescriptorImage} {choreo : Choreo} {session actor : Nat}
-    {group : SourceFrameClass (images actor) choreo}
+    {group : SourceOrderGroup (images actor) choreo}
     {first last : DistributedSourceCut × List SourceAcceptance}
     {records : List (Nat × ActorCommitRecord)}
     {after : ActorProgressObservation × Nat} {cleared : List Nat} {record : ActorCommitRecord}
     (execution : DistributedSourceExecution images choreo session first last records)
-    (initial : ∀ event ∈ (images actor).frameClassRows group.key,
+    (initial : ∀ event ∈ group.rows,
       (first.1.actors actor).1.doneState.done event = false)
     (committed : ActorMeasuredCommit (images actor) choreo session (last.1.actors actor) after cleared record)
-    (member : record.step.event ∈ (images actor).frameClassRows group.key) :
-    sourceFrameWord ((images actor).frameClassRows group.key)
-        (committedFrameClassWord ((images actor).frameClassRows group.key) actor records ++ [record.step.event]) ∧
-      ((images actor).frameClassRows group.key)[
-        (committedFrameClassWord ((images actor).frameClassRows group.key) actor records).length %
-          ((images actor).frameClassRows group.key).length]? = some record.step.event := by
+    (member : record.step.event ∈ group.rows) :
+    sourceFrameWord group.rows
+        (committedFrameClassWord group.rows actor records ++ [record.step.event]) ∧
+      group.rows[
+        (committedFrameClassWord group.rows actor records).length %
+          group.rows.length]? = some record.step.event := by
   obtain ⟨ordered, cycles, position, initialSegment, known, balance⟩ :=
     a_measured_distributed_class_has_its_source_word_and_exact_prefix execution initial
   have cut : group.WordCut (last.1.actors actor).1
-      (committedFrameClassWord ((images actor).frameClassRows group.key) actor records) :=
+      (committedFrameClassWord group.rows actor records) :=
     ⟨cycles, position, initialSegment, known, balance, ordered⟩
   obtain ⟨_, _, _, _, _, nextOrdered⟩ := a_measured_class_boundary_extends_its_word_cut committed cut
   obtain ⟨_, _, _, _, _, nextLetter⟩ :=
@@ -673,15 +664,15 @@ theorem source_frame_words_match_at_each_common_class_position
   exact Option.some.inj (first.symm.trans ((congrArg (fun rows : List (Option Nat) => rows[index % sentRows.length]?) cycle).trans second))
 
 private theorem a_ready_source_row_is_the_next_class_row
-    {image : RustDescriptorImage} {choreo : Choreo} {group : SourceFrameClass image choreo}
+    {image : RustDescriptorImage} {choreo : Choreo} {group : SourceOrderGroup image choreo}
     {event position : Nat} {snapshot : ActorProgressObservation} {data : DecodedActorOrder}
     {path : NormalizedPath} {row : DecodedActorRow}
     (decoded : image.decodeActorOrder? choreo = some data)
     (pathMember : path ∈ data.normalized.paths) (rowAt : data.rows[event]? = some row)
     (active : row ∈ data.activeRows path) (ready : sourceRowReady data path snapshot row = true)
-    (initialSegment : sourceFramePrefix (image.frameClassRows group.key) snapshot position)
-    (member : event ∈ image.frameClassRows group.key) :
-    (image.frameClassRows group.key)[position]? = some event := by
+    (initialSegment : sourceFramePrefix group.rows snapshot position)
+    (member : event ∈ group.rows) :
+    group.rows[position]? = some event := by
   have rowSame := decoded_actor_row_lookup_preserves_its_index (decoded_actor_order_fields decoded).2.2.2.2.1 rowAt
   have sameData := Option.some.inj (decoded.symm.trans group.decoded)
   subst data
@@ -703,9 +694,9 @@ private theorem a_ready_source_row_is_the_next_class_row
     · exact within
     apply False.elim
     have bound := (List.getElem?_eq_some_iff.mp eventAt).1
-    have positionBound : position < (image.frameClassRows group.key).length := by omega
-    let previous := (image.frameClassRows group.key)[position]
-    have previousAt : (image.frameClassRows group.key)[position]? = some previous :=
+    have positionBound : position < group.rows.length := by omega
+    let previous := group.rows[position]
+    have previousAt : group.rows[position]? = some previous :=
       List.getElem?_eq_some_iff.mpr ⟨positionBound, rfl⟩
     have required := group.ordered path pathMember
       (previous, position) (List.mk_mem_zipIdx_iff_getElem?.mpr previousAt)
@@ -722,12 +713,12 @@ base. Neither a successful post-operation snapshot nor sender publication is
 used. This states the next source letter, not value custody or I/O readiness. -/
 theorem a_prepared_wire_operation_extends_its_actors_measured_source_word
     {images : Nat → RustDescriptorImage} {choreo : Choreo} {session actor previousPath pathIndex event : Nat}
-    {group : SourceFrameClass (images actor) choreo}
+    {group : SourceOrderGroup (images actor) choreo}
     {first last : DistributedSourceCut × List SourceAcceptance}
     {records : List (Nat × ActorCommitRecord)}
     {base : ActorProgressObservation} {data : DecodedActorOrder} {path : NormalizedPath} {row : DecodedActorRow}
     (execution : DistributedSourceExecution images choreo session first last records)
-    (initial : ∀ event ∈ (images actor).frameClassRows group.key,
+    (initial : ∀ event ∈ group.rows,
       (first.1.actors actor).1.doneState.done event = false)
     (decoded : (images actor).decodeActorOrder? choreo = some data)
     (pathAt : data.normalized.paths[pathIndex]? = some path)
@@ -736,33 +727,33 @@ theorem a_prepared_wire_operation_extends_its_actors_measured_source_word
     (origin : ActorSourceCandidateBase
       { snapshot := (last.1.actors actor).1, pathIndex, admitted := [] }
       (images actor) choreo previousPath path row base)
-    (member : event ∈ (images actor).frameClassRows group.key) :
-    sourceFrameWord ((images actor).frameClassRows group.key)
-      (committedFrameClassWord ((images actor).frameClassRows group.key) actor records ++ [event]) ∧
-    ((images actor).frameClassRows group.key)[
-      (committedFrameClassWord ((images actor).frameClassRows group.key) actor records).length %
-        ((images actor).frameClassRows group.key).length]? = some event := by
+    (member : event ∈ group.rows) :
+    sourceFrameWord group.rows
+      (committedFrameClassWord group.rows actor records ++ [event]) ∧
+    group.rows[
+      (committedFrameClassWord group.rows actor records).length %
+        group.rows.length]? = some event := by
   obtain ⟨ordered, cycles, position, initialSegment, known, balance⟩ :=
     a_measured_distributed_class_has_its_source_word_and_exact_prefix execution initial
   have qualify : ∀ {rounds point},
-      sourceFramePrefix ((images actor).frameClassRows group.key) base point →
-      (committedFrameClassWord ((images actor).frameClassRows group.key) actor records).length =
-        rounds * ((images actor).frameClassRows group.key).length + point →
-      ((images actor).frameClassRows group.key)[
-        (committedFrameClassWord ((images actor).frameClassRows group.key) actor records).length %
-          ((images actor).frameClassRows group.key).length]? = some event := by
+      sourceFramePrefix group.rows base point →
+      (committedFrameClassWord group.rows actor records).length =
+        rounds * group.rows.length + point →
+      group.rows[
+        (committedFrameClassWord group.rows actor records).length %
+          group.rows.length]? = some event := by
     intro rounds point initialPart equation
     have next := a_ready_source_row_is_the_next_class_row decoded (List.mem_of_getElem? pathAt)
       rowAt active ready initialPart member
     have bound := (List.getElem?_eq_some_iff.mp next).1
-    have residue : (committedFrameClassWord ((images actor).frameClassRows group.key) actor records).length %
-        ((images actor).frameClassRows group.key).length = point := by
+    have residue : (committedFrameClassWord group.rows actor records).length %
+        group.rows.length = point := by
       simp only [equation, Nat.add_mod, Nat.mul_mod, Nat.mod_self, Nat.mul_zero,
         Nat.zero_mod, Nat.zero_add, Nat.mod_eq_of_lt bound]
     simpa only [residue] using next
-  have next : ((images actor).frameClassRows group.key)[
-      (committedFrameClassWord ((images actor).frameClassRows group.key) actor records).length %
-        ((images actor).frameClassRows group.key).length]? = some event := by
+  have next : group.rows[
+      (committedFrameClassWord group.rows actor records).length %
+        group.rows.length]? = some event := by
     cases origin with
     | current agrees => exact qualify initialSegment balance
     | fresh domain rollMember prepared =>

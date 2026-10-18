@@ -249,12 +249,14 @@ fn write_frame_words(initial: &[ActorSnapshot; 3], source: &mut std::string::Str
                 continue;
             }
             let name = std::format!("distributedFrameClass{actor}_{event}");
-            writeln!(source, "private def {name} : SourceFrameClass distributedImage{actor} distributedChoreo := {{\n\
-              key := (distributedImage{actor}.frameKey? {event}).get (by decide)\n\
+            writeln!(source, "private def distributedFrameKey{actor}_{event} := (distributedImage{actor}.frameKey? {event}).get (by decide)\n\n\
+              private def {name} : SourceOrderGroup distributedImage{actor} distributedChoreo := {{\n\
+              rows := distributedImage{actor}.frameClassRows distributedFrameKey{actor}_{event}\n\
+              distinct := by decide\n\
               data := distributedWordData{actor}\n\
               rolls := distributedWordRolls{actor}\n\
               choices := (distributedImage{actor}.frameClassChoices? distributedChoreo\n\
-                ((distributedImage{actor}.frameKey? {event}).get (by decide))).get (by decide)\n\
+                distributedFrameKey{actor}_{event}).get (by decide)\n\
               decoded := (Option.some_get _).symm\n\
               decodedRolls := (Option.some_get _).symm\n\
               nonempty := by decide\n\
@@ -285,7 +287,7 @@ fn write_frame_words(initial: &[ActorSnapshot; 3], source: &mut std::string::Str
             if matches!(step.action, super::LocalAction::Local { .. }) {
                 writeln!(source, "    have absent : distributedImage{actor}.frameKey? {event} = none := by decide\n    rw [absent] at keyAt\n    cases keyAt").unwrap();
             } else {
-                writeln!(source, r#"    have actual : distributedImage{actor}.frameKey? {event} = some distributedFrameClass{actor}_{event}.key := by decide
+                writeln!(source, r#"    have actual : distributedImage{actor}.frameKey? {event} = some distributedFrameKey{actor}_{event} := by decide
     have same := Option.some.inj (keyAt.symm.trans actual)
     subst key
     exact (a_measured_distributed_class_has_its_source_word_and_exact_prefix

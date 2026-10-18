@@ -1,0 +1,84 @@
+distributedActor0AllFrameClassesFollowTheirSourceWords : ∀ (event : Nat),
+  event ∈ List.range distributedImage0.eventCount →
+    ∀ (key : SourceFrameKey),
+      distributedImage0.frameKey? event = some key →
+        sourceFrameWord (distributedImage0.frameClassRows key)
+          (committedFrameClassWord (distributedImage0.frameClassRows key) 0 distributedRecords)
+distributedActor1AllFrameClassesFollowTheirSourceWords : ∀ (event : Nat),
+  event ∈ List.range distributedImage1.eventCount →
+    ∀ (key : SourceFrameKey),
+      distributedImage1.frameKey? event = some key →
+        sourceFrameWord (distributedImage1.frameClassRows key)
+          (committedFrameClassWord (distributedImage1.frameClassRows key) 1 distributedRecords)
+distributedActor3AllFrameClassesFollowTheirSourceWords : ∀ (event : Nat),
+  event ∈ List.range distributedImage3.eventCount →
+    ∀ (key : SourceFrameKey),
+      distributedImage3.frameKey? event = some key →
+        sourceFrameWord (distributedImage3.frameClassRows key)
+          (committedFrameClassWord (distributedImage3.frameClassRows key) 3 distributedRecords)
+distributedActorHistories : ∀ (actor : Nat),
+  ∃ cleared commits,
+    ActorMeasuredHistory (distributedImages actor) distributedChoreo 9064 (distributedCut0.actors actor)
+      (distributedCut36.actors actor) cleared commits
+distributedActualExecution : DistributedSourceExecution distributedImages distributedChoreo 9064
+  (distributedCut0, distributedEntries0) (distributedCut36, distributedEntries36) distributedRecords
+distributedFifoHistories : ∀ (channel : TransportChannel),
+  ∃ history,
+    SendAdmissionTrace distributedChoreo 9064 (distributedCut36.carriers channel) history
+      (sourceChannelRecords distributedEntries36 channel)
+@logicalActor0OutstandingSourceClock : ∀ {cut : DistributedSourceCut} {entries : List SourceAcceptance}
+  {records : List (Nat × ActorCommitRecord)} {entry : SourceAcceptance},
+  DistributedSourceExecution distributedImages distributedChoreo 9064 (distributedCut0, distributedEntries0)
+      (cut, entries) records →
+    entry ∈ entries →
+      entry.stamps 0 (cut.actors 0).snd →
+        sourceFrameWord (List.range distributedImage0.eventCount)
+          (committedFrameClassWord (List.range distributedImage0.eventCount) 0 records ++
+            if entry.sample.event ∈ List.range distributedImage0.eventCount then [entry.sample.event] else [])
+@logicalActor0WholeSourceClock : ∀ {cut : DistributedSourceCut} {entries : List SourceAcceptance}
+  {records : List (Nat × ActorCommitRecord)},
+  DistributedSourceExecution distributedImages distributedChoreo 9064 (distributedCut0, distributedEntries0)
+      (cut, entries) records →
+    sourceFrameWord (List.range distributedImage0.eventCount)
+      (committedFrameClassWord (List.range distributedImage0.eventCount) 0 records)
+@logicalActor1OutstandingSourceClock : ∀ {cut : DistributedSourceCut} {entries : List SourceAcceptance}
+  {records : List (Nat × ActorCommitRecord)} {entry : SourceAcceptance},
+  DistributedSourceExecution distributedImages distributedChoreo 9064 (distributedCut0, distributedEntries0)
+      (cut, entries) records →
+    entry ∈ entries →
+      entry.stamps 1 (cut.actors 1).snd →
+        sourceFrameWord (List.range distributedImage1.eventCount)
+          (committedFrameClassWord (List.range distributedImage1.eventCount) 1 records ++
+            if entry.sample.event ∈ List.range distributedImage1.eventCount then [entry.sample.event] else [])
+@logicalActor1WholeSourceClock : ∀ {cut : DistributedSourceCut} {entries : List SourceAcceptance}
+  {records : List (Nat × ActorCommitRecord)},
+  DistributedSourceExecution distributedImages distributedChoreo 9064 (distributedCut0, distributedEntries0)
+      (cut, entries) records →
+    sourceFrameWord (List.range distributedImage1.eventCount)
+      (committedFrameClassWord (List.range distributedImage1.eventCount) 1 records)
+@logicalActor3OutstandingSourceClock : ∀ {cut : DistributedSourceCut} {entries : List SourceAcceptance}
+  {records : List (Nat × ActorCommitRecord)} {entry : SourceAcceptance},
+  DistributedSourceExecution distributedImages distributedChoreo 9064 (distributedCut0, distributedEntries0)
+      (cut, entries) records →
+    entry ∈ entries →
+      entry.stamps 3 (cut.actors 3).snd →
+        sourceFrameWord (List.range distributedImage3.eventCount)
+          (committedFrameClassWord (List.range distributedImage3.eventCount) 3 records ++
+            if entry.sample.event ∈ List.range distributedImage3.eventCount then [entry.sample.event] else [])
+@logicalActor3WholeSourceClock : ∀ {cut : DistributedSourceCut} {entries : List SourceAcceptance}
+  {records : List (Nat × ActorCommitRecord)},
+  DistributedSourceExecution distributedImages distributedChoreo 9064 (distributedCut0, distributedEntries0)
+      (cut, entries) records →
+    sourceFrameWord (List.range distributedImage3.eventCount)
+      (committedFrameClassWord (List.range distributedImage3.eventCount) 3 records)
+logicalClassIsLargerThanEitherPhysicalSenderClass : List.map distributedImage0.eventEffIndex?
+      (distributedImage0.frameClassRows distributedFrameKey0_0) =
+    [some 0] ∧
+  List.map distributedImage1.eventEffIndex? (distributedImage1.frameClassRows distributedFrameKey1_1) = [some 3] ∧
+    List.map distributedImage3.eventEffIndex? (distributedImage3.frameClassRows distributedFrameKey3_0) =
+      [some 0, some 3]
+logicalRequestsHaveBothPhysicalSenders : List.map (fun entry => entry.sample.image.role)
+      (sourceChannelEntries distributedEntries36 distributedChannel0) =
+    [0, 1, 0, 1] ∧
+  List.map (fun entry => entry.fst.effIndex?) (sourceChannelRecords distributedEntries36 distributedChannel0) =
+    [some 0, some 3, some 0, some 3]

@@ -1,0 +1,304 @@
+//! One logical FIFO continues across the two physical holders of its view.
+use super::distributed_source::{FrameBoundary, OperationObservation};
+use super::*;
+use crate::{
+    endpoint::proof_snapshot::actor_snapshot,
+    runtime::{SessionKitStorage, ids::SessionId},
+    test_support::transport::TestTransport,
+};
+use std::cell::RefCell;
+
+type First = g::Msg<31, u32>;
+type FirstValue = g::Msg<32, u32>;
+type Second = g::Msg<33, u32>;
+type SecondValue = g::Msg<34, u32>;
+type Body = g::Seq<
+    g::Send<10, 3, First>,
+    g::Seq<
+        g::Send<3, 10, FirstValue>,
+        g::Seq<
+            g::Send<0, 1, Loan>,
+            g::Seq<
+                g::Send<10, 3, Second>,
+                g::Seq<g::Send<3, 10, SecondValue>, g::Send<1, 0, Loan>>,
+            >,
+        >,
+    >,
+>;
+type Steps = g::Roll<Body>;
+
+#[test]
+fn a_logical_wire_word_keeps_its_order_when_the_sender_changes_holder() {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .start_paused(true)
+        .build()
+        .unwrap()
+        .block_on(async {
+            let () = g::ProgramProjection::<Steps, 16>::VALIDATION;
+            let owner_program = crate::global::role_program::role_program_from_image::<0>(
+                &RoleProjection::<0, Steps, 16>::IMAGE_REF,
+            );
+            let worker_program = crate::global::role_program::role_program_from_image::<1>(
+                &RoleProjection::<1, Steps, 16>::IMAGE_REF,
+            );
+            let db_program = crate::global::role_program::role_program_from_image::<10>(
+                &RoleProjection::<10, Steps, 16>::IMAGE_REF,
+            );
+            let service_program = crate::global::role_program::role_program_from_image::<3>(
+                &RoleProjection::<3, Steps, 16>::IMAGE_REF,
+            );
+            let network = TestTransport::new();
+            let mut owner_slab = [0; 32 * 1024];
+            let mut worker_slab = [0; 32 * 1024];
+            let mut service_slab = [0; 32 * 1024];
+            let mut owner_storage = SessionKitStorage::uninit();
+            let mut worker_storage = SessionKitStorage::uninit();
+            let mut service_storage = SessionKitStorage::uninit();
+            let owner_rv = owner_storage
+                .init()
+                .rendezvous(&mut owner_slab, network.clone())
+                .unwrap();
+            let worker_rv = worker_storage
+                .init()
+                .rendezvous(&mut worker_slab, network.clone())
+                .unwrap();
+            let service_rv = service_storage
+                .init()
+                .rendezvous(&mut service_slab, network.clone())
+                .unwrap();
+            let sid = SessionId::new(9064);
+            let mut owner = owner_rv.enter(sid, &owner_program).unwrap();
+            let mut db = owner_rv.enter(sid, &db_program).unwrap();
+            let mut worker = worker_rv.enter(sid, &worker_program).unwrap();
+            let mut service = service_rv.enter(sid, &service_program).unwrap();
+            // SAFETY: these three pinned actors all use TestTransport. The copied
+            // observations cannot issue an Endpoint or authorize its next operation.
+            let initial = unsafe {
+                [
+                    actor_snapshot(&owner),
+                    actor_snapshot(&worker),
+                    actor_snapshot(&service),
+                ]
+            };
+            let operations = RefCell::new(std::vec::Vec::new());
+            tokio::time::timeout(core::time::Duration::from_secs(30), async {
+                tokio::join!(
+                    async {
+                        for number in [10, 20] {
+                            let before = unsafe { actor_snapshot(&db) };
+                            db.send::<First>(&number).await.unwrap();
+                            operations.borrow_mut().push(OperationObservation {
+                                view: 10,
+                                label: 31,
+                                before,
+                                after: unsafe { actor_snapshot(&db) },
+                                frame: FrameBoundary::Sent(network.accepted_frame(3, 0)),
+                            });
+                            let before = unsafe { actor_snapshot(&db) };
+                            assert_eq!(db.recv::<FirstValue>().await.unwrap(), number + 1);
+                            operations.borrow_mut().push(OperationObservation {
+                                view: 10,
+                                label: 32,
+                                before,
+                                after: unsafe { actor_snapshot(&db) },
+                                frame: FrameBoundary::Received(network.received_frame(10, sid, 0)),
+                            });
+                            let before = unsafe { actor_snapshot(&owner) };
+                            owner.send::<Loan>(db).await.unwrap();
+                            operations.borrow_mut().push(OperationObservation {
+                                view: 0,
+                                label: 1,
+                                before,
+                                after: unsafe { actor_snapshot(&owner) },
+                                frame: FrameBoundary::Sent(network.accepted_frame(1, 0)),
+                            });
+                            let before = unsafe { actor_snapshot(&owner) };
+                            db = owner.recv::<Loan>().await.unwrap();
+                            operations.borrow_mut().push(OperationObservation {
+                                view: 0,
+                                label: 1,
+                                before,
+                                after: unsafe { actor_snapshot(&owner) },
+                                frame: FrameBoundary::Received(network.received_frame(0, sid, 0)),
+                            });
+                        }
+                    },
+                    async {
+                        for number in [110, 120] {
+                            let before = unsafe { actor_snapshot(&worker) };
+                            let mut db = worker.recv::<Loan>().await.unwrap();
+                            operations.borrow_mut().push(OperationObservation {
+                                view: 1,
+                                label: 1,
+                                before,
+                                after: unsafe { actor_snapshot(&worker) },
+                                frame: FrameBoundary::Received(network.received_frame(1, sid, 0)),
+                            });
+                            let before = unsafe { actor_snapshot(&db) };
+                            db.send::<Second>(&number).await.unwrap();
+                            operations.borrow_mut().push(OperationObservation {
+                                view: 10,
+                                label: 33,
+                                before,
+                                after: unsafe { actor_snapshot(&db) },
+                                frame: FrameBoundary::Sent(network.accepted_frame(3, 0)),
+                            });
+                            let before = unsafe { actor_snapshot(&db) };
+                            assert_eq!(db.recv::<SecondValue>().await.unwrap(), number + 1);
+                            operations.borrow_mut().push(OperationObservation {
+                                view: 10,
+                                label: 34,
+                                before,
+                                after: unsafe { actor_snapshot(&db) },
+                                frame: FrameBoundary::Received(network.received_frame(10, sid, 0)),
+                            });
+                            let before = unsafe { actor_snapshot(&worker) };
+                            worker.send::<Loan>(db).await.unwrap();
+                            operations.borrow_mut().push(OperationObservation {
+                                view: 1,
+                                label: 1,
+                                before,
+                                after: unsafe { actor_snapshot(&worker) },
+                                frame: FrameBoundary::Sent(network.accepted_frame(0, 0)),
+                            });
+                        }
+                    },
+                    async {
+                        for number in [10, 20] {
+                            let before = unsafe { actor_snapshot(&service) };
+                            assert_eq!(service.recv::<First>().await.unwrap(), number);
+                            operations.borrow_mut().push(OperationObservation {
+                                view: 3,
+                                label: 31,
+                                before,
+                                after: unsafe { actor_snapshot(&service) },
+                                frame: FrameBoundary::Received(network.received_frame(3, sid, 0)),
+                            });
+                            let before = unsafe { actor_snapshot(&service) };
+                            service.send::<FirstValue>(&(number + 1)).await.unwrap();
+                            operations.borrow_mut().push(OperationObservation {
+                                view: 3,
+                                label: 32,
+                                before,
+                                after: unsafe { actor_snapshot(&service) },
+                                frame: FrameBoundary::Sent(network.accepted_frame(10, 0)),
+                            });
+                            let before = unsafe { actor_snapshot(&service) };
+                            assert_eq!(service.recv::<Second>().await.unwrap(), number + 100);
+                            operations.borrow_mut().push(OperationObservation {
+                                view: 3,
+                                label: 33,
+                                before,
+                                after: unsafe { actor_snapshot(&service) },
+                                frame: FrameBoundary::Received(network.received_frame(3, sid, 0)),
+                            });
+                            let before = unsafe { actor_snapshot(&service) };
+                            service.send::<SecondValue>(&(number + 101)).await.unwrap();
+                            operations.borrow_mut().push(OperationObservation {
+                                view: 3,
+                                label: 34,
+                                before,
+                                after: unsafe { actor_snapshot(&service) },
+                                frame: FrameBoundary::Sent(network.accepted_frame(10, 0)),
+                            });
+                        }
+                    },
+                );
+            })
+            .await
+            .expect("a handoff stranded the logical FIFO");
+            assert!(network.queue_is_empty());
+            let operations = operations.into_inner();
+            super::distributed_source::check_observations(&operations);
+            assert_eq!(operations.len(), 24);
+            let requests: std::vec::Vec<_> = operations
+                .iter()
+                .filter(|operation| {
+                    operation.view == 10 && matches!(operation.frame, FrameBoundary::Sent(_))
+                })
+                .collect();
+            assert_eq!(requests.len(), 4);
+            assert_eq!(
+                requests
+                    .iter()
+                    .map(|operation| operation.before.actor)
+                    .collect::<std::vec::Vec<_>>(),
+                [0, 1, 0, 1]
+            );
+            for request in &requests[1..] {
+                assert_eq!(request.frame().header, requests[0].frame().header);
+            }
+            #[cfg(not(miri))]
+            {
+                use std::fmt::Write;
+                let mut source = super::distributed_source::execution_source::<Steps, 16>(
+                    &initial,
+                    &operations,
+                    &std::vec![(0, 0); operations.len()],
+                );
+                source.insert_str(0, "import Hibana.SourceAcceptedWord\n");
+                for actor in [0, 1, 3] {
+                    writeln!(source, r#"
+private def logicalActorGroup{actor} : SourceOrderGroup distributedImage{actor} distributedChoreo := {{
+  rows := List.range distributedImage{actor}.eventCount
+  distinct := by decide
+  data := distributedWordData{actor}
+  rolls := distributedWordRolls{actor}
+  choices := []
+  decoded := (Option.some_get _).symm
+  decodedRolls := (Option.some_get _).symm
+  nonempty := by decide
+  paths := by decide
+  choiceMembers := by decide
+  slots := by decide
+  active := by decide
+  ordered := by decide
+  uniformReset := by decide
+  outsideChoices := by decide
+}}
+
+theorem logicalActor{actor}WholeSourceClock
+    {{cut : DistributedSourceCut}} {{entries : List SourceAcceptance}}
+    {{records : List (Nat × ActorCommitRecord)}}
+    (history : DistributedSourceExecution distributedImages distributedChoreo 9064
+      (distributedCut0, distributedEntries0) (cut, entries) records) :
+    sourceFrameWord (List.range distributedImage{actor}.eventCount)
+      (committedFrameClassWord (List.range distributedImage{actor}.eventCount) {actor} records) :=
+  (a_measured_distributed_class_has_its_source_word_and_exact_prefix
+    (actor := {actor}) (group := logicalActorGroup{actor}) history (by decide)).1
+
+theorem logicalActor{actor}OutstandingSourceClock
+    {{cut : DistributedSourceCut}} {{entries : List SourceAcceptance}}
+    {{records : List (Nat × ActorCommitRecord)}} {{entry : SourceAcceptance}}
+    (history : DistributedSourceExecution distributedImages distributedChoreo 9064
+      (distributedCut0, distributedEntries0) (cut, entries) records)
+    (present : entry ∈ entries) (stamp : entry.stamps {actor} (cut.actors {actor}).2) :
+    sourceFrameWord (List.range distributedImage{actor}.eventCount)
+      (committedFrameClassWord (List.range distributedImage{actor}.eventCount) {actor} records ++
+        if entry.sample.event ∈ List.range distributedImage{actor}.eventCount then [entry.sample.event] else []) :=
+  (a_pending_acceptance_extends_its_current_actor_source_word
+    (actor := {actor}) (group := logicalActorGroup{actor}) history rfl (by decide) present stamp).1
+"#).unwrap();
+                }
+                source.push_str(r#"
+theorem logicalRequestsHaveBothPhysicalSenders :
+    ((sourceChannelEntries distributedEntries36 distributedChannel0).map
+      (fun entry => entry.sample.image.role)) = [0, 1, 0, 1] ∧
+    ((sourceChannelRecords distributedEntries36 distributedChannel0).map
+      (fun entry => entry.1.effIndex?)) = [some 0, some 3, some 0, some 3] := by decide
+
+theorem logicalClassIsLargerThanEitherPhysicalSenderClass :
+    (distributedImage0.frameClassRows distributedFrameKey0_0).map distributedImage0.eventEffIndex? = [some 0] ∧
+    (distributedImage1.frameClassRows distributedFrameKey1_1).map distributedImage1.eventEffIndex? = [some 3] ∧
+    (distributedImage3.frameClassRows distributedFrameKey3_0).map distributedImage3.eventEffIndex? = [some 0, some 3] := by decide
+"#);
+                let directory =
+                    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/lean-proof");
+                std::fs::create_dir_all(&directory).unwrap();
+                std::fs::write(directory.join("LogicalViewWordGenerated.lean"), source).unwrap();
+            }
+            #[cfg(miri)]
+            let _ = initial;
+        });
+}

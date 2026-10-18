@@ -191,9 +191,13 @@ fresh source base, without a successful post-operation snapshot. The mixed
 fixture uses this result before its second loan receipt; its new source identity
 does not depend on that receipt's measured commit or receive-pair check.
 Equal immutable source cycles identify letters at the same class position. Cycle counts are
-erased conclusions, not new runtime fields. `SourceFrameClass` supplies finite
+erased conclusions, not new runtime fields. `SourceOrderGroup` supplies finite
 static projection facts about route membership, actor-local source order,
-reset ranges and local choice slots; it does not assume the desired word.
+reset ranges and local choice slots; its distinct row domain is part of those
+immutable facts. It does not assume the desired word. A wire group contains
+the complete `frameClassRows` set for its selector. The same proof also applies
+to a local sequence spanning request, reply, loan and return operations.
+Independent parallel fragments retain separate groups and advance freely.
 The order condition applies when the later row is active on that path. A
 two-letter branch class is checked against both its present and absent paths.
 Uniform class membership is a proof condition, not a new projectability rule:
@@ -210,6 +214,27 @@ only accepted frames inside that lease. Independent futures may wait before
 acceptance, and other actors can receive, return and continue before publication.
 The mixed fixture checks its first accepted loan while the publication prefix
 is still empty.
+
+`SourceAcceptedWord.lean` ties an actual unpublished acceptance to the current
+local source word, even after arbitrary work by other actors. Its earlier
+acceptance boundary retains the exact split of the same record log. An unchanged
+sender mutation stamp then proves that no intervening local commit has changed
+that actor's word. The accepted operation's original current/fresh preparation
+extends this current word before publication. No successful post-operation
+snapshot or callable-value premise is needed. Together with the publication
+prefix theorem, this covers the one outstanding accepted operation.
+
+The logical-view fixture drives two rounds of a six-message body over three
+separate runtimes, with all 24 Endpoint operations written directly. Its
+resource requests have byte-identical headers while their physical senders
+alternate between actors zero and one. The actual logical source sequence is
+`[0, 3, 0, 3]`. Each physical sender's wire class has one source row; the service's
+matching receive class has two. Those different cycle lengths demonstrate why
+one physical sender's word cannot stand for the resource's whole word.
+Checked local source groups cover each participant's request/reply/loan/return
+sequence for arbitrary successful-boundary prefixes, including an unpublished
+acceptance. They provide the local pieces for handoff composition; the finite
+observed sequence alone is not a general theorem of logical-resource progress.
 
 Composition of these results across different physical holders and
 branch-dependent classes remains required. Static class facts are not yet

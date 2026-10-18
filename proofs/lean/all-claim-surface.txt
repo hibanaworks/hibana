@@ -1512,13 +1512,13 @@ Hibana.EndpointDelegation.withOwner_same : ∀ (owners : Hibana.EndpointDelegati
     And (@Eq.{1} Bool (record.check image choreo session) true) (record.step.SourceOrdered image choreo)
 @Hibana.a_measured_distributed_class_has_its_source_word_and_exact_prefix : ∀
   {images : Nat → Hibana.RustDescriptorImage} {choreo : Hibana.Choreo} {session actor : Nat}
-  {group : Hibana.SourceFrameClass (images actor) choreo}
+  {group : Hibana.SourceOrderGroup (images actor) choreo}
   {first last : Prod.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance)}
   {records : List.{0} (Prod.{0, 0} Nat Hibana.ActorCommitRecord)},
   Hibana.DistributedSourceExecution images choreo session first last records →
     (∀ (event : Nat),
         @Membership.mem.{0, 0} Nat (List.{0} Nat) (@List.instMembership.{0} Nat)
-            ((images actor).frameClassRows (@Hibana.SourceFrameClass.key (images actor) choreo group)) event →
+            (@Hibana.SourceOrderGroup.rows (images actor) choreo group) event →
           @Eq.{1} Bool
             ((@Prod.fst.{0, 0} Hibana.ActorProgressObservation Nat
                     ((@Prod.fst.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance) first).actors
@@ -1526,33 +1526,28 @@ Hibana.EndpointDelegation.withOwner_same : ∀ (owners : Hibana.EndpointDelegati
               event)
             false) →
       And
-        (Hibana.sourceFrameWord
-          ((images actor).frameClassRows (@Hibana.SourceFrameClass.key (images actor) choreo group))
-          (Hibana.committedFrameClassWord
-            ((images actor).frameClassRows (@Hibana.SourceFrameClass.key (images actor) choreo group)) actor records))
+        (Hibana.sourceFrameWord (@Hibana.SourceOrderGroup.rows (images actor) choreo group)
+          (Hibana.committedFrameClassWord (@Hibana.SourceOrderGroup.rows (images actor) choreo group) actor records))
         (@Exists.{1} Nat fun cycles =>
           @Exists.{1} Nat fun position =>
             And
-              (Hibana.sourceFramePrefix
-                ((images actor).frameClassRows (@Hibana.SourceFrameClass.key (images actor) choreo group))
+              (Hibana.sourceFramePrefix (@Hibana.SourceOrderGroup.rows (images actor) choreo group)
                 (@Prod.fst.{0, 0} Hibana.ActorProgressObservation Nat
                   ((@Prod.fst.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance) last).actors actor))
                 position)
               (And
                 (@LT.lt.{0} Nat instLTNat (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0))) position →
-                  @Hibana.SourceFrameClass.Known (images actor) choreo group
+                  @Hibana.SourceOrderGroup.Known (images actor) choreo group
                     (@Prod.fst.{0, 0} Hibana.ActorProgressObservation Nat
                       ((@Prod.fst.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance) last).actors
                         actor)))
                 (@Eq.{1} Nat
                   (@List.length.{0} Nat
-                    (Hibana.committedFrameClassWord
-                      ((images actor).frameClassRows (@Hibana.SourceFrameClass.key (images actor) choreo group)) actor
+                    (Hibana.committedFrameClassWord (@Hibana.SourceOrderGroup.rows (images actor) choreo group) actor
                       records))
                   (@HAdd.hAdd.{0, 0, 0} Nat Nat Nat (@instHAdd.{0} Nat instAddNat)
                     (@HMul.hMul.{0, 0, 0} Nat Nat Nat (@instHMul.{0} Nat instMulNat) cycles
-                      (@List.length.{0} Nat
-                        ((images actor).frameClassRows (@Hibana.SourceFrameClass.key (images actor) choreo group))))
+                      (@List.length.{0} Nat (@Hibana.SourceOrderGroup.rows (images actor) choreo group)))
                     position))))
 @Hibana.a_measured_history_preserves_completed_events : ∀ {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo}
   {session event : Nat} {first final : Hibana.ActorProgressObservation} {firstMutation finalMutation : Nat}
@@ -1915,6 +1910,53 @@ Hibana.a_parallel_sibling_cannot_supply_reentry_authority : ∀ (left right : Hi
     @LE.le.{0} Nat instLENat left.eventCount event → @Eq.{1} Bool ((left.par right).before earlier event) false
 Hibana.a_payloads_own_transfer_can_finish : ∀ (current : Hibana.PublicOperationPhase) (resource : Nat),
   @Eq.{1} Bool (Hibana.checkSendPayloadBorrow current resource (@some.{0} Nat resource)) true
+@Hibana.a_pending_acceptance_extends_its_current_actor_source_word : ∀ {images : Nat → Hibana.RustDescriptorImage}
+  {choreo : Hibana.Choreo} {session actor : Nat} {group : Hibana.SourceOrderGroup (images actor) choreo}
+  {first last : Prod.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance)}
+  {records : List.{0} (Prod.{0, 0} Nat Hibana.ActorCommitRecord)} {entry : Hibana.SourceAcceptance},
+  Hibana.DistributedSourceExecution images choreo session first last records →
+    @Eq.{1} (List.{0} Hibana.SourceAcceptance)
+        (@Prod.snd.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance) first)
+        (@List.nil.{0} Hibana.SourceAcceptance) →
+      (∀ (event : Nat),
+          @Membership.mem.{0, 0} Nat (List.{0} Nat) (@List.instMembership.{0} Nat)
+              (@Hibana.SourceOrderGroup.rows (images actor) choreo group) event →
+            @Eq.{1} Bool
+              ((@Prod.fst.{0, 0} Hibana.ActorProgressObservation Nat
+                      ((@Prod.fst.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance) first).actors
+                        actor)).doneState.done
+                event)
+              false) →
+        @Membership.mem.{0, 0} Hibana.SourceAcceptance (List.{0} Hibana.SourceAcceptance)
+            (@List.instMembership.{0} Hibana.SourceAcceptance)
+            (@Prod.snd.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance) last) entry →
+          entry.stamps actor
+              (@Prod.snd.{0, 0} Hibana.ActorProgressObservation Nat
+                ((@Prod.fst.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance) last).actors actor)) →
+            And
+              (Hibana.sourceFrameWord (@Hibana.SourceOrderGroup.rows (images actor) choreo group)
+                (@HAppend.hAppend.{0, 0, 0} (List.{0} Nat) (List.{0} Nat) (List.{0} Nat)
+                  (@instHAppendOfAppend.{0} (List.{0} Nat) (@List.instAppend.{0} Nat))
+                  (Hibana.committedFrameClassWord (@Hibana.SourceOrderGroup.rows (images actor) choreo group) actor
+                    records)
+                  (@ite.{1} (List.{0} Nat)
+                    (@Membership.mem.{0, 0} Nat (List.{0} Nat) (@List.instMembership.{0} Nat)
+                      (@Hibana.SourceOrderGroup.rows (images actor) choreo group) entry.sample.event)
+                    (@List.instDecidableMemOfLawfulBEq.{0} Nat (@instBEqOfDecidableEq.{0} Nat instDecidableEqNat)
+                      Nat.instLawfulBEq entry.sample.event (@Hibana.SourceOrderGroup.rows (images actor) choreo group))
+                    (@List.cons.{0} Nat entry.sample.event (@List.nil.{0} Nat)) (@List.nil.{0} Nat))))
+              (@Membership.mem.{0, 0} Nat (List.{0} Nat) (@List.instMembership.{0} Nat)
+                  (@Hibana.SourceOrderGroup.rows (images actor) choreo group) entry.sample.event →
+                @Eq.{1} (Option.{0} Nat)
+                  (@getElem?.{0, 0, 0} (List.{0} Nat) Nat Nat
+                    (fun as i => @LT.lt.{0} Nat instLTNat i (@List.length.{0} Nat as))
+                    (@List.instGetElem?NatLtLength.{0} Nat) (@Hibana.SourceOrderGroup.rows (images actor) choreo group)
+                    (@HMod.hMod.{0, 0, 0} Nat Nat Nat (@instHMod.{0} Nat Nat.instMod)
+                      (@List.length.{0} Nat
+                        (Hibana.committedFrameClassWord (@Hibana.SourceOrderGroup.rows (images actor) choreo group)
+                          actor records))
+                      (@List.length.{0} Nat (@Hibana.SourceOrderGroup.rows (images actor) choreo group))))
+                  (@some.{0} Nat entry.sample.event))
 @Hibana.a_pending_final_event_was_pending_at_every_measured_commit : ∀ {image : Hibana.RustDescriptorImage}
   {choreo : Hibana.Choreo} {session event : Nat} {first final : Hibana.ActorProgressObservation}
   {firstMutation finalMutation : Nat} {records : List.{0} Hibana.ActorCommitMutationRecord},
@@ -1969,14 +2011,14 @@ Hibana.a_pending_payload_requires_its_own_send : ∀ (resource : Nat) (sent : Op
               (@HAdd.hAdd.{0, 0, 0} Nat Nat Nat (@instHAdd.{0} Nat instAddNat) roll.eventStart roll.eventLength))))
 @Hibana.a_prepared_wire_operation_extends_its_actors_measured_source_word : ∀
   {images : Nat → Hibana.RustDescriptorImage} {choreo : Hibana.Choreo}
-  {session actor previousPath pathIndex event : Nat} {group : Hibana.SourceFrameClass (images actor) choreo}
+  {session actor previousPath pathIndex event : Nat} {group : Hibana.SourceOrderGroup (images actor) choreo}
   {first last : Prod.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance)}
   {records : List.{0} (Prod.{0, 0} Nat Hibana.ActorCommitRecord)} {base : Hibana.ActorProgressObservation}
   {data : Hibana.DecodedActorOrder} {path : Hibana.EndpointDelegation.NormalizedPath} {row : Hibana.DecodedActorRow},
   Hibana.DistributedSourceExecution images choreo session first last records →
     (∀ (event : Nat),
         @Membership.mem.{0, 0} Nat (List.{0} Nat) (@List.instMembership.{0} Nat)
-            ((images actor).frameClassRows (@Hibana.SourceFrameClass.key (images actor) choreo group)) event →
+            (@Hibana.SourceOrderGroup.rows (images actor) choreo group) event →
           @Eq.{1} Bool
             ((@Prod.fst.{0, 0} Hibana.ActorProgressObservation Nat
                     ((@Prod.fst.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance) first).actors
@@ -2009,33 +2051,27 @@ Hibana.a_pending_payload_requires_its_own_send : ∀ (resource : Nat) (sent : Op
                       pathIndex := pathIndex, admitted := @List.nil.{0} Bool }
                     (images actor) choreo previousPath path row base →
                   @Membership.mem.{0, 0} Nat (List.{0} Nat) (@List.instMembership.{0} Nat)
-                      ((images actor).frameClassRows (@Hibana.SourceFrameClass.key (images actor) choreo group)) event →
+                      (@Hibana.SourceOrderGroup.rows (images actor) choreo group) event →
                     And
-                      (Hibana.sourceFrameWord
-                        ((images actor).frameClassRows (@Hibana.SourceFrameClass.key (images actor) choreo group))
+                      (Hibana.sourceFrameWord (@Hibana.SourceOrderGroup.rows (images actor) choreo group)
                         (@HAppend.hAppend.{0, 0, 0} (List.{0} Nat) (List.{0} Nat) (List.{0} Nat)
                           (@instHAppendOfAppend.{0} (List.{0} Nat) (@List.instAppend.{0} Nat))
-                          (Hibana.committedFrameClassWord
-                            ((images actor).frameClassRows (@Hibana.SourceFrameClass.key (images actor) choreo group))
+                          (Hibana.committedFrameClassWord (@Hibana.SourceOrderGroup.rows (images actor) choreo group)
                             actor records)
                           (@List.cons.{0} Nat event (@List.nil.{0} Nat))))
                       (@Eq.{1} (Option.{0} Nat)
                         (@getElem?.{0, 0, 0} (List.{0} Nat) Nat Nat
                           (fun as i => @LT.lt.{0} Nat instLTNat i (@List.length.{0} Nat as))
                           (@List.instGetElem?NatLtLength.{0} Nat)
-                          ((images actor).frameClassRows (@Hibana.SourceFrameClass.key (images actor) choreo group))
+                          (@Hibana.SourceOrderGroup.rows (images actor) choreo group)
                           (@HMod.hMod.{0, 0, 0} Nat Nat Nat (@instHMod.{0} Nat Nat.instMod)
                             (@List.length.{0} Nat
                               (Hibana.committedFrameClassWord
-                                ((images actor).frameClassRows
-                                  (@Hibana.SourceFrameClass.key (images actor) choreo group))
-                                actor records))
-                            (@List.length.{0} Nat
-                              ((images actor).frameClassRows
-                                (@Hibana.SourceFrameClass.key (images actor) choreo group)))))
+                                (@Hibana.SourceOrderGroup.rows (images actor) choreo group) actor records))
+                            (@List.length.{0} Nat (@Hibana.SourceOrderGroup.rows (images actor) choreo group))))
                         (@some.{0} Nat event))
 @Hibana.a_prospective_class_commit_extends_its_measured_source_word : ∀ {images : Nat → Hibana.RustDescriptorImage}
-  {choreo : Hibana.Choreo} {session actor : Nat} {group : Hibana.SourceFrameClass (images actor) choreo}
+  {choreo : Hibana.Choreo} {session actor : Nat} {group : Hibana.SourceOrderGroup (images actor) choreo}
   {first last : Prod.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance)}
   {records : List.{0} (Prod.{0, 0} Nat Hibana.ActorCommitRecord)}
   {after : Prod.{0, 0} Hibana.ActorProgressObservation Nat} {cleared : List.{0} Nat}
@@ -2043,7 +2079,7 @@ Hibana.a_pending_payload_requires_its_own_send : ∀ (resource : Nat) (sent : Op
   Hibana.DistributedSourceExecution images choreo session first last records →
     (∀ (event : Nat),
         @Membership.mem.{0, 0} Nat (List.{0} Nat) (@List.instMembership.{0} Nat)
-            ((images actor).frameClassRows (@Hibana.SourceFrameClass.key (images actor) choreo group)) event →
+            (@Hibana.SourceOrderGroup.rows (images actor) choreo group) event →
           @Eq.{1} Bool
             ((@Prod.fst.{0, 0} Hibana.ActorProgressObservation Nat
                     ((@Prod.fst.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance) first).actors
@@ -2054,29 +2090,23 @@ Hibana.a_pending_payload_requires_its_own_send : ∀ (resource : Nat) (sent : Op
           ((@Prod.fst.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance) last).actors actor) after
           cleared record →
         @Membership.mem.{0, 0} Nat (List.{0} Nat) (@List.instMembership.{0} Nat)
-            ((images actor).frameClassRows (@Hibana.SourceFrameClass.key (images actor) choreo group))
-            record.step.event →
+            (@Hibana.SourceOrderGroup.rows (images actor) choreo group) record.step.event →
           And
-            (Hibana.sourceFrameWord
-              ((images actor).frameClassRows (@Hibana.SourceFrameClass.key (images actor) choreo group))
+            (Hibana.sourceFrameWord (@Hibana.SourceOrderGroup.rows (images actor) choreo group)
               (@HAppend.hAppend.{0, 0, 0} (List.{0} Nat) (List.{0} Nat) (List.{0} Nat)
                 (@instHAppendOfAppend.{0} (List.{0} Nat) (@List.instAppend.{0} Nat))
-                (Hibana.committedFrameClassWord
-                  ((images actor).frameClassRows (@Hibana.SourceFrameClass.key (images actor) choreo group)) actor
+                (Hibana.committedFrameClassWord (@Hibana.SourceOrderGroup.rows (images actor) choreo group) actor
                   records)
                 (@List.cons.{0} Nat record.step.event (@List.nil.{0} Nat))))
             (@Eq.{1} (Option.{0} Nat)
               (@getElem?.{0, 0, 0} (List.{0} Nat) Nat Nat
                 (fun as i => @LT.lt.{0} Nat instLTNat i (@List.length.{0} Nat as))
-                (@List.instGetElem?NatLtLength.{0} Nat)
-                ((images actor).frameClassRows (@Hibana.SourceFrameClass.key (images actor) choreo group))
+                (@List.instGetElem?NatLtLength.{0} Nat) (@Hibana.SourceOrderGroup.rows (images actor) choreo group)
                 (@HMod.hMod.{0, 0, 0} Nat Nat Nat (@instHMod.{0} Nat Nat.instMod)
                   (@List.length.{0} Nat
-                    (Hibana.committedFrameClassWord
-                      ((images actor).frameClassRows (@Hibana.SourceFrameClass.key (images actor) choreo group)) actor
+                    (Hibana.committedFrameClassWord (@Hibana.SourceOrderGroup.rows (images actor) choreo group) actor
                       records))
-                  (@List.length.{0} Nat
-                    ((images actor).frameClassRows (@Hibana.SourceFrameClass.key (images actor) choreo group)))))
+                  (@List.length.{0} Nat (@Hibana.SourceOrderGroup.rows (images actor) choreo group))))
               (@some.{0} Nat record.step.event))
 @Hibana.a_prospective_owned_receipt_has_its_distributed_fifo_source_instance : ∀
   {images : Nat → Hibana.RustDescriptorImage} {choreo : Hibana.Choreo} {session : Nat}

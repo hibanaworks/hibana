@@ -76,12 +76,14 @@ fn actual_rolled_colors_refine_route_paths_and_elastic_owners() {
     .unwrap();
     source.push_str(
         r#"
-private def conditionalPairClass : SourceFrameClass branchWordImage branchChoreo := {
-  key := (branchWordImage.frameKey? 0).get (by decide)
+private def conditionalPairKey := (branchWordImage.frameKey? 0).get (by decide)
+private def conditionalPairClass : SourceOrderGroup branchWordImage branchChoreo := {
+  rows := branchWordImage.frameClassRows conditionalPairKey
+  distinct := by decide
   data := (branchWordImage.decodeActorOrder? branchChoreo).get (by decide)
   rolls := branchWordImage.decodeRollRows?.get (by decide)
   choices := (branchWordImage.frameClassChoices? branchChoreo
-    ((branchWordImage.frameKey? 0).get (by decide))).get (by decide)
+    conditionalPairKey).get (by decide)
   decoded := (Option.some_get _).symm
   decodedRolls := (Option.some_get _).symm
   nonempty := by decide
@@ -95,10 +97,11 @@ private def conditionalPairClass : SourceFrameClass branchWordImage branchChoreo
 }
 
 theorem actualConditionalTwoLetterClassKeepsBothSourcePaths :
-    ∃ group : SourceFrameClass branchWordImage branchChoreo,
-      (branchWordImage.frameClassRows group.key).length = 2 ∧
+    ∃ group : SourceOrderGroup branchWordImage branchChoreo,
+      group.rows = branchWordImage.frameClassRows conditionalPairKey ∧
+      group.rows.length = 2 ∧
       group.data.normalized.paths.length = 2 :=
-  ⟨conditionalPairClass, by decide, by decide⟩
+  ⟨conditionalPairClass, rfl, by decide, by decide⟩
 "#,
     );
     writeln!(

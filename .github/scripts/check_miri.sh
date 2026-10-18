@@ -305,6 +305,12 @@ MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_t
   g::role_projection::tests::occurrence_choice::changing_rolled_loans_teach_only_the_received_occurrences_choices \
   -- --exact
 
+MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \
+  logical-view-word \
+  -p hibana --lib \
+  g::role_projection::tests::logical_view_word::a_logical_wire_word_keeps_its_order_when_the_sender_changes_holder \
+  -- --exact
+
 # Each nested choice case gets the same bounded run independently.
 # Retain rework, delayed ingress and the shared parallel prefix in full.
 MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \

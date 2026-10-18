@@ -34,6 +34,7 @@ MIXED_SEND_ADMISSION_GENERATED="${ROOT_DIR}/target/lean-proof/MixedSendAdmission
 DISTRIBUTED_SOURCE_GENERATED="${ROOT_DIR}/target/lean-proof/DistributedSourceGenerated.lean"
 DISTRIBUTED_CHOICE_GENERATED="${ROOT_DIR}/target/lean-proof/DistributedChoiceGenerated.lean"
 FRAME_DOMAINS_GENERATED="${ROOT_DIR}/target/lean-proof/FrameDomainsGenerated.lean"
+LOGICAL_VIEW_WORD_GENERATED="${ROOT_DIR}/target/lean-proof/LogicalViewWordGenerated.lean"
 OCCURRENCE_CHOICE_GENERATED="${ROOT_DIR}/target/lean-proof/OccurrenceChoiceGenerated.lean"
 RECEIPT_REFRESH_GENERATED="${ROOT_DIR}/target/lean-proof/ReceiptRefreshGenerated.lean"
 ACTOR_ROUTE_LEFT_REENTRY_GENERATED="${ROOT_DIR}/target/lean-proof/ActorRouteLeftReentryGenerated.lean"
@@ -65,7 +66,7 @@ bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" build-serial "${PROOF_
 bash "${ROOT_DIR}/.github/scripts/check_lean_claim_surface.sh"
 static_audit_output="$(run_audit \
   theorem-inventory \
-  --static "${PROOF_DIR}" "${STATIC_CLAIM_SNAPSHOT}" 1052 638 302 112)"
+  --static "${PROOF_DIR}" "${STATIC_CLAIM_SNAPSHOT}" 1053 639 302 112)"
 printf '%s\n' "${static_audit_output}"
 printf '%s\n' "${static_audit_output}" | bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard markers static
 bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" theorem-inventory \
@@ -251,6 +252,12 @@ run_audit generated-axioms --kernel "${OCCURRENCE_CHOICE_GENERATED}" "${PROOF_DI
 bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${DISTRIBUTED_CHOICE_GENERATED}" "joint distributed choice origins"
 run_audit generated-axioms --kernel "${DISTRIBUTED_CHOICE_GENERATED}" "${PROOF_DIR}" \
   "${PROOF_DIR}/distributed-choice-generated-claim-surface.txt" 14
+CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib \
+  g::role_projection::tests::logical_view_word::a_logical_wire_word_keeps_its_order_when_the_sender_changes_holder \
+  -- --exact
+bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${LOGICAL_VIEW_WORD_GENERATED}" "logical source words across physical holders"
+run_audit generated-axioms --kernel "${LOGICAL_VIEW_WORD_GENERATED}" "${PROOF_DIR}" \
+  "${PROOF_DIR}/logical-view-word-generated-claim-surface.txt" 14
 CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib -- \
   g::role_projection::tests::conditional_controller::remote_controller::a_conditional_controller_does_not_take_authority_from_its_co_resident_observer \
   g::role_projection::tests::conditional_controller::co_resident_controller::a_conditional_controller_does_not_take_authority_from_its_co_resident_observer \

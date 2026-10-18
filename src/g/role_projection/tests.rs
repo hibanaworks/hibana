@@ -25,6 +25,7 @@ mod handoff_interval;
 mod ingress;
 mod ingress_columns;
 mod local_return;
+mod logical_view_word;
 mod mixed_send_admission;
 mod mutation_coverage;
 #[cfg(all(unix, not(miri)))]
