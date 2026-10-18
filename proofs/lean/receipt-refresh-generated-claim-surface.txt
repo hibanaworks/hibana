@@ -1,0 +1,35 @@
+actualContinuationIsAdmitted : refreshAdmissions[readRow.eventId]? = some true
+actualCurrentHeaderComesFromFreshReceipt : observedResourceTag? current 10 = observedResourceTag? freshReceipt.after 10
+actualCurrentHeaderIsFresh : (resourceNonceCut current 10).issued = some current.counter ∧
+  outsideAfter.counter < current.counter
+actualDoneBitsAreTheSameAfterFreshReceipt : outsideAfter.doneState.done = current.doneState.done
+actualOldReceiptHeaderIsNoLongerCurrent : observedResourceTag? current 10 ≠ observedResourceTag? outsideAfter 10
+actualReceiptsNameTheSameResource : outsideFacts.resource = freshFacts.resource
+actualRepeatedBodyRestoresItsResourceOwner : EndpointDelegation.instantiate refreshData.normalized.issuance
+    (freshRollRun.owners freshFacts.resource) =
+  EndpointDelegation.instantiate refreshData.normalized.issuance
+    (EndpointDelegation.initialOwners refreshData.source.resources freshFacts.resource)
+actualSourceBeginsWithThisClosedBody : ∃ tail, refreshData.source = refreshBody.roll.seq tail
+actualSourceContinuationIsReady : sourceRowReady refreshData refreshPath current readRow = true
+@currentSourceReadyCutUsesActualReceiptProvenance : ∀ {Frame : Type} {first : Nat × Nat × Nat × Nat → Prop}
+  {state : EndpointTransfer.Observation (Nat × Nat × Nat × Nat) Frame},
+  ResourceHeaderExecution first (EndpointTransfer.initial initialTag) actualIssued state →
+    EndpointTransfer.Execution (EndpointTransfer.initial initialTag) state →
+      (∀ (tag : Nat × Nat × Nat × Nat), first tag ↔ tag = initialTag) →
+        (∀ (before after : EndpointTransfer.Observation (Nat × Nat × Nat × Nat) Frame),
+            EndpointTransfer.Execution (EndpointTransfer.initial initialTag) before →
+              EndpointTransfer.Step EndpointTransfer.Action.accept before after →
+                after.acceptedFutures.head? = some currentTag →
+                  EndpointTransfer.Execution after state →
+                    AcceptedSendCallEvidence currentTag.snd.snd.snd (resourceNonceCut current 10) False False) →
+          sourceRowReady refreshData refreshPath current readRow = true ∧
+            TransferValueLocated currentTag state ∧
+              ∃ beforeIssued before afterIssued after,
+                ResourceHeaderExecution first (EndpointTransfer.initial initialTag) beforeIssued before ∧
+                  EndpointTransfer.Step EndpointTransfer.Action.receive before after ∧
+                    ResourceHeaderStepEvidence EndpointTransfer.Action.receive before after beforeIssued afterIssued ∧
+                      currentTag ∈ List.take 1 after.usable ∧
+                        HeaderSuffixWithoutReceipt currentTag afterIssued after actualIssued state
+freshActualReceiptIsChecked : freshReceipt.ownedCheck refreshImage refreshChoreo freshWire 9058 = true
+latestActualReceiptHasAnEarlierSourceEvent : freshFacts.effIndex < outsideFacts.effIndex
+outsideActualReceiptIsChecked : outsideReceipt.ownedCheck refreshImage refreshChoreo outsideWire 9058 = true

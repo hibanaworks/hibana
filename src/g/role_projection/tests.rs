@@ -31,6 +31,7 @@ mod partial_choice;
 mod pending_reentry;
 mod program_columns;
 mod receipt_alternatives;
+mod receipt_refresh;
 mod recovery_image;
 mod reentry;
 mod reentry_choice;

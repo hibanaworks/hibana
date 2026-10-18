@@ -535,4 +535,32 @@ theorem accepted_resource_use_derives_its_initial_or_last_receiver
           shape, transferred, untouched, previousAt, actors.1, actors.2.1, actors.2.2,
           by simpa only [Nat.sub_zero] using causal⟩
 
+/-- A completed projected roll restores each resource's source owner under
+its solved initial issuance. This is source ownership, not persistence of a
+particular Rust Endpoint tag: a legal round trip can issue a fresh tag. -/
+theorem an_accepted_roll_preserves_each_instantiated_resource_owner
+    {resources : List EndpointKey} {owners : OwnerMap} {path : List Selection}
+    {body : Source} {start : Nat} {run : Elaboration} {issuance : List Issuance}
+    {key : EndpointKey}
+    (accepted : elaborate resources owners path (.roll body) start = some run)
+    (solved : run.equations.all (equationAccepted issuance) = true)
+    (member : key ∈ resources) :
+    instantiate issuance (run.owners key) = instantiate issuance (owners key) := by
+  change (elaborate resources owners path body start).bind _ = some run at accepted
+  obtain ⟨inner, _, written⟩ := Option.bind_eq_some_iff.mp accepted
+  have same := Option.some.inj written
+  subst run
+  have equation : equationAccepted issuance (owners key, inner.owners key) = true := by
+    apply List.all_eq_true.mp solved
+    exact List.mem_append.mpr (.inr (List.mem_map.mpr ⟨key, member, rfl⟩))
+  unfold equationAccepted at equation
+  cases first : instantiate issuance (owners key) with
+  | none => simp [first] at equation
+  | some owner =>
+      cases last : instantiate issuance (inner.owners key) with
+      | none => simp [first, last] at equation
+      | some finalOwner =>
+          have equal : owner = finalOwner := by simpa only [first, last, beq_iff_eq] using equation
+          exact congrArg some equal.symm
+
 end Hibana

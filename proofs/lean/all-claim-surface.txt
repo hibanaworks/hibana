@@ -614,6 +614,91 @@ Hibana.EndpointDelegation.withOwner_same : ∀ (owners : Hibana.EndpointDelegati
         (And (@Eq.{1} Nat sample.polls (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1))))
           (And (@Eq.{1} Nat sample.publications (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1))))
             (And (@Eq.{1} Bool sample.done true) (@Eq.{1} Bool sample.retained false))))
+@Hibana.a_fresh_live_public_header_has_actual_custody_and_receive_origin : ∀ {Frame : Type}
+  {first last : Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)) → Prop}
+  {initialValue value : Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))}
+  {state : Hibana.EndpointTransfer.Observation (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) Frame}
+  {current : Hibana.ViewNonceCut} {leaseHeld faulted : Prop},
+  @Hibana.ResourceHeaderExecution (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) Frame first
+      (@Hibana.EndpointTransfer.initial (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) Frame initialValue)
+      last state →
+    @Hibana.EndpointTransfer.Execution (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) Frame
+        (@Hibana.EndpointTransfer.initial (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) Frame initialValue)
+        state →
+      (∀ (tag : Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))),
+          Iff (first tag) (@Eq.{1} (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) tag initialValue)) →
+        last value →
+          @Eq.{1} (Option.{0} Nat) current.issued
+              (@some.{0} Nat
+                (@Prod.snd.{0, 0} Nat Nat
+                  (@Prod.snd.{0, 0} Nat (Prod.{0, 0} Nat Nat)
+                    (@Prod.snd.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)) value)))) →
+            @Ne.{1} (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) value initialValue →
+              Not leaseHeld →
+                Not faulted →
+                  (∀
+                      (before after :
+                        Hibana.EndpointTransfer.Observation (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)))
+                          Frame),
+                      @Hibana.EndpointTransfer.Execution (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) Frame
+                          (@Hibana.EndpointTransfer.initial (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)))
+                            Frame initialValue)
+                          before →
+                        @Hibana.EndpointTransfer.Step (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) Frame
+                            Hibana.EndpointTransfer.Action.accept before after →
+                          @Eq.{1} (Option.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))))
+                              (@List.head?.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)))
+                                (@Hibana.EndpointTransfer.Observation.acceptedFutures
+                                  (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) Frame after))
+                              (@some.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) value) →
+                            @Hibana.EndpointTransfer.Execution (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)))
+                                Frame after state →
+                              Hibana.AcceptedSendCallEvidence
+                                (@Prod.snd.{0, 0} Nat Nat
+                                  (@Prod.snd.{0, 0} Nat (Prod.{0, 0} Nat Nat)
+                                    (@Prod.snd.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)) value)))
+                                current leaseHeld faulted) →
+                    And
+                      (@Hibana.TransferValueLocated (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) Frame
+                        value state)
+                      (@Exists.{1} (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)) → Prop) fun beforeIssued =>
+                        @Exists.{1}
+                          (Hibana.EndpointTransfer.Observation (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)))
+                            Frame)
+                          fun before =>
+                          @Exists.{1} (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)) → Prop)
+                            fun afterIssued =>
+                            @Exists.{1}
+                              (Hibana.EndpointTransfer.Observation
+                                (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) Frame)
+                              fun after =>
+                              And
+                                (@Hibana.ResourceHeaderExecution
+                                  (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) Frame first
+                                  (@Hibana.EndpointTransfer.initial
+                                    (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) Frame initialValue)
+                                  beforeIssued before)
+                                (And
+                                  (@Hibana.EndpointTransfer.Step
+                                    (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) Frame
+                                    Hibana.EndpointTransfer.Action.receive before after)
+                                  (And
+                                    (@Hibana.ResourceHeaderStepEvidence
+                                      (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) Frame
+                                      Hibana.EndpointTransfer.Action.receive before after beforeIssued afterIssued)
+                                    (And
+                                      (@Membership.mem.{0, 0} (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)))
+                                        (List.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))))
+                                        (@List.instMembership.{0}
+                                          (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))))
+                                        (@List.take.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)))
+                                          (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1)))
+                                          (@Hibana.EndpointTransfer.Observation.usable
+                                            (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) Frame after))
+                                        value)
+                                      (@Hibana.HeaderSuffixWithoutReceipt
+                                        (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) value Frame
+                                        afterIssued after last state)))))
 @Hibana.a_live_public_cut_cannot_issue_an_accepted_sender_tag : ∀ {old : Nat} {current : Hibana.ViewNonceCut}
   {leaseHeld faulted : Prop},
   Hibana.AcceptedSendCallEvidence old current leaseHeld faulted →
@@ -2876,6 +2961,22 @@ Hibana.ambiguous_receive_fails_closed : ∀ (before : Hibana.CompactGlobalState)
       (@some.{0} Hibana.CompactGlobalState
         (Hibana.CompactGlobalState.fromGlobalConfig
           (config.beginCancellation reporter Hibana.SessionFault.protocolViolation)))
+@Hibana.an_accepted_roll_preserves_each_instantiated_resource_owner : ∀
+  {resources : List.{0} Hibana.EndpointDelegation.EndpointKey} {owners : Hibana.EndpointDelegation.OwnerMap}
+  {path : List.{0} Hibana.EndpointDelegation.Selection} {body : Hibana.EndpointDelegation.Source} {start : Nat}
+  {run : Hibana.EndpointDelegation.Elaboration} {issuance : List.{0} Hibana.EndpointDelegation.Issuance}
+  {key : Hibana.EndpointDelegation.EndpointKey},
+  @Eq.{1} (Option.{0} Hibana.EndpointDelegation.Elaboration)
+      (Hibana.EndpointDelegation.elaborate resources owners path body.roll start)
+      (@some.{0} Hibana.EndpointDelegation.Elaboration run) →
+    @Eq.{1} Bool
+        (@List.all.{0} Hibana.EndpointDelegation.Equation run.equations
+          (Hibana.EndpointDelegation.equationAccepted issuance))
+        true →
+      @Membership.mem.{0, 0} Hibana.EndpointDelegation.EndpointKey (List.{0} Hibana.EndpointDelegation.EndpointKey)
+          (@List.instMembership.{0} Hibana.EndpointDelegation.EndpointKey) resources key →
+        @Eq.{1} (Option.{0} Nat) (Hibana.EndpointDelegation.instantiate issuance (run.owners key))
+          (Hibana.EndpointDelegation.instantiate issuance (owners key))
 @Hibana.an_earlier_resource_use_causally_precedes_a_transfer : ∀ {source : Hibana.EndpointDelegation.Source}
   {resources : List.{0} Hibana.EndpointDelegation.EndpointKey} {owners : Hibana.EndpointDelegation.OwnerMap}
   {path : List.{0} Hibana.EndpointDelegation.Selection} {start first second : Nat}
@@ -2995,6 +3096,33 @@ Hibana.ambiguous_receive_fails_closed : ∀ (before : Hibana.CompactGlobalState)
                   (@Eq.{1} Hibana.EndpointDelegation.Payload targetBinding.message.payload
                     (Hibana.EndpointDelegation.Payload.endpoint key))) →
               Or (@Eq.{1} Nat transfer target) (@Eq.{1} Bool (source.before target transfer) true)
+@Hibana.an_issued_header_has_initial_or_latest_receive_origin : ∀ {View Frame : Type} [DecidableEq.{1} View]
+  {first last : View → Prop} {initialValue value : View} {state : Hibana.EndpointTransfer.Observation View Frame},
+  @Hibana.ResourceHeaderExecution View Frame first (@Hibana.EndpointTransfer.initial View Frame initialValue) last
+      state →
+    (∀ (tag : View), Iff (first tag) (@Eq.{1} View tag initialValue)) →
+      last value →
+        Or
+          (And (@Eq.{1} View value initialValue)
+            (@Hibana.HeaderSuffixWithoutReceipt View value Frame first
+              (@Hibana.EndpointTransfer.initial View Frame initialValue) last state))
+          (@Exists.{1} (View → Prop) fun beforeIssued =>
+            @Exists.{1} (Hibana.EndpointTransfer.Observation View Frame) fun before =>
+              @Exists.{1} (View → Prop) fun afterIssued =>
+                @Exists.{1} (Hibana.EndpointTransfer.Observation View Frame) fun after =>
+                  And
+                    (@Hibana.ResourceHeaderExecution View Frame first
+                      (@Hibana.EndpointTransfer.initial View Frame initialValue) beforeIssued before)
+                    (And (@Hibana.EndpointTransfer.Step View Frame Hibana.EndpointTransfer.Action.receive before after)
+                      (And
+                        (@Hibana.ResourceHeaderStepEvidence View Frame Hibana.EndpointTransfer.Action.receive before
+                          after beforeIssued afterIssued)
+                        (And
+                          (@Membership.mem.{0, 0} View (List.{0} View) (@List.instMembership.{0} View)
+                            (@List.take.{0} View (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1)))
+                              (@Hibana.EndpointTransfer.Observation.usable View Frame after))
+                            value)
+                          (@Hibana.HeaderSuffixWithoutReceipt View value Frame afterIssued after last state)))))
 @Hibana.an_issued_header_in_a_checked_trace_has_its_actual_custody : ∀ {View Frame : Type} {first last : View → Prop}
   {initialValue value : View} {state : Hibana.EndpointTransfer.Observation View Frame},
   @Hibana.ResourceHeaderExecution View Frame first (@Hibana.EndpointTransfer.initial View Frame initialValue) last

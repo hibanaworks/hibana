@@ -109,6 +109,12 @@ MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_t
   -- --exact
 
 MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \
+  chronological-resource-receipt \
+  -p hibana --lib \
+  g::role_projection::tests::receipt_refresh::a_reentered_earlier_body_refreshes_the_value_after_a_later_source_receipt \
+  -- --exact
+
+MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \
   measured-source-handoff-interval \
   -p hibana --lib \
   g::role_projection::tests::handoff_interval::a_last_receipt_keeps_past_and_future_handoffs_outside_pending_parallel_work \
@@ -147,6 +153,7 @@ MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_t
   -- --skip g::role_projection::tests::owned:: \
   --skip g::role_projection::tests::mutation_coverage:: \
   --skip g::role_projection::tests::handoff_interval:: \
+  --skip g::role_projection::tests::receipt_refresh:: \
   --skip g::role_projection::tests::send_wait::an_owned_send_rejects_a_predecessor_that_needs_its_payload_view \
   --skip g::role_projection::tests::admission:: \
   --skip g::role_projection::tests::parallel_pending:: \

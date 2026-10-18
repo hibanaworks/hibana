@@ -80,6 +80,19 @@ selected visit. It does not derive actual Rust value availability from a header,
 nor establish fresh rolled visits, carrier delivery or general distributed
 progress. The public owned-projection guard remains closed.
 
+`ResourceHeaderOrigin.lean` derives an issued tag's initial or latest actual
+receive origin from the complete transfer/header history. Static source event
+order cannot choose this origin: a closed earlier roll body can execute again
+after a later source receipt. The real two-runtime `receipt_refresh` test does
+this, retains the same completion bits, receives a new tag, and uses that
+Endpoint for the pending continuation. Both wire receipts are checked against
+their actual before/after snapshots. Source elaboration separately proves that
+an accepted closed roll restores each resource's instantiated owner; it does
+not preserve the old Endpoint tag. The generated application of the custody
+theorem retains complete carrier/header and originating-call histories as
+correspondence contracts. It does not derive these histories from readiness,
+or establish general distributed progress across independent visits.
+
 The public guard rejects owned choreography before returning its projected
 image. Private qualification tests obtain the image from the same production
 actor lowering and then attach and drive actual Endpoints, including owned
