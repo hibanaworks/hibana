@@ -237,7 +237,7 @@ fn a_logical_wire_word_keeps_its_order_when_the_sender_changes_holder() {
                     &operations,
                     &std::vec![(0, 0); operations.len()],
                 );
-                source.insert_str(0, "import Hibana.SourceReceiptWord\n");
+                source.insert_str(0, "import Hibana.SourceReceiptWord\nimport Hibana.SourceActorWord\n");
                 for actor in [0, 1, 3] {
                     writeln!(source, r#"
 private def logicalActorGroup{actor} : SourceOrderGroup distributedImage{actor} distributedChoreo := {{
@@ -279,6 +279,27 @@ theorem logicalActor{actor}OutstandingSourceClock
         if entry.sample.event ∈ List.range distributedImage{actor}.eventCount then [entry.sample.event] else []) :=
   (a_pending_acceptance_extends_its_current_actor_source_word
     (actor := {actor}) (group := logicalActorGroup{actor}) history rfl (by decide) present stamp).1
+
+theorem logicalActor{actor}AcceptanceInclusiveClock
+    {{cut : DistributedSourceCut}} {{entries : List SourceAcceptance}}
+    {{records : List (Nat × ActorCommitRecord)}}
+    (history : DistributedSourceExecution distributedImages distributedChoreo 9064
+      (distributedCut0, distributedEntries0) (cut, entries) records) :
+    ∃ pending : List SourceAcceptance,
+      pending.length ≤ 1 ∧
+      (∀ entry ∈ pending, entry ∈ entries ∧ entry.stamps {actor} (cut.actors {actor}).2) ∧
+      let word := committedFrameClassWord (List.range distributedImage{actor}.eventCount) {actor} records ++
+        pending.filterMap (fun entry => if entry.sample.event ∈ List.range distributedImage{actor}.eventCount
+          then some entry.sample.event else none)
+      sourceFrameWord (List.range distributedImage{actor}.eventCount) word ∧
+      (∀ event ∈ List.range distributedImage{actor}.eventCount,
+        distributedImage{actor}.sourceRowSide? event = some .send →
+        word.count event = ((actorAcceptedSends entries {actor}).map (fun entry => entry.sample.event)).count event) ∧
+      (∀ event ∈ List.range distributedImage{actor}.eventCount,
+        distributedImage{actor}.sourceRowSide? event = some .receive →
+        word.count event = (committedFrameClassWord (List.range distributedImage{actor}.eventCount) {actor} records).count event) :=
+  a_distributed_actor_has_its_acceptance_inclusive_source_word
+    (actor := {actor}) (group := logicalActorGroup{actor}) history rfl (by decide) (by decide)
 "#).unwrap();
                 }
                 source.push_str(r#"
@@ -343,6 +364,8 @@ theorem logicalSecondHolderHeadGetsItsOrdinalBeforePublication
   · exact globalAt.trans eventSame
   · exact sampleSame ▸ identity
 "#);
+                source.insert_str(0, "import Hibana.SourceHandoffWord\n");
+                source.push_str(include_str!("logical_handoff_word.lean"));
                 let directory =
                     std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/lean-proof");
                 std::fs::create_dir_all(&directory).unwrap();

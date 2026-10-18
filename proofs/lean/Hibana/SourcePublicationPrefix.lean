@@ -13,7 +13,7 @@ This is a projection of the shared observation log, not a runtime queue. -/
 def actorAcceptedSends (entries : List SourceAcceptance) (actor : Nat) : List SourceAcceptance :=
   entries.filter fun entry => entry.sample.image.role == actor
 
-private def sourceSendRecord (image : RustDescriptorImage) (choreo : Choreo)
+def sourceSendRecord (image : RustDescriptorImage) (choreo : Choreo)
     (record : ActorCommitRecord) : Bool :=
   match sourceOperationIdentity? image choreo record.step.pathIndex record.step.event with
   | some (_, _, .send) => true

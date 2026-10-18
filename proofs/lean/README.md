@@ -224,6 +224,13 @@ extends this current word before publication. No successful post-operation
 snapshot or callable-value premise is needed. Together with the publication
 prefix theorem, this covers the one outstanding accepted operation.
 
+`SourceActorWord.lean` derives a participant's source word including that
+outstanding acceptance. Its send-phase counts equal the actual accepted send
+counts, while receive-phase counts equal actual committed receives. The finite
+row identity certificate includes direction, so the two halves of one source
+message can belong to the same physical actor. This certificate is erased
+translation evidence, not an additional Rust admission guard.
+
 `SourceReceiptWord.lean` reconstructs the complete source receipt word from
 that same distributed execution. Its projection on each physical direction
 is exactly the delivered prefix of the full acceptance list. The proof retains
@@ -235,6 +242,13 @@ are retained in the result. No current receive-pair check, successful receiver
 snapshot or sender-publication barrier is an input. The earlier receive-pair
 checks remain an explicit correspondence obligation in the shared history.
 
+`SourceHandoffWord.lean` derives that source receipts cannot exceed their
+actual acceptances across all physical directions. This follows from the
+per-direction prefixes without a finite channel catalogue or a common carrier
+generation. Counts derived from local source words then connect the loan and
+return directions to uses by successive holders. The proof adds no runtime
+counter, ownership table, source iteration or publication barrier.
+
 The logical-view fixture drives two rounds of a six-message body over three
 separate runtimes, with all 24 Endpoint operations written directly. Its
 resource requests have byte-identical headers while their physical senders
@@ -244,15 +258,22 @@ matching receive class has two. Those different cycle lengths demonstrate why
 one physical sender's word cannot stand for the resource's whole word.
 Checked local source groups cover each participant's request/reply/loan/return
 sequence for arbitrary successful-boundary prefixes, including an unpublished
-acceptance. They provide the local pieces for handoff composition; the finite
-observed sequence alone is not a general theorem of logical-resource progress.
+acceptance. The generated handoff-word claims compose these clocks with the
+actual FIFO count bounds. For every successful-boundary prefix of this protocol,
+the number of worker requests cannot exceed owner requests, and owner requests
+can lead by at most one. Induction over the same execution then establishes
+the accepted request source word `[0, 3, 0, 3, ...]` for arbitrary finite
+histories. This uses derived loan/return bounds, not an assumed logical word
+or a shared actor visit. The full proof is in the generated artifact; the Lean
+fixture source is `src/g/role_projection/tests/logical_handoff_word.lean`.
 The receipt-word proof is also instantiated for arbitrary prefixes of this
 protocol. At the second worker-held request, before that sender's publication,
 the prospective FIFO head gets ordinal one from the three preceding request
 receipts. This qualification does not use that head's eventual receive commit.
 
-Composition of these results across different physical holders and
-branch-dependent classes remains required. Static class facts are not yet
+General correspondence for other holder-changing and branch-dependent
+classes remains required, as does matching a new receiver's actual local row
+and carrier binding to its accepted source word. Static class facts are not yet
 proved for every image emitted by Rust projection.
 
 This is a joint successful-boundary refinement and concrete qualification.

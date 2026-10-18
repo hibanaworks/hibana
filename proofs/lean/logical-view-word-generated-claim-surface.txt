@@ -26,6 +26,38 @@ distributedFifoHistories : ∀ (channel : TransportChannel),
   ∃ history,
     SendAdmissionTrace distributedChoreo 9064 (distributedCut36.carriers channel) history
       (sourceChannelRecords distributedEntries36 channel)
+@logicalAcceptedRequestCountsAreBalanced : ∀ {cut : DistributedSourceCut} {entries : List SourceAcceptance}
+  {records : List (Nat × ActorCommitRecord)},
+  DistributedSourceExecution distributedImages distributedChoreo 9064 (distributedCut0, distributedEntries0)
+      (cut, entries) records →
+    List.count 3 (List.map SourceAcceptance.event entries) ≤ List.count 0 (List.map SourceAcceptance.event entries) ∧
+      List.count 0 (List.map SourceAcceptance.event entries) ≤
+        List.count 3 (List.map SourceAcceptance.event entries) + 1
+@logicalActor0AcceptanceInclusiveClock : ∀ {cut : DistributedSourceCut} {entries : List SourceAcceptance}
+  {records : List (Nat × ActorCommitRecord)},
+  DistributedSourceExecution distributedImages distributedChoreo 9064 (distributedCut0, distributedEntries0)
+      (cut, entries) records →
+    ∃ pending,
+      pending.length ≤ 1 ∧
+        (∀ (entry : SourceAcceptance), entry ∈ pending → entry ∈ entries ∧ entry.stamps 0 (cut.actors 0).snd) ∧
+          have word :=
+            committedFrameClassWord (List.range distributedImage0.eventCount) 0 records ++
+              List.filterMap
+                (fun entry =>
+                  if entry.sample.event ∈ List.range distributedImage0.eventCount then some entry.sample.event
+                  else none)
+                pending;
+          sourceFrameWord (List.range distributedImage0.eventCount) word ∧
+            (∀ (event : Nat),
+                event ∈ List.range distributedImage0.eventCount →
+                  distributedImage0.sourceRowSide? event = some Side.send →
+                    List.count event word =
+                      List.count event (List.map (fun entry => entry.sample.event) (actorAcceptedSends entries 0))) ∧
+              ∀ (event : Nat),
+                event ∈ List.range distributedImage0.eventCount →
+                  distributedImage0.sourceRowSide? event = some Side.receive →
+                    List.count event word =
+                      List.count event (committedFrameClassWord (List.range distributedImage0.eventCount) 0 records)
 @logicalActor0OutstandingSourceClock : ∀ {cut : DistributedSourceCut} {entries : List SourceAcceptance}
   {records : List (Nat × ActorCommitRecord)} {entry : SourceAcceptance},
   DistributedSourceExecution distributedImages distributedChoreo 9064 (distributedCut0, distributedEntries0)
@@ -41,6 +73,31 @@ distributedFifoHistories : ∀ (channel : TransportChannel),
       (cut, entries) records →
     sourceFrameWord (List.range distributedImage0.eventCount)
       (committedFrameClassWord (List.range distributedImage0.eventCount) 0 records)
+@logicalActor1AcceptanceInclusiveClock : ∀ {cut : DistributedSourceCut} {entries : List SourceAcceptance}
+  {records : List (Nat × ActorCommitRecord)},
+  DistributedSourceExecution distributedImages distributedChoreo 9064 (distributedCut0, distributedEntries0)
+      (cut, entries) records →
+    ∃ pending,
+      pending.length ≤ 1 ∧
+        (∀ (entry : SourceAcceptance), entry ∈ pending → entry ∈ entries ∧ entry.stamps 1 (cut.actors 1).snd) ∧
+          have word :=
+            committedFrameClassWord (List.range distributedImage1.eventCount) 1 records ++
+              List.filterMap
+                (fun entry =>
+                  if entry.sample.event ∈ List.range distributedImage1.eventCount then some entry.sample.event
+                  else none)
+                pending;
+          sourceFrameWord (List.range distributedImage1.eventCount) word ∧
+            (∀ (event : Nat),
+                event ∈ List.range distributedImage1.eventCount →
+                  distributedImage1.sourceRowSide? event = some Side.send →
+                    List.count event word =
+                      List.count event (List.map (fun entry => entry.sample.event) (actorAcceptedSends entries 1))) ∧
+              ∀ (event : Nat),
+                event ∈ List.range distributedImage1.eventCount →
+                  distributedImage1.sourceRowSide? event = some Side.receive →
+                    List.count event word =
+                      List.count event (committedFrameClassWord (List.range distributedImage1.eventCount) 1 records)
 @logicalActor1OutstandingSourceClock : ∀ {cut : DistributedSourceCut} {entries : List SourceAcceptance}
   {records : List (Nat × ActorCommitRecord)} {entry : SourceAcceptance},
   DistributedSourceExecution distributedImages distributedChoreo 9064 (distributedCut0, distributedEntries0)
@@ -56,6 +113,31 @@ distributedFifoHistories : ∀ (channel : TransportChannel),
       (cut, entries) records →
     sourceFrameWord (List.range distributedImage1.eventCount)
       (committedFrameClassWord (List.range distributedImage1.eventCount) 1 records)
+@logicalActor3AcceptanceInclusiveClock : ∀ {cut : DistributedSourceCut} {entries : List SourceAcceptance}
+  {records : List (Nat × ActorCommitRecord)},
+  DistributedSourceExecution distributedImages distributedChoreo 9064 (distributedCut0, distributedEntries0)
+      (cut, entries) records →
+    ∃ pending,
+      pending.length ≤ 1 ∧
+        (∀ (entry : SourceAcceptance), entry ∈ pending → entry ∈ entries ∧ entry.stamps 3 (cut.actors 3).snd) ∧
+          have word :=
+            committedFrameClassWord (List.range distributedImage3.eventCount) 3 records ++
+              List.filterMap
+                (fun entry =>
+                  if entry.sample.event ∈ List.range distributedImage3.eventCount then some entry.sample.event
+                  else none)
+                pending;
+          sourceFrameWord (List.range distributedImage3.eventCount) word ∧
+            (∀ (event : Nat),
+                event ∈ List.range distributedImage3.eventCount →
+                  distributedImage3.sourceRowSide? event = some Side.send →
+                    List.count event word =
+                      List.count event (List.map (fun entry => entry.sample.event) (actorAcceptedSends entries 3))) ∧
+              ∀ (event : Nat),
+                event ∈ List.range distributedImage3.eventCount →
+                  distributedImage3.sourceRowSide? event = some Side.receive →
+                    List.count event word =
+                      List.count event (committedFrameClassWord (List.range distributedImage3.eventCount) 3 records)
 @logicalActor3OutstandingSourceClock : ∀ {cut : DistributedSourceCut} {entries : List SourceAcceptance}
   {records : List (Nat × ActorCommitRecord)} {entry : SourceAcceptance},
   DistributedSourceExecution distributedImages distributedChoreo 9064 (distributedCut0, distributedEntries0)
@@ -80,6 +162,19 @@ logicalClassIsLargerThanEitherPhysicalSenderClass : List.map distributedImage0.e
 logicalDeliveredRequestWordKeepsBothHolders : ∃ receipts,
   receivedSourceWord distributedImages distributedChoreo distributedRecords = List.map SourceAcceptance.event receipts ∧
     List.map SourceAcceptance.event (sourceChannelEntries receipts distributedChannel0) = [0, 3, 0, 3]
+@logicalHandoffsBoundUsesInEveryPrefix : ∀ {cut : DistributedSourceCut} {entries : List SourceAcceptance}
+  {records : List (Nat × ActorCommitRecord)},
+  DistributedSourceExecution distributedImages distributedChoreo 9064 (distributedCut0, distributedEntries0)
+      (cut, entries) records →
+    ∃ ownerWord workerWord,
+      sourceFrameWord [0, 1, 2, 3] ownerWord ∧
+        sourceFrameWord [0, 1, 2, 3] workerWord ∧
+          List.count 0 workerWord ≤ List.count 2 ownerWord ∧
+            List.count 3 ownerWord ≤ List.count 3 workerWord ∧
+              List.count 0 ownerWord =
+                  List.count 0 (List.map (fun entry => entry.sample.event) (actorAcceptedSends entries 0)) ∧
+                List.count 1 workerWord =
+                  List.count 1 (List.map (fun entry => entry.sample.event) (actorAcceptedSends entries 1))
 @logicalReceiptPrefixesAtEveryBoundary : ∀ {cut : DistributedSourceCut} {entries : List SourceAcceptance}
   {records : List (Nat × ActorCommitRecord)},
   DistributedSourceExecution distributedImages distributedChoreo 9064 (distributedCut0, distributedEntries0)
@@ -89,6 +184,13 @@ logicalDeliveredRequestWordKeepsBothHolders : ∃ receipts,
         ∀ (channel : TransportChannel),
           sourceChannelEntries receipts channel =
             List.take (cut.carriers channel).delivered (sourceChannelEntries entries channel)
+@logicalRequestSourceWordAtEveryCut : ∀ {last : DistributedSourceCut × List SourceAcceptance}
+  {records : List (Nat × ActorCommitRecord)},
+  DistributedSourceExecution distributedImages distributedChoreo 9064 (distributedCut0, distributedEntries0) last
+      records →
+    sourceFrameWord [0, 3]
+      (List.filterMap (fun entry => if (entry.event == 0 || entry.event == 3) = true then some entry.event else none)
+        last.snd)
 logicalRequestsHaveBothPhysicalSenders : List.map (fun entry => entry.sample.image.role)
       (sourceChannelEntries distributedEntries36 distributedChannel0) =
     [0, 1, 0, 1] ∧

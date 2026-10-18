@@ -1,4 +1,4 @@
-import Hibana.SourceAcceptedWord
+import Hibana.SourceActorWord
 import Hibana.FifoOccurrenceOrigin
 import Init.Data.List.Count
 
@@ -9,15 +9,6 @@ private instance : ReflBEq Nat where
   rfl {a} := by
     change decide (a = a) = true
     exact decide_eq_true rfl
-
-/-- Source occurrences of the real receive commits, in boundary order.
-Publication records and local operations do not add receipt letters. -/
-def receivedSourceWord (images : Nat → RustDescriptorImage) (choreo : Choreo)
-    (records : List (Nat × ActorCommitRecord)) : List Nat :=
-  records.filterMap fun (actor, record) =>
-    match sourceOperationIdentity? (images actor) choreo record.step.pathIndex record.step.event with
-    | some (event, _, .receive) => some event
-    | _ => none
 
 private theorem a_source_identity_retains_its_effect
     {image : RustDescriptorImage} {choreo : Choreo} {pathIndex event eff : Nat}
