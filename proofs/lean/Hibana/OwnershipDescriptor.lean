@@ -508,6 +508,44 @@ theorem decoded_actor_rows_bind_operation_identity
             simpa [atomsAt, columnsAt] using decoded
           exact actor_row_mapM_member_binds_view rowsAt member
 
+private theorem decoded_actor_row_indices
+    {image : RustDescriptorImage} {atoms : List DecodedProgramAtom}
+    {columns : DecodedProgramColumns} {indices : List Nat} {rows : List DecodedActorRow}
+    (decoded : indices.mapM (image.actorRowFrom? atoms columns) = some rows) :
+    rows.map DecodedActorRow.eventId = indices := by
+  induction indices generalizing rows with
+  | nil => simp at decoded; subst rows; rfl
+  | cons index rest ih =>
+      cases headAt : image.actorRowFrom? atoms columns index with
+      | none => simp [headAt] at decoded
+      | some head =>
+          cases tailAt : rest.mapM (image.actorRowFrom? atoms columns) with
+          | none => simp [headAt, tailAt] at decoded
+          | some tail =>
+              have same : rows = head :: tail :=
+                (Option.some.inj (by simpa [headAt, tailAt] using decoded)).symm
+              rw [same, List.map_cons, (decoded_actor_row_binds_view headAt).1, ih tailAt]
+
+/-- A decoded row's local event ID is its actual list position. Membership
+alone therefore suffices to recover that exact immutable descriptor row. -/
+theorem decoded_actor_row_is_at_its_own_index
+    {image : RustDescriptorImage} {rows : List DecodedActorRow} {row : DecodedActorRow}
+    (decoded : image.decodeActorRows? = some rows) (member : row ∈ rows) :
+    rows[row.eventId]? = some row := by
+  unfold RustDescriptorImage.decodeActorRows? at decoded
+  simp only [Option.bind_eq_bind, Option.bind_eq_some_iff] at decoded
+  obtain ⟨atoms, _, columns, _, mapped⟩ := decoded
+  have indices := decoded_actor_row_indices mapped
+  obtain ⟨index, located⟩ := List.mem_iff_getElem?.mp member
+  have bound := (List.getElem?_eq_some_iff.mp located).1
+  have lengths := congrArg List.length indices
+  simp only [List.length_map, List.length_range] at lengths
+  have identity := congrArg (fun entries => entries[index]?) indices
+  simp only [List.getElem?_map, located, Option.map_some] at identity
+  rw [List.getElem?_range (i := index) (n := image.eventCount) (by omega)] at identity
+  have same := Option.some.inj identity
+  simpa only [same] using located
+
 /-- Source action identities retain both send and receive when two different
 logical roles share one physical actor. No runtime holder state is synthesized. -/
 def EndpointDelegation.Source.actorActions

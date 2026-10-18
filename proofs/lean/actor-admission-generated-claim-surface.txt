@@ -29,9 +29,22 @@
                     Hibana.SourceHandoffBoundaryOutcome admissionImage admissionChoreo useData usePath resourceKey
                         returnRow action ∧
                       (action = Hibana.EndpointTransfer.Action.accept → ∃ frame, Hibana.TransferFrameLocated frame next)
+changedObservationOrderRejected : Hibana.actorCommitHistoryCheck admissionImage admissionChoreo 9053 initial.snapshot
+    returned.snapshot [observedCommit0, observedCommit2, observedCommit1, observedCommit3] =
+  false
 completedStepReplayRejected : (have __src := received;
       { snapshot := __src.snapshot, pathIndex := __src.pathIndex, admitted := received.admitted.set 0 true }).check
     admissionImage admissionChoreo =
+  false
+corruptedReceiptWireRejected : Hibana.actorCommitHistoryCheck admissionImage admissionChoreo 9053 initial.snapshot
+    returned.snapshot
+    ((have __src := observedCommit0;
+      { step := __src.step,
+        wire :=
+          have __src := observedCommit0.wire;
+          { session := __src.session, lane := __src.lane, sender := __src.sender, receiver := __src.receiver,
+            frameLabel := __src.frameLabel, payload := [255, 0, 0] } }) ::
+      observedCommits.tail) =
   false
 dbDoneChecked : dbDone.check admissionImage admissionChoreo = true
 dbDoneSourceReadiness : ∃ data path,
@@ -44,6 +57,24 @@ dbDoneSourceReadiness : ∃ data path,
             dbDone.admitted[row.eventId]? = some (Hibana.sourceRowReady data path dbDone.snapshot row) ∧
               (Hibana.sourceRowReady data path dbDone.snapshot row = true →
                 Hibana.sourceRowViewsIssued path dbDone.snapshot row = true)
+@everyReadyReadHistoryContainsTheWireCheckedReceipt : ∀ {first final : Hibana.ActorProgressObservation}
+  {records : List Hibana.ActorCommitRecord},
+  Hibana.actorCommitHistoryCheck admissionImage admissionChoreo 9053 first final records = true →
+    first.doneState.done receiptRow.eventId = false →
+      Hibana.sourceRowReady useData usePath final readRow = true →
+        ∃ earlier record later,
+          records = earlier ++ record :: later ∧
+            record.step.event = receiptRow.eventId ∧
+              record.step.ownedCheck admissionImage admissionChoreo record.wire 9053 = true ∧
+                record.step.SourceOrdered admissionImage admissionChoreo ∧
+                  Hibana.actorCommitHistoryCheck admissionImage admissionChoreo 9053 record.step.after final later =
+                      true ∧
+                    (∀ (next : Hibana.ActorCommitRecord), next ∈ later → next.step.event ≠ receiptRow.eventId) ∧
+                      record.step.after.doneState.done receiptRow.eventId = true ∧
+                        ∀ (next : Hibana.ActorCommitRecord),
+                          next ∈ later →
+                            next.step.before.doneState.done receiptRow.eventId = true ∧
+                              next.step.after.doneState.done receiptRow.eventId = true
 @everyReadyRowHasItsSourceDerivedInitialIssueOrReceipt : ∀ {row : Hibana.DecodedActorRow}
   {binding : Hibana.EndpointDelegation.Binding} {key : Hibana.EndpointDelegation.EndpointKey}
   {snapshot : Hibana.ActorProgressObservation},
@@ -117,6 +148,28 @@ missingAdmissionRowRejected : (have __src := received;
   false
 missingPayloadViewRejected : missingPayloadView.check admissionImage admissionChoreo = false
 missingPayloadViewSnapshotValid : missingPayloadView.snapshot.valid = true
+observedCommitHistoryChecked : Hibana.actorCommitHistoryCheck admissionImage admissionChoreo 9053 initial.snapshot
+    returned.snapshot observedCommits =
+  true
+observedReadyReadHasTheWireCheckedReceipt : ∃ earlier record later,
+  [observedCommit0] = earlier ++ record :: later ∧
+    record.step.event = receiptRow.eventId ∧
+      record.step.ownedCheck admissionImage admissionChoreo record.wire 9053 = true ∧
+        record.step.SourceOrdered admissionImage admissionChoreo ∧
+          Hibana.actorCommitHistoryCheck admissionImage admissionChoreo 9053 record.step.after received.snapshot later =
+              true ∧
+            (∀ (next : Hibana.ActorCommitRecord), next ∈ later → next.step.event ≠ receiptRow.eventId) ∧
+              record.step.after.doneState.done receiptRow.eventId = true ∧
+                ∀ (next : Hibana.ActorCommitRecord),
+                  next ∈ later →
+                    next.step.before.doneState.done receiptRow.eventId = true ∧
+                      next.step.after.doneState.done receiptRow.eventId = true
+observedReceiptHistoryChecked : Hibana.actorCommitHistoryCheck admissionImage admissionChoreo 9053 initial.snapshot
+    received.snapshot [observedCommit0] =
+  true
+omittedReceiptCommitRejected : Hibana.actorCommitHistoryCheck admissionImage admissionChoreo 9053 initial.snapshot
+    returned.snapshot observedCommits.tail =
+  false
 prematureReturnRejected : (have __src := received;
       { snapshot := __src.snapshot, pathIndex := __src.pathIndex, admitted := received.admitted.set 3 true }).check
     admissionImage admissionChoreo =
@@ -160,6 +213,9 @@ returnedSourceReadiness : ∃ data path,
             returned.admitted[row.eventId]? = some (Hibana.sourceRowReady data path returned.snapshot row) ∧
               (Hibana.sourceRowReady data path returned.snapshot row = true →
                 Hibana.sourceRowViewsIssued path returned.snapshot row = true)
+unrecordedGapCompletionRejected : Hibana.actorCommitHistoryCheck admissionImage admissionChoreo 9053 initial.snapshot
+    received.snapshot [] =
+  false
 workerDoneChecked : workerDone.check admissionImage admissionChoreo = true
 workerDoneSourceReadiness : ∃ data path,
   admissionImage.decodeActorOrder? admissionChoreo = some data ∧

@@ -52,25 +52,60 @@ fn source_ready_rows_match_actual_admission_across_a_parallel_owned_visit() {
             let mut reader = peer_rv.enter(sid, &reader_program).unwrap();
             let mut peer = peer_rv.enter(sid, &peer_program).unwrap();
 
+            // Append-only qualification evidence. Endpoint operations never
+            // inspect this log or use it to decide what may run next.
+            #[cfg(not(miri))]
+            let commits = std::cell::RefCell::new(std::vec::Vec::new());
+
             // SAFETY: every observation retains this pinned TestTransport actor.
             let initial = unsafe { (actor_snapshot(&worker), actor_admissions(&worker)) };
             assert_eq!(initial.1, [true, false, false, false]);
             owner.send::<Loan>(db).await.unwrap();
+            #[cfg(not(miri))]
+            let received_wire = network.queued_frame(1);
             let mut db = worker.recv::<Loan>().await.unwrap();
             // SAFETY: the same actor remains pinned and has no active kernel call.
             let received = unsafe { (actor_snapshot(&worker), actor_admissions(&worker)) };
             assert_eq!(received.1, [false, true, true, false]);
+            #[cfg(not(miri))]
+            commits
+                .borrow_mut()
+                .push((0, 1, initial.0.clone(), received.0.clone(), received_wire));
 
             let (db_done, worker_done) = tokio::join!(
                 async {
+                    // SAFETY: read before borrowing this live actor's DB view.
+                    #[cfg(not(miri))]
+                    let before = unsafe { actor_snapshot(&db) };
                     db.send::<Read>(&17).await.unwrap();
                     // SAFETY: this distinct view retains the same actor.
-                    unsafe { (actor_snapshot(&db), actor_admissions(&db)) }
+                    let observation = unsafe { (actor_snapshot(&db), actor_admissions(&db)) };
+                    #[cfg(not(miri))]
+                    commits.borrow_mut().push((
+                        1,
+                        10,
+                        before,
+                        observation.0.clone(),
+                        network.queued_frame(3),
+                    ));
+                    observation
                 },
                 async {
+                    // SAFETY: read before borrowing WORKER's live view.
+                    #[cfg(not(miri))]
+                    let before = unsafe { actor_snapshot(&worker) };
                     worker.send::<Value>(&19).await.unwrap();
                     // SAFETY: the shared actor lease was released by send.
-                    unsafe { (actor_snapshot(&worker), actor_admissions(&worker)) }
+                    let observation = unsafe { (actor_snapshot(&worker), actor_admissions(&worker)) };
+                    #[cfg(not(miri))]
+                    commits.borrow_mut().push((
+                        2,
+                        1,
+                        before,
+                        observation.0.clone(),
+                        network.queued_frame(4),
+                    ));
+                    observation
                 },
             );
             assert_eq!(reader.recv::<Read>().await.unwrap(), 17);
@@ -87,6 +122,14 @@ fn source_ready_rows_match_actual_admission_across_a_parallel_owned_visit() {
             // SAFETY: returning DB leaves WORKER's own view alive.
             let returned = unsafe { (actor_snapshot(&worker), actor_admissions(&worker)) };
             assert_eq!(returned.1, [false, false, false, false]);
+            #[cfg(not(miri))]
+            commits.borrow_mut().push((
+                3,
+                1,
+                joined.0.clone(),
+                returned.0.clone(),
+                network.queued_frame(0),
+            ));
             let db = owner.recv::<Loan>().await.unwrap();
             assert!(network.queue_is_empty());
 
@@ -100,7 +143,7 @@ fn source_ready_rows_match_actual_admission_across_a_parallel_owned_visit() {
                     &RoleProjection::<1, Steps, 8>::IMAGE_REF,
                 ));
                 let mut source = std::format!(
-                    "import Hibana.SourceReceiptDependency\n\nset_option maxRecDepth 10000\n\n\
+                    "import Hibana.ActorCommitHistory\n\nset_option maxRecDepth 10000\n\n\
                      def admissionChoreo : Hibana.Choreo := {choreo}\n\n\
                      def admissionImage : Hibana.RustDescriptorImage := {image}\n\n"
                 );
@@ -276,6 +319,101 @@ theorem everyReadyRowHasItsSourceDerivedInitialIssueOrReceipt
     (image := admissionImage) (choreo := admissionChoreo)
     (by decide) ((Option.some_get (x := admissionImage.decodeActorOrder? admissionChoreo) (by decide)).symm)
     (by decide) member located required ready
+
+"#);
+                let commits = commits.borrow();
+                assert_eq!(commits.len(), 4);
+                assert_eq!(commits[0].0, 0);
+                assert_eq!(commits[3].0, 3);
+                assert_ne!(commits[1].0, commits[2].0);
+                for (index, (event, view, before, after, (header, payload))) in
+                    commits.iter().enumerate()
+                {
+                    assert!(!before.steps[*event].done);
+                    assert!(after.steps[*event].done);
+                    assert_eq!(after.steps[*event].view, *view);
+                    source.push_str(&std::format!(
+                        "def observedCommit{index} : Hibana.ActorCommitRecord := {{\n  \
+                         step := {{\n    pathIndex := 0\n    event := {event}\n    view := {view}\n    \
+                         before := {}\n    after := {}\n  }}\n  \
+                         wire := {{\n    session := {}\n    lane := {}\n    sender := {}\n    receiver := {}\n    \
+                         frameLabel := {}\n    payload := {payload:?}\n  }} }}\n\n",
+                        super::commit::observation_source(before),
+                        super::commit::observation_source(after),
+                        header.session().raw(),
+                        header.lane(),
+                        header.source_role(),
+                        header.target_role(),
+                        header.label().raw(),
+                    ));
+                }
+                source.push_str(r#"
+def observedCommits : List Hibana.ActorCommitRecord :=
+  [observedCommit0, observedCommit1, observedCommit2, observedCommit3]
+
+theorem observedCommitHistoryChecked :
+    Hibana.actorCommitHistoryCheck admissionImage admissionChoreo 9053
+      initial.snapshot returned.snapshot observedCommits = true := by decide
+
+theorem observedReceiptHistoryChecked :
+    Hibana.actorCommitHistoryCheck admissionImage admissionChoreo 9053
+      initial.snapshot received.snapshot [observedCommit0] = true := by decide
+
+theorem omittedReceiptCommitRejected :
+    Hibana.actorCommitHistoryCheck admissionImage admissionChoreo 9053
+      initial.snapshot returned.snapshot observedCommits.tail = false := by decide
+
+theorem unrecordedGapCompletionRejected :
+    Hibana.actorCommitHistoryCheck admissionImage admissionChoreo 9053
+      initial.snapshot received.snapshot [] = false := by decide
+
+theorem corruptedReceiptWireRejected :
+    Hibana.actorCommitHistoryCheck admissionImage admissionChoreo 9053
+      initial.snapshot returned.snapshot
+      ({ observedCommit0 with wire := { observedCommit0.wire with payload := [255, 0, 0] } } ::
+        observedCommits.tail) = false := by decide
+
+theorem changedObservationOrderRejected :
+    Hibana.actorCommitHistoryCheck admissionImage admissionChoreo 9053
+      initial.snapshot returned.snapshot
+      [observedCommit0, observedCommit2, observedCommit1, observedCommit3] = false := by decide
+
+def receiptRow : Hibana.DecodedActorRow := (useData.rows[0]?).get (by decide)
+def receiptBinding : Hibana.EndpointDelegation.Binding :=
+  ((usePath.bindings.find? fun entry => entry.1 == receiptRow.actionId.event).get (by decide)).2
+
+theorem everyReadyReadHistoryContainsTheWireCheckedReceipt
+    {first final : Hibana.ActorProgressObservation} {records : List Hibana.ActorCommitRecord}
+    (history : Hibana.actorCommitHistoryCheck admissionImage admissionChoreo 9053 first final records = true)
+    (unfinished : first.doneState.done receiptRow.eventId = false)
+    (ready : Hibana.sourceRowReady useData usePath final readRow = true) :
+    ∃ earlier record later, records = earlier ++ record :: later ∧
+      record.step.event = receiptRow.eventId ∧
+      record.step.ownedCheck admissionImage admissionChoreo record.wire 9053 = true ∧
+      record.step.SourceOrdered admissionImage admissionChoreo ∧
+      Hibana.actorCommitHistoryCheck admissionImage admissionChoreo 9053 record.step.after final later = true ∧
+      (∀ next ∈ later, next.step.event ≠ receiptRow.eventId) ∧
+      record.step.after.doneState.done receiptRow.eventId = true ∧
+      ∀ next ∈ later, next.step.before.doneState.done receiptRow.eventId = true ∧
+        next.step.after.doneState.done receiptRow.eventId = true := by
+  have completed := List.all_eq_true.mp (Bool.and_eq_true_iff.mp ready).2 receiptRow.eventId (by decide)
+  exact Hibana.completed_owned_source_row_has_a_wire_checked_commit
+    (path := usePath) (binding := receiptBinding) (key := resourceKey)
+    ((Option.some_get (x := admissionImage.decodeActorOrder? admissionChoreo) (by decide)).symm)
+    (by decide) (by decide) (by decide) (by decide) history unfinished completed
+
+theorem observedReadyReadHasTheWireCheckedReceipt :
+    ∃ earlier record later, [observedCommit0] = earlier ++ record :: later ∧
+      record.step.event = receiptRow.eventId ∧
+      record.step.ownedCheck admissionImage admissionChoreo record.wire 9053 = true ∧
+      record.step.SourceOrdered admissionImage admissionChoreo ∧
+      Hibana.actorCommitHistoryCheck admissionImage admissionChoreo 9053
+        record.step.after received.snapshot later = true ∧
+      (∀ next ∈ later, next.step.event ≠ receiptRow.eventId) ∧
+      record.step.after.doneState.done receiptRow.eventId = true ∧
+      ∀ next ∈ later, next.step.before.doneState.done receiptRow.eventId = true ∧
+        next.step.after.doneState.done receiptRow.eventId = true :=
+  everyReadyReadHistoryContainsTheWireCheckedReceipt observedReceiptHistoryChecked (by decide) (by decide)
 
 "#);
                 let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))

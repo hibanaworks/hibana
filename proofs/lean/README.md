@@ -133,11 +133,31 @@ Every source-ready required-resource row either has its derived initial
 issuer or marks that receive complete among its actual source predecessors.
 This result does not assume an issued header or a value-availability oracle.
 The actual admission fixture applies it to every ready row of its generated
-source and descriptor. It remains a selected-visit completion-bit result,
-not evidence by itself that the Endpoint value still exists in application
-code, a private future or an accepted frame. That history correspondence and
-independently advancing fresh visits remain progress obligations. Comparison
-proofs use explicit decidable equalities without extending the axiom policy.
+source and descriptor. This result alone does not establish that an Endpoint
+value still exists in application code, a private future or an accepted frame.
+
+`ActorCommitHistory.lean` connects completed source receipts to copied actual
+commits and wire evidence. It derives the most recent commit of the same local
+event, a checked suffix with no later commit of that event, and true completion
+at every recorded suffix boundary. The recorded and current selected paths
+may differ: the immutable source fixes the message at a shared occurrence.
+Owned rows must pass the owned wire check; they cannot fall back to an ordinary
+commit check. The two-runtime admission fixture records the actual pre/post
+snapshots and wire bytes alongside its direct Endpoint operations, including
+the observed order of both parallel sends. Its generated proofs reject missing
+receipt records, unrecorded completion, corrupt owned bytes and reordered
+observations. Reordering those pre/post snapshots is a trace inconsistency;
+the protocol still permits either order of the independent parallel commits.
+These records never control runtime execution.
+
+Complete recording is an implementation contract, not something the Boolean
+history checker can establish: it cannot detect an omitted reset/commit pair
+with identical boundary snapshots. The current-receipt witness must still be
+connected to its subsequent transfer history to establish value/future/frame
+availability and general progress across independently advancing fresh visits.
+Neither completion retention nor a valid header alone implies live ownership.
+Comparison proofs use explicit decidable equalities without extending the
+axiom policy.
 
 The native remote-loss test executes the same owned global with a worker
 process that exits before or after receiving its Endpoint. The survivor's
