@@ -36,6 +36,56 @@
 (check-sat)
 (pop)
 
+; A fresh visit's publication reads the derived base, not the old selected
+; value. Equal visible arms therefore do not make the old receipt current.
+(declare-const reset-inner Bool)
+(declare-const base-inner Choice)
+(define-fun prepared-publication () Bool
+  (and (= base-inner (ite reset-inner Unknown inner-before))
+       (not (= frame-arm Unknown))
+       (or (= base-inner Unknown) (= base-inner frame-arm))
+       (= inner-after frame-arm)))
+(define-fun newly-learned () Bool (= base-inner Unknown))
+
+(push)
+(assert prepared-publication)
+(assert reset-inner)
+(assert (= inner-before Left))
+(assert (= inner-after Left))
+(assert (not newly-learned))
+; EXPECT: unsat
+(check-sat)
+(pop)
+
+(push)
+(assert prepared-publication)
+(assert reset-inner)
+(assert (= inner-before Left))
+(assert (= inner-after Left))
+(assert newly-learned)
+; EXPECT: sat
+(check-sat)
+(pop)
+
+(push)
+(assert prepared-publication)
+(assert (not reset-inner))
+(assert (= inner-before Left))
+(assert newly-learned)
+; EXPECT: unsat
+(check-sat)
+(pop)
+
+(push)
+(assert prepared-publication)
+(assert (not reset-inner))
+(assert (= inner-before Left))
+(assert (= inner-after Left))
+(assert (not newly-learned))
+; EXPECT: sat
+(check-sat)
+(pop)
+
 ; The corrected quiet rule forbids changing any committed branch slot.
 (push)
 (assert quiet)

@@ -104,7 +104,7 @@ fn changing_rolled_loans_teach_only_the_received_occurrences_choices() {
             let mut db = owner_rv.enter(session, &db_program).unwrap();
             let mut worker = worker_rv.enter(session, &worker_program).unwrap();
             let mut service = service_rv.enter(session, &service_program).unwrap();
-            let (sends, receipts, ()) =
+            let (sends, (_notice_before, _notice_after, receipts), ()) =
                 tokio::time::timeout(core::time::Duration::from_secs(30), async {
                     tokio::join!(
                         async {
@@ -114,7 +114,7 @@ fn changing_rolled_loans_teach_only_the_received_occurrences_choices() {
                             assert_eq!(branch.label(), 8);
                             branch.send::<LeftNotice>(&()).await.unwrap();
                             let mut sends = std::vec![(before, network.queued_frame(1))];
-                            for (visit, value) in [7, 8, 9].into_iter().enumerate() {
+                            for (visit, value) in [7, 8, 9, 9].into_iter().enumerate() {
                                 number.set(value);
                                 let before = unsafe { actor_snapshot(&owner) };
                                 let branch = owner.offer().await.unwrap();
@@ -136,11 +136,13 @@ fn changing_rolled_loans_teach_only_the_received_occurrences_choices() {
                             sends
                         },
                         async {
+                            let notice_before = unsafe { actor_snapshot(&worker) };
                             let branch = worker.offer().await.unwrap();
                             assert_eq!(branch.label(), 8);
                             branch.recv::<LeftNotice>().await.unwrap();
+                            let notice_after = unsafe { actor_snapshot(&worker) };
                             let mut receipts = std::vec::Vec::new();
-                            for expected in [1, 2, 1] {
+                            for expected in [1, 2, 1, 1] {
                                 // SAFETY: this receiver has its own pinned TestTransport actor.
                                 let before = unsafe { actor_snapshot(&worker) };
                                 let branch = worker.offer().await.unwrap();
@@ -151,10 +153,12 @@ fn changing_rolled_loans_teach_only_the_received_occurrences_choices() {
                                     label => panic!("unexpected received loan label {label}"),
                                 };
                                 let after = unsafe { actor_snapshot(&worker) };
-                                receipts.push((before, after));
                                 worker.send::<Return>(db).await.unwrap();
+                                let return_wire = network.queued_frame(0);
+                                let returned = unsafe { actor_snapshot(&worker) };
+                                receipts.push((before, after, returned, return_wire));
                             }
-                            receipts
+                            (notice_before, notice_after, receipts)
                         },
                         async {
                             let number = service.recv::<Read>().await.unwrap();
@@ -165,27 +169,31 @@ fn changing_rolled_loans_teach_only_the_received_occurrences_choices() {
                 .await
                 .expect("alternating owned choices stopped progressing");
             assert!(network.queue_is_empty());
-            assert_eq!(sends.len(), 4);
-            assert_eq!(receipts.len(), 3);
+            assert_eq!(sends.len(), 5);
+            assert_eq!(receipts.len(), 4);
             assert!(
                 sends
                     .iter()
                     .all(|(_, wire)| wire.0.lane() == sends[0].1.0.lane())
             );
             assert_eq!(sends[1].1.1, sends[3].1.1);
+            assert_eq!(sends[3].1.1, sends[4].1.1);
+            assert_eq!(receipts[3].0.choices, receipts[3].1.choices);
+            assert!(receipts[3].0.completion_mutations < receipts[3].1.completion_mutations);
             #[cfg(not(miri))]
-            write_observations(&sends, &receipts);
+            write_observations(&sends, &receipts, (&_notice_before, &_notice_after));
         });
 }
 
 #[cfg(not(miri))]
 fn write_observations(
     sends: &[(ActorSnapshot, Wire)],
-    receipts: &[(ActorSnapshot, ActorSnapshot)],
+    receipts: &[(ActorSnapshot, ActorSnapshot, ActorSnapshot, Wire)],
+    notice: (&ActorSnapshot, &ActorSnapshot),
 ) {
     use crate::test_support::{lean_choreo::LeanChoreo, lean_descriptor::descriptor_source};
     let mut source = std::format!(
-        "import Hibana.OccurrenceChoiceKnowledge\n\nset_option maxRecDepth 10000\n\n\
+        "import Hibana.OccurrenceChoiceKnowledge\nimport Hibana.ActorChoiceOrigin\n\nset_option maxRecDepth 10000\n\n\
          def occurrenceChoiceChoreo : Hibana.Choreo := {}\n\n",
         Steps::lean_source(),
     );
@@ -205,7 +213,7 @@ fn write_observations(
         ));
     }
     for (index, (before, (header, payload))) in sends.iter().enumerate() {
-        let label = [8, 1, 2, 1][index];
+        let label = [8, 1, 2, 1, 1][index];
         let event = before
             .steps
             .iter()
@@ -241,9 +249,26 @@ fn write_observations(
              theorem choiceSend{index}Checked : choiceSend{index}.check occurrenceChoiceChoreo 9063 = true := by decide\n\n"
         ));
     }
-    for (visit, (before, after)) in receipts.iter().enumerate() {
+    source.push_str(&std::format!(
+        "def choicePrefixBefore : Hibana.ActorProgressObservation := {}\n\n\
+         def choicePrefixAfter : Hibana.ActorProgressObservation := {}\n\n\
+         def choicePrefixCommit : Hibana.ActorCommitRecord := {{ step := {{ pathIndex := 1, event := 0, view := 1, \
+         before := choicePrefixBefore, after := choicePrefixAfter }}, wire := choiceWire0 }}\n\n\
+         private theorem choicePrefixChecked : choicePrefixCommit.check occurrenceWorkerImage \
+         occurrenceChoiceChoreo 9063 = true := by decide\n\n\
+         private theorem choicePrefixHistory : Hibana.ActorMeasuredHistory occurrenceWorkerImage \
+         occurrenceChoiceChoreo 9063 (choicePrefixBefore, {}) (choicePrefixAfter, {}) [] 1 :=\n  \
+         .tail .refl (.commit (record := {{ commit := choicePrefixCommit, before := {}, after := {} }}) \
+         choicePrefixChecked (by decide))\n\n",
+        super::commit::observation_source(notice.0), super::commit::observation_source(notice.1),
+        notice.0.completion_mutations, notice.1.completion_mutations,
+        notice.0.completion_mutations, notice.1.completion_mutations
+    ));
+    for (visit, (before, after, returned, (return_header, return_payload))) in
+        receipts.iter().enumerate()
+    {
         let index = visit + 1;
-        let label = [1, 2, 1][visit];
+        let label = [1, 2, 1, 1][visit];
         let event = before
             .steps
             .iter()
@@ -270,11 +295,33 @@ fn write_observations(
         } else {
             std::format!("choiceReceiverBefore{visit}")
         };
+        if visit == 0 {
+            source.push_str(&std::format!(
+                "def choiceReceipt{visit} : Hibana.ActorCommitObservation := {{ pathIndex := {next_path}, \
+                 event := {event}, view := 1, before := {base}, after := choiceReceiverAfter{visit} }}\n\n"
+            ));
+        } else {
+            let scope = before.steps[event].reentry_scope.unwrap();
+            source.push_str(&std::format!(
+                "def choiceFresh{visit} : Hibana.ActorReentryCommitObservation := {{ previousPath := {previous_path}, \
+                 nextPath := {next_path}, scope := {scope}, event := {event}, view := 1, \
+                 before := choiceReceiverBefore{visit}, after := choiceReceiverAfter{visit} }}\n\n\
+                 private theorem choicePreparedPresent{visit} : \
+                 (choiceFresh{visit}.prepared? occurrenceWorkerImage occurrenceChoiceChoreo).isSome = true := by decide\n\n\
+                 def choicePrepared{visit} := (choiceFresh{visit}.prepared? occurrenceWorkerImage \
+                 occurrenceChoiceChoreo).get choicePreparedPresent{visit}\n\n\
+                 def choiceReceipt{visit} := choicePrepared{visit}.2\n\n\
+                 private theorem choicePreparedAt{visit} : choiceFresh{visit}.prepared? occurrenceWorkerImage \
+                 occurrenceChoiceChoreo = some (choicePrepared{visit}.1, choiceReceipt{visit}) := \
+                 (Option.some_get choicePreparedPresent{visit}).symm\n\n"
+            ));
+        }
         source.push_str(&std::format!(
-            "def choiceReceipt{visit} : Hibana.ActorCommitObservation := {{ pathIndex := {next_path}, \
-             event := {event}, view := 1, before := {base}, after := choiceReceiverAfter{visit} }}\n\n\
-             theorem choiceReceipt{visit}Checked : choiceReceipt{visit}.ownedCheck occurrenceWorkerImage \
-             occurrenceChoiceChoreo choiceWire{index} 9063 = true := by decide\n\n"
+            "theorem choiceReceipt{visit}Checked : choiceReceipt{visit}.ownedCheck occurrenceWorkerImage \
+             occurrenceChoiceChoreo choiceWire{index} 9063 = true := by decide\n\n\
+             private theorem choiceReceiptRecordChecked{visit} : \
+             ({{ step := choiceReceipt{visit}, wire := choiceWire{index} }} : Hibana.ActorCommitRecord).check \
+             occurrenceWorkerImage occurrenceChoiceChoreo 9063 = true := by decide\n\n"
         ));
         let arm = if label == 2 { "right" } else { "left" };
         source.push_str(&std::format!(r#"private theorem choiceSourcePresent{visit} : (choiceSend{index}.ownedFacts? occurrenceChoiceChoreo).isSome = true := by decide
@@ -317,6 +364,93 @@ theorem choiceReceipt{visit}PreservesUnknownSibling :
 theorem choiceReceipt{visit}NeedsNoCommonWholePath : choiceSend{index}.pathIndex ≠ choiceReceipt{visit}.pathIndex := by decide
 
 "#));
+        let return_event = after
+            .steps
+            .iter()
+            .zip(&returned.steps)
+            .position(|(before, after)| !before.done && after.done)
+            .unwrap();
+        source.push_str(&std::format!(
+            "def choiceReturned{visit} : Hibana.ActorProgressObservation := {}\n\n\
+             def choiceReturnWire{visit} : Hibana.OwnedWireObservation := {{ session := {}, lane := {}, \
+             sender := {}, receiver := {}, frameLabel := {}, payload := {return_payload:?} }}\n\n\
+             def choiceReturn{visit} : Hibana.ActorCommitRecord := {{ step := {{ pathIndex := {next_path}, \
+             event := {return_event}, view := 1, before := choiceReceiverAfter{visit}, after := choiceReturned{visit} }}, \
+             wire := choiceReturnWire{visit} }}\n\n\
+             private theorem choiceReturnChecked{visit} : choiceReturn{visit}.check occurrenceWorkerImage \
+             occurrenceChoiceChoreo 9063 = true := by decide\n\n",
+            super::commit::observation_source(returned), return_header.session().raw(), return_header.lane(),
+            return_header.source_role(), return_header.target_role(), return_header.label().raw()
+        ));
+        if visit == 0 {
+            source.push_str(&std::format!(
+                "private theorem choiceMeasuredHistory{visit} : ∃ cleared commits, Hibana.ActorMeasuredHistory \
+                 occurrenceWorkerImage occurrenceChoiceChoreo 9063 \
+                 (choicePrefixBefore, {}) (choiceReceiverAfter{visit}, {}) cleared commits :=\n  \
+                 ⟨[], 2, .tail (.tail choicePrefixHistory (.quiet (by decide))) \
+                 (.commit (record := {{ commit := {{ step := choiceReceipt0, wire := choiceWire1 }}, \
+                 before := {}, after := {} }}) choiceReceiptRecordChecked0 (by decide))⟩\n\n",
+                notice.0.completion_mutations, after.completion_mutations,
+                before.completion_mutations, after.completion_mutations
+            ));
+        } else {
+            let previous = visit - 1;
+            let previous_count = receipts[previous].2.completion_mutations;
+            source.push_str(&std::format!(
+                "private theorem choiceFreshChecked{visit} : Hibana.actorReentryMutationCheck choiceFresh{visit} \
+                 choiceWire{index} occurrenceWorkerImage occurrenceChoiceChoreo 9063 {} {} = true := by decide\n\n\
+                 private theorem choiceMeasuredHistory{visit} : ∃ cleared commits, Hibana.ActorMeasuredHistory \
+                 occurrenceWorkerImage occurrenceChoiceChoreo 9063 \
+                 (choicePrefixBefore, {}) (choiceReceiverAfter{visit}, {}) cleared commits := by\n  \
+                 obtain ⟨cleared, commits, history⟩ := choiceReturnedHistory{previous}\n  \
+                 have gap : Hibana.ActorMeasuredStep occurrenceWorkerImage occurrenceChoiceChoreo 9063 \
+                 (choiceReturned{previous}, {previous_count}) (choiceReceiverBefore{visit}, {previous_count}) [] 0 := .quiet (by decide)\n  \
+                 have fresh := Hibana.ActorMeasuredStep.reentry \
+                 (roll := choicePrepared{visit}.1) \
+                 (step := choiceReceipt{visit}) choiceFreshChecked{visit} choicePreparedAt{visit}\n  \
+                 exact ⟨_, _, .tail (.tail history gap) fresh⟩\n\n",
+                before.completion_mutations, after.completion_mutations,
+                notice.0.completion_mutations, after.completion_mutations
+            ));
+        }
+        source.push_str(&std::format!(
+            "private theorem choiceReturnedHistory{visit} : ∃ cleared commits, Hibana.ActorMeasuredHistory \
+             occurrenceWorkerImage occurrenceChoiceChoreo 9063 \
+             (choicePrefixBefore, {}) (choiceReturned{visit}, {}) cleared commits := by\n  \
+             obtain ⟨cleared, commits, history⟩ := choiceMeasuredHistory{visit}\n  \
+             exact ⟨_, _, .tail history (.commit (record := {{ commit := choiceReturn{visit}, \
+             before := {}, after := {} }}) choiceReturnChecked{visit} (by decide))⟩\n\n\
+             theorem choiceCurrentArm{visit}HasItsActualIntroducingCommit :\n  \
+             ∃ before after prior marked priorCommits record, \
+             Hibana.ActorMeasuredHistory occurrenceWorkerImage occurrenceChoiceChoreo 9063 \
+             (choicePrefixBefore, {}) before prior priorCommits ∧ \
+             Hibana.ActorMeasuredCommit occurrenceWorkerImage occurrenceChoiceChoreo 9063 before after marked record ∧ \
+             record.IntroducesChoice occurrenceWorkerImage occurrenceChoiceChoreo 2 .{arm} ∧ \
+             Hibana.ActorChoiceUnresetHistory occurrenceWorkerImage occurrenceChoiceChoreo 9063 2 \
+             after (choiceReceiverAfter{visit}, {}) ∧ \
+             record.check occurrenceWorkerImage occurrenceChoiceChoreo 9063 = true ∧ \
+             record.step.SourceOrdered occurrenceWorkerImage occurrenceChoiceChoreo := by\n  \
+             obtain ⟨cleared, commits, history⟩ := choiceMeasuredHistory{visit}\n  \
+             exact Hibana.a_current_choice_has_its_latest_actual_source_origin history (by decide) (by decide)\n\n",
+            notice.0.completion_mutations, returned.completion_mutations,
+            after.completion_mutations, returned.completion_mutations,
+            notice.0.completion_mutations, after.completion_mutations
+        ));
+        source.push_str(&std::format!(
+            "theorem choiceOuterArm{visit}KeepsItsActualOriginAcrossInnerResets :\n  \
+             ∃ before after prior marked priorCommits record, \
+             Hibana.ActorMeasuredHistory occurrenceWorkerImage occurrenceChoiceChoreo 9063 \
+             (choicePrefixBefore, {}) before prior priorCommits ∧ \
+             Hibana.ActorMeasuredCommit occurrenceWorkerImage occurrenceChoiceChoreo 9063 before after marked record ∧ \
+             record.IntroducesChoice occurrenceWorkerImage occurrenceChoiceChoreo 0 .left ∧ \
+             Hibana.ActorChoiceUnresetHistory occurrenceWorkerImage occurrenceChoiceChoreo 9063 0 \
+             after (choiceReceiverAfter{visit}, {}) ∧ \
+             record.check occurrenceWorkerImage occurrenceChoiceChoreo 9063 = true ∧ \
+             record.step.SourceOrdered occurrenceWorkerImage occurrenceChoiceChoreo := by\n  \
+             obtain ⟨cleared, commits, history⟩ := choiceMeasuredHistory{visit}\n  \
+             exact Hibana.a_current_choice_has_its_latest_actual_source_origin history (by decide) (by decide)\n\n",
+            notice.0.completion_mutations, after.completion_mutations
+        ));
     }
     source.push_str(
         "def choiceChannel : Hibana.TransportChannel := { session := 9063, generation := 0, \
@@ -329,7 +463,7 @@ theorem choiceReceipt{visit}NeedsNoCommonWholePath : choiceSend{index}.pathIndex
     let mut prior_carrier = std::string::String::from("choiceCarrier0");
     let mut prior_ghost = std::string::String::from("choiceGhost0");
     let mut prior_trace = std::string::String::from("choiceTrace0");
-    for index in 0..4 {
+    for index in 0..sends.len() {
         let next = index + 1;
         source.push_str(&std::format!(
             "def choiceEvent{index} := choiceSend{index}.effIndex?.get (by decide)\n\n\
@@ -348,6 +482,7 @@ theorem choiceReceipt{visit}NeedsNoCommonWholePath : choiceSend{index}.pathIndex
         let deliveries: &[usize] = match index {
             1 => &[0, 1],
             2 => &[2],
+            3 => &[3],
             _ => &[],
         };
         for &delivered in deliveries {
@@ -391,6 +526,30 @@ theorem choiceActualFreshSourceIsTheOneTeachingTheNewArm :
     (choiceRecords4[choiceCarrier4.delivered]?).map (fun record => record.1) = some choiceSend3 ∧
       choiceReceipt2.after.doneState.selected 2 = some .left := by
   exact ⟨by rfl, choiceReceipt2LearnsFromItsAcceptedFrame.2⟩
+
+theorem choiceEqualVisibleArmStillComesFromAFreshPreparedBase :
+    choiceReceiverBefore3.choices = choiceReceiverAfter3.choices ∧
+      choiceReceipt3.before.choices.find? (fun row => row.1 == 2) = some (2, none) ∧
+      choiceReceiverAfter3.choices.find? (fun row => row.1 == 2) = some (2, some Hibana.RouteArm.left) := by
+  exact ⟨by rfl, choiceInnerUnknown3, by decide⟩
+
+private theorem choiceLastReturnSuffix :
+    Hibana.ActorChoiceUnresetHistory occurrenceWorkerImage occurrenceChoiceChoreo 9063 2
+      (choiceReceipt3.after, 20) (choiceReturned3, 21) :=
+  .commit (record := { commit := choiceReturn3, before := 20, after := 21 })
+    .refl choiceReturnChecked3 (by decide)
+
+theorem choiceEqualArmCurrentKnowledgeHasItsActualFifthFrame :
+    (choiceRecords5[choiceCarrier5.delivered]?).map (fun record => record.1) = some choiceSend4 ∧
+      choiceGhost5.accepted[choiceCarrier5.delivered]? = some ⟨choiceEvent4, 2⟩ ∧
+      choiceReceipt3.after.actor = choiceReceiptFacts3.binding.receiverActor ∧
+      choiceReturned3.doneState.selected 2 = some .left := by
+  refine ⟨rfl, by rfl, ?_⟩
+  exact Hibana.a_received_choice_stays_tied_to_its_accepted_source_occurrence
+    (sentFacts := choiceSourceFacts3) (receivedFacts := choiceReceiptFacts3)
+    (memberships := choiceMemberships3) (previous := none)
+    choiceSend4Checked choiceSourceAt3 choiceReceipt3Checked choiceReceiptAt3
+    choiceReceiverSide3 rfl choiceMembershipsAt3 choiceInnerMember3 choiceInnerUnknown3 choiceLastReturnSuffix
 
 def choiceInventedSibling : Hibana.ActorProgressObservation :=
   { choiceReceiverBefore0 with choices := choiceReceiverBefore0.choices.map fun (scope, arm) =>

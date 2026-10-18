@@ -144,7 +144,7 @@ choices outside those memberships are preserved. Sender publication and
 equality of the actors' whole normalized paths are not premises.
 
 The nested-choice Tokio fixture keeps an outer left branch, borrows and returns
-the same Endpoint through inner left/right/left visits, and then uses its
+the same Endpoint through inner left/right/left/left visits, and then uses its
 continuation. Sender and receiver witnesses intentionally disagree about the
 unentered sibling branch, which remains unknown at runtime. The ordinary
 prefix and every owned frame are included in the same FIFO trace.
@@ -154,9 +154,20 @@ as progress and write-count equality. A copied real snapshot demonstrated that
 the previous rule accepted invented sibling knowledge without a write. The
 corrected checker rejects both invention and forgetting; genuine fresh visits
 still use their separate source-derived reset/commit evidence. This changes
-proof observation validation, not runtime admission. The current choice's
-origin through complete mixed histories and its composition with the global
-distributed cut remain separate obligations.
+proof observation validation, not runtime admission.
+
+`ActorChoicePublication.lean` separates retained local knowledge from a choice
+introduced by the operation's exact source membership. A source-derived reset
+can only retain knowledge outside the body's route scopes.
+`ActorChoiceOrigin.lean` uses these results over complete mixed measured
+histories. Starting from an unknown slot, a current selected arm has an actual
+introducing commit and a measured suffix without a reset of that one route.
+Other parallel or nested bodies may restart. A fresh commit uses its prepared
+base, so equal pre-reset and post-commit arms do not reuse an old receipt.
+The Tokio fixture supplies all receives, returns and intervening quiet gaps,
+including the final equal-arm reentry. These observations do not create a
+common actor visit or source path. Composing the current origins, FIFO frames,
+custody and live calls into the global distributed cut remains unfinished.
 
 `ResourceHeaderOrigin.lean` derives an issued tag's initial or latest actual
 receive origin from the complete transfer/header history. Static source event

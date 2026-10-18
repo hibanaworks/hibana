@@ -57,7 +57,7 @@ bash "$ROOT/.github/scripts/check_smt2.sh" "$PROOFS/SourceUseCut.smt2" > "$EVIDE
 bash "$ROOT/.github/scripts/check_smt2.sh" "$PROOFS/RollBoundary.smt2" > "$EVIDENCE/z3-roll-boundary.log"
 bash "$ROOT/.github/scripts/check_smt2.sh" "$PROOFS/ViewGeneration.smt2" > "$EVIDENCE/z3-view-generation.log"
 bash "$ROOT/.github/scripts/check_smt2.sh" "$PROOFS/OccurrenceChoiceKnowledge.smt2" > "$EVIDENCE/z3-occurrence-choice.log"
-printf 'Occurrence choice publication and quiet observation: Z3 3 UNSAT, 3 SAT witnesses. Evidence: %s\n' "$EVIDENCE/z3-occurrence-choice.log"
+printf 'Occurrence choice publication, fresh origins and quiet observation: Z3 5 UNSAT, 5 SAT witnesses. Evidence: %s\n' "$EVIDENCE/z3-occurrence-choice.log"
 printf 'Actor view generations: Z3 4 UNSAT, 1 rejected-rule SAT, 1 positive SAT. Evidence: %s\n' "$EVIDENCE/z3-view-generation.log"
 printf 'Receipt wait frontier: Lean 3 general rules; Z3 2 UNSAT, 1 rejected-rule SAT, 1 positive SAT. Evidence: %s\n' "$EVIDENCE/z3-receipt-wait.log"
 printf 'Source resource use cut: Z3 3 UNSAT, 3 positive SAT witnesses. Evidence: %s\n' "$EVIDENCE/z3-source-use-cut.log"

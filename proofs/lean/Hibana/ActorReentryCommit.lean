@@ -225,6 +225,30 @@ theorem prepared_body_reentry_is_derived_before_commit
     next rejected => simp at written
   next rejected => simp at prepared
 
+/-- The source-derived reset changes exactly the local choices belonging to
+that body. In particular a later equal arm is not evidence that no reset
+occurred. This correspondence uses the pre-operation preparation alone. -/
+theorem a_prepared_body_has_its_source_choice_reset
+    {image : RustDescriptorImage} {choreo : Choreo} {before base : ActorProgressObservation}
+    {previousPath nextPath scope event : Nat} {roll : DecodedRollRow}
+    (prepared : prepareObservedActorBody? image choreo before
+      previousPath nextPath scope event = some (roll, base)) :
+    resetObservedChoices? (canonicalProgramSource choreo) scope before.choices = some base.choices := by
+  unfold prepareObservedActorBody? at prepared
+  obtain ⟨data, _, prepared⟩ := Option.bind_eq_some_iff.mp prepared
+  obtain ⟨previous, _, prepared⟩ := Option.bind_eq_some_iff.mp prepared
+  obtain ⟨nextPath, _, prepared⟩ := Option.bind_eq_some_iff.mp prepared
+  obtain ⟨rows, _, prepared⟩ := Option.bind_eq_some_iff.mp prepared
+  obtain ⟨chosen, _, prepared⟩ := Option.bind_eq_some_iff.mp prepared
+  obtain ⟨choices, choicesAt, allowed⟩ := Option.bind_eq_some_iff.mp prepared
+  dsimp only at allowed
+  split at allowed
+  next guarded =>
+    have same := Option.some.inj allowed
+    cases same
+    exact choicesAt
+  next rejected => simp at allowed
+
 private theorem source_body_base_facts
     {image : RustDescriptorImage} {choreo : Choreo} {before base : ActorProgressObservation}
     {previousPath nextPath scope event : Nat} {roll : DecodedRollRow}

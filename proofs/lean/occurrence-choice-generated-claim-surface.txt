@@ -12,11 +12,94 @@ choiceConsumed2 : Hibana.SendAdmissionTrace occurrenceChoiceChoreo 9063 choiceCa
   choiceRecords2
 choiceConsumed3 : Hibana.SendAdmissionTrace occurrenceChoiceChoreo 9063 choiceCarrierConsumed3 choiceGhostConsumed3
   choiceRecords3
+choiceConsumed4 : Hibana.SendAdmissionTrace occurrenceChoiceChoreo 9063 choiceCarrierConsumed4 choiceGhostConsumed4
+  choiceRecords4
+choiceCurrentArm0HasItsActualIntroducingCommit : ∃ before after prior marked priorCommits record,
+  Hibana.ActorMeasuredHistory occurrenceWorkerImage occurrenceChoiceChoreo 9063 (choicePrefixBefore, 0) before prior
+      priorCommits ∧
+    Hibana.ActorMeasuredCommit occurrenceWorkerImage occurrenceChoiceChoreo 9063 before after marked record ∧
+      record.IntroducesChoice occurrenceWorkerImage occurrenceChoiceChoreo 2 Hibana.RouteArm.left ∧
+        Hibana.ActorChoiceUnresetHistory occurrenceWorkerImage occurrenceChoiceChoreo 9063 2 after
+            (choiceReceiverAfter0, 2) ∧
+          record.check occurrenceWorkerImage occurrenceChoiceChoreo 9063 = true ∧
+            record.step.SourceOrdered occurrenceWorkerImage occurrenceChoiceChoreo
+choiceCurrentArm1HasItsActualIntroducingCommit : ∃ before after prior marked priorCommits record,
+  Hibana.ActorMeasuredHistory occurrenceWorkerImage occurrenceChoiceChoreo 9063 (choicePrefixBefore, 0) before prior
+      priorCommits ∧
+    Hibana.ActorMeasuredCommit occurrenceWorkerImage occurrenceChoiceChoreo 9063 before after marked record ∧
+      record.IntroducesChoice occurrenceWorkerImage occurrenceChoiceChoreo 2 Hibana.RouteArm.right ∧
+        Hibana.ActorChoiceUnresetHistory occurrenceWorkerImage occurrenceChoiceChoreo 9063 2 after
+            (choiceReceiverAfter1, 8) ∧
+          record.check occurrenceWorkerImage occurrenceChoiceChoreo 9063 = true ∧
+            record.step.SourceOrdered occurrenceWorkerImage occurrenceChoiceChoreo
+choiceCurrentArm2HasItsActualIntroducingCommit : ∃ before after prior marked priorCommits record,
+  Hibana.ActorMeasuredHistory occurrenceWorkerImage occurrenceChoiceChoreo 9063 (choicePrefixBefore, 0) before prior
+      priorCommits ∧
+    Hibana.ActorMeasuredCommit occurrenceWorkerImage occurrenceChoiceChoreo 9063 before after marked record ∧
+      record.IntroducesChoice occurrenceWorkerImage occurrenceChoiceChoreo 2 Hibana.RouteArm.left ∧
+        Hibana.ActorChoiceUnresetHistory occurrenceWorkerImage occurrenceChoiceChoreo 9063 2 after
+            (choiceReceiverAfter2, 14) ∧
+          record.check occurrenceWorkerImage occurrenceChoiceChoreo 9063 = true ∧
+            record.step.SourceOrdered occurrenceWorkerImage occurrenceChoiceChoreo
+choiceCurrentArm3HasItsActualIntroducingCommit : ∃ before after prior marked priorCommits record,
+  Hibana.ActorMeasuredHistory occurrenceWorkerImage occurrenceChoiceChoreo 9063 (choicePrefixBefore, 0) before prior
+      priorCommits ∧
+    Hibana.ActorMeasuredCommit occurrenceWorkerImage occurrenceChoiceChoreo 9063 before after marked record ∧
+      record.IntroducesChoice occurrenceWorkerImage occurrenceChoiceChoreo 2 Hibana.RouteArm.left ∧
+        Hibana.ActorChoiceUnresetHistory occurrenceWorkerImage occurrenceChoiceChoreo 9063 2 after
+            (choiceReceiverAfter3, 20) ∧
+          record.check occurrenceWorkerImage occurrenceChoiceChoreo 9063 = true ∧
+            record.step.SourceOrdered occurrenceWorkerImage occurrenceChoiceChoreo
+choiceEqualArmCurrentKnowledgeHasItsActualFifthFrame : Option.map (fun record => record.fst)
+      choiceRecords5[choiceCarrier5.delivered]? =
+    some choiceSend4 ∧
+  choiceGhost5.accepted[choiceCarrier5.delivered]? = some { globalId := choiceEvent4, iteration := 2 } ∧
+    choiceReceipt3.after.actor = choiceReceiptFacts3.binding.receiverActor ∧
+      choiceReturned3.doneState.selected 2 = some Hibana.RouteArm.left
+choiceEqualVisibleArmStillComesFromAFreshPreparedBase : choiceReceiverBefore3.choices = choiceReceiverAfter3.choices ∧
+  List.find? (fun row => row.fst == 2) choiceReceipt3.before.choices = some (2, none) ∧
+    List.find? (fun row => row.fst == 2) choiceReceiverAfter3.choices = some (2, some Hibana.RouteArm.left)
 choiceFreshReceiveHasItsActualAcceptedSource : ∃ sample eventId key,
   choiceRecords4[choiceCarrier4.delivered]? = some (sample, eventId) ∧
     choiceGhost4.accepted[choiceCarrier4.delivered]? = some key ∧
       sample.check occurrenceChoiceChoreo 9063 = true ∧
         sample.effIndex? = some eventId ∧ key.globalId = eventId ∧ sample.wire.identifies choiceFinalFrame
+choiceOuterArm0KeepsItsActualOriginAcrossInnerResets : ∃ before after prior marked priorCommits record,
+  Hibana.ActorMeasuredHistory occurrenceWorkerImage occurrenceChoiceChoreo 9063 (choicePrefixBefore, 0) before prior
+      priorCommits ∧
+    Hibana.ActorMeasuredCommit occurrenceWorkerImage occurrenceChoiceChoreo 9063 before after marked record ∧
+      record.IntroducesChoice occurrenceWorkerImage occurrenceChoiceChoreo 0 Hibana.RouteArm.left ∧
+        Hibana.ActorChoiceUnresetHistory occurrenceWorkerImage occurrenceChoiceChoreo 9063 0 after
+            (choiceReceiverAfter0, 2) ∧
+          record.check occurrenceWorkerImage occurrenceChoiceChoreo 9063 = true ∧
+            record.step.SourceOrdered occurrenceWorkerImage occurrenceChoiceChoreo
+choiceOuterArm1KeepsItsActualOriginAcrossInnerResets : ∃ before after prior marked priorCommits record,
+  Hibana.ActorMeasuredHistory occurrenceWorkerImage occurrenceChoiceChoreo 9063 (choicePrefixBefore, 0) before prior
+      priorCommits ∧
+    Hibana.ActorMeasuredCommit occurrenceWorkerImage occurrenceChoiceChoreo 9063 before after marked record ∧
+      record.IntroducesChoice occurrenceWorkerImage occurrenceChoiceChoreo 0 Hibana.RouteArm.left ∧
+        Hibana.ActorChoiceUnresetHistory occurrenceWorkerImage occurrenceChoiceChoreo 9063 0 after
+            (choiceReceiverAfter1, 8) ∧
+          record.check occurrenceWorkerImage occurrenceChoiceChoreo 9063 = true ∧
+            record.step.SourceOrdered occurrenceWorkerImage occurrenceChoiceChoreo
+choiceOuterArm2KeepsItsActualOriginAcrossInnerResets : ∃ before after prior marked priorCommits record,
+  Hibana.ActorMeasuredHistory occurrenceWorkerImage occurrenceChoiceChoreo 9063 (choicePrefixBefore, 0) before prior
+      priorCommits ∧
+    Hibana.ActorMeasuredCommit occurrenceWorkerImage occurrenceChoiceChoreo 9063 before after marked record ∧
+      record.IntroducesChoice occurrenceWorkerImage occurrenceChoiceChoreo 0 Hibana.RouteArm.left ∧
+        Hibana.ActorChoiceUnresetHistory occurrenceWorkerImage occurrenceChoiceChoreo 9063 0 after
+            (choiceReceiverAfter2, 14) ∧
+          record.check occurrenceWorkerImage occurrenceChoiceChoreo 9063 = true ∧
+            record.step.SourceOrdered occurrenceWorkerImage occurrenceChoiceChoreo
+choiceOuterArm3KeepsItsActualOriginAcrossInnerResets : ∃ before after prior marked priorCommits record,
+  Hibana.ActorMeasuredHistory occurrenceWorkerImage occurrenceChoiceChoreo 9063 (choicePrefixBefore, 0) before prior
+      priorCommits ∧
+    Hibana.ActorMeasuredCommit occurrenceWorkerImage occurrenceChoiceChoreo 9063 before after marked record ∧
+      record.IntroducesChoice occurrenceWorkerImage occurrenceChoiceChoreo 0 Hibana.RouteArm.left ∧
+        Hibana.ActorChoiceUnresetHistory occurrenceWorkerImage occurrenceChoiceChoreo 9063 0 after
+            (choiceReceiverAfter3, 20) ∧
+          record.check occurrenceWorkerImage occurrenceChoiceChoreo 9063 = true ∧
+            record.step.SourceOrdered occurrenceWorkerImage occurrenceChoiceChoreo
 choiceReceipt0Checked : choiceReceipt0.ownedCheck occurrenceWorkerImage occurrenceChoiceChoreo choiceWire1 9063 = true
 choiceReceipt0LearnsFromItsAcceptedFrame : choiceReceipt0.after.actor = choiceReceiptFacts0.binding.receiverActor ∧
   choiceReceipt0.after.doneState.selected 2 = some Hibana.RouteArm.left
@@ -32,15 +115,22 @@ choiceReceipt2LearnsFromItsAcceptedFrame : choiceReceipt2.after.actor = choiceRe
   choiceReceipt2.after.doneState.selected 2 = some Hibana.RouteArm.left
 choiceReceipt2NeedsNoCommonWholePath : choiceSend3.pathIndex ≠ choiceReceipt2.pathIndex
 choiceReceipt2PreservesUnknownSibling : choiceReceipt2.after.doneState.selected 4 = none
+choiceReceipt3Checked : choiceReceipt3.ownedCheck occurrenceWorkerImage occurrenceChoiceChoreo choiceWire4 9063 = true
+choiceReceipt3LearnsFromItsAcceptedFrame : choiceReceipt3.after.actor = choiceReceiptFacts3.binding.receiverActor ∧
+  choiceReceipt3.after.doneState.selected 2 = some Hibana.RouteArm.left
+choiceReceipt3NeedsNoCommonWholePath : choiceSend4.pathIndex ≠ choiceReceipt3.pathIndex
+choiceReceipt3PreservesUnknownSibling : choiceReceipt3.after.doneState.selected 4 = none
 choiceSend0Checked : choiceSend0.check occurrenceChoiceChoreo 9063 = true
 choiceSend1Checked : choiceSend1.check occurrenceChoiceChoreo 9063 = true
 choiceSend2Checked : choiceSend2.check occurrenceChoiceChoreo 9063 = true
 choiceSend3Checked : choiceSend3.check occurrenceChoiceChoreo 9063 = true
+choiceSend4Checked : choiceSend4.check occurrenceChoiceChoreo 9063 = true
 choiceTrace0 : Hibana.SendAdmissionTrace occurrenceChoiceChoreo 9063 choiceCarrier0 choiceGhost0 choiceRecords0
 choiceTrace1 : Hibana.SendAdmissionTrace occurrenceChoiceChoreo 9063 choiceCarrier1 choiceGhost1 choiceRecords1
 choiceTrace2 : Hibana.SendAdmissionTrace occurrenceChoiceChoreo 9063 choiceCarrier2 choiceGhost2 choiceRecords2
 choiceTrace3 : Hibana.SendAdmissionTrace occurrenceChoiceChoreo 9063 choiceCarrier3 choiceGhost3 choiceRecords3
 choiceTrace4 : Hibana.SendAdmissionTrace occurrenceChoiceChoreo 9063 choiceCarrier4 choiceGhost4 choiceRecords4
+choiceTrace5 : Hibana.SendAdmissionTrace occurrenceChoiceChoreo 9063 choiceCarrier5 choiceGhost5 choiceRecords5
 choiceTraceIncludesTheOrdinaryPrefixAndAllThreeLoans : choiceRecords4.length = choiceCarrier4.frames.length
 choiceZeroWriteGapCannotForgetOuterKnowledge : ∀ (count : Nat),
   Hibana.actorCommitMutationHistoryCheck occurrenceWorkerImage occurrenceChoiceChoreo 9063 choiceReceiverBefore0 count
