@@ -506,6 +506,40 @@ These tests qualify their concrete schedules. General originating-call and
 complete-history correspondence are still explicit implementation contracts,
 not a claim of Rust source extraction or completed global progress.
 
+`ActorVisitProgress.lean` derives the finite point domain from the selected
+source bindings, with the path itself checked against the normalized global.
+It contains acceptance and both local halves of each wire
+message, or one local step for a self message. Domain closure follows from
+those bindings, so a caller cannot omit a predecessor to manufacture progress.
+The existing ready-point theorem then applies without another rank argument.
+
+A checked actor family covers every source action with exactly one actual
+descriptor row and its copied cursor-admission observation. Missing or duplicate
+rows reject the cut. Completed wire operations require their recorded accepted
+send, and unknown or repeated acceptance IDs reject the cut. These records are
+qualification data and never authorize a localside operation.
+
+The general selected-visit theorem derives an admitted actual row, or an
+accepted send whose local publication remains unfinished. It connects source
+dependency edges to each actor's existing done bits and admission query. A
+publication candidate is the existing call, not permission to send again.
+The result does not establish available carrier bytes, a successful arbitrary
+application payload, or refinement of independently advancing fresh visits.
+Per-cut translation validation remains distinct from universal Rust refinement.
+The observations must come from the same run and complete, authentic acceptance
+history. The cursor observation is distinct from the public kernel's first-fault
+check, so it is not a claim that a faulted run can resume.
+
+`ActorVisitProgressGenerated.lean` checks seven real cuts from four actors in
+two runtimes. Both independent resource/worker sends are admitted before either
+runs, and the direct Tokio localside drives them in parallel. Six unfinished
+cuts use the general progress theorem, and the final cut has no unfinished
+point. Omitted/duplicated actors and missing/unknown/repeated acceptance records
+are rejected, as is a fabricated empty source domain. Three explicitly model-only
+claims admit acceptance and receipt before sender publication using copied
+progress. They are not presented as
+additional observations from a real callback cut.
+
 `OwnedRetirement.lean` checks retirement against the global source for the
 current selected visit. It considers every path compatible with the committed
 choices. A view is needed for its own send/receive or as the owned payload of
@@ -682,5 +716,5 @@ bash .github/scripts/check_lean_proofs.sh
 
 The gate pins the Lean toolchain, builds the static package, exports the
 production descriptor and kernel artifacts from Rust, checks every claim
-surface, and audits the permitted proof dependencies. Its final status line is
-the authoritative current inventory.
+surface, and audits the permitted proof dependencies. Each artifact audit prints
+its checked inventory. The final status is emitted only after all checks pass.

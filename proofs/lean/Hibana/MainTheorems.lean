@@ -18,6 +18,7 @@ import Hibana.ActorCommitHistory
 import Hibana.ResourceValueCorrespondence
 import Hibana.SendCompletion
 import Hibana.PublicAdmissionCustody
+import Hibana.ActorVisitProgress
 import Hibana.ActorReentryCommit
 import Hibana.GlobalSemantics
 import Hibana.GlobalAllocationCorrectness

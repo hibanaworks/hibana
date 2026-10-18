@@ -4,7 +4,7 @@ import Hibana.SourceResourceAvailability
 namespace Hibana
 open EndpointDelegation
 
-private theorem decoded_actor_order_fields
+theorem decoded_actor_order_fields
     {image : RustDescriptorImage} {choreo : Choreo} {data : DecodedActorOrder}
     (decoded : image.decodeActorOrder? choreo = some data) :
     choreo.ownershipSource? = some data.source ∧

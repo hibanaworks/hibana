@@ -1,0 +1,153 @@
+bothParallelSendsHaveActualAdmission : visitLoanReceivedActor1.admission.admitted[1]? = some true ∧
+  visitLoanReceivedActor1.admission.admitted[2]? = some true ∧
+    Hibana.actorVisitObserved visitLoanReceived visitChoreo visitPath visitLoanReceivedAccepted
+          (Hibana.SourcePoint.accepted 1) =
+        false ∧
+      Hibana.actorVisitObserved visitLoanReceived visitChoreo visitPath visitLoanReceivedAccepted
+          (Hibana.SourcePoint.accepted 2) =
+        false
+duplicateAcceptedEventIsRejected : Hibana.actorVisitCutCheck visitLoanAccepted visitChoreo visitSource visitPath
+    [0, 0] =
+  false
+duplicateActorIsRejected : Hibana.actorVisitCutCheck (visitLoanReceived ++ [visitLoanReceivedActor1]) visitChoreo
+    visitSource visitPath visitLoanReceivedAccepted =
+  false
+fabricatedEmptySourceDomainIsRejected : Hibana.actorVisitCutCheck [] visitChoreo visitSource
+    { selections := [], bindings := [] } [] =
+  false
+missingAcceptedSendIsRejected : Hibana.actorVisitCutCheck visitLoanAccepted visitChoreo visitSource visitPath [] = false
+missingActorIsRejected : Hibana.actorVisitCutCheck (List.take 2 visitLoanReceived) visitChoreo visitSource visitPath
+    visitLoanReceivedAccepted =
+  false
+modelAcceptedBeforePublicationIsAllowed : Hibana.actorVisitCutCheck visitInitial visitChoreo visitSource visitPath [0] =
+  true
+modelAcceptedBeforePublicationIsNotAnotherSend : Hibana.actorVisitObserved visitInitial visitChoreo visitPath [0]
+      (Hibana.SourcePoint.accepted 0) =
+    true ∧
+  Hibana.actorVisitObserved visitInitial visitChoreo visitPath [0]
+      (Hibana.SourcePoint.committed { event := 0, side := Hibana.EndpointDelegation.Side.send }) =
+    false
+modelReceiptBeforeSenderPublicationIsAllowed : Hibana.actorVisitCutCheck
+    [visitInitialActor0, visitLoanReceivedActor1, visitInitialActor2, visitInitialActor3] visitChoreo visitSource
+    visitPath [0] =
+  true
+unknownAcceptedEventIsRejected : Hibana.actorVisitCutCheck visitLoanAccepted visitChoreo visitSource visitPath [0, 99] =
+  false
+visitCompleteChecked : Hibana.actorVisitCutCheck visitComplete visitChoreo visitSource visitPath visitCompleteAccepted =
+  true
+visitCompleteHasNoUnfinishedPoint : (Hibana.sourceVisitPoints visitPath.bindings).all
+    (Hibana.actorVisitObserved visitComplete visitChoreo visitPath visitCompleteAccepted) =
+  true
+visitInitialChecked : Hibana.actorVisitCutCheck visitInitial visitChoreo visitSource visitPath visitInitialAccepted =
+  true
+visitInitialHasActualAdmissionOrPublication : ∃ point record data row,
+  point ∈ Hibana.sourceVisitPoints visitPath.bindings ∧
+    Hibana.actorVisitObserved visitInitial visitChoreo visitPath visitInitialAccepted point = false ∧
+      record ∈ visitInitial ∧
+        record.image.decodeActorOrder? visitChoreo = some data ∧
+          row ∈ data.activeRows visitPath ∧
+            (point = Hibana.SourcePoint.committed row.actionId ∧
+                row.actionId.side = Hibana.EndpointDelegation.Side.send ∧
+                  Hibana.actorVisitObserved visitInitial visitChoreo visitPath visitInitialAccepted
+                        (Hibana.SourcePoint.accepted row.actionId.event) =
+                      true ∧
+                    record.admission.snapshot.doneState.done row.eventId = false ∨
+              point = row.actionId.entryPoint ∧
+                Hibana.sourceRowReady data visitPath record.admission.snapshot row = true ∧
+                  record.admission.admitted[row.eventId]? = some true ∧
+                    Hibana.sourceRowViewsIssued visitPath record.admission.snapshot row = true)
+visitLoanAcceptedChecked : Hibana.actorVisitCutCheck visitLoanAccepted visitChoreo visitSource visitPath
+    visitLoanAcceptedAccepted =
+  true
+visitLoanAcceptedHasActualAdmissionOrPublication : ∃ point record data row,
+  point ∈ Hibana.sourceVisitPoints visitPath.bindings ∧
+    Hibana.actorVisitObserved visitLoanAccepted visitChoreo visitPath visitLoanAcceptedAccepted point = false ∧
+      record ∈ visitLoanAccepted ∧
+        record.image.decodeActorOrder? visitChoreo = some data ∧
+          row ∈ data.activeRows visitPath ∧
+            (point = Hibana.SourcePoint.committed row.actionId ∧
+                row.actionId.side = Hibana.EndpointDelegation.Side.send ∧
+                  Hibana.actorVisitObserved visitLoanAccepted visitChoreo visitPath visitLoanAcceptedAccepted
+                        (Hibana.SourcePoint.accepted row.actionId.event) =
+                      true ∧
+                    record.admission.snapshot.doneState.done row.eventId = false ∨
+              point = row.actionId.entryPoint ∧
+                Hibana.sourceRowReady data visitPath record.admission.snapshot row = true ∧
+                  record.admission.admitted[row.eventId]? = some true ∧
+                    Hibana.sourceRowViewsIssued visitPath record.admission.snapshot row = true)
+visitLoanReceivedChecked : Hibana.actorVisitCutCheck visitLoanReceived visitChoreo visitSource visitPath
+    visitLoanReceivedAccepted =
+  true
+visitLoanReceivedHasActualAdmissionOrPublication : ∃ point record data row,
+  point ∈ Hibana.sourceVisitPoints visitPath.bindings ∧
+    Hibana.actorVisitObserved visitLoanReceived visitChoreo visitPath visitLoanReceivedAccepted point = false ∧
+      record ∈ visitLoanReceived ∧
+        record.image.decodeActorOrder? visitChoreo = some data ∧
+          row ∈ data.activeRows visitPath ∧
+            (point = Hibana.SourcePoint.committed row.actionId ∧
+                row.actionId.side = Hibana.EndpointDelegation.Side.send ∧
+                  Hibana.actorVisitObserved visitLoanReceived visitChoreo visitPath visitLoanReceivedAccepted
+                        (Hibana.SourcePoint.accepted row.actionId.event) =
+                      true ∧
+                    record.admission.snapshot.doneState.done row.eventId = false ∨
+              point = row.actionId.entryPoint ∧
+                Hibana.sourceRowReady data visitPath record.admission.snapshot row = true ∧
+                  record.admission.admitted[row.eventId]? = some true ∧
+                    Hibana.sourceRowViewsIssued visitPath record.admission.snapshot row = true)
+visitParallelAcceptedChecked : Hibana.actorVisitCutCheck visitParallelAccepted visitChoreo visitSource visitPath
+    visitParallelAcceptedAccepted =
+  true
+visitParallelAcceptedHasActualAdmissionOrPublication : ∃ point record data row,
+  point ∈ Hibana.sourceVisitPoints visitPath.bindings ∧
+    Hibana.actorVisitObserved visitParallelAccepted visitChoreo visitPath visitParallelAcceptedAccepted point = false ∧
+      record ∈ visitParallelAccepted ∧
+        record.image.decodeActorOrder? visitChoreo = some data ∧
+          row ∈ data.activeRows visitPath ∧
+            (point = Hibana.SourcePoint.committed row.actionId ∧
+                row.actionId.side = Hibana.EndpointDelegation.Side.send ∧
+                  Hibana.actorVisitObserved visitParallelAccepted visitChoreo visitPath visitParallelAcceptedAccepted
+                        (Hibana.SourcePoint.accepted row.actionId.event) =
+                      true ∧
+                    record.admission.snapshot.doneState.done row.eventId = false ∨
+              point = row.actionId.entryPoint ∧
+                Hibana.sourceRowReady data visitPath record.admission.snapshot row = true ∧
+                  record.admission.admitted[row.eventId]? = some true ∧
+                    Hibana.sourceRowViewsIssued visitPath record.admission.snapshot row = true)
+visitParallelReceivedChecked : Hibana.actorVisitCutCheck visitParallelReceived visitChoreo visitSource visitPath
+    visitParallelReceivedAccepted =
+  true
+visitParallelReceivedHasActualAdmissionOrPublication : ∃ point record data row,
+  point ∈ Hibana.sourceVisitPoints visitPath.bindings ∧
+    Hibana.actorVisitObserved visitParallelReceived visitChoreo visitPath visitParallelReceivedAccepted point = false ∧
+      record ∈ visitParallelReceived ∧
+        record.image.decodeActorOrder? visitChoreo = some data ∧
+          row ∈ data.activeRows visitPath ∧
+            (point = Hibana.SourcePoint.committed row.actionId ∧
+                row.actionId.side = Hibana.EndpointDelegation.Side.send ∧
+                  Hibana.actorVisitObserved visitParallelReceived visitChoreo visitPath visitParallelReceivedAccepted
+                        (Hibana.SourcePoint.accepted row.actionId.event) =
+                      true ∧
+                    record.admission.snapshot.doneState.done row.eventId = false ∨
+              point = row.actionId.entryPoint ∧
+                Hibana.sourceRowReady data visitPath record.admission.snapshot row = true ∧
+                  record.admission.admitted[row.eventId]? = some true ∧
+                    Hibana.sourceRowViewsIssued visitPath record.admission.snapshot row = true)
+visitReturnAcceptedChecked : Hibana.actorVisitCutCheck visitReturnAccepted visitChoreo visitSource visitPath
+    visitReturnAcceptedAccepted =
+  true
+visitReturnAcceptedHasActualAdmissionOrPublication : ∃ point record data row,
+  point ∈ Hibana.sourceVisitPoints visitPath.bindings ∧
+    Hibana.actorVisitObserved visitReturnAccepted visitChoreo visitPath visitReturnAcceptedAccepted point = false ∧
+      record ∈ visitReturnAccepted ∧
+        record.image.decodeActorOrder? visitChoreo = some data ∧
+          row ∈ data.activeRows visitPath ∧
+            (point = Hibana.SourcePoint.committed row.actionId ∧
+                row.actionId.side = Hibana.EndpointDelegation.Side.send ∧
+                  Hibana.actorVisitObserved visitReturnAccepted visitChoreo visitPath visitReturnAcceptedAccepted
+                        (Hibana.SourcePoint.accepted row.actionId.event) =
+                      true ∧
+                    record.admission.snapshot.doneState.done row.eventId = false ∨
+              point = row.actionId.entryPoint ∧
+                Hibana.sourceRowReady data visitPath record.admission.snapshot row = true ∧
+                  record.admission.admitted[row.eventId]? = some true ∧
+                    Hibana.sourceRowViewsIssued visitPath record.admission.snapshot row = true)

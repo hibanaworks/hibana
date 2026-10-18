@@ -89,6 +89,13 @@ run_miri_test \
   --lib \
   endpoint::carrier::tests
 
+MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \
+  complete-actor-visit-progress \
+  -p hibana \
+  --lib \
+  g::role_projection::tests::visit_progress::a_complete_actor_visit_exposes_real_parallel_admissions_and_completion \
+  -- --exact
+
 run_miri_test \
   actor-shared-workspace \
   -p hibana \

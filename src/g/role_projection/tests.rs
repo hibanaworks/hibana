@@ -42,6 +42,7 @@ mod routing;
 mod send_wait;
 mod source_order;
 mod transitive_borrow;
+mod visit_progress;
 
 #[test]
 fn initial_resource_views_share_progress_and_park_independent_receives() {

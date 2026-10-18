@@ -23,6 +23,7 @@ SOURCE_ORDER_GENERATED="${ROOT_DIR}/target/lean-proof/SourceOrderGenerated.lean"
 OWNED_ENTRY_GENERATED="${ROOT_DIR}/target/lean-proof/OwnedEntryGenerated.lean"
 ACTOR_COMMIT_GENERATED="${ROOT_DIR}/target/lean-proof/ActorCommitGenerated.lean"
 ACTOR_ADMISSION_GENERATED="${ROOT_DIR}/target/lean-proof/ActorAdmissionGenerated.lean"
+ACTOR_VISIT_GENERATED="${ROOT_DIR}/target/lean-proof/ActorVisitProgressGenerated.lean"
 SEND_COMPLETION_GENERATED="${ROOT_DIR}/target/lean-proof/SendCompletionGenerated.lean"
 ACTOR_REENTRY_COMMIT_GENERATED="${ROOT_DIR}/target/lean-proof/ActorReentryCommitGenerated.lean"
 ACTOR_PARALLEL_REENTRY_GENERATED="${ROOT_DIR}/target/lean-proof/ActorParallelReentryGenerated.lean"
@@ -55,7 +56,7 @@ bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" build-serial "${PROOF_
 bash "${ROOT_DIR}/.github/scripts/check_lean_claim_surface.sh"
 static_audit_output="$(run_audit \
   theorem-inventory \
-  --static "${PROOF_DIR}" "${STATIC_CLAIM_SNAPSHOT}" 943 544 287 112)"
+  --static "${PROOF_DIR}" "${STATIC_CLAIM_SNAPSHOT}" 954 555 287 112)"
 printf '%s\n' "${static_audit_output}"
 printf '%s\n' "${static_audit_output}" | bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard markers static
 bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" theorem-inventory \
@@ -67,6 +68,7 @@ mkdir -p "$(dirname "${GENERATED}")"
 rm -f "${GENERATED}" "${RUNTIME_GENERATED}" "${PUBLIC_OPERATION_GENERATED}" "${CAUSAL_GENERATED}" "${PARALLEL_GENERATED}" "${PROGRAM_COLUMNS_GENERATED}" "${PARTIAL_CHOICE_GENERATED}" "${CONTROLLER_GENERATED}" "${INGRESS_GENERATED}" "${REENTRY_GENERATED}" "${ACTOR_COMMIT_GENERATED}" "${ACTOR_REENTRY_COMMIT_GENERATED}" "${ACTOR_PARALLEL_REENTRY_GENERATED}" "${ACTOR_ROUTE_LEFT_REENTRY_GENERATED}" "${ACTOR_ROUTE_RIGHT_REENTRY_GENERATED}"
 rm -f "${OWNED_RECOVERY_GENERATED}"
 rm -f "${ACTOR_ADMISSION_GENERATED}"
+rm -f "${ACTOR_VISIT_GENERATED}"
 rm -f "${SEND_COMPLETION_GENERATED}"
 rm -f "${LOCAL_RETURN_GENERATED}"
 rm -f "${PENDING_BORROW_GENERATED}"
@@ -80,6 +82,12 @@ CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --li
 bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${ACTOR_ADMISSION_GENERATED}" "source and actual cursor admission"
 run_audit generated-axioms --kernel "${ACTOR_ADMISSION_GENERATED}" "${PROOF_DIR}" \
   "${PROOF_DIR}/actor-admission-generated-claim-surface.txt" 46
+CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib \
+  g::role_projection::tests::visit_progress::a_complete_actor_visit_exposes_real_parallel_admissions_and_completion \
+  -- --exact
+bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${ACTOR_VISIT_GENERATED}" "complete actor visit progress"
+run_audit generated-axioms --kernel "${ACTOR_VISIT_GENERATED}" "${PROOF_DIR}" \
+  "${PROOF_DIR}/actor-visit-generated-claim-surface.txt" 24
 CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib \
   endpoint::kernel::core::commit_delta::send_completion::a_prepared_send_publishes_before_returning_success \
   -- --exact
@@ -228,4 +236,4 @@ public_operation_lean_output="$(run_audit \
 printf '%s\n' "${public_operation_lean_output}"
 printf '%s\n' "${public_operation_lean_output}" | bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard markers public-operation
 
-echo "Lean proof gate passed toolchain=v4.30.0 traces=14 frames=66 projections=22 exact-descriptors=22 progress=4 projectability=8 distributed-progress=8 verified-protocols=8 static-theorems=910 source-order-correspondence=3 owned-entry-correspondence=5 owned-recovery-correspondence=5 local-return-correspondence=12 pending-borrow-correspondence=11 future-custody-correspondence=66 owned-drop-correspondence=54 completed-retirement-correspondence=18 actor-admission-correspondence=34 actor-commit-correspondence=64 actor-body-reentry-correspondence=36 actor-parallel-reentry-correspondence=26 actor-route-reentry-correspondence=168 program-column-correspondence=139 partial-choice-correspondence=30 controller-correspondence=57 actor-ingress-correspondence=16 actor-reentry-correspondence=97 parallel-descriptors=10 parallel-correspondence=182 causal-correspondence=36 anonymous-regressions=36 generated-theorems=506 generated-obligations=458 production-transitions=7 production-operations=6 production-owners=8 verified-codecs=3 verified-family=8 static-deployments=8 deployment-rejections=3 capabilities=6 runtime-regions=4 atomic-failures=4 public-operation-edges=18 public-operation-transitions=180 native-regressions=32"
+echo "Lean proof gate passed"

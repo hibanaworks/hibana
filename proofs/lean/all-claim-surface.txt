@@ -295,6 +295,41 @@ Hibana.EndpointDelegation.withOwner_same : ∀ (owners : Hibana.EndpointDelegati
           (@List.take.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding) index run.bindings)
           (@Prod.mk.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding previousEvent previous) →
         @LT.lt.{0} Nat instLTNat previousEvent event
+@Hibana.a_checked_actor_visit_covers_each_source_action : ∀ {family : List.{0} Hibana.ActorVisitRecord}
+  {choreo : Hibana.Choreo} {source : Hibana.EndpointDelegation.Source} {path : Hibana.EndpointDelegation.NormalizedPath}
+  {accepted : List.{0} Nat} {id : Hibana.EndpointDelegation.ActionId},
+  @Eq.{1} Bool (Hibana.actorVisitCutCheck family choreo source path accepted) true →
+    @Membership.mem.{0, 0} Hibana.EndpointDelegation.ActionId (List.{0} Hibana.EndpointDelegation.ActionId)
+        (@List.instMembership.{0} Hibana.EndpointDelegation.ActionId) (Hibana.sourceVisitActions path.bindings) id →
+      @Exists.{1} Hibana.ActorVisitRecord fun record =>
+        @Exists.{1} Hibana.DecodedActorOrder fun data =>
+          @Exists.{1} Hibana.DecodedActorRow fun row =>
+            And
+              (@Membership.mem.{0, 0} Hibana.ActorVisitRecord (List.{0} Hibana.ActorVisitRecord)
+                (@List.instMembership.{0} Hibana.ActorVisitRecord) family record)
+              (And
+                (@Eq.{1} (Option.{0} (Prod.{0, 0} Hibana.ActorVisitRecord Hibana.DecodedActorRow))
+                  (Hibana.actorVisitRow? family choreo path id)
+                  (@some.{0} (Prod.{0, 0} Hibana.ActorVisitRecord Hibana.DecodedActorRow)
+                    (@Prod.mk.{0, 0} Hibana.ActorVisitRecord Hibana.DecodedActorRow record row)))
+                (And (@Eq.{1} Hibana.EndpointDelegation.ActionId row.actionId id)
+                  (And (@Eq.{1} Bool (record.admission.check record.image choreo) true)
+                    (And
+                      (@Eq.{1} (Option.{0} Hibana.DecodedActorOrder) (record.image.decodeActorOrder? choreo)
+                        (@some.{0} Hibana.DecodedActorOrder data))
+                      (And (@Eq.{1} Hibana.EndpointDelegation.Source data.source source)
+                        (And
+                          (@Eq.{1} (Option.{0} Hibana.EndpointDelegation.NormalizedPath)
+                            (@getElem?.{0, 0, 0} (List.{0} Hibana.EndpointDelegation.NormalizedPath) Nat
+                              Hibana.EndpointDelegation.NormalizedPath
+                              (fun as i =>
+                                @LT.lt.{0} Nat instLTNat i
+                                  (@List.length.{0} Hibana.EndpointDelegation.NormalizedPath as))
+                              (@List.instGetElem?NatLtLength.{0} Hibana.EndpointDelegation.NormalizedPath)
+                              data.normalized.paths record.admission.pathIndex)
+                            (@some.{0} Hibana.EndpointDelegation.NormalizedPath path))
+                          (@Membership.mem.{0, 0} Hibana.DecodedActorRow (List.{0} Hibana.DecodedActorRow)
+                            (@List.instMembership.{0} Hibana.DecodedActorRow) (data.activeRows path) row)))))))
 @Hibana.a_checked_failed_send_finishes_without_publication : ∀ {sample : Hibana.SendCompletionObservation},
   @Eq.{1} Bool sample.check true →
     @Eq.{1} Hibana.SendPollClass sample.boundary Hibana.SendPollClass.failure →
@@ -2563,6 +2598,37 @@ Hibana.canonical_scope_facts_bind_source_parent : ∀ (source : Hibana.Canonical
       scope →
     @Eq.{1} (Option.{0} Nat) (Hibana.canonicalScopeFacts✝ source scope)
       (@some.{0} Nat (Hibana.canonicalPackedDependencyConflict✝ source scope))
+@Hibana.canonical_source_visit_is_dependency_closed : ∀ {source : Hibana.EndpointDelegation.Source}
+  {bindings : List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)} {before after : Hibana.SourcePoint},
+  @Membership.mem.{0, 0} Hibana.SourcePoint (List.{0} Hibana.SourcePoint) (@List.instMembership.{0} Hibana.SourcePoint)
+      (Hibana.sourceVisitPoints bindings) after →
+    Hibana.SourcePointEdge source bindings before after →
+      @Membership.mem.{0, 0} Hibana.SourcePoint (List.{0} Hibana.SourcePoint)
+        (@List.instMembership.{0} Hibana.SourcePoint) (Hibana.sourceVisitPoints bindings) before
+@Hibana.canonical_visit_actions_are_exactly_decodable : ∀
+  {bindings : List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)} {id : Hibana.EndpointDelegation.ActionId},
+  Iff
+    (@Membership.mem.{0, 0} Hibana.EndpointDelegation.ActionId (List.{0} Hibana.EndpointDelegation.ActionId)
+      (@List.instMembership.{0} Hibana.EndpointDelegation.ActionId) (Hibana.sourceVisitActions bindings) id)
+    (@Eq.{1} Bool (@Option.isSome.{0} Hibana.EndpointDelegation.Action (Hibana.EndpointDelegation.action? bindings id))
+      true)
+@Hibana.canonical_visit_contains_exactly_its_committed_actions : ∀
+  {bindings : List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)} {id : Hibana.EndpointDelegation.ActionId},
+  Iff
+    (@Membership.mem.{0, 0} Hibana.SourcePoint (List.{0} Hibana.SourcePoint)
+      (@List.instMembership.{0} Hibana.SourcePoint) (Hibana.sourceVisitPoints bindings)
+      (Hibana.SourcePoint.committed id))
+    (@Membership.mem.{0, 0} Hibana.EndpointDelegation.ActionId (List.{0} Hibana.EndpointDelegation.ActionId)
+      (@List.instMembership.{0} Hibana.EndpointDelegation.ActionId) (Hibana.sourceVisitActions bindings) id)
+@Hibana.canonical_visit_contains_exactly_its_wire_acceptances : ∀
+  {bindings : List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)} {event : Nat},
+  Iff
+    (@Membership.mem.{0, 0} Hibana.SourcePoint (List.{0} Hibana.SourcePoint)
+      (@List.instMembership.{0} Hibana.SourcePoint) (Hibana.sourceVisitPoints bindings)
+      (Hibana.SourcePoint.accepted event))
+    (@Membership.mem.{0, 0} Hibana.EndpointDelegation.ActionId (List.{0} Hibana.EndpointDelegation.ActionId)
+      (@List.instMembership.{0} Hibana.EndpointDelegation.ActionId) (Hibana.sourceVisitActions bindings)
+      { event := event, side := Hibana.EndpointDelegation.Side.send })
 Hibana.carrier_profile_hierarchy_is_strict : And
   (Hibana.CarrierProfile.mediated.StrictStep Hibana.CarrierProfile.authentic)
   (And (Hibana.CarrierProfile.authentic.StrictStep Hibana.CarrierProfile.ordered)
@@ -2629,6 +2695,34 @@ Hibana.causal_flow_monotone : ∀ (flow : Hibana.CausalFlowExpr) {left right : H
       @Membership.mem.{0, 0} Nat (List.{0} Nat) (@List.instMembership.{0} Nat) (data.sourcePredecessors path event)
           before →
         @LT.lt.{0} Nat instLTNat before event
+@Hibana.checked_actor_visit_committed_observation_is_its_actual_row : ∀ {family : List.{0} Hibana.ActorVisitRecord}
+  {choreo : Hibana.Choreo} {source : Hibana.EndpointDelegation.Source} {path : Hibana.EndpointDelegation.NormalizedPath}
+  {accepted : List.{0} Nat} {record : Hibana.ActorVisitRecord} {data : Hibana.DecodedActorOrder}
+  {row : Hibana.DecodedActorRow},
+  @Eq.{1} Bool (Hibana.actorVisitCutCheck family choreo source path accepted) true →
+    @Membership.mem.{0, 0} Hibana.ActorVisitRecord (List.{0} Hibana.ActorVisitRecord)
+        (@List.instMembership.{0} Hibana.ActorVisitRecord) family record →
+      @Eq.{1} (Option.{0} Hibana.DecodedActorOrder) (record.image.decodeActorOrder? choreo)
+          (@some.{0} Hibana.DecodedActorOrder data) →
+        @Membership.mem.{0, 0} Hibana.DecodedActorRow (List.{0} Hibana.DecodedActorRow)
+            (@List.instMembership.{0} Hibana.DecodedActorRow) (data.activeRows path) row →
+          @Eq.{1} Bool
+            (Hibana.actorVisitObserved family choreo path accepted (Hibana.SourcePoint.committed row.actionId))
+            (record.admission.snapshot.doneState.done row.eventId)
+@Hibana.checked_actor_visit_has_its_canonical_source_path : ∀ {family : List.{0} Hibana.ActorVisitRecord}
+  {choreo : Hibana.Choreo} {source : Hibana.EndpointDelegation.Source} {path : Hibana.EndpointDelegation.NormalizedPath}
+  {accepted : List.{0} Nat},
+  @Eq.{1} Bool (Hibana.actorVisitCutCheck family choreo source path accepted) true →
+    And
+      (@Eq.{1} (Option.{0} Hibana.EndpointDelegation.Source) choreo.ownershipSource?
+        (@some.{0} Hibana.EndpointDelegation.Source source))
+      (@Exists.{1} Hibana.EndpointDelegation.Normalization fun normalized =>
+        And
+          (@Eq.{1} (Option.{0} Hibana.EndpointDelegation.Normalization) (Hibana.EndpointDelegation.normalize source)
+            (@some.{0} Hibana.EndpointDelegation.Normalization normalized))
+          (@Membership.mem.{0, 0} Hibana.EndpointDelegation.NormalizedPath
+            (List.{0} Hibana.EndpointDelegation.NormalizedPath)
+            (@List.instMembership.{0} Hibana.EndpointDelegation.NormalizedPath) normalized.paths path))
 @Hibana.checked_descriptor_binds_active_lane_metadata : ∀ {image : Hibana.RustDescriptorImage},
   @Eq.{1} Bool image.check true → @Eq.{1} Bool image.activeLaneMetadataCoherent true
 @Hibana.checked_descriptor_binds_event_lane_column : ∀ {image : Hibana.RustDescriptorImage},
@@ -3005,6 +3099,53 @@ Hibana.causal_flow_monotone : ∀ (flow : Hibana.CausalFlowExpr) {left right : H
                         (Hibana.EndpointDelegation.Payload.endpoint key) →
                       @Eq.{1} Bool (Hibana.sourceRowReady data path snapshot useRow) true →
                         @Eq.{1} Bool (Hibana.sourceRowReady data path snapshot transfer) false
+@Hibana.checked_unfinished_actor_visit_has_admission_or_publication : ∀ {family : List.{0} Hibana.ActorVisitRecord}
+  {choreo : Hibana.Choreo} {source : Hibana.EndpointDelegation.Source} {path : Hibana.EndpointDelegation.NormalizedPath}
+  {accepted : List.{0} Nat},
+  @Eq.{1} Bool (Hibana.actorVisitCutCheck family choreo source path accepted) true →
+    (@Exists.{1} Hibana.SourcePoint fun point =>
+        And
+          (@Membership.mem.{0, 0} Hibana.SourcePoint (List.{0} Hibana.SourcePoint)
+            (@List.instMembership.{0} Hibana.SourcePoint) (Hibana.sourceVisitPoints path.bindings) point)
+          (@Eq.{1} Bool (Hibana.actorVisitObserved family choreo path accepted point) false)) →
+      @Exists.{1} Hibana.SourcePoint fun point =>
+        @Exists.{1} Hibana.ActorVisitRecord fun record =>
+          @Exists.{1} Hibana.DecodedActorOrder fun data =>
+            @Exists.{1} Hibana.DecodedActorRow fun row =>
+              And
+                (@Membership.mem.{0, 0} Hibana.SourcePoint (List.{0} Hibana.SourcePoint)
+                  (@List.instMembership.{0} Hibana.SourcePoint) (Hibana.sourceVisitPoints path.bindings) point)
+                (And (@Eq.{1} Bool (Hibana.actorVisitObserved family choreo path accepted point) false)
+                  (And
+                    (@Membership.mem.{0, 0} Hibana.ActorVisitRecord (List.{0} Hibana.ActorVisitRecord)
+                      (@List.instMembership.{0} Hibana.ActorVisitRecord) family record)
+                    (And
+                      (@Eq.{1} (Option.{0} Hibana.DecodedActorOrder) (record.image.decodeActorOrder? choreo)
+                        (@some.{0} Hibana.DecodedActorOrder data))
+                      (And
+                        (@Membership.mem.{0, 0} Hibana.DecodedActorRow (List.{0} Hibana.DecodedActorRow)
+                          (@List.instMembership.{0} Hibana.DecodedActorRow) (data.activeRows path) row)
+                        (Or
+                          (And (@Eq.{1} Hibana.SourcePoint point (Hibana.SourcePoint.committed row.actionId))
+                            (And
+                              (@Eq.{1} Hibana.EndpointDelegation.Side row.actionId.side
+                                Hibana.EndpointDelegation.Side.send)
+                              (And
+                                (@Eq.{1} Bool
+                                  (Hibana.actorVisitObserved family choreo path accepted
+                                    (Hibana.SourcePoint.accepted row.actionId.event))
+                                  true)
+                                (@Eq.{1} Bool (record.admission.snapshot.doneState.done row.eventId) false))))
+                          (And (@Eq.{1} Hibana.SourcePoint point row.actionId.entryPoint)
+                            (And (@Eq.{1} Bool (Hibana.sourceRowReady data path record.admission.snapshot row) true)
+                              (And
+                                (@Eq.{1} (Option.{0} Bool)
+                                  (@getElem?.{0, 0, 0} (List.{0} Bool) Nat Bool
+                                    (fun as i => @LT.lt.{0} Nat instLTNat i (@List.length.{0} Bool as))
+                                    (@List.instGetElem?NatLtLength.{0} Bool) record.admission.admitted row.eventId)
+                                  (@some.{0} Bool true))
+                                (@Eq.{1} Bool (Hibana.sourceRowViewsIssued path record.admission.snapshot row)
+                                  true)))))))))
 @Hibana.checked_unrepeated_suffix_retains_completion : ∀ {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo}
   {session event : Nat} {first final : Hibana.ActorProgressObservation} {records : List.{0} Hibana.ActorCommitRecord},
   @Eq.{1} Bool (Hibana.actorCommitHistoryCheck image choreo session first final records) true →
@@ -3448,6 +3589,26 @@ Hibana.decode_packed_lane_range_accepts_bounded : ∀ (raw capacity : Nat),
               (@OfNat.ofNat.{0} Nat (nat_lit 65536) (instOfNatNat (nat_lit 65536))))
             (@HMod.hMod.{0, 0, 0} Nat Nat Nat (@instHMod.{0} Nat Nat.instMod) raw
               (@OfNat.ofNat.{0} Nat (nat_lit 65536) (instOfNatNat (nat_lit 65536))))))
+@Hibana.decoded_actor_order_fields : ∀ {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo}
+  {data : Hibana.DecodedActorOrder},
+  @Eq.{1} (Option.{0} Hibana.DecodedActorOrder) (image.decodeActorOrder? choreo)
+      (@some.{0} Hibana.DecodedActorOrder data) →
+    And
+      (@Eq.{1} (Option.{0} Hibana.EndpointDelegation.Source) choreo.ownershipSource?
+        (@some.{0} Hibana.EndpointDelegation.Source data.source))
+      (And
+        (@Eq.{1} (Option.{0} Hibana.EndpointDelegation.Normalization) (Hibana.EndpointDelegation.normalize data.source)
+          (@some.{0} Hibana.EndpointDelegation.Normalization data.normalized))
+        (And
+          (@Eq.{1} (Option.{0} Hibana.DecodedProgramColumns) image.decodeProgramColumns?
+            (@some.{0} Hibana.DecodedProgramColumns data.columns))
+          (And
+            (@Eq.{1} (Option.{0} (List.{0} Hibana.DecodedScopeMarker)) image.decodeScopeMarkers?
+              (@some.{0} (List.{0} Hibana.DecodedScopeMarker) data.markers))
+            (And
+              (@Eq.{1} (Option.{0} (List.{0} Hibana.DecodedActorRow)) image.decodeActorRows?
+                (@some.{0} (List.{0} Hibana.DecodedActorRow) data.rows))
+              (@Eq.{1} Nat data.actor image.role)))))
 @Hibana.decoded_actor_order_retains_its_normalized_source : ∀ {image : Hibana.RustDescriptorImage}
   {choreo : Hibana.Choreo} {data : Hibana.DecodedActorOrder},
   @Eq.{1} (Option.{0} Hibana.DecodedActorOrder) (image.decodeActorOrder? choreo)
@@ -6608,6 +6769,31 @@ Hibana.ready_evidence_clear_is_exact : ∀ (state : Hibana.ScopeReadyEvidence),
                                       (Hibana.SourcePoint.committed
                                         { event := previousEvent, side := Hibana.EndpointDelegation.Side.receive }))
                                     true)))))
+@Hibana.ready_source_entry_has_checked_actor_admission : ∀ {family : List.{0} Hibana.ActorVisitRecord}
+  {choreo : Hibana.Choreo} {source : Hibana.EndpointDelegation.Source} {path : Hibana.EndpointDelegation.NormalizedPath}
+  {accepted : List.{0} Nat} {record : Hibana.ActorVisitRecord} {data : Hibana.DecodedActorOrder}
+  {row : Hibana.DecodedActorRow},
+  @Eq.{1} Bool (Hibana.actorVisitCutCheck family choreo source path accepted) true →
+    @Membership.mem.{0, 0} Hibana.ActorVisitRecord (List.{0} Hibana.ActorVisitRecord)
+        (@List.instMembership.{0} Hibana.ActorVisitRecord) family record →
+      @Eq.{1} (Option.{0} Hibana.DecodedActorOrder) (record.image.decodeActorOrder? choreo)
+          (@some.{0} Hibana.DecodedActorOrder data) →
+        @Membership.mem.{0, 0} Hibana.DecodedActorRow (List.{0} Hibana.DecodedActorRow)
+            (@List.instMembership.{0} Hibana.DecodedActorRow) (data.activeRows path) row →
+          @Eq.{1} Bool
+              (Hibana.actorVisitObserved family choreo path accepted (Hibana.SourcePoint.committed row.actionId))
+              false →
+            (∀ (before : Hibana.SourcePoint),
+                Hibana.SourcePointEdge source path.bindings before row.actionId.entryPoint →
+                  @Eq.{1} Bool (Hibana.actorVisitObserved family choreo path accepted before) true) →
+              And (@Eq.{1} Bool (Hibana.sourceRowReady data path record.admission.snapshot row) true)
+                (And
+                  (@Eq.{1} (Option.{0} Bool)
+                    (@getElem?.{0, 0, 0} (List.{0} Bool) Nat Bool
+                      (fun as i => @LT.lt.{0} Nat instLTNat i (@List.length.{0} Bool as))
+                      (@List.instGetElem?NatLtLength.{0} Bool) record.admission.admitted row.eventId)
+                    (@some.{0} Bool true))
+                  (@Eq.{1} Bool (Hibana.sourceRowViewsIssued path record.admission.snapshot row) true))
 @Hibana.ready_source_handoff_keeps_its_value_or_takes_its_required_boundary : ∀ {image : Hibana.RustDescriptorImage}
   {choreo : Hibana.Choreo} {data : Hibana.DecodedActorOrder} {path : Hibana.EndpointDelegation.NormalizedPath}
   {key : Hibana.EndpointDelegation.EndpointKey} {target : Hibana.DecodedActorRow}
@@ -9413,6 +9599,20 @@ Hibana.trace_checker_sound : ∀ (graph : Hibana.EventGraph) (state : Hibana.Com
         ∀ (role : Nat),
           @Eq.{1} (Option.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))))
             (Hibana.observedResourceTag? after role) (Hibana.observedResourceTag? before role)
+@Hibana.unfinished_canonical_source_visit_has_ready_point : ∀ {source : Hibana.EndpointDelegation.Source}
+  {bindings : List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)} {observed : Hibana.SourcePoint → Bool},
+  (@Exists.{1} Hibana.SourcePoint fun point =>
+      And
+        (@Membership.mem.{0, 0} Hibana.SourcePoint (List.{0} Hibana.SourcePoint)
+          (@List.instMembership.{0} Hibana.SourcePoint) (Hibana.sourceVisitPoints bindings) point)
+        (@Eq.{1} Bool (observed point) false)) →
+    @Exists.{1} Hibana.SourcePoint fun point =>
+      And
+        (@Membership.mem.{0, 0} Hibana.SourcePoint (List.{0} Hibana.SourcePoint)
+          (@List.instMembership.{0} Hibana.SourcePoint) (Hibana.sourceVisitPoints bindings) point)
+        (And (@Eq.{1} Bool (observed point) false)
+          (∀ (before : Hibana.SourcePoint),
+            Hibana.SourcePointEdge source bindings before point → @Eq.{1} Bool (observed before) true))
 @Hibana.unfinished_source_visit_has_ready_point : ∀ {source : Hibana.EndpointDelegation.Source}
   {bindings : List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)} {domain : List.{0} Hibana.SourcePoint}
   {observed : Hibana.SourcePoint → Bool},
