@@ -33,6 +33,7 @@ ACTOR_PARALLEL_REENTRY_GENERATED="${ROOT_DIR}/target/lean-proof/ActorParallelRee
 MIXED_SEND_ADMISSION_GENERATED="${ROOT_DIR}/target/lean-proof/MixedSendAdmissionGenerated.lean"
 DISTRIBUTED_SOURCE_GENERATED="${ROOT_DIR}/target/lean-proof/DistributedSourceGenerated.lean"
 DISTRIBUTED_CHOICE_GENERATED="${ROOT_DIR}/target/lean-proof/DistributedChoiceGenerated.lean"
+FRAME_DOMAINS_GENERATED="${ROOT_DIR}/target/lean-proof/FrameDomainsGenerated.lean"
 OCCURRENCE_CHOICE_GENERATED="${ROOT_DIR}/target/lean-proof/OccurrenceChoiceGenerated.lean"
 RECEIPT_REFRESH_GENERATED="${ROOT_DIR}/target/lean-proof/ReceiptRefreshGenerated.lean"
 ACTOR_ROUTE_LEFT_REENTRY_GENERATED="${ROOT_DIR}/target/lean-proof/ActorRouteLeftReentryGenerated.lean"
@@ -64,7 +65,7 @@ bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" build-serial "${PROOF_
 bash "${ROOT_DIR}/.github/scripts/check_lean_claim_surface.sh"
 static_audit_output="$(run_audit \
   theorem-inventory \
-  --static "${PROOF_DIR}" "${STATIC_CLAIM_SNAPSHOT}" 1038 625 301 112)"
+  --static "${PROOF_DIR}" "${STATIC_CLAIM_SNAPSHOT}" 1042 629 301 112)"
 printf '%s\n' "${static_audit_output}"
 printf '%s\n' "${static_audit_output}" | bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard markers static
 bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" theorem-inventory \
@@ -85,6 +86,7 @@ rm -f "${RECEIPT_REFRESH_GENERATED}"
 rm -f "${MIXED_SEND_ADMISSION_GENERATED}"
 rm -f "${DISTRIBUTED_SOURCE_GENERATED}"
 rm -f "${DISTRIBUTED_CHOICE_GENERATED}"
+rm -f "${FRAME_DOMAINS_GENERATED}"
 rm -f "${OCCURRENCE_CHOICE_GENERATED}"
 rm -f "${LOCAL_RETURN_GENERATED}"
 rm -f "${PENDING_BORROW_GENERATED}"
@@ -92,6 +94,12 @@ rm -f "${FUTURE_CUSTODY_GENERATED}"
 rm -f "${OWNED_DROP_GENERATED}" "${COMPLETED_RETIREMENT_GENERATED}"
 rm -f "${SOURCE_ORDER_GENERATED}"
 rm -f "${OWNED_ENTRY_GENERATED}"
+CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib \
+  g::role_projection::tests::frame_domains::actual_rolled_colors_refine_route_paths_and_elastic_owners \
+  -- --exact
+bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${FRAME_DOMAINS_GENERATED}" "source frame domains"
+run_audit generated-axioms --kernel "${FRAME_DOMAINS_GENERATED}" "${PROOF_DIR}" \
+  "${PROOF_DIR}/frame-domains-generated-claim-surface.txt" 8
 CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib \
   g::role_projection::tests::admission::source_ready_rows_match_actual_admission_across_a_parallel_owned_visit \
   -- --exact

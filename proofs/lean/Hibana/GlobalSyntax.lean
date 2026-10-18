@@ -291,24 +291,20 @@ def RollFrameLabelClass.sameInboundKey
 /-- Roll compilation retains one frame color for each exact route path of an
 inbound operation key. Equal paths preserve ordered reuse; distinct paths are
 the elastic reentry frontier and therefore receive distinct colors. -/
-def recolorRollOccurrencesFrom
-    (conflictRows : List (List ConflictArm)) :
-    List RollFrameLabelClass -> Nat -> List CompiledOccurrence ->
-      List CompiledOccurrence
-  | _, _, [] => []
-  | classes, index, occurrence :: rest =>
+def recolorRollOccurrence
+    (conflictRows : List (List ConflictArm))
+    (classes : List RollFrameLabelClass) (index : Nat) (occurrence : CompiledOccurrence) :
+    CompiledOccurrence × List RollFrameLabelClass :=
       if occurrence.sender == occurrence.receiver then
-        occurrence :: recolorRollOccurrencesFrom conflictRows classes (index + 1) rest
+        (occurrence, classes)
       else
         match conflictRows[index]? with
         | none =>
-            { occurrence with frameLabel := 256 } ::
-              recolorRollOccurrencesFrom conflictRows classes (index + 1) rest
+            ({ occurrence with frameLabel := 256 }, classes)
         | some conflicts =>
             match classes.find? (fun entry => entry.matches occurrence conflicts) with
             | some entry =>
-                { occurrence with frameLabel := entry.frameLabel } ::
-                  recolorRollOccurrencesFrom conflictRows classes (index + 1) rest
+                ({ occurrence with frameLabel := entry.frameLabel }, classes)
             | none =>
                 let used := (classes.filter fun entry =>
                   entry.sameInboundKey occurrence).map RollFrameLabelClass.frameLabel
@@ -322,9 +318,16 @@ def recolorRollOccurrencesFrom
                   conflicts
                   frameLabel := selected
                 }
-                { occurrence with frameLabel := selected } ::
-                  recolorRollOccurrencesFrom conflictRows
-                    (classes ++ [nextClass]) (index + 1) rest
+                ({ occurrence with frameLabel := selected }, classes ++ [nextClass])
+
+def recolorRollOccurrencesFrom
+    (conflictRows : List (List ConflictArm)) :
+    List RollFrameLabelClass -> Nat -> List CompiledOccurrence ->
+      List CompiledOccurrence
+  | _, _, [] => []
+  | classes, index, occurrence :: rest =>
+      let step := recolorRollOccurrence conflictRows classes index occurrence
+      step.1 :: recolorRollOccurrencesFrom conflictRows step.2 (index + 1) rest
 
 def recolorRollOccurrences
     (occurrences : List CompiledOccurrence)
@@ -341,7 +344,7 @@ theorem recolor_roll_local_effect_head_is_unchanged
       occurrence :: recolorRollOccurrencesFrom conflictRows classes (index + 1) rest := by
   have sameRole : (occurrence.sender == occurrence.receiver) = true :=
     beq_iff_eq.mpr localEffect
-  cases rest <;> simp only [recolorRollOccurrencesFrom, sameRole, if_true]
+  cases rest <;> simp only [recolorRollOccurrencesFrom, recolorRollOccurrence, sameRole, if_true]
 
 theorem recolor_roll_missing_conflict_row_is_unencodable
     (conflictRows : List (List ConflictArm))
@@ -353,7 +356,7 @@ theorem recolor_roll_missing_conflict_row_is_unencodable
       some { occurrence with frameLabel := 256 } := by
   have differentRole : (occurrence.sender == occurrence.receiver) = false :=
     beq_eq_false_iff_ne.mpr remote
-  simp [recolorRollOccurrencesFrom, differentRole, missing]
+  simp [recolorRollOccurrencesFrom, recolorRollOccurrence, differentRole, missing]
 
 def recolorRollSource
     (source : CompiledOccurrenceSource)
@@ -415,7 +418,7 @@ theorem recolor_roll_occurrences_from_length
   induction occurrences generalizing classes index with
   | nil => rfl
   | cons head tail tailIH =>
-      simp only [recolorRollOccurrencesFrom]
+      simp only [recolorRollOccurrencesFrom, recolorRollOccurrence]
       split
       · simp [tailIH]
       · split
@@ -438,7 +441,7 @@ theorem recolor_roll_occurrences_from_actions
   induction occurrences generalizing classes index with
   | nil => rfl
   | cons head tail tailIH =>
-      simp only [recolorRollOccurrencesFrom]
+      simp only [recolorRollOccurrencesFrom, recolorRollOccurrence]
       split
       · simp only [List.filterMap_cons]
         rw [tailIH]

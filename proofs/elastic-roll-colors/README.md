@@ -11,6 +11,16 @@ The finite source models cover the recorded fixtures and retain their original
 source-transcription, lane, and ancestry assumptions. The detailed original
 claim boundary is in `historical/SOURCE_BRIDGE.md`.
 
+The current direct allocation proofs are separate from that historical
+abstraction: [RollFrameDomains](../lean/Hibana/RollFrameDomains.lean) derives
+route-class separation from the actual empty prefix, and
+[ElasticFrameDomains](../lean/Hibana/ElasticFrameDomains.lean) derives preservation
+of original colors and elastic owners from the final pass. They require no
+`Covers` or `SameClassUnique` premise. The generated frame-domain fixture compares
+current Rust colors with those exact reference functions. These static results
+do not by themselves prove source/FIFO correspondence or distributed progress
+for arbitrary rolled executions.
+
 ## Portable replay
 
 Requirements: Rust 1.95.0, Lean 4.30.0, the Z3 CLI, gzip and Bash.

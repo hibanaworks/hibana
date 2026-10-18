@@ -19,6 +19,8 @@ mod controller_columns;
 mod distributed_source;
 mod entry_image;
 mod fifo_origin;
+#[cfg(not(miri))]
+mod frame_domains;
 mod handoff_interval;
 mod ingress;
 mod ingress_columns;

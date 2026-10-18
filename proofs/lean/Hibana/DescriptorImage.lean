@@ -1273,24 +1273,33 @@ def firstElasticFrameColor (used : List Nat) : Nat :=
   | some color => color
   | none => 256
 
+def elasticFrameUsedColors (prior : List ElasticFrameAssignment)
+    (atom : ProgramAtomBody) (owner : Nat) : List Nat :=
+  prior.filterMap fun entry =>
+    if entry.original.sender == atom.sender &&
+        entry.original.receiver == atom.receiver && entry.original.lane == atom.lane &&
+        (entry.original.frameLabel != atom.frameLabel || entry.owner != owner) then
+      some entry.color
+    else none
+
+def elasticFrameAssignment (markers : List DecodedScopeMarker)
+    (prior : List ElasticFrameAssignment) (index : Nat) (atom : ProgramAtomBody) :
+    ElasticFrameAssignment :=
+  let owner := elasticFrameOwner markers index
+  { original := atom, owner,
+    color := if atom.sender == atom.receiver then atom.frameLabel
+      else firstElasticFrameColor (elasticFrameUsedColors prior atom owner) }
+
 def separateElasticFrameDomainsFrom
     (markers : List DecodedScopeMarker)
     (prior : List ElasticFrameAssignment) (index : Nat) :
     List ProgramAtomBody → List ProgramAtomBody
   | [] => []
   | atom :: rest =>
-      let owner := elasticFrameOwner markers index
-      let used := prior.filterMap fun entry =>
-        if entry.original.sender == atom.sender &&
-            entry.original.receiver == atom.receiver && entry.original.lane == atom.lane &&
-            (entry.original.frameLabel != atom.frameLabel || entry.owner != owner) then
-          some entry.color
-        else none
-      let color := if atom.sender == atom.receiver then atom.frameLabel
-        else firstElasticFrameColor used
-      { atom with frameLabel := color } ::
+      let assignment := elasticFrameAssignment markers prior index atom
+      { atom with frameLabel := assignment.color } ::
         separateElasticFrameDomainsFrom markers
-          (prior ++ [{ original := atom, owner, color }]) (index + 1) rest
+          (prior ++ [assignment]) (index + 1) rest
 
 /-- Final wire allocation refines the route coloring after all source scopes are
 known. Logical events and lanes retain the preceding allocation's identity. -/

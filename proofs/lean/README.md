@@ -173,6 +173,34 @@ two visible choice lists cannot substitute an old receipt. The shared actor
 boundary theorem distinguishes unchanged state, checked quiet observation and
 the exact logged commit; actor, row and choice projections use that one split.
 
+`RollFrameDomains.lean` proves separation directly for the roll recoloring
+function. Starting from its actual empty class prefix, equal encodable colors
+on one inbound key imply equal complete route paths. The proof derives and
+preserves class separation as assignments are appended; it does not assume
+`SameClassUnique` or an abstract conflict cover. Missing path rows and palette
+exhaustion retain the unencodable sentinel.
+
+`ElasticFrameDomains.lean` proves the corresponding property of the final
+allocation pass: equal encodable colors on one inbound key retain both the
+original color and the innermost elastic owner. The result is instantiated
+directly for `canonicalProgramSource`. These are static allocation results,
+not a proof that equal owner IDs establish full ancestry for arbitrary marker
+lists, nor that every receive already has its matching source occurrence.
+The generated Rust fixture checks nested rolls, branch/outside paths and
+independent parallel lanes against these exact functions. Deriving the
+per-class execution order and composing it with custody remain necessary.
+
+A separate public-API probe uses `seq(roll(A → B; B → A), B → A Finish)`.
+Projection accepts it. After one exchange, A can wait for `Finish` while B
+waits for the next exchange; neither receive reports an error before the
+external watchdog expires. With B sending `Finish`, the same protocol completes.
+The source frontier still has enabled sends, so this is not a counterexample
+to the existing enabled-transition theorem. It shows why that theorem alone
+does not establish progress of the currently borrowed public calls. Loop-exit
+choice knowledge and the exact application/executor conditions must be resolved
+before claiming the stronger distributed public-call result. A source-ready
+send must not be treated as an available callable Endpoint by assumption.
+
 The nested-choice fixture now records all twenty-two operations in three
 runtimes, including the ordinary notice, four changing loans and returns,
 and the final resource continuation. Source witnesses retain all eight paths.

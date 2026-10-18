@@ -295,6 +295,58 @@ Hibana.EndpointDelegation.withOwner_same : ∀ (owners : Hibana.EndpointDelegati
           (@List.take.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding) index run.bindings)
           (@Prod.mk.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding previousEvent previous) →
         @LT.lt.{0} Nat instLTNat previousEvent event
+@Hibana.a_canonical_rolled_wire_alias_retains_its_actual_source_domain : ∀ {choreo : Hibana.Choreo} {left right : Nat}
+  {leftSource rightSource leftOutput rightOutput : Hibana.ProgramAtomBody},
+  @Eq.{1} Bool
+      (@List.any.{0} Hibana.DecodedScopeMarker (Hibana.canonicalControlSource choreo).markers fun marker =>
+        (@BEq.beq.{0} Nat (@instBEqOfDecidableEq.{0} Nat instDecidableEqNat)
+              (@HDiv.hDiv.{0, 0, 0} Nat Nat Nat (@instHDiv.{0} Nat Nat.instDiv) marker.scope
+                (@OfNat.ofNat.{0} Nat (nat_lit 8192) (instOfNatNat (nat_lit 8192))))
+              (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1)))).and
+          (@BEq.beq.{0} Nat (@instBEqOfDecidableEq.{0} Nat instDecidableEqNat)
+            (@HMod.hMod.{0, 0, 0} Nat Nat Nat (@instHMod.{0} Nat Nat.instMod) marker.tag
+              (@OfNat.ofNat.{0} Nat (nat_lit 4) (instOfNatNat (nat_lit 4))))
+            (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0)))))
+      true →
+    @LT.lt.{0} Nat instLTNat left right →
+      @Eq.{1} (Option.{0} Hibana.ProgramAtomBody)
+          (@getElem?.{0, 0, 0} (List.{0} Hibana.ProgramAtomBody) Nat Hibana.ProgramAtomBody
+            (fun as i => @LT.lt.{0} Nat instLTNat i (@List.length.{0} Hibana.ProgramAtomBody as))
+            (@List.instGetElem?NatLtLength.{0} Hibana.ProgramAtomBody)
+            (@List.map.{0, 0} Hibana.CompiledOccurrence Hibana.ProgramAtomBody Hibana.CompiledOccurrence.programAtomBody
+              choreo.compiledOccurrences.occurrences)
+            left)
+          (@some.{0} Hibana.ProgramAtomBody leftSource) →
+        @Eq.{1} (Option.{0} Hibana.ProgramAtomBody)
+            (@getElem?.{0, 0, 0} (List.{0} Hibana.ProgramAtomBody) Nat Hibana.ProgramAtomBody
+              (fun as i => @LT.lt.{0} Nat instLTNat i (@List.length.{0} Hibana.ProgramAtomBody as))
+              (@List.instGetElem?NatLtLength.{0} Hibana.ProgramAtomBody)
+              (@List.map.{0, 0} Hibana.CompiledOccurrence Hibana.ProgramAtomBody
+                Hibana.CompiledOccurrence.programAtomBody choreo.compiledOccurrences.occurrences)
+              right)
+            (@some.{0} Hibana.ProgramAtomBody rightSource) →
+          @Eq.{1} (Option.{0} Hibana.ProgramAtomBody)
+              (@getElem?.{0, 0, 0} (List.{0} Hibana.ProgramAtomBody) Nat Hibana.ProgramAtomBody
+                (fun as i => @LT.lt.{0} Nat instLTNat i (@List.length.{0} Hibana.ProgramAtomBody as))
+                (@List.instGetElem?NatLtLength.{0} Hibana.ProgramAtomBody) (Hibana.canonicalProgramSource choreo).atoms
+                left)
+              (@some.{0} Hibana.ProgramAtomBody leftOutput) →
+            @Eq.{1} (Option.{0} Hibana.ProgramAtomBody)
+                (@getElem?.{0, 0, 0} (List.{0} Hibana.ProgramAtomBody) Nat Hibana.ProgramAtomBody
+                  (fun as i => @LT.lt.{0} Nat instLTNat i (@List.length.{0} Hibana.ProgramAtomBody as))
+                  (@List.instGetElem?NatLtLength.{0} Hibana.ProgramAtomBody)
+                  (Hibana.canonicalProgramSource choreo).atoms right)
+                (@some.{0} Hibana.ProgramAtomBody rightOutput) →
+              @Eq.{1} Nat leftSource.sender rightSource.sender →
+                @Eq.{1} Nat leftSource.receiver rightSource.receiver →
+                  @Eq.{1} Nat leftSource.lane rightSource.lane →
+                    @Ne.{1} Nat rightSource.sender rightSource.receiver →
+                      @LT.lt.{0} Nat instLTNat rightOutput.frameLabel
+                          (@OfNat.ofNat.{0} Nat (nat_lit 256) (instOfNatNat (nat_lit 256))) →
+                        @Eq.{1} Nat leftOutput.frameLabel rightOutput.frameLabel →
+                          And (@Eq.{1} Nat leftSource.frameLabel rightSource.frameLabel)
+                            (@Eq.{1} Nat (Hibana.elasticFrameOwner (Hibana.canonicalControlSource choreo).markers left)
+                              (Hibana.elasticFrameOwner (Hibana.canonicalControlSource choreo).markers right))
 @Hibana.a_checked_actor_visit_covers_each_source_action : ∀ {family : List.{0} Hibana.ActorVisitRecord}
   {choreo : Hibana.Choreo} {source : Hibana.EndpointDelegation.Source} {path : Hibana.EndpointDelegation.NormalizedPath}
   {accepted : List.{0} Nat} {id : Hibana.EndpointDelegation.ActionId},
@@ -7095,6 +7147,12 @@ Hibana.filter_map_recolored_lanes : ∀ (role : Nat) (occurrences : List.{0} Hib
       And (@Eq.{1} (Option.{0} Nat) (Hibana.firstAvailableFrameLabel used) (@some.{0} Nat label))
         (And (@LT.lt.{0} Nat instLTNat label (@OfNat.ofNat.{0} Nat (nat_lit 256) (instOfNatNat (nat_lit 256))))
           (Not (@Membership.mem.{0, 0} Nat (List.{0} Nat) (@List.instMembership.{0} Nat) used label)))
+@Hibana.first_elastic_frame_color_avoids_its_actual_used_colors : ∀ {used : List.{0} Nat},
+  @LT.lt.{0} Nat instLTNat (Hibana.firstElasticFrameColor used)
+      (@OfNat.ofNat.{0} Nat (nat_lit 256) (instOfNatNat (nat_lit 256))) →
+    Not
+      (@Membership.mem.{0, 0} Nat (List.{0} Nat) (@List.instMembership.{0} Nat) used
+        (Hibana.firstElasticFrameColor used))
 @Hibana.first_owning_lane_is_exact_owner : ∀ {target : Hibana.ActiveOfferKey} {lanes : List.{0} Hibana.ActiveOfferLane}
   {owner : Hibana.ActiveOfferLane},
   @Eq.{1} (Option.{0} Hibana.ActiveOfferLane) (Hibana.firstOwningLane target lanes)
@@ -10178,6 +10236,45 @@ Hibana.runtime_fault_classification_is_total : ∀ (fault : Hibana.RuntimeFault)
 @Hibana.runtime_transition_certificate_sound : ∀ {certificate : Hibana.RuntimeTransitionCertificate}
   {session roleCount : Nat} {choreo : Hibana.Choreo},
   @Eq.{1} Bool (certificate.check session roleCount choreo) true → certificate.Refines session roleCount choreo
+@Hibana.same_elastic_wire_color_retains_its_original_and_owner : ∀ {markers : List.{0} Hibana.DecodedScopeMarker}
+  {prior : List.{0} Hibana.ElasticFrameAssignment} {index left right : Nat} {atoms : List.{0} Hibana.ProgramAtomBody}
+  {leftSource rightSource leftOutput rightOutput : Hibana.ProgramAtomBody},
+  @LT.lt.{0} Nat instLTNat left right →
+    @Eq.{1} (Option.{0} Hibana.ProgramAtomBody)
+        (@getElem?.{0, 0, 0} (List.{0} Hibana.ProgramAtomBody) Nat Hibana.ProgramAtomBody
+          (fun as i => @LT.lt.{0} Nat instLTNat i (@List.length.{0} Hibana.ProgramAtomBody as))
+          (@List.instGetElem?NatLtLength.{0} Hibana.ProgramAtomBody) atoms left)
+        (@some.{0} Hibana.ProgramAtomBody leftSource) →
+      @Eq.{1} (Option.{0} Hibana.ProgramAtomBody)
+          (@getElem?.{0, 0, 0} (List.{0} Hibana.ProgramAtomBody) Nat Hibana.ProgramAtomBody
+            (fun as i => @LT.lt.{0} Nat instLTNat i (@List.length.{0} Hibana.ProgramAtomBody as))
+            (@List.instGetElem?NatLtLength.{0} Hibana.ProgramAtomBody) atoms right)
+          (@some.{0} Hibana.ProgramAtomBody rightSource) →
+        @Eq.{1} (Option.{0} Hibana.ProgramAtomBody)
+            (@getElem?.{0, 0, 0} (List.{0} Hibana.ProgramAtomBody) Nat Hibana.ProgramAtomBody
+              (fun as i => @LT.lt.{0} Nat instLTNat i (@List.length.{0} Hibana.ProgramAtomBody as))
+              (@List.instGetElem?NatLtLength.{0} Hibana.ProgramAtomBody)
+              (Hibana.separateElasticFrameDomainsFrom markers prior index atoms) left)
+            (@some.{0} Hibana.ProgramAtomBody leftOutput) →
+          @Eq.{1} (Option.{0} Hibana.ProgramAtomBody)
+              (@getElem?.{0, 0, 0} (List.{0} Hibana.ProgramAtomBody) Nat Hibana.ProgramAtomBody
+                (fun as i => @LT.lt.{0} Nat instLTNat i (@List.length.{0} Hibana.ProgramAtomBody as))
+                (@List.instGetElem?NatLtLength.{0} Hibana.ProgramAtomBody)
+                (Hibana.separateElasticFrameDomainsFrom markers prior index atoms) right)
+              (@some.{0} Hibana.ProgramAtomBody rightOutput) →
+            @Eq.{1} Nat leftSource.sender rightSource.sender →
+              @Eq.{1} Nat leftSource.receiver rightSource.receiver →
+                @Eq.{1} Nat leftSource.lane rightSource.lane →
+                  @Ne.{1} Nat rightSource.sender rightSource.receiver →
+                    @LT.lt.{0} Nat instLTNat rightOutput.frameLabel
+                        (@OfNat.ofNat.{0} Nat (nat_lit 256) (instOfNatNat (nat_lit 256))) →
+                      @Eq.{1} Nat leftOutput.frameLabel rightOutput.frameLabel →
+                        And (@Eq.{1} Nat leftSource.frameLabel rightSource.frameLabel)
+                          (@Eq.{1} Nat
+                            (Hibana.elasticFrameOwner markers
+                              (@HAdd.hAdd.{0, 0, 0} Nat Nat Nat (@instHAdd.{0} Nat instAddNat) index left))
+                            (Hibana.elasticFrameOwner markers
+                              (@HAdd.hAdd.{0, 0, 0} Nat Nat Nat (@instHAdd.{0} Nat instAddNat) index right)))
 Hibana.same_entry_foreign_scope_is_not_alternative_cursor_candidate : ∀ (current : Hibana.ActiveOfferKey)
   (foreign : Hibana.ActiveOfferObservation) (observations : List.{0} Hibana.ActiveOfferObservation),
   @Eq.{1} Nat foreign.key.entry current.entry →
@@ -10187,6 +10284,50 @@ Hibana.same_entry_foreign_scope_is_not_alternative_cursor_candidate : ∀ (curre
         (Hibana.alternativeCursorObservations current
           (@List.cons.{0} Hibana.ActiveOfferObservation foreign observations))
         foreign)
+@Hibana.same_roll_wire_color_retains_its_exact_source_route_path : ∀ {occurrences : List.{0} Hibana.CompiledOccurrence}
+  {conflictRows : List.{0} (List.{0} Hibana.ConflictArm)} {left right : Nat}
+  {leftSource rightSource leftOutput rightOutput : Hibana.CompiledOccurrence}
+  {leftPath rightPath : List.{0} Hibana.ConflictArm},
+  @Eq.{1} (Option.{0} Hibana.CompiledOccurrence)
+      (@getElem?.{0, 0, 0} (List.{0} Hibana.CompiledOccurrence) Nat Hibana.CompiledOccurrence
+        (fun as i => @LT.lt.{0} Nat instLTNat i (@List.length.{0} Hibana.CompiledOccurrence as))
+        (@List.instGetElem?NatLtLength.{0} Hibana.CompiledOccurrence) occurrences left)
+      (@some.{0} Hibana.CompiledOccurrence leftSource) →
+    @Eq.{1} (Option.{0} Hibana.CompiledOccurrence)
+        (@getElem?.{0, 0, 0} (List.{0} Hibana.CompiledOccurrence) Nat Hibana.CompiledOccurrence
+          (fun as i => @LT.lt.{0} Nat instLTNat i (@List.length.{0} Hibana.CompiledOccurrence as))
+          (@List.instGetElem?NatLtLength.{0} Hibana.CompiledOccurrence) occurrences right)
+        (@some.{0} Hibana.CompiledOccurrence rightSource) →
+      @Eq.{1} (Option.{0} Hibana.CompiledOccurrence)
+          (@getElem?.{0, 0, 0} (List.{0} Hibana.CompiledOccurrence) Nat Hibana.CompiledOccurrence
+            (fun as i => @LT.lt.{0} Nat instLTNat i (@List.length.{0} Hibana.CompiledOccurrence as))
+            (@List.instGetElem?NatLtLength.{0} Hibana.CompiledOccurrence)
+            (Hibana.recolorRollOccurrences occurrences conflictRows) left)
+          (@some.{0} Hibana.CompiledOccurrence leftOutput) →
+        @Eq.{1} (Option.{0} Hibana.CompiledOccurrence)
+            (@getElem?.{0, 0, 0} (List.{0} Hibana.CompiledOccurrence) Nat Hibana.CompiledOccurrence
+              (fun as i => @LT.lt.{0} Nat instLTNat i (@List.length.{0} Hibana.CompiledOccurrence as))
+              (@List.instGetElem?NatLtLength.{0} Hibana.CompiledOccurrence)
+              (Hibana.recolorRollOccurrences occurrences conflictRows) right)
+            (@some.{0} Hibana.CompiledOccurrence rightOutput) →
+          @Eq.{1} (Option.{0} (List.{0} Hibana.ConflictArm))
+              (@getElem?.{0, 0, 0} (List.{0} (List.{0} Hibana.ConflictArm)) Nat (List.{0} Hibana.ConflictArm)
+                (fun as i => @LT.lt.{0} Nat instLTNat i (@List.length.{0} (List.{0} Hibana.ConflictArm) as))
+                (@List.instGetElem?NatLtLength.{0} (List.{0} Hibana.ConflictArm)) conflictRows left)
+              (@some.{0} (List.{0} Hibana.ConflictArm) leftPath) →
+            @Eq.{1} (Option.{0} (List.{0} Hibana.ConflictArm))
+                (@getElem?.{0, 0, 0} (List.{0} (List.{0} Hibana.ConflictArm)) Nat (List.{0} Hibana.ConflictArm)
+                  (fun as i => @LT.lt.{0} Nat instLTNat i (@List.length.{0} (List.{0} Hibana.ConflictArm) as))
+                  (@List.instGetElem?NatLtLength.{0} (List.{0} Hibana.ConflictArm)) conflictRows right)
+                (@some.{0} (List.{0} Hibana.ConflictArm) rightPath) →
+              @Eq.{1} Nat leftSource.sender rightSource.sender →
+                @Eq.{1} Nat leftSource.receiver rightSource.receiver →
+                  @Eq.{1} Nat leftSource.lane rightSource.lane →
+                    @Ne.{1} Nat rightSource.sender rightSource.receiver →
+                      @LT.lt.{0} Nat instLTNat rightOutput.frameLabel
+                          (@OfNat.ofNat.{0} Nat (nat_lit 256) (instOfNatNat (nat_lit 256))) →
+                        @Eq.{1} Nat leftOutput.frameLabel rightOutput.frameLabel →
+                          @Eq.{1} (List.{0} Hibana.ConflictArm) leftPath rightPath
 @Hibana.scan_frontier_progress_retains_first_admissible : ∀ {α : Type} (admissible matchesFrontier : α → Bool)
   (selection : Hibana.FrontierProgressSelectionModel α) (candidates : List.{0} α),
   @Eq.{1} (Option.{0} α)

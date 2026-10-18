@@ -1,0 +1,16 @@
+actualBranchAndOutsidePathsDoNotAlias : bodyRecolored[0].frameLabel ≠ bodyRecolored[2].frameLabel ∧
+  bodyRecolored[0].frameLabel ≠ bodyRecolored[4].frameLabel ∧ bodyRecolored[2].frameLabel ≠ bodyRecolored[4].frameLabel
+actualInnerAndOuterDomainsRemainDistinct : elasticFrameOwner (canonicalControlSource nestedChoreo).markers 0 ≠
+    elasticFrameOwner (canonicalControlSource nestedChoreo).markers 1 ∧
+  nestedAfter[0].frameLabel ≠ nestedAfter[1].frameLabel
+actualOrderedAliasKeepsItsCompleteSourceRoutePath : bodyRows[0] = bodyRows[1]
+actualOuterAliasHasItsOriginalColorAndOwner : nestedBefore[0].frameLabel = nestedBefore[3].frameLabel ∧
+  elasticFrameOwner (canonicalControlSource nestedChoreo).markers 0 =
+    elasticFrameOwner (canonicalControlSource nestedChoreo).markers 3
+branchColorsMatchActualRust : List.map ProgramAtomBody.frameLabel (canonicalProgramSource branchChoreo).atoms =
+  branchRustColors
+exhaustedElasticColorsCannotBecomeAnAcceptedByte : firstElasticFrameColor (List.range 256) = 256
+nestedColorsMatchActualRust : List.map ProgramAtomBody.frameLabel (canonicalProgramSource nestedChoreo).atoms =
+  nestedRustColors
+parallelColorsMatchActualRust : List.map ProgramAtomBody.frameLabel (canonicalProgramSource parallelChoreo).atoms =
+  parallelRustColors
