@@ -31,6 +31,7 @@ import Hibana.ActorOccurrenceHistory
 import Hibana.SendAdmission
 import Hibana.OccurrenceChoiceKnowledge
 import Hibana.ActorChoiceOrigin
+import Hibana.DistributedSourceExecution
 import Hibana.GlobalSemantics
 import Hibana.GlobalAllocationCorrectness
 import Hibana.GlobalMessageTransitions

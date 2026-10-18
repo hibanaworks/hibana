@@ -754,6 +754,88 @@ Hibana.EndpointDelegation.withOwner_same : ∀ (owners : Hibana.EndpointDelegati
                           (And (Hibana.ActorChoiceUnresetHistory image choreo session scope after final)
                             (And (@Eq.{1} Bool (record.check image choreo session) true)
                               (record.step.SourceOrdered image choreo)))))
+@Hibana.a_current_distributed_row_has_its_unreset_actual_boundary : ∀ {images : Nat → Hibana.RustDescriptorImage}
+  {choreo : Hibana.Choreo} {session actor event : Nat}
+  {first last : Prod.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance)}
+  {records : List.{0} (Prod.{0, 0} Nat Hibana.ActorCommitRecord)},
+  Hibana.DistributedSourceExecution images choreo session first last records →
+    @Eq.{1} Bool
+        ((@Prod.fst.{0, 0} Hibana.ActorProgressObservation Nat
+                ((@Prod.fst.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance) first).actors
+                  actor)).doneState.done
+          event)
+        false →
+      @Eq.{1} Bool
+          ((@Prod.fst.{0, 0} Hibana.ActorProgressObservation Nat
+                  ((@Prod.fst.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance) last).actors
+                    actor)).doneState.done
+            event)
+          true →
+        @Exists.{1} (Prod.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance)) fun before =>
+          @Exists.{1} (Prod.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance)) fun after =>
+            @Exists.{1} (List.{0} (Prod.{0, 0} Nat Hibana.ActorCommitRecord)) fun prior =>
+              @Exists.{1} (List.{0} (Prod.{0, 0} Nat Hibana.ActorCommitRecord)) fun later =>
+                @Exists.{1} Hibana.ActorCommitRecord fun record =>
+                  @Exists.{1} (List.{0} Nat) fun marked =>
+                    @Exists.{1} (List.{0} Nat) fun untouched =>
+                      @Exists.{1} Nat fun commits =>
+                        And (Hibana.DistributedSourceExecution images choreo session first before prior)
+                          (And
+                            (Hibana.DistributedSourceStep images choreo session before after
+                              (@some.{0} (Prod.{0, 0} Nat Hibana.ActorCommitRecord)
+                                (@Prod.mk.{0, 0} Nat Hibana.ActorCommitRecord actor record)))
+                            (And
+                              (Hibana.ActorMeasuredCommit (images actor) choreo session
+                                ((@Prod.fst.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance)
+                                      before).actors
+                                  actor)
+                                ((@Prod.fst.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance)
+                                      after).actors
+                                  actor)
+                                marked record)
+                              (And (Hibana.DistributedSourceExecution images choreo session after last later)
+                                (And
+                                  (Hibana.ActorMeasuredHistory (images actor) choreo session
+                                    ((@Prod.fst.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance)
+                                          after).actors
+                                      actor)
+                                    ((@Prod.fst.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance)
+                                          last).actors
+                                      actor)
+                                    untouched commits)
+                                  (And
+                                    (Not
+                                      (@Membership.mem.{0, 0} Nat (List.{0} Nat) (@List.instMembership.{0} Nat)
+                                        untouched event))
+                                    (@Eq.{1} Nat record.step.event event))))))
+@Hibana.a_distributed_source_execution_projects_each_actual_actor_history : ∀
+  {images : Nat → Hibana.RustDescriptorImage} {choreo : Hibana.Choreo} {session : Nat}
+  {first last : Prod.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance)}
+  {records : List.{0} (Prod.{0, 0} Nat Hibana.ActorCommitRecord)},
+  Hibana.DistributedSourceExecution images choreo session first last records →
+    ∀ (actor : Nat),
+      @Exists.{1} (List.{0} Nat) fun cleared =>
+        @Exists.{1} Nat fun commits =>
+          Hibana.ActorMeasuredHistory (images actor) choreo session
+            ((@Prod.fst.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance) first).actors actor)
+            ((@Prod.fst.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance) last).actors actor)
+            cleared commits
+@Hibana.a_distributed_source_execution_projects_its_complete_fifo_histories : ∀
+  {images : Nat → Hibana.RustDescriptorImage} {choreo : Hibana.Choreo} {session : Nat}
+  {initial : Nat → Prod.{0, 0} Hibana.ActorProgressObservation Nat}
+  {last : Prod.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance)}
+  {records : List.{0} (Prod.{0, 0} Nat Hibana.ActorCommitRecord)},
+  Hibana.DistributedSourceExecution images choreo session
+      (@Prod.mk.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance)
+        (Hibana.DistributedSourceCut.initial initial) (@List.nil.{0} Hibana.SourceAcceptance))
+      last records →
+    ∀ (channel : Hibana.TransportChannel),
+      @Exists.{1} Hibana.ElasticAdmissionHistory fun history =>
+        Hibana.SendAdmissionTrace choreo session
+          ((@Prod.fst.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance) last).carriers channel)
+          history
+          (Hibana.sourceChannelRecords
+            (@Prod.snd.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance) last) channel)
 @Hibana.a_fifo_receive_has_its_actual_accepted_source_occurrence : ∀ {choreo : Hibana.Choreo} {session : Nat}
   {transport next : Hibana.TransportState} {history : Hibana.ElasticAdmissionHistory}
   {records : List.{0} (Prod.{0, 0} Hibana.SourceSendAdmission Nat)} {frame : Hibana.TransportFrame},
@@ -928,6 +1010,169 @@ Hibana.EndpointDelegation.withOwner_same : ∀ (owners : Hibana.EndpointDelegati
                               current leaseHeld faulted) →
                   @Hibana.TransferValueLocated (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) Frame value
                     state
+@Hibana.a_logged_distributed_source_commit_has_its_exact_boundary : ∀ {images : Nat → Hibana.RustDescriptorImage}
+  {choreo : Hibana.Choreo} {session actor : Nat}
+  {first last : Prod.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance)}
+  {records : List.{0} (Prod.{0, 0} Nat Hibana.ActorCommitRecord)} {record : Hibana.ActorCommitRecord},
+  Hibana.DistributedSourceExecution images choreo session first last records →
+    @Membership.mem.{0, 0} (Prod.{0, 0} Nat Hibana.ActorCommitRecord)
+        (List.{0} (Prod.{0, 0} Nat Hibana.ActorCommitRecord))
+        (@List.instMembership.{0} (Prod.{0, 0} Nat Hibana.ActorCommitRecord)) records
+        (@Prod.mk.{0, 0} Nat Hibana.ActorCommitRecord actor record) →
+      @Exists.{1} (Prod.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance)) fun before =>
+        @Exists.{1} (Prod.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance)) fun after =>
+          @Exists.{1} (List.{0} (Prod.{0, 0} Nat Hibana.ActorCommitRecord)) fun prior =>
+            @Exists.{1} (List.{0} (Prod.{0, 0} Nat Hibana.ActorCommitRecord)) fun later =>
+              And (Hibana.DistributedSourceExecution images choreo session first before prior)
+                (And
+                  (Hibana.DistributedSourceStep images choreo session before after
+                    (@some.{0} (Prod.{0, 0} Nat Hibana.ActorCommitRecord)
+                      (@Prod.mk.{0, 0} Nat Hibana.ActorCommitRecord actor record)))
+                  (Hibana.DistributedSourceExecution images choreo session after last later))
+@Hibana.a_logged_receive_has_its_exact_fifo_acceptance : ∀ {images : Nat → Hibana.RustDescriptorImage}
+  {choreo : Hibana.Choreo} {session actor eff : Nat}
+  {first last : Prod.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance)}
+  {records : List.{0} (Prod.{0, 0} Nat Hibana.ActorCommitRecord)} {record : Hibana.ActorCommitRecord}
+  {binding : Hibana.EndpointDelegation.Binding},
+  Hibana.DistributedSourceExecution images choreo session first last records →
+    @Membership.mem.{0, 0} (Prod.{0, 0} Nat Hibana.ActorCommitRecord)
+        (List.{0} (Prod.{0, 0} Nat Hibana.ActorCommitRecord))
+        (@List.instMembership.{0} (Prod.{0, 0} Nat Hibana.ActorCommitRecord)) records
+        (@Prod.mk.{0, 0} Nat Hibana.ActorCommitRecord actor record) →
+      @Eq.{1}
+          (Option.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Hibana.EndpointDelegation.Binding Hibana.EndpointDelegation.Side)))
+          (Hibana.sourceOperationIdentity? (images actor) choreo record.step.pathIndex record.step.event)
+          (@some.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Hibana.EndpointDelegation.Binding Hibana.EndpointDelegation.Side))
+            (@Prod.mk.{0, 0} Nat (Prod.{0, 0} Hibana.EndpointDelegation.Binding Hibana.EndpointDelegation.Side) eff
+              (@Prod.mk.{0, 0} Hibana.EndpointDelegation.Binding Hibana.EndpointDelegation.Side binding
+                Hibana.EndpointDelegation.Side.receive))) →
+        @Exists.{1} (Prod.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance)) fun before =>
+          @Exists.{1} (Prod.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance)) fun after =>
+            @Exists.{1} (List.{0} (Prod.{0, 0} Nat Hibana.ActorCommitRecord)) fun prior =>
+              @Exists.{1} (List.{0} (Prod.{0, 0} Nat Hibana.ActorCommitRecord)) fun later =>
+                @Exists.{1} Hibana.TransportChannel fun channel =>
+                  @Exists.{1} Hibana.SourceAcceptance fun entry =>
+                    @Exists.{1} Nat fun witness =>
+                      @Exists.{1} Hibana.TransportState fun next =>
+                        @Exists.{1} Hibana.TransportFrame fun frame =>
+                          And (Hibana.DistributedSourceExecution images choreo session first before prior)
+                            (And
+                              (Hibana.DistributedSourceStep images choreo session before after
+                                (@some.{0} (Prod.{0, 0} Nat Hibana.ActorCommitRecord)
+                                  (@Prod.mk.{0, 0} Nat Hibana.ActorCommitRecord actor record)))
+                              (And
+                                (@Eq.{1} Hibana.TransportPoll
+                                  ((@Prod.fst.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance)
+                                          before).carriers
+                                      channel).pollReceive
+                                  (Hibana.TransportPoll.delivered frame next))
+                                (And
+                                  (@Eq.{1} (Option.{0} Hibana.SourceAcceptance)
+                                    (@getElem?.{0, 0, 0} (List.{0} Hibana.SourceAcceptance) Nat Hibana.SourceAcceptance
+                                      (fun as i =>
+                                        @LT.lt.{0} Nat instLTNat i (@List.length.{0} Hibana.SourceAcceptance as))
+                                      (@List.instGetElem?NatLtLength.{0} Hibana.SourceAcceptance)
+                                      (Hibana.sourceChannelEntries
+                                        (@Prod.snd.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance)
+                                          before)
+                                        channel)
+                                      ((@Prod.fst.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance)
+                                              before).carriers
+                                          channel).delivered)
+                                    (@some.{0} Hibana.SourceAcceptance entry))
+                                  (And (@Eq.{1} Nat entry.carrierWitness witness)
+                                    (And
+                                      (@Eq.{1} Bool
+                                        (Hibana.sourceReceivePairCheck entry.sample record (images actor) choreo
+                                          session)
+                                        true)
+                                      (Hibana.DistributedSourceExecution images choreo session after last later))))))
+@Hibana.a_logged_receive_has_its_prior_actual_transport_acceptance : ∀ {images : Nat → Hibana.RustDescriptorImage}
+  {choreo : Hibana.Choreo} {session actor eff : Nat}
+  {first last : Prod.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance)}
+  {records : List.{0} (Prod.{0, 0} Nat Hibana.ActorCommitRecord)} {record : Hibana.ActorCommitRecord}
+  {binding : Hibana.EndpointDelegation.Binding},
+  Hibana.DistributedSourceExecution images choreo session first last records →
+    @Eq.{1} (List.{0} Hibana.SourceAcceptance)
+        (@Prod.snd.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance) first)
+        (@List.nil.{0} Hibana.SourceAcceptance) →
+      @Membership.mem.{0, 0} (Prod.{0, 0} Nat Hibana.ActorCommitRecord)
+          (List.{0} (Prod.{0, 0} Nat Hibana.ActorCommitRecord))
+          (@List.instMembership.{0} (Prod.{0, 0} Nat Hibana.ActorCommitRecord)) records
+          (@Prod.mk.{0, 0} Nat Hibana.ActorCommitRecord actor record) →
+        @Eq.{1}
+            (Option.{0}
+              (Prod.{0, 0} Nat (Prod.{0, 0} Hibana.EndpointDelegation.Binding Hibana.EndpointDelegation.Side)))
+            (Hibana.sourceOperationIdentity? (images actor) choreo record.step.pathIndex record.step.event)
+            (@some.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Hibana.EndpointDelegation.Binding Hibana.EndpointDelegation.Side))
+              (@Prod.mk.{0, 0} Nat (Prod.{0, 0} Hibana.EndpointDelegation.Binding Hibana.EndpointDelegation.Side) eff
+                (@Prod.mk.{0, 0} Hibana.EndpointDelegation.Binding Hibana.EndpointDelegation.Side binding
+                  Hibana.EndpointDelegation.Side.receive))) →
+          @Exists.{1} (Prod.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance)) fun accepting =>
+            @Exists.{1} (Prod.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance)) fun accepted =>
+              @Exists.{1} (Prod.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance)) fun receiving =>
+                @Exists.{1} (Prod.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance)) fun received =>
+                  @Exists.{1} (List.{0} (Prod.{0, 0} Nat Hibana.ActorCommitRecord)) fun earlier =>
+                    @Exists.{1} (List.{0} (Prod.{0, 0} Nat Hibana.ActorCommitRecord)) fun between =>
+                      @Exists.{1} (List.{0} (Prod.{0, 0} Nat Hibana.ActorCommitRecord)) fun later =>
+                        @Exists.{1} Hibana.TransportChannel fun channel =>
+                          @Exists.{1} Hibana.SourceAcceptance fun entry =>
+                            @Exists.{1} Nat fun witness =>
+                              @Exists.{1} Hibana.TransportState fun next =>
+                                @Exists.{1} Hibana.TransportFrame fun frame =>
+                                  And (Hibana.DistributedSourceExecution images choreo session first accepting earlier)
+                                    (And
+                                      (Hibana.DistributedSourceStep images choreo session accepting accepted
+                                        (@none.{0} (Prod.{0, 0} Nat Hibana.ActorCommitRecord)))
+                                      (And
+                                        (@Eq.{1} (List.{0} Hibana.SourceAcceptance)
+                                          (@Prod.snd.{0, 0} Hibana.DistributedSourceCut
+                                            (List.{0} Hibana.SourceAcceptance) accepted)
+                                          (@HAppend.hAppend.{0, 0, 0} (List.{0} Hibana.SourceAcceptance)
+                                            (List.{0} Hibana.SourceAcceptance) (List.{0} Hibana.SourceAcceptance)
+                                            (@instHAppendOfAppend.{0} (List.{0} Hibana.SourceAcceptance)
+                                              (@List.instAppend.{0} Hibana.SourceAcceptance))
+                                            (@Prod.snd.{0, 0} Hibana.DistributedSourceCut
+                                              (List.{0} Hibana.SourceAcceptance) accepting)
+                                            (@List.cons.{0} Hibana.SourceAcceptance entry
+                                              (@List.nil.{0} Hibana.SourceAcceptance))))
+                                        (And
+                                          (Hibana.DistributedSourceExecution images choreo session accepted receiving
+                                            between)
+                                          (And
+                                            (Hibana.DistributedSourceStep images choreo session receiving received
+                                              (@some.{0} (Prod.{0, 0} Nat Hibana.ActorCommitRecord)
+                                                (@Prod.mk.{0, 0} Nat Hibana.ActorCommitRecord actor record)))
+                                            (And
+                                              (@Eq.{1} Hibana.TransportPoll
+                                                ((@Prod.fst.{0, 0} Hibana.DistributedSourceCut
+                                                        (List.{0} Hibana.SourceAcceptance) receiving).carriers
+                                                    channel).pollReceive
+                                                (Hibana.TransportPoll.delivered frame next))
+                                              (And
+                                                (@Eq.{1} (Option.{0} Hibana.SourceAcceptance)
+                                                  (@getElem?.{0, 0, 0} (List.{0} Hibana.SourceAcceptance) Nat
+                                                    Hibana.SourceAcceptance
+                                                    (fun as i =>
+                                                      @LT.lt.{0} Nat instLTNat i
+                                                        (@List.length.{0} Hibana.SourceAcceptance as))
+                                                    (@List.instGetElem?NatLtLength.{0} Hibana.SourceAcceptance)
+                                                    (Hibana.sourceChannelEntries
+                                                      (@Prod.snd.{0, 0} Hibana.DistributedSourceCut
+                                                        (List.{0} Hibana.SourceAcceptance) receiving)
+                                                      channel)
+                                                    ((@Prod.fst.{0, 0} Hibana.DistributedSourceCut
+                                                            (List.{0} Hibana.SourceAcceptance) receiving).carriers
+                                                        channel).delivered)
+                                                  (@some.{0} Hibana.SourceAcceptance entry))
+                                                (And (@Eq.{1} Nat entry.carrierWitness witness)
+                                                  (And
+                                                    (@Eq.{1} Bool
+                                                      (Hibana.sourceReceivePairCheck entry.sample record (images actor)
+                                                        choreo session)
+                                                      true)
+                                                    (Hibana.DistributedSourceExecution images choreo session received
+                                                      last later)))))))))
 @Hibana.a_measured_actor_history_accounts_for_every_mark_and_clear : ∀ {image : Hibana.RustDescriptorImage}
   {choreo : Hibana.Choreo} {session : Nat} {before after : Prod.{0, 0} Hibana.ActorProgressObservation Nat}
   {cleared : List.{0} Nat} {commits : Nat},
@@ -944,6 +1189,14 @@ Hibana.EndpointDelegation.withOwner_same : ∀ (owners : Hibana.EndpointDelegati
     Not (@Membership.mem.{0, 0} Nat (List.{0} Nat) (@List.instMembership.{0} Nat) cleared event) →
       @Eq.{1} Bool ((@Prod.fst.{0, 0} Hibana.ActorProgressObservation Nat before).doneState.done event) true →
         @Eq.{1} Bool ((@Prod.fst.{0, 0} Hibana.ActorProgressObservation Nat after).doneState.done event) true
+@Hibana.a_measured_commit_marks_or_preserves_a_completed_row : ∀ {image : Hibana.RustDescriptorImage}
+  {choreo : Hibana.Choreo} {session event : Nat} {before after : Prod.{0, 0} Hibana.ActorProgressObservation Nat}
+  {cleared : List.{0} Nat} {record : Hibana.ActorCommitRecord},
+  Hibana.ActorMeasuredCommit image choreo session before after cleared record →
+    @Eq.{1} Bool ((@Prod.fst.{0, 0} Hibana.ActorProgressObservation Nat after).doneState.done event) true →
+      Or (@Eq.{1} Nat record.step.event event)
+        (And (@Eq.{1} Bool ((@Prod.fst.{0, 0} Hibana.ActorProgressObservation Nat before).doneState.done event) true)
+          (Not (@Membership.mem.{0, 0} Nat (List.{0} Nat) (@List.instMembership.{0} Nat) cleared event)))
 @Hibana.a_measured_commit_retains_its_checked_source_and_wire : ∀ {image : Hibana.RustDescriptorImage}
   {choreo : Hibana.Choreo} {session : Nat} {before after : Prod.{0, 0} Hibana.ActorProgressObservation Nat}
   {cleared : List.{0} Nat} {record : Hibana.ActorCommitRecord},
@@ -1997,6 +2250,12 @@ Hibana.a_pending_payload_requires_its_own_send : ∀ (resource : Nat) (sent : Op
           after)
         (@some.{0} (Prod.{0, 0} Nat (Option.{0} Hibana.RouteArm))
           (@Prod.mk.{0, 0} Nat (Option.{0} Hibana.RouteArm) scope (@some.{0} Hibana.RouteArm arm)))
+@Hibana.a_source_publication_retains_its_exact_prepared_cursor : ∀ {sent : Hibana.SourceSendAdmission}
+  {published : Hibana.ActorCommitRecord} {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo} {session : Nat},
+  @Eq.{1} Bool (Hibana.sourcePublicationPairCheck sent published image choreo session) true →
+    And (@Eq.{1} (List.{0} Bool) sent.base.progress published.step.before.progress)
+      (@Eq.{1} (List.{0} (Prod.{0, 0} Nat (Option.{0} Hibana.RouteArm))) sent.base.choices
+        published.step.before.choices)
 @Hibana.a_structurally_ready_source_point_has_actual_candidate_admission : ∀ {sample : Hibana.ActorAdmissionObservation}
   {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo} {previousPath : Nat} {data : Hibana.DecodedActorOrder}
   {path : Hibana.EndpointDelegation.NormalizedPath} {row : Hibana.DecodedActorRow}
@@ -3620,6 +3879,36 @@ Hibana.ambiguous_receive_fails_closed : ∀ (before : Hibana.CompactGlobalState)
       (@some.{0} Hibana.CompactGlobalState
         (Hibana.CompactGlobalState.fromGlobalConfig
           (config.beginCancellation reporter Hibana.SessionFault.protocolViolation)))
+@Hibana.an_accepted_distributed_entry_has_its_actual_transport_boundary : ∀ {images : Nat → Hibana.RustDescriptorImage}
+  {choreo : Hibana.Choreo} {session : Nat}
+  {first last : Prod.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance)}
+  {records : List.{0} (Prod.{0, 0} Nat Hibana.ActorCommitRecord)} {entry : Hibana.SourceAcceptance},
+  Hibana.DistributedSourceExecution images choreo session first last records →
+    Not
+        (@Membership.mem.{0, 0} Hibana.SourceAcceptance (List.{0} Hibana.SourceAcceptance)
+          (@List.instMembership.{0} Hibana.SourceAcceptance)
+          (@Prod.snd.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance) first) entry) →
+      @Membership.mem.{0, 0} Hibana.SourceAcceptance (List.{0} Hibana.SourceAcceptance)
+          (@List.instMembership.{0} Hibana.SourceAcceptance)
+          (@Prod.snd.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance) last) entry →
+        @Exists.{1} (Prod.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance)) fun before =>
+          @Exists.{1} (Prod.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance)) fun after =>
+            @Exists.{1} (List.{0} (Prod.{0, 0} Nat Hibana.ActorCommitRecord)) fun prior =>
+              @Exists.{1} (List.{0} (Prod.{0, 0} Nat Hibana.ActorCommitRecord)) fun later =>
+                And (Hibana.DistributedSourceExecution images choreo session first before prior)
+                  (And
+                    (Hibana.DistributedSourceStep images choreo session before after
+                      (@none.{0} (Prod.{0, 0} Nat Hibana.ActorCommitRecord)))
+                    (And
+                      (@Eq.{1} (List.{0} Hibana.SourceAcceptance)
+                        (@Prod.snd.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance) after)
+                        (@HAppend.hAppend.{0, 0, 0} (List.{0} Hibana.SourceAcceptance)
+                          (List.{0} Hibana.SourceAcceptance) (List.{0} Hibana.SourceAcceptance)
+                          (@instHAppendOfAppend.{0} (List.{0} Hibana.SourceAcceptance)
+                            (@List.instAppend.{0} Hibana.SourceAcceptance))
+                          (@Prod.snd.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance) before)
+                          (@List.cons.{0} Hibana.SourceAcceptance entry (@List.nil.{0} Hibana.SourceAcceptance))))
+                      (Hibana.DistributedSourceExecution images choreo session after last later)))
 @Hibana.an_accepted_roll_preserves_each_instantiated_resource_owner : ∀
   {resources : List.{0} Hibana.EndpointDelegation.EndpointKey} {owners : Hibana.EndpointDelegation.OwnerMap}
   {path : List.{0} Hibana.EndpointDelegation.Selection} {body : Hibana.EndpointDelegation.Source} {start : Nat}
@@ -5825,6 +6114,18 @@ Hibana.distributed_roll_materialization_is_affine : ∀ (state : Hibana.Distribu
     @Eq.{1} (Option.{0} Hibana.DistributedConfig) (config.rollStep? rollId) (@some.{0} Hibana.DistributedConfig next) →
       @Eq.{1} (Option.{0} Hibana.GlobalConfig) (config.abstract.step? (Hibana.GlobalOperation.roll rollId))
         (@some.{0} Hibana.GlobalConfig next.abstract)
+@Hibana.distributed_source_executions_compose_at_the_same_observed_cut : ∀ {images : Nat → Hibana.RustDescriptorImage}
+  {choreo : Hibana.Choreo} {session : Nat}
+  {first middle last : Prod.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance)}
+  {prior later : List.{0} (Prod.{0, 0} Nat Hibana.ActorCommitRecord)},
+  Hibana.DistributedSourceExecution images choreo session first middle prior →
+    Hibana.DistributedSourceExecution images choreo session middle last later →
+      Hibana.DistributedSourceExecution images choreo session first last
+        (@HAppend.hAppend.{0, 0, 0} (List.{0} (Prod.{0, 0} Nat Hibana.ActorCommitRecord))
+          (List.{0} (Prod.{0, 0} Nat Hibana.ActorCommitRecord)) (List.{0} (Prod.{0, 0} Nat Hibana.ActorCommitRecord))
+          (@instHAppendOfAppend.{0} (List.{0} (Prod.{0, 0} Nat Hibana.ActorCommitRecord))
+            (@List.instAppend.{0} (Prod.{0, 0} Nat Hibana.ActorCommitRecord)))
+          prior later)
 @Hibana.distributed_step_preserves_abstract_route_fidelity : ∀ {current next : Hibana.DistributedConfig},
   Hibana.RouteSelectionFidelity current.abstract →
     Hibana.DistributedStep current next → Hibana.RouteSelectionFidelity next.abstract

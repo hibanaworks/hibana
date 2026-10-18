@@ -136,6 +136,35 @@ connect per-actor origins to individual FIFO receipts; coherence of a complete
 distributed cut across partial choices, custody, pending calls and failures
 still needs composition before the public guard can be opened.
 
+`DistributedSourceExecution.lean` now puts the actor and transport boundaries
+in one chronological history. Its actors retain independent current choices
+and independently prepared rolled bodies. A send's transport acceptance and
+local publication are separate steps, so a receiver can run between them.
+Publication must use the same prepared progress and choices as acceptance;
+matching message bytes alone cannot substitute a different rolled base.
+Each channel's entire FIFO history, including ordinary messages between
+delegations, and each actor's measured history are derived from that same
+execution. A current completed row has an actual marking boundary and a
+suffix that has not reset it. A recorded receive names its exact physical
+FIFO head, source send and carrier witness; accepted records also have an
+actual earlier acceptance boundary.
+
+The Tokio mixed-message fixture records all sixteen completed operations,
+eight acceptances and eight receives across three separate runtimes. At one
+cut the owner has entered its second visit while the worker still retains
+its completed first visit. The repeated loan's header and payload bytes are
+identical, and even source-pair validation alone fits the old loan. The
+actual FIFO head and its transport observation distinguish the second loan.
+These identifiers belong only to the test carrier's copied observations;
+they are neither wire fields nor runtime admission authority.
+
+This is a joint successful-boundary refinement and concrete qualification.
+Receive-pair correspondence is an explicit obligation of the relation, not
+a proof that every possible Rust history already satisfies it. The general
+unfolded-source progress argument and composition with actual value custody,
+active-call and fault/closure histories remain required. The public owned
+projection guard stays closed.
+
 `OccurrenceChoiceKnowledge.lean` relates the actual accepted owned frame to
 the receiver's committed branch knowledge. It derives the matching source
 effect from checked bytes, then applies that occurrence's canonical route

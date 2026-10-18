@@ -95,6 +95,7 @@ impl<T, const N: usize> FixedQueue<T, N> {
 }
 
 pub(crate) struct FrameOwned {
+    witness: Option<u64>,
     session_id: SessionId,
     lane: u8,
     source_role: u8,
@@ -119,6 +120,7 @@ impl FrameOwned {
         let mut payload = [0u8; TEST_FRAME_PAYLOAD_CAPACITY];
         payload[..bytes.len()].copy_from_slice(bytes);
         Self {
+            witness: None,
             session_id,
             lane,
             source_role,
@@ -132,6 +134,45 @@ impl FrameOwned {
     fn as_slice(&self) -> &[u8] {
         &self.payload[..self.len]
     }
+
+    fn evidence(&self, target_role: u8) -> FrameEvidence {
+        FrameEvidence {
+            witness: self.witness.expect("accepted packet witness"),
+            header: frame_header_from_parts(
+                self.session_id,
+                self.lane,
+                self.source_role,
+                target_role,
+                self.frame_label,
+            ),
+            len: self.len,
+            payload: self.payload,
+        }
+    }
+}
+
+/// A copied observation, without the queue ownership of a real packet. The
+/// witness survives requeue and is never put on the wire or read by Hibana.
+#[derive(Clone)]
+#[allow(
+    dead_code,
+    reason = "shared carrier; actor qualification reads the copied packet evidence"
+)]
+pub(crate) struct FrameEvidence {
+    pub(crate) witness: u64,
+    pub(crate) header: FrameHeader,
+    len: usize,
+    payload: [u8; TEST_FRAME_PAYLOAD_CAPACITY],
+}
+
+impl FrameEvidence {
+    #[allow(
+        dead_code,
+        reason = "shared carrier; actor qualification reads the copied packet payload"
+    )]
+    pub(crate) fn payload(&self) -> &[u8] {
+        &self.payload[..self.len]
+    }
 }
 
 struct SessionWaiter {
@@ -143,6 +184,7 @@ struct SessionWaiter {
 pub(crate) struct RoleState {
     pub(crate) queue: FixedQueue<FrameOwned, TEST_QUEUE_CAPACITY>,
     waiters: Vec<SessionWaiter>,
+    received: Vec<FrameEvidence>,
 }
 
 impl RoleState {
@@ -150,6 +192,7 @@ impl RoleState {
         Self {
             queue: FixedQueue::new(),
             waiters: Vec::new(),
+            received: Vec::new(),
         }
     }
 
@@ -185,11 +228,15 @@ struct RoleSlot {
 
 pub(crate) struct TestState {
     roles: Vec<RoleSlot>,
+    next_witness: u64,
 }
 
 impl TestState {
     fn new() -> Self {
-        Self { roles: Vec::new() }
+        Self {
+            roles: Vec::new(),
+            next_witness: 0,
+        }
     }
 
     fn role_mut(&mut self, role: u8) -> &mut RoleState {
@@ -203,7 +250,13 @@ impl TestState {
         &mut self.roles.last_mut().expect("inserted role slot").state
     }
 
-    fn enqueue(&mut self, role: u8, frame: FrameOwned) -> Option<Waker> {
+    fn enqueue(&mut self, role: u8, mut frame: FrameOwned) -> Option<Waker> {
+        assert!(frame.witness.is_none(), "packet accepted twice");
+        frame.witness = Some(self.next_witness);
+        self.next_witness = self
+            .next_witness
+            .checked_add(1)
+            .expect("packet witness exhausted");
         let role_state = self.role_mut(role);
         let session_id = frame.session_id;
         let lane = frame.lane;
@@ -219,6 +272,18 @@ impl TestState {
 
     fn requeue(&mut self, role: u8, frame: FrameOwned) {
         self.role_mut(role).queue.push_front(frame);
+    }
+
+    fn observe_received(&mut self, role: u8, frame: FrameEvidence) {
+        let received = &mut self.role_mut(role).received;
+        if let Some(previous) = received
+            .iter_mut()
+            .find(|previous| previous.header.bytes()[..5] == frame.header.bytes()[..5])
+        {
+            *previous = frame;
+        } else {
+            received.push(frame);
+        }
     }
 
     fn add_waiter(&mut self, role: u8, session_id: SessionId, lane: u8, waker: Waker) {
@@ -324,6 +389,48 @@ impl TestTransport {
             ),
             frame.as_slice().to_vec(),
         )
+    }
+
+    #[allow(
+        dead_code,
+        reason = "shared carrier; actor qualification correlates physical acceptances"
+    )]
+    pub(crate) fn accepted_frame(&self, role: u8, offset: usize) -> FrameEvidence {
+        let state = self.state.borrow();
+        let queue = &state
+            .roles
+            .iter()
+            .find(|slot| slot.role == role)
+            .expect("observed receiver")
+            .state
+            .queue;
+        assert!(offset < queue.len, "accepted frame ordinal to observe");
+        queue.items[(queue.head + offset) % TEST_QUEUE_CAPACITY]
+            .as_ref()
+            .expect("accepted frame to observe")
+            .evidence(role)
+    }
+
+    #[allow(
+        dead_code,
+        reason = "shared carrier; actor qualification correlates physical receives"
+    )]
+    pub(crate) fn received_frame(&self, role: u8, session: SessionId, lane: u8) -> FrameEvidence {
+        self.state
+            .borrow()
+            .roles
+            .iter()
+            .find(|slot| slot.role == role)
+            .expect("observed receiver")
+            .state
+            .received
+            .iter()
+            .find(|frame| {
+                let bytes = frame.header.bytes();
+                bytes[..4] == session.raw().to_be_bytes() && bytes[4] == lane
+            })
+            .expect("actual returned frame")
+            .clone()
     }
 
     pub(crate) fn truncate_next_payload(&self, role: u8, len: usize) {
@@ -441,6 +548,9 @@ impl TestTransport {
                 }
             };
             if let Some(frame) = dequeued {
+                rx.state
+                    .borrow_mut()
+                    .observe_received(rx.role, frame.evidence(rx.role));
                 rx.current_hint_drained.set(frame.hint_drained);
                 rx.current = Some(frame);
             } else {

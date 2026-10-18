@@ -1,4 +1,5 @@
 //! Ordinary and owned messages share one FIFO through independent local reentry.
+use super::distributed_source::{FrameBoundary, OperationObservation};
 use super::*;
 #[cfg(not(miri))]
 use crate::endpoint::proof_snapshot::ActorSnapshot;
@@ -7,10 +8,12 @@ use crate::{
     runtime::{SessionKitStorage, ids::SessionId},
     test_support::transport::TestTransport,
 };
+use std::cell::RefCell;
 
 type Note = g::Msg<9, u32>;
 type BorrowBody = g::Seq<g::Send<0, 1, Loan>, g::Seq<g::Send<0, 1, Note>, g::Send<1, 0, Loan>>>;
-type Steps = g::Seq<g::Roll<BorrowBody>, g::Seq<g::Send<10, 3, Read>, g::Send<3, 10, Value>>>;
+pub(super) type Steps =
+    g::Seq<g::Roll<BorrowBody>, g::Seq<g::Send<10, 3, Read>, g::Send<3, 10, Value>>>;
 #[cfg(not(miri))]
 type Wire = (crate::transport::FrameHeader, std::vec::Vec<u8>);
 
@@ -59,6 +62,15 @@ fn ordinary_and_owned_acceptances_keep_the_same_fifo_through_reentry() {
             let mut db = owner_rv.enter(sid, &db_program).unwrap();
             let mut worker = worker_rv.enter(sid, &worker_program).unwrap();
             let mut service = service_rv.enter(sid, &service_program).unwrap();
+            let operations = RefCell::new(std::vec::Vec::new());
+            // SAFETY: all three pinned actors were attached with TestTransport.
+            let initial = unsafe {
+                [
+                    actor_snapshot(&owner),
+                    actor_snapshot(&worker),
+                    actor_snapshot(&service),
+                ]
+            };
             let (sends, receipts, ()) =
                 tokio::time::timeout(core::time::Duration::from_secs(30), async {
                     tokio::join!(
@@ -68,19 +80,59 @@ fn ordinary_and_owned_acceptances_keep_the_same_fifo_through_reentry() {
                                 // SAFETY: this pinned actor was attached with TestTransport.
                                 let before_loan = unsafe { actor_snapshot(&owner) };
                                 owner.send::<Loan>(db).await.unwrap();
+                                operations.borrow_mut().push(OperationObservation {
+                                    view: 0,
+                                    label: 1,
+                                    before: before_loan.clone(),
+                                    after: unsafe { actor_snapshot(&owner) },
+                                    frame: FrameBoundary::Sent(network.accepted_frame(1, 0)),
+                                });
                                 let loan_wire = network.queued_frame_at(1, 0);
                                 let before_note = unsafe { actor_snapshot(&owner) };
                                 owner.send::<Note>(&number).await.unwrap();
+                                operations.borrow_mut().push(OperationObservation {
+                                    view: 0,
+                                    label: 9,
+                                    before: before_note.clone(),
+                                    after: unsafe { actor_snapshot(&owner) },
+                                    frame: FrameBoundary::Sent(network.accepted_frame(1, 1)),
+                                });
                                 // Both frames are accepted before this executor polls WORKER.
                                 // Inspection neither consumes them nor authorizes a receive.
                                 let note_wire = network.queued_frame_at(1, 1);
                                 assert_eq!(loan_wire.0.lane(), note_wire.0.lane());
                                 sends.push((before_loan, loan_wire));
                                 sends.push((before_note, note_wire));
+                                let before = unsafe { actor_snapshot(&owner) };
                                 db = owner.recv::<Loan>().await.unwrap();
+                                operations.borrow_mut().push(OperationObservation {
+                                    view: 0,
+                                    label: 1,
+                                    before,
+                                    after: unsafe { actor_snapshot(&owner) },
+                                    frame: FrameBoundary::Received(
+                                        network.received_frame(0, sid, 0),
+                                    ),
+                                });
                             }
+                            let before = unsafe { actor_snapshot(&db) };
                             db.send::<Read>(&41).await.unwrap();
+                            operations.borrow_mut().push(OperationObservation {
+                                view: 10,
+                                label: 3,
+                                before,
+                                after: unsafe { actor_snapshot(&db) },
+                                frame: FrameBoundary::Sent(network.accepted_frame(3, 0)),
+                            });
+                            let before = unsafe { actor_snapshot(&db) };
                             assert_eq!(db.recv::<Value>().await.unwrap(), 42);
+                            operations.borrow_mut().push(OperationObservation {
+                                view: 10,
+                                label: 4,
+                                before,
+                                after: unsafe { actor_snapshot(&db) },
+                                frame: FrameBoundary::Received(network.received_frame(10, sid, 0)),
+                            });
                             sends
                         },
                         async {
@@ -90,15 +142,58 @@ fn ordinary_and_owned_acceptances_keep_the_same_fifo_through_reentry() {
                                 let before = unsafe { actor_snapshot(&worker) };
                                 let db = worker.recv::<Loan>().await.unwrap();
                                 let after = unsafe { actor_snapshot(&worker) };
+                                operations.borrow_mut().push(OperationObservation {
+                                    view: 1,
+                                    label: 1,
+                                    before: before.clone(),
+                                    after: after.clone(),
+                                    frame: FrameBoundary::Received(
+                                        network.received_frame(1, sid, 0),
+                                    ),
+                                });
+                                let note_before = unsafe { actor_snapshot(&worker) };
                                 assert_eq!(worker.recv::<Note>().await.unwrap(), number);
+                                operations.borrow_mut().push(OperationObservation {
+                                    view: 1,
+                                    label: 9,
+                                    before: note_before,
+                                    after: unsafe { actor_snapshot(&worker) },
+                                    frame: FrameBoundary::Received(
+                                        network.received_frame(1, sid, 0),
+                                    ),
+                                });
+                                let return_before = unsafe { actor_snapshot(&worker) };
                                 worker.send::<Loan>(db).await.unwrap();
+                                operations.borrow_mut().push(OperationObservation {
+                                    view: 1,
+                                    label: 1,
+                                    before: return_before,
+                                    after: unsafe { actor_snapshot(&worker) },
+                                    frame: FrameBoundary::Sent(network.accepted_frame(0, 0)),
+                                });
                                 receipts.push((before, after));
                             }
                             receipts
                         },
                         async {
+                            let before = unsafe { actor_snapshot(&service) };
                             let number = service.recv::<Read>().await.unwrap();
+                            operations.borrow_mut().push(OperationObservation {
+                                view: 3,
+                                label: 3,
+                                before,
+                                after: unsafe { actor_snapshot(&service) },
+                                frame: FrameBoundary::Received(network.received_frame(3, sid, 0)),
+                            });
+                            let before = unsafe { actor_snapshot(&service) };
                             service.send::<Value>(&(number + 1)).await.unwrap();
+                            operations.borrow_mut().push(OperationObservation {
+                                view: 3,
+                                label: 4,
+                                before,
+                                after: unsafe { actor_snapshot(&service) },
+                                frame: FrameBoundary::Sent(network.accepted_frame(10, 0)),
+                            });
                         },
                     )
                 })
@@ -109,8 +204,23 @@ fn ordinary_and_owned_acceptances_keep_the_same_fifo_through_reentry() {
             assert_eq!(receipts.len(), 2);
             assert_eq!(sends[0].1.1, sends[2].1.1);
             assert_ne!(receipts[0].1.views, receipts[1].1.views);
+            let operations = operations.into_inner();
+            super::distributed_source::check_observations(&operations);
+            for actor in &initial {
+                assert_eq!(
+                    &operations
+                        .iter()
+                        .find(|op| op.before.actor == actor.actor)
+                        .unwrap()
+                        .before,
+                    actor
+                );
+            }
             #[cfg(not(miri))]
-            write_observations(&sends, &receipts);
+            {
+                write_observations(&sends, &receipts);
+                super::distributed_source::write_observations(&initial, &operations);
+            }
         });
 }
 

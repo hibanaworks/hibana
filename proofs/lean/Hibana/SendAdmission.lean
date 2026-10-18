@@ -15,6 +15,7 @@ structure SourceSendAdmission where
   pathIndex : Nat
   event : Nat
   wire : OwnedWireObservation
+  deriving DecidableEq
 
 def SourceSendAdmission.effIndex? (sample : SourceSendAdmission) : Option Nat :=
   sample.image.eventEffIndex? sample.event

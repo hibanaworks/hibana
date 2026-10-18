@@ -1,0 +1,55 @@
+distributedActorHistories : ∀ (actor : Nat),
+  ∃ cleared commits,
+    ActorMeasuredHistory (distributedImages actor) distributedChoreo 9062 (distributedCut0.actors actor)
+      (distributedCut24.actors actor) cleared commits
+distributedActualExecution : DistributedSourceExecution distributedImages distributedChoreo 9062
+  (distributedCut0, distributedEntries0) (distributedCut24, distributedEntries24) distributedRecords
+distributedActualReceiveBoundaries : ∀ (actor eff : Nat) (record : ActorCommitRecord) (binding : Binding),
+  (actor, record) ∈ distributedRecords →
+    sourceOperationIdentity? (distributedImages actor) distributedChoreo record.step.pathIndex record.step.event =
+        some (eff, binding, Side.receive) →
+      ∃ before after prior later channel entry witness next frame,
+        DistributedSourceExecution distributedImages distributedChoreo 9062 (distributedCut0, distributedEntries0)
+            before prior ∧
+          DistributedSourceStep distributedImages distributedChoreo 9062 before after (some (actor, record)) ∧
+            (before.fst.carriers channel).pollReceive = TransportPoll.delivered frame next ∧
+              (sourceChannelEntries before.snd channel)[(before.fst.carriers channel).delivered]? = some entry ∧
+                entry.carrierWitness = witness ∧
+                  sourceReceivePairCheck entry.sample record (distributedImages actor) distributedChoreo 9062 = true ∧
+                    DistributedSourceExecution distributedImages distributedChoreo 9062 after
+                      (distributedCut24, distributedEntries24) later
+distributedCurrentReceiptHasItsActualUnresetGlobalOrigin : ∃ before after prior later record marked untouched commits,
+  DistributedSourceExecution distributedImages distributedChoreo 9062 (distributedCut0, distributedEntries0) before
+      prior ∧
+    DistributedSourceStep distributedImages distributedChoreo 9062 before after (some (1, record)) ∧
+      ActorMeasuredCommit distributedImage1 distributedChoreo 9062 (before.fst.actors 1) (after.fst.actors 1) marked
+          record ∧
+        DistributedSourceExecution distributedImages distributedChoreo 9062 after
+            (distributedCut24, distributedEntries24) later ∧
+          ActorMeasuredHistory distributedImage1 distributedChoreo 9062 (after.fst.actors 1) (distributedCut24.actors 1)
+              untouched commits ∧
+            ¬0 ∈ untouched ∧ record.step.event = 0
+distributedFifoHistories : ∀ (channel : TransportChannel),
+  ∃ history,
+    SendAdmissionTrace distributedChoreo 9062 (distributedCut24.carriers channel) history
+      (sourceChannelRecords distributedEntries24 channel)
+distributedFreshReceiptAlsoFitsOldBytes : sourceReceivePairCheck distributedSend0 distributedCommit8 distributedImage1
+    distributedChoreo 9062 =
+  true
+distributedFreshReceiptHasItsActualFifoHead : (sourceChannelEntries distributedEntries13
+      distributedChannel8)[(distributedCut13.carriers distributedChannel8).delivered]? =
+  some distributedEntry6
+distributedFreshReceiptResetsEvenWhenItsRowBitStaysTrue : distributedBefore8.doneState.done 0 = true ∧
+  distributedAfter8.doneState.done 0 = true ∧
+    distributedBefore8.progress ≠ distributedAfter8.progress ∧
+      distributedPreparedPair8.snd.before.doneState.done 0 = false
+distributedMixedCutKeepsIndependentActorVisits : (distributedCut13.actors 0).snd = 8 ∧
+  (distributedCut13.actors 1).snd = 3 ∧
+    (distributedCut13.carriers distributedChannel8).delivered = 2 ∧
+      (distributedCut13.carriers distributedChannel8).frames.length = 4
+distributedOldWitnessCannotIdentifyTheFreshFifoHead : ∀ (entry : SourceAcceptance),
+  (sourceChannelEntries distributedEntries13
+          distributedChannel8)[(distributedCut13.carriers distributedChannel8).delivered]? =
+      some entry →
+    entry.carrierWitness ≠ distributedEntry0.carrierWitness
+distributedRepeatedLoanHasIdenticalBytes : distributedWire0 = distributedWire6 ∧ distributedWire6 = distributedWire8

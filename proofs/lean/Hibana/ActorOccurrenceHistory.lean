@@ -38,27 +38,26 @@ theorem a_measured_commit_retains_its_checked_source_and_wire
       exact valid
   exact ⟨checked, accepted_actor_commit_matches_source_progress (checked_record_is_a_checked_commit checked)⟩
 
-private theorem a_measured_step_either_marks_the_row_or_preserves_its_origin
+/-- The exact recorded commit either marks this row, or preserves both its
+completion and its current origin. This retains the actual record, so a joint
+distributed history need not invent a compatible local commit afterwards. -/
+theorem a_measured_commit_marks_or_preserves_a_completed_row
     {image : RustDescriptorImage} {choreo : Choreo} {session event : Nat}
-    {before after : ActorProgressObservation × Nat} {cleared : List Nat} {commits : Nat}
-    (step : ActorMeasuredStep image choreo session before after cleared commits)
+    {before after : ActorProgressObservation × Nat} {cleared : List Nat} {record : ActorCommitRecord}
+    (commit : ActorMeasuredCommit image choreo session before after cleared record)
     (completed : after.1.doneState.done event = true) :
-    (∃ record, ActorMeasuredCommit image choreo session before after cleared record ∧
-      record.step.event = event) ∨
+    record.step.event = event ∨
     (before.1.doneState.done event = true ∧ event ∉ cleared) := by
-  cases step with
-  | quiet checked =>
-    have progressAt := beq_iff_eq.mp (Bool.and_eq_true_iff.mp (Bool.and_eq_true_iff.mp checked).2).1
-    exact .inr ⟨by simpa only [ActorProgressObservation.doneState, progressAt] using completed, by simp⟩
-  | @commit record checked written =>
+  cases commit with
+  | @ordinary record checked written =>
     by_cases same : record.commit.step.event = event
-    · exact .inl ⟨record.commit, .ordinary checked written, same⟩
+    · exact .inl same
     · obtain ⟨_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, unchanged, _⟩ :=
         accepted_actor_commit_matches_source_progress (checked_record_is_a_checked_commit checked)
       exact .inr ⟨(unchanged event (Ne.symm same)).symm.trans completed, by simp⟩
-  | @reentry sample wire first final roll operation checked prepared =>
+  | @fresh sample wire first final roll operation checked prepared =>
     by_cases same : operation.event = event
-    · exact .inl ⟨{ step := operation, wire }, .fresh checked prepared, same⟩
+    · exact .inl same
     · obtain ⟨ordered, _⟩ := a_measured_reentry_has_its_source_reset_and_exact_writes checked
       obtain ⟨actual, step, rows, actualAt, _, _, reset, stepOrdered⟩ := ordered
       have identity := Option.some.inj (actualAt.symm.trans prepared)
@@ -86,6 +85,29 @@ private theorem a_measured_step_either_marks_the_row_or_preserves_its_origin
           rw [← atEvent]
           exact ⟨Nat.le_add_right _ _, Nat.add_lt_add_left limit _⟩
         exact outside (by simpa only [Bool.and_eq_true, decide_eq_true_eq] using range)
+
+private theorem a_measured_step_either_marks_the_row_or_preserves_its_origin
+    {image : RustDescriptorImage} {choreo : Choreo} {session event : Nat}
+    {before after : ActorProgressObservation × Nat} {cleared : List Nat} {commits : Nat}
+    (step : ActorMeasuredStep image choreo session before after cleared commits)
+    (completed : after.1.doneState.done event = true) :
+    (∃ record, ActorMeasuredCommit image choreo session before after cleared record ∧
+      record.step.event = event) ∨
+    (before.1.doneState.done event = true ∧ event ∉ cleared) := by
+  cases step with
+  | quiet checked =>
+    have progressAt := beq_iff_eq.mp (Bool.and_eq_true_iff.mp (Bool.and_eq_true_iff.mp checked).2).1
+    exact .inr ⟨by simpa only [ActorProgressObservation.doneState, progressAt] using completed, by simp⟩
+  | @commit record checked written =>
+    have actual := ActorMeasuredCommit.ordinary checked written
+    rcases a_measured_commit_marks_or_preserves_a_completed_row actual completed with same | preserved
+    · exact .inl ⟨_, actual, same⟩
+    · exact .inr preserved
+  | @reentry sample wire first final roll operation checked prepared =>
+    have actual := ActorMeasuredCommit.fresh checked prepared
+    rcases a_measured_commit_marks_or_preserves_a_completed_row actual completed with same | preserved
+    · exact .inl ⟨_, actual, same⟩
+    · exact .inr preserved
 
 /-- Recover the latest actual marking boundary of each completed row from
 a history containing arbitrary independent and nested resets. A retained old

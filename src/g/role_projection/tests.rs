@@ -16,6 +16,7 @@ mod commit;
 mod composed;
 mod conditional_controller;
 mod controller_columns;
+mod distributed_source;
 mod entry_image;
 mod handoff_interval;
 mod ingress;
