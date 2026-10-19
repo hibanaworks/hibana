@@ -453,7 +453,8 @@ add no letters. No common visit is imposed on different actors or classes. -/
 def sourceFrameWord (rows word : List Nat) : Prop :=
   ∀ index event, word[index]? = some event → rows[index % rows.length]? = some event
 
-private theorem a_source_word_extends_by_its_next_actual_letter
+/-- Append the next actual source row to an ordered finite word. -/
+theorem a_source_word_extends_by_its_next_actual_letter
     {rows word : List Nat} {event : Nat}
     (ordered : sourceFrameWord rows word)
     (next : rows[word.length % rows.length]? = some event) :
@@ -859,8 +860,8 @@ theorem a_prepared_wire_operation_extends_its_actors_measured_source_word
 
 /-- Prepare the next source operation in the general asynchronous chronology,
 without the earlier actor-wide acceptance/publication restriction. This supplies
-its next committed-word letter before I/O; maintaining an accepted pending
-letter across subsequent boundaries remains a separate refinement. -/
+its next committed-word letter before I/O. `SourceActorWord` then retains pending
+letters across boundaries and derives the acceptance-inclusive source word. -/
 theorem a_prepared_call_operation_has_its_next_committed_source_letter
     {images : Nat → RustDescriptorImage} {choreo : Choreo} {session actor previousPath pathIndex event : Nat}
     {group : SourceOrderGroup (images actor) choreo}

@@ -235,4 +235,91 @@ theorem a_prospective_fifo_head_has_its_actual_receipt_word_ordinal
   rw [ordinal, prefixes channel]
   exact a_source_fifo_prefix_counts_its_receipt_events last.2 channel _ event
 
+/-- The general asynchronous chronology reconstructs exactly the delivered
+prefix of every full logical direction. Source words include unpublished sends,
+while receipt letters come only from actual receives. Independent calls may
+publish out of acceptance order without changing this FIFO correspondence. -/
+theorem a_distributed_call_receipt_word_is_the_exact_accepted_fifo_prefix
+    {images : Nat → RustDescriptorImage} {choreo : Choreo} {session : Nat}
+    {initial : Nat → ActorProgressObservation × Nat} {last : DistributedSourceCut}
+    {word : List DistributedCallBoundary} {entries pending : List SourceAcceptance}
+    {published : List (SourceAcceptance × ActorCommitRecord)}
+    (execution : DistributedCallExecution images choreo session
+      (.initial initial) last word entries published pending) :
+    ∃ receipts : List SourceAcceptance,
+      receivedSourceWord images choreo (word.filterMap DistributedCallBoundary.record?) =
+        receipts.map SourceAcceptance.event ∧
+      ∀ channel, sourceChannelEntries receipts channel =
+        (sourceChannelEntries entries channel).take (last.carriers channel).delivered := by
+  induction execution with
+  | refl => exact ⟨[], rfl, fun _ => rfl⟩
+  | quiet history checked ih =>
+    obtain ⟨receipts, word, prefixes⟩ := ih
+    refine ⟨receipts, ?_, prefixes⟩
+    simpa [List.filterMap_append, DistributedCallBoundary.record?] using word
+  | @accept cut boundaries entries published pending sample changed sent event previousPath witness label data path row
+      history imageAt checked decoded pathAt rowAt prepared slotFree freshWitness sourceAt accepted identity ih =>
+    obtain ⟨receipts, word, prefixes⟩ := ih
+    refine ⟨receipts, ?_, ?_⟩
+    · simpa [List.filterMap_append, DistributedCallBoundary.record?] using word
+    · intro channel
+      by_cases same : channel = changed
+      · subst changed
+        obtain ⟨admissions, trace⟩ := a_distributed_call_execution_projects_its_complete_fifo_histories history channel
+        obtain ⟨valid, _, _, _, _, _⟩ := a_checked_source_admission_trace_keeps_exact_frame_and_occurrence_records trace
+        have lengthAt := a_checked_source_admission_trace_records_every_frame trace
+        have bound : (cut.carriers channel).delivered ≤ (sourceChannelEntries entries channel).length := by
+          have sameLength : (sourceChannelEntries entries channel).length = (cut.carriers channel).frames.length := by
+            simpa only [sourceChannelRecords, List.length_map] using lengthAt
+          simpa only [← sameLength] using valid.1
+        unfold TransportState.send at accepted
+        split at accepted
+        · contradiction
+        · have sentAt := Option.some.inj accepted
+          subst sent
+          simpa only [DistributedSourceCut.carrierAt, if_pos rfl, receipt_channel_entries_append,
+            ite_true, List.take_append_of_le_length bound] using prefixes channel
+      · simpa only [DistributedSourceCut.carrierAt, if_neg same, receipt_channel_entries_append,
+          if_neg (Ne.symm same), List.append_nil] using prefixes channel
+  | @publish cut boundaries entries published left right actor after cleared record entry
+      history actorAt paired committed ih =>
+    obtain ⟨receipts, word, prefixes⟩ := ih
+    refine ⟨receipts, ?_, prefixes⟩
+    have member : entry ∈ entries :=
+      (a_distributed_call_execution_partitions_its_actual_acceptances history).1.mem_iff.mpr
+        (List.mem_append.mpr (.inr (by simp)))
+    have facts := a_distributed_call_execution_retains_each_accepted_source history entry member
+    have imageAt : entry.sample.image = images actor := by simpa only [actorAt] using facts.1
+    obtain ⟨_, _, _, _, _, _, sendIdentity, _⟩ := a_retained_publication_preserves_its_source_and_wire paired
+    rw [imageAt] at sendIdentity
+    simpa [List.filterMap_append, DistributedCallBoundary.record?, received_source_word_append,
+      receivedSourceWord, sendIdentity] using word
+  | @localCommit cut boundaries entries published pending actor after cleared record eff binding
+      history actorRole localAt committed ih =>
+    obtain ⟨receipts, word, prefixes⟩ := ih
+    refine ⟨receipts, ?_, prefixes⟩
+    simpa [List.filterMap_append, DistributedCallBoundary.record?, received_source_word_append,
+      receivedSourceWord, localAt] using word
+  | @receive cut boundaries entries published pending actor changed next frame after cleared record entry witness
+      history actorRole received entryAt identity paired committed ih =>
+    obtain ⟨receipts, word, prefixes⟩ := ih
+    have sourceAt := (a_distributed_call_execution_retains_each_accepted_source history entry
+      (List.mem_filter.mp (List.mem_of_getElem? entryAt)).1).2.2
+    have letter := a_paired_receipt_adds_its_accepted_effect paired sourceAt
+    have channelAt := a_received_entry_has_its_recorded_channel entryAt
+    have nextAt := transport_receive_is_fifo received
+    refine ⟨receipts ++ [entry], ?_, ?_⟩
+    · simp only [List.filterMap_append, DistributedCallBoundary.record?, List.filterMap_cons,
+        List.filterMap_nil, received_source_word_append, letter, List.map_append, List.map_cons, List.map_nil]
+      exact congrArg (fun values => values ++ [entry.event]) word
+    · intro query
+      by_cases same : query = changed
+      · subst query
+        simpa only [DistributedSourceCut.carrierAt, DistributedSourceCut.actorAt, if_pos rfl,
+          receipt_channel_entries_append, channelAt, if_pos rfl, ite_true, nextAt.2.2.2,
+          a_fifo_receipt_extends_exactly_its_delivered_prefix entryAt] using
+            congrArg (fun values => values ++ [entry]) (prefixes changed)
+      · simpa only [DistributedSourceCut.carrierAt, DistributedSourceCut.actorAt, if_neg same,
+          receipt_channel_entries_append, channelAt, if_neg (Ne.symm same), List.append_nil] using prefixes query
+
 end Hibana

@@ -245,4 +245,120 @@ theorem a_prospective_source_word_head_matches_its_prepared_receiver
   have matched := source_frame_words_match_at_each_common_class_position cycle sentOrdered receiverOrdered nextAt receiverAt
   exact ⟨sample, source, history, key, trace, keyAt, recordAt, checked, sourceAt, identity, keySource, matched.symm⟩
 
+/-- Locate the next raw FIFO head in its complete selector class using the
+asynchronous call chronology. Earlier receipts provide its ordinal; the
+prospective receive needs no pair check or successful after-snapshot. -/
+theorem a_prospective_call_port_head_has_its_actual_source_class_position
+    {images : Nat → RustDescriptorImage} {choreo : Choreo} {session : Nat}
+    {initial : Nat → ActorProgressObservation × Nat} {last : DistributedSourceCut}
+    {boundaries : List DistributedCallBoundary} {entries pending : List SourceAcceptance}
+    {published : List (SourceAcceptance × ActorCommitRecord)} {channel : TransportChannel}
+    {next : TransportState} {frame : TransportFrame} (selected colors : Nat → Bool)
+    (execution : DistributedCallExecution images choreo session
+      (.initial initial) last boundaries entries published pending)
+    (received : (last.carriers channel).pollReceive = .delivered frame next)
+    (classifies : ∀ entry ∈ entries,
+      (decide (entry.channel = channel) && colors entry.sample.wire.frameLabel) = selected entry.event)
+    (visible : colors frame.frameLabel.val = true) :
+    ∃ sample event history key,
+      SendAdmissionTrace choreo session (last.carriers channel) history (sourceChannelRecords entries channel) ∧
+      history.accepted[(last.carriers channel).delivered]? = some key ∧
+      (sourceChannelRecords entries channel)[(last.carriers channel).delivered]? = some (sample, event) ∧
+      sample.check choreo session = true ∧ sample.effIndex? = some event ∧
+      sample.wire.identifies frame ∧ key.globalId = event ∧
+      (entries.filterMap (fun entry => if selected entry.event then some entry.event else none))[
+        (receivedSourceWord images choreo (boundaries.filterMap DistributedCallBoundary.record?)).countP selected]? = some event ∧
+      selected event = true := by
+  obtain ⟨receipts, word, prefixes⟩ := a_distributed_call_receipt_word_is_the_exact_accepted_fifo_prefix execution
+  obtain ⟨history, trace⟩ := a_distributed_call_execution_projects_its_complete_fifo_histories execution channel
+  obtain ⟨sample, event, key, _, recordAt, keyAt, checked, sourceAt, identity, sourceKey, _, _, _⟩ :=
+    a_fifo_receipt_reconstructs_its_source_occurrence_without_a_shared_visit trace received
+  have onlyPort : ∀ entry ∈ entries, selected entry.event = true → entry.channel = channel := by
+    intro entry member chosen
+    exact of_decide_eq_true (Bool.and_eq_true_iff.mp ((classifies entry member).trans chosen)).1
+  have receiptPort : ∀ entry ∈ receipts, selected entry.event = true → entry.channel = channel :=
+    fun entry member => onlyPort entry (receipt_prefixes_contain_only_actual_acceptances prefixes entry member)
+  have position : (receivedSourceWord images choreo (boundaries.filterMap DistributedCallBoundary.record?)).countP selected =
+      (((sourceChannelEntries entries channel).take (last.carriers channel).delivered).filter
+        (fun entry => selected entry.event)).length := by
+    rw [word, List.countP_map, List.countP_eq_length_filter]
+    simp only [Function.comp_def]
+    rw [← a_selected_acceptance_word_keeps_its_complete_port_subsequence receiptPort, prefixes channel]
+  have rawAt : ∃ entry,
+      (sourceChannelEntries entries channel)[(last.carriers channel).delivered]? = some entry ∧
+        entry.sample = sample ∧ entry.event = event := by
+    simp only [sourceChannelRecords, List.getElem?_map] at recordAt
+    cases actual : (sourceChannelEntries entries channel)[(last.carriers channel).delivered]? with
+    | none => simp only [actual, Option.map_none] at recordAt; contradiction
+    | some entry =>
+      have same := Option.some.inj (by simpa only [actual, Option.map_some] using recordAt)
+      exact ⟨entry, rfl, congrArg Prod.fst same, congrArg Prod.snd same⟩
+  obtain ⟨entry, entryAt, sampleSame, eventSame⟩ := rawAt
+  have member := List.mem_filter.mp (List.mem_of_getElem? entryAt)
+  have selectedHead : selected entry.event = true := by
+    rw [← classifies entry member.1, member.2, Bool.true_and, sampleSame,
+      identity.2.2.2.2, visible]
+  have nextEntry := a_selected_element_has_its_filtered_prefix_position
+    (selected := fun entry : SourceAcceptance => selected entry.event) entryAt selectedHead
+  have nextSource := congrArg (Option.map SourceAcceptance.event) nextEntry
+  simp only [← List.getElem?_map, Option.map_some, eventSame] at nextSource
+  refine ⟨sample, event, history, key, trace, keyAt, recordAt, checked, sourceAt,
+    identity, sourceKey, ?_, by simpa only [eventSame] using selectedHead⟩
+  rw [position]
+  rw [a_selected_acceptance_word_keeps_its_complete_port_subsequence onlyPort] at nextSource
+  simpa only [← List.filterMap_eq_map', List.filterMap_filter] using nextSource
+
+/-- The next raw head agrees with the independently prepared receiver's source
+identity in the asynchronous call model. Its ordinal comes from actual past
+receipts, not sender publication. Static cycle classification and the accepted
+word/count invariants are explicit inputs; a current receive-pair is not. -/
+theorem a_prospective_call_source_word_head_matches_its_prepared_receiver
+    {images : Nat → RustDescriptorImage} {choreo : Choreo}
+    {session actor previousPath pathIndex event : Nat}
+    {initial : Nat → ActorProgressObservation × Nat} {last : DistributedSourceCut}
+    {boundaries : List DistributedCallBoundary} {entries pending : List SourceAcceptance}
+    {published : List (SourceAcceptance × ActorCommitRecord)} {channel : TransportChannel}
+    {next : TransportState} {frame : TransportFrame}
+    {group : SourceOrderGroup (images actor) choreo} {sourceRows : List Nat}
+    {base : ActorProgressObservation} {data : DecodedActorOrder} {path : NormalizedPath} {row : DecodedActorRow}
+    (selected colors : Nat → Bool)
+    (execution : DistributedCallExecution images choreo session
+      (.initial initial) last boundaries entries published pending)
+    (empty : ∀ event ∈ group.rows, (initial actor).1.doneState.done event = false)
+    (decoded : (images actor).decodeActorOrder? choreo = some data)
+    (pathAt : data.normalized.paths[pathIndex]? = some path)
+    (rowAt : data.rows[event]? = some row)
+    (active : row ∈ data.activeRows path) (ready : sourceRowReady data path base row = true)
+    (origin : ActorSourceCandidateBase
+      { snapshot := (last.actors actor).1, pathIndex, admitted := [] }
+      (images actor) choreo previousPath path row base)
+    (member : event ∈ group.rows)
+    (received : (last.carriers channel).pollReceive = .delivered frame next)
+    (classifies : ∀ entry ∈ entries,
+      (decide (entry.channel = channel) && colors entry.sample.wire.frameLabel) = selected entry.event)
+    (visible : colors frame.frameLabel.val = true)
+    (cycle : sourceRows.map some = group.rows.map (images actor).eventEffIndex?)
+    (sentOrdered : sourceFrameWord sourceRows
+      (entries.filterMap fun entry => if selected entry.event then some entry.event else none))
+    (receiptCount : (receivedSourceWord images choreo
+        (boundaries.filterMap DistributedCallBoundary.record?)).countP selected =
+      (committedFrameClassWord group.rows actor (boundaries.filterMap DistributedCallBoundary.record?)).length) :
+    ∃ sample source history key,
+      SendAdmissionTrace choreo session (last.carriers channel) history (sourceChannelRecords entries channel) ∧
+      history.accepted[(last.carriers channel).delivered]? = some key ∧
+      (sourceChannelRecords entries channel)[(last.carriers channel).delivered]? = some (sample, source) ∧
+      sample.check choreo session = true ∧ sample.effIndex? = some source ∧
+      sample.wire.identifies frame ∧ key.globalId = source ∧
+      (images actor).eventEffIndex? event = some source := by
+  obtain ⟨receiverOrdered, _⟩ := a_prepared_call_operation_has_its_next_committed_source_letter
+    execution empty decoded pathAt rowAt active ready origin member
+  obtain ⟨sample, source, history, key, trace, keyAt, recordAt, checked, sourceAt, identity, keySource, nextAt, _⟩ :=
+    a_prospective_call_port_head_has_its_actual_source_class_position selected colors execution received classifies visible
+  rw [receiptCount] at nextAt
+  have receiverAt : (committedFrameClassWord group.rows actor
+      (boundaries.filterMap DistributedCallBoundary.record?) ++ [event])[
+        (committedFrameClassWord group.rows actor (boundaries.filterMap DistributedCallBoundary.record?)).length]? = some event := by simp
+  have matched := source_frame_words_match_at_each_common_class_position cycle sentOrdered receiverOrdered nextAt receiverAt
+  exact ⟨sample, source, history, key, trace, keyAt, recordAt, checked, sourceAt, identity, keySource, matched.symm⟩
+
 end Hibana

@@ -1070,10 +1070,25 @@ prepared-base argument also serves the earlier synchronous theorem.
 
 The chronological logical word records sends at acceptance and stutters sender
 publication. It is deliberately distinct from the committed word proved above.
-The remaining refinement must preserve a pending accepted source letter across
-later boundaries and combine independent ordered groups. General Rust call-slot
-extraction, custody, logical simulation, actual enabled-step lifting, and
-fault/closure composition remain completion work. The older
+`SourceActorWord.lean` proves that a pending send stays the next letter of its
+ordered source group across independent commits, branch observations and fresh
+body resets. Immutable row direction excludes a receive or local operation at
+that pending send row; unique pending call slots exclude another publication.
+Consequently each ordered group has at most one pending call, while an actor
+may retain several calls from independent groups. This is a derived property,
+not a new runtime guard. The logical group word follows its cyclic source word
+and counts every actual send acceptance and receive commit exactly once.
+
+`SourceReceiptWord.lean` also reconstructs each full direction's delivered prefix
+from this asynchronous chronology. `SourcePortWord.lean` uses those actual past
+receipts to locate a prospective raw head and match it to an independently
+prepared receiver. The current head needs no assumed receive-pair check or
+successful after-snapshot. Static selector/cycle classification and accepted
+word/count invariants remain explicit inputs to that last composition; deriving
+them for all generated classes and physical-holder changes is still required.
+
+General Rust call-slot extraction, custody, full logical simulation, actual
+enabled-step lifting, and fault/closure composition remain completion work. The older
 `DistributedSourceExecution` lemmas still describe their explicitly restricted
 publication window; they are not used as evidence that this general refinement
 is finished. No new network fixture or Rust runtime restriction was added for

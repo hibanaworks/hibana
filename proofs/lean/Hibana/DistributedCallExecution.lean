@@ -42,9 +42,10 @@ and each receive consumes the full logical FIFO including ordinary frames.
 There is no common actor path, visit count, or shared runtime memory premise.
 
 The call-slot exclusion and retained-call extraction must still be justified
-for complete Rust histories. Source-word validity, custody, enabled-step lifting
-and fault/closure composition are further obligations, not premises hidden in
-this definition or claims established merely by constructing it. -/
+for complete Rust histories. `SourceActorWord` derives ordered source-group
+words from this relation. Custody, enabled-step lifting and fault/closure
+composition are further obligations, not premises hidden in this definition
+or claims established merely by constructing it. -/
 inductive DistributedCallExecution
     (images : Nat → RustDescriptorImage) (choreo : Choreo) (session : Nat) :
     DistributedSourceCut → DistributedSourceCut → List DistributedCallBoundary →
