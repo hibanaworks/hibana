@@ -2,6 +2,7 @@ import Hibana.ActorSourceProgress
 import Hibana.ActorRouting
 import Hibana.ViewGeneration
 import Hibana.PublicOperationKernel
+import Hibana.Generation
 
 namespace Hibana
 open EndpointDelegation
@@ -32,6 +33,9 @@ structure ActorProgressObservation where
   views : List ActorViewObservation
   steps : List ActorStepObservation
   choices : List (Nat × Option RouteArm) := []
+  /-- The existing actor-local first fault, copied with the same physical cut.
+  This is erased qualification data, not a shared distributed fault registry. -/
+  fault : Option SessionFault := none
   deriving Repr, DecidableEq
 
 def ActorProgressObservation.progress (snapshot : ActorProgressObservation) : List Bool :=
@@ -212,7 +216,7 @@ are checked here. Causal order belongs to the same chronological source trace,
 not to a second interpretation of only the current visit's done bits. -/
 def ActorCommitObservation.transitionCheck
     (sample : ActorCommitObservation) (image : RustDescriptorImage) (choreo : Choreo) : Bool :=
-  sample.before.viewIssued sample.view && (image.actorOrderCheck choreo &&
+  (sample.before.viewIssued sample.view && (image.actorOrderCheck choreo &&
   match image.decodeActorOrder? choreo with
   | none => false
   | some data =>
@@ -236,11 +240,11 @@ def ActorCommitObservation.transitionCheck
               observedViewCommitMatches sample.before sample.after binding.message.payload
                 row.actionId.side
           | none => false)))
-      | _, _ => false)
+      | _, _ => false)) && decide (sample.before.fault = none ∧ sample.after.fault = none)
 
 def ActorCommitObservation.check
     (sample : ActorCommitObservation) (image : RustDescriptorImage) (choreo : Choreo) : Bool :=
-  sample.before.viewIssued sample.view && (image.actorOrderCheck choreo &&
+  (sample.before.viewIssued sample.view && (image.actorOrderCheck choreo &&
   match image.decodeActorOrder? choreo with
   | none => false
   | some data =>
@@ -267,14 +271,22 @@ def ActorCommitObservation.check
               observedViewCommitMatches sample.before sample.after binding.message.payload
                 row.actionId.side
           | _, _ => false))))
-      | _, _ => false)
+      | _, _ => false)) && decide (sample.before.fault = none ∧ sample.after.fault = none)
+
+/-- A successful physical commit cannot erase or continue through an observed
+actor fault. Carrier acceptance and other actors' progress are separate events. -/
+theorem a_checked_physical_commit_uses_live_actor_cuts
+    {sample : ActorCommitObservation} {image : RustDescriptorImage} {choreo : Choreo}
+    (checked : sample.transitionCheck image choreo = true) :
+    sample.before.fault = none ∧ sample.after.fault = none :=
+  of_decide_eq_true (Bool.and_eq_true_iff.mp checked).2
 
 theorem accepted_actor_commit_uses_issued_view
     {sample : ActorCommitObservation} {image : RustDescriptorImage} {choreo : Choreo}
     (accepted : sample.check image choreo = true) :
     ∃ view, observedActorView? sample.before sample.view = some view ∧
       view.run = sample.before.run ∧ view.nonce % 2 = 1 :=
-  observed_issued_view_has_current_header (Bool.and_eq_true_iff.mp accepted).1
+  observed_issued_view_has_current_header (Bool.and_eq_true_iff.mp (Bool.and_eq_true_iff.mp accepted).1).1
 
 /-- Separating physical updates from source ordering retains every check on
 the actual operation. Existing selected-visit commits are included unchanged. -/
@@ -283,6 +295,10 @@ theorem a_checked_source_commit_has_its_physical_transition
     (checked : sample.check image choreo = true) :
     sample.transitionCheck image choreo = true := by
   unfold ActorCommitObservation.check ActorCommitObservation.transitionCheck at *
+  have live := (Bool.and_eq_true_iff.mp checked).2
+  have checked := (Bool.and_eq_true_iff.mp checked).1
+  apply Bool.and_eq_true_iff.mpr
+  refine ⟨?_, live⟩
   cases dataAt : image.decodeActorOrder? choreo with
   | none => simp only [dataAt, Bool.and_false, Bool.false_eq_true] at checked
   | some data =>
@@ -340,6 +356,7 @@ theorem a_checked_physical_transition_marks_exactly_its_event
       ∀ other, other ≠ sample.event →
         sample.after.doneState.done other = sample.before.doneState.done other := by
   unfold ActorCommitObservation.transitionCheck at checked
+  have checked := (Bool.and_eq_true_iff.mp checked).1
   cases dataAt : image.decodeActorOrder? choreo with
   | none => simp [dataAt] at checked
   | some data =>
@@ -387,6 +404,7 @@ it is not source extraction or a distributed ownership/liveness theorem. -/
 theorem accepted_actor_commit_matches_source_progress
     {sample : ActorCommitObservation} {image : RustDescriptorImage} {choreo : Choreo}
     (accepted : sample.check image choreo = true) : sample.SourceOrdered image choreo := by
+  have accepted := (Bool.and_eq_true_iff.mp accepted).1
   have accepted := (Bool.and_eq_true_iff.mp accepted).2
   have actorAccepted : image.actorOrderCheck choreo = true :=
     (Bool.and_eq_true_iff.mp accepted).1

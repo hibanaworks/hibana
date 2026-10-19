@@ -74,7 +74,7 @@ bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" build-serial "${PROOF_
 bash "${ROOT_DIR}/.github/scripts/check_lean_claim_surface.sh"
 static_audit_output="$(run_audit \
   theorem-inventory \
-  --static "${PROOF_DIR}" "${STATIC_CLAIM_SNAPSHOT}" 1168 725 326 117)"
+  --static "${PROOF_DIR}" "${STATIC_CLAIM_SNAPSHOT}" 1172 728 327 117)"
 printf '%s\n' "${static_audit_output}"
 printf '%s\n' "${static_audit_output}" | bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard markers static
 bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" theorem-inventory \
@@ -222,9 +222,9 @@ CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --li
 bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${OWNED_DROP_GENERATED}" "owned future drop"
 bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${COMPLETED_RETIREMENT_GENERATED}" "completed view retirement"
 run_audit generated-axioms --kernel "${OWNED_DROP_GENERATED}" "${PROOF_DIR}" \
-  "${PROOF_DIR}/owned-drop-generated-claim-surface.txt" 84
+  "${PROOF_DIR}/owned-drop-generated-claim-surface.txt" 120
 run_audit generated-axioms --kernel "${COMPLETED_RETIREMENT_GENERATED}" "${PROOF_DIR}" \
-  "${PROOF_DIR}/completed-retirement-generated-claim-surface.txt" 28
+  "${PROOF_DIR}/completed-retirement-generated-claim-surface.txt" 29
 CARGO_BUILD_JOBS=1 \
   RUST_TEST_THREADS=1 \
 cargo +"${TOOLCHAIN}" test -p hibana --lib \

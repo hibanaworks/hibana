@@ -53,6 +53,38 @@ theorem a_measured_source_commit_has_its_same_physical_transition
     exact .ordinary (a_checked_source_record_has_its_physical_transition checked) written
   | fresh checked prepared => exact .fresh checked prepared
 
+private theorem a_checked_physical_record_has_live_cuts
+    {record : ActorCommitRecord} {image : RustDescriptorImage} {choreo : Choreo} {session : Nat}
+    (checked : record.transitionCheck image choreo session = true) :
+    record.step.before.fault = none ∧ record.step.after.fault = none := by
+  unfold ActorCommitRecord.transitionCheck at checked
+  split at checked
+  · contradiction
+  · split at checked
+    · split at checked
+      · contradiction
+      · exact a_checked_physical_commit_uses_live_actor_cuts (Bool.and_eq_true_iff.mp checked).1
+    · contradiction
+
+/-- Both ordinary and fresh-visit commits use live cuts of this actor. A reset
+does not revive its first fault, and this says nothing about another actor's
+ability to use authority that the carrier has already accepted. -/
+theorem a_measured_physical_transition_uses_live_actor_cuts
+    (transition : ActorMeasuredTransition image choreo session before after cleared record) :
+    before.1.fault = none ∧ after.1.fault = none := by
+  cases transition with
+  | ordinary checked written => exact a_checked_physical_record_has_live_cuts checked
+  | @fresh sample wire first final roll step checked prepared =>
+    obtain ⟨_, actualRoll, actualStep, actualAt, valid, _⟩ :=
+      a_measured_reentry_has_its_source_reset_and_exact_writes checked
+    cases Option.some.inj (actualAt.symm.trans prepared)
+    have live := a_checked_physical_record_has_live_cuts
+      (a_checked_source_record_has_its_physical_transition valid)
+    obtain ⟨base, baseAt, beforeAt, _, afterAt⟩ :=
+      prepared_body_reentry_is_derived_before_commit prepared
+    have sameFault := a_prepared_source_base_preserves_actor_fault baseAt
+    exact ⟨sameFault.symm.trans (beforeAt ▸ live.1), afterAt ▸ live.2⟩
+
 theorem a_measured_commit_retains_its_checked_source_and_wire
     {image : RustDescriptorImage} {choreo : Choreo} {session : Nat}
     {before after : ActorProgressObservation × Nat} {cleared : List Nat} {record : ActorCommitRecord}

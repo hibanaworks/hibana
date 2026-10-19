@@ -97,6 +97,7 @@ private theorem a_checked_frame_commit_was_unfinished
     {sample : ActorCommitObservation} {image : RustDescriptorImage} {choreo : Choreo}
     (checked : sample.check image choreo = true) :
     sample.before.doneState.done sample.event = false := by
+  have checked := (Bool.and_eq_true_iff.mp checked).1
   have rest := (Bool.and_eq_true_iff.mp (Bool.and_eq_true_iff.mp checked).2).2
   cases dataAt : image.decodeActorOrder? choreo with
   | none => simp [dataAt] at rest
@@ -200,6 +201,7 @@ private theorem a_checked_commit_has_its_class_metadata
     (decoded : image.decodeActorOrder? choreo = some data)
     (checked : sample.check image choreo = true) :
     sample.before.metadataMatches image data.rows = true := by
+  have checked := (Bool.and_eq_true_iff.mp checked).1
   have rest := (Bool.and_eq_true_iff.mp (Bool.and_eq_true_iff.mp checked).2).2
   cases pathAt : data.normalized.paths[sample.pathIndex]? with
   | none => simp [decoded, pathAt] at rest

@@ -211,14 +211,14 @@ publication. It is not a claim of distributed closure or future callability. -/
 theorem a_joint_value_retirement_is_complete_or_faulted
     (boundary : OwnedCallHistory.Boundary images resource choreo events event before after)
     (recorded : event.retirement? = some (value, sample)) :
-    (sample.afterFault = none ∧
+    (sample.after.fault = none ∧
       sourceViewComplete? sample.before (images sample.before.actor) choreo sample.view = some true ∧
       ∃ current, observedActorView? sample.before sample.view = some current ∧ current.operation = .idle) ∨
-    ∃ cause, sample.afterFault = some cause ∧
-      (observedGeneration sample.afterFault).publicationPermitted = false := by
+    ∃ cause, sample.after.fault = some cause ∧
+      (observedGeneration sample.after.fault).publicationPermitted = false := by
   have checked := (a_matched_retirement_uses_its_actual_value
     (a_joint_value_retirement_keeps_its_checked_source_boundary boundary recorded).1).1
-  cases faultAt : sample.afterFault with
+  cases faultAt : sample.after.fault with
   | none => exact .inl ⟨rfl, live_retirement_requires_source_completion checked faultAt⟩
   | some cause =>
       exact .inr ⟨cause, rfl, rfl⟩

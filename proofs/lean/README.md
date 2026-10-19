@@ -1481,13 +1481,34 @@ Abandoning an unaccepted owned payload or dropping a live value retains its
 `ViewRetirementObservation` in that word. The checked resource and actual
 actor/role/run/nonce tag must match the header retired by the record. Its
 source projection is `retireView`, with the exact physical before/after actor
-cut and unchanged completion-write count. The record includes the observed
-before/after fault, so it cannot be replaced by an unrelated fault assumption.
+cut and unchanged completion-write count. The first fault is copied into
+`ActorProgressObservation` under the same Rust observation lease as its headers
+and progress. `ViewRetirementObservation` no longer carries separate fault
+fields that could disagree with its physical cut.
 
 Both physical and selected-visit executions now require a quiet interval to
-preserve view headers, live-view count and issuance counter. Ordinary I/O
-phase changes are permitted. A zero-write interval cannot silently retire or
-issue an Endpoint merely because its progress bits are unchanged.
+preserve view headers, live-view count, issuance counter and first fault.
+Ordinary I/O phase changes are permitted. A zero-write interval cannot silently
+retire or issue an Endpoint, introduce a fault, or erase one merely because
+its progress bits are unchanged.
+
+Physical and selected-visit commits require live before/after cuts. A prepared
+body reset preserves its actor's first fault. Consequently every qualified
+`DistributedPhysicalExecution` suffix preserves each fault already recorded
+at its initial cut. This follows from the same history, including checked
+retirement, rather than a second assumed fault trace. Carrier acceptance stays
+separate from local publication; another actor may continue with authority
+already accepted by the carrier. No fault is shared instantaneously between
+actors and no new runtime admission guard is added.
+
+The actual unaccepted-send drop fixture now also begins with a recorded
+`ProtocolViolation`. Dropping its unpolled owned future preserves that cause
+rather than replacing it with `EndpointDropped`. Generated claims reject
+quiet fault changes and retain the observed fault through every qualified
+physical suffix. Completed-view retirement still permits independent work.
+This closes first-fault continuity for the boundaries represented by this
+word. General transport-error, fencing and observable-closure boundaries are
+not yet included, and their composition remains unfinished.
 
 This establishes finite-prefix custody/source correspondence in the observation
 model. Applying it to Rust still requires complete authentic merged observations;

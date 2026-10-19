@@ -69,7 +69,7 @@ def SourceHandoffBoundaryOutcome
     transfer.actionId = target.actionId ∧ sample.admitted[transfer.eventId]? = some true) ∨
   ((action = .abandonPreparation ∨ action = .dropValue) ∧
     ∃ sample : ViewRetirementObservation,
-      sample.check image choreo = true ∧ sample.view = key.role ∧ sample.afterFault ≠ none)
+      sample.check image choreo = true ∧ sample.view = key.role ∧ sample.after.fault ≠ none)
 
 theorem checked_source_handoff_boundary_is_its_own_acceptance_or_a_fault
     {image : RustDescriptorImage} {choreo : Choreo} {data : DecodedActorOrder}

@@ -248,7 +248,7 @@ theorem pending_source_use_prevents_live_view_retirement
       some (row.actionId.event, binding))
     (required : sourceActionRequiresView sample.view binding row.actionId.side = true)
     (pending : sample.before.doneState.done row.eventId = false) :
-    sample.afterFault ≠ none := by
+    sample.after.fault ≠ none := by
   intro live
   obtain ⟨actual, actualAt, complete⟩ := live_retirement_removes_no_pending_source_action checked live
   have same := Option.some.inj (actualAt.symm.trans decoded)
@@ -285,7 +285,7 @@ def SourceUseBoundaryEvidence
       ∃ sample : ViewRetirementObservation,
         sample.check image choreo = true ∧ sample.view = key.role ∧
         observedChoicesAgree (canonicalProgramSource choreo) path sample.before = true ∧
-        sample.before.doneState.done useRow.eventId = false ∧ sample.afterFault = none
+        sample.before.doneState.done useRow.eventId = false ∧ sample.after.fault = none
   | .seal | .receive | .retireAcceptedFuture | .fenceFrame | .unchanged => True
 
 theorem checked_live_source_cut_cannot_exit_by_handoff_or_retirement

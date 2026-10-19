@@ -47,7 +47,7 @@ inductive SessionFault where
   | protocolViolation
   | endpointDropped
   | progressInvariantViolated
-  deriving DecidableEq
+  deriving Repr, DecidableEq
 
 inductive SessionGenerationState where
   | live

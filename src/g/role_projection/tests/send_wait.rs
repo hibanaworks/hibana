@@ -348,7 +348,7 @@ fn a_waiting_send_does_not_run_its_resolver_before_the_predecessor() {
 
 #[test]
 fn dropping_an_owned_send_cancels_the_run_before_or_during_preparation() {
-    use crate::endpoint::proof_snapshot::{actor_fault, actor_snapshot, view_tag};
+    use crate::endpoint::proof_snapshot::{actor_snapshot, view_tag};
     use crate::rendezvous::SessionFaultKind;
     type Steps = g::Seq<
         g::Send<11, 3, Read>,
@@ -376,12 +376,13 @@ fn dropping_an_owned_send_cancels_the_run_before_or_during_preparation() {
     runtime.block_on(async {
         #[cfg(not(miri))]
         let mut retirement_observations = std::vec::Vec::new();
-        // Test stimuli, not application progress: unpolled, waiting for the
-        // other view, and prepared while the transport is paused.
-        for (name, poll_before_drop, finish_predecessor) in [
-            ("unpolled", false, false),
-            ("predecessor", true, false),
-            ("transport", true, true),
+        // Test stimuli, not application progress: include a prior actor fault
+        // so payload destruction cannot replace the first recorded cause.
+        for (name, poll_before_drop, finish_predecessor, initial_fault) in [
+            ("unpolled", false, false, None),
+            ("predecessor", true, false, None),
+            ("transport", true, true, None),
+            ("faulted", false, false, Some(SessionFaultKind::ProtocolViolation)),
         ] {
             let network = TestTransport::new();
             let mut slab = std::vec![0; 64 * 1024];
@@ -400,10 +401,13 @@ fn dropping_an_owned_send_cancels_the_run_before_or_during_preparation() {
                 assert_eq!(service.recv::<Read>().await.unwrap(), 17);
                 network.pause_send(0);
             }
+            if initial_fault.is_some() {
+                assert!(auth.send::<Value>(&17).await.is_err());
+            }
             let tag = view_tag(&db);
             #[cfg(not(miri))]
             let capture = crate::endpoint::proof_snapshot::owned_future::Capture::start();
-            let (before, before_fault) = {
+            let before = {
                 let mut send = pin!(owner.send::<Loan>(db));
                 if poll_before_drop {
                     assert!(
@@ -414,9 +418,7 @@ fn dropping_an_owned_send_cancels_the_run_before_or_during_preparation() {
                 }
                 // SAFETY: AUTH is distinct from the future's borrowed carrier
                 // and payload; the poll released its actor mutation lease.
-                (unsafe { actor_snapshot(&auth) }, unsafe {
-                    actor_fault(&auth)
-                })
+                unsafe { actor_snapshot(&auth) }
             };
             #[cfg(not(miri))]
             let constructor = capture
@@ -424,7 +426,7 @@ fn dropping_an_owned_send_cancels_the_run_before_or_during_preparation() {
                 .into_iter()
                 .find(|event| matches!(event, crate::endpoint::proof_snapshot::owned_future::OwnedFutureBoundary::Seal { .. }))
                 .expect("the actual owned-future constructor");
-            assert_eq!(before_fault, None, "{name}");
+            assert_eq!(before.fault, initial_fault, "{name}");
             // SAFETY: AUTH still owns its distinct view in the original actor.
             let after = unsafe { actor_snapshot(&auth) };
             assert_eq!(before.steps, after.steps);
@@ -435,11 +437,9 @@ fn dropping_an_owned_send_cancels_the_run_before_or_during_preparation() {
             assert_eq!(before.live_views, after.live_views + 1);
             // SAFETY: the original DB header remains allocated by storage.
             assert!(!unsafe { tag.matches_header() });
-            // SAFETY: AUTH retains the same TestTransport actor and registry.
-            let after_fault = unsafe { actor_fault(&auth) };
             assert_eq!(
-                after_fault,
-                Some(SessionFaultKind::EndpointDropped),
+                after.fault,
+                initial_fault.or(Some(SessionFaultKind::EndpointDropped)),
                 "{name}"
             );
             assert!(network.queue_is_empty());
@@ -448,13 +448,9 @@ fn dropping_an_owned_send_cancels_the_run_before_or_during_preparation() {
                 network.resume_send();
             }
             assert!(auth.send::<Read>(&17).await.is_err());
-            // SAFETY: the failed operation cannot replace the first fault.
-            assert_eq!(
-                unsafe { actor_fault(&auth) },
-                Some(SessionFaultKind::EndpointDropped)
-            );
             // SAFETY: observing a fault does not destroy AUTH's pinned actor.
             let rejected = unsafe { actor_snapshot(&auth) };
+            assert_eq!(rejected.fault, after.fault);
             assert_eq!(after.steps, rejected.steps);
             assert_eq!(after.choices, rejected.choices);
             assert_eq!(after.counter, rejected.counter);
@@ -466,8 +462,6 @@ fn dropping_an_owned_send_cancels_the_run_before_or_during_preparation() {
                 name,
                 before,
                 after,
-                before_fault,
-                after_fault,
                 origin: super::retirement::RetirementOrigin::Future,
                 complete: false,
                 constructor: Some(constructor),

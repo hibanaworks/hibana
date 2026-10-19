@@ -221,6 +221,15 @@ fn owned_commits_publish_the_shared_actor_step_and_resource_view_together() {
 
 #[cfg(not(miri))]
 pub(super) fn observation_source(snapshot: &ActorSnapshot) -> std::string::String {
+    use crate::rendezvous::SessionFaultKind;
+    let fault = match snapshot.fault {
+        None => "none",
+        Some(SessionFaultKind::EndpointDropped) => "some .endpointDropped",
+        Some(SessionFaultKind::TransportClosed) => "some .transportClosed",
+        Some(SessionFaultKind::DecodeFailed) => "some .decodeFailed",
+        Some(SessionFaultKind::ProtocolViolation) => "some .protocolViolation",
+        Some(SessionFaultKind::ProgressInvariantViolated) => "some .progressInvariantViolated",
+    };
     let views = snapshot
         .views
         .iter()
@@ -270,7 +279,7 @@ pub(super) fn observation_source(snapshot: &ActorSnapshot) -> std::string::Strin
         .collect::<Vec<_>>()
         .join(", ");
     std::format!(
-        "{{ actor := {}, run := {}, counter := {}, liveViews := {}, views := [{views}], steps := [{steps}], choices := [{choices}] }}",
+        "{{ actor := {}, run := {}, counter := {}, liveViews := {}, fault := {fault}, views := [{views}], steps := [{steps}], choices := [{choices}] }}",
         snapshot.actor,
         snapshot.run,
         snapshot.counter,

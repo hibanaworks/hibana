@@ -169,7 +169,7 @@ def SourceMessageBoundaryOutcome
     sample.admitted[transfer.eventId]? = some true) ∨
   ((action = .abandonPreparation ∨ action = .dropValue) ∧
     ∃ sample : ViewRetirementObservation,
-      sample.check image choreo = true ∧ sample.view = key.role ∧ sample.afterFault ≠ none)
+      sample.check image choreo = true ∧ sample.view = key.role ∧ sample.after.fault ≠ none)
 
 private theorem an_origin_interval_excludes_a_distinct_handoff
     {image : RustDescriptorImage} {choreo : Choreo} {session : Nat}
@@ -311,7 +311,7 @@ theorem the_measured_boundary_of_an_ordinary_use_is_a_fault
     (outcome : SourceMessageBoundaryOutcome image choreo data path key target action) :
     (action = .abandonPreparation ∨ action = .dropValue) ∧
       ∃ sample : ViewRetirementObservation,
-        sample.check image choreo = true ∧ sample.view = key.role ∧ sample.afterFault ≠ none := by
+        sample.check image choreo = true ∧ sample.view = key.role ∧ sample.after.fault ≠ none := by
   rcases outcome with ⟨_, sample, transfer, loan, _, _, _, _, loanAt, payload, same, _⟩ | retired
   · rw [same] at loanAt
     have sameBinding := congrArg Prod.snd (Option.some.inj (loanAt.symm.trans located))

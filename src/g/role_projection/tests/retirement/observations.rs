@@ -1,8 +1,5 @@
 //! Copied retirement evidence. No Endpoint operation or coordination lives here.
-use crate::{
-    endpoint::proof_snapshot::{ActorSnapshot, owned_future::OwnedFutureBoundary},
-    rendezvous::SessionFaultKind,
-};
+use crate::endpoint::proof_snapshot::{ActorSnapshot, owned_future::OwnedFutureBoundary};
 use std::string::String;
 
 /// Location of the actual moved Rust value immediately before its drop.
@@ -15,23 +12,10 @@ pub(in crate::g::role_projection::tests) struct RetirementSample {
     pub(in crate::g::role_projection::tests) name: &'static str,
     pub(in crate::g::role_projection::tests) before: ActorSnapshot,
     pub(in crate::g::role_projection::tests) after: ActorSnapshot,
-    pub(in crate::g::role_projection::tests) before_fault: Option<SessionFaultKind>,
-    pub(in crate::g::role_projection::tests) after_fault: Option<SessionFaultKind>,
     pub(in crate::g::role_projection::tests) origin: RetirementOrigin,
     /// Fixture expectation, independently checked from the global in Lean.
     pub(in crate::g::role_projection::tests) complete: bool,
     pub(in crate::g::role_projection::tests) constructor: Option<OwnedFutureBoundary>,
-}
-
-fn fault_source(fault: Option<SessionFaultKind>) -> &'static str {
-    match fault {
-        None => "none",
-        Some(SessionFaultKind::EndpointDropped) => "some .endpointDropped",
-        Some(SessionFaultKind::TransportClosed) => "some .transportClosed",
-        Some(SessionFaultKind::DecodeFailed) => "some .decodeFailed",
-        Some(SessionFaultKind::ProtocolViolation) => "some .protocolViolation",
-        Some(SessionFaultKind::ProgressInvariantViolated) => "some .progressInvariantViolated",
-    }
 }
 
 pub(in crate::g::role_projection::tests) fn write_retirements(
@@ -61,13 +45,16 @@ def retirementResource : Hibana.EndpointDelegation.EndpointKey := {{ component :
             name,
             before,
             after,
-            before_fault,
-            after_fault,
             origin,
             complete,
             constructor,
         } = sample;
         let view = before.views.iter().find(|view| view.role == 10).unwrap();
+        let bad_fault = if after.fault.is_some() {
+            "none"
+        } else {
+            "some .endpointDropped"
+        };
         let (before_authority, action, prefix) = match origin {
             RetirementOrigin::Future => (
                 std::format!(
@@ -87,8 +74,6 @@ def retirementResource : Hibana.EndpointDelegation.EndpointKey := {{ component :
   view := 10
   before := {before}
   after := {after}
-  beforeFault := {before_fault}
-  afterFault := {after_fault}
 }}
 
 def {name}Value : Nat × Nat × Nat × Nat := ({actor}, 10, {run}, {nonce})
@@ -111,9 +96,9 @@ theorem {name}GenerationRealized :
   ∃ complete current,
     Hibana.sourceViewComplete? {name}.before retirementImage retirementChoreo 10 = some complete ∧
     Hibana.observedActorView? {name}.before 10 = some current ∧
-    Hibana.applySessionGenerationAction (Hibana.observedGeneration {name}.beforeFault)
+    Hibana.applySessionGenerationAction (Hibana.observedGeneration {name}.before.fault)
       (Hibana.retirementGenerationAction current.operation complete) =
-        some (Hibana.observedGeneration {name}.afterFault) :=
+        some (Hibana.observedGeneration {name}.after.fault) :=
   Hibana.retirement_realizes_existing_generation_action {name}Accepted
 
 theorem {name}Retired : {name}.after.viewIssued 10 = false := by decide
@@ -158,8 +143,6 @@ theorem {name}LossBoundary :
 "#,
             before = super::super::commit::observation_source(before),
             after = super::super::commit::observation_source(after),
-            before_fault = fault_source(*before_fault),
-            after_fault = fault_source(*after_fault),
             actor = before.actor, run = view.run, nonce = view.nonce,
         ));
         let (event, before_cut, boundary) = match origin {
@@ -250,11 +233,11 @@ theorem {name}MergedBoundary (events : List Hibana.OwnedCallHistory.OwnedCallEve
 theorem {name}RetirementIsRecorded : {name}Event.retirement? = some ({name}Value, {name}) := rfl
 
 theorem {name}MergedOutcome (events : List Hibana.OwnedCallHistory.OwnedCallEvent) :
-  ({name}.afterFault = none ∧
+  ({name}.after.fault = none ∧
     Hibana.sourceViewComplete? {name}.before retirementImage retirementChoreo {name}.view = some true ∧
     ∃ current, Hibana.observedActorView? {name}.before {name}.view = some current ∧ current.operation = .idle) ∨
-  ∃ cause, {name}.afterFault = some cause ∧
-    (Hibana.observedGeneration {name}.afterFault).publicationPermitted = false :=
+  ∃ cause, {name}.after.fault = some cause ∧
+    (Hibana.observedGeneration {name}.after.fault).publicationPermitted = false :=
   Hibana.a_joint_value_retirement_is_complete_or_faulted ({name}MergedBoundary events) {name}RetirementIsRecorded
 
 theorem {name}SourceWordRetainsRetirement (events : List Hibana.OwnedCallHistory.OwnedCallEvent) :
@@ -267,6 +250,10 @@ theorem {name}ActualZeroWrites : ({after_writes} : Nat) = {before_writes} := by 
 
 theorem {name}QuietCannotHideRetirement :
   Hibana.actorQuietHeadersCheck {name}.before {name}.after = false := by decide
+
+theorem {name}QuietCannotRewriteFault :
+  Hibana.actorQuietHeadersCheck {name}.after
+    {{ {name}.after with fault := {bad_fault} }} = false := by decide
 
 theorem {name}PhysicalCutExtension
     {{images : Nat → Hibana.RustDescriptorImage}} {{first cut : Hibana.DistributedSourceCut}}
@@ -297,25 +284,40 @@ theorem {name}PhysicalCutExtension
   Hibana.live_retirement_requires_source_completion {name}Accepted (by decide)
 
 theorem {name}PublicationPermitted :
-  (Hibana.observedGeneration {name}.afterFault).publicationPermitted = true := by decide
+  (Hibana.observedGeneration {name}.after.fault).publicationPermitted = true := by decide
 
 theorem {name}SpuriousFaultRejected :
-  ({{ {name} with afterFault := some .endpointDropped }} : Hibana.ViewRetirementObservation).check
+  ({{ {name} with after := {{ {name}.after with fault := some .endpointDropped }} }} : Hibana.ViewRetirementObservation).check
     retirementImage retirementChoreo = false := by decide
 
 "#,
             ));
         } else {
             source.push_str(&std::format!(
-                r#"theorem {name}PublicationBlocked :
-  (Hibana.observedGeneration {name}.afterFault).publicationPermitted = false :=
+                r#"theorem {name}FaultSurvivesPhysicalSuffix
+    {{images : Nat → Hibana.RustDescriptorImage}} {{first last : Hibana.DistributedSourceCut}}
+    {{word entries published pending}} {{session : Nat}}
+    (history : Hibana.DistributedPhysicalExecution images retirementChoreo session
+      first last word entries published pending)
+    (atCut : (first.actors {name}.after.actor).1 = {name}.after) :
+  (last.actors {name}.after.actor).1.fault = {name}.after.fault := by
+  let cause := {name}.after.fault.get (by decide)
+  have observed : {name}.after.fault = some cause := (Option.some_get (by decide)).symm
+  have actual : (first.actors {name}.after.actor).1.fault = some cause := by
+    rw [atCut]
+    exact observed
+  exact (Hibana.a_distributed_physical_history_preserves_each_first_fault
+    history {name}.after.actor cause actual).trans observed.symm
+
+theorem {name}PublicationBlocked :
+  (Hibana.observedGeneration {name}.after.fault).publicationPermitted = false :=
   Hibana.retirement_with_pending_source_disables_publication {name}Accepted {name}SourceCompletion
 
 theorem {name}ReattachmentBlocked :
-  Hibana.applySessionGenerationAction (Hibana.observedGeneration {name}.afterFault) .attach = none := by decide
+  Hibana.applySessionGenerationAction (Hibana.observedGeneration {name}.after.fault) .attach = none := by decide
 
 theorem {name}MissingFaultRejected :
-  ({{ {name} with afterFault := none }} : Hibana.ViewRetirementObservation).check
+  ({{ {name} with after := {{ {name}.after with fault := none }} }} : Hibana.ViewRetirementObservation).check
     retirementImage retirementChoreo = false := by decide
 
 "#,

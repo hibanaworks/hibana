@@ -8,9 +8,9 @@ completedBeforeValid : completed.before.valid = true
 completedGenerationRealized : ∃ complete current,
   Hibana.sourceViewComplete? completed.before retirementImage retirementChoreo 10 = some complete ∧
     Hibana.observedActorView? completed.before 10 = some current ∧
-      Hibana.applySessionGenerationAction (Hibana.observedGeneration completed.beforeFault)
+      Hibana.applySessionGenerationAction (Hibana.observedGeneration completed.before.fault)
           (Hibana.retirementGenerationAction current.operation complete) =
-        some (Hibana.observedGeneration completed.afterFault)
+        some (Hibana.observedGeneration completed.after.fault)
 completedGhostProgressRejected : (have __src := completed;
       { view := __src.view, before := __src.before,
         after :=
@@ -20,8 +20,7 @@ completedGhostProgressRejected : (have __src := completed;
             steps :=
               List.map (fun step => { effIndex := step.effIndex, view := step.view, side := step.side, done := true })
                 completed.after.steps,
-            choices := __src.choices },
-        beforeFault := __src.beforeFault, afterFault := __src.afterFault }).check
+            choices := __src.choices, fault := __src.fault } }).check
     retirementImage retirementChoreo =
   false
 completedLiveSourceCompleted : Hibana.sourceViewComplete? completed.before retirementImage retirementChoreo 10 =
@@ -40,26 +39,27 @@ completedMergedBoundary : ∀ (events : List Hibana.OwnedCallHistory.OwnedCallEv
   Hibana.OwnedCallHistory.Boundary (fun x => retirementImage) retirementResource retirementChoreo events completedEvent
     completedBeforeCut completedAfterCut
 completedMergedOutcome : ∀ (events : List Hibana.OwnedCallHistory.OwnedCallEvent),
-  (completed.afterFault = none ∧
+  (completed.after.fault = none ∧
       Hibana.sourceViewComplete? completed.before retirementImage retirementChoreo completed.view = some true ∧
         ∃ current,
           Hibana.observedActorView? completed.before completed.view = some current ∧
             current.operation = Hibana.PublicOperationPhase.idle) ∨
     ∃ cause,
-      completed.afterFault = some cause ∧ (Hibana.observedGeneration completed.afterFault).publicationPermitted = false
+      completed.after.fault = some cause ∧
+        (Hibana.observedGeneration completed.after.fault).publicationPermitted = false
 completedMissingRetirementRejected : (have __src := completed;
       { view := __src.view, before := __src.before,
         after :=
           have __src := completed.after;
           { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
-            views := completed.before.views, steps := __src.steps, choices := __src.choices },
-        beforeFault := __src.beforeFault, afterFault := __src.afterFault }).check
+            views := completed.before.views, steps := __src.steps, choices := __src.choices,
+            fault := __src.fault } }).check
     retirementImage retirementChoreo =
   false
 completedMissingSourceRowsRejected : Hibana.sourceViewComplete?
     (have __src := completed.before;
     { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
-      views := __src.views, steps := [], choices := __src.choices })
+      views := __src.views, steps := [], choices := __src.choices, fault := __src.fault })
     retirementImage retirementChoreo 10 =
   none
 completedNoAuthorityRestored : Observation.authorityCount completedAfterAuthority = 0
@@ -74,8 +74,14 @@ completedNoAuthorityRestored : Observation.authorityCount completedAfterAuthorit
           (cut.actorAt completed.before.actor (completed.after, 2))
           (word ++ [Hibana.DistributedCallBoundary.retireView completed]) entries published pending
 completedProgressPreserved : completed.progressMatches = true
-completedPublicationPermitted : (Hibana.observedGeneration completed.afterFault).publicationPermitted = true
+completedPublicationPermitted : (Hibana.observedGeneration completed.after.fault).publicationPermitted = true
 completedQuietCannotHideRetirement : Hibana.actorQuietHeadersCheck completed.before completed.after = false
+completedQuietCannotRewriteFault : Hibana.actorQuietHeadersCheck completed.after
+    (have __src := completed.after;
+    { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
+      views := __src.views, steps := __src.steps, choices := __src.choices,
+      fault := some Hibana.SessionFault.endpointDropped }) =
+  false
 completedRetired : completed.after.viewIssued 10 = false
 completedRetirementIsRecorded : completedEvent.retirement? = some (completedValue, completed)
 completedSourceCompletion : Hibana.sourceViewComplete? completed.before retirementImage retirementChoreo 10 = some true
@@ -83,8 +89,12 @@ completedSourceWordRetainsRetirement : ∀ (events : List Hibana.OwnedCallHistor
   Hibana.OwnedCallHistory.sourceWord (events ++ [completedEvent]) =
     Hibana.OwnedCallHistory.sourceWord events ++ [Hibana.DistributedCallBoundary.retireView completed]
 completedSpuriousFaultRejected : (have __src := completed;
-      { view := __src.view, before := __src.before, after := __src.after, beforeFault := __src.beforeFault,
-        afterFault := some Hibana.SessionFault.endpointDropped }).check
+      { view := __src.view, before := __src.before,
+        after :=
+          have __src := completed.after;
+          { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
+            views := __src.views, steps := __src.steps, choices := __src.choices,
+            fault := some Hibana.SessionFault.endpointDropped } }).check
     retirementImage retirementChoreo =
   false
 completedWrongResourceRejected : Hibana.OwnedCallHistory.retirementMatches

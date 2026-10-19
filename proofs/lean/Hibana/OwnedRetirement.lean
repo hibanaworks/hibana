@@ -165,8 +165,6 @@ structure ViewRetirementObservation where
   view : Nat
   before : ActorProgressObservation
   after : ActorProgressObservation
-  beforeFault : Option SessionFault
-  afterFault : Option SessionFault
 
 def ViewRetirementObservation.progressMatches (sample : ViewRetirementObservation) : Bool :=
   sample.after.actor == sample.before.actor && sample.after.run == sample.before.run &&
@@ -188,7 +186,7 @@ def ViewRetirementObservation.check
       observedActorView? sample.before sample.view with
   | some complete, some current =>
       (sample.progressMatches && sample.headersMatch current) &&
-        decide (sample.afterFault = retirementFirstFault sample.beforeFault current.operation complete)
+        decide (sample.after.fault = retirementFirstFault sample.before.fault current.operation complete)
   | _, _ => false
 
 theorem accepted_retirement_has_checked_source_and_headers
@@ -198,7 +196,7 @@ theorem accepted_retirement_has_checked_source_and_headers
       sourceViewComplete? sample.before image choreo sample.view = some complete ∧
       observedActorView? sample.before sample.view = some current ∧
       sample.progressMatches = true ∧ sample.headersMatch current = true ∧
-      sample.afterFault = retirementFirstFault sample.beforeFault current.operation complete := by
+      sample.after.fault = retirementFirstFault sample.before.fault current.operation complete := by
   cases sourceAt : sourceViewComplete? sample.before image choreo sample.view with
   | none => simp [ViewRetirementObservation.check, sourceAt] at checked
   | some complete =>
@@ -207,14 +205,14 @@ theorem accepted_retirement_has_checked_source_and_headers
       | some current =>
           have fields :
               (sample.progressMatches = true ∧ sample.headersMatch current = true) ∧
-                sample.afterFault = retirementFirstFault sample.beforeFault current.operation complete := by
+                sample.after.fault = retirementFirstFault sample.before.fault current.operation complete := by
             simpa [ViewRetirementObservation.check, sourceAt, currentAt] using checked
           exact ⟨complete, current, rfl, rfl, fields.1.1, fields.1.2, fields.2⟩
 
 theorem accepted_retirement_preserves_first_fault
     {sample : ViewRetirementObservation} {image : RustDescriptorImage} {choreo : Choreo}
     {cause : SessionFault} (checked : sample.check image choreo = true)
-    (existing : sample.beforeFault = some cause) : sample.afterFault = some cause := by
+    (existing : sample.before.fault = some cause) : sample.after.fault = some cause := by
   obtain ⟨complete, current, _, _, _, _, fault⟩ :=
     accepted_retirement_has_checked_source_and_headers checked
   rw [fault, existing]
@@ -225,18 +223,18 @@ theorem retirement_with_pending_source_disables_publication
     {sample : ViewRetirementObservation} {image : RustDescriptorImage} {choreo : Choreo}
     (checked : sample.check image choreo = true)
     (pending : sourceViewComplete? sample.before image choreo sample.view = some false) :
-    (observedGeneration sample.afterFault).publicationPermitted = false := by
+    (observedGeneration sample.after.fault).publicationPermitted = false := by
   obtain ⟨complete, current, sourceAt, _, _, _, fault⟩ :=
     accepted_retirement_has_checked_source_and_headers checked
   have same : complete = false := Option.some.inj (sourceAt.symm.trans pending)
   rw [fault, same]
-  cases sample.beforeFault <;>
+  cases sample.before.fault <;>
     simp [retirementFirstFault, observedGeneration, SessionGenerationState.publicationPermitted]
 
 theorem live_retirement_requires_source_completion
     {sample : ViewRetirementObservation} {image : RustDescriptorImage} {choreo : Choreo}
     (checked : sample.check image choreo = true)
-    (live : sample.afterFault = none) :
+    (live : sample.after.fault = none) :
     sourceViewComplete? sample.before image choreo sample.view = some true ∧
       ∃ current, observedActorView? sample.before sample.view = some current ∧
         current.operation = .idle := by
@@ -245,12 +243,12 @@ theorem live_retirement_requires_source_completion
   have finished : current.operation = .idle ∧ complete = true := by
     by_cases finished : current.operation = .idle ∧ complete = true
     · exact finished
-    · cases sample.beforeFault <;> simp [retirementFirstFault, finished, live] at fault
+    · cases sample.before.fault <;> simp [retirementFirstFault, finished, live] at fault
   exact ⟨finished.2 ▸ sourceAt, current, currentAt, finished.1⟩
 
 theorem live_retirement_removes_no_pending_source_action
     {sample : ViewRetirementObservation} {image : RustDescriptorImage} {choreo : Choreo}
-    (checked : sample.check image choreo = true) (live : sample.afterFault = none) :
+    (checked : sample.check image choreo = true) (live : sample.after.fault = none) :
     ∃ data, image.decodeActorOrder? choreo = some data ∧
       ∀ path ∈ data.normalized.paths,
         observedChoicesAgree (canonicalProgramSource choreo) path sample.before = true →
@@ -266,12 +264,12 @@ theorem retirement_realizes_existing_generation_action
     ∃ complete current,
       sourceViewComplete? sample.before image choreo sample.view = some complete ∧
       observedActorView? sample.before sample.view = some current ∧
-      applySessionGenerationAction (observedGeneration sample.beforeFault)
-        (retirementGenerationAction current.operation complete) = some (observedGeneration sample.afterFault) := by
+      applySessionGenerationAction (observedGeneration sample.before.fault)
+        (retirementGenerationAction current.operation complete) = some (observedGeneration sample.after.fault) := by
   obtain ⟨complete, current, sourceAt, currentAt, _, _, fault⟩ :=
     accepted_retirement_has_checked_source_and_headers checked
   exact ⟨complete, current, sourceAt, currentAt, fault ▸
-    retirement_fault_matches_existing_generation_model sample.beforeFault current.operation complete⟩
+    retirement_fault_matches_existing_generation_model sample.before.fault current.operation complete⟩
 
 /-- Ordinary transfer boundaries conserve authority exactly. Only explicit
 abandonment, application-value drop or frame fencing can reduce it. -/

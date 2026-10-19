@@ -72,9 +72,7 @@ fn a_completed_view_retires_without_cancelling_independent_work() {
         let tag = view_tag(&db);
         // SAFETY: WORKER retains this TestTransport actor and its issued DB view.
         let before = unsafe { actor_snapshot(&worker) };
-        // SAFETY: the same pinned actor is idle between the two observations.
-        let before_fault = unsafe { actor_fault(&worker) };
-        assert_eq!(before_fault, None);
+        assert_eq!(before.fault, None);
         drop(db);
         // SAFETY: retiring DB does not destroy the worker's distinct view.
         let after = unsafe { actor_snapshot(&worker) };
@@ -86,9 +84,7 @@ fn a_completed_view_retires_without_cancelling_independent_work() {
         assert_eq!(before.live_views, after.live_views + 1);
         // SAFETY: storage still retains the retired DB record.
         assert!(!unsafe { tag.matches_header() });
-        // SAFETY: WORKER is an issued view of the same TestTransport actor.
-        let after_fault = unsafe { actor_fault(&worker) };
-        assert_eq!(after_fault, None);
+        assert_eq!(after.fault, None);
         // Controlled transport delay proves the completed view's drop does not
         // make an independent projected send wait for its sibling's readiness.
         network.pause_send(1);
@@ -127,8 +123,6 @@ fn a_completed_view_retires_without_cancelling_independent_work() {
                     name: "completed",
                     before,
                     after,
-                    before_fault,
-                    after_fault,
                     origin: RetirementOrigin::Application,
                     complete: true,
                     constructor: None,

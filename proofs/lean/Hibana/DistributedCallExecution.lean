@@ -8,7 +8,7 @@ open EndpointDelegation
 issuance or retirement. Those header changes need their recorded boundary. -/
 def actorQuietHeadersCheck (before after : ActorProgressObservation) : Bool :=
   before.viewHeaders == after.viewHeaders && before.counter == after.counter &&
-    before.liveViews == after.liveViews
+    before.liveViews == after.liveViews && decide (before.fault = after.fault)
 
 /-- One chronological source boundary. Sender publication is recorded separately
 from physical acceptance, including when another operation of that actor commits
@@ -520,5 +520,68 @@ theorem a_physical_execution_projects_its_complete_fifo_histories
     ∀ channel, ∃ history,
       SendAdmissionTrace choreo session (last.carriers channel) history (sourceChannelRecords entries channel) := by
   exact a_physical_execution_preserves_each_full_fifo execution (fun channel => ⟨_, .initial channel⟩)
+
+/-- First-fault continuity is a property of this same physical history. A
+retirement can add a cause but cannot replace one; quiet observations cannot
+erase it; successful commits require live cuts. Other actors and already
+accepted carrier frames do not acquire this actor's fault by shared memory. -/
+theorem a_distributed_physical_history_preserves_each_first_fault
+    (execution : DistributedPhysicalExecution images choreo session first last word entries published pending) :
+    ∀ actor cause, (first.actors actor).1.fault = some cause →
+      (last.actors actor).1.fault = some cause := by
+  induction execution with
+  | refl => exact fun _ _ faulted => faulted
+  | @retireView cut word entries published pending sample history checked beforeAt ih =>
+    intro actor cause faulted
+    have prior := ih actor cause faulted
+    by_cases same : actor = sample.before.actor
+    · subst actor
+      have beforeFault : sample.before.fault = some cause := by
+        rw [← beforeAt]
+        exact prior
+      simpa only [DistributedSourceCut.actorAt, if_pos rfl] using
+        accepted_retirement_preserves_first_fault checked beforeFault
+    · simpa only [DistributedSourceCut.actorAt, if_neg same] using prior
+  | @quiet cut word entries published pending changed after history checked headers ih =>
+    intro actor cause faulted
+    have prior := ih actor cause faulted
+    by_cases same : actor = changed
+    · subst actor
+      have sameFault : (cut.actors changed).1.fault = after.fault :=
+        of_decide_eq_true (Bool.and_eq_true_iff.mp headers).2
+      simpa only [DistributedSourceCut.actorAt, if_pos rfl] using sameFault.symm.trans prior
+    · simpa only [DistributedSourceCut.actorAt, if_neg same] using prior
+  | accept history imageAt checked decoded pathAt rowAt prepared slotFree freshWitness sourceAt accepted identity ih =>
+    simpa only [DistributedSourceCut.carrierAt] using ih
+  | @publish cut word entries published left right changed after cleared record entry
+      history actorAt sameWire committed ih =>
+    intro actor cause faulted
+    have prior := ih actor cause faulted
+    by_cases same : actor = changed
+    · subst actor
+      have live := a_measured_physical_transition_uses_live_actor_cuts committed
+      have impossible := live.1.symm.trans prior
+      contradiction
+    · simpa only [DistributedSourceCut.actorAt, if_neg same] using prior
+  | @localCommit cut word entries published pending changed after cleared record eff binding
+      history actorRole localAt committed ih =>
+    intro actor cause faulted
+    have prior := ih actor cause faulted
+    by_cases same : actor = changed
+    · subst actor
+      have live := a_measured_physical_transition_uses_live_actor_cuts committed
+      have impossible := live.1.symm.trans prior
+      contradiction
+    · simpa only [DistributedSourceCut.actorAt, if_neg same] using prior
+  | @receive cut word entries published pending changed channel next frame after cleared record entry witness
+      history actorRole received entryAt identity sameWire committed ih =>
+    intro actor cause faulted
+    have prior := ih actor cause faulted
+    by_cases same : actor = changed
+    · subst actor
+      have live := a_measured_physical_transition_uses_live_actor_cuts committed
+      have impossible := live.1.symm.trans prior
+      contradiction
+    · simpa only [DistributedSourceCut.carrierAt, DistributedSourceCut.actorAt, if_neg same] using prior
 
 end Hibana

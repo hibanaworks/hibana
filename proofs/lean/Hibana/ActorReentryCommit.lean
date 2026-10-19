@@ -282,6 +282,16 @@ private theorem source_body_base_facts
       of_decide_eq_true start, of_decide_eq_true stop⟩
   next rejected => simp at allowed
 
+/-- A prospective body reset preserves the same actor-local first fault. It
+cannot turn a failed run into a fresh live one merely by selecting a new visit. -/
+theorem a_prepared_source_base_preserves_actor_fault
+    (prepared : prepareObservedActorBody? image choreo before
+      previousPath nextPath scope event = some (roll, base)) :
+    base.fault = before.fault := by
+  obtain ⟨_, _, choices, _, _, reset, _, _⟩ := source_body_base_facts prepared
+  rw [reset]
+  rfl
+
 /-- A prospective reset can erase an old completion, but cannot invent one.
 This statement uses no successful operation or post-operation observation. -/
 theorem a_prepared_source_base_only_retains_existing_completion

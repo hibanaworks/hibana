@@ -677,6 +677,11 @@ Hibana.EndpointDelegation.withOwner_same : ∀ (owners : Hibana.EndpointDelegati
         (And (@Eq.{1} Nat sample.polls (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1))))
           (And (@Eq.{1} Nat sample.publications (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0))))
             (And (@Eq.{1} Bool sample.done false) (@Eq.{1} Bool sample.retained true))))
+@Hibana.a_checked_physical_commit_uses_live_actor_cuts : ∀ {sample : Hibana.ActorCommitObservation}
+  {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo},
+  @Eq.{1} Bool (sample.transitionCheck image choreo) true →
+    And (@Eq.{1} (Option.{0} Hibana.SessionFault) sample.before.fault (@none.{0} Hibana.SessionFault))
+      (@Eq.{1} (Option.{0} Hibana.SessionFault) sample.after.fault (@none.{0} Hibana.SessionFault))
 @Hibana.a_checked_physical_transition_marks_exactly_its_event : ∀ {sample : Hibana.ActorCommitObservation}
   {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo},
   @Eq.{1} Bool (sample.transitionCheck image choreo) true →
@@ -1615,6 +1620,19 @@ Hibana.EndpointDelegation.withOwner_same : ∀ (owners : Hibana.EndpointDelegati
                 (Hibana.committedFrameClassWord (@Hibana.SourceOrderGroup.rows (images actor) choreo group) actor
                   (@List.filterMap.{0, 0} Hibana.DistributedCallBoundary (Prod.{0, 0} Nat Hibana.ActorCommitRecord)
                     Hibana.DistributedCallBoundary.record? word))))
+@Hibana.a_distributed_physical_history_preserves_each_first_fault : ∀ {images : Nat → Hibana.RustDescriptorImage}
+  {choreo : Hibana.Choreo} {session : Nat} {first last : Hibana.DistributedSourceCut}
+  {word : List.{0} Hibana.DistributedCallBoundary} {entries : List.{0} Hibana.SourceAcceptance}
+  {published : List.{0} (Prod.{0, 0} Hibana.SourceAcceptance Hibana.ActorCommitRecord)}
+  {pending : List.{0} Hibana.SourceAcceptance},
+  Hibana.DistributedPhysicalExecution images choreo session first last word entries published pending →
+    ∀ (actor : Nat) (cause : Hibana.SessionFault),
+      @Eq.{1} (Option.{0} Hibana.SessionFault)
+          (@Prod.fst.{0, 0} Hibana.ActorProgressObservation Nat (first.actors actor)).fault
+          (@some.{0} Hibana.SessionFault cause) →
+        @Eq.{1} (Option.{0} Hibana.SessionFault)
+          (@Prod.fst.{0, 0} Hibana.ActorProgressObservation Nat (last.actors actor)).fault
+          (@some.{0} Hibana.SessionFault cause)
 @Hibana.a_distributed_receipt_source_count_has_its_static_row_classification : ∀
   {images : Nat → Hibana.RustDescriptorImage} {choreo : Hibana.Choreo} {session : Nat}
   {first last : Prod.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance)}
@@ -2155,7 +2173,7 @@ Hibana.EndpointDelegation.withOwner_same : ∀ (owners : Hibana.EndpointDelegati
         (@some.{0} (Prod.{0, 0} Hibana.OwnedCallHistory.Tag Hibana.ViewRetirementObservation)
           (@Prod.mk.{0, 0} Hibana.OwnedCallHistory.Tag Hibana.ViewRetirementObservation value sample)) →
       Or
-        (And (@Eq.{1} (Option.{0} Hibana.SessionFault) sample.afterFault (@none.{0} Hibana.SessionFault))
+        (And (@Eq.{1} (Option.{0} Hibana.SessionFault) sample.after.fault (@none.{0} Hibana.SessionFault))
           (And
             (@Eq.{1} (Option.{0} Bool)
               (Hibana.sourceViewComplete? sample.before (images sample.before.actor) choreo sample.view)
@@ -2166,8 +2184,8 @@ Hibana.EndpointDelegation.withOwner_same : ∀ (owners : Hibana.EndpointDelegati
                   (@some.{0} Hibana.ActorViewObservation current))
                 (@Eq.{1} Hibana.PublicOperationPhase current.operation Hibana.PublicOperationPhase.idle))))
         (@Exists.{1} Hibana.SessionFault fun cause =>
-          And (@Eq.{1} (Option.{0} Hibana.SessionFault) sample.afterFault (@some.{0} Hibana.SessionFault cause))
-            (@Eq.{1} Bool (Hibana.observedGeneration sample.afterFault).publicationPermitted false))
+          And (@Eq.{1} (Option.{0} Hibana.SessionFault) sample.after.fault (@some.{0} Hibana.SessionFault cause))
+            (@Eq.{1} Bool (Hibana.observedGeneration sample.after.fault).publicationPermitted false))
 @Hibana.a_joint_value_retirement_keeps_its_checked_source_boundary : ∀ {images : Nat → Hibana.RustDescriptorImage}
   {resource : Hibana.EndpointDelegation.EndpointKey} {choreo : Hibana.Choreo}
   {events : List.{0} Hibana.OwnedCallHistory.OwnedCallEvent} {event : Hibana.OwnedCallHistory.OwnedCallEvent}
@@ -2742,6 +2760,15 @@ Hibana.a_lease_only_origin_does_not_cover_a_pending_issued_header : ∀ (old : N
                                                   true →
                                                 @Eq.{1} Bool (final.doneState.done target.eventId) false →
                                                   @Eq.{1} Bool (Hibana.sourceRowReady data path cut transfer) false
+@Hibana.a_measured_physical_transition_uses_live_actor_cuts : ∀ {image : Hibana.RustDescriptorImage}
+  {choreo : Hibana.Choreo} {session : Nat} {before after : Prod.{0, 0} Hibana.ActorProgressObservation Nat}
+  {cleared : List.{0} Nat} {record : Hibana.ActorCommitRecord},
+  Hibana.ActorMeasuredTransition image choreo session before after cleared record →
+    And
+      (@Eq.{1} (Option.{0} Hibana.SessionFault) (@Prod.fst.{0, 0} Hibana.ActorProgressObservation Nat before).fault
+        (@none.{0} Hibana.SessionFault))
+      (@Eq.{1} (Option.{0} Hibana.SessionFault) (@Prod.fst.{0, 0} Hibana.ActorProgressObservation Nat after).fault
+        (@none.{0} Hibana.SessionFault))
 @Hibana.a_measured_reentry_has_its_source_reset_and_exact_writes : ∀ {sample : Hibana.ActorReentryCommitObservation}
   {wire : Hibana.OwnedWireObservation} {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo}
   {session before after : Nat},
@@ -3115,6 +3142,14 @@ Hibana.a_pending_payload_requires_its_own_send : ∀ (resource : Nat) (sent : Op
           (And (@LE.le.{0} Nat instLENat roll.eventStart required)
             (@LT.lt.{0} Nat instLTNat required
               (@HAdd.hAdd.{0, 0, 0} Nat Nat Nat (@instHAdd.{0} Nat instAddNat) roll.eventStart roll.eventLength))))
+@Hibana.a_prepared_source_base_preserves_actor_fault : ∀ {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo}
+  {before : Hibana.ActorProgressObservation} {previousPath nextPath scope event : Nat} {roll : Hibana.DecodedRollRow}
+  {base : Hibana.ActorProgressObservation},
+  @Eq.{1} (Option.{0} (Prod.{0, 0} Hibana.DecodedRollRow Hibana.ActorProgressObservation))
+      (Hibana.prepareObservedActorBody? image choreo before previousPath nextPath scope event)
+      (@some.{0} (Prod.{0, 0} Hibana.DecodedRollRow Hibana.ActorProgressObservation)
+        (@Prod.mk.{0, 0} Hibana.DecodedRollRow Hibana.ActorProgressObservation roll base)) →
+    @Eq.{1} (Option.{0} Hibana.SessionFault) base.fault before.fault
 @Hibana.a_prepared_wire_operation_extends_its_actors_measured_source_word : ∀
   {images : Nat → Hibana.RustDescriptorImage} {choreo : Hibana.Choreo}
   {session actor previousPath pathIndex event : Nat} {group : Hibana.SourceOrderGroup (images actor) choreo}
@@ -6195,13 +6230,13 @@ Hibana.abort_peer_is_well_formed : ∀ (state : Hibana.TransportState), state.ab
               (@some.{0} Hibana.ActorViewObservation current))
             (And (@Eq.{1} Bool sample.progressMatches true)
               (And (@Eq.{1} Bool (sample.headersMatch current) true)
-                (@Eq.{1} (Option.{0} Hibana.SessionFault) sample.afterFault
-                  (Hibana.retirementFirstFault sample.beforeFault current.operation complete)))))
+                (@Eq.{1} (Option.{0} Hibana.SessionFault) sample.after.fault
+                  (Hibana.retirementFirstFault sample.before.fault current.operation complete)))))
 @Hibana.accepted_retirement_preserves_first_fault : ∀ {sample : Hibana.ViewRetirementObservation}
   {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo} {cause : Hibana.SessionFault},
   @Eq.{1} Bool (sample.check image choreo) true →
-    @Eq.{1} (Option.{0} Hibana.SessionFault) sample.beforeFault (@some.{0} Hibana.SessionFault cause) →
-      @Eq.{1} (Option.{0} Hibana.SessionFault) sample.afterFault (@some.{0} Hibana.SessionFault cause)
+    @Eq.{1} (Option.{0} Hibana.SessionFault) sample.before.fault (@some.{0} Hibana.SessionFault cause) →
+      @Eq.{1} (Option.{0} Hibana.SessionFault) sample.after.fault (@some.{0} Hibana.SessionFault cause)
 @Hibana.accepted_session_reattach_is_exact : ∀ {binding next : Hibana.SessionBinding} {rendezvous : Nat}
   {program : Hibana.ProgramImageIdentity},
   @Eq.{1} (Option.{0} Hibana.SessionBinding)
@@ -10499,7 +10534,7 @@ Hibana.lane_ingress_head_preserved_by_other_lane_progress : ∀ (events : List.{
 @Hibana.live_retirement_removes_no_pending_source_action : ∀ {sample : Hibana.ViewRetirementObservation}
   {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo},
   @Eq.{1} Bool (sample.check image choreo) true →
-    @Eq.{1} (Option.{0} Hibana.SessionFault) sample.afterFault (@none.{0} Hibana.SessionFault) →
+    @Eq.{1} (Option.{0} Hibana.SessionFault) sample.after.fault (@none.{0} Hibana.SessionFault) →
       @Exists.{1} Hibana.DecodedActorOrder fun data =>
         And
           (@Eq.{1} (Option.{0} Hibana.DecodedActorOrder) (image.decodeActorOrder? choreo)
@@ -10540,7 +10575,7 @@ Hibana.lane_ingress_head_preserved_by_other_lane_progress : ∀ (events : List.{
 @Hibana.live_retirement_requires_source_completion : ∀ {sample : Hibana.ViewRetirementObservation}
   {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo},
   @Eq.{1} Bool (sample.check image choreo) true →
-    @Eq.{1} (Option.{0} Hibana.SessionFault) sample.afterFault (@none.{0} Hibana.SessionFault) →
+    @Eq.{1} (Option.{0} Hibana.SessionFault) sample.after.fault (@none.{0} Hibana.SessionFault) →
       And
         (@Eq.{1} (Option.{0} Bool) (Hibana.sourceViewComplete? sample.before image choreo sample.view)
           (@some.{0} Bool true))
@@ -11268,7 +11303,7 @@ Hibana.parallel_join_remains_required_after_ancestors : ∀ (regions : List.{0} 
                   (@Prod.mk.{0, 0} Nat Hibana.EndpointDelegation.Binding row.actionId.event binding)) →
               @Eq.{1} Bool (Hibana.sourceActionRequiresView sample.view binding row.actionId.side) true →
                 @Eq.{1} Bool (sample.before.doneState.done row.eventId) false →
-                  @Ne.{1} (Option.{0} Hibana.SessionFault) sample.afterFault (@none.{0} Hibana.SessionFault)
+                  @Ne.{1} (Option.{0} Hibana.SessionFault) sample.after.fault (@none.{0} Hibana.SessionFault)
 Hibana.poisoned_callback_reentry_cannot_publish : ∀ (cause : Hibana.SessionFault),
   @Eq.{1} Bool (Hibana.SessionGenerationState.poisoned cause).publicationPermitted false
 @Hibana.poisoned_generation_aborts_lease_publication : ∀ {state : Hibana.LeaseAllocatorState}
@@ -12508,9 +12543,9 @@ Hibana.retirement_fault_matches_existing_generation_model : ∀ (before : Option
             (@Eq.{1} (Option.{0} Hibana.ActorViewObservation) (Hibana.observedActorView? sample.before sample.view)
               (@some.{0} Hibana.ActorViewObservation current))
             (@Eq.{1} (Option.{0} Hibana.SessionGenerationState)
-              (Hibana.applySessionGenerationAction (Hibana.observedGeneration sample.beforeFault)
+              (Hibana.applySessionGenerationAction (Hibana.observedGeneration sample.before.fault)
                 (Hibana.retirementGenerationAction current.operation complete))
-              (@some.{0} Hibana.SessionGenerationState (Hibana.observedGeneration sample.afterFault))))
+              (@some.{0} Hibana.SessionGenerationState (Hibana.observedGeneration sample.after.fault))))
 @Hibana.retirement_step_consumes_one_authority : ∀ {View Frame : Type} {action : Hibana.EndpointTransfer.Action}
   {before after : Hibana.EndpointTransfer.Observation View Frame},
   @Hibana.EndpointTransfer.Step View Frame action before after →
@@ -12527,7 +12562,7 @@ Hibana.retirement_fault_matches_existing_generation_model : ∀ (before : Option
   @Eq.{1} Bool (sample.check image choreo) true →
     @Eq.{1} (Option.{0} Bool) (Hibana.sourceViewComplete? sample.before image choreo sample.view)
         (@some.{0} Bool false) →
-      @Eq.{1} Bool (Hibana.observedGeneration sample.afterFault).publicationPermitted false
+      @Eq.{1} Bool (Hibana.observedGeneration sample.after.fault).publicationPermitted false
 @Hibana.reused_session_on_new_carrier_generation_excludes_old_frame : ∀ {oldFrame newFrame : Hibana.TransportFrame},
   @Ne.{1} Nat oldFrame.channel.generation newFrame.channel.generation → @Ne.{1} Hibana.TransportFrame oldFrame newFrame
 Hibana.role_event_bytes_dominate_local_step_field : @LT.lt.{0} Nat instLTNat Hibana.productionRoleEventOnlyCapacity
@@ -14965,7 +15000,7 @@ Hibana.terminal_public_operation_clear_is_exact : ∀ (current : Hibana.PublicOp
           (@Exists.{1} Hibana.ViewRetirementObservation fun sample =>
             And (@Eq.{1} Bool (sample.check image choreo) true)
               (And (@Eq.{1} Nat sample.view key.role)
-                (@Ne.{1} (Option.{0} Hibana.SessionFault) sample.afterFault (@none.{0} Hibana.SessionFault))))
+                (@Ne.{1} (Option.{0} Hibana.SessionFault) sample.after.fault (@none.{0} Hibana.SessionFault))))
 @Hibana.top_level_roll_step_establishes_session_fidelity : ∀ {config next : Hibana.GlobalConfig},
   Hibana.SessionFidelity config →
     @Eq.{1} (Option.{0} Hibana.GlobalConfig) config.topLevelRollStep? (@some.{0} Hibana.GlobalConfig next) →

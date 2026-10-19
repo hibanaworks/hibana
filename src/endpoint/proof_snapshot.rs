@@ -218,6 +218,8 @@ pub(crate) struct ActorSnapshot {
     pub(crate) run: u32,
     pub(crate) counter: u32,
     pub(crate) live_views: u16,
+    /// The existing actor-local first fault, copied under the same lease.
+    pub(crate) fault: Option<crate::rendezvous::SessionFaultKind>,
     pub(crate) views: Vec<ViewSnapshot>,
     pub(crate) steps: Vec<StepSnapshot>,
     /// Committed route history. Unknown choices remain unknown.
@@ -431,6 +433,11 @@ unsafe fn snapshot_from_handle<T: crate::transport::Transport>(
                 run: kernel.context.public_generation.get(),
                 counter: kernel.context.view_generation.get(),
                 live_views: kernel.context.live_views.get(),
+                fault: kernel
+                    .context
+                    .session
+                    .rendezvous()
+                    .session_fault(kernel.context.sid),
                 views: actor
                     .views
                     .as_slice()

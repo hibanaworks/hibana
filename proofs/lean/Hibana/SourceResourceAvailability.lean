@@ -138,6 +138,7 @@ theorem checked_actor_commit_preserves_actor_and_run
     {sample : ActorCommitObservation} {image : RustDescriptorImage} {choreo : Choreo}
     (checked : sample.check image choreo = true) :
     sample.after.actor = sample.before.actor ∧ sample.after.run = sample.before.run := by
+  have checked := (Bool.and_eq_true_iff.mp checked).1
   have body := (Bool.and_eq_true_iff.mp (Bool.and_eq_true_iff.mp checked).2).2
   cases dataAt : image.decodeActorOrder? choreo with
   | none => simp [dataAt] at body
