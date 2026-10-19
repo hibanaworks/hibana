@@ -6,6 +6,9 @@ published crate, or affect Pico artifacts.
 
 The pinned gate exhausts the production arithmetic for:
 
+- the actual immutable parallel-mask reader on a real two-arm role image,
+  with every u16 probe lane symbolic, including the 256-lane boundary and
+  out-of-domain probes. This is a bounded graph, not all source programs;
 - exact binary decoding of every compact route-arm byte and every valid
   two-bit ready mask;
 - exact ready-evidence record, conflict, poll/materialization, consume, and

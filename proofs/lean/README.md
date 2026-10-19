@@ -1125,15 +1125,34 @@ cell even when the current target is a non-primary parallel borrow.
 
 The existing direct Tokio parallel test supplies four cuts. Its second lane
 has a pending receive while the first lane starts and completes a send.
-Twelve generated kernel-checked claims include rejection of missing/duplicate
+Fifteen generated kernel-checked claims include rejection of missing/duplicate
 slots, an invented lane mask and an incorrect whole-parent idle claim. The
 existing separate-process TCP test also checks that the pending owned future
 retains its exact prepared source event across an independent publication.
 Its six operation-cut claims retain both the pending sender and payload slots,
 permit the actual independent call and reject omitting an entire resource view.
 Preparation without a source event remains distinct from a prepared plan.
-These are read-only test observations and add no production API, wire field,
-runtime guard or serialization of independent work.
+These are read-only test observations. They do not select operations or
+serialize independent work.
+
+Projection now emits compressed immutable lane masks for each logical view
+and lexical parallel arm. A borrow retains the mask's two-byte image offset;
+membership no longer scans the local event list. The source interval grows
+from six to eight bytes, while the measured host operation handle, Endpoint
+and ParallelEndpoint remain 16, 16 and 24 bytes. No mutable cache, resource
+lock, heap storage, wire field or public API is added. Other runtime event
+scans remain unfinished performance work.
+
+The actual image constructor independently reconstructs the complete table
+from source markers and local rows. `DescriptorTopology.lean` does the same
+from decoded source and event columns. Operation-cut checks bind the actual
+cached offset to its view, source interval and recomputed lane set. The three
+additional generated claims check this correspondence and reject an omitted
+reference or a sibling's reference. Native constructor tests also reject
+plausible but incorrect view, lane and interval rows and an omitted table,
+even when the raw column syntax is coherent. The mask remains valid through
+route choices, repetition and deferred borrow destruction because it records
+immutable source membership, not current progress.
 
 This is a local operation-admission component of lifting. Complete slot coverage does not prove
 that every source-ready action has an available Rust value or future, nor that
@@ -1265,7 +1284,12 @@ pollability and executor fairness must not be replaced by inventory membership.
 
 The application must eventually issue its permitted local continuation, driving
 independent fragments concurrently where progress requires it; the executor
-must poll those actual futures. Neither premise can be derived from a kernel
+must poll those actual futures. Authority-bearing futures and fragments must
+remain reachable until completion or normal Drop. `mem::forget` does not
+produce an abandonment boundary or a fault: a private payload can remain in
+the inventory forever without a schedulable future. Such a leak violates the
+application's progress premise; a transport deadline is a separate assumption,
+not authority recovery. None of these premises can be derived from a kernel
 snapshot. They must remain distinct from the implementation obligation that a
 properly held Endpoint/borrow can safely issue its permitted call, or that an
 accepted receipt reaches its current holder. A premise saying merely that the

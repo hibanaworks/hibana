@@ -1,4 +1,4 @@
-import Hibana.DescriptorImage
+import Hibana.DescriptorTopology
 import Hibana.PublicOperationKernel
 
 namespace Hibana
@@ -20,6 +20,7 @@ structure OperationBorrowObservation where
   stop : Nat
   ownedLanes : List Nat
   otherActive : Bool
+  laneMaskOffset : Option Nat := none
   deriving Repr, DecidableEq
 
 structure PublicOperationCut where
@@ -60,8 +61,9 @@ def RustDescriptorImage.operationSlotKeys
     (image : RustDescriptorImage) (views : List Nat) : List (Nat × Nat) :=
   views.flatMap fun view => (List.range (image.operationSlotCount view)).map (view, ·)
 
-/-- `owns_lane` reads immutable descriptor rows and the actual source interval.
-No observed lane mask is allowed to become its own authority. -/
+/-- Independent membership specification from descriptor rows and the actual
+source interval. The production lookup's cached reference is checked below;
+no observed lane mask is allowed to become its own authority. -/
 def RustDescriptorImage.borrowOwnedLanes
     (image : RustDescriptorImage) (target : OperationBorrowObservation) : List Nat :=
   (List.range (image.operationSlotCount target.view)).filter fun lane =>
@@ -76,6 +78,16 @@ def PublicOperationCut.hasOtherActive (cut : PublicOperationCut) : Bool :=
     slot.view == cut.target.view && slot.lane != cut.target.lane &&
       slot.phase != .idle && cut.target.ownedLanes.contains slot.lane
 
+def PublicOperationCut.maskReferenceMatches
+    (cut : PublicOperationCut) (image : RustDescriptorImage) : Bool :=
+  if cut.target.whole then cut.target.laneMaskOffset == none
+  else match cut.target.laneMaskOffset with
+    | none => false
+    | some offset => match image.checkedParallelBorrowMaskAt? offset with
+      | none => false
+      | some mask => mask.view == cut.target.view && mask.start == cut.target.start &&
+          mask.stop == cut.target.stop && mask.lanes == cut.target.ownedLanes
+
 /-- Check the whole immutable view/slot inventory, not a caller-selected subset.
 This establishes neither the existence of a Rust future nor I/O liveness. -/
 def PublicOperationCut.matches (cut : PublicOperationCut) (image : RustDescriptorImage) : Bool :=
@@ -84,7 +96,7 @@ def PublicOperationCut.matches (cut : PublicOperationCut) (image : RustDescripto
     cut.slots.any (fun slot => slot.key == (cut.target.view, cut.target.lane)) &&
     decide (cut.target.start < cut.target.stop ∧ cut.target.stop ≤ 65535) &&
     cut.target.ownedLanes == image.borrowOwnedLanes cut.target &&
-    cut.target.otherActive == cut.hasOtherActive
+    cut.target.otherActive == cut.hasOtherActive && cut.maskReferenceMatches image
 
 def PublicOperationCut.targetPhase? (cut : PublicOperationCut) : Option PublicOperationPhase :=
   (cut.slots.find? fun slot => slot.key == (cut.target.view, cut.target.lane)).map (·.phase)
@@ -105,7 +117,7 @@ theorem a_checked_operation_cut_uses_the_immutable_view_inventory
     image.operationViews? = some cut.views := by
   simp only [PublicOperationCut.matches, Bool.and_eq_true, beq_iff_eq,
     decide_eq_true_eq] at checked
-  exact checked.1.1.1.1.1
+  exact checked.1.1.1.1.1.1
 
 theorem a_checked_operation_cut_covers_every_resident_slot
     {cut : PublicOperationCut} {image : RustDescriptorImage}
@@ -113,7 +125,7 @@ theorem a_checked_operation_cut_covers_every_resident_slot
     cut.slots.map OperationSlotObservation.key = image.operationSlotKeys cut.views := by
   simp only [PublicOperationCut.matches, Bool.and_eq_true, beq_iff_eq,
     decide_eq_true_eq] at checked
-  exact checked.1.1.1.1.2
+  exact checked.1.1.1.1.1.2
 
 theorem a_checked_operation_cut_uses_the_descriptor_borrow_mask
     {cut : PublicOperationCut} {image : RustDescriptorImage}
@@ -121,7 +133,7 @@ theorem a_checked_operation_cut_uses_the_descriptor_borrow_mask
     cut.target.ownedLanes = image.borrowOwnedLanes cut.target := by
   simp only [PublicOperationCut.matches, Bool.and_eq_true, beq_iff_eq,
     decide_eq_true_eq] at checked
-  exact checked.1.2
+  exact checked.1.1.2
 
 theorem a_checked_operation_cut_matches_the_other_active_guard
     {cut : PublicOperationCut} {image : RustDescriptorImage}
@@ -129,6 +141,12 @@ theorem a_checked_operation_cut_matches_the_other_active_guard
     cut.target.otherActive = cut.hasOtherActive := by
   simp only [PublicOperationCut.matches, Bool.and_eq_true, beq_iff_eq,
     decide_eq_true_eq] at checked
+  exact checked.1.2
+
+theorem a_checked_operation_cut_binds_its_cached_lane_reference
+    {cut : PublicOperationCut} {image : RustDescriptorImage}
+    (checked : cut.matches image = true) : cut.maskReferenceMatches image = true := by
+  simp only [PublicOperationCut.matches, Bool.and_eq_true] at checked
   exact checked.2
 
 /-- Lifts a real idle target through the fresh-send operation guard. This is

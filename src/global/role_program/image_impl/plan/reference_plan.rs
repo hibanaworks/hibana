@@ -165,7 +165,12 @@ impl RoleImageColumnCounts {
             dependency_rows,
             conflict_rows,
             resident_boundaries,
-            lane_bits: active_lane_bits + route_facts.lane_bits,
+            lane_bits: active_lane_bits
+                + route_facts.lane_bits
+                + super::super::parallel_masks::MaskRows::byte_len(
+                    eff_list,
+                    projection::LocalRows::Role(role),
+                ),
             route_arm_lane_steps: route_facts.route_arm_lane_steps,
             route_commit_rows: route_facts.route_commit_rows,
             roll_scopes,

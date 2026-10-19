@@ -1,4 +1,5 @@
-// Frozen pre-edit emitter and row helpers; only names/visibility/import paths adapted.
+// Reference route emitter. Parallel-mask serialization is shared; its source
+// membership is checked independently by the mandatory resident-image validator.
 use super::super::*;
 use crate::global::const_dsl::ScopeId;
 use crate::global::typestate::{LocalConflict, RouteChoiceMark};
@@ -334,6 +335,21 @@ impl<const N: usize> RoleImageBytes<N> {
                 }
             }
             marker_idx += 1;
+        }
+
+        let mut masks = crate::global::role_program::image_impl::parallel_masks::MaskRows::new();
+        while let Some(row) = masks.next(eff_list, projection::LocalRows::Role(role)) {
+            let mut byte = 0;
+            while byte < row.len() {
+                out.w8(
+                    columns.lane_bits,
+                    lane_bit_row,
+                    ROLE_IMAGE_LANE_STRIDE,
+                    row.byte(byte),
+                );
+                lane_bit_row += 1;
+                byte += 1;
+            }
         }
 
         if route_slot != route_scope_len

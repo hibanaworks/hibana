@@ -42,6 +42,15 @@ impl LocalEventProgram {
 }
 
 impl LocalEventProgram {
+    pub(crate) fn parallel_borrow_mask(&self, view: u8, start: usize, stop: usize) -> Option<u16> {
+        self.rows().parallel_borrow_mask(view, start, stop)
+    }
+
+    #[inline]
+    pub(crate) fn parallel_borrow_owns_lane(&self, mask: u16, lane: usize) -> bool {
+        self.rows().parallel_borrow_owns_lane(mask, lane)
+    }
+
     #[inline(always)]
     pub(crate) const fn footprint(&self) -> crate::global::role_program::RuntimeRoleFootprint {
         self.rows().footprint()

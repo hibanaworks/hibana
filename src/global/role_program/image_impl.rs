@@ -4,6 +4,7 @@ mod event_rows;
 mod kani;
 mod lane_image;
 mod metadata;
+mod parallel_masks;
 mod plan;
 mod projection;
 pub(crate) use projection::{ActorLocalRows, LocalRows, ScopeFacts, retained_route_counts};

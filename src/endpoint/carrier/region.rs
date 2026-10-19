@@ -5,6 +5,7 @@ pub(crate) struct OperationRegion {
     start: u16,
     end: u16,
     lane: u16,
+    mask: u16,
 }
 
 impl OperationRegion {
@@ -12,6 +13,7 @@ impl OperationRegion {
         start: 0,
         end: u16::MAX,
         lane: 256,
+        mask: u16::MAX,
     };
 
     pub(crate) fn parallel(start: usize, end: usize, lane: usize) -> Option<Self> {
@@ -22,7 +24,22 @@ impl OperationRegion {
             start: u16::try_from(start).ok()?,
             end: u16::try_from(end).ok()?,
             lane: lane as u16,
+            mask: u16::MAX,
         })
+    }
+
+    pub(crate) fn bind_mask(&mut self, mask: u16) {
+        if self.is_whole() || mask == u16::MAX {
+            crate::invariant();
+        }
+        self.mask = mask;
+    }
+
+    pub(crate) fn mask(self) -> u16 {
+        if self.is_whole() || self.mask == u16::MAX {
+            crate::invariant();
+        }
+        self.mask
     }
 
     pub(crate) const fn is_whole(self) -> bool {

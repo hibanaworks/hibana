@@ -11,6 +11,26 @@ mod operation_cut;
 mod reentrant;
 
 #[test]
+fn the_immutable_lane_reference_keeps_parallel_handles_and_futures_compact() {
+    use crate::endpoint::carrier::{OperationHandle, OperationRegion};
+    use core::mem::size_of;
+    assert_eq!(size_of::<OperationRegion>(), 8);
+    assert_eq!(size_of::<OperationHandle>(), 16);
+    assert_eq!(
+        size_of::<crate::ParallelEndpoint<'static, 'static, 0>>(),
+        size_of::<usize>() + 16
+    );
+    assert!(size_of::<crate::Endpoint<'static, 0>>() <= 3 * size_of::<usize>());
+    std::println!(
+        "parallel region={} operation_handle={} endpoint={} parallel_endpoint={}",
+        size_of::<OperationRegion>(),
+        size_of::<OperationHandle>(),
+        size_of::<crate::Endpoint<'static, 0>>(),
+        size_of::<crate::ParallelEndpoint<'static, 'static, 0>>()
+    );
+}
+
+#[test]
 fn identical_message_types_remain_independent_in_their_own_arms() {
     type Value = g::Msg<121, u32>;
     let global = g::par(g::send::<0, 1, Value>(), g::send::<2, 1, Value>());

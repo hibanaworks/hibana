@@ -474,6 +474,21 @@ impl<const N: usize> RoleImageBytes<N> {
             marker_idx += 1;
         }
 
+        let mut masks = super::parallel_masks::MaskRows::new();
+        while let Some(row) = masks.next(eff_list, rows) {
+            let mut byte = 0;
+            while byte < row.len() {
+                out.w8(
+                    columns.lane_bits,
+                    lane_bit_row,
+                    ROLE_IMAGE_LANE_STRIDE,
+                    row.byte(byte),
+                );
+                lane_bit_row += 1;
+                byte += 1;
+            }
+        }
+
         if route_slot != route_scope_len
             || route_slot * 2 != route_arm_len
             || resident_row != resident_row_count

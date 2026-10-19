@@ -447,6 +447,9 @@ Hibana.EndpointDelegation.withOwner_same : ∀ (owners : Hibana.EndpointDelegati
         (And (@Eq.{1} Nat sample.polls (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1))))
           (And (@Eq.{1} Nat sample.publications (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0))))
             (And (@Eq.{1} Bool sample.done true) (@Eq.{1} Bool sample.retained false))))
+@Hibana.a_checked_operation_cut_binds_its_cached_lane_reference : ∀ {cut : Hibana.PublicOperationCut}
+  {image : Hibana.RustDescriptorImage},
+  @Eq.{1} Bool (cut.matches image) true → @Eq.{1} Bool (cut.maskReferenceMatches image) true
 @Hibana.a_checked_operation_cut_covers_every_resident_slot : ∀ {cut : Hibana.PublicOperationCut}
   {image : Hibana.RustDescriptorImage},
   @Eq.{1} Bool (cut.matches image) true →

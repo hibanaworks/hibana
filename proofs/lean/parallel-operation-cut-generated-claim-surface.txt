@@ -1,12 +1,21 @@
 a_non_primary_observation_retains_the_primary_idle_phase : parallelOperationCut2.targetPhase? =
     some Hibana.PublicOperationPhase.recv ∧
   Option.map (fun x => x.phase) parallelOperationCut2.slots[0]? = some Hibana.PublicOperationPhase.idle
+a_siblings_cached_lane_reference_is_rejected : (have __src := parallelOperationCut1;
+      { views := __src.views, slots := __src.slots,
+        target :=
+          have __src := parallelOperationCut1.target;
+          { view := __src.view, lane := __src.lane, whole := __src.whole, start := __src.start, stop := __src.stop,
+            ownedLanes := __src.ownedLanes, otherActive := __src.otherActive,
+            laneMaskOffset := parallelOperationCut2.target.laneMaskOffset } }).matches
+    parallelOperationImage =
+  false
 an_invented_borrow_mask_is_rejected : (have __src := parallelOperationCut1;
       { views := __src.views, slots := __src.slots,
         target :=
           have __src := parallelOperationCut1.target;
           { view := __src.view, lane := __src.lane, whole := __src.whole, start := __src.start, stop := __src.stop,
-            ownedLanes := [], otherActive := __src.otherActive } }).matches
+            ownedLanes := [], otherActive := __src.otherActive, laneMaskOffset := __src.laneMaskOffset } }).matches
     parallelOperationImage =
   false
 claiming_the_whole_parent_is_clear_is_rejected : (have __src := parallelOperationCut0;
@@ -14,12 +23,21 @@ claiming_the_whole_parent_is_clear_is_rejected : (have __src := parallelOperatio
         target :=
           have __src := parallelOperationCut0.target;
           { view := __src.view, lane := __src.lane, whole := __src.whole, start := __src.start, stop := __src.stop,
-            ownedLanes := __src.ownedLanes, otherActive := false } }).matches
+            ownedLanes := __src.ownedLanes, otherActive := false, laneMaskOffset := __src.laneMaskOffset } }).matches
     parallelOperationImage =
   false
 duplicating_a_slot_is_rejected : (have __src := parallelOperationCut1;
       { views := __src.views, slots := parallelOperationCut1.slots ++ List.take 1 parallelOperationCut1.slots,
         target := __src.target }).matches
+    parallelOperationImage =
+  false
+every_cached_parallel_mask_matches_its_source : parallelOperationImage.parallelBorrowMasksExact = true
+omitting_the_cached_lane_reference_is_rejected : (have __src := parallelOperationCut1;
+      { views := __src.views, slots := __src.slots,
+        target :=
+          have __src := parallelOperationCut1.target;
+          { view := __src.view, lane := __src.lane, whole := __src.whole, start := __src.start, stop := __src.stop,
+            ownedLanes := __src.ownedLanes, otherActive := __src.otherActive } }).matches
     parallelOperationImage =
   false
 omitting_the_pending_slot_is_rejected : (have __src := parallelOperationCut1;

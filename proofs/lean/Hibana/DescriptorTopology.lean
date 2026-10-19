@@ -1479,6 +1479,82 @@ private def routeLaneRowsInEmissionOrder :
   | [], [] => some []
   | _, _ => none
 
+/-- Immutable lane facts for one logical view and one global parallel arm. -/
+structure ParallelBorrowMask where
+  view : Nat
+  start : Nat
+  stop : Nat
+  lanes : List Nat
+  deriving Repr, DecidableEq
+
+private def ParallelBorrowMask.bytes (row : ParallelBorrowMask) : List Nat :=
+  let len := match row.lanes.getLast? with
+    | none => 0
+    | some lane => (lane + 8) / 8
+  [row.view, row.start % 256, row.start / 256, row.stop % 256, row.stop / 256, len] ++
+    (List.range len).map fun byte =>
+      ((List.range 8).map fun bit => if row.lanes.contains (byte * 8 + bit) then 2 ^ bit else 0).sum
+
+private def parallelBorrowRanges?
+    (markers : List DecodedScopeMarker) (atomCount : Nat) :
+    Option (List (Nat × Nat)) := do
+  let ranges ← markers.mapM fun marker => do
+    if marker.scope / productionScopeCapacity = 2 ∧ marker.tag % 4 = 0 then
+      let splits := markers.filterMap fun next =>
+        if next.scope = marker.scope && next.tag % 4 = 1 then some next.offset else none
+      let exits := markers.filterMap fun next =>
+        if next.scope = marker.scope && next.tag % 4 = 2 then some next.offset else none
+      match splits, exits with
+      | [split], [stop] =>
+          if marker.offset < split ∧ split < stop ∧ stop ≤ atomCount then
+            pure [(marker.offset, split), (split, stop)]
+          else none
+      | _, _ => none
+    else pure []
+  pure ranges.flatten
+
+def RustDescriptorImage.parallelBorrowMasks?
+    (image : RustDescriptorImage) : Option (List ParallelBorrowMask) := do
+  let markers ← image.decodeScopeMarkers?
+  let ranges ← parallelBorrowRanges? markers image.atomCount
+  let events ← (List.range image.eventCount).mapM fun row => do
+    let view ← image.eventView? row
+    let eff ← image.eventEffIndex? row
+    let lane ← image.eventLane? row
+    pure (view, eff, lane)
+  pure (ranges.flatMap fun (start, stop) =>
+    let visible := events.filter fun event => decide (start ≤ event.2.1 ∧ event.2.1 < stop)
+    (canonicalParticipants (visible.map (·.1))).map fun view => {
+      view, start, stop,
+      lanes := canonicalParticipants
+        ((visible.filter fun event => event.1 == view).map (·.2.2)) })
+
+private def RustDescriptorImage.parallelMaskStart?
+    (image : RustDescriptorImage) : Option Nat := do
+  let arms ← image.decodeRouteArmLaneRows?
+  let offers ← image.decodeRouteOfferLaneRows?
+  let rows ← routeLaneRowsInEmissionOrder arms offers
+  let start := image.activeLaneStart + image.activeLaneLength
+  let stop := rows.foldl (fun cursor row => if row.2 = 0 then cursor else row.1 + row.2) start
+  if optionalRangePartitionFrom start stop rows then pure stop else none
+
+/-- Reconstruct the complete suffix from source markers and actual local rows.
+No observed bitmap is used to establish its own membership or completeness. -/
+def RustDescriptorImage.parallelBorrowMasksExact (image : RustDescriptorImage) : Bool :=
+  match image.decodeLaneBits?, image.parallelMaskStart?, image.parallelBorrowMasks? with
+  | some bits, some start, some rows =>
+      start ≤ bits.length && bits.drop start == rows.flatMap ParallelBorrowMask.bytes
+  | _, _, _ => false
+
+def RustDescriptorImage.checkedParallelBorrowMaskAt?
+    (image : RustDescriptorImage) (offset : Nat) : Option ParallelBorrowMask := do
+  if image.parallelBorrowMasksExact then pure () else none
+  let start ← image.parallelMaskStart?
+  let rows ← image.parallelBorrowMasks?
+  let positioned := rows.foldl (fun (acc, cursor) row =>
+    (acc ++ [(cursor, row)], cursor + row.bytes.length)) ([], start)
+  (positioned.1.find? fun row => row.1 == offset).map (·.2)
+
 private def RustDescriptorImage.residentEventLanesMatchActive
     (image : RustDescriptorImage) : Bool :=
   image.eventLaneColumnCoherent &&
@@ -1493,7 +1569,8 @@ private def RustDescriptorImage.residentEventLanesMatchActive
 
 /-- Every lane column carries one exact fact. Active lanes own the prefix;
 route rows follow in `(left, right, union)` order; arm bitmaps equal their
-lane-step lanes; and no bitmap or lane-step bytes remain unowned. -/
+lane-step lanes; parallel masks own the exact reconstructed suffix; and no
+bitmap or lane-step bytes remain unowned. -/
 def RustDescriptorImage.laneColumnsCoherent
     (image : RustDescriptorImage) : Bool :=
   image.activeLaneMetadataCoherent &&
@@ -1510,11 +1587,12 @@ def RustDescriptorImage.laneColumnsCoherent
       | some emittedRows =>
           optionalRangePartitionFrom
             (image.activeLaneStart + image.activeLaneLength)
-            laneBits.length emittedRows &&
+            (emittedRows.foldl (fun cursor row => if row.2 = 0 then cursor else row.1 + row.2)
+              (image.activeLaneStart + image.activeLaneLength)) emittedRows &&
           armLaneColumnsCoherent image.logicalLaneCount laneBits activeBytes
             activeLanes steps armRows arms &&
           offerLaneColumnsCoherent image.logicalLaneCount laneBits activeBytes
-            activeLanes armRows offerRows
+            activeLanes armRows offerRows && image.parallelBorrowMasksExact
       | none => false
   | _, _, _, _, _ => false
 

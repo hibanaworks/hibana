@@ -62,3 +62,24 @@ fn received_controller_view_has_only_its_projected_route() {
         raw_scope == ScopeId::route(0).raw()
     );
 }
+
+#[kani::proof]
+#[kani::unwind(10)]
+fn cached_parallel_lane_membership_is_exact_for_every_probe_lane() {
+    type Parallel = g::Par<g::Send<0, 1, g::Msg<1, ()>>, g::Send<1, 0, g::Msg<2, ()>>>;
+    let rows = &RoleProjection::<0, Parallel, 8>::IMAGE_REF;
+    let lane: u16 = kani::any();
+    let left = rows.parallel_borrow_mask(0, 0, 1).unwrap();
+    let right = rows.parallel_borrow_mask(0, 1, 2).unwrap();
+    assert_ne!(left, right);
+    assert_eq!(
+        rows.parallel_borrow_owns_lane(left, lane as usize),
+        lane == 0
+    );
+    assert_eq!(
+        rows.parallel_borrow_owns_lane(right, lane as usize),
+        lane == 1
+    );
+    kani::cover!(lane == 255);
+    kani::cover!(lane == u16::MAX);
+}

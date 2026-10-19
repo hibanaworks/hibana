@@ -34,16 +34,9 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
         if self.region.is_whole() {
             return true;
         }
-        (0..self.progress.cursor.local_steps_len()).any(|index| {
-            self.progress.cursor.logical_role_at(index) == Some(self.public_header.role())
-                && self.permits_event(index)
-                && match self.progress.cursor.action_at(index) {
-                    LocalAction::Send { lane: actual, .. }
-                    | LocalAction::Recv { lane: actual, .. }
-                    | LocalAction::Local { lane: actual, .. } => usize::from(actual) == lane,
-                    LocalAction::Terminate => false,
-                }
-        })
+        self.progress
+            .cursor
+            .parallel_borrow_owns_lane(self.region.mask(), lane)
     }
 
     fn arm_lane(&self, source: core::ops::Range<usize>) -> Option<usize> {
@@ -218,6 +211,15 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
                 {
                     return Err(SendError::PhaseInvariant);
                 }
+            }
+            for region in regions.iter_mut() {
+                let source = region.bounds();
+                let mask = self
+                    .progress
+                    .cursor
+                    .parallel_borrow_mask(self.public_header.role(), source.start, source.end)
+                    .ok_or(SendError::PhaseInvariant)?;
+                region.bind_mask(mask);
             }
             self.move_parked_branch_to_parallel_borrow(regions)?;
             return Ok(());

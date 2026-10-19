@@ -56,6 +56,18 @@ theorem an_invented_borrow_mask_is_rejected :
 theorem claiming_the_whole_parent_is_clear_is_rejected :
     ({ parallelOperationCut0 with target := { parallelOperationCut0.target with
       otherActive := false } }).matches parallelOperationImage = false := by decide
+
+theorem every_cached_parallel_mask_matches_its_source :
+    parallelOperationImage.parallelBorrowMasksExact = true := by decide
+
+theorem omitting_the_cached_lane_reference_is_rejected :
+    ({ parallelOperationCut1 with target := { parallelOperationCut1.target with
+      laneMaskOffset := none } }).matches parallelOperationImage = false := by decide
+
+theorem a_siblings_cached_lane_reference_is_rejected :
+    ({ parallelOperationCut1 with target := { parallelOperationCut1.target with
+      laneMaskOffset := parallelOperationCut2.target.laneMaskOffset } }).matches
+      parallelOperationImage = false := by decide
 "#,
     );
     let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/lean-proof");

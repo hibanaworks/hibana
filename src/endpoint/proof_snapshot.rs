@@ -208,6 +208,7 @@ pub(crate) struct OperationTargetSnapshot {
     pub(crate) end: usize,
     pub(crate) owned_lanes: Vec<usize>,
     pub(crate) other_active: bool,
+    pub(crate) lane_mask_offset: Option<u16>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -266,14 +267,18 @@ pub(crate) fn operation_cut_source(cut: &OperationCutSnapshot) -> std::string::S
     std::format!(
         "{{ views := [{views}], slots := [{slots}], target := {{ \
         view := {}, lane := {}, whole := {}, start := {}, stop := {}, \
-        ownedLanes := {:?}, otherActive := {} }} }}",
+        ownedLanes := {:?}, otherActive := {}, laneMaskOffset := {} }} }}",
         target.view,
         target.lane,
         target.whole,
         target.start,
         target.end,
         target.owned_lanes,
-        target.other_active
+        target.other_active,
+        match target.lane_mask_offset {
+            Some(offset) => std::format!("some {offset}"),
+            None => std::string::String::from("none"),
+        },
     )
 }
 
@@ -415,6 +420,7 @@ unsafe fn snapshot_from_handle<T: crate::transport::Transport>(
                     .filter_map(|(lane, _)| kernel.owns_lane(lane).then_some(lane))
                     .collect(),
                 other_active: kernel.has_other_active_operations(),
+                lane_mask_offset: (!region.is_whole()).then(|| region.mask()),
             };
             let snapshot = ActorSnapshot {
                 completion_mutations: cursor.completion_mutations(),

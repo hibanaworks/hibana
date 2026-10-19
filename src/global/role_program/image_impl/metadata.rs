@@ -543,6 +543,50 @@ pub(super) const fn lane_columns_are_coherent<const N: usize>(
         };
         route_slot += 1;
     }
-    expected_start == columns.lane_bits.len as usize
+    parallel_mask_tail_is_canonical(bytes, columns, active_lane_row, expected_start)
         && lane_step_start == columns.route_arm_lane_step_rows.len as usize
+}
+
+const fn parallel_mask_tail_is_canonical<const N: usize>(
+    bytes: &[u8; N],
+    columns: RoleImageColumns,
+    active: PackedLaneRange,
+    mut row: usize,
+) -> bool {
+    let end = columns.lane_bits.len as usize;
+    while row < end {
+        let header_end = row + super::parallel_masks::HEADER_BYTES;
+        if header_end > end {
+            return false;
+        }
+        let base = columns.lane_bits.offset as usize + row;
+        let Some(start) = read_u16(bytes, base + 1) else {
+            return false;
+        };
+        let Some(stop) = read_u16(bytes, base + 3) else {
+            return false;
+        };
+        if base + 5 >= N {
+            return false;
+        }
+        let len = bytes[base + 5] as usize;
+        if start >= stop || len == 0 || len > active.len() || header_end + len > end {
+            return false;
+        }
+        let mut byte = 0;
+        while byte < len {
+            let offset = base + super::parallel_masks::HEADER_BYTES + byte;
+            let active_offset = columns.lane_bits.offset as usize + active.start() + byte;
+            if offset >= N || active_offset >= N {
+                return false;
+            }
+            if bytes[offset] & !bytes[active_offset] != 0 || (byte + 1 == len && bytes[offset] == 0)
+            {
+                return false;
+            }
+            byte += 1;
+        }
+        row = header_end + len;
+    }
+    row == end
 }

@@ -524,6 +524,8 @@ Applying these results to a running system requires:
    observable closure required by the selected model.
 4. The application eventually issues the communication required by its local
    continuation, and the executor continues polling its pending futures.
+   Authority-bearing futures and fragments remain reachable until they complete
+   or are dropped normally.
 5. The runtime implementation follows the model's operation and ownership rules.
 
 Creating a future and polling it are separate responsibilities. For independent
@@ -533,6 +535,12 @@ that the application never calls. These application and executor assumptions
 do not establish that a particular Endpoint is owned, callable or admitted;
 the runtime and its implementation correspondence must still establish those
 properties.
+
+Leaking an authority-bearing future or fragment with `mem::forget` violates
+the progress assumptions. Its `Drop` does not run, so the runtime does not
+automatically cancel it, report a fault or restore its authority. The peer may
+keep waiting until the transport reports a deadline or closure. This does not
+duplicate authority, but it can prevent progress.
 
 Under these assumptions, a live, unfinished protocol has an enabled
 communication transition. This is **protocol deadlock freedom within one

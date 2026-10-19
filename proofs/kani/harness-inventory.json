@@ -113,6 +113,7 @@
       "endpoint::transfer::kani::owned_envelope_preserves_the_resource_and_full_event_identifier"
     ],
     "../../src/g/role_projection/kani.rs": [
+      "g::role_projection::kani::cached_parallel_lane_membership_is_exact_for_every_probe_lane",
       "g::role_projection::kani::initial_resource_issuance_cannot_confer_later_route_control",
       "g::role_projection::kani::received_controller_view_has_only_its_projected_route"
     ],

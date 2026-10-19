@@ -522,6 +522,19 @@ impl EventCursor {
         self.machine().program_ref()
     }
 
+    pub(crate) fn parallel_borrow_mask(&self, view: u8, start: usize, stop: usize) -> Option<u16> {
+        self.machine()
+            .event_program()
+            .parallel_borrow_mask(view, start, stop)
+    }
+
+    #[inline]
+    pub(crate) fn parallel_borrow_owns_lane(&self, mask: u16, lane: usize) -> bool {
+        self.machine()
+            .event_program()
+            .parallel_borrow_owns_lane(mask, lane)
+    }
+
     #[inline(always)]
     fn state(&self) -> &EventCursorState {
         if self.state.is_null() {

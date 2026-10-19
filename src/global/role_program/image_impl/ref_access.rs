@@ -14,6 +14,7 @@ use crate::global::{
 };
 
 mod entry_resources;
+mod parallel_masks;
 #[cfg(all(test, hibana_repo_tests))]
 mod tests;
 mod validation;
@@ -146,6 +147,7 @@ impl RoleImageRef {
             invalid_resident_descriptor();
         }
         image.validate_resident_events();
+        image.validate_parallel_borrow_masks();
         image
     }
 
