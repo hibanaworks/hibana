@@ -280,30 +280,107 @@ private def occurrenceCandidatePredecessor? (plan : SourceOccurrenceCut source)
     plan.matchesAction image choreo image.role pathIndex row.eventId before.event before.side &&
       precedes plan.expanded plan.path.bindings before target
 
+/-- A completed region may have selected a different arm from the current
+visit. Locate its causal operations through all static rows and original
+source ordinals, without reinterpreting them under the current branch. -/
+private def occurrenceRegionComplete (plan : SourceOccurrenceCut source)
+    (image : RustDescriptorImage) (data : DecodedActorOrder) (roll : DecodedRollRow)
+    (points : List SourcePoint) (target : ActionId) : Bool :=
+  (sourceVisitActions plan.path.bindings).all fun before =>
+    !precedes plan.expanded plan.path.bindings before target ||
+      !(data.rows.any fun prior =>
+        roll.eventStart ≤ prior.eventId && prior.eventId < roll.eventStart + roll.eventLength &&
+          decide (prior.actionId.side = before.side) &&
+          image.eventEffIndex? prior.eventId ==
+            ((plan.unfolding.occurrences 0)[before.event]?).map Prod.fst) ||
+      points.contains (.committed before)
+
 /-- Compare the authentic current/fresh base with the same chronological
 occurrence history. The predecessor domain is derived from the complete source
-descriptor. For each row the last matching causal occurrence is used, not an
-old equal envelope or a caller-supplied subset. No raw admission result or
+descriptor. A retained region checks its complete causal domain, including
+inactive old arms. Other rows use their last matching causal occurrence, not
+an old equal envelope or a caller-supplied subset. No raw admission result or
 desired Rust value is assumed by this check. -/
 def SourceOccurrenceCut.candidateHistoryMatches (plan : SourceOccurrenceCut source)
     (image : RustDescriptorImage) (choreo : Choreo) (pathIndex : Nat)
     (data : DecodedActorOrder) (path : NormalizedPath) (row : DecodedActorRow)
-    (base : ActorProgressObservation) (points : List SourcePoint) (target : ActionId) : Bool :=
+    (base : ActorProgressObservation) (points : List SourcePoint) (target : ActionId)
+    (retained : List Nat := []) : Bool :=
   plan.matchesAction image choreo image.role pathIndex row.eventId target.event target.side &&
     !points.contains (.committed target) &&
     decide (base.doneState.done row.eventId = points.contains (.committed target)) &&
     (data.sourcePredecessors path row.eventId).all fun event =>
-      match (data.activeRows path).find? (fun prior => prior.eventId == event) with
-      | none => false
-      | some prior =>
-        match occurrenceCandidatePredecessor? plan image choreo pathIndex prior target with
+      match sourceRetainedRegion? image choreo retained row event with
+      | some roll => occurrenceRegionComplete plan image data roll points target
+      | none =>
+        match (data.activeRows path).find? (fun prior => prior.eventId == event) with
         | none => false
-        | some before => decide (base.doneState.done event = points.contains (.committed before))
+        | some prior =>
+          match occurrenceCandidatePredecessor? plan image choreo pathIndex prior target with
+          | none => false
+          | some before => decide (sourceCandidatePredecessorDone image choreo retained base row event =
+              points.contains (.committed before))
+
+/-- Only past-history correspondence is needed to derive source prerequisite
+support, including an earlier completed visit. The local projected query and
+actual acceptance evidence still derive source readiness. -/
+private theorem a_projected_occurrence_has_supported_readiness
+    {image : RustDescriptorImage} {choreo : Choreo} {pathIndex : Nat}
+    {data : DecodedActorOrder} {path : NormalizedPath} {row : DecodedActorRow}
+    {base : ActorProgressObservation} {retained : List Nat}
+    {plan : SourceOccurrenceCut source} {points : List SourcePoint} {target : ActionId}
+    (correspondence : plan.candidateHistoryMatches image choreo pathIndex
+      data path row base points target (retained := retained) = true)
+    (localReady : occurrenceLocalReady plan image.role
+      (occurrenceLocalHistory plan image.role points) target.entryPoint = true)
+    (wire : occurrenceWireReady points target.entryPoint = true) :
+    sourceCandidateRowReady image choreo retained data path base row = true := by
+  have globalReady := (projected_occurrence_readiness_is_exact plan points target.entryPoint).mpr
+    ⟨image.role, localReady, wire⟩
+  obtain ⟨after, step⟩ := a_checked_source_occurrence_has_its_exact_transition
+    (occurrenceCut plan points) target.entryPoint globalReady
+  have predecessors : ∀ before, precedes plan.expanded plan.path.bindings before target = true →
+      points.contains (.committed before) = true := by
+    intro before ordered
+    cases step with
+    | advance present pending ready => exact ready _ (.ordered ordered)
+  unfold SourceOccurrenceCut.candidateHistoryMatches at correspondence
+  simp only [Bool.and_eq_true, Bool.not_eq_true', decide_eq_true_eq] at correspondence
+  rcases correspondence with ⟨⟨⟨_matched, pending⟩, targetAt⟩, rows⟩
+  have ready : sourceCandidateRowReady image choreo retained data path base row = true := by
+    apply Bool.and_eq_true_iff.mpr
+    refine ⟨?_, List.all_eq_true.mpr ?_⟩
+    · rw [targetAt, pending]
+      rfl
+    · intro event present
+      have same := List.all_eq_true.mp rows event present
+      cases regionAt : sourceRetainedRegion? image choreo retained row event with
+      | some roll =>
+        simp only [sourceCandidatePredecessorDone, regionAt, Option.isSome_some, Bool.or_true]
+      | none =>
+        simp only [regionAt] at same
+        cases priorAt : (data.activeRows path).find? (fun prior => prior.eventId == event) with
+        | none => simp only [priorAt, Bool.false_eq_true] at same
+        | some prior =>
+          simp only [priorAt] at same
+          cases beforeAt : occurrenceCandidatePredecessor? plan image choreo pathIndex prior target with
+          | none => simp only [beforeAt, Bool.false_eq_true] at same
+          | some before =>
+            have doneAt : sourceCandidatePredecessorDone image choreo retained base row event =
+                points.contains (.committed before) := by
+              simpa only [beforeAt, decide_eq_true_eq] using same
+            unfold occurrenceCandidatePredecessor? at beforeAt
+            have predicate := List.find?_some
+              (p := fun earlier : ActionId => plan.matchesAction image choreo image.role pathIndex
+                prior.eventId earlier.event earlier.side &&
+                  precedes plan.expanded plan.path.bindings earlier target) beforeAt
+            have order := (Bool.and_eq_true_iff.mp predicate).2
+            exact doneAt.trans (predecessors before order)
+  exact ready
 
 /-- Lift an enabled occurrence through the actual descriptor's current/fresh
-base to its measured raw cursor result. Only past-history correspondence is
-checked; source readiness is derived from the projected query and acceptance.
-This does not claim a callable future or transport completion. -/
+base. Empty retained evidence recovers the strict current-event result; no
+callable future or transport completion is assumed. -/
 theorem a_projected_occurrence_has_actual_candidate_admission
     {sample : ActorAdmissionObservation} {image : RustDescriptorImage} {choreo : Choreo}
     {previousPath : Nat} {data : DecodedActorOrder} {path : NormalizedPath}
@@ -320,42 +397,36 @@ theorem a_projected_occurrence_has_actual_candidate_admission
       (occurrenceLocalHistory plan image.role points) target.entryPoint = true)
     (wire : occurrenceWireReady points target.entryPoint = true) :
     sourceRowReady data path base row = true ∧ sample.admitted[row.eventId]? = some true := by
-  have globalReady := (projected_occurrence_readiness_is_exact plan points target.entryPoint).mpr
-    ⟨image.role, localReady, wire⟩
-  obtain ⟨after, step⟩ := a_checked_source_occurrence_has_its_exact_transition
-    (occurrenceCut plan points) target.entryPoint globalReady
-  have predecessors : ∀ before, precedes plan.expanded plan.path.bindings before target = true →
-      points.contains (.committed before) = true := by
-    intro before ordered
-    cases step with
-    | advance present pending ready => exact ready _ (.ordered ordered)
-  unfold SourceOccurrenceCut.candidateHistoryMatches at correspondence
-  simp only [Bool.and_eq_true, Bool.not_eq_true', decide_eq_true_eq] at correspondence
-  rcases correspondence with ⟨⟨⟨_matched, pending⟩, targetAt⟩, rows⟩
+  have supported := a_projected_occurrence_has_supported_readiness correspondence localReady wire
   have ready : sourceRowReady data path base row = true := by
-    apply Bool.and_eq_true_iff.mpr
-    refine ⟨?_, List.all_eq_true.mpr ?_⟩
-    · rw [targetAt, pending]
-      rfl
-    · intro event present
-      have same := List.all_eq_true.mp rows event present
-      cases priorAt : (data.activeRows path).find? (fun prior => prior.eventId == event) with
-      | none => simp only [priorAt, Bool.false_eq_true] at same
-      | some prior =>
-        simp only [priorAt] at same
-        cases beforeAt : occurrenceCandidatePredecessor? plan image choreo sample.pathIndex prior target with
-        | none => simp only [beforeAt, Bool.false_eq_true] at same
-        | some before =>
-          have doneAt : base.doneState.done event = points.contains (.committed before) := by
-            simpa only [beforeAt, decide_eq_true_eq] using same
-          unfold occurrenceCandidatePredecessor? at beforeAt
-          have predicate := List.find?_some
-            (p := fun earlier : ActionId => plan.matchesAction image choreo image.role sample.pathIndex
-              prior.eventId earlier.event earlier.side &&
-                precedes plan.expanded plan.path.bindings earlier target) beforeAt
-          have order := (Bool.and_eq_true_iff.mp predicate).2
-          exact doneAt.trans (predecessors before order)
+    simpa only [source_candidate_without_retained_completion_is_current] using supported
   exact ⟨ready, a_ready_source_candidate_base_has_actual_cursor_admission
     checked decoded pathAt member origin ready⟩
+
+/-- Lift a late incoming continuation whose prerequisite belongs to a past
+visit. Its raw admission is obtained from the same read-only cursor evidence;
+only chronological causal correspondence, local order and actual acceptance
+are inputs. The proof does not require an application future to exist. -/
+theorem a_projected_current_occurrence_has_actual_candidate_admission
+    {sample : ActorAdmissionObservation} {image : RustDescriptorImage} {choreo : Choreo}
+    {previousPath : Nat} {data : DecodedActorOrder} {path : NormalizedPath}
+    {row : DecodedActorRow}
+    {plan : SourceOccurrenceCut source} {points : List SourcePoint} {target : ActionId}
+    (checked : sample.candidateCheck image choreo previousPath = true)
+    (decoded : image.decodeActorOrder? choreo = some data)
+    (pathAt : data.normalized.paths[sample.pathIndex]? = some path)
+    (member : row ∈ data.activeRows path)
+    (agrees : observedChoicesAgree (canonicalProgramSource choreo) path sample.snapshot = true)
+    (_sameSource : choreo.ownershipSource? = some source)
+    (correspondence : plan.candidateHistoryMatches image choreo sample.pathIndex
+      data path row sample.snapshot points target (retained := sample.retainedRolls) = true)
+    (localReady : occurrenceLocalReady plan image.role
+      (occurrenceLocalHistory plan image.role points) target.entryPoint = true)
+    (wire : occurrenceWireReady points target.entryPoint = true) :
+    sourceCandidateRowReady image choreo sample.retainedRolls data path sample.snapshot row = true ∧
+      sample.admitted[row.eventId]? = some true := by
+  have ready := a_projected_occurrence_has_supported_readiness correspondence localReady wire
+  exact ⟨ready, a_ready_current_candidate_has_actual_cursor_admission
+    checked decoded pathAt member agrees ready⟩
 
 end Hibana

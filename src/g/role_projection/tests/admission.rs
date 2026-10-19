@@ -185,7 +185,7 @@ fn source_ready_rows_match_actual_admission_across_a_parallel_owned_visit() {
                 ] {
                     source.push_str(&std::format!(
                         "def {name} : Hibana.ActorAdmissionObservation := {{ snapshot := {}, \
-                         pathIndex := 0, admitted := {admitted:?} }}\n\n\
+                         pathIndex := 0, admitted := {admitted:?}, retainedRolls := {:?} }}\n\n\
                          theorem {name}Checked : {name}.check admissionImage admissionChoreo = true := by decide\n\n\
                          theorem {name}SourceReadiness :\n  \
                          ∃ data path, admissionImage.decodeActorOrder? admissionChoreo = some data ∧\n    \
@@ -198,6 +198,7 @@ fn source_ready_rows_match_actual_admission_across_a_parallel_owned_visit() {
                          Hibana.sourceRowViewsIssued path {name}.snapshot row = true) :=\n  \
                          Hibana.accepted_actor_admission_has_exact_source_readiness {name}Checked\n\n",
                         super::commit::observation_source(&snapshot),
+                        snapshot.retained_rolls,
                     ));
                     source.push_str(&std::format!(
                         "def {name}MutationCount : Nat := {}\n\n",

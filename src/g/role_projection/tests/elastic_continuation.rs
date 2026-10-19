@@ -9,6 +9,15 @@ type Ack = g::Msg<202, u32>;
 type Finish = g::Msg<203, u32>;
 type Body = g::Seq<g::Send<0, 1, Start>, g::Send<1, 0, Ack>>;
 type Steps = g::Seq<g::Roll<Body>, g::Send<1, 0, Finish>>;
+type Stop = g::Msg<204, u32>;
+type OtherAck = g::Msg<208, u32>;
+type Final = g::Msg<209, u32>;
+type BranchBody =
+    g::Seq<g::Send<0, 1, Start>, g::Route<g::Send<1, 0, Ack>, g::Send<1, 0, OtherAck>>>;
+type BranchSteps = g::Seq<
+    g::Roll<BranchBody>,
+    g::Seq<g::Route<g::Send<1, 0, Finish>, g::Send<1, 0, Stop>>, g::Send<0, 1, Final>>,
+>;
 
 #[test]
 fn a_queued_old_continuation_survives_a_new_body_visit() {
@@ -50,6 +59,12 @@ fn a_queued_old_continuation_survives_a_new_body_visit() {
                 a.send::<Start>(&10).await.unwrap();
                 assert_eq!(b.recv::<Start>().await.unwrap(), 10);
                 b.send::<Ack>(&11).await.unwrap();
+                // SAFETY: a retains its pinned TestTransport actor and no
+                // operation is polled between these read-only observations.
+                let before = unsafe { crate::endpoint::proof_snapshot::actor_snapshot(&a) };
+                let admitted = unsafe { crate::endpoint::proof_snapshot::actor_admissions(&a) };
+                assert_eq!(before.retained_rolls, [0]);
+                assert_eq!(admitted, [false, true, true]);
                 assert_eq!(a.recv::<Finish>().await.unwrap(), 9);
                 assert_eq!(a.recv::<Ack>().await.unwrap(), 11);
                 a.send::<Start>(&12).await.unwrap();
@@ -63,23 +78,125 @@ fn a_queued_old_continuation_survives_a_new_body_visit() {
         });
 }
 
+/// Serialize read-only evidence; all Endpoint operations remain above.
+#[cfg(not(miri))]
+fn write_retained_admission(
+    snapshot: &crate::endpoint::proof_snapshot::ActorSnapshot,
+    admitted: &[bool],
+) {
+    use crate::test_support::{lean_choreo::LeanChoreo, lean_descriptor::descriptor_source};
+    use std::string::ToString;
+    let image = descriptor_source(RoleDescriptorRef::from_resident(
+        &RoleProjection::<0, BranchSteps, 32>::IMAGE_REF,
+    ));
+    let choreo = BranchSteps::lean_source();
+    let state = super::commit::observation_source(snapshot);
+    let admitted = admitted
+        .iter()
+        .map(bool::to_string)
+        .collect::<std::vec::Vec<_>>()
+        .join(", ");
+    let retained = snapshot
+        .retained_rolls
+        .iter()
+        .map(u16::to_string)
+        .collect::<std::vec::Vec<_>>()
+        .join(", ");
+    let source = std::format!(
+        r#"import Hibana.SourceOccurrenceTrace
+
+set_option maxRecDepth 10000
+def elasticChoreo : Hibana.Choreo := {choreo}
+def elasticImage : Hibana.RustDescriptorImage := {image}
+def elasticSnapshot : Hibana.ActorProgressObservation := {state}
+def elasticCandidate : Hibana.ActorAdmissionObservation := {{
+  snapshot := elasticSnapshot, pathIndex := 2, admitted := [{admitted}], retainedRolls := [{retained}]
+}}
+def elasticData : Hibana.DecodedActorOrder := (elasticImage.decodeActorOrder? elasticChoreo).get (by decide)
+def elasticPath : Hibana.EndpointDelegation.NormalizedPath := elasticData.normalized.paths[2]'(by decide)
+def elasticFinish : Hibana.DecodedActorRow := elasticData.rows[3]'(by decide)
+
+theorem actualLateCandidateIsChecked : elasticCandidate.candidateCheck elasticImage elasticChoreo 2 = true := by decide
+theorem currentBitsCannotSupplyTheOldAck :
+    Hibana.sourceRowReady elasticData elasticPath elasticSnapshot elasticFinish = false := by decide
+theorem retainedVisitSuppliesTheLateReceive :
+    Hibana.sourceCandidateRowReady elasticImage elasticChoreo elasticCandidate.retainedRolls
+      elasticData elasticPath elasticSnapshot elasticFinish = true := by decide
+theorem forgettingTheRetainedVisitIsRejected :
+    ({{ elasticCandidate with retainedRolls := [] }} : Hibana.ActorAdmissionObservation).candidateCheck
+      elasticImage elasticChoreo 2 = false := by decide
+theorem anUnknownRetainedScopeIsRejected :
+    ({{ elasticCandidate with retainedRolls := [65535] }} : Hibana.ActorAdmissionObservation).candidateCheck
+      elasticImage elasticChoreo 2 = false := by decide
+theorem aRepeatedRetainedScopeIsRejected :
+    ({{ elasticCandidate with retainedRolls := [0, 0] }} : Hibana.ActorAdmissionObservation).candidateCheck
+      elasticImage elasticChoreo 2 = false := by decide
+theorem anOldVisitCannotSupplyTheFreshStart :
+    Hibana.sourceCandidateRowReady elasticImage elasticChoreo elasticCandidate.retainedRolls
+      elasticData elasticPath
+      {{ elasticSnapshot with steps := elasticSnapshot.steps.set 0 {{ elasticSnapshot.steps[0]'(by decide) with done := false }} }}
+      (elasticData.rows[2]'(by decide)) = false := by decide
+def elasticSource : Hibana.EndpointDelegation.Source := elasticChoreo.ownershipSource?.get (by decide)
+def elasticStartMessage : Hibana.EndpointDelegation.Message := (elasticSource.messageEntries 0)[0]'(by decide) |>.2
+def elasticAckMessage : Hibana.EndpointDelegation.Message := (elasticSource.messageEntries 0)[1]'(by decide) |>.2
+def elasticOtherMessage : Hibana.EndpointDelegation.Message := (elasticSource.messageEntries 0)[2]'(by decide) |>.2
+def elasticFinishMessage : Hibana.EndpointDelegation.Message := (elasticSource.messageEntries 0)[3]'(by decide) |>.2
+def elasticStopMessage : Hibana.EndpointDelegation.Message := (elasticSource.messageEntries 0)[4]'(by decide) |>.2
+def elasticFinalMessage : Hibana.EndpointDelegation.Message := (elasticSource.messageEntries 0)[5]'(by decide) |>.2
+def elasticBody : Hibana.EndpointDelegation.Source := .seq (.send elasticStartMessage)
+  (.route none (.send elasticAckMessage) (.send elasticOtherMessage))
+def elasticContinuation : Hibana.EndpointDelegation.Source := .seq
+  (.route none (.send elasticFinishMessage) (.send elasticStopMessage)) (.send elasticFinalMessage)
+def elasticExpanded : Hibana.EndpointDelegation.Source := .seq elasticBody (.par elasticBody elasticContinuation)
+def elasticOriginalNormalization : Hibana.EndpointDelegation.Normalization :=
+  (Hibana.EndpointDelegation.normalize elasticSource).get (by decide)
+def elasticExpandedNormalization : Hibana.EndpointDelegation.Normalization :=
+  (Hibana.EndpointDelegation.normalize elasticExpanded).get (by decide)
+def elasticPlan : Hibana.SourceOccurrenceCut elasticSource := {{
+  original := elasticOriginalNormalization, originalAccepted := by rfl
+  expanded := elasticExpanded
+  unfolding := .resumeAlongsideContinuation (.rollOnce (.oneCopy elasticBody))
+    (.rollOnce (.oneCopy elasticBody)) (.oneCopy elasticContinuation)
+  normalized := elasticExpandedNormalization, accepted := by rfl
+  sameIssuance := by rfl
+  path := elasticExpandedNormalization.paths[2]'(by decide), selected := by decide
+  observed := fun _ => false
+}}
+def elasticPoints : List Hibana.SourcePoint := [
+  .accepted 0, .committed ⟨0, .send⟩, .committed ⟨0, .receive⟩,
+  .accepted 1, .committed ⟨1, .send⟩, .committed ⟨1, .receive⟩,
+  .accepted 6, .committed ⟨6, .send⟩,
+  .accepted 3, .committed ⟨3, .send⟩, .committed ⟨3, .receive⟩,
+  .accepted 5, .committed ⟨5, .send⟩]
+def elasticTarget : Hibana.EndpointDelegation.ActionId := ⟨6, .receive⟩
+
+theorem theActualPastSupportMatchesItsCausalOccurrences :
+    elasticPlan.candidateHistoryMatches elasticImage elasticChoreo 2 elasticData elasticPath elasticFinish
+      elasticSnapshot elasticPoints elasticTarget (retained := elasticCandidate.retainedRolls) = true := by decide
+theorem interpretingTheCurrentBranchAsThePastIsRejected :
+    elasticPlan.candidateHistoryMatches elasticImage elasticChoreo 2 elasticData elasticPath elasticFinish
+      elasticSnapshot elasticPoints elasticTarget = false := by decide
+theorem theLateReceiveHasActualRawAdmission : elasticCandidate.admitted[3]? = some true :=
+  (Hibana.a_projected_current_occurrence_has_actual_candidate_admission actualLateCandidateIsChecked
+    (data := elasticData) (path := elasticPath) (row := elasticFinish)
+    (plan := elasticPlan) (points := elasticPoints) (target := elasticTarget)
+    (by rfl) (by rfl) (by decide) (by decide) (by rfl) theActualPastSupportMatchesItsCausalOccurrences
+    (by decide) (by decide)).2
+"#
+    );
+    let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/lean-proof");
+    std::fs::create_dir_all(&directory).unwrap();
+    std::fs::write(directory.join("ElasticContinuationGenerated.lean"), source).unwrap();
+}
+
 #[test]
 fn a_queued_old_branch_does_not_skip_the_fresh_body_receive() {
-    type Stop = g::Msg<204, u32>;
-    type OtherAck = g::Msg<208, u32>;
-    type Final = g::Msg<209, u32>;
-    type ChoiceBody =
-        g::Seq<g::Send<0, 1, Start>, g::Route<g::Send<1, 0, Ack>, g::Send<1, 0, OtherAck>>>;
-    type Choice = g::Seq<
-        g::Roll<ChoiceBody>,
-        g::Seq<g::Route<g::Send<1, 0, Finish>, g::Send<1, 0, Stop>>, g::Send<0, 1, Final>>,
-    >;
-    let () = g::ProgramProjection::<Choice, 32>::VALIDATION;
+    let () = g::ProgramProjection::<BranchSteps, 32>::VALIDATION;
     let a_program = crate::global::role_program::role_program_from_image::<0>(
-        &RoleProjection::<0, Choice, 32>::IMAGE_REF,
+        &RoleProjection::<0, BranchSteps, 32>::IMAGE_REF,
     );
     let b_program = crate::global::role_program::role_program_from_image::<1>(
-        &RoleProjection::<1, Choice, 32>::IMAGE_REF,
+        &RoleProjection::<1, BranchSteps, 32>::IMAGE_REF,
     );
     tokio::runtime::Builder::new_current_thread()
         .enable_time()
@@ -119,6 +236,16 @@ fn a_queued_old_branch_does_not_skip_the_fresh_body_receive() {
                     a.send::<Start>(&10).await.unwrap();
                     assert_eq!(b.recv::<Start>().await.unwrap(), 10);
                     b.send::<OtherAck>(&11).await.unwrap();
+                    // SAFETY: a owns this pinned TestTransport actor; no poll
+                    // occurs between the two copied admission observations.
+                    let before = unsafe { crate::endpoint::proof_snapshot::actor_snapshot(&a) };
+                    let admitted = unsafe { crate::endpoint::proof_snapshot::actor_admissions(&a) };
+                    assert_eq!(before.retained_rolls, [0]);
+                    assert!(admitted[2] && admitted[3]);
+                    #[cfg(not(miri))]
+                    if expected_label == 203 {
+                        write_retained_admission(&before, &admitted);
+                    }
                     let branch = a.offer().await.unwrap();
                     assert_eq!(branch.label(), expected_label);
                     match branch.label() {
@@ -249,13 +376,13 @@ fn retained_roll_completion_has_storage_past_a_full_event_word() {
 #[test]
 fn a_late_branch_is_available_while_the_new_body_head_is_ordinary() {
     type Stop = g::Msg<204, u32>;
-    type Choice = g::Seq<g::Roll<Body>, g::Route<g::Send<1, 0, Finish>, g::Send<1, 0, Stop>>>;
-    let () = g::ProgramProjection::<Choice, 16>::VALIDATION;
+    type BranchSteps = g::Seq<g::Roll<Body>, g::Route<g::Send<1, 0, Finish>, g::Send<1, 0, Stop>>>;
+    let () = g::ProgramProjection::<BranchSteps, 16>::VALIDATION;
     let a_program = crate::global::role_program::role_program_from_image::<0>(
-        &RoleProjection::<0, Choice, 16>::IMAGE_REF,
+        &RoleProjection::<0, BranchSteps, 16>::IMAGE_REF,
     );
     let b_program = crate::global::role_program::role_program_from_image::<1>(
-        &RoleProjection::<1, Choice, 16>::IMAGE_REF,
+        &RoleProjection::<1, BranchSteps, 16>::IMAGE_REF,
     );
     tokio::runtime::Builder::new_current_thread()
         .enable_time()

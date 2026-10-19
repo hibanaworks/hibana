@@ -54,7 +54,8 @@ everyCurrentReadPrerequisiteHasItsActualMixedCommitOrigin : ∀ (event : Nat),
                   record.step.SourceOrdered refreshImage refreshChoreo
 fabricatedBlockedAdmissionIsRejected : (have __src := freshBeforeCandidates;
       { snapshot := __src.snapshot, pathIndex := __src.pathIndex,
-        admitted := freshBeforeCandidates.admitted.set readRow.eventId true }).candidateCheck
+        admitted := freshBeforeCandidates.admitted.set readRow.eventId true,
+        retainedRolls := __src.retainedRolls }).candidateCheck
     refreshImage refreshChoreo 0 =
   false
 freshActualReceiptIsChecked : freshReceipt.ownedCheck refreshImage refreshChoreo freshWire 9058 = true
@@ -63,7 +64,8 @@ initialCandidateDomainIsChecked : initialCandidates.candidateCheck refreshImage 
 latestActualReceiptHasAnEarlierSourceEvent : freshFacts.effIndex < outsideFacts.effIndex
 missingFreshAdmissionIsRejected : (have __src := currentCandidates;
       { snapshot := __src.snapshot, pathIndex := __src.pathIndex,
-        admitted := currentCandidates.admitted.set bodyEntry.eventId false }).candidateCheck
+        admitted := currentCandidates.admitted.set bodyEntry.eventId false,
+        retainedRolls := __src.retainedRolls }).candidateCheck
     refreshImage refreshChoreo 0 =
   false
 mixedFreshOmittedClearsRejected : actorReentryMutationCheck mixedFresh mixedWire4 refreshImage refreshChoreo 9058 4
@@ -76,8 +78,8 @@ mixedRecord2Checked : mixedRecord2.check refreshImage refreshChoreo 9058 = true
 mixedRecord3Checked : mixedRecord3.check refreshImage refreshChoreo 9058 = true
 mixedRecord5Checked : mixedRecord5.check refreshImage refreshChoreo 9058 = true
 omittedCandidateRowIsRejected : (have __src := currentCandidates;
-      { snapshot := __src.snapshot, pathIndex := __src.pathIndex,
-        admitted := List.drop 1 currentCandidates.admitted }).candidateCheck
+      { snapshot := __src.snapshot, pathIndex := __src.pathIndex, admitted := List.drop 1 currentCandidates.admitted,
+        retainedRolls := __src.retainedRolls }).candidateCheck
     refreshImage refreshChoreo 0 =
   false
 outsideActualReceiptIsChecked : outsideReceipt.ownedCheck refreshImage refreshChoreo outsideWire 9058 = true

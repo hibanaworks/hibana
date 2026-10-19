@@ -1,6 +1,22 @@
 use super::super::super::{EventCursor, ScopeId};
 
 impl EventCursor {
+    /// Copy existing scope completions for qualification without treating a
+    /// raw admission result as the evidence for its own prerequisites.
+    #[cfg(all(test, hibana_repo_tests))]
+    pub(crate) fn retained_roll_scopes(&self) -> std::vec::Vec<u16> {
+        let mut scopes = std::vec::Vec::new();
+        let mut slot = 0;
+        while let Some((scope, _)) = self.machine().roll_scope_row_by_slot(slot) {
+            let index = self.local_steps_len() + slot;
+            if self.completed_event_words()[index / 32] & (1 << (index % 32)) != 0 {
+                scopes.push(scope.local_ordinal());
+            }
+            slot += 1;
+        }
+        scopes
+    }
+
     /// A restart replaces the current visit, but cannot revoke prerequisites
     /// already established for the enclosing continuation. These bits belong
     /// to that enclosing visit: restarting an ancestor clears its descendants.

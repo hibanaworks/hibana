@@ -1,0 +1,38 @@
+aRepeatedRetainedScopeIsRejected : (have __src := elasticCandidate;
+      { snapshot := __src.snapshot, pathIndex := __src.pathIndex, admitted := __src.admitted,
+        retainedRolls := [0, 0] }).candidateCheck
+    elasticImage elasticChoreo 2 =
+  false
+actualLateCandidateIsChecked : elasticCandidate.candidateCheck elasticImage elasticChoreo 2 = true
+anOldVisitCannotSupplyTheFreshStart : Hibana.sourceCandidateRowReady elasticImage elasticChoreo
+    elasticCandidate.retainedRolls elasticData elasticPath
+    (have __src := elasticSnapshot;
+    { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
+      views := __src.views,
+      steps :=
+        elasticSnapshot.steps.set 0
+          (have __src := elasticSnapshot.steps[0];
+          { effIndex := __src.effIndex, view := __src.view, side := __src.side, done := false }),
+      choices := __src.choices })
+    elasticData.rows[2] =
+  false
+anUnknownRetainedScopeIsRejected : (have __src := elasticCandidate;
+      { snapshot := __src.snapshot, pathIndex := __src.pathIndex, admitted := __src.admitted,
+        retainedRolls := [65535] }).candidateCheck
+    elasticImage elasticChoreo 2 =
+  false
+currentBitsCannotSupplyTheOldAck : Hibana.sourceRowReady elasticData elasticPath elasticSnapshot elasticFinish = false
+forgettingTheRetainedVisitIsRejected : (have __src := elasticCandidate;
+      { snapshot := __src.snapshot, pathIndex := __src.pathIndex, admitted := __src.admitted }).candidateCheck
+    elasticImage elasticChoreo 2 =
+  false
+interpretingTheCurrentBranchAsThePastIsRejected : elasticPlan.candidateHistoryMatches elasticImage elasticChoreo 2
+    elasticData elasticPath elasticFinish elasticSnapshot elasticPoints elasticTarget =
+  false
+retainedVisitSuppliesTheLateReceive : Hibana.sourceCandidateRowReady elasticImage elasticChoreo
+    elasticCandidate.retainedRolls elasticData elasticPath elasticSnapshot elasticFinish =
+  true
+theActualPastSupportMatchesItsCausalOccurrences : elasticPlan.candidateHistoryMatches elasticImage elasticChoreo 2
+    elasticData elasticPath elasticFinish elasticSnapshot elasticPoints elasticTarget elasticCandidate.retainedRolls =
+  true
+theLateReceiveHasActualRawAdmission : elasticCandidate.admitted[3]? = some true

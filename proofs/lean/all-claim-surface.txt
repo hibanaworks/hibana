@@ -2755,6 +2755,13 @@ Hibana.a_non_payload_view_adds_no_borrow_dependency : ∀ (current : Hibana.Publ
   (sent : Option.{0} Nat),
   @Ne.{1} Hibana.PublicOperationPhase current Hibana.PublicOperationPhase.sendPayload →
     @Eq.{1} Bool (Hibana.checkSendPayloadBorrow current resource sent) true
+Hibana.a_non_receive_candidate_never_uses_retained_completion : ∀ (image : Hibana.RustDescriptorImage)
+  (choreo : Hibana.Choreo) (retained : List.{0} Nat) (data : Hibana.DecodedActorOrder)
+  (path : Hibana.EndpointDelegation.NormalizedPath) (before : Hibana.ActorProgressObservation)
+  (row : Hibana.DecodedActorRow),
+  @Ne.{1} Hibana.EndpointDelegation.Side row.actionId.side Hibana.EndpointDelegation.Side.receive →
+    @Eq.{1} Bool (Hibana.sourceCandidateRowReady image choreo retained data path before row)
+      (Hibana.sourceRowReady data path before row)
 Hibana.a_parallel_sibling_cannot_supply_reentry_authority : ∀ (left right : Hibana.EndpointDelegation.Source)
   {earlier event : Nat},
   @LT.lt.{0} Nat instLTNat earlier left.eventCount →
@@ -3015,6 +3022,44 @@ Hibana.a_pending_payload_requires_its_own_send : ∀ (resource : Nat) (sent : Op
                                 (@Hibana.SourceOrderGroup.rows (images actor) choreo group) actor records))
                             (@List.length.{0} Nat (@Hibana.SourceOrderGroup.rows (images actor) choreo group))))
                         (@some.{0} Nat event))
+@Hibana.a_projected_current_occurrence_has_actual_candidate_admission : ∀ {source : Hibana.EndpointDelegation.Source}
+  {sample : Hibana.ActorAdmissionObservation} {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo}
+  {previousPath : Nat} {data : Hibana.DecodedActorOrder} {path : Hibana.EndpointDelegation.NormalizedPath}
+  {row : Hibana.DecodedActorRow} {plan : Hibana.SourceOccurrenceCut source} {points : List.{0} Hibana.SourcePoint}
+  {target : Hibana.EndpointDelegation.ActionId},
+  @Eq.{1} Bool (sample.candidateCheck image choreo previousPath) true →
+    @Eq.{1} (Option.{0} Hibana.DecodedActorOrder) (image.decodeActorOrder? choreo)
+        (@some.{0} Hibana.DecodedActorOrder data) →
+      @Eq.{1} (Option.{0} Hibana.EndpointDelegation.NormalizedPath)
+          (@getElem?.{0, 0, 0} (List.{0} Hibana.EndpointDelegation.NormalizedPath) Nat
+            Hibana.EndpointDelegation.NormalizedPath
+            (fun as i => @LT.lt.{0} Nat instLTNat i (@List.length.{0} Hibana.EndpointDelegation.NormalizedPath as))
+            (@List.instGetElem?NatLtLength.{0} Hibana.EndpointDelegation.NormalizedPath) data.normalized.paths
+            sample.pathIndex)
+          (@some.{0} Hibana.EndpointDelegation.NormalizedPath path) →
+        @Membership.mem.{0, 0} Hibana.DecodedActorRow (List.{0} Hibana.DecodedActorRow)
+            (@List.instMembership.{0} Hibana.DecodedActorRow) (data.activeRows path) row →
+          @Eq.{1} Bool (Hibana.observedChoicesAgree (Hibana.canonicalProgramSource choreo) path sample.snapshot) true →
+            @Eq.{1} (Option.{0} Hibana.EndpointDelegation.Source) choreo.ownershipSource?
+                (@some.{0} Hibana.EndpointDelegation.Source source) →
+              @Eq.{1} Bool
+                  (@Hibana.SourceOccurrenceCut.candidateHistoryMatches source plan image choreo sample.pathIndex data
+                    path row sample.snapshot points target sample.retainedRolls)
+                  true →
+                @Eq.{1} Bool
+                    (@Hibana.occurrenceLocalReady source plan image.role
+                      (@Hibana.occurrenceLocalHistory source plan image.role points) target.entryPoint)
+                    true →
+                  @Eq.{1} Bool (Hibana.occurrenceWireReady points target.entryPoint) true →
+                    And
+                      (@Eq.{1} Bool
+                        (Hibana.sourceCandidateRowReady image choreo sample.retainedRolls data path sample.snapshot row)
+                        true)
+                      (@Eq.{1} (Option.{0} Bool)
+                        (@getElem?.{0, 0, 0} (List.{0} Bool) Nat Bool
+                          (fun as i => @LT.lt.{0} Nat instLTNat i (@List.length.{0} Bool as))
+                          (@List.instGetElem?NatLtLength.{0} Bool) sample.admitted row.eventId)
+                        (@some.{0} Bool true))
 @Hibana.a_projected_occurrence_has_actual_candidate_admission : ∀ {source : Hibana.EndpointDelegation.Source}
   {sample : Hibana.ActorAdmissionObservation} {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo}
   {previousPath : Nat} {data : Hibana.DecodedActorOrder} {path : Hibana.EndpointDelegation.NormalizedPath}
@@ -3035,7 +3080,7 @@ Hibana.a_pending_payload_requires_its_own_send : ∀ (resource : Nat) (sent : Op
           Hibana.ActorSourceCandidateBase sample image choreo previousPath path row base →
             @Eq.{1} Bool
                 (@Hibana.SourceOccurrenceCut.candidateHistoryMatches source plan image choreo sample.pathIndex data path
-                  row base points target)
+                  row base points target (@List.nil.{0} Nat))
                 true →
               @Eq.{1} Bool
                   (@Hibana.occurrenceLocalReady source plan image.role
@@ -3894,6 +3939,29 @@ Hibana.a_pending_payload_requires_its_own_send : ∀ (resource : Nat) (sent : Op
                                           event))
                                       (And (@Eq.{1} Bool (record.check image choreo session) true)
                                         (record.step.SourceOrdered image choreo))))))
+@Hibana.a_ready_current_candidate_has_actual_cursor_admission : ∀ {sample : Hibana.ActorAdmissionObservation}
+  {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo} {previousPath : Nat} {data : Hibana.DecodedActorOrder}
+  {path : Hibana.EndpointDelegation.NormalizedPath} {row : Hibana.DecodedActorRow},
+  @Eq.{1} Bool (sample.candidateCheck image choreo previousPath) true →
+    @Eq.{1} (Option.{0} Hibana.DecodedActorOrder) (image.decodeActorOrder? choreo)
+        (@some.{0} Hibana.DecodedActorOrder data) →
+      @Eq.{1} (Option.{0} Hibana.EndpointDelegation.NormalizedPath)
+          (@getElem?.{0, 0, 0} (List.{0} Hibana.EndpointDelegation.NormalizedPath) Nat
+            Hibana.EndpointDelegation.NormalizedPath
+            (fun as i => @LT.lt.{0} Nat instLTNat i (@List.length.{0} Hibana.EndpointDelegation.NormalizedPath as))
+            (@List.instGetElem?NatLtLength.{0} Hibana.EndpointDelegation.NormalizedPath) data.normalized.paths
+            sample.pathIndex)
+          (@some.{0} Hibana.EndpointDelegation.NormalizedPath path) →
+        @Membership.mem.{0, 0} Hibana.DecodedActorRow (List.{0} Hibana.DecodedActorRow)
+            (@List.instMembership.{0} Hibana.DecodedActorRow) (data.activeRows path) row →
+          @Eq.{1} Bool (Hibana.observedChoicesAgree (Hibana.canonicalProgramSource choreo) path sample.snapshot) true →
+            @Eq.{1} Bool
+                (Hibana.sourceCandidateRowReady image choreo sample.retainedRolls data path sample.snapshot row) true →
+              @Eq.{1} (Option.{0} Bool)
+                (@getElem?.{0, 0, 0} (List.{0} Bool) Nat Bool
+                  (fun as i => @LT.lt.{0} Nat instLTNat i (@List.length.{0} Bool as))
+                  (@List.instGetElem?NatLtLength.{0} Bool) sample.admitted row.eventId)
+                (@some.{0} Bool true)
 @Hibana.a_ready_owned_admitted_row_has_its_actual_payload_custody : ∀ {sample : Hibana.ActorAdmissionObservation}
   {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo} {data : Hibana.DecodedActorOrder}
   {path : Hibana.EndpointDelegation.NormalizedPath} {row : Hibana.DecodedActorRow}
@@ -7186,9 +7254,10 @@ Hibana.causal_flow_monotone : ∀ (flow : Hibana.CausalFlowExpr) {left right : H
                         (fun as i => @LT.lt.{0} Nat instLTNat i (@List.length.{0} Bool as))
                         (@List.instGetElem?NatLtLength.{0} Bool) sample.admitted row.eventId)
                       (@some.{0} Bool
-                        ((Hibana.sourceCurrentCandidateReady choreo data path sample.snapshot row).or
-                          (Hibana.sourceFreshCandidateReady image choreo sample.snapshot previousPath sample.pathIndex
-                            data path row))))))
+                        ((Hibana.sourceCurrentCandidateReady image choreo sample.retainedRolls data path sample.snapshot
+                              row).or
+                          (Hibana.sourceFreshCandidateReady image choreo sample.retainedRolls sample.snapshot
+                            previousPath sample.pathIndex data path row))))))
 @Hibana.checked_actor_commit_preserves_actor_and_run : ∀ {sample : Hibana.ActorCommitObservation}
   {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo},
   @Eq.{1} Bool (sample.check image choreo) true →
@@ -13073,6 +13142,11 @@ Hibana.source_acceptance_observation_checks_are_exact : ∀ (entries : List.{0} 
           (@Eq.{1} (Option.{0} Hibana.EndpointDelegation.Action) (Hibana.EndpointDelegation.action? path.bindings id)
             (@some.{0} Hibana.EndpointDelegation.Action action))
           (@Eq.{1} Nat action.actor actor))
+Hibana.source_candidate_without_retained_completion_is_current : ∀ (image : Hibana.RustDescriptorImage)
+  (choreo : Hibana.Choreo) (data : Hibana.DecodedActorOrder) (path : Hibana.EndpointDelegation.NormalizedPath)
+  (before : Hibana.ActorProgressObservation) (row : Hibana.DecodedActorRow),
+  @Eq.{1} Bool (Hibana.sourceCandidateRowReady image choreo (@List.nil.{0} Nat) data path before row)
+    (Hibana.sourceRowReady data path before row)
 @Hibana.source_checked_carrier_receive_preserves_unique_authority : ∀ {sample : Hibana.ActorCommitObservation}
   {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo} {wire : Hibana.OwnedWireObservation} {session : Nat}
   {facts : Hibana.OwnedCommitFacts},

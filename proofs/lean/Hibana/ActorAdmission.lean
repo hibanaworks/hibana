@@ -8,6 +8,9 @@ structure ActorAdmissionObservation where
   snapshot : ActorProgressObservation
   pathIndex : Nat
   admitted : List Bool
+  /-- Copied completed-roll scopes, used by the current/fresh candidate check.
+  The selected-visit checker below deliberately concerns current event bits. -/
+  retainedRolls : List Nat := []
 
 def sourceRowReady (data : DecodedActorOrder)
     (path : EndpointDelegation.NormalizedPath)

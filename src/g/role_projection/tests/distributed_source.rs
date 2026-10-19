@@ -465,9 +465,9 @@ theorem distributedFreshMixedSourceIdentityBeforeItsNewReceivePair :
             .iter()
             .position(|step| matches!(step.action, super::LocalAction::Send { label: found, .. } if found == label))
             .unwrap();
-        writeln!(source, "private def distributedCandidate{index} : ActorAdmissionObservation := {{ snapshot := {}, pathIndex := 0, admitted := {admitted:?} }}\n\n\
+        writeln!(source, "private def distributedCandidate{index} : ActorAdmissionObservation := {{ snapshot := {}, pathIndex := 0, admitted := {admitted:?}, retainedRolls := {:?} }}\n\n\
             private def distributedCandidateRow{index} := (distributedCandidateData.rows[{event}]?).get (by decide)\n",
-            super::commit::observation_source(before)).unwrap();
+            super::commit::observation_source(before), before.retained_rolls).unwrap();
         let base = if let Some(scope) = before.steps[event].reentry_scope {
             std::format!(
                 "((prepareObservedActorBody? distributedImage0 distributedChoreo distributedCandidate{index}.snapshot 0 0 {scope} {event}).get (by decide)).2"

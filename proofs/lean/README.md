@@ -9,6 +9,14 @@ protocol kernel. The delegation models and their remaining reduction
 obligations are described below. This is not a source-level verification of
 arbitrary Rust code or a specification of a concrete transport.
 
+Qualification work is limited to the stated protocol, ownership and
+communication-progress claims. Application issuance, retention and necessary
+concurrent driving, and executor polling remain explicit premises. New proof
+work must close a named gap in those claims or address a concrete implementation
+counterexample. Additional object inventories, fixtures or theorem counts are
+not completion conditions. Once a changed boundary is checked, integration
+continues without expanding that target.
+
 ## Checked boundary
 
 For an accepted choreography and its exact role descriptors, the Lean
@@ -161,13 +169,15 @@ enabled actor's local query and acceptance evidence. It does not impose one
 pending call per actor or synchronized visits.
 
 For a candidate operation, `candidateHistoryMatches` derives the complete
-predecessor domain from the original descriptor. It resolves each predecessor
-to the last matching causal occurrence in that same chronological history,
-then compares the recorded completions with the authentic current or purely
-prepared fresh base. The admission theorem combines this correspondence with
-the projected query and transport acceptance to derive the source row's
-readiness and the measured raw cursor result. Raw readiness and the existence
-of a Rust future are not correspondence premises.
+predecessor domain from the original descriptor. Current prerequisites use
+their last matching causal occurrence in that same chronological history,
+compared with the authentic current or purely prepared fresh base. An incoming
+continuation may instead use a retained, completed roll region. That region's
+causal operations are located by their original source ordinals across all
+descriptor rows, including an older branch different from the current visit.
+The admission theorem combines this correspondence with the projected query
+and transport acceptance to derive readiness and the measured raw cursor
+result. Raw readiness and the existence of a Rust future are not premises.
 
 This proves source simulation and projected progress for the selected finite
 unfolding's local protocol model. Applying it to every production history still
@@ -183,8 +193,17 @@ send or a fresh body predecessor. An ancestor restart clears its descendants.
 Tokio regressions cover ordinary and branch continuations queued before a fresh
 visit, current body ordering, nested reset and a scope bit past 32 event bits.
 The mutation checker now counts these writes from the decoded roll rows.
-These implementation checks do not close the general historical correspondence
-above: the selected-visit `sourceRowReady` model still uses current event bits.
+The test-only candidate observation copies these existing retained bits under
+the same cursor lease. The branch regression rejects removing its retained
+scope, as well as duplicate or unknown scope entries.
+`ElasticContinuationGenerated.lean` connects that regression's
+actual cursor query to its chronological source occurrences; treating the
+current arm as the earlier visit is rejected. The generic current-candidate
+admission theorem covers retained incoming support, while outgoing operations
+still require current prerequisites. The selected-visit `sourceRowReady`
+model intentionally remains a current-event check. This cut-level connection
+does not establish the correspondence at every reachable production cut or
+complete the custody/FIFO/fault/closure composition above.
 
 The existing three-runtime mixed-message fixture qualifies both loan visits
 and the later Read/Value exchange through this projected model. Its generated

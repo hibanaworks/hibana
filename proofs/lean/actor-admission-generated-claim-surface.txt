@@ -51,7 +51,8 @@ changedObservationOrderRejected : Hibana.actorCommitHistoryCheck admissionImage 
     returned.snapshot [observedCommit0, observedCommit2, observedCommit1, observedCommit3] =
   false
 completedStepReplayRejected : (have __src := received;
-      { snapshot := __src.snapshot, pathIndex := __src.pathIndex, admitted := received.admitted.set 0 true }).check
+      { snapshot := __src.snapshot, pathIndex := __src.pathIndex, admitted := received.admitted.set 0 true,
+        retainedRolls := __src.retainedRolls }).check
     admissionImage admissionChoreo =
   false
 corruptedReceiptWireRejected : Hibana.actorCommitHistoryCheck admissionImage admissionChoreo 9053 initial.snapshot
@@ -170,11 +171,13 @@ joinedSourceReadiness : ∃ data path,
               (Hibana.sourceRowReady data path joined.snapshot row = true →
                 Hibana.sourceRowViewsIssued path joined.snapshot row = true)
 lostParallelReadinessRejected : (have __src := received;
-      { snapshot := __src.snapshot, pathIndex := __src.pathIndex, admitted := received.admitted.set 1 false }).check
+      { snapshot := __src.snapshot, pathIndex := __src.pathIndex, admitted := received.admitted.set 1 false,
+        retainedRolls := __src.retainedRolls }).check
     admissionImage admissionChoreo =
   false
 missingAdmissionRowRejected : (have __src := received;
-      { snapshot := __src.snapshot, pathIndex := __src.pathIndex, admitted := List.take 3 received.admitted }).check
+      { snapshot := __src.snapshot, pathIndex := __src.pathIndex, admitted := List.take 3 received.admitted,
+        retainedRolls := __src.retainedRolls }).check
     admissionImage admissionChoreo =
   false
 missingPayloadViewRejected : missingPayloadView.check admissionImage admissionChoreo = false
@@ -225,7 +228,8 @@ omittedReceiptCommitRejected : Hibana.actorCommitHistoryCheck admissionImage adm
 ownerAcceptChecked : ownerAccept.ownedCheck ownerImage admissionChoreo observedCommit0.wire 9053 = true
 ownerReturnChecked : ownerReturn.ownedCheck ownerImage admissionChoreo observedCommit3.wire 9053 = true
 prematureReturnRejected : (have __src := received;
-      { snapshot := __src.snapshot, pathIndex := __src.pathIndex, admitted := received.admitted.set 3 true }).check
+      { snapshot := __src.snapshot, pathIndex := __src.pathIndex, admitted := received.admitted.set 3 true,
+        retainedRolls := __src.retainedRolls }).check
     admissionImage admissionChoreo =
   false
 privatePayloadAndAcceptedFramesRemainDistinctFromApplicationValues : dbOwnerSealed.usable = [] ∧

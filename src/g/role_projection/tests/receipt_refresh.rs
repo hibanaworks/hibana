@@ -254,7 +254,7 @@ fn write_observations(
         "def refreshAdmissions : List Bool := {:?}\n\n",
         admitted[4],
     ));
-    for (name, candidates) in [
+    for ((name, candidates), snapshot) in [
         "initial",
         "outsideBefore",
         "outsideAfter",
@@ -263,12 +263,19 @@ fn write_observations(
     ]
     .into_iter()
     .zip(admitted)
-    {
+    .zip([
+        &snapshots[0],
+        &snapshots[3],
+        &snapshots[4],
+        &snapshots[5],
+        &snapshots[6],
+    ]) {
         source.push_str(&std::format!(
             "def {name}Candidates : Hibana.ActorAdmissionObservation := {{ snapshot := {name}, \
-             pathIndex := 0, admitted := {candidates:?} }}\n\n\
+             pathIndex := 0, admitted := {candidates:?}, retainedRolls := {:?} }}\n\n\
              theorem {name}CandidateDomainIsChecked : \
              {name}Candidates.candidateCheck refreshImage refreshChoreo 0 = true := by decide\n\n",
+            snapshot.retained_rolls,
         ));
     }
     source.push_str(r#"

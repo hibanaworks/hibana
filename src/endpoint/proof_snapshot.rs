@@ -222,6 +222,9 @@ pub(crate) struct ActorSnapshot {
     pub(crate) steps: Vec<StepSnapshot>,
     /// Committed route history. Unknown choices remain unknown.
     pub(crate) choices: Vec<(u16, Option<u8>)>,
+    /// Existing retained completion bits, separate from current event rows.
+    /// These are copied under the same actor lease and never drive progress.
+    pub(crate) retained_rolls: Vec<u16>,
 }
 
 impl ActorSnapshot {
@@ -453,6 +456,7 @@ unsafe fn snapshot_from_handle<T: crate::transport::Transport>(
                     })
                     .collect(),
                 steps,
+                retained_rolls: cursor.retained_roll_scopes(),
                 choices: (0..kernel.context.program.route_resolver_row_count())
                     .filter_map(|row| {
                         let (scope, _) = kernel

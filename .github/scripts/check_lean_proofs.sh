@@ -7,6 +7,7 @@ GENERATED="${ROOT_DIR}/target/lean-proof/Generated.lean"
 RUNTIME_GENERATED="${ROOT_DIR}/target/lean-proof/RuntimeGenerated.lean"
 PUBLIC_OPERATION_GENERATED="${ROOT_DIR}/target/lean-proof/PublicOperationGenerated.lean"
 PUBLIC_OPERATION_CUT_GENERATED="${ROOT_DIR}/target/lean-proof/ParallelOperationCutGenerated.lean"
+ELASTIC_CONTINUATION_GENERATED="${ROOT_DIR}/target/lean-proof/ElasticContinuationGenerated.lean"
 CAUSAL_GENERATED="${ROOT_DIR}/target/lean-proof/CausalGenerated.lean"
 PARALLEL_GENERATED="${ROOT_DIR}/target/lean-proof/ParallelGenerated.lean"
 PROGRAM_COLUMNS_GENERATED="${ROOT_DIR}/target/lean-proof/ProgramColumnsGenerated.lean"
@@ -71,7 +72,7 @@ bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" build-serial "${PROOF_
 bash "${ROOT_DIR}/.github/scripts/check_lean_claim_surface.sh"
 static_audit_output="$(run_audit \
   theorem-inventory \
-  --static "${PROOF_DIR}" "${STATIC_CLAIM_SNAPSHOT}" 1148 715 316 117)"
+  --static "${PROOF_DIR}" "${STATIC_CLAIM_SNAPSHOT}" 1152 717 318 117)"
 printf '%s\n' "${static_audit_output}"
 printf '%s\n' "${static_audit_output}" | bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard markers static
 bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" theorem-inventory \
@@ -83,6 +84,7 @@ mkdir -p "$(dirname "${GENERATED}")"
 rm -f "${GENERATED}" "${RUNTIME_GENERATED}" "${PUBLIC_OPERATION_GENERATED}" "${CAUSAL_GENERATED}" "${PARALLEL_GENERATED}" "${PROGRAM_COLUMNS_GENERATED}" "${PARTIAL_CHOICE_GENERATED}" "${CONTROLLER_GENERATED}" "${INGRESS_GENERATED}" "${REENTRY_GENERATED}" "${ACTOR_COMMIT_GENERATED}" "${ACTOR_REENTRY_COMMIT_GENERATED}" "${ACTOR_PARALLEL_REENTRY_GENERATED}" "${ACTOR_ROUTE_LEFT_REENTRY_GENERATED}" "${ACTOR_ROUTE_RIGHT_REENTRY_GENERATED}"
 rm -f "${OWNED_RECOVERY_GENERATED}"
 rm -f "${PUBLIC_OPERATION_CUT_GENERATED}"
+rm -f "${ELASTIC_CONTINUATION_GENERATED}"
 rm -f "${ACTOR_ADMISSION_GENERATED}"
 rm -f "${ACTOR_VISIT_GENERATED}"
 rm -f "${ACTOR_MUTATION_GENERATED}"
@@ -171,6 +173,12 @@ CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --li
 bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${OWNED_RECOVERY_GENERATED}" "owned resource receipts"
 run_audit generated-axioms --kernel "${OWNED_RECOVERY_GENERATED}" "${PROOF_DIR}" \
   "${PROOF_DIR}/owned-recovery-generated-claim-surface.txt" 5
+CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib \
+  g::role_projection::tests::elastic_continuation::a_queued_old_branch_does_not_skip_the_fresh_body_receive \
+  -- --exact
+bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${ELASTIC_CONTINUATION_GENERATED}" "retained continuation admission"
+run_audit generated-axioms --kernel "${ELASTIC_CONTINUATION_GENERATED}" "${PROOF_DIR}" \
+  "${PROOF_DIR}/elastic-continuation-generated-claim-surface.txt" 10
 CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib \
   g::role_projection::tests::local_return::a_local_branch_waits_for_another_view_to_receive_its_entry_resource \
   -- --exact
