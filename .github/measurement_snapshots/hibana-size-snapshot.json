@@ -1,7 +1,7 @@
 {
   "schema": 1,
-  "description": "The provisional runtime stack budget is 5 KiB (5120 bytes) per workload during Endpoint delegation completion. Modeled SRAM budgets include the same stack allowance and 64 bytes of headroom. Slab, resident storage and flash limits are unchanged. See runtime-stack-20261017.md for scope and current measurements.",
-  "toolchain": "1.95.0",
+  "description": "The provisional runtime stack budget is 5 KiB (5120 bytes) per workload during Endpoint delegation completion. Modeled SRAM budgets include the same stack allowance and 64 bytes of headroom. Latest-stable decoder measurements move 112 bytes of the section allowance from text to rodata without increasing the 169965-byte total flash budget. Slab, resident storage and SRAM limits are unchanged. See runtime-stack-20261017.md and decode-inlining-20261019.md for scope and measurements.",
+  "toolchain": "1.99.1",
   "flash_measurement": {
     "target": "thumbv6m-none-eabi",
     "profile": "release",
@@ -19,8 +19,8 @@
   "budget": {
     "thumbv6m_none_eabi_no_std_release_lib": {
       "sections": {
-        ".text": 154624,
-        ".rodata": 15341,
+        ".text": 154512,
+        ".rodata": 15453,
         ".data": 0,
         ".bss": 0,
         "flash_total": 169965

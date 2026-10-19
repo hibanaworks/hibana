@@ -181,7 +181,8 @@ fn layout(text: &str) -> Result<()> {
         ("OfferFuture", 3 * word),
         ("RecvFuture", 3 * word),
         ("BranchRecvFuture", 3 * word),
-        ("SendFuture", 5 * word),
+        // Same six-word bound as the library's owned/scoped target tests.
+        ("SendFuture", 6 * word),
         ("RawOfferFuture", 2 * word),
         ("RawRecvFuture", 2 * word),
         ("OfferFutureLease", 1),
@@ -906,7 +907,7 @@ mod tests {
             3 * w,
             3 * w,
             3 * w,
-            5 * w,
+            6 * w,
             2 * w,
             2 * w
         );
@@ -916,6 +917,13 @@ mod tests {
             }
         }
         assert!(layout(&line).is_ok());
+        assert!(
+            layout(&line.replace(
+                &format!("SendFuture={}", 6 * w),
+                &format!("SendFuture={}", 6 * w + 1),
+            ))
+            .is_err()
+        );
         assert!(
             layout(&line.replace(&format!("RecvFutureU64={}", 3 * w), "RecvFutureU64=999"))
                 .is_err()

@@ -396,6 +396,7 @@ impl RoleImageRef {
         }
     }
 
+    #[inline]
     pub(crate) const fn local_step_node(&self, step_idx: usize) -> Option<LocalNode> {
         if step_idx >= self.local_step_count() {
             None

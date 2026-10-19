@@ -263,6 +263,7 @@ impl PackedLocalEventRow {
         }
     }
 
+    #[inline]
     pub(crate) const fn to_node(
         self,
         action_ordinal: usize,
