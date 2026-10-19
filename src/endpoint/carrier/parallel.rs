@@ -4,14 +4,15 @@ impl<'cfg, T: crate::transport::Transport + 'cfg> crate::runtime::SessionKit<'cf
     pub(super) unsafe fn split_parallel_raw(
         ptr: NonNull<()>,
         handle: OperationHandle,
-    ) -> crate::endpoint::SendResult<[OperationRegion; 2]> {
+        regions: &mut [OperationRegion],
+    ) -> crate::endpoint::SendResult<()> {
         // SAFETY: the issued parent is exclusively borrowed by the split.
         unsafe {
             Self::with_public_endpoint_mut::<'cfg, _>(
                 ptr,
                 handle,
                 Err(crate::endpoint::SendError::PhaseInvariant),
-                |kernel| kernel.split_parallel(),
+                |kernel| kernel.split_parallel(regions),
             )
         }
     }

@@ -104,7 +104,7 @@ fn a_reentrant_arm_drop_cancels_and_wakes_its_pending_sibling() {
         )
         .unwrap();
     let mut endpoint = rv.enter(SessionId::new(1653), &program).unwrap();
-    let (mut left, right) = endpoint.par().unwrap();
+    let [mut left, right] = endpoint.par().unwrap();
     let target = RefCell::new(Some(right));
     hook.arm(&target);
     network.pause_send(0);
@@ -155,7 +155,7 @@ fn a_reentrant_completed_arm_drop_preserves_its_pending_sibling() {
     let sid = SessionId::new(1655);
     let mut client = rv.enter(sid, &client_program).unwrap();
     let mut server = rv.enter(sid, &server_program).unwrap();
-    let (mut request, mut notice) = client.par().unwrap();
+    let [mut request, mut notice] = client.par().unwrap();
     tokio::runtime::Builder::new_current_thread()
         .enable_time()
         .start_paused(true)
@@ -208,8 +208,7 @@ fn multiple_reentrant_arm_drops_are_all_drained() {
         )
         .unwrap();
     let mut client = rv.enter(SessionId::new(1656), &program).unwrap();
-    let (mut request, mut notices) = client.par().unwrap();
-    let (first, second) = notices.par().unwrap();
+    let [mut request, first, second] = client.par().unwrap();
     let target = RefCell::new(Some((first, second)));
     hook.arm(&target);
     network.pause_send(0);
@@ -256,7 +255,7 @@ fn a_reentrant_future_drop_releases_its_operation_before_reuse() {
     let sid = SessionId::new(1657);
     let mut client = rv.enter(sid, &client_program).unwrap();
     let mut server = rv.enter(sid, &server_program).unwrap();
-    let (mut request, mut notice) = client.par().unwrap();
+    let [mut request, mut notice] = client.par().unwrap();
     tokio::runtime::Builder::new_current_thread()
         .enable_time()
         .start_paused(true)
@@ -319,7 +318,7 @@ fn a_reentrant_receive_drop_allows_the_same_step_to_be_received() {
     let sid = SessionId::new(1659);
     let mut client = rv.enter(sid, &client_program).unwrap();
     let mut server = rv.enter(sid, &server_program).unwrap();
-    let (mut request, mut notice) = client.par().unwrap();
+    let [mut request, mut notice] = client.par().unwrap();
     tokio::runtime::Builder::new_current_thread()
         .enable_time()
         .start_paused(true)
@@ -377,7 +376,7 @@ fn a_reentrant_branch_drop_preserves_its_selected_frame() {
     let sid = SessionId::new(1660);
     let mut client = rv.enter(sid, &client_program).unwrap();
     let mut server = rv.enter(sid, &server_program).unwrap();
-    let (mut request, mut notice) = client.par().unwrap();
+    let [mut request, mut notice] = client.par().unwrap();
     tokio::runtime::Builder::new_current_thread()
         .enable_time()
         .start_paused(true)

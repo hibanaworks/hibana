@@ -200,4 +200,4 @@ mod rendezvous;
 // ============================================================================
 
 // Endpoint facade
-pub use endpoint::{Endpoint, EndpointError, RouteBranch};
+pub use endpoint::{Endpoint, EndpointError, ParallelEndpoint, RouteBranch};

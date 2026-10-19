@@ -222,6 +222,13 @@ Projectionは所有権を検査し、それぞれの操作を区別します。
 後続の逐次操作は、そのロールに必要な並列操作の完了を待ちます。
 Rust関数の実行をスケジュールするのはexecutorです。
 
+一つのEndpoint内の独立した部分を並行に進めるには、
+`let [mut requests, mut notices] = endpoint.par()?;`で借用し、executorで各操作をpollします。
+借用した各部分でも、同じ`send`、`recv`、`offer`を使います。
+借用が終わるまで、親Endpointは操作・委譲できません。
+各部分はglobalから導かれ、localの`par()`は借用だけを行います。実行の開始や分岐の選択はしません。
+隣接する並行合成は平坦化されるので、globalの二分構造をlocalsideへ書き直す必要はありません。
+
 `body.roll()`は、完了したプロトコルの一部分を再び実行できるようにします。
 Projectionはguarded repetitionを要求します。
 繰り返しではコンパイル済みデータを再利用し、その部分の操作を再度実行できます。

@@ -1,0 +1,9 @@
+error[E0499]: cannot borrow `*endpoint` as mutable more than once at a time
+ --> tests/ui/parallel-parent-alias.rs:5:19
+  |
+4 |     let [mut first, _second] = endpoint.par().unwrap();
+  |                                -------- first mutable borrow occurs here
+5 |     let _parent = endpoint.send::<g::Msg<3, u32>>(&3);
+  |                   ^^^^^^^^ second mutable borrow occurs here
+6 |     let _child = first.send::<g::Msg<1, u32>>(&1);
+  |                  ----- first borrow later used here

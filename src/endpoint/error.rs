@@ -11,8 +11,7 @@ pub(crate) enum EndpointOp {
 
 /// Domain error for endpoint progress.
 ///
-/// The API shape stays on `send/recv/offer`; this error records
-/// which operation failed, so callers can keep using plain `?` without extra
+/// This error records which endpoint operation failed, so callers can use `?` without extra
 /// context types. The diagnostic kind is deliberately private: application code
 /// should not match endpoint failures to continue the same generation on an
 /// alternate route.

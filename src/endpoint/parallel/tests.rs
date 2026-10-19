@@ -4,6 +4,7 @@ use crate::{
     test_support::transport::TestTransport,
 };
 
+mod associative;
 mod reentrant;
 
 #[test]
@@ -30,7 +31,7 @@ fn identical_message_types_remain_independent_in_their_own_arms() {
         .build()
         .unwrap()
         .block_on(async {
-            let (mut b_left, mut b_right) = b.par().unwrap();
+            let [mut b_left, mut b_right] = b.par().unwrap();
             tokio::time::timeout(core::time::Duration::from_secs(10), async {
                 tokio::join!(
                     async {
@@ -79,8 +80,8 @@ fn parallel_arms_poll_independently_and_join_the_same_parent() {
         .block_on(async {
             tokio::time::timeout(core::time::Duration::from_secs(10), async {
                 {
-                    let (mut a_left, mut a_right) = a.par().unwrap();
-                    let (mut b_left, mut b_right) = b.par().unwrap();
+                    let [mut a_left, mut a_right] = a.par().unwrap();
+                    let [mut b_left, mut b_right] = b.par().unwrap();
                     tokio::join!(
                         async {
                             assert_eq!(a_right.recv::<Ack>().await.unwrap(), 8);
@@ -131,8 +132,8 @@ fn a_sibling_fault_preserves_a_borrowed_payload() {
         .build()
         .unwrap()
         .block_on(async {
-            let (mut a_left, mut a_right) = a.par().unwrap();
-            let (mut b_left, mut b_right) = b.par().unwrap();
+            let [mut a_left, mut a_right] = a.par().unwrap();
+            let [mut b_left, mut b_right] = b.par().unwrap();
             a_left
                 .send::<Data>(&b"borrow survives the other lane".as_slice())
                 .await
@@ -145,7 +146,7 @@ fn a_sibling_fault_preserves_a_borrowed_payload() {
 }
 
 #[test]
-fn nested_parallel_borrows_preserve_their_own_scope() {
+fn left_associated_parallel_borrows_have_a_flat_local_shape() {
     type A = g::Msg<61, u32>;
     type B = g::Msg<62, u32>;
     type C = g::Msg<63, u32>;
@@ -171,10 +172,13 @@ fn nested_parallel_borrows_preserve_their_own_scope() {
         .unwrap()
         .block_on(async {
             tokio::time::timeout(core::time::Duration::from_secs(10), async {
-                let (mut a_left, mut a_right) = a.par().unwrap();
-                let (mut b_left, mut b_right) = b.par().unwrap();
-                let (mut a_first, mut a_second) = a_left.par().unwrap();
-                let (mut b_first, mut b_second) = b_left.par().unwrap();
+                assert!(
+                    a.par::<2>().is_err(),
+                    "a missing arm cannot escape as a borrow"
+                );
+                assert!(a.par::<4>().is_err(), "an extra arm cannot be invented");
+                let [mut a_first, mut a_second, mut a_right] = a.par().unwrap();
+                let [mut b_first, mut b_second, mut b_right] = b.par().unwrap();
                 let (a1, b1, a2, b2, a3, b3) = tokio::join!(
                     a_first.send::<A>(&11),
                     b_first.recv::<A>(),
@@ -223,8 +227,8 @@ fn parallel_route_previews_do_not_take_the_sibling_choice() {
         .unwrap()
         .block_on(async {
             tokio::time::timeout(core::time::Duration::from_secs(10), async {
-                let (mut a_left, mut a_right) = a.par().unwrap();
-                let (mut b_left, mut b_right) = b.par().unwrap();
+                let [mut a_left, mut a_right] = a.par().unwrap();
+                let [mut b_left, mut b_right] = b.par().unwrap();
                 tokio::join!(
                     async {
                         let branch = a_right.offer().await.unwrap();
@@ -279,8 +283,8 @@ fn a_rolled_parallel_body_reenters_after_both_arms_join() {
         .block_on(async {
             tokio::time::timeout(core::time::Duration::from_secs(10), async {
                 for number in [1, 2, 3] {
-                    let (mut a_left, mut a_right) = a.par().unwrap();
-                    let (mut b_left, mut b_right) = b.par().unwrap();
+                    let [mut a_left, mut a_right] = a.par().unwrap();
+                    let [mut b_left, mut b_right] = b.par().unwrap();
                     tokio::join!(
                         async {
                             a_left.send::<A>(&number).await.unwrap();
@@ -329,8 +333,8 @@ fn a_fault_wakes_a_pending_sibling_on_the_same_endpoint() {
         .build()
         .unwrap()
         .block_on(async {
-            let (_a_left, mut a_right) = a.par().unwrap();
-            let (mut b_left, mut b_right) = b.par().unwrap();
+            let [_a_left, mut a_right] = a.par().unwrap();
+            let [mut b_left, mut b_right] = b.par().unwrap();
             tokio::time::timeout(core::time::Duration::from_secs(10), async {
                 let (left, right) = tokio::join!(b_left.recv::<Left>(), async {
                     a_right.send::<Good>(&7).await.unwrap();
@@ -358,7 +362,7 @@ fn forgotten_arm_receive_is_retired_with_the_parent() {
         .unwrap();
     let mut b = rv.enter(SessionId::new(1644), &b_program).unwrap();
     {
-        let (left, mut right) = b.par().unwrap();
+        let [left, mut right] = b.par().unwrap();
         let mut pending = right.recv::<Right>();
         let mut cx = core::task::Context::from_waker(core::task::Waker::noop());
         assert!(
@@ -400,8 +404,8 @@ fn one_arm_repeats_while_the_other_arm_is_still_waiting() {
         .unwrap()
         .block_on(async {
             let start = tokio::time::Instant::now();
-            let (mut a_left, mut a_right) = a.par().unwrap();
-            let (mut b_left, mut b_right) = b.par().unwrap();
+            let [mut a_left, mut a_right] = a.par().unwrap();
+            let [mut b_left, mut b_right] = b.par().unwrap();
             tokio::time::timeout(core::time::Duration::from_secs(10), async {
                 tokio::join!(
                     async {

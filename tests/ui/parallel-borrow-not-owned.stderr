@@ -1,0 +1,15 @@
+error[E0308]: mismatched types
+ --> tests/ui/parallel-borrow-not-owned.rs:6:46
+  |
+6 |         .send::<g::Msg<1, Endpoint<'r, 10>>>(first)
+  |          ----------------------------------- ^^^^^ expected `Endpoint<'_, 10>`, found `ParallelEndpoint<'_, '_, 10>`
+  |          |
+  |          arguments to this method are incorrect
+  |
+  = note: expected struct `Endpoint<'_, 10>`
+             found struct `ParallelEndpoint<'_, '_, 10>`
+note: method defined here
+ --> src/endpoint/ops.rs
+  |
+  |     pub fn send<'a, 'e, M>(
+  |            ^^^^

@@ -6,13 +6,14 @@ use hibana::g;
 use hibana::runtime::SessionKit;
 use hibana::runtime::program::{RoleProgram, project};
 use hibana::runtime::resolver::{DecisionArm, ResolverError, ResolverRef};
-use hibana::{Endpoint, RouteBranch};
+use hibana::{Endpoint, ParallelEndpoint, RouteBranch};
 use static_assertions::assert_not_impl_any;
 
 type StaticTestKit = SessionKit<'static, common::TestTransport>;
 
 assert_not_impl_any!(StaticTestKit: Send, Sync);
 assert_not_impl_any!(Endpoint<'static, 0>: Send, Sync);
+assert_not_impl_any!(ParallelEndpoint<'static, 'static, 0>: Send, Sync, Clone, Copy);
 assert_not_impl_any!(RouteBranch<'static, 'static, 0>: Send, Sync);
 
 #[test]

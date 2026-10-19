@@ -49,4 +49,5 @@ mod transfer;
 
 pub use self::error::EndpointError;
 pub(crate) use self::error::{EndpointOp, RecvError, RecvResult, SendError, SendResult};
+pub use self::parallel::ParallelEndpoint;
 pub use self::public_types::{Endpoint, RouteBranch};

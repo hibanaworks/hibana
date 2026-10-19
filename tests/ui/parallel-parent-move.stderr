@@ -1,0 +1,12 @@
+error[E0505]: cannot move out of `db` because it is borrowed
+ --> tests/ui/parallel-parent-move.rs:5:47
+  |
+3 | async fn moves<'r>(mut owner: Endpoint<'r, 0>, mut db: Endpoint<'r, 10>) {
+  |                                                ------ binding `db` declared here
+4 |     let [mut first, _second] = db.par().unwrap();
+  |                                -- borrow of `db` occurs here
+5 |     owner.send::<g::Msg<1, Endpoint<'r, 10>>>(db).await.unwrap();
+  |                                               ^^ move out of `db` occurs here
+6 |     first.send::<g::Msg<2, u32>>(&1).await.unwrap();
+7 | }
+  | - borrow might be used here, when `first` is dropped and runs the `Drop` code for type `ParallelEndpoint`

@@ -1,4 +1,5 @@
 use super::*;
+mod associative;
 use crate::{
     runtime::{SessionKitStorage, ids::SessionId},
     test_support::transport::TestTransport,
@@ -75,7 +76,7 @@ fn an_owned_continuation_returns_while_the_carrier_drives_an_independent_arm() {
                 tokio::join!(
                     async {
                         let mut db = {
-                            let (mut loan, mut independent) = owner.par().unwrap();
+                            let [mut loan, mut independent] = owner.par().unwrap();
                             let (db, ()) = tokio::join!(
                                 async {
                                     loan.send::<Loan>(db).await.unwrap();
@@ -189,7 +190,7 @@ fn a_received_endpoint_drives_its_parallel_arms_and_returns_its_continuation() {
                     async {
                         let mut db = worker.recv::<Loan>().await.unwrap();
                         {
-                            let (mut left, mut right) = db.par().unwrap();
+                            let [mut left, mut right] = db.par().unwrap();
                             tokio::join!(
                                 async {
                                     left.send::<A>(&7).await.unwrap();
@@ -205,7 +206,7 @@ fn a_received_endpoint_drives_its_parallel_arms_and_returns_its_continuation() {
                     },
                     async {
                         {
-                            let (mut left, mut right) = service.par().unwrap();
+                            let [mut left, mut right] = service.par().unwrap();
                             tokio::join!(
                                 async {
                                     let value = left.recv::<A>().await.unwrap();

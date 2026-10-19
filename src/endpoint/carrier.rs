@@ -269,7 +269,8 @@ pub(crate) struct EndpointOps {
     pub(crate) split_parallel: unsafe fn(
         NonNull<()>,
         OperationHandle,
-    ) -> crate::endpoint::SendResult<[OperationRegion; 2]>,
+        &mut [OperationRegion],
+    ) -> crate::endpoint::SendResult<()>,
     pub(crate) drop_parallel: unsafe fn(NonNull<()>, OperationHandle),
     pub(crate) drop_endpoint: unsafe fn(ptr: NonNull<()>, handle: EndpointHandle),
     pub(crate) release_operation: unsafe fn(ptr: NonNull<()>, handle: OperationHandle),

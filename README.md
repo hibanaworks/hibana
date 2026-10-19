@@ -241,6 +241,14 @@ other's intermediate progress. A later sequential continuation waits for the
 parallel work required by that role to finish. Your executor schedules the
 Rust functions.
 
+To drive independent fragments of one endpoint concurrently, borrow them with
+`let [mut requests, mut notices] = endpoint.par()?;` and poll their operations
+with your executor. Each borrow uses the same `send`, `recv`, and `offer`
+operations. The parent endpoint is unavailable until the borrows end. The
+global protocol determines the fragments; `par()` only borrows them and does
+not schedule work or choose a branch. Adjacent parallel groups are flattened,
+so the local bindings do not repeat the global protocol's binary grouping.
+
 `body.roll()` allows a completed protocol fragment to run again. Projection
 requires guarded repetition. Each repetition reuses the compiled protocol
 data, and the fragment's steps can be executed again. FIFO delivery, replay
