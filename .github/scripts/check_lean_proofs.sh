@@ -33,6 +33,7 @@ ACTOR_REENTRY_COMMIT_GENERATED="${ROOT_DIR}/target/lean-proof/ActorReentryCommit
 ACTOR_PARALLEL_REENTRY_GENERATED="${ROOT_DIR}/target/lean-proof/ActorParallelReentryGenerated.lean"
 MIXED_SEND_ADMISSION_GENERATED="${ROOT_DIR}/target/lean-proof/MixedSendAdmissionGenerated.lean"
 DISTRIBUTED_SOURCE_GENERATED="${ROOT_DIR}/target/lean-proof/DistributedSourceGenerated.lean"
+ASYNC_SOURCE_GENERATED="${ROOT_DIR}/target/lean-proof/AsyncSourcePublicationGenerated.lean"
 DISTRIBUTED_CHOICE_GENERATED="${ROOT_DIR}/target/lean-proof/DistributedChoiceGenerated.lean"
 FRAME_DOMAINS_GENERATED="${ROOT_DIR}/target/lean-proof/FrameDomainsGenerated.lean"
 LOGICAL_VIEW_WORD_GENERATED="${ROOT_DIR}/target/lean-proof/LogicalViewWordGenerated.lean"
@@ -67,7 +68,7 @@ bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" build-serial "${PROOF_
 bash "${ROOT_DIR}/.github/scripts/check_lean_claim_surface.sh"
 static_audit_output="$(run_audit \
   theorem-inventory \
-  --static "${PROOF_DIR}" "${STATIC_CLAIM_SNAPSHOT}" 1083 664 305 114)"
+  --static "${PROOF_DIR}" "${STATIC_CLAIM_SNAPSHOT}" 1088 668 306 114)"
 printf '%s\n' "${static_audit_output}"
 printf '%s\n' "${static_audit_output}" | bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard markers static
 bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" theorem-inventory \
@@ -87,6 +88,7 @@ rm -f "${SEND_COMPLETION_GENERATED}"
 rm -f "${RECEIPT_REFRESH_GENERATED}"
 rm -f "${MIXED_SEND_ADMISSION_GENERATED}"
 rm -f "${DISTRIBUTED_SOURCE_GENERATED}"
+rm -f "${ASYNC_SOURCE_GENERATED}"
 rm -f "${DISTRIBUTED_CHOICE_GENERATED}"
 rm -f "${FRAME_DOMAINS_GENERATED}"
 rm -f "${OCCURRENCE_CHOICE_GENERATED}"
@@ -245,6 +247,12 @@ run_audit generated-axioms --kernel "${MIXED_SEND_ADMISSION_GENERATED}" "${PROOF
 bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${DISTRIBUTED_SOURCE_GENERATED}" "joint distributed source boundaries"
 run_audit generated-axioms --kernel "${DISTRIBUTED_SOURCE_GENERATED}" "${PROOF_DIR}" \
   "${PROOF_DIR}/distributed-source-generated-claim-surface.txt" 19
+CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib \
+  g::role_projection::tests::native::network::preemption::a_tcp_receiver_returns_the_resource_while_the_send_is_pending_between_polls \
+  -- --exact
+bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${ASYNC_SOURCE_GENERATED}" "overlapping asynchronous send calls"
+run_audit generated-axioms --kernel "${ASYNC_SOURCE_GENERATED}" "${PROOF_DIR}" \
+  "${PROOF_DIR}/async-source-generated-claim-surface.txt" 9
 CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib \
   g::role_projection::tests::occurrence_choice::changing_rolled_loans_teach_only_the_received_occurrences_choices \
   -- --exact

@@ -26,6 +26,171 @@ def actorPublishedSends (images : Nat → RustDescriptorImage) (choreo : Choreo)
   records.filterMap fun (owner, record) =>
     if owner == actor && sourceSendRecord (images actor) choreo record then some record else none
 
+/-- A physical acceptance is identified by its existing logical direction and
+carrier witness. This is an erased observation, not a new wire or runtime ID.
+Equal bytes in different rolled visits do not identify the same acceptance. -/
+def SourceAcceptance.callKey (entry : SourceAcceptance) : TransportChannel × Nat :=
+  (entry.channel, entry.carrierWitness)
+
+/-- Match one retained send call to its publication. Independent fragments may
+have changed progress and choice knowledge since its physical acceptance.
+The lifecycle below consumes the exact outstanding acceptance once; matching
+bytes or a source row alone is deliberately insufficient to establish a call.
+This checker observes existing source checks and never admits a Rust operation. -/
+def retainedSendPublicationCheck (entry : SourceAcceptance) (record : ActorCommitRecord)
+    (choreo : Choreo) (session : Nat) : Bool :=
+  entry.sample.check choreo session && record.check entry.sample.image choreo session &&
+    decide (entry.sample.wire = record.wire) &&
+    match sourceOperationIdentity? entry.sample.image choreo entry.sample.pathIndex entry.sample.event,
+        sourceOperationIdentity? entry.sample.image choreo record.step.pathIndex record.step.event with
+    | some (sendEff, sendBinding, .send), some (pubEff, pubBinding, .send) =>
+        sendEff == pubEff && decide (sendBinding = pubBinding) &&
+          entry.sample.image.role == sendBinding.senderActor
+    | _, _ => false
+
+/-- The send-call projection of one chronological boundary history. Receives
+and local commits are retained by the complete distributed execution, not
+invented as publications here. Publication order need not be acceptance order. -/
+inductive SourceCallBoundary where
+  | accept (entry : SourceAcceptance)
+  | publish (key : TransportChannel × Nat) (record : ActorCommitRecord)
+
+/-- Match physical acceptances and completed sends from the same retained
+calls. The three lists are proof outputs derived from one boundary word, not
+runtime queues, progress flags or an actor ownership table.
+
+An outstanding row excludes a second call to that row, not other fragments of
+the actor. The actual operation-slot/borrow correspondence must establish this
+fact when extracting Rust histories. The relation does not assume an actor-wide
+mutation stamp, identical whole-actor snapshots, or a shared roll iteration.
+It is the publication component of the distributed reduction, not a second
+executor or a completed distributed-progress theorem. -/
+inductive SourceCallHistory (choreo : Choreo) (session : Nat) :
+    List SourceCallBoundary → List SourceAcceptance →
+      List (SourceAcceptance × ActorCommitRecord) → List SourceAcceptance → Prop where
+  | nil : SourceCallHistory choreo session [] [] [] []
+  | accept {word accepted published pending} {entry : SourceAcceptance}
+      (history : SourceCallHistory choreo session word accepted published pending)
+      (checked : entry.sample.check choreo session = true)
+      (fresh : accepted.all (fun old => old.callKey != entry.callKey) = true)
+      (slotFree : pending.all (fun old => !(old.sample.image.role == entry.sample.image.role &&
+        old.sample.event == entry.sample.event)) = true) :
+      SourceCallHistory choreo session (word ++ [.accept entry])
+        (accepted ++ [entry]) published (pending ++ [entry])
+  | publish {word accepted published left right} {entry : SourceAcceptance}
+      {record : ActorCommitRecord}
+      (history : SourceCallHistory choreo session word accepted published (left ++ entry :: right))
+      (paired : retainedSendPublicationCheck entry record choreo session = true) :
+      SourceCallHistory choreo session (word ++ [.publish entry.callKey record])
+        accepted (published ++ [(entry, record)]) (left ++ right)
+
+/-- Independent sends may publish in a different order, but each acceptance is
+still exactly one published call or one outstanding call. There is no bound of
+one outstanding acceptance per actor. This is a multiset conservation statement
+over the same chronological observations, not equality of publication prefixes. -/
+theorem a_source_call_history_partitions_its_acceptances
+    {choreo : Choreo} {session : Nat} {word : List SourceCallBoundary}
+    {accepted pending : List SourceAcceptance}
+    {published : List (SourceAcceptance × ActorCommitRecord)}
+    (history : SourceCallHistory choreo session word accepted published pending) :
+    accepted.Perm (published.map Prod.fst ++ pending) := by
+  induction history with
+  | nil => exact .nil
+  | accept history checked fresh slotFree ih =>
+      simpa only [List.append_assoc] using ih.append_right [_]
+  | @publish word accepted published left right entry record history paired ih =>
+      simpa only [List.map_append, List.map_cons, List.map_nil, List.append_assoc,
+        List.cons_append, List.nil_append] using
+        ih.trans ((List.perm_middle :
+          (left ++ entry :: right).Perm (entry :: (left ++ right))).append_left _)
+
+/-- The carrier identity is never reused in a checked call history, even when
+the source event and the complete wire bytes repeat in a later rolled visit. -/
+theorem a_source_call_history_never_reuses_an_acceptance_key
+    {choreo : Choreo} {session : Nat} {word : List SourceCallBoundary}
+    {accepted pending : List SourceAcceptance}
+    {published : List (SourceAcceptance × ActorCommitRecord)}
+    (history : SourceCallHistory choreo session word accepted published pending) :
+    (accepted.map SourceAcceptance.callKey).Nodup := by
+  induction history with
+  | nil => simp
+  | @accept word accepted published pending entry history checked fresh slotFree ih =>
+      simp only [List.map_append, List.map_cons, List.map_nil]
+      apply List.nodup_append.mpr
+      refine ⟨ih, by simp, ?_⟩
+      intro key member other singleton equal
+      have same : key = entry.callKey := equal.trans (by simpa using singleton)
+      obtain ⟨old, inAccepted, atKey⟩ := List.mem_map.mp member
+      have different := List.all_eq_true.mp fresh old inAccepted
+      simp only [bne_iff_ne] at different
+      exact different (atKey.trans same)
+  | publish history paired ih => exact ih
+
+/-- Publication consumes an existing outstanding call. A repeated or missing
+publication cannot create another accepted occurrence or another live call. -/
+theorem a_source_call_history_never_duplicates_a_publication
+    {choreo : Choreo} {session : Nat} {word : List SourceCallBoundary}
+    {accepted pending : List SourceAcceptance}
+    {published : List (SourceAcceptance × ActorCommitRecord)}
+    (history : SourceCallHistory choreo session word accepted published pending) :
+    ((published.map (fun pair => pair.1.callKey)) ++
+      pending.map SourceAcceptance.callKey).Nodup := by
+  have permutation := (a_source_call_history_partitions_its_acceptances history).map
+    SourceAcceptance.callKey
+  have distinct := a_source_call_history_never_reuses_an_acceptance_key history
+  simpa only [List.map_append, List.map_map] using permutation.nodup_iff.mp distinct
+
+/-- Every published call retains its checked physical bytes and exact source
+binding. Advancing another fragment never replaces these observations with a
+freshly invented acceptance, a different frame, or a different logical send. -/
+theorem a_retained_publication_preserves_its_source_and_wire
+    {entry : SourceAcceptance} {record : ActorCommitRecord} {choreo : Choreo} {session : Nat}
+    (paired : retainedSendPublicationCheck entry record choreo session = true) :
+    entry.sample.check choreo session = true ∧
+      record.check entry.sample.image choreo session = true ∧
+      entry.sample.wire = record.wire ∧
+      ∃ eff binding,
+        sourceOperationIdentity? entry.sample.image choreo entry.sample.pathIndex entry.sample.event =
+          some (eff, binding, .send) ∧
+        sourceOperationIdentity? entry.sample.image choreo record.step.pathIndex record.step.event =
+          some (eff, binding, .send) ∧
+        entry.sample.image.role = binding.senderActor := by
+  unfold retainedSendPublicationCheck at paired
+  have header := (Bool.and_eq_true_iff.mp paired).1
+  have localChecks := (Bool.and_eq_true_iff.mp header).1
+  refine ⟨(Bool.and_eq_true_iff.mp localChecks).1, (Bool.and_eq_true_iff.mp localChecks).2,
+    of_decide_eq_true (Bool.and_eq_true_iff.mp header).2, ?_⟩
+  have matched := (Bool.and_eq_true_iff.mp paired).2
+  cases sentAt : sourceOperationIdentity? entry.sample.image choreo entry.sample.pathIndex entry.sample.event with
+  | none => simp [sentAt] at matched
+  | some sent =>
+      rcases sent with ⟨eff, binding, side⟩
+      cases pubAt : sourceOperationIdentity? entry.sample.image choreo record.step.pathIndex record.step.event with
+      | none => cases side <;> simp_all
+      | some pub =>
+          rcases pub with ⟨pubEff, pubBinding, pubSide⟩
+          cases side <;> cases pubSide <;> simp_all
+          exact ⟨pubEff, pubBinding, ⟨rfl, rfl⟩, rfl⟩
+
+/-- Matching records are outputs of the lifecycle, including records whose
+whole-actor base changed. No publication can avoid the source/wire check. -/
+theorem a_source_call_history_checks_every_publication
+    {choreo : Choreo} {session : Nat} {word : List SourceCallBoundary}
+    {accepted pending : List SourceAcceptance}
+    {published : List (SourceAcceptance × ActorCommitRecord)}
+    (history : SourceCallHistory choreo session word accepted published pending) :
+    ∀ pair ∈ published, retainedSendPublicationCheck pair.1 pair.2 choreo session = true := by
+  induction history with
+  | nil => simp
+  | accept history checked fresh slotFree ih => exact ih
+  | @publish word accepted published left right entry record history paired ih =>
+      intro pair member
+      rcases List.mem_append.mp member with previous | current
+      · exact ih pair previous
+      · have equal : pair = (entry, record) := by simpa using current
+        subst pair
+        exact paired
+
 private theorem publication_is_send
     {sample : SourceSendAdmission} {record : ActorCommitRecord}
     {image : RustDescriptorImage} {choreo : Choreo} {session : Nat}

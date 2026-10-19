@@ -18,6 +18,23 @@ pub(crate) struct ActorCallCut {
 }
 
 impl ViewTagObservation {
+    /// Copy this actor's progress between polls, including while a different
+    /// parallel borrow owns a pending future. The tag remains observation only.
+    ///
+    /// # Safety
+    /// This exact pinned actor must remain alive, use `T`, and retain this view
+    /// tag. No operation lease may be held during the observation.
+    pub(crate) unsafe fn snapshot<T: crate::transport::Transport>(self) -> ActorSnapshot {
+        // SAFETY: the caller fixes the erased transport and allocation lifetime.
+        unsafe {
+            snapshot_from_handle::<T>(
+                self.ptr,
+                self.handle,
+                crate::endpoint::carrier::OperationRegion::WHOLE,
+            )
+        }
+    }
+
     /// Observe whether an existing view is an owned-send payload between polls.
     ///
     /// # Safety
@@ -161,7 +178,7 @@ pub(crate) unsafe fn branch_snapshot<const ROLE: u8>(
 ) -> ActorSnapshot {
     let (ptr, handle) = branch.target.parts();
     // SAFETY: the caller establishes TestTransport and the preview retains the view.
-    unsafe { snapshot_from_handle::<ROLE>(ptr, handle.endpoint, handle.region) }
+    unsafe { snapshot_from_handle::<TestTransport>(ptr, handle.endpoint, handle.region) }
 }
 
 /// Copy observations under the existing operation lease and kernel borrow.
@@ -175,7 +192,7 @@ pub(crate) unsafe fn actor_snapshot<const ROLE: u8>(
 ) -> ActorSnapshot {
     // SAFETY: this live Endpoint retains the erased TestTransport view.
     unsafe {
-        snapshot_from_handle::<ROLE>(
+        snapshot_from_handle::<TestTransport>(
             endpoint.owner.ptr,
             endpoint.owner.handle,
             crate::endpoint::carrier::OperationRegion::WHOLE,
@@ -183,29 +200,28 @@ pub(crate) unsafe fn actor_snapshot<const ROLE: u8>(
     }
 }
 
-unsafe fn snapshot_from_handle<const ROLE: u8>(
+unsafe fn snapshot_from_handle<T: crate::transport::Transport>(
     ptr: core::ptr::NonNull<super::carrier::KernelEndpointHeader>,
     handle: super::carrier::EndpointHandle,
     region: super::carrier::OperationRegion,
 ) -> ActorSnapshot {
-    // SAFETY: the caller establishes TestTransport, and the live Endpoint retains
+    // SAFETY: the caller establishes T, and the live Endpoint retains
     // this pinned actor. Recover its original allocation pointer; do not widen
     // the narrow view borrow.
     let actor = unsafe {
         let header = ptr.as_ref();
         assert!(handle.matches_header(header));
-        header
-            .actor()
-            .cast::<ResidentActor<'_, TestTransport>>()
-            .as_ref()
+        header.actor().cast::<ResidentActor<'_, T>>().as_ref()
     };
     let mut operation = actor
         .context
         .try_operation_lease()
         .expect("observation lease");
+    // SAFETY: the caller retains this pinned view header for the observation.
+    let role = unsafe { ptr.as_ref() }.role();
     actor.with_kernel(
         &mut operation,
-        actor.views.get(ROLE).unwrap(),
+        actor.views.get(role).unwrap(),
         region,
         |kernel| {
             let cursor = &kernel.progress.cursor;

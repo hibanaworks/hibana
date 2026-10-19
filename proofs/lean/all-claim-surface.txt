@@ -3228,6 +3228,81 @@ Hibana.a_pending_payload_requires_its_own_send : ∀ (resource : Nat) (sent : Op
                   Or (@Eq.{1} Bool (source.before transfer previousEvent) true)
                     (Or (@Eq.{1} Nat transfer previousEvent)
                       (Or (@Eq.{1} Nat transfer target) (@Eq.{1} Bool (source.before target transfer) true)))
+@Hibana.a_retained_publication_preserves_its_source_and_wire : ∀ {entry : Hibana.SourceAcceptance}
+  {record : Hibana.ActorCommitRecord} {choreo : Hibana.Choreo} {session : Nat},
+  @Eq.{1} Bool (Hibana.retainedSendPublicationCheck entry record choreo session) true →
+    And (@Eq.{1} Bool (entry.sample.check choreo session) true)
+      (And (@Eq.{1} Bool (record.check entry.sample.image choreo session) true)
+        (And (@Eq.{1} Hibana.OwnedWireObservation entry.sample.wire record.wire)
+          (@Exists.{1} Nat fun eff =>
+            @Exists.{1} Hibana.EndpointDelegation.Binding fun binding =>
+              And
+                (@Eq.{1}
+                  (Option.{0}
+                    (Prod.{0, 0} Nat (Prod.{0, 0} Hibana.EndpointDelegation.Binding Hibana.EndpointDelegation.Side)))
+                  (Hibana.sourceOperationIdentity? entry.sample.image choreo entry.sample.pathIndex entry.sample.event)
+                  (@some.{0}
+                    (Prod.{0, 0} Nat (Prod.{0, 0} Hibana.EndpointDelegation.Binding Hibana.EndpointDelegation.Side))
+                    (@Prod.mk.{0, 0} Nat (Prod.{0, 0} Hibana.EndpointDelegation.Binding Hibana.EndpointDelegation.Side)
+                      eff
+                      (@Prod.mk.{0, 0} Hibana.EndpointDelegation.Binding Hibana.EndpointDelegation.Side binding
+                        Hibana.EndpointDelegation.Side.send))))
+                (And
+                  (@Eq.{1}
+                    (Option.{0}
+                      (Prod.{0, 0} Nat (Prod.{0, 0} Hibana.EndpointDelegation.Binding Hibana.EndpointDelegation.Side)))
+                    (Hibana.sourceOperationIdentity? entry.sample.image choreo record.step.pathIndex record.step.event)
+                    (@some.{0}
+                      (Prod.{0, 0} Nat (Prod.{0, 0} Hibana.EndpointDelegation.Binding Hibana.EndpointDelegation.Side))
+                      (@Prod.mk.{0, 0} Nat
+                        (Prod.{0, 0} Hibana.EndpointDelegation.Binding Hibana.EndpointDelegation.Side) eff
+                        (@Prod.mk.{0, 0} Hibana.EndpointDelegation.Binding Hibana.EndpointDelegation.Side binding
+                          Hibana.EndpointDelegation.Side.send))))
+                  (@Eq.{1} Nat entry.sample.image.role binding.senderActor)))))
+@Hibana.a_source_call_history_checks_every_publication : ∀ {choreo : Hibana.Choreo} {session : Nat}
+  {word : List.{0} Hibana.SourceCallBoundary} {accepted pending : List.{0} Hibana.SourceAcceptance}
+  {published : List.{0} (Prod.{0, 0} Hibana.SourceAcceptance Hibana.ActorCommitRecord)},
+  Hibana.SourceCallHistory choreo session word accepted published pending →
+    ∀ (pair : Prod.{0, 0} Hibana.SourceAcceptance Hibana.ActorCommitRecord),
+      @Membership.mem.{0, 0} (Prod.{0, 0} Hibana.SourceAcceptance Hibana.ActorCommitRecord)
+          (List.{0} (Prod.{0, 0} Hibana.SourceAcceptance Hibana.ActorCommitRecord))
+          (@List.instMembership.{0} (Prod.{0, 0} Hibana.SourceAcceptance Hibana.ActorCommitRecord)) published pair →
+        @Eq.{1} Bool
+          (Hibana.retainedSendPublicationCheck (@Prod.fst.{0, 0} Hibana.SourceAcceptance Hibana.ActorCommitRecord pair)
+            (@Prod.snd.{0, 0} Hibana.SourceAcceptance Hibana.ActorCommitRecord pair) choreo session)
+          true
+@Hibana.a_source_call_history_never_duplicates_a_publication : ∀ {choreo : Hibana.Choreo} {session : Nat}
+  {word : List.{0} Hibana.SourceCallBoundary} {accepted pending : List.{0} Hibana.SourceAcceptance}
+  {published : List.{0} (Prod.{0, 0} Hibana.SourceAcceptance Hibana.ActorCommitRecord)},
+  Hibana.SourceCallHistory choreo session word accepted published pending →
+    @List.Nodup.{0} (Prod.{0, 0} Hibana.TransportChannel Nat)
+      (@HAppend.hAppend.{0, 0, 0} (List.{0} (Prod.{0, 0} Hibana.TransportChannel Nat))
+        (List.{0} (Prod.{0, 0} Hibana.TransportChannel Nat)) (List.{0} (Prod.{0, 0} Hibana.TransportChannel Nat))
+        (@instHAppendOfAppend.{0} (List.{0} (Prod.{0, 0} Hibana.TransportChannel Nat))
+          (@List.instAppend.{0} (Prod.{0, 0} Hibana.TransportChannel Nat)))
+        (@List.map.{0, 0} (Prod.{0, 0} Hibana.SourceAcceptance Hibana.ActorCommitRecord)
+          (Prod.{0, 0} Hibana.TransportChannel Nat)
+          (fun pair => (@Prod.fst.{0, 0} Hibana.SourceAcceptance Hibana.ActorCommitRecord pair).callKey) published)
+        (@List.map.{0, 0} Hibana.SourceAcceptance (Prod.{0, 0} Hibana.TransportChannel Nat)
+          Hibana.SourceAcceptance.callKey pending))
+@Hibana.a_source_call_history_never_reuses_an_acceptance_key : ∀ {choreo : Hibana.Choreo} {session : Nat}
+  {word : List.{0} Hibana.SourceCallBoundary} {accepted pending : List.{0} Hibana.SourceAcceptance}
+  {published : List.{0} (Prod.{0, 0} Hibana.SourceAcceptance Hibana.ActorCommitRecord)},
+  Hibana.SourceCallHistory choreo session word accepted published pending →
+    @List.Nodup.{0} (Prod.{0, 0} Hibana.TransportChannel Nat)
+      (@List.map.{0, 0} Hibana.SourceAcceptance (Prod.{0, 0} Hibana.TransportChannel Nat)
+        Hibana.SourceAcceptance.callKey accepted)
+@Hibana.a_source_call_history_partitions_its_acceptances : ∀ {choreo : Hibana.Choreo} {session : Nat}
+  {word : List.{0} Hibana.SourceCallBoundary} {accepted pending : List.{0} Hibana.SourceAcceptance}
+  {published : List.{0} (Prod.{0, 0} Hibana.SourceAcceptance Hibana.ActorCommitRecord)},
+  Hibana.SourceCallHistory choreo session word accepted published pending →
+    @List.Perm.{0} Hibana.SourceAcceptance accepted
+      (@HAppend.hAppend.{0, 0, 0} (List.{0} Hibana.SourceAcceptance) (List.{0} Hibana.SourceAcceptance)
+        (List.{0} Hibana.SourceAcceptance)
+        (@instHAppendOfAppend.{0} (List.{0} Hibana.SourceAcceptance) (@List.instAppend.{0} Hibana.SourceAcceptance))
+        (@List.map.{0, 0} (Prod.{0, 0} Hibana.SourceAcceptance Hibana.ActorCommitRecord) Hibana.SourceAcceptance
+          (@Prod.fst.{0, 0} Hibana.SourceAcceptance Hibana.ActorCommitRecord) published)
+        pending)
 @Hibana.a_source_choice_reset_only_retains_unreset_knowledge : ∀ {source : Hibana.CanonicalProgramSource}
   {body scope : Nat} {arm : Hibana.RouteArm} {before after : List.{0} (Prod.{0, 0} Nat (Option.{0} Hibana.RouteArm))},
   @Eq.{1} (Option.{0} (List.{0} (Prod.{0, 0} Nat (Option.{0} Hibana.RouteArm))))

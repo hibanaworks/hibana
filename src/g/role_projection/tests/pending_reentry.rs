@@ -228,7 +228,7 @@ fn a_pending_owned_send_keeps_its_payload_unavailable_for_resource_dependent_ree
             // this observation runs between polls with no kernel lease held.
             assert!(unsafe { payload_tag.is_send_payload::<TestTransport>() });
             // SAFETY: owner remains attached to this TestTransport actor.
-            let pending_snapshot = unsafe { actor_snapshot(&owner) };
+            let pending_snapshot = unsafe { view_tag(&owner).snapshot::<TestTransport>() };
             let borrowed_db = pending_snapshot.views.iter().find(|view| view.role == 10).unwrap();
             assert_eq!(borrowed_db.run, pending_snapshot.run);
             assert_eq!(borrowed_db.operation, "SendPayload");

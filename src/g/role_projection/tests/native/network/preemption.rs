@@ -16,6 +16,8 @@ const PEER: &str =
 type Independent = g::Msg<93, u32>;
 type Global = g::Par<preemption::Global, g::Send<0, 2, Independent>>;
 
+mod publication;
+
 #[tokio::test(flavor = "current_thread")]
 async fn a_tcp_receiver_returns_the_resource_while_the_send_is_pending_between_polls() {
     let () = g::ProgramProjection::<Global, 16>::VALIDATION;
@@ -43,6 +45,8 @@ async fn a_tcp_receiver_returns_the_resource_while_the_send_is_pending_between_p
             .spawn()
             .unwrap(),
     );
+    let observations;
+    let pending_journal;
     {
         let mut slab = vec![0; 64 * 1024];
         let mut storage = SessionKitStorage::uninit();
@@ -56,6 +60,10 @@ async fn a_tcp_receiver_returns_the_resource_while_the_send_is_pending_between_p
         let mut owner = rv.enter(SID, &owner_program).unwrap();
         let db = rv.enter(SID, &db_program).unwrap();
         let tag = view_tag(&db);
+        let owner_tag = view_tag(&owner);
+        // SAFETY: this tag retains the pinned NetworkTransport actor. The
+        // snapshots only observe calls; they never decide an operation.
+        let before = unsafe { owner_tag.snapshot::<NetworkTransport<'_>>() };
         let [mut resources, mut independent] = owner.par().unwrap();
         {
             let mut transfer = pin!(resources.send::<Loan>(db));
@@ -76,12 +84,20 @@ async fn a_tcp_receiver_returns_the_resource_while_the_send_is_pending_between_p
 
             // A different fragment of this very actor commits while the
             // accepted owned send still retains its payload between polls.
+            // SAFETY: the same pinned actor is idle between the future polls.
+            let pending = unsafe { owner_tag.snapshot::<NetworkTransport<'_>>() };
             independent.send::<Independent>(&77).await.unwrap();
             peer.wait_success().await;
             // SAFETY: both observations use the same pinned sender actor.
             assert!(unsafe { tag.matches_header() });
             assert!(unsafe { tag.is_send_payload::<NetworkTransport<'_>>() });
+            // SAFETY: independent's await completed; transfer is not polling.
+            let independent_done = unsafe { owner_tag.snapshot::<NetworkTransport<'_>>() };
+            pending_journal = broker.journal().await;
             transfer.await.unwrap();
+            // SAFETY: the live owner view and its original actor remain pinned.
+            let published = unsafe { owner_tag.snapshot::<NetworkTransport<'_>>() };
+            observations = [before, pending, independent_done, published];
         }
         // SAFETY: the resident header remains allocated, now retired.
         assert!(!unsafe { tag.matches_header() });
@@ -97,6 +113,7 @@ async fn a_tcp_receiver_returns_the_resource_while_the_send_is_pending_between_p
             },
         );
     }
+    publication::write_observations(&observations, &pending_journal);
     let journal = broker.journal().await;
     assert_eq!(
         journal

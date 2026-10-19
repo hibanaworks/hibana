@@ -1,0 +1,24 @@
+asyncAcceptancesAreConservedDespiteReorderedPublications : [asyncEntry0, asyncEntry1].Perm [asyncEntry1, asyncEntry0]
+asyncEarlierActorWideAcceptanceGuardRejectsTheLegalOverlap : ([asyncEntry0].all fun entry =>
+    !(entry.sample.image.role == asyncEntry1.sample.image.role && entry.mutation == asyncEntry1.mutation)) =
+  false
+asyncIndependentProgressChangesTheWholeActorBase : asyncEntry0.sample.base.progress ≠
+    asyncCommit0.step.before.progress ∧
+  sourcePublicationPairCheck asyncEntry0.sample asyncCommit0 asyncImage asyncChoreo 9023 = false ∧
+    retainedSendPublicationCheck asyncEntry0 asyncCommit0 asyncChoreo 9023 = true
+asyncIndependentPublicationIsAnActualMeasuredCommit : ActorMeasuredCommit asyncImage asyncChoreo 9023 (asyncCut1, 0)
+  (asyncCut2, 1) [] asyncCommit1
+asyncLoanPublicationIsAnActualMeasuredCommit : ActorMeasuredCommit asyncImage asyncChoreo 9023 (asyncCut2, 1)
+  (asyncCut3, 2) [] asyncCommit0
+asyncNoAcceptanceCanPublishTwice : ¬∃ word pending,
+    SourceCallHistory asyncChoreo 9023 word [asyncEntry0, asyncEntry1]
+      [(asyncEntry1, asyncCommit1), (asyncEntry0, asyncCommit0), (asyncEntry0, asyncCommit0)] pending
+asyncOldOccurrenceKeyCannotBeAcceptedAgain : ¬∃ word published pending,
+    SourceCallHistory asyncChoreo 9023 word [asyncEntry0, asyncEntry1, asyncEntry0] published pending
+asyncOutstandingAcceptancesNeedNoActorWideStamp : asyncEntry0.sample.image.role = asyncEntry1.sample.image.role ∧
+  asyncEntry0.mutation = asyncEntry1.mutation ∧ asyncEntry0.sample.event ≠ asyncEntry1.sample.event
+asyncSameActorPublishesInReverseAcceptanceOrder : SourceCallHistory asyncChoreo 9023
+  [SourceCallBoundary.accept asyncEntry0, SourceCallBoundary.accept asyncEntry1,
+    SourceCallBoundary.publish asyncEntry1.callKey asyncCommit1,
+    SourceCallBoundary.publish asyncEntry0.callKey asyncCommit0]
+  [asyncEntry0, asyncEntry1] [(asyncEntry1, asyncCommit1), (asyncEntry0, asyncCommit0)] []

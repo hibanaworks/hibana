@@ -1038,6 +1038,29 @@ between acceptance and publication. Those histories must be generalized before
 using that relation for the full distributed reduction. Restricting the runtime
 to match this proof fragment would unnecessarily remove parallelism.
 
+`SourceCallHistory` in `SourcePublicationPrefix.lean` supplies the asynchronous
+publication component. It pairs each call with its existing logical direction
+and carrier witness, permits multiple independent outstanding sends in the same
+actor, and permits publications in a different order from acceptances. The
+accepted calls are a permutation of published and outstanding calls. Every
+key occurs once across that partition; every publication checks the original
+source binding and exact wire bytes. It requires no whole-actor progress
+equality and introduces no Rust field, wire identifier or runtime admission
+guard. The pending-row exclusion represents the existing call-slot/borrow
+contract, not an actor-wide lock.
+
+`AsyncSourcePublicationGenerated.lean` comes from the TCP fixture's real actor
+snapshots and physical inbox journal. Both acceptances have the same actor and
+completion stamp; the independent send publishes first, followed by the loan.
+Both publications separately pass the measured-commit checker. The artifact
+also proves that the previous whole-actor checker rejects this legal loan
+publication, and rules out duplicate publication and reuse of an acceptance
+key. The latter concerns observation identities, not network replay protection:
+affine delivery remains a carrier premise. This component does not yet replace
+the restricted full `DistributedSourceExecution`, derive every Rust call-slot
+history, or establish the global simulation and enabled-step lifting across
+independent choices, rolled visits and faults. Those remain completion work.
+
 `ActorVisitProgress.lean` derives the finite point domain from the selected
 source bindings, with the path itself checked against the normalized global.
 It contains acceptance and both local halves of each wire
