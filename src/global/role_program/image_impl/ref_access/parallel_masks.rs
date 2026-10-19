@@ -1,8 +1,10 @@
 //! Mandatory source/row reconstruction for the immutable parallel lane table.
 //! No live cursor, route selection or ownership state participates in a mask.
 use super::{RoleImageRef, invalid_resident_descriptor};
-use crate::global::role_program::image_impl::parallel_masks::HEADER_BYTES;
-use crate::global::{role_program::PackedLaneRange, typestate::LocalAction};
+use crate::global::role_program::{
+    PackedLaneRange,
+    image_impl::{event_rows::RoleLocalDirection, parallel_masks::HEADER_BYTES},
+};
 
 impl RoleImageRef {
     const fn mask_byte(&self, offset: usize) -> u8 {
@@ -45,23 +47,37 @@ impl RoleImageRef {
     }
 
     const fn mask_event(&self, row: usize) -> (u8, usize, u8) {
-        let Some(node) = self.local_step_node(row) else {
+        let Some(event) = self.lanes().local_step_event(row) else {
             invalid_resident_descriptor();
         };
-        let (eff, lane, receiving) = match node.action() {
-            LocalAction::Send {
-                eff_index, lane, ..
-            }
-            | LocalAction::Local {
-                eff_index, lane, ..
-            } => (eff_index.dense_ordinal(), lane, false),
-            LocalAction::Recv {
-                eff_index, lane, ..
-            } => (eff_index.dense_ordinal(), lane, true),
-            LocalAction::Terminate => invalid_resident_descriptor(),
-        };
+        let eff = event.eff_index as usize;
         let atom = self.program.event_atom_at(eff);
-        (if receiving { atom.to } else { atom.from }, eff, lane)
+        let view = match event.direction() {
+            RoleLocalDirection::Recv => atom.to,
+            RoleLocalDirection::Local | RoleLocalDirection::Send => atom.from,
+        };
+        (view, eff, atom.lane)
+    }
+
+    /// Resident validation has already established the complete source-ordered
+    /// row projection and each row's direction, atom and lane. Locate the arm
+    /// without decoding unrelated conflicts or scanning the entire local image.
+    /// Equal source indices retain both facets of an actor-held communication.
+    const fn mask_row_start(&self, source: usize) -> usize {
+        let mut low = 0;
+        let mut high = self.local_step_count();
+        while low < high {
+            let middle = low + (high - low) / 2;
+            let Some(event) = self.lanes().local_step_event(middle) else {
+                invalid_resident_descriptor();
+            };
+            if (event.eff_index as usize) < source {
+                low = middle + 1;
+            } else {
+                high = middle;
+            }
+        }
+        low
     }
 
     pub(super) const fn validate_parallel_borrow_masks(&self) {
@@ -73,13 +89,13 @@ impl RoleImageRef {
                 let mut arm = 0;
                 while arm < 2 {
                     let (start, stop) = ranges[arm];
+                    let first = self.mask_row_start(start);
+                    let end = self.mask_row_start(stop);
                     let mut views = [0u8; 32];
-                    let mut event = 0;
-                    while event < self.local_step_count() {
-                        let (view, eff, _) = self.mask_event(event);
-                        if start <= eff && eff < stop {
-                            views[view as usize / 8] |= 1 << (view % 8);
-                        }
+                    let mut event = first;
+                    while event < end {
+                        let (view, _, _) = self.mask_event(event);
+                        views[view as usize / 8] |= 1 << (view % 8);
                         event += 1;
                     }
                     let mut view = 0usize;
@@ -87,10 +103,10 @@ impl RoleImageRef {
                         if views[view / 8] & (1 << (view % 8)) != 0 {
                             let mut bits = [0u8; 32];
                             let mut len = 0;
-                            let mut event = 0;
-                            while event < self.local_step_count() {
-                                let (actual, eff, lane) = self.mask_event(event);
-                                if actual as usize == view && start <= eff && eff < stop {
+                            let mut event = first;
+                            while event < end {
+                                let (actual, _, lane) = self.mask_event(event);
+                                if actual as usize == view {
                                     bits[lane as usize / 8] |= 1 << (lane % 8);
                                     let bound = lane as usize / 8 + 1;
                                     if bound > len {
@@ -201,17 +217,22 @@ mod tests {
                 ),
                 "mutation {mutation} must reach the independent semantic validator"
             );
-            let bytes = Box::leak(Box::new(bytes));
+            let bytes = Box::into_raw(Box::new(bytes));
             assert!(
                 catch_unwind(|| RoleImageRef::new(
                     rows.program,
                     rows.role,
                     rows.facts,
                     columns,
-                    bytes
+                    // SAFETY: this allocation stays live through validation.
+                    // A rejected constructor cannot let its reference escape.
+                    unsafe { &*bytes }
                 ))
                 .is_err()
             );
+            // SAFETY: rejection has unwound every image borrowing this unique
+            // allocation. No RoleImageRef escaped, so the test can reclaim it.
+            unsafe { drop(Box::from_raw(bytes)) };
         }
     }
 }
