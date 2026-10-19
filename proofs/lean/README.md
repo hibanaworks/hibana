@@ -52,7 +52,8 @@ The strongest end-to-end conclusions require all of the following:
 2. Peers agree on each canonical wire schema and use conforming codecs.
 3. The deployment supplies the carrier properties required by its selected
    profile: mediation, peer authenticity, FIFO and replay exclusion, observable
-   close or abort, and fairness where liveness is claimed.
+   close or abort, continued receive access by each permitted holder after
+   handoff, and fairness where liveness is claimed.
 4. The executor eventually polls operations that remain enabled.
 5. Production Rust supplies the prepare/commit refinement and ownership
    evidence required by `ProductionEndToEnd.lean`.
@@ -86,6 +87,14 @@ The target reduction has four obligations over the **same reachable execution**:
    follow from reachable custody and calls, not assume the desired Endpoint or
    future is already available. Forward simulation alone does not supply this
    lifting result or establish progress of arbitrary pending public calls.
+
+The carrier premises for that lifting include peer binding, FIFO, replay
+exclusion and **continued receive access after handoff**. The next permitted
+holder must be able to receive the same logical direction, including frames
+accepted before the handoff and any uncommitted buffered observation. Changing
+physical holders must not create an empty replacement queue, strand a receipt
+in the previous process, or require a shared-memory owner record. This is a
+carrier obligation, not a conclusion of the current logical progress theorem.
 
 Only after these obligations are established can the corresponding existing
 logical progress result be inherited, with its scheduling, accepted-artifact
@@ -969,23 +978,27 @@ The source-checked owned publication supplies the actual retired resource tag.
 The same production loop executes under ordinary tests, Miri and a symbolic
 Kani harness. Its boundary double supplies an opaque test plan and records
 calls; it does not establish source admission, the real publication body or
-physical transport correctness. The native receiver-first test separately
-checks that, once OS acceptance has allowed the child to complete its return,
-the sender completes publication in that same poll. It may still wait before
-acceptance. Arbitrary callback termination and executor fairness are execution
+physical transport correctness. The Unix receiver-first fixture deliberately
+suspends inside one synchronous send poll: its child finishes before that poll
+publishes. That is one schedule, not a requirement that all asynchronous
+transports publish in the poll that first exposes a frame. Arbitrary callback
+termination and executor fairness are execution
 assumptions; a completed observation is not a liveness proof for a stuck callback.
 
 `PublicAdmissionCustody.lean` separates a live public admission from an internal
 transport callback. Every retained sender witness has an acceptance origin in
 the same complete transfer history. At a later cut, its originating public call
-is either still protected by its mutation lease, has published its checked
-source commit, or has faulted the run. Publication retires the exact old tag;
+either still excludes use of its payload through the short mutation lease or
+the existing `SendPayload` operation phase, has published its checked source
+commit, or has faulted the run. Publication retires the exact old tag;
 the subsequent nonce history prevents that tag from reappearing when the
 resource returns, even if the old completed future remains alive. Other views
 may advance the actor's nonce counter independently.
 
-Under that public-call correspondence, a live actor with an available lease
-cannot use a retained accepted witness to justify an issued header. Composing
+Under that public-call correspondence, an admitted fresh operation on a live,
+unborrowed resource cannot use a retained accepted witness to justify an issued
+header. The actual public-operation classifier excludes `SendPayload` at that
+entry. An available actor lease alone does not establish this exclusion. Composing
 this exclusion with the complete header/transfer history gives actual custody
 in application code or a preparing future. The call correspondence must cover
 each acceptance origin; the proof does not assume source-ready value
@@ -1004,6 +1017,26 @@ boundary under Miri; Kani checks the existing lease's exclusion and release.
 These tests qualify their concrete schedules. General originating-call and
 complete-history correspondence are still explicit implementation contracts,
 not a claim of Rust source extraction or completed global progress.
+
+The TCP pending-send fixture covers the interval between polls. A separate
+worker receives, uses and returns the resource before the original sender
+observes its delayed TCP acknowledgement. The old tag is still issued and the
+actor lease is free, but the resource's existing phase is `SendPayload`. Another
+fragment of the **same actor** then sends through `par()` to a third process and
+completes before the original owned send publishes. No new owner field or
+serialization guard is needed. The SMT model retains this cut as satisfiable;
+the corresponding Lean counterexample rejects lease-only call correspondence.
+The added positive custody theorem uses the existing public classifier to
+derive payload exclusion. Its originating-call correspondence still refers to
+the same complete history, not to an assumed available Endpoint.
+
+This test also exposes a limitation of `DistributedSourceExecution`: its
+current per-actor acceptance stamp and publication-prefix lemmas cover at most
+one unpublished acceptance per actor and require its prepared whole-actor base
+to match publication. They do not cover this legal independent `par()` commit
+between acceptance and publication. Those histories must be generalized before
+using that relation for the full distributed reduction. Restricting the runtime
+to match this proof fragment would unnecessarily remove parallelism.
 
 `ActorVisitProgress.lean` derives the finite point domain from the selected
 source bindings, with the path itself checked against the normalized global.

@@ -191,11 +191,12 @@ private theorem filtering_other_pending_rows_keeps_this_count
   · simp [same, member]
   · by_cases inside : entry.sample.event ∈ rows <;> simp [inside, same]
 
-/-- Each actor's actual source word includes its at most one physically
+/-- Within this restricted relation, each actor's source word includes its at most one physically
 accepted but unpublished send. Its send-phase counts are the actual accepted
 send counts, and its receive-phase counts are the actual committed receive
-counts. The original stamp and mutation lease establish this refinement;
-there is no second runtime cursor, visit counter, owner map or publication
+counts. The restricted relation's publication stamp establishes this refinement;
+the general asynchronous same-actor par schedule is outside that relation.
+There is no second runtime cursor, visit counter, owner map or publication
 barrier for another participant.
 
 `sourceRowIdentityCheck` qualifies finite immutable columns, including both

@@ -1,5 +1,7 @@
 //! Current-kernel measurement. Setup and tail draining are outside the timer.
 //! One operation means one successful Endpoint send or receive, not one round trip.
+#[path = "support/callgrind.rs"]
+mod callgrind;
 #[path = "../examples/support/in_memory.rs"]
 mod in_memory;
 
@@ -76,6 +78,7 @@ async fn sequential<const S: usize>(
     let mut a = rv.enter(sid, a_program).unwrap();
     let mut b = rv.enter(sid, b_program).unwrap();
     let start = Instant::now();
+    callgrind::start();
     tokio::join!(
         async {
             for n in 0..ROUNDS {
@@ -90,6 +93,7 @@ async fn sequential<const S: usize>(
             }
         },
     );
+    callgrind::stop();
     let elapsed = start.elapsed();
     tokio::join!(
         async {
@@ -124,6 +128,7 @@ async fn parallel<const S: usize>(
         let [mut a_send, mut a_recv] = a.par().unwrap();
         let [mut b_recv, mut b_send] = b.par().unwrap();
         let start = Instant::now();
+        callgrind::start();
         tokio::join!(
             async {
                 for n in 0..ROUNDS {
@@ -146,6 +151,7 @@ async fn parallel<const S: usize>(
                 }
             },
         );
+        callgrind::stop();
         elapsed = start.elapsed();
     }
     tokio::join!(

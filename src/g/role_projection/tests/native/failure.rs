@@ -3,7 +3,8 @@ use super::*;
 use crate::transport::TransportError;
 use std::time::Instant;
 
-type Global = g::Seq<g::Send<0, 1, Loan>, g::Seq<g::Send<10, 2, Read>, g::Send<1, 0, Loan>>>;
+pub(super) type Global =
+    g::Seq<g::Send<0, 1, Loan>, g::Seq<g::Send<10, 2, Read>, g::Send<1, 0, Loan>>>;
 const LANES: usize = g::ProgramProjection::<Global, 8>::SOURCE_EFF_LIST.len();
 const SID: SessionId = SessionId::new(9061);
 const BEFORE: &str = "g::role_projection::tests::native::failure::worker_exits_before_receipt";

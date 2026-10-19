@@ -323,12 +323,15 @@ def DistributedSourceCut.carrierAt (cut : DistributedSourceCut) (channel : Trans
     (after : TransportState) : DistributedSourceCut :=
   { cut with carriers := fun query => if query = channel then after else cut.carriers query }
 
-/-- Successful source/transport boundaries in their observed order. Acceptance
-and local publication are different transitions; a remote receive may occur
-between them. The actor's short mutation lease prevents another acceptance
-or commit at its unconsumed acceptance stamp. Quiet observations do not
-advance its protocol. This does not
-delay any other actor or require a receiver acknowledgement.
+/-- Successful source/transport boundaries for a restricted publication
+schedule. Acceptance and local publication are different transitions; a remote
+receive may occur between them. This relation excludes another acceptance or
+commit by that same actor at an unconsumed acceptance stamp. That restriction
+models a synchronous publication window, not every asynchronous transport:
+the actual TCP pending-send fixture permits an independent par commit by this
+actor between acceptance and publication. A general correspondence must cover
+that schedule too, without imposing this proof restriction on the runtime.
+Quiet observations do not advance the protocol. Other actors remain independent.
 
 Receive-pair validation is an explicit implementation-correspondence obligation.
 The relation does not yet prove that all Rust histories pass it, or global

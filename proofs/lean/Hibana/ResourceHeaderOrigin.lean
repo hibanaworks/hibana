@@ -79,16 +79,16 @@ theorem a_fresh_live_public_header_has_actual_custody_and_receive_origin
     {Frame : Type} {first last : (Nat × Nat × Nat × Nat) → Prop}
     {initialValue value : Nat × Nat × Nat × Nat}
     {state : Observation (Nat × Nat × Nat × Nat) Frame}
-    {current : ViewNonceCut} {leaseHeld faulted : Prop}
+    {current : ViewNonceCut} {callBlocked faulted : Prop}
     (headers : ResourceHeaderExecution first (initial initialValue) last state)
     (transfers : Execution (initial initialValue) state)
     (initialHeaders : ∀ tag, first tag ↔ tag = initialValue)
     (issued : last value) (exactTag : current.issued = some value.2.2.2)
-    (fresh : value ≠ initialValue) (available : ¬leaseHeld) (live : ¬faulted)
+    (fresh : value ≠ initialValue) (available : ¬callBlocked) (live : ¬faulted)
     (calls : ∀ before after, Execution (initial initialValue) before →
       Step .accept before after → after.acceptedFutures.head? = some value →
       Execution after state →
-      AcceptedSendCallEvidence value.2.2.2 current leaseHeld faulted) :
+      AcceptedSendCallEvidence value.2.2.2 current callBlocked faulted) :
     TransferValueLocated value state ∧
       ∃ beforeIssued before afterIssued after,
         ResourceHeaderExecution first (initial initialValue) beforeIssued before ∧

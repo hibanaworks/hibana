@@ -18,6 +18,29 @@ pub(crate) struct ActorCallCut {
 }
 
 impl ViewTagObservation {
+    /// Observe whether an existing view is an owned-send payload between polls.
+    ///
+    /// # Safety
+    /// The pinned actor must remain alive and use exactly `T`. No operation
+    /// lease may be held while this read-only observation acquires its lease.
+    pub(crate) unsafe fn is_send_payload<T: crate::transport::Transport>(self) -> bool {
+        // SAFETY: the caller establishes the concrete transport and lifetime.
+        let header = unsafe { self.ptr.as_ref() };
+        // SAFETY: this is the original actor allocation with concrete `T`.
+        let actor = unsafe { header.actor().cast::<ResidentActor<'_, T>>().as_ref() };
+        let _lease = actor
+            .context
+            .try_operation_lease()
+            .expect("observation between polls");
+        let view = actor
+            .views
+            .get(header.role())
+            .expect("original view remains resident");
+        // SAFETY: this lease excludes mutation of the resident operation.
+        let phase = unsafe { (*view.primary_operation().state.get()).public_active_op };
+        phase == super::kernel::PublicActiveOp::SendPayload
+    }
+
     /// # Safety
     /// The observed Endpoint's pinned runtime allocation must remain alive.
     pub(crate) unsafe fn matches_header(self) -> bool {

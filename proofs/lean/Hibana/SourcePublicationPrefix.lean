@@ -228,9 +228,11 @@ consume it before publication; no peer acknowledgement or source-wide visit
 is required. The paired records retain exact source identity, wire bytes and
 the same prepared cursor through `sourcePublicationPairCheck`.
 
-The bound applies only after physical acceptance within the short mutation
-lease. Independent futures may wait before acceptance, and other actors may
-complete arbitrarily many operations while this publication is suspended.
+The bound follows from the restricted `DistributedSourceExecution` relation,
+which excludes this actor's independent commits in its publication window.
+It does not cover an asynchronously pending accepted send while another par
+fragment in the same actor commits; the TCP fixture exercises that legal case.
+Other actors may complete arbitrarily many operations in this relation.
 
 This is an observation theorem. It adds no runtime pending field or ledger,
 and does not infer a callable Endpoint from source readiness. -/

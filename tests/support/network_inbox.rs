@@ -45,10 +45,10 @@ struct Inbox {
     ready: Notify,
 }
 
-#[derive(Default)]
 struct Server {
     inboxes: Mutex<BTreeMap<Key, Arc<Inbox>>>,
     journal: Mutex<Vec<(u8, Vec<u8>)>>,
+    acknowledgement_delay: fn(FrameHeader) -> Duration,
 }
 
 impl Server {
@@ -72,6 +72,10 @@ impl Server {
                 frames.push_back(packet);
                 drop(frames);
                 inbox.ready.notify_waiters();
+                let delay = (self.acknowledgement_delay)(FrameHeader::from_bytes(header));
+                if !delay.is_zero() {
+                    tokio::time::sleep(delay).await;
+                }
                 // Acceptance precedes this acknowledgement. Losing its TCP
                 // connection must not retract or duplicate the queued frame.
                 stream.write_u8(0).await?;
@@ -129,11 +133,15 @@ async fn write_packet(stream: &mut TcpStream, packet: &[u8]) -> io::Result<()> {
     stream.write_all(packet).await
 }
 
-pub async fn serve() {
+pub async fn serve(acknowledgement_delay: fn(FrameHeader) -> Duration) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     std::println!("inbox={}", listener.local_addr().unwrap());
     io::stdout().flush().unwrap();
-    let server = Arc::new(Server::default());
+    let server = Arc::new(Server {
+        inboxes: Mutex::new(BTreeMap::new()),
+        journal: Mutex::new(Vec::new()),
+        acknowledgement_delay,
+    });
     loop {
         let (stream, _) = listener.accept().await.unwrap();
         let server = Arc::clone(&server);

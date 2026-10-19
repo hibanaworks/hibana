@@ -11,6 +11,8 @@ mod inbox;
 use inbox::{Broker, NetworkTransport, Process};
 
 mod composed;
+mod failure;
+mod preemption;
 
 const SID: SessionId = SessionId::new(9020);
 const WORKER: &str = "g::role_projection::tests::native::network::worker_process";
@@ -202,5 +204,5 @@ async fn worker_process() {
 #[ignore = "separate byte-inbox server exercised by the network parent fixture"]
 async fn broker_process() {
     assert_eq!(std::env::var("HIBANA_NETWORK_BROKER").unwrap(), "1");
-    inbox::serve().await;
+    inbox::serve(|_| Duration::ZERO).await;
 }

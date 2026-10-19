@@ -1431,7 +1431,7 @@ Hibana.EndpointDelegation.withOwner_same : ∀ (owners : Hibana.EndpointDelegati
   {first last : Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)) → Prop}
   {initialValue value : Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))}
   {state : Hibana.EndpointTransfer.Observation (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) Frame}
-  {current : Hibana.ViewNonceCut} {leaseHeld faulted : Prop},
+  {current : Hibana.ViewNonceCut} {callBlocked faulted : Prop},
   @Hibana.ResourceHeaderExecution (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) Frame first
       (@Hibana.EndpointTransfer.initial (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) Frame initialValue)
       last state →
@@ -1447,7 +1447,7 @@ Hibana.EndpointDelegation.withOwner_same : ∀ (owners : Hibana.EndpointDelegati
                   (@Prod.snd.{0, 0} Nat (Prod.{0, 0} Nat Nat)
                     (@Prod.snd.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)) value)))) →
             @Ne.{1} (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) value initialValue →
-              Not leaseHeld →
+              Not callBlocked →
                 Not faulted →
                   (∀
                       (before after :
@@ -1470,7 +1470,7 @@ Hibana.EndpointDelegation.withOwner_same : ∀ (owners : Hibana.EndpointDelegati
                                 (@Prod.snd.{0, 0} Nat Nat
                                   (@Prod.snd.{0, 0} Nat (Prod.{0, 0} Nat Nat)
                                     (@Prod.snd.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)) value)))
-                                current leaseHeld faulted) →
+                                current callBlocked faulted) →
                     And
                       (@Hibana.TransferValueLocated (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) Frame
                         value state)
@@ -1512,15 +1512,17 @@ Hibana.EndpointDelegation.withOwner_same : ∀ (owners : Hibana.EndpointDelegati
                                       (@Hibana.HeaderSuffixWithoutReceipt
                                         (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) value Frame
                                         afterIssued after last state)))))
+Hibana.a_lease_only_origin_does_not_cover_a_pending_issued_header : ∀ (old : Nat),
+  Not (Hibana.AcceptedSendCallEvidence old { counter := old, issued := @some.{0} Nat old } False False)
 @Hibana.a_live_public_cut_cannot_issue_an_accepted_sender_tag : ∀ {old : Nat} {current : Hibana.ViewNonceCut}
-  {leaseHeld faulted : Prop},
-  Hibana.AcceptedSendCallEvidence old current leaseHeld faulted →
-    Not leaseHeld → Not faulted → @Ne.{1} (Option.{0} Nat) current.issued (@some.{0} Nat old)
+  {callBlocked faulted : Prop},
+  Hibana.AcceptedSendCallEvidence old current callBlocked faulted →
+    Not callBlocked → Not faulted → @Ne.{1} (Option.{0} Nat) current.issued (@some.{0} Nat old)
 @Hibana.a_live_public_header_has_actual_authority_custody : ∀ {Frame : Type}
   {first last : Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)) → Prop}
   {initialValue value : Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))}
   {state : Hibana.EndpointTransfer.Observation (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) Frame}
-  {current : Hibana.ViewNonceCut} {leaseHeld faulted : Prop},
+  {current : Hibana.ViewNonceCut} {callBlocked faulted : Prop},
   @Hibana.ResourceHeaderExecution (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) Frame first
       (@Hibana.EndpointTransfer.initial (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) Frame initialValue)
       last state →
@@ -1535,7 +1537,7 @@ Hibana.EndpointDelegation.withOwner_same : ∀ (owners : Hibana.EndpointDelegati
                 (@Prod.snd.{0, 0} Nat Nat
                   (@Prod.snd.{0, 0} Nat (Prod.{0, 0} Nat Nat)
                     (@Prod.snd.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)) value)))) →
-            Not leaseHeld →
+            Not callBlocked →
               Not faulted →
                 (∀
                     (before after :
@@ -1558,7 +1560,7 @@ Hibana.EndpointDelegation.withOwner_same : ∀ (owners : Hibana.EndpointDelegati
                               (@Prod.snd.{0, 0} Nat Nat
                                 (@Prod.snd.{0, 0} Nat (Prod.{0, 0} Nat Nat)
                                   (@Prod.snd.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)) value)))
-                              current leaseHeld faulted) →
+                              current callBlocked faulted) →
                   @Hibana.TransferValueLocated (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) Frame value
                     state
 @Hibana.a_logged_distributed_source_commit_has_its_exact_boundary : ∀ {images : Nat → Hibana.RustDescriptorImage}
@@ -2264,6 +2266,11 @@ Hibana.a_payloads_own_transfer_can_finish : ∀ (current : Hibana.PublicOperatio
 Hibana.a_pending_payload_requires_its_own_send : ∀ (resource : Nat) (sent : Option.{0} Nat),
   @Eq.{1} Bool (Hibana.checkSendPayloadBorrow Hibana.PublicOperationPhase.sendPayload resource sent) true →
     @Eq.{1} (Option.{0} Nat) sent (@some.{0} Nat resource)
+@Hibana.a_pending_payload_supplies_its_blocked_call_evidence : ∀ {old : Nat} {current : Hibana.ViewNonceCut}
+  {leaseHeld faulted : Prop} {phase : Hibana.PublicOperationPhase},
+  @Eq.{1} Hibana.PublicOperationPhase phase Hibana.PublicOperationPhase.sendPayload →
+    Hibana.AcceptedSendCallEvidence old current
+      (Or leaseHeld (@Eq.{1} Hibana.PublicOperationPhase phase Hibana.PublicOperationPhase.sendPayload)) faulted
 @Hibana.a_pending_source_ancestor_blocks_covered_local_guards : ∀ {expected : Nat → List.{0} Nat}
   {actual : List.{0} Nat} {event before : Nat} {state : Hibana.CommitState},
   @Eq.{1} Bool (Hibana.predecessorCoverage expected actual event) true →
@@ -5268,6 +5275,69 @@ Hibana.ambiguous_receive_fails_closed : ∀ (before : Hibana.CompactGlobalState)
                                                   (@List.instMembership.{0} Nat) later event))
                                               (And (@Eq.{1} Bool (record.check sample.image choreo session) true)
                                                 (record.step.SourceOrdered sample.image choreo))))))
+@Hibana.an_admitted_fresh_public_operation_has_no_payload_borrow : ∀ {phase : Hibana.PublicOperationPhase}
+  {edge : Hibana.PublicOperationEdge},
+  Or (@Eq.{1} Hibana.PublicOperationEdge edge Hibana.PublicOperationEdge.beginSend)
+      (Or (@Eq.{1} Hibana.PublicOperationEdge edge Hibana.PublicOperationEdge.beginRecv)
+        (@Eq.{1} Hibana.PublicOperationEdge edge Hibana.PublicOperationEdge.beginOffer)) →
+    @Eq.{1} Hibana.PublicOperationLease (Hibana.transitionPublicOperation phase edge).lease
+        Hibana.PublicOperationLease.held →
+      @Ne.{1} Hibana.PublicOperationPhase phase Hibana.PublicOperationPhase.sendPayload
+@Hibana.an_admitted_live_public_header_has_asynchronous_authority_custody : ∀ {Frame : Type}
+  {first last : Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)) → Prop}
+  {initialValue value : Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))}
+  {state : Hibana.EndpointTransfer.Observation (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) Frame}
+  {current : Hibana.ViewNonceCut} {leaseHeld faulted : Prop} {phase : Hibana.PublicOperationPhase}
+  {edge : Hibana.PublicOperationEdge},
+  @Hibana.ResourceHeaderExecution (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) Frame first
+      (@Hibana.EndpointTransfer.initial (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) Frame initialValue)
+      last state →
+    @Hibana.EndpointTransfer.Execution (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) Frame
+        (@Hibana.EndpointTransfer.initial (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) Frame initialValue)
+        state →
+      (∀ (tag : Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))),
+          Iff (first tag) (@Eq.{1} (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) tag initialValue)) →
+        last value →
+          @Eq.{1} (Option.{0} Nat) current.issued
+              (@some.{0} Nat
+                (@Prod.snd.{0, 0} Nat Nat
+                  (@Prod.snd.{0, 0} Nat (Prod.{0, 0} Nat Nat)
+                    (@Prod.snd.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)) value)))) →
+            Or (@Eq.{1} Hibana.PublicOperationEdge edge Hibana.PublicOperationEdge.beginSend)
+                (Or (@Eq.{1} Hibana.PublicOperationEdge edge Hibana.PublicOperationEdge.beginRecv)
+                  (@Eq.{1} Hibana.PublicOperationEdge edge Hibana.PublicOperationEdge.beginOffer)) →
+              @Eq.{1} Hibana.PublicOperationLease (Hibana.transitionPublicOperation phase edge).lease
+                  Hibana.PublicOperationLease.held →
+                Not leaseHeld →
+                  Not faulted →
+                    (∀
+                        (before after :
+                          Hibana.EndpointTransfer.Observation (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)))
+                            Frame),
+                        @Hibana.EndpointTransfer.Execution (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)))
+                            Frame
+                            (@Hibana.EndpointTransfer.initial (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)))
+                              Frame initialValue)
+                            before →
+                          @Hibana.EndpointTransfer.Step (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) Frame
+                              Hibana.EndpointTransfer.Action.accept before after →
+                            @Eq.{1} (Option.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))))
+                                (@List.head?.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)))
+                                  (@Hibana.EndpointTransfer.Observation.acceptedFutures
+                                    (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) Frame after))
+                                (@some.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) value) →
+                              @Hibana.EndpointTransfer.Execution
+                                  (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) Frame after state →
+                                Hibana.AcceptedSendCallEvidence
+                                  (@Prod.snd.{0, 0} Nat Nat
+                                    (@Prod.snd.{0, 0} Nat (Prod.{0, 0} Nat Nat)
+                                      (@Prod.snd.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)) value)))
+                                  current
+                                  (Or leaseHeld
+                                    (@Eq.{1} Hibana.PublicOperationPhase phase Hibana.PublicOperationPhase.sendPayload))
+                                  faulted) →
+                      @Hibana.TransferValueLocated (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) Frame value
+                        state
 @Hibana.an_earlier_resource_use_causally_precedes_a_transfer : ∀ {source : Hibana.EndpointDelegation.Source}
   {resources : List.{0} Hibana.EndpointDelegation.EndpointKey} {owners : Hibana.EndpointDelegation.OwnerMap}
   {path : List.{0} Hibana.EndpointDelegation.Selection} {start first second : Nat}
@@ -6128,7 +6198,7 @@ Hibana.causal_flow_monotone : ∀ (flow : Hibana.CausalFlowExpr) {left right : H
 @Hibana.checked_owned_publication_supplies_its_accepted_call_evidence : ∀ {sample : Hibana.ActorCommitObservation}
   {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo} {wire : Hibana.OwnedWireObservation} {session : Nat}
   {facts : Hibana.OwnedCommitFacts} {tag : Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))}
-  {current : Hibana.ViewNonceCut} {leaseHeld faulted : Prop},
+  {current : Hibana.ViewNonceCut} {callBlocked faulted : Prop},
   @Eq.{1} Bool (sample.ownedCheck image choreo wire session) true →
     @Eq.{1} (Option.{0} Hibana.OwnedCommitFacts) (sample.ownedFacts? image choreo)
         (@some.{0} Hibana.OwnedCommitFacts facts) →
@@ -6142,7 +6212,7 @@ Hibana.causal_flow_monotone : ∀ (flow : Hibana.CausalFlowExpr) {left right : H
                 (@Prod.snd.{0, 0} Nat Nat
                   (@Prod.snd.{0, 0} Nat (Prod.{0, 0} Nat Nat)
                     (@Prod.snd.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)) tag)))
-                current leaseHeld faulted
+                current callBlocked faulted
 @Hibana.checked_owned_receive_publishes_its_exact_observed_tag : ∀ {sample : Hibana.ActorCommitObservation}
   {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo} {wire : Hibana.OwnedWireObservation} {session : Nat}
   {facts : Hibana.OwnedCommitFacts},

@@ -6,7 +6,7 @@ use crate::endpoint::proof_snapshot::{ViewTagObservation, view_tag};
 use core::{cell::Cell, future::poll_fn, pin::Pin};
 use std::{cell::RefCell, time::Instant};
 
-type Global = g::Seq<
+pub(super) type Global = g::Seq<
     g::Send<0, 1, Loan>,
     g::Seq<
         g::Send<10, 1, Read>,

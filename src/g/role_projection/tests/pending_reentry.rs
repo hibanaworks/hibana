@@ -2,7 +2,7 @@
 //! Every operation below is a real Endpoint operation on the same actor.
 use super::*;
 use crate::{
-    endpoint::proof_snapshot::actor_snapshot,
+    endpoint::proof_snapshot::{actor_snapshot, view_tag},
     runtime::{SessionKitStorage, ids::SessionId},
     test_support::transport::TestTransport,
 };
@@ -214,6 +214,7 @@ fn a_pending_owned_send_keeps_its_payload_unavailable_for_resource_dependent_ree
             ticker.recv::<Tick>().await.unwrap();
             assert_eq!(reader.recv::<Read>().await.unwrap(), 7);
             network.pause_send(11);
+            let payload_tag = view_tag(&db);
             let mut pending = pin!(auth.send::<Loan>(db));
             poll_fn(|cx| {
                 assert!(pending.as_mut().poll(cx).is_pending());
@@ -223,6 +224,9 @@ fn a_pending_owned_send_keeps_its_payload_unavailable_for_resource_dependent_ree
             // The send future owns DB. Even before transport acceptance, that
             // value cannot perform the next visit's resource action.
             // Independent par work on this same actor must remain enabled.
+            // SAFETY: DB's pinned TestTransport actor is retained by auth;
+            // this observation runs between polls with no kernel lease held.
+            assert!(unsafe { payload_tag.is_send_payload::<TestTransport>() });
             // SAFETY: owner remains attached to this TestTransport actor.
             let pending_snapshot = unsafe { actor_snapshot(&owner) };
             let borrowed_db = pending_snapshot.views.iter().find(|view| view.role == 10).unwrap();

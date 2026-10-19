@@ -13,6 +13,27 @@ on:
         options: [all, final-form]
 
 jobs:
+  runtime-instructions:
+    runs-on: ubuntu-24.04
+    env:
+      TOOLCHAIN: stable
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install instruction profiler
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y valgrind
+          rustup toolchain install stable --profile minimal
+      - name: Measure the current kernel instruction counts
+        run: >-
+          bash .github/scripts/lib/resource_guard.sh
+          bash .github/scripts/measure_runtime_instructions.sh
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: runtime-instructions
+          path: target/runtime-instructions/results/
+
   kani:
     if: github.event_name != 'workflow_dispatch' || inputs.check == 'all'
     runs-on: ubuntu-24.04
