@@ -132,7 +132,17 @@ must both normalize with the same initial issuance. The executable dependency
 check is proved equivalent to the source relation, and every unfinished cut
 has a logical source transition. Kernel-checked examples cover output
 pipelining, unequal parallel visits, a new holder lending before the old sender
-publishes, and different choices in overlapping visits.
+publishes, and different choices in overlapping visits. The unfolding also
+admits reentry after a sequential continuation: the earlier continuation's
+completed work is retained instead of moving it after every later body copy.
+
+`SourceOccurrenceProjection.lean` derives the actor-local domain and local
+predecessors from the accepted binding. A query reads that actor's projected
+history and immutable order; transport acceptance is separate evidence.
+Global source readiness is proved equivalent to these local checks and that
+evidence. Every unfinished occurrence cut therefore identifies an actor with
+an enabled projected operation, without a callable-future oracle or a shared
+mutable owner record.
 
 `SourceOccurrenceTrace.lean` reconstructs source cuts from one chronological
 acceptance, publication, receipt and local-commit word. Each occurrence retains
@@ -140,14 +150,29 @@ its original message, binding and source ordinal. Publication and receipt use
 the same earlier carrier call key, including ordinary frames; equal rolled
 envelopes do not identify a visit. The joint theorem combines this reconstructed
 source execution, affine custody and complete FIFO histories for that same
-word. It does not impose one pending call per actor or synchronized visits.
+word. Its transition rules now check projected local order, rather than taking
+global source readiness as a premise. Publication and receipt obtain acceptance
+evidence from their actual earlier call key. The source execution is derived
+by induction over those local transitions. The joint result also returns the
+enabled actor's local query and acceptance evidence. It does not impose one
+pending call per actor or synchronized visits.
 
-This proves source-dependency progress for histories satisfying that checked
-correspondence. The remaining model result must derive the correspondence for
-its reachable executions and compose carrier and fault/closure outcomes. It
-cannot assume an independently chosen source cut agrees with the custody
-trace. Rust implementation evidence remains scoped as described above;
-formalizing arbitrary application code or an executor is not another task.
+This proves source simulation and projected progress for the selected finite
+unfolding's local protocol model. Applying it to every production history still
+requires descriptor/current-and-fresh-base correspondence, general elastic
+continuation refinement, and carrier/fault/closure composition. An independently
+chosen source cut cannot replace that correspondence. Rust implementation
+evidence remains scoped as described above; formalizing arbitrary application
+code or an executor is not another task.
+
+The existing three-runtime mixed-message fixture qualifies both loan visits
+and the later Read/Value exchange through this projected model. Its generated
+word contains all eight accepted frames and sixteen measured commits, including
+ordinary Note messages between loans. Exact equality with the physical run's
+complete acceptance and commit lists is kernel checked. The source execution
+then follows from local order and the earlier accepted calls, and all selected
+source points finish. This is one captured execution, not the general
+production refinement or an additional future-custody qualification.
 
 The Unix-datagram process fixtures inherit descriptors for the same kernel
 datagram queues. They share no Rust runtime memory, but they test one host's

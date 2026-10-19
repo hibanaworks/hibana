@@ -1,4 +1,4 @@
-import Hibana.SourceOccurrenceProgress
+import Hibana.SourceOccurrenceProjection
 import Hibana.OwnedCallHistory
 
 namespace Hibana
@@ -10,12 +10,6 @@ abbrev OccurrenceCalls := List ((TransportChannel × Nat) × Nat)
 
 def occurrenceCall? (calls : OccurrenceCalls) (key : TransportChannel × Nat) : Option Nat :=
   (calls.find? fun pair => decide (pair.1 = key)).map Prod.snd
-
-/-- Source progress is reconstructed from the chronological operation word.
-The supplied template's arbitrary observation function is always replaced. -/
-def occurrenceCut (plan : SourceOccurrenceCut source) (points : List SourcePoint) :
-    SourceOccurrenceCut source :=
-  { plan with observed := fun point => points.contains point }
 
 /-- Match one observed operation to a static message origin and one occurrence
 in the accepted unfolding. Physical actor, logical peers, payload kind, label
@@ -75,9 +69,12 @@ observation cut. Ordinary frames are included. Receipts and publications must
 resolve the exact earlier acceptance key, so equal rolled envelopes cannot
 select another occurrence.
 
-This is a proof-only conformance relation, not a runtime scheduler or another
-admission guard. Establishing it for all production histories is a separate
-refinement obligation. It assumes no future call or application Rust value. -/
+Each step checks only its actor's projected local order. Publication and receipt
+resolve the earlier accepted call; they do not assume global source readiness.
+The source simulation is derived below. This is an erased protocol model, not
+a runtime scheduler or another admission guard. Relating every production
+history to the projected model remains an implementation refinement obligation;
+no future call or application Rust value is assumed. -/
 inductive SourceOccurrenceTrace (images : Nat → RustDescriptorImage) (choreo : Choreo)
     (plan : SourceOccurrenceCut source) :
     List DistributedCallBoundary → OccurrenceCalls → List SourcePoint → Prop where
@@ -92,7 +89,8 @@ inductive SourceOccurrenceTrace (images : Nat → RustDescriptorImage) (choreo :
       (origin : ((plan.unfolding.occurrences 0)[occurrence]?).map Prod.fst = some entry.event)
       (matched : plan.matchesAction entry.sample.image choreo entry.sample.image.role
         entry.sample.pathIndex entry.sample.event occurrence .send = true)
-      (ready : (occurrenceCut plan points).ready (.accepted occurrence) = true) :
+      (ready : occurrenceLocalReady plan entry.sample.image.role
+        (occurrenceLocalHistory plan entry.sample.image.role points) (.accepted occurrence) = true) :
       SourceOccurrenceTrace images choreo plan (word ++ [.accept entry])
         (calls ++ [(entry.callKey, occurrence)]) (points ++ [.accepted occurrence])
   | publish {word calls points key actor occurrence} {record : ActorCommitRecord}
@@ -100,7 +98,8 @@ inductive SourceOccurrenceTrace (images : Nat → RustDescriptorImage) (choreo :
       (callAt : occurrenceCall? calls key = some occurrence)
       (matched : plan.matchesAction (images actor) choreo actor
         record.step.pathIndex record.step.event occurrence .send = true)
-      (ready : (occurrenceCut plan points).ready (.committed ⟨occurrence, .send⟩) = true) :
+      (ready : occurrenceLocalReady plan actor (occurrenceLocalHistory plan actor points)
+        (.committed ⟨occurrence, .send⟩) = true) :
       SourceOccurrenceTrace images choreo plan (word ++ [.publish key actor record]) calls
         (points ++ [.committed ⟨occurrence, .send⟩])
   | receive {word calls points key actor occurrence} {record : ActorCommitRecord}
@@ -108,19 +107,53 @@ inductive SourceOccurrenceTrace (images : Nat → RustDescriptorImage) (choreo :
       (callAt : occurrenceCall? calls key = some occurrence)
       (matched : plan.matchesAction (images actor) choreo actor
         record.step.pathIndex record.step.event occurrence .receive = true)
-      (ready : (occurrenceCut plan points).ready (.committed ⟨occurrence, .receive⟩) = true) :
+      (ready : occurrenceLocalReady plan actor (occurrenceLocalHistory plan actor points)
+        (.committed ⟨occurrence, .receive⟩) = true) :
       SourceOccurrenceTrace images choreo plan (word ++ [.receive key actor record]) calls
         (points ++ [.committed ⟨occurrence, .receive⟩])
   | localCommit {word calls points actor occurrence} {record : ActorCommitRecord}
       (prior : SourceOccurrenceTrace images choreo plan word calls points)
       (matched : plan.matchesAction (images actor) choreo actor
         record.step.pathIndex record.step.event occurrence .local = true)
-      (ready : (occurrenceCut plan points).ready (.committed ⟨occurrence, .local⟩) = true) :
+      (ready : occurrenceLocalReady plan actor (occurrenceLocalHistory plan actor points)
+        (.committed ⟨occurrence, .local⟩) = true) :
       SourceOccurrenceTrace images choreo plan (word ++ [.localCommit actor record]) calls
         (points ++ [.committed ⟨occurrence, .local⟩])
 
-/-- Reconstruct every intermediate logical state from the same observed word.
-No final Boolean snapshot, common actor visit, or desired next call is an input. -/
+private theorem trace_calls_have_observed_acceptances
+    (trace : SourceOccurrenceTrace images choreo plan word calls points) :
+    ∀ pair ∈ calls, SourcePoint.accepted pair.2 ∈ points := by
+  induction trace with
+  | nil => simp
+  | @accept word calls points entry occurrence prior fresh origin matched ready ih =>
+    intro pair member
+    rcases List.mem_append.mp member with earlier | current
+    · exact List.mem_append_left _ (ih pair earlier)
+    · have same := List.mem_singleton.mp current
+      subst pair
+      exact List.mem_append_right _ (by simp)
+  | quiet prior ih => exact ih
+  | publish prior callAt matched ready ih
+  | receive prior callAt matched ready ih
+  | localCommit prior matched ready ih =>
+    intro pair member
+    exact List.mem_append_left _ (ih pair member)
+
+private theorem a_resolved_call_has_actual_acceptance_evidence
+    (trace : SourceOccurrenceTrace images choreo plan word calls points)
+    (found : occurrenceCall? calls key = some occurrence) :
+    points.contains (SourcePoint.accepted occurrence) = true := by
+  unfold occurrenceCall? at found
+  cases atPair : calls.find? (fun pair => decide (pair.1 = key)) with
+  | none => simp only [atPair, Option.map_none, reduceCtorEq] at found
+  | some pair =>
+    have same : pair.2 = occurrence := Option.some.inj (by simpa only [atPair, Option.map_some] using found)
+    have present := trace_calls_have_observed_acceptances trace pair (List.mem_of_find?_eq_some atPair)
+    simpa only [same, List.contains_iff_mem] using present
+
+/-- Derive every intermediate source state from projected local steps and
+actual earlier acceptance. There is no global-ready premise, independent final
+Boolean snapshot, common actor visit, or desired next Rust call. -/
 theorem a_source_occurrence_trace_is_its_reconstructed_execution
     (trace : SourceOccurrenceTrace images choreo plan word calls points) :
     SourceOccurrenceExecution (occurrenceCut plan []) (occurrenceCut plan points) points := by
@@ -128,13 +161,19 @@ theorem a_source_occurrence_trace_is_its_reconstructed_execution
   | nil => exact .nil
   | quiet prior ih => exact ih
   | accept prior fresh origin matched ready ih =>
-    exact .tail ih (a_checked_occurrence_call_appends_exactly_its_source_point _ _ _ ready)
+    exact .tail ih (a_checked_occurrence_call_appends_exactly_its_source_point _ _ _
+      ((projected_occurrence_readiness_is_exact _ _ _).mpr ⟨_, ready, rfl⟩))
   | publish prior callAt matched ready ih =>
-    exact .tail ih (a_checked_occurrence_call_appends_exactly_its_source_point _ _ _ ready)
+    exact .tail ih (a_checked_occurrence_call_appends_exactly_its_source_point _ _ _
+      ((projected_occurrence_readiness_is_exact _ _ _).mpr
+        ⟨_, ready, a_resolved_call_has_actual_acceptance_evidence prior callAt⟩))
   | receive prior callAt matched ready ih =>
-    exact .tail ih (a_checked_occurrence_call_appends_exactly_its_source_point _ _ _ ready)
+    exact .tail ih (a_checked_occurrence_call_appends_exactly_its_source_point _ _ _
+      ((projected_occurrence_readiness_is_exact _ _ _).mpr
+        ⟨_, ready, a_resolved_call_has_actual_acceptance_evidence prior callAt⟩))
   | localCommit prior matched ready ih =>
-    exact .tail ih (a_checked_occurrence_call_appends_exactly_its_source_point _ _ _ ready)
+    exact .tail ih (a_checked_occurrence_call_appends_exactly_its_source_point _ _ _
+      ((projected_occurrence_readiness_is_exact _ _ _).mpr ⟨_, ready, rfl⟩))
 
 private theorem an_occurrence_call_retains_its_acceptance
     (trace : SourceOccurrenceTrace images choreo plan word calls points) :
@@ -198,9 +237,10 @@ theorem a_resolved_occurrence_call_has_its_same_word_acceptance
     simpa only [keyAt, indexAt] using origin
 
 /-- The custody, physical FIFO/call history and reconstructed source cut all
-refer to ONE chronological execution. This derives source-model progress and
-affine authority, not the still-outstanding actor/carrier/fault lifting theorem.
-No ordinary-future inventory or future-existence oracle is required. -/
+refer to ONE chronological execution. The next operation is enabled by one
+actor's projected local history and actual acceptance evidence. This derives
+protocol-model progress and affine authority, not complete Rust/kernel or
+carrier/fault refinement. No future-existence oracle is required. -/
 theorem a_joint_occurrence_refinement_has_custody_fifo_and_source_progress
     {images : Nat → RustDescriptorImage} {choreo : Choreo} {session : Nat}
     {resource : EndpointKey} {value : OwnedCallHistory.Tag}
@@ -220,13 +260,16 @@ theorem a_joint_occurrence_refinement_has_custody_fifo_and_source_progress
       SourceOccurrenceExecution (occurrenceCut plan []) (occurrenceCut plan points) points ∧
       (∀ channel, ∃ history, SendAdmissionTrace choreo session
         (last.carriers channel) history (sourceChannelRecords entries channel)) ∧
-      ∃ point next, SourceOccurrenceStep (occurrenceCut plan points) point next := by
-  obtain ⟨point, next, step, _⟩ :=
-    an_unfinished_source_occurrence_cut_has_a_transition (occurrenceCut plan points) unfinished
+      ∃ actor point next,
+        occurrenceLocalReady plan actor (occurrenceLocalHistory plan actor points) point = true ∧
+        occurrenceWireReady points point = true ∧
+        SourceOccurrenceStep (occurrenceCut plan points) point next := by
+  obtain ⟨actor, point, next, localChecked, wire, step⟩ :=
+    unfinished_source_occurrences_have_a_projected_operation plan points unfinished
   exact ⟨(a_joint_call_history_preserves_affine_custody custody).1,
     (a_distributed_call_execution_partitions_its_actual_acceptances physical).1,
     a_source_occurrence_trace_is_its_reconstructed_execution mapped,
     a_distributed_call_execution_projects_its_complete_fifo_histories physical,
-    point, next, step⟩
+    actor, point, next, localChecked, wire, step⟩
 
 end Hibana

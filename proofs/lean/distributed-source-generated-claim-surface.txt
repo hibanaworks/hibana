@@ -77,6 +77,8 @@ distributedFreshReceiptResetsEvenWhenItsRowBitStaysTrue : distributedBefore8.don
   distributedAfter8.doneState.done 0 = true ∧
     distributedBefore8.progress ≠ distributedAfter8.progress ∧
       distributedPreparedPair8.snd.before.doneState.done 0 = false
+distributedLocalProjectionReconstructsItsOccurrenceHistory : SourceOccurrenceTrace distributedImages distributedChoreo
+  distributedOccurrencePlan distributedOccurrenceWord distributedOccurrenceCalls distributedOccurrencePoints
 distributedMixedCutKeepsIndependentActorVisits : (distributedCut13.actors 0).snd = 8 ∧
   (distributedCut13.actors 1).snd = 3 ∧
     (distributedCut13.carriers distributedChannel8).delivered = 2 ∧
@@ -86,6 +88,15 @@ distributedOldWitnessCannotIdentifyTheFreshFifoHead : ∀ (entry : SourceAccepta
           distributedChannel8)[(distributedCut13.carriers distributedChannel8).delivered]? =
       some entry →
     entry.carrierWitness ≠ distributedEntry0.carrierWitness
+distributedProjectedHistoryIncludesEveryPhysicalBoundary : List.filterMap DistributedCallBoundary.record?
+      distributedOccurrenceWord =
+    distributedRecords ∧
+  List.filterMap DistributedCallBoundary.acceptance? distributedOccurrenceWord = distributedEntries24 ∧
+    ((sourceVisitPoints distributedOccurrencePlan.path.bindings).all fun point =>
+          distributedOccurrencePoints.contains point) =
+        true ∧
+      SourceOccurrenceExecution (occurrenceCut distributedOccurrencePlan [])
+        (occurrenceCut distributedOccurrencePlan distributedOccurrencePoints) distributedOccurrencePoints
 distributedProspectiveReceiptHasItsSourceInstanceBeforePairValidation : ∃ history key following,
   SendAdmissionTrace distributedChoreo 9062 (distributedCut13.carriers distributedChannel8) history
       (sourceChannelRecords distributedEntries13 distributedChannel8) ∧

@@ -309,7 +309,7 @@ pub(super) fn write_observations(
     );
     source.insert_str(
         0,
-        "import Hibana.FifoOccurrenceOrigin\nimport Hibana.SourcePublicationPrefix\nimport Hibana.SourceOwnedReceive\n",
+        "import Hibana.FifoOccurrenceOrigin\nimport Hibana.SourcePublicationPrefix\nimport Hibana.SourceOwnedReceive\nimport Hibana.SourceOccurrenceTrace\n",
     );
     use std::fmt::Write;
     writeln!(source, "private theorem distributedBeforeFreshReceiptExecution : DistributedSourceExecution distributedImages distributedChoreo 9062\n  (distributedCut0, distributedEntries0) (distributedCut13, distributedEntries13) (distributedRecords.take 8) := by\n  exact {}\n",
@@ -453,6 +453,7 @@ theorem distributedFreshMixedSourceIdentityBeforeItsNewReceivePair :
   distributedFreshPreparedSourceIdentity
 "#);
     source.push_str(include_str!("distributed_owned_receive.lean"));
+    source.push_str(include_str!("distributed_occurrence.lean"));
     let directory = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/lean-proof");
     std::fs::create_dir_all(&directory).unwrap();
     std::fs::write(directory.join("DistributedSourceGenerated.lean"), source).unwrap();

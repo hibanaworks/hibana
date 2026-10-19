@@ -24,6 +24,9 @@ inductive SourceUnfolding : Source → Source → Type where
   | rollOnce : SourceUnfolding body expanded → SourceUnfolding (.roll body) expanded
   | rollMore : SourceUnfolding (.roll body) earlier → SourceUnfolding body next →
       SourceUnfolding (.roll body) (.seq earlier next)
+  | resumeAfterContinuation :
+      SourceUnfolding (.seq (.roll body) continuation) earlier → SourceUnfolding body next →
+      SourceUnfolding (.seq (.roll body) continuation) (.seq earlier next)
 
 def EndpointDelegation.Source.oneCopy : Source → Source
   | .send message => .send message
@@ -50,6 +53,8 @@ def SourceUnfolding.occurrences : {source expanded : Source} →
       first.occurrences start ++ second.occurrences (start + left.eventCount)
   | _, _, .rollOnce body, start => body.occurrences start
   | _, _, .rollMore earlier next, start => earlier.occurrences start ++ next.occurrences start
+  | _, _, .resumeAfterContinuation earlier next, start =>
+      earlier.occurrences start ++ next.occurrences start
 
 def SourceUnfolding.origins (unfolding : SourceUnfolding source expanded) (start : Nat) : List Nat :=
   (unfolding.occurrences start).map Prod.fst
@@ -82,6 +87,11 @@ theorem source_unfolding_preserves_original_messages
     rcases List.mem_append.mp present with before | after
     · exact left start entry before
     · exact right start entry after
+  | resumeAfterContinuation earlier next left right =>
+    intro entry present
+    rcases List.mem_append.mp present with before | after
+    · exact left start entry before
+    · exact List.mem_append_left _ (right start entry after)
 
 /-- Every occurrence has an origin, including later copies of the same
 message. Equal source ordinals are intentionally retained rather than deduped. -/
@@ -100,6 +110,8 @@ theorem source_unfolding_has_one_origin_per_occurrence
     simp [SourceUnfolding.occurrences, Source.eventCount, left, right]
   | rollOnce body ih => exact ih start
   | rollMore earlier next left right =>
+    simp [SourceUnfolding.occurrences, Source.eventCount, left, right]
+  | resumeAfterContinuation earlier next left right =>
     simp [SourceUnfolding.occurrences, Source.eventCount, left, right]
 
 /-- Executable source dependency, including the distinct acceptance and
@@ -171,6 +183,11 @@ structure SourceOccurrenceCut (source : Source) where
   path : NormalizedPath
   selected : path ∈ normalized.paths
   observed : SourcePoint → Bool
+
+/-- Reconstruct observations from the chronological operation word. -/
+def occurrenceCut (plan : SourceOccurrenceCut source) (points : List SourcePoint) :
+    SourceOccurrenceCut source :=
+  { plan with observed := fun point => points.contains point }
 
 def SourceOccurrenceCut.Unfinished (cut : SourceOccurrenceCut source) : Prop :=
   ∃ point ∈ sourceVisitPoints cut.path.bindings, cut.observed point = false
@@ -361,6 +378,42 @@ theorem source_occurrences_preserve_holder_change_before_old_publication :
       loanBeforeReturnCut.ready (.accepted 4) = false ∧
       ∃ next, SourceOccurrenceStep loanCut (.accepted 4) next :=
   ⟨rfl, rfl, rfl, by decide, a_checked_source_occurrence_has_its_exact_transition _ _ (by decide)⟩
+
+private def continuationMessage : Message := ⟨⟨0, 0⟩, ⟨0, 1⟩, 97, .wire 0⟩
+private def loanWithContinuation : Source := .seq (.roll loanBody) (.send continuationMessage)
+private def resumedLoanSource : Source :=
+  .seq (.seq loanBody (.send continuationMessage)) loanBody
+private def resumedLoanUnfolding : SourceUnfolding loanWithContinuation resumedLoanSource :=
+  .resumeAfterContinuation (.seq (.rollOnce loanBodyUnfolding) (.send _)) loanBodyUnfolding
+private def resumedLoanBindings : List (Nat × Binding) :=
+  loanBindings 0 ++ [(4, ⟨continuationMessage, 0, 1⟩)] ++ loanBindings 5
+private def resumedLoanCut : SourceOccurrenceCut loanWithContinuation := {
+  original := ⟨[⟨dbKey, 0⟩], [⟨[], loanBindings 0 ++ [(4, ⟨continuationMessage, 0, 1⟩)]⟩]⟩
+  originalAccepted := by decide
+  expanded := resumedLoanSource
+  unfolding := resumedLoanUnfolding
+  normalized := ⟨[⟨dbKey, 0⟩], [⟨[], resumedLoanBindings⟩]⟩
+  accepted := by decide
+  sameIssuance := rfl
+  path := ⟨[], resumedLoanBindings⟩
+  selected := by decide
+  observed := fun point => match point with
+    | .accepted event => event < 5
+    | .committed id => id.event < 5
+}
+
+/-- Elastic reentry may occur after the sequential continuation. Its completed
+work remains observed; an unfolding must not force every future body copy to
+precede that continuation. This adds no runtime reset or synchronization. -/
+theorem source_occurrences_preserve_reentry_after_the_continuation :
+    resumedLoanUnfolding.origins 0 = [0, 1, 2, 3, 4, 0, 1, 2, 3] ∧
+      resumedLoanCut.observed (.committed ⟨4, .receive⟩) = true ∧
+      ∃ next, SourceOccurrenceStep resumedLoanCut (.accepted 5) next ∧
+        next.observed (.committed ⟨4, .receive⟩) = true := by
+  obtain ⟨next, step⟩ := a_checked_source_occurrence_has_its_exact_transition resumedLoanCut (.accepted 5) (by decide)
+  refine ⟨rfl, rfl, next, step, ?_⟩
+  cases step
+  rfl
 
 private def rightChoiceMessage : Message := ⟨⟨0, 0⟩, ⟨0, 1⟩, 96, .wire 0⟩
 private def choiceBody : Source := .route none (.send pipelineMessage) (.send rightChoiceMessage)

@@ -1972,9 +1972,17 @@ Hibana.EndpointDelegation.withOwner_same : ∀ (owners : Hibana.EndpointDelegati
                     @Exists.{1} Hibana.ElasticAdmissionHistory fun history =>
                       Hibana.SendAdmissionTrace choreo session (last.carriers channel) history
                         (Hibana.sourceChannelRecords entries channel))
-                  (@Exists.{1} Hibana.SourcePoint fun point =>
-                    @Exists.{1} (Hibana.SourceOccurrenceCut source) fun next =>
-                      @Hibana.SourceOccurrenceStep source (@Hibana.occurrenceCut source plan points) point next))))
+                  (@Exists.{1} Nat fun actor =>
+                    @Exists.{1} Hibana.SourcePoint fun point =>
+                      @Exists.{1} (Hibana.SourceOccurrenceCut source) fun next =>
+                        And
+                          (@Eq.{1} Bool
+                            (@Hibana.occurrenceLocalReady source plan actor
+                              (@Hibana.occurrenceLocalHistory source plan actor points) point)
+                            true)
+                          (And (@Eq.{1} Bool (Hibana.occurrenceWireReady points point) true)
+                            (@Hibana.SourceOccurrenceStep source (@Hibana.occurrenceCut source plan points) point
+                              next))))))
 @Hibana.a_joint_private_payload_has_its_same_history_constructor : ∀ {images : Nat → Hibana.RustDescriptorImage}
   {resource : Hibana.EndpointDelegation.EndpointKey} {choreo : Hibana.Choreo} {value : Hibana.OwnedCallHistory.Tag}
   {events : List.{0} Hibana.OwnedCallHistory.OwnedCallEvent} {cut : Hibana.OwnedCallHistory.Cut}
@@ -11394,6 +11402,16 @@ Hibana.project_graph_roll_count_matches_global : ∀ (role : Nat) (choreo : Hiba
 Hibana.projected_actions_match_global_events : ∀ (role : Nat) (choreo : Hibana.Choreo),
   @Eq.{1} (List.{0} Hibana.LocalAction) (Hibana.Choreo.projectedActions role choreo)
     (@List.filterMap.{0, 0} Hibana.GlobalEvent Hibana.LocalAction (fun x => x.action? role) choreo.globalEvents)
+@Hibana.projected_occurrence_readiness_is_exact : ∀ {source : Hibana.EndpointDelegation.Source}
+  (plan : Hibana.SourceOccurrenceCut source) (points : List.{0} Hibana.SourcePoint) (point : Hibana.SourcePoint),
+  Iff (@Eq.{1} Bool (@Hibana.SourceOccurrenceCut.ready source (@Hibana.occurrenceCut source plan points) point) true)
+    (@Exists.{1} Nat fun actor =>
+      And
+        (@Eq.{1} Bool
+          (@Hibana.occurrenceLocalReady source plan actor (@Hibana.occurrenceLocalHistory source plan actor points)
+            point)
+          true)
+        (@Eq.{1} Bool (Hibana.occurrenceWireReady points point) true))
 Hibana.projected_route_arm_lane_duplicates_do_not_allocate_relations : ∀ (lanes : List.{0} Nat) (lane : Nat),
   @Eq.{1} (List.{0} Nat)
     (Hibana.projectedRouteArmLanes
@@ -13970,6 +13988,37 @@ Hibana.source_occurrences_preserve_independent_parallel_visits : And
         (@Exists.{1} (Hibana.SourceOccurrenceCut Hibana.unevenSource✝) fun next =>
           @Hibana.SourceOccurrenceStep Hibana.unevenSource✝ Hibana.unevenCut✝
             (Hibana.SourcePoint.accepted (@OfNat.ofNat.{0} Nat (nat_lit 3) (instOfNatNat (nat_lit 3)))) next))))
+Hibana.source_occurrences_preserve_reentry_after_the_continuation : And
+  (@Eq.{1} (List.{0} Nat)
+    (@Hibana.SourceUnfolding.origins Hibana.loanWithContinuation✝ Hibana.resumedLoanSource✝ Hibana.resumedLoanUnfolding✝
+      (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0))))
+    (@List.cons.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0)))
+      (@List.cons.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1)))
+        (@List.cons.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 2) (instOfNatNat (nat_lit 2)))
+          (@List.cons.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 3) (instOfNatNat (nat_lit 3)))
+            (@List.cons.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 4) (instOfNatNat (nat_lit 4)))
+              (@List.cons.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0)))
+                (@List.cons.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1)))
+                  (@List.cons.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 2) (instOfNatNat (nat_lit 2)))
+                    (@List.cons.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 3) (instOfNatNat (nat_lit 3)))
+                      (@List.nil.{0} Nat)))))))))))
+  (And
+    (@Eq.{1} Bool
+      (@Hibana.SourceOccurrenceCut.observed Hibana.loanWithContinuation✝ Hibana.resumedLoanCut✝
+        (Hibana.SourcePoint.committed
+          { event := @OfNat.ofNat.{0} Nat (nat_lit 4) (instOfNatNat (nat_lit 4)),
+            side := Hibana.EndpointDelegation.Side.receive }))
+      true)
+    (@Exists.{1} (Hibana.SourceOccurrenceCut Hibana.loanWithContinuation✝) fun next =>
+      And
+        (@Hibana.SourceOccurrenceStep Hibana.loanWithContinuation✝ Hibana.resumedLoanCut✝
+          (Hibana.SourcePoint.accepted (@OfNat.ofNat.{0} Nat (nat_lit 5) (instOfNatNat (nat_lit 5)))) next)
+        (@Eq.{1} Bool
+          (@Hibana.SourceOccurrenceCut.observed Hibana.loanWithContinuation✝ next
+            (Hibana.SourcePoint.committed
+              { event := @OfNat.ofNat.{0} Nat (nat_lit 4) (instOfNatNat (nat_lit 4)),
+                side := Hibana.EndpointDelegation.Side.receive }))
+          true)))
 @Hibana.source_order_gives_actor_precedence : ∀ {data : Hibana.DecodedActorOrder}
   {path : Hibana.EndpointDelegation.NormalizedPath} {before after : Hibana.DecodedActorRow},
   @Eq.{1} (Option.{0} Hibana.EndpointDelegation.Action)
@@ -14914,6 +14963,19 @@ Hibana.trace_checker_sound : ∀ (graph : Hibana.EventGraph) (state : Hibana.Com
         (And (@Eq.{1} Bool (observed point) false)
           (∀ (before : Hibana.SourcePoint),
             Hibana.SourcePointEdge source bindings before point → @Eq.{1} Bool (observed before) true))
+@Hibana.unfinished_source_occurrences_have_a_projected_operation : ∀ {source : Hibana.EndpointDelegation.Source}
+  (plan : Hibana.SourceOccurrenceCut source) (points : List.{0} Hibana.SourcePoint),
+  @Hibana.SourceOccurrenceCut.Unfinished source (@Hibana.occurrenceCut source plan points) →
+    @Exists.{1} Nat fun actor =>
+      @Exists.{1} Hibana.SourcePoint fun point =>
+        @Exists.{1} (Hibana.SourceOccurrenceCut source) fun next =>
+          And
+            (@Eq.{1} Bool
+              (@Hibana.occurrenceLocalReady source plan actor (@Hibana.occurrenceLocalHistory source plan actor points)
+                point)
+              true)
+            (And (@Eq.{1} Bool (Hibana.occurrenceWireReady points point) true)
+              (@Hibana.SourceOccurrenceStep source (@Hibana.occurrenceCut source plan points) point next))
 @Hibana.unfinished_source_visit_has_ready_point : ∀ {source : Hibana.EndpointDelegation.Source}
   {bindings : List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)} {domain : List.{0} Hibana.SourcePoint}
   {observed : Hibana.SourcePoint → Bool},
