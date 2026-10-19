@@ -30,6 +30,46 @@
 (check-sat)
 (pop)
 
+; A temporary return is not enough: reentry can move another resource needed
+; for that return. A causally enclosing local resource supplies a safe guard.
+; These are occurrences at one causally closed cut, not runtime fields.
+(declare-const guard_departed Bool)
+(declare-const guard_returned Bool)
+(declare-const resource_departed Bool)
+(declare-const resource_returned Bool)
+(define-fun resource_away () Bool
+  (and resource_departed (not resource_returned)))
+(define-fun guard_away () Bool
+  (and guard_departed (not guard_returned)))
+
+(push)
+(assert resource_away)
+(assert (=> resource_departed guard_departed))
+(assert (=> guard_returned resource_returned))
+(assert (not guard_away))
+; EXPECT: unsat
+(check-sat)
+(pop)
+
+; Without the return-acceptance edge, the local guard can be restored while
+; the remote return is not even accepted. An accepted return may await receipt.
+(push)
+(assert resource_away)
+(assert (=> resource_departed guard_departed))
+(assert guard_returned)
+; EXPECT: sat
+(check-sat)
+(pop)
+
+; Source preorder across par is not the departure-to-departure causal edge.
+(push)
+(assert resource_away)
+(assert (=> guard_returned resource_returned))
+(assert (not guard_departed))
+; EXPECT: sat
+(check-sat)
+(pop)
+
 ; Without the fresh-visit origin obligation, an outside sender remains free
 ; to send even when the holder has permanently handed the resource away.
 (push)

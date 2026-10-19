@@ -1,6 +1,6 @@
-//! Construction-only knowledge of resource-dependent reentry. A roll that
-//! permanently gives up an entry resource must let that owner control every
-//! causal origin of another visit. Independent par components stay independent.
+//! Construction-only knowledge of resource-dependent reentry. Temporary and
+//! permanent resource departures both require permission for another visit.
+//! Independent par components stay independent.
 //! The workspace below is compiler scratch, never resident protocol state.
 
 use super::super::{
@@ -129,9 +129,226 @@ impl<const E: usize, const D: usize> Checker<'_, E, D> {
             Err(choice) => return Err(choice),
         };
         if owner == final_owner {
-            return Ok(true);
+            return self.temporary_departures(body, owner, path);
         }
         self.origins(body, owner, path)
+    }
+
+    const fn transfer(
+        &self,
+        event: usize,
+        key: EndpointKey,
+        path: &Context<'_>,
+    ) -> Result<Option<(u8, u8)>, Scope> {
+        if !matches!(self.root.message_at(event).payload,
+            Payload::Endpoint(payload) if payload.same(key))
+        {
+            return Ok(None);
+        }
+        match Self::present(self.root, 0, event, path) {
+            Ok(false) => return Ok(None),
+            Ok(true) => (),
+            Err(scope) => return Err(scope),
+        }
+        let sender = match self.side(event, 0, path) {
+            Ok(actor) => actor,
+            Err(scope) => return Err(scope),
+        };
+        match self.side(event, 1, path) {
+            Ok(receiver) => Ok(Some((sender, receiver))),
+            Err(scope) => Err(scope),
+        }
+    }
+
+    /// A temporary absence is harmless when its return can proceed without
+    /// resources moved by a fresh visit. Only irreversible sends that can
+    /// obstruct that return need fresh permission; ordinary queued messages
+    /// may wait for a return through an independent logical view.
+    const fn temporary_departures(
+        &self,
+        body: &Body<'_>,
+        owner: u8,
+        path: &Context<'_>,
+    ) -> Result<bool, Scope> {
+        let end = body.start + body.source.event_count();
+        let mut needed = [0; E];
+        let mut event = end;
+        while event < self.image.event_len {
+            match self.transfer(event, body.key, path) {
+                Ok(Some((sender, receiver))) if sender == owner && receiver != owner => {
+                    let returned = match self.return_after(body.key, event, owner, path) {
+                        Ok(Some(returned)) => returned,
+                        Ok(None) => return Ok(false),
+                        Err(scope) => return Err(scope),
+                    };
+                    let mut returning = [0; E];
+                    returning[returned] = 2;
+                    match self.close_dependencies(self.root, 0, &mut returning, path) {
+                        Ok(()) => (),
+                        Err(scope) => return Err(scope),
+                    }
+                    let mut outgoing = body.start;
+                    while outgoing < end {
+                        if let Payload::Endpoint(key) = self.root.message_at(outgoing).payload
+                            && !key.same(body.key)
+                        {
+                            let present =
+                                match Self::present(body.source, body.start, outgoing, path) {
+                                    Ok(present) => present,
+                                    Err(scope) => return Err(scope),
+                                };
+                            let mut prior = event;
+                            while present && prior <= returned {
+                                let message = self.root.message_at(prior);
+                                let uses = (message.from.same(key) && returning[prior] & 1 != 0)
+                                    || (message.to.same(key) && returning[prior] & 2 != 0)
+                                    || (matches!(message.payload, Payload::Endpoint(payload) if payload.same(key))
+                                        && returning[prior] != 0);
+                                if uses {
+                                    needed[outgoing] = 1;
+                                    break;
+                                }
+                                prior += 1;
+                            }
+                        }
+                        outgoing += 1;
+                    }
+                }
+                Ok(_) => (),
+                Err(scope) => return Err(scope),
+            }
+            event += 1;
+        }
+        self.permitted_origins(body, owner, needed, path)
+    }
+
+    const fn return_after(
+        &self,
+        key: EndpointKey,
+        departure: usize,
+        owner: u8,
+        path: &Context<'_>,
+    ) -> Result<Option<usize>, Scope> {
+        let mut event = departure + 1;
+        while event < self.image.event_len {
+            match self.transfer(event, key, path) {
+                Ok(Some((_, receiver))) if receiver == owner => return Ok(Some(event)),
+                Ok(_) => (),
+                Err(scope) => return Err(scope),
+            }
+            event += 1;
+        }
+        Ok(None)
+    }
+
+    const fn causally_before(
+        &self,
+        first: (usize, usize),
+        second: (usize, usize),
+        path: &Context<'_>,
+    ) -> Result<bool, Scope> {
+        if first.0 > second.0 || (first.0 == second.0 && first.1 >= second.1) {
+            return Ok(false);
+        }
+        let mut needed = [0; E];
+        needed[second.0] = 1 << second.1;
+        match self.close_dependencies(self.root, 0, &mut needed, path) {
+            Ok(()) => Ok(needed[first.0] & (1 << first.1) != 0),
+            Err(scope) => Err(scope),
+        }
+    }
+
+    /// A local entry resource can guard a remote resource's entire absence.
+    /// Its send precedes the remote departure; restoring it follows acceptance
+    /// of the remote return. That accepted return can then be received without
+    /// another visit. Preorder alone supplies neither causal edge.
+    const fn guarded_excursion(
+        &self,
+        body: &Body<'_>,
+        actor: u8,
+        departure: usize,
+        returned: Option<usize>,
+        path: &Context<'_>,
+    ) -> Result<bool, Scope> {
+        let mut guard = body.start + body.source.event_count();
+        while guard < departure {
+            if let Payload::Endpoint(key) = self.root.message_at(guard).payload
+                && !key.same(body.key)
+                && body.source.uses(key)
+            {
+                let owner = match self.owner(key, body.start, path) {
+                    Ok(owner) => owner,
+                    Err(scope) => return Err(scope),
+                };
+                if owner == actor {
+                    match self.transfer(guard, key, path) {
+                        Ok(Some((sender, receiver))) if sender == actor && receiver != actor => {
+                            let begins =
+                                match self.causally_before((guard, 0), (departure, 0), path) {
+                                    Ok(begins) => begins,
+                                    Err(scope) => return Err(scope),
+                                };
+                            if begins {
+                                let guard_return = match self.return_after(key, guard, actor, path)
+                                {
+                                    Ok(event) => event,
+                                    Err(scope) => return Err(scope),
+                                };
+                                match (returned, guard_return) {
+                                    (_, None) => return Ok(true),
+                                    (Some(returned), Some(guard_return)) => {
+                                        match self.causally_before(
+                                            (returned, 0),
+                                            (guard_return, 1),
+                                            path,
+                                        ) {
+                                            Ok(true) => return Ok(true),
+                                            Ok(false) => (),
+                                            Err(scope) => return Err(scope),
+                                        }
+                                    }
+                                    (None, Some(_)) => (),
+                                }
+                            }
+                        }
+                        Ok(_) => (),
+                        Err(scope) => return Err(scope),
+                    }
+                }
+            }
+            guard += 1;
+        }
+        Ok(false)
+    }
+
+    const fn guarded_departures(
+        &self,
+        body: &Body<'_>,
+        owner: u8,
+        actor: u8,
+        path: &Context<'_>,
+    ) -> Result<bool, Scope> {
+        let mut found = false;
+        let mut event = body.start + body.source.event_count();
+        while event < self.image.event_len {
+            match self.transfer(event, body.key, path) {
+                Ok(Some((sender, receiver))) if sender == owner && receiver != owner => {
+                    found = true;
+                    let returned = match self.return_after(body.key, event, owner, path) {
+                        Ok(event) => event,
+                        Err(scope) => return Err(scope),
+                    };
+                    match self.guarded_excursion(body, actor, event, returned, path) {
+                        Ok(true) => (),
+                        other => return other,
+                    }
+                }
+                Ok(_) => (),
+                Err(scope) => return Err(scope),
+            }
+            event += 1;
+        }
+        Ok(found)
     }
 
     const fn origins(&self, body: &Body<'_>, owner: u8, path: &Context<'_>) -> Result<bool, Scope> {
@@ -155,49 +372,25 @@ impl<const E: usize, const D: usize> Checker<'_, E, D> {
             }
             event += 1;
         }
-        event = end;
-        while event > body.start {
-            event -= 1;
-            if needed[event] & 2 != 0 {
-                needed[event] |= 1;
-            }
-            let mut side = 0;
-            while side < 2 {
-                if needed[event] & (1 << side) != 0 {
-                    let actor = match self.side(event, side, path) {
-                        Ok(actor) => actor,
-                        Err(choice) => return Err(choice),
-                    };
-                    let mut prior = body.start;
-                    while prior < event {
-                        if body.source.before(prior - body.start, event - body.start) {
-                            let mut previous_side = 0;
-                            while previous_side < 2 {
-                                let previous = match self.side(prior, previous_side, path) {
-                                    Ok(actor) => actor,
-                                    Err(choice) => return Err(choice),
-                                };
-                                if previous == actor {
-                                    match Self::present(body.source, body.start, prior, path) {
-                                        Ok(true) => needed[prior] |= 1 << previous_side,
-                                        Ok(false) => (),
-                                        Err(choice) => return Err(choice),
-                                    }
-                                }
-                                previous_side += 1;
-                            }
-                        }
-                        prior += 1;
-                    }
-                }
-                side += 1;
-            }
+        self.permitted_origins(body, owner, needed, path)
+    }
+
+    const fn permitted_origins(
+        &self,
+        body: &Body<'_>,
+        owner: u8,
+        mut needed: [u8; E],
+        path: &Context<'_>,
+    ) -> Result<bool, Scope> {
+        match self.close_dependencies(body.source, body.start, &mut needed, path) {
+            Ok(()) => (),
+            Err(scope) => return Err(scope),
         }
 
-        // Every relevant send is rooted at the entry owner, or follows an
-        // incoming action in this visit. That incoming action's sender is also
-        // in the closure, so finite source order prevents circular permission.
-        event = body.start;
+        // Each origin either observes an incoming permission in this visit,
+        // owns the resource, or owns a resource covering its remote absence.
+        let mut event = body.start;
+        let end = body.start + body.source.event_count();
         while event < end {
             if needed[event] & 1 != 0 {
                 let actor = match self.side(event, 0, path) {
@@ -219,13 +412,65 @@ impl<const E: usize, const D: usize> Checker<'_, E, D> {
                         prior += 1;
                     }
                     if !informed {
-                        return Ok(false);
+                        match self.guarded_departures(body, owner, actor, path) {
+                            Ok(true) => (),
+                            other => return other,
+                        }
                     }
                 }
             }
             event += 1;
         }
         Ok(true)
+    }
+
+    const fn close_dependencies(
+        &self,
+        source: &Source<'_>,
+        start: usize,
+        needed: &mut [u8; E],
+        path: &Context<'_>,
+    ) -> Result<(), Scope> {
+        let mut event = start + source.event_count();
+        while event > start {
+            event -= 1;
+            if needed[event] & 2 != 0 {
+                needed[event] |= 1;
+            }
+            let mut side = 0;
+            while side < 2 {
+                if needed[event] & (1 << side) != 0 {
+                    let actor = match self.side(event, side, path) {
+                        Ok(actor) => actor,
+                        Err(choice) => return Err(choice),
+                    };
+                    let mut prior = start;
+                    while prior < event {
+                        if source.before(prior - start, event - start) {
+                            let mut previous_side = 0;
+                            while previous_side < 2 {
+                                let previous = match self.side(prior, previous_side, path) {
+                                    Ok(actor) => actor,
+                                    Err(choice) => return Err(choice),
+                                };
+                                if previous == actor {
+                                    match Self::present(source, start, prior, path) {
+                                        Ok(true) => needed[prior] |= 1 << previous_side,
+                                        Ok(false) => (),
+                                        Err(choice) => return Err(choice),
+                                    }
+                                }
+                                previous_side += 1;
+                            }
+                        }
+                        prior += 1;
+                    }
+                }
+                side += 1;
+            }
+        }
+
+        Ok(())
     }
 
     const fn body(&self, body: &Body<'_>, path: &Context<'_>) -> bool {

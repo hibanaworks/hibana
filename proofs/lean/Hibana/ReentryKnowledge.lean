@@ -3,6 +3,20 @@ import Hibana.ActorSourceProgress
 namespace Hibana
 open EndpointDelegation
 
+/-- A causally enclosing local resource stays absent throughout the remote
+resource's absence before return acceptance. This uses only a causally closed cut: there is no shared
+owner table, global clock or requirement to serialize independent actions.
+Rust checks the two causal edges on selected source actions. -/
+theorem a_causal_resource_guard_covers_the_remote_absence
+    {Action : Type} {before : Action → Action → Prop} {occurred : Action → Prop}
+    {guardSend resourceSend resourceReturn guardReceive : Action}
+    (closed : ∀ {earlier later}, before earlier later → occurred later → occurred earlier)
+    (departure : before guardSend resourceSend)
+    (returned : before resourceReturn guardReceive)
+    (away : occurred resourceSend ∧ ¬occurred resourceReturn) :
+    occurred guardSend ∧ ¬occurred guardReceive := by
+  exact ⟨closed departure away.1, fun guardBack => away.2 (closed returned guardBack)⟩
+
 /-- Permission flows from the entry owner through this visit's actual messages
 and strict actor-local source order. It is proof evidence, not runtime state. -/
 inductive ReentryAuthority (source : Source) (sender receiver : Nat → Nat)

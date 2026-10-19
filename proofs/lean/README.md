@@ -1595,9 +1595,21 @@ under wire predecessors and each origin follows an incoming message or belongs
 to that owner. Strict `Source.before` supplies well-foundedness; a parallel
 sibling supplies no permission edge. The Rust projection check constructs this
 closure for resources that the continuation does not restore to their entry
-owner. An initial prefix outside the roll cannot authorize another visit.
-These three general lemmas specify that construction obligation; they do not
-complete the owned runtime's pending-I/O or distributed progress refinement.
+owner. Temporary departures also require checking irreversible reentry sends
+that can block the resource's return. Merely comparing initial and final owners
+misses such a cycle. Ordinary messages may still wait for an independent return.
+An initial prefix outside the roll cannot authorize another visit.
+
+A local entry resource can instead prevent reentry throughout the dangerous
+absence. Its departure must causally precede the remote departure, and restoring
+it must follow acceptance of the remote return. The fourth lemma proves this
+enclosure at any causally closed cut. The Rust source check uses send/receive
+edges and actor-local dependencies, never source enumeration across `par`.
+The Tokio regression runs three independent runtimes, uses both resources in
+the continuation, returns them, and performs a fresh visit. Negative cases
+reject the original circular return and a prematurely restored local guard.
+These checks add no resident state, locks or wire fields and do not complete
+the owned runtime's pending-I/O or distributed progress refinement.
 
 `OwnedRecovery.lean` independently derives incoming owned-receive rows from the
 serialized directions and global payload kinds. It checks the complete receipt

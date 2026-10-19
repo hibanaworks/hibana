@@ -405,6 +405,13 @@ Hibana.EndpointDelegation.withOwner_same : ∀ (owners : Hibana.EndpointDelegati
                           And (@Eq.{1} Nat leftSource.frameLabel rightSource.frameLabel)
                             (@Eq.{1} Nat (Hibana.elasticFrameOwner (Hibana.canonicalControlSource choreo).markers left)
                               (Hibana.elasticFrameOwner (Hibana.canonicalControlSource choreo).markers right))
+@Hibana.a_causal_resource_guard_covers_the_remote_absence : ∀ {Action : Type} {before : Action → Action → Prop}
+  {occurred : Action → Prop} {guardSend resourceSend resourceReturn guardReceive : Action},
+  (∀ {earlier later : Action}, before earlier later → occurred later → occurred earlier) →
+    before guardSend resourceSend →
+      before resourceReturn guardReceive →
+        And (occurred resourceSend) (Not (occurred resourceReturn)) →
+          And (occurred guardSend) (Not (occurred guardReceive))
 @Hibana.a_checked_actor_visit_covers_each_source_action : ∀ {family : List.{0} Hibana.ActorVisitRecord}
   {choreo : Hibana.Choreo} {source : Hibana.EndpointDelegation.Source} {path : Hibana.EndpointDelegation.NormalizedPath}
   {accepted : List.{0} Nat} {id : Hibana.EndpointDelegation.ActionId},

@@ -138,7 +138,9 @@
       "g::source::ownership::actors::reentry::kani::a_fresh_permit_authorizes_the_dependent_sender",
       "g::source::ownership::actors::reentry::kani::a_parallel_permit_does_not_authorize_an_independently_enabled_send",
       "g::source::ownership::actors::reentry::kani::a_remote_origin_without_a_fresh_permit_is_rejected",
-      "g::source::ownership::actors::reentry::kani::an_unrelated_parallel_sender_needs_no_resource_permit"
+      "g::source::ownership::actors::reentry::kani::an_unrelated_parallel_sender_needs_no_resource_permit",
+      "g::source::ownership::actors::reentry::kani::parallel_preorder_does_not_supply_a_resource_guard_handoff",
+      "g::source::ownership::actors::reentry::kani::receipt_causality_comes_from_the_actual_actor_handoff"
     ],
     "../../src/global/compiled/images/image/program_ref/actors/kani.rs": [
       "global::compiled::images::image::program_ref::actors::kani::actor_row_lookups_reject_every_out_of_range_index",

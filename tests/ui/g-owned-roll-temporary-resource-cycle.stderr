@@ -1,0 +1,34 @@
+error[E0080]: evaluation panicked: rolled reentry requires permission from the resource's entry owner; help: let the resource's entry owner authorize each visit inside the roll
+ --> src/g.rs
+  |
+  |             diagnostic_message::panic_diagnostic(diagnostic);
+  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `hibana::g::ProgramProjection::<hibana::g::Seq<hibana::g::Roll<hibana::g::Seq<hibana::g::Send<0, 1, hibana::g::Msg<141, hibana::Endpoint<'_, 10>>>, hibana::g::Seq<hibana::g::Send<1, 0, hibana::g::Msg<142, hibana::Endpoint<'_, 11>>>, hibana::g::Seq<hibana::g::Send<1, 0, hibana::g::Msg<143, hibana::Endpoint<'_, 10>>>, hibana::g::Send<0, 1, hibana::g::Msg<144, hibana::Endpoint<'_, 11>>>>>>>, hibana::g::Seq<hibana::g::Send<1, 2, hibana::g::Msg<151, hibana::Endpoint<'_, 11>>>, hibana::g::Seq<hibana::g::Send<2, 0, hibana::g::Msg<152, ()>>, hibana::g::Seq<hibana::g::Send<0, 2, hibana::g::Msg<153, hibana::Endpoint<'_, 10>>>, hibana::g::Seq<hibana::g::Send<2, 1, hibana::g::Msg<154, hibana::Endpoint<'_, 11>>>, hibana::g::Send<2, 0, hibana::g::Msg<155, hibana::Endpoint<'_, 10>>>>>>>>, 32>::VALIDATION` failed inside this call
+  |
+note: inside `g::diagnostic_message::panic_diagnostic`
+ --> $RUST/core/src/panic.rs
+  |
+  |         $crate::panicking::panic_display(&$arg);
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the failure occurred here
+  |
+ ::: src/g/diagnostic_message.rs
+  |
+  |         Ok(message) => panic!("{}", message),
+  |                        --------------------- in this macro invocation
+
+note: erroneous constant encountered
+ --> src/g/role_projection.rs
+  |
+  |     let () = ProgramProjection::<Steps, CAPACITY>::VALIDATION;
+  |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+note: erroneous constant encountered
+ --> src/global/role_program/program.rs
+  |
+  |     crate::global::program::bind_projection(program, const { crate::g::project_image::<ROLE, _>() })
+  |                                                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+note: the above error was encountered while instantiating `fn project::<0, Program<Seq<Roll<Seq<hibana::g::Send<0, 1, Msg<141, Endpoint<'_, 10>>>, Seq<hibana::g::Send<1, 0, Msg<142, Endpoint<'_, 11>>>, Seq<hibana::g::Send<1, 0, Msg<143, Endpoint<'_, 10>>>, hibana::g::Send<0, 1, Msg<144, Endpoint<'_, 11>>>>>>>, Seq<hibana::g::Send<1, 2, Msg<151, Endpoint<'_, 11>>>, Seq<hibana::g::Send<2, 0, Msg<152, ()>>, Seq<hibana::g::Send<0, 2, Msg<153, Endpoint<'_, 10>>>, Seq<hibana::g::Send<2, 1, Msg<154, Endpoint<'_, 11>>>, hibana::g::Send<2, 0, Msg<155, Endpoint<'_, 10>>>>>>>>>>`
+  --> tests/ui/g-owned-roll-temporary-resource-cycle.rs:26:13
+   |
+26 |     let _ = project::<0>(&g::seq(body.roll(), tail));
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

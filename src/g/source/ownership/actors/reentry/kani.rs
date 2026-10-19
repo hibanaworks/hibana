@@ -147,3 +147,41 @@ fn an_unrelated_parallel_sender_needs_no_resource_permit() {
         Ok(true)
     );
 }
+
+#[kani::proof]
+#[kani::unwind(4)]
+fn receipt_causality_comes_from_the_actual_actor_handoff() {
+    let a: u8 = kani::any();
+    let b: u8 = kani::any();
+    let c: u8 = kani::any();
+    let d: u8 = kani::any();
+    let image =
+        ActorImage::<2, 0>::causal_fixture(&[[a.into(), b.into()], [c.into(), d.into()]], &[]);
+    assert_eq!(
+        Checker {
+            root: &WORK,
+            image: &image
+        }
+        .causally_before((0, 1), (1, 1), &Context::new(&[])),
+        Ok(b == c || b == d),
+    );
+}
+
+#[kani::proof]
+#[kani::unwind(4)]
+fn parallel_preorder_does_not_supply_a_resource_guard_handoff() {
+    let a: u8 = kani::any();
+    let b: u8 = kani::any();
+    let c: u8 = kani::any();
+    let d: u8 = kani::any();
+    let image =
+        ActorImage::<2, 0>::causal_fixture(&[[a.into(), b.into()], [c.into(), d.into()]], &[]);
+    assert_eq!(
+        Checker {
+            root: &PARALLEL_UNRELATED,
+            image: &image
+        }
+        .causally_before((0, 1), (1, 1), &Context::new(&[])),
+        Ok(false),
+    );
+}

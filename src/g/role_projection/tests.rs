@@ -27,6 +27,7 @@ mod ingress_columns;
 mod local_return;
 mod logical_view_word;
 mod mixed_send_admission;
+mod multi_owner_roll;
 mod mutation_coverage;
 #[cfg(all(unix, not(miri)))]
 mod native;
