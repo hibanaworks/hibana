@@ -199,6 +199,7 @@ impl ScopeId {
         Self::new(ScopeKind::Roll, ordinal)
     }
 
+    #[cfg(any(test, kani))]
     pub(crate) const fn parallel(ordinal: u16) -> Self {
         Self::new(ScopeKind::Parallel, ordinal)
     }

@@ -137,7 +137,7 @@ impl<const N: usize> RoleImageBytes<N> {
         let offset = Self::column_offset(column, row, ROLE_IMAGE_DEPENDENCY_STRIDE);
         self.write_u16(offset, dependency.start());
         self.write_u16(offset + 2, dependency.end());
-        self.write_u16(offset + 4, dependency.dep_ordinal());
+        self.write_u16(offset + 4, dependency.dep_scope());
         self.write_u16(offset + 6, dependency.conflict_route());
     }
 

@@ -1,5 +1,6 @@
 use super::*;
 mod associative;
+mod choice;
 use crate::{
     runtime::{SessionKitStorage, ids::SessionId},
     test_support::transport::TestTransport,

@@ -13,7 +13,7 @@ private structure DecodedRoleEventRow where
 structure DecodedDependencyRow where
   start : Nat
   stop : Nat
-  parallelScope : Nat
+  scope : Nat
   conflict : Nat
   deriving Repr, DecidableEq
 
@@ -33,12 +33,16 @@ private def canonicalLocalEventRange
   | none => (0, 0)
   | some start => (start, positions.length)
 
-private def parallelExitForEnter?
+private def scopeExitForEnter?
     (markers : List DecodedScopeMarker) (enterIndex : Nat) : Option Nat := do
   let enter ← markers[enterIndex]?
-  let exit ← (markers.drop (enterIndex + 1)).find? fun marker =>
-    marker.scope = enter.scope && marker.tag % 4 = 2
-  pure exit.offset
+  if enter.scope / 8192 = 0 then
+    let (_, stop) ← routeBounds? markers enter.scope
+    pure stop
+  else
+    let exit ← (markers.drop (enterIndex + 1)).find? fun marker =>
+      marker.scope = enter.scope && marker.tag % 4 = 2
+    pure exit.offset
 
 private def canonicalScopeDependencyBounds?
     (source : CanonicalProgramSource) (scope : Nat) : Option (Nat × Nat) := do
@@ -80,7 +84,7 @@ private def parallelRegions (source : CanonicalProgramSource) : List ParallelReg
     if marker.tag % 4 = 0 && marker.scope / 8192 = 2 then
       let split ← source.markers.find? fun boundary =>
         boundary.scope = marker.scope && boundary.tag % 4 = 1
-      let stop ← parallelExitForEnter? source.markers index
+      let stop ← scopeExitForEnter? source.markers index
       some { start := marker.offset, split := split.offset, stop }
     else none
 
@@ -187,7 +191,7 @@ private def parallelInputFloor
       if parent.tag % 4 = 0 && parent.scope / 8192 = 2 then
         match source.markers.find? (fun marker =>
             marker.scope = parent.scope && marker.tag % 4 = 1),
-            parallelExitForEnter? source.markers parentIndex with
+            scopeExitForEnter? source.markers parentIndex with
         | some split, some stop =>
             if parent.offset ≤ enterOffset && exitOffset ≤ split.offset then
               max floor parent.offset
@@ -234,23 +238,25 @@ private def Choreo.canonicalRoleDependenciesByEvent
     (choreo : Choreo) (role : Nat) : List (Option DecodedDependencyRow) :=
   let source := canonicalProgramSource choreo
   let atoms := canonicalRoleAtoms source role
+  let hasParallel := source.markers.any fun marker => marker.scope / 8192 = 2
   (List.range source.markers.length).foldl (fun dependencies markerIndex =>
     match source.markers[markerIndex]? with
     | none => dependencies
     | some marker =>
-        if marker.tag % 4 = 0 && marker.scope / 8192 = 2 then
-          match parallelExitForEnter? source.markers markerIndex with
+        if hasParallel && marker.tag % 4 = 0 &&
+            (marker.scope / 8192 = 0 || marker.scope / 8192 = 2) then
+          match scopeExitForEnter? source.markers markerIndex with
           | none => dependencies
           | some exitEff =>
               let inputRange := canonicalLocalEventRange atoms
                 (parallelInputFloor source markerIndex marker.offset exitEff) marker.offset
               let inputStart := inputRange.1
               let inputStop := inputStart + inputRange.2
-              let withInput := if inputStart < inputStop then
+              let withInput := if marker.scope / 8192 = 2 && inputStart < inputStop then
                 applyCanonicalInput atoms marker.offset exitEff {
                   start := inputStart
                   stop := inputStop
-                  parallelScope := marker.scope % 8192
+                  scope := marker.scope
                   conflict := canonicalPackedDependencyConflict source marker.scope
                 } dependencies
               else dependencies
@@ -261,7 +267,7 @@ private def Choreo.canonicalRoleDependenciesByEvent
                 let dependency := {
                   start
                   stop
-                  parallelScope := marker.scope % 8192
+                  scope := marker.scope
                   conflict := canonicalPackedDependencyConflict source marker.scope
                 }
                 applyCanonicalDependency source atoms start stop (marker.offset, exitEff)
@@ -1005,14 +1011,14 @@ private def RustDescriptorImage.decodeDependencyRow?
   let offset := image.roleDependencyOffset + row * productionRoleDependencyStride
   let start ← readU16LE? image.roleBytes offset
   let stop ← readU16LE? image.roleBytes (offset + 2)
-  let parallelScope ← readU16LE? image.roleBytes (offset + 4)
+  let scope ← readU16LE? image.roleBytes (offset + 4)
   let conflict ← readU16LE? image.roleBytes (offset + 6)
   if start < stop ∧
       stop < productionLocalStepCapacity ∧
       stop ≤ image.eventCount ∧
-      parallelScope < productionScopeCapacity ∧
+      (scope / productionScopeCapacity = 0 ∨ scope / productionScopeCapacity = 2) ∧
       validPackedDependencyConflict conflict = true then
-    pure { start, stop, parallelScope, conflict }
+    pure { start, stop, scope, conflict }
   else
     none
 

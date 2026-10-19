@@ -1,9 +1,6 @@
-use super::{
-    LocalRows, ScopeFacts, local_step_range_for_eff_range, parallel_exit_for_enter,
-    scope_markers_contain_kind,
-};
+use super::{LocalRows, ScopeFacts, local_step_range_for_eff_range, scope_markers_contain_kind};
 use crate::global::{
-    const_dsl::{EffList, ScopeEvent, ScopeId, ScopeKind},
+    const_dsl::{EffList, ScopeEvent, ScopeId, ScopeKind, route_arm_ranges_from_first_enter},
     role_program::LANE_DOMAIN_SIZE,
     typestate::{LocalDependency, PackedLocalDependency},
 };
@@ -117,15 +114,20 @@ impl<'a, const E: usize> DependencyCursor<'a, E> {
         }
     }
 
-    const fn process_parallel_exit(&mut self, exit_index: usize) {
+    const fn process_join(&mut self, exit_index: usize) {
         let markers = self.eff_list.scope_markers();
         let enter_index = markers
             .first_enter_index(markers.at(exit_index).scope_id)
-            .expect("parallel scope without entry");
+            .expect("composition scope without entry");
         let enter = markers.at(enter_index);
-        let exit_eff = parallel_exit_for_enter(markers, enter_index);
-        if markers.at(exit_index).offset() != exit_eff {
-            crate::invariant();
+        let exit_eff = markers.at(exit_index).offset();
+        if matches!(enter.scope_id.kind(), Some(ScopeKind::Route)) {
+            let [_, (_, end)] = route_arm_ranges_from_first_enter(markers, enter_index);
+            // A route has an exit for each arm. The first exit is not a join
+            // and must not become the other arm's sequential input.
+            if exit_eff != end {
+                return;
+            }
         }
         let row =
             local_step_range_for_eff_range(self.eff_list, enter.offset(), exit_eff, self.rows);
@@ -135,8 +137,9 @@ impl<'a, const E: usize> DependencyCursor<'a, E> {
         let candidate = CandidateKey::new(enter_index, row.start(), row.end());
         self.update_lane_candidates(enter.offset(), exit_eff, candidate);
 
-        // A completed par contributes its whole local row, including both arms.
-        // A subsequent sibling starts from the saved input at its Split marker.
+        // A join covers the whole composition. Route-row conflicts exclude
+        // the unchosen arm; retaining only its last par would lose the other
+        // arm's dependencies after the route. Parallel splits restore input.
         self.branch_barrier = candidate;
     }
 
@@ -171,7 +174,7 @@ impl<'a, const E: usize> DependencyCursor<'a, E> {
                                     .take()
                                     .expect("parallel exit without input");
                                 self.branch_floor = input.outer_floor;
-                                self.process_parallel_exit(index);
+                                self.process_join(index);
                             }
                             (1, ScopeEvent::Split) => {
                                 self.branch_barrier = self.parallel_inputs[slot]
@@ -199,6 +202,11 @@ impl<'a, const E: usize> DependencyCursor<'a, E> {
                             }
                             _ => {}
                         }
+                    } else if pass == 0
+                        && matches!(marker.scope_id.kind(), Some(ScopeKind::Route))
+                        && matches!(marker.event, ScopeEvent::Exit)
+                    {
+                        self.process_join(index);
                     }
                     index += 1;
                 }

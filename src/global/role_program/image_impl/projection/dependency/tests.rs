@@ -1,4 +1,4 @@
-use super::super::dependency_conflict_for_scope;
+use super::super::{dependency_conflict_for_scope, parallel_exit_for_enter};
 use super::*;
 use crate::global::const_dsl::parallel_arm_ranges_from_enter;
 use crate::global::typestate::LocalConflict;

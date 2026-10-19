@@ -22,7 +22,7 @@ impl LocalDependency {
         start: usize,
         end: usize,
     ) -> Self {
-        if scope.is_none() || !matches!(scope.kind(), Some(ScopeKind::Parallel)) {
+        if !matches!(scope.kind(), Some(ScopeKind::Parallel | ScopeKind::Route)) {
             crate::invariant();
         }
         if start > u16::MAX as usize || end > u16::MAX as usize {
@@ -67,15 +67,15 @@ impl LocalDependency {
 
 /// Compact role-local dependency row stored beside local step lanes.
 ///
-/// Dependency scopes are always parallel scopes. Route conflicts only need the
-/// enclosing route ordinal plus the selected arm. The row stays in four
+/// The join's scope keeps its kind as well as its ordinal. Route conflicts need
+/// the enclosing route ordinal plus the selected arm. The row stays in four
 /// byte-addressable u16 limbs so Cortex-M0+ does not need 64-bit helpers on
 /// descriptor reads.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct PackedLocalDependency {
     start: u16,
     end: u16,
-    dep_ordinal: u16,
+    dep_scope: u16,
     conflict_route: u16,
 }
 
@@ -96,7 +96,7 @@ impl PackedLocalDependency {
         Self {
             start: Self::ABSENT_FIELD,
             end: Self::ABSENT_FIELD,
-            dep_ordinal: Self::ABSENT_FIELD,
+            dep_scope: Self::ABSENT_FIELD,
             conflict_route: Self::ABSENT_FIELD,
         }
     }
@@ -105,13 +105,13 @@ impl PackedLocalDependency {
     pub(crate) const fn from_packed_parts(
         start: u16,
         end: u16,
-        dep_ordinal: u16,
+        dep_scope: u16,
         conflict_route: u16,
     ) -> Self {
         Self {
             start,
             end,
-            dep_ordinal,
+            dep_scope,
             conflict_route,
         }
     }
@@ -127,8 +127,8 @@ impl PackedLocalDependency {
     }
 
     #[inline(always)]
-    pub(crate) const fn dep_ordinal(self) -> u16 {
-        self.dep_ordinal
+    pub(crate) const fn dep_scope(self) -> u16 {
+        self.dep_scope
     }
 
     #[inline(always)]
@@ -140,7 +140,7 @@ impl PackedLocalDependency {
     pub(crate) const fn is_none(self) -> bool {
         if self.start == Self::ABSENT_FIELD {
             if self.end != Self::ABSENT_FIELD
-                || self.dep_ordinal != Self::ABSENT_FIELD
+                || self.dep_scope != Self::ABSENT_FIELD
                 || self.conflict_route != Self::ABSENT_FIELD
             {
                 crate::invariant();
@@ -153,7 +153,7 @@ impl PackedLocalDependency {
 
     pub(crate) const fn from_dependency(dependency: LocalDependency) -> Self {
         let scope = dependency.scope();
-        let dep_ordinal = scope.local_ordinal();
+        let dep_scope = scope.raw();
         let start = dependency.start();
         let end = dependency.end();
 
@@ -173,7 +173,7 @@ impl PackedLocalDependency {
         Self {
             start: start as u16,
             end: end as u16,
-            dep_ordinal,
+            dep_scope,
             conflict_route: (route_ordinal << Self::ROUTE_SHIFT) | conflict_tag,
         }
     }
@@ -181,7 +181,7 @@ impl PackedLocalDependency {
     pub(super) const fn decode(self) -> Option<Option<LocalDependency>> {
         if self.start == Self::ABSENT_FIELD {
             return if self.end == Self::ABSENT_FIELD
-                && self.dep_ordinal == Self::ABSENT_FIELD
+                && self.dep_scope == Self::ABSENT_FIELD
                 && self.conflict_route == Self::ABSENT_FIELD
             {
                 Some(None)
@@ -192,15 +192,17 @@ impl PackedLocalDependency {
         if self.start >= self.end {
             return None;
         }
-        if self.dep_ordinal >= ScopeId::LOCAL_CAPACITY {
-            return None;
-        }
+        let scope = match ScopeId::decode_raw(self.dep_scope) {
+            Some(scope) if matches!(scope.kind(), Some(ScopeKind::Parallel | ScopeKind::Route)) => {
+                scope
+            }
+            _ => return None,
+        };
         if (self.conflict_route & !Self::CONFLICT_ROUTE_MASK) != 0 {
             return None;
         }
         let conflict_tag = self.conflict_route & Self::CONFLICT_MASK;
         let route_ordinal = (self.conflict_route >> Self::ROUTE_SHIFT) & Self::ROUTE_ORDINAL_MASK;
-        let scope = ScopeId::parallel(self.dep_ordinal);
         let conflict = if conflict_tag == Self::CONFLICT_UNCONDITIONAL {
             if route_ordinal != 0 {
                 return None;
@@ -272,10 +274,11 @@ mod tests {
                 arm: 1,
             },
         ] {
-            let dependency =
-                LocalDependency::with_conflict_range(ScopeId::parallel(3), conflict, 2, 5);
-            let packed = PackedLocalDependency::from_dependency(dependency);
-            assert_eq!(packed.decode(), Some(Some(dependency)));
+            for scope in [ScopeId::parallel(3), ScopeId::route(3)] {
+                let dependency = LocalDependency::with_conflict_range(scope, conflict, 2, 5);
+                let packed = PackedLocalDependency::from_dependency(dependency);
+                assert_eq!(packed.decode(), Some(Some(dependency)));
+            }
         }
         assert_eq!(PackedLocalDependency::none().decode(), Some(None));
     }

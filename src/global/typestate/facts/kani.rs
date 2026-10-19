@@ -140,18 +140,16 @@ fn optional_route_arm_decoding_accepts_exact_domain() {
 fn packed_local_dependency_decoding_accepts_exact_domain() {
     let start: u16 = kani::any();
     let end: u16 = kani::any();
-    let dep_ordinal: u16 = kani::any();
+    let dep_scope: u16 = kani::any();
     let conflict_route: u16 = kani::any();
-    let packed = PackedLocalDependency::from_packed_parts(start, end, dep_ordinal, conflict_route);
+    let packed = PackedLocalDependency::from_packed_parts(start, end, dep_scope, conflict_route);
     let decoded = packed.decode();
-    let absent = start == u16::MAX
-        && end == u16::MAX
-        && dep_ordinal == u16::MAX
-        && conflict_route == u16::MAX;
+    let absent =
+        start == u16::MAX && end == u16::MAX && dep_scope == u16::MAX && conflict_route == u16::MAX;
     let conflict_tag = conflict_route & 0b11;
     let route_ordinal = conflict_route >> 2;
     let present = start < end
-        && dep_ordinal < crate::global::const_dsl::ScopeId::LOCAL_CAPACITY
+        && (dep_scope < 8192 || (16384..24576).contains(&dep_scope))
         && (conflict_route & 0x8000) == 0
         && (if conflict_tag >= 2 {
             route_ordinal < crate::global::const_dsl::ScopeId::LOCAL_CAPACITY
@@ -172,20 +170,18 @@ fn packed_local_dependency_decoding_accepts_exact_domain() {
 fn packed_local_dependency_event_bounds_are_exact() {
     let start: u16 = kani::any();
     let end: u16 = kani::any();
-    let dep_ordinal: u16 = kani::any();
+    let dep_scope: u16 = kani::any();
     let conflict_route: u16 = kani::any();
     let event_count: u16 = kani::any();
-    let packed = PackedLocalDependency::from_packed_parts(start, end, dep_ordinal, conflict_route);
+    let packed = PackedLocalDependency::from_packed_parts(start, end, dep_scope, conflict_route);
     let decoded = packed.decode_for_event_count(event_count as usize);
-    let absent = start == u16::MAX
-        && end == u16::MAX
-        && dep_ordinal == u16::MAX
-        && conflict_route == u16::MAX;
+    let absent =
+        start == u16::MAX && end == u16::MAX && dep_scope == u16::MAX && conflict_route == u16::MAX;
     let conflict_tag = conflict_route & 0b11;
     let route_ordinal = conflict_route >> 2;
     let present = start < end
         && end <= event_count
-        && dep_ordinal < crate::global::const_dsl::ScopeId::LOCAL_CAPACITY
+        && (dep_scope < 8192 || (16384..24576).contains(&dep_scope))
         && (conflict_route & 0x8000) == 0
         && (if conflict_tag >= 2 {
             route_ordinal < crate::global::const_dsl::ScopeId::LOCAL_CAPACITY
