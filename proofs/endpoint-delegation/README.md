@@ -25,6 +25,12 @@ unfinished. Initial attachment now reserves the physical resource's durable
 establishes physical identity at its explicit unsafe construction boundary.
 The public 0.9.9 release does not provide Endpoint delegation.
 
+The CI entry point, `check.sh`, discovers every `.smt2` file in this directory
+and checks its `EXPECT` results. Per-model output is saved as
+`z3-<model-name>.log` in the evidence directory. This includes the actor mutation,
+actor visit, public admission custody, send completion and source handoff
+interval models; generated Lean files do not substitute for these SMT checks.
+
 An accepted ownership plan is not an accepted Hibana protocol. This package
 also checks branch knowledge and the causal-path laws below, but does not
 certify the complete projection boundary, route authority, codecs, lane mapping,

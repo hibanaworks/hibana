@@ -43,26 +43,11 @@ lean -j1 "$PROOFS/ReceiptWait.lean" > "$EVIDENCE/lean-receipt-wait.log" 2>&1
 bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" lean "$EVIDENCE/lean-receipt-wait.log" 3
 LEAN_PATH="$EVIDENCE:$MODEL_PATH" lean "$EVIDENCE/Generated.lean" > "$EVIDENCE/lean-generated.log" 2>&1
 bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" lean "$EVIDENCE/lean-generated.log" 193
-bash "$ROOT/.github/scripts/check_smt2.sh" "$PROOFS/Ownership.smt2" > "$EVIDENCE/z3.log"
-bash "$ROOT/.github/scripts/check_smt2.sh" "$PROOFS/Issuance.smt2" > "$EVIDENCE/z3-issuance.log"
-bash "$ROOT/.github/scripts/check_smt2.sh" "$PROOFS/Causality.smt2" > "$EVIDENCE/z3-causality.log"
-bash "$ROOT/.github/scripts/check_smt2.sh" "$PROOFS/Reentry.smt2" > "$EVIDENCE/z3-reentry.log"
-bash "$ROOT/.github/scripts/check_smt2.sh" "$PROOFS/ReentryKnowledge.smt2" > "$EVIDENCE/z3-reentry-knowledge.log"
-bash "$ROOT/.github/scripts/check_smt2.sh" "$PROOFS/PendingSend.smt2" > "$EVIDENCE/z3-pending-send.log"
-bash "$ROOT/.github/scripts/check_smt2.sh" "$PROOFS/OwnedEntry.smt2" > "$EVIDENCE/z3-owned-entry.log"
-bash "$ROOT/.github/scripts/check_smt2.sh" "$PROOFS/BorrowedPredecessor.smt2" > "$EVIDENCE/z3-borrowed-predecessor.log"
-bash "$ROOT/.github/scripts/check_smt2.sh" "$PROOFS/OwnedEnvelope.smt2" > "$EVIDENCE/z3-owned-envelope.log"
-bash "$ROOT/.github/scripts/check_smt2.sh" "$PROOFS/ReceiptWait.smt2" > "$EVIDENCE/z3-receipt-wait.log"
-bash "$ROOT/.github/scripts/check_smt2.sh" "$PROOFS/SourceUseCut.smt2" > "$EVIDENCE/z3-source-use-cut.log"
-bash "$ROOT/.github/scripts/check_smt2.sh" "$PROOFS/RollBoundary.smt2" > "$EVIDENCE/z3-roll-boundary.log"
-bash "$ROOT/.github/scripts/check_smt2.sh" "$PROOFS/ViewGeneration.smt2" > "$EVIDENCE/z3-view-generation.log"
-bash "$ROOT/.github/scripts/check_smt2.sh" "$PROOFS/OccurrenceChoiceKnowledge.smt2" > "$EVIDENCE/z3-occurrence-choice.log"
-printf 'Occurrence choice publication, fresh origins and quiet observation: Z3 5 UNSAT, 5 SAT witnesses. Evidence: %s\n' "$EVIDENCE/z3-occurrence-choice.log"
-printf 'Actor view generations: Z3 4 UNSAT, 1 rejected-rule SAT, 1 positive SAT. Evidence: %s\n' "$EVIDENCE/z3-view-generation.log"
-printf 'Receipt wait frontier: Lean 3 general rules; Z3 2 UNSAT, 1 rejected-rule SAT, 1 positive SAT. Evidence: %s\n' "$EVIDENCE/z3-receipt-wait.log"
-printf 'Source resource use cut: Z3 3 UNSAT, 3 positive SAT witnesses. Evidence: %s\n' "$EVIDENCE/z3-source-use-cut.log"
-printf 'Reentry dependency cut and choice reset: Z3 2 UNSAT, 4 counterexample SAT. Evidence: %s\n' "$EVIDENCE/z3-reentry.log"
-printf 'Resource-dependent reentry origins: Z3 3 UNSAT, 2 witnesses. Evidence: %s\n' "$EVIDENCE/z3-reentry-knowledge.log"
-printf 'Pending-send admission boundary: Z3 3 UNSAT, 2 witnesses. Evidence: %s\n' "$EVIDENCE/z3-pending-send.log"
-printf 'Explicit roll boundaries: Z3 6 UNSAT, 3 SAT witnesses. Evidence: %s\n' "$EVIDENCE/z3-roll-boundary.log"
-printf 'Endpoint ownership projection: Rust tests passed; 17 projection/knowledge, 4 issuance and 4 causal-path general Lean theorems, 193 generated; ownership Z3 7 UNSAT, 2 counterexample SAT, 1 positive SAT; issuance Z3 3 UNSAT, 1 counterexample SAT, 1 positive SAT; causality Z3 3 UNSAT, 3 counterexample SAT, 1 independent-visit SAT. Evidence: %s\n' "$EVIDENCE"
+model_count=0
+for model in "$PROOFS"/*.smt2; do
+  name="${model##*/}"
+  bash "$ROOT/.github/scripts/check_smt2.sh" "$model" > "$EVIDENCE/z3-${name%.smt2}.log"
+  model_count=$((model_count + 1))
+done
+printf 'Endpoint delegation: all %s SMT models passed EXPECT checks; per-model logs: %s/z3-*.log\n' "$model_count" "$EVIDENCE"
+printf 'Endpoint ownership projection: Rust tests passed; 17 projection/knowledge, 4 issuance, 4 causal-path and 3 receipt-wait general Lean theorems; 193 generated. Evidence: %s\n' "$EVIDENCE"
