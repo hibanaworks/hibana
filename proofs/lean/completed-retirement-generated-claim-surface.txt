@@ -1,4 +1,5 @@
 completedAccepted : completed.check retirementImage retirementChoreo = true
+completedActualZeroWrites : 2 = 2
 completedAfterValid : completed.after.valid = true
 completedAuthorityHistory : Execution (initial completedValue) completedAfterAuthority
 completedAuthorityRetirement : Step Action.dropValue completedBeforeAuthority completedAfterAuthority
@@ -32,6 +33,20 @@ completedLossBoundary : ∃ middle following action,
     Step action middle following ∧
       (action = Action.abandonPreparation ∨ action = Action.dropValue ∨ action = Action.fenceFrame) ∧
         Execution following completedAfterAuthority
+completedMatchedValue : Hibana.OwnedCallHistory.retirementMatches retirementResource completedValue completed
+    retirementImage retirementChoreo =
+  true
+completedMergedBoundary : ∀ (events : List Hibana.OwnedCallHistory.OwnedCallEvent),
+  Hibana.OwnedCallHistory.Boundary (fun x => retirementImage) retirementResource retirementChoreo events completedEvent
+    completedBeforeCut completedAfterCut
+completedMergedOutcome : ∀ (events : List Hibana.OwnedCallHistory.OwnedCallEvent),
+  (completed.afterFault = none ∧
+      Hibana.sourceViewComplete? completed.before retirementImage retirementChoreo completed.view = some true ∧
+        ∃ current,
+          Hibana.observedActorView? completed.before completed.view = some current ∧
+            current.operation = Hibana.PublicOperationPhase.idle) ∨
+    ∃ cause,
+      completed.afterFault = some cause ∧ (Hibana.observedGeneration completed.afterFault).publicationPermitted = false
 completedMissingRetirementRejected : (have __src := completed;
       { view := __src.view, before := __src.before,
         after :=
@@ -48,12 +63,35 @@ completedMissingSourceRowsRejected : Hibana.sourceViewComplete?
     retirementImage retirementChoreo 10 =
   none
 completedNoAuthorityRestored : Observation.authorityCount completedAfterAuthority = 0
+@completedPhysicalCutExtension : ∀ {images : Nat → Hibana.RustDescriptorImage} {first cut : Hibana.DistributedSourceCut}
+  {word : List Hibana.DistributedCallBoundary} {entries : List Hibana.SourceAcceptance}
+  {published : List (Hibana.SourceAcceptance × Hibana.ActorCommitRecord)} {pending : List Hibana.SourceAcceptance}
+  {session : Nat},
+  images completed.before.actor = retirementImage →
+    Hibana.DistributedPhysicalExecution images retirementChoreo session first cut word entries published pending →
+      cut.actors completed.before.actor = (completed.before, 2) →
+        Hibana.DistributedPhysicalExecution images retirementChoreo session first
+          (cut.actorAt completed.before.actor (completed.after, 2))
+          (word ++ [Hibana.DistributedCallBoundary.retireView completed]) entries published pending
 completedProgressPreserved : completed.progressMatches = true
 completedPublicationPermitted : (Hibana.observedGeneration completed.afterFault).publicationPermitted = true
+completedQuietCannotHideRetirement : Hibana.actorQuietHeadersCheck completed.before completed.after = false
 completedRetired : completed.after.viewIssued 10 = false
+completedRetirementIsRecorded : completedEvent.retirement? = some (completedValue, completed)
 completedSourceCompletion : Hibana.sourceViewComplete? completed.before retirementImage retirementChoreo 10 = some true
+completedSourceWordRetainsRetirement : ∀ (events : List Hibana.OwnedCallHistory.OwnedCallEvent),
+  Hibana.OwnedCallHistory.sourceWord (events ++ [completedEvent]) =
+    Hibana.OwnedCallHistory.sourceWord events ++ [Hibana.DistributedCallBoundary.retireView completed]
 completedSpuriousFaultRejected : (have __src := completed;
       { view := __src.view, before := __src.before, after := __src.after, beforeFault := __src.beforeFault,
         afterFault := some Hibana.SessionFault.endpointDropped }).check
+    retirementImage retirementChoreo =
+  false
+completedWrongResourceRejected : Hibana.OwnedCallHistory.retirementMatches
+    (have __src := retirementResource;
+    { component := __src.component, role := 11 })
+    completedValue completed retirementImage retirementChoreo =
+  false
+completedWrongValueRejected : Hibana.OwnedCallHistory.retirementMatches retirementResource (1, 10, 2, 5 + 2) completed
     retirementImage retirementChoreo =
   false

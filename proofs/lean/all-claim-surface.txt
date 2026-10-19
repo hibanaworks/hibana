@@ -2145,6 +2145,43 @@ Hibana.EndpointDelegation.withOwner_same : ∀ (owners : Hibana.EndpointDelegati
                                               (Hibana.sourceChannelEntries
                                                 (Hibana.OwnedCallHistory.acceptedEntries earlier)
                                                 entry.channel))))))))))))))
+@Hibana.a_joint_value_retirement_is_complete_or_faulted : ∀ {images : Nat → Hibana.RustDescriptorImage}
+  {resource : Hibana.EndpointDelegation.EndpointKey} {choreo : Hibana.Choreo}
+  {events : List.{0} Hibana.OwnedCallHistory.OwnedCallEvent} {event : Hibana.OwnedCallHistory.OwnedCallEvent}
+  {before after : Hibana.OwnedCallHistory.Cut} {value : Hibana.OwnedCallHistory.Tag}
+  {sample : Hibana.ViewRetirementObservation},
+  Hibana.OwnedCallHistory.Boundary images resource choreo events event before after →
+    @Eq.{1} (Option.{0} (Prod.{0, 0} Hibana.OwnedCallHistory.Tag Hibana.ViewRetirementObservation)) event.retirement?
+        (@some.{0} (Prod.{0, 0} Hibana.OwnedCallHistory.Tag Hibana.ViewRetirementObservation)
+          (@Prod.mk.{0, 0} Hibana.OwnedCallHistory.Tag Hibana.ViewRetirementObservation value sample)) →
+      Or
+        (And (@Eq.{1} (Option.{0} Hibana.SessionFault) sample.afterFault (@none.{0} Hibana.SessionFault))
+          (And
+            (@Eq.{1} (Option.{0} Bool)
+              (Hibana.sourceViewComplete? sample.before (images sample.before.actor) choreo sample.view)
+              (@some.{0} Bool true))
+            (@Exists.{1} Hibana.ActorViewObservation fun current =>
+              And
+                (@Eq.{1} (Option.{0} Hibana.ActorViewObservation) (Hibana.observedActorView? sample.before sample.view)
+                  (@some.{0} Hibana.ActorViewObservation current))
+                (@Eq.{1} Hibana.PublicOperationPhase current.operation Hibana.PublicOperationPhase.idle))))
+        (@Exists.{1} Hibana.SessionFault fun cause =>
+          And (@Eq.{1} (Option.{0} Hibana.SessionFault) sample.afterFault (@some.{0} Hibana.SessionFault cause))
+            (@Eq.{1} Bool (Hibana.observedGeneration sample.afterFault).publicationPermitted false))
+@Hibana.a_joint_value_retirement_keeps_its_checked_source_boundary : ∀ {images : Nat → Hibana.RustDescriptorImage}
+  {resource : Hibana.EndpointDelegation.EndpointKey} {choreo : Hibana.Choreo}
+  {events : List.{0} Hibana.OwnedCallHistory.OwnedCallEvent} {event : Hibana.OwnedCallHistory.OwnedCallEvent}
+  {before after : Hibana.OwnedCallHistory.Cut} {value : Hibana.OwnedCallHistory.Tag}
+  {sample : Hibana.ViewRetirementObservation},
+  Hibana.OwnedCallHistory.Boundary images resource choreo events event before after →
+    @Eq.{1} (Option.{0} (Prod.{0, 0} Hibana.OwnedCallHistory.Tag Hibana.ViewRetirementObservation)) event.retirement?
+        (@some.{0} (Prod.{0, 0} Hibana.OwnedCallHistory.Tag Hibana.ViewRetirementObservation)
+          (@Prod.mk.{0, 0} Hibana.OwnedCallHistory.Tag Hibana.ViewRetirementObservation value sample)) →
+      And
+        (@Eq.{1} Bool
+          (Hibana.OwnedCallHistory.retirementMatches resource value sample (images sample.before.actor) choreo) true)
+        (@Eq.{1} (Option.{0} Hibana.DistributedCallBoundary) event.source?
+          (@some.{0} Hibana.DistributedCallBoundary (Hibana.DistributedCallBoundary.retireView sample)))
 Hibana.a_lease_only_origin_does_not_cover_a_pending_issued_header : ∀ (old : Nat),
   Not (Hibana.AcceptedSendCallEvidence old { counter := old, issued := @some.{0} Nat old } False False)
 @Hibana.a_live_public_cut_cannot_issue_an_accepted_sender_tag : ∀ {old : Nat} {current : Hibana.ViewNonceCut}
@@ -2382,6 +2419,17 @@ Hibana.a_lease_only_origin_does_not_cover_a_pending_issued_header : ∀ (old : N
                                   Hibana.EndpointDelegation.Side.send)
                                 (Iff (@Eq.{1} Bool (receivedFacts.wireMatches receiverImage.role wire session) true)
                                   (@Eq.{1} (List.{0} Nat) wire.payload sender.wire.payload))))
+@Hibana.a_matched_retirement_uses_its_actual_value : ∀ {resource : Hibana.EndpointDelegation.EndpointKey}
+  {value : Hibana.OwnedCallHistory.Tag} {sample : Hibana.ViewRetirementObservation} {image : Hibana.RustDescriptorImage}
+  {choreo : Hibana.Choreo},
+  @Eq.{1} Bool (Hibana.OwnedCallHistory.retirementMatches resource value sample image choreo) true →
+    And (@Eq.{1} Bool (sample.check image choreo) true)
+      (@Exists.{1} Hibana.ActorViewObservation fun current =>
+        And
+          (@Eq.{1} (Option.{0} Hibana.ActorViewObservation) (Hibana.observedActorView? sample.before sample.view)
+            (@some.{0} Hibana.ActorViewObservation current))
+          (@Eq.{1} Hibana.OwnedCallHistory.Tag value
+            (@Prod.mk.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)) sample.before.actor current.header)))
 @Hibana.a_measured_actor_history_accounts_for_every_mark_and_clear : ∀ {image : Hibana.RustDescriptorImage}
   {choreo : Hibana.Choreo} {session : Nat} {before after : Prod.{0, 0} Hibana.ActorProgressObservation Nat}
   {cleared : List.{0} Nat} {commits : Nat},

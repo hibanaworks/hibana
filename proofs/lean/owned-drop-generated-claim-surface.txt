@@ -1,4 +1,5 @@
 predecessorAccepted : predecessor.check retirementImage retirementChoreo = true
+predecessorActualZeroWrites : 0 = 0
 predecessorAfterValid : predecessor.after.valid = true
 predecessorAuthorityHistory : Execution (initial predecessorValue) predecessorAfterAuthority
 predecessorAuthorityRetirement : Step Action.abandonPreparation predecessorBeforeAuthority predecessorAfterAuthority
@@ -28,6 +29,21 @@ predecessorLossBoundary : ∃ middle following action,
     Step action middle following ∧
       (action = Action.abandonPreparation ∨ action = Action.dropValue ∨ action = Action.fenceFrame) ∧
         Execution following predecessorAfterAuthority
+predecessorMatchedValue : Hibana.OwnedCallHistory.retirementMatches retirementResource predecessorValue predecessor
+    retirementImage retirementChoreo =
+  true
+predecessorMergedBoundary : ∀ (events : List Hibana.OwnedCallHistory.OwnedCallEvent),
+  Hibana.OwnedCallHistory.Boundary (fun x => retirementImage) retirementResource retirementChoreo events
+    predecessorEvent predecessorBeforeCut predecessorAfterCut
+predecessorMergedOutcome : ∀ (events : List Hibana.OwnedCallHistory.OwnedCallEvent),
+  (predecessor.afterFault = none ∧
+      Hibana.sourceViewComplete? predecessor.before retirementImage retirementChoreo predecessor.view = some true ∧
+        ∃ current,
+          Hibana.observedActorView? predecessor.before predecessor.view = some current ∧
+            current.operation = Hibana.PublicOperationPhase.idle) ∨
+    ∃ cause,
+      predecessor.afterFault = some cause ∧
+        (Hibana.observedGeneration predecessor.afterFault).publicationPermitted = false
 predecessorMissingFaultRejected : (have __src := predecessor;
       { view := __src.view, before := __src.before, after := __src.after, beforeFault := __src.beforeFault,
         afterFault := none }).check
@@ -49,15 +65,39 @@ predecessorMissingSourceRowsRejected : Hibana.sourceViewComplete?
     retirementImage retirementChoreo 10 =
   none
 predecessorNoAuthorityRestored : Observation.authorityCount predecessorAfterAuthority = 0
+@predecessorPhysicalCutExtension : ∀ {images : Nat → Hibana.RustDescriptorImage}
+  {first cut : Hibana.DistributedSourceCut} {word : List Hibana.DistributedCallBoundary}
+  {entries : List Hibana.SourceAcceptance} {published : List (Hibana.SourceAcceptance × Hibana.ActorCommitRecord)}
+  {pending : List Hibana.SourceAcceptance} {session : Nat},
+  images predecessor.before.actor = retirementImage →
+    Hibana.DistributedPhysicalExecution images retirementChoreo session first cut word entries published pending →
+      cut.actors predecessor.before.actor = (predecessor.before, 0) →
+        Hibana.DistributedPhysicalExecution images retirementChoreo session first
+          (cut.actorAt predecessor.before.actor (predecessor.after, 0))
+          (word ++ [Hibana.DistributedCallBoundary.retireView predecessor]) entries published pending
 predecessorProgressPreserved : predecessor.progressMatches = true
 predecessorPublicationBlocked : (Hibana.observedGeneration predecessor.afterFault).publicationPermitted = false
+predecessorQuietCannotHideRetirement : Hibana.actorQuietHeadersCheck predecessor.before predecessor.after = false
 predecessorReattachmentBlocked : Hibana.applySessionGenerationAction (Hibana.observedGeneration predecessor.afterFault)
     Hibana.SessionGenerationAction.attach =
   none
 predecessorRetired : predecessor.after.viewIssued 10 = false
+predecessorRetirementIsRecorded : predecessorEvent.retirement? = some (predecessorValue, predecessor)
 predecessorSourceCompletion : Hibana.sourceViewComplete? predecessor.before retirementImage retirementChoreo 10 =
   some false
+predecessorSourceWordRetainsRetirement : ∀ (events : List Hibana.OwnedCallHistory.OwnedCallEvent),
+  Hibana.OwnedCallHistory.sourceWord (events ++ [predecessorEvent]) =
+    Hibana.OwnedCallHistory.sourceWord events ++ [Hibana.DistributedCallBoundary.retireView predecessor]
+predecessorWrongResourceRejected : Hibana.OwnedCallHistory.retirementMatches
+    (have __src := retirementResource;
+    { component := __src.component, role := 11 })
+    predecessorValue predecessor retirementImage retirementChoreo =
+  false
+predecessorWrongValueRejected : Hibana.OwnedCallHistory.retirementMatches retirementResource (0, 10, 1, 3 + 2)
+    predecessor retirementImage retirementChoreo =
+  false
 transportAccepted : transport.check retirementImage retirementChoreo = true
+transportActualZeroWrites : 1 = 1
 transportAfterValid : transport.after.valid = true
 transportAuthorityHistory : Execution (initial transportValue) transportAfterAuthority
 transportAuthorityRetirement : Step Action.abandonPreparation transportBeforeAuthority transportAfterAuthority
@@ -87,6 +127,20 @@ transportLossBoundary : ∃ middle following action,
     Step action middle following ∧
       (action = Action.abandonPreparation ∨ action = Action.dropValue ∨ action = Action.fenceFrame) ∧
         Execution following transportAfterAuthority
+transportMatchedValue : Hibana.OwnedCallHistory.retirementMatches retirementResource transportValue transport
+    retirementImage retirementChoreo =
+  true
+transportMergedBoundary : ∀ (events : List Hibana.OwnedCallHistory.OwnedCallEvent),
+  Hibana.OwnedCallHistory.Boundary (fun x => retirementImage) retirementResource retirementChoreo events transportEvent
+    transportBeforeCut transportAfterCut
+transportMergedOutcome : ∀ (events : List Hibana.OwnedCallHistory.OwnedCallEvent),
+  (transport.afterFault = none ∧
+      Hibana.sourceViewComplete? transport.before retirementImage retirementChoreo transport.view = some true ∧
+        ∃ current,
+          Hibana.observedActorView? transport.before transport.view = some current ∧
+            current.operation = Hibana.PublicOperationPhase.idle) ∨
+    ∃ cause,
+      transport.afterFault = some cause ∧ (Hibana.observedGeneration transport.afterFault).publicationPermitted = false
 transportMissingFaultRejected : (have __src := transport;
       { view := __src.view, before := __src.before, after := __src.after, beforeFault := __src.beforeFault,
         afterFault := none }).check
@@ -108,14 +162,38 @@ transportMissingSourceRowsRejected : Hibana.sourceViewComplete?
     retirementImage retirementChoreo 10 =
   none
 transportNoAuthorityRestored : Observation.authorityCount transportAfterAuthority = 0
+@transportPhysicalCutExtension : ∀ {images : Nat → Hibana.RustDescriptorImage} {first cut : Hibana.DistributedSourceCut}
+  {word : List Hibana.DistributedCallBoundary} {entries : List Hibana.SourceAcceptance}
+  {published : List (Hibana.SourceAcceptance × Hibana.ActorCommitRecord)} {pending : List Hibana.SourceAcceptance}
+  {session : Nat},
+  images transport.before.actor = retirementImage →
+    Hibana.DistributedPhysicalExecution images retirementChoreo session first cut word entries published pending →
+      cut.actors transport.before.actor = (transport.before, 1) →
+        Hibana.DistributedPhysicalExecution images retirementChoreo session first
+          (cut.actorAt transport.before.actor (transport.after, 1))
+          (word ++ [Hibana.DistributedCallBoundary.retireView transport]) entries published pending
 transportProgressPreserved : transport.progressMatches = true
 transportPublicationBlocked : (Hibana.observedGeneration transport.afterFault).publicationPermitted = false
+transportQuietCannotHideRetirement : Hibana.actorQuietHeadersCheck transport.before transport.after = false
 transportReattachmentBlocked : Hibana.applySessionGenerationAction (Hibana.observedGeneration transport.afterFault)
     Hibana.SessionGenerationAction.attach =
   none
 transportRetired : transport.after.viewIssued 10 = false
+transportRetirementIsRecorded : transportEvent.retirement? = some (transportValue, transport)
 transportSourceCompletion : Hibana.sourceViewComplete? transport.before retirementImage retirementChoreo 10 = some false
+transportSourceWordRetainsRetirement : ∀ (events : List Hibana.OwnedCallHistory.OwnedCallEvent),
+  Hibana.OwnedCallHistory.sourceWord (events ++ [transportEvent]) =
+    Hibana.OwnedCallHistory.sourceWord events ++ [Hibana.DistributedCallBoundary.retireView transport]
+transportWrongResourceRejected : Hibana.OwnedCallHistory.retirementMatches
+    (have __src := retirementResource;
+    { component := __src.component, role := 11 })
+    transportValue transport retirementImage retirementChoreo =
+  false
+transportWrongValueRejected : Hibana.OwnedCallHistory.retirementMatches retirementResource (0, 10, 1, 3 + 2) transport
+    retirementImage retirementChoreo =
+  false
 unpolledAccepted : unpolled.check retirementImage retirementChoreo = true
+unpolledActualZeroWrites : 0 = 0
 unpolledAfterValid : unpolled.after.valid = true
 unpolledAuthorityHistory : Execution (initial unpolledValue) unpolledAfterAuthority
 unpolledAuthorityRetirement : Step Action.abandonPreparation unpolledBeforeAuthority unpolledAfterAuthority
@@ -145,6 +223,20 @@ unpolledLossBoundary : ∃ middle following action,
     Step action middle following ∧
       (action = Action.abandonPreparation ∨ action = Action.dropValue ∨ action = Action.fenceFrame) ∧
         Execution following unpolledAfterAuthority
+unpolledMatchedValue : Hibana.OwnedCallHistory.retirementMatches retirementResource unpolledValue unpolled
+    retirementImage retirementChoreo =
+  true
+unpolledMergedBoundary : ∀ (events : List Hibana.OwnedCallHistory.OwnedCallEvent),
+  Hibana.OwnedCallHistory.Boundary (fun x => retirementImage) retirementResource retirementChoreo events unpolledEvent
+    unpolledBeforeCut unpolledAfterCut
+unpolledMergedOutcome : ∀ (events : List Hibana.OwnedCallHistory.OwnedCallEvent),
+  (unpolled.afterFault = none ∧
+      Hibana.sourceViewComplete? unpolled.before retirementImage retirementChoreo unpolled.view = some true ∧
+        ∃ current,
+          Hibana.observedActorView? unpolled.before unpolled.view = some current ∧
+            current.operation = Hibana.PublicOperationPhase.idle) ∨
+    ∃ cause,
+      unpolled.afterFault = some cause ∧ (Hibana.observedGeneration unpolled.afterFault).publicationPermitted = false
 unpolledMissingFaultRejected : (have __src := unpolled;
       { view := __src.view, before := __src.before, after := __src.after, beforeFault := __src.beforeFault,
         afterFault := none }).check
@@ -166,10 +258,33 @@ unpolledMissingSourceRowsRejected : Hibana.sourceViewComplete?
     retirementImage retirementChoreo 10 =
   none
 unpolledNoAuthorityRestored : Observation.authorityCount unpolledAfterAuthority = 0
+@unpolledPhysicalCutExtension : ∀ {images : Nat → Hibana.RustDescriptorImage} {first cut : Hibana.DistributedSourceCut}
+  {word : List Hibana.DistributedCallBoundary} {entries : List Hibana.SourceAcceptance}
+  {published : List (Hibana.SourceAcceptance × Hibana.ActorCommitRecord)} {pending : List Hibana.SourceAcceptance}
+  {session : Nat},
+  images unpolled.before.actor = retirementImage →
+    Hibana.DistributedPhysicalExecution images retirementChoreo session first cut word entries published pending →
+      cut.actors unpolled.before.actor = (unpolled.before, 0) →
+        Hibana.DistributedPhysicalExecution images retirementChoreo session first
+          (cut.actorAt unpolled.before.actor (unpolled.after, 0))
+          (word ++ [Hibana.DistributedCallBoundary.retireView unpolled]) entries published pending
 unpolledProgressPreserved : unpolled.progressMatches = true
 unpolledPublicationBlocked : (Hibana.observedGeneration unpolled.afterFault).publicationPermitted = false
+unpolledQuietCannotHideRetirement : Hibana.actorQuietHeadersCheck unpolled.before unpolled.after = false
 unpolledReattachmentBlocked : Hibana.applySessionGenerationAction (Hibana.observedGeneration unpolled.afterFault)
     Hibana.SessionGenerationAction.attach =
   none
 unpolledRetired : unpolled.after.viewIssued 10 = false
+unpolledRetirementIsRecorded : unpolledEvent.retirement? = some (unpolledValue, unpolled)
 unpolledSourceCompletion : Hibana.sourceViewComplete? unpolled.before retirementImage retirementChoreo 10 = some false
+unpolledSourceWordRetainsRetirement : ∀ (events : List Hibana.OwnedCallHistory.OwnedCallEvent),
+  Hibana.OwnedCallHistory.sourceWord (events ++ [unpolledEvent]) =
+    Hibana.OwnedCallHistory.sourceWord events ++ [Hibana.DistributedCallBoundary.retireView unpolled]
+unpolledWrongResourceRejected : Hibana.OwnedCallHistory.retirementMatches
+    (have __src := retirementResource;
+    { component := __src.component, role := 11 })
+    unpolledValue unpolled retirementImage retirementChoreo =
+  false
+unpolledWrongValueRejected : Hibana.OwnedCallHistory.retirementMatches retirementResource (0, 10, 1, 3 + 2) unpolled
+    retirementImage retirementChoreo =
+  false

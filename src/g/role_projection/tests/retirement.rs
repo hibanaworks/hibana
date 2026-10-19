@@ -81,6 +81,8 @@ fn a_completed_view_retires_without_cancelling_independent_work() {
         assert_eq!(before.steps, after.steps);
         assert_eq!(before.choices, after.choices);
         assert_eq!(before.counter, after.counter);
+        assert_eq!(before.completion_mutations, after.completion_mutations);
+        assert_eq!(before.retained_rolls, after.retained_rolls);
         assert_eq!(before.live_views, after.live_views + 1);
         // SAFETY: storage still retains the retired DB record.
         assert!(!unsafe { tag.matches_header() });
@@ -129,6 +131,7 @@ fn a_completed_view_retires_without_cancelling_independent_work() {
                     after_fault,
                     origin: RetirementOrigin::Application,
                     complete: true,
+                    constructor: None,
                 }],
             );
         }

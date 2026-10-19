@@ -1,5 +1,8 @@
 //! Copied retirement evidence. No Endpoint operation or coordination lives here.
-use crate::{endpoint::proof_snapshot::ActorSnapshot, rendezvous::SessionFaultKind};
+use crate::{
+    endpoint::proof_snapshot::{ActorSnapshot, owned_future::OwnedFutureBoundary},
+    rendezvous::SessionFaultKind,
+};
 use std::string::String;
 
 /// Location of the actual moved Rust value immediately before its drop.
@@ -17,6 +20,7 @@ pub(in crate::g::role_projection::tests) struct RetirementSample {
     pub(in crate::g::role_projection::tests) origin: RetirementOrigin,
     /// Fixture expectation, independently checked from the global in Lean.
     pub(in crate::g::role_projection::tests) complete: bool,
+    pub(in crate::g::role_projection::tests) constructor: Option<OwnedFutureBoundary>,
 }
 
 fn fault_source(fault: Option<SessionFaultKind>) -> &'static str {
@@ -37,7 +41,7 @@ pub(in crate::g::role_projection::tests) fn write_retirements(
     samples: &[RetirementSample],
 ) {
     let mut source = std::format!(
-        r#"import Hibana.OwnedRetirement
+        r#"import Hibana.OwnedCallHistory
 
 set_option maxRecDepth 10000
 
@@ -48,6 +52,7 @@ def retirementImage : Hibana.RustDescriptorImage := {image}
 open Hibana.EndpointTransfer
 
 abbrev RetirementAuthority := Observation (Nat × Nat × Nat × Nat) Unit
+def retirementResource : Hibana.EndpointDelegation.EndpointKey := {{ component := 0, role := 10 }}
 
 "#
     );
@@ -60,6 +65,7 @@ abbrev RetirementAuthority := Observation (Nat × Nat × Nat × Nat) Unit
             after_fault,
             origin,
             complete,
+            constructor,
         } = sample;
         let view = before.views.iter().find(|view| view.role == 10).unwrap();
         let (before_authority, action, prefix) = match origin {
@@ -155,6 +161,133 @@ theorem {name}LossBoundary :
             before_fault = fault_source(*before_fault),
             after_fault = fault_source(*after_fault),
             actor = before.actor, run = view.run, nonce = view.nonce,
+        ));
+        let (event, before_cut, boundary) = match origin {
+            RetirementOrigin::Future => {
+                let Some(OwnedFutureBoundary::Seal {
+                    carrier,
+                    payload,
+                    label,
+                    region,
+                }) = *constructor
+                else {
+                    panic!("missing actual owned-future constructor");
+                };
+                assert_eq!(carrier.actor_address, payload.actor_address);
+                for identity in [carrier, payload] {
+                    let observed = before
+                        .views
+                        .iter()
+                        .find(|candidate| candidate.role == identity.role)
+                        .unwrap();
+                    assert_eq!(
+                        (identity.run, identity.nonce),
+                        (observed.run, observed.nonce)
+                    );
+                }
+                assert_eq!(payload.role, view.role);
+                let bounds = region.bounds();
+                source.push_str(&std::format!(
+                    "def {name}Request : Hibana.OwnedCallHistory.Request := {{ \
+                     carrier := ({}, {}, {}, {}), payload := ({}, {}, {}, {}), \
+                     label := {label}, borrow := ({}, {}) }}\n\n",
+                    before.actor,
+                    carrier.role,
+                    carrier.run,
+                    carrier.nonce,
+                    before.actor,
+                    payload.role,
+                    payload.run,
+                    payload.nonce,
+                    bounds.start,
+                    bounds.end,
+                ));
+                (
+                    std::format!(".abandon {name}Request {name}"),
+                    std::format!(
+                        "{{ requests := [{name}Request], custody := {{ usable := [], preparing := [{name}Value], acceptedFutures := [], inFlight := [] }} }}"
+                    ),
+                    std::format!(
+                        ".abandon events {{ usable := [], preparing := [], acceptedFutures := [], inFlight := [] }} [] [] [] [] {name}Request {name} (by decide)"
+                    ),
+                )
+            }
+            RetirementOrigin::Application => {
+                assert!(constructor.is_none());
+                (
+                    std::format!(".dropValue {name}Value {name}"),
+                    std::format!(
+                        "{{ requests := [], custody := {{ usable := [{name}Value], preparing := [], acceptedFutures := [], inFlight := [] }} }}"
+                    ),
+                    std::format!(
+                        ".dropValue events {{ usable := [], preparing := [], acceptedFutures := [], inFlight := [] }} [] [] [] {name}Value {name} (by decide)"
+                    ),
+                )
+            }
+        };
+        source.push_str(&std::format!(
+            r#"def {name}Event : Hibana.OwnedCallHistory.OwnedCallEvent := {event}
+def {name}BeforeCut : Hibana.OwnedCallHistory.Cut := {before_cut}
+def {name}AfterCut : Hibana.OwnedCallHistory.Cut :=
+  {{ requests := [], custody := {{ usable := [], preparing := [], acceptedFutures := [], inFlight := [] }} }}
+
+theorem {name}MatchedValue :
+  Hibana.OwnedCallHistory.retirementMatches retirementResource {name}Value {name}
+    retirementImage retirementChoreo = true := by decide
+
+theorem {name}WrongValueRejected :
+  Hibana.OwnedCallHistory.retirementMatches retirementResource
+    ({actor}, 10, {run}, {nonce} + 2) {name} retirementImage retirementChoreo = false := by decide
+
+theorem {name}WrongResourceRejected :
+  Hibana.OwnedCallHistory.retirementMatches {{ retirementResource with role := 11 }} {name}Value
+    {name} retirementImage retirementChoreo = false := by decide
+
+theorem {name}MergedBoundary (events : List Hibana.OwnedCallHistory.OwnedCallEvent) :
+  Hibana.OwnedCallHistory.Boundary (fun _ => retirementImage) retirementResource retirementChoreo
+    events {name}Event {name}BeforeCut {name}AfterCut := {boundary}
+
+theorem {name}RetirementIsRecorded : {name}Event.retirement? = some ({name}Value, {name}) := rfl
+
+theorem {name}MergedOutcome (events : List Hibana.OwnedCallHistory.OwnedCallEvent) :
+  ({name}.afterFault = none ∧
+    Hibana.sourceViewComplete? {name}.before retirementImage retirementChoreo {name}.view = some true ∧
+    ∃ current, Hibana.observedActorView? {name}.before {name}.view = some current ∧ current.operation = .idle) ∨
+  ∃ cause, {name}.afterFault = some cause ∧
+    (Hibana.observedGeneration {name}.afterFault).publicationPermitted = false :=
+  Hibana.a_joint_value_retirement_is_complete_or_faulted ({name}MergedBoundary events) {name}RetirementIsRecorded
+
+theorem {name}SourceWordRetainsRetirement (events : List Hibana.OwnedCallHistory.OwnedCallEvent) :
+  Hibana.OwnedCallHistory.sourceWord (events ++ [{name}Event]) =
+    Hibana.OwnedCallHistory.sourceWord events ++ [.retireView {name}] := by
+  simp only [Hibana.OwnedCallHistory.sourceWord, List.filterMap_append, List.filterMap_cons,
+    List.filterMap_nil, {name}Event, Hibana.OwnedCallHistory.OwnedCallEvent.source?]
+
+theorem {name}ActualZeroWrites : ({after_writes} : Nat) = {before_writes} := by decide
+
+theorem {name}QuietCannotHideRetirement :
+  Hibana.actorQuietHeadersCheck {name}.before {name}.after = false := by decide
+
+theorem {name}PhysicalCutExtension
+    {{images : Nat → Hibana.RustDescriptorImage}} {{first cut : Hibana.DistributedSourceCut}}
+    {{word entries published pending}} {{session : Nat}}
+    (imageAt : images {name}.before.actor = retirementImage)
+    (history : Hibana.DistributedPhysicalExecution images retirementChoreo session
+      first cut word entries published pending)
+    (atCut : cut.actors {name}.before.actor = ({name}.before, {before_writes})) :
+  Hibana.DistributedPhysicalExecution images retirementChoreo session first
+    (cut.actorAt {name}.before.actor ({name}.after, {after_writes}))
+    (word ++ [.retireView {name}]) entries published pending := by
+  have advanced := Hibana.DistributedPhysicalExecution.retireView (sample := {name}) history
+    (by simpa only [imageAt] using {name}Accepted) (congrArg Prod.fst atCut)
+  simpa only [atCut] using advanced
+
+"#,
+            actor = before.actor,
+            run = view.run,
+            nonce = view.nonce,
+            before_writes = before.completion_mutations,
+            after_writes = after.completion_mutations,
         ));
         if *complete {
             source.push_str(&std::format!(

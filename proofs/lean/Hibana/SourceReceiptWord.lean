@@ -253,7 +253,7 @@ theorem a_distributed_call_receipt_word_is_the_exact_accepted_fifo_prefix
         (sourceChannelEntries entries channel).take (last.carriers channel).delivered := by
   induction execution with
   | refl => exact ⟨[], rfl, fun _ => rfl⟩
-  | quiet history checked ih =>
+  | quiet history checked _headers ih =>
     obtain ⟨receipts, word, prefixes⟩ := ih
     refine ⟨receipts, ?_, prefixes⟩
     simpa [List.filterMap_append, DistributedCallBoundary.record?] using word

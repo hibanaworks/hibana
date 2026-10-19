@@ -1,7 +1,14 @@
 import Hibana.SourcePublicationPrefix
+import Hibana.OwnedRetirement
 
 namespace Hibana
 open EndpointDelegation
+
+/-- An ordinary zero-write interval may change I/O phase, but cannot hide
+issuance or retirement. Those header changes need their recorded boundary. -/
+def actorQuietHeadersCheck (before after : ActorProgressObservation) : Bool :=
+  before.viewHeaders == after.viewHeaders && before.counter == after.counter &&
+    before.liveViews == after.liveViews
 
 /-- One chronological source boundary. Sender publication is recorded separately
 from physical acceptance, including when another operation of that actor commits
@@ -12,6 +19,7 @@ inductive DistributedCallBoundary where
   | receive (key : TransportChannel × Nat) (actor : Nat) (record : ActorCommitRecord)
   | localCommit (actor : Nat) (record : ActorCommitRecord)
   | quiet (actor : Nat)
+  | retireView (sample : ViewRetirementObservation)
 
 def DistributedCallBoundary.acceptance? : DistributedCallBoundary → Option SourceAcceptance
   | .accept entry => some entry
@@ -60,7 +68,8 @@ inductive DistributedCallExecution
       {actor : Nat} {after : ActorProgressObservation}
       (history : DistributedCallExecution images choreo session first cut word accepted published pending)
       (checked : actorCommitMutationHistoryCheck (images actor) choreo session
-        (cut.actors actor).1 (cut.actors actor).2 after (cut.actors actor).2 [] = true) :
+        (cut.actors actor).1 (cut.actors actor).2 after (cut.actors actor).2 [] = true)
+      (headers : actorQuietHeadersCheck (cut.actors actor).1 after = true) :
       DistributedCallExecution images choreo session first
         (cut.actorAt actor (after, (cut.actors actor).2))
         (word ++ [.quiet actor]) accepted published pending
@@ -139,7 +148,7 @@ theorem a_distributed_call_execution_has_its_same_history_publication_matching
     SourceCallHistory choreo session (word.filterMap DistributedCallBoundary.call?) entries published pending := by
   induction execution with
   | refl => exact .nil
-  | quiet history checked ih => simpa [List.filterMap_append, DistributedCallBoundary.call?] using ih
+  | quiet history checked _headers ih => simpa [List.filterMap_append, DistributedCallBoundary.call?] using ih
   | @accept cut word entries published pending sample channel sent event previousPath witness label
       data path row history imageAt checked decoded pathAt rowAt prepared slotFree freshWitness sourceAt accepted identity ih =>
       let entry : SourceAcceptance := ⟨sample, channel, event, (cut.actors sample.image.role).2, witness⟩
@@ -189,7 +198,7 @@ theorem a_distributed_call_execution_retains_each_accepted_source
       entry.sample.check choreo session = true ∧ entry.sample.effIndex? = some entry.event := by
   induction execution with
   | refl => simp
-  | quiet history checked ih => exact ih
+  | quiet history checked _headers ih => exact ih
   | accept history imageAt checked decoded pathAt rowAt prepared slotFree freshWitness sourceAt accepted identity ih =>
       intro entry member
       rcases List.mem_append.mp member with earlier | current
@@ -240,7 +249,7 @@ theorem a_distributed_call_execution_projects_each_actual_actor_history
       ActorMeasuredHistory (images actor) choreo session (first.actors actor) (last.actors actor) cleared commits := by
   induction execution with
   | refl => exact fun _ => ⟨[], 0, .refl⟩
-  | quiet history checked ih => exact a_measured_call_update_extends_each_actor ih (.quiet checked)
+  | quiet history checked _headers ih => exact a_measured_call_update_extends_each_actor ih (.quiet checked)
   | accept history imageAt checked decoded pathAt rowAt prepared slotFree freshWitness sourceAt accepted identity ih =>
       simpa only [DistributedSourceCut.carrierAt] using ih
   | publish history actorAt paired committed ih =>
@@ -274,7 +283,7 @@ private theorem a_call_execution_preserves_each_full_fifo
   | refl =>
       intro initial
       simpa only [sourceChannelRecords, sourceChannelEntries, List.filter_nil, List.map_nil] using initial
-  | quiet history checked ih =>
+  | quiet history checked _headers ih =>
       intro initial
       simpa only [DistributedSourceCut.actorAt] using ih initial
   | @accept cut word entries published pending sample changed sent event previousPath witness label
@@ -340,11 +349,20 @@ inductive DistributedPhysicalExecution
       List SourceAcceptance → List (SourceAcceptance × ActorCommitRecord) →
       List SourceAcceptance → Prop where
   | refl {cut} : DistributedPhysicalExecution images choreo session cut cut [] [] [] []
+  | retireView {first cut : DistributedSourceCut} {word accepted published pending}
+      {sample : ViewRetirementObservation}
+      (history : DistributedPhysicalExecution images choreo session first cut word accepted published pending)
+      (checked : sample.check (images sample.before.actor) choreo = true)
+      (beforeAt : (cut.actors sample.before.actor).1 = sample.before) :
+      DistributedPhysicalExecution images choreo session first
+        (cut.actorAt sample.before.actor (sample.after, (cut.actors sample.before.actor).2))
+        (word ++ [.retireView sample]) accepted published pending
   | quiet {first cut : DistributedSourceCut} {word accepted published pending}
       {actor : Nat} {after : ActorProgressObservation}
       (history : DistributedPhysicalExecution images choreo session first cut word accepted published pending)
       (checked : actorCommitMutationHistoryCheck (images actor) choreo session
-        (cut.actors actor).1 (cut.actors actor).2 after (cut.actors actor).2 [] = true) :
+        (cut.actors actor).1 (cut.actors actor).2 after (cut.actors actor).2 [] = true)
+      (headers : actorQuietHeadersCheck (cut.actors actor).1 after = true) :
       DistributedPhysicalExecution images choreo session first
         (cut.actorAt actor (after, (cut.actors actor).2))
         (word ++ [.quiet actor]) accepted published pending
@@ -418,7 +436,7 @@ theorem a_selected_visit_execution_has_its_same_physical_execution
     DistributedPhysicalExecution images choreo session first last word entries published pending := by
   induction execution with
   | refl => exact .refl
-  | quiet history checked ih => exact .quiet ih checked
+  | quiet history checked headers ih => exact .quiet ih checked headers
   | accept history imageAt checked decoded pathAt rowAt prepared slotFree freshWitness sourceAt accepted identity ih =>
     exact .accept ih imageAt checked decoded pathAt rowAt prepared slotFree freshWitness sourceAt accepted identity
   | publish history actorAt paired committed ih =>
@@ -437,7 +455,8 @@ theorem a_physical_execution_partitions_its_actual_acceptances
     entries.Perm (published.map Prod.fst ++ pending) := by
   induction execution with
   | refl => exact .nil
-  | quiet history checked ih => exact ih
+  | retireView history checked beforeAt ih => exact ih
+  | quiet history checked _headers ih => exact ih
   | accept history imageAt checked decoded pathAt rowAt prepared slotFree freshWitness sourceAt accepted identity ih =>
     simpa only [List.append_assoc] using ih.append_right [_]
   | publish history actorAt sameWire committed ih =>
@@ -457,7 +476,10 @@ private theorem a_physical_execution_preserves_each_full_fifo
   | refl =>
     intro initial
     simpa only [sourceChannelRecords, sourceChannelEntries, List.filter_nil, List.map_nil] using initial
-  | quiet history checked ih =>
+  | retireView history checked beforeAt ih =>
+    intro initial
+    simpa only [DistributedSourceCut.actorAt] using ih initial
+  | quiet history checked _headers ih =>
     intro initial
     simpa only [DistributedSourceCut.actorAt] using ih initial
   | @accept cut word entries published pending sample changed sent event previousPath witness label

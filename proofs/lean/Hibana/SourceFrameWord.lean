@@ -590,7 +590,7 @@ private theorem a_call_execution_has_its_actual_group_word_cut
         (committedFrameClassWord group.rows actor (word.filterMap DistributedCallBoundary.record?)) := by
   induction execution with
   | refl => intro prior; exact prior
-  | @quiet cut word entries published pending changed after history checked ih =>
+  | @quiet cut word entries published pending changed after history checked _headers ih =>
       intro initial
       have prior := ih initial
       by_cases same : actor = changed

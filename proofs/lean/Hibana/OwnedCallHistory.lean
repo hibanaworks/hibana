@@ -10,6 +10,15 @@ unique actor identities. No part of this tag is added to the wire. -/
 abbrev Tag := Nat × Nat × Nat × Nat
 abbrev Request := OwnedFutureInventory.Request Tag (Nat × Nat)
 
+/-- Bind the actual header retired by this observation to the tracked
+resource and moved Rust value. A fault from another view or another actor
+cannot stand in for retiring this value. -/
+def retirementMatches (resource : EndpointKey) (value : Tag)
+    (sample : ViewRetirementObservation) (image : RustDescriptorImage) (choreo : Choreo) : Bool :=
+  resource.component == 0 && sample.view == resource.role && sample.check image choreo &&
+    ((observedActorView? sample.before sample.view).map fun current =>
+      (sample.before.actor, current.header)) == some value
+
 /-- The actual FIFO receipt and acceptance identity, not the repeated envelope
 bytes. These are erased observations supplied by the affine carrier. -/
 structure Receipt where
@@ -44,18 +53,24 @@ inductive OwnedCallEvent where
   | construct (request : Request)
   | poll (request : Request)
   | retire (request : Request)
-  | abandon (request : Request)
-  | dropValue (value : Tag)
+  | abandon (request : Request) (sample : ViewRetirementObservation)
+  | dropValue (value : Tag) (sample : ViewRetirementObservation)
   | fence (receipt : Receipt)
   | source (boundary : DistributedCallBoundary)
   | accept (entry : SourceAcceptance) (request : Request) (frame : TransportFrame)
   | receive (key : TransportChannel × Nat) (actor : Nat) (record : ActorCommitRecord)
       (frame : TransportFrame) (fresh : Tag)
 
+def OwnedCallEvent.retirement? : OwnedCallEvent → Option (Tag × ViewRetirementObservation)
+  | .abandon request sample => some (request.payload, sample)
+  | .dropValue value sample => some (value, sample)
+  | _ => none
+
 def OwnedCallEvent.source? : OwnedCallEvent → Option DistributedCallBoundary
   | .source boundary => some boundary
   | .accept entry _ _ => some (.accept entry)
   | .receive key actor record _ _ => some (.receive key actor record)
+  | .abandon _ sample | .dropValue _ sample => some (.retireView sample)
   | _ => none
 
 def sourceWord (events : List OwnedCallEvent) : List DistributedCallBoundary :=
@@ -73,6 +88,7 @@ def Untracked (resource : EndpointKey) (choreo : Choreo)
   | .receive key _ _ => ∃ entry ∈ acceptedEntries events,
       entry.callKey = key ∧ tracks resource choreo entry = false
   | .publish _ _ _ | .localCommit _ _ | .quiet _ => True
+  | .retireView sample => sample.view ≠ resource.role
 
 /-- One boundary of the same chronological run. This relation adds no admission
 guard to Rust. Authentic complete observations and their source qualification
@@ -95,13 +111,17 @@ inductive Boundary (images : Nat → RustDescriptorImage) (resource : EndpointKe
         ⟨earlier ++ request :: later, { state with acceptedFutures := left ++ request.payload :: right }⟩
         ⟨earlier ++ later, { state with acceptedFutures := left ++ right }⟩
   | abandon (events : List OwnedCallEvent) (state : Observation Tag Receipt)
-      (left right : List Tag) (earlier later : List Request) (request : Request) :
-      Boundary images resource choreo events (.abandon request)
+      (left right : List Tag) (earlier later : List Request) (request : Request)
+      (sample : ViewRetirementObservation)
+      (checked : retirementMatches resource request.payload sample (images sample.before.actor) choreo = true) :
+      Boundary images resource choreo events (.abandon request sample)
         ⟨earlier ++ request :: later, { state with preparing := left ++ request.payload :: right }⟩
         ⟨earlier ++ later, { state with preparing := left ++ right }⟩
   | dropValue (events : List OwnedCallEvent) (state : Observation Tag Receipt)
-      (left right : List Tag) (requests : List Request) (value : Tag) :
-      Boundary images resource choreo events (.dropValue value)
+      (left right : List Tag) (requests : List Request) (value : Tag)
+      (sample : ViewRetirementObservation)
+      (checked : retirementMatches resource value sample (images sample.before.actor) choreo = true) :
+      Boundary images resource choreo events (.dropValue value sample)
         ⟨requests, { state with usable := left ++ value :: right }⟩
         ⟨requests, { state with usable := left ++ right }⟩
   | fence (events : List OwnedCallEvent) (state : Observation Tag Receipt)
@@ -153,6 +173,56 @@ end Hibana.OwnedCallHistory
 namespace Hibana
 open OwnedCallHistory EndpointTransfer
 
+theorem a_matched_retirement_uses_its_actual_value
+    (checked : retirementMatches resource value sample image choreo = true) :
+    sample.check image choreo = true ∧
+      ∃ current, observedActorView? sample.before sample.view = some current ∧
+        value = (sample.before.actor, current.header) := by
+  have fields := Bool.and_eq_true_iff.mp checked
+  have validated := (Bool.and_eq_true_iff.mp fields.1).2
+  refine ⟨validated, ?_⟩
+  cases currentAt : observedActorView? sample.before sample.view with
+  | none =>
+      have impossible := beq_iff_eq.mp fields.2
+      simp only [currentAt, Option.map_none, reduceCtorEq] at impossible
+  | some current =>
+      have same : some (sample.before.actor, current.header) = some value :=
+        beq_iff_eq.mp (by simpa only [currentAt, Option.map_some] using fields.2)
+      exact ⟨current, rfl, (Option.some.inj same).symm⟩
+
+/-- Retirement is retained as a checked physical source boundary in the same
+word. Its header and fault cannot come from an independently chosen trace. -/
+theorem a_joint_value_retirement_keeps_its_checked_source_boundary
+    (boundary : OwnedCallHistory.Boundary images resource choreo events event before after)
+    (recorded : event.retirement? = some (value, sample)) :
+    retirementMatches resource value sample (images sample.before.actor) choreo = true ∧
+      event.source? = some (.retireView sample) := by
+  cases boundary <;> simp only [OwnedCallEvent.retirement?, reduceCtorEq] at recorded
+  case abandon state left right earlier later request observed checked =>
+    cases Option.some.inj recorded
+    exact ⟨checked, rfl⟩
+  case dropValue state left right requests value observed checked =>
+    cases Option.some.inj recorded
+    exact ⟨checked, rfl⟩
+
+/-- This classifies the real recorded retirement. Completed idle views may
+retire without stopping independent work; a faulted retirement cannot authorize
+publication. It is not a claim of distributed closure or future callability. -/
+theorem a_joint_value_retirement_is_complete_or_faulted
+    (boundary : OwnedCallHistory.Boundary images resource choreo events event before after)
+    (recorded : event.retirement? = some (value, sample)) :
+    (sample.afterFault = none ∧
+      sourceViewComplete? sample.before (images sample.before.actor) choreo sample.view = some true ∧
+      ∃ current, observedActorView? sample.before sample.view = some current ∧ current.operation = .idle) ∨
+    ∃ cause, sample.afterFault = some cause ∧
+      (observedGeneration sample.afterFault).publicationPermitted = false := by
+  have checked := (a_matched_retirement_uses_its_actual_value
+    (a_joint_value_retirement_keeps_its_checked_source_boundary boundary recorded).1).1
+  cases faultAt : sample.afterFault with
+  | none => exact .inl ⟨rfl, live_retirement_requires_source_completion checked faultAt⟩
+  | some cause =>
+      exact .inr ⟨cause, rfl, rfl⟩
+
 /-- Erase the source annotations without changing any future or receipt
 boundary. This is a projection of one history, not an independently supplied
 custody trace that could disagree with its communication log. -/
@@ -164,8 +234,8 @@ theorem a_joint_call_boundary_has_its_actual_future_boundary
   | construct state left right requests request => exact ⟨_, .construct state left right requests request⟩
   | poll cut request present => exact ⟨_, .poll request present _⟩
   | retire state left right earlier later request => exact ⟨_, .retire state left right earlier later request⟩
-  | abandon state left right earlier later request => exact ⟨_, .abandon state left right earlier later request⟩
-  | dropValue state left right requests value => exact ⟨_, .dropValue (.dropValue state left right value)⟩
+  | abandon state left right earlier later request sample checked => exact ⟨_, .abandon state left right earlier later request⟩
+  | dropValue state left right requests value sample checked => exact ⟨_, .dropValue (.dropValue state left right value)⟩
   | fence state left right requests receipt => exact ⟨_, .fenceFrame (.fenceFrame state left right receipt)⟩
   | source cut boundary untracked => exact ⟨_, .localBoundary _ _⟩
   | accept state left right requests entry request frame facts factsAt resourceAt sending present matched wire channel position =>
@@ -202,7 +272,7 @@ private theorem a_boundary_keeps_each_live_constructor
       · subst request; exact List.mem_append_right _ (List.mem_cons_self)
       · exact List.mem_append_left _ (prior _ old)
   | retire state left right earlier later removed
-  | abandon state left right earlier later removed =>
+  | abandon state left right earlier later removed sample checked =>
       have old : request ∈ earlier ++ removed :: later := by
         rcases List.mem_append.mp member with left | right
         · exact List.mem_append_left _ left
@@ -242,7 +312,7 @@ theorem a_distributed_call_execution_has_its_exact_acceptance_word
     word.filterMap DistributedCallBoundary.acceptance? = entries := by
   induction execution with
   | refl => rfl
-  | quiet history checked ih
+  | quiet history checked _headers ih
   | publish history actorAt paired committed ih
   | localCommit history actorRole localAt committed ih
   | receive history actorRole received entryAt identity paired committed ih =>

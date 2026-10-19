@@ -491,7 +491,7 @@ private theorem pending_group_rows_keep_their_next_source_letter
     pendingGroupNext group.rows actor word pending := by
   induction execution with
   | refl => simp [pendingGroupNext]
-  | quiet history checked ih =>
+  | quiet history checked _headers ih =>
       simpa [pendingGroupNext, call_committed_word_append, DistributedCallBoundary.record?,
         committedFrameClassWord] using ih
   | @accept cut word entries published pending sample channel sent event previousPath witness label
@@ -693,7 +693,7 @@ private theorem call_word_length_balance
       (callCommittedWord rows actor word).length + (callPendingGroup rows actor pending).length := by
   induction execution with
   | refl => simp [callLogicalWord, callCommittedWord, committedFrameClassWord, callPendingGroup]
-  | quiet history checked ih =>
+  | quiet history checked _headers ih =>
       simpa [call_logical_word_append, call_committed_word_append, DistributedCallBoundary.sourceLetter?,
         DistributedCallBoundary.record?, committedFrameClassWord] using ih
   | @accept cut word entries published pending sample channel sent event previousPath witness label
@@ -776,7 +776,7 @@ theorem a_distributed_call_execution_has_its_acceptance_inclusive_source_group_w
   change sourceFrameWord group.rows (callLogicalWord group.rows actor word)
   induction execution with
   | refl => simp [sourceFrameWord, callLogicalWord]
-  | quiet history checked ih =>
+  | quiet history checked _headers ih =>
     simpa [call_logical_word_append, DistributedCallBoundary.sourceLetter?] using ih
   | @accept cut word entries published pending sample channel sent event previousPath witness label
       data path row history imageAt checked decoded pathAt rowAt prepared slotFree freshWitness sourceAt accepted identity ih =>
@@ -878,7 +878,7 @@ private theorem a_call_word_counts_each_actual_send_row
       ((actorAcceptedSends entries actor).map fun entry => entry.sample.event).count event := by
   induction execution with
   | refl => simp [callLogicalWord, actorAcceptedSends]
-  | quiet history checked ih =>
+  | quiet history checked _headers ih =>
     simpa [call_logical_word_append, DistributedCallBoundary.sourceLetter?] using ih
   | @accept cut word entries published pending sample channel sent sourceEvent previousPath witness label
       data path row history imageAt checked decoded pathAt rowAt prepared slotFree freshWitness sourceAt accepted identity ih =>
@@ -927,7 +927,7 @@ private theorem a_call_word_counts_each_actual_receive_row
     (callLogicalWord rows actor word).count event = (callCommittedWord rows actor word).count event := by
   induction execution with
   | refl => simp [callLogicalWord, callCommittedWord, committedFrameClassWord]
-  | quiet history checked ih =>
+  | quiet history checked _headers ih =>
     simpa [call_logical_word_append, call_committed_word_append, DistributedCallBoundary.sourceLetter?,
       DistributedCallBoundary.record?, committedFrameClassWord] using ih
   | @accept cut word entries published pending sample channel sent sourceEvent previousPath witness label
@@ -1009,7 +1009,7 @@ private theorem a_call_execution_logs_its_checked_actor_images
       (images entry.1).role = entry.1 ∧ entry.2.check (images entry.1) choreo session = true := by
   induction execution with
   | refl => simp
-  | quiet history checked ih =>
+  | quiet history checked _headers ih =>
     simpa [List.filterMap_append, DistributedCallBoundary.record?] using ih
   | accept history imageAt checked decoded pathAt rowAt prepared slotFree freshWitness sourceAt accepted identity ih =>
     simpa [List.filterMap_append, DistributedCallBoundary.record?] using ih
@@ -1082,7 +1082,7 @@ private theorem a_call_word_selects_its_actual_send_rows
       (fun entry => if entry.sample.event ∈ rows then some entry.sample.event else none) := by
   induction execution with
   | refl => simp [callLogicalWord, actorAcceptedSends]
-  | quiet history checked ih =>
+  | quiet history checked _headers ih =>
     simpa [call_logical_word_append, DistributedCallBoundary.sourceLetter?] using ih
   | @accept cut word entries published pending sample channel sent sourceEvent previousPath witness label
       data path row history imageAt checked decoded pathAt rowAt prepared slotFree freshWitness sourceAt accepted identity ih =>

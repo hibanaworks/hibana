@@ -1467,14 +1467,27 @@ This is erased proof data, with no runtime owner registry or reservation lock.
 
 `OwnedCallHistory.lean` joins constructor, poll, Drop, physical acceptance,
 publication and receipt observations in one chronological word. Its source
-projection must qualify as that same `DistributedCallExecution`; a second,
-independently chosen source trace is insufficient. A queued resource receipt
+projection qualifies as the same `DistributedPhysicalExecution` and
+`SourceOccurrenceTrace`; a second, independently chosen source trace is
+insufficient. A queued resource receipt
 then has an earlier real constructor, a retained request matched at preparation
 to the carrier/view tags, label and lexical source interval, and the checked
 source acceptance. The FIFO position counts every accepted frame on that
 direction, including ordinary payloads. Repeated envelope bytes are not the
 receipt identity. Sender publication and witness destruction remain independent
 of receiver progress.
+
+Abandoning an unaccepted owned payload or dropping a live value retains its
+`ViewRetirementObservation` in that word. The checked resource and actual
+actor/role/run/nonce tag must match the header retired by the record. Its
+source projection is `retireView`, with the exact physical before/after actor
+cut and unchanged completion-write count. The record includes the observed
+before/after fault, so it cannot be replaced by an unrelated fault assumption.
+
+Both physical and selected-visit executions now require a quiet interval to
+preserve view headers, live-view count and issuance counter. Ordinary I/O
+phase changes are permitted. A zero-write interval cannot silently retire or
+issue an Endpoint merely because its progress bits are unchanged.
 
 This establishes finite-prefix custody/source correspondence in the observation
 model. Applying it to Rust still requires complete authentic merged observations;
@@ -1623,10 +1636,28 @@ preserve progress, retire the payload, reject reattachment, and retain the
 first EndpointDropped fault after another failed operation. A separate test
 drops a completed resource view, then runs independent co-resident work with
 one send deliberately delayed. Its delay is a test stimulus, not measured
-benchmark overlap. The two generated artifacts have 54 and 18 kernel claims,
+benchmark overlap. The two generated artifacts have 84 and 28 kernel claims,
 including source completion, generation transitions, explicit authority loss,
 and rejection of missing faults, spurious faults, source rows and header deltas.
 The observations never authorize execution and add no production runtime state.
+
+These existing fixtures now also qualify their relative boundaries in the
+merged call history. The future-drop cases use the captured real constructor,
+payload tag and borrow range. The application-drop case uses its actual value
+and header record. They extend any qualified physical prefix whose last actor
+cut equals that actual before-snapshot; they do not invent a fresh initial
+binding at the observation window. Wrong values, wrong resources and hiding
+the retirement as a quiet update are rejected. No source step or completion
+write is introduced by retirement. The outcome theorem derives either idle
+current-visit completion or that actor's recorded publication-blocking fault.
+
+Cleanup of a completed send witness is distinct from retiring a usable value.
+Custody-only witness cleanup does not by itself prove absence of a carrier
+fault, especially when a send was accepted but still pending. Continuity of
+first-fault observations across all event kinds, in-flight frame fencing and
+distributed observable closure remain to be composed. The above per-boundary
+qualification does not establish those remaining results or all future rolled
+visits.
 
 `OwnedCommit.lean` connects the actor commit checker to that transfer model.
 It decodes the same source path and image as the observed actor, then checks

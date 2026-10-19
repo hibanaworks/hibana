@@ -401,6 +401,8 @@ fn dropping_an_owned_send_cancels_the_run_before_or_during_preparation() {
                 network.pause_send(0);
             }
             let tag = view_tag(&db);
+            #[cfg(not(miri))]
+            let capture = crate::endpoint::proof_snapshot::owned_future::Capture::start();
             let (before, before_fault) = {
                 let mut send = pin!(owner.send::<Loan>(db));
                 if poll_before_drop {
@@ -416,12 +418,20 @@ fn dropping_an_owned_send_cancels_the_run_before_or_during_preparation() {
                     actor_fault(&auth)
                 })
             };
+            #[cfg(not(miri))]
+            let constructor = capture
+                .finish()
+                .into_iter()
+                .find(|event| matches!(event, crate::endpoint::proof_snapshot::owned_future::OwnedFutureBoundary::Seal { .. }))
+                .expect("the actual owned-future constructor");
             assert_eq!(before_fault, None, "{name}");
             // SAFETY: AUTH still owns its distinct view in the original actor.
             let after = unsafe { actor_snapshot(&auth) };
             assert_eq!(before.steps, after.steps);
             assert_eq!(before.choices, after.choices);
             assert_eq!(before.counter, after.counter);
+            assert_eq!(before.completion_mutations, after.completion_mutations);
+            assert_eq!(before.retained_rolls, after.retained_rolls);
             assert_eq!(before.live_views, after.live_views + 1);
             // SAFETY: the original DB header remains allocated by storage.
             assert!(!unsafe { tag.matches_header() });
@@ -460,6 +470,7 @@ fn dropping_an_owned_send_cancels_the_run_before_or_during_preparation() {
                 after_fault,
                 origin: super::retirement::RetirementOrigin::Future,
                 complete: false,
+                constructor: Some(constructor),
             });
         }
         #[cfg(not(miri))]
