@@ -1,4 +1,4 @@
-import Hibana.SourceOccurrenceProjection
+import Hibana.SourceResumptionProgress
 import Hibana.OwnedCallHistory
 import Hibana.ActorCandidateAdmission
 
@@ -264,14 +264,15 @@ theorem a_joint_physical_occurrence_refinement_has_custody_fifo_and_source_progr
       ∃ actor point next,
         occurrenceLocalReady plan actor (occurrenceLocalHistory plan actor points) point = true ∧
         occurrenceWireReady points point = true ∧
+        (occurrenceCut plan (occurrenceLocalHistory plan actor points)).resumptionReady point = true ∧
         SourceOccurrenceStep (occurrenceCut plan points) point next := by
-  obtain ⟨actor, point, next, localChecked, wire, step⟩ :=
-    unfinished_source_occurrences_have_a_projected_operation plan points unfinished
+  obtain ⟨actor, point, next, localChecked, wire, resumed, step⟩ :=
+    an_unfinished_resumption_cut_has_a_projected_operation plan points unfinished
   exact ⟨(a_joint_call_history_preserves_affine_custody custody).1,
     a_physical_execution_partitions_its_actual_acceptances physical,
     a_source_occurrence_trace_is_its_reconstructed_execution mapped,
     a_physical_execution_projects_its_complete_fifo_histories physical,
-    actor, point, next, localChecked, wire, step⟩
+    actor, point, next, localChecked, wire, resumed, step⟩
 
 /-- The custody, physical FIFO/call history and reconstructed source cut all
 refer to ONE chronological execution. The next operation is enabled by one
@@ -300,6 +301,7 @@ theorem a_joint_occurrence_refinement_has_custody_fifo_and_source_progress
       ∃ actor point next,
         occurrenceLocalReady plan actor (occurrenceLocalHistory plan actor points) point = true ∧
         occurrenceWireReady points point = true ∧
+        (occurrenceCut plan (occurrenceLocalHistory plan actor points)).resumptionReady point = true ∧
         SourceOccurrenceStep (occurrenceCut plan points) point next := by
   exact a_joint_physical_occurrence_refinement_has_custody_fifo_and_source_progress
     custody (a_selected_visit_execution_has_its_same_physical_execution physical) mapped unfinished

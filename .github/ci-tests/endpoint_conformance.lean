@@ -73,42 +73,6 @@ def atFifoHead (plan : SourceOccurrenceCut source) (image : RustDescriptorImage)
           !points.contains (.committed ⟨event, .receive⟩)
       | _ => false) == some (.accepted occurrence)
 
-def pointEvent : SourcePoint → Nat
-  | .accepted event => event
-  | .committed action => action.event
-
-/-- The alongside unfolding is an overapproximation of local sequencing.
-For these two-visit cases, identify the current body copy from this actor's
-own observed actions. After entering that copy, an outgoing continuation
-still follows its local body. An incoming old continuation may use retained
-completion instead (ActorCandidateAdmission.sourceRetainedRegion?).
-
-This is the source projection rule, not an observed runtime admission bit.
-It reads only the syntax, occurrence identities and local operation word.
-Explicit source par has no such sequential boundary. -/
-def outgoingLocalOrder (plan : SourceOccurrenceCut source)
-    (points : List SourcePoint) (action : ActionId) : Bool := Id.run do
-  let .seq (.roll body) _ := source | return true
-  if action.side != .send then return true
-  let occurrences := plan.unfolding.occurrences 0
-  let some (origin, _) := occurrences[action.event]? | return false
-  if origin < body.eventCount then return true
-  let some actor := occurrenceActor? plan action.entryPoint | return false
-  -- A second copy is detected by a repeated original source position. The
-  -- bounded language has two identical, route-free copies; no visit counter
-  -- or ownership table is added to the runtime or application.
-  let fresh := occurrences.zipIdx.filterMap fun ((original, _), event) =>
-    if original < body.eventCount &&
-        ((occurrences.take event).any fun entry => entry.1 == original) then
-      some event else none
-  let localPoints := occurrenceLocalDomain plan actor
-  let entered := points.any fun point =>
-    fresh.contains (pointEvent point) && occurrenceActor? plan point == some actor
-  if !entered then return true
-  return localPoints.all fun point => match point with
-    | .committed id => !fresh.contains id.event || points.contains point
-    | .accepted _ => true
-
 def nextPoints (plan : SourceOccurrenceCut source) (image : RustDescriptorImage) (oracle : Oracle)
     (points : List SourcePoint) (command : Nat) : List (List SourcePoint) :=
   (plan.unfolding.occurrences 0).zipIdx.filterMap fun ((origin, _), occurrence) =>
@@ -120,7 +84,7 @@ def nextPoints (plan : SourceOccurrenceCut source) (image : RustDescriptorImage)
       (sourceVisitPoints plan.path.bindings).contains point && !points.contains point
       else (occurrenceCut plan points).ready point
     if !ready || (oracle != .unguarded && oracle != .unprojected &&
-        !outgoingLocalOrder plan points action) ||
+        !(occurrenceCut plan points).resumptionReady point) ||
         (side == .receive && oracle != .unguarded &&
         !atFifoHead plan image points occurrence) then none else
     let accepted := points ++ [point]

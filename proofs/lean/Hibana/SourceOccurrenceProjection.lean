@@ -41,7 +41,7 @@ def occurrenceWireReady (points : List SourcePoint) : SourcePoint → Bool
   | .committed ⟨event, .send⟩ | .committed ⟨event, .receive⟩ => points.contains (.accepted event)
   | _ => true
 
-private theorem local_history_contains
+theorem occurrence_local_history_contains
     (plan : SourceOccurrenceCut source) (points : List SourcePoint) (point : SourcePoint)
     (atActor : occurrenceActor? plan point = some actor) :
     (occurrenceLocalHistory plan actor points).contains point = points.contains point := by
@@ -88,7 +88,7 @@ private theorem a_local_query_and_wire_evidence_are_source_ready
   have atActor : occurrenceActor? plan point = some actor :=
     of_decide_eq_true (List.mem_filter.mp member).2
   have pending : points.contains point = false := by
-    simpa only [local_history_contains plan points point atActor, Bool.not_eq_true'] using head.2
+    simpa only [occurrence_local_history_contains plan points point atActor, Bool.not_eq_true'] using head.2
   change (((sourceVisitPoints plan.path.bindings).contains point && !points.contains point) &&
     ((sourceVisitPoints plan.path.bindings).all (fun before =>
       !sourcePointDepends plan.expanded plan.path.bindings before point || points.contains before))) = true
@@ -109,7 +109,7 @@ private theorem a_local_query_and_wire_evidence_are_source_ready
         have enabled := List.all_eq_true.mp fields.2 _ localMember
         have dependency : localDepends plan (.committed prior) after.entryPoint = true := edgeAt
         simpa only [dependency, Bool.not_true, Bool.false_or,
-          local_history_contains plan points _ priorActor] using enabled
+          occurrence_local_history_contains plan points _ priorActor] using enabled
     simp only [edgeAt, Bool.not_true, Bool.false_or, done]
   · have noEdge : sourcePointDepends plan.expanded plan.path.bindings before point = false :=
       Bool.eq_false_iff.mpr edgeAt
@@ -157,7 +157,7 @@ theorem projected_occurrence_readiness_is_exact
       · have member : point ∈ occurrenceLocalDomain plan actor :=
           List.mem_filter.mpr ⟨present, by simpa using atActor⟩
         simpa using member
-      · simp only [local_history_contains plan points point atActor, pending, Bool.not_false]
+      · simp only [occurrence_local_history_contains plan points point atActor, pending, Bool.not_false]
       · intro before member
         have beforeAt : occurrenceActor? plan before = some actor :=
           of_decide_eq_true (List.mem_filter.mp member).2
@@ -167,7 +167,7 @@ theorem projected_occurrence_readiness_is_exact
           by_cases depends : sourcePointDepends plan.expanded plan.path.bindings (.committed id) point = true
           · have done := ready _ (source_point_dependency_check_is_exact.mp depends)
             simp only [localDepends, depends, Bool.not_true, Bool.false_or,
-              local_history_contains plan points _ beforeAt, done]
+              occurrence_local_history_contains plan points _ beforeAt, done]
           · have noEdge := Bool.eq_false_iff.mpr depends
             simp only [localDepends, noEdge, Bool.not_false, Bool.true_or]
     · cases point with

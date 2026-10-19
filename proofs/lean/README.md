@@ -46,7 +46,9 @@ continuation must still follow that local body. An incoming old continuation
 can instead use retained completion. The bounded interpreter applies this
 existing projection rule from the actor's own word, without a runtime visit
 counter. Explicit source `par` retains its independent progress. Omitting that
-rule reproduces the discrepancy, rather than silently ignoring it.
+rule reproduces the discrepancy, rather than silently ignoring it. This query
+now comes directly from `SourceResumptionProgress.lean`; the two-visit-specific
+oracle implementation has been removed.
 
 These are exhaustive completed-operation schedules within the stated bounds
 on an immediate in-memory carrier. They do not cover all Pending-poll
@@ -191,6 +193,29 @@ Global source readiness is proved equivalent to these local checks and that
 evidence. Every unfinished occurrence cut therefore identifies an actor with
 an enabled projected operation, without a callable-future oracle or a shared
 mutable owner record.
+
+`SourceResumptionProgress.lean` retains the local sequencing at an alongside
+resumption. It derives each resumed copy and continuation interval recursively
+from the accepted unfolding, including nested composition, separate branch
+sites and any finite number of copies. Plain source `par` introduces no
+sequential resumption boundary. Once an actor enters a resumed copy, its
+outgoing continuation follows that actor's body operations. Incoming old
+continuations and accepted-but-unpublished sends gain no new dependency.
+
+Every additional edge increases the existing source-point rank and remains
+within one actor. The query gives the same answer when all other actors'
+observations are removed. For every unfinished finite occurrence cut, the
+model has a projected operation satisfying both the original source order and
+this extra local condition. Minimal rank selects a proof witness, not a
+runtime schedule. No caller-supplied ready bit, common iteration counter,
+resource lock, wire epoch or runtime owner record is added.
+
+The joint physical/source/custody/FIFO theorem now returns this stronger
+operation with its local resumption query as part of the conclusion, under
+the same hypotheses. The source abstraction remains an erasure of those
+local constraints. Applying the result to every reachable production cut,
+and composing fault/closure, remain separate obligations; this strengthening
+does not assert a complete Rust refinement.
 
 `SourceOccurrenceTrace.lean` reconstructs source cuts from one chronological
 acceptance, publication, receipt and local-commit word. Each occurrence retains
