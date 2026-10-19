@@ -62,6 +62,29 @@ structure ActorCommitRecord where
   step : ActorCommitObservation
   wire : OwnedWireObservation
 
+/-- Physical update and wire identity, without imposing a scalar current-visit
+causal prefix. The source occurrence trace supplies order for the same record.
+Owned messages still require their exact source-derived envelope. -/
+def ActorCommitRecord.transitionCheck
+    (record : ActorCommitRecord) (image : RustDescriptorImage) (choreo : Choreo)
+    (session : Nat) : Bool :=
+  match image.decodeActorOrder? choreo with
+  | none => false
+  | some data =>
+      match data.normalized.paths[record.step.pathIndex]?, data.rows[record.step.event]? with
+      | some path, some row =>
+          match path.bindings.find? (fun entry => entry.1 == row.actionId.event) with
+          | none => false
+          | some (_, binding) =>
+              record.step.transitionCheck image choreo &&
+                match binding.message.payload with
+                | .wire _ => true
+                | .endpoint _ =>
+                    match record.step.ownedFacts? image choreo with
+                    | none => false
+                    | some facts => facts.wireMatches record.step record.wire session
+      | _, _ => false
+
 def ActorCommitRecord.check
     (record : ActorCommitRecord) (image : RustDescriptorImage) (choreo : Choreo)
     (session : Nat) : Bool :=
@@ -92,6 +115,33 @@ theorem checked_record_is_a_checked_commit
         · exact checked
         · exact (Bool.and_eq_true_iff.mp checked).1
     · contradiction
+
+theorem a_checked_source_record_has_its_physical_transition
+    {record : ActorCommitRecord} {image : RustDescriptorImage} {choreo : Choreo} {session : Nat}
+    (checked : record.check image choreo session = true) :
+    record.transitionCheck image choreo session = true := by
+  have delta := a_checked_source_commit_has_its_physical_transition
+    (checked_record_is_a_checked_commit checked)
+  unfold ActorCommitRecord.check ActorCommitRecord.transitionCheck at *
+  cases dataAt : image.decodeActorOrder? choreo with
+  | none => simp only [dataAt, Bool.false_eq_true] at checked
+  | some data =>
+    cases pathAt : data.normalized.paths[record.step.pathIndex]? with
+    | none => simp only [dataAt, pathAt, Bool.false_eq_true] at checked
+    | some path =>
+      cases rowAt : data.rows[record.step.event]? with
+      | none => simp only [dataAt, pathAt, rowAt, Bool.false_eq_true] at checked
+      | some row =>
+        cases bindingAt : path.bindings.find? (fun entry => entry.1 == row.actionId.event) with
+        | none => simp only [dataAt, pathAt, rowAt, bindingAt, Bool.false_eq_true] at checked
+        | some binding =>
+          cases payloadAt : binding.2.message.payload with
+          | wire schema =>
+            simpa only [dataAt, pathAt, rowAt, bindingAt, payloadAt, Bool.and_true] using delta
+          | endpoint key =>
+            simp only [dataAt, pathAt, rowAt, bindingAt, payloadAt,
+              ActorCommitObservation.ownedCheck, delta, Bool.true_and] at checked ⊢
+            exact (Bool.and_eq_true_iff.mp checked).2
 
 /-- A checked source commit only completes its own event. It cannot clear an
 already completed event; visit resets are separate from this boundary. -/

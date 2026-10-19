@@ -325,4 +325,178 @@ theorem a_distributed_call_execution_projects_its_complete_fifo_histories
   apply a_call_execution_preserves_each_full_fifo execution
   exact fun channel => ⟨_, .initial channel⟩
 
+/-- Physical calls, updates and complete logical FIFOs from one chronological
+word. Unlike the selected-visit execution above, an incoming commit need not
+re-establish an old causal prefix in the current visit's event bits. Its
+source order and physical actor binding are supplied by SourceOccurrenceTrace
+for this SAME word. Neither predicate alone is the distributed refinement.
+
+The before/after actor cuts, real mutation counts, owned envelope checks and
+actual FIFO positions remain mandatory. This is erased proof data, not a new
+runtime path, owner table or scheduling restriction. -/
+inductive DistributedPhysicalExecution
+    (images : Nat → RustDescriptorImage) (choreo : Choreo) (session : Nat) :
+    DistributedSourceCut → DistributedSourceCut → List DistributedCallBoundary →
+      List SourceAcceptance → List (SourceAcceptance × ActorCommitRecord) →
+      List SourceAcceptance → Prop where
+  | refl {cut} : DistributedPhysicalExecution images choreo session cut cut [] [] [] []
+  | quiet {first cut : DistributedSourceCut} {word accepted published pending}
+      {actor : Nat} {after : ActorProgressObservation}
+      (history : DistributedPhysicalExecution images choreo session first cut word accepted published pending)
+      (checked : actorCommitMutationHistoryCheck (images actor) choreo session
+        (cut.actors actor).1 (cut.actors actor).2 after (cut.actors actor).2 [] = true) :
+      DistributedPhysicalExecution images choreo session first
+        (cut.actorAt actor (after, (cut.actors actor).2))
+        (word ++ [.quiet actor]) accepted published pending
+  | accept {first cut : DistributedSourceCut} {word entries published pending}
+      {sample : SourceSendAdmission} {channel : TransportChannel} {sent : TransportState}
+      {event previousPath witness : Nat} {label : Fin 256}
+      {data : DecodedActorOrder} {path : NormalizedPath} {row : DecodedActorRow}
+      (history : DistributedPhysicalExecution images choreo session first cut word entries published pending)
+      (imageAt : sample.image = images sample.image.role)
+      (checked : sample.check choreo session = true)
+      (decoded : sample.image.decodeActorOrder? choreo = some data)
+      (pathAt : data.normalized.paths[sample.pathIndex]? = some path)
+      (rowAt : data.rows[sample.event]? = some row)
+      (prepared : ActorSourceCandidateBase
+        { snapshot := (cut.actors sample.image.role).1, pathIndex := sample.pathIndex, admitted := [] }
+        sample.image choreo previousPath path row sample.base)
+      (slotFree : pending.all (fun old => !(old.sample.image.role == sample.image.role &&
+        old.sample.event == sample.event)) = true)
+      (freshWitness : entries.all (fun entry => entry.channel != channel || entry.carrierWitness != witness) = true)
+      (sourceAt : sample.effIndex? = some event)
+      (accepted : (cut.carriers channel).send label = some sent)
+      (identity : sample.wire.identifies {
+        channel := (cut.carriers channel).channel,
+        sequence := (cut.carriers channel).frames.length, frameLabel := label }) :
+      DistributedPhysicalExecution images choreo session first (cut.carrierAt channel sent)
+        (word ++ [.accept ⟨sample, channel, event, (cut.actors sample.image.role).2, witness⟩])
+        (entries ++ [⟨sample, channel, event, (cut.actors sample.image.role).2, witness⟩]) published
+        (pending ++ [⟨sample, channel, event, (cut.actors sample.image.role).2, witness⟩])
+  | publish {first cut : DistributedSourceCut} {word entries published left right}
+      {actor : Nat} {after : ActorProgressObservation × Nat} {cleared : List Nat}
+      {record : ActorCommitRecord} {entry : SourceAcceptance}
+      (history : DistributedPhysicalExecution images choreo session first cut word entries published (left ++ entry :: right))
+      (actorAt : entry.sample.image.role = actor)
+      (sameWire : entry.sample.wire = record.wire)
+      (committed : ActorMeasuredTransition (images actor) choreo session
+        (cut.actors actor) after cleared record) :
+      DistributedPhysicalExecution images choreo session first (cut.actorAt actor after)
+        (word ++ [.publish entry.callKey actor record]) entries
+        (published ++ [(entry, record)]) (left ++ right)
+  | localCommit {first cut : DistributedSourceCut} {word entries published pending}
+      {actor : Nat} {after : ActorProgressObservation × Nat} {cleared : List Nat}
+      {record : ActorCommitRecord} {eff : Nat} {binding : Binding}
+      (history : DistributedPhysicalExecution images choreo session first cut word entries published pending)
+      (actorRole : (images actor).role = actor)
+      (localAt : sourceOperationIdentity? (images actor) choreo record.step.pathIndex record.step.event =
+        some (eff, binding, .local))
+      (committed : ActorMeasuredTransition (images actor) choreo session
+        (cut.actors actor) after cleared record) :
+      DistributedPhysicalExecution images choreo session first (cut.actorAt actor after)
+        (word ++ [.localCommit actor record]) entries published pending
+  | receive {first cut : DistributedSourceCut} {word entries published pending}
+      {actor : Nat} {channel : TransportChannel} {next : TransportState} {frame : TransportFrame}
+      {after : ActorProgressObservation × Nat} {cleared : List Nat} {record : ActorCommitRecord}
+      {entry : SourceAcceptance} {witness : Nat}
+      (history : DistributedPhysicalExecution images choreo session first cut word entries published pending)
+      (actorRole : (images actor).role = actor)
+      (received : (cut.carriers channel).pollReceive = .delivered frame next)
+      (entryAt : (sourceChannelEntries entries channel)[(cut.carriers channel).delivered]? = some entry)
+      (identity : entry.carrierWitness = witness)
+      (sameWire : entry.sample.wire = record.wire)
+      (committed : ActorMeasuredTransition (images actor) choreo session
+        (cut.actors actor) after cleared record) :
+      DistributedPhysicalExecution images choreo session first
+        ((cut.actorAt actor after).carrierAt channel next)
+        (word ++ [.receive entry.callKey actor record]) entries published pending
+
+/-- Every previously qualified selected-visit execution keeps its exact cuts,
+records and carrier identities in the physical projection. -/
+theorem a_selected_visit_execution_has_its_same_physical_execution
+    (execution : DistributedCallExecution images choreo session first last word entries published pending) :
+    DistributedPhysicalExecution images choreo session first last word entries published pending := by
+  induction execution with
+  | refl => exact .refl
+  | quiet history checked ih => exact .quiet ih checked
+  | accept history imageAt checked decoded pathAt rowAt prepared slotFree freshWitness sourceAt accepted identity ih =>
+    exact .accept ih imageAt checked decoded pathAt rowAt prepared slotFree freshWitness sourceAt accepted identity
+  | publish history actorAt paired committed ih =>
+    have wire := of_decide_eq_true
+      (Bool.and_eq_true_iff.mp (Bool.and_eq_true_iff.mp paired).1).2
+    exact .publish ih actorAt wire (a_measured_source_commit_has_its_same_physical_transition committed)
+  | localCommit history actorRole localAt committed ih =>
+    exact .localCommit ih actorRole localAt (a_measured_source_commit_has_its_same_physical_transition committed)
+  | receive history actorRole received entryAt identity paired committed ih =>
+    exact .receive ih actorRole received entryAt identity
+      (a_corresponding_receive_pair_preserves_its_observed_boundaries paired).2.2
+      (a_measured_source_commit_has_its_same_physical_transition committed)
+
+theorem a_physical_execution_partitions_its_actual_acceptances
+    (execution : DistributedPhysicalExecution images choreo session first last word entries published pending) :
+    entries.Perm (published.map Prod.fst ++ pending) := by
+  induction execution with
+  | refl => exact .nil
+  | quiet history checked ih => exact ih
+  | accept history imageAt checked decoded pathAt rowAt prepared slotFree freshWitness sourceAt accepted identity ih =>
+    simpa only [List.append_assoc] using ih.append_right [_]
+  | publish history actorAt sameWire committed ih =>
+    simpa only [List.map_append, List.map_cons, List.map_nil, List.append_assoc,
+      List.cons_append, List.nil_append] using
+      ih.trans ((List.perm_middle : (_ ++ _ :: _).Perm (_ :: (_ ++ _))).append_left _)
+  | localCommit history actorRole localAt committed ih => exact ih
+  | receive history actorRole received entryAt identity sameWire committed ih => exact ih
+
+private theorem a_physical_execution_preserves_each_full_fifo
+    {first last : DistributedSourceCut}
+    (execution : DistributedPhysicalExecution images choreo session first last word entries published pending) :
+    (∀ channel, ∃ history, SendAdmissionTrace choreo session (first.carriers channel) history []) →
+    ∀ channel, ∃ history,
+      SendAdmissionTrace choreo session (last.carriers channel) history (sourceChannelRecords entries channel) := by
+  induction execution with
+  | refl =>
+    intro initial
+    simpa only [sourceChannelRecords, sourceChannelEntries, List.filter_nil, List.map_nil] using initial
+  | quiet history checked ih =>
+    intro initial
+    simpa only [DistributedSourceCut.actorAt] using ih initial
+  | @accept cut word entries published pending sample changed sent event previousPath witness label
+      data path row history imageAt checked decoded pathAt rowAt prepared slotFree freshWitness sourceAt accepted identity ih =>
+    intro initial channel
+    obtain ⟨prior, trace⟩ := ih initial channel
+    by_cases same : channel = changed
+    · subst changed
+      refine ⟨prior.appendOccurrence event, ?_⟩
+      simpa only [DistributedSourceCut.carrierAt, if_pos rfl, call_channel_records_append] using
+        SendAdmissionTrace.accept trace checked sourceAt accepted identity
+    · refine ⟨prior, ?_⟩
+      simpa only [DistributedSourceCut.carrierAt, if_neg same, call_channel_records_append,
+        if_neg (Ne.symm same), List.append_nil] using trace
+  | publish history actorAt sameWire committed ih =>
+    intro initial
+    simpa only [DistributedSourceCut.actorAt] using ih initial
+  | localCommit history actorRole localAt committed ih =>
+    intro initial
+    simpa only [DistributedSourceCut.actorAt] using ih initial
+  | @receive cut word entries published pending actor changed next frame after cleared record entry witness
+      history actorRole received entryAt identity sameWire committed ih =>
+    intro initial channel
+    obtain ⟨prior, trace⟩ := ih initial channel
+    by_cases same : channel = changed
+    · subst changed
+      obtain ⟨_, _, _, following, _, _, _, _, _, _, _, _, _, advanced⟩ :=
+        a_fifo_receive_has_its_actual_accepted_source_occurrence trace received
+      exact ⟨following, by simpa only [DistributedSourceCut.carrierAt,
+        DistributedSourceCut.actorAt, if_pos rfl] using advanced⟩
+    · exact ⟨prior, by simpa only [DistributedSourceCut.carrierAt,
+        DistributedSourceCut.actorAt, if_neg same] using trace⟩
+
+theorem a_physical_execution_projects_its_complete_fifo_histories
+    {initial : Nat → ActorProgressObservation × Nat}
+    (execution : DistributedPhysicalExecution images choreo session
+      (.initial initial) last word entries published pending) :
+    ∀ channel, ∃ history,
+      SendAdmissionTrace choreo session (last.carriers channel) history (sourceChannelRecords entries channel) := by
+  exact a_physical_execution_preserves_each_full_fifo execution (fun channel => ⟨_, .initial channel⟩)
+
 end Hibana

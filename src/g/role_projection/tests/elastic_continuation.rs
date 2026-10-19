@@ -83,6 +83,8 @@ fn a_queued_old_continuation_survives_a_new_body_visit() {
 fn write_retained_admission(
     snapshot: &crate::endpoint::proof_snapshot::ActorSnapshot,
     admitted: &[bool],
+    after: &crate::endpoint::proof_snapshot::ActorSnapshot,
+    wire: &crate::test_support::transport::FrameEvidence,
 ) {
     use crate::test_support::{lean_choreo::LeanChoreo, lean_descriptor::descriptor_source};
     use std::string::ToString;
@@ -91,6 +93,19 @@ fn write_retained_admission(
     ));
     let choreo = BranchSteps::lean_source();
     let state = super::commit::observation_source(snapshot);
+    let after_state = super::commit::observation_source(after);
+    let before_writes = snapshot.completion_mutations;
+    let after_writes = after.completion_mutations;
+    let header = wire.header;
+    let wire_source = std::format!(
+        "{{ session := {}, lane := {}, sender := {}, receiver := {}, frameLabel := {}, payload := {:?} }}",
+        header.session().raw(),
+        header.lane(),
+        header.source_role(),
+        header.target_role(),
+        header.label().raw(),
+        wire.payload(),
+    );
     let admitted = admitted
         .iter()
         .map(bool::to_string)
@@ -109,6 +124,7 @@ set_option maxRecDepth 10000
 def elasticChoreo : Hibana.Choreo := {choreo}
 def elasticImage : Hibana.RustDescriptorImage := {image}
 def elasticSnapshot : Hibana.ActorProgressObservation := {state}
+def elasticAfter : Hibana.ActorProgressObservation := {after_state}
 def elasticCandidate : Hibana.ActorAdmissionObservation := {{
   snapshot := elasticSnapshot, pathIndex := 2, admitted := [{admitted}], retainedRolls := [{retained}]
 }}
@@ -182,6 +198,26 @@ theorem theLateReceiveHasActualRawAdmission : elasticCandidate.admitted[3]? = so
     (plan := elasticPlan) (points := elasticPoints) (target := elasticTarget)
     (by rfl) (by rfl) (by decide) (by decide) (by rfl) theActualPastSupportMatchesItsCausalOccurrences
     (by decide) (by decide)).2
+def elasticReceive : Hibana.ActorCommitObservation := {{
+  pathIndex := 2, event := 3, view := 0, before := elasticSnapshot, after := elasticAfter
+}}
+theorem theActualLateReceiveHasItsPhysicalUpdate :
+    elasticReceive.transitionCheck elasticImage elasticChoreo = true := by decide
+theorem theCurrentVisitCommitModelRejectsThatActualUpdate :
+    elasticReceive.check elasticImage elasticChoreo = false := by decide
+theorem aPhysicalUpdateCannotSilentlyFinishTheNewBody :
+    ({{ elasticReceive with after := {{ elasticAfter with
+      steps := elasticAfter.steps.set 2 {{ elasticAfter.steps[2]'(by decide) with done := true }} }} }} :
+      Hibana.ActorCommitObservation).transitionCheck elasticImage elasticChoreo = false := by decide
+def elasticReceiveRecord : Hibana.ActorCommitRecord := {{
+  step := elasticReceive
+  wire := {wire_source}
+}}
+theorem theLateReceiveHasItsActualMeasuredTransition :
+    Hibana.ActorMeasuredTransition elasticImage elasticChoreo 9073
+      (elasticSnapshot, {before_writes}) (elasticAfter, {after_writes}) [] elasticReceiveRecord :=
+  .ordinary (record := {{ commit := elasticReceiveRecord, before := {before_writes}, after := {after_writes} }})
+    (by decide) (by decide)
 "#
     );
     let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/lean-proof");
@@ -243,15 +279,23 @@ fn a_queued_old_branch_does_not_skip_the_fresh_body_receive() {
                     assert_eq!(before.retained_rolls, [0]);
                     assert!(admitted[2] && admitted[3]);
                     #[cfg(not(miri))]
-                    if expected_label == 203 {
-                        write_retained_admission(&before, &admitted);
-                    }
+                    let wire = network.accepted_frame(0, 0);
                     let branch = a.offer().await.unwrap();
                     assert_eq!(branch.label(), expected_label);
                     match branch.label() {
                         203 => assert_eq!(branch.recv::<Finish>().await.unwrap(), 9),
                         204 => assert_eq!(branch.recv::<Stop>().await.unwrap(), 9),
                         _ => unreachable!(),
+                    }
+                    // SAFETY: the completed branch released its local borrow;
+                    // no further operation is polled during this observation.
+                    let after = unsafe { crate::endpoint::proof_snapshot::actor_snapshot(&a) };
+                    assert_eq!(after.retained_rolls, before.retained_rolls);
+                    assert_eq!(after.completion_mutations, before.completion_mutations + 1);
+                    assert!(!after.steps[2].done);
+                    #[cfg(not(miri))]
+                    if expected_label == 203 {
+                        write_retained_admission(&before, &admitted, &after, &wire);
                     }
                     let branch = a.offer().await.unwrap();
                     assert_eq!(branch.label(), 208);

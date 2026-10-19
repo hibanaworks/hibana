@@ -206,6 +206,38 @@ structure ActorCommitObservation where
   before : ActorProgressObservation
   after : ActorProgressObservation
 
+/-- The physical update of one successful operation. Local descriptor identity,
+the one completed event, committed choice and affine view-header arithmetic
+are checked here. Causal order belongs to the same chronological source trace,
+not to a second interpretation of only the current visit's done bits. -/
+def ActorCommitObservation.transitionCheck
+    (sample : ActorCommitObservation) (image : RustDescriptorImage) (choreo : Choreo) : Bool :=
+  sample.before.viewIssued sample.view && (image.actorOrderCheck choreo &&
+  match image.decodeActorOrder? choreo with
+  | none => false
+  | some data =>
+      match data.normalized.paths[sample.pathIndex]?, data.rows[sample.event]? with
+      | some path, some row =>
+          ((sample.before.metadataMatches image data.rows &&
+            sample.after.metadataMatches image data.rows &&
+            sample.before.valid && sample.after.valid &&
+            sample.after.actor == sample.before.actor && sample.after.run == sample.before.run) &&
+          (observedChoicesAgree (canonicalProgramSource choreo) path sample.before &&
+            (observedChoicesAgree (canonicalProgramSource choreo) path sample.after &&
+            decide ((image.eventEffIndex? sample.event).bind (fun eff =>
+              publishedObservedChoices? (canonicalProgramSource choreo) eff
+                sample.before.choices) = some sample.after.choices)))) &&
+          ((row.eventId == sample.event &&
+              (row.view == sample.view && decide (row ∈ data.activeRows path))) &&
+          ((sample.before.progress[sample.event]? == some false &&
+            decide (sample.after.progress = sample.before.progress.set sample.event true)) &&
+          (match path.bindings.find? (fun binding => binding.1 == row.actionId.event) with
+          | some (_, binding) =>
+              observedViewCommitMatches sample.before sample.after binding.message.payload
+                row.actionId.side
+          | none => false)))
+      | _, _ => false)
+
 def ActorCommitObservation.check
     (sample : ActorCommitObservation) (image : RustDescriptorImage) (choreo : Choreo) : Bool :=
   sample.before.viewIssued sample.view && (image.actorOrderCheck choreo &&
@@ -244,6 +276,34 @@ theorem accepted_actor_commit_uses_issued_view
       view.run = sample.before.run ∧ view.nonce % 2 = 1 :=
   observed_issued_view_has_current_header (Bool.and_eq_true_iff.mp accepted).1
 
+/-- Separating physical updates from source ordering retains every check on
+the actual operation. Existing selected-visit commits are included unchanged. -/
+theorem a_checked_source_commit_has_its_physical_transition
+    {sample : ActorCommitObservation} {image : RustDescriptorImage} {choreo : Choreo}
+    (checked : sample.check image choreo = true) :
+    sample.transitionCheck image choreo = true := by
+  unfold ActorCommitObservation.check ActorCommitObservation.transitionCheck at *
+  cases dataAt : image.decodeActorOrder? choreo with
+  | none => simp only [dataAt, Bool.and_false, Bool.false_eq_true] at checked
+  | some data =>
+    cases pathAt : data.normalized.paths[sample.pathIndex]? with
+    | none => simp only [dataAt, pathAt, Bool.and_false, Bool.false_eq_true] at checked
+    | some path =>
+      cases rowAt : data.rows[sample.event]? with
+      | none => simp only [dataAt, pathAt, rowAt, Bool.and_false, Bool.false_eq_true] at checked
+      | some row =>
+        cases parentsAt : data.runtimePredecessors? path sample.event with
+        | none => simp only [dataAt, pathAt, rowAt, parentsAt,
+            Bool.and_false, Bool.false_eq_true] at checked
+        | some parents =>
+          cases bindingAt : path.bindings.find? (fun binding => binding.1 == row.actionId.event) with
+          | none => simp only [dataAt, pathAt, rowAt, parentsAt, bindingAt,
+              Bool.and_false, Bool.false_eq_true] at checked
+          | some binding =>
+            simp only [dataAt, pathAt, rowAt, parentsAt, bindingAt, Bool.and_eq_true] at checked ⊢
+            exact ⟨checked.1, checked.2.1, checked.2.2.1, checked.2.2.2.1,
+              checked.2.2.2.2.1, checked.2.2.2.2.2.2.2⟩
+
 private theorem one_observed_step_is_exact
     {before after : List Bool} {event : Nat}
     (unfinished : before[event]? = some false)
@@ -270,6 +330,32 @@ private theorem one_observed_step_is_exact
           | zero => rfl
           | succ other =>
               exact unchanged other (fun same => different (congrArg Nat.succ same))
+
+/-- A physical commit marks exactly its own event even when an earlier visit
+supplied its causal support. Source ordering is deliberately a separate result. -/
+theorem a_checked_physical_transition_marks_exactly_its_event
+    {sample : ActorCommitObservation} {image : RustDescriptorImage} {choreo : Choreo}
+    (checked : sample.transitionCheck image choreo = true) :
+    sample.after.doneState.done sample.event = true ∧
+      ∀ other, other ≠ sample.event →
+        sample.after.doneState.done other = sample.before.doneState.done other := by
+  unfold ActorCommitObservation.transitionCheck at checked
+  cases dataAt : image.decodeActorOrder? choreo with
+  | none => simp [dataAt] at checked
+  | some data =>
+    cases pathAt : data.normalized.paths[sample.pathIndex]? with
+    | none => simp [dataAt, pathAt] at checked
+    | some path =>
+      cases rowAt : data.rows[sample.event]? with
+      | none => simp [dataAt, pathAt, rowAt] at checked
+      | some row =>
+        cases bindingAt : path.bindings.find? (fun binding => binding.1 == row.actionId.event) with
+        | none => simp [dataAt, pathAt, rowAt, bindingAt] at checked
+        | some binding =>
+          simp only [dataAt, pathAt, rowAt, bindingAt, Bool.and_eq_true] at checked
+          exact one_observed_step_is_exact
+            (beq_iff_eq.mp checked.2.2.2.2.1.1)
+            (of_decide_eq_true checked.2.2.2.2.1.2)
 
 def ActorCommitObservation.SourceOrdered
     (sample : ActorCommitObservation) (image : RustDescriptorImage) (choreo : Choreo) : Prop :=

@@ -1,3 +1,16 @@
+aPhysicalUpdateCannotSilentlyFinishTheNewBody : (have __src := elasticReceive;
+      { pathIndex := __src.pathIndex, event := __src.event, view := __src.view, before := __src.before,
+        after :=
+          have __src := elasticAfter;
+          { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
+            views := __src.views,
+            steps :=
+              elasticAfter.steps.set 2
+                (have __src := elasticAfter.steps[2];
+                { effIndex := __src.effIndex, view := __src.view, side := __src.side, done := true }),
+            choices := __src.choices } }).transitionCheck
+    elasticImage elasticChoreo =
+  false
 aRepeatedRetainedScopeIsRejected : (have __src := elasticCandidate;
       { snapshot := __src.snapshot, pathIndex := __src.pathIndex, admitted := __src.admitted,
         retainedRolls := [0, 0] }).candidateCheck
@@ -32,7 +45,11 @@ interpretingTheCurrentBranchAsThePastIsRejected : elasticPlan.candidateHistoryMa
 retainedVisitSuppliesTheLateReceive : Hibana.sourceCandidateRowReady elasticImage elasticChoreo
     elasticCandidate.retainedRolls elasticData elasticPath elasticSnapshot elasticFinish =
   true
+theActualLateReceiveHasItsPhysicalUpdate : elasticReceive.transitionCheck elasticImage elasticChoreo = true
 theActualPastSupportMatchesItsCausalOccurrences : elasticPlan.candidateHistoryMatches elasticImage elasticChoreo 2
     elasticData elasticPath elasticFinish elasticSnapshot elasticPoints elasticTarget elasticCandidate.retainedRolls =
   true
+theCurrentVisitCommitModelRejectsThatActualUpdate : elasticReceive.check elasticImage elasticChoreo = false
 theLateReceiveHasActualRawAdmission : elasticCandidate.admitted[3]? = some true
+theLateReceiveHasItsActualMeasuredTransition : Hibana.ActorMeasuredTransition elasticImage elasticChoreo 9073
+  (elasticSnapshot, 7) (elasticAfter, 8) [] elasticReceiveRecord

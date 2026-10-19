@@ -4,8 +4,10 @@ This host-only package verifies Hibana's normalized choreography, descriptor,
 and execution models with Lean Core and Std. It is outside the Cargo workspace
 and contributes no code, metadata, memory use, or flash cost to Pico builds.
 
-The established end-to-end result covers Hibana's finite-role, non-delegating
-protocol kernel. The delegation models and their remaining reduction
+The established end-to-end result covers the finite-role, non-delegating
+logical model with its re-entry premises. Its common roll-reset boundary does
+not cover every independently advancing runtime visit. The delegation and
+finite-occurrence models and their remaining reduction
 obligations are described below. This is not a source-level verification of
 arbitrary Rust code or a specification of a concrete transport.
 
@@ -16,6 +18,41 @@ work must close a named gap in those claims or address a concrete implementation
 counterexample. Additional object inventories, fixtures or theorem counts are
 not completion conditions. Once a changed boundary is checked, integration
 continues without expanding that target.
+
+### Bounded runtime/model conformance
+
+The CI Lean launcher regenerates completed-operation schedules by driving real
+Endpoints under Tokio, then runs `.github/ci-tests/endpoint_conformance.lean`
+over those observations. The reference interpreter uses accepted source
+unfoldings, actor-local projection and the image's independently checked lane
+table. FIFO heads follow from the acceptance/receive word. No observed runtime
+admission bits are inputs to the oracle. Every successful prefix probes every
+remaining bounded operation once, including requests that return Pending or an
+error. Missing and duplicate probes are rejected.
+
+The current cases compare `seq(roll(Start; Ack), Finish)` and
+`par(roll(Start; Ack), Finish)` over two body visits and one continuation.
+They exercise 624 attempts at 224 prefixes. Both runtime-only and model-only
+acceptances are reported, along with unfinished frontiers that have no common
+enabled operation. Three deliberately incorrect models check that this can
+detect excessive serialization, missing causal/FIFO checks, and omitted local
+sequencing. The test does not execute old kernels or infer correctness from
+source text.
+
+This comparison exposed one distinction in the finite source abstraction:
+expanding a resumed sequential body beside its continuation as global `par`
+alone allows too much. Once an actor enters a new body, its outgoing
+continuation must still follow that local body. An incoming old continuation
+can instead use retained completion. The bounded interpreter applies this
+existing projection rule from the actor's own word, without a runtime visit
+counter. Explicit source `par` retains its independent progress. Omitting that
+rule reproduces the discrepancy, rather than silently ignoring it.
+
+These are exhaustive completed-operation schedules within the stated bounds
+on an immediate in-memory carrier. They do not cover all Pending-poll
+interleavings, branch-dependent handoff, process failures, or arbitrary
+choreographies, and are not a source-level refinement proof. Extending a test
+case must target an identified gap or counterexample.
 
 ## Checked boundary
 
@@ -204,6 +241,23 @@ still require current prerequisites. The selected-visit `sourceRowReady`
 model intentionally remains a current-event check. This cut-level connection
 does not establish the correspondence at every reachable production cut or
 complete the custody/FIFO/fault/closure composition above.
+
+`ActorCommitObservation.transitionCheck` separates the physical cursor update
+from a selected current visit's causal prefix. It still checks the source row,
+metadata, choices, affine headers, exact one-event update and owned envelope.
+`ActorMeasuredTransition` retains actual mutation counts and checked reentry.
+`DistributedPhysicalExecution` connects those same records to accepted calls,
+pending/publication partitioning and complete FIFO histories. The joint source
+theorem combines this physical projection with custody and occurrence order on
+one word. Physical transition acceptance alone is not source-order evidence.
+Every execution accepted by the earlier selected-visit relation embeds with
+unchanged records and cuts.
+
+The retained-branch fixture now also copies its actual late receive and wire
+frame. Its measured update is checked even though the old current-visit commit
+predicate rejects that valid receive. A mutation that also completes the new
+body is rejected. This closes that concrete physical-model mismatch without
+relaxing the runtime's ordering or pretending to prove all reachable cuts.
 
 The existing three-runtime mixed-message fixture qualifies both loan visits
 and the later Read/Value exchange through this projected model. Its generated

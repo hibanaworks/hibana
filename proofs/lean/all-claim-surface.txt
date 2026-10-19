@@ -677,6 +677,13 @@ Hibana.EndpointDelegation.withOwner_same : ∀ (owners : Hibana.EndpointDelegati
         (And (@Eq.{1} Nat sample.polls (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1))))
           (And (@Eq.{1} Nat sample.publications (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0))))
             (And (@Eq.{1} Bool sample.done false) (@Eq.{1} Bool sample.retained true))))
+@Hibana.a_checked_physical_transition_marks_exactly_its_event : ∀ {sample : Hibana.ActorCommitObservation}
+  {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo},
+  @Eq.{1} Bool (sample.transitionCheck image choreo) true →
+    And (@Eq.{1} Bool (sample.after.doneState.done sample.event) true)
+      (∀ (other : Nat),
+        @Ne.{1} Nat other sample.event →
+          @Eq.{1} Bool (sample.after.doneState.done other) (sample.before.doneState.done other))
 @Hibana.a_checked_receipt_retains_its_value_until_a_measured_source_boundary : ∀
   {sample : Hibana.ActorCommitObservation} {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo}
   {wire : Hibana.OwnedWireObservation} {session : Nat} {facts : Hibana.OwnedCommitFacts},
@@ -884,6 +891,9 @@ Hibana.EndpointDelegation.withOwner_same : ∀ (owners : Hibana.EndpointDelegati
   Hibana.SendAdmissionTrace choreo session transport history records →
     @Eq.{1} Nat (@List.length.{0} (Prod.{0, 0} Hibana.SourceSendAdmission Nat) records)
       (@List.length.{0} Hibana.TransportFrame transport.frames)
+@Hibana.a_checked_source_commit_has_its_physical_transition : ∀ {sample : Hibana.ActorCommitObservation}
+  {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo},
+  @Eq.{1} Bool (sample.check image choreo) true → @Eq.{1} Bool (sample.transitionCheck image choreo) true
 @Hibana.a_checked_source_commit_preserves_completed_events : ∀ {record : Hibana.ActorCommitRecord}
   {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo} {session event : Nat},
   @Eq.{1} Bool (record.check image choreo session) true →
@@ -893,6 +903,10 @@ Hibana.EndpointDelegation.withOwner_same : ∀ (owners : Hibana.EndpointDelegati
   (cut : Hibana.SourceOccurrenceCut source) (point : Hibana.SourcePoint),
   @Eq.{1} Bool (@Hibana.SourceOccurrenceCut.ready source cut point) true →
     @Exists.{1} (Hibana.SourceOccurrenceCut source) fun next => @Hibana.SourceOccurrenceStep source cut point next
+@Hibana.a_checked_source_record_has_its_physical_transition : ∀ {record : Hibana.ActorCommitRecord}
+  {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo} {session : Nat},
+  @Eq.{1} Bool (record.check image choreo session) true →
+    @Eq.{1} Bool (record.transitionCheck image choreo session) true
 @Hibana.a_checked_successful_send_publishes_before_returning : ∀ {sample : Hibana.SendCompletionObservation},
   @Eq.{1} Bool sample.check true →
     @Eq.{1} Hibana.SendPollClass sample.boundary Hibana.SendPollClass.success →
@@ -1990,6 +2004,55 @@ Hibana.EndpointDelegation.withOwner_same : ∀ (owners : Hibana.EndpointDelegati
                           (And (@Eq.{1} Bool (Hibana.occurrenceWireReady points point) true)
                             (@Hibana.SourceOccurrenceStep source (@Hibana.occurrenceCut source plan points) point
                               next))))))
+@Hibana.a_joint_physical_occurrence_refinement_has_custody_fifo_and_source_progress : ∀
+  {images : Nat → Hibana.RustDescriptorImage} {choreo : Hibana.Choreo} {session : Nat}
+  {resource : Hibana.EndpointDelegation.EndpointKey} {value : Hibana.OwnedCallHistory.Tag}
+  {events : List.{0} Hibana.OwnedCallHistory.OwnedCallEvent} {cut : Hibana.OwnedCallHistory.Cut}
+  {source : Hibana.EndpointDelegation.Source} {plan : Hibana.SourceOccurrenceCut source}
+  {initial : Nat → Prod.{0, 0} Hibana.ActorProgressObservation Nat} {last : Hibana.DistributedSourceCut}
+  {entries pending : List.{0} Hibana.SourceAcceptance}
+  {published : List.{0} (Prod.{0, 0} Hibana.SourceAcceptance Hibana.ActorCommitRecord)} {calls : Hibana.OccurrenceCalls}
+  {points : List.{0} Hibana.SourcePoint},
+  Hibana.OwnedCallHistory.History images resource choreo value events cut →
+    Hibana.DistributedPhysicalExecution images choreo session (Hibana.DistributedSourceCut.initial initial) last
+        (Hibana.OwnedCallHistory.sourceWord events) entries published pending →
+      @Hibana.SourceOccurrenceTrace source images choreo plan (Hibana.OwnedCallHistory.sourceWord events) calls points →
+        @Hibana.SourceOccurrenceCut.Unfinished source (@Hibana.occurrenceCut source plan points) →
+          And
+            (@LE.le.{0} Nat instLENat
+              (@Hibana.EndpointTransfer.Observation.authorityCount Hibana.OwnedCallHistory.Tag
+                Hibana.OwnedCallHistory.Receipt cut.custody)
+              (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1))))
+            (And
+              (@List.Perm.{0} Hibana.SourceAcceptance entries
+                (@HAppend.hAppend.{0, 0, 0} (List.{0} Hibana.SourceAcceptance) (List.{0} Hibana.SourceAcceptance)
+                  (List.{0} Hibana.SourceAcceptance)
+                  (@instHAppendOfAppend.{0} (List.{0} Hibana.SourceAcceptance)
+                    (@List.instAppend.{0} Hibana.SourceAcceptance))
+                  (@List.map.{0, 0} (Prod.{0, 0} Hibana.SourceAcceptance Hibana.ActorCommitRecord)
+                    Hibana.SourceAcceptance (@Prod.fst.{0, 0} Hibana.SourceAcceptance Hibana.ActorCommitRecord)
+                    published)
+                  pending))
+              (And
+                (@Hibana.SourceOccurrenceExecution source
+                  (@Hibana.occurrenceCut source plan (@List.nil.{0} Hibana.SourcePoint))
+                  (@Hibana.occurrenceCut source plan points) points)
+                (And
+                  (∀ (channel : Hibana.TransportChannel),
+                    @Exists.{1} Hibana.ElasticAdmissionHistory fun history =>
+                      Hibana.SendAdmissionTrace choreo session (last.carriers channel) history
+                        (Hibana.sourceChannelRecords entries channel))
+                  (@Exists.{1} Nat fun actor =>
+                    @Exists.{1} Hibana.SourcePoint fun point =>
+                      @Exists.{1} (Hibana.SourceOccurrenceCut source) fun next =>
+                        And
+                          (@Eq.{1} Bool
+                            (@Hibana.occurrenceLocalReady source plan actor
+                              (@Hibana.occurrenceLocalHistory source plan actor points) point)
+                            true)
+                          (And (@Eq.{1} Bool (Hibana.occurrenceWireReady points point) true)
+                            (@Hibana.SourceOccurrenceStep source (@Hibana.occurrenceCut source plan points) point
+                              next))))))
 @Hibana.a_joint_private_payload_has_its_same_history_constructor : ∀ {images : Nat → Hibana.RustDescriptorImage}
   {resource : Hibana.EndpointDelegation.EndpointKey} {choreo : Hibana.Choreo} {value : Hibana.OwnedCallHistory.Tag}
   {events : List.{0} Hibana.OwnedCallHistory.OwnedCallEvent} {cut : Hibana.OwnedCallHistory.Cut}
@@ -2697,6 +2760,11 @@ Hibana.a_lease_only_origin_does_not_cover_a_pending_issued_header : ∀ (old : N
                               Hibana.EndpointTransfer.Action.abandonPreparation)
                             (@Eq.{1} Hibana.EndpointTransfer.Action action Hibana.EndpointTransfer.Action.dropValue)) →
                         Hibana.SourceMessageBoundaryOutcome image choreo data path key target action
+@Hibana.a_measured_source_commit_has_its_same_physical_transition : ∀ {image : Hibana.RustDescriptorImage}
+  {choreo : Hibana.Choreo} {session : Nat} {before after : Prod.{0, 0} Hibana.ActorProgressObservation Nat}
+  {cleared : List.{0} Nat} {record : Hibana.ActorCommitRecord},
+  Hibana.ActorMeasuredCommit image choreo session before after cleared record →
+    Hibana.ActorMeasuredTransition image choreo session before after cleared record
 @Hibana.a_measured_source_interval_keeps_its_value_or_takes_its_boundary : ∀ {image : Hibana.RustDescriptorImage}
   {choreo : Hibana.Choreo} {session : Nat} {data : Hibana.DecodedActorOrder}
   {path : Hibana.EndpointDelegation.NormalizedPath} {target : Hibana.DecodedActorRow}
@@ -2879,6 +2947,30 @@ Hibana.a_pending_payload_requires_its_own_send : ∀ (resource : Nat) (sent : Op
       before.eventId →
     @Eq.{1} Bool (snapshot.doneState.done before.eventId) false →
       @Eq.{1} Bool (Hibana.sourceRowReady data path snapshot after) false
+@Hibana.a_physical_execution_partitions_its_actual_acceptances : ∀ {images : Nat → Hibana.RustDescriptorImage}
+  {choreo : Hibana.Choreo} {session : Nat} {first last : Hibana.DistributedSourceCut}
+  {word : List.{0} Hibana.DistributedCallBoundary} {entries : List.{0} Hibana.SourceAcceptance}
+  {published : List.{0} (Prod.{0, 0} Hibana.SourceAcceptance Hibana.ActorCommitRecord)}
+  {pending : List.{0} Hibana.SourceAcceptance},
+  Hibana.DistributedPhysicalExecution images choreo session first last word entries published pending →
+    @List.Perm.{0} Hibana.SourceAcceptance entries
+      (@HAppend.hAppend.{0, 0, 0} (List.{0} Hibana.SourceAcceptance) (List.{0} Hibana.SourceAcceptance)
+        (List.{0} Hibana.SourceAcceptance)
+        (@instHAppendOfAppend.{0} (List.{0} Hibana.SourceAcceptance) (@List.instAppend.{0} Hibana.SourceAcceptance))
+        (@List.map.{0, 0} (Prod.{0, 0} Hibana.SourceAcceptance Hibana.ActorCommitRecord) Hibana.SourceAcceptance
+          (@Prod.fst.{0, 0} Hibana.SourceAcceptance Hibana.ActorCommitRecord) published)
+        pending)
+@Hibana.a_physical_execution_projects_its_complete_fifo_histories : ∀ {images : Nat → Hibana.RustDescriptorImage}
+  {choreo : Hibana.Choreo} {session : Nat} {last : Hibana.DistributedSourceCut}
+  {word : List.{0} Hibana.DistributedCallBoundary} {entries : List.{0} Hibana.SourceAcceptance}
+  {published : List.{0} (Prod.{0, 0} Hibana.SourceAcceptance Hibana.ActorCommitRecord)}
+  {pending : List.{0} Hibana.SourceAcceptance} {initial : Nat → Prod.{0, 0} Hibana.ActorProgressObservation Nat},
+  Hibana.DistributedPhysicalExecution images choreo session (Hibana.DistributedSourceCut.initial initial) last word
+      entries published pending →
+    ∀ (channel : Hibana.TransportChannel),
+      @Exists.{1} Hibana.ElasticAdmissionHistory fun history =>
+        Hibana.SendAdmissionTrace choreo session (last.carriers channel) history
+          (Hibana.sourceChannelRecords entries channel)
 @Hibana.a_prepared_body_has_its_source_choice_reset : ∀ {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo}
   {before base : Hibana.ActorProgressObservation} {previousPath nextPath scope event : Nat}
   {roll : Hibana.DecodedRollRow},
@@ -4380,6 +4472,13 @@ Hibana.a_pending_payload_requires_its_own_send : ∀ (resource : Nat) (sent : Op
                         (@Prod.mk.{0, 0} Hibana.EndpointDelegation.Binding Hibana.EndpointDelegation.Side binding
                           Hibana.EndpointDelegation.Side.send))))
                   (@Eq.{1} Nat entry.sample.image.role binding.senderActor)))))
+@Hibana.a_selected_visit_execution_has_its_same_physical_execution : ∀ {images : Nat → Hibana.RustDescriptorImage}
+  {choreo : Hibana.Choreo} {session : Nat} {first last : Hibana.DistributedSourceCut}
+  {word : List.{0} Hibana.DistributedCallBoundary} {entries : List.{0} Hibana.SourceAcceptance}
+  {published : List.{0} (Prod.{0, 0} Hibana.SourceAcceptance Hibana.ActorCommitRecord)}
+  {pending : List.{0} Hibana.SourceAcceptance},
+  Hibana.DistributedCallExecution images choreo session first last word entries published pending →
+    Hibana.DistributedPhysicalExecution images choreo session first last word entries published pending
 @Hibana.a_source_call_history_checks_every_publication : ∀ {choreo : Hibana.Choreo} {session : Nat}
   {word : List.{0} Hibana.SourceCallBoundary} {accepted pending : List.{0} Hibana.SourceAcceptance}
   {published : List.{0} (Prod.{0, 0} Hibana.SourceAcceptance Hibana.ActorCommitRecord)},

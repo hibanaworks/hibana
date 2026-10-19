@@ -8,6 +8,8 @@ RUNTIME_GENERATED="${ROOT_DIR}/target/lean-proof/RuntimeGenerated.lean"
 PUBLIC_OPERATION_GENERATED="${ROOT_DIR}/target/lean-proof/PublicOperationGenerated.lean"
 PUBLIC_OPERATION_CUT_GENERATED="${ROOT_DIR}/target/lean-proof/ParallelOperationCutGenerated.lean"
 ELASTIC_CONTINUATION_GENERATED="${ROOT_DIR}/target/lean-proof/ElasticContinuationGenerated.lean"
+CONFORMANCE_CASES="${ROOT_DIR}/target/lean-proof/EndpointConformanceCases.lean"
+CONFORMANCE_GENERATED="${ROOT_DIR}/target/lean-proof/EndpointConformanceGenerated.lean"
 CAUSAL_GENERATED="${ROOT_DIR}/target/lean-proof/CausalGenerated.lean"
 PARALLEL_GENERATED="${ROOT_DIR}/target/lean-proof/ParallelGenerated.lean"
 PROGRAM_COLUMNS_GENERATED="${ROOT_DIR}/target/lean-proof/ProgramColumnsGenerated.lean"
@@ -72,7 +74,7 @@ bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" build-serial "${PROOF_
 bash "${ROOT_DIR}/.github/scripts/check_lean_claim_surface.sh"
 static_audit_output="$(run_audit \
   theorem-inventory \
-  --static "${PROOF_DIR}" "${STATIC_CLAIM_SNAPSHOT}" 1152 717 318 117)"
+  --static "${PROOF_DIR}" "${STATIC_CLAIM_SNAPSHOT}" 1160 719 324 117)"
 printf '%s\n' "${static_audit_output}"
 printf '%s\n' "${static_audit_output}" | bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard markers static
 bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" theorem-inventory \
@@ -81,6 +83,17 @@ bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" theorem-inventory \
 source "${ROOT_DIR}/.github/scripts/repo_rustflags.sh"
 hibana_enable_repo_tests_cfg
 mkdir -p "$(dirname "${GENERATED}")"
+# Regenerate real Endpoint outcomes, then execute the independent source
+# projection/FIFO oracle. These are bounded model comparisons, not proofs or
+# source-string checks. Empty output prevents stale data from passing if a
+# test filter ever stops matching.
+: > "${CONFORMANCE_CASES}"
+CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib \
+  g::role_projection::tests::bounded_conformance::bounded_public_schedules_emit_executable_lean_conformance_cases \
+  -- --exact --nocapture
+bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${CONFORMANCE_CASES}" "bounded Endpoint schedules"
+cat "${ROOT_DIR}/.github/ci-tests/endpoint_conformance.lean" "${CONFORMANCE_CASES}" > "${CONFORMANCE_GENERATED}"
+(cd "${PROOF_DIR}" && lake env lean --run "${CONFORMANCE_GENERATED}")
 rm -f "${GENERATED}" "${RUNTIME_GENERATED}" "${PUBLIC_OPERATION_GENERATED}" "${CAUSAL_GENERATED}" "${PARALLEL_GENERATED}" "${PROGRAM_COLUMNS_GENERATED}" "${PARTIAL_CHOICE_GENERATED}" "${CONTROLLER_GENERATED}" "${INGRESS_GENERATED}" "${REENTRY_GENERATED}" "${ACTOR_COMMIT_GENERATED}" "${ACTOR_REENTRY_COMMIT_GENERATED}" "${ACTOR_PARALLEL_REENTRY_GENERATED}" "${ACTOR_ROUTE_LEFT_REENTRY_GENERATED}" "${ACTOR_ROUTE_RIGHT_REENTRY_GENERATED}"
 rm -f "${OWNED_RECOVERY_GENERATED}"
 rm -f "${PUBLIC_OPERATION_CUT_GENERATED}"
@@ -178,7 +191,7 @@ CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --li
   -- --exact
 bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${ELASTIC_CONTINUATION_GENERATED}" "retained continuation admission"
 run_audit generated-axioms --kernel "${ELASTIC_CONTINUATION_GENERATED}" "${PROOF_DIR}" \
-  "${PROOF_DIR}/elastic-continuation-generated-claim-surface.txt" 10
+  "${PROOF_DIR}/elastic-continuation-generated-claim-surface.txt" 14
 CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib \
   g::role_projection::tests::local_return::a_local_branch_waits_for_another_view_to_receive_its_entry_resource \
   -- --exact

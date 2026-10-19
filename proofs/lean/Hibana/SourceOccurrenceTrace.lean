@@ -237,6 +237,42 @@ theorem a_resolved_occurrence_call_has_its_same_word_acceptance
     have origin := an_occurrence_call_retains_its_acceptance trace pair (List.mem_of_find?_eq_some atPair)
     simpa only [keyAt, indexAt] using origin
 
+/-- Compose physical updates and source order on the same chronological word.
+An old incoming continuation can commit alongside a fresh body without making
+the fresh body's current bits represent the old causal visit. Custody and all
+ordinary/owned FIFO positions stay in that word; no shared actor memory or
+future-existence oracle is introduced. -/
+theorem a_joint_physical_occurrence_refinement_has_custody_fifo_and_source_progress
+    {images : Nat → RustDescriptorImage} {choreo : Choreo} {session : Nat}
+    {resource : EndpointKey} {value : OwnedCallHistory.Tag}
+    {events : List OwnedCallHistory.OwnedCallEvent} {cut : OwnedCallHistory.Cut}
+    {source : Source} {plan : SourceOccurrenceCut source}
+    {initial : Nat → ActorProgressObservation × Nat} {last : DistributedSourceCut}
+    {entries pending : List SourceAcceptance} {published : List (SourceAcceptance × ActorCommitRecord)}
+    {calls : OccurrenceCalls} {points : List SourcePoint}
+    (custody : OwnedCallHistory.History images resource choreo value events cut)
+    (physical : DistributedPhysicalExecution images choreo session (.initial initial) last
+      (OwnedCallHistory.sourceWord events) entries published pending)
+    (mapped : SourceOccurrenceTrace images choreo plan
+      (OwnedCallHistory.sourceWord events) calls points)
+    (unfinished : (occurrenceCut plan points).Unfinished) :
+    cut.custody.authorityCount ≤ 1 ∧
+      entries.Perm (published.map Prod.fst ++ pending) ∧
+      SourceOccurrenceExecution (occurrenceCut plan []) (occurrenceCut plan points) points ∧
+      (∀ channel, ∃ history, SendAdmissionTrace choreo session
+        (last.carriers channel) history (sourceChannelRecords entries channel)) ∧
+      ∃ actor point next,
+        occurrenceLocalReady plan actor (occurrenceLocalHistory plan actor points) point = true ∧
+        occurrenceWireReady points point = true ∧
+        SourceOccurrenceStep (occurrenceCut plan points) point next := by
+  obtain ⟨actor, point, next, localChecked, wire, step⟩ :=
+    unfinished_source_occurrences_have_a_projected_operation plan points unfinished
+  exact ⟨(a_joint_call_history_preserves_affine_custody custody).1,
+    a_physical_execution_partitions_its_actual_acceptances physical,
+    a_source_occurrence_trace_is_its_reconstructed_execution mapped,
+    a_physical_execution_projects_its_complete_fifo_histories physical,
+    actor, point, next, localChecked, wire, step⟩
+
 /-- The custody, physical FIFO/call history and reconstructed source cut all
 refer to ONE chronological execution. The next operation is enabled by one
 actor's projected local history and actual acceptance evidence. This derives
@@ -265,13 +301,8 @@ theorem a_joint_occurrence_refinement_has_custody_fifo_and_source_progress
         occurrenceLocalReady plan actor (occurrenceLocalHistory plan actor points) point = true ∧
         occurrenceWireReady points point = true ∧
         SourceOccurrenceStep (occurrenceCut plan points) point next := by
-  obtain ⟨actor, point, next, localChecked, wire, step⟩ :=
-    unfinished_source_occurrences_have_a_projected_operation plan points unfinished
-  exact ⟨(a_joint_call_history_preserves_affine_custody custody).1,
-    (a_distributed_call_execution_partitions_its_actual_acceptances physical).1,
-    a_source_occurrence_trace_is_its_reconstructed_execution mapped,
-    a_distributed_call_execution_projects_its_complete_fifo_histories physical,
-    actor, point, next, localChecked, wire, step⟩
+  exact a_joint_physical_occurrence_refinement_has_custody_fifo_and_source_progress
+    custody (a_selected_visit_execution_has_its_same_physical_execution physical) mapped unfinished
 
 private def occurrenceCandidatePredecessor? (plan : SourceOccurrenceCut source)
     (image : RustDescriptorImage) (choreo : Choreo) (pathIndex : Nat)

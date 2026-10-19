@@ -522,6 +522,13 @@ properties for their models. The global results apply to the exact generated
 protocol data accepted by an independent checker. Successful Rust projection
 alone does not prove distributed deadlock freedom.
 
+The earlier distributed `roll` model requires a common reset boundary. It does
+not cover every schedule where roles enter new visits independently while old
+messages remain unread. The finite occurrence model and bounded Endpoint/model
+comparisons cover selected such schedules. A general refinement for all of
+them is still unfinished. The progress claim below applies within the selected
+model's scope and premises.
+
 Applying these results to a running system requires:
 
 1. Every role follows the accepted local protocol derived from the same global

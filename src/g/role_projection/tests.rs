@@ -11,6 +11,8 @@ use crate::global::{
 use crate::{Endpoint, g};
 use core::mem::MaybeUninit;
 mod admission;
+#[cfg(not(miri))]
+mod bounded_conformance;
 mod carrier_contract;
 mod commit;
 mod composed;

@@ -23,6 +23,36 @@ inductive ActorMeasuredCommit (image : RustDescriptorImage) (choreo : Choreo) (s
       ActorMeasuredCommit image choreo session (sample.before, before) (sample.after, after)
         ((List.range roll.eventLength).map (roll.eventStart + ·)) { step, wire }
 
+/-- Physical measured updates are separate from the selected-visit source
+prefix. The shared occurrence word supplies source order; this relation keeps
+the real before/after cut, write count, source atom and owned wire validation.
+The fresh case retains the existing checked reset boundary. -/
+inductive ActorMeasuredTransition (image : RustDescriptorImage) (choreo : Choreo) (session : Nat) :
+    ActorProgressObservation × Nat → ActorProgressObservation × Nat →
+      List Nat → ActorCommitRecord → Prop where
+  | ordinary {record : ActorCommitMutationRecord}
+      (checked : record.commit.transitionCheck image choreo session = true)
+      (written : record.after = record.before + 1) :
+      ActorMeasuredTransition image choreo session
+        (record.commit.step.before, record.before) (record.commit.step.after, record.after)
+        [] record.commit
+  | fresh {sample : ActorReentryCommitObservation} {wire : OwnedWireObservation}
+      {before after : Nat} {roll : DecodedRollRow} {step : ActorCommitObservation}
+      (checked : actorReentryMutationCheck sample wire image choreo session before after = true)
+      (prepared : sample.prepared? image choreo = some (roll, step)) :
+      ActorMeasuredTransition image choreo session (sample.before, before) (sample.after, after)
+        ((List.range roll.eventLength).map (roll.eventStart + ·)) { step, wire }
+
+theorem a_measured_source_commit_has_its_same_physical_transition
+    {image : RustDescriptorImage} {choreo : Choreo} {session : Nat}
+    {before after : ActorProgressObservation × Nat} {cleared : List Nat} {record : ActorCommitRecord}
+    (commit : ActorMeasuredCommit image choreo session before after cleared record) :
+    ActorMeasuredTransition image choreo session before after cleared record := by
+  cases commit with
+  | ordinary checked written =>
+    exact .ordinary (a_checked_source_record_has_its_physical_transition checked) written
+  | fresh checked prepared => exact .fresh checked prepared
+
 theorem a_measured_commit_retains_its_checked_source_and_wire
     {image : RustDescriptorImage} {choreo : Choreo} {session : Nat}
     {before after : ActorProgressObservation × Nat} {cleared : List Nat} {record : ActorCommitRecord}
