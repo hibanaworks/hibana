@@ -50,7 +50,7 @@ pub(crate) struct CompiledProgramRef {
 impl core::fmt::Debug for CompiledProgramRef {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("CompiledProgramRef")
-            .field("blob", &(self.blob.as_ptr(), self.columns.blob_len()))
+            .field("blob", &(self.blob.as_ptr(), self.blob.len()))
             .finish()
     }
 }
@@ -78,7 +78,7 @@ impl CompiledProgramRef {
         events == self.columns.atom_count()
             && scope_markers == self.source_scope_marker_count()
             && resolver_markers <= self.columns.route_resolver_count()
-            && rows <= self.columns.blob_len()
+            && rows <= self.blob.len()
     }
 
     #[inline(always)]
@@ -114,7 +114,7 @@ impl CompiledProgramRef {
             return false;
         }
         let mut offset = 0usize;
-        let len = self.columns.blob_len();
+        let len = self.blob.len();
         while offset < len {
             if self.byte_at(offset) != other.byte_at(offset) {
                 return false;
@@ -135,7 +135,7 @@ impl CompiledProgramRef {
             return None;
         }
         let offset = column.offset as usize + row * stride;
-        if offset + stride > self.columns.blob_len() {
+        if offset + stride > self.blob.len() {
             crate::invariant();
         }
         Some(offset)
@@ -143,9 +143,6 @@ impl CompiledProgramRef {
 
     #[inline(always)]
     pub(super) const fn byte_at(&self, offset: usize) -> u8 {
-        if offset >= self.columns.blob_len() {
-            crate::invariant();
-        }
         self.blob.byte_at(offset)
     }
 

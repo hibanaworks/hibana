@@ -276,6 +276,10 @@
     "../../src/global/role_program/image_impl/projection/lanes/kani.rs": [
       "global::role_program::image_impl::projection::lanes::kani::local_lane_accumulator_preserves_exact_lane_relations_and_last_steps"
     ],
+    "../../src/global/role_program/image_types/blob_tests.rs": [
+      "global::role_program::image_types::blob_tests::static_blob_preserves_every_valid_prefix_read",
+      "global::role_program::image_types::blob_tests::static_blob_rejects_every_read_outside_its_used_prefix"
+    ],
     "../../src/global/role_program/lane_set/kani.rs": [
       "global::role_program::lane_set::kani::descriptor_lane_byte_iteration_returns_the_first_set_lane_in_the_exact_domain",
       "global::role_program::lane_set::kani::descriptor_lane_byte_view_rejects_lengths_beyond_the_lane_domain",
@@ -386,7 +390,7 @@
   "contract-harnesses": {},
   "contracts": [],
   "totals": {
-    "standard-harnesses": 266,
+    "standard-harnesses": 268,
     "contract-harnesses": 0,
     "functions-under-contract": 0
   }

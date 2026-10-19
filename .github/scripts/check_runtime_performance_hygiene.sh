@@ -60,6 +60,9 @@ run_runtime_test \
   -p hibana \
   --test huge_choreography_runtime
 
+echo "== current-kernel runtime cost measurements =="
+cargo +"${TOOLCHAIN}" bench --locked --bench runtime_cost
+
 echo "== runtime cold compile-pressure test =="
 cold_target_dir="$(mktemp -d "${TMPDIR:-/tmp}/hibana-runtime-cold-target.XXXXXX")"
 cleanup_cold_target_dir() {

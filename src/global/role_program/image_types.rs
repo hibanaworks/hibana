@@ -334,13 +334,12 @@ pub(crate) struct PackedLocalEventRow {
     pub(crate) flags: u8,
 }
 
+/// The exact immutable byte prefix validated by a program or role image.
+/// Keep its bound with the pointer so reads need not rebuild the column layout.
 #[derive(Clone, Copy)]
 pub(crate) struct BlobPtr {
-    base: *const u8,
+    bytes: &'static [u8],
 }
-
-// SAFETY: immutable static storage, with bounds checked by the sealed directory.
-unsafe impl Sync for BlobPtr {}
 
 impl BlobPtr {
     #[inline(always)]
@@ -352,21 +351,29 @@ impl BlobPtr {
             panic!("resident blob pointer");
         }
         Self {
-            base: bytes.as_ptr(),
+            bytes: bytes.split_at(len).0,
         }
     }
 
     #[inline(always)]
     pub(in crate::global) const fn as_ptr(self) -> *const u8 {
-        self.base
+        self.bytes.as_ptr()
+    }
+
+    #[inline(always)]
+    pub(in crate::global) const fn len(self) -> usize {
+        self.bytes.len()
     }
 
     #[inline(always)]
     pub(in crate::global) const fn byte_at(self, offset: usize) -> u8 {
-        // SAFETY: callers check the sealed column-derived byte bound.
-        unsafe { *self.base.add(offset) }
+        self.bytes[offset]
     }
 }
+
+#[cfg(any(kani, all(test, hibana_repo_tests)))]
+#[path = "image_types/blob_tests.rs"]
+mod blob_tests;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]

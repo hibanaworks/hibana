@@ -39,7 +39,7 @@ impl<'a> RoleLaneImage<'a> {
             return None;
         }
         let offset = column.offset as usize + row * stride;
-        if offset + stride > self.columns.blob_len() {
+        if offset + stride > self.blob.len() {
             invalid_resident_descriptor();
         }
         Some(offset)
@@ -47,9 +47,6 @@ impl<'a> RoleLaneImage<'a> {
 
     #[inline(always)]
     const fn byte_at(&self, offset: usize) -> u8 {
-        if offset >= self.columns.blob_len() {
-            invalid_resident_descriptor();
-        }
         self.blob.byte_at(offset)
     }
 
@@ -132,7 +129,7 @@ impl<'a> RoleLaneImage<'a> {
                 invalid_resident_descriptor();
             }
             let offset = self.columns.lane_bits.offset as usize + range.start();
-            if offset + range.len() > self.columns.blob_len() {
+            if offset + range.len() > self.blob.len() {
                 invalid_resident_descriptor();
             }
             /* SAFETY: the column directory bounds above cover the immutable

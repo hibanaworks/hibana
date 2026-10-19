@@ -83,6 +83,16 @@ run_miri_test \
   transport::binding::tests
 
 run_miri_test \
+  static-image-bounds \
+  -p hibana --lib \
+  global::role_program::image_types::blob_tests
+
+MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \
+  parallel-endpoint-borrows \
+  -p hibana --lib \
+  endpoint::parallel::tests
+
+run_miri_test \
   prepared-send-completion \
   -p hibana \
   --lib \
