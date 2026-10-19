@@ -1331,6 +1331,16 @@ Hibana.EndpointDelegation.withOwner_same : ∀ (owners : Hibana.EndpointDelegati
                     Nat.instLawfulBEq event (@Hibana.SourceOrderGroup.rows (images actor) choreo group))
                   (@some.{0} Nat event) (@none.{0} Nat))
             word)
+@Hibana.a_distributed_call_execution_has_its_exact_acceptance_word : ∀ {images : Nat → Hibana.RustDescriptorImage}
+  {choreo : Hibana.Choreo} {session : Nat} {first last : Hibana.DistributedSourceCut}
+  {word : List.{0} Hibana.DistributedCallBoundary} {entries : List.{0} Hibana.SourceAcceptance}
+  {published : List.{0} (Prod.{0, 0} Hibana.SourceAcceptance Hibana.ActorCommitRecord)}
+  {pending : List.{0} Hibana.SourceAcceptance},
+  Hibana.DistributedCallExecution images choreo session first last word entries published pending →
+    @Eq.{1} (List.{0} Hibana.SourceAcceptance)
+      (@List.filterMap.{0, 0} Hibana.DistributedCallBoundary Hibana.SourceAcceptance
+        Hibana.DistributedCallBoundary.acceptance? word)
+      entries
 @Hibana.a_distributed_call_execution_has_its_same_history_publication_matching : ∀
   {images : Nat → Hibana.RustDescriptorImage} {choreo : Hibana.Choreo} {session : Nat}
   {first last : Hibana.DistributedSourceCut} {word : List.{0} Hibana.DistributedCallBoundary}
@@ -1873,6 +1883,122 @@ Hibana.EndpointDelegation.withOwner_same : ∀ (owners : Hibana.EndpointDelegati
                                       (@Hibana.HeaderSuffixWithoutReceipt
                                         (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) value Frame
                                         afterIssued after last state)))))
+@Hibana.a_joint_call_boundary_has_its_actual_future_boundary : ∀ {images : Nat → Hibana.RustDescriptorImage}
+  {resource : Hibana.EndpointDelegation.EndpointKey} {choreo : Hibana.Choreo}
+  {events : List.{0} Hibana.OwnedCallHistory.OwnedCallEvent} {event : Hibana.OwnedCallHistory.OwnedCallEvent}
+  {before after : Hibana.OwnedCallHistory.Cut},
+  Hibana.OwnedCallHistory.Boundary images resource choreo events event before after →
+    @Exists.{1} Hibana.EndpointTransfer.Action fun action =>
+      @Hibana.OwnedFutureInventory.Boundary Hibana.OwnedCallHistory.Tag Hibana.OwnedCallHistory.Receipt
+        (Prod.{0, 0} Nat Nat) action before.requests before.custody after.requests after.custody
+@Hibana.a_joint_call_history_has_its_same_future_history : ∀ {images : Nat → Hibana.RustDescriptorImage}
+  {resource : Hibana.EndpointDelegation.EndpointKey} {choreo : Hibana.Choreo} {value : Hibana.OwnedCallHistory.Tag}
+  {events : List.{0} Hibana.OwnedCallHistory.OwnedCallEvent} {cut : Hibana.OwnedCallHistory.Cut},
+  Hibana.OwnedCallHistory.History images resource choreo value events cut →
+    @Hibana.OwnedFutureInventory.History Hibana.OwnedCallHistory.Tag Hibana.OwnedCallHistory.Receipt
+      (Prod.{0, 0} Nat Nat)
+      (@List.nil.{0} (Hibana.OwnedFutureInventory.Request Hibana.OwnedCallHistory.Tag (Prod.{0, 0} Nat Nat)))
+      (@Hibana.EndpointTransfer.initial Hibana.OwnedCallHistory.Tag Hibana.OwnedCallHistory.Receipt value) cut.requests
+      cut.custody
+@Hibana.a_joint_call_history_preserves_affine_custody : ∀ {images : Nat → Hibana.RustDescriptorImage}
+  {resource : Hibana.EndpointDelegation.EndpointKey} {choreo : Hibana.Choreo} {value : Hibana.OwnedCallHistory.Tag}
+  {events : List.{0} Hibana.OwnedCallHistory.OwnedCallEvent} {cut : Hibana.OwnedCallHistory.Cut},
+  Hibana.OwnedCallHistory.History images resource choreo value events cut →
+    And
+      (@LE.le.{0} Nat instLENat
+        (@Hibana.EndpointTransfer.Observation.authorityCount Hibana.OwnedCallHistory.Tag Hibana.OwnedCallHistory.Receipt
+          cut.custody)
+        (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1))))
+      (@Hibana.OwnedFutureInventory.Covers Hibana.OwnedCallHistory.Tag Hibana.OwnedCallHistory.Receipt
+        (Prod.{0, 0} Nat Nat) cut.requests cut.custody)
+@Hibana.a_joint_call_request_has_its_actual_constructor : ∀ {images : Nat → Hibana.RustDescriptorImage}
+  {resource : Hibana.EndpointDelegation.EndpointKey} {choreo : Hibana.Choreo} {value : Hibana.OwnedCallHistory.Tag}
+  {events : List.{0} Hibana.OwnedCallHistory.OwnedCallEvent} {cut : Hibana.OwnedCallHistory.Cut},
+  Hibana.OwnedCallHistory.History images resource choreo value events cut →
+    ∀ (request : Hibana.OwnedCallHistory.Request),
+      @Membership.mem.{0, 0} Hibana.OwnedCallHistory.Request (List.{0} Hibana.OwnedCallHistory.Request)
+          (@List.instMembership.{0} Hibana.OwnedCallHistory.Request) cut.requests request →
+        @Membership.mem.{0, 0} Hibana.OwnedCallHistory.OwnedCallEvent (List.{0} Hibana.OwnedCallHistory.OwnedCallEvent)
+          (@List.instMembership.{0} Hibana.OwnedCallHistory.OwnedCallEvent) events
+          (Hibana.OwnedCallHistory.OwnedCallEvent.construct request)
+@Hibana.a_joint_private_payload_has_its_same_history_constructor : ∀ {images : Nat → Hibana.RustDescriptorImage}
+  {resource : Hibana.EndpointDelegation.EndpointKey} {choreo : Hibana.Choreo} {value : Hibana.OwnedCallHistory.Tag}
+  {events : List.{0} Hibana.OwnedCallHistory.OwnedCallEvent} {cut : Hibana.OwnedCallHistory.Cut}
+  {payload : Hibana.OwnedCallHistory.Tag},
+  Hibana.OwnedCallHistory.History images resource choreo value events cut →
+    @Membership.mem.{0, 0} Hibana.OwnedCallHistory.Tag (List.{0} Hibana.OwnedCallHistory.Tag)
+        (@List.instMembership.{0} Hibana.OwnedCallHistory.Tag)
+        (@Hibana.EndpointTransfer.Observation.preparing Hibana.OwnedCallHistory.Tag Hibana.OwnedCallHistory.Receipt
+          cut.custody)
+        payload →
+      @Exists.{1} Hibana.OwnedCallHistory.Request fun request =>
+        And
+          (@Membership.mem.{0, 0} Hibana.OwnedCallHistory.Request (List.{0} Hibana.OwnedCallHistory.Request)
+            (@List.instMembership.{0} Hibana.OwnedCallHistory.Request) cut.requests request)
+          (And
+            (@Eq.{1} Hibana.OwnedCallHistory.Tag
+              (@Hibana.OwnedFutureInventory.Request.payload Hibana.OwnedCallHistory.Tag (Prod.{0, 0} Nat Nat) request)
+              payload)
+            (@Membership.mem.{0, 0} Hibana.OwnedCallHistory.OwnedCallEvent
+              (List.{0} Hibana.OwnedCallHistory.OwnedCallEvent)
+              (@List.instMembership.{0} Hibana.OwnedCallHistory.OwnedCallEvent) events
+              (Hibana.OwnedCallHistory.OwnedCallEvent.construct request)))
+@Hibana.a_joint_queued_transfer_has_its_checked_source_and_actual_constructor : ∀
+  {images : Nat → Hibana.RustDescriptorImage} {resource : Hibana.EndpointDelegation.EndpointKey}
+  {choreo : Hibana.Choreo} {value : Hibana.OwnedCallHistory.Tag}
+  {events : List.{0} Hibana.OwnedCallHistory.OwnedCallEvent} {cut : Hibana.OwnedCallHistory.Cut} {session : Nat}
+  {first last : Hibana.DistributedSourceCut} {entries : List.{0} Hibana.SourceAcceptance}
+  {published : List.{0} (Prod.{0, 0} Hibana.SourceAcceptance Hibana.ActorCommitRecord)}
+  {pending : List.{0} Hibana.SourceAcceptance} {receipt : Hibana.OwnedCallHistory.Receipt},
+  Hibana.OwnedCallHistory.History images resource choreo value events cut →
+    Hibana.DistributedCallExecution images choreo session first last (Hibana.OwnedCallHistory.sourceWord events) entries
+        published pending →
+      @Membership.mem.{0, 0} Hibana.OwnedCallHistory.Receipt (List.{0} Hibana.OwnedCallHistory.Receipt)
+          (@List.instMembership.{0} Hibana.OwnedCallHistory.Receipt)
+          (@Hibana.EndpointTransfer.Observation.inFlight Hibana.OwnedCallHistory.Tag Hibana.OwnedCallHistory.Receipt
+            cut.custody)
+          receipt →
+        @Exists.{1} (List.{0} Hibana.OwnedCallHistory.OwnedCallEvent) fun earlier =>
+          @Exists.{1} (List.{0} Hibana.OwnedCallHistory.OwnedCallEvent) fun later =>
+            @Exists.{1} Hibana.SourceAcceptance fun entry =>
+              @Exists.{1} Hibana.OwnedCallHistory.Request fun request =>
+                @Exists.{1} Hibana.OwnedSourceFacts fun facts =>
+                  And
+                    (@Eq.{1} (List.{0} Hibana.OwnedCallHistory.OwnedCallEvent) events
+                      (@HAppend.hAppend.{0, 0, 0} (List.{0} Hibana.OwnedCallHistory.OwnedCallEvent)
+                        (List.{0} Hibana.OwnedCallHistory.OwnedCallEvent)
+                        (List.{0} Hibana.OwnedCallHistory.OwnedCallEvent)
+                        (@instHAppendOfAppend.{0} (List.{0} Hibana.OwnedCallHistory.OwnedCallEvent)
+                          (@List.instAppend.{0} Hibana.OwnedCallHistory.OwnedCallEvent))
+                        earlier
+                        (@List.cons.{0} Hibana.OwnedCallHistory.OwnedCallEvent
+                          (Hibana.OwnedCallHistory.OwnedCallEvent.accept entry request receipt.frame) later)))
+                    (And
+                      (@Membership.mem.{0, 0} Hibana.SourceAcceptance (List.{0} Hibana.SourceAcceptance)
+                        (@List.instMembership.{0} Hibana.SourceAcceptance) entries entry)
+                      (And (@Eq.{1} (Prod.{0, 0} Hibana.TransportChannel Nat) entry.callKey receipt.call)
+                        (And
+                          (@Membership.mem.{0, 0} Hibana.OwnedCallHistory.OwnedCallEvent
+                            (List.{0} Hibana.OwnedCallHistory.OwnedCallEvent)
+                            (@List.instMembership.{0} Hibana.OwnedCallHistory.OwnedCallEvent) earlier
+                            (Hibana.OwnedCallHistory.OwnedCallEvent.construct request))
+                          (And (@Eq.{1} Hibana.RustDescriptorImage entry.sample.image (images entry.sample.image.role))
+                            (And (@Eq.{1} Bool (entry.sample.check choreo session) true)
+                              (And
+                                (@Eq.{1} (Option.{0} Hibana.OwnedSourceFacts) (entry.sample.ownedFacts? choreo)
+                                  (@some.{0} Hibana.OwnedSourceFacts facts))
+                                (And (@Eq.{1} Hibana.EndpointDelegation.EndpointKey facts.resource resource)
+                                  (And
+                                    (@Eq.{1} Hibana.EndpointDelegation.Side facts.side
+                                      Hibana.EndpointDelegation.Side.send)
+                                    (And (request.matches entry.sample facts)
+                                      (And (entry.sample.wire.identifies receipt.frame)
+                                        (And (@Eq.{1} Hibana.TransportChannel receipt.frame.channel entry.channel)
+                                          (@Eq.{1} Nat receipt.frame.sequence
+                                            (@List.length.{0} Hibana.SourceAcceptance
+                                              (Hibana.sourceChannelEntries
+                                                (Hibana.OwnedCallHistory.acceptedEntries earlier)
+                                                entry.channel))))))))))))))
 Hibana.a_lease_only_origin_does_not_cover_a_pending_issued_header : ∀ (old : Nat),
   Not (Hibana.AcceptedSendCallEvidence old { counter := old, issued := @some.{0} Nat old } False False)
 @Hibana.a_live_public_cut_cannot_issue_an_accepted_sender_tag : ∀ {old : Nat} {current : Hibana.ViewNonceCut}

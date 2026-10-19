@@ -1,7 +1,8 @@
 //! Serialize copied observations of the real Endpoint schedule.
 //! Placement in a Rust variable, private future, or accepted frame is observed
 //! by that schedule. These proof values never authorize a runtime operation.
-use crate::endpoint::proof_snapshot::ActorSnapshot;
+use crate::endpoint::proof_snapshot::{ActorSnapshot, owned_future::OwnedFutureBoundary};
+use crate::test_support::transport::FrameEvidence;
 use crate::transport::FrameHeader;
 use std::{string::String, vec::Vec};
 
@@ -10,9 +11,10 @@ pub(super) fn write(
     images: [String; 2],
     snapshots: &[(&str, &ActorSnapshot)],
     wires: &[(&str, &(FrameHeader, Vec<u8>))],
+    captured: (&[OwnedFutureBoundary], &FrameEvidence),
 ) {
     let mut source = std::format!(
-        "import Hibana.SourceResourceAvailability\n\nset_option maxRecDepth 10000\n\n\
+        "import Hibana.SourceResourceAvailability\nimport Hibana.OwnedCallHistory\n\nset_option maxRecDepth 10000\n\n\
          def custodyChoreo : Hibana.Choreo := {choreography}\n\n\
          def ownerImage : Hibana.RustDescriptorImage := {}\n\n\
          def workerImage : Hibana.RustDescriptorImage := {}\n\n",
@@ -274,6 +276,50 @@ theorem custodyCannotTreatTheUnpolledPayloadAsAnApplicationValue :
              simpa only [factsAt, Option.map_some, Option.some.injEq] using actor.symm\n",
         ));
     }
+    let OwnedFutureBoundary::Seal {
+        carrier,
+        payload,
+        label,
+        region,
+    } = captured.0[0]
+    else {
+        panic!("actual initial constructor");
+    };
+    let owner = snapshot("ownerBefore");
+    assert_eq!(carrier.actor_address, payload.actor_address);
+    for identity in [carrier, payload] {
+        let view = owner
+            .views
+            .iter()
+            .find(|view| view.role == identity.role)
+            .unwrap();
+        assert_eq!((identity.run, identity.nonce), (view.run, view.nonce));
+    }
+    assert_eq!(captured.1.header, wires[0].1.0);
+    assert_eq!(captured.1.payload(), wires[0].1.1);
+    let bounds = region.bounds();
+    source.push_str(&std::format!(
+        "\ndef jointRequest : Hibana.OwnedCallHistory.Request := {{\n  \
+         carrier := ({}, {}, {}, {}), payload := ({}, {}, {}, {}),\n  \
+         label := {label}, borrow := ({}, {})\n}}\n\n\
+         def jointWitness : Nat := {}\n\n\
+         def jointOwnerMutation : Nat := {}\n\n\
+         def jointWorkerMutation : Nat := {}\n",
+        owner.actor,
+        carrier.role,
+        carrier.run,
+        carrier.nonce,
+        owner.actor,
+        payload.role,
+        payload.run,
+        payload.nonce,
+        bounds.start,
+        bounds.end,
+        captured.1.witness,
+        snapshot("ownerPending").completion_mutations,
+        snapshot("workerBefore").completion_mutations,
+    ));
+    source.push_str(include_str!("joint_call.lean"));
     let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/lean-proof");
     std::fs::create_dir_all(&directory).unwrap();
     std::fs::write(directory.join("FutureCustodyGenerated.lean"), source).unwrap();

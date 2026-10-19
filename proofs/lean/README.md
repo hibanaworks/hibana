@@ -1267,6 +1267,35 @@ the exact multiset of private payloads and retained witnesses, and a preparing
 payload yields its actual request, including carrier, label and lexical borrow.
 This is erased proof data, with no runtime owner registry or reservation lock.
 
+`OwnedCallHistory.lean` joins constructor, poll, Drop, physical acceptance,
+publication and receipt observations in one chronological word. Its source
+projection must qualify as that same `DistributedCallExecution`; a second,
+independently chosen source trace is insufficient. A queued resource receipt
+then has an earlier real constructor, a retained request matched at preparation
+to the carrier/view tags, label and lexical source interval, and the checked
+source acceptance. The FIFO position counts every accepted frame on that
+direction, including ordinary payloads. Repeated envelope bytes are not the
+receipt identity. Sender publication and witness destruction remain independent
+of receiver progress.
+
+This establishes finite-prefix custody/source correspondence in the observation
+model. Applying it to Rust still requires complete authentic merged observations;
+it does not derive their completeness from endpoint snapshots. It is not yet
+the enabled-step lifting result, a proof of current Rust callability, or the
+fault/closure composition. No runtime guard, wire field, shared actor memory,
+owner table or scheduling restriction is introduced by this model.
+The inventory does not yet cover ordinary-future or parallel-borrow object
+availability. In particular, a source-only ordinary operation is not evidence
+that its Rust Endpoint is currently usable.
+
+The existing two-runtime round-trip test also qualifies the first transfer's
+constructor, Pending poll and actual accepted frame with this joint model.
+It copies the stored request fields and carrier witness, binds actor identities
+to those runtimes, and checks the same source preparation and acceptance.
+This prefix ends before sender publication. It does not qualify every boundary
+of the round trip or a distributed run merely because the rest of that Rust
+test completes.
+
 Qualification hooks copy the real constructor, poll-result and Drop fields.
 The existing rolled-resource/par choreography now checks an unpolled loan:
 independent work and a permitted restart proceed, then the loan's first poll

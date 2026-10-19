@@ -1,3 +1,23 @@
+actualJointConstructorAcceptance : Hibana.OwnedCallHistory.History jointImages jointResource custodyChoreo initialValue
+  jointEvents jointCut
+actualJointQueuedOrigin : ∃ earlier later entry request facts,
+  jointEvents = earlier ++ Hibana.OwnedCallHistory.OwnedCallEvent.accept entry request jointFrame :: later ∧
+    entry ∈ [jointEntry] ∧
+      entry.callKey = jointEntry.callKey ∧
+        Hibana.OwnedCallHistory.OwnedCallEvent.construct request ∈ earlier ∧
+          entry.sample.image = jointImages entry.sample.image.role ∧
+            entry.sample.check custodyChoreo 873 = true ∧
+              entry.sample.ownedFacts? custodyChoreo = some facts ∧
+                facts.resource = jointResource ∧
+                  facts.side = Hibana.EndpointDelegation.Side.send ∧
+                    request.matches entry.sample facts ∧
+                      entry.sample.wire.identifies jointFrame ∧
+                        jointFrame.channel = entry.channel ∧
+                          jointFrame.sequence =
+                            (Hibana.sourceChannelEntries (Hibana.OwnedCallHistory.acceptedEntries earlier)
+                                entry.channel).length
+actualJointSourceAcceptance : Hibana.DistributedCallExecution jointImages custodyChoreo 873 jointSourceInitial
+  jointSourceAfter (Hibana.OwnedCallHistory.sourceWord jointEvents) [jointEntry] [] [jointEntry]
 custodyAcceptStep : Step Action.accept custodyPending custodySent
 custodyActualPendingSendUsesTheSamePrivateValue : ∃ sending,
   sending = initialValue ∧

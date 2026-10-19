@@ -13,6 +13,10 @@ inductive DistributedCallBoundary where
   | localCommit (actor : Nat) (record : ActorCommitRecord)
   | quiet (actor : Nat)
 
+def DistributedCallBoundary.acceptance? : DistributedCallBoundary → Option SourceAcceptance
+  | .accept entry => some entry
+  | _ => none
+
 def DistributedCallBoundary.call? : DistributedCallBoundary → Option SourceCallBoundary
   | .accept entry => some (.accept entry)
   | .publish key _ record => some (.publish key record)

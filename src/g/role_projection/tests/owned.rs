@@ -252,6 +252,7 @@ fn dropping_a_completed_owned_send_does_not_retire_the_returned_resource_view() 
         assert_eq!(owner_sent.live_views + 1, owner_pending.live_views);
         assert_eq!(owner_sent.counter, owner_pending.counter);
         let loan_wire = network.queued_frame(1);
+        let loan_frame = network.accepted_frame(1, 0);
         assert_eq!(loan_wire.1, [10, 0, 0]);
         // SAFETY: successful transfer retains the original runtime storage.
         assert!(!unsafe { old_tag.matches_header() });
@@ -338,6 +339,7 @@ fn dropping_a_completed_owned_send_does_not_retire_the_returned_resource_view() 
                     ("ownerRetired", &owner_retired),
                 ],
                 &[("loanWire", &loan_wire), ("returnWire", &return_wire)],
+                (&events, &loan_frame),
             );
         }
         let (value, ()) = tokio::join!(
