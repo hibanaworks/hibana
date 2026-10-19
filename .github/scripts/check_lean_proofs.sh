@@ -18,6 +18,7 @@ REENTRY_GENERATED="${ROOT_DIR}/target/lean-proof/ReentryGenerated.lean"
 OWNED_RECOVERY_GENERATED="${ROOT_DIR}/target/lean-proof/OwnedRecoveryGenerated.lean"
 LOCAL_RETURN_GENERATED="${ROOT_DIR}/target/lean-proof/LocalReturnGenerated.lean"
 PENDING_BORROW_GENERATED="${ROOT_DIR}/target/lean-proof/PendingBorrowGenerated.lean"
+FUTURE_INVENTORY_GENERATED="${ROOT_DIR}/target/lean-proof/OwnedFutureInventoryGenerated.lean"
 FUTURE_CUSTODY_GENERATED="${ROOT_DIR}/target/lean-proof/FutureCustodyGenerated.lean"
 OWNED_DROP_GENERATED="${ROOT_DIR}/target/lean-proof/OwnedDropGenerated.lean"
 COMPLETED_RETIREMENT_GENERATED="${ROOT_DIR}/target/lean-proof/CompletedViewRetirementGenerated.lean"
@@ -70,7 +71,7 @@ bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" build-serial "${PROOF_
 bash "${ROOT_DIR}/.github/scripts/check_lean_claim_surface.sh"
 static_audit_output="$(run_audit \
   theorem-inventory \
-  --static "${PROOF_DIR}" "${STATIC_CLAIM_SNAPSHOT}" 1115 694 307 114)"
+  --static "${PROOF_DIR}" "${STATIC_CLAIM_SNAPSHOT}" 1121 696 309 116)"
 printf '%s\n' "${static_audit_output}"
 printf '%s\n' "${static_audit_output}" | bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard markers static
 bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" theorem-inventory \
@@ -98,6 +99,7 @@ rm -f "${FRAME_DOMAINS_GENERATED}"
 rm -f "${OCCURRENCE_CHOICE_GENERATED}"
 rm -f "${LOCAL_RETURN_GENERATED}"
 rm -f "${PENDING_BORROW_GENERATED}"
+rm -f "${FUTURE_INVENTORY_GENERATED}"
 rm -f "${FUTURE_CUSTODY_GENERATED}"
 rm -f "${OWNED_DROP_GENERATED}" "${COMPLETED_RETIREMENT_GENERATED}"
 rm -f "${SOURCE_ORDER_GENERATED}"
@@ -181,6 +183,12 @@ CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --li
 bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${PENDING_BORROW_GENERATED}" "pending payload borrow"
 run_audit generated-axioms --kernel "${PENDING_BORROW_GENERATED}" "${PROOF_DIR}" \
   "${PROOF_DIR}/pending-borrow-generated-claim-surface.txt" 11
+CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib \
+  g::role_projection::tests::pending_reentry::an_unpolled_owned_send_cannot_wait_on_its_payload_after_another_view_restarts \
+  -- --exact
+bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${FUTURE_INVENTORY_GENERATED}" "actual owned future constructor"
+run_audit generated-axioms --kernel "${FUTURE_INVENTORY_GENERATED}" "${PROOF_DIR}" \
+  "${PROOF_DIR}/future-inventory-generated-claim-surface.txt" 4
 CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib \
   g::role_projection::tests::owned::dropping_a_completed_owned_send_does_not_retire_the_returned_resource_view \
   -- --exact

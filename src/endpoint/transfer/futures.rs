@@ -31,11 +31,18 @@ impl<'e, 'r, const ROLE: u8, const RESOURCE: u8> OwnedSendFuture<'e, 'r, ROLE, R
         label: u8,
         payload: Endpoint<'r, RESOURCE>,
     ) -> Self {
-        Self {
+        let future = Self {
             endpoint,
             payload,
             phase: OwnedSendPhase::Direct(label),
-        }
+        };
+        #[cfg(all(test, hibana_repo_tests))]
+        crate::endpoint::proof_snapshot::owned_future::record_seal(
+            &future.endpoint,
+            &future.payload.owner,
+            label,
+        );
+        future
     }
     pub(super) fn branch(
         branch: RouteBranch<'e, 'r, ROLE>,
@@ -43,12 +50,19 @@ impl<'e, 'r, const ROLE: u8, const RESOURCE: u8> OwnedSendFuture<'e, 'r, ROLE, R
         payload: Endpoint<'r, RESOURCE>,
     ) -> Self {
         let branch = core::mem::ManuallyDrop::new(branch);
-        Self {
+        let future = Self {
             // SAFETY: the consumed branch transfers its unique borrow.
             endpoint: unsafe { core::ptr::read(&branch.target) }.with_metadata(()),
             payload,
             phase: OwnedSendPhase::Branch(label),
-        }
+        };
+        #[cfg(all(test, hibana_repo_tests))]
+        crate::endpoint::proof_snapshot::owned_future::record_seal(
+            &future.endpoint,
+            &future.payload.owner,
+            label,
+        );
+        future
     }
 }
 
@@ -67,7 +81,13 @@ impl<'e, 'r, const ROLE: u8, const RESOURCE: u8> Future
                     endpoint.begin_public_send_state(label, EventPayload::Endpoint(RESOURCE))
                 {
                     this.phase = OwnedSendPhase::Done;
-                    return Poll::Ready(Err(EndpointError::new(EndpointOp::Send, error)));
+                    let result = Poll::Ready(Err(EndpointError::new(EndpointOp::Send, error)));
+                    #[cfg(all(test, hibana_repo_tests))]
+                    crate::endpoint::proof_snapshot::owned_future::record_poll(
+                        &this.payload.owner,
+                        result,
+                    );
+                    return result;
                 }
                 Some(SendInput::Endpoint(super::EndpointTransfer::borrowed(
                     &this.payload.owner,
@@ -76,7 +96,7 @@ impl<'e, 'r, const ROLE: u8, const RESOURCE: u8> Future
             OwnedSendPhase::Pending => None,
             OwnedSendPhase::Done => crate::invariant(),
         };
-        match endpoint.poll_send(cx, input) {
+        let result = match endpoint.poll_send(cx, input) {
             Poll::Pending => {
                 this.phase = OwnedSendPhase::Pending;
                 Poll::Pending
@@ -89,12 +109,17 @@ impl<'e, 'r, const ROLE: u8, const RESOURCE: u8> Future
                         .map_err(|error| EndpointError::new(EndpointOp::Send, error)),
                 )
             }
-        }
+        };
+        #[cfg(all(test, hibana_repo_tests))]
+        crate::endpoint::proof_snapshot::owned_future::record_poll(&this.payload.owner, result);
+        result
     }
 }
 
 impl<const ROLE: u8, const RESOURCE: u8> Drop for OwnedSendFuture<'_, '_, ROLE, RESOURCE> {
     fn drop(&mut self) {
+        #[cfg(all(test, hibana_repo_tests))]
+        crate::endpoint::proof_snapshot::owned_future::record_drop(&self.payload.owner);
         // The payload owner is dropped after cancellation. A committed transfer
         // has invalidated its tag; an aborted transfer cancels the current run.
         match self.phase {

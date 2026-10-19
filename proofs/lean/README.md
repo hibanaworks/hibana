@@ -1240,6 +1240,41 @@ contract. Custody in a private future is not yet callable availability:
 eventual polling, causal prefix correspondence across independent route/roll
 visits, and their composition into distributed progress remain open.
 
+`OwnedFutureInventory.lean` relates a complete history of actual live owned-send
+objects to that same transfer execution. Construction moves a value into a
+private future before any poll; acceptance keeps only a zero-authority sender
+witness until Drop. Polling does not imply acceptance. The inventory preserves
+the exact multiset of private payloads and retained witnesses, and a preparing
+payload yields its actual request, including carrier, label and lexical borrow.
+This is erased proof data, with no runtime owner registry or reservation lock.
+
+Qualification hooks copy the real constructor, poll-result and Drop fields.
+The existing rolled-resource/par choreography now checks an unpolled loan:
+independent work and a permitted restart proceed, then the loan's first poll
+rejects its own unavailable payload predecessor. It publishes no completion;
+the peer observes failure. Its generated Lean artifact uses the captured
+constructor identities to instantiate the private-future inventory. An Idle
+resident slot is not used to infer an application value. Full-history
+authenticity, receipt correspondence, fault/closure composition and general
+enabled-step lifting remain obligations; the finite artifact does not close
+them. The recorder exists only under repository-test cfg, so production still
+has no heap, alloc dependency, Mutex/RwLock or new protocol state.
+The recovered request is still proof data, not a callable Rust capability.
+In particular, forgetting a future does not make it schedulable. Actual
+pollability and executor fairness must not be replaced by inventory membership.
+
+The application must eventually issue its permitted local continuation, driving
+independent fragments concurrently where progress requires it; the executor
+must poll those actual futures. Neither premise can be derived from a kernel
+snapshot. They must remain distinct from the implementation obligation that a
+properly held Endpoint/borrow can safely issue its permitted call, or that an
+accepted receipt reaches its current holder. A premise saying merely that the
+desired source-ready call exists would hide the latter obligations.
+`DistributedSemanticallyUnstuck` itself states existence of a model transition;
+it has no fairness parameter and is not an eventual-execution theorem. The
+application/executor liveness contract belongs to the eventual-execution
+composition, which remains unfinished.
+
 `ActorMutationCoverage.lean` strengthens selected-visit history observations
 with measurements at the actual completion-bit writes. Qualification builds
 increment one checked counter in the existing mark/clear functions, including

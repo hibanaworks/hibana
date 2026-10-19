@@ -1,0 +1,8 @@
+actualFutureInventoryCoversThisPrivatePayload : OwnedFutureInventory.Covers [actualUnpolledRequest] afterUnpolledMove
+actualPrivatePayloadHasItsCapturedFuture : ∃ request,
+  request ∈ [actualUnpolledRequest] ∧ request.payload = expectedUnpolledPayload
+actualUnpolledConstructorFields : actualUnpolledRequest.carrier = expectedUnpolledCarrier ∧
+  actualUnpolledRequest.payload = expectedUnpolledPayload ∧
+    actualUnpolledRequest.label = 1 ∧ actualUnpolledRequest.borrow.fst = true
+actualUnpolledConstructorHistory : OwnedFutureInventory.History [] beforeUnpolledMove [actualUnpolledRequest]
+  afterUnpolledMove

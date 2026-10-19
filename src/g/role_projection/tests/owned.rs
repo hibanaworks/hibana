@@ -133,6 +133,7 @@ mod future_custody;
 
 #[test]
 fn dropping_a_completed_owned_send_does_not_retire_the_returned_resource_view() {
+    use crate::endpoint::proof_snapshot::owned_future::{Capture, OwnedFutureBoundary};
     use crate::endpoint::proof_snapshot::{actor_snapshot, view_tag};
     use core::{
         future::{Future, poll_fn},
@@ -214,6 +215,7 @@ fn dropping_a_completed_owned_send_does_not_retire_the_returned_resource_view() 
         // SAFETY: all copied observations belong to these TestTransport actors.
         let owner_before = unsafe { actor_snapshot(&auth) };
         network.pause_send(0);
+        let capture = Capture::start();
         let mut loan = owner.send::<Loan>(db);
         // The Rust value has moved into the unpolled future. The unchanged
         // header is not a second application value or a progress publication.
@@ -288,6 +290,21 @@ fn dropping_a_completed_owned_send_does_not_retire_the_returned_resource_view() 
         // SAFETY: the stale future's Drop must not touch this fresh view.
         let owner_retired = unsafe { actor_snapshot(&db) };
         assert_eq!(owner_retired, owner_returned);
+        let events = capture.finish();
+        use core::task::Poll;
+        assert!(
+            matches!(events.as_slice(), [
+            OwnedFutureBoundary::Seal { payload: original, .. },
+            OwnedFutureBoundary::Poll { payload: pending, result: Poll::Pending },
+            OwnedFutureBoundary::Poll { payload: sent, result: Poll::Ready(Ok(())) },
+            OwnedFutureBoundary::Seal { payload: received, .. },
+            OwnedFutureBoundary::Poll { payload: returned, result: Poll::Ready(Ok(())) },
+            OwnedFutureBoundary::Drop { payload: receiver_dropped },
+            OwnedFutureBoundary::Drop { payload: original_dropped },
+        ] if original == pending && original == sent && original == original_dropped &&
+            received == returned && received == receiver_dropped && original != received),
+            "actual future identities must survive receipt, return and stale Drop: {events:?}"
+        );
         #[cfg(not(miri))]
         {
             use crate::test_support::{

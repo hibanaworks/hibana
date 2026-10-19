@@ -272,6 +272,59 @@ Hibana.EndpointDelegation.withOwner_same : ∀ (owners : Hibana.EndpointDelegati
   @Hibana.EndpointTransfer.Step View Frame action before after →
     @LE.le.{0} Nat instLENat (@Hibana.EndpointTransfer.Observation.authorityCount View Frame after)
       (@Hibana.EndpointTransfer.Observation.authorityCount View Frame before)
+@Hibana.OwnedFutureInventory.a_complete_future_history_covers_every_private_payload : ∀ {View Frame Borrow : Type}
+  {initialValue : View} {state : Hibana.EndpointTransfer.Observation View Frame}
+  {requests : List.{0} (Hibana.OwnedFutureInventory.Request View Borrow)},
+  @Hibana.OwnedFutureInventory.History View Frame Borrow
+      (@List.nil.{0} (Hibana.OwnedFutureInventory.Request View Borrow))
+      (@Hibana.EndpointTransfer.initial View Frame initialValue) requests state →
+    @Hibana.OwnedFutureInventory.Covers View Frame Borrow requests state
+@Hibana.OwnedFutureInventory.a_complete_future_history_erases_to_its_transfer_history : ∀ {View Borrow : Type}
+  {firstRequests : List.{0} (Hibana.OwnedFutureInventory.Request View Borrow)} {Frame : Type}
+  {first : Hibana.EndpointTransfer.Observation View Frame}
+  {lastRequests : List.{0} (Hibana.OwnedFutureInventory.Request View Borrow)}
+  {last : Hibana.EndpointTransfer.Observation View Frame},
+  @Hibana.OwnedFutureInventory.History View Frame Borrow firstRequests first lastRequests last →
+    @Hibana.EndpointTransfer.Execution View Frame first last
+@Hibana.OwnedFutureInventory.a_future_boundary_erases_to_the_same_transfer_step : ∀
+  {action : Hibana.EndpointTransfer.Action} {View Borrow : Type}
+  {first : List.{0} (Hibana.OwnedFutureInventory.Request View Borrow)} {Frame : Type}
+  {before : Hibana.EndpointTransfer.Observation View Frame}
+  {last : List.{0} (Hibana.OwnedFutureInventory.Request View Borrow)}
+  {after : Hibana.EndpointTransfer.Observation View Frame},
+  @Hibana.OwnedFutureInventory.Boundary View Frame Borrow action first before last after →
+    @Hibana.EndpointTransfer.Step View Frame action before after
+@Hibana.OwnedFutureInventory.a_private_payload_has_its_actual_request : ∀ {View Frame : Type} {initialValue : View}
+  {Borrow : Type} {requests : List.{0} (Hibana.OwnedFutureInventory.Request View Borrow)}
+  {state : Hibana.EndpointTransfer.Observation View Frame} {value : View},
+  @Hibana.OwnedFutureInventory.History View Frame Borrow
+      (@List.nil.{0} (Hibana.OwnedFutureInventory.Request View Borrow))
+      (@Hibana.EndpointTransfer.initial View Frame initialValue) requests state →
+    @Membership.mem.{0, 0} View (List.{0} View) (@List.instMembership.{0} View)
+        (@Hibana.EndpointTransfer.Observation.preparing View Frame state) value →
+      @Exists.{1} (Hibana.OwnedFutureInventory.Request View Borrow) fun request =>
+        And
+          (@Membership.mem.{0, 0} (Hibana.OwnedFutureInventory.Request View Borrow)
+            (List.{0} (Hibana.OwnedFutureInventory.Request View Borrow))
+            (@List.instMembership.{0} (Hibana.OwnedFutureInventory.Request View Borrow)) requests request)
+          (@Eq.{1} View (@Hibana.OwnedFutureInventory.Request.payload View Borrow request) value)
+@Hibana.OwnedFutureInventory.actual_future_boundaries_preserve_the_complete_inventory : ∀
+  {action : Hibana.EndpointTransfer.Action} {View Borrow : Type}
+  {first : List.{0} (Hibana.OwnedFutureInventory.Request View Borrow)} {Frame : Type}
+  {before : Hibana.EndpointTransfer.Observation View Frame}
+  {last : List.{0} (Hibana.OwnedFutureInventory.Request View Borrow)}
+  {after : Hibana.EndpointTransfer.Observation View Frame},
+  @Hibana.OwnedFutureInventory.Boundary View Frame Borrow action first before last after →
+    @Hibana.OwnedFutureInventory.Covers View Frame Borrow first before →
+      @Hibana.OwnedFutureInventory.Covers View Frame Borrow last after
+@Hibana.OwnedFutureInventory.actual_future_history_preserves_unique_authority : ∀ {View Frame : Type}
+  {initialValue : View} {Borrow : Type} {requests : List.{0} (Hibana.OwnedFutureInventory.Request View Borrow)}
+  {state : Hibana.EndpointTransfer.Observation View Frame},
+  @Hibana.OwnedFutureInventory.History View Frame Borrow
+      (@List.nil.{0} (Hibana.OwnedFutureInventory.Request View Borrow))
+      (@Hibana.EndpointTransfer.initial View Frame initialValue) requests state →
+    @LE.le.{0} Nat instLENat (@Hibana.EndpointTransfer.Observation.authorityCount View Frame state)
+      (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1)))
 @Hibana.a_binding_in_the_source_prefix_has_an_earlier_occurrence : ∀ {source : Hibana.EndpointDelegation.Source}
   {resources : List.{0} Hibana.EndpointDelegation.EndpointKey} {owners : Hibana.EndpointDelegation.OwnerMap}
   {path : List.{0} Hibana.EndpointDelegation.Selection} {start : Nat} {run : Hibana.EndpointDelegation.Elaboration}

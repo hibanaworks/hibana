@@ -4,6 +4,8 @@ use super::{Endpoint, RouteBranch, kernel::ResidentActor};
 use crate::{global::typestate::LocalAction, test_support::transport::TestTransport};
 use std::vec::Vec;
 
+pub(crate) mod owned_future;
+
 /// A copied header tag, not an Endpoint or a usable operation capability.
 #[derive(Clone, Copy)]
 pub(crate) struct ViewTagObservation {
@@ -19,6 +21,15 @@ pub(crate) struct ActorCallCut {
 }
 
 impl ViewTagObservation {
+    /// Copy this stored value tag without treating it as usable authority.
+    ///
+    /// # Safety
+    /// The original pinned header allocation must remain alive.
+    pub(crate) unsafe fn value_identity(self) -> owned_future::ValueIdentity {
+        // SAFETY: the caller retains the allocation, including a retired tag.
+        unsafe { owned_future::identity(self.ptr, self.handle) }
+    }
+
     /// Copy this actor's progress between polls, including while a different
     /// parallel borrow owns a pending future. The tag remains observation only.
     ///

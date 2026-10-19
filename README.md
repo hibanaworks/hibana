@@ -522,8 +522,17 @@ Applying these results to a running system requires:
 2. Peers agree on wire formats and use conforming codecs.
 3. The transport provides the peer binding, ordering, replay exclusion, and
    observable closure required by the selected model.
-4. The executor eventually polls operations that remain enabled.
+4. The application eventually issues the communication required by its local
+   continuation, and the executor continues polling its pending futures.
 5. The runtime implementation follows the model's operation and ownership rules.
+
+Creating a future and polling it are separate responsibilities. For independent
+parallel fragments, use `endpoint.par()` and drive the fragments concurrently
+when progress needs both. Polling a receive cannot create an independent send
+that the application never calls. These application and executor assumptions
+do not establish that a particular Endpoint is owned, callable or admitted;
+the runtime and its implementation correspondence must still establish those
+properties.
 
 Under these assumptions, a live, unfinished protocol has an enabled
 communication transition. This is **protocol deadlock freedom within one
