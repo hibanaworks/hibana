@@ -332,6 +332,7 @@ mod decision_resolver;
 mod frontier_helpers;
 mod owned;
 mod public_types;
+mod retirement;
 mod route_preview;
 mod runtime_types;
 mod send_ops;
@@ -495,6 +496,7 @@ where
                 // common cursor borrow excludes any other kernel entry.
                 operation: unsafe { &mut *operation.state.get() },
                 operations: self.operations,
+                views: self.views,
                 region: crate::endpoint::carrier::OperationRegion::WHOLE,
             };
             sibling.finish_operation_io();

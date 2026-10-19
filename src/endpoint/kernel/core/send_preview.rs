@@ -155,7 +155,7 @@ where
                 ),
             ))
         })();
-        self.reconcile_retired_views();
+        self.reconcile_retirements();
         if let Some(kind) = self.session_fault() {
             result = Poll::Ready(Err(SendError::SessionFault(kind)));
         }

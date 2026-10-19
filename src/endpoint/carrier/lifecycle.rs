@@ -3,6 +3,27 @@ impl<'cfg, T> crate::runtime::SessionKit<'cfg, T>
 where
     T: crate::transport::Transport + 'cfg,
 {
+    pub(super) unsafe fn release_public_operation_raw(
+        ptr: NonNull<()>,
+        handle: super::OperationHandle,
+    ) {
+        // SAFETY: the future or preview retains its issued view. Destruction
+        // is recorded before trying a lease, so callback reentry cannot lose it.
+        unsafe {
+            let Some(actor) = Self::resident_actor_from_header::<'cfg>(ptr, handle.endpoint) else {
+                return;
+            };
+            let role = ptr.cast::<super::KernelEndpointHeader>().as_ref().role();
+            let view = crate::invariant_some(actor.views.get(role));
+            actor.defer_operation(
+                view,
+                handle.region,
+                crate::endpoint::kernel::OperationRetirement::Release,
+            );
+            Self::with_public_endpoint_mut::<'cfg, _>(ptr, handle, (), |_| ());
+        }
+    }
+
     pub(super) unsafe fn drop_public_endpoint_raw(ptr: NonNull<()>, handle: EndpointHandle) {
         let Some(actor) = (/* SAFETY: validate the immutable header and live generation before accessing the resident allocation. */unsafe { Self::resident_actor_from_header::<'cfg>(ptr, handle) })
         else {
@@ -28,7 +49,7 @@ where
         actor.retire_view(view);
         // Reentry from a sibling view's poll only enqueues destruction. The
         // active entry drains it after releasing the common progress borrow.
-        if !actor.drain_retired_views() || actor.context.live_views.get() != 0 {
+        if !actor.drain_retirements() || actor.context.live_views.get() != 0 {
             return;
         }
         actor.finish_all_view_io();

@@ -55,7 +55,7 @@ where
             self.public_header.role(),
             cx,
         );
-        self.reconcile_retired_views();
+        self.reconcile_retirements();
         if let Some(kind) = self.session_fault() {
             if let Poll::Ready(Ok(frame)) = transport_poll {
                 frame.discard_uncommitted();
@@ -113,7 +113,7 @@ where
     ) -> Poll<RecvResult<lane_port::ReceivedFrame<'r>>> {
         let port = self.port_for_lane(lane_idx);
         let transport_poll = lane_port::poll_recv_frame(pending_recv, port, expected, cx);
-        self.reconcile_retired_views();
+        self.reconcile_retirements();
         if let Some(kind) = self.session_fault() {
             if let Poll::Ready(Ok(frame)) = transport_poll {
                 frame.discard_uncommitted();

@@ -151,7 +151,7 @@ where
                 validate(payload).map_err(RecvError::Codec)
             }
         });
-        self.reconcile_retired_views();
+        self.reconcile_retirements();
         if let Some(kind) = self.session_fault() {
             plan.payload.discard_uncommitted();
             return Err(RecvError::SessionFault(kind));

@@ -123,12 +123,12 @@ impl<'e, 'r, const ROLE: u8, D> super::target::OperationTarget<'e, 'r, ROLE, D> 
     }
 
     #[inline]
-    fn call_handle_op(&mut self, op: unsafe fn(core::ptr::NonNull<()>, carrier::OperationHandle)) {
+    pub(super) fn release_public_operation(&mut self) {
         unsafe {
             /* SAFETY: this target retains its exclusive whole-view or arm
             borrow. The carrier validates the issued generation and the
             compiled region, and serializes synchronous kernel entries. */
-            op(self.erased_ptr(), self.parts().1);
+            (self.ops().release_operation)(self.erased_ptr(), self.parts().1);
         }
     }
 
@@ -147,19 +147,9 @@ impl<'e, 'r, const ROLE: u8, D> super::target::OperationTarget<'e, 'r, ROLE, D> 
     }
 
     #[inline]
-    pub(super) fn reset_public_offer_state(&mut self) {
-        self.call_handle_op(self.ops().reset_public_offer_state);
-    }
-
-    #[inline]
     #[must_use]
     pub(super) fn init_public_offer_state(&mut self) -> kernel::PublicOpLease {
         self.call_lease_op(self.ops().init_public_offer_state)
-    }
-
-    #[inline]
-    pub(super) fn restore_public_route_branch(&mut self) {
-        self.call_handle_op(self.ops().restore_public_route_branch);
     }
 
     #[inline]
@@ -181,19 +171,9 @@ impl<'e, 'r, const ROLE: u8, D> super::target::OperationTarget<'e, 'r, ROLE, D> 
     }
 
     #[inline]
-    pub(super) fn reset_public_send_state(&mut self) {
-        self.call_handle_op(self.ops().reset_public_send_state);
-    }
-
-    #[inline]
     #[must_use]
     pub(super) fn init_public_recv_state(&mut self) -> kernel::PublicOpLease {
         self.call_lease_op(self.ops().init_public_recv_state)
-    }
-
-    #[inline]
-    pub(super) fn reset_public_recv_state(&mut self) {
-        self.call_handle_op(self.ops().reset_public_recv_state);
     }
 
     #[inline]
@@ -202,10 +182,6 @@ impl<'e, 'r, const ROLE: u8, D> super::target::OperationTarget<'e, 'r, ROLE, D> 
         self.call_lease_op(self.ops().begin_public_branch_recv_state)
     }
 
-    #[inline]
-    pub(super) fn reset_public_branch_recv_state(&mut self) {
-        self.call_handle_op(self.ops().reset_public_branch_recv_state);
-    }
     #[inline]
     pub(super) fn poll_recv(
         &mut self,

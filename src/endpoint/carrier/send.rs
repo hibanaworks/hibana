@@ -23,17 +23,6 @@ where
         }
     }
 
-    pub(super) unsafe fn reset_public_send_state_raw(ptr: NonNull<()>, handle: OperationHandle) {
-        let mut waiters = WaiterTransfer::empty();
-        unsafe {
-            // SAFETY: send-state reset owns the carrier endpoint slot selected
-            // by `handle` and clears only the resident public send state.
-            Self::with_public_endpoint_mut::<'cfg, _>(ptr, handle, (), |kernel| {
-                kernel.reset_public_send_state(&mut waiters);
-            });
-        }
-    }
-
     pub(super) unsafe fn poll_send_public_endpoint(
         ptr: NonNull<()>,
         handle: OperationHandle,

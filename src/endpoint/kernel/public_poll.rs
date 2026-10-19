@@ -24,7 +24,7 @@ where
 {
     #[inline]
     fn publish_public_route_branch(&mut self, label: u8) -> RecvResult<u8> {
-        self.reconcile_retired_views();
+        self.reconcile_retirements();
         match self.transition_public_op(PublicOpEdge::PublishRouteBranch) {
             super::core::PublicOpLease::Held => Ok(label),
             super::core::PublicOpLease::Rejected | super::core::PublicOpLease::Faulted => Err(
@@ -72,7 +72,7 @@ where
             let mut frontier_scratch = self.frontier_scratch_workspace(&mut scratch_lease);
             self.poll_offer_state(&mut offer_state, cx, &mut frontier_scratch)
         };
-        self.reconcile_retired_views();
+        self.reconcile_retirements();
         let poll = match self.session_fault() {
             Some(kind) => Poll::Ready(Err(RecvError::SessionFault(kind))),
             None => poll,

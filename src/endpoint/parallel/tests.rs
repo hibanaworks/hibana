@@ -4,6 +4,52 @@ use crate::{
     test_support::transport::TestTransport,
 };
 
+mod reentrant;
+
+#[test]
+fn identical_message_types_remain_independent_in_their_own_arms() {
+    type Value = g::Msg<121, u32>;
+    let global = g::par(g::send::<0, 1, Value>(), g::send::<2, 1, Value>());
+    let a_program = project::<0>(&global);
+    let b_program = project::<1>(&global);
+    let c_program = project::<2>(&global);
+    let mut slab = [0; 32 * 1024];
+    let mut storage = SessionKitStorage::uninit();
+    let network = TestTransport::new();
+    let rv = storage
+        .init()
+        .rendezvous(&mut slab, network.clone())
+        .unwrap();
+    let sid = SessionId::new(1651);
+    let mut a = rv.enter(sid, &a_program).unwrap();
+    let mut b = rv.enter(sid, &b_program).unwrap();
+    let mut c = rv.enter(sid, &c_program).unwrap();
+    tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .start_paused(true)
+        .build()
+        .unwrap()
+        .block_on(async {
+            let (mut b_left, mut b_right) = b.par().unwrap();
+            tokio::time::timeout(core::time::Duration::from_secs(10), async {
+                tokio::join!(
+                    async {
+                        c.send::<Value>(&22).await.unwrap();
+                        assert_eq!(b_right.recv::<Value>().await.unwrap(), 22);
+                    },
+                    async {
+                        tokio::time::sleep(core::time::Duration::from_secs(1)).await;
+                        a.send::<Value>(&11).await.unwrap();
+                        assert_eq!(b_left.recv::<Value>().await.unwrap(), 11);
+                    },
+                );
+            })
+            .await
+            .expect("the right arm cannot require the matching left message first");
+        });
+    assert!(network.queue_is_empty());
+}
+
 #[test]
 fn parallel_arms_poll_independently_and_join_the_same_parent() {
     type Start = g::Msg<41, u32>;

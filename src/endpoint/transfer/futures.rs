@@ -98,8 +98,9 @@ impl<const ROLE: u8, const RESOURCE: u8> Drop for OwnedSendFuture<'_, '_, ROLE, 
         // The payload owner is dropped after cancellation. A committed transfer
         // has invalidated its tag; an aborted transfer cancels the current run.
         match self.phase {
-            OwnedSendPhase::Pending => self.endpoint.reset_public_send_state(),
-            OwnedSendPhase::Branch(_) => self.endpoint.restore_public_route_branch(),
+            OwnedSendPhase::Pending | OwnedSendPhase::Branch(_) => {
+                self.endpoint.release_public_operation();
+            }
             OwnedSendPhase::Direct(_) | OwnedSendPhase::Done => {}
         }
     }

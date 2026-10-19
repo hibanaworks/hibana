@@ -6,17 +6,6 @@ impl<'cfg, T> crate::runtime::SessionKit<'cfg, T>
 where
     T: crate::transport::Transport + 'cfg,
 {
-    pub(super) unsafe fn reset_public_offer_state_raw(ptr: NonNull<()>, handle: OperationHandle) {
-        let mut waiters = WaiterTransfer::empty();
-        unsafe {
-            // SAFETY: offer-state reset owns the carrier endpoint slot selected
-            // by `handle` and clears only the resident public offer state.
-            Self::with_public_endpoint_mut::<'cfg, _>(ptr, handle, (), |endpoint| {
-                endpoint.reset_public_offer_state(&mut waiters);
-            });
-        }
-    }
-
     pub(super) unsafe fn init_public_offer_state_raw(
         ptr: NonNull<()>,
         handle: OperationHandle,
@@ -30,19 +19,6 @@ where
                 crate::endpoint::kernel::PublicOpLease::Rejected,
                 |endpoint| endpoint.init_public_offer_state(),
             )
-        }
-    }
-
-    pub(super) unsafe fn restore_public_route_branch_raw(
-        ptr: NonNull<()>,
-        handle: OperationHandle,
-    ) {
-        unsafe {
-            // SAFETY: route-branch restore owns the carrier endpoint slot
-            // selected by `handle` and restores the resident branch preview.
-            Self::with_public_endpoint_mut::<'cfg, _>(ptr, handle, (), |endpoint| {
-                endpoint.restore_public_route_branch();
-            });
         }
     }
 
@@ -60,20 +36,6 @@ where
                 crate::endpoint::kernel::PublicOpLease::Rejected,
                 |kernel| kernel.begin_public_branch_recv_state(),
             )
-        }
-    }
-
-    pub(super) unsafe fn reset_public_branch_recv_state_raw(
-        ptr: NonNull<()>,
-        handle: OperationHandle,
-    ) {
-        let mut waiters = WaiterTransfer::empty();
-        unsafe {
-            // SAFETY: branch-recv reset owns the carrier endpoint slot selected
-            // by `handle` and clears only the resident branch-recv state.
-            Self::with_public_endpoint_mut::<'cfg, _>(ptr, handle, (), |kernel| {
-                kernel.reset_public_branch_recv_state(&mut waiters);
-            });
         }
     }
 

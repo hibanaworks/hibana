@@ -15,6 +15,31 @@ impl<'r, T> OperationKernel<'_, 'r, T>
 where
     T: Transport + 'r,
 {
+    /// Release exactly the resident operation owned by a dropped future or
+    /// preview. The canonical phase determines cleanup; callers keep no second
+    /// copy of the operation kind in the deferred destruction queue.
+    pub(in crate::endpoint) fn release_public_operation(&mut self, waiters: &mut WaiterTransfer) {
+        match self.operation.public_active_op {
+            PublicActiveOp::Send | PublicActiveOp::BranchSend => {
+                self.reset_public_send_state(waiters);
+            }
+            PublicActiveOp::Recv => self.reset_public_recv_state(waiters),
+            PublicActiveOp::Offer => self.reset_public_offer_state(waiters),
+            PublicActiveOp::BranchRecv => self.reset_public_branch_recv_state(waiters),
+            PublicActiveOp::RouteBranch => {
+                self.clear_endpoint_waiter(waiters);
+                self.restore_public_route_branch();
+            }
+            PublicActiveOp::Poisoned => {
+                self.clear_endpoint_waiter(waiters);
+                self.finish_operation_io();
+            }
+            PublicActiveOp::Idle
+            | PublicActiveOp::RestoredRouteBranch
+            | PublicActiveOp::SendPayload => crate::invariant(),
+        }
+    }
+
     #[inline]
     pub(in crate::endpoint::kernel) fn public_op_busy_fault(&mut self) {
         self.fail_session(SessionFaultKind::ProgressInvariantViolated);

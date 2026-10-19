@@ -21,17 +21,6 @@ where
         }
     }
 
-    pub(super) unsafe fn reset_public_recv_state_raw(ptr: NonNull<()>, handle: OperationHandle) {
-        let mut waiters = WaiterTransfer::empty();
-        unsafe {
-            // SAFETY: recv-state reset owns the carrier endpoint slot selected
-            // by `handle` and clears only the resident recv state.
-            Self::with_public_endpoint_mut::<'cfg, _>(ptr, handle, (), |kernel| {
-                kernel.reset_public_recv_state(&mut waiters);
-            });
-        }
-    }
-
     pub(super) unsafe fn poll_recv_public_endpoint(request: RecvPollRequest<'_, '_>) {
         let RecvPollRequest {
             ptr,

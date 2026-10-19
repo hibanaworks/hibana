@@ -207,6 +207,7 @@ where
         ::core::ptr::addr_of_mut!((*context).view_generation).write(core::cell::Cell::new(1));
         ::core::ptr::addr_of_mut!((*context).live_views).write(core::cell::Cell::new(1));
         ::core::ptr::addr_of_mut!((*context).retired_views).write(core::cell::Cell::new(None));
+        ::core::ptr::addr_of_mut!((*context).retired_operations).write(core::cell::Cell::new(None));
         ::core::ptr::addr_of_mut!((*context).public_slot_ownership)
             .write(core::cell::Cell::new(public_slot_ownership));
         ::core::ptr::addr_of_mut!((*context).session).write(session);

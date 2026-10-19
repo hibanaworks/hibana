@@ -227,13 +227,9 @@ where
 impl<'e, 'r, const ROLE: u8> Drop for RawRecvFuture<'e, 'r, ROLE> {
     fn drop(&mut self) {
         match *self.endpoint.metadata() {
-            RecvFutureLease::RestoreOnDrop => {
-                // SAFETY: this pending future still owns direct receive state.
-                self.endpoint.reset_public_recv_state();
-            }
-            RecvFutureLease::BranchRestoreOnDrop => {
-                // SAFETY: this pending future still owns branch receive state.
-                self.endpoint.reset_public_branch_recv_state();
+            RecvFutureLease::RestoreOnDrop | RecvFutureLease::BranchRestoreOnDrop => {
+                // This future retains its direct or branch receive lease.
+                self.endpoint.release_public_operation();
             }
             RecvFutureLease::Rejected
             | RecvFutureLease::Completed

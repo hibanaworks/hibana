@@ -1,4 +1,4 @@
-use super::{NonNull, OperationHandle, OperationRegion, WaiterTransfer};
+use super::{NonNull, OperationHandle, OperationRegion};
 
 impl<'cfg, T: crate::transport::Transport + 'cfg> crate::runtime::SessionKit<'cfg, T> {
     pub(super) unsafe fn split_parallel_raw(
@@ -17,14 +17,21 @@ impl<'cfg, T: crate::transport::Transport + 'cfg> crate::runtime::SessionKit<'cf
     }
 
     pub(super) unsafe fn drop_parallel_raw(ptr: NonNull<()>, handle: OperationHandle) {
-        let mut waiters = WaiterTransfer::empty();
-        // SAFETY: the arm's Rust borrow excludes any live operation future.
+        // SAFETY: this borrow retains the live parent allocation. Queue its
+        // destruction even when an I/O callback already owns the kernel lease.
         unsafe {
-            Self::with_public_endpoint_mut::<'cfg, _>(ptr, handle, (), |kernel| {
-                kernel.finish_parallel(&mut waiters);
-            });
-            // The kernel borrow has ended before arbitrary sibling wakeups.
-            Self::wake_public_actor_waiters(ptr, handle.endpoint);
+            let Some(actor) = Self::resident_actor_from_header::<'cfg>(ptr, handle.endpoint) else {
+                return;
+            };
+            let role = ptr.cast::<super::KernelEndpointHeader>().as_ref().role();
+            let view = crate::invariant_some(actor.views.get(role));
+            actor.defer_operation(
+                view,
+                handle.region,
+                crate::endpoint::kernel::OperationRetirement::Parallel,
+            );
+            // A busy entry leaves the queue for the active kernel to reconcile.
+            Self::with_public_endpoint_mut::<'cfg, _>(ptr, handle, (), |_| ());
         }
     }
 }

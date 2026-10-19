@@ -272,8 +272,7 @@ pub(crate) struct EndpointOps {
     ) -> crate::endpoint::SendResult<[OperationRegion; 2]>,
     pub(crate) drop_parallel: unsafe fn(NonNull<()>, OperationHandle),
     pub(crate) drop_endpoint: unsafe fn(ptr: NonNull<()>, handle: EndpointHandle),
-    pub(crate) restore_public_route_branch: unsafe fn(ptr: NonNull<()>, handle: OperationHandle),
-    pub(crate) reset_public_offer_state: unsafe fn(ptr: NonNull<()>, handle: OperationHandle),
+    pub(crate) release_operation: unsafe fn(ptr: NonNull<()>, handle: OperationHandle),
     pub(crate) init_public_offer_state: unsafe fn(
         ptr: NonNull<()>,
         handle: OperationHandle,
@@ -284,18 +283,15 @@ pub(crate) struct EndpointOps {
         logical_label: u8,
         payload_kind: crate::eff::EventPayload,
     ) -> crate::endpoint::SendResult<()>,
-    pub(crate) reset_public_send_state: unsafe fn(ptr: NonNull<()>, handle: OperationHandle),
     pub(crate) init_public_recv_state: unsafe fn(
         ptr: NonNull<()>,
         handle: OperationHandle,
     ) -> crate::endpoint::kernel::PublicOpLease,
-    pub(crate) reset_public_recv_state: unsafe fn(ptr: NonNull<()>, handle: OperationHandle),
     pub(crate) begin_public_branch_recv_state: unsafe fn(
         ptr: NonNull<()>,
         handle: OperationHandle,
     )
         -> crate::endpoint::kernel::PublicOpLease,
-    pub(crate) reset_public_branch_recv_state: unsafe fn(ptr: NonNull<()>, handle: OperationHandle),
     pub(crate) poll_recv: for<'a, 'cx> unsafe fn(RecvPollRequest<'a, 'cx>),
     pub(crate) poll_offer: unsafe fn(
         ptr: NonNull<()>,
@@ -415,8 +411,20 @@ where
             crate::invariant();
         }
         let result = actor.with_kernel(&mut operation_lease, view, handle.region, f);
-        if !actor.drain_retired_views() || actor.context.live_views.get() == 0 {
+        if !actor.drain_retirements() || actor.context.live_views.get() == 0 {
             crate::invariant();
+        }
+        let fault = actor.context.session.cluster().session_fault(
+            actor.context.public_rv,
+            actor.context.public_slot,
+            actor.context.public_generation.get(),
+            actor.context.sid,
+        );
+        drop(operation_lease);
+        if fault.is_some() {
+            // SAFETY: no kernel borrow or operation lease spans arbitrary
+            // wake callbacks, including a fault discovered after a Pending poll.
+            unsafe { Self::wake_public_actor_waiters(ptr, handle.endpoint) };
         }
         result
     }
@@ -444,15 +452,11 @@ where
             split_parallel: Self::split_parallel_raw,
             drop_parallel: Self::drop_parallel_raw,
             drop_endpoint: Self::drop_public_endpoint_raw,
-            restore_public_route_branch: Self::restore_public_route_branch_raw,
-            reset_public_offer_state: Self::reset_public_offer_state_raw,
+            release_operation: Self::release_public_operation_raw,
             init_public_offer_state: Self::init_public_offer_state_raw,
             init_public_send_state: Self::init_public_send_state_raw,
-            reset_public_send_state: Self::reset_public_send_state_raw,
             init_public_recv_state: Self::init_public_recv_state_raw,
-            reset_public_recv_state: Self::reset_public_recv_state_raw,
             begin_public_branch_recv_state: Self::begin_public_branch_recv_state_raw,
-            reset_public_branch_recv_state: Self::reset_public_branch_recv_state_raw,
             poll_recv: Self::poll_recv_public_endpoint,
             poll_offer: Self::poll_offer_public_endpoint,
             poll_branch_recv: Self::poll_branch_recv_public_endpoint,

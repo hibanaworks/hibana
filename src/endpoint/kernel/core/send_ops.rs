@@ -278,7 +278,7 @@ where
         cx: &mut core::task::Context<'_>,
     ) -> Poll<SendResult<()>> {
         let lane_idx = pending.lane_idx();
-        self.reconcile_retired_views();
+        self.reconcile_retirements();
         if let Some(kind) = self.session_fault() {
             lane_port::cancel_send_outgoing(&mut pending.transport, self.port_for_lane(lane_idx));
             return Poll::Ready(Err(SendError::SessionFault(kind)));
@@ -301,7 +301,7 @@ where
         let port = self.port_for_lane(lane_idx);
         let lane_wire = pending.lane_wire();
         let transport_poll = lane_port::poll_send_outgoing(&mut pending.transport, port, cx);
-        self.reconcile_retired_views();
+        self.reconcile_retirements();
         if let Some(kind) = self.session_fault() {
             lane_port::cancel_send_outgoing(&mut pending.transport, self.port_for_lane(lane_idx));
             return Poll::Ready(Err(SendError::SessionFault(kind)));

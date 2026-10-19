@@ -71,7 +71,7 @@ impl<'e, 'r, const ROLE: u8> Drop for RouteBranch<'e, 'r, ROLE> {
         /* SAFETY: `RouteBranch` owns the route preview borrow produced by
         `offer`. Dropping an unconsumed branch restores that preview exactly
         once through the endpoint pointer carried by the branch. */
-        self.target.restore_public_route_branch();
+        self.target.release_public_operation();
     }
 }
 
@@ -141,7 +141,7 @@ impl<'e, 'r, const ROLE: u8> Drop for RawOfferFuture<'e, 'r, ROLE> {
             /* SAFETY: this offer future still owns the restore-on-drop lease.
             Dropping it releases the public offer state before another endpoint
             operation can borrow the same endpoint. */
-            self.endpoint.reset_public_offer_state();
+            self.endpoint.release_public_operation();
         }
     }
 }

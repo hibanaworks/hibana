@@ -189,7 +189,7 @@ impl<'a, 'e, 'r, const ROLE: u8> Drop for RawSendFuture<'a, 'e, 'r, ROLE> {
             /* SAFETY: an armed send future holds the public send lease.
             Drop owns the future and releases that lease exactly once
             through the same endpoint pointer. */
-            endpoint.reset_public_send_state();
+            endpoint.release_public_operation();
         }
     }
 }

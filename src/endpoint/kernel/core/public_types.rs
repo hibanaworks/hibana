@@ -42,13 +42,33 @@ pub(crate) struct ResidentView<'r, T: Transport + 'r> {
 /// progress and transport handles remain owned once by the actor and view.
 pub(crate) struct ResidentOperation<'r> {
     pub(crate) waiter: crate::rendezvous::core::EndpointWaiter,
+    pub(super) retired: core::cell::Cell<Option<RetiredOperation>>,
+    pub(super) retired_next: core::cell::Cell<Option<core::ptr::NonNull<Self>>>,
     pub(crate) state: core::cell::UnsafeCell<OperationIo<'r>>,
+}
+
+/// Destruction waiting for the current synchronous cursor borrow to end.
+/// The region identifies a borrow to release, never another progress cursor.
+#[derive(Clone, Copy)]
+pub(super) struct RetiredOperation {
+    pub(super) role: u8,
+    pub(super) region: crate::endpoint::carrier::OperationRegion,
+    pub(super) kind: OperationRetirement,
+}
+
+/// Deferred RAII work, independent of the canonical operation phase.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OperationRetirement {
+    Release,
+    Parallel,
 }
 
 impl<'r> ResidentOperation<'r> {
     pub(crate) const fn new() -> Self {
         Self {
             waiter: crate::rendezvous::core::EndpointWaiter::empty(),
+            retired: core::cell::Cell::new(None),
+            retired_next: core::cell::Cell::new(None),
             state: core::cell::UnsafeCell::new(OperationIo {
                 public_active_op: PublicActiveOp::Idle,
                 public_offer_state: OfferState::new(),
@@ -73,10 +93,13 @@ impl<'r, T: Transport + 'r> ResidentView<'r, T> {
     }
 
     pub(crate) fn primary_operation(&self) -> &ResidentOperation<'r> {
+        crate::invariant_some(self.operation(self.primary_operation_lane()))
+    }
+
+    pub(super) fn primary_operation_lane(&self) -> usize {
         // SAFETY: primary_lane is fixed when this view is initialized. Reading
         // this scalar does not borrow its ports or operation-state owners.
-        let lane = unsafe { core::ptr::addr_of!((*self.io.get()).primary_lane).read() };
-        crate::invariant_some(self.operation(lane))
+        unsafe { core::ptr::addr_of!((*self.io.get()).primary_lane).read() }
     }
 }
 
@@ -119,6 +142,8 @@ pub(crate) struct ActorContext<'r, T: Transport + 'r> {
     pub(crate) view_generation: core::cell::Cell<u32>,
     pub(crate) live_views: core::cell::Cell<u16>,
     pub(crate) retired_views: core::cell::Cell<Option<core::ptr::NonNull<ResidentView<'r, T>>>>,
+    pub(in crate::endpoint::kernel) retired_operations:
+        core::cell::Cell<Option<core::ptr::NonNull<ResidentOperation<'r>>>>,
     pub(crate) public_slot_ownership: core::cell::Cell<PublicSlotOwnership>,
     pub(crate) session: SessionCtx<'r, T>,
 }
@@ -180,6 +205,7 @@ pub(crate) struct OperationKernel<'op, 'r, T: Transport + 'r> {
     pub(crate) io: &'op mut EndpointIo<'r, T>,
     pub(crate) operation: &'op mut OperationIo<'r>,
     pub(in crate::endpoint::kernel) operations: &'op LaneSlotArray<ResidentOperation<'r>>,
+    pub(super) views: &'op ActorViews<'r, T>,
     pub(crate) region: crate::endpoint::carrier::OperationRegion,
 }
 
@@ -233,27 +259,6 @@ impl<'r, T: Transport + 'r> ResidentActor<'r, T> {
         self.context.live_views.set(crate::invariant_some(
             self.context.live_views.get().checked_sub(1),
         ));
-    }
-
-    pub(crate) fn drain_retired_views(&self) -> bool {
-        while let Some(ptr) = self.context.retired_views.get() {
-            // SAFETY: retirement enqueues only pinned records in this actor.
-            let view = unsafe { ptr.as_ref() };
-            let mut waiters = crate::endpoint::carrier::WaiterTransfer::empty();
-            let Some(()) = self.try_with_kernel(
-                view,
-                crate::endpoint::carrier::OperationRegion::WHOLE,
-                |kernel| {
-                    self.context.retired_views.set(view.retired_next.take());
-                    kernel.clear_endpoint_waiter(&mut waiters);
-                    kernel.retire_view();
-                },
-            ) else {
-                return false;
-            };
-            drop(waiters);
-        }
-        true
     }
 
     pub(crate) fn finish_all_view_io(&self) {
@@ -319,48 +324,10 @@ impl<'r, T: Transport + 'r> ResidentActor<'r, T> {
             // entry while this operation state's mutable borrow is active.
             operation: unsafe { &mut *operation.state.get() },
             operations: &view.operations,
+            views: &self.views,
             region,
         };
         Some(f(&mut kernel))
-    }
-}
-
-impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
-    /// Reconcile destruction performed by a callback before publishing progress.
-    /// The current kernel already owns the common cursor borrow. Borrow only
-    /// the retired sibling's disjoint I/O, never the cursor a second time.
-    pub(crate) fn reconcile_retired_views(&mut self) {
-        while let Some(ptr) = self.context.retired_views.get() {
-            // SAFETY: only this actor's pinned view records enter this queue.
-            let view = unsafe { ptr.as_ref() };
-            if view.public_header.actor() != self.public_header.actor()
-                || core::ptr::eq(&view.public_header, self.public_header)
-            {
-                crate::invariant();
-            }
-            self.context.retired_views.set(view.retired_next.take());
-            let mut waiters = crate::endpoint::carrier::WaiterTransfer::empty();
-            {
-                let operation = view.primary_operation();
-                let mut sibling = OperationKernel {
-                    public_header: &view.public_header,
-                    waiter: &operation.waiter,
-                    context: self.context,
-                    progress: self.progress,
-                    // SAFETY: this is a different view; the common cursor
-                    // borrow excludes another concurrent kernel entry.
-                    io: unsafe { &mut *view.io.get() },
-                    // SAFETY: this retired view is distinct from the current
-                    // kernel, and the common progress borrow is retained.
-                    operation: unsafe { &mut *operation.state.get() },
-                    operations: &view.operations,
-                    region: crate::endpoint::carrier::OperationRegion::WHOLE,
-                };
-                sibling.clear_endpoint_waiter(&mut waiters);
-                sibling.retire_view();
-            }
-            drop(waiters);
-        }
     }
 }
 
