@@ -188,6 +188,22 @@ pub(crate) struct OperationIo<'r> {
     pub(in crate::endpoint) public_send_state: SendState<'r>,
 }
 
+#[cfg(all(test, hibana_repo_tests))]
+impl OperationIo<'_> {
+    /// Read the existing pending plan; this observation never prepares a send.
+    pub(crate) fn proof_prepared_send(&self) -> Option<(usize, u8, u8)> {
+        let SendState::Sending { pending } = &self.public_send_state else {
+            return None;
+        };
+        let event = pending.commit_plan.as_ref()?.proof.progress.delta.event()?;
+        Some((
+            event.eff_index().dense_ordinal(),
+            event.event_label(),
+            event.lane(),
+        ))
+    }
+}
+
 /// One synchronous kernel borrow. It owns neither the actor nor its I/O.
 /// The borrow ends before a public future returns Pending.
 pub(crate) struct OperationKernel<'op, 'r, T: Transport + 'r> {

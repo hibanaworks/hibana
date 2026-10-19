@@ -76,6 +76,7 @@ import Hibana.IterationErasure
 import Hibana.InBandChoiceKnowledge
 import Hibana.RuntimeRefinement
 import Hibana.PublicOperationKernel
+import Hibana.PublicOperationCut
 import Hibana.PreparedKernelRefinement
 import Hibana.ProductionKernelArtifact
 import Hibana.ProtocolArtifact

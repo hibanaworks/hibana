@@ -1,0 +1,16 @@
+an_actual_independent_call_can_start_during_the_pending_owned_send : asyncOperationCut0.permitsFreshCall
+    Hibana.PublicOperationEdge.beginSend =
+  true
+async_operation_cut_0_matches : asyncOperationCut0.matches asyncOperationImage = true
+async_operation_cut_1_matches : asyncOperationCut1.matches asyncOperationImage = true
+both_pending_sender_and_payload_slots_remain_visible : (asyncOperationCut0.slots.any fun slot =>
+      slot.view == 0 && slot.phase == Hibana.PublicOperationPhase.send) =
+    true ∧
+  (asyncOperationCut0.slots.any fun slot => slot.view == 10 && slot.phase == Hibana.PublicOperationPhase.sendPayload) =
+    true
+independent_publication_does_not_erase_the_other_pending_call : asyncOperationCut1.slots = asyncOperationCut0.slots
+omitting_a_whole_resource_view_cannot_hide_its_borrow : (have __src := asyncOperationCut0;
+      { views := List.filter (fun x => x != 10) asyncOperationCut0.views,
+        slots := List.filter (fun slot => slot.view != 10) asyncOperationCut0.slots, target := __src.target }).matches
+    asyncOperationImage =
+  false

@@ -6,6 +6,7 @@ PROOF_DIR="${ROOT_DIR}/proofs/lean"
 GENERATED="${ROOT_DIR}/target/lean-proof/Generated.lean"
 RUNTIME_GENERATED="${ROOT_DIR}/target/lean-proof/RuntimeGenerated.lean"
 PUBLIC_OPERATION_GENERATED="${ROOT_DIR}/target/lean-proof/PublicOperationGenerated.lean"
+PUBLIC_OPERATION_CUT_GENERATED="${ROOT_DIR}/target/lean-proof/ParallelOperationCutGenerated.lean"
 CAUSAL_GENERATED="${ROOT_DIR}/target/lean-proof/CausalGenerated.lean"
 PARALLEL_GENERATED="${ROOT_DIR}/target/lean-proof/ParallelGenerated.lean"
 PROGRAM_COLUMNS_GENERATED="${ROOT_DIR}/target/lean-proof/ProgramColumnsGenerated.lean"
@@ -34,6 +35,7 @@ ACTOR_PARALLEL_REENTRY_GENERATED="${ROOT_DIR}/target/lean-proof/ActorParallelRee
 MIXED_SEND_ADMISSION_GENERATED="${ROOT_DIR}/target/lean-proof/MixedSendAdmissionGenerated.lean"
 DISTRIBUTED_SOURCE_GENERATED="${ROOT_DIR}/target/lean-proof/DistributedSourceGenerated.lean"
 ASYNC_SOURCE_GENERATED="${ROOT_DIR}/target/lean-proof/AsyncSourcePublicationGenerated.lean"
+ASYNC_OPERATION_CUT_GENERATED="${ROOT_DIR}/target/lean-proof/AsyncOperationCutGenerated.lean"
 DISTRIBUTED_CHOICE_GENERATED="${ROOT_DIR}/target/lean-proof/DistributedChoiceGenerated.lean"
 FRAME_DOMAINS_GENERATED="${ROOT_DIR}/target/lean-proof/FrameDomainsGenerated.lean"
 LOGICAL_VIEW_WORD_GENERATED="${ROOT_DIR}/target/lean-proof/LogicalViewWordGenerated.lean"
@@ -68,7 +70,7 @@ bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" build-serial "${PROOF_
 bash "${ROOT_DIR}/.github/scripts/check_lean_claim_surface.sh"
 static_audit_output="$(run_audit \
   theorem-inventory \
-  --static "${PROOF_DIR}" "${STATIC_CLAIM_SNAPSHOT}" 1109 688 307 114)"
+  --static "${PROOF_DIR}" "${STATIC_CLAIM_SNAPSHOT}" 1115 694 307 114)"
 printf '%s\n' "${static_audit_output}"
 printf '%s\n' "${static_audit_output}" | bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard markers static
 bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" theorem-inventory \
@@ -79,6 +81,7 @@ hibana_enable_repo_tests_cfg
 mkdir -p "$(dirname "${GENERATED}")"
 rm -f "${GENERATED}" "${RUNTIME_GENERATED}" "${PUBLIC_OPERATION_GENERATED}" "${CAUSAL_GENERATED}" "${PARALLEL_GENERATED}" "${PROGRAM_COLUMNS_GENERATED}" "${PARTIAL_CHOICE_GENERATED}" "${CONTROLLER_GENERATED}" "${INGRESS_GENERATED}" "${REENTRY_GENERATED}" "${ACTOR_COMMIT_GENERATED}" "${ACTOR_REENTRY_COMMIT_GENERATED}" "${ACTOR_PARALLEL_REENTRY_GENERATED}" "${ACTOR_ROUTE_LEFT_REENTRY_GENERATED}" "${ACTOR_ROUTE_RIGHT_REENTRY_GENERATED}"
 rm -f "${OWNED_RECOVERY_GENERATED}"
+rm -f "${PUBLIC_OPERATION_CUT_GENERATED}"
 rm -f "${ACTOR_ADMISSION_GENERATED}"
 rm -f "${ACTOR_VISIT_GENERATED}"
 rm -f "${ACTOR_MUTATION_GENERATED}"
@@ -89,6 +92,7 @@ rm -f "${RECEIPT_REFRESH_GENERATED}"
 rm -f "${MIXED_SEND_ADMISSION_GENERATED}"
 rm -f "${DISTRIBUTED_SOURCE_GENERATED}"
 rm -f "${ASYNC_SOURCE_GENERATED}"
+rm -f "${ASYNC_OPERATION_CUT_GENERATED}"
 rm -f "${DISTRIBUTED_CHOICE_GENERATED}"
 rm -f "${FRAME_DOMAINS_GENERATED}"
 rm -f "${OCCURRENCE_CHOICE_GENERATED}"
@@ -211,6 +215,12 @@ CARGO_BUILD_JOBS=1 \
     -- --ignored --exact
 bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${PUBLIC_OPERATION_GENERATED}" "public-operation"
 CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib \
+  endpoint::parallel::tests::parallel_arms_poll_independently_and_join_the_same_parent \
+  -- --exact
+bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${PUBLIC_OPERATION_CUT_GENERATED}" "parallel operation slots"
+run_audit generated-axioms --kernel "${PUBLIC_OPERATION_CUT_GENERATED}" "${PROOF_DIR}" \
+  "${PROOF_DIR}/parallel-operation-cut-generated-claim-surface.txt" 12
+CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib \
   global::const_dsl::receive_lane_causality::tests::export_causal_flow_for_lean \
   -- --ignored --exact
 bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${CAUSAL_GENERATED}" "causal"
@@ -253,6 +263,9 @@ CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --li
 bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${ASYNC_SOURCE_GENERATED}" "overlapping asynchronous send calls"
 run_audit generated-axioms --kernel "${ASYNC_SOURCE_GENERATED}" "${PROOF_DIR}" \
   "${PROOF_DIR}/async-source-generated-claim-surface.txt" 9
+bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${ASYNC_OPERATION_CUT_GENERATED}" "pending owned send operation slots"
+run_audit generated-axioms --kernel "${ASYNC_OPERATION_CUT_GENERATED}" "${PROOF_DIR}" \
+  "${PROOF_DIR}/async-operation-cut-generated-claim-surface.txt" 6
 CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib \
   g::role_projection::tests::occurrence_choice::changing_rolled_loans_teach_only_the_received_occurrences_choices \
   -- --exact

@@ -46,6 +46,7 @@ async fn a_tcp_receiver_returns_the_resource_while_the_send_is_pending_between_p
             .unwrap(),
     );
     let observations;
+    let operation_observations;
     let pending_journal;
     {
         let mut slab = vec![0; 64 * 1024];
@@ -65,6 +66,7 @@ async fn a_tcp_receiver_returns_the_resource_while_the_send_is_pending_between_p
         // snapshots only observe calls; they never decide an operation.
         let before = unsafe { owner_tag.snapshot::<NetworkTransport<'_>>() };
         let [mut resources, mut independent] = owner.par().unwrap();
+        let independent_tag = independent.proof_tag();
         {
             let mut transfer = pin!(resources.send::<Loan>(db));
             tokio::select! {
@@ -85,14 +87,34 @@ async fn a_tcp_receiver_returns_the_resource_while_the_send_is_pending_between_p
             // A different fragment of this very actor commits while the
             // accepted owned send still retains its payload between polls.
             // SAFETY: the same pinned actor is idle between the future polls.
-            let pending = unsafe { owner_tag.snapshot::<NetworkTransport<'_>>() };
+            let pending_cut = unsafe { independent_tag.operation_cut::<NetworkTransport<'_>>() };
+            let prepared = pending_cut
+                .operations
+                .iter()
+                .find_map(|slot| (slot.view == 0).then_some(slot.prepared_send).flatten())
+                .expect("the actual pending owned future retains its prepared source event");
+            assert_eq!(prepared.1, 1);
+            assert!(pending_cut.actor.steps.iter().any(|step| step.view == 0
+                && matches!(step.action, crate::global::typestate::LocalAction::Send {
+                    eff_index, label: 1, lane, ..
+                } if eff_index.dense_ordinal() == prepared.0 && lane == prepared.2)));
+            let pending = pending_cut.actor.clone();
             independent.send::<Independent>(&77).await.unwrap();
             peer.wait_success().await;
             // SAFETY: both observations use the same pinned sender actor.
             assert!(unsafe { tag.matches_header() });
             assert!(unsafe { tag.is_send_payload::<NetworkTransport<'_>>() });
             // SAFETY: independent's await completed; transfer is not polling.
-            let independent_done = unsafe { owner_tag.snapshot::<NetworkTransport<'_>>() };
+            let independent_cut =
+                unsafe { independent_tag.operation_cut::<NetworkTransport<'_>>() };
+            assert!(
+                independent_cut
+                    .operations
+                    .iter()
+                    .any(|slot| slot.view == 0 && slot.prepared_send == Some(prepared))
+            );
+            let independent_done = independent_cut.actor.clone();
+            operation_observations = [pending_cut, independent_cut];
             pending_journal = broker.journal().await;
             transfer.await.unwrap();
             // SAFETY: the live owner view and its original actor remain pinned.
@@ -113,7 +135,7 @@ async fn a_tcp_receiver_returns_the_resource_while_the_send_is_pending_between_p
             },
         );
     }
-    publication::write_observations(&observations, &pending_journal);
+    publication::write_observations(&observations, &pending_journal, &operation_observations);
     let journal = broker.journal().await;
     assert_eq!(
         journal

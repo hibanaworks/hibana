@@ -1112,6 +1112,36 @@ slot and its originating future/borrow; a primary-slot phase alone cannot prove
 that the other lanes are idle or identify their calls. This is an observation
 and correspondence gap, not evidence that the runtime serializes those lanes.
 
+`PublicOperationCut.lean` checks a complete lane-slot observation against the
+immutable descriptor's full view roster, per-view allocation and the actual
+borrow's source interval. It derives resident views from initial actor bindings,
+logical operations and owned payloads. It recomputes the owned-lane mask and the other-active-operation
+guard. The Rust observer reads the existing slots under the actor lease and
+uses the current kernel reference for its already borrowed slot. It does not
+create another owner table or operation state. The lexical target is recorded
+separately from actor progress so observing another Endpoint does not invent a
+state transition. The primary-phase observation now reads the actual primary
+cell even when the current target is a non-primary parallel borrow.
+
+The existing direct Tokio parallel test supplies four cuts. Its second lane
+has a pending receive while the first lane starts and completes a send.
+Twelve generated kernel-checked claims include rejection of missing/duplicate
+slots, an invented lane mask and an incorrect whole-parent idle claim. The
+existing separate-process TCP test also checks that the pending owned future
+retains its exact prepared source event across an independent publication.
+Its six operation-cut claims retain both the pending sender and payload slots,
+permit the actual independent call and reject omitting an entire resource view.
+Preparation without a source event remains distinct from a prepared plan.
+These are read-only test observations and add no production API, wire field,
+runtime guard or serialization of independent work.
+
+This is a local operation-admission component of lifting. Complete slot coverage does not prove
+that every source-ready action has an available Rust value or future, nor that
+an indefinitely pending carrier will complete. General future/value
+correspondence, source progress, custody and observable fault/closure still
+have to be composed into enabled-step lifting. The public owned projection
+guard remains closed.
+
 `ActorVisitProgress.lean` derives the finite point domain from the selected
 source bindings, with the path itself checked against the normalized global.
 It contains acceptance and both local halves of each wire

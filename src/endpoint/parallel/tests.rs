@@ -6,6 +6,8 @@ use crate::{
 
 mod associative;
 mod choice;
+#[cfg(not(miri))]
+mod operation_cut;
 mod reentrant;
 
 #[test]
@@ -73,6 +75,8 @@ fn parallel_arms_poll_independently_and_join_the_same_parent() {
     let sid = SessionId::new(1635);
     let mut a = rv.enter(sid, &a_program).unwrap();
     let mut b = rv.enter(sid, &b_program).unwrap();
+    let a_tag = crate::endpoint::proof_snapshot::view_tag(&a);
+    let mut operation_cuts = std::vec::Vec::new();
     tokio::runtime::Builder::new_current_thread()
         .enable_time()
         .start_paused(true)
@@ -83,6 +87,8 @@ fn parallel_arms_poll_independently_and_join_the_same_parent() {
                 {
                     let [mut a_left, mut a_right] = a.par().unwrap();
                     let [mut b_left, mut b_right] = b.par().unwrap();
+                    let left_tag = a_left.proof_tag();
+                    let right_tag = a_right.proof_tag();
                     tokio::join!(
                         async {
                             assert_eq!(a_right.recv::<Ack>().await.unwrap(), 8);
@@ -92,10 +98,41 @@ fn parallel_arms_poll_independently_and_join_the_same_parent() {
                         },
                         async {
                             tokio::time::sleep(core::time::Duration::from_secs(1)).await;
+                            // SAFETY: these copied tags refer to this pinned
+                            // TestTransport actor, between synchronous polls.
+                            let (whole, left, right) = unsafe {
+                                (
+                                    a_tag.operation_cut::<TestTransport>(),
+                                    left_tag.operation_cut::<TestTransport>(),
+                                    right_tag.operation_cut::<TestTransport>(),
+                                )
+                            };
+                            use crate::endpoint::kernel::PublicActiveOp;
+                            assert_eq!(whole.actor.views[0].operation, "Idle");
+                            assert!(whole.target.other_active);
+                            assert!(!left.target.other_active);
+                            assert_eq!(right.actor.views[0].operation, "Idle");
+                            assert_eq!(
+                                right
+                                    .operations
+                                    .iter()
+                                    .find(|slot| slot.view == right.target.view
+                                        && slot.lane == right.target.lane)
+                                    .unwrap()
+                                    .phase,
+                                PublicActiveOp::Recv
+                            );
+                            assert_eq!(whole.operations, left.operations);
+                            assert_eq!(left.operations, right.operations);
+                            operation_cuts.extend([whole, left, right]);
                             a_left.send::<Start>(&7).await.unwrap();
+                            // SAFETY: the send completed, and the sibling's
+                            // receive remains pending until the later Ack.
+                            operation_cuts
+                                .push(unsafe { left_tag.operation_cut::<TestTransport>() });
                         },
                         async {
-                            tokio::time::sleep(core::time::Duration::from_secs(1)).await;
+                            tokio::time::sleep(core::time::Duration::from_secs(2)).await;
                             b_right.send::<Ack>(&8).await.unwrap();
                         },
                     );
@@ -108,6 +145,9 @@ fn parallel_arms_poll_independently_and_join_the_same_parent() {
             .expect("independent arm I/O must not hold the sibling pending");
         });
     assert!(network.queue_is_empty());
+    assert_eq!(operation_cuts.len(), 4);
+    #[cfg(not(miri))]
+    operation_cut::write_observations(&a_program, &operation_cuts);
 }
 
 #[test]

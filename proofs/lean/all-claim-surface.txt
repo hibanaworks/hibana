@@ -295,6 +295,11 @@ Hibana.EndpointDelegation.withOwner_same : ∀ (owners : Hibana.EndpointDelegati
           (@List.take.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding) index run.bindings)
           (@Prod.mk.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding previousEvent previous) →
         @LT.lt.{0} Nat instLTNat previousEvent event
+@Hibana.a_busy_borrow_cannot_begin_a_fresh_call : ∀ {cut : Hibana.PublicOperationCut}
+  {image : Hibana.RustDescriptorImage},
+  @Eq.{1} Bool (cut.matches image) true →
+    @Eq.{1} Bool cut.target.otherActive true →
+      ∀ (edge : Hibana.PublicOperationEdge), @Eq.{1} Bool (cut.permitsFreshCall edge) false
 @Hibana.a_canonical_rolled_wire_alias_retains_its_actual_source_domain : ∀ {choreo : Hibana.Choreo} {left right : Nat}
   {leftSource rightSource leftOutput rightOutput : Hibana.ProgramAtomBody},
   @Eq.{1} Bool
@@ -389,6 +394,24 @@ Hibana.EndpointDelegation.withOwner_same : ∀ (owners : Hibana.EndpointDelegati
         (And (@Eq.{1} Nat sample.polls (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1))))
           (And (@Eq.{1} Nat sample.publications (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0))))
             (And (@Eq.{1} Bool sample.done true) (@Eq.{1} Bool sample.retained false))))
+@Hibana.a_checked_operation_cut_covers_every_resident_slot : ∀ {cut : Hibana.PublicOperationCut}
+  {image : Hibana.RustDescriptorImage},
+  @Eq.{1} Bool (cut.matches image) true →
+    @Eq.{1} (List.{0} (Prod.{0, 0} Nat Nat))
+      (@List.map.{0, 0} Hibana.OperationSlotObservation (Prod.{0, 0} Nat Nat) Hibana.OperationSlotObservation.key
+        cut.slots)
+      (image.operationSlotKeys cut.views)
+@Hibana.a_checked_operation_cut_matches_the_other_active_guard : ∀ {cut : Hibana.PublicOperationCut}
+  {image : Hibana.RustDescriptorImage},
+  @Eq.{1} Bool (cut.matches image) true → @Eq.{1} Bool cut.target.otherActive cut.hasOtherActive
+@Hibana.a_checked_operation_cut_uses_the_descriptor_borrow_mask : ∀ {cut : Hibana.PublicOperationCut}
+  {image : Hibana.RustDescriptorImage},
+  @Eq.{1} Bool (cut.matches image) true →
+    @Eq.{1} (List.{0} Nat) cut.target.ownedLanes (image.borrowOwnedLanes cut.target)
+@Hibana.a_checked_operation_cut_uses_the_immutable_view_inventory : ∀ {cut : Hibana.PublicOperationCut}
+  {image : Hibana.RustDescriptorImage},
+  @Eq.{1} Bool (cut.matches image) true →
+    @Eq.{1} (Option.{0} (List.{0} Nat)) image.operationViews? (@some.{0} (List.{0} Nat) cut.views)
 @Hibana.a_checked_owned_fifo_receipt_retains_its_actual_source_instance : ∀ {choreo : Hibana.Choreo} {session : Nat}
   {transport next : Hibana.TransportState} {history : Hibana.ElasticAdmissionHistory}
   {records : List.{0} (Prod.{0, 0} Hibana.SourceSendAdmission Nat)} {frame : Hibana.TransportFrame}
@@ -6218,6 +6241,13 @@ Hibana.ambiguous_receive_fails_closed : ∀ (before : Hibana.CompactGlobalState)
                 (source.before (@HSub.hSub.{0, 0, 0} Nat Nat Nat (@instHSub.{0} Nat instSubNat) first start)
                   (@HSub.hSub.{0, 0, 0} Nat Nat Nat (@instHSub.{0} Nat instSubNat) second start))
                 true
+@Hibana.an_idle_independent_borrow_can_begin_its_send : ∀ {cut : Hibana.PublicOperationCut}
+  {image : Hibana.RustDescriptorImage},
+  @Eq.{1} Bool (cut.matches image) true →
+    @Eq.{1} (Option.{0} Hibana.PublicOperationPhase) cut.targetPhase?
+        (@some.{0} Hibana.PublicOperationPhase Hibana.PublicOperationPhase.idle) →
+      @Eq.{1} Bool cut.target.otherActive false →
+        @Eq.{1} Bool (cut.permitsFreshCall Hibana.PublicOperationEdge.beginSend) true
 @Hibana.an_initial_resource_has_no_handoff_before_its_target : ∀ {source : Hibana.EndpointDelegation.Source}
   {resources : List.{0} Hibana.EndpointDelegation.EndpointKey} {owners : Hibana.EndpointDelegation.OwnerMap}
   {path : List.{0} Hibana.EndpointDelegation.Selection} {run : Hibana.EndpointDelegation.Elaboration}

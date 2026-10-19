@@ -9,6 +9,7 @@ use std::vec::Vec;
 pub(crate) struct ViewTagObservation {
     ptr: core::ptr::NonNull<super::carrier::KernelEndpointHeader>,
     handle: super::carrier::EndpointHandle,
+    region: super::carrier::OperationRegion,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -26,13 +27,21 @@ impl ViewTagObservation {
     /// tag. No operation lease may be held during the observation.
     pub(crate) unsafe fn snapshot<T: crate::transport::Transport>(self) -> ActorSnapshot {
         // SAFETY: the caller fixes the erased transport and allocation lifetime.
-        unsafe {
-            snapshot_from_handle::<T>(
-                self.ptr,
-                self.handle,
-                crate::endpoint::carrier::OperationRegion::WHOLE,
-            )
-        }
+        unsafe { snapshot_from_handle::<T>(self.ptr, self.handle, self.region) }.actor
+    }
+
+    /// Observe every resident operation plus this exact lexical borrow target.
+    /// The target is separate from actor state: viewing the same actor through
+    /// another Endpoint must not fabricate a protocol-state transition.
+    ///
+    /// # Safety
+    /// The same lifetime, concrete transport and between-polls requirements as
+    /// `snapshot` apply. This copied tag is never an operation capability.
+    pub(crate) unsafe fn operation_cut<T: crate::transport::Transport>(
+        self,
+    ) -> OperationCutSnapshot {
+        // SAFETY: the caller fixes the erased transport and allocation lifetime.
+        unsafe { snapshot_from_handle::<T>(self.ptr, self.handle, self.region) }
     }
 
     /// Observe whether an existing view is an owned-send payload between polls.
@@ -97,9 +106,23 @@ impl ViewTagObservation {
 }
 
 pub(crate) fn view_tag<const ROLE: u8>(endpoint: &Endpoint<'_, ROLE>) -> ViewTagObservation {
+    operation_tag(
+        endpoint.owner.ptr,
+        super::carrier::OperationHandle {
+            endpoint: endpoint.owner.handle,
+            region: super::carrier::OperationRegion::WHOLE,
+        },
+    )
+}
+
+pub(super) fn operation_tag(
+    ptr: core::ptr::NonNull<super::carrier::KernelEndpointHeader>,
+    handle: super::carrier::OperationHandle,
+) -> ViewTagObservation {
     ViewTagObservation {
-        ptr: endpoint.owner.ptr,
-        handle: endpoint.owner.handle,
+        ptr,
+        handle: handle.endpoint,
+        region: handle.region,
     }
 }
 
@@ -149,6 +172,33 @@ pub(crate) struct ViewSnapshot {
     pub(crate) operation: std::string::String,
 }
 
+/// Every resident slot, including idle slots and non-primary parallel calls.
+/// These copies are evidence only, never another operation/ownership registry.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct OperationSnapshot {
+    pub(crate) view: u8,
+    pub(crate) lane: usize,
+    pub(in crate::endpoint) phase: super::kernel::PublicActiveOp,
+    /// Preparation can precede source selection. Do not invent a source row.
+    pub(crate) preparing: Option<(u8, crate::eff::EventPayload)>,
+    /// Exact existing commit plan: source event, logical label and lane.
+    pub(crate) prepared_send: Option<(usize, u8, u8)>,
+    pub(crate) offered_event: Option<usize>,
+}
+
+/// The actual Endpoint/parallel-borrow target used for this observation.
+/// A resident slot does not retain this borrow region between polls.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct OperationTargetSnapshot {
+    pub(crate) view: u8,
+    pub(crate) lane: usize,
+    pub(crate) whole: bool,
+    pub(crate) start: usize,
+    pub(crate) end: usize,
+    pub(crate) owned_lanes: Vec<usize>,
+    pub(crate) other_active: bool,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ActorSnapshot {
     pub(crate) completion_mutations: u64,
@@ -170,6 +220,52 @@ impl ActorSnapshot {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct OperationCutSnapshot {
+    pub(crate) actor: ActorSnapshot,
+    pub(crate) operations: Vec<OperationSnapshot>,
+    pub(crate) target: OperationTargetSnapshot,
+}
+
+/// Encode copied evidence only, after the direct localsides have run.
+#[cfg(not(miri))]
+pub(crate) fn operation_cut_source(cut: &OperationCutSnapshot) -> std::string::String {
+    let views = cut
+        .actor
+        .views
+        .iter()
+        .map(|view| std::format!("{}", view.role))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let slots = cut
+        .operations
+        .iter()
+        .map(|slot| {
+            let mut phase = std::format!("{:?}", slot.phase);
+            phase.get_mut(..1).unwrap().make_ascii_lowercase();
+            std::format!(
+                "{{ view := {}, lane := {}, phase := .{phase} }}",
+                slot.view,
+                slot.lane
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    let target = &cut.target;
+    std::format!(
+        "{{ views := [{views}], slots := [{slots}], target := {{ \
+        view := {}, lane := {}, whole := {}, start := {}, stop := {}, \
+        ownedLanes := {:?}, otherActive := {} }} }}",
+        target.view,
+        target.lane,
+        target.whole,
+        target.start,
+        target.end,
+        target.owned_lanes,
+        target.other_active
+    )
+}
+
 /// Observe an offered branch before consuming its first operation.
 ///
 /// # Safety
@@ -179,7 +275,7 @@ pub(crate) unsafe fn branch_snapshot<const ROLE: u8>(
 ) -> ActorSnapshot {
     let (ptr, handle) = branch.target.parts();
     // SAFETY: the caller establishes TestTransport and the preview retains the view.
-    unsafe { snapshot_from_handle::<TestTransport>(ptr, handle.endpoint, handle.region) }
+    unsafe { snapshot_from_handle::<TestTransport>(ptr, handle.endpoint, handle.region) }.actor
 }
 
 /// Copy observations under the existing operation lease and kernel borrow.
@@ -198,6 +294,7 @@ pub(crate) unsafe fn actor_snapshot<const ROLE: u8>(
             endpoint.owner.handle,
             crate::endpoint::carrier::OperationRegion::WHOLE,
         )
+        .actor
     }
 }
 
@@ -205,7 +302,7 @@ unsafe fn snapshot_from_handle<T: crate::transport::Transport>(
     ptr: core::ptr::NonNull<super::carrier::KernelEndpointHeader>,
     handle: super::carrier::EndpointHandle,
     region: super::carrier::OperationRegion,
-) -> ActorSnapshot {
+) -> OperationCutSnapshot {
     // SAFETY: the caller establishes T, and the live Endpoint retains
     // this pinned actor. Recover its original allocation pointer; do not widen
     // the narrow view borrow.
@@ -257,7 +354,58 @@ unsafe fn snapshot_from_handle<T: crate::transport::Transport>(
                 index += 1;
             }
             assert_eq!(steps.len(), cursor.local_steps_len());
-            ActorSnapshot {
+            let mut operations = Vec::new();
+            let mut target_lane = None;
+            for view in actor.views.as_slice() {
+                for (lane, slot) in view.operations().enumerate() {
+                    let current = core::ptr::eq(slot.state.get(), kernel.operation);
+                    let state = if current {
+                        target_lane = Some(lane);
+                        &*kernel.operation
+                    } else {
+                        // SAFETY: the actor lease excludes other kernels and
+                        // the current mutable operation cell was excluded.
+                        unsafe { &*slot.state.get() }
+                    };
+                    operations.push(OperationSnapshot {
+                        view: view.public_header.role(),
+                        lane,
+                        phase: state.public_active_op,
+                        preparing: match state.public_send_state {
+                            super::kernel::SendState::Preparing {
+                                logical_label,
+                                payload_kind,
+                                ..
+                            } => Some((logical_label, payload_kind)),
+                            super::kernel::SendState::Sending { .. }
+                            | super::kernel::SendState::Done => None,
+                        },
+                        prepared_send: state.proof_prepared_send(),
+                        offered_event: state
+                            .public_route_branch
+                            .as_ref()
+                            .map(|branch| branch.branch_meta.eff_index.dense_ordinal()),
+                    });
+                }
+            }
+            let bounds = region.bounds();
+            let target = OperationTargetSnapshot {
+                view: role,
+                lane: target_lane.expect("current operation is resident"),
+                whole: region.is_whole(),
+                start: bounds.start,
+                end: bounds.end,
+                owned_lanes: actor
+                    .views
+                    .get(role)
+                    .unwrap()
+                    .operations()
+                    .enumerate()
+                    .filter_map(|(lane, _)| kernel.owns_lane(lane).then_some(lane))
+                    .collect(),
+                other_active: kernel.has_other_active_operations(),
+            };
+            let snapshot = ActorSnapshot {
                 completion_mutations: cursor.completion_mutations(),
                 actor: cursor.role(),
                 run: kernel.context.public_generation.get(),
@@ -269,11 +417,14 @@ unsafe fn snapshot_from_handle<T: crate::transport::Transport>(
                     .iter()
                     .map(|view| {
                         let header = &view.public_header;
-                        let operation = if core::ptr::eq(header, kernel.public_header) {
+                        let operation = if core::ptr::eq(
+                            view.primary_operation().state.get(),
+                            kernel.operation,
+                        ) {
                             kernel.operation.public_active_op
                         } else {
                             // SAFETY: the actor operation lease excludes mutation,
-                            // and this view is distinct from kernel.io's borrow.
+                            // and this primary cell is not kernel.operation.
                             unsafe { &*view.primary_operation().state.get() }.public_active_op
                         };
                         ViewSnapshot {
@@ -301,6 +452,11 @@ unsafe fn snapshot_from_handle<T: crate::transport::Transport>(
                             .then(|| (scope.raw() % 8192, kernel.selected_arm_for_scope(scope)))
                     })
                     .collect(),
+            };
+            OperationCutSnapshot {
+                actor: snapshot,
+                operations,
+                target,
             }
         },
     )

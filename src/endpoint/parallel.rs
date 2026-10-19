@@ -98,6 +98,17 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
 }
 
 impl<'p, 'r, const ROLE: u8> ParallelEndpoint<'p, 'r, ROLE> {
+    #[cfg(all(test, hibana_repo_tests))]
+    pub(crate) fn proof_tag(&self) -> super::proof_snapshot::ViewTagObservation {
+        super::proof_snapshot::operation_tag(
+            self.borrowed.ptr,
+            OperationHandle {
+                endpoint: self.borrowed.handle,
+                region: self.borrowed.region,
+            },
+        )
+    }
+
     /// Execute a permitted send in this fragment, as with [`Endpoint::send`].
     /// This can move a separately owned endpoint payload; the parallel borrow
     /// itself is not an owned endpoint and cannot be sent as one.

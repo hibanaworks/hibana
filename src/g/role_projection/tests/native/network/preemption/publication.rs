@@ -1,7 +1,7 @@
 //! Serialize measured call boundaries after execution; never drive localside.
 use super::{Global, SID};
 use crate::{
-    endpoint::proof_snapshot::ActorSnapshot,
+    endpoint::proof_snapshot::{ActorSnapshot, OperationCutSnapshot, operation_cut_source},
     g::role_projection::RoleProjection,
     global::{compiled::images::RoleDescriptorRef, typestate::LocalAction},
     runtime::transport::FrameHeader,
@@ -9,7 +9,11 @@ use crate::{
 };
 use std::{fmt::Write, vec::Vec};
 
-pub(super) fn write_observations(snapshots: &[ActorSnapshot; 4], journal: &[(u8, Vec<u8>)]) {
+pub(super) fn write_observations(
+    snapshots: &[ActorSnapshot; 4],
+    journal: &[(u8, Vec<u8>)],
+    operations: &[OperationCutSnapshot; 2],
+) {
     assert_eq!(snapshots[0].completion_mutations, 0);
     assert_eq!(snapshots[1].completion_mutations, 0);
     assert_eq!(snapshots[2].completion_mutations, 1);
@@ -78,4 +82,21 @@ pub(super) fn write_observations(snapshots: &[ActorSnapshot; 4], journal: &[(u8,
         source,
     )
     .unwrap();
+    let mut source = std::format!(
+        "import Hibana.PublicOperationCut\n\nset_option maxRecDepth 10000\n\n\
+         def asyncOperationImage : Hibana.RustDescriptorImage := {}\n\n",
+        descriptor_source(image)
+    );
+    for (index, cut) in operations.iter().enumerate() {
+        writeln!(
+            source,
+            "def asyncOperationCut{index} : Hibana.PublicOperationCut := {}\n\n\
+            theorem async_operation_cut_{index}_matches :\n\
+            asyncOperationCut{index}.matches asyncOperationImage = true := by decide\n",
+            operation_cut_source(cut)
+        )
+        .unwrap();
+    }
+    source.push_str(include_str!("operation_cut.lean"));
+    std::fs::write(directory.join("AsyncOperationCutGenerated.lean"), source).unwrap();
 }
