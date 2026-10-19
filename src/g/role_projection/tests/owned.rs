@@ -252,6 +252,7 @@ fn dropping_a_completed_owned_send_does_not_retire_the_returned_resource_view() 
         assert_eq!(owner_sent.live_views + 1, owner_pending.live_views);
         assert_eq!(owner_sent.counter, owner_pending.counter);
         let loan_wire = network.queued_frame(1);
+        #[cfg(not(miri))]
         let loan_frame = network.accepted_frame(1, 0);
         assert_eq!(loan_wire.1, [10, 0, 0]);
         // SAFETY: successful transfer retains the original runtime storage.
@@ -273,6 +274,8 @@ fn dropping_a_completed_owned_send_does_not_retire_the_returned_resource_view() 
         // SAFETY: OBSERVER is independent of returned's carrier borrow.
         let worker_sent = unsafe { actor_snapshot(&observer) };
         let return_wire = network.queued_frame(11);
+        #[cfg(not(miri))]
+        let return_frame = network.accepted_frame(11, 0);
         assert_eq!(return_wire.1, [10, 0, 1]);
         // The return future remains alive through the receiver's commit.
         let mut db = auth.recv::<Loan>().await.unwrap();
@@ -339,7 +342,7 @@ fn dropping_a_completed_owned_send_does_not_retire_the_returned_resource_view() 
                     ("ownerRetired", &owner_retired),
                 ],
                 &[("loanWire", &loan_wire), ("returnWire", &return_wire)],
-                (&events, &loan_frame),
+                (&events, [&loan_frame, &return_frame]),
             );
         }
         let (value, ()) = tokio::join!(

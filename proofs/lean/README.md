@@ -101,11 +101,14 @@ The target reduction has four obligations over the **same reachable execution**:
 3. Local actor order and handoff preserve source causality and the complete
    logical FIFO, including ordinary frames between transfers. Independently
    advancing branch knowledge and visits do not become one common actor history.
-4. A logical enabled transition lifts to an actual permitted actor operation,
-   carrier transition, or the selected model's terminal fault/closure. This must
-   follow from reachable custody and calls, not assume the desired Endpoint or
-   future is already available. Forward simulation alone does not supply this
-   lifting result or establish progress of arbitrary pending public calls.
+4. Under the stated application and scheduling premises, a logical enabled
+   transition corresponds to a permitted actor operation, carrier transition,
+   or the selected model's terminal fault/closure. The model must preserve the
+   authority and continuation needed for that operation. The kernel's admission
+   and commit rules are implementation obligations; application issuance and
+   executor polling are premises. This does not require proving the existence
+   of every application's Rust future. Forward simulation alone does not supply
+   this lifting result.
 
 The carrier premises for that lifting include peer binding, FIFO, replay
 exclusion and **continued receive access after handoff**. The next permitted
@@ -131,13 +134,20 @@ has a logical source transition. Kernel-checked examples cover output
 pipelining, unequal parallel visits, a new holder lending before the old sender
 publishes, and different choices in overlapping visits.
 
-This proves source-dependency progress across finite unfoldings. It does not
-yet derive the required unfolding and source cut from every distributed
-execution, compose that correspondence with custody, or discharge carrier and
-fault/closure refinement. In particular, one may not pair an unrelated source
-cut with a custody trace and call that a distributed progress proof. The
-remaining reduction is a model and implementation correspondence task, not a
-requirement to verify arbitrary application code or an executor in Lean.
+`SourceOccurrenceTrace.lean` reconstructs source cuts from one chronological
+acceptance, publication, receipt and local-commit word. Each occurrence retains
+its original message, binding and source ordinal. Publication and receipt use
+the same earlier carrier call key, including ordinary frames; equal rolled
+envelopes do not identify a visit. The joint theorem combines this reconstructed
+source execution, affine custody and complete FIFO histories for that same
+word. It does not impose one pending call per actor or synchronized visits.
+
+This proves source-dependency progress for histories satisfying that checked
+correspondence. The remaining model result must derive the correspondence for
+its reachable executions and compose carrier and fault/closure outcomes. It
+cannot assume an independently chosen source cut agrees with the custody
+trace. Rust implementation evidence remains scoped as described above;
+formalizing arbitrary application code or an executor is not another task.
 
 The Unix-datagram process fixtures inherit descriptors for the same kernel
 datagram queues. They share no Rust runtime memory, but they test one host's
@@ -1322,17 +1332,18 @@ it does not derive their completeness from endpoint snapshots. It is not yet
 the enabled-step lifting result, a proof of current Rust callability, or the
 fault/closure composition. No runtime guard, wire field, shared actor memory,
 owner table or scheduling restriction is introduced by this model.
-The inventory does not yet cover ordinary-future or parallel-borrow object
-availability. In particular, a source-only ordinary operation is not evidence
-that its Rust Endpoint is currently usable.
+This inventory covers owned-send objects. Ordinary-future and parallel-borrow
+object inventories are outside its scope and are not additional completion
+requirements. A source operation alone does not establish kernel admission.
 
-The existing two-runtime round-trip test also qualifies the first transfer's
-constructor, Pending poll and actual accepted frame with this joint model.
-It copies the stored request fields and carrier witness, binds actor identities
-to those runtimes, and checks the same source preparation and acceptance.
-This prefix ends before sender publication. It does not qualify every boundary
-of the round trip or a distributed run merely because the rest of that Rust
-test completes.
+The existing two-runtime round-trip test qualifies the loan and return through
+retirement of both completed send futures. Its thirteen chronological
+boundaries use the captured requests, both accepted frames and carrier
+witnesses, actor snapshots and mutation counts. The same word establishes
+custody, physical call/FIFO execution and reconstructed source progress. At
+its final cut only the returned value is usable and the next Read is enabled;
+the Rust test then executes that Read through the returned Endpoint. This
+qualifies that prefix, not the test's later traffic or every distributed run.
 
 Qualification hooks copy the real constructor, poll-result and Drop fields.
 The existing rolled-resource/par choreography now checks an unpolled loan:

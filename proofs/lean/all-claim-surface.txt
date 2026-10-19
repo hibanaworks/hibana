@@ -447,6 +447,15 @@ Hibana.EndpointDelegation.withOwner_same : ∀ (owners : Hibana.EndpointDelegati
         (And (@Eq.{1} Nat sample.polls (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1))))
           (And (@Eq.{1} Nat sample.publications (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0))))
             (And (@Eq.{1} Bool sample.done true) (@Eq.{1} Bool sample.retained false))))
+@Hibana.a_checked_occurrence_call_appends_exactly_its_source_point : ∀ {source : Hibana.EndpointDelegation.Source}
+  (plan : Hibana.SourceOccurrenceCut source) (points : List.{0} Hibana.SourcePoint) (point : Hibana.SourcePoint),
+  @Eq.{1} Bool (@Hibana.SourceOccurrenceCut.ready source (@Hibana.occurrenceCut source plan points) point) true →
+    @Hibana.SourceOccurrenceStep source (@Hibana.occurrenceCut source plan points) point
+      (@Hibana.occurrenceCut source plan
+        (@HAppend.hAppend.{0, 0, 0} (List.{0} Hibana.SourcePoint) (List.{0} Hibana.SourcePoint)
+          (List.{0} Hibana.SourcePoint)
+          (@instHAppendOfAppend.{0} (List.{0} Hibana.SourcePoint) (@List.instAppend.{0} Hibana.SourcePoint)) points
+          (@List.cons.{0} Hibana.SourcePoint point (@List.nil.{0} Hibana.SourcePoint))))
 @Hibana.a_checked_operation_cut_binds_its_cached_lane_reference : ∀ {cut : Hibana.PublicOperationCut}
   {image : Hibana.RustDescriptorImage},
   @Eq.{1} Bool (cut.matches image) true → @Eq.{1} Bool (cut.maskReferenceMatches image) true
@@ -1925,6 +1934,47 @@ Hibana.EndpointDelegation.withOwner_same : ∀ (owners : Hibana.EndpointDelegati
         @Membership.mem.{0, 0} Hibana.OwnedCallHistory.OwnedCallEvent (List.{0} Hibana.OwnedCallHistory.OwnedCallEvent)
           (@List.instMembership.{0} Hibana.OwnedCallHistory.OwnedCallEvent) events
           (Hibana.OwnedCallHistory.OwnedCallEvent.construct request)
+@Hibana.a_joint_occurrence_refinement_has_custody_fifo_and_source_progress : ∀
+  {images : Nat → Hibana.RustDescriptorImage} {choreo : Hibana.Choreo} {session : Nat}
+  {resource : Hibana.EndpointDelegation.EndpointKey} {value : Hibana.OwnedCallHistory.Tag}
+  {events : List.{0} Hibana.OwnedCallHistory.OwnedCallEvent} {cut : Hibana.OwnedCallHistory.Cut}
+  {source : Hibana.EndpointDelegation.Source} {plan : Hibana.SourceOccurrenceCut source}
+  {initial : Nat → Prod.{0, 0} Hibana.ActorProgressObservation Nat} {last : Hibana.DistributedSourceCut}
+  {entries pending : List.{0} Hibana.SourceAcceptance}
+  {published : List.{0} (Prod.{0, 0} Hibana.SourceAcceptance Hibana.ActorCommitRecord)} {calls : Hibana.OccurrenceCalls}
+  {points : List.{0} Hibana.SourcePoint},
+  Hibana.OwnedCallHistory.History images resource choreo value events cut →
+    Hibana.DistributedCallExecution images choreo session (Hibana.DistributedSourceCut.initial initial) last
+        (Hibana.OwnedCallHistory.sourceWord events) entries published pending →
+      @Hibana.SourceOccurrenceTrace source images choreo plan (Hibana.OwnedCallHistory.sourceWord events) calls points →
+        @Hibana.SourceOccurrenceCut.Unfinished source (@Hibana.occurrenceCut source plan points) →
+          And
+            (@LE.le.{0} Nat instLENat
+              (@Hibana.EndpointTransfer.Observation.authorityCount Hibana.OwnedCallHistory.Tag
+                Hibana.OwnedCallHistory.Receipt cut.custody)
+              (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1))))
+            (And
+              (@List.Perm.{0} Hibana.SourceAcceptance entries
+                (@HAppend.hAppend.{0, 0, 0} (List.{0} Hibana.SourceAcceptance) (List.{0} Hibana.SourceAcceptance)
+                  (List.{0} Hibana.SourceAcceptance)
+                  (@instHAppendOfAppend.{0} (List.{0} Hibana.SourceAcceptance)
+                    (@List.instAppend.{0} Hibana.SourceAcceptance))
+                  (@List.map.{0, 0} (Prod.{0, 0} Hibana.SourceAcceptance Hibana.ActorCommitRecord)
+                    Hibana.SourceAcceptance (@Prod.fst.{0, 0} Hibana.SourceAcceptance Hibana.ActorCommitRecord)
+                    published)
+                  pending))
+              (And
+                (@Hibana.SourceOccurrenceExecution source
+                  (@Hibana.occurrenceCut source plan (@List.nil.{0} Hibana.SourcePoint))
+                  (@Hibana.occurrenceCut source plan points) points)
+                (And
+                  (∀ (channel : Hibana.TransportChannel),
+                    @Exists.{1} Hibana.ElasticAdmissionHistory fun history =>
+                      Hibana.SendAdmissionTrace choreo session (last.carriers channel) history
+                        (Hibana.sourceChannelRecords entries channel))
+                  (@Exists.{1} Hibana.SourcePoint fun point =>
+                    @Exists.{1} (Hibana.SourceOccurrenceCut source) fun next =>
+                      @Hibana.SourceOccurrenceStep source (@Hibana.occurrenceCut source plan points) point next))))
 @Hibana.a_joint_private_payload_has_its_same_history_constructor : ∀ {images : Nat → Hibana.RustDescriptorImage}
   {resource : Hibana.EndpointDelegation.EndpointKey} {choreo : Hibana.Choreo} {value : Hibana.OwnedCallHistory.Tag}
   {events : List.{0} Hibana.OwnedCallHistory.OwnedCallEvent} {cut : Hibana.OwnedCallHistory.Cut}
@@ -4050,6 +4100,44 @@ Hibana.a_pending_payload_requires_its_own_send : ∀ (resource : Nat) (sent : Op
                 (@List.cons.{0} View sender (@List.nil.{0} View)))
               (@Eq.{1} Nat (@Hibana.EndpointTransfer.Observation.authorityCount View Frame state)
                 (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1))))))))
+@Hibana.a_resolved_occurrence_call_has_its_same_word_acceptance : ∀ {images : Nat → Hibana.RustDescriptorImage}
+  {choreo : Hibana.Choreo} {source : Hibana.EndpointDelegation.Source} {plan : Hibana.SourceOccurrenceCut source}
+  {word : List.{0} Hibana.DistributedCallBoundary} {calls : Hibana.OccurrenceCalls}
+  {points : List.{0} Hibana.SourcePoint} {key : Prod.{0, 0} Hibana.TransportChannel Nat} {occurrence : Nat},
+  @Hibana.SourceOccurrenceTrace source images choreo plan word calls points →
+    @Eq.{1} (Option.{0} Nat) (Hibana.occurrenceCall? calls key) (@some.{0} Nat occurrence) →
+      @Exists.{1} (List.{0} Hibana.DistributedCallBoundary) fun earlier =>
+        @Exists.{1} (List.{0} Hibana.DistributedCallBoundary) fun later =>
+          @Exists.{1} Hibana.SourceAcceptance fun entry =>
+            And
+              (@Eq.{1} (List.{0} Hibana.DistributedCallBoundary) word
+                (@HAppend.hAppend.{0, 0, 0} (List.{0} Hibana.DistributedCallBoundary)
+                  (List.{0} Hibana.DistributedCallBoundary) (List.{0} Hibana.DistributedCallBoundary)
+                  (@instHAppendOfAppend.{0} (List.{0} Hibana.DistributedCallBoundary)
+                    (@List.instAppend.{0} Hibana.DistributedCallBoundary))
+                  earlier
+                  (@List.cons.{0} Hibana.DistributedCallBoundary (Hibana.DistributedCallBoundary.accept entry) later)))
+              (And (@Eq.{1} (Prod.{0, 0} Hibana.TransportChannel Nat) entry.callKey key)
+                (And
+                  (@Eq.{1} (Option.{0} Nat)
+                    (@Option.map.{0, 0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Message) Nat
+                      (@Prod.fst.{0, 0} Nat Hibana.EndpointDelegation.Message)
+                      (@getElem?.{0, 0, 0} (List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Message)) Nat
+                        (Prod.{0, 0} Nat Hibana.EndpointDelegation.Message)
+                        (fun as i =>
+                          @LT.lt.{0} Nat instLTNat i
+                            (@List.length.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Message) as))
+                        (@List.instGetElem?NatLtLength.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Message))
+                        (@Hibana.SourceUnfolding.occurrences source (@Hibana.SourceOccurrenceCut.expanded source plan)
+                          (@Hibana.SourceOccurrenceCut.unfolding source plan)
+                          (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0))))
+                        occurrence))
+                    (@some.{0} Nat entry.event))
+                  (@Eq.{1} Bool
+                    (@Hibana.SourceOccurrenceCut.matchesAction source plan entry.sample.image choreo
+                      entry.sample.image.role entry.sample.pathIndex entry.sample.event occurrence
+                      Hibana.EndpointDelegation.Side.send)
+                    true)))
 @Hibana.a_resource_continuation_follows_its_last_handoff : ∀ {source : Hibana.EndpointDelegation.Source}
   {resources : List.{0} Hibana.EndpointDelegation.EndpointKey} {owners : Hibana.EndpointDelegation.OwnerMap}
   {path : List.{0} Hibana.EndpointDelegation.Selection} {start : Nat} {run : Hibana.EndpointDelegation.Elaboration}
@@ -4414,6 +4502,13 @@ Hibana.a_pending_payload_requires_its_own_send : ∀ (resource : Nat) (sent : Op
               after)
             (@some.{0} (Prod.{0, 0} Nat (Option.{0} Hibana.RouteArm))
               (@Prod.mk.{0, 0} Nat (Option.{0} Hibana.RouteArm) scope (@some.{0} Hibana.RouteArm arm)))
+@Hibana.a_source_occurrence_trace_is_its_reconstructed_execution : ∀ {images : Nat → Hibana.RustDescriptorImage}
+  {choreo : Hibana.Choreo} {source : Hibana.EndpointDelegation.Source} {plan : Hibana.SourceOccurrenceCut source}
+  {word : List.{0} Hibana.DistributedCallBoundary} {calls : Hibana.OccurrenceCalls}
+  {points : List.{0} Hibana.SourcePoint},
+  @Hibana.SourceOccurrenceTrace source images choreo plan word calls points →
+    @Hibana.SourceOccurrenceExecution source (@Hibana.occurrenceCut source plan (@List.nil.{0} Hibana.SourcePoint))
+      (@Hibana.occurrenceCut source plan points) points
 @Hibana.a_source_predecessor_has_its_exact_actor_row : ∀ {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo}
   {data : Hibana.DecodedActorOrder} {path : Hibana.EndpointDelegation.NormalizedPath} {row : Hibana.DecodedActorRow}
   {event : Nat},

@@ -71,7 +71,7 @@ bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" build-serial "${PROOF_
 bash "${ROOT_DIR}/.github/scripts/check_lean_claim_surface.sh"
 static_audit_output="$(run_audit \
   theorem-inventory \
-  --static "${PROOF_DIR}" "${STATIC_CLAIM_SNAPSHOT}" 1138 707 315 116)"
+  --static "${PROOF_DIR}" "${STATIC_CLAIM_SNAPSHOT}" 1142 711 315 116)"
 printf '%s\n' "${static_audit_output}"
 printf '%s\n' "${static_audit_output}" | bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard markers static
 bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" theorem-inventory \
@@ -194,7 +194,7 @@ CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --li
   -- --exact
 bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${FUTURE_CUSTODY_GENERATED}" "future and frame custody"
 run_audit generated-axioms --kernel "${FUTURE_CUSTODY_GENERATED}" "${PROOF_DIR}" \
-  "${PROOF_DIR}/future-custody-generated-claim-surface.txt" 69
+  "${PROOF_DIR}/future-custody-generated-claim-surface.txt" 73
 CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib -- \
   g::role_projection::tests::send_wait::dropping_an_owned_send_cancels_the_run_before_or_during_preparation \
   g::role_projection::tests::retirement::a_completed_view_retires_without_cancelling_independent_work --exact

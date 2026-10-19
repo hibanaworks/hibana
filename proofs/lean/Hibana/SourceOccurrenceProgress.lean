@@ -25,6 +25,22 @@ inductive SourceUnfolding : Source → Source → Type where
   | rollMore : SourceUnfolding (.roll body) earlier → SourceUnfolding body next →
       SourceUnfolding (.roll body) (.seq earlier next)
 
+def EndpointDelegation.Source.oneCopy : Source → Source
+  | .send message => .send message
+  | .seq left right => .seq left.oneCopy right.oneCopy
+  | .par left right => .par left.oneCopy right.oneCopy
+  | .route resolver left right => .route resolver left.oneCopy right.oneCopy
+  | .roll body => body.oneCopy
+
+/-- A concrete finite witness for prefixes contained in the first copy of
+each roll. This does not synchronize participants or impose a runtime bound. -/
+def SourceUnfolding.oneCopy : (source : Source) → SourceUnfolding source source.oneCopy
+  | .send message => .send message
+  | .seq left right => .seq (oneCopy left) (oneCopy right)
+  | .par left right => .par (oneCopy left) (oneCopy right)
+  | .route resolver left right => .route resolver (oneCopy left) (oneCopy right)
+  | .roll body => .rollOnce (oneCopy body)
+
 def SourceUnfolding.occurrences : {source expanded : Source} →
     SourceUnfolding source expanded → Nat → List (Nat × Message)
   | _, _, .send message, start => [(start, message)]

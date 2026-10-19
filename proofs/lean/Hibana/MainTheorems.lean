@@ -24,6 +24,7 @@ import Hibana.PublicAdmissionCustody
 import Hibana.ResourceHeaderOrigin
 import Hibana.ActorVisitProgress
 import Hibana.SourceOccurrenceProgress
+import Hibana.SourceOccurrenceTrace
 import Hibana.SourceReadyReceipt
 import Hibana.SourceHandoffInterval
 import Hibana.MeasuredResourceAvailability

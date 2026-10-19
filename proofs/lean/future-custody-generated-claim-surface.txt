@@ -16,6 +16,21 @@ actualJointQueuedOrigin : ∃ earlier later entry request facts,
                           jointFrame.sequence =
                             (Hibana.sourceChannelEntries (Hibana.OwnedCallHistory.acceptedEntries earlier)
                                 entry.channel).length
+actualJointRoundTripContinuation : jointReturnedCut.custody.authorityCount ≤ 1 ∧
+  jointReturnedCut.custody.usable = [returnedValue] ∧
+    Hibana.SourceOccurrenceExecution (Hibana.occurrenceCut jointOccurrencePlan [])
+        (Hibana.occurrenceCut jointOccurrencePlan jointRoundTripPoints) jointRoundTripPoints ∧
+      ∃ next,
+        Hibana.SourceOccurrenceStep (Hibana.occurrenceCut jointOccurrencePlan jointRoundTripPoints)
+          (Hibana.SourcePoint.accepted 2) next
+actualJointRoundTripCustody : Hibana.OwnedCallHistory.History jointImages jointResource custodyChoreo initialValue
+  jointRoundTripEvents jointReturnedCut
+actualJointRoundTripOccurrence : Hibana.SourceOccurrenceTrace jointImages custodyChoreo jointOccurrencePlan
+  (Hibana.OwnedCallHistory.sourceWord jointRoundTripEvents) [(jointEntry.callKey, 0), (jointReturnEntry.callKey, 1)]
+  jointRoundTripPoints
+actualJointRoundTripSource : Hibana.DistributedCallExecution jointImages custodyChoreo 873 jointSourceInitial
+  jointSourceReturned (Hibana.OwnedCallHistory.sourceWord jointRoundTripEvents) [jointEntry, jointReturnEntry]
+  [(jointEntry, jointLoanRecord), (jointReturnEntry, jointReturnRecord)] []
 actualJointSourceAcceptance : Hibana.DistributedCallExecution jointImages custodyChoreo 873 jointSourceInitial
   jointSourceAfter (Hibana.OwnedCallHistory.sourceWord jointEvents) [jointEntry] [] [jointEntry]
 custodyAcceptStep : Step Action.accept custodyPending custodySent

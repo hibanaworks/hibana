@@ -11,10 +11,10 @@ pub(super) fn write(
     images: [String; 2],
     snapshots: &[(&str, &ActorSnapshot)],
     wires: &[(&str, &(FrameHeader, Vec<u8>))],
-    captured: (&[OwnedFutureBoundary], &FrameEvidence),
+    captured: (&[OwnedFutureBoundary], [&FrameEvidence; 2]),
 ) {
     let mut source = std::format!(
-        "import Hibana.SourceResourceAvailability\nimport Hibana.OwnedCallHistory\n\nset_option maxRecDepth 10000\n\n\
+        "import Hibana.SourceResourceAvailability\nimport Hibana.OwnedCallHistory\nimport Hibana.SourceOccurrenceTrace\n\nset_option maxRecDepth 10000\n\n\
          def custodyChoreo : Hibana.Choreo := {choreography}\n\n\
          def ownerImage : Hibana.RustDescriptorImage := {}\n\n\
          def workerImage : Hibana.RustDescriptorImage := {}\n\n",
@@ -295,8 +295,8 @@ theorem custodyCannotTreatTheUnpolledPayloadAsAnApplicationValue :
             .unwrap();
         assert_eq!((identity.run, identity.nonce), (view.run, view.nonce));
     }
-    assert_eq!(captured.1.header, wires[0].1.0);
-    assert_eq!(captured.1.payload(), wires[0].1.1);
+    assert_eq!(captured.1[0].header, wires[0].1.0);
+    assert_eq!(captured.1[0].payload(), wires[0].1.1);
     let bounds = region.bounds();
     source.push_str(&std::format!(
         "\ndef jointRequest : Hibana.OwnedCallHistory.Request := {{\n  \
@@ -315,11 +315,62 @@ theorem custodyCannotTreatTheUnpolledPayloadAsAnApplicationValue :
         payload.nonce,
         bounds.start,
         bounds.end,
-        captured.1.witness,
+        captured.1[0].witness,
         snapshot("ownerPending").completion_mutations,
         snapshot("workerBefore").completion_mutations,
     ));
     source.push_str(include_str!("joint_call.lean"));
+    let OwnedFutureBoundary::Seal {
+        carrier,
+        payload,
+        label,
+        region,
+    } = captured.0[3]
+    else {
+        panic!("actual return constructor");
+    };
+    let peer = snapshot("workerReceived");
+    assert_eq!(carrier.actor_address, payload.actor_address);
+    for identity in [carrier, payload] {
+        let view = peer
+            .views
+            .iter()
+            .find(|view| view.role == identity.role)
+            .unwrap();
+        assert_eq!((identity.run, identity.nonce), (view.run, view.nonce));
+    }
+    assert_eq!(captured.1[1].header, wires[1].1.0);
+    assert_eq!(captured.1[1].payload(), wires[1].1.1);
+    let bounds = region.bounds();
+    source.push_str(&std::format!(
+        "\ndef jointReturnRequest : Hibana.OwnedCallHistory.Request := {{\n  \
+         carrier := ({}, {}, {}, {}), payload := ({}, {}, {}, {}),\n  \
+         label := {label}, borrow := ({}, {})\n}}\n\n\
+         def jointReturnWitness : Nat := {}\n\n",
+        peer.actor,
+        carrier.role,
+        carrier.run,
+        carrier.nonce,
+        peer.actor,
+        payload.role,
+        payload.run,
+        payload.nonce,
+        bounds.start,
+        bounds.end,
+        captured.1[1].witness,
+    ));
+    for (name, observed) in [
+        ("jointOwnerSentMutation", "ownerSent"),
+        ("jointWorkerReceivedMutation", "workerReceived"),
+        ("jointWorkerSentMutation", "workerSent"),
+        ("jointOwnerReturnedMutation", "ownerReturned"),
+    ] {
+        source.push_str(&std::format!(
+            "def {name} : Nat := {}\n\n",
+            snapshot(observed).completion_mutations,
+        ));
+    }
+    source.push_str(include_str!("joint_occurrence.lean"));
     let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/lean-proof");
     std::fs::create_dir_all(&directory).unwrap();
     std::fs::write(directory.join("FutureCustodyGenerated.lean"), source).unwrap();
