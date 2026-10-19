@@ -5,6 +5,7 @@ use crate::{
 };
 
 mod associative;
+mod choice;
 mod reentrant;
 
 #[test]

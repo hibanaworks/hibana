@@ -228,6 +228,9 @@ Rust関数の実行をスケジュールするのはexecutorです。
 借用が終わるまで、親Endpointは操作・委譲できません。
 各部分はglobalから導かれ、localの`par()`は借用だけを行います。実行の開始や分岐の選択はしません。
 隣接する並行合成は平坦化されるので、globalの二分構造をlocalsideへ書き直す必要はありません。
+分岐の中の並行処理は、先に`let label = endpoint.offer().await?.label();`で分岐を観測してから借用します。
+観測済みの選択を引き継ぐため、最初の通信の完了を待たずに各部分を進められます。
+各部分は借用なので、それ自体は委譲できません。globalで許された送信では、別の所有Endpointをpayloadとして渡せます。
 
 `body.roll()`は、完了したプロトコルの一部分を再び実行できるようにします。
 Projectionはguarded repetitionを要求します。

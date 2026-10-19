@@ -110,6 +110,15 @@ where
         cx: &mut core::task::Context<'_>,
         waiters: &mut WaiterTransfer,
     ) -> Poll<RecvResult<crate::endpoint::transfer::RecvOutput<'r>>> {
+        if self.operation.public_active_op == PublicActiveOp::BranchRecv {
+            return self.poll_public_branch_recv(
+                logical_label,
+                payload_kind,
+                validate,
+                cx,
+                waiters,
+            );
+        }
         if let Some(kind) = self.session_fault() {
             self.clear_endpoint_waiter(waiters);
             self.fail_session(kind);

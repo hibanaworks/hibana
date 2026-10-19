@@ -57,8 +57,12 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     ///
     /// Returns an error if there is no unambiguous current parallel fragment,
     /// the array length differs from its width, or an earlier operation remains
-    /// active. A rejected borrow leaves the parent protocol unchanged. Select an
-    /// enclosing route with ordinary `send` or `offer`/branch operations first.
+    /// active. A rejected borrow leaves the parent protocol unchanged. Observe
+    /// an enclosing route with `offer` before borrowing its parallel fragments:
+    /// `let label = endpoint.offer().await?.label();` releases the temporary
+    /// preview handle while retaining its materialized choice. The borrows then
+    /// reuse that preview without waiting for its first message to commit or
+    /// rerunning its resolver. Matching ordinary `send`/`recv` consumes it.
     ///
     /// ```
     /// use hibana::{Endpoint, EndpointError, g};
@@ -95,6 +99,8 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
 
 impl<'p, 'r, const ROLE: u8> ParallelEndpoint<'p, 'r, ROLE> {
     /// Execute a permitted send in this fragment, as with [`Endpoint::send`].
+    /// This can move a separately owned endpoint payload; the parallel borrow
+    /// itself is not an owned endpoint and cannot be sent as one.
     pub fn send<'a, 'e, M>(
         &'e mut self,
         payload: <M::Payload as crate::global::PayloadSpec>::SendArgument<'a, 'r>,

@@ -248,6 +248,11 @@ operations. The parent endpoint is unavailable until the borrows end. The
 global protocol determines the fragments; `par()` only borrows them and does
 not schedule work or choose a branch. Adjacent parallel groups are flattened,
 so the local bindings do not repeat the global protocol's binary grouping.
+For parallel work inside a choice, first observe it with
+`let label = endpoint.offer().await?.label();`, then borrow its fragments.
+They reuse the observed choice without waiting for the first message to finish.
+These fragments are borrows, so they cannot themselves be delegated. A fragment
+can send another owned endpoint when the global protocol permits that transfer.
 
 `body.roll()` allows a completed protocol fragment to run again. Projection
 requires guarded repetition. Each repetition reuses the compiled protocol

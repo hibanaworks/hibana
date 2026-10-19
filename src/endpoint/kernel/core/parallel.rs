@@ -1,7 +1,7 @@
 use super::{OperationKernel, PublicActiveOp, SendError, SendResult, Transport};
 use crate::{
     endpoint::carrier::OperationRegion,
-    global::typestate::{EventCommitMeta, LocalAction},
+    global::typestate::{EventArmView, EventCommitMeta, LocalAction},
 };
 
 impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
@@ -93,8 +93,20 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
                 let conflict = self.progress.cursor.event_conflict_for_index(index);
                 self.progress
                     .cursor
-                    .event_enabled(index, event, &mut |scope, view| {
-                        self.selected_arm_for_recv_event(conflict, scope, view)
+                    .event_enabled(index, event, &mut |scope, view| match view {
+                        // A fresh preview can select another arm, but cannot
+                        // change which arm completed the preceding roll visit.
+                        EventArmView::Committed => self.selected_arm_for_scope(scope),
+                        EventArmView::Preview => self
+                            .operation
+                            .public_route_branch
+                            .as_ref()
+                            .and_then(|branch| {
+                                (branch.branch_meta.scope_id == scope)
+                                    .then_some(branch.branch_meta.selected_arm)
+                            })
+                            .or_else(|| self.selected_arm_for_recv_event(conflict, scope, view))
+                            .or_else(|| self.preview_live_selected_arm_for_scope(scope)),
                     })
                     .is_ok()
                     .then_some(event.eff_index.dense_ordinal())
@@ -133,7 +145,10 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
             return Err(SendError::SessionFault(fault));
         }
         if regions.len() < 2
-            || self.operation.public_active_op != PublicActiveOp::Idle
+            || !matches!(
+                self.operation.public_active_op,
+                PublicActiveOp::Idle | PublicActiveOp::RestoredRouteBranch
+            )
             || self.has_other_active_operations()
         {
             return Err(SendError::PhaseInvariant);
@@ -204,9 +219,48 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
                     return Err(SendError::PhaseInvariant);
                 }
             }
+            self.move_parked_branch_to_parallel_borrow(regions)?;
             return Ok(());
         }
         Err(SendError::PhaseInvariant)
+    }
+
+    /// A parked preview belongs to the fragment containing its exact first
+    /// event, which need not be the parent's primary operation slot. Move its
+    /// existing I/O owner; never clone a frame, choice or protocol cursor.
+    fn move_parked_branch_to_parallel_borrow(
+        &mut self,
+        regions: &[OperationRegion],
+    ) -> SendResult<()> {
+        if self.operation.public_active_op != PublicActiveOp::RestoredRouteBranch {
+            return Ok(());
+        }
+        let branch = self
+            .operation
+            .public_route_branch
+            .as_ref()
+            .ok_or(SendError::PhaseInvariant)?;
+        let event = branch.branch_meta.eff_index.dense_ordinal();
+        let region = regions
+            .iter()
+            .find(|region| region.contains(event))
+            .ok_or(SendError::PhaseInvariant)?;
+        let target =
+            crate::invariant_some(self.operations.get(region.lane(0)).and_then(Option::as_ref));
+        let target = target.state.get();
+        if core::ptr::eq(target, self.operation) {
+            return Ok(());
+        }
+        // SAFETY: the common cursor borrow excludes another kernel. Admission
+        // rejected every other active operation in this parent region, and the
+        // exclusive parent borrow excludes child futures and payload borrows.
+        // The distinct target slot belongs to one of the validated fragments.
+        let target = unsafe { &mut *target };
+        if target.public_active_op != PublicActiveOp::Idle || target.public_route_branch.is_some() {
+            return Err(SendError::PhaseInvariant);
+        }
+        core::mem::swap(self.operation, target);
+        Ok(())
     }
 
     pub(crate) fn finish_parallel(

@@ -181,6 +181,16 @@ where
         self.park_public_route_branch(PublicOpEdge::ParkRouteBranch);
     }
 
+    /// Reuse the already materialized preview without polling I/O or rerunning
+    /// its resolver. The same canonical edges are used by an explicit re-offer.
+    fn resume_public_route_branch(&mut self) -> super::core::PublicOpLease {
+        let lease = self.init_public_offer_state();
+        if lease != super::core::PublicOpLease::Held {
+            return lease;
+        }
+        self.transition_public_op(PublicOpEdge::PublishRouteBranch)
+    }
+
     #[inline]
     pub(in crate::endpoint) fn init_public_send_state(
         &mut self,
@@ -198,6 +208,14 @@ where
             PublicActiveOp::RouteBranch => {
                 self.public_op_busy_fault();
                 super::core::PublicOpLease::Rejected
+            }
+            PublicActiveOp::RestoredRouteBranch if self.operation.public_route_branch.is_some() => {
+                let lease = self.resume_public_route_branch();
+                if lease == super::core::PublicOpLease::Held {
+                    self.transition_public_op(PublicOpEdge::BeginBranchSend)
+                } else {
+                    lease
+                }
             }
             PublicActiveOp::Poisoned => super::core::PublicOpLease::Faulted,
             PublicActiveOp::Send
@@ -274,6 +292,14 @@ where
     #[inline]
     #[must_use]
     pub(in crate::endpoint) fn init_public_recv_state(&mut self) -> super::core::PublicOpLease {
+        if self.operation.public_active_op == PublicActiveOp::RestoredRouteBranch {
+            let lease = self.resume_public_route_branch();
+            return if lease == super::core::PublicOpLease::Held {
+                self.begin_public_branch_recv_state()
+            } else {
+                lease
+            };
+        }
         let lease = self.transition_public_op(PublicOpEdge::BeginRecv);
         match lease {
             super::core::PublicOpLease::Held => {}
