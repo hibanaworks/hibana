@@ -1056,10 +1056,28 @@ Both publications separately pass the measured-commit checker. The artifact
 also proves that the previous whole-actor checker rejects this legal loan
 publication, and rules out duplicate publication and reuse of an acceptance
 key. The latter concerns observation identities, not network replay protection:
-affine delivery remains a carrier premise. This component does not yet replace
-the restricted full `DistributedSourceExecution`, derive every Rust call-slot
-history, or establish the global simulation and enabled-step lifting across
-independent choices, rolled visits and faults. Those remain completion work.
+affine delivery remains a carrier premise.
+
+`DistributedCallExecution.lean` connects that component to one chronology of
+physical acceptances, sender publications, receives, local commits and quiet
+observations. Each receive consumes the corresponding full logical FIFO;
+each actor commit checks its actual measured boundary, including fresh body
+resets. Multiple independent calls may remain outstanding in an actor. The
+same execution projects its call matching, actual actor histories and complete
+FIFO histories. `SourceFrameWord.lean` derives its committed source-group word
+and qualifies the next current/fresh operation before I/O. The shared
+prepared-base argument also serves the earlier synchronous theorem.
+
+The chronological logical word records sends at acceptance and stutters sender
+publication. It is deliberately distinct from the committed word proved above.
+The remaining refinement must preserve a pending accepted source letter across
+later boundaries and combine independent ordered groups. General Rust call-slot
+extraction, custody, logical simulation, actual enabled-step lifting, and
+fault/closure composition remain completion work. The older
+`DistributedSourceExecution` lemmas still describe their explicitly restricted
+publication window; they are not used as evidence that this general refinement
+is finished. No new network fixture or Rust runtime restriction was added for
+the chronological model.
 
 `ActorVisitProgress.lean` derives the finite point domain from the selected
 source bindings, with the path itself checked against the normalized global.

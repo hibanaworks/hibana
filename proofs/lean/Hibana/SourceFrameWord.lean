@@ -1,4 +1,5 @@
 import Hibana.DistributedChoiceHistory
+import Hibana.DistributedCallExecution
 
 namespace Hibana
 open EndpointDelegation
@@ -561,6 +562,88 @@ private theorem a_distributed_class_boundary_extends_its_word_cut
     · simpa [DistributedSourceCut.actorAt, DistributedSourceCut.carrierAt,
         committedFrameClassWord, same, Ne.symm same] using cut
 
+private theorem a_call_commit_updates_its_actual_group_word
+    {images : Nat → RustDescriptorImage} {choreo : Choreo} {session actor changed : Nat}
+    {group : SourceOrderGroup (images actor) choreo} {cut : DistributedSourceCut}
+    {after : ActorProgressObservation × Nat} {cleared : List Nat}
+    {record : ActorCommitRecord} {word : List Nat}
+    (committed : ActorMeasuredCommit (images changed) choreo session (cut.actors changed) after cleared record)
+    (prior : group.WordCut (cut.actors actor).1 word) :
+    group.WordCut ((cut.actorAt changed after).actors actor).1
+      (word ++ committedFrameClassWord group.rows actor [(changed, record)]) := by
+  by_cases same : actor = changed
+  · subst changed
+    simpa only [DistributedSourceCut.actorAt, if_pos rfl,
+      a_class_record_contributes_exactly_its_own_letter] using
+      a_measured_class_boundary_extends_its_word_cut committed prior
+  · simpa [DistributedSourceCut.actorAt, committedFrameClassWord, same, Ne.symm same] using prior
+
+private theorem a_call_execution_has_its_actual_group_word_cut
+    {images : Nat → RustDescriptorImage} {choreo : Choreo} {session actor : Nat}
+    {group : SourceOrderGroup (images actor) choreo}
+    {first last : DistributedSourceCut} {word : List DistributedCallBoundary}
+    {entries pending : List SourceAcceptance} {published : List (SourceAcceptance × ActorCommitRecord)}
+    (execution : DistributedCallExecution images choreo session first last word entries published pending) :
+    group.WordCut (first.actors actor).1 [] →
+      group.WordCut (last.actors actor).1
+        (committedFrameClassWord group.rows actor (word.filterMap DistributedCallBoundary.record?)) := by
+  induction execution with
+  | refl => intro prior; exact prior
+  | @quiet cut word entries published pending changed after history checked ih =>
+      intro initial
+      have prior := ih initial
+      by_cases same : actor = changed
+      · subst changed
+        simpa [DistributedSourceCut.actorAt, List.filterMap_append, DistributedCallBoundary.record?] using
+          a_quiet_boundary_preserves_its_word_cut checked prior
+      · simpa [DistributedSourceCut.actorAt, same, List.filterMap_append, DistributedCallBoundary.record?] using prior
+  | accept history imageAt checked decoded pathAt rowAt prepared slotFree freshWitness sourceAt accepted identity ih =>
+      intro initial
+      simpa [DistributedSourceCut.carrierAt, List.filterMap_append, DistributedCallBoundary.record?] using ih initial
+  | @publish cut word entries published left right changed after cleared record entry history actorAt paired committed ih =>
+      intro initial
+      have next := a_call_commit_updates_its_actual_group_word committed (ih initial)
+      simpa [List.filterMap_append, DistributedCallBoundary.record?, committedFrameClassWord] using next
+  | @localCommit cut word entries published pending changed after cleared record eff binding history actorRole localAt committed ih =>
+      intro initial
+      have next := a_call_commit_updates_its_actual_group_word committed (ih initial)
+      simpa [List.filterMap_append, DistributedCallBoundary.record?, committedFrameClassWord] using next
+  | @receive cut word entries published pending changed channel next frame after cleared record entry witness
+      history actorRole received entryAt identity paired committed ih =>
+      intro initial
+      have advanced := a_call_commit_updates_its_actual_group_word committed (ih initial)
+      simpa [DistributedSourceCut.carrierAt, List.filterMap_append,
+        DistributedCallBoundary.record?, committedFrameClassWord] using advanced
+
+/-- The actual committed word retains source order even with multiple
+outstanding calls and independent same-actor commits. This is the publication
+projection of the chronological execution. Its acceptance-inclusive logical
+word still needs the pending-call refinement; the two words are not equated. -/
+theorem a_distributed_call_execution_keeps_its_committed_source_group_word
+    {images : Nat → RustDescriptorImage} {choreo : Choreo} {session actor : Nat}
+    {group : SourceOrderGroup (images actor) choreo}
+    {first last : DistributedSourceCut} {word : List DistributedCallBoundary}
+    {entries pending : List SourceAcceptance} {published : List (SourceAcceptance × ActorCommitRecord)}
+    (execution : DistributedCallExecution images choreo session first last word entries published pending)
+    (initial : ∀ event ∈ group.rows, (first.actors actor).1.doneState.done event = false) :
+    sourceFrameWord group.rows
+      (committedFrameClassWord group.rows actor (word.filterMap DistributedCallBoundary.record?)) ∧
+      ∃ cycles position,
+        sourceFramePrefix group.rows (last.actors actor).1 position ∧
+        (0 < position → group.Known (last.actors actor).1) ∧
+        (committedFrameClassWord group.rows actor (word.filterMap DistributedCallBoundary.record?)).length =
+          cycles * group.rows.length + position := by
+  have initialCut : group.WordCut (first.actors actor).1 [] := by
+    refine ⟨0, 0, ⟨by omega, ?_⟩, ?_, by simp, ?_⟩
+    · intro index event atEvent
+      rw [initial event (List.mem_of_getElem? atEvent)]
+      simp
+    · exact fun impossible => False.elim (Nat.lt_irrefl 0 impossible)
+    · intro index event missing; simp at missing
+  obtain ⟨cycles, position, finalSegment, known, balance, ordered⟩ :=
+    a_call_execution_has_its_actual_group_word_cut execution initialCut
+  exact ⟨ordered, cycles, position, finalSegment, known, balance⟩
+
 /-- An actual measured actor history produces a prefix of its ordered
 group's cyclic source word. The proof reads checked commits, source-derived
 resets and committed branch knowledge from the same distributed execution.
@@ -708,52 +791,34 @@ private theorem a_ready_source_row_is_the_next_class_row
   have same : index = position := by omega
   simpa only [same] using eventAt
 
-/-- Qualify a send or receive directly from its actual current/fresh prepared
-base. Neither a successful post-operation snapshot nor sender publication is
-used. This states the next source letter, not value custody or I/O readiness. -/
-theorem a_prepared_wire_operation_extends_its_actors_measured_source_word
-    {images : Nat → RustDescriptorImage} {choreo : Choreo} {session actor previousPath pathIndex event : Nat}
-    {group : SourceOrderGroup (images actor) choreo}
-    {first last : DistributedSourceCut × List SourceAcceptance}
-    {records : List (Nat × ActorCommitRecord)}
+private theorem a_prepared_source_group_base_has_its_next_word_letter
+    {image : RustDescriptorImage} {choreo : Choreo} {previousPath pathIndex event : Nat}
+    {group : SourceOrderGroup image choreo} {before : ActorProgressObservation} {word : List Nat}
     {base : ActorProgressObservation} {data : DecodedActorOrder} {path : NormalizedPath} {row : DecodedActorRow}
-    (execution : DistributedSourceExecution images choreo session first last records)
-    (initial : ∀ event ∈ group.rows,
-      (first.1.actors actor).1.doneState.done event = false)
-    (decoded : (images actor).decodeActorOrder? choreo = some data)
+    (cut : group.WordCut before word)
+    (decoded : image.decodeActorOrder? choreo = some data)
     (pathAt : data.normalized.paths[pathIndex]? = some path)
     (rowAt : data.rows[event]? = some row)
     (active : row ∈ data.activeRows path) (ready : sourceRowReady data path base row = true)
     (origin : ActorSourceCandidateBase
-      { snapshot := (last.1.actors actor).1, pathIndex, admitted := [] }
-      (images actor) choreo previousPath path row base)
+      { snapshot := before, pathIndex, admitted := [] } image choreo previousPath path row base)
     (member : event ∈ group.rows) :
-    sourceFrameWord group.rows
-      (committedFrameClassWord group.rows actor records ++ [event]) ∧
-    group.rows[
-      (committedFrameClassWord group.rows actor records).length %
-        group.rows.length]? = some event := by
-  obtain ⟨ordered, cycles, position, initialSegment, known, balance⟩ :=
-    a_measured_distributed_class_has_its_source_word_and_exact_prefix execution initial
+    sourceFrameWord group.rows (word ++ [event]) ∧
+      group.rows[word.length % group.rows.length]? = some event := by
+  obtain ⟨cycles, position, initialSegment, known, balance, ordered⟩ := cut
   have qualify : ∀ {rounds point},
       sourceFramePrefix group.rows base point →
-      (committedFrameClassWord group.rows actor records).length =
-        rounds * group.rows.length + point →
-      group.rows[
-        (committedFrameClassWord group.rows actor records).length %
-          group.rows.length]? = some event := by
+      word.length = rounds * group.rows.length + point →
+      group.rows[word.length % group.rows.length]? = some event := by
     intro rounds point initialPart equation
     have next := a_ready_source_row_is_the_next_class_row decoded (List.mem_of_getElem? pathAt)
       rowAt active ready initialPart member
     have bound := (List.getElem?_eq_some_iff.mp next).1
-    have residue : (committedFrameClassWord group.rows actor records).length %
-        group.rows.length = point := by
+    have residue : word.length % group.rows.length = point := by
       simp only [equation, Nat.add_mod, Nat.mul_mod, Nat.mod_self, Nat.mul_zero,
         Nat.zero_mod, Nat.zero_add, Nat.mod_eq_of_lt bound]
     simpa only [residue] using next
-  have next : group.rows[
-      (committedFrameClassWord group.rows actor records).length %
-        group.rows.length]? = some event := by
+  have next : group.rows[word.length % group.rows.length]? = some event := by
     cases origin with
     | current agrees => exact qualify initialSegment balance
     | fresh domain rollMember prepared =>
@@ -766,5 +831,58 @@ theorem a_prepared_wire_operation_extends_its_actors_measured_source_word
         · apply qualify reset.2 (rounds := cycles + 1)
           simpa only [Nat.add_mul, Nat.one_mul, Nat.add_zero, full] using balance
   exact ⟨a_source_word_extends_by_its_next_actual_letter ordered next, next⟩
+
+/-- Qualify a send or receive directly from its actual current/fresh prepared
+base. Neither a successful post-operation snapshot nor sender publication is
+used. This states the next source letter, not value custody or I/O readiness. -/
+theorem a_prepared_wire_operation_extends_its_actors_measured_source_word
+    {images : Nat → RustDescriptorImage} {choreo : Choreo} {session actor previousPath pathIndex event : Nat}
+    {group : SourceOrderGroup (images actor) choreo}
+    {first last : DistributedSourceCut × List SourceAcceptance}
+    {records : List (Nat × ActorCommitRecord)}
+    {base : ActorProgressObservation} {data : DecodedActorOrder} {path : NormalizedPath} {row : DecodedActorRow}
+    (execution : DistributedSourceExecution images choreo session first last records)
+    (initial : ∀ event ∈ group.rows, (first.1.actors actor).1.doneState.done event = false)
+    (decoded : (images actor).decodeActorOrder? choreo = some data)
+    (pathAt : data.normalized.paths[pathIndex]? = some path) (rowAt : data.rows[event]? = some row)
+    (active : row ∈ data.activeRows path) (ready : sourceRowReady data path base row = true)
+    (origin : ActorSourceCandidateBase
+      { snapshot := (last.1.actors actor).1, pathIndex, admitted := [] }
+      (images actor) choreo previousPath path row base)
+    (member : event ∈ group.rows) :
+    sourceFrameWord group.rows (committedFrameClassWord group.rows actor records ++ [event]) ∧
+      group.rows[(committedFrameClassWord group.rows actor records).length % group.rows.length]? = some event := by
+  obtain ⟨ordered, cycles, position, initialSegment, known, balance⟩ :=
+    a_measured_distributed_class_has_its_source_word_and_exact_prefix execution initial
+  exact a_prepared_source_group_base_has_its_next_word_letter
+    ⟨cycles, position, initialSegment, known, balance, ordered⟩ decoded pathAt rowAt active ready origin member
+
+/-- Prepare the next source operation in the general asynchronous chronology,
+without the earlier actor-wide acceptance/publication restriction. This supplies
+its next committed-word letter before I/O; maintaining an accepted pending
+letter across subsequent boundaries remains a separate refinement. -/
+theorem a_prepared_call_operation_has_its_next_committed_source_letter
+    {images : Nat → RustDescriptorImage} {choreo : Choreo} {session actor previousPath pathIndex event : Nat}
+    {group : SourceOrderGroup (images actor) choreo}
+    {first last : DistributedSourceCut} {word : List DistributedCallBoundary}
+    {entries pending : List SourceAcceptance} {published : List (SourceAcceptance × ActorCommitRecord)}
+    {base : ActorProgressObservation} {data : DecodedActorOrder} {path : NormalizedPath} {row : DecodedActorRow}
+    (execution : DistributedCallExecution images choreo session first last word entries published pending)
+    (initial : ∀ event ∈ group.rows, (first.actors actor).1.doneState.done event = false)
+    (decoded : (images actor).decodeActorOrder? choreo = some data)
+    (pathAt : data.normalized.paths[pathIndex]? = some path) (rowAt : data.rows[event]? = some row)
+    (active : row ∈ data.activeRows path) (ready : sourceRowReady data path base row = true)
+    (origin : ActorSourceCandidateBase
+      { snapshot := (last.actors actor).1, pathIndex, admitted := [] }
+      (images actor) choreo previousPath path row base)
+    (member : event ∈ group.rows) :
+    sourceFrameWord group.rows
+      (committedFrameClassWord group.rows actor (word.filterMap DistributedCallBoundary.record?) ++ [event]) ∧
+      group.rows[(committedFrameClassWord group.rows actor
+        (word.filterMap DistributedCallBoundary.record?)).length % group.rows.length]? = some event := by
+  obtain ⟨ordered, cycles, position, initialSegment, known, balance⟩ :=
+    a_distributed_call_execution_keeps_its_committed_source_group_word execution initial
+  exact a_prepared_source_group_base_has_its_next_word_letter
+    ⟨cycles, position, initialSegment, known, balance, ordered⟩ decoded pathAt rowAt active ready origin member
 
 end Hibana

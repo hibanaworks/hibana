@@ -32,6 +32,9 @@ Equal bytes in different rolled visits do not identify the same acceptance. -/
 def SourceAcceptance.callKey (entry : SourceAcceptance) : TransportChannel × Nat :=
   (entry.channel, entry.carrierWitness)
 
+def SourceAcceptance.callRow (entry : SourceAcceptance) : Nat × Nat :=
+  (entry.sample.image.role, entry.sample.event)
+
 /-- Match one retained send call to its publication. Independent fragments may
 have changed progress and choice knowledge since its physical acceptance.
 The lifecycle below consumes the exact outstanding acceptance once; matching
@@ -190,6 +193,34 @@ theorem a_source_call_history_checks_every_publication
       · have equal : pair = (entry, record) := by simpa using current
         subst pair
         exact paired
+
+/-- Outstanding calls are unique by actor and local row, not by actor alone.
+This is derived from the observed call-slot contract and publication removal;
+it permits arbitrarily many independent rows of the same actor to be pending. -/
+theorem a_source_call_history_has_unique_outstanding_rows
+    {choreo : Choreo} {session : Nat} {word : List SourceCallBoundary}
+    {accepted pending : List SourceAcceptance}
+    {published : List (SourceAcceptance × ActorCommitRecord)}
+    (history : SourceCallHistory choreo session word accepted published pending) :
+    (pending.map SourceAcceptance.callRow).Nodup := by
+  induction history with
+  | nil => simp
+  | @accept word accepted published pending entry history checked fresh slotFree ih =>
+      simp only [List.map_append, List.map_cons, List.map_nil]
+      apply List.nodup_append.mpr
+      refine ⟨ih, by simp, ?_⟩
+      intro key member other singleton equal
+      have same : key = entry.callRow := equal.trans (by simpa using singleton)
+      obtain ⟨old, inPending, atKey⟩ := List.mem_map.mp member
+      have fields : old.sample.image.role = entry.sample.image.role ∧
+          old.sample.event = entry.sample.event := Prod.mk.inj (atKey.trans same)
+      have unavailable := List.all_eq_true.mp slotFree old inPending
+      have both := Bool.and_eq_true_iff.mpr
+        ⟨beq_iff_eq.mpr fields.1, beq_iff_eq.mpr fields.2⟩
+      rw [both] at unavailable
+      cases unavailable
+  | @publish word accepted published left right entry record history paired ih =>
+      exact (((List.sublist_cons_self entry right).append_left left).map SourceAcceptance.callRow).nodup ih
 
 private theorem publication_is_send
     {sample : SourceSendAdmission} {record : ActorCommitRecord}

@@ -44,6 +44,7 @@ import Hibana.SourceHandoffWord
 import Hibana.SourcePortWord
 import Hibana.SourceOwnedReceive
 import Hibana.SourcePublicationPrefix
+import Hibana.DistributedCallExecution
 import Hibana.GlobalSemantics
 import Hibana.GlobalAllocationCorrectness
 import Hibana.GlobalMessageTransitions
