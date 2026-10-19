@@ -336,6 +336,23 @@ impl PortOpen {
 /// profile. A raw carrier may instead expose protocol-defined close or timeout
 /// as ordinary observations; without either, no global cancellation-termination
 /// conclusion applies.
+///
+/// # Logical channels across Endpoint handoff
+/// Endpoint transfer carries logical protocol authority, not a Rust pointer,
+/// socket, or shared-memory reference. Every runtime owns its own storage.
+/// A receiving actor opens the same logical session/role/lane through its own
+/// transport. Deployment must make that logical direction usable there,
+/// including frames accepted before the handoff. The FIFO and no-replay
+/// requirements span holders; starting a new physical connection does not start
+/// a new logical direction or discard its unread prefix. Carrier buffering and
+/// `requeue` must not strand an uncommitted frame at an earlier holder.
+///
+/// These requirements do not impose shared memory or one global FIFO. Independent
+/// projected directions remain independent. A network transport may use a stable
+/// logical inbox; changing physical destinations instead requires preserving the
+/// accepted prefix during forwarding. Neither mechanism is supplied by this
+/// trait, and passing a same-host shared-queue test does not validate either
+/// mechanism across machines.
 pub trait Transport {
     type Tx<'a>: 'a
     where

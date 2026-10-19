@@ -61,6 +61,65 @@ These are explicit premises. Lean does not infer remote installation agreement,
 transport authentication, delivery, failure detection, or scheduler fairness
 from the `Transport` trait.
 
+## Delegation reduction target and network boundary
+
+The outstanding delegation result concerns independently stored actor runtimes,
+including actors on different machines. It must not require a common Rust heap,
+shared cursor, or a physical receive queue that only same-host actors can open.
+An initial resource binding belongs to its sole physical issuer; remote holders
+receive protocol authority and do not create another initial binding.
+
+The target reduction has four obligations over the **same reachable execution**:
+
+1. Erasing physical actors gives the accepted logical-role semantics, preserving
+   sends, receives, choices and repetition occurrences. Transfer and local
+   bookkeeping may stutter only with their custody and ordering effects retained.
+2. Initial issuance, values, pending futures and accepted frames conserve affine
+   custody at every cut. There is at most one usable authority; an accepted frame
+   or an abandoned right is not an additional callable Endpoint. Fault and drop
+   cases cannot be replaced with an unconditional exactly-one-live-holder claim.
+3. Local actor order and handoff preserve source causality and the complete
+   logical FIFO, including ordinary frames between transfers. Independently
+   advancing branch knowledge and visits do not become one common actor history.
+4. A logical enabled transition lifts to an actual permitted actor operation,
+   carrier transition, or the selected model's terminal fault/closure. This must
+   follow from reachable custody and calls, not assume the desired Endpoint or
+   future is already available. Forward simulation alone does not supply this
+   lifting result or establish progress of arbitrary pending public calls.
+
+Only after these obligations are established can the corresponding existing
+logical progress result be inherited, with its scheduling, accepted-artifact
+and transport premises intact. This is the target contract, not a completed
+delegation theorem or a new axiom.
+
+The Unix-datagram process fixtures inherit descriptors for the same kernel
+datagram queues. They share no Rust runtime memory, but they test one host's
+queue continuity rather than a network handoff. Across machines, the transport
+must keep each logical direction accessible to its next holder and preserve
+frames accepted before handoff, including uncommitted buffered observations.
+A stable network inbox can provide this without moving the inbox itself;
+destination migration instead needs a correctly ordered forwarding mechanism.
+Neither mechanism is established by those Unix fixtures. FIFO is per mapped
+logical direction and does not serialize independent parallel directions.
+
+The additional `native::network` fixtures use a separate TCP inbox process.
+The unread-frame fixture also separates the owner, worker and physical service
+into different processes, with no inherited queue or socket descriptors. The
+service alone creates the initial binding. An ordinary frame is accepted and
+remains unread after the worker exits, then the owner receives the returned
+Endpoint and consumes that frame through its continuation. A second fixture
+uses the existing resolved-choice, repeated-loan, parallel global and compares
+complete accepted and received frame sequences per logical direction. The
+inbox server stores bytes and I/O readiness, not a holder table or protocol
+cursor. Parent fixtures invoke the ignored process entrypoints; they are not
+unexecuted test cases.
+
+This is a trusted loopback TCP deployment with an isolated inbox server per
+test and carrier deadlines. It does not test two physical machines, production
+authentication, brokerless destination forwarding, every cancellation schedule,
+or the general delegation theorem above. The server and its test journal use
+host allocation; neither is linked into the no-heap core execution path.
+
 Rust handle borrowing is also an implementation boundary, not a consequence of
 the carrier model. `Transport` borrows each Tx only for a send/cancel call, and
 each Rx for the returned frame's lifetime, independently of the handle's internal

@@ -26,6 +26,7 @@ use mailbox::{Mailboxes, NativeTransport};
 
 mod composed;
 mod failure;
+mod network;
 mod preemption;
 mod retirement;
 
