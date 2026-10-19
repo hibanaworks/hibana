@@ -36,6 +36,16 @@ distributedActualReceiveBoundaries : ∀ (actor eff : Nat) (record : ActorCommit
                   SourceReceivePair entry.sample record (distributedImages actor) distributedChoreo 9062 ∧
                     DistributedSourceExecution distributedImages distributedChoreo 9062 after
                       (distributedCut24, distributedEntries24) later
+distributedCandidateCorrespondenceRejectsOldProgress : distributedOccurrencePlan.candidateHistoryMatches
+      distributedImage0 distributedChoreo 0 distributedCandidateData distributedCandidatePath distributedCandidateRow2
+      distributedCandidate2.snapshot (List.take 9 distributedOccurrencePoints) { event := 3, side := Side.send } =
+    false ∧
+  distributedOccurrencePlan.candidateHistoryMatches distributedImage0 distributedChoreo 0 distributedCandidateData
+      distributedCandidatePath distributedCandidateRow3 distributedCandidateBase3
+      (List.filter (fun point => decide (point ≠ SourcePoint.committed { event := 3, side := Side.send }))
+        (List.take 11 distributedOccurrencePoints))
+      { event := 4, side := Side.send } =
+    false
 distributedCurrentReceiptHasItsActualUnresetGlobalOrigin : ∃ before after prior later record marked untouched commits,
   DistributedSourceExecution distributedImages distributedChoreo 9062 (distributedCut0, distributedEntries0) before
       prior ∧
@@ -97,6 +107,9 @@ distributedProjectedHistoryIncludesEveryPhysicalBoundary : List.filterMap Distri
         true ∧
       SourceOccurrenceExecution (occurrenceCut distributedOccurrencePlan [])
         (occurrenceCut distributedOccurrencePlan distributedOccurrencePoints) distributedOccurrencePoints
+distributedProjectedOccurrencesReachTheirActualCursorQueries : distributedCandidate0.admitted[0]? = some true ∧
+  distributedCandidate1.admitted[1]? = some true ∧
+    distributedCandidate2.admitted[0]? = some true ∧ distributedCandidate3.admitted[1]? = some true
 distributedProspectiveReceiptHasItsSourceInstanceBeforePairValidation : ∃ history key following,
   SendAdmissionTrace distributedChoreo 9062 (distributedCut13.carriers distributedChannel8) history
       (sourceChannelRecords distributedEntries13 distributedChannel8) ∧

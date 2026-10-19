@@ -4,7 +4,7 @@ use super::*;
 #[cfg(not(miri))]
 use crate::endpoint::proof_snapshot::ActorSnapshot;
 use crate::{
-    endpoint::proof_snapshot::actor_snapshot,
+    endpoint::proof_snapshot::{actor_admissions, actor_snapshot},
     runtime::{SessionKitStorage, ids::SessionId},
     test_support::transport::TestTransport,
 };
@@ -78,7 +78,8 @@ fn ordinary_and_owned_acceptances_keep_the_same_fifo_through_reentry() {
                             let mut sends = std::vec::Vec::new();
                             for number in [7, 9] {
                                 // SAFETY: this pinned actor was attached with TestTransport.
-                                let before_loan = unsafe { actor_snapshot(&owner) };
+                                let (before_loan, loan_admission) =
+                                    unsafe { (actor_snapshot(&owner), actor_admissions(&owner)) };
                                 owner.send::<Loan>(db).await.unwrap();
                                 operations.borrow_mut().push(OperationObservation {
                                     view: 0,
@@ -88,7 +89,8 @@ fn ordinary_and_owned_acceptances_keep_the_same_fifo_through_reentry() {
                                     frame: FrameBoundary::Sent(network.accepted_frame(1, 0)),
                                 });
                                 let loan_wire = network.queued_frame_at(1, 0);
-                                let before_note = unsafe { actor_snapshot(&owner) };
+                                let (before_note, note_admission) =
+                                    unsafe { (actor_snapshot(&owner), actor_admissions(&owner)) };
                                 owner.send::<Note>(&number).await.unwrap();
                                 operations.borrow_mut().push(OperationObservation {
                                     view: 0,
@@ -101,8 +103,8 @@ fn ordinary_and_owned_acceptances_keep_the_same_fifo_through_reentry() {
                                 // Inspection neither consumes them nor authorizes a receive.
                                 let note_wire = network.queued_frame_at(1, 1);
                                 assert_eq!(loan_wire.0.lane(), note_wire.0.lane());
-                                sends.push((before_loan, loan_wire));
-                                sends.push((before_note, note_wire));
+                                sends.push((before_loan, loan_wire, loan_admission));
+                                sends.push((before_note, note_wire, note_admission));
                                 let before = unsafe { actor_snapshot(&owner) };
                                 db = owner.recv::<Loan>().await.unwrap();
                                 operations.borrow_mut().push(OperationObservation {
@@ -219,14 +221,18 @@ fn ordinary_and_owned_acceptances_keep_the_same_fifo_through_reentry() {
             #[cfg(not(miri))]
             {
                 write_observations(&sends, &receipts);
-                super::distributed_source::write_observations(&initial, &operations);
+                let candidates = sends
+                    .iter()
+                    .map(|(before, _, admitted)| (before.clone(), admitted.clone()))
+                    .collect::<std::vec::Vec<_>>();
+                super::distributed_source::write_observations(&initial, &operations, &candidates);
             }
         });
 }
 
 #[cfg(not(miri))]
 fn write_observations(
-    sends: &[(ActorSnapshot, Wire)],
+    sends: &[(ActorSnapshot, Wire, std::vec::Vec<bool>)],
     receipts: &[(ActorSnapshot, ActorSnapshot)],
 ) {
     use crate::test_support::{lean_choreo::LeanChoreo, lean_descriptor::descriptor_source};
@@ -250,7 +256,7 @@ fn write_observations(
             descriptor_source(RoleDescriptorRef::from_resident(image))
         ));
     }
-    for (index, (before, (header, payload))) in sends.iter().enumerate() {
+    for (index, (before, (header, payload), _admitted)) in sends.iter().enumerate() {
         let label = if index % 2 == 0 { 1 } else { 9 };
         let event = before
             .steps

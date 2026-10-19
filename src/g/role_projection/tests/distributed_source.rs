@@ -301,6 +301,7 @@ fn write_frame_words(initial: &[ActorSnapshot; 3], source: &mut std::string::Str
 pub(super) fn write_observations(
     initial: &[ActorSnapshot; 3],
     operations: &[OperationObservation],
+    candidates: &[(ActorSnapshot, std::vec::Vec<bool>)],
 ) {
     let mut source = execution_source::<super::mixed_send_admission::Steps, 16>(
         initial,
@@ -453,6 +454,33 @@ theorem distributedFreshMixedSourceIdentityBeforeItsNewReceivePair :
   distributedFreshPreparedSourceIdentity
 "#);
     source.push_str(include_str!("distributed_owned_receive.lean"));
+    source.push_str("\nprivate def distributedCandidateData := (distributedImage0.decodeActorOrder? distributedChoreo).get (by decide)\n\n\
+        private def distributedCandidatePath := (distributedCandidateData.normalized.paths[0]?).get (by decide)\n\n\
+        private def distributedCandidateRolls := (distributedChoreo.canonicalActorRollRows? 0).get (by decide)\n\n\
+        private def distributedCandidateRoll := (distributedCandidateRolls[0]?).get (by decide)\n\n");
+    for (index, (before, admitted)) in candidates.iter().enumerate() {
+        let label = if index % 2 == 0 { 1 } else { 9 };
+        let event = before
+            .steps
+            .iter()
+            .position(|step| matches!(step.action, super::LocalAction::Send { label: found, .. } if found == label))
+            .unwrap();
+        writeln!(source, "private def distributedCandidate{index} : ActorAdmissionObservation := {{ snapshot := {}, pathIndex := 0, admitted := {admitted:?} }}\n\n\
+            private def distributedCandidateRow{index} := (distributedCandidateData.rows[{event}]?).get (by decide)\n",
+            super::commit::observation_source(before)).unwrap();
+        let base = if let Some(scope) = before.steps[event].reentry_scope {
+            std::format!(
+                "((prepareObservedActorBody? distributedImage0 distributedChoreo distributedCandidate{index}.snapshot 0 0 {scope} {event}).get (by decide)).2"
+            )
+        } else {
+            std::format!("distributedCandidate{index}.snapshot")
+        };
+        writeln!(
+            source,
+            "private def distributedCandidateBase{index} : ActorProgressObservation := {base}\n"
+        )
+        .unwrap();
+    }
     source.push_str(include_str!("distributed_occurrence.lean"));
     let directory = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/lean-proof");
     std::fs::create_dir_all(&directory).unwrap();

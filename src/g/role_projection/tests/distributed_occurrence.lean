@@ -137,4 +137,65 @@ theorem distributedProjectedHistoryIncludesEveryPhysicalBoundary :
     a_source_occurrence_trace_is_its_reconstructed_execution
       distributedLocalProjectionReconstructsItsOccurrenceHistory⟩
 
+/-- Four real raw queries: first-visit loan/note and fresh-visit loan/note.
+The source points are prefixes of the same complete captured word above.
+Each result uses the authentic current or purely prepared fresh base. -/
+theorem distributedProjectedOccurrencesReachTheirActualCursorQueries :
+    distributedCandidate0.admitted[0]? = some true ∧
+      distributedCandidate1.admitted[1]? = some true ∧
+      distributedCandidate2.admitted[0]? = some true ∧
+      distributedCandidate3.admitted[1]? = some true := by
+  have firstLoan := a_projected_occurrence_has_actual_candidate_admission
+    (sample := distributedCandidate0) (image := distributedImage0) (choreo := distributedChoreo)
+    (previousPath := 0) (data := distributedCandidateData) (path := distributedCandidatePath)
+    (row := distributedCandidateRow0) (base := distributedCandidateBase0)
+    (plan := distributedOccurrencePlan) (points := distributedOccurrencePoints.take 0)
+    (target := ⟨0, .send⟩)
+    (by decide) ((Option.some_get (x := distributedImage0.decodeActorOrder? distributedChoreo) (by decide)).symm)
+    (by decide) (by decide) (.current (by decide))
+    (by decide) (by decide) (by decide)
+  have firstNote := a_projected_occurrence_has_actual_candidate_admission
+    (sample := distributedCandidate1) (image := distributedImage0) (choreo := distributedChoreo)
+    (previousPath := 0) (data := distributedCandidateData) (path := distributedCandidatePath)
+    (row := distributedCandidateRow1) (base := distributedCandidateBase1)
+    (plan := distributedOccurrencePlan) (points := distributedOccurrencePoints.take 2)
+    (target := ⟨1, .send⟩)
+    (by decide) ((Option.some_get (x := distributedImage0.decodeActorOrder? distributedChoreo) (by decide)).symm)
+    (by decide) (by decide) (.current (by decide))
+    (by decide) (by decide) (by decide)
+  have freshLoan := a_projected_occurrence_has_actual_candidate_admission
+    (sample := distributedCandidate2) (image := distributedImage0) (choreo := distributedChoreo)
+    (previousPath := 0) (data := distributedCandidateData) (path := distributedCandidatePath)
+    (row := distributedCandidateRow2) (base := distributedCandidateBase2)
+    (plan := distributedOccurrencePlan) (points := distributedOccurrencePoints.take 9)
+    (target := ⟨3, .send⟩)
+    (by decide) ((Option.some_get (x := distributedImage0.decodeActorOrder? distributedChoreo) (by decide)).symm)
+    (by decide) (by decide)
+    (.fresh (rolls := distributedCandidateRolls) (roll := distributedCandidateRoll)
+      (by decide) (by decide) (by decide))
+    (by decide) (by decide) (by decide)
+  have freshNote := a_projected_occurrence_has_actual_candidate_admission
+    (sample := distributedCandidate3) (image := distributedImage0) (choreo := distributedChoreo)
+    (previousPath := 0) (data := distributedCandidateData) (path := distributedCandidatePath)
+    (row := distributedCandidateRow3) (base := distributedCandidateBase3)
+    (plan := distributedOccurrencePlan) (points := distributedOccurrencePoints.take 11)
+    (target := ⟨4, .send⟩)
+    (by decide) ((Option.some_get (x := distributedImage0.decodeActorOrder? distributedChoreo) (by decide)).symm)
+    (by decide) (by decide) (.current (by decide))
+    (by decide) (by decide) (by decide)
+  exact ⟨firstLoan.2, firstNote.2, freshLoan.2, freshNote.2⟩
+
+/-- Old completed bits and an old equal send cannot replace the current
+occurrence. These are negative controls for the actual fresh-loan/note cuts. -/
+theorem distributedCandidateCorrespondenceRejectsOldProgress :
+    distributedOccurrencePlan.candidateHistoryMatches distributedImage0 distributedChoreo 0
+      distributedCandidateData distributedCandidatePath distributedCandidateRow2
+      distributedCandidate2.snapshot (distributedOccurrencePoints.take 9) ⟨3, .send⟩ = false ∧
+    distributedOccurrencePlan.candidateHistoryMatches distributedImage0 distributedChoreo 0
+      distributedCandidateData distributedCandidatePath distributedCandidateRow3
+      distributedCandidateBase3
+      ((distributedOccurrencePoints.take 11).filter fun point =>
+        decide (point ≠ .committed ⟨3, .send⟩)) ⟨4, .send⟩ = false := by
+  decide
+
 end

@@ -3013,6 +3013,39 @@ Hibana.a_pending_payload_requires_its_own_send : ∀ (resource : Nat) (sent : Op
                                 (@Hibana.SourceOrderGroup.rows (images actor) choreo group) actor records))
                             (@List.length.{0} Nat (@Hibana.SourceOrderGroup.rows (images actor) choreo group))))
                         (@some.{0} Nat event))
+@Hibana.a_projected_occurrence_has_actual_candidate_admission : ∀ {source : Hibana.EndpointDelegation.Source}
+  {sample : Hibana.ActorAdmissionObservation} {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo}
+  {previousPath : Nat} {data : Hibana.DecodedActorOrder} {path : Hibana.EndpointDelegation.NormalizedPath}
+  {row : Hibana.DecodedActorRow} {base : Hibana.ActorProgressObservation} {plan : Hibana.SourceOccurrenceCut source}
+  {points : List.{0} Hibana.SourcePoint} {target : Hibana.EndpointDelegation.ActionId},
+  @Eq.{1} Bool (sample.candidateCheck image choreo previousPath) true →
+    @Eq.{1} (Option.{0} Hibana.DecodedActorOrder) (image.decodeActorOrder? choreo)
+        (@some.{0} Hibana.DecodedActorOrder data) →
+      @Eq.{1} (Option.{0} Hibana.EndpointDelegation.NormalizedPath)
+          (@getElem?.{0, 0, 0} (List.{0} Hibana.EndpointDelegation.NormalizedPath) Nat
+            Hibana.EndpointDelegation.NormalizedPath
+            (fun as i => @LT.lt.{0} Nat instLTNat i (@List.length.{0} Hibana.EndpointDelegation.NormalizedPath as))
+            (@List.instGetElem?NatLtLength.{0} Hibana.EndpointDelegation.NormalizedPath) data.normalized.paths
+            sample.pathIndex)
+          (@some.{0} Hibana.EndpointDelegation.NormalizedPath path) →
+        @Membership.mem.{0, 0} Hibana.DecodedActorRow (List.{0} Hibana.DecodedActorRow)
+            (@List.instMembership.{0} Hibana.DecodedActorRow) (data.activeRows path) row →
+          Hibana.ActorSourceCandidateBase sample image choreo previousPath path row base →
+            @Eq.{1} Bool
+                (@Hibana.SourceOccurrenceCut.candidateHistoryMatches source plan image choreo sample.pathIndex data path
+                  row base points target)
+                true →
+              @Eq.{1} Bool
+                  (@Hibana.occurrenceLocalReady source plan image.role
+                    (@Hibana.occurrenceLocalHistory source plan image.role points) target.entryPoint)
+                  true →
+                @Eq.{1} Bool (Hibana.occurrenceWireReady points target.entryPoint) true →
+                  And (@Eq.{1} Bool (Hibana.sourceRowReady data path base row) true)
+                    (@Eq.{1} (Option.{0} Bool)
+                      (@getElem?.{0, 0, 0} (List.{0} Bool) Nat Bool
+                        (fun as i => @LT.lt.{0} Nat instLTNat i (@List.length.{0} Bool as))
+                        (@List.instGetElem?NatLtLength.{0} Bool) sample.admitted row.eventId)
+                      (@some.{0} Bool true))
 @Hibana.a_prospective_call_head_matches_its_statically_classified_receiver : ∀
   {images : Nat → Hibana.RustDescriptorImage} {choreo : Hibana.Choreo}
   {session sender actor previousPath pathIndex event : Nat}

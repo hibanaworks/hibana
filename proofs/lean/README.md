@@ -157,10 +157,19 @@ by induction over those local transitions. The joint result also returns the
 enabled actor's local query and acceptance evidence. It does not impose one
 pending call per actor or synchronized visits.
 
+For a candidate operation, `candidateHistoryMatches` derives the complete
+predecessor domain from the original descriptor. It resolves each predecessor
+to the last matching causal occurrence in that same chronological history,
+then compares the recorded completions with the authentic current or purely
+prepared fresh base. The admission theorem combines this correspondence with
+the projected query and transport acceptance to derive the source row's
+readiness and the measured raw cursor result. Raw readiness and the existence
+of a Rust future are not correspondence premises.
+
 This proves source simulation and projected progress for the selected finite
 unfolding's local protocol model. Applying it to every production history still
-requires descriptor/current-and-fresh-base correspondence, general elastic
-continuation refinement, and carrier/fault/closure composition. An independently
+requires deriving this descriptor correspondence at each reachable cut, general
+elastic continuation refinement, and carrier/fault/closure composition. An independently
 chosen source cut cannot replace that correspondence. Rust implementation
 evidence remains scoped as described above; formalizing arbitrary application
 code or an executor is not another task.
@@ -173,6 +182,12 @@ complete acceptance and commit lists is kernel checked. The source execution
 then follows from local order and the earlier accepted calls, and all selected
 source points finish. This is one captured execution, not the general
 production refinement or an additional future-custody qualification.
+
+Four copied raw queries from that same fixture qualify the first and fresh
+loan/note sends through the admission theorem. Reusing the old completed base
+for the fresh loan is rejected. Removing the fresh loan's publication cannot
+be repaired by the first visit's equal send. The queries are read-only test
+observations and do not change localside control or add runtime storage.
 
 The Unix-datagram process fixtures inherit descriptors for the same kernel
 datagram queues. They share no Rust runtime memory, but they test one host's
