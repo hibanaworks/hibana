@@ -1,0 +1,10 @@
+# Linux x86-64, Rust 1.99.1, Valgrind 3.22.0, current kernel f8c32d44.
+# Baseline: CI 39213113552, two independent processes per case, 512 endpoint ops.
+# Max of the two actual Ir totals, plus 5% explicit regression headroom, rounded up.
+# Baselines: seq/8=139614351 seq/256=259670012 par/8=80259751 par/256=142262140.
+# Compiler/target changes require profile review, never an automatic budget increase.
+case	tail_events	endpoint_ops	max_instructions
+seq	8	512	146595069
+seq	256	512	272653513
+par	8	512	84272739
+par	256	512	149375247

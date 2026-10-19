@@ -34,4 +34,6 @@ for case in seq par; do
 done
 rustc +"$TOOLCHAIN" --edition=2024 -D warnings -O \
   .github/ci-tests/runtime_instructions.rs -o "$build/read-instructions"
-"$build/read-instructions" "$results" | tee "$results/counts.tsv"
+"$build/read-instructions" "$results" \
+  "$ROOT/.github/measurement_snapshots/hibana-runtime-instructions.tsv" \
+  | tee "$results/counts.tsv"

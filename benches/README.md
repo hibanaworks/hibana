@@ -34,7 +34,18 @@ run twice; raw profiles, exact tool versions and counts are uploaded. Profiling
 uses no alternate kernel, old implementation or extra core dependency. Other
 hosts retain the same benchmark without the platform-specific client requests.
 
-Instruction counts are a separate metric from elapsed time. This first profile
-collection has no committed instruction budget yet. A budget must be based on
-the measured Linux profiles, with compiler/target and tolerance recorded, before
-this job can be described as a regression gate.
+The Rust reader checks the final `totals` against the sum of self costs, excluding
+inclusive call costs to avoid double counting. Callgrind 3.22.0 can report zero
+in its optional `summary` after these instrumentation windows; that header is
+not used as the instruction count. Missing, truncated or inconsistent profiles
+fail the job.
+
+The instruction budget in
+`.github/measurement_snapshots/hibana-runtime-instructions.tsv` records Linux
+x86-64, Rust 1.99.1 and Valgrind 3.22.0. Each limit is the larger of the two
+actual f8c32d44 CI counts plus 5%, rounded up. Both runs must fit. Compiler or
+target changes require reviewing the new profiles, without automatically
+increasing the limits. This guards against further regressions from that
+checkpoint. It does not establish parity with historical main or remove the
+remaining performance work; instruction counts and elapsed time are separate
+measurements.
