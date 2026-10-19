@@ -205,10 +205,10 @@ private theorem a_call_commit_is_its_measured_step
     {image : RustDescriptorImage} {choreo : Choreo} {session : Nat}
     {before after : ActorProgressObservation × Nat} {cleared : List Nat} {record : ActorCommitRecord}
     (committed : ActorMeasuredCommit image choreo session before after cleared record) :
-    ActorMeasuredStep image choreo session before after cleared 1 := by
+    ∃ writes, ActorMeasuredStep image choreo session before after cleared writes := by
   cases committed with
-  | ordinary checked written => exact .commit checked written
-  | fresh checked prepared => exact .reentry checked prepared
+  | ordinary checked written => exact ⟨_, .commit checked written⟩
+  | fresh checked prepared => exact ⟨_, .reentry checked prepared⟩
 
 private theorem a_measured_call_update_extends_each_actor
     {images : Nat → RustDescriptorImage} {choreo : Choreo} {session changed : Nat}
@@ -244,12 +244,15 @@ theorem a_distributed_call_execution_projects_each_actual_actor_history
   | accept history imageAt checked decoded pathAt rowAt prepared slotFree freshWitness sourceAt accepted identity ih =>
       simpa only [DistributedSourceCut.carrierAt] using ih
   | publish history actorAt paired committed ih =>
-      exact a_measured_call_update_extends_each_actor ih (a_call_commit_is_its_measured_step committed)
+      obtain ⟨_, measured⟩ := a_call_commit_is_its_measured_step committed
+      exact a_measured_call_update_extends_each_actor ih measured
   | localCommit history actorRole localAt committed ih =>
-      exact a_measured_call_update_extends_each_actor ih (a_call_commit_is_its_measured_step committed)
+      obtain ⟨_, measured⟩ := a_call_commit_is_its_measured_step committed
+      exact a_measured_call_update_extends_each_actor ih measured
   | receive history actorRole received entryAt identity paired committed ih =>
+      obtain ⟨_, measured⟩ := a_call_commit_is_its_measured_step committed
       simpa only [DistributedSourceCut.carrierAt] using
-        a_measured_call_update_extends_each_actor ih (a_call_commit_is_its_measured_step committed)
+        a_measured_call_update_extends_each_actor ih measured
 
 private theorem call_channel_records_append
     (entries : List SourceAcceptance) (entry : SourceAcceptance) (channel : TransportChannel) :

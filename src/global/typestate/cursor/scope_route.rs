@@ -64,8 +64,11 @@ impl EventCursor {
         selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
     ) -> bool {
         let target = progress_step.0;
+        let retained = self.has_retained_roll_completion();
         for step_idx in self.pending_event_steps(0..usize::from(target.step_idx)) {
-            if self.machine().event_program().local_step_lane(step_idx) == Some(target.lane)
+            if (!retained
+                || !self.retained_roll_allows_predecessor(step_idx, usize::from(target.step_idx)))
+                && self.machine().event_program().local_step_lane(step_idx) == Some(target.lane)
                 && let Some(pending_idx) = self
                     .machine()
                     .state_for_step_index(step_idx)

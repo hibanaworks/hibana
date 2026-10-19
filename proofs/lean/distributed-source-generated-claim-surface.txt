@@ -89,7 +89,7 @@ distributedFreshReceiptResetsEvenWhenItsRowBitStaysTrue : distributedBefore8.don
       distributedPreparedPair8.snd.before.doneState.done 0 = false
 distributedLocalProjectionReconstructsItsOccurrenceHistory : SourceOccurrenceTrace distributedImages distributedChoreo
   distributedOccurrencePlan distributedOccurrenceWord distributedOccurrenceCalls distributedOccurrencePoints
-distributedMixedCutKeepsIndependentActorVisits : (distributedCut13.actors 0).snd = 8 ∧
+distributedMixedCutKeepsIndependentActorVisits : (distributedCut13.actors 0).snd = 9 ∧
   (distributedCut13.actors 1).snd = 3 ∧
     (distributedCut13.carriers distributedChannel8).delivered = 2 ∧
       (distributedCut13.carriers distributedChannel8).frames.length = 4

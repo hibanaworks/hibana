@@ -260,6 +260,13 @@ data, and the fragment's steps can be executed again. FIFO delivery, replay
 exclusion, and separation of session runs are required to distinguish new
 messages from old ones. A repeated protocol may run indefinitely.
 
+Each role keeps one completion bit per repeated region alongside its current
+event completions. This lets it receive an earlier continuation after starting
+another visit. New sends and operations inside the region still need their
+current predecessors. Restarting an outer region clears its children's retained
+completions. This bit does not identify a message's visit or replace the
+transport's ordering and replay guarantees.
+
 Repetition can coexist with a later continuation. Projection rejects an
 outgoing operation that could start a repeated fragment and also select that
 continuation through the same role, label, and payload schema. An intervening

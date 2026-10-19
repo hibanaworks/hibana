@@ -167,7 +167,7 @@ fn parallel_loan_reentry_preserves_the_other_body_and_completed_tail() {
                 assert!(before.steps.len() > stop - first);
                 assert_eq!(
                     after.completion_mutations,
-                    before.completion_mutations + (stop - first) as u64 + 1,
+                    before.completion_mutations + (stop - first) as u64 + 2,
                 );
                 assert!(after.steps.iter().enumerate().all(|(index, step)| step.done
                     == (!(first..stop).contains(&index) || index == event)));
@@ -294,7 +294,8 @@ theorem {name}ActualResetWritesAndSource :
       ∃ roll step, {name}.prepared? parallelReentryImage{actor} parallelReentryChoreo = some (roll, step) ∧
         ({{ step, wire := parallelReentryWire }} : Hibana.ActorCommitRecord).check
           parallelReentryImage{actor} parallelReentryChoreo {session} = true ∧
-        {after_count} = {before_count} + roll.eventLength + 1 :=
+        {after_count} = {before_count} + roll.eventLength +
+          Hibana.rollCompletionWriteCount parallelReentryImage{actor} roll + 1 :=
   Hibana.a_measured_reentry_has_its_source_reset_and_exact_writes {name}ActualResetWritesChecked
 theorem {name}OmittedResetWritesRejected :
     Hibana.actorReentryMutationCheck {name} parallelReentryWire
@@ -306,12 +307,14 @@ def {name}MeasuredResetRows : List Nat :=
 theorem {name}ActualMeasuredFreshHistory :
     Hibana.ActorMeasuredHistory parallelReentryImage{actor} parallelReentryChoreo {session}
       ({name}.before, {before_count}) ({name}.after, {after_count})
-      {name}MeasuredResetRows 1 :=
+      {name}MeasuredResetRows
+        (Hibana.rollCompletionWriteCount parallelReentryImage{actor} {name}Prepared.1 + 1) :=
   .tail .refl (.reentry {name}ActualResetWritesChecked
     ((Option.some_get (x := {name}.prepared? parallelReentryImage{actor} parallelReentryChoreo) (by decide)).symm))
 
 theorem {name}MeasuredHistoryAccountsForAllWrites :
-    {after_count} = {before_count} + {name}MeasuredResetRows.length + 1 :=
+    {after_count} = {before_count} + {name}MeasuredResetRows.length +
+      (Hibana.rollCompletionWriteCount parallelReentryImage{actor} {name}Prepared.1 + 1) :=
   Hibana.a_measured_actor_history_accounts_for_every_mark_and_clear {name}ActualMeasuredFreshHistory
 
 theorem {name}RequiredProgressSurvivesEveryIndependentSuffix

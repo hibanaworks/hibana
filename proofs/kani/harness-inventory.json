@@ -295,7 +295,8 @@
     "../../src/global/typestate/cursor/kani.rs": [
       "global::typestate::cursor::kani::actual_completion_writes_are_observed_even_when_the_bits_repeat",
       "global::typestate::cursor::kani::compact_cursor_position_covers_the_full_u16_value_domain",
-      "global::typestate::cursor::kani::local_event_bit_exists_exactly_inside_the_local_step_domain"
+      "global::typestate::cursor::kani::local_event_bit_exists_exactly_inside_the_local_step_domain",
+      "global::typestate::cursor::kani::retained_roll_completion_is_scoped_and_cannot_authorize_an_outgoing_step"
     ],
     "../../src/global/typestate/facts/kani.rs": [
       "global::typestate::facts::kani::checked_state_index_acceptance_is_the_exact_present_identity_domain",
@@ -393,7 +394,7 @@
   "contract-harnesses": {},
   "contracts": [],
   "totals": {
-    "standard-harnesses": 271,
+    "standard-harnesses": 272,
     "contract-harnesses": 0,
     "functions-under-contract": 0
   }

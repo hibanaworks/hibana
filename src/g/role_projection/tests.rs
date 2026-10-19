@@ -17,6 +17,7 @@ mod composed;
 mod conditional_controller;
 mod controller_columns;
 mod distributed_source;
+mod elastic_continuation;
 mod entry_image;
 mod fifo_origin;
 #[cfg(not(miri))]
@@ -274,12 +275,11 @@ fn owned_send_recv_crosses_distinct_runtime_slabs_and_returns_the_continuation()
 
 fn with_cursor(image: &'static RoleImageRef, run: impl FnOnce(&mut EventCursor)) {
     let descriptor = RoleDescriptorRef::from_resident(image);
-    assert!(image.local_step_count() <= 32);
     let mut state = MaybeUninit::<EventCursorState>::uninit();
     let mut cursor = MaybeUninit::<EventCursor>::uninit();
     let mut heads = [0u16; 256];
     let mut labels = [0u16; 256];
-    let mut completed = [0u32; 1];
+    let mut completed = std::vec![0u32; image.footprint().completion_bit_count().div_ceil(32)];
     // SAFETY: all disjoint backing arrays remain stationary for the callback;
     // no cursor, state reference or borrowed backing pointer escapes it.
     unsafe {

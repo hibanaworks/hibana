@@ -12,7 +12,7 @@ actualCompletedTickSurvivesAZeroWriteGap : first.doneState.done 0 = true ∧
     record ∈ [] → record.commit.step.before.doneState.done 0 = true ∧ record.commit.step.after.doneState.done 0 = true
 actualCoveredHistoryAccountsForEveryWrite : 1 = 0 + [observedCommit].length
 actualOmittedResetAndCommitAreRejected : Hibana.actorCommitMutationHistoryCheck mutationImage mutationChoreo 9056 first
-    1 second 3 [] =
+    1 second 4 [] =
   false
 actualOrdinarySnapshotsAreEqual : first = second
 actualPendingLoanWasPendingAtEveryCoveredCommit : initial.doneState.done 1 = false ∧

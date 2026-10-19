@@ -131,13 +131,17 @@ where
                 } else if self.progress.cursor.has_route_scope(scope_id) {
                     (idx, scope_id)
                 } else {
-                    let (scope_id, entry) = reentry_offer?;
+                    let (scope_id, entry) = reentry_offer
+                        .or_else(|| self.retained_continuation_offer_for_lane(lane_idx))?;
                     (state_index_to_usize(entry), scope_id)
                 }
             } else {
-                let (scope_id, entry) = reentry_offer?;
+                let (scope_id, entry) = reentry_offer
+                    .or_else(|| self.retained_continuation_offer_for_lane(lane_idx))?;
                 (state_index_to_usize(entry), scope_id)
             };
+        // This is a readiness cache only. Exact frame identity and current
+        // source admission still select the branch in select_observed_ingress.
         let normalized = self.progress.cursor.normalize_lane_offer_entry(
             scope_id,
             entry_idx,
@@ -180,6 +184,47 @@ where
             frontier: frontier_facts.frontier,
             flags,
         })
+    }
+
+    fn retained_continuation_offer_for_lane(&self, lane: usize) -> Option<(ScopeId, StateIndex)> {
+        let cursor = &self.progress.cursor;
+        if cursor.route_chain_bound() == 1 {
+            return None;
+        }
+        let head = cursor.index_for_lane_step(lane)?;
+        let start = cursor.retained_continuation_start(head)?;
+        for index in start..cursor.local_steps_len() {
+            let Some(meta) = cursor.try_recv_meta_at(index) else {
+                continue;
+            };
+            if usize::from(meta.lane) != lane
+                || !cursor.retained_roll_allows_predecessor(head, index)
+            {
+                continue;
+            }
+            let Some(scope) =
+                cursor.route_scope_for_offer_node(cursor.node_scope_id_at(index), index)
+            else {
+                continue;
+            };
+            let Some(arm) = cursor.route_arm_for_index(scope, index) else {
+                continue;
+            };
+            let role = crate::invariant_some(cursor.logical_role_at(index));
+            if cursor.route_arm_view_lane_entry(scope, arm, role, meta.lane) != Some(index) {
+                continue;
+            }
+            let conflict = cursor.event_conflict_for_index(index);
+            if cursor
+                .event_enabled(index, meta.into(), &mut |scope, view| {
+                    self.selected_arm_for_recv_event(conflict, scope, view)
+                })
+                .is_ok()
+            {
+                return Some((scope, StateIndex::from_usize(index)));
+            }
+        }
+        None
     }
 
     pub(super) fn active_reentry_offer_for_lane(

@@ -29,7 +29,7 @@ choiceCurrentArm1HasItsActualIntroducingCommit : ∃ before after prior marked p
     Hibana.ActorMeasuredCommit occurrenceWorkerImage occurrenceChoiceChoreo 9063 before after marked record ∧
       record.IntroducesChoice occurrenceWorkerImage occurrenceChoiceChoreo 2 Hibana.RouteArm.right ∧
         Hibana.ActorChoiceUnresetHistory occurrenceWorkerImage occurrenceChoiceChoreo 9063 2 after
-            (choiceReceiverAfter1, 8) ∧
+            (choiceReceiverAfter1, 9) ∧
           record.check occurrenceWorkerImage occurrenceChoiceChoreo 9063 = true ∧
             record.step.SourceOrdered occurrenceWorkerImage occurrenceChoiceChoreo
 choiceCurrentArm2HasItsActualIntroducingCommit : ∃ before after prior marked priorCommits record,
@@ -38,7 +38,7 @@ choiceCurrentArm2HasItsActualIntroducingCommit : ∃ before after prior marked p
     Hibana.ActorMeasuredCommit occurrenceWorkerImage occurrenceChoiceChoreo 9063 before after marked record ∧
       record.IntroducesChoice occurrenceWorkerImage occurrenceChoiceChoreo 2 Hibana.RouteArm.left ∧
         Hibana.ActorChoiceUnresetHistory occurrenceWorkerImage occurrenceChoiceChoreo 9063 2 after
-            (choiceReceiverAfter2, 14) ∧
+            (choiceReceiverAfter2, 16) ∧
           record.check occurrenceWorkerImage occurrenceChoiceChoreo 9063 = true ∧
             record.step.SourceOrdered occurrenceWorkerImage occurrenceChoiceChoreo
 choiceCurrentArm3HasItsActualIntroducingCommit : ∃ before after prior marked priorCommits record,
@@ -47,7 +47,7 @@ choiceCurrentArm3HasItsActualIntroducingCommit : ∃ before after prior marked p
     Hibana.ActorMeasuredCommit occurrenceWorkerImage occurrenceChoiceChoreo 9063 before after marked record ∧
       record.IntroducesChoice occurrenceWorkerImage occurrenceChoiceChoreo 2 Hibana.RouteArm.left ∧
         Hibana.ActorChoiceUnresetHistory occurrenceWorkerImage occurrenceChoiceChoreo 9063 2 after
-            (choiceReceiverAfter3, 20) ∧
+            (choiceReceiverAfter3, 23) ∧
           record.check occurrenceWorkerImage occurrenceChoiceChoreo 9063 = true ∧
             record.step.SourceOrdered occurrenceWorkerImage occurrenceChoiceChoreo
 choiceEqualArmCurrentKnowledgeHasItsActualFifthFrame : Option.map (fun record => record.fst)
@@ -79,7 +79,7 @@ choiceOuterArm1KeepsItsActualOriginAcrossInnerResets : ∃ before after prior ma
     Hibana.ActorMeasuredCommit occurrenceWorkerImage occurrenceChoiceChoreo 9063 before after marked record ∧
       record.IntroducesChoice occurrenceWorkerImage occurrenceChoiceChoreo 0 Hibana.RouteArm.left ∧
         Hibana.ActorChoiceUnresetHistory occurrenceWorkerImage occurrenceChoiceChoreo 9063 0 after
-            (choiceReceiverAfter1, 8) ∧
+            (choiceReceiverAfter1, 9) ∧
           record.check occurrenceWorkerImage occurrenceChoiceChoreo 9063 = true ∧
             record.step.SourceOrdered occurrenceWorkerImage occurrenceChoiceChoreo
 choiceOuterArm2KeepsItsActualOriginAcrossInnerResets : ∃ before after prior marked priorCommits record,
@@ -88,7 +88,7 @@ choiceOuterArm2KeepsItsActualOriginAcrossInnerResets : ∃ before after prior ma
     Hibana.ActorMeasuredCommit occurrenceWorkerImage occurrenceChoiceChoreo 9063 before after marked record ∧
       record.IntroducesChoice occurrenceWorkerImage occurrenceChoiceChoreo 0 Hibana.RouteArm.left ∧
         Hibana.ActorChoiceUnresetHistory occurrenceWorkerImage occurrenceChoiceChoreo 9063 0 after
-            (choiceReceiverAfter2, 14) ∧
+            (choiceReceiverAfter2, 16) ∧
           record.check occurrenceWorkerImage occurrenceChoiceChoreo 9063 = true ∧
             record.step.SourceOrdered occurrenceWorkerImage occurrenceChoiceChoreo
 choiceOuterArm3KeepsItsActualOriginAcrossInnerResets : ∃ before after prior marked priorCommits record,
@@ -97,7 +97,7 @@ choiceOuterArm3KeepsItsActualOriginAcrossInnerResets : ∃ before after prior ma
     Hibana.ActorMeasuredCommit occurrenceWorkerImage occurrenceChoiceChoreo 9063 before after marked record ∧
       record.IntroducesChoice occurrenceWorkerImage occurrenceChoiceChoreo 0 Hibana.RouteArm.left ∧
         Hibana.ActorChoiceUnresetHistory occurrenceWorkerImage occurrenceChoiceChoreo 9063 0 after
-            (choiceReceiverAfter3, 20) ∧
+            (choiceReceiverAfter3, 23) ∧
           record.check occurrenceWorkerImage occurrenceChoiceChoreo 9063 = true ∧
             record.step.SourceOrdered occurrenceWorkerImage occurrenceChoiceChoreo
 choicePrepared0ChecksAcceptedBytesBeforeReceipt : ∀ (bytes : List Nat),

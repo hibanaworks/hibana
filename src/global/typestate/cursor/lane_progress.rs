@@ -240,6 +240,17 @@ impl EventCursor {
             crate::invariant();
         };
         self.mark_local_event_done(target.step_idx as usize);
+        // An enclosing continuation can arrive after this lane has begun its
+        // next body visit. Consuming it must not park the lane past that fresh
+        // visit's unfinished head. Locators remain caches of current progress.
+        if let Some(head) = self.step_index_at_lane(lane_idx)
+            && head < usize::from(target.step_idx)
+            && !self.local_event_done(head)
+            && self.retained_roll_allows_predecessor(head, usize::from(target.step_idx))
+        {
+            self.set_index(head);
+            return CursorRefresh::Lane(target.lane);
+        }
         let refresh = self.select_resident_row_for_lane(row_idx, target.lane);
         let Some((_, end)) = self.resident_row_bounds(row_idx) else {
             crate::invariant();

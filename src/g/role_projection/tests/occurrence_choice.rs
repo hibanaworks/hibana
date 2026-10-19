@@ -373,8 +373,8 @@ def distributedCurrentMemberships :=
 
 private theorem distributedActualPostReceiptChoiceSuffix :
     ActorChoiceUnresetHistory distributedImage1 distributedChoreo 9063 2
-      (distributedCommit15.step.after, 20) (distributedCut33.actors 1) :=
-  .commit (record := { commit := distributedCommit16, before := 20, after := 21 })
+      (distributedCommit15.step.after, (distributedCut24.actors 1).2) (distributedCut33.actors 1) :=
+  .commit (record := { commit := distributedCommit16, before := (distributedCut24.actors 1).2, after := (distributedCut26.actors 1).2 })
     .refl (by decide) (by decide)
 
 theorem distributedCurrentChoiceComesFromItsActualAcceptedFrame :
@@ -385,14 +385,22 @@ theorem distributedCurrentChoiceComesFromItsActualAcceptedFrame :
     (sentFacts := distributedCurrentSource) (memberships := distributedCurrentMemberships)
     (receiver := distributedCommit15.step) (wire := distributedWire15)
     (receiverImage := distributedImage1) (choreo := distributedChoreo) (session := 9063)
-    (scope := 2) (arm := .left) (previous := none) (count := 20) (final := distributedCut33.actors 1)
+    (scope := 2) (arm := .left) (previous := none)
+    (count := (distributedCut24.actors 1).2) (final := distributedCut33.actors 1)
     (by decide) (Option.some_get (by decide)).symm
     (by decide) (Option.some_get (by decide)).symm (by decide) (by decide)
     (Option.some_get (by decide)).symm (by decide) (by decide) distributedActualPostReceiptChoiceSuffix
 "#);
     let directory = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/lean-proof");
     std::fs::create_dir_all(&directory).unwrap();
-    std::fs::write(directory.join("DistributedChoiceGenerated.lean"), source).unwrap();
+    // Generated equal-data checks can use reflexivity without synthesizing a
+    // Decidable instance. Arithmetic obligations still use ordinary decide;
+    // both paths produce proofs checked by the same Lean kernel.
+    std::fs::write(
+        directory.join("DistributedChoiceGenerated.lean"),
+        source.replace("by decide", "by first | rfl | decide"),
+    )
+    .unwrap();
 }
 
 #[cfg(not(miri))]
@@ -742,13 +750,17 @@ theorem choiceEqualVisibleArmStillComesFromAFreshPreparedBase :
       choiceReceipt3.before.choices.find? (fun row => row.1 == 2) = some (2, none) ∧
       choiceReceiverAfter3.choices.find? (fun row => row.1 == 2) = some (2, some Hibana.RouteArm.left) := by
   exact ⟨by rfl, choiceInnerUnknown3, by decide⟩
-
+"#);
+    let received_count = receipts[3].1.completion_mutations;
+    let returned_count = receipts[3].2.completion_mutations;
+    source.push_str(&std::format!(r#"
 private theorem choiceLastReturnSuffix :
     Hibana.ActorChoiceUnresetHistory occurrenceWorkerImage occurrenceChoiceChoreo 9063 2
-      (choiceReceipt3.after, 20) (choiceReturned3, 21) :=
-  .commit (record := { commit := choiceReturn3, before := 20, after := 21 })
+      (choiceReceipt3.after, {received_count}) (choiceReturned3, {returned_count}) :=
+  .commit (record := {{ commit := choiceReturn3, before := {received_count}, after := {returned_count} }})
     .refl choiceReturnChecked3 (by decide)
-
+"#));
+    source.push_str(r#"
 theorem choiceEqualArmCurrentKnowledgeHasItsActualFifthFrame :
     (choiceRecords5[choiceCarrier5.delivered]?).map (fun record => record.1) = some choiceSend4 ∧
       choiceGhost5.accepted[choiceCarrier5.delivered]? = some ⟨choiceEvent4, 2⟩ ∧

@@ -317,7 +317,7 @@ pub(super) fn write_observations(
         (1..=13).fold(".refl".into(), |proof, boundary| std::format!("(.tail {proof} distributedStep{boundary})"))).unwrap();
     source.push_str(r#"
 theorem distributedMixedCutKeepsIndependentActorVisits :
-    (distributedCut13.actors 0).2 = 8 ∧
+    (distributedCut13.actors 0).2 = 9 ∧
     (distributedCut13.actors 1).2 = 3 ∧
     (distributedCut13.carriers distributedChannel8).delivered = 2 ∧
     (distributedCut13.carriers distributedChannel8).frames.length = 4 := by decide

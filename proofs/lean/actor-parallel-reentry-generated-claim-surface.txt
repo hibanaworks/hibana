@@ -22,16 +22,17 @@ parallelFreshBytesBindTheActualReceiverWithoutSenderPublication : parallelFreshS
   parallelFreshSource.effIndex = parallelReentryRecvFacts.effIndex
 parallelReentryActor0Accepted : parallelReentryActor0.check parallelReentryImage0 parallelReentryChoreo = true
 parallelReentryActor0ActualMeasuredFreshHistory : Hibana.ActorMeasuredHistory parallelReentryImage0
-  parallelReentryChoreo 875 (parallelReentryActor0.before, 5) (parallelReentryActor0.after, 8)
-  parallelReentryActor0MeasuredResetRows 1
+  parallelReentryChoreo 875 (parallelReentryActor0.before, 5) (parallelReentryActor0.after, 9)
+  parallelReentryActor0MeasuredResetRows
+  (Hibana.rollCompletionWriteCount parallelReentryImage0 parallelReentryActor0Prepared.fst + 1)
 parallelReentryActor0ActualResetWritesAndSource : parallelReentryActor0.SourceOrdered parallelReentryImage0
     parallelReentryChoreo ∧
   ∃ roll step,
     parallelReentryActor0.prepared? parallelReentryImage0 parallelReentryChoreo = some (roll, step) ∧
       { step := step, wire := parallelReentryWire }.check parallelReentryImage0 parallelReentryChoreo 875 = true ∧
-        8 = 5 + roll.eventLength + 1
+        9 = 5 + roll.eventLength + Hibana.rollCompletionWriteCount parallelReentryImage0 roll + 1
 parallelReentryActor0ActualResetWritesChecked : Hibana.actorReentryMutationCheck parallelReentryActor0
-    parallelReentryWire parallelReentryImage0 parallelReentryChoreo 875 5 8 =
+    parallelReentryWire parallelReentryImage0 parallelReentryChoreo 875 5 9 =
   true
 parallelReentryActor0ClearedSiblingRejected : (have __src := parallelReentryActor0;
       { previousPath := __src.previousPath, nextPath := __src.nextPath, scope := __src.scope, event := __src.event,
@@ -49,7 +50,9 @@ parallelReentryActor0ClearedSiblingRejected : (have __src := parallelReentryActo
             choices := __src.choices } }).check
     parallelReentryImage0 parallelReentryChoreo =
   false
-parallelReentryActor0MeasuredHistoryAccountsForAllWrites : 8 = 5 + parallelReentryActor0MeasuredResetRows.length + 1
+parallelReentryActor0MeasuredHistoryAccountsForAllWrites : 9 =
+  5 + parallelReentryActor0MeasuredResetRows.length +
+    (Hibana.rollCompletionWriteCount parallelReentryImage0 parallelReentryActor0Prepared.fst + 1)
 parallelReentryActor0MissingResetRejected : (have __src := parallelReentryActor0;
       { previousPath := __src.previousPath, nextPath := __src.nextPath, scope := __src.scope, event := __src.event,
         view := __src.view, before := __src.before,
@@ -70,7 +73,7 @@ parallelReentryActor0PreparedOwned : parallelReentryActor0Prepared.snd.ownedChec
   true
 @parallelReentryActor0RequiredProgressSurvivesEveryIndependentSuffix : ∀ {final : Hibana.ActorProgressObservation × Nat}
   {cleared : List Nat} {commits event : Nat},
-  Hibana.ActorMeasuredHistory parallelReentryImage0 parallelReentryChoreo 875 (parallelReentryActor0.after, 8) final
+  Hibana.ActorMeasuredHistory parallelReentryImage0 parallelReentryChoreo 875 (parallelReentryActor0.after, 9) final
       cleared commits →
     ¬event ∈ parallelReentryActor0MeasuredResetRows ++ cleared →
       parallelReentryActor0.before.doneState.done event = true → final.fst.doneState.done event = true
@@ -115,16 +118,17 @@ parallelReentryActor0WrongViewCountRejected : (have __src := parallelReentryActo
   false
 parallelReentryActor1Accepted : parallelReentryActor1.check parallelReentryImage1 parallelReentryChoreo = true
 parallelReentryActor1ActualMeasuredFreshHistory : Hibana.ActorMeasuredHistory parallelReentryImage1
-  parallelReentryChoreo 875 (parallelReentryActor1.before, 9) (parallelReentryActor1.after, 14)
-  parallelReentryActor1MeasuredResetRows 1
+  parallelReentryChoreo 875 (parallelReentryActor1.before, 9) (parallelReentryActor1.after, 15)
+  parallelReentryActor1MeasuredResetRows
+  (Hibana.rollCompletionWriteCount parallelReentryImage1 parallelReentryActor1Prepared.fst + 1)
 parallelReentryActor1ActualResetWritesAndSource : parallelReentryActor1.SourceOrdered parallelReentryImage1
     parallelReentryChoreo ∧
   ∃ roll step,
     parallelReentryActor1.prepared? parallelReentryImage1 parallelReentryChoreo = some (roll, step) ∧
       { step := step, wire := parallelReentryWire }.check parallelReentryImage1 parallelReentryChoreo 875 = true ∧
-        14 = 9 + roll.eventLength + 1
+        15 = 9 + roll.eventLength + Hibana.rollCompletionWriteCount parallelReentryImage1 roll + 1
 parallelReentryActor1ActualResetWritesChecked : Hibana.actorReentryMutationCheck parallelReentryActor1
-    parallelReentryWire parallelReentryImage1 parallelReentryChoreo 875 9 14 =
+    parallelReentryWire parallelReentryImage1 parallelReentryChoreo 875 9 15 =
   true
 parallelReentryActor1ClearedSiblingRejected : (have __src := parallelReentryActor1;
       { previousPath := __src.previousPath, nextPath := __src.nextPath, scope := __src.scope, event := __src.event,
@@ -142,7 +146,9 @@ parallelReentryActor1ClearedSiblingRejected : (have __src := parallelReentryActo
             choices := __src.choices } }).check
     parallelReentryImage1 parallelReentryChoreo =
   false
-parallelReentryActor1MeasuredHistoryAccountsForAllWrites : 14 = 9 + parallelReentryActor1MeasuredResetRows.length + 1
+parallelReentryActor1MeasuredHistoryAccountsForAllWrites : 15 =
+  9 + parallelReentryActor1MeasuredResetRows.length +
+    (Hibana.rollCompletionWriteCount parallelReentryImage1 parallelReentryActor1Prepared.fst + 1)
 parallelReentryActor1MissingResetRejected : (have __src := parallelReentryActor1;
       { previousPath := __src.previousPath, nextPath := __src.nextPath, scope := __src.scope, event := __src.event,
         view := __src.view, before := __src.before,
@@ -163,7 +169,7 @@ parallelReentryActor1PreparedOwned : parallelReentryActor1Prepared.snd.ownedChec
   true
 @parallelReentryActor1RequiredProgressSurvivesEveryIndependentSuffix : ∀ {final : Hibana.ActorProgressObservation × Nat}
   {cleared : List Nat} {commits event : Nat},
-  Hibana.ActorMeasuredHistory parallelReentryImage1 parallelReentryChoreo 875 (parallelReentryActor1.after, 14) final
+  Hibana.ActorMeasuredHistory parallelReentryImage1 parallelReentryChoreo 875 (parallelReentryActor1.after, 15) final
       cleared commits →
     ¬event ∈ parallelReentryActor1MeasuredResetRows ++ cleared →
       parallelReentryActor1.before.doneState.done event = true → final.fst.doneState.done event = true

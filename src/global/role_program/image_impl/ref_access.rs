@@ -79,6 +79,7 @@ impl RuntimeRoleFacts {
             max_route_commit_count: self.words[Self::MAX_ROUTE_COMMIT_COUNT] as usize,
             route_arm_state_capacity: 0,
             local_step_count: self.words[Self::LOCAL_STEP_COUNT] as usize,
+            roll_scope_count: 0,
             route_scope_count: self.words[Self::ROUTE_SCOPE_COUNT] as usize,
             active_lane_count: self.words[Self::ACTIVE_LANE_COUNT] as usize,
             endpoint_lane_slot_count: self.words[Self::ENDPOINT_LANE_SLOT_COUNT] as usize,
@@ -199,6 +200,7 @@ impl RoleImageRef {
     pub(crate) const fn footprint(&self) -> RuntimeRoleFootprint {
         let mut footprint = self.facts.footprint();
         footprint.route_arm_state_capacity = self.columns.route_arm_lane_step_rows.len as usize;
+        footprint.roll_scope_count = self.columns.roll_scopes.len as usize;
         footprint
     }
 

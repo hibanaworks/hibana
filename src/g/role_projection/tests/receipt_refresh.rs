@@ -490,7 +490,7 @@ theorem currentSourceReadyCutUsesActualReceiptProvenance
     }
     source.push_str(&std::format!(
         "theorem actualCompleteOwnerMixedHistory : Hibana.ActorMeasuredHistory refreshImage refreshChoreo {} \
-         (initial, {}) (current, {}) mixedCleared 6 :=\n  {history}\n\n",
+         (initial, {}) (current, {}) mixedCleared 7 :=\n  {history}\n\n",
         outside_wire.0.session().raw(), snapshots[0].completion_mutations, snapshots[6].completion_mutations,
     ));
     source.push_str(r#"
@@ -499,7 +499,7 @@ theorem everyCurrentReadPrerequisiteHasItsActualMixedCommitOrigin
     ∃ before after prior marked later priorCommits laterCommits record,
       ActorMeasuredHistory refreshImage refreshChoreo 9058 (initial, 0) before prior priorCommits ∧
       ActorMeasuredCommit refreshImage refreshChoreo 9058 before after marked record ∧
-      ActorMeasuredHistory refreshImage refreshChoreo 9058 after (current, 8) later laterCommits ∧
+      ActorMeasuredHistory refreshImage refreshChoreo 9058 after (current, 9) later laterCommits ∧
       record.step.event = event ∧ event ∉ later ∧
       record.check refreshImage refreshChoreo 9058 = true ∧ record.step.SourceOrdered refreshImage refreshChoreo := by
   have allInitial : (refreshData.sourcePredecessors refreshPath readRow.eventId).all
@@ -514,7 +514,7 @@ theorem everyCurrentReadPrerequisiteHasItsActualMixedCommitOrigin
     (.current (by decide)) required actualSourceContinuationIsReady
 
 theorem actualMixedHistoryCountsEveryClearAndMark :
-    8 = 0 + mixedCleared.length + 6 :=
+    9 = 0 + mixedCleared.length + 7 :=
   a_measured_actor_history_accounts_for_every_mark_and_clear actualCompleteOwnerMixedHistory
 "#);
     let directory = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/lean-proof");

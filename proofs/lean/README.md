@@ -174,6 +174,15 @@ chosen source cut cannot replace that correspondence. Rust implementation
 evidence remains scoped as described above; formalizing arbitrary application
 code or an executor is not another task.
 
+The cursor also retains one completed-visit bit per projected roll. Only an
+incoming continuation outside that roll can use it; it cannot authorize a new
+send or a fresh body predecessor. An ancestor restart clears its descendants.
+Tokio regressions cover ordinary and branch continuations queued before a fresh
+visit, current body ordering, nested reset and a scope bit past 32 event bits.
+The mutation checker now counts these writes from the decoded roll rows.
+These implementation checks do not close the general historical correspondence
+above: the selected-visit `sourceRowReady` model still uses current event bits.
+
 The existing three-runtime mixed-message fixture qualifies both loan visits
 and the later Read/Value exchange through this projected model. Its generated
 word contains all eight accepted frames and sixteen measured commits, including

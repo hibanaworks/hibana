@@ -3,6 +3,19 @@ import Hibana.ActorReentryCommit
 
 namespace Hibana
 
+/-- A restart retains its own completed visit and clears nested retained
+visits. Equal projected ranges use the same source preorder as Rust. These
+are writes to the existing cursor bitset, not a second progress authority. -/
+def rollCompletionWriteCount (image : RustDescriptorImage) (roll : DecodedRollRow) : Nat :=
+  match image.decodeRollRows? with
+  | none => 0
+  | some rows => (rows.filter fun child =>
+      child.scope == roll.scope ||
+        (roll.eventStart ≤ child.eventStart &&
+          child.eventStart + child.eventLength ≤ roll.eventStart + roll.eventLength &&
+          (child.eventStart != roll.eventStart || child.eventLength != roll.eventLength ||
+            roll.scope < child.scope))).length
+
 /-- Measurements around an actual reentry poll. The reset range and prepared
 base are derived by the existing source checker. Counts are qualification
 observations, not a visit field or a runtime scheduling rule. -/
@@ -13,10 +26,10 @@ def actorReentryMutationCheck
   | none => false
   | some (roll, step) =>
       ({ step, wire } : ActorCommitRecord).check image choreo session &&
-        after == before + roll.eventLength + 1
+        after == before + roll.eventLength + rollCompletionWriteCount image roll + 1
 
 /-- A measured fresh visit uses the same checked source commit and accounts
-for one clear of each projected body row and its one successful mark. No
+for each body-row clear, retained-visit write and successful event mark. No
 global drain or reset of an independent sibling is part of this boundary. -/
 theorem a_measured_reentry_has_its_source_reset_and_exact_writes
     {sample : ActorReentryCommitObservation} {wire : OwnedWireObservation}
@@ -25,13 +38,13 @@ theorem a_measured_reentry_has_its_source_reset_and_exact_writes
     sample.SourceOrdered image choreo ∧
       ∃ roll step, sample.prepared? image choreo = some (roll, step) ∧
         ({ step, wire } : ActorCommitRecord).check image choreo session = true ∧
-        after = before + roll.eventLength + 1 := by
+        after = before + roll.eventLength + rollCompletionWriteCount image roll + 1 := by
   cases prepared : sample.prepared? image choreo with
   | none => simp [actorReentryMutationCheck, prepared] at checked
   | some entry =>
       rcases entry with ⟨roll, step⟩
       have fields : ({ step, wire } : ActorCommitRecord).check image choreo session = true ∧
-          after = before + roll.eventLength + 1 := by
+          after = before + roll.eventLength + rollCompletionWriteCount image roll + 1 := by
         simpa only [actorReentryMutationCheck, prepared, Bool.and_eq_true, beq_iff_eq] using checked
       have ordinary : step.check image choreo = true := checked_record_is_a_checked_commit fields.1
       have accepted : sample.check image choreo = true := by

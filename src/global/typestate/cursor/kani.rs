@@ -78,3 +78,71 @@ fn actual_completion_writes_are_observed_even_when_the_bits_repeat() {
     }
     kani::cover!(expected == 0 && cursor.completion_mutations() == 2);
 }
+
+/// The production cursor keeps a completed child for an incoming continuation,
+/// clears it on outer reentry, and never turns it into permission for a send.
+#[kani::proof]
+#[kani::unwind(24)]
+fn retained_roll_completion_is_scoped_and_cannot_authorize_an_outgoing_step() {
+    use super::{EventCursor, EventCursorState};
+    use crate::{g, global::compiled::images::RoleDescriptorRef};
+    use core::mem::MaybeUninit;
+
+    let choreography = g::seq(
+        g::seq(
+            g::send::<0, 1, g::Msg<1, ()>>(),
+            g::send::<1, 0, g::Msg<2, ()>>(),
+        )
+        .roll(),
+        g::send::<1, 0, g::Msg<3, ()>>(),
+    )
+    .roll();
+    let projected = crate::runtime::program::project::<0>(&choreography);
+    let descriptor = RoleDescriptorRef::from_resident(projected.role_image_ref());
+    let mut state = MaybeUninit::<EventCursorState>::uninit();
+    let mut cursor = MaybeUninit::<EventCursor>::uninit();
+    let mut heads = [0u16; 1];
+    let mut labels = [0u16; 1];
+    let mut completed = [0u32; 1];
+    // SAFETY: three event bits and two scope bits fit the one supplied word;
+    // the stationary arrays are disjoint and outlive the actual cursor.
+    unsafe {
+        EventCursor::init_from_compiled(
+            cursor.as_mut_ptr(),
+            state.as_mut_ptr(),
+            heads.as_mut_ptr(),
+            labels.as_mut_ptr(),
+            completed.as_mut_ptr(),
+            descriptor,
+        );
+    }
+    // SAFETY: the production initializer wrote every cursor field.
+    let cursor = unsafe { cursor.assume_init_mut() };
+    let first = descriptor.local_event_rows().roll_scope_row(0).unwrap();
+    let second = descriptor.local_event_rows().roll_scope_row(1).unwrap();
+    let (inner, outer) = if first.event_row().len() == 2 {
+        (first.scope(), second.scope())
+    } else {
+        (second.scope(), first.scope())
+    };
+    cursor.mark_local_event_done(0);
+    cursor.mark_local_event_done(1);
+    cursor.clear_reentry_scope_events(inner);
+    assert!(cursor.retained_roll_allows_predecessor(0, 2));
+    assert!(!cursor.retained_roll_allows_predecessor(0, 1));
+    assert!(!cursor.retained_roll_allows_predecessor(1, 0));
+    assert_eq!(cursor.retained_continuation_start(0), Some(2));
+    assert_eq!(cursor.retained_continuation_start(1), Some(2));
+    assert_eq!(cursor.retained_continuation_start(2), None);
+    let target = usize::from(kani::any::<u8>() % 3);
+    if target < 2 {
+        assert!(!cursor.local_event_done(target));
+    }
+    cursor.mark_local_event_done(0);
+    cursor.mark_local_event_done(1);
+    cursor.mark_local_event_done(2);
+    cursor.clear_reentry_scope_events(outer);
+    assert!(!cursor.retained_roll_allows_predecessor(0, target));
+    assert_eq!(cursor.retained_continuation_start(target), None);
+    assert_eq!(cursor.completion_mutations(), 13);
+}

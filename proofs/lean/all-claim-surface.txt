@@ -2632,7 +2632,9 @@ Hibana.a_lease_only_origin_does_not_cover_a_pending_issued_header : ∀ (old : N
             (And (@Eq.{1} Bool ({ step := step, wire := wire }.check image choreo session) true)
               (@Eq.{1} Nat after
                 (@HAdd.hAdd.{0, 0, 0} Nat Nat Nat (@instHAdd.{0} Nat instAddNat)
-                  (@HAdd.hAdd.{0, 0, 0} Nat Nat Nat (@instHAdd.{0} Nat instAddNat) before roll.eventLength)
+                  (@HAdd.hAdd.{0, 0, 0} Nat Nat Nat (@instHAdd.{0} Nat instAddNat)
+                    (@HAdd.hAdd.{0, 0, 0} Nat Nat Nat (@instHAdd.{0} Nat instAddNat) before roll.eventLength)
+                    (Hibana.rollCompletionWriteCount image roll))
                   (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1)))))))
 @Hibana.a_measured_reentry_preserves_every_outside_progress_bit : ∀ {sample : Hibana.ActorReentryCommitObservation}
   {wire : Hibana.OwnedWireObservation} {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo}

@@ -1,5 +1,5 @@
-actualCompleteOwnerMixedHistory : ActorMeasuredHistory refreshImage refreshChoreo 9058 (initial, 0) (current, 8)
-  mixedCleared 6
+actualCompleteOwnerMixedHistory : ActorMeasuredHistory refreshImage refreshChoreo 9058 (initial, 0) (current, 9)
+  mixedCleared 7
 actualCompletedBodyHasFreshRawAdmission : current.doneState.done bodyEntry.eventId = true ∧
   currentCandidates.admitted[bodyEntry.eventId]? = some true
 actualContinuationIsAdmitted : refreshAdmissions[readRow.eventId]? = some true
@@ -13,7 +13,7 @@ actualFreshEntryUsesSourcePreparation : ActorSourceCandidateBase currentCandidat
 actualFreshSourceReadinessGivesAdmission : currentCandidates.admitted[bodyEntry.eventId]? = some true
 actualLaterSourcePointHasRealAdmission : sourceRowReady refreshData refreshPath current readRow = true ∧
   currentCandidates.admitted[readRow.eventId]? = some true
-actualMixedHistoryCountsEveryClearAndMark : 8 = 0 + mixedCleared.length + 6
+actualMixedHistoryCountsEveryClearAndMark : 9 = 0 + mixedCleared.length + 7
 actualOldReceiptHeaderIsNoLongerCurrent : observedResourceTag? current 10 ≠ observedResourceTag? outsideAfter 10
 actualReceiptsNameTheSameResource : outsideFacts.resource = freshFacts.resource
 actualRepeatedBodyRestoresItsResourceOwner : EndpointDelegation.instantiate refreshData.normalized.issuance
@@ -47,7 +47,7 @@ everyCurrentReadPrerequisiteHasItsActualMixedCommitOrigin : ∀ (event : Nat),
     ∃ before after prior marked later priorCommits laterCommits record,
       ActorMeasuredHistory refreshImage refreshChoreo 9058 (initial, 0) before prior priorCommits ∧
         ActorMeasuredCommit refreshImage refreshChoreo 9058 before after marked record ∧
-          ActorMeasuredHistory refreshImage refreshChoreo 9058 after (current, 8) later laterCommits ∧
+          ActorMeasuredHistory refreshImage refreshChoreo 9058 after (current, 9) later laterCommits ∧
             record.step.event = event ∧
               ¬event ∈ later ∧
                 record.check refreshImage refreshChoreo 9058 = true ∧
@@ -69,7 +69,7 @@ missingFreshAdmissionIsRejected : (have __src := currentCandidates;
 mixedFreshOmittedClearsRejected : actorReentryMutationCheck mixedFresh mixedWire4 refreshImage refreshChoreo 9058 4
     (4 + 1) =
   false
-mixedFreshWritesChecked : actorReentryMutationCheck mixedFresh mixedWire4 refreshImage refreshChoreo 9058 4 7 = true
+mixedFreshWritesChecked : actorReentryMutationCheck mixedFresh mixedWire4 refreshImage refreshChoreo 9058 4 8 = true
 mixedRecord0Checked : mixedRecord0.check refreshImage refreshChoreo 9058 = true
 mixedRecord1Checked : mixedRecord1.check refreshImage refreshChoreo 9058 = true
 mixedRecord2Checked : mixedRecord2.check refreshImage refreshChoreo 9058 = true

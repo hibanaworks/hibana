@@ -44,7 +44,7 @@ fn actual_reset_and_recommit_cannot_disappear_between_equal_snapshots() {
             let second = unsafe { actor_snapshot(&owner) };
             assert_eq!(initial.completion_mutations, 0);
             assert_eq!(first.completion_mutations, 1);
-            assert_eq!(second.completion_mutations, 3);
+            assert_eq!(second.completion_mutations, 4);
             assert_eq!(
                 (first.actor, first.run, first.counter, first.live_views,
                     &first.views, &first.steps, &first.choices),

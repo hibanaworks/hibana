@@ -9,12 +9,11 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 
 fn with_rows(rows: &'static RoleImageRef, test: impl FnOnce(&mut EventCursor)) {
     let descriptor = RoleDescriptorRef::from_resident(rows);
-    assert!(rows.local_step_count() <= 32);
     let mut state = MaybeUninit::<EventCursorState>::uninit();
     let mut cursor = MaybeUninit::<EventCursor>::uninit();
     let mut heads = [0u16; 256];
     let mut labels = [0u16; 256];
-    let mut completed = [0u32; 1];
+    let mut completed = std::vec![0u32; rows.footprint().completion_bit_count().div_ceil(32)];
     // SAFETY: static descriptor and disjoint, stationary backing arrays outlive
     // the callback. No initialized cursor or backing pointer escapes.
     unsafe {

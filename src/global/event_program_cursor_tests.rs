@@ -1476,7 +1476,9 @@ impl ProductionCursorTrace {
         let lane_cursors = vec![0u16; descriptor.logical_lane_count()];
         let current_labels = vec![0u16; descriptor.logical_lane_count()];
         let completed_word_count = descriptor
-            .local_len()
+            .local_event_rows()
+            .footprint()
+            .completion_bit_count()
             .checked_add(31)
             .expect("completed word count overflow")
             / 32;

@@ -1,6 +1,7 @@
 use super::super::super::facts::LocalAction;
 use super::super::{EventCursor, ScopeId};
 
+mod completion;
 mod nesting;
 mod reentry;
 

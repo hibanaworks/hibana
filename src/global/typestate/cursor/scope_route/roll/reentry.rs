@@ -64,6 +64,7 @@ impl EventCursor {
 
     #[inline(never)]
     pub(crate) fn clear_reentry_scope_events(&mut self, scope: ScopeId) {
+        self.retain_reentry_completion(scope);
         let Some((mut idx, end)) = self.reentry_scope_event_bounds(scope) else {
             crate::invariant();
         };

@@ -129,7 +129,7 @@ impl EndpointArenaLayout {
         total_align = max_usize(total_align, event_cursor_current_step_label_codes.align());
 
         let event_cursor_completed_event_words =
-            Self::section_array::<u32>(offset, u32_word_count(footprint.local_step_count));
+            Self::section_array::<u32>(offset, u32_word_count(footprint.completion_bit_count()));
         offset = event_cursor_completed_event_words.end_offset();
         total_align = max_usize(total_align, event_cursor_completed_event_words.align());
 
@@ -420,6 +420,7 @@ mod tests {
             max_route_commit_count: route_scope_count,
             route_arm_state_capacity,
             local_step_count,
+            roll_scope_count: 0,
             route_scope_count,
             active_lane_count,
             endpoint_lane_slot_count,

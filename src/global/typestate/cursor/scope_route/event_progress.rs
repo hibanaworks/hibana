@@ -99,13 +99,14 @@ impl EventCursor {
     #[inline]
     fn dependency_state(
         &self,
+        target: usize,
         dependency: LocalDependency,
         selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
     ) -> LocalDependencyState {
         if !Self::dependency_applies(dependency, &mut *selected_arm_for_scope) {
             return LocalDependencyState::InactiveByConflict;
         }
-        if self.dependency_row_live_events_done(dependency, selected_arm_for_scope) {
+        if self.dependency_row_live_events_done(target, dependency, selected_arm_for_scope) {
             LocalDependencyState::Satisfied
         } else {
             LocalDependencyState::Blocked
@@ -228,7 +229,7 @@ impl EventCursor {
             };
             let dependency_state = row
                 .dependency()
-                .map(|dependency| self.dependency_state(dependency, &mut preview));
+                .map(|dependency| self.dependency_state(idx, dependency, &mut preview));
             if !self.event_conflict_row_allows_with_preview(
                 preview_conflict,
                 preview_conflict,

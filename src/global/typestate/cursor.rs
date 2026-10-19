@@ -405,7 +405,7 @@ pub(crate) struct EventCursorState {
     lane_cursors: *mut u16,
     /// Encoded current logical label for each lane's pending step.
     current_step_label_codes: *mut u16,
-    /// Bitset of committed local event rows.
+    /// Current event completions followed by one retained completion per roll.
     completed_event_words: *mut u32,
     /// Qualification-only observation. It never authorizes or schedules an
     /// operation and is absent from production storage and generated images.
@@ -597,7 +597,12 @@ impl EventCursor {
 
     #[inline(always)]
     fn completed_event_word_count(&self) -> usize {
-        u32_word_count(self.local_steps_len())
+        u32_word_count(
+            self.machine()
+                .event_program()
+                .footprint()
+                .completion_bit_count(),
+        )
     }
 
     #[inline(always)]
@@ -607,7 +612,7 @@ impl EventCursor {
             &[]
         } else {
             /* SAFETY: `completed_event_words` was initialized with the word
-            count derived from this cursor's local event row length. */
+            count derived from this cursor's event and roll rows. */
             unsafe { slice::from_raw_parts(self.state().completed_event_words, len) }
         }
     }
@@ -619,7 +624,7 @@ impl EventCursor {
             &mut []
         } else {
             /* SAFETY: `completed_event_words` has the initialized word count
-            derived from the local event rows, and `&mut self` owns updates to
+            derived from the event and roll rows, and `&mut self` owns updates to
             that bitset. */
             unsafe { slice::from_raw_parts_mut(self.state_mut().completed_event_words, len) }
         }
@@ -638,40 +643,44 @@ impl EventCursor {
 
     #[inline(always)]
     fn clear_local_event_done(&mut self, step_idx: usize) {
-        #[cfg(any(kani, all(test, hibana_repo_tests)))]
-        let next_mutation = self
-            .state()
-            .completion_mutations
-            .checked_add(1)
-            .expect("qualification mutation count exhausted");
-        let Some((word_idx, bit)) = local_event_bit(step_idx, self.local_steps_len()) else {
+        if step_idx >= self.local_steps_len() {
             crate::invariant();
-        };
-        let Some(word) = self.completed_event_words_mut().get_mut(word_idx) else {
-            crate::invariant();
-        };
-        *word &= !bit;
-        #[cfg(any(kani, all(test, hibana_repo_tests)))]
-        {
-            self.state_mut().completion_mutations = next_mutation;
         }
+        self.write_completion_bit(step_idx, false);
     }
 
     #[inline(always)]
     fn mark_local_event_done(&mut self, step_idx: usize) {
+        if step_idx >= self.local_steps_len() {
+            crate::invariant();
+        }
+        self.write_completion_bit(step_idx, true);
+    }
+
+    #[inline(always)]
+    fn write_completion_bit(&mut self, index: usize, completed: bool) {
         #[cfg(any(kani, all(test, hibana_repo_tests)))]
         let next_mutation = self
             .state()
             .completion_mutations
             .checked_add(1)
             .expect("qualification mutation count exhausted");
-        let Some((word_idx, bit)) = local_event_bit(step_idx, self.local_steps_len()) else {
+        let count = self
+            .machine()
+            .event_program()
+            .footprint()
+            .completion_bit_count();
+        let Some((word_idx, bit)) = local_event_bit(index, count) else {
             crate::invariant();
         };
         let Some(word) = self.completed_event_words_mut().get_mut(word_idx) else {
             crate::invariant();
         };
-        *word |= bit;
+        if completed {
+            *word |= bit;
+        } else {
+            *word &= !bit;
+        }
         #[cfg(any(kani, all(test, hibana_repo_tests)))]
         {
             self.state_mut().completion_mutations = next_mutation;
@@ -751,7 +760,12 @@ impl EventCursor {
                 current_step_label_codes,
                 completed_event_words,
                 role_descriptor.logical_lane_count(),
-                u32_word_count(role_descriptor.local_len()),
+                u32_word_count(
+                    role_descriptor
+                        .local_event_rows()
+                        .footprint()
+                        .completion_bit_count(),
+                ),
             );
             (&mut *dst).seed_resident_lane_heads();
             (&mut *dst).rebuild_current_step_label_codes();

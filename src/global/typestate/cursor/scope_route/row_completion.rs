@@ -114,6 +114,7 @@ impl EventCursor {
     #[inline(never)]
     pub(super) fn dependency_row_live_events_done(
         &self,
+        target: usize,
         dependency: LocalDependency,
         selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
     ) -> bool {
@@ -121,7 +122,22 @@ impl EventCursor {
             .machine()
             .event_program()
             .dependency_row_set(dependency);
-        self.event_row_set_live_events_done(row_set, selected_arm_for_scope)
+        let retained = self.has_retained_roll_completion();
+        for idx in self.pending_event_steps(row_set.start()..row_set.end()) {
+            if (!retained || !self.retained_roll_allows_predecessor(idx, target))
+                && self.event_actor_is_local(idx, selected_arm_for_scope) != Some(false)
+                && let Some(row) = self.machine().event_program().event_row_at(idx)
+                && self.event_conflict_row_allows(
+                    row.conflict(),
+                    ScopeId::none(),
+                    None,
+                    selected_arm_for_scope,
+                )
+            {
+                return false;
+            }
+        }
+        true
     }
 
     #[inline(never)]

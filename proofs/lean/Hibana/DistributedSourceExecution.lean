@@ -427,10 +427,10 @@ private theorem a_measured_commit_is_its_actual_step
     {image : RustDescriptorImage} {choreo : Choreo} {session : Nat}
     {before after : ActorProgressObservation × Nat} {cleared : List Nat} {record : ActorCommitRecord}
     (committed : ActorMeasuredCommit image choreo session before after cleared record) :
-    ActorMeasuredStep image choreo session before after cleared 1 := by
+    ∃ writes, ActorMeasuredStep image choreo session before after cleared writes := by
   cases committed with
-  | ordinary checked written => exact .commit checked written
-  | fresh checked prepared => exact .reentry checked prepared
+  | ordinary checked written => exact ⟨_, .commit checked written⟩
+  | fresh checked prepared => exact ⟨_, .reentry checked prepared⟩
 
 private theorem source_channel_records_append
     (entries : List SourceAcceptance) (entry : SourceAcceptance) (channel : TransportChannel) :
@@ -514,7 +514,9 @@ private theorem a_distributed_source_step_projects_each_actor
     same | quiet | ⟨record, cleared, logged, committed⟩
   · exact ⟨[], 0, by rw [← same]; exact .refl⟩
   · exact ⟨[], 0, .tail .refl (a_quiet_actor_interval_is_its_measured_step quiet)⟩
-  · exact ⟨cleared, 1, .tail .refl (a_measured_commit_is_its_actual_step committed)⟩
+  · obtain ⟨writes, measured⟩ := a_measured_commit_is_its_actual_step committed
+    exact ⟨cleared, writes, by
+      simpa only [List.nil_append, Nat.zero_add] using ActorMeasuredHistory.tail .refl measured⟩
 
 /-- Every actor's complete measured history is derived from the same global
 boundary history. Foreign actors and carrier acceptance are genuine stutters;
@@ -654,7 +656,9 @@ private theorem a_distributed_step_marks_or_preserves_the_completed_actor_row
       by simpa only [ActorProgressObservation.doneState, progressAt] using completed⟩
   · rcases a_measured_commit_marks_or_preserves_a_completed_row committed completed with marked | preserved
     · exact .inl ⟨record, cleared, loggedAt, committed, marked⟩
-    · exact .inr ⟨cleared, 1, .tail .refl (a_measured_commit_is_its_actual_step committed),
+    · obtain ⟨writes, measured⟩ := a_measured_commit_is_its_actual_step committed
+      exact .inr ⟨cleared, writes, by
+        simpa only [List.nil_append, Nat.zero_add] using ActorMeasuredHistory.tail .refl measured,
         preserved.2, preserved.1⟩
 
 /-- Recover a current row's origin in the one distributed execution itself.

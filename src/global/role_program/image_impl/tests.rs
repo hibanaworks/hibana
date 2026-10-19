@@ -120,6 +120,7 @@ fn lane_column_fixture() -> ([u8; 64], RoleImageColumns, RuntimeRoleFootprint) {
         max_route_commit_count: 0,
         route_arm_state_capacity: 2,
         local_step_count: 2,
+        roll_scope_count: 0,
         route_scope_count: 1,
         active_lane_count: 2,
         endpoint_lane_slot_count: 2,

@@ -20,10 +20,11 @@ inductive ActorMeasuredStep (image : RustDescriptorImage) (choreo : Choreo) (ses
       (checked : actorReentryMutationCheck sample wire image choreo session before after = true)
       (prepared : sample.prepared? image choreo = some (roll, step)) :
       ActorMeasuredStep image choreo session (sample.before, before) (sample.after, after)
-        ((List.range roll.eventLength).map (roll.eventStart + ·)) 1
+        ((List.range roll.eventLength).map (roll.eventStart + ·))
+        (rollCompletionWriteCount image roll + 1)
 
 /-- A finite measured history can mix ordinary commits and independently
-restarted bodies. The row list and commit count are erased observations used
+restarted bodies. The cleared event rows and remaining write count are erased observations used
 to check the real write count, not a second execution or ownership authority. -/
 inductive ActorMeasuredHistory (image : RustDescriptorImage) (choreo : Choreo) (session : Nat) :
     ActorProgressObservation × Nat → ActorProgressObservation × Nat → List Nat → Nat → Prop where
@@ -62,7 +63,7 @@ private theorem a_measured_step_accounts_for_its_marks_and_clears
       have same := Option.some.inj (actualAt.symm.trans prepared)
       have rollAt : actualRoll = roll := congrArg Prod.fst same
       subst actualRoll
-      simpa only [List.length_map, List.length_range] using written
+      simpa only [List.length_map, List.length_range, Nat.add_assoc] using written
 
 private theorem a_measured_step_retains_untouched_completion
     {image : RustDescriptorImage} {choreo : Choreo} {session event : Nat}
