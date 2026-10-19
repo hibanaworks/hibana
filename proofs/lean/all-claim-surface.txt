@@ -13968,6 +13968,53 @@ Hibana.source_occurrences_keep_separate_choices_for_overlapping_visits : And
       (@Exists.{1} (Hibana.SourceOccurrenceCut Hibana.choiceBody✝.roll) fun next =>
         @Hibana.SourceOccurrenceStep Hibana.choiceBody✝.roll Hibana.choiceCut✝
           (Hibana.SourcePoint.accepted (@OfNat.ofNat.{0} Nat (nat_lit 3) (instOfNatNat (nat_lit 3)))) next)))
+Hibana.source_occurrences_preserve_a_queued_continuation_during_reentry : And
+  (@Eq.{1} (List.{0} Nat)
+    (@Hibana.SourceUnfolding.origins Hibana.exchangeSource✝ Hibana.exchangeExpansion✝ Hibana.exchangeUnfolding✝
+      (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0))))
+    (@List.cons.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0)))
+      (@List.cons.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1)))
+        (@List.cons.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0)))
+          (@List.cons.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1)))
+            (@List.cons.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 2) (instOfNatNat (nat_lit 2))) (@List.nil.{0} Nat)))))))
+  (And
+    (@Eq.{1} Bool
+      (@List.all.{0} (Prod.{0, 0} Hibana.SourcePoint Nat)
+        (@List.zipIdx.{0} Hibana.SourcePoint Hibana.exchangePoints✝
+          (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0))))
+        fun x =>
+        Hibana.source_occurrences_preserve_a_queued_continuation_during_reentry.match_1.{1} (fun x => Bool) x
+          fun point index =>
+          @Hibana.SourceOccurrenceCut.ready Hibana.exchangeSource✝
+            (@Hibana.occurrenceCut Hibana.exchangeSource✝ Hibana.exchangePlan✝
+              (@List.take.{0} Hibana.SourcePoint index Hibana.exchangePoints✝))
+            point)
+      true)
+    (And
+      (@Eq.{1} Bool
+        (@Hibana.SourceOccurrenceCut.ready Hibana.exchangeSource✝
+          (@Hibana.occurrenceCut Hibana.exchangeSource✝ Hibana.exchangeBeforeContinuation✝
+            (@List.take.{0} Hibana.SourcePoint (@OfNat.ofNat.{0} Nat (nat_lit 6) (instOfNatNat (nat_lit 6)))
+              Hibana.exchangePoints✝))
+          (Hibana.SourcePoint.accepted (@OfNat.ofNat.{0} Nat (nat_lit 4) (instOfNatNat (nat_lit 4)))))
+        false)
+      (@Eq.{1} Bool
+        (@Hibana.SourceOccurrenceCut.ready Hibana.exchangeSource✝
+          (@Hibana.occurrenceCut Hibana.exchangeSource✝ Hibana.exchangeAfterContinuation✝
+            (@HAppend.hAppend.{0, 0, 0} (List.{0} Hibana.SourcePoint) (List.{0} Hibana.SourcePoint)
+              (List.{0} Hibana.SourcePoint)
+              (@instHAppendOfAppend.{0} (List.{0} Hibana.SourcePoint) (@List.instAppend.{0} Hibana.SourcePoint))
+              (@List.take.{0} Hibana.SourcePoint (@OfNat.ofNat.{0} Nat (nat_lit 6) (instOfNatNat (nat_lit 6)))
+                Hibana.exchangePoints✝)
+              (@List.cons.{0} Hibana.SourcePoint
+                (Hibana.SourcePoint.accepted (@OfNat.ofNat.{0} Nat (nat_lit 2) (instOfNatNat (nat_lit 2))))
+                (@List.cons.{0} Hibana.SourcePoint
+                  (Hibana.SourcePoint.committed
+                    { event := @OfNat.ofNat.{0} Nat (nat_lit 2) (instOfNatNat (nat_lit 2)),
+                      side := Hibana.EndpointDelegation.Side.send })
+                  (@List.nil.{0} Hibana.SourcePoint)))))
+          (Hibana.SourcePoint.accepted (@OfNat.ofNat.{0} Nat (nat_lit 3) (instOfNatNat (nat_lit 3)))))
+        false)))
 Hibana.source_occurrences_preserve_holder_change_before_old_publication : And
   (@Eq.{1} (List.{0} Nat)
     (@Hibana.SourceUnfolding.origins Hibana.loanBody✝.roll (Hibana.loanBody✝.seq Hibana.loanBody✝) Hibana.loanUnfolding✝

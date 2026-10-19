@@ -133,8 +133,11 @@ check is proved equivalent to the source relation, and every unfinished cut
 has a logical source transition. Kernel-checked examples cover output
 pipelining, unequal parallel visits, a new holder lending before the old sender
 publishes, and different choices in overlapping visits. The unfolding also
-admits reentry after a sequential continuation: the earlier continuation's
-completed work is retained instead of moving it after every later body copy.
+admits reentry after a sequential continuation and a later body copy progressing
+alongside that continuation. Once the earlier body finishes locally, neither
+later operation is globally placed before the other. Every expansion must still
+normalize with the original affine issuance. A regression follows the real
+Start/Ack/Finish schedule at every boundary and rejects both serial placements.
 
 `SourceOccurrenceProjection.lean` derives the actor-local domain and local
 predecessors from the accepted binding. A query reads that actor's projected

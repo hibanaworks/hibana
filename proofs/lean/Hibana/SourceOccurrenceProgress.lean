@@ -27,6 +27,13 @@ inductive SourceUnfolding : Source → Source → Type where
   | resumeAfterContinuation :
       SourceUnfolding (.seq (.roll body) continuation) earlier → SourceUnfolding body next →
       SourceUnfolding (.seq (.roll body) continuation) (.seq earlier next)
+  /-- A completed body releases both a later copy and its continuation.
+  Neither is ordered after the other. The cut still requires normalization
+  of the whole expansion with the original affine issuance. -/
+  | resumeAlongsideContinuation :
+      SourceUnfolding (.roll body) earlier → SourceUnfolding (.roll body) next →
+      SourceUnfolding continuation tail →
+      SourceUnfolding (.seq (.roll body) continuation) (.seq earlier (.par next tail))
 
 def EndpointDelegation.Source.oneCopy : Source → Source
   | .send message => .send message
@@ -55,6 +62,9 @@ def SourceUnfolding.occurrences : {source expanded : Source} →
   | _, _, .rollMore earlier next, start => earlier.occurrences start ++ next.occurrences start
   | _, _, .resumeAfterContinuation earlier next, start =>
       earlier.occurrences start ++ next.occurrences start
+  | .seq (.roll body) _, _, .resumeAlongsideContinuation earlier next tail, start =>
+      earlier.occurrences start ++ next.occurrences start ++
+        tail.occurrences (start + body.eventCount)
 
 def SourceUnfolding.origins (unfolding : SourceUnfolding source expanded) (start : Nat) : List Nat :=
   (unfolding.occurrences start).map Prod.fst
@@ -92,6 +102,13 @@ theorem source_unfolding_preserves_original_messages
     rcases List.mem_append.mp present with before | after
     · exact left start entry before
     · exact List.mem_append_left _ (right start entry after)
+  | resumeAlongsideContinuation earlier next tail left right continuation =>
+    intro entry present
+    rcases List.mem_append.mp present with body | later
+    · rcases List.mem_append.mp body with before | after
+      · exact List.mem_append_left _ (left start entry before)
+      · exact List.mem_append_left _ (right start entry after)
+    · exact List.mem_append_right _ (continuation _ entry later)
 
 /-- Every occurrence has an origin, including later copies of the same
 message. Equal source ordinals are intentionally retained rather than deduped. -/
@@ -113,6 +130,8 @@ theorem source_unfolding_has_one_origin_per_occurrence
     simp [SourceUnfolding.occurrences, Source.eventCount, left, right]
   | resumeAfterContinuation earlier next left right =>
     simp [SourceUnfolding.occurrences, Source.eventCount, left, right]
+  | resumeAlongsideContinuation earlier next tail left right continuation =>
+    simp [SourceUnfolding.occurrences, Source.eventCount, left, right, continuation]
 
 /-- Executable source dependency, including the distinct acceptance and
 publication boundaries. Message payload bytes do not choose an occurrence. -/
@@ -414,6 +433,87 @@ theorem source_occurrences_preserve_reentry_after_the_continuation :
   refine ⟨rfl, rfl, next, step, ?_⟩
   cases step
   rfl
+
+private def exchangeStart : Message := ⟨⟨0, 0⟩, ⟨0, 1⟩, 201, .wire 6⟩
+private def exchangeAck : Message := ⟨⟨0, 1⟩, ⟨0, 0⟩, 202, .wire 6⟩
+private def exchangeFinish : Message := ⟨⟨0, 1⟩, ⟨0, 0⟩, 203, .wire 6⟩
+private def exchangeBody : Source := .seq (.send exchangeStart) (.send exchangeAck)
+private def exchangeSource : Source := .seq (.roll exchangeBody) (.send exchangeFinish)
+private def exchangeExpansion : Source := .seq exchangeBody
+  (.par exchangeBody (.send exchangeFinish))
+private def exchangeBodyUnfolding : SourceUnfolding exchangeBody exchangeBody :=
+  .seq (.send _) (.send _)
+private def exchangeUnfolding : SourceUnfolding exchangeSource exchangeExpansion :=
+  .resumeAlongsideContinuation (.rollOnce exchangeBodyUnfolding)
+    (.rollOnce exchangeBodyUnfolding) (.send _)
+private def exchangeBindings : List (Nat × Binding) :=
+  [(0, ⟨exchangeStart, 0, 1⟩), (1, ⟨exchangeAck, 1, 0⟩),
+    (2, ⟨exchangeStart, 0, 1⟩), (3, ⟨exchangeAck, 1, 0⟩),
+    (4, ⟨exchangeFinish, 1, 0⟩)]
+private def exchangePlan : SourceOccurrenceCut exchangeSource := {
+  original := ⟨[], [⟨[], [(0, ⟨exchangeStart, 0, 1⟩), (1, ⟨exchangeAck, 1, 0⟩),
+    (2, ⟨exchangeFinish, 1, 0⟩)]⟩]⟩
+  originalAccepted := by decide
+  expanded := exchangeExpansion
+  unfolding := exchangeUnfolding
+  normalized := ⟨[], [⟨[], exchangeBindings⟩]⟩
+  accepted := by decide
+  sameIssuance := rfl
+  path := ⟨[], exchangeBindings⟩
+  selected := by decide
+  observed := fun _ => false
+}
+
+/-- This is the operation order of the real queued-continuation regression:
+the second Start precedes receipt of Finish, while Finish is sent before the
+second Ack. No placement wholly before or after the continuation represents
+both actors' order. FIFO receipt still belongs to the physical word. -/
+private def exchangePoints : List SourcePoint := [
+  .accepted 0, .committed ⟨0, .send⟩, .committed ⟨0, .receive⟩,
+  .accepted 1, .committed ⟨1, .send⟩, .committed ⟨1, .receive⟩,
+  .accepted 4, .committed ⟨4, .send⟩,
+  .accepted 2, .committed ⟨2, .send⟩, .committed ⟨2, .receive⟩,
+  .accepted 3, .committed ⟨3, .send⟩,
+  .committed ⟨4, .receive⟩, .committed ⟨3, .receive⟩]
+
+private def exchangeBeforeContinuation : SourceOccurrenceCut exchangeSource := {
+  exchangePlan with
+  expanded := .seq (.seq exchangeBody exchangeBody) (.send exchangeFinish)
+  unfolding := .seq (.rollMore (.rollOnce exchangeBodyUnfolding) exchangeBodyUnfolding)
+    (.send _)
+  accepted := by decide
+}
+
+private def exchangeAfterContinuation : SourceOccurrenceCut exchangeSource := {
+  exchangePlan with
+  expanded := .seq (.seq exchangeBody (.send exchangeFinish)) exchangeBody
+  unfolding := .resumeAfterContinuation
+    (.seq (.rollOnce exchangeBodyUnfolding) (.send _)) exchangeBodyUnfolding
+  normalized := ⟨[], [⟨[], [(0, ⟨exchangeStart, 0, 1⟩), (1, ⟨exchangeAck, 1, 0⟩),
+    (2, ⟨exchangeFinish, 1, 0⟩), (3, ⟨exchangeStart, 0, 1⟩),
+    (4, ⟨exchangeAck, 1, 0⟩)]⟩]⟩
+  accepted := by decide
+  sameIssuance := rfl
+  path := ⟨[], [(0, ⟨exchangeStart, 0, 1⟩), (1, ⟨exchangeAck, 1, 0⟩),
+    (2, ⟨exchangeFinish, 1, 0⟩), (3, ⟨exchangeStart, 0, 1⟩),
+    (4, ⟨exchangeAck, 1, 0⟩)]⟩
+  selected := by decide
+}
+
+/-- Every boundary of the queued-continuation schedule is enabled using only
+its preceding observations. In particular neither next-visit entry nor the
+earlier continuation is serialized behind the other. This is a model
+regression, not by itself the Rust/carrier refinement theorem. -/
+theorem source_occurrences_preserve_a_queued_continuation_during_reentry :
+    exchangeUnfolding.origins 0 = [0, 1, 0, 1, 2] ∧
+      exchangePoints.zipIdx.all (fun (point, index) =>
+        (occurrenceCut exchangePlan (exchangePoints.take index)).ready point) = true ∧
+      (occurrenceCut exchangeBeforeContinuation (exchangePoints.take 6)).ready
+        (.accepted 4) = false ∧
+      (occurrenceCut exchangeAfterContinuation
+        (exchangePoints.take 6 ++ [.accepted 2, .committed ⟨2, .send⟩])).ready
+        (.accepted 3) = false :=
+  ⟨rfl, by decide, by decide, by decide⟩
 
 private def rightChoiceMessage : Message := ⟨⟨0, 0⟩, ⟨0, 1⟩, 96, .wire 0⟩
 private def choiceBody : Source := .route none (.send pipelineMessage) (.send rightChoiceMessage)
