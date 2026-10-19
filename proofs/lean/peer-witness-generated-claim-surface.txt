@@ -1,3 +1,20 @@
+@peerProspectiveLoanHasItsSourceBeforeReceive : ∀ {session : Nat} {initial : Nat → ActorProgressObservation × Nat}
+  {last : DistributedSourceCut × List SourceAcceptance} {records : List (Nat × ActorCommitRecord)}
+  {next : TransportState} {frame : TransportFrame},
+  DistributedSourceExecution peerSourceImages peerWitnessChoreo session (DistributedSourceCut.initial initial, []) last
+      records →
+    (∀ (entry : SourceAcceptance), entry ∈ last.snd → entry.channel.generation = 0) →
+      (last.fst.carriers (peerLoanPort session)).pollReceive = TransportPoll.delivered frame next →
+        ↑frame.frameLabel = 0 →
+          ∃ sample fifo key,
+            SendAdmissionTrace peerWitnessChoreo session (last.fst.carriers (peerLoanPort session)) fifo
+                (sourceChannelRecords last.snd (peerLoanPort session)) ∧
+              fifo.accepted[(last.fst.carriers (peerLoanPort session)).delivered]? = some key ∧
+                (sourceChannelRecords last.snd
+                        (peerLoanPort session))[(last.fst.carriers (peerLoanPort session)).delivered]? =
+                    some (sample, 0) ∧
+                  sample.check peerWitnessChoreo session = true ∧
+                    sample.effIndex? = some 0 ∧ sample.wire.identifies frame ∧ key.globalId = 0
 peerWitnessPair1CompatibleChecked : sourceReceivePairCheck peerWitnessSender1 (peerWitnessReceiver1 0) peerWitnessImage4
     peerWitnessChoreo 9071 =
   true

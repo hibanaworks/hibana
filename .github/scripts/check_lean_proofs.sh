@@ -265,7 +265,7 @@ CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --li
   -- --exact
 bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${PEER_WITNESS_GENERATED}" "unknown peer holder source witnesses"
 run_audit generated-axioms --kernel "${PEER_WITNESS_GENERATED}" "${PROOF_DIR}" \
-  "${PROOF_DIR}/peer-witness-generated-claim-surface.txt" 18
+  "${PROOF_DIR}/peer-witness-generated-claim-surface.txt" 19
 CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib -- \
   g::role_projection::tests::conditional_controller::remote_controller::a_conditional_controller_does_not_take_authority_from_its_co_resident_observer \
   g::role_projection::tests::conditional_controller::co_resident_controller::a_conditional_controller_does_not_take_authority_from_its_co_resident_observer \

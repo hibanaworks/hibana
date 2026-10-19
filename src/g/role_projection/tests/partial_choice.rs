@@ -182,11 +182,12 @@ fn a_service_uses_the_delegated_peer_without_knowing_its_physical_holder() {
         use crate::test_support::{lean_choreo::LeanChoreo, lean_descriptor::descriptor_source};
         use std::fmt::Write;
         let mut text = std::format!(
-            "import Hibana.SourceOwnedReceive\n\nopen Hibana Hibana.EndpointDelegation\n\n\
+            "import Hibana.SourceOwnedReceive\nimport Hibana.SourcePortWord\n\nopen Hibana Hibana.EndpointDelegation\n\n\
              set_option maxRecDepth 10000\n\ndef peerWitnessChoreo : Choreo := {}\n\n",
             Steps::lean_source(),
         );
         for (actor, image) in [
+            (0, &RoleProjection::<0, Steps, 32>::IMAGE_REF),
             (1, &RoleProjection::<1, Steps, 32>::IMAGE_REF),
             (2, &RoleProjection::<2, Steps, 32>::IMAGE_REF),
             (3, &RoleProjection::<3, Steps, 32>::IMAGE_REF),
@@ -377,6 +378,7 @@ fn a_service_uses_the_delegated_peer_without_knowing_its_physical_holder() {
         });
     #[cfg(not(miri))]
     {
+        proof.push_str(include_str!("peer_source_port.lean"));
         let directory =
             std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/lean-proof");
         std::fs::create_dir_all(&directory).unwrap();

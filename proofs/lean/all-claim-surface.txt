@@ -2557,7 +2557,7 @@ Hibana.a_pending_payload_requires_its_own_send : ∀ (resource : Nat) (sent : Op
   {choreo : Hibana.Choreo} {session : Nat} {initial : Nat → Prod.{0, 0} Hibana.ActorProgressObservation Nat}
   {last : Prod.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance)}
   {records : List.{0} (Prod.{0, 0} Nat Hibana.ActorCommitRecord)} {channel : Hibana.TransportChannel}
-  {next : Hibana.TransportState} {frame : Hibana.TransportFrame} (selected : Nat → Bool),
+  {next : Hibana.TransportState} {frame : Hibana.TransportFrame} (selected colors : Nat → Bool),
   Hibana.DistributedSourceExecution images choreo session
       (@Prod.mk.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance)
         (Hibana.DistributedSourceCut.initial initial) (@List.nil.{0} Hibana.SourceAcceptance))
@@ -2571,61 +2571,68 @@ Hibana.a_pending_payload_requires_its_own_send : ∀ (resource : Nat) (sent : Op
               (@List.instMembership.{0} Hibana.SourceAcceptance)
               (@Prod.snd.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance) last) entry →
             @Eq.{1} Bool
-              (@decide (@Eq.{1} Hibana.TransportChannel entry.channel channel)
-                (Hibana.instDecidableEqTransportChannel entry.channel channel))
+              ((@decide (@Eq.{1} Hibana.TransportChannel entry.channel channel)
+                    (Hibana.instDecidableEqTransportChannel entry.channel channel)).and
+                (colors entry.sample.wire.frameLabel))
               (selected entry.event)) →
-        @Exists.{1} Hibana.SourceSendAdmission fun sample =>
-          @Exists.{1} Nat fun event =>
-            @Exists.{1} Hibana.ElasticAdmissionHistory fun history =>
-              @Exists.{1} Hibana.ElasticOccurrenceKey fun key =>
-                And
-                  (Hibana.SendAdmissionTrace choreo session
-                    ((@Prod.fst.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance) last).carriers
-                      channel)
-                    history
-                    (Hibana.sourceChannelRecords
-                      (@Prod.snd.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance) last) channel))
-                  (And
-                    (@Eq.{1} (Option.{0} Hibana.ElasticOccurrenceKey)
-                      (@getElem?.{0, 0, 0} (List.{0} Hibana.ElasticOccurrenceKey) Nat Hibana.ElasticOccurrenceKey
-                        (fun as i => @LT.lt.{0} Nat instLTNat i (@List.length.{0} Hibana.ElasticOccurrenceKey as))
-                        (@List.instGetElem?NatLtLength.{0} Hibana.ElasticOccurrenceKey) history.accepted
-                        ((@Prod.fst.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance) last).carriers
-                            channel).delivered)
-                      (@some.{0} Hibana.ElasticOccurrenceKey key))
+        @Eq.{1} Bool
+            (colors (@Fin.val (@OfNat.ofNat.{0} Nat (nat_lit 256) (instOfNatNat (nat_lit 256))) frame.frameLabel))
+            true →
+          @Exists.{1} Hibana.SourceSendAdmission fun sample =>
+            @Exists.{1} Nat fun event =>
+              @Exists.{1} Hibana.ElasticAdmissionHistory fun history =>
+                @Exists.{1} Hibana.ElasticOccurrenceKey fun key =>
+                  And
+                    (Hibana.SendAdmissionTrace choreo session
+                      ((@Prod.fst.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance) last).carriers
+                        channel)
+                      history
+                      (Hibana.sourceChannelRecords
+                        (@Prod.snd.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance) last) channel))
                     (And
-                      (@Eq.{1} (Option.{0} (Prod.{0, 0} Hibana.SourceSendAdmission Nat))
-                        (@getElem?.{0, 0, 0} (List.{0} (Prod.{0, 0} Hibana.SourceSendAdmission Nat)) Nat
-                          (Prod.{0, 0} Hibana.SourceSendAdmission Nat)
-                          (fun as i =>
-                            @LT.lt.{0} Nat instLTNat i
-                              (@List.length.{0} (Prod.{0, 0} Hibana.SourceSendAdmission Nat) as))
-                          (@List.instGetElem?NatLtLength.{0} (Prod.{0, 0} Hibana.SourceSendAdmission Nat))
-                          (Hibana.sourceChannelRecords
-                            (@Prod.snd.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance) last)
-                            channel)
+                      (@Eq.{1} (Option.{0} Hibana.ElasticOccurrenceKey)
+                        (@getElem?.{0, 0, 0} (List.{0} Hibana.ElasticOccurrenceKey) Nat Hibana.ElasticOccurrenceKey
+                          (fun as i => @LT.lt.{0} Nat instLTNat i (@List.length.{0} Hibana.ElasticOccurrenceKey as))
+                          (@List.instGetElem?NatLtLength.{0} Hibana.ElasticOccurrenceKey) history.accepted
                           ((@Prod.fst.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance)
                                   last).carriers
                               channel).delivered)
-                        (@some.{0} (Prod.{0, 0} Hibana.SourceSendAdmission Nat)
-                          (@Prod.mk.{0, 0} Hibana.SourceSendAdmission Nat sample event)))
-                      (And (@Eq.{1} Bool (sample.check choreo session) true)
-                        (And (@Eq.{1} (Option.{0} Nat) sample.effIndex? (@some.{0} Nat event))
-                          (And (sample.wire.identifies frame)
-                            (And (@Eq.{1} Nat key.globalId event)
-                              (@Eq.{1} (Option.{0} Nat)
-                                (@getElem?.{0, 0, 0} (List.{0} Nat) Nat Nat
-                                  (fun as i => @LT.lt.{0} Nat instLTNat i (@List.length.{0} Nat as))
-                                  (@List.instGetElem?NatLtLength.{0} Nat)
-                                  (@List.filterMap.{0, 0} Hibana.SourceAcceptance Nat
-                                    (fun entry =>
-                                      @ite.{1} (Option.{0} Nat) (@Eq.{1} Bool (selected entry.event) true)
-                                        (instDecidableEqBool (selected entry.event) true) (@some.{0} Nat entry.event)
-                                        (@none.{0} Nat))
-                                    (@Prod.snd.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance)
-                                      last))
-                                  (@List.countP.{0} Nat selected (Hibana.receivedSourceWord images choreo records)))
-                                (@some.{0} Nat event))))))))
+                        (@some.{0} Hibana.ElasticOccurrenceKey key))
+                      (And
+                        (@Eq.{1} (Option.{0} (Prod.{0, 0} Hibana.SourceSendAdmission Nat))
+                          (@getElem?.{0, 0, 0} (List.{0} (Prod.{0, 0} Hibana.SourceSendAdmission Nat)) Nat
+                            (Prod.{0, 0} Hibana.SourceSendAdmission Nat)
+                            (fun as i =>
+                              @LT.lt.{0} Nat instLTNat i
+                                (@List.length.{0} (Prod.{0, 0} Hibana.SourceSendAdmission Nat) as))
+                            (@List.instGetElem?NatLtLength.{0} (Prod.{0, 0} Hibana.SourceSendAdmission Nat))
+                            (Hibana.sourceChannelRecords
+                              (@Prod.snd.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance) last)
+                              channel)
+                            ((@Prod.fst.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance)
+                                    last).carriers
+                                channel).delivered)
+                          (@some.{0} (Prod.{0, 0} Hibana.SourceSendAdmission Nat)
+                            (@Prod.mk.{0, 0} Hibana.SourceSendAdmission Nat sample event)))
+                        (And (@Eq.{1} Bool (sample.check choreo session) true)
+                          (And (@Eq.{1} (Option.{0} Nat) sample.effIndex? (@some.{0} Nat event))
+                            (And (sample.wire.identifies frame)
+                              (And (@Eq.{1} Nat key.globalId event)
+                                (And
+                                  (@Eq.{1} (Option.{0} Nat)
+                                    (@getElem?.{0, 0, 0} (List.{0} Nat) Nat Nat
+                                      (fun as i => @LT.lt.{0} Nat instLTNat i (@List.length.{0} Nat as))
+                                      (@List.instGetElem?NatLtLength.{0} Nat)
+                                      (@List.filterMap.{0, 0} Hibana.SourceAcceptance Nat
+                                        (fun entry =>
+                                          @ite.{1} (Option.{0} Nat) (@Eq.{1} Bool (selected entry.event) true)
+                                            (instDecidableEqBool (selected entry.event) true)
+                                            (@some.{0} Nat entry.event) (@none.{0} Nat))
+                                        (@Prod.snd.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance)
+                                          last))
+                                      (@List.countP.{0} Nat selected (Hibana.receivedSourceWord images choreo records)))
+                                    (@some.{0} Nat event))
+                                  (@Eq.{1} Bool (selected event) true))))))))
 @Hibana.a_prospective_source_word_head_matches_its_prepared_receiver : ∀ {images : Nat → Hibana.RustDescriptorImage}
   {choreo : Hibana.Choreo} {session actor previousPath pathIndex event : Nat}
   {initial : Nat → Prod.{0, 0} Hibana.ActorProgressObservation Nat}
@@ -2633,7 +2640,7 @@ Hibana.a_pending_payload_requires_its_own_send : ∀ (resource : Nat) (sent : Op
   {records : List.{0} (Prod.{0, 0} Nat Hibana.ActorCommitRecord)} {channel : Hibana.TransportChannel}
   {next : Hibana.TransportState} {frame : Hibana.TransportFrame} {group : Hibana.SourceOrderGroup (images actor) choreo}
   {sourceRows : List.{0} Nat} {base : Hibana.ActorProgressObservation} {data : Hibana.DecodedActorOrder}
-  {path : Hibana.EndpointDelegation.NormalizedPath} {row : Hibana.DecodedActorRow} (selected : Nat → Bool),
+  {path : Hibana.EndpointDelegation.NormalizedPath} {row : Hibana.DecodedActorRow} (selected colors : Nat → Bool),
   Hibana.DistributedSourceExecution images choreo session
       (@Prod.mk.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance)
         (Hibana.DistributedSourceCut.initial initial) (@List.nil.{0} Hibana.SourceAcceptance))
@@ -2680,78 +2687,85 @@ Hibana.a_pending_payload_requires_its_own_send : ∀ (resource : Nat) (sent : Op
                               (@Prod.snd.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance) last)
                               entry →
                             @Eq.{1} Bool
-                              (@decide (@Eq.{1} Hibana.TransportChannel entry.channel channel)
-                                (Hibana.instDecidableEqTransportChannel entry.channel channel))
+                              ((@decide (@Eq.{1} Hibana.TransportChannel entry.channel channel)
+                                    (Hibana.instDecidableEqTransportChannel entry.channel channel)).and
+                                (colors entry.sample.wire.frameLabel))
                               (selected entry.event)) →
-                        @Eq.{1} (List.{0} (Option.{0} Nat))
-                            (@List.map.{0, 0} Nat (Option.{0} Nat) (@some.{0} Nat) sourceRows)
-                            (@List.map.{0, 0} Nat (Option.{0} Nat) (images actor).eventEffIndex?
-                              (@Hibana.SourceOrderGroup.rows (images actor) choreo group)) →
-                          Hibana.sourceFrameWord sourceRows
-                              (@List.filterMap.{0, 0} Hibana.SourceAcceptance Nat
-                                (fun entry =>
-                                  @ite.{1} (Option.{0} Nat) (@Eq.{1} Bool (selected entry.event) true)
-                                    (instDecidableEqBool (selected entry.event) true) (@some.{0} Nat entry.event)
-                                    (@none.{0} Nat))
-                                (@Prod.snd.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance)
-                                  last)) →
-                            @Eq.{1} Nat
-                                (@List.countP.{0} Nat selected (Hibana.receivedSourceWord images choreo records))
-                                (@List.length.{0} Nat
-                                  (Hibana.committedFrameClassWord
-                                    (@Hibana.SourceOrderGroup.rows (images actor) choreo group) actor records)) →
-                              @Exists.{1} Hibana.SourceSendAdmission fun sample =>
-                                @Exists.{1} Nat fun source =>
-                                  @Exists.{1} Hibana.ElasticAdmissionHistory fun history =>
-                                    @Exists.{1} Hibana.ElasticOccurrenceKey fun key =>
-                                      And
-                                        (Hibana.SendAdmissionTrace choreo session
-                                          ((@Prod.fst.{0, 0} Hibana.DistributedSourceCut
-                                                (List.{0} Hibana.SourceAcceptance) last).carriers
-                                            channel)
-                                          history
-                                          (Hibana.sourceChannelRecords
-                                            (@Prod.snd.{0, 0} Hibana.DistributedSourceCut
-                                              (List.{0} Hibana.SourceAcceptance) last)
-                                            channel))
-                                        (And
-                                          (@Eq.{1} (Option.{0} Hibana.ElasticOccurrenceKey)
-                                            (@getElem?.{0, 0, 0} (List.{0} Hibana.ElasticOccurrenceKey) Nat
-                                              Hibana.ElasticOccurrenceKey
-                                              (fun as i =>
-                                                @LT.lt.{0} Nat instLTNat i
-                                                  (@List.length.{0} Hibana.ElasticOccurrenceKey as))
-                                              (@List.instGetElem?NatLtLength.{0} Hibana.ElasticOccurrenceKey)
-                                              history.accepted
-                                              ((@Prod.fst.{0, 0} Hibana.DistributedSourceCut
-                                                      (List.{0} Hibana.SourceAcceptance) last).carriers
-                                                  channel).delivered)
-                                            (@some.{0} Hibana.ElasticOccurrenceKey key))
+                        @Eq.{1} Bool
+                            (colors
+                              (@Fin.val (@OfNat.ofNat.{0} Nat (nat_lit 256) (instOfNatNat (nat_lit 256)))
+                                frame.frameLabel))
+                            true →
+                          @Eq.{1} (List.{0} (Option.{0} Nat))
+                              (@List.map.{0, 0} Nat (Option.{0} Nat) (@some.{0} Nat) sourceRows)
+                              (@List.map.{0, 0} Nat (Option.{0} Nat) (images actor).eventEffIndex?
+                                (@Hibana.SourceOrderGroup.rows (images actor) choreo group)) →
+                            Hibana.sourceFrameWord sourceRows
+                                (@List.filterMap.{0, 0} Hibana.SourceAcceptance Nat
+                                  (fun entry =>
+                                    @ite.{1} (Option.{0} Nat) (@Eq.{1} Bool (selected entry.event) true)
+                                      (instDecidableEqBool (selected entry.event) true) (@some.{0} Nat entry.event)
+                                      (@none.{0} Nat))
+                                  (@Prod.snd.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance)
+                                    last)) →
+                              @Eq.{1} Nat
+                                  (@List.countP.{0} Nat selected (Hibana.receivedSourceWord images choreo records))
+                                  (@List.length.{0} Nat
+                                    (Hibana.committedFrameClassWord
+                                      (@Hibana.SourceOrderGroup.rows (images actor) choreo group) actor records)) →
+                                @Exists.{1} Hibana.SourceSendAdmission fun sample =>
+                                  @Exists.{1} Nat fun source =>
+                                    @Exists.{1} Hibana.ElasticAdmissionHistory fun history =>
+                                      @Exists.{1} Hibana.ElasticOccurrenceKey fun key =>
+                                        And
+                                          (Hibana.SendAdmissionTrace choreo session
+                                            ((@Prod.fst.{0, 0} Hibana.DistributedSourceCut
+                                                  (List.{0} Hibana.SourceAcceptance) last).carriers
+                                              channel)
+                                            history
+                                            (Hibana.sourceChannelRecords
+                                              (@Prod.snd.{0, 0} Hibana.DistributedSourceCut
+                                                (List.{0} Hibana.SourceAcceptance) last)
+                                              channel))
                                           (And
-                                            (@Eq.{1} (Option.{0} (Prod.{0, 0} Hibana.SourceSendAdmission Nat))
-                                              (@getElem?.{0, 0, 0}
-                                                (List.{0} (Prod.{0, 0} Hibana.SourceSendAdmission Nat)) Nat
-                                                (Prod.{0, 0} Hibana.SourceSendAdmission Nat)
+                                            (@Eq.{1} (Option.{0} Hibana.ElasticOccurrenceKey)
+                                              (@getElem?.{0, 0, 0} (List.{0} Hibana.ElasticOccurrenceKey) Nat
+                                                Hibana.ElasticOccurrenceKey
                                                 (fun as i =>
                                                   @LT.lt.{0} Nat instLTNat i
-                                                    (@List.length.{0} (Prod.{0, 0} Hibana.SourceSendAdmission Nat) as))
-                                                (@List.instGetElem?NatLtLength.{0}
-                                                  (Prod.{0, 0} Hibana.SourceSendAdmission Nat))
-                                                (Hibana.sourceChannelRecords
-                                                  (@Prod.snd.{0, 0} Hibana.DistributedSourceCut
-                                                    (List.{0} Hibana.SourceAcceptance) last)
-                                                  channel)
+                                                    (@List.length.{0} Hibana.ElasticOccurrenceKey as))
+                                                (@List.instGetElem?NatLtLength.{0} Hibana.ElasticOccurrenceKey)
+                                                history.accepted
                                                 ((@Prod.fst.{0, 0} Hibana.DistributedSourceCut
                                                         (List.{0} Hibana.SourceAcceptance) last).carriers
                                                     channel).delivered)
-                                              (@some.{0} (Prod.{0, 0} Hibana.SourceSendAdmission Nat)
-                                                (@Prod.mk.{0, 0} Hibana.SourceSendAdmission Nat sample source)))
-                                            (And (@Eq.{1} Bool (sample.check choreo session) true)
-                                              (And (@Eq.{1} (Option.{0} Nat) sample.effIndex? (@some.{0} Nat source))
-                                                (And (sample.wire.identifies frame)
-                                                  (And (@Eq.{1} Nat key.globalId source)
-                                                    (@Eq.{1} (Option.{0} Nat) ((images actor).eventEffIndex? event)
-                                                      (@some.{0} Nat source))))))))
+                                              (@some.{0} Hibana.ElasticOccurrenceKey key))
+                                            (And
+                                              (@Eq.{1} (Option.{0} (Prod.{0, 0} Hibana.SourceSendAdmission Nat))
+                                                (@getElem?.{0, 0, 0}
+                                                  (List.{0} (Prod.{0, 0} Hibana.SourceSendAdmission Nat)) Nat
+                                                  (Prod.{0, 0} Hibana.SourceSendAdmission Nat)
+                                                  (fun as i =>
+                                                    @LT.lt.{0} Nat instLTNat i
+                                                      (@List.length.{0} (Prod.{0, 0} Hibana.SourceSendAdmission Nat)
+                                                        as))
+                                                  (@List.instGetElem?NatLtLength.{0}
+                                                    (Prod.{0, 0} Hibana.SourceSendAdmission Nat))
+                                                  (Hibana.sourceChannelRecords
+                                                    (@Prod.snd.{0, 0} Hibana.DistributedSourceCut
+                                                      (List.{0} Hibana.SourceAcceptance) last)
+                                                    channel)
+                                                  ((@Prod.fst.{0, 0} Hibana.DistributedSourceCut
+                                                          (List.{0} Hibana.SourceAcceptance) last).carriers
+                                                      channel).delivered)
+                                                (@some.{0} (Prod.{0, 0} Hibana.SourceSendAdmission Nat)
+                                                  (@Prod.mk.{0, 0} Hibana.SourceSendAdmission Nat sample source)))
+                                              (And (@Eq.{1} Bool (sample.check choreo session) true)
+                                                (And (@Eq.{1} (Option.{0} Nat) sample.effIndex? (@some.{0} Nat source))
+                                                  (And (sample.wire.identifies frame)
+                                                    (And (@Eq.{1} Nat key.globalId source)
+                                                      (@Eq.{1} (Option.{0} Nat) ((images actor).eventEffIndex? event)
+                                                        (@some.{0} Nat source))))))))
 @Hibana.a_published_occurrence_teaches_its_local_route_arm : ∀ {memberships : List.{0} (Prod.{0, 0} Nat Nat)}
   {scope : Nat} {previous : Option.{0} Hibana.RouteArm} {arm : Hibana.RouteArm}
   {result : Prod.{0, 0} Nat (Option.{0} Hibana.RouteArm)},

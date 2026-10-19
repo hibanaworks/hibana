@@ -179,8 +179,10 @@ theorem logicalProspectiveRequestSourceMatchesBeforeReceive
     exact List.mem_filter.mpr ⟨List.mem_range.mpr bounded, by simp only [selector, decide_true]⟩
   exact a_prospective_source_word_head_matches_its_prepared_receiver
     (actor := 3) (group := logicalRequestGroup) (sourceRows := [0, 3])
-    (fun eff => eff == 0 || eff == 3) history (by decide) decoded pathAt rowAt active ready origin member received
-    (logicalOpenedRequestDirection history sameRun) (by decide) (logicalRequestSourceWordAtEveryCut history)
+    (fun eff => eff == 0 || eff == 3) (fun _ => true)
+    history (by decide) decoded pathAt rowAt active ready origin member received
+    (by simpa only [Bool.and_true] using logicalOpenedRequestDirection history sameRun)
+    rfl (by decide) (logicalRequestSourceWordAtEveryCut history)
     (logicalRequestReceiptCountIsTheServiceClassLength history)
 
 /-- At the observed second worker-held request, the generic result applies

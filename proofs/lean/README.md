@@ -286,8 +286,12 @@ receipts. This qualification does not use that head's eventual receive commit.
 
 `SourcePortWord.lean` extracts each acceptance's original source binding,
 wire columns and opened logical direction from that same history. It composes
-the complete accepted direction word with the receiver's independently
-prepared current/fresh word. An exact count of past receives supplies their
+the complete accepted wire-selector word with the receiver's independently
+prepared current/fresh word. The selector may include one or several wire
+colors on a direction. The proof retains every raw frame on that FIFO and
+derives the selected head's position by filtering its actual delivered prefix.
+It never skips a raw head or selects by payload schema or logical label.
+An exact count of past receives in that selector class supplies their
 common position; neither a common actor visit nor the prospective receive's
 pair-check or successful after-snapshot supplies it. These are erased proof
 observations, with no new runtime field or wire identifier.
@@ -302,6 +306,15 @@ The receiver's selector includes every matching row, not just the row expected
 by the test. At the second worker-held request the proof is also applied to the
 actual cut before sender publication, using the service's existing before-cut.
 Its source identity is derived before adding that receive to the history.
+
+The nested three-holder fixture also qualifies a prospective loan head for
+every finite execution prefix of its projected images. Other branch messages
+use different wire colors on the same port. Complete static source-row tables,
+the accepted header checks and the actual raw head determine the loan's source
+identity. The new receive's commit, receiver snapshot, chosen holder and common
+path are absent from its premises. Correspondence of earlier receives remains
+an explicit premise of the execution model; this result does not close the
+general distributed progress obligation.
 
 `SourceOwnedReceive.lean` carries source matching through the owned wire
 preflight. It takes the matched send/receive source identities, the receiver's

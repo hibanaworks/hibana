@@ -83,23 +83,38 @@ theorem a_distributed_acceptance_retains_its_source_and_opened_port
         exact ⟨imageAt, checked, sourceAt,
           identity.1, identity.2.1, identity.2.2.1, identity.2.2.2.1⟩
 
-private theorem a_complete_direction_word_keeps_every_selected_acceptance
+private theorem a_selected_acceptance_word_keeps_its_complete_port_subsequence
     {entries : List SourceAcceptance} {channel : TransportChannel} {selected : Nat → Bool}
-    (classifies : ∀ entry ∈ entries, decide (entry.channel = channel) = selected entry.event) :
-    (sourceChannelEntries entries channel).map SourceAcceptance.event =
-      entries.filterMap (fun entry => if selected entry.event then some entry.event else none) := by
-  induction entries with
-  | nil => rfl
-  | cons entry entries ih =>
-    have head := classifies entry (List.mem_cons_self ..)
-    have rest := ih (fun other member => classifies other (List.mem_cons_of_mem _ member))
-    by_cases same : entry.channel = channel
-    · have chosen : selected entry.event = true := by simpa only [same, decide_true] using head.symm
-      simpa only [sourceChannelEntries, List.filter_cons, same, decide_true, if_true,
-        List.map_cons, List.filterMap_cons, chosen] using congrArg (fun word => entry.event :: word) rest
-    · have omitted : selected entry.event = false := by simpa only [same, decide_false] using head.symm
-      simpa only [sourceChannelEntries, List.filter_cons, same, decide_false, if_false,
-        List.filterMap_cons, omitted, Bool.false_eq_true] using rest
+    (bound : ∀ entry ∈ entries, selected entry.event = true → entry.channel = channel) :
+    (sourceChannelEntries entries channel).filter (fun entry => selected entry.event) =
+      entries.filter (fun entry => selected entry.event) := by
+  unfold sourceChannelEntries
+  rw [List.filter_filter]
+  apply List.filter_congr
+  intro entry member
+  cases chosen : selected entry.event with
+  | false => simp only [Bool.false_and]
+  | true => simp only [bound entry member chosen, decide_true, Bool.true_and]
+
+private theorem a_selected_element_has_its_filtered_prefix_position
+    {α : Type} {entries : List α} {index : Nat} {entry : α} {selected : α → Bool}
+    (atEntry : entries[index]? = some entry) (chosen : selected entry = true) :
+    (entries.filter selected)[((entries.take index).filter selected).length]? = some entry := by
+  induction entries generalizing index with
+  | nil => simp only [List.getElem?_nil] at atEntry; cases atEntry
+  | cons head tail ih =>
+    cases index with
+    | zero =>
+      have same : head = entry := Option.some.inj atEntry
+      subst head
+      simp only [List.filter_cons, chosen, if_true, List.take_zero, List.filter_nil,
+        List.length_nil, List.getElem?_cons_zero]
+    | succ index =>
+      have rest : tail[index]? = some entry := atEntry
+      have next := ih rest
+      cases headSelected : selected head <;>
+        simpa only [List.filter_cons, headSelected, Bool.false_eq_true, if_false, if_true,
+          List.take_succ_cons, List.length_cons, List.getElem?_cons_succ] using next
 
 private theorem receipt_prefixes_contain_only_actual_acceptances
     {receipts entries : List SourceAcceptance} {cut : DistributedSourceCut}
@@ -113,20 +128,23 @@ private theorem receipt_prefixes_contain_only_actual_acceptances
   exact (List.mem_filter.mp (List.mem_of_mem_take own)).1
 
 /-- A prospective raw head is at the number of actual past receives in its
-complete source class. The supplied classification concerns static source
-rows and opened port identity, not the expected source order. All accepted
-ordinary/owned frames sharing the direction must be included. No current
-receive-pair or successful receiver snapshot is assumed. -/
+complete wire-selector class. The supplied classification concerns static
+source rows, opened port identity and wire-visible colors, not the expected
+source order. Other colors on the same FIFO remain in the raw history and
+contribute only when selected. No frame is skipped or received speculatively.
+No current receive-pair or successful receiver snapshot is assumed. -/
 theorem a_prospective_port_head_has_its_actual_source_class_position
     {images : Nat → RustDescriptorImage} {choreo : Choreo} {session : Nat}
     {initial : Nat → ActorProgressObservation × Nat}
     {last : DistributedSourceCut × List SourceAcceptance}
     {records : List (Nat × ActorCommitRecord)} {channel : TransportChannel}
-    {next : TransportState} {frame : TransportFrame} (selected : Nat → Bool)
+    {next : TransportState} {frame : TransportFrame} (selected colors : Nat → Bool)
     (execution : DistributedSourceExecution images choreo session
       (DistributedSourceCut.initial initial, []) last records)
     (received : (last.1.carriers channel).pollReceive = .delivered frame next)
-    (classifies : ∀ entry ∈ last.2, decide (entry.channel = channel) = selected entry.event) :
+    (classifies : ∀ entry ∈ last.2,
+      (decide (entry.channel = channel) && colors entry.sample.wire.frameLabel) = selected entry.event)
+    (visible : colors frame.frameLabel.val = true) :
     ∃ sample event history key,
       SendAdmissionTrace choreo session (last.1.carriers channel) history (sourceChannelRecords last.2 channel) ∧
       history.accepted[(last.1.carriers channel).delivered]? = some key ∧
@@ -134,35 +152,47 @@ theorem a_prospective_port_head_has_its_actual_source_class_position
       sample.check choreo session = true ∧ sample.effIndex? = some event ∧
       sample.wire.identifies frame ∧ key.globalId = event ∧
       (last.2.filterMap (fun entry => if selected entry.event then some entry.event else none))[
-        (receivedSourceWord images choreo records).countP selected]? = some event := by
+        (receivedSourceWord images choreo records).countP selected]? = some event ∧
+      selected event = true := by
   obtain ⟨receipts, word, prefixes⟩ := a_distributed_receipt_word_is_the_exact_accepted_fifo_prefix execution
   obtain ⟨history, trace⟩ := a_distributed_source_execution_projects_its_complete_fifo_histories execution channel
   obtain ⟨sample, event, key, _, recordAt, keyAt, checked, sourceAt, identity, sourceKey, _, _, _⟩ :=
     a_fifo_receipt_reconstructs_its_source_occurrence_without_a_shared_visit trace received
-  have receiptClass : ∀ entry ∈ receipts, decide (entry.channel = channel) = selected entry.event :=
-    fun entry member => classifies entry (receipt_prefixes_contain_only_actual_acceptances prefixes entry member)
-  have receiptCount : (receipts.map SourceAcceptance.event).countP selected =
-      (sourceChannelEntries receipts channel).length := by
-    simp only [sourceChannelEntries, ← List.countP_eq_length_filter, List.countP_map]
-    apply List.countP_congr
-    intro entry member
-    rw [receiptClass entry member]
-    rfl
-  have bound : (last.1.carriers channel).delivered < (sourceChannelEntries last.2 channel).length := by
-    have actual := (List.getElem?_eq_some_iff.mp recordAt).1
-    simpa only [sourceChannelRecords, List.length_map] using actual
+  have onlyPort : ∀ entry ∈ last.2, selected entry.event = true → entry.channel = channel := by
+    intro entry member chosen
+    exact of_decide_eq_true (Bool.and_eq_true_iff.mp ((classifies entry member).trans chosen)).1
+  have receiptPort : ∀ entry ∈ receipts, selected entry.event = true → entry.channel = channel :=
+    fun entry member => onlyPort entry (receipt_prefixes_contain_only_actual_acceptances prefixes entry member)
   have position : (receivedSourceWord images choreo records).countP selected =
-      (last.1.carriers channel).delivered := by
-    rw [word, receiptCount, prefixes channel, List.length_take, Nat.min_eq_left (Nat.le_of_lt bound)]
-  have nextSource : ((sourceChannelEntries last.2 channel).map SourceAcceptance.event)[
-      (last.1.carriers channel).delivered]? = some event := by
-    have actual := congrArg (Option.map Prod.snd) recordAt
-    simpa only [sourceChannelRecords, List.getElem?_map, Option.map_map, Option.map_some,
-      Function.comp_def] using actual
+      (((sourceChannelEntries last.2 channel).take (last.1.carriers channel).delivered).filter
+        (fun entry => selected entry.event)).length := by
+    rw [word, List.countP_map, List.countP_eq_length_filter]
+    simp only [Function.comp_def]
+    rw [
+      ← a_selected_acceptance_word_keeps_its_complete_port_subsequence receiptPort, prefixes channel]
+  have rawAt : ∃ entry,
+      (sourceChannelEntries last.2 channel)[(last.1.carriers channel).delivered]? = some entry ∧
+        entry.sample = sample ∧ entry.event = event := by
+    simp only [sourceChannelRecords, List.getElem?_map] at recordAt
+    cases actual : (sourceChannelEntries last.2 channel)[(last.1.carriers channel).delivered]? with
+    | none => simp only [actual, Option.map_none] at recordAt; contradiction
+    | some entry =>
+      have same := Option.some.inj (by simpa only [actual, Option.map_some] using recordAt)
+      exact ⟨entry, rfl, congrArg Prod.fst same, congrArg Prod.snd same⟩
+  obtain ⟨entry, entryAt, sampleSame, eventSame⟩ := rawAt
+  have member := List.mem_filter.mp (List.mem_of_getElem? entryAt)
+  have selectedHead : selected entry.event = true := by
+    rw [← classifies entry member.1, member.2, Bool.true_and, sampleSame,
+      identity.2.2.2.2, visible]
+  have nextEntry := a_selected_element_has_its_filtered_prefix_position
+    (selected := fun entry : SourceAcceptance => selected entry.event) entryAt selectedHead
+  have nextSource := congrArg (Option.map SourceAcceptance.event) nextEntry
+  simp only [← List.getElem?_map, Option.map_some, eventSame] at nextSource
   refine ⟨sample, event, history, key, trace, keyAt, recordAt, checked, sourceAt,
-    identity, sourceKey, ?_⟩
-  rw [position, ← a_complete_direction_word_keeps_every_selected_acceptance classifies]
-  exact nextSource
+    identity, sourceKey, ?_, by simpa only [eventSame] using selectedHead⟩
+  rw [position]
+  rw [a_selected_acceptance_word_keeps_its_complete_port_subsequence onlyPort] at nextSource
+  simpa only [← List.filterMap_eq_map', List.filterMap_filter] using nextSource
 
 /-- Compose the accepted logical source word with the receiver's independent
 current/fresh preparation. Its next source identity is derived before any
@@ -177,7 +207,7 @@ theorem a_prospective_source_word_head_matches_its_prepared_receiver
     {next : TransportState} {frame : TransportFrame}
     {group : SourceOrderGroup (images actor) choreo} {sourceRows : List Nat}
     {base : ActorProgressObservation} {data : DecodedActorOrder} {path : NormalizedPath} {row : DecodedActorRow}
-    (selected : Nat → Bool)
+    (selected colors : Nat → Bool)
     (execution : DistributedSourceExecution images choreo session
       (DistributedSourceCut.initial initial, []) last records)
     (empty : ∀ event ∈ group.rows, (initial actor).1.doneState.done event = false)
@@ -190,7 +220,9 @@ theorem a_prospective_source_word_head_matches_its_prepared_receiver
       (images actor) choreo previousPath path row base)
     (member : event ∈ group.rows)
     (received : (last.1.carriers channel).pollReceive = .delivered frame next)
-    (classifies : ∀ entry ∈ last.2, decide (entry.channel = channel) = selected entry.event)
+    (classifies : ∀ entry ∈ last.2,
+      (decide (entry.channel = channel) && colors entry.sample.wire.frameLabel) = selected entry.event)
+    (visible : colors frame.frameLabel.val = true)
     (cycle : sourceRows.map some = group.rows.map (images actor).eventEffIndex?)
     (sentOrdered : sourceFrameWord sourceRows
       (last.2.filterMap fun entry => if selected entry.event then some entry.event else none))
@@ -205,8 +237,8 @@ theorem a_prospective_source_word_head_matches_its_prepared_receiver
       (images actor).eventEffIndex? event = some source := by
   obtain ⟨receiverOrdered, _⟩ := a_prepared_wire_operation_extends_its_actors_measured_source_word
     execution empty decoded pathAt rowAt active ready origin member
-  obtain ⟨sample, source, history, key, trace, keyAt, recordAt, checked, sourceAt, identity, keySource, nextAt⟩ :=
-    a_prospective_port_head_has_its_actual_source_class_position selected execution received classifies
+  obtain ⟨sample, source, history, key, trace, keyAt, recordAt, checked, sourceAt, identity, keySource, nextAt, _⟩ :=
+    a_prospective_port_head_has_its_actual_source_class_position selected colors execution received classifies visible
   rw [receiptCount] at nextAt
   have receiverAt : (committedFrameClassWord group.rows actor records ++ [event])[
       (committedFrameClassWord group.rows actor records).length]? = some event := by simp
