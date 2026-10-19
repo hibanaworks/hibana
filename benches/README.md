@@ -43,9 +43,10 @@ fail the job.
 The instruction budget in
 `.github/measurement_snapshots/hibana-runtime-instructions.tsv` records Linux
 x86-64, Rust 1.99.1 and Valgrind 3.22.0. Each limit is the larger of the two
-actual f8c32d44 CI counts plus 5%, rounded up. Both runs must fit. Compiler or
+actual 51a273b4 CI counts plus 1%, rounded up. Both runs must fit. Compiler or
 target changes require reviewing the new profiles, without automatically
 increasing the limits. This guards against further regressions from that
-checkpoint. It does not establish parity with historical main or remove the
+checkpoint. The two observed counts differed by less than 0.001%; all limits
+were tightened after decoder inlining. It does not establish parity with historical main or remove the
 remaining performance work; instruction counts and elapsed time are separate
 measurements.

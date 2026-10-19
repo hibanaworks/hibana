@@ -33,6 +33,13 @@ There is no increase to total flash, slab, resident storage, modeled SRAM or
 the provisional 5120-byte stack budget. The complete measurement gate must
 still check the final build; the first rejected log is retained separately.
 
+CI 39217605385 also passed the Linux instruction gate. The larger fresh total
+per case was 134967179 (seq/8), 249383269 (seq/256), 77593284 (par/8), and
+136723836 (par/256), over 512 endpoint operations each. These are 3.3–4.0%
+below the pre-inlining totals at the same compiler and target. The two fresh
+runs differ by less than 0.001%. Tighten each instruction limit to its new
+maximum plus 1%, rounded up, so the previous decoder's cost would fail it.
+
 The next measurement exposed a stale collector limit: the actual host
 SendFuture is 48 bytes, and both existing library size tests already permit six
 words for the owned/scoped operation target. The collector still allowed five
