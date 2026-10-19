@@ -42,7 +42,9 @@ where
                 crate::invariant();
             }
             let key = crate::invariant_some(info.key());
-            active_entries.insert_key(key, lane_idx as u8);
+            if self.permits_event(info.entry.as_usize()) {
+                active_entries.insert_key(key, lane_idx as u8);
+            }
             next = active_offer_lanes.next_set_from(lane_idx + 1, lane_limit);
         }
         active_entries.seal()

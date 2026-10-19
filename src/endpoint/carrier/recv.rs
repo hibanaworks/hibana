@@ -1,5 +1,5 @@
 use super::{
-    EndpointHandle, NonNull, OutSlot, Poll, RawRecvOutput, RecvPollRequest, WaiterTransfer,
+    NonNull, OperationHandle, OutSlot, Poll, RawRecvOutput, RecvPollRequest, WaiterTransfer,
 };
 impl<'cfg, T> crate::runtime::SessionKit<'cfg, T>
 where
@@ -7,7 +7,7 @@ where
 {
     pub(super) unsafe fn init_public_recv_state_raw(
         ptr: NonNull<()>,
-        handle: EndpointHandle,
+        handle: OperationHandle,
     ) -> crate::endpoint::kernel::PublicOpLease {
         unsafe {
             // SAFETY: recv-state initialization owns the carrier endpoint slot
@@ -21,7 +21,7 @@ where
         }
     }
 
-    pub(super) unsafe fn reset_public_recv_state_raw(ptr: NonNull<()>, handle: EndpointHandle) {
+    pub(super) unsafe fn reset_public_recv_state_raw(ptr: NonNull<()>, handle: OperationHandle) {
         let mut waiters = WaiterTransfer::empty();
         unsafe {
             // SAFETY: recv-state reset owns the carrier endpoint slot selected
@@ -68,10 +68,10 @@ where
                 },
             )
         };
-        if matches!(&poll, Poll::Ready(Ok(_))) {
+        if poll.is_ready() {
             // SAFETY: the kernel borrow ended; this receive still retains its
             // carrier Endpoint while other logical views are notified.
-            unsafe { Self::wake_public_actor_waiters(ptr, handle) };
+            unsafe { Self::wake_public_actor_waiters(ptr, handle.endpoint) };
         }
         OutSlot::new(out).write(poll);
     }

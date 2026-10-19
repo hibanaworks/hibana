@@ -32,6 +32,7 @@ where
                 continue;
             };
             if self.progress.cursor.logical_role_at(idx) != Some(self.public_header.role())
+                || !self.permits_event(idx)
                 || meta.origin.is_session()
                 || !key.matches_recv(meta)
             {

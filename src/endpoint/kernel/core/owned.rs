@@ -63,9 +63,9 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
                 // SAFETY: the actor operation lease excludes another kernel;
                 // the payload view is distinct from this borrowed carrier.
                 let operation = if core::ptr::eq(&view.public_header, self.public_header) {
-                    self.io.public_active_op
+                    self.operation.public_active_op
                 } else {
-                    unsafe { &*view.io.get() }.public_active_op
+                    unsafe { &*view.primary_operation().state.get() }.public_active_op
                 };
                 if operation.check_payload_borrow(role, sent).is_err() {
                     verdict = Err(EventAdmissionError::OtherViewPending);
@@ -135,17 +135,19 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
         let view = self.outgoing_transfer_view(transfer, role)?;
         // SAFETY: the common actor lease protects the distinct payload view;
         // its Endpoint value is exclusively owned by this send future.
-        let io = unsafe { &mut *view.io.get() };
-        if io.public_active_op != PublicActiveOp::Idle {
+        if view.operations().any(|operation| unsafe {
+            (&*operation.state.get()).public_active_op != PublicActiveOp::Idle
+        }) {
             return Err(SendError::PhaseInvariant);
         }
-        let borrowed = io
+        let operation = unsafe { &mut *view.primary_operation().state.get() };
+        let borrowed = operation
             .public_active_op
             .transition(PublicOpEdge::BeginSendPayload);
         if borrowed.lease() != PublicOpLease::Held {
             crate::invariant();
         }
-        io.public_active_op = borrowed.phase();
+        operation.public_active_op = borrowed.phase();
         Ok(())
     }
 
@@ -156,7 +158,9 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
     ) -> SendResult<()> {
         let view = self.outgoing_transfer_view(transfer, role)?;
         // SAFETY: the same actor lease excludes concurrent payload mutation.
-        if unsafe { &*view.io.get() }.public_active_op != PublicActiveOp::SendPayload {
+        if unsafe { &*view.primary_operation().state.get() }.public_active_op
+            != PublicActiveOp::SendPayload
+        {
             return Err(SendError::PhaseInvariant);
         }
         Ok(())
@@ -270,14 +274,14 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
                     .unwrap_or_else(|_| crate::invariant());
                 // SAFETY: preflight proved the unique payload borrow, and the
                 // actor lease keeps its release and retirement in one commit.
-                let io = unsafe { &mut *view.io.get() };
-                let released = io
+                let operation = unsafe { &mut *view.primary_operation().state.get() };
+                let released = operation
                     .public_active_op
                     .transition(PublicOpEdge::FinishSendPayload);
                 if released.lease() != PublicOpLease::Held {
                     crate::invariant();
                 }
-                io.public_active_op = released.phase();
+                operation.public_active_op = released.phase();
                 // SAFETY: preflight rechecked the unique future-owned view.
                 header.retire_generation();
                 self.context.live_views.set(live_views);

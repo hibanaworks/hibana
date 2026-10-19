@@ -33,9 +33,51 @@ where
 #[repr(C)]
 pub(crate) struct ResidentView<'r, T: Transport + 'r> {
     pub(crate) public_header: crate::endpoint::carrier::KernelEndpointHeader,
-    pub(crate) waiter: crate::rendezvous::core::EndpointWaiter,
     pub(crate) retired_next: core::cell::Cell<Option<core::ptr::NonNull<ResidentView<'r, T>>>>,
     pub(crate) io: core::cell::UnsafeCell<EndpointIo<'r, T>>,
+    pub(in crate::endpoint::kernel) operations: LaneSlotArray<ResidentOperation<'r>>,
+}
+
+/// Resident I/O for one independently borrowed operation region. Protocol
+/// progress and transport handles remain owned once by the actor and view.
+pub(crate) struct ResidentOperation<'r> {
+    pub(crate) waiter: crate::rendezvous::core::EndpointWaiter,
+    pub(crate) state: core::cell::UnsafeCell<OperationIo<'r>>,
+}
+
+impl<'r> ResidentOperation<'r> {
+    pub(crate) const fn new() -> Self {
+        Self {
+            waiter: crate::rendezvous::core::EndpointWaiter::empty(),
+            state: core::cell::UnsafeCell::new(OperationIo {
+                public_active_op: PublicActiveOp::Idle,
+                public_offer_state: OfferState::new(),
+                public_route_branch: None,
+                public_recv_state: recv::RecvState::new(),
+                public_branch_recv_state: branch_recv::BranchRecvState::empty(),
+                public_send_state: SendState::Done,
+            }),
+        }
+    }
+}
+
+impl<'r, T: Transport + 'r> ResidentView<'r, T> {
+    pub(crate) fn operation(&self, lane: usize) -> Option<&ResidentOperation<'r>> {
+        self.operations.get(lane).and_then(Option::as_ref)
+    }
+
+    pub(crate) fn operations(&self) -> impl Iterator<Item = &ResidentOperation<'r>> {
+        self.operations
+            .iter()
+            .map(|slot| crate::invariant_some(slot.as_ref()))
+    }
+
+    pub(crate) fn primary_operation(&self) -> &ResidentOperation<'r> {
+        // SAFETY: primary_lane is fixed when this view is initialized. Reading
+        // this scalar does not borrow its ports or operation-state owners.
+        let lane = unsafe { core::ptr::addr_of!((*self.io.get()).primary_lane).read() };
+        crate::invariant_some(self.operation(lane))
+    }
 }
 
 /// Sparse view records carved from the actor's caller-provided allocation.
@@ -107,8 +149,8 @@ pub(crate) struct ActorProgress {
     pub(in crate::endpoint::kernel) frontier_state: LeasedState<FrontierState>,
 }
 
-/// Pending operations and transport handles of one logical Endpoint view.
-/// These fields do not contain a second cursor or branch-selection authority.
+/// Transport handles of one logical Endpoint view, independent of pending
+/// operation-state owners. These fields contain no cursor or choice authority.
 pub(crate) struct EndpointIo<'r, T: Transport + 'r> {
     /// Multi-lane port array. Each active lane has its own port.
     /// For single-lane programs, only `ports[0]` is used.
@@ -117,6 +159,9 @@ pub(crate) struct EndpointIo<'r, T: Transport + 'r> {
     pub(in crate::endpoint::kernel) guards: LaneSlotArray<LaneGuard<'r, T>>,
     /// Primary lane index (first live application lane, not always lane 0).
     pub(crate) primary_lane: usize,
+}
+
+pub(crate) struct OperationIo<'r> {
     pub(in crate::endpoint) public_active_op: PublicActiveOp,
     pub(in crate::endpoint) public_offer_state: OfferState<'r>,
     pub(in crate::endpoint) public_route_branch: Option<MaterializedRouteBranch<'r>>,
@@ -133,6 +178,9 @@ pub(crate) struct OperationKernel<'op, 'r, T: Transport + 'r> {
     pub(crate) context: &'op ActorContext<'r, T>,
     pub(crate) progress: &'op mut ActorProgress,
     pub(crate) io: &'op mut EndpointIo<'r, T>,
+    pub(crate) operation: &'op mut OperationIo<'r>,
+    pub(in crate::endpoint::kernel) operations: &'op LaneSlotArray<ResidentOperation<'r>>,
+    pub(crate) region: crate::endpoint::carrier::OperationRegion,
 }
 
 impl<'r, T: Transport + 'r> ResidentActor<'r, T> {
@@ -192,11 +240,15 @@ impl<'r, T: Transport + 'r> ResidentActor<'r, T> {
             // SAFETY: retirement enqueues only pinned records in this actor.
             let view = unsafe { ptr.as_ref() };
             let mut waiters = crate::endpoint::carrier::WaiterTransfer::empty();
-            let Some(()) = self.try_with_kernel(view, |kernel| {
-                self.context.retired_views.set(view.retired_next.take());
-                kernel.clear_endpoint_waiter(&mut waiters);
-                kernel.retire_view();
-            }) else {
+            let Some(()) = self.try_with_kernel(
+                view,
+                crate::endpoint::carrier::OperationRegion::WHOLE,
+                |kernel| {
+                    self.context.retired_views.set(view.retired_next.take());
+                    kernel.clear_endpoint_waiter(&mut waiters);
+                    kernel.retire_view();
+                },
+            ) else {
                 return false;
             };
             drop(waiters);
@@ -207,10 +259,14 @@ impl<'r, T: Transport + 'r> ResidentActor<'r, T> {
     pub(crate) fn finish_all_view_io(&self) {
         for view in self.views.as_slice() {
             let mut waiters = crate::endpoint::carrier::WaiterTransfer::empty();
-            crate::invariant_some(self.try_with_kernel(view, |kernel| {
-                kernel.clear_endpoint_waiter(&mut waiters);
-                kernel.finish_view_io();
-            }));
+            crate::invariant_some(self.try_with_kernel(
+                view,
+                crate::endpoint::carrier::OperationRegion::WHOLE,
+                |kernel| {
+                    kernel.clear_endpoint_waiter(&mut waiters);
+                    kernel.finish_view_io();
+                },
+            ));
             drop(waiters);
         }
     }
@@ -220,6 +276,7 @@ impl<'r, T: Transport + 'r> ResidentActor<'r, T> {
         &self,
         lease: &mut crate::rendezvous::core::EndpointOperationLease<'r>,
         view: &ResidentView<'r, T>,
+        region: crate::endpoint::carrier::OperationRegion,
         f: impl FnOnce(&mut OperationKernel<'_, 'r, T>) -> R,
     ) -> R {
         if !self.context.is_protected_by(lease)
@@ -227,12 +284,13 @@ impl<'r, T: Transport + 'r> ResidentActor<'r, T> {
         {
             crate::invariant();
         }
-        crate::invariant_some(self.try_with_kernel(view, f))
+        crate::invariant_some(self.try_with_kernel(view, region, f))
     }
 
     pub(crate) fn try_with_kernel<R>(
         &self,
         view: &ResidentView<'r, T>,
+        region: crate::endpoint::carrier::OperationRegion,
         f: impl FnOnce(&mut OperationKernel<'_, 'r, T>) -> R,
     ) -> Option<R> {
         if view.public_header.actor() != core::ptr::NonNull::from(&self.public_header)
@@ -246,14 +304,22 @@ impl<'r, T: Transport + 'r> ResidentActor<'r, T> {
         // RefMut protects it during normal polls and callback-driven Drop.
         let mut progress =
             core::cell::RefMut::map(progress, |progress| unsafe { progress.assume_init_mut() });
+        // SAFETY: this immutable scalar was initialized before publication.
+        let primary = unsafe { core::ptr::addr_of!((*view.io.get()).primary_lane).read() };
+        let operation = crate::invariant_some(view.operation(region.lane(primary)));
         let mut kernel = OperationKernel {
             public_header: &view.public_header,
-            waiter: &view.waiter,
+            waiter: &operation.waiter,
             context: &self.context,
             progress: &mut progress,
             // SAFETY: the common progress borrow excludes another kernel;
             // the uniquely issued Endpoint selects this one view's I/O.
             io: unsafe { &mut *view.io.get() },
+            // SAFETY: the same actor progress borrow excludes another kernel
+            // entry while this operation state's mutable borrow is active.
+            operation: unsafe { &mut *operation.state.get() },
+            operations: &view.operations,
+            region,
         };
         Some(f(&mut kernel))
     }
@@ -275,14 +341,20 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
             self.context.retired_views.set(view.retired_next.take());
             let mut waiters = crate::endpoint::carrier::WaiterTransfer::empty();
             {
+                let operation = view.primary_operation();
                 let mut sibling = OperationKernel {
                     public_header: &view.public_header,
-                    waiter: &view.waiter,
+                    waiter: &operation.waiter,
                     context: self.context,
                     progress: self.progress,
                     // SAFETY: this is a different view; the common cursor
                     // borrow excludes another concurrent kernel entry.
                     io: unsafe { &mut *view.io.get() },
+                    // SAFETY: this retired view is distinct from the current
+                    // kernel, and the common progress borrow is retained.
+                    operation: unsafe { &mut *operation.state.get() },
+                    operations: &view.operations,
+                    region: crate::endpoint::carrier::OperationRegion::WHOLE,
                 };
                 sibling.clear_endpoint_waiter(&mut waiters);
                 sibling.retire_view();
@@ -297,13 +369,24 @@ impl<'r, T: Transport + 'r> Drop for ResidentActor<'r, T> {
         for view in self.views.as_slice() {
             view.public_header.retire_generation();
         }
+        // All headers are fenced before any arbitrary Waker destructor runs.
+        // Forgotten parallel futures must not retain wake owners in the slab.
+        for view in self.views.as_slice() {
+            for operation in view.operations() {
+                drop(operation.waiter.take());
+            }
+        }
         let len = self.views.len as usize;
         let mut index = 0;
         while index < len {
             // SAFETY: this record has not yet been destroyed; earlier records
             // are not reborrowed while later I/O owners are retired.
             let view = unsafe { &*self.views.ptr.as_ptr().add(index) };
-            crate::invariant_some(self.try_with_kernel(view, |kernel| kernel.retire_actor()));
+            crate::invariant_some(self.try_with_kernel(
+                view,
+                crate::endpoint::carrier::OperationRegion::WHOLE,
+                |kernel| kernel.retire_actor(),
+            ));
             // SAFETY: terminal retirement has removed callbacks and pending
             // frames. This is the unique final destruction of this I/O owner.
             unsafe {

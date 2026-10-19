@@ -5,6 +5,7 @@ impl EventCursor {
     pub(crate) fn is_view_complete(
         &self,
         role: u8,
+        source: core::ops::Range<usize>,
         selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
     ) -> bool {
         use crate::{eff::EventPayload, global::typestate::LocalAction};
@@ -17,6 +18,9 @@ impl EventCursor {
                 LocalAction::Recv { eff_index, .. } => (eff_index, true),
                 LocalAction::Terminate => continue,
             };
+            if !source.contains(&eff.dense_ordinal()) {
+                continue;
+            }
             let atom = self.program_ref().event_atom_at(eff.dense_ordinal());
             let owns_step = (if receiving { atom.to } else { atom.from }) == role;
             let supplies_payload = !receiving && atom.payload == EventPayload::Endpoint(role);
@@ -36,11 +40,8 @@ impl EventCursor {
         true
     }
 
-    /// Completion belongs to every live event in the committed projection.
-    /// The current node is only a navigation locator: independently committed
-    /// parallel arms may leave it before a completed event or after a pending
-    /// sibling. Observe the same bitmap and committed conflicts used for joins,
-    /// without selecting an arm, advancing a lane, or starting another visit.
+    /// Query completion of every live event in this actor's committed image.
+    /// Unlike a logical-view query, this needs no source ownership lookup.
     pub(crate) fn is_complete(
         &self,
         selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,

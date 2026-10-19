@@ -59,6 +59,47 @@ impl CompiledProgramRef {
         }
     }
 
+    pub(crate) const fn source_parallel_at(&self, marker: usize) -> Option<(usize, usize, usize)> {
+        let markers = self
+            .columns
+            .scope_markers_for(self.source_scope_marker_count());
+        if marker >= markers.len as usize {
+            return None;
+        }
+        let offset = markers.offset as usize + marker * PROGRAM_IMAGE_SCOPE_MARKER_STRIDE;
+        let scope = match ScopeId::decode_raw(self.read_u16_at(offset + 2)) {
+            Some(scope) => scope,
+            None => crate::invariant(),
+        };
+        if !matches!(scope.kind(), Some(ScopeKind::Parallel)) || self.byte_at(offset + 4) & 3 != 0 {
+            return None;
+        }
+        let start = self.read_u16_at(offset) as usize;
+        let mut split = None;
+        let mut index = marker + 1;
+        while index < markers.len as usize {
+            let at = markers.offset as usize + index * PROGRAM_IMAGE_SCOPE_MARKER_STRIDE;
+            if self.read_u16_at(at + 2) == scope.raw() {
+                match self.byte_at(at + 4) & 3 {
+                    1 => split = Some(self.read_u16_at(at) as usize),
+                    2 => {
+                        let end = self.read_u16_at(at) as usize;
+                        let Some(split) = split else {
+                            crate::invariant();
+                        };
+                        if start >= split || split >= end || end > self.columns.atom_count() {
+                            crate::invariant();
+                        }
+                        return Some((start, split, end));
+                    }
+                    _ => (),
+                }
+            }
+            index += 1;
+        }
+        crate::invariant()
+    }
+
     /// Strict single-visit source order. Enumeration orders sequential terms,
     /// except for operations separated by parallel or alternative arms.
     /// Read the existing immutable markers; do not create a dependency ledger.

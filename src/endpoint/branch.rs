@@ -1,5 +1,5 @@
 use super::{
-    Endpoint, EndpointError, EndpointOp, RecvResult, RouteBranch,
+    EndpointError, EndpointOp, RecvResult, RouteBranch,
     futures::{OfferFuture, OfferFutureLease, RawOfferFuture},
 };
 use core::{
@@ -10,13 +10,8 @@ use core::{
 
 impl<'e, 'r, const ROLE: u8> RouteBranch<'e, 'r, ROLE> {
     #[inline]
-    pub(crate) fn from_parts(endpoint: *mut Endpoint<'r, ROLE>, label: u8) -> Self {
-        Self {
-            endpoint,
-            label,
-            _borrow: core::marker::PhantomData,
-            _local_only: crate::local::LocalOnly::new(),
-        }
+    pub(crate) fn from_parts(target: super::target::OperationTarget<'e, 'r, ROLE, u8>) -> Self {
+        Self { target }
     }
 
     /// Return the selected arm's first logical label.
@@ -25,7 +20,7 @@ impl<'e, 'r, const ROLE: u8> RouteBranch<'e, 'r, ROLE> {
     /// that authority before the branch is materialized.
     #[inline]
     pub fn label(&self) -> u8 {
-        self.label
+        *self.target.metadata()
     }
 
     /// Receive the first payload of a selected route arm.
@@ -76,46 +71,37 @@ impl<'e, 'r, const ROLE: u8> Drop for RouteBranch<'e, 'r, ROLE> {
         /* SAFETY: `RouteBranch` owns the route preview borrow produced by
         `offer`. Dropping an unconsumed branch restores that preview exactly
         once through the endpoint pointer carried by the branch. */
-        unsafe {
-            (&mut *self.endpoint).restore_public_route_branch();
-        }
+        self.target.restore_public_route_branch();
     }
 }
 
 impl<'e, 'r, const ROLE: u8> RawOfferFuture<'e, 'r, ROLE> {
     #[inline]
-    pub(super) fn new(endpoint: &'e mut Endpoint<'r, ROLE>) -> Self {
+    pub(super) fn new(mut endpoint: super::target::OperationTarget<'e, 'r, ROLE>) -> Self {
         let lease = endpoint.init_public_offer_state();
-        let endpoint_ptr = core::ptr::from_mut(endpoint);
         Self {
-            endpoint: endpoint_ptr,
-            lease: OfferFutureLease::from_public_lease(lease),
-            _borrow: core::marker::PhantomData,
+            endpoint: endpoint.with_metadata(OfferFutureLease::from_public_lease(lease)),
         }
     }
 
     #[inline]
     pub(super) fn poll_raw(&mut self, cx: &mut Context<'_>) -> Poll<RecvResult<u8>> {
-        match self.lease {
+        match *self.endpoint.metadata() {
             OfferFutureLease::Completed => crate::invariant(),
             OfferFutureLease::Rejected => {
-                self.lease = OfferFutureLease::Completed;
+                *self.endpoint.metadata_mut() = OfferFutureLease::Completed;
                 return Poll::Ready(Err(crate::endpoint::RecvError::PhaseInvariant));
             }
             OfferFutureLease::RestoreOnDrop | OfferFutureLease::Faulted => {}
         }
-        match /* SAFETY: `RawOfferFuture` owns the unique endpoint borrow. A
-        restore-on-drop state holds the public offer lease; a faulted state
-        performs one terminal fault observation without arming offer state. */ unsafe {
-            (&mut *self.endpoint).poll_offer(cx)
-        } {
+        match self.endpoint.poll_offer(cx) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Err(err)) => {
-                self.lease = OfferFutureLease::Completed;
+                *self.endpoint.metadata_mut() = OfferFutureLease::Completed;
                 Poll::Ready(Err(err))
             }
             Poll::Ready(Ok(label)) => {
-                self.lease = OfferFutureLease::Completed;
+                *self.endpoint.metadata_mut() = OfferFutureLease::Completed;
                 Poll::Ready(Ok(label))
             }
         }
@@ -124,7 +110,7 @@ impl<'e, 'r, const ROLE: u8> RawOfferFuture<'e, 'r, ROLE> {
 
 impl<'e, 'r, const ROLE: u8> OfferFuture<'e, 'r, ROLE> {
     #[inline]
-    pub(super) fn new(endpoint: &'e mut Endpoint<'r, ROLE>) -> Self {
+    pub(super) fn new(endpoint: super::target::OperationTarget<'e, 'r, ROLE>) -> Self {
         Self {
             raw: RawOfferFuture::new(endpoint),
         }
@@ -140,7 +126,10 @@ impl<'e, 'r, const ROLE: u8> Future for OfferFuture<'e, 'r, ROLE> {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Err(err)) => Poll::Ready(Err(EndpointError::new(EndpointOp::Offer, err))),
             Poll::Ready(Ok(label)) => {
-                Poll::Ready(Ok(RouteBranch::from_parts(this.raw.endpoint, label)))
+                // SAFETY: the completed future will not poll or restore the preview.
+                Poll::Ready(Ok(RouteBranch::from_parts(unsafe {
+                    this.raw.endpoint.completed_preview(label)
+                })))
             }
         }
     }
@@ -148,13 +137,11 @@ impl<'e, 'r, const ROLE: u8> Future for OfferFuture<'e, 'r, ROLE> {
 
 impl<'e, 'r, const ROLE: u8> Drop for RawOfferFuture<'e, 'r, ROLE> {
     fn drop(&mut self) {
-        if self.lease == OfferFutureLease::RestoreOnDrop {
+        if *self.endpoint.metadata_mut() == OfferFutureLease::RestoreOnDrop {
             /* SAFETY: this offer future still owns the restore-on-drop lease.
             Dropping it releases the public offer state before another endpoint
             operation can borrow the same endpoint. */
-            unsafe {
-                (&mut *self.endpoint).reset_public_offer_state();
-            }
+            self.endpoint.reset_public_offer_state();
         }
     }
 }

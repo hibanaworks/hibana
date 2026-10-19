@@ -19,6 +19,9 @@ where
         index: usize,
         meta: EventCommitMeta,
     ) -> Result<EnabledEventCommit, EventAdmissionError> {
+        if !self.permits_event(index) {
+            return Err(EventAdmissionError::Invariant);
+        }
         let conflict = self.progress.cursor.event_conflict_for_index(index);
         let enabled = self
             .progress

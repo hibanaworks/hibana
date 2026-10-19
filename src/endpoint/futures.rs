@@ -1,4 +1,4 @@
-use super::{Endpoint, EndpointError, EndpointOp, RecvResult, RouteBranch, carrier};
+use super::{EndpointError, EndpointOp, RecvResult, RouteBranch, carrier};
 use crate::transport::wire::{CodecError, Payload, WireEncode, WirePayload};
 use core::{
     future::Future,
@@ -7,9 +7,7 @@ use core::{
 };
 
 pub(crate) struct RawOfferFuture<'e, 'r, const ROLE: u8> {
-    pub(super) endpoint: *mut Endpoint<'r, ROLE>,
-    pub(super) lease: OfferFutureLease,
-    pub(super) _borrow: core::marker::PhantomData<&'e mut Endpoint<'r, ROLE>>,
+    pub(super) endpoint: super::target::OperationTarget<'e, 'r, ROLE, OfferFutureLease>,
 }
 
 pub(crate) struct OfferFuture<'e, 'r, const ROLE: u8> {
@@ -25,9 +23,7 @@ where
 }
 
 pub(crate) struct RawRecvFuture<'e, 'r, const ROLE: u8> {
-    endpoint: *mut Endpoint<'r, ROLE>,
-    lease: RecvFutureLease,
-    _borrow: core::marker::PhantomData<&'e mut Endpoint<'r, ROLE>>,
+    endpoint: super::target::OperationTarget<'e, 'r, ROLE, RecvFutureLease>,
 }
 
 #[repr(u8)]
@@ -84,29 +80,26 @@ impl<'e, 'r, const ROLE: u8> RawRecvFuture<'e, 'r, ROLE> {
     #[inline]
     pub(super) fn from_branch(branch: RouteBranch<'e, 'r, ROLE>) -> Self {
         let branch = core::mem::ManuallyDrop::new(branch);
-        let endpoint = branch.endpoint;
+        // SAFETY: the consumed preview transfers its sole borrow to this future.
+        let mut endpoint = unsafe { core::ptr::read(&branch.target) }.with_metadata(());
         /* SAFETY: consuming `RouteBranch` transfers its route preview borrow to
         this branch-recv future. Beginning branch recv arms the public
         branch-recv state once on the same endpoint pointer carried by the
         branch. */
-        let lease = match unsafe { (&mut *endpoint).begin_public_branch_recv_state() } {
+        let lease = match endpoint.begin_public_branch_recv_state() {
             crate::endpoint::kernel::PublicOpLease::Held => RecvFutureLease::BranchRestoreOnDrop,
             crate::endpoint::kernel::PublicOpLease::Rejected => RecvFutureLease::Rejected,
             crate::endpoint::kernel::PublicOpLease::Faulted => RecvFutureLease::BranchFaulted,
         };
         Self {
-            endpoint,
-            lease,
-            _borrow: core::marker::PhantomData,
+            endpoint: endpoint.with_metadata(lease),
         }
     }
     #[inline]
-    pub(super) fn new(endpoint: &'e mut Endpoint<'r, ROLE>) -> Self {
+    pub(super) fn new(mut endpoint: super::target::OperationTarget<'e, 'r, ROLE>) -> Self {
         let lease = RecvFutureLease::from_public_lease(endpoint.init_public_recv_state());
         Self {
-            endpoint: core::ptr::from_mut(endpoint),
-            lease,
-            _borrow: core::marker::PhantomData,
+            endpoint: endpoint.with_metadata(lease),
         }
     }
 
@@ -118,30 +111,27 @@ impl<'e, 'r, const ROLE: u8> RawRecvFuture<'e, 'r, ROLE> {
         validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
         cx: &mut Context<'_>,
     ) -> Poll<RecvResult<carrier::RawRecvOutput>> {
-        let result = match self.lease {
+        let result = match *self.endpoint.metadata() {
             RecvFutureLease::Completed => crate::invariant(),
             RecvFutureLease::Rejected => {
-                self.lease = RecvFutureLease::Completed;
+                *self.endpoint.metadata_mut() = RecvFutureLease::Completed;
                 return Poll::Ready(Err(crate::endpoint::RecvError::PhaseInvariant));
             }
             RecvFutureLease::RestoreOnDrop | RecvFutureLease::Faulted => {
                 // SAFETY: the unique endpoint borrow is retained. The lease
                 // owns direct receive state or makes one terminal observation.
-                unsafe { &mut *self.endpoint }.poll_recv(logical_label, payload_kind, validate, cx)
+                self.endpoint
+                    .poll_recv(logical_label, payload_kind, validate, cx)
             }
             RecvFutureLease::BranchRestoreOnDrop | RecvFutureLease::BranchFaulted => {
                 // SAFETY: consuming the branch retained the same unique borrow
                 // for branch receive state or one terminal fault observation.
-                unsafe { &mut *self.endpoint }.poll_branch_recv(
-                    logical_label,
-                    payload_kind,
-                    validate,
-                    cx,
-                )
+                self.endpoint
+                    .poll_branch_recv(logical_label, payload_kind, validate, cx)
             }
         };
         if result.is_ready() {
-            self.lease = RecvFutureLease::Completed;
+            *self.endpoint.metadata_mut() = RecvFutureLease::Completed;
         }
         result
     }
@@ -166,7 +156,7 @@ where
     M::Payload: WireEncode + WirePayload,
 {
     #[inline]
-    pub(super) fn new(endpoint: &'e mut Endpoint<'r, ROLE>) -> Self {
+    pub(super) fn new(endpoint: super::target::OperationTarget<'e, 'r, ROLE>) -> Self {
         Self {
             raw: RawRecvFuture::new(endpoint),
             _msg: core::marker::PhantomData,
@@ -236,14 +226,14 @@ where
 
 impl<'e, 'r, const ROLE: u8> Drop for RawRecvFuture<'e, 'r, ROLE> {
     fn drop(&mut self) {
-        match self.lease {
+        match *self.endpoint.metadata() {
             RecvFutureLease::RestoreOnDrop => {
                 // SAFETY: this pending future still owns direct receive state.
-                unsafe { (&mut *self.endpoint).reset_public_recv_state() };
+                self.endpoint.reset_public_recv_state();
             }
             RecvFutureLease::BranchRestoreOnDrop => {
                 // SAFETY: this pending future still owns branch receive state.
-                unsafe { (&mut *self.endpoint).reset_public_branch_recv_state() };
+                self.endpoint.reset_public_branch_recv_state();
             }
             RecvFutureLease::Rejected
             | RecvFutureLease::Completed

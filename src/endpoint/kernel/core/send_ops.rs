@@ -20,6 +20,9 @@ where
         meta: SendMeta,
         route_authority: SendRouteAuthority,
     ) -> SendResult<SendProgressCommitPlan> {
+        if !self.region.contains(meta.eff_index.dense_ordinal()) {
+            return Err(SendError::PhaseInvariant);
+        }
         let preview_idx = match preview_cursor_index {
             Some(index) => state_index_to_usize(index),
             None => self.progress.cursor.index(),

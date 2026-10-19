@@ -63,7 +63,7 @@ where
             if let Some(kind) = self.session_fault() {
                 return Poll::Ready(Err(SendError::SessionFault(kind)));
             }
-            match self.io.public_active_op {
+            match self.operation.public_active_op {
                 PublicActiveOp::Send => {}
                 PublicActiveOp::BranchSend => {
                     let preview = self.preview_branch_send_meta(target_label, target_payload)?;
@@ -134,6 +134,9 @@ where
                     expected: meta.payload_kind,
                     actual: target_payload,
                 }));
+            }
+            if !self.region.contains(meta.eff_index.dense_ordinal()) {
+                return Poll::Ready(Err(SendError::PhaseInvariant));
             }
             match self.poll_send_entry_views(meta, cursor_index) {
                 Poll::Pending => return Poll::Pending,

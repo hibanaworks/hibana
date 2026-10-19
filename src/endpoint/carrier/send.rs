@@ -1,11 +1,11 @@
-use super::{Context, EndpointHandle, NonNull, OutSlot, Poll, WaiterTransfer};
+use super::{Context, NonNull, OperationHandle, OutSlot, Poll, WaiterTransfer};
 impl<'cfg, T> crate::runtime::SessionKit<'cfg, T>
 where
     T: crate::transport::Transport + 'cfg,
 {
     pub(super) unsafe fn init_public_send_state_raw(
         ptr: NonNull<()>,
-        handle: EndpointHandle,
+        handle: OperationHandle,
         logical_label: u8,
         payload_kind: crate::eff::EventPayload,
     ) -> crate::endpoint::SendResult<()> {
@@ -23,7 +23,7 @@ where
         }
     }
 
-    pub(super) unsafe fn reset_public_send_state_raw(ptr: NonNull<()>, handle: EndpointHandle) {
+    pub(super) unsafe fn reset_public_send_state_raw(ptr: NonNull<()>, handle: OperationHandle) {
         let mut waiters = WaiterTransfer::empty();
         unsafe {
             // SAFETY: send-state reset owns the carrier endpoint slot selected
@@ -36,7 +36,7 @@ where
 
     pub(super) unsafe fn poll_send_public_endpoint(
         ptr: NonNull<()>,
-        handle: EndpointHandle,
+        handle: OperationHandle,
         payload: Option<crate::endpoint::kernel::lane_port::SendInput>,
         cx: &mut Context<'_>,
         out: *mut (),
@@ -55,10 +55,10 @@ where
                 |kernel| kernel.poll_public_send(cx, payload, &mut waiters),
             )
         };
-        if matches!(&poll, Poll::Ready(Ok(_))) {
+        if poll.is_ready() {
             // SAFETY: the carrier borrow above ended; the send future still
             // retains this issued Endpoint and its runtime lifetime.
-            unsafe { Self::wake_public_actor_waiters(ptr, handle) };
+            unsafe { Self::wake_public_actor_waiters(ptr, handle.endpoint) };
         }
         OutSlot::erased::<
             Poll<crate::endpoint::SendResult<crate::endpoint::kernel::SendCommitOutcome<'cfg>>>,

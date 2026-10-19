@@ -16,7 +16,7 @@ pub trait PayloadSpec: Sized {
     where
         'r: 'e;
     fn send<'a, 'e, 'r, M, const ROLE: u8>(
-        endpoint: &'e mut crate::Endpoint<'r, ROLE>,
+        endpoint: crate::endpoint::target::OperationTarget<'e, 'r, ROLE>,
         payload: Self::SendArgument<'a, 'r>,
     ) -> impl core::future::Future<Output = Result<(), crate::EndpointError>> + 'a
     where
@@ -25,7 +25,7 @@ pub trait PayloadSpec: Sized {
         'e: 'a,
         'r: 'e;
     fn recv<'e, 'r, M, const ROLE: u8>(
-        endpoint: &'e mut crate::Endpoint<'r, ROLE>,
+        endpoint: crate::endpoint::target::OperationTarget<'e, 'r, ROLE>,
     ) -> impl core::future::Future<Output = Result<Self::Received<'e, 'r>, crate::EndpointError>> + 'e
     where
         M: Message<Payload = Self> + 'e,

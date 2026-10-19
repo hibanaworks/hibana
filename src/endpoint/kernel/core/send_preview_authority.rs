@@ -13,7 +13,7 @@ where
         target_label: u8,
         target_payload: crate::eff::EventPayload,
     ) -> SendResult<crate::endpoint::kernel::SendPreview> {
-        let Some(branch) = self.io.public_route_branch.as_ref() else {
+        let Some(branch) = self.operation.public_route_branch.as_ref() else {
             return Err(SendError::PhaseInvariant);
         };
         let branch_meta = branch.branch_meta;
@@ -30,7 +30,9 @@ where
         }
 
         let cursor_index = state_index_to_usize(branch_meta.cursor_index);
-        if self.progress.cursor.logical_role_at(cursor_index) != Some(self.public_header.role()) {
+        if self.progress.cursor.logical_role_at(cursor_index) != Some(self.public_header.role())
+            || !self.permits_event(cursor_index)
+        {
             return Err(SendError::PhaseInvariant);
         }
         let Some(mut meta) = self.progress.cursor.try_send_meta_at(cursor_index) else {

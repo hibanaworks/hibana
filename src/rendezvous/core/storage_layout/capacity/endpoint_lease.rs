@@ -133,7 +133,7 @@ where
             self.wake_actor_endpoint_waiters(
                 crate::invariant_some(EndpointLeaseId::try_from(actor_index).ok()),
                 slot.generation,
-                excluded_role,
+                Some(excluded_role),
             );
             actor_index += 1;
         }
@@ -145,9 +145,10 @@ where
         &self,
         lease_slot: EndpointLeaseId,
         generation: u32,
-        excluded_role: u8,
+        excluded_role: Option<u8>,
     ) {
         let mut view_index = 0;
+        let mut operation_index = 0;
         while let Some(current) = self.endpoint_lease_slot_by_index(usize::from(lease_slot)) {
             // A wake can destroy another view or actor and relocate the
             // record table. Reload and validate before every view access.
@@ -173,15 +174,20 @@ where
                 let Some(view) = actor.views.as_slice().get(view_index) else {
                     break;
                 };
+                let Some(operation) = view.operation(operation_index) else {
+                    view_index += 1;
+                    operation_index = 0;
+                    continue;
+                };
+                operation_index += 1;
                 if view.public_header.generation() != 0
-                    && view.public_header.role() != excluded_role
+                    && Some(view.public_header.role()) != excluded_role
                 {
-                    view.waiter.take()
+                    operation.waiter.take()
                 } else {
                     None
                 }
             };
-            view_index += 1;
             if let Some(waiter) = waiter {
                 waiter.wake();
             }

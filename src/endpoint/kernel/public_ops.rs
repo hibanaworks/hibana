@@ -26,15 +26,23 @@ where
         &mut self,
         edge: PublicOpEdge,
     ) -> super::core::PublicOpLease {
-        let transition = self.io.public_active_op.transition(edge);
-        self.io.public_active_op = transition.phase();
+        if matches!(
+            edge,
+            PublicOpEdge::BeginOffer | PublicOpEdge::BeginSend | PublicOpEdge::BeginRecv
+        ) && self.has_other_active_operations()
+        {
+            self.public_op_busy_fault();
+            return super::core::PublicOpLease::Rejected;
+        }
+        let transition = self.operation.public_active_op.transition(edge);
+        self.operation.public_active_op = transition.phase();
         match transition.lease() {
             super::core::PublicOpLease::Held | super::core::PublicOpLease::Faulted => {}
             super::core::PublicOpLease::Rejected => {
                 self.public_op_busy_fault();
             }
         }
-        if self.io.public_active_op != transition.phase() {
+        if self.operation.public_active_op != transition.phase() {
             crate::invariant();
         }
         transition.lease()
@@ -42,17 +50,17 @@ where
 
     #[inline]
     pub(in crate::endpoint::kernel) fn clear_public_op_if_current(&mut self, op: PublicActiveOp) {
-        self.io.public_active_op = self.io.public_active_op.clear_if_current(op);
+        self.operation.public_active_op = self.operation.public_active_op.clear_if_current(op);
     }
 
     #[inline]
     pub(in crate::endpoint::kernel) fn clear_public_op_terminal(&mut self) {
-        self.io.public_active_op = self.io.public_active_op.clear_terminal();
+        self.operation.public_active_op = self.operation.public_active_op.clear_terminal();
     }
 
     #[inline]
     fn park_public_route_branch(&mut self, edge: PublicOpEdge) {
-        if self.io.public_route_branch.is_none() {
+        if self.operation.public_route_branch.is_none() {
             self.public_op_busy_fault();
             return;
         }
@@ -62,12 +70,13 @@ where
     #[inline]
     pub(in crate::endpoint) fn reset_public_offer_state(&mut self, waiters: &mut WaiterTransfer) {
         self.clear_endpoint_waiter(waiters);
-        if self.io.public_route_branch.is_some() {
+        if self.operation.public_route_branch.is_some() {
             self.park_public_route_branch(PublicOpEdge::ParkOffer);
         } else {
             let _ = self.transition_public_op(PublicOpEdge::FinishOffer);
         }
-        let mut state = core::mem::replace(&mut self.io.public_offer_state, OfferState::new());
+        let mut state =
+            core::mem::replace(&mut self.operation.public_offer_state, OfferState::new());
         self.restore_detached_offer_state(&mut state);
     }
 
@@ -98,9 +107,10 @@ where
     #[inline]
     pub(in crate::endpoint) fn terminal_clear_public_offer_state(&mut self) {
         self.clear_public_op_if_current(PublicActiveOp::Offer);
-        let mut state = core::mem::replace(&mut self.io.public_offer_state, OfferState::new());
+        let mut state =
+            core::mem::replace(&mut self.operation.public_offer_state, OfferState::new());
         state.discard_terminal();
-        if let Some(branch) = self.io.public_route_branch.take() {
+        if let Some(branch) = self.operation.public_route_branch.take() {
             branch.discard_terminal();
         }
     }
@@ -108,11 +118,11 @@ where
     #[inline]
     #[must_use]
     pub(in crate::endpoint) fn init_public_offer_state(&mut self) -> super::core::PublicOpLease {
-        let lease = match self.io.public_active_op {
-            PublicActiveOp::Idle if self.io.public_route_branch.is_none() => {
+        let lease = match self.operation.public_active_op {
+            PublicActiveOp::Idle if self.operation.public_route_branch.is_none() => {
                 self.transition_public_op(PublicOpEdge::BeginOffer)
             }
-            PublicActiveOp::RestoredRouteBranch if self.io.public_route_branch.is_some() => {
+            PublicActiveOp::RestoredRouteBranch if self.operation.public_route_branch.is_some() => {
                 self.transition_public_op(PublicOpEdge::ResumeOffer)
             }
             PublicActiveOp::Idle | PublicActiveOp::RestoredRouteBranch => {
@@ -137,7 +147,7 @@ where
                 return lease;
             }
         }
-        self.io.public_offer_state = OfferState::new();
+        self.operation.public_offer_state = OfferState::new();
         lease
     }
 
@@ -155,9 +165,9 @@ where
         if let Some(kind) = self.session_fault() {
             return Err(crate::endpoint::SendError::SessionFault(kind));
         }
-        let lease = match self.io.public_active_op {
+        let lease = match self.operation.public_active_op {
             PublicActiveOp::Idle => self.transition_public_op(PublicOpEdge::BeginSend),
-            PublicActiveOp::RouteBranch if self.io.public_route_branch.is_some() => {
+            PublicActiveOp::RouteBranch if self.operation.public_route_branch.is_some() => {
                 self.transition_public_op(PublicOpEdge::BeginBranchSend)
             }
             PublicActiveOp::RouteBranch => {
@@ -187,7 +197,7 @@ where
                 ));
             }
         }
-        self.io.public_send_state = SendState::Preparing {
+        self.operation.public_send_state = SendState::Preparing {
             logical_label,
             payload_kind,
             input: None,
@@ -198,7 +208,7 @@ where
     #[inline]
     pub(in crate::endpoint) fn reset_public_send_state(&mut self, waiters: &mut WaiterTransfer) {
         self.clear_endpoint_waiter(waiters);
-        match self.io.public_active_op {
+        match self.operation.public_active_op {
             PublicActiveOp::Send => {
                 let _ = self.transition_public_op(PublicOpEdge::FinishSend);
             }
@@ -214,7 +224,7 @@ where
             | PublicActiveOp::BranchRecv
             | PublicActiveOp::SendPayload => self.public_op_busy_fault(),
         }
-        let state = core::mem::replace(&mut self.io.public_send_state, SendState::Done);
+        let state = core::mem::replace(&mut self.operation.public_send_state, SendState::Done);
         self.cancel_detached_send_state(state);
     }
 
@@ -222,7 +232,7 @@ where
     pub(in crate::endpoint) fn terminal_clear_public_send_state(&mut self) {
         self.clear_public_op_if_current(PublicActiveOp::Send);
         self.clear_public_op_if_current(PublicActiveOp::BranchSend);
-        let state = core::mem::replace(&mut self.io.public_send_state, SendState::Done);
+        let state = core::mem::replace(&mut self.operation.public_send_state, SendState::Done);
         self.cancel_detached_send_state(state);
     }
 
@@ -246,7 +256,7 @@ where
                 return lease;
             }
         }
-        self.io.public_recv_state = super::recv::RecvState::new();
+        self.operation.public_recv_state = super::recv::RecvState::new();
         lease
     }
 
@@ -254,13 +264,13 @@ where
     pub(in crate::endpoint) fn reset_public_recv_state(&mut self, waiters: &mut WaiterTransfer) {
         self.clear_endpoint_waiter(waiters);
         let _ = self.transition_public_op(PublicOpEdge::FinishRecv);
-        self.io.public_recv_state = super::recv::RecvState::new();
+        self.operation.public_recv_state = super::recv::RecvState::new();
     }
 
     #[inline]
     pub(in crate::endpoint) fn terminal_clear_public_recv_state(&mut self) {
         self.clear_public_op_if_current(PublicActiveOp::Recv);
-        self.io.public_recv_state = super::recv::RecvState::new();
+        self.operation.public_recv_state = super::recv::RecvState::new();
     }
 
     #[inline]
@@ -272,17 +282,18 @@ where
         match lease {
             super::core::PublicOpLease::Held => {}
             super::core::PublicOpLease::Rejected => {
-                self.io.public_branch_recv_state = super::branch_recv::BranchRecvState::empty();
+                self.operation.public_branch_recv_state =
+                    super::branch_recv::BranchRecvState::empty();
                 return lease;
             }
             super::core::PublicOpLease::Faulted => return lease,
         }
-        if self.io.public_route_branch.is_none() {
+        if self.operation.public_route_branch.is_none() {
             self.public_op_busy_fault();
-            self.io.public_branch_recv_state = super::branch_recv::BranchRecvState::empty();
+            self.operation.public_branch_recv_state = super::branch_recv::BranchRecvState::empty();
             super::core::PublicOpLease::Rejected
         } else {
-            self.io.public_branch_recv_state = super::branch_recv::BranchRecvState::armed();
+            self.operation.public_branch_recv_state = super::branch_recv::BranchRecvState::armed();
             lease
         }
     }
@@ -293,21 +304,21 @@ where
         waiters: &mut WaiterTransfer,
     ) {
         self.clear_endpoint_waiter(waiters);
-        if self.io.public_active_op == PublicActiveOp::Poisoned {
-            self.io.public_branch_recv_state = super::branch_recv::BranchRecvState::empty();
+        if self.operation.public_active_op == PublicActiveOp::Poisoned {
+            self.operation.public_branch_recv_state = super::branch_recv::BranchRecvState::empty();
             return;
         }
         self.park_public_route_branch(PublicOpEdge::ParkBranchRecv);
-        self.io.public_branch_recv_state = super::branch_recv::BranchRecvState::empty();
+        self.operation.public_branch_recv_state = super::branch_recv::BranchRecvState::empty();
     }
 
     #[inline]
     pub(in crate::endpoint) fn terminal_clear_public_branch_recv_state(&mut self) {
         self.clear_public_op_if_current(PublicActiveOp::BranchRecv);
-        if let Some(branch) = self.io.public_route_branch.take() {
+        if let Some(branch) = self.operation.public_route_branch.take() {
             branch.discard_terminal();
         }
-        self.io.public_branch_recv_state = super::branch_recv::BranchRecvState::empty();
+        self.operation.public_branch_recv_state = super::branch_recv::BranchRecvState::empty();
     }
 
     #[inline]
@@ -350,8 +361,10 @@ where
                 None
             }
         };
-        for port in self.io.ports.iter_mut() {
-            if let Some(port) = port.take() {
+        for lane in 0..self.io.ports.len() {
+            if self.owns_lane(lane)
+                && let Some(port) = self.io.ports[lane].take()
+            {
                 drop(port);
             }
         }
@@ -368,10 +381,10 @@ where
         self.terminal_clear_public_recv_state();
         self.terminal_clear_public_offer_state();
         self.terminal_clear_public_branch_recv_state();
-        if let Some(branch) = self.io.public_route_branch.take() {
+        if let Some(branch) = self.operation.public_route_branch.take() {
             branch.discard_terminal();
         }
-        self.io.public_active_op = self.io.public_active_op.fault();
+        self.operation.public_active_op = self.operation.public_active_op.fault();
         self.retire_transport_handles();
         cause
     }

@@ -22,9 +22,8 @@ impl<P: WireEncode + WirePayload> PayloadSpec for P {
         = P::Decoded<'e>
     where
         'r: 'e;
-
     fn send<'a, 'e, 'r, M, const ROLE: u8>(
-        endpoint: &'e mut Endpoint<'r, ROLE>,
+        endpoint: crate::endpoint::target::OperationTarget<'e, 'r, ROLE>,
         payload: &'a P,
     ) -> impl Future<Output = Result<(), EndpointError>> + 'a
     where
@@ -33,7 +32,6 @@ impl<P: WireEncode + WirePayload> PayloadSpec for P {
         'e: 'a,
         'r: 'e,
     {
-        let endpoint = core::ptr::from_mut(endpoint);
         let logical_label = <M as crate::g::Message>::LOGICAL_LABEL;
         let payload_kind = crate::global::payload_kind::<M>();
         crate::endpoint::send::SendFuture::pending_direct(
@@ -44,7 +42,7 @@ impl<P: WireEncode + WirePayload> PayloadSpec for P {
         )
     }
     fn recv<'e, 'r, M, const ROLE: u8>(
-        endpoint: &'e mut Endpoint<'r, ROLE>,
+        endpoint: crate::endpoint::target::OperationTarget<'e, 'r, ROLE>,
     ) -> impl Future<Output = Result<Self::Received<'e, 'r>, EndpointError>> + 'e
     where
         M: Message<Payload = Self> + 'e,
@@ -63,12 +61,11 @@ impl<P: WireEncode + WirePayload> PayloadSpec for P {
         'r: 'e,
     {
         let branch = core::mem::ManuallyDrop::new(branch);
-        let endpoint = branch.endpoint;
+        // SAFETY: the consumed preview transfers its sole borrow to the send.
+        let mut endpoint = unsafe { core::ptr::read(&branch.target) }.with_metadata(());
         let logical_label = <M as crate::g::Message>::LOGICAL_LABEL;
         let payload_kind = crate::global::payload_kind::<M>();
-        let result = /* SAFETY: the consumed branch owns the in-flight kernel borrow until the returned future completes or drops. */ unsafe {
-            (&mut *endpoint).begin_public_send_state(logical_label, payload_kind)
-        };
+        let result = endpoint.begin_public_send_state(logical_label, payload_kind);
         if let Err(error) = result {
             return SendFuture::ready_error(error);
         }
@@ -100,9 +97,8 @@ impl<const RESOURCE: u8> PayloadSpec for Endpoint<'_, RESOURCE> {
         = Endpoint<'r, RESOURCE>
     where
         'r: 'e;
-
     fn send<'a, 'e, 'r, M, const ROLE: u8>(
-        endpoint: &'e mut Endpoint<'r, ROLE>,
+        endpoint: crate::endpoint::target::OperationTarget<'e, 'r, ROLE>,
         payload: Endpoint<'r, RESOURCE>,
     ) -> impl Future<Output = Result<(), EndpointError>> + 'a
     where
@@ -114,7 +110,7 @@ impl<const RESOURCE: u8> PayloadSpec for Endpoint<'_, RESOURCE> {
         super::futures::OwnedSendFuture::direct(endpoint, M::LOGICAL_LABEL, payload)
     }
     fn recv<'e, 'r, M, const ROLE: u8>(
-        endpoint: &'e mut Endpoint<'r, ROLE>,
+        endpoint: crate::endpoint::target::OperationTarget<'e, 'r, ROLE>,
     ) -> impl Future<Output = Result<Self::Received<'e, 'r>, EndpointError>> + 'e
     where
         M: Message<Payload = Self> + 'e,

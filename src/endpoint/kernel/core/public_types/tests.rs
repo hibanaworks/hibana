@@ -40,7 +40,12 @@ fn another_actor_in_the_same_rendezvous_cannot_use_the_mutation_lease() {
     };
     let mut lease = actor.context.try_operation_lease().expect("operation");
     let rejected = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        other.with_kernel(&mut lease, other.views.get(1).unwrap(), |_| ());
+        other.with_kernel(
+            &mut lease,
+            other.views.get(1).unwrap(),
+            crate::endpoint::carrier::OperationRegion::WHOLE,
+            |_| (),
+        );
     }));
     assert!(
         rejected.is_err(),
@@ -80,19 +85,24 @@ fn shared_frontier_workspace_outlives_retired_view_ports() {
             .as_ref()
     };
     let mut operation = actor.context.try_operation_lease().expect("operation");
-    actor.with_kernel(&mut operation, actor.views.get(0).unwrap(), |kernel| {
-        let mut scratch = kernel
-            .context
-            .session
-            .rendezvous()
-            .try_scratch_lease()
-            .expect("workspace");
-        kernel.retire_transport_handles();
-        assert!(kernel.io.ports.iter().all(Option::is_none));
-        // This must borrow the common owner, even though this view no longer
-        // has a transport port through which to reach its workspace.
-        core::hint::black_box(kernel.frontier_scratch_workspace(&mut scratch));
-    });
+    actor.with_kernel(
+        &mut operation,
+        actor.views.get(0).unwrap(),
+        crate::endpoint::carrier::OperationRegion::WHOLE,
+        |kernel| {
+            let mut scratch = kernel
+                .context
+                .session
+                .rendezvous()
+                .try_scratch_lease()
+                .expect("workspace");
+            kernel.retire_transport_handles();
+            assert!(kernel.io.ports.iter().all(Option::is_none));
+            // This must borrow the common owner, even though this view no longer
+            // has a transport port through which to reach its workspace.
+            core::hint::black_box(kernel.frontier_scratch_workspace(&mut scratch));
+        },
+    );
     drop(operation);
     drop(client);
     drop(peer);

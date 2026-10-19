@@ -143,6 +143,9 @@ where
         delta: &CommitDelta,
     ) -> Result<(), CursorInvariantError> {
         if let Some(event) = delta.event() {
+            if !self.region.contains(event.eff_index().dense_ordinal()) {
+                return Err(CursorInvariantError::INVARIANT);
+            }
             self.preflight_roll_entry_views(Some(event))?;
             let idx = self
                 .progress

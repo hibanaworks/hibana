@@ -14,12 +14,15 @@ use core::{
 use crate::transport::wire::Payload;
 
 mod lifecycle;
+mod parallel;
 #[cfg(kani)]
 #[path = "carrier/kani.rs"]
 mod proofs;
 mod recv;
+mod region;
 mod route;
 mod send;
+pub(crate) use region::OperationRegion;
 
 pub(crate) const fn next_view_generation(current: u32) -> Option<u32> {
     if current & 1 == 0 {
@@ -111,7 +114,7 @@ impl OutSlot<()> {
 
 pub(crate) struct RecvPollRequest<'a, 'cx> {
     pub(crate) ptr: NonNull<()>,
-    pub(crate) handle: EndpointHandle,
+    pub(crate) handle: OperationHandle,
     pub(crate) logical_label: u8,
     pub(crate) payload_kind: crate::eff::EventPayload,
     pub(crate) validate:
@@ -122,7 +125,7 @@ pub(crate) struct RecvPollRequest<'a, 'cx> {
 
 pub(crate) struct BranchRecvPollRequest<'a, 'cx> {
     pub(crate) ptr: NonNull<()>,
-    pub(crate) handle: EndpointHandle,
+    pub(crate) handle: OperationHandle,
     pub(crate) logical_label: u8,
     pub(crate) payload_kind: crate::eff::EventPayload,
     pub(crate) validate:
@@ -263,42 +266,47 @@ impl KernelEndpointHeader {
 
 #[derive(Clone, Copy)]
 pub(crate) struct EndpointOps {
+    pub(crate) split_parallel: unsafe fn(
+        NonNull<()>,
+        OperationHandle,
+    ) -> crate::endpoint::SendResult<[OperationRegion; 2]>,
+    pub(crate) drop_parallel: unsafe fn(NonNull<()>, OperationHandle),
     pub(crate) drop_endpoint: unsafe fn(ptr: NonNull<()>, handle: EndpointHandle),
-    pub(crate) restore_public_route_branch: unsafe fn(ptr: NonNull<()>, handle: EndpointHandle),
-    pub(crate) reset_public_offer_state: unsafe fn(ptr: NonNull<()>, handle: EndpointHandle),
+    pub(crate) restore_public_route_branch: unsafe fn(ptr: NonNull<()>, handle: OperationHandle),
+    pub(crate) reset_public_offer_state: unsafe fn(ptr: NonNull<()>, handle: OperationHandle),
     pub(crate) init_public_offer_state: unsafe fn(
         ptr: NonNull<()>,
-        handle: EndpointHandle,
+        handle: OperationHandle,
     ) -> crate::endpoint::kernel::PublicOpLease,
     pub(crate) init_public_send_state: unsafe fn(
         ptr: NonNull<()>,
-        handle: EndpointHandle,
+        handle: OperationHandle,
         logical_label: u8,
         payload_kind: crate::eff::EventPayload,
     ) -> crate::endpoint::SendResult<()>,
-    pub(crate) reset_public_send_state: unsafe fn(ptr: NonNull<()>, handle: EndpointHandle),
+    pub(crate) reset_public_send_state: unsafe fn(ptr: NonNull<()>, handle: OperationHandle),
     pub(crate) init_public_recv_state: unsafe fn(
         ptr: NonNull<()>,
-        handle: EndpointHandle,
+        handle: OperationHandle,
     ) -> crate::endpoint::kernel::PublicOpLease,
-    pub(crate) reset_public_recv_state: unsafe fn(ptr: NonNull<()>, handle: EndpointHandle),
+    pub(crate) reset_public_recv_state: unsafe fn(ptr: NonNull<()>, handle: OperationHandle),
     pub(crate) begin_public_branch_recv_state: unsafe fn(
         ptr: NonNull<()>,
-        handle: EndpointHandle,
+        handle: OperationHandle,
     )
         -> crate::endpoint::kernel::PublicOpLease,
-    pub(crate) reset_public_branch_recv_state: unsafe fn(ptr: NonNull<()>, handle: EndpointHandle),
+    pub(crate) reset_public_branch_recv_state: unsafe fn(ptr: NonNull<()>, handle: OperationHandle),
     pub(crate) poll_recv: for<'a, 'cx> unsafe fn(RecvPollRequest<'a, 'cx>),
     pub(crate) poll_offer: unsafe fn(
         ptr: NonNull<()>,
-        handle: EndpointHandle,
+        handle: OperationHandle,
         cx: &mut Context<'_>,
         out: *mut Poll<crate::endpoint::RecvResult<u8>>,
     ),
     pub(crate) poll_branch_recv: for<'a, 'cx> unsafe fn(BranchRecvPollRequest<'a, 'cx>),
     pub(crate) poll_send: unsafe fn(
         ptr: NonNull<()>,
-        handle: EndpointHandle,
+        handle: OperationHandle,
         payload: Option<crate::endpoint::kernel::lane_port::SendInput>,
         cx: &mut Context<'_>,
         out: *mut (),
@@ -312,6 +320,12 @@ pub(crate) struct EndpointOps {
 pub(crate) struct EndpointHandle {
     generation: core::num::NonZeroU32,
     view_generation: core::num::NonZeroU32,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct OperationHandle {
+    pub(crate) endpoint: EndpointHandle,
+    pub(crate) region: OperationRegion,
 }
 
 impl EndpointHandle {
@@ -375,7 +389,7 @@ where
 
     unsafe fn with_public_endpoint_mut<'r, R>(
         ptr: NonNull<()>,
-        handle: EndpointHandle,
+        handle: OperationHandle,
         missing: R,
         f: impl FnOnce(&mut crate::endpoint::kernel::OperationKernel<'_, 'r, T>) -> R,
     ) -> R
@@ -385,7 +399,7 @@ where
         let Some(actor) = (unsafe {
             // SAFETY: this callback-level helper applies the same carrier tag,
             // generation, and validated role preflight as direct raw endpoint projection.
-            Self::resident_actor_from_header::<'r>(ptr, handle)
+            Self::resident_actor_from_header::<'r>(ptr, handle.endpoint)
         }) else {
             return missing;
         };
@@ -400,7 +414,7 @@ where
         if core::ptr::from_ref(&view.public_header).cast::<()>() != ptr.as_ptr().cast_const() {
             crate::invariant();
         }
-        let result = actor.with_kernel(&mut operation_lease, view, f);
+        let result = actor.with_kernel(&mut operation_lease, view, handle.region, f);
         if !actor.drain_retired_views() || actor.context.live_views.get() == 0 {
             crate::invariant();
         }
@@ -410,7 +424,7 @@ where
     /// A successful communication commit can enable another logical view.
     /// No kernel borrow or actor operation lease may span a wake callback.
     unsafe fn wake_public_actor_waiters(ptr: NonNull<()>, handle: EndpointHandle) {
-        let (rv, lease_slot, generation, role) = {
+        let (rv, lease_slot, generation) = {
             // SAFETY: the caller retains the carrier Endpoint across this
             // callback; generation preflight excludes a retired view.
             let Some(actor) = (unsafe { Self::resident_actor_from_header(ptr, handle) }) else {
@@ -420,14 +434,15 @@ where
                 actor.context.session.rendezvous(),
                 actor.context.public_slot,
                 actor.context.public_generation.get(),
-                unsafe { ptr.cast::<KernelEndpointHeader>().as_ref() }.role(),
             )
         };
-        rv.wake_actor_endpoint_waiters(lease_slot, generation, role);
+        rv.wake_actor_endpoint_waiters(lease_slot, generation, None);
     }
 
     pub(crate) const fn endpoint_ops() -> EndpointOps {
         EndpointOps {
+            split_parallel: Self::split_parallel_raw,
+            drop_parallel: Self::drop_parallel_raw,
             drop_endpoint: Self::drop_public_endpoint_raw,
             restore_public_route_branch: Self::restore_public_route_branch_raw,
             reset_public_offer_state: Self::reset_public_offer_state_raw,

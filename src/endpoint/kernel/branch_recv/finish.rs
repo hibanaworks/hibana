@@ -21,7 +21,7 @@ where
         logical_label: u8,
         payload_kind: crate::eff::EventPayload,
     ) -> Poll<RecvResult<Option<crate::global::typestate::RecvMeta>>> {
-        let Some(branch) = self.io.public_route_branch.as_ref() else {
+        let Some(branch) = self.operation.public_route_branch.as_ref() else {
             return Poll::Ready(Err(branch_recv_phase_invariant()));
         };
         let expected = logical_label;
@@ -114,7 +114,7 @@ where
         prepared_meta: Option<crate::global::typestate::RecvMeta>,
         validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
     ) -> RecvResult<crate::endpoint::transfer::RecvOutput<'r>> {
-        let Some(branch) = self.io.public_route_branch.as_ref() else {
+        let Some(branch) = self.operation.public_route_branch.as_ref() else {
             return Err(branch_recv_phase_invariant());
         };
         let branch_meta = branch.branch_meta;
@@ -168,7 +168,7 @@ where
                 }
 
                 {
-                    let Some(branch) = self.io.public_route_branch.as_ref() else {
+                    let Some(branch) = self.operation.public_route_branch.as_ref() else {
                         return Err(branch_recv_phase_invariant());
                     };
                     let Some(offered_frame) = branch.offered_frame.as_ref() else {
@@ -188,7 +188,7 @@ where
                 let event =
                     EndpointRxEventPlan::branch(branch_meta.lane_wire, label, branch_meta.origin);
                 let frame = {
-                    let Some(branch) = self.io.public_route_branch.as_mut() else {
+                    let Some(branch) = self.operation.public_route_branch.as_mut() else {
                         return Err(branch_recv_phase_invariant());
                     };
                     crate::invariant_some(branch.offered_frame.take()).into_frame()
@@ -463,7 +463,7 @@ where
 {
     #[inline]
     fn has_branch_recv_kernel_branch(&self) -> bool {
-        self.io.public_route_branch.is_some()
+        self.operation.public_route_branch.is_some()
     }
 
     #[inline]
@@ -502,7 +502,7 @@ where
         &mut self,
         frame: lane_port::ReceivedFrame<'r>,
     ) -> RecvResult<()> {
-        let Some(branch) = self.io.public_route_branch.as_mut() else {
+        let Some(branch) = self.operation.public_route_branch.as_mut() else {
             frame.discard_uncommitted();
             return Err(branch_recv_phase_invariant());
         };

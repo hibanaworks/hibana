@@ -34,6 +34,7 @@ mod futures;
 pub(crate) mod kernel;
 mod ops;
 mod owner;
+mod parallel;
 #[cfg(all(test, hibana_repo_tests))]
 pub(crate) mod proof_snapshot;
 mod public_types;
@@ -41,6 +42,7 @@ mod public_types;
 pub(crate) mod send;
 /// Endpoint session binding helpers.
 pub(crate) mod session;
+pub(crate) mod target;
 #[cfg(all(test, hibana_repo_tests))]
 mod tests;
 mod transfer;

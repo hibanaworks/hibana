@@ -18,8 +18,5 @@ pub struct Endpoint<'r, const ROLE: u8> {
 /// [`RouteBranch::send`]. The label is descriptor/resolver evidence, not the
 /// result of parsing payload bytes.
 pub struct RouteBranch<'e, 'r, const ROLE: u8> {
-    pub(super) endpoint: *mut Endpoint<'r, ROLE>,
-    pub(super) label: u8,
-    pub(super) _borrow: core::marker::PhantomData<&'e mut Endpoint<'r, ROLE>>,
-    pub(super) _local_only: crate::local::LocalOnly,
+    pub(super) target: super::target::OperationTarget<'e, 'r, ROLE, u8>,
 }

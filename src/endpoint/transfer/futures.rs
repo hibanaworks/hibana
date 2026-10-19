@@ -8,7 +8,6 @@ use crate::{
 };
 use core::{
     future::Future,
-    marker::PhantomData,
     pin::Pin,
     task::{Context, Poll},
 };
@@ -21,15 +20,14 @@ enum OwnedSendPhase {
 }
 
 pub(super) struct OwnedSendFuture<'e, 'r, const ROLE: u8, const RESOURCE: u8> {
-    endpoint: *mut Endpoint<'r, ROLE>,
+    endpoint: super::super::target::OperationTarget<'e, 'r, ROLE>,
     payload: Endpoint<'r, RESOURCE>,
     phase: OwnedSendPhase,
-    _borrow: PhantomData<&'e mut Endpoint<'r, ROLE>>,
 }
 
 impl<'e, 'r, const ROLE: u8, const RESOURCE: u8> OwnedSendFuture<'e, 'r, ROLE, RESOURCE> {
     pub(super) fn direct(
-        endpoint: &'e mut Endpoint<'r, ROLE>,
+        endpoint: super::super::target::OperationTarget<'e, 'r, ROLE>,
         label: u8,
         payload: Endpoint<'r, RESOURCE>,
     ) -> Self {
@@ -37,7 +35,6 @@ impl<'e, 'r, const ROLE: u8, const RESOURCE: u8> OwnedSendFuture<'e, 'r, ROLE, R
             endpoint,
             payload,
             phase: OwnedSendPhase::Direct(label),
-            _borrow: PhantomData,
         }
     }
     pub(super) fn branch(
@@ -47,10 +44,10 @@ impl<'e, 'r, const ROLE: u8, const RESOURCE: u8> OwnedSendFuture<'e, 'r, ROLE, R
     ) -> Self {
         let branch = core::mem::ManuallyDrop::new(branch);
         Self {
-            endpoint: branch.endpoint,
+            // SAFETY: the consumed branch transfers its unique borrow.
+            endpoint: unsafe { core::ptr::read(&branch.target) }.with_metadata(()),
             payload,
             phase: OwnedSendPhase::Branch(label),
-            _borrow: PhantomData,
         }
     }
 }
@@ -63,7 +60,7 @@ impl<'e, 'r, const ROLE: u8, const RESOURCE: u8> Future
         let this = self.get_mut();
         // SAFETY: this future holds the unique carrier Endpoint borrow until
         // completion/drop, and owns the distinct resource Endpoint value.
-        let endpoint = unsafe { &mut *this.endpoint };
+        let endpoint = &mut this.endpoint;
         let input = match this.phase {
             OwnedSendPhase::Direct(label) | OwnedSendPhase::Branch(label) => {
                 if let Err(error) =
@@ -101,10 +98,8 @@ impl<const ROLE: u8, const RESOURCE: u8> Drop for OwnedSendFuture<'_, '_, ROLE, 
         // The payload owner is dropped after cancellation. A committed transfer
         // has invalidated its tag; an aborted transfer cancels the current run.
         match self.phase {
-            OwnedSendPhase::Pending => unsafe { (&mut *self.endpoint).reset_public_send_state() },
-            OwnedSendPhase::Branch(_) => unsafe {
-                (&mut *self.endpoint).restore_public_route_branch()
-            },
+            OwnedSendPhase::Pending => self.endpoint.reset_public_send_state(),
+            OwnedSendPhase::Branch(_) => self.endpoint.restore_public_route_branch(),
             OwnedSendPhase::Direct(_) | OwnedSendPhase::Done => {}
         }
     }
@@ -125,7 +120,10 @@ fn validate_envelope<const RESOURCE: u8>(payload: Payload<'_>) -> Result<(), Cod
 }
 
 impl<'e, 'r, const ROLE: u8, const RESOURCE: u8> OwnedRecvFuture<'e, 'r, ROLE, RESOURCE> {
-    pub(super) fn direct(endpoint: &'e mut Endpoint<'r, ROLE>, label: u8) -> Self {
+    pub(super) fn direct(
+        endpoint: super::super::target::OperationTarget<'e, 'r, ROLE>,
+        label: u8,
+    ) -> Self {
         Self {
             raw: RawRecvFuture::new(endpoint),
             label,

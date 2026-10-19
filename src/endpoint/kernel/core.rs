@@ -324,6 +324,7 @@ mod commit_delta_route_only;
 mod frontier_observation;
 mod frontier_select;
 mod offer_refresh;
+mod parallel;
 mod public_operation;
 mod scope_evidence_logic;
 
@@ -364,17 +365,17 @@ where
     }
 
     fn projection_complete(&self) -> bool {
-        if self.context.program.actor_binding_at(0).is_none() {
+        if self.region.is_whole() && self.context.program.actor_binding_at(0).is_none() {
             return self
                 .progress
                 .cursor
                 .is_complete(&mut |scope| self.selected_arm_for_scope(scope));
         }
-        self.progress
-            .cursor
-            .is_view_complete(self.public_header.role(), &mut |scope| {
-                self.selected_arm_for_scope(scope)
-            })
+        self.progress.cursor.is_view_complete(
+            self.public_header.role(),
+            self.region.bounds(),
+            &mut |scope| self.selected_arm_for_scope(scope),
+        )
     }
 
     /// Get port for a specific lane.
@@ -463,7 +464,8 @@ where
 
     pub(in crate::endpoint) fn retire_view(&mut self) {
         if self.context.public_generation.get() != 0
-            && (self.io.public_active_op != PublicActiveOp::Idle || !self.projection_complete())
+            && (self.operation.public_active_op != PublicActiveOp::Idle
+                || !self.projection_complete())
         {
             self.poison_session(SessionFaultKind::EndpointDropped);
         }
@@ -471,19 +473,48 @@ where
     }
 
     pub(in crate::endpoint) fn finish_view_io(&mut self) {
-        self.terminal_clear_public_send_state();
-        self.terminal_clear_public_recv_state();
-        self.terminal_clear_public_offer_state();
-        self.terminal_clear_public_branch_recv_state();
-        if let Some(branch) = self.io.public_route_branch.take() {
-            branch.discard_terminal();
+        if !self.region.is_whole() {
+            crate::invariant();
         }
-        self.clear_public_op_terminal();
+        self.finish_operation_io();
+        // An abandoned arm/future can leave another operation slot armed.
+        // Cancel every such owner before destroying any shared view port.
+        // This reborrows the same cursor; it never creates a second cursor.
+        for slot in self.operations.iter() {
+            let operation = crate::invariant_some(slot.as_ref());
+            if core::ptr::eq(operation.state.get(), self.operation) {
+                continue;
+            }
+            let mut sibling = OperationKernel {
+                public_header: self.public_header,
+                waiter: &operation.waiter,
+                context: self.context,
+                progress: self.progress,
+                io: self.io,
+                // SAFETY: this is a distinct operation cell. The current
+                // common cursor borrow excludes any other kernel entry.
+                operation: unsafe { &mut *operation.state.get() },
+                operations: self.operations,
+                region: crate::endpoint::carrier::OperationRegion::WHOLE,
+            };
+            sibling.finish_operation_io();
+        }
         self.retire_transport_handles();
         for guard in self.io.guards.iter_mut() {
             if let Some(g) = guard.take() {
                 drop(g);
             }
         }
+    }
+
+    pub(in crate::endpoint) fn finish_operation_io(&mut self) {
+        self.terminal_clear_public_send_state();
+        self.terminal_clear_public_recv_state();
+        self.terminal_clear_public_offer_state();
+        self.terminal_clear_public_branch_recv_state();
+        if let Some(branch) = self.operation.public_route_branch.take() {
+            branch.discard_terminal();
+        }
+        self.clear_public_op_terminal();
     }
 }

@@ -33,6 +33,7 @@ mod native;
 mod occurrence_choice;
 mod order;
 mod owned;
+mod parallel_borrow;
 mod parallel_pending;
 mod partial_choice;
 mod pending_reentry;

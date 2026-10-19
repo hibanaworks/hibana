@@ -1,12 +1,12 @@
 use super::{
-    BranchRecvPollRequest, Context, EndpointHandle, NonNull, OutSlot, Poll, RawRecvOutput,
+    BranchRecvPollRequest, Context, NonNull, OperationHandle, OutSlot, Poll, RawRecvOutput,
     WaiterTransfer,
 };
 impl<'cfg, T> crate::runtime::SessionKit<'cfg, T>
 where
     T: crate::transport::Transport + 'cfg,
 {
-    pub(super) unsafe fn reset_public_offer_state_raw(ptr: NonNull<()>, handle: EndpointHandle) {
+    pub(super) unsafe fn reset_public_offer_state_raw(ptr: NonNull<()>, handle: OperationHandle) {
         let mut waiters = WaiterTransfer::empty();
         unsafe {
             // SAFETY: offer-state reset owns the carrier endpoint slot selected
@@ -19,7 +19,7 @@ where
 
     pub(super) unsafe fn init_public_offer_state_raw(
         ptr: NonNull<()>,
-        handle: EndpointHandle,
+        handle: OperationHandle,
     ) -> crate::endpoint::kernel::PublicOpLease {
         unsafe {
             // SAFETY: offer-state initialization owns the carrier endpoint slot
@@ -33,7 +33,10 @@ where
         }
     }
 
-    pub(super) unsafe fn restore_public_route_branch_raw(ptr: NonNull<()>, handle: EndpointHandle) {
+    pub(super) unsafe fn restore_public_route_branch_raw(
+        ptr: NonNull<()>,
+        handle: OperationHandle,
+    ) {
         unsafe {
             // SAFETY: route-branch restore owns the carrier endpoint slot
             // selected by `handle` and restores the resident branch preview.
@@ -45,7 +48,7 @@ where
 
     pub(super) unsafe fn begin_public_branch_recv_state_raw(
         ptr: NonNull<()>,
-        handle: EndpointHandle,
+        handle: OperationHandle,
     ) -> crate::endpoint::kernel::PublicOpLease {
         unsafe {
             // SAFETY: branch-recv decode initialization owns the carrier
@@ -62,7 +65,7 @@ where
 
     pub(super) unsafe fn reset_public_branch_recv_state_raw(
         ptr: NonNull<()>,
-        handle: EndpointHandle,
+        handle: OperationHandle,
     ) {
         let mut waiters = WaiterTransfer::empty();
         unsafe {
@@ -76,7 +79,7 @@ where
 
     pub(super) unsafe fn poll_offer_public_endpoint(
         ptr: NonNull<()>,
-        handle: EndpointHandle,
+        handle: OperationHandle,
         cx: &mut Context<'_>,
         out: *mut Poll<crate::endpoint::RecvResult<u8>>,
     ) {
@@ -133,10 +136,10 @@ where
                 },
             )
         };
-        if matches!(&poll, Poll::Ready(Ok(_))) {
+        if poll.is_ready() {
             // SAFETY: branch receive has committed and released its kernel
             // borrow; the consumed branch still retains the carrier Endpoint.
-            unsafe { Self::wake_public_actor_waiters(ptr, handle) };
+            unsafe { Self::wake_public_actor_waiters(ptr, handle.endpoint) };
         }
         OutSlot::new(out).write(poll);
     }

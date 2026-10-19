@@ -42,7 +42,9 @@ where
                 let mut slot_idx = 0usize;
                 while slot_idx < source.len() {
                     let slot = crate::invariant_some(source.slot_at(slot_idx));
-                    active_entries.insert_key(slot.key, slot.lane_idx);
+                    if self.permits_event(state_index_to_usize(slot.key.entry())) {
+                        active_entries.insert_key(slot.key, slot.lane_idx);
+                    }
                     slot_idx += 1;
                 }
                 active_entries.seal()

@@ -27,7 +27,7 @@ use crate::transport::Transport;
 
 use super::ActorStorageLayout;
 use super::ResidentActor;
-use super::core::{ActorProgress, ActorViews, EndpointIo, ResidentView};
+use super::core::{ActorProgress, ActorViews, EndpointIo, ResidentOperation, ResidentView};
 use super::evidence_store::ScopeEvidenceSlot;
 use super::layout::EndpointArenaSection;
 use super::layout::LeasedState;
@@ -164,6 +164,18 @@ where
                     .add(lane_offset),
                 logical_lane_count,
             );
+            super::lane_slots::LaneSlotArray::init_from_parts(
+                ::core::ptr::addr_of_mut!((*view).operations),
+                storage_base
+                    .add(storage_layout.operation_slots_offset())
+                    .cast::<Option<ResidentOperation<'r>>>()
+                    .add(lane_offset),
+                logical_lane_count,
+            );
+            for operation in 0..logical_lane_count {
+                *crate::invariant_some((*view).operations.get_mut(operation)) =
+                    Some(ResidentOperation::new());
+            }
             ::core::ptr::addr_of_mut!((*view).public_header).write(
                 crate::endpoint::carrier::KernelEndpointHeader::new(
                     actor_header,
@@ -171,8 +183,6 @@ where
                     role,
                 ),
             );
-            ::core::ptr::addr_of_mut!((*view).waiter)
-                .write(crate::rendezvous::core::EndpointWaiter::empty());
             ::core::ptr::addr_of_mut!((*view).retired_next).write(core::cell::Cell::new(None));
             let view_primary = if role == initial_role {
                 primary_lane
@@ -183,15 +193,6 @@ where
                 crate::invariant();
             }
             ::core::ptr::addr_of_mut!((*io).primary_lane).write(view_primary);
-            ::core::ptr::addr_of_mut!((*io).public_active_op)
-                .write(super::core::PublicActiveOp::Idle);
-            ::core::ptr::addr_of_mut!((*io).public_offer_state)
-                .write(super::offer::OfferState::new());
-            ::core::ptr::addr_of_mut!((*io).public_route_branch).write(None);
-            ::core::ptr::addr_of_mut!((*io).public_recv_state).write(super::recv::RecvState::new());
-            ::core::ptr::addr_of_mut!((*io).public_branch_recv_state)
-                .write(super::branch_recv::BranchRecvState::empty());
-            ::core::ptr::addr_of_mut!((*io).public_send_state).write(super::core::SendState::Done);
             if role == initial_role && !(*view).public_header.issue_initial(1) {
                 crate::invariant();
             }
@@ -499,10 +500,10 @@ where
     initialized and before endpoint publication. */
     unsafe {
         let actor = &*dst;
-        crate::invariant_some(
-            actor.try_with_kernel(crate::invariant_some(actor.views.get(role)), |kernel| {
-                kernel.sync_lane_offer_state()
-            }),
-        );
+        crate::invariant_some(actor.try_with_kernel(
+            crate::invariant_some(actor.views.get(role)),
+            crate::endpoint::carrier::OperationRegion::WHOLE,
+            |kernel| kernel.sync_lane_offer_state(),
+        ));
     }
 }

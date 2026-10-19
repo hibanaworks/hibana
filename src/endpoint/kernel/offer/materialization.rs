@@ -71,13 +71,13 @@ where
             route_arm_selection_commit_evidence: resolved.route_arm_selection_commit_evidence,
         };
         let offered_frame = transport_payload_for_branch.map(OfferedFrame::new);
-        if self.io.public_route_branch.is_some() {
+        if self.operation.public_route_branch.is_some() {
             if let Some(payload) = offered_frame {
                 payload.discard_terminal();
             }
             crate::invariant();
         }
-        self.io.public_route_branch = Some(MaterializedRouteBranch {
+        self.operation.public_route_branch = Some(MaterializedRouteBranch {
             offered_frame,
             branch_meta,
         });

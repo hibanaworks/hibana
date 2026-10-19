@@ -124,6 +124,7 @@ pub(crate) struct ActorStorageLayout {
     guard_slots_offset: usize,
     guard_slots_bytes: usize,
     guard_slots_align: usize,
+    operation_slots_offset: usize,
     arena_offset: usize,
     arena_bytes: usize,
     arena_align: usize,
@@ -143,6 +144,10 @@ impl ActorStorageLayout {
     #[inline(always)]
     pub(crate) const fn guard_slots_offset(self) -> usize {
         self.guard_slots_offset
+    }
+
+    pub(crate) const fn operation_slots_offset(self) -> usize {
+        self.operation_slots_offset
     }
 
     #[inline(always)]
@@ -201,14 +206,23 @@ where
         crate::runtime_core::layout::add(port_slots_offset, port_slots_bytes),
         guard_slots_align,
     );
-    let arena_offset = crate::runtime_core::layout::align_up(
+    let operation_slots_align = core::mem::align_of::<Option<super::ResidentOperation<'r>>>();
+    let operation_slots_bytes = crate::runtime_core::layout::mul(
+        core::mem::size_of::<Option<super::ResidentOperation<'r>>>(),
+        lane_slot_count,
+    );
+    let operation_slots_offset = crate::runtime_core::layout::align_up(
         crate::runtime_core::layout::add(guard_slots_offset, guard_slots_bytes),
+        operation_slots_align,
+    );
+    let arena_offset = crate::runtime_core::layout::align_up(
+        crate::runtime_core::layout::add(operation_slots_offset, operation_slots_bytes),
         arena_layout.header_align(),
     );
     let total_align = storage_max(
         storage_max(
             storage_max(storage_max(header_align, view_align), port_slots_align),
-            guard_slots_align,
+            storage_max(guard_slots_align, operation_slots_align),
         ),
         arena_layout.header_align(),
     );
@@ -222,6 +236,7 @@ where
         guard_slots_offset,
         guard_slots_bytes,
         guard_slots_align,
+        operation_slots_offset,
         arena_offset,
         arena_bytes: arena_layout.total_bytes(),
         arena_align: arena_layout.total_align(),

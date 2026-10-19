@@ -136,9 +136,9 @@ impl ActorSnapshot {
 pub(crate) unsafe fn branch_snapshot<const ROLE: u8>(
     branch: &RouteBranch<'_, '_, ROLE>,
 ) -> ActorSnapshot {
-    // SAFETY: the live branch exclusively borrows its Endpoint, and the caller
-    // establishes the concrete transport required by actor_snapshot.
-    unsafe { actor_snapshot(&*branch.endpoint) }
+    let (ptr, handle) = branch.target.parts();
+    // SAFETY: the caller establishes TestTransport and the preview retains the view.
+    unsafe { snapshot_from_handle::<ROLE>(ptr, handle.endpoint, handle.region) }
 }
 
 /// Copy observations under the existing operation lease and kernel borrow.
@@ -150,12 +150,27 @@ pub(crate) unsafe fn branch_snapshot<const ROLE: u8>(
 pub(crate) unsafe fn actor_snapshot<const ROLE: u8>(
     endpoint: &Endpoint<'_, ROLE>,
 ) -> ActorSnapshot {
+    // SAFETY: this live Endpoint retains the erased TestTransport view.
+    unsafe {
+        snapshot_from_handle::<ROLE>(
+            endpoint.owner.ptr,
+            endpoint.owner.handle,
+            crate::endpoint::carrier::OperationRegion::WHOLE,
+        )
+    }
+}
+
+unsafe fn snapshot_from_handle<const ROLE: u8>(
+    ptr: core::ptr::NonNull<super::carrier::KernelEndpointHeader>,
+    handle: super::carrier::EndpointHandle,
+    region: super::carrier::OperationRegion,
+) -> ActorSnapshot {
     // SAFETY: the caller establishes TestTransport, and the live Endpoint retains
     // this pinned actor. Recover its original allocation pointer; do not widen
     // the narrow view borrow.
     let actor = unsafe {
-        let header = endpoint.owner.ptr.as_ref();
-        assert!(endpoint.owner.handle.matches_header(header));
+        let header = ptr.as_ref();
+        assert!(handle.matches_header(header));
         header
             .actor()
             .cast::<ResidentActor<'_, TestTransport>>()
@@ -165,82 +180,90 @@ pub(crate) unsafe fn actor_snapshot<const ROLE: u8>(
         .context
         .try_operation_lease()
         .expect("observation lease");
-    actor.with_kernel(&mut operation, actor.views.get(ROLE).unwrap(), |kernel| {
-        let cursor = &kernel.progress.cursor;
-        let mut steps = Vec::new();
-        let mut index = 0;
-        while cursor.contains_node_index(index) {
-            let action = cursor.action_at(index);
-            let lane = match action {
-                LocalAction::Send { lane, .. }
-                | LocalAction::Recv { lane, .. }
-                | LocalAction::Local { lane, .. } => Some(lane),
-                LocalAction::Terminate => None,
-            };
-            if let Some(lane) = lane {
-                steps.push(StepSnapshot {
-                    view: cursor.logical_role_at(index).expect("operation view"),
-                    action,
-                    done: cursor.node_event_done_for_lane(index, lane),
-                    reentry_scope: cursor
-                        .roll_body_reentry_scope_for_step(
-                            cursor
-                                .relocatable_resident_lane_step_at_index(index, usize::from(lane))
-                                .unwrap(),
-                            &mut |scope| kernel.selected_arm_for_scope(scope),
-                        )
-                        .map(|scope| scope.raw() % 8192),
-                });
+    actor.with_kernel(
+        &mut operation,
+        actor.views.get(ROLE).unwrap(),
+        region,
+        |kernel| {
+            let cursor = &kernel.progress.cursor;
+            let mut steps = Vec::new();
+            let mut index = 0;
+            while cursor.contains_node_index(index) {
+                let action = cursor.action_at(index);
+                let lane = match action {
+                    LocalAction::Send { lane, .. }
+                    | LocalAction::Recv { lane, .. }
+                    | LocalAction::Local { lane, .. } => Some(lane),
+                    LocalAction::Terminate => None,
+                };
+                if let Some(lane) = lane {
+                    steps.push(StepSnapshot {
+                        view: cursor.logical_role_at(index).expect("operation view"),
+                        action,
+                        done: cursor.node_event_done_for_lane(index, lane),
+                        reentry_scope: cursor
+                            .roll_body_reentry_scope_for_step(
+                                cursor
+                                    .relocatable_resident_lane_step_at_index(
+                                        index,
+                                        usize::from(lane),
+                                    )
+                                    .unwrap(),
+                                &mut |scope| kernel.selected_arm_for_scope(scope),
+                            )
+                            .map(|scope| scope.raw() % 8192),
+                    });
+                }
+                index += 1;
             }
-            index += 1;
-        }
-        assert_eq!(steps.len(), cursor.local_steps_len());
-        ActorSnapshot {
-            completion_mutations: cursor.completion_mutations(),
-            actor: cursor.role(),
-            run: kernel.context.public_generation.get(),
-            counter: kernel.context.view_generation.get(),
-            live_views: kernel.context.live_views.get(),
-            views: actor
-                .views
-                .as_slice()
-                .iter()
-                .map(|view| {
-                    let header = &view.public_header;
-                    let operation = if core::ptr::eq(header, kernel.public_header) {
-                        kernel.io.public_active_op
-                    } else {
-                        // SAFETY: the actor operation lease excludes mutation,
-                        // and this view is distinct from kernel.io's borrow.
-                        unsafe { &*view.io.get() }.public_active_op
-                    };
-                    ViewSnapshot {
-                        role: header.role(),
-                        run: header.generation(),
-                        nonce: header.view_generation(),
-                        operation: std::format!("{operation:?}"),
-                    }
-                })
-                .collect(),
-            steps,
-            choices: (0..kernel.context.program.route_resolver_row_count())
-                .filter_map(|row| {
-                    let (scope, _) = kernel
-                        .context
-                        .program
-                        .route_resolver_authority_at_row(row)
-                        .unwrap();
-                    // A retained slot can have no local events in either
-                    // arm. It still has an allocated choice cell, whose
-                    // unknown value is part of this actor's copied state.
-                    cursor
-                        .route_scope_slot(scope)
-                        .is_some()
-                        .then(|| (scope.raw() % 8192, kernel.selected_arm_for_scope(scope)))
-                })
-                .collect(),
-        }
-    })
+            assert_eq!(steps.len(), cursor.local_steps_len());
+            ActorSnapshot {
+                completion_mutations: cursor.completion_mutations(),
+                actor: cursor.role(),
+                run: kernel.context.public_generation.get(),
+                counter: kernel.context.view_generation.get(),
+                live_views: kernel.context.live_views.get(),
+                views: actor
+                    .views
+                    .as_slice()
+                    .iter()
+                    .map(|view| {
+                        let header = &view.public_header;
+                        let operation = if core::ptr::eq(header, kernel.public_header) {
+                            kernel.operation.public_active_op
+                        } else {
+                            // SAFETY: the actor operation lease excludes mutation,
+                            // and this view is distinct from kernel.io's borrow.
+                            unsafe { &*view.primary_operation().state.get() }.public_active_op
+                        };
+                        ViewSnapshot {
+                            role: header.role(),
+                            run: header.generation(),
+                            nonce: header.view_generation(),
+                            operation: std::format!("{operation:?}"),
+                        }
+                    })
+                    .collect(),
+                steps,
+                choices: (0..kernel.context.program.route_resolver_row_count())
+                    .filter_map(|row| {
+                        let (scope, _) = kernel
+                            .context
+                            .program
+                            .route_resolver_authority_at_row(row)
+                            .unwrap();
+                        // A retained slot can have no local events in either
+                        // arm. It still has an allocated choice cell, whose
+                        // unknown value is part of this actor's copied state.
+                        cursor
+                            .route_scope_slot(scope)
+                            .is_some()
+                            .then(|| (scope.raw() % 8192, kernel.selected_arm_for_scope(scope)))
+                    })
+                    .collect(),
+            }
+        },
+    )
 }
 
 /// Observe the production cursor's admission for every descriptor row without
@@ -263,32 +286,37 @@ pub(crate) unsafe fn actor_admissions<const ROLE: u8>(endpoint: &Endpoint<'_, RO
         .context
         .try_operation_lease()
         .expect("observation lease");
-    actor.with_kernel(&mut operation, actor.views.get(ROLE).unwrap(), |kernel| {
-        let cursor = &kernel.progress.cursor;
-        (0..cursor.local_steps_len())
-            .map(|index| {
-                let meta = match cursor.action_at(index) {
-                    LocalAction::Send { .. } => cursor.try_send_meta_at(index).unwrap().into(),
-                    LocalAction::Recv { .. } => cursor.try_recv_meta_at(index).unwrap().into(),
-                    LocalAction::Local { .. } => {
-                        let meta = cursor.try_local_meta_at(index).unwrap();
-                        crate::global::typestate::EventCommitMeta::new(
-                            meta.eff_index,
-                            meta.label,
-                            meta.origin,
-                            meta.scope,
-                            meta.route_arm,
-                            meta.lane,
-                        )
-                    }
-                    LocalAction::Terminate => crate::invariant(),
-                };
-                cursor
-                    .event_enabled(index, meta, &mut |scope, _| {
-                        kernel.selected_arm_for_scope(scope)
-                    })
-                    .is_ok()
-            })
-            .collect()
-    })
+    actor.with_kernel(
+        &mut operation,
+        actor.views.get(ROLE).unwrap(),
+        crate::endpoint::carrier::OperationRegion::WHOLE,
+        |kernel| {
+            let cursor = &kernel.progress.cursor;
+            (0..cursor.local_steps_len())
+                .map(|index| {
+                    let meta = match cursor.action_at(index) {
+                        LocalAction::Send { .. } => cursor.try_send_meta_at(index).unwrap().into(),
+                        LocalAction::Recv { .. } => cursor.try_recv_meta_at(index).unwrap().into(),
+                        LocalAction::Local { .. } => {
+                            let meta = cursor.try_local_meta_at(index).unwrap();
+                            crate::global::typestate::EventCommitMeta::new(
+                                meta.eff_index,
+                                meta.label,
+                                meta.origin,
+                                meta.scope,
+                                meta.route_arm,
+                                meta.lane,
+                            )
+                        }
+                        LocalAction::Terminate => crate::invariant(),
+                    };
+                    cursor
+                        .event_enabled(index, meta, &mut |scope, _| {
+                            kernel.selected_arm_for_scope(scope)
+                        })
+                        .is_ok()
+                })
+                .collect()
+        },
+    )
 }

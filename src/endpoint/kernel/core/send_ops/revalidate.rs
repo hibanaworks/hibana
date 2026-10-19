@@ -12,6 +12,9 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
     ) -> Poll<SendResult<()>> {
         let prepared = &plan.proof.progress.delta;
         let event = prepared.event().ok_or(SendError::PhaseInvariant)?;
+        if !self.region.contains(event.eff_index().dense_ordinal()) {
+            return Poll::Ready(Err(SendError::PhaseInvariant));
+        }
         match self.preflight_roll_entry_views(Some(event)) {
             Ok(()) => (),
             Err(EventAdmissionError::OtherViewPending) => return Poll::Pending,

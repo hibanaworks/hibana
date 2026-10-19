@@ -178,6 +178,7 @@ fn transport_requeue_callback_reentry_revalidates_generation() {
     actor.with_kernel(
         &mut operation_lease,
         actor.views.get(1).unwrap(),
+        crate::endpoint::carrier::OperationRegion::WHOLE,
         |kernel| {
             let lane_idx = kernel.io.primary_lane;
             let lane_wire = kernel.port_for_lane(lane_idx).lane().as_wire();

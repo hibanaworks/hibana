@@ -28,22 +28,37 @@ fn reentrant_carrier_entry_is_rejected_before_mutable_actor_borrow() {
     // reenters the raw carrier to test its aliasing boundary, while leaving
     // the outer cursor borrow live across the rejected nested invocation.
     let outer_entered = unsafe {
-        SessionKit::<TestTransport>::with_public_endpoint_mut(ptr, handle, false, |kernel| {
-            // SAFETY: this test created the live pinned actor with TestTransport.
-            let cut = tag.actor_call_cut::<TestTransport>();
-            assert!(!cut.lease_available);
-            assert_eq!(cut.fault, None);
-            let cursor = &mut kernel.progress.cursor;
-            let before = cursor.index();
-            let nested_result =
-                SessionKit::<TestTransport>::with_public_endpoint_mut(ptr, handle, false, |_| {
-                    nested_entered = true;
-                    true
-                });
-            assert!(!nested_result);
-            assert_eq!(cursor.index(), before);
-            true
-        })
+        SessionKit::<TestTransport>::with_public_endpoint_mut(
+            ptr,
+            super::OperationHandle {
+                endpoint: handle,
+                region: super::OperationRegion::WHOLE,
+            },
+            false,
+            |kernel| {
+                // SAFETY: this test created the live pinned actor with TestTransport.
+                let cut = tag.actor_call_cut::<TestTransport>();
+                assert!(!cut.lease_available);
+                assert_eq!(cut.fault, None);
+                let cursor = &mut kernel.progress.cursor;
+                let before = cursor.index();
+                let nested_result = SessionKit::<TestTransport>::with_public_endpoint_mut(
+                    ptr,
+                    super::OperationHandle {
+                        endpoint: handle,
+                        region: super::OperationRegion::WHOLE,
+                    },
+                    false,
+                    |_| {
+                        nested_entered = true;
+                        true
+                    },
+                );
+                assert!(!nested_result);
+                assert_eq!(cursor.index(), before);
+                true
+            },
+        )
     };
     assert!(outer_entered);
     assert!(!nested_entered);

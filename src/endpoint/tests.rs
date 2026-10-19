@@ -94,8 +94,8 @@ fn recv_future_state_caches_completion() {
 fn send_future_and_runtime_descriptor_size_gates_hold() {
     const WORD: usize = size_of::<usize>();
     assert!(
-        size_of::<SendFut>() <= 5 * WORD,
-        "SendFuture must stay within the direct-send future budget",
+        size_of::<SendFut>() <= 6 * WORD,
+        "SendFuture includes one word distinguishing owned and scoped operation targets",
     );
     assert!(
         size_of::<kernel::SendRuntimeDesc>() <= 6 * WORD,

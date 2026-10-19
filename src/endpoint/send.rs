@@ -6,7 +6,6 @@
 
 use core::{
     future::Future,
-    marker::PhantomData,
     pin::Pin,
     task::{Context, Poll},
 };
@@ -28,10 +27,10 @@ enum SendFutureState {
 }
 
 struct RawSendFuture<'a, 'e, 'r, const ROLE: u8> {
-    endpoint: *mut super::Endpoint<'r, ROLE>,
+    endpoint: Option<super::target::OperationTarget<'e, 'r, ROLE>>,
     payload: Option<kernel::RawSendPayload>,
     state: SendFutureState,
-    _borrow: PhantomData<(&'a (), &'e mut super::Endpoint<'r, ROLE>)>,
+    _payload_borrow: core::marker::PhantomData<&'a ()>,
 }
 
 pub(crate) struct SendFuture<'a, 'e, 'r, const ROLE: u8> {
@@ -41,7 +40,7 @@ pub(crate) struct SendFuture<'a, 'e, 'r, const ROLE: u8> {
 impl<'a, 'e, 'r, const ROLE: u8> SendFuture<'a, 'e, 'r, ROLE> {
     #[inline]
     pub(crate) fn pending_direct(
-        endpoint: *mut super::Endpoint<'r, ROLE>,
+        endpoint: super::target::OperationTarget<'e, 'r, ROLE>,
         logical_label: u8,
         payload_kind: crate::eff::EventPayload,
         payload: &'a impl WireEncode,
@@ -60,7 +59,7 @@ impl<'a, 'e, 'r, const ROLE: u8> SendFuture<'a, 'e, 'r, ROLE> {
 
     #[inline]
     pub(crate) fn pending_armed(
-        endpoint: *mut super::Endpoint<'r, ROLE>,
+        endpoint: super::target::OperationTarget<'e, 'r, ROLE>,
         payload: &'a impl WireEncode,
     ) -> Self {
         Self {
@@ -83,31 +82,31 @@ impl<'a, 'e, 'r, const ROLE: u8> SendFuture<'a, 'e, 'r, ROLE> {
 impl<'a, 'e, 'r, const ROLE: u8> RawSendFuture<'a, 'e, 'r, ROLE> {
     #[inline]
     fn pending(
-        endpoint: *mut super::Endpoint<'r, ROLE>,
+        endpoint: super::target::OperationTarget<'e, 'r, ROLE>,
         state: SendFutureState,
         payload: Option<kernel::RawSendPayload>,
     ) -> Self {
         Self {
-            endpoint,
+            endpoint: Some(endpoint),
             payload,
             state,
-            _borrow: PhantomData,
+            _payload_borrow: core::marker::PhantomData,
         }
     }
 
     #[inline]
     fn ready_error(error: SendError) -> Self {
         Self {
-            endpoint: core::ptr::null_mut(),
+            endpoint: None,
             payload: None,
             state: SendFutureState::ReadyError(error),
-            _borrow: PhantomData,
+            _payload_borrow: core::marker::PhantomData,
         }
     }
 
     #[inline]
     fn mark_done(&mut self) {
-        self.endpoint = core::ptr::null_mut();
+        self.endpoint = None;
         self.state = SendFutureState::Done;
     }
 
@@ -121,13 +120,8 @@ impl<'a, 'e, 'r, const ROLE: u8> RawSendFuture<'a, 'e, 'r, ROLE> {
             } => (logical_label, payload_kind),
             SendFutureState::ReadyError(_) | SendFutureState::Done => crate::invariant(),
         };
-        if self.endpoint.is_null() {
-            crate::invariant();
-        }
         let result = {
-            let endpoint = /* SAFETY: unarmed send futures hold the unique
-            endpoint borrow but have not yet published resident send state. */
-                unsafe { &mut *self.endpoint };
+            let endpoint = crate::invariant_some(self.endpoint.as_mut());
             endpoint.begin_public_send_state(logical_label, payload_kind)
         };
         match result {
@@ -151,15 +145,8 @@ impl<'a, 'e, 'r, const ROLE: u8> RawSendFuture<'a, 'e, 'r, ROLE> {
         if let Err(error) = self.arm_on_first_poll() {
             return Poll::Ready(Err(error));
         }
-        if self.endpoint.is_null() {
-            crate::invariant();
-        }
         let poll = {
-            let endpoint = /* SAFETY: an armed send future stores the endpoint
-            pointer while the send lease is held. Polling owns `&mut self`, so
-            this is the only mutable access until the future resolves or Drop
-            resets the send state. */
-                unsafe { &mut *self.endpoint };
+            let endpoint = crate::invariant_some(self.endpoint.as_mut());
             endpoint.poll_send(
                 cx,
                 self.payload
@@ -196,15 +183,13 @@ impl<'a, 'e, 'r, const ROLE: u8> Future for SendFuture<'a, 'e, 'r, ROLE> {
 
 impl<'a, 'e, 'r, const ROLE: u8> Drop for RawSendFuture<'a, 'e, 'r, ROLE> {
     fn drop(&mut self) {
-        if !self.endpoint.is_null()
+        if let Some(endpoint) = self.endpoint.as_mut()
             && let SendFutureState::Armed = self.state
         {
             /* SAFETY: an armed send future holds the public send lease.
             Drop owns the future and releases that lease exactly once
             through the same endpoint pointer. */
-            unsafe {
-                (&mut *self.endpoint).reset_public_send_state();
-            }
+            endpoint.reset_public_send_state();
         }
     }
 }
@@ -221,8 +206,8 @@ mod tests {
     fn send_future_stays_within_size_budget() {
         const WORD: usize = size_of::<usize>();
         assert!(
-            size_of::<SendFut>() <= 5 * WORD,
-            "SendFuture must stay within the direct-send future budget"
+            size_of::<SendFut>() <= 6 * WORD,
+            "SendFuture includes one word distinguishing owned and scoped operation targets"
         );
     }
 
