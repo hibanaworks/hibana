@@ -4,9 +4,10 @@ This host-only package verifies Hibana's normalized choreography, descriptor,
 and execution models with Lean Core and Std. It is outside the Cargo workspace
 and contributes no code, metadata, memory use, or flash cost to Pico builds.
 
-The model specifies Hibana's finite-role, non-delegating protocol kernel. It is
-not a source-level verification of arbitrary Rust code or a specification of a
-concrete transport.
+The established end-to-end result covers Hibana's finite-role, non-delegating
+protocol kernel. The delegation models and their remaining reduction
+obligations are described below. This is not a source-level verification of
+arbitrary Rust code or a specification of a concrete transport.
 
 ## Checked boundary
 
@@ -62,6 +63,24 @@ These are explicit premises. Lean does not infer remote installation agreement,
 transport authentication, delivery, failure detection, or scheduler fairness
 from the `Transport` trait.
 
+### Verification scope
+
+The delegation target concerns Hibana's protocol and ownership semantics.
+It does not require a Lean semantics of every Rust application, every ordinary
+future object, or the executor. Applications issue their local continuations,
+drive independent fragments where necessary, and retain authority-bearing
+objects until completion or normal Drop; executors poll the issued futures.
+These are application and scheduling premises, not kernel conclusions.
+
+The implementation boundary still matters: a permitted operation on a validly
+held Endpoint must follow the modeled transition, and handoff must preserve
+affine ownership and receive access. Rust types, actual Endpoint tests, Miri,
+and focused Kani checks support that boundary. They do not establish a complete
+source-level Rust refinement, and the Lean result must not be described as one.
+Extending the proof to an inventory of every ordinary future or parallel borrow
+is not a prerequisite for completing this model result. Conversely, an assumed
+application call does not prove that the kernel admits or commits it correctly.
+
 ## Delegation reduction target and network boundary
 
 The outstanding delegation result concerns independently stored actor runtimes,
@@ -96,10 +115,29 @@ physical holders must not create an empty replacement queue, strand a receipt
 in the previous process, or require a shared-memory owner record. This is a
 carrier obligation, not a conclusion of the current logical progress theorem.
 
-Only after these obligations are established can the corresponding existing
-logical progress result be inherited, with its scheduling, accepted-artifact
-and transport premises intact. This is the target contract, not a completed
-delegation theorem or a new axiom.
+These obligations must use a logical model that admits the production
+runtime's schedules. The old atomic global-roll model cannot represent a
+sender entering the next visit while an earlier frame is still unread;
+`DistributedRollRefinement.lean` contains that checked counterexample. Its
+progress theorem cannot simply be applied to such an execution.
+
+`SourceOccurrenceProgress.lean` supplies a source model for finite unfoldings
+with distinct communication occurrences. Each roll copy keeps its own route
+sites, parallel bodies may have different copy counts, and acceptance,
+publication and receipt remain separate points. Original and unfolded sources
+must both normalize with the same initial issuance. The executable dependency
+check is proved equivalent to the source relation, and every unfinished cut
+has a logical source transition. Kernel-checked examples cover output
+pipelining, unequal parallel visits, a new holder lending before the old sender
+publishes, and different choices in overlapping visits.
+
+This proves source-dependency progress across finite unfoldings. It does not
+yet derive the required unfolding and source cut from every distributed
+execution, compose that correspondence with custody, or discharge carrier and
+fault/closure refinement. In particular, one may not pair an unrelated source
+cut with a custody trace and call that a distributed progress proof. The
+remaining reduction is a model and implementation correspondence task, not a
+requirement to verify arbitrary application code or an executor in Lean.
 
 The Unix-datagram process fixtures inherit descriptors for the same kernel
 datagram queues. They share no Rust runtime memory, but they test one host's

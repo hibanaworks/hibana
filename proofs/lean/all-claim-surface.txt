@@ -873,6 +873,10 @@ Hibana.EndpointDelegation.withOwner_same : ∀ (owners : Hibana.EndpointDelegati
   @Eq.{1} Bool (record.check image choreo session) true →
     @Eq.{1} Bool (record.step.before.doneState.done event) true →
       @Eq.{1} Bool (record.step.after.doneState.done event) true
+@Hibana.a_checked_source_occurrence_has_its_exact_transition : ∀ {source : Hibana.EndpointDelegation.Source}
+  (cut : Hibana.SourceOccurrenceCut source) (point : Hibana.SourcePoint),
+  @Eq.{1} Bool (@Hibana.SourceOccurrenceCut.ready source cut point) true →
+    @Exists.{1} (Hibana.SourceOccurrenceCut source) fun next => @Hibana.SourceOccurrenceStep source cut point next
 @Hibana.a_checked_successful_send_publishes_before_returning : ∀ {sample : Hibana.SendCompletionObservation},
   @Eq.{1} Bool sample.check true →
     @Eq.{1} Hibana.SendPollClass sample.boundary Hibana.SendPollClass.success →
@@ -6560,6 +6564,21 @@ Hibana.ambiguous_receive_fails_closed : ∀ (before : Hibana.CompactGlobalState)
                       (@Hibana.SourceOrderGroup.rows (images actor) choreo group))))
               pending))
           (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1)))
+@Hibana.an_unfinished_source_occurrence_cut_has_a_transition : ∀ {source : Hibana.EndpointDelegation.Source}
+  (cut : Hibana.SourceOccurrenceCut source),
+  @Hibana.SourceOccurrenceCut.Unfinished source cut →
+    @Exists.{1} Hibana.SourcePoint fun point =>
+      @Exists.{1} (Hibana.SourceOccurrenceCut source) fun next =>
+        And (@Hibana.SourceOccurrenceStep source cut point next)
+          (And (@Eq.{1} Bool (@Hibana.SourceOccurrenceCut.observed source cut point) false)
+            (And (@Eq.{1} Bool (@Hibana.SourceOccurrenceCut.observed source next point) true)
+              (And
+                (@Eq.{1} Hibana.EndpointDelegation.Source (@Hibana.SourceOccurrenceCut.expanded source next)
+                  (@Hibana.SourceOccurrenceCut.expanded source cut))
+                (∀ (other : Hibana.SourcePoint),
+                  @Ne.{1} Hibana.SourcePoint other point →
+                    @Eq.{1} Bool (@Hibana.SourceOccurrenceCut.observed source next other)
+                      (@Hibana.SourceOccurrenceCut.observed source cut other)))))
 @Hibana.an_uninformed_reentry_origin_is_the_entry_owner : ∀ {source : Hibana.EndpointDelegation.Source}
   {sender receiver : Nat → Nat} {owner event : Nat},
   Or (@Eq.{1} Nat (sender event) owner)
@@ -13742,6 +13761,120 @@ Hibana.source_occurrence_enumeration_increases : ∀ (source : Hibana.EndpointDe
     And (@LE.le.{0} Nat instLENat start event)
       (@LT.lt.{0} Nat instLTNat event
         (@HAdd.hAdd.{0, 0, 0} Nat Nat Nat (@instHAdd.{0} Nat instAddNat) start source.eventCount))
+Hibana.source_occurrences_allow_fifo_send_pipelining : And
+  (@Eq.{1} (List.{0} Nat)
+    (@Hibana.SourceUnfolding.origins (Hibana.EndpointDelegation.Source.send Hibana.pipelineMessage✝).roll
+      Hibana.twoCopies✝ Hibana.twoCopyUnfolding✝ (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0))))
+    (@List.cons.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0)))
+      (@List.cons.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0))) (@List.nil.{0} Nat))))
+  (And
+    (@Eq.{1} Bool
+      (@Hibana.SourceOccurrenceCut.observed (Hibana.EndpointDelegation.Source.send Hibana.pipelineMessage✝).roll
+        Hibana.pipelineCut✝
+        (Hibana.SourcePoint.committed
+          { event := @OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0)),
+            side := Hibana.EndpointDelegation.Side.receive }))
+      false)
+    (And
+      (@Eq.{1} Bool
+        (@Hibana.SourceOccurrenceCut.ready (Hibana.EndpointDelegation.Source.send Hibana.pipelineMessage✝).roll
+          Hibana.pipelineUnreadCut✝
+          (Hibana.SourcePoint.committed
+            { event := @OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1)),
+              side := Hibana.EndpointDelegation.Side.receive }))
+        false)
+      (@Exists.{1} (Hibana.SourceOccurrenceCut (Hibana.EndpointDelegation.Source.send Hibana.pipelineMessage✝).roll)
+        fun next =>
+        @Hibana.SourceOccurrenceStep (Hibana.EndpointDelegation.Source.send Hibana.pipelineMessage✝).roll
+          Hibana.pipelineCut✝
+          (Hibana.SourcePoint.accepted (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1)))) next)))
+Hibana.source_occurrences_keep_separate_choices_for_overlapping_visits : And
+  (@Eq.{1} (List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding))
+    (@Hibana.SourceOccurrenceCut.path Hibana.choiceBody✝.roll Hibana.choiceCut✝).bindings
+    (@List.cons.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)
+      (Hibana.choiceBinding✝ (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0))) Hibana.RouteArm.left)
+      (@List.cons.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)
+        (Hibana.choiceBinding✝ (@OfNat.ofNat.{0} Nat (nat_lit 2) (instOfNatNat (nat_lit 2))) Hibana.RouteArm.right)
+        (@List.nil.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)))))
+  (And
+    (@Eq.{1} Bool
+      (@Hibana.SourceOccurrenceCut.observed Hibana.choiceBody✝.roll Hibana.choiceCut✝
+        (Hibana.SourcePoint.committed
+          { event := @OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0)),
+            side := Hibana.EndpointDelegation.Side.receive }))
+      false)
+    (And
+      (@Eq.{1} Bool
+        (@Hibana.SourceOccurrenceCut.ready Hibana.choiceBody✝.roll Hibana.choiceUnreadCut✝
+          (Hibana.SourcePoint.committed
+            { event := @OfNat.ofNat.{0} Nat (nat_lit 3) (instOfNatNat (nat_lit 3)),
+              side := Hibana.EndpointDelegation.Side.receive }))
+        false)
+      (@Exists.{1} (Hibana.SourceOccurrenceCut Hibana.choiceBody✝.roll) fun next =>
+        @Hibana.SourceOccurrenceStep Hibana.choiceBody✝.roll Hibana.choiceCut✝
+          (Hibana.SourcePoint.accepted (@OfNat.ofNat.{0} Nat (nat_lit 3) (instOfNatNat (nat_lit 3)))) next)))
+Hibana.source_occurrences_preserve_holder_change_before_old_publication : And
+  (@Eq.{1} (List.{0} Nat)
+    (@Hibana.SourceUnfolding.origins Hibana.loanBody✝.roll (Hibana.loanBody✝.seq Hibana.loanBody✝) Hibana.loanUnfolding✝
+      (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0))))
+    (@List.cons.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0)))
+      (@List.cons.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1)))
+        (@List.cons.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 2) (instOfNatNat (nat_lit 2)))
+          (@List.cons.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 3) (instOfNatNat (nat_lit 3)))
+            (@List.cons.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0)))
+              (@List.cons.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1)))
+                (@List.cons.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 2) (instOfNatNat (nat_lit 2)))
+                  (@List.cons.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 3) (instOfNatNat (nat_lit 3)))
+                    (@List.nil.{0} Nat))))))))))
+  (And
+    (@Eq.{1} Bool
+      (@Hibana.SourceOccurrenceCut.observed Hibana.loanBody✝.roll Hibana.loanCut✝
+        (Hibana.SourcePoint.committed
+          { event := @OfNat.ofNat.{0} Nat (nat_lit 3) (instOfNatNat (nat_lit 3)),
+            side := Hibana.EndpointDelegation.Side.receive }))
+      true)
+    (And
+      (@Eq.{1} Bool
+        (@Hibana.SourceOccurrenceCut.observed Hibana.loanBody✝.roll Hibana.loanCut✝
+          (Hibana.SourcePoint.committed
+            { event := @OfNat.ofNat.{0} Nat (nat_lit 3) (instOfNatNat (nat_lit 3)),
+              side := Hibana.EndpointDelegation.Side.send }))
+        false)
+      (And
+        (@Eq.{1} Bool
+          (@Hibana.SourceOccurrenceCut.ready Hibana.loanBody✝.roll Hibana.loanBeforeReturnCut✝
+            (Hibana.SourcePoint.accepted (@OfNat.ofNat.{0} Nat (nat_lit 4) (instOfNatNat (nat_lit 4)))))
+          false)
+        (@Exists.{1} (Hibana.SourceOccurrenceCut Hibana.loanBody✝.roll) fun next =>
+          @Hibana.SourceOccurrenceStep Hibana.loanBody✝.roll Hibana.loanCut✝
+            (Hibana.SourcePoint.accepted (@OfNat.ofNat.{0} Nat (nat_lit 4) (instOfNatNat (nat_lit 4)))) next))))
+Hibana.source_occurrences_preserve_independent_parallel_visits : And
+  (@Eq.{1} (List.{0} Nat)
+    (@Hibana.SourceUnfolding.origins Hibana.unevenSource✝ Hibana.unevenExpanded✝ Hibana.unevenUnfolding✝
+      (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0))))
+    (@List.cons.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0)))
+      (@List.cons.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0)))
+        (@List.cons.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0)))
+          (@List.cons.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1))) (@List.nil.{0} Nat))))))
+  (And
+    (@Eq.{1} Bool
+      (@Hibana.SourceOccurrenceCut.observed Hibana.unevenSource✝ Hibana.unevenCut✝
+        (Hibana.SourcePoint.accepted (@OfNat.ofNat.{0} Nat (nat_lit 3) (instOfNatNat (nat_lit 3)))))
+      false)
+    (And
+      (@Eq.{1} Bool
+        (@Hibana.SourceOccurrenceCut.observed Hibana.unevenSource✝ Hibana.unevenCut✝
+          (Hibana.SourcePoint.committed
+            { event := @OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0)),
+              side := Hibana.EndpointDelegation.Side.receive }))
+        false)
+      (And
+        (@Exists.{1} (Hibana.SourceOccurrenceCut Hibana.unevenSource✝) fun next =>
+          @Hibana.SourceOccurrenceStep Hibana.unevenSource✝ Hibana.unevenCut✝
+            (Hibana.SourcePoint.accepted (@OfNat.ofNat.{0} Nat (nat_lit 2) (instOfNatNat (nat_lit 2)))) next)
+        (@Exists.{1} (Hibana.SourceOccurrenceCut Hibana.unevenSource✝) fun next =>
+          @Hibana.SourceOccurrenceStep Hibana.unevenSource✝ Hibana.unevenCut✝
+            (Hibana.SourcePoint.accepted (@OfNat.ofNat.{0} Nat (nat_lit 3) (instOfNatNat (nat_lit 3)))) next))))
 @Hibana.source_order_gives_actor_precedence : ∀ {data : Hibana.DecodedActorOrder}
   {path : Hibana.EndpointDelegation.NormalizedPath} {before after : Hibana.DecodedActorRow},
   @Eq.{1} (Option.{0} Hibana.EndpointDelegation.Action)
@@ -13761,6 +13894,10 @@ Hibana.source_occurrence_enumeration_increases : ∀ (source : Hibana.EndpointDe
 @Hibana.source_point_dependencies_have_no_cycle : ∀ {source : Hibana.EndpointDelegation.Source}
   {bindings : List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)} (point : Hibana.SourcePoint),
   Not (@Relation.TransGen.{1} Hibana.SourcePoint (Hibana.SourcePointEdge source bindings) point point)
+@Hibana.source_point_dependency_check_is_exact : ∀ {source : Hibana.EndpointDelegation.Source}
+  {bindings : List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)} {before after : Hibana.SourcePoint},
+  Iff (@Eq.{1} Bool (Hibana.sourcePointDepends source bindings before after) true)
+    (Hibana.SourcePointEdge source bindings before after)
 @Hibana.source_point_dependency_increases_rank : ∀ {source : Hibana.EndpointDelegation.Source}
   {bindings : List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)} {before after : Hibana.SourcePoint},
   Hibana.SourcePointEdge source bindings before after → @LT.lt.{0} Nat instLTNat before.rank after.rank
@@ -14112,6 +14249,20 @@ Hibana.source_occurrence_enumeration_increases : ∀ (source : Hibana.EndpointDe
                       (@Eq.{1} Hibana.EndpointDelegation.Payload symbolic.message.payload
                           (Hibana.EndpointDelegation.Payload.endpoint key) →
                         @Eq.{1} Nat binding.senderActor previousBinding.receiverActor))
+@Hibana.source_unfolding_has_one_origin_per_occurrence : ∀ {source expanded : Hibana.EndpointDelegation.Source}
+  (unfolding : Hibana.SourceUnfolding source expanded) (start : Nat),
+  @Eq.{1} Nat (@List.length.{0} Nat (@Hibana.SourceUnfolding.origins source expanded unfolding start))
+    expanded.eventCount
+@Hibana.source_unfolding_preserves_original_messages : ∀ {source expanded : Hibana.EndpointDelegation.Source}
+  (unfolding : Hibana.SourceUnfolding source expanded) (start : Nat)
+  (entry : Prod.{0, 0} Nat Hibana.EndpointDelegation.Message),
+  @Membership.mem.{0, 0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Message)
+      (List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Message))
+      (@List.instMembership.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Message))
+      (@Hibana.SourceUnfolding.occurrences source expanded unfolding start) entry →
+    @Membership.mem.{0, 0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Message)
+      (List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Message))
+      (@List.instMembership.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Message)) (source.messageEntries start) entry
 Hibana.sparse_route_history_avoids_the_lane_depth_product : And
   (@Eq.{1} Nat (Hibana.productionRouteHistoryCapacity Hibana.sparseRouteHistoryExample)
     (@OfNat.ofNat.{0} Nat (nat_lit 17) (instOfNatNat (nat_lit 17))))
