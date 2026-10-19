@@ -19,6 +19,8 @@ structure ActorViewObservation where
   role : Nat
   run : Nat
   nonce : Nat
+  /-- Copied phase of the view's primary operation slot. This is not an
+  enumeration of its independently borrowed parallel lane slots. -/
   operation : PublicOperationPhase
   deriving Repr, DecidableEq
 

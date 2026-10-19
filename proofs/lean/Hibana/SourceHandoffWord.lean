@@ -213,4 +213,25 @@ theorem a_two_phase_source_word_extends_when_its_actual_counts_stay_balanced
     have same : event = actual := by simpa using atIndex
     exact next.trans (congrArg some same)
 
+/-- Every predicate of actual receipts is bounded by physical acceptances in
+the same asynchronous chronology, across all directions and changing holders.
+No common generation, finite channel catalogue or actor visit is required. -/
+theorem a_distributed_call_receipt_predicate_is_bounded_by_actual_acceptances
+    {images : Nat → RustDescriptorImage} {choreo : Choreo} {session : Nat}
+    {initial : Nat → ActorProgressObservation × Nat} {last : DistributedSourceCut}
+    {word : List DistributedCallBoundary} {entries pending : List SourceAcceptance}
+    {published : List (SourceAcceptance × ActorCommitRecord)}
+    (execution : DistributedCallExecution images choreo session
+      (.initial initial) last word entries published pending) (selected : Nat → Bool) :
+    (receivedSourceWord images choreo (word.filterMap DistributedCallBoundary.record?)).countP selected ≤
+      (entries.map SourceAcceptance.event).countP selected := by
+  obtain ⟨receipts, actual, prefixes⟩ := a_distributed_call_receipt_word_is_the_exact_accepted_fifo_prefix execution
+  have subsequences : ∀ channel, List.Sublist (sourceChannelEntries receipts channel) (sourceChannelEntries entries channel) := by
+    intro channel
+    rw [prefixes channel]
+    exact List.take_sublist _ _
+  have bound := fifo_prefixes_bound_every_receipt_predicate receipts entries subsequences
+    (fun entry => selected entry.event)
+  simpa only [actual, List.countP_map, Function.comp_def] using bound
+
 end Hibana

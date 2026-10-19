@@ -1210,6 +1210,25 @@ Hibana.EndpointDelegation.withOwner_same : ∀ (owners : Hibana.EndpointDelegati
                         (@Prod.snd.{0, 0} Hibana.ActorProgressObservation Nat
                           ((@Prod.fst.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance) last).actors
                             actor))))))
+@Hibana.a_distributed_call_acceptance_predicate_has_its_static_row_classification : ∀
+  {images : Nat → Hibana.RustDescriptorImage} {choreo : Hibana.Choreo} {session : Nat}
+  {first last : Hibana.DistributedSourceCut} {word : List.{0} Hibana.DistributedCallBoundary}
+  {entries pending : List.{0} Hibana.SourceAcceptance}
+  {published : List.{0} (Prod.{0, 0} Hibana.SourceAcceptance Hibana.ActorCommitRecord)},
+  Hibana.DistributedCallExecution images choreo session first last word entries published pending →
+    ∀ (selectedSource : Nat → Bool) (selectedRow : Nat → Nat → Bool),
+      (∀ (owner row eff : Nat),
+          @Eq.{1} Nat (images owner).role owner →
+            @LT.lt.{0} Nat instLTNat row (images owner).eventCount →
+              @Eq.{1} (Option.{0} Nat) ((images owner).eventEffIndex? row) (@some.{0} Nat eff) →
+                @Eq.{1} (Option.{0} Hibana.EndpointDelegation.Side) ((images owner).sourceRowSide? row)
+                    (@some.{0} Hibana.EndpointDelegation.Side Hibana.EndpointDelegation.Side.send) →
+                  @Eq.{1} Bool (selectedSource eff) (selectedRow owner row)) →
+        @Eq.{1} Nat
+          (@List.countP.{0} Nat selectedSource
+            (@List.map.{0, 0} Hibana.SourceAcceptance Nat Hibana.SourceAcceptance.event entries))
+          (@List.countP.{0} Hibana.SourceAcceptance
+            (fun entry => selectedRow entry.sample.image.role entry.sample.event) entries)
 @Hibana.a_distributed_call_execution_has_its_acceptance_inclusive_source_group_word : ∀
   {images : Nat → Hibana.RustDescriptorImage} {choreo : Hibana.Choreo} {session actor : Nat}
   {group : Hibana.SourceOrderGroup (images actor) choreo} {first last : Hibana.DistributedSourceCut}
@@ -1332,6 +1351,50 @@ Hibana.EndpointDelegation.withOwner_same : ∀ (owners : Hibana.EndpointDelegati
         And (@Eq.{1} Hibana.RustDescriptorImage entry.sample.image (images entry.sample.image.role))
           (And (@Eq.{1} Bool (entry.sample.check choreo session) true)
             (@Eq.{1} (Option.{0} Nat) entry.sample.effIndex? (@some.{0} Nat entry.event)))
+@Hibana.a_distributed_call_receipt_predicate_is_bounded_by_actual_acceptances : ∀
+  {images : Nat → Hibana.RustDescriptorImage} {choreo : Hibana.Choreo} {session : Nat}
+  {initial : Nat → Prod.{0, 0} Hibana.ActorProgressObservation Nat} {last : Hibana.DistributedSourceCut}
+  {word : List.{0} Hibana.DistributedCallBoundary} {entries pending : List.{0} Hibana.SourceAcceptance}
+  {published : List.{0} (Prod.{0, 0} Hibana.SourceAcceptance Hibana.ActorCommitRecord)},
+  Hibana.DistributedCallExecution images choreo session (Hibana.DistributedSourceCut.initial initial) last word entries
+      published pending →
+    ∀ (selected : Nat → Bool),
+      @LE.le.{0} Nat instLENat
+        (@List.countP.{0} Nat selected
+          (Hibana.receivedSourceWord images choreo
+            (@List.filterMap.{0, 0} Hibana.DistributedCallBoundary (Prod.{0, 0} Nat Hibana.ActorCommitRecord)
+              Hibana.DistributedCallBoundary.record? word)))
+        (@List.countP.{0} Nat selected
+          (@List.map.{0, 0} Hibana.SourceAcceptance Nat Hibana.SourceAcceptance.event entries))
+@Hibana.a_distributed_call_receipt_source_count_has_its_static_row_classification : ∀
+  {images : Nat → Hibana.RustDescriptorImage} {choreo : Hibana.Choreo} {session : Nat}
+  {first last : Hibana.DistributedSourceCut} {word : List.{0} Hibana.DistributedCallBoundary}
+  {entries pending : List.{0} Hibana.SourceAcceptance}
+  {published : List.{0} (Prod.{0, 0} Hibana.SourceAcceptance Hibana.ActorCommitRecord)},
+  Hibana.DistributedCallExecution images choreo session first last word entries published pending →
+    ∀ (selectedSource : Nat → Bool) (selectedRow : Nat → Nat → Bool),
+      (∀ (actor row eff : Nat) (side : Hibana.EndpointDelegation.Side),
+          @Eq.{1} Nat (images actor).role actor →
+            @LT.lt.{0} Nat instLTNat row (images actor).eventCount →
+              @Eq.{1} (Option.{0} Nat) ((images actor).eventEffIndex? row) (@some.{0} Nat eff) →
+                @Eq.{1} (Option.{0} Hibana.EndpointDelegation.Side) ((images actor).sourceRowSide? row)
+                    (@some.{0} Hibana.EndpointDelegation.Side side) →
+                  @Eq.{1} Bool
+                    (@ite.{1} Bool (@Eq.{1} Hibana.EndpointDelegation.Side side Hibana.EndpointDelegation.Side.receive)
+                      (Hibana.EndpointDelegation.instDecidableEqSide side Hibana.EndpointDelegation.Side.receive)
+                      (selectedSource eff) false)
+                    (selectedRow actor row)) →
+        @Eq.{1} Nat
+          (@List.countP.{0} Nat selectedSource
+            (Hibana.receivedSourceWord images choreo
+              (@List.filterMap.{0, 0} Hibana.DistributedCallBoundary (Prod.{0, 0} Nat Hibana.ActorCommitRecord)
+                Hibana.DistributedCallBoundary.record? word)))
+          (@List.countP.{0} (Prod.{0, 0} Nat Hibana.ActorCommitRecord)
+            (fun entry =>
+              selectedRow (@Prod.fst.{0, 0} Nat Hibana.ActorCommitRecord entry)
+                (@Prod.snd.{0, 0} Nat Hibana.ActorCommitRecord entry).step.event)
+            (@List.filterMap.{0, 0} Hibana.DistributedCallBoundary (Prod.{0, 0} Nat Hibana.ActorCommitRecord)
+              Hibana.DistributedCallBoundary.record? word))
 @Hibana.a_distributed_call_receipt_word_is_the_exact_accepted_fifo_prefix : ∀
   {images : Nat → Hibana.RustDescriptorImage} {choreo : Hibana.Choreo} {session : Nat}
   {initial : Nat → Prod.{0, 0} Hibana.ActorProgressObservation Nat} {last : Hibana.DistributedSourceCut}
@@ -1350,6 +1413,48 @@ Hibana.EndpointDelegation.withOwner_same : ∀ (owners : Hibana.EndpointDelegati
           @Eq.{1} (List.{0} Hibana.SourceAcceptance) (Hibana.sourceChannelEntries receipts channel)
             (@List.take.{0} Hibana.SourceAcceptance (last.carriers channel).delivered
               (Hibana.sourceChannelEntries entries channel)))
+@Hibana.a_distributed_call_send_group_derives_its_accepted_source_word : ∀ {images : Nat → Hibana.RustDescriptorImage}
+  {choreo : Hibana.Choreo} {session actor : Nat} {group : Hibana.SourceOrderGroup (images actor) choreo}
+  {sourceRows : List.{0} Nat} {first last : Hibana.DistributedSourceCut}
+  {word : List.{0} Hibana.DistributedCallBoundary} {entries pending : List.{0} Hibana.SourceAcceptance}
+  {published : List.{0} (Prod.{0, 0} Hibana.SourceAcceptance Hibana.ActorCommitRecord)},
+  Hibana.DistributedCallExecution images choreo session first last word entries published pending →
+    (∀ (event : Nat),
+        @Membership.mem.{0, 0} Nat (List.{0} Nat) (@List.instMembership.{0} Nat)
+            (@Hibana.SourceOrderGroup.rows (images actor) choreo group) event →
+          @Eq.{1} Bool
+            ((@Prod.fst.{0, 0} Hibana.ActorProgressObservation Nat (first.actors actor)).doneState.done event) false) →
+      @Eq.{1} Bool (images actor).sourceRowIdentityCheck true →
+        (∀ (event : Nat),
+            @Membership.mem.{0, 0} Nat (List.{0} Nat) (@List.instMembership.{0} Nat)
+                (@Hibana.SourceOrderGroup.rows (images actor) choreo group) event →
+              @Eq.{1} (Option.{0} Hibana.EndpointDelegation.Side) ((images actor).sourceRowSide? event)
+                (@some.{0} Hibana.EndpointDelegation.Side Hibana.EndpointDelegation.Side.send)) →
+          ∀ (selected : Nat → Bool),
+            (∀ (owner row eff : Nat),
+                @Eq.{1} Nat (images owner).role owner →
+                  @LT.lt.{0} Nat instLTNat row (images owner).eventCount →
+                    @Eq.{1} (Option.{0} Nat) ((images owner).eventEffIndex? row) (@some.{0} Nat eff) →
+                      @Eq.{1} (Option.{0} Hibana.EndpointDelegation.Side) ((images owner).sourceRowSide? row)
+                          (@some.{0} Hibana.EndpointDelegation.Side Hibana.EndpointDelegation.Side.send) →
+                        @Eq.{1} Bool (selected eff)
+                          ((@BEq.beq.{0} Nat (@instBEqOfDecidableEq.{0} Nat instDecidableEqNat) owner actor).and
+                            (@decide
+                              (@Membership.mem.{0, 0} Nat (List.{0} Nat) (@List.instMembership.{0} Nat)
+                                (@Hibana.SourceOrderGroup.rows (images actor) choreo group) row)
+                              (@List.instDecidableMemOfLawfulBEq.{0} Nat
+                                (@instBEqOfDecidableEq.{0} Nat instDecidableEqNat) Nat.instLawfulBEq row
+                                (@Hibana.SourceOrderGroup.rows (images actor) choreo group))))) →
+              @Eq.{1} (List.{0} (Option.{0} Nat))
+                  (@List.map.{0, 0} Nat (Option.{0} Nat) (images actor).eventEffIndex?
+                    (@Hibana.SourceOrderGroup.rows (images actor) choreo group))
+                  (@List.map.{0, 0} Nat (Option.{0} Nat) (@some.{0} Nat) sourceRows) →
+                Hibana.sourceFrameWord sourceRows
+                  (@List.filterMap.{0, 0} Hibana.SourceAcceptance Nat
+                    (fun entry =>
+                      @ite.{1} (Option.{0} Nat) (@Eq.{1} Bool (selected entry.event) true)
+                        (instDecidableEqBool (selected entry.event) true) (@some.{0} Nat entry.event) (@none.{0} Nat))
+                    entries)
 @Hibana.a_distributed_call_source_group_counts_its_actual_sends_and_receives : ∀
   {images : Nat → Hibana.RustDescriptorImage} {choreo : Hibana.Choreo} {session actor : Nat}
   {group : Hibana.SourceOrderGroup (images actor) choreo} {first last : Hibana.DistributedSourceCut}
@@ -2634,6 +2739,157 @@ Hibana.a_pending_payload_requires_its_own_send : ∀ (resource : Nat) (sent : Op
                                 (@Hibana.SourceOrderGroup.rows (images actor) choreo group) actor records))
                             (@List.length.{0} Nat (@Hibana.SourceOrderGroup.rows (images actor) choreo group))))
                         (@some.{0} Nat event))
+@Hibana.a_prospective_call_head_matches_its_statically_classified_receiver : ∀
+  {images : Nat → Hibana.RustDescriptorImage} {choreo : Hibana.Choreo}
+  {session sender actor previousPath pathIndex event : Nat}
+  {initial : Nat → Prod.{0, 0} Hibana.ActorProgressObservation Nat} {last : Hibana.DistributedSourceCut}
+  {boundaries : List.{0} Hibana.DistributedCallBoundary} {entries pending : List.{0} Hibana.SourceAcceptance}
+  {published : List.{0} (Prod.{0, 0} Hibana.SourceAcceptance Hibana.ActorCommitRecord)}
+  {channel : Hibana.TransportChannel} {next : Hibana.TransportState} {frame : Hibana.TransportFrame}
+  {sentGroup : Hibana.SourceOrderGroup (images sender) choreo} {group : Hibana.SourceOrderGroup (images actor) choreo}
+  {sourceRows : List.{0} Nat} {base : Hibana.ActorProgressObservation} {data : Hibana.DecodedActorOrder}
+  {path : Hibana.EndpointDelegation.NormalizedPath} {row : Hibana.DecodedActorRow} (selected colors : Nat → Bool),
+  Hibana.DistributedCallExecution images choreo session (Hibana.DistributedSourceCut.initial initial) last boundaries
+      entries published pending →
+    (∀ (event : Nat),
+        @Membership.mem.{0, 0} Nat (List.{0} Nat) (@List.instMembership.{0} Nat)
+            (@Hibana.SourceOrderGroup.rows (images sender) choreo sentGroup) event →
+          @Eq.{1} Bool ((@Prod.fst.{0, 0} Hibana.ActorProgressObservation Nat (initial sender)).doneState.done event)
+            false) →
+      @Eq.{1} Bool (images sender).sourceRowIdentityCheck true →
+        (∀ (event : Nat),
+            @Membership.mem.{0, 0} Nat (List.{0} Nat) (@List.instMembership.{0} Nat)
+                (@Hibana.SourceOrderGroup.rows (images sender) choreo sentGroup) event →
+              @Eq.{1} (Option.{0} Hibana.EndpointDelegation.Side) ((images sender).sourceRowSide? event)
+                (@some.{0} Hibana.EndpointDelegation.Side Hibana.EndpointDelegation.Side.send)) →
+          (∀ (owner row eff : Nat),
+              @Eq.{1} Nat (images owner).role owner →
+                @LT.lt.{0} Nat instLTNat row (images owner).eventCount →
+                  @Eq.{1} (Option.{0} Nat) ((images owner).eventEffIndex? row) (@some.{0} Nat eff) →
+                    @Eq.{1} (Option.{0} Hibana.EndpointDelegation.Side) ((images owner).sourceRowSide? row)
+                        (@some.{0} Hibana.EndpointDelegation.Side Hibana.EndpointDelegation.Side.send) →
+                      @Eq.{1} Bool (selected eff)
+                        ((@BEq.beq.{0} Nat (@instBEqOfDecidableEq.{0} Nat instDecidableEqNat) owner sender).and
+                          (@decide
+                            (@Membership.mem.{0, 0} Nat (List.{0} Nat) (@List.instMembership.{0} Nat)
+                              (@Hibana.SourceOrderGroup.rows (images sender) choreo sentGroup) row)
+                            (@List.instDecidableMemOfLawfulBEq.{0} Nat
+                              (@instBEqOfDecidableEq.{0} Nat instDecidableEqNat) Nat.instLawfulBEq row
+                              (@Hibana.SourceOrderGroup.rows (images sender) choreo sentGroup))))) →
+            @Eq.{1} (List.{0} (Option.{0} Nat))
+                (@List.map.{0, 0} Nat (Option.{0} Nat) (images sender).eventEffIndex?
+                  (@Hibana.SourceOrderGroup.rows (images sender) choreo sentGroup))
+                (@List.map.{0, 0} Nat (Option.{0} Nat) (@some.{0} Nat) sourceRows) →
+              (∀ (owner row eff : Nat) (side : Hibana.EndpointDelegation.Side),
+                  @Eq.{1} Nat (images owner).role owner →
+                    @LT.lt.{0} Nat instLTNat row (images owner).eventCount →
+                      @Eq.{1} (Option.{0} Nat) ((images owner).eventEffIndex? row) (@some.{0} Nat eff) →
+                        @Eq.{1} (Option.{0} Hibana.EndpointDelegation.Side) ((images owner).sourceRowSide? row)
+                            (@some.{0} Hibana.EndpointDelegation.Side side) →
+                          @Eq.{1} Bool
+                            (@ite.{1} Bool
+                              (@Eq.{1} Hibana.EndpointDelegation.Side side Hibana.EndpointDelegation.Side.receive)
+                              (Hibana.EndpointDelegation.instDecidableEqSide side
+                                Hibana.EndpointDelegation.Side.receive)
+                              (selected eff) false)
+                            ((@BEq.beq.{0} Nat (@instBEqOfDecidableEq.{0} Nat instDecidableEqNat) owner actor).and
+                              (@decide
+                                (@Membership.mem.{0, 0} Nat (List.{0} Nat) (@List.instMembership.{0} Nat)
+                                  (@Hibana.SourceOrderGroup.rows (images actor) choreo group) row)
+                                (@List.instDecidableMemOfLawfulBEq.{0} Nat
+                                  (@instBEqOfDecidableEq.{0} Nat instDecidableEqNat) Nat.instLawfulBEq row
+                                  (@Hibana.SourceOrderGroup.rows (images actor) choreo group))))) →
+                (∀ (event : Nat),
+                    @Membership.mem.{0, 0} Nat (List.{0} Nat) (@List.instMembership.{0} Nat)
+                        (@Hibana.SourceOrderGroup.rows (images actor) choreo group) event →
+                      @Eq.{1} Bool
+                        ((@Prod.fst.{0, 0} Hibana.ActorProgressObservation Nat (initial actor)).doneState.done event)
+                        false) →
+                  @Eq.{1} (Option.{0} Hibana.DecodedActorOrder) ((images actor).decodeActorOrder? choreo)
+                      (@some.{0} Hibana.DecodedActorOrder data) →
+                    @Eq.{1} (Option.{0} Hibana.EndpointDelegation.NormalizedPath)
+                        (@getElem?.{0, 0, 0} (List.{0} Hibana.EndpointDelegation.NormalizedPath) Nat
+                          Hibana.EndpointDelegation.NormalizedPath
+                          (fun as i =>
+                            @LT.lt.{0} Nat instLTNat i (@List.length.{0} Hibana.EndpointDelegation.NormalizedPath as))
+                          (@List.instGetElem?NatLtLength.{0} Hibana.EndpointDelegation.NormalizedPath)
+                          data.normalized.paths pathIndex)
+                        (@some.{0} Hibana.EndpointDelegation.NormalizedPath path) →
+                      @Eq.{1} (Option.{0} Hibana.DecodedActorRow)
+                          (@getElem?.{0, 0, 0} (List.{0} Hibana.DecodedActorRow) Nat Hibana.DecodedActorRow
+                            (fun as i => @LT.lt.{0} Nat instLTNat i (@List.length.{0} Hibana.DecodedActorRow as))
+                            (@List.instGetElem?NatLtLength.{0} Hibana.DecodedActorRow) data.rows event)
+                          (@some.{0} Hibana.DecodedActorRow row) →
+                        @Membership.mem.{0, 0} Hibana.DecodedActorRow (List.{0} Hibana.DecodedActorRow)
+                            (@List.instMembership.{0} Hibana.DecodedActorRow) (data.activeRows path) row →
+                          @Eq.{1} Bool (Hibana.sourceRowReady data path base row) true →
+                            Hibana.ActorSourceCandidateBase
+                                { snapshot := @Prod.fst.{0, 0} Hibana.ActorProgressObservation Nat (last.actors actor),
+                                  pathIndex := pathIndex, admitted := @List.nil.{0} Bool }
+                                (images actor) choreo previousPath path row base →
+                              @Membership.mem.{0, 0} Nat (List.{0} Nat) (@List.instMembership.{0} Nat)
+                                  (@Hibana.SourceOrderGroup.rows (images actor) choreo group) event →
+                                @Eq.{1} Hibana.TransportPoll (last.carriers channel).pollReceive
+                                    (Hibana.TransportPoll.delivered frame next) →
+                                  (∀ (entry : Hibana.SourceAcceptance),
+                                      @Membership.mem.{0, 0} Hibana.SourceAcceptance (List.{0} Hibana.SourceAcceptance)
+                                          (@List.instMembership.{0} Hibana.SourceAcceptance) entries entry →
+                                        @Eq.{1} Bool
+                                          ((@decide (@Eq.{1} Hibana.TransportChannel entry.channel channel)
+                                                (Hibana.instDecidableEqTransportChannel entry.channel channel)).and
+                                            (colors entry.sample.wire.frameLabel))
+                                          (selected entry.event)) →
+                                    @Eq.{1} Bool
+                                        (colors
+                                          (@Fin.val (@OfNat.ofNat.{0} Nat (nat_lit 256) (instOfNatNat (nat_lit 256)))
+                                            frame.frameLabel))
+                                        true →
+                                      @Eq.{1} (List.{0} (Option.{0} Nat))
+                                          (@List.map.{0, 0} Nat (Option.{0} Nat) (@some.{0} Nat) sourceRows)
+                                          (@List.map.{0, 0} Nat (Option.{0} Nat) (images actor).eventEffIndex?
+                                            (@Hibana.SourceOrderGroup.rows (images actor) choreo group)) →
+                                        @Exists.{1} Hibana.SourceSendAdmission fun sample =>
+                                          @Exists.{1} Nat fun source =>
+                                            @Exists.{1} Hibana.ElasticAdmissionHistory fun history =>
+                                              @Exists.{1} Hibana.ElasticOccurrenceKey fun key =>
+                                                And
+                                                  (Hibana.SendAdmissionTrace choreo session (last.carriers channel)
+                                                    history (Hibana.sourceChannelRecords entries channel))
+                                                  (And
+                                                    (@Eq.{1} (Option.{0} Hibana.ElasticOccurrenceKey)
+                                                      (@getElem?.{0, 0, 0} (List.{0} Hibana.ElasticOccurrenceKey) Nat
+                                                        Hibana.ElasticOccurrenceKey
+                                                        (fun as i =>
+                                                          @LT.lt.{0} Nat instLTNat i
+                                                            (@List.length.{0} Hibana.ElasticOccurrenceKey as))
+                                                        (@List.instGetElem?NatLtLength.{0} Hibana.ElasticOccurrenceKey)
+                                                        history.accepted (last.carriers channel).delivered)
+                                                      (@some.{0} Hibana.ElasticOccurrenceKey key))
+                                                    (And
+                                                      (@Eq.{1} (Option.{0} (Prod.{0, 0} Hibana.SourceSendAdmission Nat))
+                                                        (@getElem?.{0, 0, 0}
+                                                          (List.{0} (Prod.{0, 0} Hibana.SourceSendAdmission Nat)) Nat
+                                                          (Prod.{0, 0} Hibana.SourceSendAdmission Nat)
+                                                          (fun as i =>
+                                                            @LT.lt.{0} Nat instLTNat i
+                                                              (@List.length.{0}
+                                                                (Prod.{0, 0} Hibana.SourceSendAdmission Nat) as))
+                                                          (@List.instGetElem?NatLtLength.{0}
+                                                            (Prod.{0, 0} Hibana.SourceSendAdmission Nat))
+                                                          (Hibana.sourceChannelRecords entries channel)
+                                                          (last.carriers channel).delivered)
+                                                        (@some.{0} (Prod.{0, 0} Hibana.SourceSendAdmission Nat)
+                                                          (@Prod.mk.{0, 0} Hibana.SourceSendAdmission Nat sample
+                                                            source)))
+                                                      (And (@Eq.{1} Bool (sample.check choreo session) true)
+                                                        (And
+                                                          (@Eq.{1} (Option.{0} Nat) sample.effIndex?
+                                                            (@some.{0} Nat source))
+                                                          (And (sample.wire.identifies frame)
+                                                            (And (@Eq.{1} Nat key.globalId source)
+                                                              (@Eq.{1} (Option.{0} Nat)
+                                                                ((images actor).eventEffIndex? event)
+                                                                (@some.{0} Nat source))))))))
 @Hibana.a_prospective_call_port_head_has_its_actual_source_class_position : ∀
   {images : Nat → Hibana.RustDescriptorImage} {choreo : Hibana.Choreo} {session : Nat}
   {initial : Nat → Prod.{0, 0} Hibana.ActorProgressObservation Nat} {last : Hibana.DistributedSourceCut}

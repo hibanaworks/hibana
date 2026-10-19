@@ -361,4 +361,74 @@ theorem a_prospective_call_source_word_head_matches_its_prepared_receiver
   have matched := source_frame_words_match_at_each_common_class_position cycle sentOrdered receiverOrdered nextAt receiverAt
   exact ⟨sample, source, history, key, trace, keyAt, recordAt, checked, sourceAt, identity, keySource, matched.symm⟩
 
+/-- Derive the prospective head/receiver source match without assuming the
+accepted word is ordered or supplying a trace-dependent receipt count. Both
+come from the same asynchronous execution and immutable row classifications.
+
+This composition identifies one sending group with one receiving group. Other
+independent work, overlapping calls and holder changes remain in the history;
+combining a selector spread over several physical-holder groups is a further
+custody/continuity obligation. No shared visit or current pair is assumed. -/
+theorem a_prospective_call_head_matches_its_statically_classified_receiver
+    {images : Nat → RustDescriptorImage} {choreo : Choreo}
+    {session sender actor previousPath pathIndex event : Nat}
+    {initial : Nat → ActorProgressObservation × Nat} {last : DistributedSourceCut}
+    {boundaries : List DistributedCallBoundary} {entries pending : List SourceAcceptance}
+    {published : List (SourceAcceptance × ActorCommitRecord)} {channel : TransportChannel}
+    {next : TransportState} {frame : TransportFrame}
+    {sentGroup : SourceOrderGroup (images sender) choreo}
+    {group : SourceOrderGroup (images actor) choreo} {sourceRows : List Nat}
+    {base : ActorProgressObservation} {data : DecodedActorOrder} {path : NormalizedPath} {row : DecodedActorRow}
+    (selected colors : Nat → Bool)
+    (execution : DistributedCallExecution images choreo session
+      (.initial initial) last boundaries entries published pending)
+    (emptySent : ∀ event ∈ sentGroup.rows, (initial sender).1.doneState.done event = false)
+    (distinctSent : (images sender).sourceRowIdentityCheck = true)
+    (sending : ∀ event ∈ sentGroup.rows, (images sender).sourceRowSide? event = some .send)
+    (sendClassifies : ∀ owner row eff, (images owner).role = owner → row < (images owner).eventCount →
+      (images owner).eventEffIndex? row = some eff → (images owner).sourceRowSide? row = some .send →
+      selected eff = (owner == sender && decide (row ∈ sentGroup.rows)))
+    (sentCycle : sentGroup.rows.map (images sender).eventEffIndex? = sourceRows.map some)
+    (receiveClassifies : ∀ owner row eff side, (images owner).role = owner → row < (images owner).eventCount →
+      (images owner).eventEffIndex? row = some eff → (images owner).sourceRowSide? row = some side →
+      (if side = .receive then selected eff else false) = (owner == actor && decide (row ∈ group.rows)))
+    (empty : ∀ event ∈ group.rows, (initial actor).1.doneState.done event = false)
+    (decoded : (images actor).decodeActorOrder? choreo = some data)
+    (pathAt : data.normalized.paths[pathIndex]? = some path)
+    (rowAt : data.rows[event]? = some row)
+    (active : row ∈ data.activeRows path) (ready : sourceRowReady data path base row = true)
+    (origin : ActorSourceCandidateBase
+      { snapshot := (last.actors actor).1, pathIndex, admitted := [] }
+      (images actor) choreo previousPath path row base)
+    (member : event ∈ group.rows)
+    (received : (last.carriers channel).pollReceive = .delivered frame next)
+    (portClassifies : ∀ entry ∈ entries,
+      (decide (entry.channel = channel) && colors entry.sample.wire.frameLabel) = selected entry.event)
+    (visible : colors frame.frameLabel.val = true)
+    (cycle : sourceRows.map some = group.rows.map (images actor).eventEffIndex?) :
+    ∃ sample source history key,
+      SendAdmissionTrace choreo session (last.carriers channel) history (sourceChannelRecords entries channel) ∧
+      history.accepted[(last.carriers channel).delivered]? = some key ∧
+      (sourceChannelRecords entries channel)[(last.carriers channel).delivered]? = some (sample, source) ∧
+      sample.check choreo session = true ∧ sample.effIndex? = some source ∧
+      sample.wire.identifies frame ∧ key.globalId = source ∧
+      (images actor).eventEffIndex? event = some source := by
+  have sentOrdered := a_distributed_call_send_group_derives_its_accepted_source_word
+    execution emptySent distinctSent sending selected sendClassifies sentCycle
+  have receiptCount := a_distributed_call_receipt_source_count_has_its_static_row_classification execution selected
+    (fun owner row => owner == actor && decide (row ∈ group.rows)) receiveClassifies
+  have exactLength : (boundaries.filterMap DistributedCallBoundary.record?).countP
+      (fun entry => entry.1 == actor && decide (entry.2.step.event ∈ group.rows)) =
+        (committedFrameClassWord group.rows actor (boundaries.filterMap DistributedCallBoundary.record?)).length := by
+    generalize recordsAt : boundaries.filterMap DistributedCallBoundary.record? = records
+    simp only [committedFrameClassWord, List.length_filterMap_eq_countP]
+    apply List.countP_congr
+    intro entry member
+    by_cases owns : entry.1 = actor <;> by_cases inside : entry.2.step.event ∈ group.rows <;>
+      simp [owns, inside]
+  rw [exactLength] at receiptCount
+  exact a_prospective_call_source_word_head_matches_its_prepared_receiver
+    selected colors execution empty decoded pathAt rowAt active ready origin member received
+      portClassifies visible cycle sentOrdered receiptCount
+
 end Hibana

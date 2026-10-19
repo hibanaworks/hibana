@@ -1000,4 +1000,225 @@ theorem a_distributed_call_source_group_counts_its_actual_sends_and_receives
   exact ⟨fun _ member sideAt => a_call_word_counts_each_actual_send_row execution group.rows member sideAt,
     fun _ _ sideAt => a_call_word_counts_each_actual_receive_row execution group.rows sideAt⟩
 
+private theorem a_call_execution_logs_its_checked_actor_images
+    {images : Nat → RustDescriptorImage} {choreo : Choreo} {session : Nat}
+    {first last : DistributedSourceCut} {word : List DistributedCallBoundary}
+    {entries pending : List SourceAcceptance} {published : List (SourceAcceptance × ActorCommitRecord)}
+    (execution : DistributedCallExecution images choreo session first last word entries published pending) :
+    ∀ entry ∈ word.filterMap DistributedCallBoundary.record?,
+      (images entry.1).role = entry.1 ∧ entry.2.check (images entry.1) choreo session = true := by
+  induction execution with
+  | refl => simp
+  | quiet history checked ih =>
+    simpa [List.filterMap_append, DistributedCallBoundary.record?] using ih
+  | accept history imageAt checked decoded pathAt rowAt prepared slotFree freshWitness sourceAt accepted identity ih =>
+    simpa [List.filterMap_append, DistributedCallBoundary.record?] using ih
+  | @publish cut word entries published left right actor after cleared record sentEntry
+      history actorAt paired committed ih =>
+    intro entry member
+    simp only [List.filterMap_append, DistributedCallBoundary.record?, List.filterMap_cons,
+      List.filterMap_nil, List.mem_append, List.mem_singleton] at member
+    rcases member with earlier | current
+    · exact ih entry earlier
+    · subst entry
+      have source := a_distributed_call_execution_retains_each_accepted_source history sentEntry
+        ((a_distributed_call_execution_partitions_its_actual_acceptances history).1.mem_iff.mpr
+          (List.mem_append.mpr (.inr (by simp))))
+      have roleAt := (congrArg RustDescriptorImage.role source.1).symm
+      exact ⟨by simpa only [actorAt] using roleAt,
+        (a_measured_commit_retains_its_checked_source_and_wire committed).1⟩
+  | localCommit history actorRole localAt committed ih =>
+    intro entry member
+    simp only [List.filterMap_append, DistributedCallBoundary.record?, List.filterMap_cons,
+      List.filterMap_nil, List.mem_append, List.mem_singleton] at member
+    rcases member with earlier | current
+    · exact ih entry earlier
+    · subst entry
+      exact ⟨actorRole, (a_measured_commit_retains_its_checked_source_and_wire committed).1⟩
+  | receive history actorRole received entryAt identity paired committed ih =>
+    intro entry member
+    simp only [List.filterMap_append, DistributedCallBoundary.record?, List.filterMap_cons,
+      List.filterMap_nil, List.mem_append, List.mem_singleton] at member
+    rcases member with earlier | current
+    · exact ih entry earlier
+    · subst entry
+      exact ⟨actorRole, (a_measured_commit_retains_its_checked_source_and_wire committed).1⟩
+
+/-- Count past receipts directly from checked records of the asynchronous
+chronology and a finite immutable row classification. The classifier includes
+every row and maps non-receiving rows to false; it contains no trace order or
+prospective receive-pair assumption. Ordinary and owned messages count alike. -/
+theorem a_distributed_call_receipt_source_count_has_its_static_row_classification
+    {images : Nat → RustDescriptorImage} {choreo : Choreo} {session : Nat}
+    {first last : DistributedSourceCut} {word : List DistributedCallBoundary}
+    {entries pending : List SourceAcceptance} {published : List (SourceAcceptance × ActorCommitRecord)}
+    (execution : DistributedCallExecution images choreo session first last word entries published pending)
+    (selectedSource : Nat → Bool) (selectedRow : Nat → Nat → Bool)
+    (classifies : ∀ actor row eff side, (images actor).role = actor → row < (images actor).eventCount →
+      (images actor).eventEffIndex? row = some eff → (images actor).sourceRowSide? row = some side →
+      (if side = .receive then selectedSource eff else false) = selectedRow actor row) :
+    (receivedSourceWord images choreo (word.filterMap DistributedCallBoundary.record?)).countP selectedSource =
+      (word.filterMap DistributedCallBoundary.record?).countP (fun entry => selectedRow entry.1 entry.2.step.event) := by
+  have checked := a_call_execution_logs_its_checked_actor_images execution
+  generalize recordAt : word.filterMap DistributedCallBoundary.record? = records at checked ⊢
+  simp only [receivedSourceWord, List.countP_filterMap]
+  apply List.countP_congr
+  intro entry present
+  have facts := checked entry present
+  obtain ⟨eff, binding, side, identity⟩ := checked_record_has_its_source_identity facts.2
+  have columns := a_source_identity_has_its_actual_row_columns identity
+  have classified := classifies entry.1 entry.2.step.event eff side facts.1 columns.1 columns.2.1 columns.2.2
+  cases side <;> simp only [identity, reduceCtorEq, if_false, if_true, Option.map_none,
+    Option.map_some, Option.getD_none, Option.getD_some] at classified ⊢ <;>
+      simp only [← classified, Bool.false_eq_true, iff_self]
+
+private theorem a_call_word_selects_its_actual_send_rows
+    {images : Nat → RustDescriptorImage} {choreo : Choreo} {session actor : Nat}
+    {first last : DistributedSourceCut} {word : List DistributedCallBoundary}
+    {entries pending : List SourceAcceptance} {published : List (SourceAcceptance × ActorCommitRecord)}
+    (execution : DistributedCallExecution images choreo session first last word entries published pending)
+    (rows : List Nat) (sending : ∀ event ∈ rows, (images actor).sourceRowSide? event = some .send) :
+    callLogicalWord rows actor word = (actorAcceptedSends entries actor).filterMap
+      (fun entry => if entry.sample.event ∈ rows then some entry.sample.event else none) := by
+  induction execution with
+  | refl => simp [callLogicalWord, actorAcceptedSends]
+  | quiet history checked ih =>
+    simpa [call_logical_word_append, DistributedCallBoundary.sourceLetter?] using ih
+  | @accept cut word entries published pending sample channel sent sourceEvent previousPath witness label
+      data path row history imageAt checked decoded pathAt rowAt prepared slotFree freshWitness sourceAt accepted identity ih =>
+    rw [call_logical_word_append]
+    by_cases owns : sample.image.role = actor <;> by_cases member : sample.event ∈ rows <;>
+      simpa [DistributedCallBoundary.sourceLetter?, actorAcceptedSends, List.filter_append,
+        List.filterMap_append, owns, member] using ih
+  | publish history actorAt paired committed ih =>
+    simpa [call_logical_word_append, DistributedCallBoundary.sourceLetter?] using ih
+  | @localCommit cut word entries published pending changed after cleared record eff binding
+      history actorRole localAt committed ih =>
+    rw [call_logical_word_append]
+    by_cases sameActor : changed = actor
+    · subst changed
+      have outside : record.step.event ∉ rows := by
+        intro member
+        have sideAt := (a_source_identity_has_its_actual_row_columns localAt).2.2
+        rw [sending _ member] at sideAt
+        cases Option.some.inj sideAt
+      simpa [DistributedCallBoundary.sourceLetter?, outside] using ih
+    · simpa [DistributedCallBoundary.sourceLetter?, sameActor] using ih
+  | @receive cut word entries published pending changed channel nextState frame after cleared record sentEntry witness
+      history actorRole received entryAt identity paired committed ih =>
+    rw [call_logical_word_append]
+    by_cases sameActor : changed = actor
+    · subst changed
+      have outside : record.step.event ∉ rows := by
+        intro member
+        obtain ⟨_, _, _, _, receiveIdentity⟩ := a_corresponding_receive_pair_has_its_original_source_halves paired
+        have sideAt := (a_source_identity_has_its_actual_row_columns receiveIdentity).2.2
+        rw [sending _ member] at sideAt
+        cases Option.some.inj sideAt
+      simpa [DistributedCallBoundary.sourceLetter?, outside] using ih
+    · simpa [DistributedCallBoundary.sourceLetter?, sameActor] using ih
+
+private theorem an_exact_partial_map_preserves_a_source_word
+    {rows word sourceRows sourceWord : List Nat} {source : Nat → Option Nat}
+    (ordered : sourceFrameWord rows word)
+    (rowMap : rows.map source = sourceRows.map some)
+    (wordMap : word.map source = sourceWord.map some) :
+    sourceFrameWord sourceRows sourceWord := by
+  have rowLength := congrArg List.length rowMap
+  simp only [List.length_map] at rowLength
+  intro index event atEvent
+  have mapped : (word.map source)[index]? = some (some event) := by
+    rw [wordMap]
+    simp only [List.getElem?_map, atEvent, Option.map_some]
+  cases rowAt : word[index]? with
+  | none => simp only [List.getElem?_map, rowAt, Option.map_none] at mapped; contradiction
+  | some row =>
+    have sourceAt : source row = some event := by
+      simpa only [List.getElem?_map, rowAt, Option.map_some, Option.some.injEq] using mapped
+    have position := ordered index row rowAt
+    have mappedRow : (rows.map source)[index % rows.length]? = some (some event) := by
+      simp only [List.getElem?_map, position, Option.map_some, sourceAt]
+    rw [rowMap, rowLength] at mappedRow
+    cases nextAt : sourceRows[index % sourceRows.length]? with
+    | none => simp only [List.getElem?_map, nextAt, Option.map_none] at mappedRow; contradiction
+    | some actual =>
+      have same : actual = event := by
+        simpa only [List.getElem?_map, nextAt, Option.map_some, Option.some.injEq] using mappedRow
+      simp only [same]
+
+/-- A sending group's actual accepted source occurrences follow the immutable
+source cycle. The accepted word is derived from the chronology, not assumed
+to be ordered. Classification is over finite source columns of every actor;
+it identifies this selector with this sending group and contains no visits,
+trace positions, whole-actor stamps or prospective receive-pair premise. -/
+theorem a_distributed_call_send_group_derives_its_accepted_source_word
+    {images : Nat → RustDescriptorImage} {choreo : Choreo} {session actor : Nat}
+    {group : SourceOrderGroup (images actor) choreo} {sourceRows : List Nat}
+    {first last : DistributedSourceCut} {word : List DistributedCallBoundary}
+    {entries pending : List SourceAcceptance} {published : List (SourceAcceptance × ActorCommitRecord)}
+    (execution : DistributedCallExecution images choreo session first last word entries published pending)
+    (initial : ∀ event ∈ group.rows, (first.actors actor).1.doneState.done event = false)
+    (distinct : (images actor).sourceRowIdentityCheck = true)
+    (sending : ∀ event ∈ group.rows, (images actor).sourceRowSide? event = some .send)
+    (selected : Nat → Bool)
+    (classifies : ∀ owner row eff, (images owner).role = owner → row < (images owner).eventCount →
+      (images owner).eventEffIndex? row = some eff → (images owner).sourceRowSide? row = some .send →
+      selected eff = (owner == actor && decide (row ∈ group.rows)))
+    (cycle : group.rows.map (images actor).eventEffIndex? = sourceRows.map some) :
+    sourceFrameWord sourceRows
+      (entries.filterMap fun entry => if selected entry.event then some entry.event else none) := by
+  have ordered := a_distributed_call_execution_has_its_acceptance_inclusive_source_group_word execution initial distinct
+  change sourceFrameWord group.rows (callLogicalWord group.rows actor word) at ordered
+  rw [a_call_word_selects_its_actual_send_rows execution group.rows sending] at ordered
+  apply an_exact_partial_map_preserves_a_source_word ordered cycle
+  simp only [List.map_filterMap, actorAcceptedSends, List.filterMap_filter]
+  have mapped : entries.map (fun entry =>
+      if entry.sample.image.role == actor then
+        (if entry.sample.event ∈ group.rows then some entry.sample.event else none).map (images actor).eventEffIndex?
+      else none) = entries.map (fun entry =>
+        (if selected entry.event then some entry.event else none).map some) := by
+    apply List.map_congr_left
+    intro entry member
+    have facts := a_distributed_call_execution_retains_each_accepted_source execution entry member
+    obtain ⟨binding, identity⟩ := a_checked_source_send_has_its_sending_identity facts.2.1 facts.2.2
+    have columns := a_source_identity_has_its_actual_row_columns identity
+    have roleAt := (congrArg RustDescriptorImage.role facts.1).symm
+    rw [facts.1] at columns
+    have classified := classifies entry.sample.image.role entry.sample.event entry.event roleAt
+      columns.1 columns.2.1 columns.2.2
+    by_cases owns : entry.sample.image.role = actor
+    · rw [owns] at columns
+      by_cases inside : entry.sample.event ∈ group.rows <;>
+        simp [classified, owns, inside, columns.2.1]
+    · simp [classified, owns]
+  have result := congrArg (List.filterMap id) mapped
+  simpa only [List.filterMap_map, Function.comp_def, id_eq, apply_ite, Option.map_none, Option.map_some] using result
+
+/-- Classify actual physical acceptances by immutable source rows. This covers
+arbitrary predicates and any set of physical actors, without a common visit or
+sender-publication requirement. It does not classify frames from payload bytes. -/
+theorem a_distributed_call_acceptance_predicate_has_its_static_row_classification
+    {images : Nat → RustDescriptorImage} {choreo : Choreo} {session : Nat}
+    {first last : DistributedSourceCut} {word : List DistributedCallBoundary}
+    {entries pending : List SourceAcceptance} {published : List (SourceAcceptance × ActorCommitRecord)}
+    (execution : DistributedCallExecution images choreo session first last word entries published pending)
+    (selectedSource : Nat → Bool) (selectedRow : Nat → Nat → Bool)
+    (classifies : ∀ owner row eff, (images owner).role = owner → row < (images owner).eventCount →
+      (images owner).eventEffIndex? row = some eff → (images owner).sourceRowSide? row = some .send →
+      selectedSource eff = selectedRow owner row) :
+    (entries.map SourceAcceptance.event).countP selectedSource =
+      entries.countP (fun entry => selectedRow entry.sample.image.role entry.sample.event) := by
+  simp only [List.countP_map]
+  apply List.countP_congr
+  intro entry member
+  have facts := a_distributed_call_execution_retains_each_accepted_source execution entry member
+  obtain ⟨binding, identity⟩ := a_checked_source_send_has_its_sending_identity facts.2.1 facts.2.2
+  have columns := a_source_identity_has_its_actual_row_columns identity
+  have roleAt := (congrArg RustDescriptorImage.role facts.1).symm
+  rw [facts.1] at columns
+  have classified := classifies entry.sample.image.role entry.sample.event entry.event roleAt
+    columns.1 columns.2.1 columns.2.2
+  change selectedSource entry.event = true ↔ selectedRow entry.sample.image.role entry.sample.event = true
+  rw [classified]
+
 end Hibana

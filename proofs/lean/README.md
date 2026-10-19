@@ -1087,12 +1087,30 @@ successful after-snapshot. Static selector/cycle classification and accepted
 word/count invariants remain explicit inputs to that last composition; deriving
 them for all generated classes and physical-holder changes is still required.
 
+For one statically classified sending/receiving group pair,
+`a_prospective_call_head_matches_its_statically_classified_receiver` now derives
+the accepted word order and exact receipt count from the execution. They are
+not trace-dependent inputs to that composition. The sending word is the actual
+acceptance subsequence mapped through the immutable source columns; receipt
+classification counts every checked actor record, including ordinary messages.
+The predicate bound in `SourceHandoffWord.lean` applies to all physical directions
+and holders. A selector spread over several holder groups still needs its
+custody/continuity composition, and the opened-port/color classification remains
+an explicit binding premise.
+
 General Rust call-slot extraction, custody, full logical simulation, actual
 enabled-step lifting, and fault/closure composition remain completion work. The older
 `DistributedSourceExecution` lemmas still describe their explicitly restricted
 publication window; they are not used as evidence that this general refinement
 is finished. No new network fixture or Rust runtime restriction was added for
 the chronological model.
+
+At the public-call boundary, the current `ActorViewObservation.operation` field
+copies the view's **primary** operation slot. It is not a complete snapshot of
+the independent slots used by `par()`. Lifting must cover every resident lane
+slot and its originating future/borrow; a primary-slot phase alone cannot prove
+that the other lanes are idle or identify their calls. This is an observation
+and correspondence gap, not evidence that the runtime serializes those lanes.
 
 `ActorVisitProgress.lean` derives the finite point domain from the selected
 source bindings, with the path itself checked against the normalized global.

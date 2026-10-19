@@ -144,7 +144,8 @@ pub(crate) struct ViewSnapshot {
     pub(crate) role: u8,
     pub(crate) run: u32,
     pub(crate) nonce: u32,
-    /// Debug spelling of the existing kernel phase, serialized to Lean only.
+    /// Debug spelling of the view's primary operation phase, serialized to Lean
+    /// only. Parallel lane slots require their own call-coverage observations.
     pub(crate) operation: std::string::String,
 }
 
