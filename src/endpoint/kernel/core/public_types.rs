@@ -33,6 +33,7 @@ where
 #[repr(C)]
 pub(crate) struct ResidentView<'r, T: Transport + 'r> {
     pub(crate) public_header: crate::endpoint::carrier::KernelEndpointHeader,
+    pub(in crate::endpoint::kernel) primary_lane: usize,
     pub(crate) retired_next: core::cell::Cell<Option<core::ptr::NonNull<ResidentView<'r, T>>>>,
     pub(crate) io: core::cell::UnsafeCell<EndpointIo<'r, T>>,
     pub(in crate::endpoint::kernel) operations: LaneSlotArray<ResidentOperation<'r>>,
@@ -93,13 +94,7 @@ impl<'r, T: Transport + 'r> ResidentView<'r, T> {
     }
 
     pub(crate) fn primary_operation(&self) -> &ResidentOperation<'r> {
-        crate::invariant_some(self.operation(self.primary_operation_lane()))
-    }
-
-    pub(super) fn primary_operation_lane(&self) -> usize {
-        // SAFETY: primary_lane is fixed when this view is initialized. Reading
-        // this scalar does not borrow its ports or operation-state owners.
-        unsafe { core::ptr::addr_of!((*self.io.get()).primary_lane).read() }
+        crate::invariant_some(self.operation(self.primary_lane))
     }
 }
 
@@ -182,8 +177,6 @@ pub(crate) struct EndpointIo<'r, T: Transport + 'r> {
     pub(in crate::endpoint::kernel) ports: LaneSlotArray<Port<'r, T>>,
     /// Multi-lane guard array. Each active lane has its own guard.
     pub(in crate::endpoint::kernel) guards: LaneSlotArray<LaneGuard<'r, T>>,
-    /// Primary lane index (first live application lane, not always lane 0).
-    pub(crate) primary_lane: usize,
 }
 
 pub(crate) struct OperationIo<'r> {
@@ -205,7 +198,7 @@ pub(crate) struct OperationKernel<'op, 'r, T: Transport + 'r> {
     pub(crate) io: &'op mut EndpointIo<'r, T>,
     pub(crate) operation: &'op mut OperationIo<'r>,
     pub(in crate::endpoint::kernel) operations: &'op LaneSlotArray<ResidentOperation<'r>>,
-    pub(super) views: &'op ActorViews<'r, T>,
+    pub(in crate::endpoint::kernel) views: &'op ActorViews<'r, T>,
     pub(crate) region: crate::endpoint::carrier::OperationRegion,
 }
 
@@ -309,9 +302,7 @@ impl<'r, T: Transport + 'r> ResidentActor<'r, T> {
         // RefMut protects it during normal polls and callback-driven Drop.
         let mut progress =
             core::cell::RefMut::map(progress, |progress| unsafe { progress.assume_init_mut() });
-        // SAFETY: this immutable scalar was initialized before publication.
-        let primary = unsafe { core::ptr::addr_of!((*view.io.get()).primary_lane).read() };
-        let operation = crate::invariant_some(view.operation(region.lane(primary)));
+        let operation = crate::invariant_some(view.operation(region.lane(view.primary_lane)));
         let mut kernel = OperationKernel {
             public_header: &view.public_header,
             waiter: &operation.waiter,

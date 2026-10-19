@@ -192,7 +192,7 @@ where
             if view_primary >= logical_lane_count {
                 crate::invariant();
             }
-            ::core::ptr::addr_of_mut!((*io).primary_lane).write(view_primary);
+            ::core::ptr::addr_of_mut!((*view).primary_lane).write(view_primary);
             if role == initial_role && !(*view).public_header.issue_initial(1) {
                 crate::invariant();
             }

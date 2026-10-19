@@ -19,8 +19,7 @@ impl<'r, T: Transport + 'r> ResidentActor<'r, T> {
         {
             crate::invariant();
         }
-        let operation =
-            crate::invariant_some(view.operation(region.lane(view.primary_operation_lane())));
+        let operation = crate::invariant_some(view.operation(region.lane(view.primary_lane)));
         let retired = RetiredOperation {
             role: view.public_header.role(),
             region,

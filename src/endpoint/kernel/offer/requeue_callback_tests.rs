@@ -180,7 +180,11 @@ fn transport_requeue_callback_reentry_revalidates_generation() {
         actor.views.get(1).unwrap(),
         crate::endpoint::carrier::OperationRegion::WHOLE,
         |kernel| {
-            let lane_idx = kernel.io.primary_lane;
+            let lane_idx = kernel
+                .views
+                .get(kernel.public_header.role())
+                .unwrap()
+                .primary_lane;
             let lane_wire = kernel.port_for_lane(lane_idx).lane().as_wire();
             let mut pending_recv = lane_port::PendingRecv::new();
             let waker = futures::task::noop_waker_ref();
