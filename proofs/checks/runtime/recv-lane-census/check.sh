@@ -8,6 +8,7 @@ lean --version | bash "$(cd "$(dirname "$0")/../../../.." && pwd)/.github/script
 lean "$proof_dir/Census.lean" 2>&1 | tee "$proof_evidence/lean.log"
 cat > "$proof_evidence/lean.expected" <<'EOF'
 'Hibana.RecvLaneCensus.fold_exact' depends on axioms: [propext]
+'Hibana.RecvLaneCensus.adopted_lane_needs_no_further_eligibility' depends on axioms: [propext, Quot.sound]
 'Hibana.RecvLaneCensus.census_exact' depends on axioms: [propext]
 'Hibana.RecvLaneCensus.ordered_transport_polls_agree' depends on axioms: [propext, Quot.sound]
 'Hibana.RecvLaneCensus.census_has_actual_eligible_row' depends on axioms: [propext, Quot.sound]
@@ -15,6 +16,6 @@ cat > "$proof_evidence/lean.expected" <<'EOF'
 EOF
 diff -u "$proof_evidence/lean.expected" "$proof_evidence/lean.log"
 z3 "$proof_dir/Census.smt2" | tee "$proof_evidence/z3.log"
-printf 'unsat\nunsat\nunsat\nunsat\nunsat\nsat\n' > "$proof_evidence/z3.expected"
+printf 'unsat\nunsat\nunsat\nunsat\nunsat\nunsat\nsat\n' > "$proof_evidence/z3.expected"
 diff -u "$proof_evidence/z3.expected" "$proof_evidence/z3.log"
-printf 'Receive lane census passed: 5 Lean theorems; Z3 5 UNSAT and 1 SAT witness. Logs: %s\n' "$proof_evidence"
+printf 'Receive lane census passed: 6 Lean theorems; Z3 6 UNSAT and 1 SAT witness. Logs: %s\n' "$proof_evidence"

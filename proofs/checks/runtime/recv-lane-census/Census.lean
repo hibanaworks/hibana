@@ -18,6 +18,15 @@ def insert (lanes : Nat → Bool) (row : Row) : Nat → Bool :=
 def census (rows : List Row) : Nat → Bool :=
   rows.foldl insert (fun _ => false)
 
+theorem adopted_lane_needs_no_further_eligibility
+    (lanes : Nat → Bool) (row : Row) (present : lanes row.lane = true) :
+    insert lanes row = lanes := by
+  funext lane
+  by_cases same : row.lane = lane
+  · subst lane
+    simp [insert, hit, present]
+  · simp [insert, hit, same]
+
 theorem fold_exact (rows : List Row) (initial : Nat → Bool) (lane : Nat) :
     (rows.foldl insert initial) lane =
       (initial lane || rows.any (fun row => hit row lane)) := by
@@ -55,6 +64,7 @@ theorem wire_lane_word_bounds (lane : Nat) (bounded : lane < 256) :
   · simpa [Nat.mul_comm] using Nat.mod_add_div lane 32
 
 #print axioms fold_exact
+#print axioms adopted_lane_needs_no_further_eligibility
 #print axioms census_exact
 #print axioms ordered_transport_polls_agree
 #print axioms census_has_actual_eligible_row

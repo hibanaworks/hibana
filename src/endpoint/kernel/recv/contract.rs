@@ -54,6 +54,15 @@ where
             .receive_candidates(self.public_header.role(), target_label)
         {
             // The checked immutable index already binds role and logical label.
+            let lane = usize::from(crate::invariant_some(
+                self.progress.cursor.event_lane_at(idx),
+            ));
+            let (word, bit) = lane_word_index(lane);
+            // One admitted matching receive is enough to poll this lane. Full
+            // frame identity and uniqueness are checked after the frame arrives.
+            if words[word] & bit != 0 {
+                continue;
+            }
             if let Some(meta) = self.progress.cursor.try_recv_meta_at(idx)
                 && !meta.origin.is_session()
             {
@@ -78,8 +87,8 @@ where
             }
         }
         // The existing u8 lane domain bounds this temporary set to 32 bytes.
-        // Every admitted occurrence remains available to the full-key unique
-        // match; this set only avoids re-reading all rows for each empty lane.
+        // This set chooses ports to poll; full-key matching still checks all
+        // candidate occurrences after receiving a frame.
         // SAFETY: The initialized words outlive the returned borrowed view;
         // the descriptor's lane count is bounded by the same wire domain.
         let lanes = unsafe {

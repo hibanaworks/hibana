@@ -60,6 +60,13 @@
 (check-sat)
 (pop)
 
+; An adopted lane needs no further eligibility evaluation or insertion.
+(push)
+(assert (has words lane))
+(assert (not (= next words)))
+(check-sat)
+(pop)
+
 ; Removing eligibility creates a concrete spurious member: negative witness.
 (push)
 (assert emptyWords)
