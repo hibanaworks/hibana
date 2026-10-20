@@ -81,6 +81,33 @@ interleavings, branch-dependent handoff, process failures, or arbitrary
 choreographies, and are not a source-level refinement proof. Extending a test
 case must target an identified gap or counterexample.
 
+The phased comparison keeps the same owned/par/roll program and uses ordinary
+Tokio tasks for its localsides. The test carrier gates only the first send on
+each of two independent outgoing directions. It accepts a frame separately
+from releasing its sender's completion. All 52 bounded release probes cover
+the six legal orders of those four I/O boundaries. Other traffic and the second
+loan visit run normally. The append-only observations distinguish public call
+start, actual carrier acceptance, actual carrier delivery and successful public
+completion. Carrier witnesses pair the copied bytes; actor images and the
+accepted source unfolding supply directions, lanes, wire labels and ordering.
+Call construction stutters rather than assuming the call was admitted.
+
+The phased checker rejects an atomic-send model in 50 probes and an
+actor-wide serialization model in 26. Missing/duplicate probes and missing/
+duplicate acceptance records are negative controls. Every complete run also
+finishes its source word. This exhausts the stated two-direction release
+window, not all future polls, failure schedules or arbitrary choreographies.
+The carrier is an in-memory test seam, not another network qualification.
+
+The exhaustive completed-operation and phased enumerators run natively and
+are checked by Lean. Miri instead executes representative real-holder and
+reverse-completion replays through those same functions, alongside the existing
+directed runtime tests. The previous module-wide Miri exclusion has been
+replaced with explicit exclusions on just the two exhaustive generators.
+This enables the representative paths without repeating the native
+combinatorial search under Miri. The split does not remove any native/Lean
+schedule or relax an ownership check.
+
 ## Checked boundary
 
 For an accepted choreography and its exact role descriptors, the Lean

@@ -161,12 +161,20 @@ MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_t
   --lib \
   g::role_projection::tests::owned::
 
+# Enumerators remain native/Lean checks; this group must execute the actual
+# holder and reverse-completion replays rather than silently matching no tests.
+MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \
+  actor-conformance-replays \
+  -p hibana --lib \
+  g::role_projection::tests::bounded_conformance::
+
 MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \
   actor-local-progress \
   -p hibana \
   --lib \
   g::role_projection::tests \
   -- --skip g::role_projection::tests::owned:: \
+  --skip g::role_projection::tests::bounded_conformance:: \
   --skip g::role_projection::tests::mutation_coverage:: \
   --skip g::role_projection::tests::handoff_interval:: \
   --skip g::role_projection::tests::receipt_refresh:: \

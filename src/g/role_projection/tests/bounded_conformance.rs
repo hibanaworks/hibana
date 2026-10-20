@@ -10,6 +10,8 @@ use crate::{
 };
 use std::{format, string::String, vec, vec::Vec};
 
+mod phases;
+
 type Start = g::Msg<221, u32>;
 type Ack = g::Msg<222, u32>;
 type Finish = g::Msg<223, u32>;
@@ -314,6 +316,10 @@ async fn enumerate(
 }
 
 #[test]
+#[cfg_attr(
+    miri,
+    ignore = "native exhaustive schedules; actual holder replays have a separate Miri test"
+)]
 fn bounded_public_schedules_emit_executable_lean_conformance_cases() {
     let (sequential, parallel, owned) = tokio::runtime::Builder::new_current_thread()
         .enable_time()
@@ -391,4 +397,21 @@ fn bounded_public_schedules_emit_executable_lean_conformance_cases() {
         owned.1,
         owned.2,
     );
+}
+
+#[test]
+fn actual_holder_values_survive_two_visits_and_refuse_another_callers_operation() {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .start_paused(true)
+        .build()
+        .unwrap()
+        .block_on(async {
+            assert!(matches!(replay_owned(&[8]).await, Outcome::Rejected(_)));
+            assert_eq!(replay_owned(&[0, 1, 8]).await, Outcome::Unavailable);
+            assert_eq!(
+                replay_owned(&[0, 1, 2, 3, 4, 5, 0, 1, 2, 3, 4, 5, 6, 7]).await,
+                Outcome::Accepted
+            );
+        });
 }

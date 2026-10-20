@@ -456,6 +456,26 @@ impl TestTransport {
 
     #[allow(
         dead_code,
+        reason = "shared carrier; phased I/O qualification observes actual acceptance"
+    )]
+    pub(crate) fn newest_accepted_frame(&self, role: u8) -> FrameEvidence {
+        let state = self.state.borrow();
+        let queue = &state
+            .roles
+            .iter()
+            .find(|slot| slot.role == role)
+            .expect("observed receiver")
+            .state
+            .queue;
+        assert!(queue.len > 0, "just accepted frame");
+        queue.items[(queue.head + queue.len - 1) % TEST_QUEUE_CAPACITY]
+            .as_ref()
+            .expect("just accepted frame")
+            .evidence(role)
+    }
+
+    #[allow(
+        dead_code,
         reason = "shared carrier; actor qualification correlates physical receives"
     )]
     pub(crate) fn received_frame(&self, role: u8, session: SessionId, lane: u8) -> FrameEvidence {
