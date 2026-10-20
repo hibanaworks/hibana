@@ -39,24 +39,12 @@ fn service_grants_a_resource_then_observes_choices_in_parallel_rolled_loans() {
         .unwrap();
     runtime.block_on(async {
         let () = g::ProgramProjection::<Global, 32>::VALIDATION;
-        let owner_program = crate::global::role_program::role_program_from_image::<0>(
-            &RoleProjection::<0, Global, 32>::IMAGE_REF,
-        );
-        let worker_program = crate::global::role_program::role_program_from_image::<1>(
-            &RoleProjection::<1, Global, 32>::IMAGE_REF,
-        );
-        let service_program = crate::global::role_program::role_program_from_image::<2>(
-            &RoleProjection::<2, Global, 32>::IMAGE_REF,
-        );
-        let db_program = crate::global::role_program::role_program_from_image::<10>(
-            &RoleProjection::<10, Global, 32>::IMAGE_REF,
-        );
-        let left_program = crate::global::role_program::role_program_from_image::<3>(
-            &RoleProjection::<3, Global, 32>::IMAGE_REF,
-        );
-        let right_program = crate::global::role_program::role_program_from_image::<4>(
-            &RoleProjection::<4, Global, 32>::IMAGE_REF,
-        );
+        let owner_program = crate::runtime::program::project::<0>(&g::Program::<Global>::new());
+        let worker_program = crate::runtime::program::project::<1>(&g::Program::<Global>::new());
+        let service_program = crate::runtime::program::project::<2>(&g::Program::<Global>::new());
+        let db_program = crate::runtime::program::project::<10>(&g::Program::<Global>::new());
+        let left_program = crate::runtime::program::project::<3>(&g::Program::<Global>::new());
+        let right_program = crate::runtime::program::project::<4>(&g::Program::<Global>::new());
         let network = TestTransport::new();
         let mut owner_slab = std::vec![0; 64 * 1024];
         let mut worker_slab = std::vec![0; 64 * 1024];

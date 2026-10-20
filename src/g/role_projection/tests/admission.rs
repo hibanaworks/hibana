@@ -13,21 +13,11 @@ fn source_ready_rows_match_actual_admission_across_a_parallel_owned_visit() {
         g::Seq<g::Par<g::Send<10, 3, Read>, g::Send<1, 4, Value>>, g::Send<1, 0, Loan>>,
     >;
     let () = g::ProgramProjection::<Steps, 8>::VALIDATION;
-    let owner_program = crate::global::role_program::role_program_from_image::<0>(
-        &RoleProjection::<0, Steps, 8>::IMAGE_REF,
-    );
-    let worker_program = crate::global::role_program::role_program_from_image::<1>(
-        &RoleProjection::<1, Steps, 8>::IMAGE_REF,
-    );
-    let db_program = crate::global::role_program::role_program_from_image::<10>(
-        &RoleProjection::<10, Steps, 8>::IMAGE_REF,
-    );
-    let reader_program = crate::global::role_program::role_program_from_image::<3>(
-        &RoleProjection::<3, Steps, 8>::IMAGE_REF,
-    );
-    let peer_program = crate::global::role_program::role_program_from_image::<4>(
-        &RoleProjection::<4, Steps, 8>::IMAGE_REF,
-    );
+    let owner_program = crate::runtime::program::project::<0>(&g::Program::<Steps>::new());
+    let worker_program = crate::runtime::program::project::<1>(&g::Program::<Steps>::new());
+    let db_program = crate::runtime::program::project::<10>(&g::Program::<Steps>::new());
+    let reader_program = crate::runtime::program::project::<3>(&g::Program::<Steps>::new());
+    let peer_program = crate::runtime::program::project::<4>(&g::Program::<Steps>::new());
     tokio::runtime::Builder::new_current_thread()
         .build()
         .unwrap()

@@ -22,21 +22,11 @@ type Steps = g::Seq<
 #[test]
 fn an_owned_send_cannot_wait_for_a_transitive_predecessor_using_its_payload() {
     let () = g::ProgramProjection::<Steps, 16>::VALIDATION;
-    let owner_program = crate::global::role_program::role_program_from_image::<0>(
-        &RoleProjection::<0, Steps, 16>::IMAGE_REF,
-    );
-    let db_program = crate::global::role_program::role_program_from_image::<10>(
-        &RoleProjection::<10, Steps, 16>::IMAGE_REF,
-    );
-    let auth_program = crate::global::role_program::role_program_from_image::<11>(
-        &RoleProjection::<11, Steps, 16>::IMAGE_REF,
-    );
-    let third_program = crate::global::role_program::role_program_from_image::<12>(
-        &RoleProjection::<12, Steps, 16>::IMAGE_REF,
-    );
-    let reader_program = crate::global::role_program::role_program_from_image::<3>(
-        &RoleProjection::<3, Steps, 16>::IMAGE_REF,
-    );
+    let owner_program = crate::runtime::program::project::<0>(&g::Program::<Steps>::new());
+    let db_program = crate::runtime::program::project::<10>(&g::Program::<Steps>::new());
+    let auth_program = crate::runtime::program::project::<11>(&g::Program::<Steps>::new());
+    let third_program = crate::runtime::program::project::<12>(&g::Program::<Steps>::new());
+    let reader_program = crate::runtime::program::project::<3>(&g::Program::<Steps>::new());
     let runtime = tokio::runtime::Builder::new_current_thread()
         .build()
         .unwrap();
@@ -72,39 +62,17 @@ fn an_owned_send_cannot_wait_for_a_transitive_predecessor_using_its_payload() {
 #[test]
 fn two_parallel_joins_release_the_owned_transfers_after_both_fragments_finish() {
     let () = g::ProgramProjection::<Steps, 16>::VALIDATION;
-    let owner_program = crate::global::role_program::role_program_from_image::<0>(
-        &RoleProjection::<0, Steps, 16>::IMAGE_REF,
-    );
-    let worker_program = crate::global::role_program::role_program_from_image::<1>(
-        &RoleProjection::<1, Steps, 16>::IMAGE_REF,
-    );
-    let other_program = crate::global::role_program::role_program_from_image::<2>(
-        &RoleProjection::<2, Steps, 16>::IMAGE_REF,
-    );
-    let third_worker_program = crate::global::role_program::role_program_from_image::<7>(
-        &RoleProjection::<7, Steps, 16>::IMAGE_REF,
-    );
-    let db_program = crate::global::role_program::role_program_from_image::<10>(
-        &RoleProjection::<10, Steps, 16>::IMAGE_REF,
-    );
-    let auth_program = crate::global::role_program::role_program_from_image::<11>(
-        &RoleProjection::<11, Steps, 16>::IMAGE_REF,
-    );
-    let third_program = crate::global::role_program::role_program_from_image::<12>(
-        &RoleProjection::<12, Steps, 16>::IMAGE_REF,
-    );
-    let first_program = crate::global::role_program::role_program_from_image::<3>(
-        &RoleProjection::<3, Steps, 16>::IMAGE_REF,
-    );
-    let second_program = crate::global::role_program::role_program_from_image::<4>(
-        &RoleProjection::<4, Steps, 16>::IMAGE_REF,
-    );
-    let middle_left_program = crate::global::role_program::role_program_from_image::<5>(
-        &RoleProjection::<5, Steps, 16>::IMAGE_REF,
-    );
-    let middle_right_program = crate::global::role_program::role_program_from_image::<6>(
-        &RoleProjection::<6, Steps, 16>::IMAGE_REF,
-    );
+    let owner_program = crate::runtime::program::project::<0>(&g::Program::<Steps>::new());
+    let worker_program = crate::runtime::program::project::<1>(&g::Program::<Steps>::new());
+    let other_program = crate::runtime::program::project::<2>(&g::Program::<Steps>::new());
+    let third_worker_program = crate::runtime::program::project::<7>(&g::Program::<Steps>::new());
+    let db_program = crate::runtime::program::project::<10>(&g::Program::<Steps>::new());
+    let auth_program = crate::runtime::program::project::<11>(&g::Program::<Steps>::new());
+    let third_program = crate::runtime::program::project::<12>(&g::Program::<Steps>::new());
+    let first_program = crate::runtime::program::project::<3>(&g::Program::<Steps>::new());
+    let second_program = crate::runtime::program::project::<4>(&g::Program::<Steps>::new());
+    let middle_left_program = crate::runtime::program::project::<5>(&g::Program::<Steps>::new());
+    let middle_right_program = crate::runtime::program::project::<6>(&g::Program::<Steps>::new());
     let runtime = tokio::runtime::Builder::new_current_thread()
         .build()
         .unwrap();

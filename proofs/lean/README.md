@@ -92,8 +92,26 @@ The gate builds the common package serially, checks theorem types and permitted
 axioms against [`claims/`](claims), regenerates Rust inputs, and checks them with
 the Lean kernel or compiled conformance executable. Missing or extra claims,
 failed generators, malformed inputs and forbidden axioms are errors.
-The permitted axioms are `propext` and `Quot.sound`. `sorry`, additional axioms
-and `native_decide` are not permitted.
+The audit separates three kinds of checks:
+
+| Check | Trusted computation |
+| --- | --- |
+| Model theorems and generated artifacts audited with `--kernel` | Lean kernel; only `propext` and `Quot.sound` are permitted |
+| Finite acceptance certificates and their derived sample claims in `Generated.lean` | `native_decide`, which also trusts Lean's compiler and native runtime |
+| JSON schedule comparisons | The compiled Lean oracle, used as an executable test |
+
+`DistributedSemanticsExamples.lean` and `StaticProjectabilityExamples.lean` also
+use `native_decide` for finite anonymous regression examples. They export no
+named model theorems. Other common model files cannot use `native_decide`.
+
+The Rust [certificate exporter](../../src/test_support/lean_proof_export/projection_certificate.rs)
+generates the finite projectability and verified-protocol acceptance checks.
+Their consequences for those concrete inputs inherit that native trust. They
+must not be described as kernel-only certificates. The
+[generated-claim auditor](../../.github/ci-tests/check_generated_lean_axioms.rs)
+checks the exact native decision owners and their dependency closure, and
+rejects any native dependency in a kernel-only claim. `sorry` and undeclared
+axioms are rejected in every category.
 
 Generated input and logs belong to build or temporary directories. They are not
 protocol state, and are never used to authorize application operations.

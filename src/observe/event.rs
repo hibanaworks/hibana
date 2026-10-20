@@ -5,7 +5,7 @@ use crate::observe::ids;
 /// Opaque 16-byte tap record with a compact causal key for evidence correlation.
 ///
 /// Layout: `ts32, id16, causal_key16, arg0_32, arg1_32`
-/// - `ts`: Timestamp (monotonic counter or wall-clock tick)
+/// - `ts`: Ring ordinal, saturated at `u32::MAX`; not wall-clock time
 /// - `id`: Event identifier (from `crate::observe::ids::*`)
 /// - `causal_key`: Causal key for reversible evidence correlation
 ///   - High 8 bits: role or lane discriminator
@@ -67,6 +67,7 @@ impl TapRecord {
     }
 }
 
+/// Event-specific diagnostic fields decoded from a tap event.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Evidence {
     kind: u16,
@@ -75,16 +76,19 @@ pub struct Evidence {
 }
 
 impl Evidence {
+    /// Return the event kind from [`crate::runtime::tap`].
     #[inline]
     pub const fn kind(self) -> u16 {
         self.kind
     }
 
+    /// Return the event-specific result or mismatch reason.
     #[inline]
     pub const fn reason(self) -> u8 {
         self.reason
     }
 
+    /// Return diagnostic words whose interpretation depends on the event kind.
     #[inline]
     pub const fn input(self) -> [u32; 4] {
         self.input
@@ -130,26 +134,31 @@ impl TapEvent {
         }
     }
 
+    /// Return the ring ordinal, saturated at `u32::MAX` after counter exhaustion.
     #[inline]
     pub const fn ts(self) -> u32 {
         u32::from_be_bytes([self.bytes[0], self.bytes[1], self.bytes[2], self.bytes[3]])
     }
 
+    /// Return the event identifier from [`crate::runtime::tap`].
     #[inline]
     pub const fn id(self) -> u16 {
         u16::from_be_bytes([self.bytes[4], self.bytes[5]])
     }
 
+    /// Return the packed role or lane discriminator and event-specific reason.
     #[inline]
     pub const fn causal_key(self) -> u16 {
         u16::from_be_bytes([self.bytes[6], self.bytes[7]])
     }
 
+    /// Return the first context word, interpreted according to the event ID.
     #[inline]
     pub const fn arg0(self) -> u32 {
         u32::from_be_bytes([self.bytes[8], self.bytes[9], self.bytes[10], self.bytes[11]])
     }
 
+    /// Return the second context word, interpreted according to the event ID.
     #[inline]
     pub const fn arg1(self) -> u32 {
         u32::from_be_bytes([
@@ -201,6 +210,7 @@ impl TapEvent {
         ((role as u16) << 8) | (seq as u16)
     }
 
+    /// Decode the event-specific diagnostic fields without changing runtime state.
     #[inline]
     pub const fn evidence(self) -> Evidence {
         let id = self.id();

@@ -12,15 +12,9 @@ fn replaying_an_owned_frame_breaks_uniqueness_without_affine_delivery() {
     type Steps =
         g::Seq<g::Roll<g::Seq<g::Send<0, 1, Loan>, g::Send<1, 0, Loan>>>, g::Send<10, 2, Read>>;
     let () = g::ProgramProjection::<Steps, 8>::VALIDATION;
-    let owner_program = crate::global::role_program::role_program_from_image::<0>(
-        &RoleProjection::<0, Steps, 8>::IMAGE_REF,
-    );
-    let worker_program = crate::global::role_program::role_program_from_image::<1>(
-        &RoleProjection::<1, Steps, 8>::IMAGE_REF,
-    );
-    let db_program = crate::global::role_program::role_program_from_image::<10>(
-        &RoleProjection::<10, Steps, 8>::IMAGE_REF,
-    );
+    let owner_program = crate::runtime::program::project::<0>(&g::Program::<Steps>::new());
+    let worker_program = crate::runtime::program::project::<1>(&g::Program::<Steps>::new());
+    let db_program = crate::runtime::program::project::<10>(&g::Program::<Steps>::new());
     tokio::runtime::Builder::new_current_thread()
         .build()
         .unwrap()

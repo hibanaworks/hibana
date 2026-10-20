@@ -46,21 +46,25 @@ pub struct Outgoing<'f> {
 }
 
 impl<'f> Outgoing<'f> {
+    /// Return the projected wire label, distinct from the message's logical label.
     #[inline]
     pub const fn frame_label(&self) -> FrameLabel {
         self.meta.frame_label
     }
 
+    /// Return the destination's logical role, independent of its current holder.
     #[inline]
     pub const fn target_role(&self) -> u8 {
         self.meta.target_role
     }
 
+    /// Return the projected logical lane for this send.
     #[inline]
     pub const fn lane(&self) -> u8 {
         self.meta.lane
     }
 
+    /// Borrow the encoded bytes for this poll. The transport must not retain them.
     #[inline]
     pub const fn payload(&self) -> Payload<'f> {
         self.payload
@@ -104,11 +108,16 @@ impl core::fmt::Debug for TransportError {
 pub struct FrameHeader([u8; 8]);
 
 impl FrameHeader {
+    /// Wrap the carrier-observed eight-byte header without validating it.
+    ///
+    /// Layout: big-endian session ID (four bytes), lane, source role, target
+    /// role, and wire frame label. The runtime checks these fields on receive.
     #[inline]
     pub const fn from_bytes(bytes: [u8; 8]) -> Self {
         Self(bytes)
     }
 
+    /// Return the header bytes in their wire order.
     #[inline]
     pub const fn bytes(self) -> [u8; 8] {
         self.0
@@ -224,6 +233,11 @@ pub struct ReceivedFrame<'f> {
 }
 
 impl<'f> ReceivedFrame<'f> {
+    /// Return a payload without a frame header.
+    ///
+    /// The bound receive handle and requested message must identify exactly one
+    /// enabled receive, or an existing branch preview must identify it. An
+    /// unresolved choice requires [`Self::framed`] instead.
     #[inline]
     pub const fn deterministic(payload: Payload<'f>) -> Self {
         Self {
@@ -232,6 +246,10 @@ impl<'f> ReceivedFrame<'f> {
         }
     }
 
+    /// Pair observed header bytes with the payload from the same received frame.
+    ///
+    /// This does not authenticate or validate the header. The transport supplies
+    /// peer binding and delivery guarantees; Hibana checks the projected step.
     #[inline]
     pub const fn framed(header: FrameHeader, payload: Payload<'f>) -> Self {
         Self {
@@ -245,6 +263,7 @@ impl<'f> ReceivedFrame<'f> {
         self.evidence
     }
 
+    /// Return the borrowed encoded bytes without changing protocol progress.
     #[inline]
     pub const fn payload(self) -> Payload<'f> {
         self.payload
@@ -277,16 +296,19 @@ impl PortOpen {
         }
     }
 
+    /// Return the logical role whose port is being opened.
     #[inline]
     pub const fn local_role(self) -> u8 {
         self.local_role
     }
 
+    /// Return the session ID to which both handles must be bound.
     #[inline]
     pub const fn session_id(self) -> crate::session::types::SessionId {
         self.session_id
     }
 
+    /// Return the projected lane to which both handles must be bound.
     #[inline]
     pub const fn lane(self) -> u8 {
         self.lane.as_wire()
@@ -363,9 +385,15 @@ impl PortOpen {
 /// trait, and passing a same-host shared-queue test does not validate either
 /// mechanism across machines.
 pub trait Transport {
+    /// Send handle, which may borrow storage from this transport for `'a`.
+    ///
+    /// Each send poll and cancellation borrows the handle independently of `'a`.
     type Tx<'a>: 'a
     where
         Self: 'a;
+    /// Receive handle, which may borrow storage from this transport for `'a`.
+    ///
+    /// A returned frame borrows the handle for that receive, not for all of `'a`.
     type Rx<'a>: 'a
     where
         Self: 'a;

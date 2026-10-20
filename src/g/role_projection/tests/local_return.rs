@@ -33,27 +33,13 @@ fn a_local_branch_waits_for_another_view_to_receive_its_entry_resource() {
         g::Seq<g::Par<Work, g::Roll<g::Send<12, 8, Independent>>>, g::Send<0, 2, ExtraLoan>>;
     const ROWS: usize = <Steps as g::ProgramShape>::SOURCE_ROW_COUNT;
     let () = g::ProgramProjection::<Steps, ROWS>::VALIDATION;
-    let owner_program = crate::global::role_program::role_program_from_image::<0>(
-        &RoleProjection::<0, Steps, ROWS>::IMAGE_REF,
-    );
-    let db_program = crate::global::role_program::role_program_from_image::<10>(
-        &RoleProjection::<10, Steps, ROWS>::IMAGE_REF,
-    );
-    let auth_program = crate::global::role_program::role_program_from_image::<11>(
-        &RoleProjection::<11, Steps, ROWS>::IMAGE_REF,
-    );
-    let worker_program = crate::global::role_program::role_program_from_image::<4>(
-        &RoleProjection::<4, Steps, ROWS>::IMAGE_REF,
-    );
-    let reader_program = crate::global::role_program::role_program_from_image::<3>(
-        &RoleProjection::<3, Steps, ROWS>::IMAGE_REF,
-    );
-    let independent_program = crate::global::role_program::role_program_from_image::<12>(
-        &RoleProjection::<12, Steps, ROWS>::IMAGE_REF,
-    );
-    let peer_program = crate::global::role_program::role_program_from_image::<8>(
-        &RoleProjection::<8, Steps, ROWS>::IMAGE_REF,
-    );
+    let owner_program = crate::runtime::program::project::<0>(&g::Program::<Steps>::new());
+    let db_program = crate::runtime::program::project::<10>(&g::Program::<Steps>::new());
+    let auth_program = crate::runtime::program::project::<11>(&g::Program::<Steps>::new());
+    let worker_program = crate::runtime::program::project::<4>(&g::Program::<Steps>::new());
+    let reader_program = crate::runtime::program::project::<3>(&g::Program::<Steps>::new());
+    let independent_program = crate::runtime::program::project::<12>(&g::Program::<Steps>::new());
+    let peer_program = crate::runtime::program::project::<8>(&g::Program::<Steps>::new());
     tokio::runtime::Builder::new_current_thread()
         .enable_time()
         .start_paused(true)
@@ -265,18 +251,10 @@ fn a_local_branch_rejects_a_receipt_that_needs_its_own_borrowed_view() {
     >;
     const ROWS: usize = <Steps as g::ProgramShape>::SOURCE_ROW_COUNT;
     let () = g::ProgramProjection::<Steps, ROWS>::VALIDATION;
-    let owner_program = crate::global::role_program::role_program_from_image::<0>(
-        &RoleProjection::<0, Steps, ROWS>::IMAGE_REF,
-    );
-    let db_program = crate::global::role_program::role_program_from_image::<10>(
-        &RoleProjection::<10, Steps, ROWS>::IMAGE_REF,
-    );
-    let worker_program = crate::global::role_program::role_program_from_image::<4>(
-        &RoleProjection::<4, Steps, ROWS>::IMAGE_REF,
-    );
-    let reader_program = crate::global::role_program::role_program_from_image::<3>(
-        &RoleProjection::<3, Steps, ROWS>::IMAGE_REF,
-    );
+    let owner_program = crate::runtime::program::project::<0>(&g::Program::<Steps>::new());
+    let db_program = crate::runtime::program::project::<10>(&g::Program::<Steps>::new());
+    let worker_program = crate::runtime::program::project::<4>(&g::Program::<Steps>::new());
+    let reader_program = crate::runtime::program::project::<3>(&g::Program::<Steps>::new());
     tokio::runtime::Builder::new_current_thread()
         .enable_time()
         .start_paused(true)

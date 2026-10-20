@@ -24,24 +24,12 @@ fn a_later_possible_self_receipt_cannot_be_hidden_by_an_independent_receipt() {
         >,
     >;
     let () = g::ProgramProjection::<Steps, 16>::VALIDATION;
-    let owner_program = crate::global::role_program::role_program_from_image::<0>(
-        &RoleProjection::<0, Steps, 16>::IMAGE_REF,
-    );
-    let db_program = crate::global::role_program::role_program_from_image::<10>(
-        &RoleProjection::<10, Steps, 16>::IMAGE_REF,
-    );
-    let auth_program = crate::global::role_program::role_program_from_image::<11>(
-        &RoleProjection::<11, Steps, 16>::IMAGE_REF,
-    );
-    let worker_program = crate::global::role_program::role_program_from_image::<1>(
-        &RoleProjection::<1, Steps, 16>::IMAGE_REF,
-    );
-    let ticker_program = crate::global::role_program::role_program_from_image::<3>(
-        &RoleProjection::<3, Steps, 16>::IMAGE_REF,
-    );
-    let reader_program = crate::global::role_program::role_program_from_image::<4>(
-        &RoleProjection::<4, Steps, 16>::IMAGE_REF,
-    );
+    let owner_program = crate::runtime::program::project::<0>(&g::Program::<Steps>::new());
+    let db_program = crate::runtime::program::project::<10>(&g::Program::<Steps>::new());
+    let auth_program = crate::runtime::program::project::<11>(&g::Program::<Steps>::new());
+    let worker_program = crate::runtime::program::project::<1>(&g::Program::<Steps>::new());
+    let ticker_program = crate::runtime::program::project::<3>(&g::Program::<Steps>::new());
+    let reader_program = crate::runtime::program::project::<4>(&g::Program::<Steps>::new());
     tokio::runtime::Builder::new_current_thread()
         .enable_time()
         .start_paused(true)
@@ -102,24 +90,12 @@ fn an_earlier_independent_return_can_restore_the_resource_before_a_later_self_re
         >,
     >;
     let () = g::ProgramProjection::<Steps, 16>::VALIDATION;
-    let owner_program = crate::global::role_program::role_program_from_image::<0>(
-        &RoleProjection::<0, Steps, 16>::IMAGE_REF,
-    );
-    let db_program = crate::global::role_program::role_program_from_image::<10>(
-        &RoleProjection::<10, Steps, 16>::IMAGE_REF,
-    );
-    let auth_program = crate::global::role_program::role_program_from_image::<11>(
-        &RoleProjection::<11, Steps, 16>::IMAGE_REF,
-    );
-    let worker_program = crate::global::role_program::role_program_from_image::<1>(
-        &RoleProjection::<1, Steps, 16>::IMAGE_REF,
-    );
-    let ticker_program = crate::global::role_program::role_program_from_image::<3>(
-        &RoleProjection::<3, Steps, 16>::IMAGE_REF,
-    );
-    let reader_program = crate::global::role_program::role_program_from_image::<4>(
-        &RoleProjection::<4, Steps, 16>::IMAGE_REF,
-    );
+    let owner_program = crate::runtime::program::project::<0>(&g::Program::<Steps>::new());
+    let db_program = crate::runtime::program::project::<10>(&g::Program::<Steps>::new());
+    let auth_program = crate::runtime::program::project::<11>(&g::Program::<Steps>::new());
+    let worker_program = crate::runtime::program::project::<1>(&g::Program::<Steps>::new());
+    let ticker_program = crate::runtime::program::project::<3>(&g::Program::<Steps>::new());
+    let reader_program = crate::runtime::program::project::<4>(&g::Program::<Steps>::new());
     tokio::runtime::Builder::new_current_thread()
         .enable_time()
         .start_paused(true)

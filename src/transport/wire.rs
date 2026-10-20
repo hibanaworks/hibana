@@ -25,7 +25,9 @@ pub(crate) const fn fixed_array_schema_id(len: usize) -> u32 {
 /// Errors surfaced by wire encode/decode helpers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CodecError {
+    /// Input or output storage is too short for the required encoding.
     Truncated,
+    /// Bytes do not match the canonical encoding, including forbidden trailing bytes.
     Malformed,
 }
 
@@ -85,6 +87,7 @@ pub trait WirePayload {
     /// The value is descriptor metadata and is not transmitted on the wire.
     const SCHEMA_ID: u32;
 
+    /// Decoded value, which may borrow the validated input for `'a`.
     type Decoded<'a>;
 
     /// Validate payload-local bytes before endpoint progress can commit.
@@ -329,11 +332,13 @@ pub struct Payload<'a> {
     data: &'a [u8],
 }
 impl<'a> Payload<'a> {
+    /// Borrow encoded bytes without copying, validating, or decoding them.
     #[inline]
     pub const fn new(data: &'a [u8]) -> Self {
         Self { data }
     }
 
+    /// Return the original borrowed byte slice.
     #[inline]
     pub fn as_bytes(&self) -> &'a [u8] {
         self.data

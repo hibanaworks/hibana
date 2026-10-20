@@ -133,6 +133,9 @@ impl<'kit, 'cfg, T> RendezvousKit<'kit, 'cfg, T>
 where
     T: crate::transport::Transport + 'cfg,
 {
+    /// Read the runtime's retained diagnostic events, then newly appended events.
+    ///
+    /// The bounded ring overwrites old events; reading it never advances a protocol.
     #[inline]
     pub fn tap(&self) -> crate::runtime::tap::TapPort<'_> {
         self.base.tap_port()

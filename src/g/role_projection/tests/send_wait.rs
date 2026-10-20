@@ -33,21 +33,11 @@ type Global = g::Seq<
 #[test]
 fn a_send_waits_for_another_views_predecessor_without_sending_early() {
     let () = g::ProgramProjection::<Global, 8>::VALIDATION;
-    let owner_program = crate::global::role_program::role_program_from_image::<0>(
-        &RoleProjection::<0, Global, 8>::IMAGE_REF,
-    );
-    let db_program = crate::global::role_program::role_program_from_image::<10>(
-        &RoleProjection::<10, Global, 8>::IMAGE_REF,
-    );
-    let worker_program = crate::global::role_program::role_program_from_image::<1>(
-        &RoleProjection::<1, Global, 8>::IMAGE_REF,
-    );
-    let reader_program = crate::global::role_program::role_program_from_image::<2>(
-        &RoleProjection::<2, Global, 8>::IMAGE_REF,
-    );
-    let service_program = crate::global::role_program::role_program_from_image::<3>(
-        &RoleProjection::<3, Global, 8>::IMAGE_REF,
-    );
+    let owner_program = crate::runtime::program::project::<0>(&g::Program::<Global>::new());
+    let db_program = crate::runtime::program::project::<10>(&g::Program::<Global>::new());
+    let worker_program = crate::runtime::program::project::<1>(&g::Program::<Global>::new());
+    let reader_program = crate::runtime::program::project::<2>(&g::Program::<Global>::new());
+    let service_program = crate::runtime::program::project::<3>(&g::Program::<Global>::new());
     let runtime = tokio::runtime::Builder::new_current_thread()
         .build()
         .unwrap();
@@ -104,15 +94,9 @@ fn a_send_waits_for_another_views_predecessor_without_sending_early() {
 fn an_owned_send_rejects_a_predecessor_that_needs_its_payload_view() {
     use crate::endpoint::proof_snapshot::{actor_snapshot, view_tag};
     let () = g::ProgramProjection::<DbLoan, 8>::VALIDATION;
-    let owner_program = crate::global::role_program::role_program_from_image::<0>(
-        &RoleProjection::<0, DbLoan, 8>::IMAGE_REF,
-    );
-    let db_program = crate::global::role_program::role_program_from_image::<10>(
-        &RoleProjection::<10, DbLoan, 8>::IMAGE_REF,
-    );
-    let worker_program = crate::global::role_program::role_program_from_image::<1>(
-        &RoleProjection::<1, DbLoan, 8>::IMAGE_REF,
-    );
+    let owner_program = crate::runtime::program::project::<0>(&g::Program::<DbLoan>::new());
+    let db_program = crate::runtime::program::project::<10>(&g::Program::<DbLoan>::new());
+    let worker_program = crate::runtime::program::project::<1>(&g::Program::<DbLoan>::new());
     let runtime = tokio::runtime::Builder::new_current_thread()
         .build()
         .unwrap();
@@ -227,21 +211,11 @@ fn an_owned_send_can_wait_for_a_distinct_live_view() {
         >,
     >;
     let () = g::ProgramProjection::<Steps, 8>::VALIDATION;
-    let owner_program = crate::global::role_program::role_program_from_image::<0>(
-        &RoleProjection::<0, Steps, 8>::IMAGE_REF,
-    );
-    let db_program = crate::global::role_program::role_program_from_image::<10>(
-        &RoleProjection::<10, Steps, 8>::IMAGE_REF,
-    );
-    let auth_program = crate::global::role_program::role_program_from_image::<11>(
-        &RoleProjection::<11, Steps, 8>::IMAGE_REF,
-    );
-    let worker_program = crate::global::role_program::role_program_from_image::<1>(
-        &RoleProjection::<1, Steps, 8>::IMAGE_REF,
-    );
-    let service_program = crate::global::role_program::role_program_from_image::<3>(
-        &RoleProjection::<3, Steps, 8>::IMAGE_REF,
-    );
+    let owner_program = crate::runtime::program::project::<0>(&g::Program::<Steps>::new());
+    let db_program = crate::runtime::program::project::<10>(&g::Program::<Steps>::new());
+    let auth_program = crate::runtime::program::project::<11>(&g::Program::<Steps>::new());
+    let worker_program = crate::runtime::program::project::<1>(&g::Program::<Steps>::new());
+    let service_program = crate::runtime::program::project::<3>(&g::Program::<Steps>::new());
     let runtime = tokio::runtime::Builder::new_current_thread()
         .build()
         .unwrap();
@@ -285,21 +259,11 @@ fn a_waiting_send_does_not_run_its_resolver_before_the_predecessor() {
         >,
     >;
     let () = g::ProgramProjection::<Steps, 16>::VALIDATION;
-    let owner_program = crate::global::role_program::role_program_from_image::<0>(
-        &RoleProjection::<0, Steps, 16>::IMAGE_REF,
-    );
-    let db_program = crate::global::role_program::role_program_from_image::<10>(
-        &RoleProjection::<10, Steps, 16>::IMAGE_REF,
-    );
-    let worker_program = crate::global::role_program::role_program_from_image::<1>(
-        &RoleProjection::<1, Steps, 16>::IMAGE_REF,
-    );
-    let reader_program = crate::global::role_program::role_program_from_image::<2>(
-        &RoleProjection::<2, Steps, 16>::IMAGE_REF,
-    );
-    let service_program = crate::global::role_program::role_program_from_image::<3>(
-        &RoleProjection::<3, Steps, 16>::IMAGE_REF,
-    );
+    let owner_program = crate::runtime::program::project::<0>(&g::Program::<Steps>::new());
+    let db_program = crate::runtime::program::project::<10>(&g::Program::<Steps>::new());
+    let worker_program = crate::runtime::program::project::<1>(&g::Program::<Steps>::new());
+    let reader_program = crate::runtime::program::project::<2>(&g::Program::<Steps>::new());
+    let service_program = crate::runtime::program::project::<3>(&g::Program::<Steps>::new());
     let runtime = tokio::runtime::Builder::new_current_thread()
         .build()
         .unwrap();
@@ -358,18 +322,10 @@ fn dropping_an_owned_send_cancels_the_run_before_or_during_preparation() {
         >,
     >;
     let () = g::ProgramProjection::<Steps, 8>::VALIDATION;
-    let owner_program = crate::global::role_program::role_program_from_image::<0>(
-        &RoleProjection::<0, Steps, 8>::IMAGE_REF,
-    );
-    let db_program = crate::global::role_program::role_program_from_image::<10>(
-        &RoleProjection::<10, Steps, 8>::IMAGE_REF,
-    );
-    let auth_program = crate::global::role_program::role_program_from_image::<11>(
-        &RoleProjection::<11, Steps, 8>::IMAGE_REF,
-    );
-    let service_program = crate::global::role_program::role_program_from_image::<3>(
-        &RoleProjection::<3, Steps, 8>::IMAGE_REF,
-    );
+    let owner_program = crate::runtime::program::project::<0>(&g::Program::<Steps>::new());
+    let db_program = crate::runtime::program::project::<10>(&g::Program::<Steps>::new());
+    let auth_program = crate::runtime::program::project::<11>(&g::Program::<Steps>::new());
+    let service_program = crate::runtime::program::project::<3>(&g::Program::<Steps>::new());
     let runtime = tokio::runtime::Builder::new_current_thread()
         .build()
         .unwrap();

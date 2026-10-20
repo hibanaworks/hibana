@@ -36,30 +36,16 @@ fn each_visit_gets_the_entry_owners_permission_while_another_roll_stays_independ
         g::Seq<g::Par<Work, g::Roll<g::Send<6, 7, Independent>>>, g::Send<1, 5, Loan>>,
     >;
     let () = g::ProgramProjection::<Steps, 16>::VALIDATION;
-    let initial_program = crate::global::role_program::role_program_from_image::<0>(
-        &RoleProjection::<0, Steps, 16>::IMAGE_REF,
-    );
-    let db_program = crate::global::role_program::role_program_from_image::<10>(
-        &RoleProjection::<10, Steps, 16>::IMAGE_REF,
-    );
-    let holder_program = crate::global::role_program::role_program_from_image::<1>(
-        &RoleProjection::<1, Steps, 16>::IMAGE_REF,
-    );
-    let controller_program = crate::global::role_program::role_program_from_image::<2>(
-        &RoleProjection::<2, Steps, 16>::IMAGE_REF,
-    );
-    let service_program = crate::global::role_program::role_program_from_image::<4>(
-        &RoleProjection::<4, Steps, 16>::IMAGE_REF,
-    );
-    let recipient_program = crate::global::role_program::role_program_from_image::<5>(
-        &RoleProjection::<5, Steps, 16>::IMAGE_REF,
-    );
-    let unrelated_sender_program = crate::global::role_program::role_program_from_image::<6>(
-        &RoleProjection::<6, Steps, 16>::IMAGE_REF,
-    );
-    let unrelated_receiver_program = crate::global::role_program::role_program_from_image::<7>(
-        &RoleProjection::<7, Steps, 16>::IMAGE_REF,
-    );
+    let initial_program = crate::runtime::program::project::<0>(&g::Program::<Steps>::new());
+    let db_program = crate::runtime::program::project::<10>(&g::Program::<Steps>::new());
+    let holder_program = crate::runtime::program::project::<1>(&g::Program::<Steps>::new());
+    let controller_program = crate::runtime::program::project::<2>(&g::Program::<Steps>::new());
+    let service_program = crate::runtime::program::project::<4>(&g::Program::<Steps>::new());
+    let recipient_program = crate::runtime::program::project::<5>(&g::Program::<Steps>::new());
+    let unrelated_sender_program =
+        crate::runtime::program::project::<6>(&g::Program::<Steps>::new());
+    let unrelated_receiver_program =
+        crate::runtime::program::project::<7>(&g::Program::<Steps>::new());
     tokio::runtime::Builder::new_current_thread()
         .enable_time()
         .start_paused(true)

@@ -22,12 +22,8 @@ type BranchSteps = g::Seq<
 #[test]
 fn a_queued_old_continuation_survives_a_new_body_visit() {
     let () = g::ProgramProjection::<Steps, 8>::VALIDATION;
-    let a_program = crate::global::role_program::role_program_from_image::<0>(
-        &RoleProjection::<0, Steps, 8>::IMAGE_REF,
-    );
-    let b_program = crate::global::role_program::role_program_from_image::<1>(
-        &RoleProjection::<1, Steps, 8>::IMAGE_REF,
-    );
+    let a_program = crate::runtime::program::project::<0>(&g::Program::<Steps>::new());
+    let b_program = crate::runtime::program::project::<1>(&g::Program::<Steps>::new());
     tokio::runtime::Builder::new_current_thread()
         .enable_time()
         .start_paused(true)
@@ -228,12 +224,8 @@ theorem theLateReceiveHasItsActualMeasuredTransition :
 #[test]
 fn a_queued_old_branch_does_not_skip_the_fresh_body_receive() {
     let () = g::ProgramProjection::<BranchSteps, 32>::VALIDATION;
-    let a_program = crate::global::role_program::role_program_from_image::<0>(
-        &RoleProjection::<0, BranchSteps, 32>::IMAGE_REF,
-    );
-    let b_program = crate::global::role_program::role_program_from_image::<1>(
-        &RoleProjection::<1, BranchSteps, 32>::IMAGE_REF,
-    );
+    let a_program = crate::runtime::program::project::<0>(&g::Program::<BranchSteps>::new());
+    let b_program = crate::runtime::program::project::<1>(&g::Program::<BranchSteps>::new());
     tokio::runtime::Builder::new_current_thread()
         .enable_time()
         .start_paused(true)
@@ -422,12 +414,8 @@ fn a_late_branch_is_available_while_the_new_body_head_is_ordinary() {
     type Stop = g::Msg<204, u32>;
     type BranchSteps = g::Seq<g::Roll<Body>, g::Route<g::Send<1, 0, Finish>, g::Send<1, 0, Stop>>>;
     let () = g::ProgramProjection::<BranchSteps, 16>::VALIDATION;
-    let a_program = crate::global::role_program::role_program_from_image::<0>(
-        &RoleProjection::<0, BranchSteps, 16>::IMAGE_REF,
-    );
-    let b_program = crate::global::role_program::role_program_from_image::<1>(
-        &RoleProjection::<1, BranchSteps, 16>::IMAGE_REF,
-    );
+    let a_program = crate::runtime::program::project::<0>(&g::Program::<BranchSteps>::new());
+    let b_program = crate::runtime::program::project::<1>(&g::Program::<BranchSteps>::new());
     tokio::runtime::Builder::new_current_thread()
         .enable_time()
         .start_paused(true)

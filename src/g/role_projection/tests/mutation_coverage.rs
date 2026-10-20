@@ -10,15 +10,9 @@ fn actual_reset_and_recommit_cannot_disappear_between_equal_snapshots() {
     type Tick = g::Msg<71, ()>;
     type Steps = g::Seq<g::Roll<g::Send<0, 2, Tick>>, g::Send<0, 1, Loan>>;
     let () = g::ProgramProjection::<Steps, 8>::VALIDATION;
-    let owner_program = crate::global::role_program::role_program_from_image::<0>(
-        &RoleProjection::<0, Steps, 8>::IMAGE_REF,
-    );
-    let db_program = crate::global::role_program::role_program_from_image::<10>(
-        &RoleProjection::<10, Steps, 8>::IMAGE_REF,
-    );
-    let peer_program = crate::global::role_program::role_program_from_image::<2>(
-        &RoleProjection::<2, Steps, 8>::IMAGE_REF,
-    );
+    let owner_program = crate::runtime::program::project::<0>(&g::Program::<Steps>::new());
+    let db_program = crate::runtime::program::project::<10>(&g::Program::<Steps>::new());
+    let peer_program = crate::runtime::program::project::<2>(&g::Program::<Steps>::new());
     tokio::runtime::Builder::new_current_thread()
         .build()
         .unwrap()

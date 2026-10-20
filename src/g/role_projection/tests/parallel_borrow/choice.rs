@@ -19,18 +19,10 @@ fn an_owned_preview_in_the_second_fragment_keeps_its_continuation() {
         g::Seq<g::Send<10, 3, Read>, g::Seq<g::Send<3, 10, Value>, g::Send<1, 0, Return>>>,
     >;
     let () = g::ProgramProjection::<Steps, 32>::VALIDATION;
-    let owner_program = crate::global::role_program::role_program_from_image::<0>(
-        &RoleProjection::<0, Steps, 32>::IMAGE_REF,
-    );
-    let worker_program = crate::global::role_program::role_program_from_image::<1>(
-        &RoleProjection::<1, Steps, 32>::IMAGE_REF,
-    );
-    let service_program = crate::global::role_program::role_program_from_image::<3>(
-        &RoleProjection::<3, Steps, 32>::IMAGE_REF,
-    );
-    let db_program = crate::global::role_program::role_program_from_image::<10>(
-        &RoleProjection::<10, Steps, 32>::IMAGE_REF,
-    );
+    let owner_program = crate::runtime::program::project::<0>(&g::Program::<Steps>::new());
+    let worker_program = crate::runtime::program::project::<1>(&g::Program::<Steps>::new());
+    let service_program = crate::runtime::program::project::<3>(&g::Program::<Steps>::new());
+    let db_program = crate::runtime::program::project::<10>(&g::Program::<Steps>::new());
     for expected_label in [201u8, 203] {
         let network = TestTransport::new();
         let mut owner_slab = [0; 32 * 1024];

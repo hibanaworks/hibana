@@ -16,9 +16,12 @@ mod bucket;
 mod kani;
 pub(crate) use bucket::ResolverBucket;
 
+/// The branch selected by an application decision function.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DecisionArm {
+    /// Select the first argument of `g::route`.
     Left,
+    /// Select the second argument of `g::route`.
     Right,
 }
 
@@ -65,6 +68,7 @@ impl fmt::Debug for ResolverError {
 }
 
 impl ResolverError {
+    /// Reject the decision without selecting a branch or advancing the protocol.
     #[inline]
     pub fn reject() -> Self {
         Self {
@@ -186,6 +190,10 @@ pub struct ResolverRef<'cfg, const RESOLVER_ID: u16> {
 }
 
 impl<'cfg, const RESOLVER_ID: u16> ResolverRef<'cfg, RESOLVER_ID> {
+    /// Borrow application state and the decision function registered for this ID.
+    ///
+    /// The callback runs when the choosing role reaches the corresponding
+    /// resolved choice. This constructor neither invokes it nor selects a branch.
     #[inline]
     pub fn decision_state<S: 'cfg>(
         state: &'cfg S,

@@ -167,15 +167,9 @@ fn an_explicit_inner_roll_repeats_without_restarting_its_parent() {
 #[test]
 fn a_loan_reenters_after_its_sequential_continuation_without_reusing_old_work() {
     let () = g::ProgramProjection::<Steps, 16>::VALIDATION;
-    let owner_program = crate::global::role_program::role_program_from_image::<0>(
-        &RoleProjection::<0, Steps, 16>::IMAGE_REF,
-    );
-    let worker_program = crate::global::role_program::role_program_from_image::<1>(
-        &RoleProjection::<1, Steps, 16>::IMAGE_REF,
-    );
-    let db_program = crate::global::role_program::role_program_from_image::<10>(
-        &RoleProjection::<10, Steps, 16>::IMAGE_REF,
-    );
+    let owner_program = crate::runtime::program::project::<0>(&g::Program::<Steps>::new());
+    let worker_program = crate::runtime::program::project::<1>(&g::Program::<Steps>::new());
+    let db_program = crate::runtime::program::project::<10>(&g::Program::<Steps>::new());
     tokio::runtime::Builder::new_current_thread()
         .enable_time()
         .start_paused(true)

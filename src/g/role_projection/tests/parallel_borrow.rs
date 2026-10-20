@@ -21,21 +21,11 @@ fn an_owned_continuation_returns_while_the_carrier_drives_an_independent_arm() {
     type Steps =
         g::Seq<g::Par<LoanBody, Side>, g::Seq<g::Send<10, 3, Read>, g::Send<3, 10, Value>>>;
     let () = g::ProgramProjection::<Steps, 32>::VALIDATION;
-    let owner_program = crate::global::role_program::role_program_from_image::<0>(
-        &RoleProjection::<0, Steps, 32>::IMAGE_REF,
-    );
-    let worker_program = crate::global::role_program::role_program_from_image::<1>(
-        &RoleProjection::<1, Steps, 32>::IMAGE_REF,
-    );
-    let side_program = crate::global::role_program::role_program_from_image::<2>(
-        &RoleProjection::<2, Steps, 32>::IMAGE_REF,
-    );
-    let service_program = crate::global::role_program::role_program_from_image::<3>(
-        &RoleProjection::<3, Steps, 32>::IMAGE_REF,
-    );
-    let db_program = crate::global::role_program::role_program_from_image::<10>(
-        &RoleProjection::<10, Steps, 32>::IMAGE_REF,
-    );
+    let owner_program = crate::runtime::program::project::<0>(&g::Program::<Steps>::new());
+    let worker_program = crate::runtime::program::project::<1>(&g::Program::<Steps>::new());
+    let side_program = crate::runtime::program::project::<2>(&g::Program::<Steps>::new());
+    let service_program = crate::runtime::program::project::<3>(&g::Program::<Steps>::new());
+    let db_program = crate::runtime::program::project::<10>(&g::Program::<Steps>::new());
     let network = TestTransport::new();
     let mut owner_slab = [0; 32 * 1024];
     let mut worker_slab = [0; 32 * 1024];
@@ -138,18 +128,10 @@ fn a_received_endpoint_drives_its_parallel_arms_and_returns_its_continuation() {
         >,
     >;
     let () = g::ProgramProjection::<Steps, 32>::VALIDATION;
-    let owner_program = crate::global::role_program::role_program_from_image::<0>(
-        &RoleProjection::<0, Steps, 32>::IMAGE_REF,
-    );
-    let worker_program = crate::global::role_program::role_program_from_image::<1>(
-        &RoleProjection::<1, Steps, 32>::IMAGE_REF,
-    );
-    let service_program = crate::global::role_program::role_program_from_image::<3>(
-        &RoleProjection::<3, Steps, 32>::IMAGE_REF,
-    );
-    let db_program = crate::global::role_program::role_program_from_image::<10>(
-        &RoleProjection::<10, Steps, 32>::IMAGE_REF,
-    );
+    let owner_program = crate::runtime::program::project::<0>(&g::Program::<Steps>::new());
+    let worker_program = crate::runtime::program::project::<1>(&g::Program::<Steps>::new());
+    let service_program = crate::runtime::program::project::<3>(&g::Program::<Steps>::new());
+    let db_program = crate::runtime::program::project::<10>(&g::Program::<Steps>::new());
     let network = TestTransport::new();
     let mut owner_slab = [0; 32 * 1024];
     let mut worker_slab = [0; 32 * 1024];

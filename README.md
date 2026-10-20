@@ -30,14 +30,7 @@ connection and for application messages sent over QUIC.
 
 ## Add to your project
 
-Install the published crate:
-
-```sh
-cargo add hibana@0.9.9
-```
-
-The Endpoint delegation and `par()` APIs below require this repository revision.
-To use them, install the branch instead:
+The examples below use Hibana 0.10.0. Install this revision from Git:
 
 ```sh
 cargo add hibana --git https://github.com/hibanaworks/hibana.git --branch feature/endpoint-delegation
@@ -632,7 +625,9 @@ does not prevent a participant from sending conflicting choices to different pee
 
 [Verification](proofs/README.md) describes the models and their connection to
 the implementation. Lean checks the model theorems. Rust/model conformance tests
-compare both allowed and rejected operations over bounded schedules. Kani checks
+compare both allowed and rejected operations over bounded schedules. Some finite
+acceptance checks use `native_decide` and also trust Lean's compiler and runtime.
+They are distinguished from kernel-only proofs in the verification notes. Kani checks
 bounded implementation properties, and Miri checks borrowing, pointer provenance
 and drop behavior in executed tests. These checks do not verify every line of
 Rust or every transport implementation. Rust projection alone is not a proof of
@@ -660,6 +655,11 @@ also runs Lean, Kani, Miri, and embedded builds. It checks code size, stack and
 storage budgets, and endpoint and future layouts. These measurements describe
 the checked programs and builds. Memory use depends on the protocol and
 configuration.
+
+The [benchmarks](benches/README.md) measure the current runtime. Execution cost
+depends on protocol size: receive candidate lookup scans projected events.
+The instruction budgets bound regressions for the measured workloads; they are
+not a constant-time guarantee.
 
 ## License
 

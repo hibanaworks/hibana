@@ -11,21 +11,11 @@ fn a_rolled_body_cannot_restart_after_its_resource_has_left_in_the_continuation(
     type Steps =
         g::Seq<g::Roll<g::Seq<g::Send<0, 2, Tick>, g::Send<10, 3, Read>>>, g::Send<0, 1, Loan>>;
     let () = g::ProgramProjection::<Steps, 8>::VALIDATION;
-    let owner_program = crate::global::role_program::role_program_from_image::<0>(
-        &RoleProjection::<0, Steps, 8>::IMAGE_REF,
-    );
-    let db_program = crate::global::role_program::role_program_from_image::<10>(
-        &RoleProjection::<10, Steps, 8>::IMAGE_REF,
-    );
-    let worker_program = crate::global::role_program::role_program_from_image::<1>(
-        &RoleProjection::<1, Steps, 8>::IMAGE_REF,
-    );
-    let ticker_program = crate::global::role_program::role_program_from_image::<2>(
-        &RoleProjection::<2, Steps, 8>::IMAGE_REF,
-    );
-    let reader_program = crate::global::role_program::role_program_from_image::<3>(
-        &RoleProjection::<3, Steps, 8>::IMAGE_REF,
-    );
+    let owner_program = crate::runtime::program::project::<0>(&g::Program::<Steps>::new());
+    let db_program = crate::runtime::program::project::<10>(&g::Program::<Steps>::new());
+    let worker_program = crate::runtime::program::project::<1>(&g::Program::<Steps>::new());
+    let ticker_program = crate::runtime::program::project::<2>(&g::Program::<Steps>::new());
+    let reader_program = crate::runtime::program::project::<3>(&g::Program::<Steps>::new());
     tokio::runtime::Builder::new_current_thread()
         .enable_time()
         .build()
@@ -79,21 +69,11 @@ fn a_rolled_body_can_restart_after_its_resource_returns_from_the_continuation() 
         g::Seq<g::Send<0, 1, Loan>, g::Send<1, 0, Loan>>,
     >;
     let () = g::ProgramProjection::<Steps, 8>::VALIDATION;
-    let owner_program = crate::global::role_program::role_program_from_image::<0>(
-        &RoleProjection::<0, Steps, 8>::IMAGE_REF,
-    );
-    let db_program = crate::global::role_program::role_program_from_image::<10>(
-        &RoleProjection::<10, Steps, 8>::IMAGE_REF,
-    );
-    let worker_program = crate::global::role_program::role_program_from_image::<1>(
-        &RoleProjection::<1, Steps, 8>::IMAGE_REF,
-    );
-    let ticker_program = crate::global::role_program::role_program_from_image::<2>(
-        &RoleProjection::<2, Steps, 8>::IMAGE_REF,
-    );
-    let reader_program = crate::global::role_program::role_program_from_image::<3>(
-        &RoleProjection::<3, Steps, 8>::IMAGE_REF,
-    );
+    let owner_program = crate::runtime::program::project::<0>(&g::Program::<Steps>::new());
+    let db_program = crate::runtime::program::project::<10>(&g::Program::<Steps>::new());
+    let worker_program = crate::runtime::program::project::<1>(&g::Program::<Steps>::new());
+    let ticker_program = crate::runtime::program::project::<2>(&g::Program::<Steps>::new());
+    let reader_program = crate::runtime::program::project::<3>(&g::Program::<Steps>::new());
     tokio::runtime::Builder::new_current_thread()
         .enable_time()
         .build()
@@ -158,30 +138,14 @@ fn dropping_a_completed_owned_send_does_not_retire_the_returned_resource_view() 
         >,
     >;
     let () = crate::g::ProgramProjection::<Steps, 16>::VALIDATION;
-    let owner_program = crate::global::role_program::role_program_from_image::<0>(
-        &RoleProjection::<0, Steps, 16>::IMAGE_REF,
-    );
-    let worker_program = crate::global::role_program::role_program_from_image::<1>(
-        &RoleProjection::<1, Steps, 16>::IMAGE_REF,
-    );
-    let service_program = crate::global::role_program::role_program_from_image::<3>(
-        &RoleProjection::<3, Steps, 16>::IMAGE_REF,
-    );
-    let receiver_program = crate::global::role_program::role_program_from_image::<2>(
-        &RoleProjection::<2, Steps, 16>::IMAGE_REF,
-    );
-    let db_program = crate::global::role_program::role_program_from_image::<10>(
-        &RoleProjection::<10, Steps, 16>::IMAGE_REF,
-    );
-    let auth_program = crate::global::role_program::role_program_from_image::<11>(
-        &RoleProjection::<11, Steps, 16>::IMAGE_REF,
-    );
-    let observer_program = crate::global::role_program::role_program_from_image::<12>(
-        &RoleProjection::<12, Steps, 16>::IMAGE_REF,
-    );
-    let observer_sink_program = crate::global::role_program::role_program_from_image::<5>(
-        &RoleProjection::<5, Steps, 16>::IMAGE_REF,
-    );
+    let owner_program = crate::runtime::program::project::<0>(&g::Program::<Steps>::new());
+    let worker_program = crate::runtime::program::project::<1>(&g::Program::<Steps>::new());
+    let service_program = crate::runtime::program::project::<3>(&g::Program::<Steps>::new());
+    let receiver_program = crate::runtime::program::project::<2>(&g::Program::<Steps>::new());
+    let db_program = crate::runtime::program::project::<10>(&g::Program::<Steps>::new());
+    let auth_program = crate::runtime::program::project::<11>(&g::Program::<Steps>::new());
+    let observer_program = crate::runtime::program::project::<12>(&g::Program::<Steps>::new());
+    let observer_sink_program = crate::runtime::program::project::<5>(&g::Program::<Steps>::new());
     let runtime = tokio::runtime::Builder::new_current_thread()
         .build()
         .unwrap();
@@ -373,15 +337,9 @@ fn dropping_a_completed_owned_send_does_not_retire_the_returned_resource_view() 
 fn a_message_between_co_resident_views_consumes_both_local_halves_before_handoff() {
     type Steps = g::Seq<g::Send<0, 10, Read>, g::Seq<g::Send<0, 1, Loan>, g::Send<1, 0, Loan>>>;
     let () = crate::g::ProgramProjection::<Steps, 8>::VALIDATION;
-    let owner_program = crate::global::role_program::role_program_from_image::<0>(
-        &RoleProjection::<0, Steps, 8>::IMAGE_REF,
-    );
-    let db_program = crate::global::role_program::role_program_from_image::<10>(
-        &RoleProjection::<10, Steps, 8>::IMAGE_REF,
-    );
-    let worker_program = crate::global::role_program::role_program_from_image::<1>(
-        &RoleProjection::<1, Steps, 8>::IMAGE_REF,
-    );
+    let owner_program = crate::runtime::program::project::<0>(&g::Program::<Steps>::new());
+    let db_program = crate::runtime::program::project::<10>(&g::Program::<Steps>::new());
+    let worker_program = crate::runtime::program::project::<1>(&g::Program::<Steps>::new());
     let runtime = tokio::runtime::Builder::new_current_thread()
         .build()
         .unwrap();
@@ -462,18 +420,10 @@ fn one_resource_binding_cannot_issue_again_in_another_runtime_or_session() {
 fn received_resource_keeps_working_after_its_original_runtime_is_destroyed() {
     type Steps = g::Seq<g::Send<0, 1, Loan>, g::Seq<g::Send<10, 3, Read>, g::Send<3, 10, Value>>>;
     let () = crate::g::ProgramProjection::<Steps, 8>::VALIDATION;
-    let owner_program = crate::global::role_program::role_program_from_image::<0>(
-        &RoleProjection::<0, Steps, 8>::IMAGE_REF,
-    );
-    let db_program = crate::global::role_program::role_program_from_image::<10>(
-        &RoleProjection::<10, Steps, 8>::IMAGE_REF,
-    );
-    let worker_program = crate::global::role_program::role_program_from_image::<1>(
-        &RoleProjection::<1, Steps, 8>::IMAGE_REF,
-    );
-    let service_program = crate::global::role_program::role_program_from_image::<3>(
-        &RoleProjection::<3, Steps, 8>::IMAGE_REF,
-    );
+    let owner_program = crate::runtime::program::project::<0>(&g::Program::<Steps>::new());
+    let db_program = crate::runtime::program::project::<10>(&g::Program::<Steps>::new());
+    let worker_program = crate::runtime::program::project::<1>(&g::Program::<Steps>::new());
+    let service_program = crate::runtime::program::project::<3>(&g::Program::<Steps>::new());
     let runtime = tokio::runtime::Builder::new_current_thread()
         .build()
         .unwrap();
@@ -535,18 +485,10 @@ fn physical_service_grants_the_initial_right_and_remote_holders_only_receive_it(
         >,
     >;
     let () = crate::g::ProgramProjection::<Steps, 16>::VALIDATION;
-    let owner_program = crate::global::role_program::role_program_from_image::<0>(
-        &RoleProjection::<0, Steps, 16>::IMAGE_REF,
-    );
-    let worker_program = crate::global::role_program::role_program_from_image::<1>(
-        &RoleProjection::<1, Steps, 16>::IMAGE_REF,
-    );
-    let service_program = crate::global::role_program::role_program_from_image::<3>(
-        &RoleProjection::<3, Steps, 16>::IMAGE_REF,
-    );
-    let db_program = crate::global::role_program::role_program_from_image::<10>(
-        &RoleProjection::<10, Steps, 16>::IMAGE_REF,
-    );
+    let owner_program = crate::runtime::program::project::<0>(&g::Program::<Steps>::new());
+    let worker_program = crate::runtime::program::project::<1>(&g::Program::<Steps>::new());
+    let service_program = crate::runtime::program::project::<3>(&g::Program::<Steps>::new());
+    let db_program = crate::runtime::program::project::<10>(&g::Program::<Steps>::new());
     let runtime = tokio::runtime::Builder::new_current_thread()
         .build()
         .unwrap();
@@ -676,18 +618,10 @@ fn received_resource_endpoint_selects_its_own_resolved_route() {
         701,
     >;
     type Steps = g::Seq<g::Send<0, 1, Loan>, g::Seq<Work, g::Send<1, 0, Loan>>>;
-    let owner_program = crate::global::role_program::role_program_from_image::<0>(
-        &RoleProjection::<0, Steps, 32>::IMAGE_REF,
-    );
-    let resource_program = crate::global::role_program::role_program_from_image::<10>(
-        &RoleProjection::<10, Steps, 32>::IMAGE_REF,
-    );
-    let worker_program = crate::global::role_program::role_program_from_image::<1>(
-        &RoleProjection::<1, Steps, 32>::IMAGE_REF,
-    );
-    let service_program = crate::global::role_program::role_program_from_image::<3>(
-        &RoleProjection::<3, Steps, 32>::IMAGE_REF,
-    );
+    let owner_program = crate::runtime::program::project::<0>(&g::Program::<Steps>::new());
+    let resource_program = crate::runtime::program::project::<10>(&g::Program::<Steps>::new());
+    let worker_program = crate::runtime::program::project::<1>(&g::Program::<Steps>::new());
+    let service_program = crate::runtime::program::project::<3>(&g::Program::<Steps>::new());
     let runtime = tokio::runtime::Builder::new_current_thread()
         .build()
         .unwrap();
@@ -746,24 +680,12 @@ fn two_owned_views_drive_independent_parallel_exchanges_with_the_same_message_ty
             g::Seq<Work, g::Seq<g::Send<1, 0, Loan>, g::Send<1, 0, OtherLoan>>>,
         >,
     >;
-    let owner_program = crate::global::role_program::role_program_from_image::<0>(
-        &RoleProjection::<0, Steps, 32>::IMAGE_REF,
-    );
-    let db_program = crate::global::role_program::role_program_from_image::<10>(
-        &RoleProjection::<10, Steps, 32>::IMAGE_REF,
-    );
-    let auth_program = crate::global::role_program::role_program_from_image::<11>(
-        &RoleProjection::<11, Steps, 32>::IMAGE_REF,
-    );
-    let worker_program = crate::global::role_program::role_program_from_image::<1>(
-        &RoleProjection::<1, Steps, 32>::IMAGE_REF,
-    );
-    let db_service_program = crate::global::role_program::role_program_from_image::<3>(
-        &RoleProjection::<3, Steps, 32>::IMAGE_REF,
-    );
-    let auth_service_program = crate::global::role_program::role_program_from_image::<4>(
-        &RoleProjection::<4, Steps, 32>::IMAGE_REF,
-    );
+    let owner_program = crate::runtime::program::project::<0>(&g::Program::<Steps>::new());
+    let db_program = crate::runtime::program::project::<10>(&g::Program::<Steps>::new());
+    let auth_program = crate::runtime::program::project::<11>(&g::Program::<Steps>::new());
+    let worker_program = crate::runtime::program::project::<1>(&g::Program::<Steps>::new());
+    let db_service_program = crate::runtime::program::project::<3>(&g::Program::<Steps>::new());
+    let auth_service_program = crate::runtime::program::project::<4>(&g::Program::<Steps>::new());
     let runtime = tokio::runtime::Builder::new_current_thread()
         .build()
         .unwrap();
@@ -843,24 +765,12 @@ fn two_received_resources_select_parallel_routes_without_serializing_their_views
             g::Seq<Work, g::Seq<g::Send<1, 0, Loan>, g::Send<1, 0, OtherLoan>>>,
         >,
     >;
-    let owner_program = crate::global::role_program::role_program_from_image::<0>(
-        &RoleProjection::<0, Steps, 64>::IMAGE_REF,
-    );
-    let db_program = crate::global::role_program::role_program_from_image::<10>(
-        &RoleProjection::<10, Steps, 64>::IMAGE_REF,
-    );
-    let auth_program = crate::global::role_program::role_program_from_image::<11>(
-        &RoleProjection::<11, Steps, 64>::IMAGE_REF,
-    );
-    let worker_program = crate::global::role_program::role_program_from_image::<1>(
-        &RoleProjection::<1, Steps, 64>::IMAGE_REF,
-    );
-    let db_service_program = crate::global::role_program::role_program_from_image::<3>(
-        &RoleProjection::<3, Steps, 64>::IMAGE_REF,
-    );
-    let auth_service_program = crate::global::role_program::role_program_from_image::<4>(
-        &RoleProjection::<4, Steps, 64>::IMAGE_REF,
-    );
+    let owner_program = crate::runtime::program::project::<0>(&g::Program::<Steps>::new());
+    let db_program = crate::runtime::program::project::<10>(&g::Program::<Steps>::new());
+    let auth_program = crate::runtime::program::project::<11>(&g::Program::<Steps>::new());
+    let worker_program = crate::runtime::program::project::<1>(&g::Program::<Steps>::new());
+    let db_service_program = crate::runtime::program::project::<3>(&g::Program::<Steps>::new());
+    let auth_service_program = crate::runtime::program::project::<4>(&g::Program::<Steps>::new());
     let image = &RoleProjection::<1, Steps, 64>::IMAGE_REF;
     assert_ne!(
         image.program().event_atom_at(2).lane,
@@ -967,18 +877,10 @@ fn two_received_resources_select_parallel_routes_without_serializing_their_views
 #[test]
 fn rolled_owned_exchange_moves_the_returned_value_without_reattaching() {
     type Steps = g::Roll<DbLoan>;
-    let owner_program = crate::global::role_program::role_program_from_image::<0>(
-        &RoleProjection::<0, Steps, 32>::IMAGE_REF,
-    );
-    let resource_program = crate::global::role_program::role_program_from_image::<10>(
-        &RoleProjection::<10, Steps, 32>::IMAGE_REF,
-    );
-    let worker_program = crate::global::role_program::role_program_from_image::<1>(
-        &RoleProjection::<1, Steps, 32>::IMAGE_REF,
-    );
-    let service_program = crate::global::role_program::role_program_from_image::<3>(
-        &RoleProjection::<3, Steps, 32>::IMAGE_REF,
-    );
+    let owner_program = crate::runtime::program::project::<0>(&g::Program::<Steps>::new());
+    let resource_program = crate::runtime::program::project::<10>(&g::Program::<Steps>::new());
+    let worker_program = crate::runtime::program::project::<1>(&g::Program::<Steps>::new());
+    let service_program = crate::runtime::program::project::<3>(&g::Program::<Steps>::new());
     let runtime = tokio::runtime::Builder::new_current_thread()
         .build()
         .unwrap();
@@ -1021,15 +923,9 @@ fn rolled_owned_exchange_moves_the_returned_value_without_reattaching() {
 
 #[test]
 fn owned_return_waits_for_resource_operations_in_the_same_actor_progress() {
-    let owner_program = crate::global::role_program::role_program_from_image::<0>(
-        &RoleProjection::<0, DbLoan, 32>::IMAGE_REF,
-    );
-    let resource_program = crate::global::role_program::role_program_from_image::<10>(
-        &RoleProjection::<10, DbLoan, 32>::IMAGE_REF,
-    );
-    let worker_program = crate::global::role_program::role_program_from_image::<1>(
-        &RoleProjection::<1, DbLoan, 32>::IMAGE_REF,
-    );
+    let owner_program = crate::runtime::program::project::<0>(&g::Program::<DbLoan>::new());
+    let resource_program = crate::runtime::program::project::<10>(&g::Program::<DbLoan>::new());
+    let worker_program = crate::runtime::program::project::<1>(&g::Program::<DbLoan>::new());
     let runtime = tokio::runtime::Builder::new_current_thread()
         .build()
         .unwrap();
@@ -1054,15 +950,9 @@ fn owned_return_waits_for_resource_operations_in_the_same_actor_progress() {
 
 #[test]
 fn malformed_owned_frame_never_returns_an_endpoint_or_restores_the_sender() {
-    let owner_program = crate::global::role_program::role_program_from_image::<0>(
-        &RoleProjection::<0, DbLoan, 32>::IMAGE_REF,
-    );
-    let resource_program = crate::global::role_program::role_program_from_image::<10>(
-        &RoleProjection::<10, DbLoan, 32>::IMAGE_REF,
-    );
-    let worker_program = crate::global::role_program::role_program_from_image::<1>(
-        &RoleProjection::<1, DbLoan, 32>::IMAGE_REF,
-    );
+    let owner_program = crate::runtime::program::project::<0>(&g::Program::<DbLoan>::new());
+    let resource_program = crate::runtime::program::project::<10>(&g::Program::<DbLoan>::new());
+    let worker_program = crate::runtime::program::project::<1>(&g::Program::<DbLoan>::new());
     let runtime = tokio::runtime::Builder::new_current_thread()
         .build()
         .unwrap();
@@ -1092,18 +982,10 @@ fn resolved_owned_branch_send_and_recv_preserve_the_resource_continuation() {
         g::Resolve<g::Route<g::Send<0, 1, Loan>, g::Send<0, 1, AltLoan>>, 701>,
         g::Seq<g::Send<10, 3, Read>, g::Seq<g::Send<3, 10, Value>, g::Send<1, 0, Loan>>>,
     >;
-    let owner_program = crate::global::role_program::role_program_from_image::<0>(
-        &RoleProjection::<0, Steps, 32>::IMAGE_REF,
-    );
-    let resource_program = crate::global::role_program::role_program_from_image::<10>(
-        &RoleProjection::<10, Steps, 32>::IMAGE_REF,
-    );
-    let worker_program = crate::global::role_program::role_program_from_image::<1>(
-        &RoleProjection::<1, Steps, 32>::IMAGE_REF,
-    );
-    let service_program = crate::global::role_program::role_program_from_image::<3>(
-        &RoleProjection::<3, Steps, 32>::IMAGE_REF,
-    );
+    let owner_program = crate::runtime::program::project::<0>(&g::Program::<Steps>::new());
+    let resource_program = crate::runtime::program::project::<10>(&g::Program::<Steps>::new());
+    let worker_program = crate::runtime::program::project::<1>(&g::Program::<Steps>::new());
+    let service_program = crate::runtime::program::project::<3>(&g::Program::<Steps>::new());
     let runtime = tokio::runtime::Builder::new_current_thread()
         .build()
         .unwrap();
@@ -1160,24 +1042,12 @@ fn a_conditional_holder_keeps_resource_rolls_and_returns_through_an_owned_carrie
         >,
     >;
     let () = crate::g::ProgramProjection::<Steps, 64>::VALIDATION;
-    let owner_program = crate::global::role_program::role_program_from_image::<0>(
-        &RoleProjection::<0, Steps, 64>::IMAGE_REF,
-    );
-    let db_program = crate::global::role_program::role_program_from_image::<10>(
-        &RoleProjection::<10, Steps, 64>::IMAGE_REF,
-    );
-    let auth_program = crate::global::role_program::role_program_from_image::<11>(
-        &RoleProjection::<11, Steps, 64>::IMAGE_REF,
-    );
-    let a_program = crate::global::role_program::role_program_from_image::<1>(
-        &RoleProjection::<1, Steps, 64>::IMAGE_REF,
-    );
-    let b_program = crate::global::role_program::role_program_from_image::<2>(
-        &RoleProjection::<2, Steps, 64>::IMAGE_REF,
-    );
-    let service_program = crate::global::role_program::role_program_from_image::<3>(
-        &RoleProjection::<3, Steps, 64>::IMAGE_REF,
-    );
+    let owner_program = crate::runtime::program::project::<0>(&g::Program::<Steps>::new());
+    let db_program = crate::runtime::program::project::<10>(&g::Program::<Steps>::new());
+    let auth_program = crate::runtime::program::project::<11>(&g::Program::<Steps>::new());
+    let a_program = crate::runtime::program::project::<1>(&g::Program::<Steps>::new());
+    let b_program = crate::runtime::program::project::<2>(&g::Program::<Steps>::new());
+    let service_program = crate::runtime::program::project::<3>(&g::Program::<Steps>::new());
     for choose in [DecisionArm::Left, DecisionArm::Right] {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .build()

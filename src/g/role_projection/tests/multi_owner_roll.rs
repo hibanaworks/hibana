@@ -124,21 +124,11 @@ fn a_guard_cannot_come_back_before_another_loan_needed_to_return_the_resource() 
 #[test]
 fn another_local_entry_resource_can_guard_a_remote_resource_excursion() {
     let () = g::ProgramProjection::<Steps, 16>::VALIDATION;
-    let a_program = crate::global::role_program::role_program_from_image::<0>(
-        &RoleProjection::<0, Steps, 16>::IMAGE_REF,
-    );
-    let b_program = crate::global::role_program::role_program_from_image::<1>(
-        &RoleProjection::<1, Steps, 16>::IMAGE_REF,
-    );
-    let c_program = crate::global::role_program::role_program_from_image::<2>(
-        &RoleProjection::<2, Steps, 16>::IMAGE_REF,
-    );
-    let x_program = crate::global::role_program::role_program_from_image::<10>(
-        &RoleProjection::<10, Steps, 16>::IMAGE_REF,
-    );
-    let y_program = crate::global::role_program::role_program_from_image::<11>(
-        &RoleProjection::<11, Steps, 16>::IMAGE_REF,
-    );
+    let a_program = crate::runtime::program::project::<0>(&g::Program::<Steps>::new());
+    let b_program = crate::runtime::program::project::<1>(&g::Program::<Steps>::new());
+    let c_program = crate::runtime::program::project::<2>(&g::Program::<Steps>::new());
+    let x_program = crate::runtime::program::project::<10>(&g::Program::<Steps>::new());
+    let y_program = crate::runtime::program::project::<11>(&g::Program::<Steps>::new());
     tokio::runtime::Builder::new_current_thread()
         .enable_time()
         .start_paused(true)

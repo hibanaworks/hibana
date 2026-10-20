@@ -28,36 +28,18 @@ fn resource(snapshot: &ActorSnapshot) -> (u32, u32) {
 #[test]
 fn owned_commits_publish_the_shared_actor_step_and_resource_view_together() {
     let () = g::ProgramProjection::<Steps, 16>::VALIDATION;
-    let owner_program = crate::global::role_program::role_program_from_image::<0>(
-        &RoleProjection::<0, Steps, 16>::IMAGE_REF,
-    );
-    let worker_program = crate::global::role_program::role_program_from_image::<1>(
-        &RoleProjection::<1, Steps, 16>::IMAGE_REF,
-    );
-    let db_program = crate::global::role_program::role_program_from_image::<10>(
-        &RoleProjection::<10, Steps, 16>::IMAGE_REF,
-    );
-    let service_program = crate::global::role_program::role_program_from_image::<3>(
-        &RoleProjection::<3, Steps, 16>::IMAGE_REF,
-    );
-    let peer_program = crate::global::role_program::role_program_from_image::<4>(
-        &RoleProjection::<4, Steps, 16>::IMAGE_REF,
-    );
+    let owner_program = crate::runtime::program::project::<0>(&g::Program::<Steps>::new());
+    let worker_program = crate::runtime::program::project::<1>(&g::Program::<Steps>::new());
+    let db_program = crate::runtime::program::project::<10>(&g::Program::<Steps>::new());
+    let service_program = crate::runtime::program::project::<3>(&g::Program::<Steps>::new());
+    let peer_program = crate::runtime::program::project::<4>(&g::Program::<Steps>::new());
     // These ordinary co-resident views let the test read shared progress while
     // the completed send future still borrows its sender and owns its payload.
     // Their later owned sends fix the initial actors in the global itself.
-    let auth_program = crate::global::role_program::role_program_from_image::<11>(
-        &RoleProjection::<11, Steps, 16>::IMAGE_REF,
-    );
-    let observer_program = crate::global::role_program::role_program_from_image::<12>(
-        &RoleProjection::<12, Steps, 16>::IMAGE_REF,
-    );
-    let auth_sink_program = crate::global::role_program::role_program_from_image::<5>(
-        &RoleProjection::<5, Steps, 16>::IMAGE_REF,
-    );
-    let observer_sink_program = crate::global::role_program::role_program_from_image::<6>(
-        &RoleProjection::<6, Steps, 16>::IMAGE_REF,
-    );
+    let auth_program = crate::runtime::program::project::<11>(&g::Program::<Steps>::new());
+    let observer_program = crate::runtime::program::project::<12>(&g::Program::<Steps>::new());
+    let auth_sink_program = crate::runtime::program::project::<5>(&g::Program::<Steps>::new());
+    let observer_sink_program = crate::runtime::program::project::<6>(&g::Program::<Steps>::new());
     tokio::runtime::Builder::new_current_thread()
         .build()
         .unwrap()

@@ -23,24 +23,12 @@ type Global = g::Par<Steps, g::Roll<g::Send<0, 8, Independent>>>;
 #[test]
 fn a_pending_body_restart_cannot_publish_after_another_view_hands_its_resource_away() {
     let () = g::ProgramProjection::<Steps, 16>::VALIDATION;
-    let owner_program = crate::global::role_program::role_program_from_image::<0>(
-        &RoleProjection::<0, Steps, 16>::IMAGE_REF,
-    );
-    let db_program = crate::global::role_program::role_program_from_image::<10>(
-        &RoleProjection::<10, Steps, 16>::IMAGE_REF,
-    );
-    let auth_program = crate::global::role_program::role_program_from_image::<11>(
-        &RoleProjection::<11, Steps, 16>::IMAGE_REF,
-    );
-    let worker_program = crate::global::role_program::role_program_from_image::<1>(
-        &RoleProjection::<1, Steps, 16>::IMAGE_REF,
-    );
-    let ticker_program = crate::global::role_program::role_program_from_image::<3>(
-        &RoleProjection::<3, Steps, 16>::IMAGE_REF,
-    );
-    let reader_program = crate::global::role_program::role_program_from_image::<4>(
-        &RoleProjection::<4, Steps, 16>::IMAGE_REF,
-    );
+    let owner_program = crate::runtime::program::project::<0>(&g::Program::<Steps>::new());
+    let db_program = crate::runtime::program::project::<10>(&g::Program::<Steps>::new());
+    let auth_program = crate::runtime::program::project::<11>(&g::Program::<Steps>::new());
+    let worker_program = crate::runtime::program::project::<1>(&g::Program::<Steps>::new());
+    let ticker_program = crate::runtime::program::project::<3>(&g::Program::<Steps>::new());
+    let reader_program = crate::runtime::program::project::<4>(&g::Program::<Steps>::new());
     tokio::runtime::Builder::new_current_thread()
         .enable_time().start_paused(true).build().unwrap().block_on(async {
         let network = TestTransport::new();
@@ -92,24 +80,12 @@ fn a_pending_send_waits_for_a_fresh_other_view_predecessor_and_then_finishes() {
         g::Seq<g::Send<11, 1, Value>, g::Seq<g::Send<0, 2, Loan>, g::Send<0, 2, OtherLoan>>>,
     >;
     let () = g::ProgramProjection::<Global, 16>::VALIDATION;
-    let owner_program = crate::global::role_program::role_program_from_image::<0>(
-        &RoleProjection::<0, Global, 16>::IMAGE_REF,
-    );
-    let db_program = crate::global::role_program::role_program_from_image::<10>(
-        &RoleProjection::<10, Global, 16>::IMAGE_REF,
-    );
-    let auth_program = crate::global::role_program::role_program_from_image::<11>(
-        &RoleProjection::<11, Global, 16>::IMAGE_REF,
-    );
-    let worker_program = crate::global::role_program::role_program_from_image::<1>(
-        &RoleProjection::<1, Global, 16>::IMAGE_REF,
-    );
-    let ticker_program = crate::global::role_program::role_program_from_image::<3>(
-        &RoleProjection::<3, Global, 16>::IMAGE_REF,
-    );
-    let reader_program = crate::global::role_program::role_program_from_image::<4>(
-        &RoleProjection::<4, Global, 16>::IMAGE_REF,
-    );
+    let owner_program = crate::runtime::program::project::<0>(&g::Program::<Global>::new());
+    let db_program = crate::runtime::program::project::<10>(&g::Program::<Global>::new());
+    let auth_program = crate::runtime::program::project::<11>(&g::Program::<Global>::new());
+    let worker_program = crate::runtime::program::project::<1>(&g::Program::<Global>::new());
+    let ticker_program = crate::runtime::program::project::<3>(&g::Program::<Global>::new());
+    let reader_program = crate::runtime::program::project::<4>(&g::Program::<Global>::new());
     tokio::runtime::Builder::new_current_thread()
         .enable_time()
         .start_paused(true)
@@ -167,27 +143,13 @@ fn a_pending_send_waits_for_a_fresh_other_view_predecessor_and_then_finishes() {
 #[test]
 fn a_pending_owned_send_keeps_its_payload_unavailable_for_resource_dependent_reentry() {
     let () = g::ProgramProjection::<Global, 16>::VALIDATION;
-    let owner_program = crate::global::role_program::role_program_from_image::<0>(
-        &RoleProjection::<0, Global, 16>::IMAGE_REF,
-    );
-    let db_program = crate::global::role_program::role_program_from_image::<10>(
-        &RoleProjection::<10, Global, 16>::IMAGE_REF,
-    );
-    let auth_program = crate::global::role_program::role_program_from_image::<11>(
-        &RoleProjection::<11, Global, 16>::IMAGE_REF,
-    );
-    let ticker_program = crate::global::role_program::role_program_from_image::<3>(
-        &RoleProjection::<3, Global, 16>::IMAGE_REF,
-    );
-    let reader_program = crate::global::role_program::role_program_from_image::<4>(
-        &RoleProjection::<4, Global, 16>::IMAGE_REF,
-    );
-    let worker_program = crate::global::role_program::role_program_from_image::<1>(
-        &RoleProjection::<1, Global, 16>::IMAGE_REF,
-    );
-    let independent_program = crate::global::role_program::role_program_from_image::<8>(
-        &RoleProjection::<8, Global, 16>::IMAGE_REF,
-    );
+    let owner_program = crate::runtime::program::project::<0>(&g::Program::<Global>::new());
+    let db_program = crate::runtime::program::project::<10>(&g::Program::<Global>::new());
+    let auth_program = crate::runtime::program::project::<11>(&g::Program::<Global>::new());
+    let ticker_program = crate::runtime::program::project::<3>(&g::Program::<Global>::new());
+    let reader_program = crate::runtime::program::project::<4>(&g::Program::<Global>::new());
+    let worker_program = crate::runtime::program::project::<1>(&g::Program::<Global>::new());
+    let independent_program = crate::runtime::program::project::<8>(&g::Program::<Global>::new());
     tokio::runtime::Builder::new_current_thread()
         .enable_time()
         .start_paused(true)
@@ -332,27 +294,13 @@ fn a_pending_owned_send_keeps_its_payload_unavailable_for_resource_dependent_ree
 #[test]
 fn an_unpolled_owned_send_cannot_wait_on_its_payload_after_another_view_restarts() {
     let () = g::ProgramProjection::<Global, 16>::VALIDATION;
-    let owner_program = crate::global::role_program::role_program_from_image::<0>(
-        &RoleProjection::<0, Global, 16>::IMAGE_REF,
-    );
-    let db_program = crate::global::role_program::role_program_from_image::<10>(
-        &RoleProjection::<10, Global, 16>::IMAGE_REF,
-    );
-    let auth_program = crate::global::role_program::role_program_from_image::<11>(
-        &RoleProjection::<11, Global, 16>::IMAGE_REF,
-    );
-    let ticker_program = crate::global::role_program::role_program_from_image::<3>(
-        &RoleProjection::<3, Global, 16>::IMAGE_REF,
-    );
-    let reader_program = crate::global::role_program::role_program_from_image::<4>(
-        &RoleProjection::<4, Global, 16>::IMAGE_REF,
-    );
-    let worker_program = crate::global::role_program::role_program_from_image::<1>(
-        &RoleProjection::<1, Global, 16>::IMAGE_REF,
-    );
-    let independent_program = crate::global::role_program::role_program_from_image::<8>(
-        &RoleProjection::<8, Global, 16>::IMAGE_REF,
-    );
+    let owner_program = crate::runtime::program::project::<0>(&g::Program::<Global>::new());
+    let db_program = crate::runtime::program::project::<10>(&g::Program::<Global>::new());
+    let auth_program = crate::runtime::program::project::<11>(&g::Program::<Global>::new());
+    let ticker_program = crate::runtime::program::project::<3>(&g::Program::<Global>::new());
+    let reader_program = crate::runtime::program::project::<4>(&g::Program::<Global>::new());
+    let worker_program = crate::runtime::program::project::<1>(&g::Program::<Global>::new());
+    let independent_program = crate::runtime::program::project::<8>(&g::Program::<Global>::new());
     tokio::runtime::Builder::new_current_thread()
         .enable_time()
         .start_paused(true)

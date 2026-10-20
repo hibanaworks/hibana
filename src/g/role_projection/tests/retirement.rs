@@ -21,30 +21,14 @@ fn a_completed_view_retires_without_cancelling_independent_work() {
         >,
     >;
     let () = g::ProgramProjection::<Steps, 8>::VALIDATION;
-    let owner_program = crate::global::role_program::role_program_from_image::<0>(
-        &RoleProjection::<0, Steps, 8>::IMAGE_REF,
-    );
-    let worker_program = crate::global::role_program::role_program_from_image::<1>(
-        &RoleProjection::<1, Steps, 8>::IMAGE_REF,
-    );
-    let db_program = crate::global::role_program::role_program_from_image::<10>(
-        &RoleProjection::<10, Steps, 8>::IMAGE_REF,
-    );
-    let service_program = crate::global::role_program::role_program_from_image::<3>(
-        &RoleProjection::<3, Steps, 8>::IMAGE_REF,
-    );
-    let value_program = crate::global::role_program::role_program_from_image::<4>(
-        &RoleProjection::<4, Steps, 8>::IMAGE_REF,
-    );
-    let auth_peer_program = crate::global::role_program::role_program_from_image::<5>(
-        &RoleProjection::<5, Steps, 8>::IMAGE_REF,
-    );
-    let receiver_program = crate::global::role_program::role_program_from_image::<6>(
-        &RoleProjection::<6, Steps, 8>::IMAGE_REF,
-    );
-    let auth_program = crate::global::role_program::role_program_from_image::<11>(
-        &RoleProjection::<11, Steps, 8>::IMAGE_REF,
-    );
+    let owner_program = crate::runtime::program::project::<0>(&g::Program::<Steps>::new());
+    let worker_program = crate::runtime::program::project::<1>(&g::Program::<Steps>::new());
+    let db_program = crate::runtime::program::project::<10>(&g::Program::<Steps>::new());
+    let service_program = crate::runtime::program::project::<3>(&g::Program::<Steps>::new());
+    let value_program = crate::runtime::program::project::<4>(&g::Program::<Steps>::new());
+    let auth_peer_program = crate::runtime::program::project::<5>(&g::Program::<Steps>::new());
+    let receiver_program = crate::runtime::program::project::<6>(&g::Program::<Steps>::new());
+    let auth_program = crate::runtime::program::project::<11>(&g::Program::<Steps>::new());
     let runtime = tokio::runtime::Builder::new_current_thread()
         .build()
         .unwrap();

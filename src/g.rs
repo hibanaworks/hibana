@@ -104,11 +104,11 @@ where
     Program::new()
 }
 
-/// Mark this choreography fragment as a reentry scope.
-///
-/// A rolled fragment may be entered again after the fragment has completed.
-/// The fragment's following continuation remains the natural exit path.
 impl<Steps> Program<Steps> {
+    /// Allow this fragment to run again after completion.
+    ///
+    /// Projection requires guarded repetition. The following sequential
+    /// continuation remains available under the projected dependencies.
     pub const fn roll(self) -> Program<Roll<Steps>> {
         let _ = self;
         Program::new()

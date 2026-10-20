@@ -32,6 +32,7 @@ impl FrameLabel {
         Self(raw)
     }
 
+    /// Return the one-byte wire discriminator assigned during projection.
     #[inline]
     pub const fn raw(self) -> u8 {
         self.0

@@ -33,10 +33,15 @@ pub const ENDPOINT_SESSION: u16 = 0x0204;
 ///   lane/source/target/label packed as `lane<<24 | source<<16 | target<<8 | label`
 pub const TRANSPORT_MISMATCH: u16 = 0x0205;
 
+/// Frame session ID differs from the port's session.
 pub const TRANSPORT_MISMATCH_SESSION: u8 = 1;
+/// Frame lane differs from the projected lane.
 pub const TRANSPORT_MISMATCH_LANE: u8 = 2;
+/// Frame sender differs from the expected logical source role.
 pub const TRANSPORT_MISMATCH_SOURCE_ROLE: u8 = 3;
+/// Frame destination differs from the receiving logical role.
 pub const TRANSPORT_MISMATCH_PEER_ROLE: u8 = 4;
+/// Wire frame label differs from the permitted message.
 pub const TRANSPORT_MISMATCH_LABEL: u8 = 5;
 
 /// Transport frame metadata observed before endpoint progress committed.
@@ -55,9 +60,13 @@ pub const TRANSPORT_FRAME: u16 = 0x0206;
 /// - `arg1`: Lane index encoded on the wire (u8 promoted to u32)
 pub const TRANSPORT_FAULT: u16 = 0x0207;
 
+/// A transport operation returned `TransportError::Offline`.
 pub const TRANSPORT_FAULT_OFFLINE: u8 = 1;
+/// A transport operation returned `TransportError::Deadline`.
 pub const TRANSPORT_FAULT_DEADLINE: u8 = 2;
+/// A transport operation returned `TransportError::Capacity`.
 pub const TRANSPORT_FAULT_CAPACITY: u8 = 3;
+/// A transport operation returned `TransportError::Failed`.
 pub const TRANSPORT_FAULT_FAILED: u8 = 4;
 
 // ───────────── Lane lifecycle (0x0210-0x021F) ─────────────

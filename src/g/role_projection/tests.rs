@@ -1,7 +1,5 @@
-//! Drive the actual compact cursor built by actor-aware production lowering.
-//! Cursor and actual owned Endpoint execution over private actor images.
-//! Full semantic acceptance and distributed guarantees remain unfinished;
-//! public owned projection remains rejected.
+//! Exercise projected cursors and actual Endpoint transfers. Runtime scenarios
+//! use public projection; descriptor tests inspect the compiled representation.
 use super::RoleProjection;
 use crate::global::{
     compiled::images::RoleDescriptorRef,
@@ -141,18 +139,10 @@ fn owned_send_recv_returns_the_resource_continuation_to_its_original_actor() {
         test_support::transport::TestTransport,
     };
     type Steps = g::Seq<DbLoan, g::Seq<g::Send<10, 3, Read>, g::Send<3, 10, Value>>>;
-    let owner_program = crate::global::role_program::role_program_from_image::<0>(
-        &RoleProjection::<0, Steps, 32>::IMAGE_REF,
-    );
-    let worker_program = crate::global::role_program::role_program_from_image::<1>(
-        &RoleProjection::<1, Steps, 32>::IMAGE_REF,
-    );
-    let resource_program = crate::global::role_program::role_program_from_image::<10>(
-        &RoleProjection::<10, Steps, 32>::IMAGE_REF,
-    );
-    let service_program = crate::global::role_program::role_program_from_image::<3>(
-        &RoleProjection::<3, Steps, 32>::IMAGE_REF,
-    );
+    let owner_program = crate::runtime::program::project::<0>(&g::Program::<Steps>::new());
+    let worker_program = crate::runtime::program::project::<1>(&g::Program::<Steps>::new());
+    let resource_program = crate::runtime::program::project::<10>(&g::Program::<Steps>::new());
+    let service_program = crate::runtime::program::project::<3>(&g::Program::<Steps>::new());
     let runtime = tokio::runtime::Builder::new_current_thread()
         .build()
         .unwrap();
@@ -202,18 +192,10 @@ fn owned_send_recv_crosses_distinct_runtime_slabs_and_returns_the_continuation()
         test_support::transport::TestTransport,
     };
     type Steps = g::Seq<DbLoan, g::Seq<g::Send<10, 3, Read>, g::Send<3, 10, Value>>>;
-    let owner_program = crate::global::role_program::role_program_from_image::<0>(
-        &RoleProjection::<0, Steps, 32>::IMAGE_REF,
-    );
-    let worker_program = crate::global::role_program::role_program_from_image::<1>(
-        &RoleProjection::<1, Steps, 32>::IMAGE_REF,
-    );
-    let resource_program = crate::global::role_program::role_program_from_image::<10>(
-        &RoleProjection::<10, Steps, 32>::IMAGE_REF,
-    );
-    let service_program = crate::global::role_program::role_program_from_image::<3>(
-        &RoleProjection::<3, Steps, 32>::IMAGE_REF,
-    );
+    let owner_program = crate::runtime::program::project::<0>(&g::Program::<Steps>::new());
+    let worker_program = crate::runtime::program::project::<1>(&g::Program::<Steps>::new());
+    let resource_program = crate::runtime::program::project::<10>(&g::Program::<Steps>::new());
+    let service_program = crate::runtime::program::project::<3>(&g::Program::<Steps>::new());
     let runtime = tokio::runtime::Builder::new_current_thread()
         .build()
         .unwrap();

@@ -70,4 +70,8 @@ The [CI workflow](../.github/workflows/quality-gates.yml) also runs the individu
 checks, transport tests, embedded builds, size measurements and instruction
 budgets. Generated Lean inputs and logs go to build or temporary directories.
 The checked theorem inventories reject missing or extra claims and forbidden
-axioms. The permitted axioms are `propext` and `Quot.sound`.
+axioms. Model theorems and kernel-only generated claims permit only `propext`
+and `Quot.sound`. Finite regression examples and explicitly classified
+acceptance certificates use `native_decide`; they also trust Lean's compiler
+and runtime. The compiled schedule oracle is an executable test. The
+[Lean audit description](lean/README.md#run-and-audit) identifies these boundaries.

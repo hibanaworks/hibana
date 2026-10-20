@@ -15,24 +15,12 @@ type Steps = g::Par<g::Seq<g::Roll<DbLoan>, g::Send<1, 0, Tail>>, g::Roll<AuthLo
 #[test]
 fn parallel_loan_reentry_preserves_the_other_body_and_completed_tail() {
     let () = g::ProgramProjection::<Steps, 32>::VALIDATION;
-    let owner_program = crate::global::role_program::role_program_from_image::<0>(
-        &RoleProjection::<0, Steps, 32>::IMAGE_REF,
-    );
-    let worker_program = crate::global::role_program::role_program_from_image::<1>(
-        &RoleProjection::<1, Steps, 32>::IMAGE_REF,
-    );
-    let db_program = crate::global::role_program::role_program_from_image::<10>(
-        &RoleProjection::<10, Steps, 32>::IMAGE_REF,
-    );
-    let auth_program = crate::global::role_program::role_program_from_image::<11>(
-        &RoleProjection::<11, Steps, 32>::IMAGE_REF,
-    );
-    let db_service_program = crate::global::role_program::role_program_from_image::<3>(
-        &RoleProjection::<3, Steps, 32>::IMAGE_REF,
-    );
-    let auth_service_program = crate::global::role_program::role_program_from_image::<4>(
-        &RoleProjection::<4, Steps, 32>::IMAGE_REF,
-    );
+    let owner_program = crate::runtime::program::project::<0>(&g::Program::<Steps>::new());
+    let worker_program = crate::runtime::program::project::<1>(&g::Program::<Steps>::new());
+    let db_program = crate::runtime::program::project::<10>(&g::Program::<Steps>::new());
+    let auth_program = crate::runtime::program::project::<11>(&g::Program::<Steps>::new());
+    let db_service_program = crate::runtime::program::project::<3>(&g::Program::<Steps>::new());
+    let auth_service_program = crate::runtime::program::project::<4>(&g::Program::<Steps>::new());
     tokio::runtime::Builder::new_current_thread()
         .enable_time()
         .start_paused(true)
