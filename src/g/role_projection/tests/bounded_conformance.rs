@@ -23,6 +23,21 @@ type Tick = g::Msg<227, u32>;
 type LoanBody = g::Seq<g::Send<0, 1, Loan>, g::Seq<g::Send<10, 2, Read>, g::Send<1, 0, Return>>>;
 type OwnedParallel = g::Par<g::Roll<LoanBody>, g::Send<0, 2, Tick>>;
 
+// (source operation = 2 * event + receive, physical caller). Alternate
+// resource holders probe the same logical operation, not another protocol step.
+const EXCHANGE_PROBES: &[(u8, u8)] = &[(0, 0), (1, 1), (2, 1), (3, 0), (4, 1), (5, 0)];
+const OWNED_PROBES: &[(u8, u8)] = &[
+    (0, 0),
+    (1, 1),
+    (2, 1),
+    (3, 2),
+    (4, 1),
+    (5, 0),
+    (6, 0),
+    (7, 2),
+    (2, 0),
+];
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum Outcome {
     Accepted,
@@ -187,6 +202,10 @@ async fn replay_owned(commands: &[u8]) -> Outcome {
             },
             6 => observe!(ticker.send::<Tick>(&7)),
             7 => observe!(ticks.recv::<Tick>()),
+            8 => match owner_db.as_mut() {
+                Some(db) => observe!(db.send::<Read>(&7)),
+                None => Outcome::Unavailable,
+            },
             _ => unreachable!(),
         };
         assert!(
@@ -207,6 +226,7 @@ async fn replay_owned(commands: &[u8]) -> Outcome {
 async fn enumerate(
     name: &str,
     caps: &[u8],
+    probes: &[(u8, u8)],
     replay: impl AsyncFn(&[u8]) -> Outcome,
 ) -> (String, usize, usize) {
     use core::fmt::Write;
@@ -223,9 +243,15 @@ async fn enumerate(
     for _depth in 0..depth {
         let mut next = Vec::new();
         for prefix in frontier {
-            for (command, &cap) in caps.iter().enumerate() {
+            for (command, &(operation, _actor)) in probes.iter().enumerate() {
                 let command = u8::try_from(command).unwrap();
-                if prefix.iter().filter(|&&prior| prior == command).count() == usize::from(cap) {
+                let cap = caps[usize::from(operation)];
+                if prefix
+                    .iter()
+                    .filter(|&&prior| probes[usize::from(prior)].0 == operation)
+                    .count()
+                    == usize::from(cap)
+                {
                     continue;
                 }
                 let mut trace = prefix.clone();
@@ -266,6 +292,15 @@ async fn enumerate(
         "the generator must reach complete bounded runs"
     );
     writeln!(observations, "]").unwrap();
+    writeln!(observations, "def {name}Probes : List Probe := [").unwrap();
+    for &(operation, actor) in probes {
+        writeln!(
+            observations,
+            "{{ operation := {operation}, actor := {actor} }},"
+        )
+        .unwrap();
+    }
+    writeln!(observations, "]").unwrap();
     writeln!(
         observations,
         "def {name}Attempts : List Attempt := {}",
@@ -287,17 +322,35 @@ fn bounded_public_schedules_emit_executable_lean_conformance_cases() {
         .unwrap()
         .block_on(async {
             (
-                enumerate("seqRoll", &[2, 2, 2, 2, 1, 1], replay::<Sequential>).await,
-                enumerate("parRoll", &[2, 2, 2, 2, 1, 1], replay::<Parallel>).await,
-                enumerate("ownedParRoll", &[2, 2, 2, 2, 2, 2, 1, 1], replay_owned).await,
+                enumerate(
+                    "seqRoll",
+                    &[2, 2, 2, 2, 1, 1],
+                    EXCHANGE_PROBES,
+                    replay::<Sequential>,
+                )
+                .await,
+                enumerate(
+                    "parRoll",
+                    &[2, 2, 2, 2, 1, 1],
+                    EXCHANGE_PROBES,
+                    replay::<Parallel>,
+                )
+                .await,
+                enumerate(
+                    "ownedParRoll",
+                    &[2, 2, 2, 2, 2, 2, 1, 1],
+                    OWNED_PROBES,
+                    replay_owned,
+                )
+                .await,
             )
         });
     let generated = format!(
         "{}\n{}\n{}\n\
         def main : IO Unit := checkCases [\n\
-        {{ name := \"seq-roll\", choreo := {}, images := [{}, {}], attempts := seqRollAttempts }},\n\
-        {{ name := \"par-roll\", choreo := {}, images := [{}, {}], attempts := parRollAttempts }},\n\
-        {{ name := \"owned-par-roll\", choreo := {}, images := [{}, {}, {}], attempts := ownedParRollAttempts }}]\n",
+        {{ name := \"seq-roll\", choreo := {}, images := [{}, {}], probes := seqRollProbes, attempts := seqRollAttempts }},\n\
+        {{ name := \"par-roll\", choreo := {}, images := [{}, {}], probes := parRollProbes, attempts := parRollAttempts }},\n\
+        {{ name := \"owned-par-roll\", choreo := {}, images := [{}, {}, {}], probes := ownedParRollProbes, attempts := ownedParRollAttempts }}]\n",
         sequential.0,
         parallel.0,
         owned.0,

@@ -9,10 +9,16 @@ structure Attempt where
   outcome : Nat
   runtime : String
 
+structure Probe where
+  operation : Nat
+  actor : Nat
+  deriving BEq, Inhabited
+
 structure ConformanceCase where
   name : String
   choreo : Choreo
   images : List RustDescriptorImage
+  probes : List Probe
   attempts : List Attempt
 
 inductive Oracle where
@@ -20,6 +26,7 @@ inductive Oracle where
   | serialized
   | unguarded
   | unprojected
+  | unheld
   deriving BEq
 
 def checkedPlans (source expanded : Source) (unfolding : SourceUnfolding source expanded) :
@@ -91,10 +98,14 @@ def atFifoHead (channels : Array (Nat × Nat × Nat))
       | _ => false) == some (.accepted occurrence)
 
 def nextPoints (plan : SourceOccurrenceCut source) (channels : Array (Nat × Nat × Nat)) (oracle : Oracle)
-    (points : List SourcePoint) (command : Nat) : List (List SourcePoint) :=
+    (points : List SourcePoint) (probe : Probe) : List (List SourcePoint) :=
   (plan.unfolding.occurrences 0).zipIdx.filterMap fun ((origin, _), occurrence) =>
-    if origin != command / 2 then none else
-    let side := if command % 2 == 0 then Side.send else Side.receive
+    if origin != probe.operation / 2 then none else
+    let side := if probe.operation % 2 == 0 then Side.send else Side.receive
+    let binding := plan.path.bindings.find? (fun entry => entry.1 == occurrence)
+    let caller := binding.map fun (_, binding) =>
+      if side == .send then binding.senderActor else binding.receiverActor
+    if oracle != .unheld && caller != some probe.actor then none else
     let action : ActionId := ⟨occurrence, side⟩
     let point := action.entryPoint
     let ready := if oracle == .unguarded then
@@ -112,21 +123,53 @@ def nextPoints (plan : SourceOccurrenceCut source) (channels : Array (Nat × Nat
       else none
 
 def permits (plans : List (SourceOccurrenceCut source × Array (Nat × Nat × Nat)))
-    (oracle : Oracle) (commands : List Nat) : Bool :=
+    (oracle : Oracle) (probes : List Probe) (commands : List Nat) : Bool :=
   plans.any fun (plan, channels) =>
     !(commands.foldl (fun states command =>
-      states.flatMap fun points => nextPoints plan channels oracle points command) [[]]).isEmpty
+      match probes[command]? with
+      | none => []
+      | some probe => states.flatMap fun points => nextPoints plan channels oracle points probe)
+      [[]]).isEmpty
+
+/-- All possible holders, including initial issuance before the first transfer.
+This comes from accepted source paths, not observed successes or the probe table.
+A holder remains a candidate for its view's operations even when that actor has
+no legitimate row for the particular operation. -/
+def possibleHolders (plans : List (SourceOccurrenceCut source)) (key : EndpointKey) : List Nat :=
+  (plans.flatMap fun plan =>
+    let initial := (issuer? plan.original.issuance key).getD key.role
+    initial :: plan.path.bindings.flatMap fun (_, binding) =>
+      (if binding.message.sender == key then [binding.senderActor] else []) ++
+      (if binding.message.receiver == key then [binding.receiverActor] else []) ++
+      (if binding.message.payload == .endpoint key then
+        [binding.senderActor, binding.receiverActor] else [])).eraseDups
+
+def expectedProbes (plans : List (SourceOccurrenceCut source)) : List Probe :=
+  (source.messageEntries 0).flatMap fun (origin, message) =>
+    ((possibleHolders plans message.sender).map fun actor => ⟨2 * origin, actor⟩) ++
+    ((possibleHolders plans message.receiver).map fun actor => ⟨2 * origin + 1, actor⟩)
+
+def probeInventory (probes : List Probe) : List (Nat × Nat) :=
+  (probes.map fun probe => (probe.operation, probe.actor)).mergeSort fun left right =>
+    left.1 < right.1 || (left.1 == right.1 && left.2 ≤ right.2)
+
+def completeProbeInventory (plans : List (SourceOccurrenceCut source))
+    (probes : List Probe) : Bool :=
+  probeInventory probes == probeInventory (expectedProbes plans)
 
 /-- Derive occurrence bounds from the accepted expansions, independently of
 the Rust enumeration loop. Every successful bounded prefix must probe every
 remaining local operation exactly once. Missing probes cannot make the
 conformance result green. -/
 def eligibleCommands (plans : List (SourceOccurrenceCut source))
-    (commands : List Nat) : List Nat :=
-  (List.range (source.eventCount * 2)).filter fun command =>
+    (probes : List Probe) (commands : List Nat) : List Nat :=
+  (List.range probes.length).filter fun command =>
+    let probe := probes[command]!
     let capacity := plans.foldl (fun largest plan => max largest
-      ((plan.unfolding.occurrences 0).filter fun entry => entry.1 == command / 2).length) 0
-    (commands.filter (· == command)).length < capacity
+      ((plan.unfolding.occurrences 0).filter fun entry =>
+        entry.1 == probe.operation / 2).length) 0
+    (commands.filter fun prior => (probes[prior]?.map (·.operation)) ==
+      some probe.operation).length < capacity
 
 def testedPrefixes (sample : ConformanceCase) (depth : Nat) : List (List Nat) :=
   ([] :: (sample.attempts.filterMap fun attempt =>
@@ -142,7 +185,7 @@ def enumerationComplete (sample : ConformanceCase)
   prefixes.all fun priorCommands =>
     let candidates := sample.attempts.filter fun attempt => attempt.commands.dropLast == priorCommands
     (candidates.map fun attempt => attempt.commands.getLast!).mergeSort (· ≤ ·) ==
-      eligibleCommands plans priorCommands
+      eligibleCommands plans sample.probes priorCommands
 
 def checkCases (cases : List ConformanceCase) : IO Unit := do
   let mut runtimeOnly := 0
@@ -151,6 +194,7 @@ def checkCases (cases : List ConformanceCase) : IO Unit := do
   let mut tooStrict := 0
   let mut tooLoose := 0
   let mut missingProjection := 0
+  let mut missingHolder := 0
   let mut checked := 0
   let mut cuts := 0
   for sample in cases do
@@ -158,6 +202,13 @@ def checkCases (cases : List ConformanceCase) : IO Unit := do
       | throw (IO.userError s!"missing source: {sample.name}")
     let plans := boundedPlans source .source
     unless !plans.isEmpty do throw (IO.userError s!"no accepted bounded plans: {sample.name}")
+    unless completeProbeInventory plans sample.probes do
+      throw (IO.userError s!"missing or duplicate holder probes: {sample.name}")
+    let some firstProbe := sample.probes.head?
+      | throw (IO.userError s!"empty probe inventory: {sample.name}")
+    if completeProbeInventory plans sample.probes.tail ||
+        completeProbeInventory plans (firstProbe :: sample.probes) then
+      throw (IO.userError "holder inventory controls missed missing/duplicate callers")
     let actors := (plans.flatMap fun plan => plan.path.bindings.flatMap fun (_, binding) =>
       [binding.senderActor, binding.receiverActor]).eraseDups.mergeSort (· ≤ ·)
     unless (sample.images.map (·.role)).mergeSort (· ≤ ·) == actors &&
@@ -179,27 +230,30 @@ def checkCases (cases : List ConformanceCase) : IO Unit := do
       throw (IO.userError "enumeration controls failed to detect missing/duplicate probes")
     for priorCommands in testedPrefixes sample depth do
       let candidates := sample.attempts.filter fun attempt => attempt.commands.dropLast == priorCommands
-      let ready := candidates.filter fun attempt => permits indexed .source attempt.commands
+      let ready := candidates.filter fun attempt =>
+        permits indexed .source sample.probes attempt.commands
       cuts := cuts + 1
       if !ready.isEmpty && !ready.any (fun attempt => attempt.outcome == 0) then
         stalled := stalled + 1
         IO.println s!"stalled {sample.name}: prefix={priorCommands} ready={ready.map (·.commands.getLast!)}"
     for attempt in sample.attempts do
-      let expected := permits indexed .source attempt.commands
+      let expected := permits indexed .source sample.probes attempt.commands
       let accepted := attempt.outcome == 0
       checked := checked + 1
       if expected != accepted then
         if runtimeOnly + modelOnly < 20 then
           IO.println s!"mismatch {sample.name}: commands={attempt.commands} model={expected} runtime={attempt.runtime}"
         if accepted then runtimeOnly := runtimeOnly + 1 else modelOnly := modelOnly + 1
-      if accepted && !permits serial .serialized attempt.commands then
+      if accepted && !permits serial .serialized sample.probes attempt.commands then
         tooStrict := tooStrict + 1
-      if !accepted && permits indexed .unguarded attempt.commands then
+      if !accepted && permits indexed .unguarded sample.probes attempt.commands then
         tooLoose := tooLoose + 1
-      if !accepted && permits indexed .unprojected attempt.commands then
+      if !accepted && permits indexed .unprojected sample.probes attempt.commands then
         missingProjection := missingProjection + 1
-  IO.println s!"Endpoint/source conformance: attempts={checked} cuts={cuts} runtime-only={runtimeOnly} model-only={modelOnly} stalled={stalled} serialized-mutant={tooStrict} unguarded-mutant={tooLoose} unprojected-mutant={missingProjection}"
-  unless tooStrict > 0 && tooLoose > 0 && missingProjection > 0 do
+      if !accepted && permits indexed .unheld sample.probes attempt.commands then
+        missingHolder := missingHolder + 1
+  IO.println s!"Endpoint/source conformance: attempts={checked} cuts={cuts} runtime-only={runtimeOnly} model-only={modelOnly} stalled={stalled} serialized-mutant={tooStrict} unguarded-mutant={tooLoose} unprojected-mutant={missingProjection} unheld-mutant={missingHolder}"
+  unless tooStrict > 0 && tooLoose > 0 && missingProjection > 0 && missingHolder > 0 do
     throw (IO.userError "conformance controls did not exercise both mismatch directions")
   unless runtimeOnly == 0 && modelOnly == 0 && stalled == 0 do
     throw (IO.userError "Endpoint/source conformance failed")

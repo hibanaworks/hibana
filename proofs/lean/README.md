@@ -30,6 +30,13 @@ admission bits are inputs to the oracle. Every successful prefix probes every
 remaining bounded operation once, including requests that return Pending or an
 error. Missing and duplicate probes are rejected.
 
+Each probe identifies both the logical operation and its physical caller.
+The required caller inventory is derived independently from initial issuance
+and transfers in the accepted source paths. Every possible holder is tested,
+even when its image has no legitimate row for that particular operation.
+Removing or duplicating a caller probe is rejected; the inventory is not
+inferred from operations the runtime happened to accept.
+
 The current cases compare `seq(roll(Start; Ack), Finish)`,
 `par(roll(Start; Ack), Finish)`, and `par(roll(Loan; Read; Return), Tick)`.
 The last case moves a real resource Endpoint from owner to worker, performs
@@ -39,18 +46,23 @@ methods; the generator retains actual Rust values rather than a shadow owner
 table. An unavailable value is recorded separately from Pending and an
 Endpoint error. It also checks that both actors never retain usable values
 simultaneously.
+The owner also attempts the worker's resource operation at every eligible cut,
+both when it holds the actual Endpoint and when that value has been moved away.
+Alternate callers share the same source-occurrence bound; adding a caller
+does not add a protocol step or another allowed use of the resource.
 
-These cases exercise 11,177 attempts at 4,842 prefixes. Both runtime-only and
+These cases exercise 11,981 attempts at 4,842 prefixes. Both runtime-only and
 model-only acceptances are reported, along with unfinished frontiers that have
 no common enabled operation. Each accepted source binding selects the actual
 sender and receiver images; their original logical rows must agree on the
 lane. This immutable direction map is checked once per accepted expansion,
 without caching observed readiness. Generated data is split into declarations
 to retain the default Lean elaboration work limit without dropping probes.
-Three deliberately incorrect models check that this can
+Four deliberately incorrect models check that this can
 detect excessive serialization, missing causal/FIFO checks, and omitted local
-sequencing. The test does not execute old kernels or infer correctness from
-source text.
+sequencing, and acceptance by the wrong holder. The holder-ignoring model
+disagrees with 330 observed refusals or unavailable values. The test does not
+execute old kernels or infer correctness from source text.
 
 This comparison exposed one distinction in the finite source abstraction:
 expanding a resumed sequential body beside its continuation as global `par`
