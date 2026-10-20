@@ -70,9 +70,11 @@ impl<'f> Outgoing<'f> {
 /// Errors surfaced by transport operations.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum TransportError {
-    /// Backing medium rejected the frame (e.g. link down).
+    /// Logical direction is unavailable (e.g. link down). This does not prove
+    /// that no frame was accepted before the failure became observable.
     Offline,
-    /// Operation exceeded a carrier-local deadline.
+    /// Operation exceeded a carrier-local deadline. This does not establish
+    /// peer death, non-delivery, or permission to reclaim transferred authority.
     Deadline,
     /// Carrier-local queue, ring, slab, or demux capacity was exhausted.
     Capacity,
@@ -332,6 +334,13 @@ impl PortOpen {
 /// It is a logical Hibana direction, not necessarily the physical connection:
 /// a multiplexed carrier can retire one substream and leave others alive.
 /// Retiring every handle for that direction must signal the remote direction.
+/// Any reported transport error stops the observing runtime's current session
+/// run and preserves its first fault. This is not a distributed rollback or
+/// an instantaneous stop of remote runtimes: already accepted authority may
+/// still be received and used there. An error alone neither closes a remote
+/// direction nor drains or isolates its accepted prefix. Carrier closure or
+/// fencing must make those effects observable separately. A deadline is a
+/// carrier's local outcome, not proof that its peer crashed or received nothing.
 /// Returning `Pending` forever after known peer closure violates the strong
 /// profile. A raw carrier may instead expose protocol-defined close or timeout
 /// as ordinary observations; without either, no global cancellation-termination

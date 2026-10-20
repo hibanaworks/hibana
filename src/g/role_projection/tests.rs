@@ -58,6 +58,7 @@ mod routing;
 mod send_wait;
 mod source_order;
 mod transitive_borrow;
+mod transport_fault;
 mod visit_progress;
 
 #[test]

@@ -27,6 +27,8 @@ FUTURE_INVENTORY_GENERATED="${ROOT_DIR}/target/lean-proof/OwnedFutureInventoryGe
 FUTURE_CUSTODY_GENERATED="${ROOT_DIR}/target/lean-proof/FutureCustodyGenerated.lean"
 OWNED_CLOSURE_GENERATED="${ROOT_DIR}/target/lean-proof/OwnedClosureGenerated.lean"
 OWNED_ABORT_GENERATED="${ROOT_DIR}/target/lean-proof/OwnedAbortGenerated.lean"
+TRANSPORT_SEND_FAULT_GENERATED="${ROOT_DIR}/target/lean-proof/TransportSendFaultGenerated.lean"
+TRANSPORT_RECEIVE_FAULT_GENERATED="${ROOT_DIR}/target/lean-proof/TransportReceiveFaultGenerated.lean"
 OWNED_DROP_GENERATED="${ROOT_DIR}/target/lean-proof/OwnedDropGenerated.lean"
 COMPLETED_RETIREMENT_GENERATED="${ROOT_DIR}/target/lean-proof/CompletedViewRetirementGenerated.lean"
 SOURCE_ORDER_GENERATED="${ROOT_DIR}/target/lean-proof/SourceOrderGenerated.lean"
@@ -78,7 +80,7 @@ bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" build-serial "${PROOF_
 bash "${ROOT_DIR}/.github/scripts/check_lean_claim_surface.sh"
 static_audit_output="$(run_audit \
   theorem-inventory \
-  --static "${PROOF_DIR}" "${STATIC_CLAIM_SNAPSHOT}" 1178 728 333 117)"
+  --static "${PROOF_DIR}" "${STATIC_CLAIM_SNAPSHOT}" 1180 728 335 117)"
 printf '%s\n' "${static_audit_output}"
 printf '%s\n' "${static_audit_output}" | bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard markers static
 bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" theorem-inventory \
@@ -133,6 +135,17 @@ rm -f "${FUTURE_INVENTORY_GENERATED}"
 rm -f "${FUTURE_CUSTODY_GENERATED}"
 rm -f "${OWNED_CLOSURE_GENERATED}"
 rm -f "${OWNED_ABORT_GENERATED}"
+: > "${TRANSPORT_SEND_FAULT_GENERATED}"
+: > "${TRANSPORT_RECEIVE_FAULT_GENERATED}"
+CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib \
+  g::role_projection::tests::transport_fault:: -- --nocapture
+for generated in "${TRANSPORT_SEND_FAULT_GENERATED}" "${TRANSPORT_RECEIVE_FAULT_GENERATED}"; do
+  bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${generated}" "actual transport errors"
+done
+run_audit generated-axioms --kernel "${TRANSPORT_SEND_FAULT_GENERATED}" "${PROOF_DIR}" \
+  "${PROOF_DIR}/transport-send-fault-generated-claim-surface.txt" 7
+run_audit generated-axioms --kernel "${TRANSPORT_RECEIVE_FAULT_GENERATED}" "${PROOF_DIR}" \
+  "${PROOF_DIR}/transport-receive-fault-generated-claim-surface.txt" 7
 rm -f "${OWNED_DROP_GENERATED}" "${COMPLETED_RETIREMENT_GENERATED}"
 rm -f "${SOURCE_ORDER_GENERATED}"
 rm -f "${OWNED_ENTRY_GENERATED}"

@@ -169,12 +169,18 @@ MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_t
   g::role_projection::tests::bounded_conformance::
 
 MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \
+  actor-transport-faults \
+  -p hibana --lib \
+  g::role_projection::tests::transport_fault::
+
+MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \
   actor-local-progress \
   -p hibana \
   --lib \
   g::role_projection::tests \
   -- --skip g::role_projection::tests::owned:: \
   --skip g::role_projection::tests::bounded_conformance:: \
+  --skip g::role_projection::tests::transport_fault:: \
   --skip g::role_projection::tests::mutation_coverage:: \
   --skip g::role_projection::tests::handoff_interval:: \
   --skip g::role_projection::tests::receipt_refresh:: \

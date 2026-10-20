@@ -1,0 +1,49 @@
+actual_receive_deadline_is_not_a_drain_or_eof : (finalCut.carriers loanChannel).peerClosed = false ∧
+  (finalCut.carriers loanChannel).delivered = 0 ∧
+    (finalCut.carriers loanChannel).frames = [loanFrame] ∧
+      workerAfter.viewIssued 10 = false ∧
+        ownerAfter.viewIssued 10 = false ∧ ¬SourcePoint.committed { event := 0, side := Side.receive } ∈ points
+actual_receive_deadline_keeps_affine_fifo_and_only_the_observers_fault : finalCustody.custody.authorityCount ≤ 1 ∧
+  finalCustody.custody.usable = [] ∧
+    finalCustody.custody.inFlight = [{ call := loanEntry.callKey, frame := loanFrame }] ∧
+      (finalCut.actors 0).fst.fault = none ∧
+        (finalCut.actors 1).fst.fault = some SessionFault.transportClosed ∧
+          ∀ (channel : TransportChannel),
+            QualifiedDirectionHistory faultChoreo 9077 (finalCut.carriers channel)
+              (sourceChannelRecords [loanEntry] channel)
+actual_receive_failure_does_not_create_or_reclaim_a_value : History faultImages resource faultChoreo loanRequest.payload
+  events finalCustody
+actual_receive_failure_does_not_invent_a_source_receive : SourceOccurrenceTrace faultImages faultChoreo plan
+  (sourceWord events) [(loanEntry.callKey, 0)] points
+actual_receive_failure_retains_the_full_accepted_prefix : DistributedPhysicalExecution faultImages faultChoreo 9077
+  initialCut finalCut (sourceWord events) [loanEntry] [(loanEntry, loanSend)] []
+all_actual_faults_reject_rebinding_missing_fault_and_hidden_progress : (actualFaults.all fun sample =>
+    !{ session := 0, view := sample.view, lane := sample.lane, io := sample.io, error := sample.error,
+                  before := sample.before, after := sample.after }.check
+              (faultImages sample.before.actor) faultChoreo 9077 &&
+          !{ session := sample.session, view := 255, lane := sample.lane, io := sample.io, error := sample.error,
+                  before := sample.before, after := sample.after }.check
+              (faultImages sample.before.actor) faultChoreo 9077 &&
+        !{ session := sample.session, view := sample.view, lane := sample.lane, io := sample.io, error := sample.error,
+                before := sample.before,
+                after :=
+                  have __src := sample.after;
+                  { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
+                    views := __src.views, steps := __src.steps, choices := __src.choices } }.check
+            (faultImages sample.before.actor) faultChoreo 9077 &&
+      !{ session := sample.session, view := sample.view, lane := sample.lane, io := sample.io, error := sample.error,
+              before := sample.before,
+              after :=
+                have __src := sample.after;
+                { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
+                  views := __src.views,
+                  steps :=
+                    List.map
+                      (fun step => { effIndex := step.effIndex, view := step.view, side := step.side, done := true })
+                      sample.after.steps,
+                  choices := __src.choices, fault := __src.fault } }.check
+          (faultImages sample.before.actor) faultChoreo 9077) =
+  true
+all_actual_transport_errors_match_their_bound_ports : (actualFaults.all fun sample =>
+    sample.check (faultImages sample.before.actor) faultChoreo 9077) =
+  true

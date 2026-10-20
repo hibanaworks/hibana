@@ -928,6 +928,16 @@ Hibana.EndpointDelegation.withOwner_same : ∀ (owners : Hibana.EndpointDelegati
         (And (@Eq.{1} Nat sample.polls (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1))))
           (And (@Eq.{1} Nat sample.publications (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1))))
             (And (@Eq.{1} Bool sample.done true) (@Eq.{1} Bool sample.retained false))))
+@Hibana.a_checked_transport_fault_disables_local_publication : ∀ {sample : Hibana.ActorTransportFaultObservation}
+  {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo} {session : Nat},
+  @Eq.{1} Bool (sample.check image choreo session) true →
+    @Eq.{1} Bool (Hibana.observedGeneration sample.after.fault).publicationPermitted false
+@Hibana.a_checked_transport_fault_preserves_the_existing_first_fault : ∀
+  {sample : Hibana.ActorTransportFaultObservation} {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo}
+  {session : Nat} {cause : Hibana.SessionFault},
+  @Eq.{1} Bool (sample.check image choreo session) true →
+    @Eq.{1} (Option.{0} Hibana.SessionFault) sample.before.fault (@some.{0} Hibana.SessionFault cause) →
+      @Eq.{1} (Option.{0} Hibana.SessionFault) sample.after.fault (@some.{0} Hibana.SessionFault cause)
 @Hibana.a_completed_mixed_history_row_has_its_actual_commit_origin : ∀ {image : Hibana.RustDescriptorImage}
   {choreo : Hibana.Choreo} {session event : Nat} {first final : Prod.{0, 0} Hibana.ActorProgressObservation Nat}
   {cleared : List.{0} Nat} {commits : Nat},

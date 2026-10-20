@@ -10,6 +10,76 @@ def actorQuietHeadersCheck (before after : ActorProgressObservation) : Bool :=
   before.viewHeaders == after.viewHeaders && before.counter == after.counter &&
     before.liveViews == after.liveViews && decide (before.fault = after.fault)
 
+/-- Error reporting cannot publish progress, change branch knowledge, or issue
+or retire an Endpoint. I/O phase can change while the failed future unwinds. -/
+def actorFaultProgressMatches (before after : ActorProgressObservation) : Bool :=
+  after.actor == before.actor && after.run == before.run &&
+    after.counter == before.counter && after.liveViews == before.liveViews &&
+    decide (after.steps = before.steps) && decide (after.choices = before.choices) &&
+    decide (after.viewHeaders = before.viewHeaders)
+
+/-- The four outcomes of the existing Rust transport seam. A deadline is a
+carrier observation, not evidence that the remote process has crashed. -/
+inductive TransportFailure where
+  | offline | deadline | capacity | failed
+  deriving Repr, DecidableEq, BEq
+
+inductive TransportIo where
+  | send | receive
+  deriving Repr, DecidableEq, BEq
+
+def TransportIo.side : TransportIo → Side
+  | .send => .send
+  | .receive => .receive
+
+/-- A failed I/O operation names its bound local port. A receive error has no
+frame, so it cannot identify a sender, source occurrence, choice or FIFO head.
+The authenticity of this observation and any clock/deadline policy remain
+carrier/implementation obligations, as with the other physical observations. -/
+structure ActorTransportFaultObservation where
+  session : Nat
+  view : Nat
+  lane : Nat
+  io : TransportIo
+  error : TransportFailure
+  before : ActorProgressObservation
+  after : ActorProgressObservation
+
+def ActorTransportFaultObservation.bindingMatches (sample : ActorTransportFaultObservation)
+    (image : RustDescriptorImage) (choreo : Choreo) (session : Nat) : Bool :=
+  match image.decodeActorOrder? choreo with
+  | none => false
+  | some data =>
+    sample.session == session && image.actorOrderCheck choreo && image.actorRollCheck choreo &&
+      sample.before.valid && sample.after.valid && sample.before.actor == image.role &&
+      sample.before.metadataMatches image data.rows && sample.before.viewIssued sample.view &&
+      data.rows.any (fun row => row.view == sample.view && row.actionId.side == sample.io.side &&
+        image.eventLane? row.eventId == some sample.lane)
+
+def ActorTransportFaultObservation.check (sample : ActorTransportFaultObservation)
+    (image : RustDescriptorImage) (choreo : Choreo) (session : Nat) : Bool :=
+  actorFaultProgressMatches sample.before sample.after &&
+    sample.bindingMatches image choreo session &&
+    decide (sample.after.fault = sample.before.fault.orElse (fun _ => some .transportClosed))
+
+theorem a_checked_transport_fault_preserves_the_existing_first_fault
+    {sample : ActorTransportFaultObservation} {image : RustDescriptorImage}
+    {choreo : Choreo} {session : Nat} {cause : SessionFault}
+    (checked : sample.check image choreo session = true)
+    (existing : sample.before.fault = some cause) : sample.after.fault = some cause := by
+  have fault := of_decide_eq_true (Bool.and_eq_true_iff.mp checked).2
+  simpa only [existing, Option.orElse_some] using fault
+
+theorem a_checked_transport_fault_disables_local_publication
+    {sample : ActorTransportFaultObservation} {image : RustDescriptorImage}
+    {choreo : Choreo} {session : Nat}
+    (checked : sample.check image choreo session = true) :
+    (observedGeneration sample.after.fault).publicationPermitted = false := by
+  have fault := of_decide_eq_true (Bool.and_eq_true_iff.mp checked).2
+  rw [fault]
+  cases sample.before.fault <;>
+    simp [observedGeneration, SessionGenerationState.publicationPermitted]
+
 /-- A receive observes EOF on its exact bound logical direction. The record
 retains the actual actor cuts; it grants no progress or resource authority. -/
 structure ActorClosureObservation where
@@ -22,11 +92,7 @@ structure ActorClosureObservation where
   after : ActorProgressObservation
 
 def ActorClosureObservation.progressMatches (sample : ActorClosureObservation) : Bool :=
-  sample.after.actor == sample.before.actor && sample.after.run == sample.before.run &&
-    sample.after.counter == sample.before.counter && sample.after.liveViews == sample.before.liveViews &&
-    decide (sample.after.steps = sample.before.steps) &&
-    decide (sample.after.choices = sample.before.choices) &&
-    decide (sample.after.viewHeaders = sample.before.viewHeaders)
+  actorFaultProgressMatches sample.before sample.after
 
 def ActorClosureObservation.bindingMatches (sample : ActorClosureObservation)
     (image : RustDescriptorImage) (choreo : Choreo) (session : Nat) : Bool :=
@@ -89,6 +155,7 @@ inductive DistributedCallBoundary where
   | close (channel : TransportChannel)
   | abort (channel : TransportChannel)
   | observeClosure (sample : ActorClosureObservation)
+  | transportFault (sample : ActorTransportFaultObservation)
 
 def DistributedCallBoundary.acceptance? : DistributedCallBoundary → Option SourceAcceptance
   | .accept entry => some entry
@@ -418,6 +485,17 @@ inductive DistributedPhysicalExecution
       List SourceAcceptance → List (SourceAcceptance × ActorCommitRecord) →
       List SourceAcceptance → Prop where
   | refl {cut} : DistributedPhysicalExecution images choreo session cut cut [] [] [] []
+  /-- This records a reported environmental outcome, not an enabled fallback
+  for blocked communication. Neither this constructor nor its error tag proves
+  a clock bound, peer death, or that an error will eventually be reported. -/
+  | transportFault {first cut : DistributedSourceCut} {word accepted published pending}
+      {sample : ActorTransportFaultObservation}
+      (history : DistributedPhysicalExecution images choreo session first cut word accepted published pending)
+      (checked : sample.check (images sample.before.actor) choreo session = true)
+      (beforeAt : (cut.actors sample.before.actor).1 = sample.before) :
+      DistributedPhysicalExecution images choreo session first
+        (cut.actorAt sample.before.actor (sample.after, (cut.actors sample.before.actor).2))
+        (word ++ [.transportFault sample]) accepted published pending
   | close {first cut : DistributedSourceCut} {word accepted published pending}
       {channel : TransportChannel}
       (history : DistributedPhysicalExecution images choreo session first cut word accepted published pending) :
@@ -549,6 +627,7 @@ theorem a_physical_execution_partitions_its_actual_acceptances
   | close history ih => exact ih
   | abort history ih => exact ih
   | observeClosure history checked beforeAt bound closed ih => exact ih
+  | transportFault history checked beforeAt ih => exact ih
   | retireView history checked beforeAt ih => exact ih
   | quiet history checked _headers ih => exact ih
   | accept history imageAt checked decoded pathAt rowAt prepared slotFree freshWitness sourceAt accepted identity ih =>
@@ -587,6 +666,9 @@ private theorem a_physical_execution_preserves_each_full_fifo
         a_qualified_direction_retains_its_actual_aborted_prefix trace
     · simpa only [DistributedSourceCut.carrierAt, if_neg same] using trace
   | observeClosure history checked beforeAt bound closed ih =>
+    intro initial
+    simpa only [DistributedSourceCut.actorAt] using ih initial
+  | transportFault history checked beforeAt ih =>
     intro initial
     simpa only [DistributedSourceCut.actorAt] using ih initial
   | retireView history checked beforeAt ih =>
@@ -658,6 +740,17 @@ theorem a_distributed_physical_history_preserves_each_first_fault
         exact prior
       simpa only [DistributedSourceCut.actorAt, if_pos rfl] using
         a_checked_closure_preserves_the_existing_first_fault checked beforeFault
+    · simpa only [DistributedSourceCut.actorAt, if_neg same] using prior
+  | @transportFault cut word entries published pending sample history checked beforeAt ih =>
+    intro actor cause faulted
+    have prior := ih actor cause faulted
+    by_cases same : actor = sample.before.actor
+    · subst actor
+      have beforeFault : sample.before.fault = some cause := by
+        rw [← beforeAt]
+        exact prior
+      simpa only [DistributedSourceCut.actorAt, if_pos rfl] using
+        a_checked_transport_fault_preserves_the_existing_first_fault checked beforeFault
     · simpa only [DistributedSourceCut.actorAt, if_neg same] using prior
   | @retireView cut word entries published pending sample history checked beforeAt ih =>
     intro actor cause faulted

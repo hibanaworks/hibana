@@ -1615,6 +1615,30 @@ notification from that observation. `roll` permits another completed-fragment
 visit and does not communicate a choice to stop. Work completion needs an
 explicit global message/route rather than treating an ambiguous EOF as success.
 
+`ActorTransportFaultObservation` also covers live-port `Offline`, `Deadline`,
+`Capacity` and `Failed` outcomes. It binds the observed session/view/lane and
+send/receive side to the projection, preserves progress and issuance, and
+records only the observing actor's first fault. A receive error has no frame
+and therefore supplies no sender identity, source occurrence or branch choice.
+This boundary preserves all accepted/published/pending calls and carrier queues;
+it is not EOF, frame delivery, rollback, or a direction-closing event. The
+environment supplies an authentic error observation. Its possibility does not
+prove a clock, detect peer death, guarantee an eventual error, or provide a
+fallback transition for a protocol deadlock.
+
+Two actual Tokio Endpoint tests run all four errors at two distinct boundaries:
+after accepting an owned send and before delivering a queued owned receive.
+The failed sender cannot execute an independent `par` fragment, while the
+remote receiver can receive and use the accepted Endpoint without sharing that
+fault. A failed receive leaves the frame queued and issues no Endpoint. Neither
+case restores the sender's initial binding. Miri executes the same eight cases.
+For each test, the actual Deadline case supplies one chronological word joining
+constructor/poll evidence, physical FIFO, source occurrences and affine custody.
+The seven kernel claims per generated artifact also check all four observed
+port bindings and reject rebinding, missing faults and hidden progress. These
+are bounded executions of existing runtime semantics, not a new failure
+detector or a proof of every failure schedule.
+
 These results cover the represented orderly-close and abrupt-isolation
 boundaries. They do not complete general runtime/source correspondence through
 independently advancing branches and visits or all failure schedules. Accepted

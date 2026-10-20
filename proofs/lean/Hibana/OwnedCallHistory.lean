@@ -89,7 +89,7 @@ def Untracked (resource : EndpointKey) (choreo : Choreo)
   | .receive key _ _ => ∃ entry ∈ acceptedEntries events,
       entry.callKey = key ∧ tracks resource choreo entry = false
   | .publish _ _ _ | .localCommit _ _ | .quiet _ => True
-  | .close _ | .observeClosure _ => True
+  | .close _ | .observeClosure _ | .transportFault _ => True
   | .abort channel => ∀ receipt ∈ cut.custody.inFlight, receipt.frame.channel ≠ channel
   | .retireView sample => sample.view ≠ resource.role
 

@@ -93,6 +93,9 @@ inductive SourceOccurrenceTrace (images : Nat → RustDescriptorImage) (choreo :
   | observeClosure {word calls points sample}
       (prior : SourceOccurrenceTrace images choreo plan word calls points) :
       SourceOccurrenceTrace images choreo plan (word ++ [.observeClosure sample]) calls points
+  | transportFault {word calls points sample}
+      (prior : SourceOccurrenceTrace images choreo plan word calls points) :
+      SourceOccurrenceTrace images choreo plan (word ++ [.transportFault sample]) calls points
   | abort {word calls points channel}
       (prior : SourceOccurrenceTrace images choreo plan word calls points) :
       SourceOccurrenceTrace images choreo plan (word ++ [.abort channel]) calls points
@@ -145,7 +148,7 @@ private theorem trace_calls_have_observed_acceptances
     · have same := List.mem_singleton.mp current
       subst pair
       exact List.mem_append_right _ (by simp)
-  | quiet prior ih | retireView prior ih | close prior ih | abort prior ih | observeClosure prior ih => exact ih
+  | quiet prior ih | retireView prior ih | close prior ih | abort prior ih | observeClosure prior ih | transportFault prior ih => exact ih
   | publish prior callAt matched ready ih
   | receive prior callAt matched ready ih
   | localCommit prior matched ready ih =>
@@ -172,7 +175,7 @@ theorem a_source_occurrence_trace_is_its_reconstructed_execution
     SourceOccurrenceExecution (occurrenceCut plan []) (occurrenceCut plan points) points := by
   induction trace with
   | nil => exact .nil
-  | quiet prior ih | retireView prior ih | close prior ih | abort prior ih | observeClosure prior ih => exact ih
+  | quiet prior ih | retireView prior ih | close prior ih | abort prior ih | observeClosure prior ih | transportFault prior ih => exact ih
   | accept prior fresh origin matched ready ih =>
     exact .tail ih (a_checked_occurrence_call_appends_exactly_its_source_point _ _ _
       ((projected_occurrence_readiness_is_exact _ _ _).mpr ⟨_, ready, rfl⟩))
@@ -226,6 +229,11 @@ private theorem an_occurrence_call_retains_its_acceptance
     intro pair present
     obtain ⟨earlier, later, entry, wordAt, key, sourceAt, matchAt⟩ := ih pair present
     refine ⟨earlier, later ++ [.observeClosure sample], entry, ?_, key, sourceAt, matchAt⟩
+    simp only [wordAt, List.append_assoc, List.cons_append]
+  | @transportFault word calls points sample prior ih =>
+    intro pair present
+    obtain ⟨earlier, later, entry, wordAt, key, sourceAt, matchAt⟩ := ih pair present
+    refine ⟨earlier, later ++ [.transportFault sample], entry, ?_, key, sourceAt, matchAt⟩
     simp only [wordAt, List.append_assoc, List.cons_append]
   | @abort word calls points channel prior ih =>
     intro pair present
