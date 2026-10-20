@@ -86,12 +86,8 @@ macro_rules! observe {
 }
 
 async fn replay<Steps: ProgramShape>(commands: &[u8]) -> Outcome {
-    let a_program = crate::global::role_program::role_program_from_image::<0>(
-        &RoleProjection::<0, Steps, 16>::IMAGE_REF,
-    );
-    let b_program = crate::global::role_program::role_program_from_image::<1>(
-        &RoleProjection::<1, Steps, 16>::IMAGE_REF,
-    );
+    let a_program = crate::runtime::program::project::<0>(&g::Program::<Steps>::new());
+    let b_program = crate::runtime::program::project::<1>(&g::Program::<Steps>::new());
     let network = TestTransport::new();
     let mut a_slab = [0; 16 * 1024];
     let mut b_slab = [0; 16 * 1024];
@@ -132,19 +128,11 @@ async fn replay<Steps: ProgramShape>(commands: &[u8]) -> Outcome {
 // Each Option is an actual affine Rust value, not a shadow owner table. The
 // generator cannot invoke a method on a value already moved into a send.
 async fn replay_owned(commands: &[u8]) -> Outcome {
-    let () = g::ProgramProjection::<OwnedParallel, 16>::VALIDATION;
-    let owner_program = crate::global::role_program::role_program_from_image::<0>(
-        &RoleProjection::<0, OwnedParallel, 16>::IMAGE_REF,
-    );
-    let worker_program = crate::global::role_program::role_program_from_image::<1>(
-        &RoleProjection::<1, OwnedParallel, 16>::IMAGE_REF,
-    );
-    let service_program = crate::global::role_program::role_program_from_image::<2>(
-        &RoleProjection::<2, OwnedParallel, 16>::IMAGE_REF,
-    );
-    let db_program = crate::global::role_program::role_program_from_image::<10>(
-        &RoleProjection::<10, OwnedParallel, 16>::IMAGE_REF,
-    );
+    let owner_program = crate::runtime::program::project::<0>(&g::Program::<OwnedParallel>::new());
+    let worker_program = crate::runtime::program::project::<1>(&g::Program::<OwnedParallel>::new());
+    let service_program =
+        crate::runtime::program::project::<2>(&g::Program::<OwnedParallel>::new());
+    let db_program = crate::runtime::program::project::<10>(&g::Program::<OwnedParallel>::new());
     let network = TestTransport::new();
     let mut owner_slab = [0; 32 * 1024];
     let mut worker_slab = [0; 32 * 1024];
@@ -378,37 +366,44 @@ fn bounded_public_schedules_emit_executable_lean_conformance_cases() {
         {{ name := \"seq-roll-continuation\", choreo := {}, images := [{}, {}], probes := {}, attempts := [] }}]\n",
         Sequential::lean_source(),
         descriptor_source(RoleDescriptorRef::from_resident(
-            &RoleProjection::<0, Sequential, 16>::IMAGE_REF
+            crate::runtime::program::project::<0>(&g::Program::<Sequential>::new())
+                .role_image_ref()
         )),
         descriptor_source(RoleDescriptorRef::from_resident(
-            &RoleProjection::<1, Sequential, 16>::IMAGE_REF
+            crate::runtime::program::project::<1>(&g::Program::<Sequential>::new())
+                .role_image_ref()
         )),
         probe_source(EXCHANGE_PROBES),
         Parallel::lean_source(),
         descriptor_source(RoleDescriptorRef::from_resident(
-            &RoleProjection::<0, Parallel, 16>::IMAGE_REF
+            crate::runtime::program::project::<0>(&g::Program::<Parallel>::new()).role_image_ref()
         )),
         descriptor_source(RoleDescriptorRef::from_resident(
-            &RoleProjection::<1, Parallel, 16>::IMAGE_REF
+            crate::runtime::program::project::<1>(&g::Program::<Parallel>::new()).role_image_ref()
         )),
         probe_source(EXCHANGE_PROBES),
         OwnedParallel::lean_source(),
         descriptor_source(RoleDescriptorRef::from_resident(
-            &RoleProjection::<0, OwnedParallel, 16>::IMAGE_REF
+            crate::runtime::program::project::<0>(&g::Program::<OwnedParallel>::new())
+                .role_image_ref()
         )),
         descriptor_source(RoleDescriptorRef::from_resident(
-            &RoleProjection::<1, OwnedParallel, 16>::IMAGE_REF
+            crate::runtime::program::project::<1>(&g::Program::<OwnedParallel>::new())
+                .role_image_ref()
         )),
         descriptor_source(RoleDescriptorRef::from_resident(
-            &RoleProjection::<2, OwnedParallel, 16>::IMAGE_REF
+            crate::runtime::program::project::<2>(&g::Program::<OwnedParallel>::new())
+                .role_image_ref()
         )),
         probe_source(OWNED_PROBES),
         SequentialContinuation::lean_source(),
         descriptor_source(RoleDescriptorRef::from_resident(
-            &RoleProjection::<0, SequentialContinuation, 16>::IMAGE_REF
+            crate::runtime::program::project::<0>(&g::Program::<SequentialContinuation>::new())
+                .role_image_ref()
         )),
         descriptor_source(RoleDescriptorRef::from_resident(
-            &RoleProjection::<1, SequentialContinuation, 16>::IMAGE_REF
+            crate::runtime::program::project::<1>(&g::Program::<SequentialContinuation>::new())
+                .role_image_ref()
         )),
         probe_source(CONTINUATION_PROBES),
     );

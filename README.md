@@ -535,6 +535,11 @@ handles. Drop, timeout, runtime replacement and a new `SessionId` do not
 replenish an issued binding. Replacing it requires fencing all old rights and
 accepted frames at the physical boundary.
 
+Attach the source-assigned initial actor before its resource Endpoint, in the
+same runtime and `SessionId`. An absent actor, including one already dropped,
+returns `AttachError` with the expected actor before reserving the binding.
+This setup error does not consume the resource's initial authority.
+
 An owned `send` future takes its Endpoint payload when constructed. The old
 holder cannot use it while the send is pending. Acceptance moves authority
 to the frame, and a validated receive publishes it in the receiver's runtime.

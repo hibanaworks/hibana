@@ -491,6 +491,10 @@ bindingを新設しません。unsafeな構築時に、integrationが
 drop、timeout、runtimeや`SessionId`の作り直しでは発行権は復活しません。
 bindingを置き換えるには、古い権利と受理済みframeを物理操作境界で実際にfenceする必要があります。
 
+資源Endpointを初期発行する前に、sourceが定める初期保持者のactorを同じruntimeと
+`SessionId`へattachします。そのactorが未attach、またはdrop済みなら、bindingの予約前に
+期待するactorを含む`AttachError`を返します。このsetup errorでは初期発行権を消費しません。
+
 owned sendのfutureは、生成時点でpayloadのEndpointを所有します。Pending中も旧保持者は
 使えません。transportの受理で権限がframeへ移り、検証済みrecvが受取先runtimeへ公開します。
 errorやcancelで送信元へEndpointを返すことはありません。deadlineは未配送の証拠ではありません。

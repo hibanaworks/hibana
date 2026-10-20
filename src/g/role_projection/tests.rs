@@ -73,18 +73,11 @@ fn initial_resource_views_share_progress_and_park_independent_receives() {
         task::{Context, Poll, Waker},
     };
     type Steps = g::Seq<g::Par<g::Send<2, 0, Read>, g::Send<3, 10, Read>>, g::Send<0, 1, Loan>>;
-    let owner_program = crate::global::role_program::role_program_from_image::<0>(
-        &RoleProjection::<0, Steps, 8>::IMAGE_REF,
-    );
-    let resource_program = crate::global::role_program::role_program_from_image::<10>(
-        &RoleProjection::<10, Steps, 8>::IMAGE_REF,
-    );
-    let left_program = crate::global::role_program::role_program_from_image::<2>(
-        &RoleProjection::<2, Steps, 8>::IMAGE_REF,
-    );
-    let right_program = crate::global::role_program::role_program_from_image::<3>(
-        &RoleProjection::<3, Steps, 8>::IMAGE_REF,
-    );
+    let global = g::Program::<Steps>::new();
+    let owner_program = crate::runtime::program::project::<0>(&global);
+    let resource_program = crate::runtime::program::project::<10>(&global);
+    let left_program = crate::runtime::program::project::<2>(&global);
+    let right_program = crate::runtime::program::project::<3>(&global);
     let runtime = tokio::runtime::Builder::new_current_thread()
         .build()
         .unwrap();
@@ -94,10 +87,10 @@ fn initial_resource_views_share_progress_and_park_independent_receives() {
         let kit = storage.init();
         let rv = kit.rendezvous(&mut slab, TestTransport::new()).unwrap();
         let sid = SessionId::new(820);
-        // Either logical view may attach first. Both must retain the same
-        // pinned actor, without creating another cursor or another issuer.
-        let mut db = rv.enter(sid, &resource_program).unwrap();
+        // Resource views join the explicitly attached source actor, sharing
+        // its cursor and retaining independent pending operations.
         let mut owner = rv.enter(sid, &owner_program).unwrap();
+        let mut db = rv.enter(sid, &resource_program).unwrap();
         assert!(rv.enter(sid, &resource_program).is_err());
         assert!(rv.enter(sid, &owner_program).is_err());
         let mut left = rv.enter(sid, &left_program).unwrap();

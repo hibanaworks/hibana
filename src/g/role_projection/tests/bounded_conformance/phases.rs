@@ -33,7 +33,6 @@ struct Attempt {
 const SID: SessionId = SessionId::new(9076);
 
 async fn replay(commands: &[u8], injection: Option<(usize, bool)>) -> Attempt {
-    let () = g::ProgramProjection::<OwnedParallel, 16>::VALIDATION;
     let network = Network::new();
     let owner_io = network.for_actor(0);
     let worker_io = network.for_actor(1);
@@ -42,12 +41,10 @@ async fn replay(commands: &[u8], injection: Option<(usize, bool)>) -> Attempt {
     local
         .run_until(async {
             let owner = tokio::task::spawn_local(async move {
-                let program = crate::global::role_program::role_program_from_image::<0>(
-                    &RoleProjection::<0, OwnedParallel, 16>::IMAGE_REF,
-                );
-                let db_program = crate::global::role_program::role_program_from_image::<10>(
-                    &RoleProjection::<10, OwnedParallel, 16>::IMAGE_REF,
-                );
+                let program =
+                    crate::runtime::program::project::<0>(&g::Program::<OwnedParallel>::new());
+                let db_program =
+                    crate::runtime::program::project::<10>(&g::Program::<OwnedParallel>::new());
                 let mut slab = [0; 32 * 1024];
                 let mut storage = SessionKitStorage::uninit();
                 let rv = storage
@@ -84,9 +81,8 @@ async fn replay(commands: &[u8], injection: Option<(usize, bool)>) -> Attempt {
                 Ok::<(), crate::endpoint::EndpointError>(())
             });
             let worker = tokio::task::spawn_local(async move {
-                let program = crate::global::role_program::role_program_from_image::<1>(
-                    &RoleProjection::<1, OwnedParallel, 16>::IMAGE_REF,
-                );
+                let program =
+                    crate::runtime::program::project::<1>(&g::Program::<OwnedParallel>::new());
                 let mut slab = [0; 32 * 1024];
                 let mut storage = SessionKitStorage::uninit();
                 let rv = storage
@@ -111,9 +107,8 @@ async fn replay(commands: &[u8], injection: Option<(usize, bool)>) -> Attempt {
                 Ok::<(), crate::endpoint::EndpointError>(())
             });
             let service = tokio::task::spawn_local(async move {
-                let program = crate::global::role_program::role_program_from_image::<2>(
-                    &RoleProjection::<2, OwnedParallel, 16>::IMAGE_REF,
-                );
+                let program =
+                    crate::runtime::program::project::<2>(&g::Program::<OwnedParallel>::new());
                 let mut slab = [0; 32 * 1024];
                 let mut storage = SessionKitStorage::uninit();
                 let rv = storage

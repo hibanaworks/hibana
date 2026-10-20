@@ -82,6 +82,11 @@ run_miri_test \
   -p hibana \
   --test transport_borrow
 
+(
+  hibana_disable_repo_tests_cfg
+  run_miri_test public-initial-issuance -p hibana --test endpoint_initial_issuance
+)
+
 MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \
   endpoint-owner-move \
   -p hibana \
@@ -93,6 +98,12 @@ run_miri_test \
   -p hibana \
   --lib \
   transport::binding::tests
+
+run_miri_test \
+  unpublished-initial-issuance \
+  -p hibana --lib \
+  endpoint::kernel::core::public_types::tests::failed_initial_attachment_does_not_consume_the_physical_resource_binding \
+  -- --exact
 
 run_miri_test \
   static-image-bounds \

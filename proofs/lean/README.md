@@ -282,11 +282,16 @@ observation checks are bounded validation, not additional general theorems.
 
 ## Delegation reduction target and network boundary
 
-The outstanding delegation result concerns independently stored actor runtimes,
+The delegation model concerns independently stored actor runtimes,
 including actors on different machines. It must not require a common Rust heap,
 shared cursor, or a physical receive queue that only same-host actors can open.
 An initial resource binding belongs to its sole physical issuer; remote holders
 receive protocol authority and do not create another initial binding.
+The initial resource view joins its source-assigned actor, already attached
+in the same runtime and session. A missing initial actor is rejected before
+binding reservation. Callback reentry must not turn its removal into a new
+resource-only actor allocation. Unpublished failure still releases a reserved
+binding; published issuance is never replenished by drop or timeout.
 
 The target reduction has four obligations over the **same reachable execution**:
 

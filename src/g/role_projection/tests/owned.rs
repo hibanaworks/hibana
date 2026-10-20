@@ -409,10 +409,9 @@ fn a_message_between_co_resident_views_consumes_both_local_halves_before_handoff
 #[test]
 fn one_resource_binding_cannot_issue_again_in_another_runtime_or_session() {
     type Steps = g::Seq<g::Send<0, 1, Loan>, g::Send<1, 0, Loan>>;
-    let () = crate::g::ProgramProjection::<Steps, 8>::VALIDATION;
-    let resource_program = crate::global::role_program::role_program_from_image::<10>(
-        &RoleProjection::<10, Steps, 8>::IMAGE_REF,
-    );
+    let global = g::Program::<Steps>::new();
+    let owner_program = crate::runtime::program::project::<0>(&global);
+    let resource_program = crate::runtime::program::project::<10>(&global);
     let network = TestTransport::new();
     let mut other_slab = [0u8; 32 * 1024];
     let mut other_storage = SessionKitStorage::<TestTransport>::uninit();
@@ -427,10 +426,12 @@ fn one_resource_binding_cannot_issue_again_in_another_runtime_or_session() {
         let owner_rv = owner_kit
             .rendezvous(&mut owner_slab, network.clone())
             .unwrap();
+        let _owner = owner_rv.enter(SessionId::new(840), &owner_program).unwrap();
         let db = owner_rv
             .enter(SessionId::new(840), &resource_program)
             .unwrap();
         for sid in [840, 841] {
+            let _other_owner = other_rv.enter(SessionId::new(sid), &owner_program).unwrap();
             let error = other_rv
                 .enter(SessionId::new(sid), &resource_program)
                 .err()
@@ -445,6 +446,7 @@ fn one_resource_binding_cannot_issue_again_in_another_runtime_or_session() {
     }
     // Neither dropping an unfinished Endpoint nor destroying its whole kit
     // fences a possibly remote right. The resource authority stays consumed.
+    let _other_owner = other_rv.enter(SessionId::new(842), &owner_program).unwrap();
     let error = other_rv
         .enter(SessionId::new(842), &resource_program)
         .err()
@@ -454,30 +456,6 @@ fn one_resource_binding_cannot_issue_again_in_another_runtime_or_session() {
         crate::runtime::AttachError::endpoint_binding_unavailable(10)
             .with_operation(crate::session::cluster::error::AttachOp::Enter)
     );
-}
-
-#[test]
-fn failed_initial_attachment_does_not_consume_the_physical_resource_binding() {
-    type Steps = g::Seq<g::Send<0, 1, Loan>, g::Send<1, 0, Loan>>;
-    let () = crate::g::ProgramProjection::<Steps, 8>::VALIDATION;
-    let resource_program = crate::global::role_program::role_program_from_image::<10>(
-        &RoleProjection::<10, Steps, 8>::IMAGE_REF,
-    );
-    let network = TestTransport::new();
-    {
-        let mut slab = [0u8; 2048];
-        let mut storage = SessionKitStorage::<TestTransport>::uninit();
-        let kit = storage.init();
-        let rv = kit.rendezvous(&mut slab, network.clone()).unwrap();
-        assert!(rv.enter(SessionId::new(843), &resource_program).is_err());
-    }
-    let mut slab = [0u8; 32 * 1024];
-    let mut storage = SessionKitStorage::<TestTransport>::uninit();
-    let kit = storage.init();
-    let rv = kit.rendezvous(&mut slab, network).unwrap();
-    // Same identity and resource, after a failure before publication.
-    let db = rv.enter(SessionId::new(843), &resource_program).unwrap();
-    drop(db);
 }
 
 #[test]
@@ -574,6 +552,22 @@ fn physical_service_grants_the_initial_right_and_remote_holders_only_receive_it(
         .unwrap();
     runtime.block_on(async {
         let network = TestTransport::new();
+        {
+            // Even the correct source actor cannot issue a physical right
+            // through a carrier that exposes no initial resource authority.
+            let mut no_issuer = network.clone();
+            no_issuer.bindings = None;
+            let mut slab = [0u8; 32 * 1024];
+            let mut storage = SessionKitStorage::<TestTransport>::uninit();
+            let rv = storage.init().rendezvous(&mut slab, no_issuer).unwrap();
+            let sid = SessionId::new(846);
+            let _service = rv.enter(sid, &service_program).unwrap();
+            assert_eq!(
+                rv.enter(sid, &db_program).err().unwrap(),
+                crate::runtime::AttachError::endpoint_binding_unavailable(10)
+                    .with_operation(crate::session::cluster::error::AttachOp::Enter)
+            );
+        }
         // The two remote holders can carry frames but have no initial issuer.
         // All initial authority stays at the service's physical resource owner.
         let mut owner_transport = network.clone();
@@ -605,7 +599,7 @@ fn physical_service_grants_the_initial_right_and_remote_holders_only_receive_it(
                 result
                     .err()
                     .expect("a carrier does not imply an initial resource right"),
-                crate::runtime::AttachError::endpoint_binding_unavailable(10)
+                crate::runtime::AttachError::initial_actor_unavailable(10, 3)
                     .with_operation(crate::session::cluster::error::AttachOp::Enter)
             );
         }

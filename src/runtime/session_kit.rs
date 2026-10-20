@@ -140,6 +140,10 @@ where
     }
 
     /// Attach this projected role program as an endpoint for `sid`.
+    ///
+    /// For a resource Endpoint, first attach its source-assigned initial actor
+    /// to the same session and runtime. A missing actor is rejected before the
+    /// physical binding is reserved; it does not consume initial authority.
     #[inline]
     pub fn enter<const ROLE: u8>(
         &self,

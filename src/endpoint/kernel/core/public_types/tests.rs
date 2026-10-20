@@ -6,6 +6,40 @@ use crate::{
 };
 
 #[test]
+fn failed_initial_attachment_does_not_consume_the_physical_resource_binding() {
+    type Loan<'r> = g::Msg<1, crate::Endpoint<'r, 10>>;
+    let global = g::seq(g::send::<0, 1, Loan<'_>>(), g::send::<1, 0, Loan<'_>>());
+    let owner_program = project::<0>(&global);
+    let resource_program = project::<10>(&global);
+    let mut slab = [0u8; 32 * 1024];
+    let mut storage = SessionKitStorage::<TestTransport>::uninit();
+    let kit = storage.init();
+    let rv = kit.rendezvous(&mut slab, TestTransport::new()).unwrap();
+    let owner = rv.enter(SessionId::new(843), &owner_program).unwrap();
+    // SAFETY: this live owner pins the TestTransport actor. The explicit
+    // operation lease protects the short progress borrow used to force an
+    // unpublished issuance failure, without any transport operation.
+    let actor = unsafe {
+        owner
+            .owner
+            .ptr
+            .as_ref()
+            .actor()
+            .cast::<ResidentActor<'_, TestTransport>>()
+            .as_ref()
+    };
+    let lease = actor.context.try_operation_lease().unwrap();
+    let progress = actor.progress.borrow_mut();
+    assert!(rv.enter(SessionId::new(843), &resource_program).is_err());
+    drop(progress);
+    drop(lease);
+    // The actor exists, but failure after reservation did not publish a view.
+    // The RAII reservation must return the same initial authority.
+    let db = rv.enter(SessionId::new(843), &resource_program).unwrap();
+    drop(db);
+}
+
+#[test]
 fn another_actor_in_the_same_rendezvous_cannot_use_the_mutation_lease() {
     let protocol = g::send::<0, 1, Msg<1, u32>>();
     let role0 = project::<0>(&protocol);

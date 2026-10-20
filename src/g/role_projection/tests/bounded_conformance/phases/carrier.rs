@@ -76,7 +76,8 @@ impl Network {
     }
 
     pub(super) fn close_loan(&self, abort: bool) {
-        let lane = RoleProjection::<1, OwnedParallel, 16>::IMAGE_REF
+        let lane = crate::runtime::program::project::<1>(&g::Program::<OwnedParallel>::new())
+            .role_image_ref()
             .local_step_lane(0)
             .expect("loan receive lane");
         // The checker independently requires a single incoming logical source

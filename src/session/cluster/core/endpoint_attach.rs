@@ -276,21 +276,20 @@ where
         P: crate::global::RoleProgramView<ROLE>,
         'cfg: 'r,
     {
+        let initial_actor = program.role_image_ref().program().initial_actor_for(ROLE);
         // Reserve at the physical owner before allocation or transport
         // callbacks can reenter attachment. This is independent of the local
         // session/actor registry, so another runtime cannot issue the same
         // binding. Only an unpublished failure returns this reservation.
-        let initial_binding = if program
-            .role_image_ref()
-            .program()
-            .initial_actor_for(ROLE)
-            .is_some()
-        {
+        let initial_binding = if let Some(actor) = initial_actor {
             let rv = self
                 .locals()
                 .get_checked(&rv_id)
                 .map_err(Self::map_rendezvous_access_error)
                 .map_err(AttachError::cluster)?;
+            if rv.published_actor_for(sid, actor).is_none() {
+                return Err(AttachError::initial_actor_unavailable(ROLE, actor));
+            }
             Some(
                 rv.transport()
                     .initial_endpoint_binding(ROLE)
@@ -342,6 +341,13 @@ where
                     }
                     return Ok((slot, generation));
                 }
+                // A carrier callback may have dropped the initial actor after
+                // the preflight. A resource view must join that existing actor,
+                // never create a replacement allocation on its own. Dropping
+                // the unpublished reservation preserves the original issuer.
+                if let Some(actor) = initial_actor {
+                    return Err(AttachError::initial_actor_unavailable(ROLE, actor));
+                }
                 let required_assoc_slots = Self::required_assoc_slots_for_endpoint(
                     rv,
                     sid,
@@ -377,9 +383,6 @@ where
                     return Err(err);
                 }
                 self.publish_public_endpoint_slot(rv_id, slot, generation);
-                if let Some(reservation) = initial_binding {
-                    reservation.commit();
-                }
                 Ok((slot, generation))
             },
             Err(err) => Err(err),
