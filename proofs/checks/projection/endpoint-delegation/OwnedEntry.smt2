@@ -1,6 +1,7 @@
 ; Static entry obligations are independently derived from checked source rows.
 ; Arrays represent immutable source/descriptor facts, never runtime owner state.
-(set-logic AUFBV)
+; Constant arrays require the solver's extended array theory.
+(set-logic ALL)
 (declare-const required (Array (_ BitVec 8) Bool))
 (declare-const actual (Array (_ BitVec 8) Bool))
 (declare-const source-owner (Array (_ BitVec 8) (_ BitVec 16)))

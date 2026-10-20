@@ -1,7 +1,8 @@
 ; Source dependency coverage and a future's borrowed prerequisite.
 ; These arrays interpret immutable guards and existing completion, not another
 ; runtime progress/ownership store. This abstraction is not Rust refinement.
-(set-logic AUFBV)
+; Constant arrays require the solver's extended array theory.
+(set-logic ALL)
 (declare-const required (Array (_ BitVec 16) Bool))
 (declare-const guards (Array (_ BitVec 16) Bool))
 (declare-const cover (Array (_ BitVec 16) (_ BitVec 16)))

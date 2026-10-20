@@ -38,8 +38,10 @@ fn run() -> Result<(), String> {
         .map_err(|e| format!("cannot run z3: {e}"))?;
     if !output.status.success() {
         return Err(format!(
-            "z3 failed {}: {}",
+            "z3 failed for {} ({}):\nstdout:\n{}\nstderr:\n{}",
+            args[1],
             output.status,
+            String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         ));
     }

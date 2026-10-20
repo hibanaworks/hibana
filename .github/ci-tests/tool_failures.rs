@@ -162,7 +162,7 @@ scratch="$(mktemp -d "${TMPDIR:-/tmp}/hibana-smt-test.XXXXXX")"
 trap 'rm -rf "$scratch"' EXIT
 mkdir "$scratch/bin"
 printf '; EXPECT: unsat\n(check-sat)\n' > "$scratch/model.smt2"
-for case in correct wrong unknown extra empty failed; do
+for case in correct wrong unknown extra empty failed stdout_error; do
   case "$case" in
     correct) result='unsat'; status=0 ;;
     wrong) result='sat'; status=0 ;;
@@ -170,13 +170,24 @@ for case in correct wrong unknown extra empty failed; do
     extra) result='unsat\nunsat'; status=0 ;;
     empty) result=''; status=0 ;;
     failed) result='unsat'; status=9 ;;
+    stdout_error) result='(error "solver diagnostic")'; status=1 ;;
   esac
-  printf '#!/bin/bash\nprintf "%%b\\n" "%s"\nexit %s\n' "$result" "$status" > "$scratch/bin/z3"
+  cat > "$scratch/bin/z3" <<SOLVER
+#!/bin/bash
+printf '%b\n' '$result'
+printf 'solver stderr\n' >&2
+exit $status
+SOLVER
   chmod +x "$scratch/bin/z3"
   if PATH="$scratch/bin:$PATH" bash "$root/.github/scripts/check_smt2.sh" "$scratch/model.smt2" > "$scratch/output" 2>&1; then
     [[ "$case" == correct ]] || { cat "$scratch/output"; exit 1; }
   else
     [[ "$case" != correct ]] || { cat "$scratch/output"; exit 1; }
+    if [[ "$case" == failed || "$case" == stdout_error ]]; then
+      rg -F "$scratch/model.smt2" "$scratch/output"
+      rg -F "$result" "$scratch/output"
+      rg -F 'solver stderr' "$scratch/output"
+    fi
   fi
 done
 "#;
