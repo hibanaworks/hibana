@@ -47,7 +47,7 @@ parallelReentryActor0ClearedSiblingRejected : (have __src := parallelReentryActo
                   if (decide (0 ≤ event) && decide (event < 2)) = true then step
                   else { effIndex := step.effIndex, view := step.view, side := step.side, done := false })
                 parallelReentryActor0.after.steps,
-            choices := __src.choices } }).check
+            choices := __src.choices, fault := __src.fault } }).check
     parallelReentryImage0 parallelReentryChoreo =
   false
 parallelReentryActor0MeasuredHistoryAccountsForAllWrites : 9 =
@@ -59,7 +59,8 @@ parallelReentryActor0MissingResetRejected : (have __src := parallelReentryActor0
         after :=
           have __src := parallelReentryActor0.after;
           { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
-            views := __src.views, steps := parallelReentryActor0.before.steps, choices := __src.choices } }).check
+            views := __src.views, steps := parallelReentryActor0.before.steps, choices := __src.choices,
+            fault := __src.fault } }).check
     parallelReentryImage0 parallelReentryChoreo =
   false
 parallelReentryActor0OmittedResetWritesRejected : Hibana.actorReentryMutationCheck parallelReentryActor0
@@ -113,7 +114,7 @@ parallelReentryActor0WrongViewCountRejected : (have __src := parallelReentryActo
           have __src := parallelReentryActor0.after;
           { actor := __src.actor, run := __src.run, counter := __src.counter,
             liveViews := parallelReentryActor0.after.liveViews + 1, views := __src.views, steps := __src.steps,
-            choices := __src.choices } }).check
+            choices := __src.choices, fault := __src.fault } }).check
     parallelReentryImage0 parallelReentryChoreo =
   false
 parallelReentryActor1Accepted : parallelReentryActor1.check parallelReentryImage1 parallelReentryChoreo = true
@@ -143,7 +144,7 @@ parallelReentryActor1ClearedSiblingRejected : (have __src := parallelReentryActo
                   if (decide (0 ≤ event) && decide (event < 4)) = true then step
                   else { effIndex := step.effIndex, view := step.view, side := step.side, done := false })
                 parallelReentryActor1.after.steps,
-            choices := __src.choices } }).check
+            choices := __src.choices, fault := __src.fault } }).check
     parallelReentryImage1 parallelReentryChoreo =
   false
 parallelReentryActor1MeasuredHistoryAccountsForAllWrites : 15 =
@@ -155,7 +156,8 @@ parallelReentryActor1MissingResetRejected : (have __src := parallelReentryActor1
         after :=
           have __src := parallelReentryActor1.after;
           { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
-            views := __src.views, steps := parallelReentryActor1.before.steps, choices := __src.choices } }).check
+            views := __src.views, steps := parallelReentryActor1.before.steps, choices := __src.choices,
+            fault := __src.fault } }).check
     parallelReentryImage1 parallelReentryChoreo =
   false
 parallelReentryActor1OmittedResetWritesRejected : Hibana.actorReentryMutationCheck parallelReentryActor1
@@ -209,7 +211,7 @@ parallelReentryActor1WrongViewCountRejected : (have __src := parallelReentryActo
           have __src := parallelReentryActor1.after;
           { actor := __src.actor, run := __src.run, counter := __src.counter,
             liveViews := parallelReentryActor1.after.liveViews + 1, views := __src.views, steps := __src.steps,
-            choices := __src.choices } }).check
+            choices := __src.choices, fault := __src.fault } }).check
     parallelReentryImage1 parallelReentryChoreo =
   false
 parallelReentryFrameNamesTheSameContinuation : parallelReentrySendFacts.resource = parallelReentryRecvFacts.resource ∧

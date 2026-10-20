@@ -8,7 +8,7 @@ aPhysicalUpdateCannotSilentlyFinishTheNewBody : (have __src := elasticReceive;
               elasticAfter.steps.set 2
                 (have __src := elasticAfter.steps[2];
                 { effIndex := __src.effIndex, view := __src.view, side := __src.side, done := true }),
-            choices := __src.choices } }).transitionCheck
+            choices := __src.choices, fault := __src.fault } }).transitionCheck
     elasticImage elasticChoreo =
   false
 aRepeatedRetainedScopeIsRejected : (have __src := elasticCandidate;
@@ -26,7 +26,7 @@ anOldVisitCannotSupplyTheFreshStart : Hibana.sourceCandidateRowReady elasticImag
         elasticSnapshot.steps.set 0
           (have __src := elasticSnapshot.steps[0];
           { effIndex := __src.effIndex, view := __src.view, side := __src.side, done := false }),
-      choices := __src.choices })
+      choices := __src.choices, fault := __src.fault })
     elasticData.rows[2] =
   false
 anUnknownRetainedScopeIsRejected : (have __src := elasticCandidate;

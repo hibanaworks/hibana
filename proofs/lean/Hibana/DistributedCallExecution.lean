@@ -523,8 +523,9 @@ theorem a_physical_execution_projects_its_complete_fifo_histories
 
 /-- First-fault continuity is a property of this same physical history. A
 retirement can add a cause but cannot replace one; quiet observations cannot
-erase it; successful commits require live cuts. Other actors and already
-accepted carrier frames do not acquire this actor's fault by shared memory. -/
+erase it; successful commits require live cuts. Remote actors and already
+accepted carrier frames do not acquire this actor's fault by shared memory.
+Co-resident endpoints may share their existing runtime/session fault state. -/
 theorem a_distributed_physical_history_preserves_each_first_fault
     (execution : DistributedPhysicalExecution images choreo session first last word entries published pending) :
     ∀ actor cause, (first.actors actor).1.fault = some cause →

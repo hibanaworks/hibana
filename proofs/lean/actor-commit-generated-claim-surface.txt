@@ -17,7 +17,8 @@ ownerLoanMissingProgressRejected : (have __src := ownerLoan;
         after :=
           have __src := ownerLoan.after;
           { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
-            views := __src.views, steps := ownerLoan.before.steps, choices := __src.choices } }).check
+            views := __src.views, steps := ownerLoan.before.steps, choices := __src.choices,
+            fault := __src.fault } }).check
     ownerImage actorCommitChoreo =
   false
 ownerLoanMissingViewRejected : (have __src := ownerLoan;
@@ -25,7 +26,8 @@ ownerLoanMissingViewRejected : (have __src := ownerLoan;
         after :=
           have __src := ownerLoan.after;
           { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
-            views := ownerLoan.before.views, steps := __src.steps, choices := __src.choices } }).check
+            views := ownerLoan.before.views, steps := __src.steps, choices := __src.choices,
+            fault := __src.fault } }).check
     ownerImage actorCommitChoreo =
   false
 ownerLoanSourceOrdered : ownerLoan.SourceOrdered ownerImage actorCommitChoreo
@@ -53,7 +55,8 @@ ownerLoanWrongActorRejected : (have __src := ownerLoan;
         before :=
           have __src := ownerLoan.before;
           { actor := ownerLoan.before.actor + 1, run := __src.run, counter := __src.counter,
-            liveViews := __src.liveViews, views := __src.views, steps := __src.steps, choices := __src.choices },
+            liveViews := __src.liveViews, views := __src.views, steps := __src.steps, choices := __src.choices,
+            fault := __src.fault },
         after := __src.after }).ownedCheck
     ownerImage actorCommitChoreo ownerLoanWire 874 =
   false
@@ -91,7 +94,8 @@ ownerReturnMissingProgressRejected : (have __src := ownerReturn;
         after :=
           have __src := ownerReturn.after;
           { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
-            views := __src.views, steps := ownerReturn.before.steps, choices := __src.choices } }).check
+            views := __src.views, steps := ownerReturn.before.steps, choices := __src.choices,
+            fault := __src.fault } }).check
     ownerImage actorCommitChoreo =
   false
 ownerReturnMissingViewRejected : (have __src := ownerReturn;
@@ -99,7 +103,8 @@ ownerReturnMissingViewRejected : (have __src := ownerReturn;
         after :=
           have __src := ownerReturn.after;
           { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
-            views := ownerReturn.before.views, steps := __src.steps, choices := __src.choices } }).check
+            views := ownerReturn.before.views, steps := __src.steps, choices := __src.choices,
+            fault := __src.fault } }).check
     ownerImage actorCommitChoreo =
   false
 ownerReturnSourceOrdered : ownerReturn.SourceOrdered ownerImage actorCommitChoreo
@@ -127,7 +132,8 @@ ownerReturnWrongActorRejected : (have __src := ownerReturn;
         before :=
           have __src := ownerReturn.before;
           { actor := ownerReturn.before.actor + 1, run := __src.run, counter := __src.counter,
-            liveViews := __src.liveViews, views := __src.views, steps := __src.steps, choices := __src.choices },
+            liveViews := __src.liveViews, views := __src.views, steps := __src.steps, choices := __src.choices,
+            fault := __src.fault },
         after := __src.after }).ownedCheck
     ownerImage actorCommitChoreo ownerReturnWire 874 =
   false
@@ -169,7 +175,8 @@ workerLoanMissingProgressRejected : (have __src := workerLoan;
         after :=
           have __src := workerLoan.after;
           { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
-            views := __src.views, steps := workerLoan.before.steps, choices := __src.choices } }).check
+            views := __src.views, steps := workerLoan.before.steps, choices := __src.choices,
+            fault := __src.fault } }).check
     workerImage actorCommitChoreo =
   false
 workerLoanMissingViewRejected : (have __src := workerLoan;
@@ -177,7 +184,8 @@ workerLoanMissingViewRejected : (have __src := workerLoan;
         after :=
           have __src := workerLoan.after;
           { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
-            views := workerLoan.before.views, steps := __src.steps, choices := __src.choices } }).check
+            views := workerLoan.before.views, steps := __src.steps, choices := __src.choices,
+            fault := __src.fault } }).check
     workerImage actorCommitChoreo =
   false
 workerLoanSourceOrdered : workerLoan.SourceOrdered workerImage actorCommitChoreo
@@ -205,7 +213,8 @@ workerLoanWrongActorRejected : (have __src := workerLoan;
         before :=
           have __src := workerLoan.before;
           { actor := workerLoan.before.actor + 1, run := __src.run, counter := __src.counter,
-            liveViews := __src.liveViews, views := __src.views, steps := __src.steps, choices := __src.choices },
+            liveViews := __src.liveViews, views := __src.views, steps := __src.steps, choices := __src.choices,
+            fault := __src.fault },
         after := __src.after }).ownedCheck
     workerImage actorCommitChoreo workerLoanWire 874 =
   false
@@ -259,7 +268,8 @@ workerReturnMissingProgressRejected : (have __src := workerReturn;
         after :=
           have __src := workerReturn.after;
           { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
-            views := __src.views, steps := workerReturn.before.steps, choices := __src.choices } }).check
+            views := __src.views, steps := workerReturn.before.steps, choices := __src.choices,
+            fault := __src.fault } }).check
     workerImage actorCommitChoreo =
   false
 workerReturnMissingViewRejected : (have __src := workerReturn;
@@ -267,7 +277,8 @@ workerReturnMissingViewRejected : (have __src := workerReturn;
         after :=
           have __src := workerReturn.after;
           { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
-            views := workerReturn.before.views, steps := __src.steps, choices := __src.choices } }).check
+            views := workerReturn.before.views, steps := __src.steps, choices := __src.choices,
+            fault := __src.fault } }).check
     workerImage actorCommitChoreo =
   false
 workerReturnSourceOrdered : workerReturn.SourceOrdered workerImage actorCommitChoreo
@@ -295,7 +306,8 @@ workerReturnWrongActorRejected : (have __src := workerReturn;
         before :=
           have __src := workerReturn.before;
           { actor := workerReturn.before.actor + 1, run := __src.run, counter := __src.counter,
-            liveViews := __src.liveViews, views := __src.views, steps := __src.steps, choices := __src.choices },
+            liveViews := __src.liveViews, views := __src.views, steps := __src.steps, choices := __src.choices,
+            fault := __src.fault },
         after := __src.after }).ownedCheck
     workerImage actorCommitChoreo workerReturnWire 874 =
   false

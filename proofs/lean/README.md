@@ -1498,8 +1498,10 @@ body reset preserves its actor's first fault. Consequently every qualified
 at its initial cut. This follows from the same history, including checked
 retirement, rather than a second assumed fault trace. Carrier acceptance stays
 separate from local publication; another actor may continue with authority
-already accepted by the carrier. No fault is shared instantaneously between
-actors and no new runtime admission guard is added.
+already accepted by the carrier. Fault state remains local to its runtime and
+session; co-resident endpoints may share that existing state, while remote
+runtimes have no shared-memory premise or instantaneous fault broadcast.
+No new runtime admission guard is added.
 
 The actual unaccepted-send drop fixture now also begins with a recorded
 `ProtocolViolation`. Dropping its unpolled owned future preserves that cause
