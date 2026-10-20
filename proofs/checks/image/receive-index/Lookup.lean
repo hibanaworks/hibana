@@ -116,11 +116,14 @@ theorem message_key_exact (role label wantedRole wantedLabel : Nat)
   · rintro ⟨rfl, rfl⟩
     rfl
 
-/-- Completed rows can be removed only when ordinary admission already rejects
-them without reentry. Rust tests check that premise against full admission. -/
-theorem completion_prefilter_preserves_admission (repeatable completed admitted : Bool)
-    (disabled : repeatable = false → completed = true → admitted = false) :
-    ((repeatable || !completed) && admitted) = admitted := by
+/-- Elimination preserves both acceptance and a legitimate wait for another
+view. Rust tests check both rejection conditions against full admission. -/
+theorem completion_prefilter_preserves_admission
+    (repeatable completed admitted otherViewPending : Bool)
+    (disabled : repeatable = false → completed = true →
+      admitted = false ∧ otherViewPending = false) :
+    (((repeatable || !completed) && admitted),
+      ((repeatable || !completed) && otherViewPending)) = (admitted, otherViewPending) := by
   cases repeatable <;> cases completed <;> simp_all
 
 #print axioms lower_partition

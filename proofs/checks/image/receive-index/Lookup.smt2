@@ -53,9 +53,13 @@
 (declare-const repeatable Bool)
 (declare-const completed Bool)
 (declare-const admitted Bool)
-(assert (=> (and (not repeatable) completed) (not admitted)))
+(declare-const otherViewPending Bool)
+(assert (=> (and (not repeatable) completed)
+  (and (not admitted) (not otherViewPending))))
 (push)
-(assert (not (= admitted (and (or repeatable (not completed)) admitted))))
+(assert (or
+  (not (= admitted (and (or repeatable (not completed)) admitted)))
+  (not (= otherViewPending (and (or repeatable (not completed)) otherViewPending)))))
 ; EXPECT: unsat
 (check-sat)
 (pop)
