@@ -80,7 +80,7 @@ bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" build-serial "${PROOF_
 bash "${ROOT_DIR}/.github/scripts/check_lean_claim_surface.sh"
 static_audit_output="$(run_audit \
   theorem-inventory \
-  --static "${PROOF_DIR}" "${STATIC_CLAIM_SNAPSHOT}" 1180 728 335 117)"
+  --static "${PROOF_DIR}" "${STATIC_CLAIM_SNAPSHOT}" 1184 732 335 117)"
 printf '%s\n' "${static_audit_output}"
 printf '%s\n' "${static_audit_output}" | bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard markers static
 bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" theorem-inventory \
@@ -143,9 +143,9 @@ for generated in "${TRANSPORT_SEND_FAULT_GENERATED}" "${TRANSPORT_RECEIVE_FAULT_
   bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${generated}" "actual transport errors"
 done
 run_audit generated-axioms --kernel "${TRANSPORT_SEND_FAULT_GENERATED}" "${PROOF_DIR}" \
-  "${PROOF_DIR}/transport-send-fault-generated-claim-surface.txt" 7
+  "${PROOF_DIR}/transport-send-fault-generated-claim-surface.txt" 8
 run_audit generated-axioms --kernel "${TRANSPORT_RECEIVE_FAULT_GENERATED}" "${PROOF_DIR}" \
-  "${PROOF_DIR}/transport-receive-fault-generated-claim-surface.txt" 7
+  "${PROOF_DIR}/transport-receive-fault-generated-claim-surface.txt" 8
 rm -f "${OWNED_DROP_GENERATED}" "${COMPLETED_RETIREMENT_GENERATED}"
 rm -f "${SOURCE_ORDER_GENERATED}"
 rm -f "${OWNED_ENTRY_GENERATED}"
@@ -257,7 +257,7 @@ CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --li
   -- --exact
 bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${OWNED_ABORT_GENERATED}" "owned transfer isolated before receipt"
 run_audit generated-axioms --kernel "${OWNED_ABORT_GENERATED}" "${PROOF_DIR}" \
-  "${PROOF_DIR}/owned-abort-generated-claim-surface.txt" 5
+  "${PROOF_DIR}/owned-abort-generated-claim-surface.txt" 6
 CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib -- \
   g::role_projection::tests::send_wait::dropping_an_owned_send_cancels_the_run_before_or_during_preparation \
   g::role_projection::tests::retirement::a_completed_view_retires_without_cancelling_independent_work --exact

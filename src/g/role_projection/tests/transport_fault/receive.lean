@@ -106,3 +106,16 @@ theorem actual_receive_deadline_is_not_a_drain_or_eof :
       workerAfter.viewIssued 10 = false ∧
       ownerAfter.viewIssued 10 = false ∧
       SourcePoint.committed ⟨0, .receive⟩ ∉ points := by decide
+
+theorem the_recorded_receiver_fault_is_retained_without_delivery :
+    (initialCut.actors 1).1.fault = none ∧
+      (1, SessionFault.transportClosed) ∈
+        (sourceWord events).filterMap DistributedCallBoundary.recordedFault? ∧
+      (finalCut.actors 1).1.fault = some .transportClosed ∧
+      (finalCut.carriers loanChannel).delivered = 0 := by
+  have recorded : (1, SessionFault.transportClosed) ∈
+      (sourceWord events).filterMap DistributedCallBoundary.recordedFault? := by decide
+  exact ⟨by decide, recorded,
+    a_distributed_physical_history_preserves_every_recorded_fault
+      actual_receive_failure_retains_the_full_accepted_prefix 1 .transportClosed (.inr recorded),
+    by decide⟩

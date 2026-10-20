@@ -15,3 +15,5 @@ actualAbortSourceHistory : SourceOccurrenceTrace abortImages abortChoreo abortPl
   [(loanEntry.callKey, 0)] abortPoints
 an_untracked_abort_cannot_hide_this_in_flight_owned_frame : ¬Untracked abortResource abortChoreo
     (List.take 6 abortEvents) beforeFence (DistributedCallBoundary.abort loanChannel)
+the_missing_loan_has_its_recorded_permanent_fence : (abortFinal.carriers loanChannel).peerClosed = true ∧
+  (abortFinal.carriers loanChannel).frames = [] ∧ (abortFinal.carriers loanChannel).delivered = 0

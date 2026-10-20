@@ -175,3 +175,18 @@ theorem actual_deadline_is_not_eof_or_a_permitted_local_retry :
       (finalCut.carriers readChannel).peerClosed = false ∧
       (observedGeneration actualFault.after.fault).publicationPermitted = false ∧
       .committed ⟨0, .send⟩ ∉ points := by decide
+
+/-- The initial actor is live. Derive its final fault from the actual report
+inside the same word, across remote use and an unpublished loan. -/
+theorem the_recorded_sender_fault_survives_remote_progress :
+    (initialCut.actors 0).1.fault = none ∧
+      (0, SessionFault.transportClosed) ∈
+        (sourceWord events).filterMap DistributedCallBoundary.recordedFault? ∧
+      (finalCut.actors 0).1.fault = some .transportClosed ∧
+      (finalCut.actors 1).1.fault = none := by
+  have recorded : (0, SessionFault.transportClosed) ∈
+      (sourceWord events).filterMap DistributedCallBoundary.recordedFault? := by decide
+  exact ⟨by decide, recorded,
+    a_distributed_physical_history_preserves_every_recorded_fault
+      actual_sender_failure_and_remote_use_share_one_physical_word 0 .transportClosed (.inr recorded),
+    by decide⟩

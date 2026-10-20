@@ -47,3 +47,6 @@ all_actual_faults_reject_rebinding_missing_fault_and_hidden_progress : (actualFa
 all_actual_transport_errors_match_their_bound_ports : (actualFaults.all fun sample =>
     sample.check (faultImages sample.before.actor) faultChoreo 9077) =
   true
+the_recorded_receiver_fault_is_retained_without_delivery : (initialCut.actors 1).fst.fault = none ∧
+  (1, SessionFault.transportClosed) ∈ List.filterMap DistributedCallBoundary.recordedFault? (sourceWord events) ∧
+    (finalCut.actors 1).fst.fault = some SessionFault.transportClosed ∧ (finalCut.carriers loanChannel).delivered = 0

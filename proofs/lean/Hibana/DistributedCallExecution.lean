@@ -717,22 +717,66 @@ theorem a_physical_execution_projects_its_complete_fifo_histories
       QualifiedDirectionHistory choreo session (last.carriers channel) (sourceChannelRecords entries channel) := by
   exact a_physical_execution_preserves_each_full_fifo execution (fun channel => .live (.initial channel))
 
+/-- Fault observations from this same physical word. A local error is not a
+fault broadcast: the actor is the one whose checked cut was updated. Ordinary
+successful commits cannot introduce a fault. -/
+def DistributedCallBoundary.recordedFault? : DistributedCallBoundary → Option (Nat × SessionFault)
+  | .retireView sample => sample.after.fault.map fun cause => (sample.before.actor, cause)
+  | .observeClosure sample => sample.after.fault.map fun cause => (sample.before.actor, cause)
+  | .transportFault sample => sample.after.fault.map fun cause => (sample.before.actor, cause)
+  | _ => none
+
+private theorem a_fault_recorded_at_an_append
+    {initial : Nat → ActorProgressObservation × Nat} {word : List DistributedCallBoundary}
+    {boundary : DistributedCallBoundary} {actor : Nat} {cause : SessionFault}
+    (recorded : (initial actor).1.fault = some cause ∨
+      (actor, cause) ∈ (word ++ [boundary]).filterMap DistributedCallBoundary.recordedFault?) :
+    ((initial actor).1.fault = some cause ∨
+      (actor, cause) ∈ word.filterMap DistributedCallBoundary.recordedFault?) ∨
+      boundary.recordedFault? = some (actor, cause) := by
+  rcases recorded with first | recorded
+  · exact .inl (.inl first)
+  · rw [List.filterMap_append] at recorded
+    rcases List.mem_append.mp recorded with old | added
+    · exact .inl (.inr old)
+    · obtain ⟨actual, present, report⟩ := List.mem_filterMap.mp added
+      have same := List.mem_singleton.mp present
+      subst actual
+      exact .inr report
+
 /-- First-fault continuity is a property of this same physical history. A
 retirement can add a cause but cannot replace one; quiet observations cannot
 erase it; successful commits require live cuts. Remote actors and already
 accepted carrier frames do not acquire this actor's fault by shared memory.
-Co-resident endpoints may share their existing runtime/session fault state. -/
-theorem a_distributed_physical_history_preserves_each_first_fault
+Co-resident endpoints may share their existing runtime/session fault state.
+This includes faults recorded AFTER the initial cut, even while accepted calls
+remain unpublished. No independently assumed suffix or fault trace is used. -/
+theorem a_distributed_physical_history_preserves_every_recorded_fault
     (execution : DistributedPhysicalExecution images choreo session first last word entries published pending) :
-    ∀ actor cause, (first.actors actor).1.fault = some cause →
+    ∀ actor cause, ((first.actors actor).1.fault = some cause ∨
+      (actor, cause) ∈ word.filterMap DistributedCallBoundary.recordedFault?) →
       (last.actors actor).1.fault = some cause := by
   induction execution with
-  | refl => exact fun _ _ faulted => faulted
-  | close history ih => simpa only [DistributedSourceCut.carrierAt] using ih
-  | abort history ih => simpa only [DistributedSourceCut.carrierAt] using ih
+  | refl => simp
+  | close history ih =>
+    simpa only [List.filterMap_append, List.filterMap_cons, List.filterMap_nil,
+      DistributedCallBoundary.recordedFault?, List.append_nil, DistributedSourceCut.carrierAt] using ih
+  | abort history ih =>
+    simpa only [List.filterMap_append, List.filterMap_cons, List.filterMap_nil,
+      DistributedCallBoundary.recordedFault?, List.append_nil, DistributedSourceCut.carrierAt] using ih
   | @observeClosure cut word entries published pending sample history checked beforeAt bound closed ih =>
     intro actor cause faulted
-    have prior := ih actor cause faulted
+    rcases a_fault_recorded_at_an_append faulted with earlier | here
+    case inr =>
+      cases atFault : sample.after.fault with
+        | none => simp [DistributedCallBoundary.recordedFault?, atFault] at here
+        | some actual =>
+          have same : sample.before.actor = actor ∧ actual = cause := by
+            simpa only [DistributedCallBoundary.recordedFault?, atFault, Option.map_some,
+              Option.some.injEq, Prod.mk.injEq] using here
+          rcases same with ⟨rfl, rfl⟩
+          simpa only [DistributedSourceCut.actorAt, if_pos rfl] using atFault
+    have prior := ih actor cause earlier
     by_cases same : actor = sample.before.actor
     · subst actor
       have beforeFault : sample.before.fault = some cause := by
@@ -743,7 +787,17 @@ theorem a_distributed_physical_history_preserves_each_first_fault
     · simpa only [DistributedSourceCut.actorAt, if_neg same] using prior
   | @transportFault cut word entries published pending sample history checked beforeAt ih =>
     intro actor cause faulted
-    have prior := ih actor cause faulted
+    rcases a_fault_recorded_at_an_append faulted with earlier | here
+    case inr =>
+      cases atFault : sample.after.fault with
+        | none => simp [DistributedCallBoundary.recordedFault?, atFault] at here
+        | some actual =>
+          have same : sample.before.actor = actor ∧ actual = cause := by
+            simpa only [DistributedCallBoundary.recordedFault?, atFault, Option.map_some,
+              Option.some.injEq, Prod.mk.injEq] using here
+          rcases same with ⟨rfl, rfl⟩
+          simpa only [DistributedSourceCut.actorAt, if_pos rfl] using atFault
+    have prior := ih actor cause earlier
     by_cases same : actor = sample.before.actor
     · subst actor
       have beforeFault : sample.before.fault = some cause := by
@@ -754,7 +808,17 @@ theorem a_distributed_physical_history_preserves_each_first_fault
     · simpa only [DistributedSourceCut.actorAt, if_neg same] using prior
   | @retireView cut word entries published pending sample history checked beforeAt ih =>
     intro actor cause faulted
-    have prior := ih actor cause faulted
+    rcases a_fault_recorded_at_an_append faulted with earlier | here
+    case inr =>
+      cases atFault : sample.after.fault with
+        | none => simp [DistributedCallBoundary.recordedFault?, atFault] at here
+        | some actual =>
+          have same : sample.before.actor = actor ∧ actual = cause := by
+            simpa only [DistributedCallBoundary.recordedFault?, atFault, Option.map_some,
+              Option.some.injEq, Prod.mk.injEq] using here
+          rcases same with ⟨rfl, rfl⟩
+          simpa only [DistributedSourceCut.actorAt, if_pos rfl] using atFault
+    have prior := ih actor cause earlier
     by_cases same : actor = sample.before.actor
     · subst actor
       have beforeFault : sample.before.fault = some cause := by
@@ -765,7 +829,9 @@ theorem a_distributed_physical_history_preserves_each_first_fault
     · simpa only [DistributedSourceCut.actorAt, if_neg same] using prior
   | @quiet cut word entries published pending changed after history checked headers ih =>
     intro actor cause faulted
-    have prior := ih actor cause faulted
+    have earlier := a_fault_recorded_at_an_append faulted
+    simp only [DistributedCallBoundary.recordedFault?, reduceCtorEq, or_false] at earlier
+    have prior := ih actor cause earlier
     by_cases same : actor = changed
     · subst actor
       have sameFault : (cut.actors changed).1.fault = after.fault :=
@@ -773,11 +839,14 @@ theorem a_distributed_physical_history_preserves_each_first_fault
       simpa only [DistributedSourceCut.actorAt, if_pos rfl] using sameFault.symm.trans prior
     · simpa only [DistributedSourceCut.actorAt, if_neg same] using prior
   | accept history imageAt checked decoded pathAt rowAt prepared slotFree freshWitness sourceAt accepted identity ih =>
-    simpa only [DistributedSourceCut.carrierAt] using ih
+    simpa only [List.filterMap_append, List.filterMap_cons, List.filterMap_nil,
+      DistributedCallBoundary.recordedFault?, List.append_nil, DistributedSourceCut.carrierAt] using ih
   | @publish cut word entries published left right changed after cleared record entry
       history actorAt sameWire committed ih =>
     intro actor cause faulted
-    have prior := ih actor cause faulted
+    have earlier := a_fault_recorded_at_an_append faulted
+    simp only [DistributedCallBoundary.recordedFault?, reduceCtorEq, or_false] at earlier
+    have prior := ih actor cause earlier
     by_cases same : actor = changed
     · subst actor
       have live := a_measured_physical_transition_uses_live_actor_cuts committed
@@ -787,7 +856,9 @@ theorem a_distributed_physical_history_preserves_each_first_fault
   | @localCommit cut word entries published pending changed after cleared record eff binding
       history actorRole localAt committed ih =>
     intro actor cause faulted
-    have prior := ih actor cause faulted
+    have earlier := a_fault_recorded_at_an_append faulted
+    simp only [DistributedCallBoundary.recordedFault?, reduceCtorEq, or_false] at earlier
+    have prior := ih actor cause earlier
     by_cases same : actor = changed
     · subst actor
       have live := a_measured_physical_transition_uses_live_actor_cuts committed
@@ -797,12 +868,85 @@ theorem a_distributed_physical_history_preserves_each_first_fault
   | @receive cut word entries published pending changed channel next frame after cleared record entry witness
       history actorRole received entryAt identity sameWire committed ih =>
     intro actor cause faulted
-    have prior := ih actor cause faulted
+    have earlier := a_fault_recorded_at_an_append faulted
+    simp only [DistributedCallBoundary.recordedFault?, reduceCtorEq, or_false] at earlier
+    have prior := ih actor cause earlier
     by_cases same : actor = changed
     · subst actor
       have live := a_measured_physical_transition_uses_live_actor_cuts committed
       have impossible := live.1.symm.trans prior
       contradiction
     · simpa only [DistributedSourceCut.carrierAt, DistributedSourceCut.actorAt, if_neg same] using prior
+
+theorem a_distributed_physical_history_preserves_each_first_fault
+    (execution : DistributedPhysicalExecution images choreo session first last word entries published pending) :
+    ∀ actor cause, (first.actors actor).1.fault = some cause →
+      (last.actors actor).1.fault = some cause := by
+  intro actor cause faulted
+  exact a_distributed_physical_history_preserves_every_recorded_fault execution actor cause (.inl faulted)
+
+/-- An actual abort is permanent within this run. Later independent traffic,
+fault observations or sender publications cannot reopen that direction or
+turn discarded bytes into a new receipt. Nothing here creates an abort merely
+because a deadline was observed. -/
+theorem a_distributed_physical_history_keeps_each_recorded_fence
+    (execution : DistributedPhysicalExecution images choreo session first last word entries published pending) :
+    ∀ channel, .abort channel ∈ word →
+      (last.carriers channel).peerClosed = true ∧
+      (last.carriers channel).frames = [] ∧ (last.carriers channel).delivered = 0 := by
+  induction execution with
+  | refl => simp
+  | @close cut word entries published pending changed history ih =>
+    intro channel recorded
+    have isolated := ih channel (by simpa using recorded)
+    by_cases same : channel = changed
+    · subst changed
+      simpa [DistributedSourceCut.carrierAt, TransportState.closePeer] using isolated.2
+    · simpa only [DistributedSourceCut.carrierAt, if_neg same] using isolated
+  | @abort cut word entries published pending changed history ih =>
+    intro channel recorded
+    by_cases same : channel = changed
+    · subst changed
+      simp [DistributedSourceCut.carrierAt, TransportState.abortPeer]
+    · have old : .abort channel ∈ word := by simpa [same] using recorded
+      simpa only [DistributedSourceCut.carrierAt, if_neg same] using ih channel old
+  | observeClosure history checked beforeAt bound closed ih =>
+    intro channel recorded
+    simpa only [DistributedSourceCut.actorAt] using ih channel (by simpa using recorded)
+  | transportFault history checked beforeAt ih =>
+    intro channel recorded
+    simpa only [DistributedSourceCut.actorAt] using ih channel (by simpa using recorded)
+  | retireView history checked beforeAt ih =>
+    intro channel recorded
+    simpa only [DistributedSourceCut.actorAt] using ih channel (by simpa using recorded)
+  | quiet history checked headers ih =>
+    intro channel recorded
+    simpa only [DistributedSourceCut.actorAt] using ih channel (by simpa using recorded)
+  | @accept cut word entries published pending sample changed sent event previousPath witness label
+      data path row history imageAt checked decoded pathAt rowAt prepared slotFree freshWitness sourceAt accepted identity ih =>
+    intro channel recorded
+    have isolated := ih channel (by simpa using recorded)
+    by_cases same : channel = changed
+    · subst changed
+      have rejected := closed_transport_rejects_send (frameLabel := label) isolated.1
+      rw [rejected] at accepted
+      contradiction
+    · simpa only [DistributedSourceCut.carrierAt, if_neg same] using isolated
+  | publish history actorAt sameWire committed ih =>
+    intro channel recorded
+    simpa only [DistributedSourceCut.actorAt] using ih channel (by simpa using recorded)
+  | localCommit history actorRole localAt committed ih =>
+    intro channel recorded
+    simpa only [DistributedSourceCut.actorAt] using ih channel (by simpa using recorded)
+  | @receive cut word entries published pending actor changed next frame after cleared record entry witness
+      history actorRole received entryAt identity sameWire committed ih =>
+    intro channel recorded
+    have isolated := ih channel (by simpa using recorded)
+    by_cases same : channel = changed
+    · subst changed
+      simp only [TransportState.pollReceive, isolated.2.1, List.getElem?_nil,
+        isolated.1, ite_true] at received
+      contradiction
+    · simpa only [DistributedSourceCut.carrierAt, DistributedSourceCut.actorAt, if_neg same] using isolated
 
 end Hibana

@@ -1555,6 +1555,24 @@ session; co-resident endpoints may share that existing state, while remote
 runtimes have no shared-memory premise or instantaneous fault broadcast.
 No new runtime admission guard is added.
 
+The stronger physical-history result retains faults recorded anywhere in that
+same word, not just faults present at its initial cut. It filters the actual
+retirement, closure-observation and transport-error records, then proves that
+each reported actor/cause remains in the final actor cut. Accepted unpublished
+calls and independent actors' work do not require restarting the proof from a
+new initial cut with an empty call list. An actual direction abort also remains
+closed and empty for the rest of this run; later traffic cannot reopen it.
+
+The same custody/physical word now accounts for every absent authority. A
+zero-authority cut has an actual preceding disposal boundary. Its resource and
+value are bound to a checked completed-view retirement, a retirement whose
+fault is still present in the final actor cut, or a recorded fence whose
+direction remains isolated. Ordinary progress, polling, accepted-sender-witness
+retirement and an I/O error alone cannot silently remove a right. A normal
+completed-view retirement is not a claim that every role finished. This closes
+the missing-right case; retaining a right is still not proof of current Rust
+callability or general enabled-step lifting. No runtime state or guard is added.
+
 The actual unaccepted-send drop fixture now also begins with a recorded
 `ProtocolViolation`. Dropping its unpolled owned future preserves that cause
 rather than replacing it with `EndpointDropped`. Generated claims reject
@@ -1596,7 +1614,7 @@ permitted only when the same custody cut has no tracked in-flight authority on
 that direction. The two-runtime abort fixture accepts a real loan, destroys its
 completed sender future, isolates the queued frame, and then observes EOF at
 the worker. No receiver value is created, no receive is appended to the source
-prefix, and the sender cannot issue the same resource again. Its five generated
+prefix, and the sender cannot issue the same resource again. Its six generated
 claims retain the same custody/source/FIFO history and reject hiding that loan
 inside an untracked discard. The fixture uses the in-memory test carrier.
 
@@ -1634,7 +1652,7 @@ fault. A failed receive leaves the frame queued and issues no Endpoint. Neither
 case restores the sender's initial binding. Miri executes the same eight cases.
 For each test, the actual Deadline case supplies one chronological word joining
 constructor/poll evidence, physical FIFO, source occurrences and affine custody.
-The seven kernel claims per generated artifact also check all four observed
+The eight kernel claims per generated artifact also check all four observed
 port bindings and reject rebinding, missing faults and hidden progress. These
 are bounded executions of existing runtime semantics, not a new failure
 detector or a proof of every failure schedule.

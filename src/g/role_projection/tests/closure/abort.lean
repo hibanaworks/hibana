@@ -129,3 +129,18 @@ theorem an_untracked_abort_cannot_hide_this_in_flight_owned_frame :
     ¬ Untracked abortResource abortChoreo (abortEvents.take 6) beforeFence (.abort loanChannel) := by
   intro hidden
   exact hidden loanReceipt (by simp [beforeFence]) rfl
+
+/-- The absent right is explained by this run's actual fence. A retirement
+or unrelated actor fault cannot stand in for its missing receiver value. -/
+theorem the_missing_loan_has_its_recorded_permanent_fence :
+    (abortFinal.carriers loanChannel).peerClosed = true ∧
+      (abortFinal.carriers loanChannel).frames = [] ∧
+      (abortFinal.carriers loanChannel).delivered = 0 := by
+  have accounted := a_joint_physical_history_accounts_for_every_missing_authority
+    actualAbortCustodyHistory actualAbortPhysicalHistory (by decide)
+  rcases accounted with ⟨disposed, sample, matched, present, outcome⟩ |
+    ⟨receipt, present, isolated⟩
+  · simp [sourceWord, abortEvents, OwnedCallEvent.source?] at present
+  · have same : receipt.frame.channel = loanChannel := by
+      simpa [sourceWord, abortEvents, OwnedCallEvent.source?] using present
+    simpa only [same] using isolated

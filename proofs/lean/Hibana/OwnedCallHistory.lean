@@ -264,6 +264,101 @@ theorem a_joint_call_history_preserves_affine_custody
   exact ⟨OwnedFutureInventory.actual_future_history_preserves_unique_authority actual,
     OwnedFutureInventory.a_complete_future_history_covers_every_private_payload actual⟩
 
+private theorem a_joint_boundary_loses_authority_only_at_disposal
+    (boundary : OwnedCallHistory.Boundary images resource choreo events event before after)
+    (had : before.custody.authorityCount = 1) (empty : after.custody.authorityCount = 0) :
+    event.retirement?.isSome = true ∨ ∃ receipt, event = .fence receipt := by
+  cases boundary <;> first
+    | exact .inl rfl
+    | exact .inr ⟨_, rfl⟩
+    | exfalso
+      simp only [EndpointTransfer.Observation.authorityCount, List.length_append,
+        List.length_cons] at had empty
+      omega
+
+/-- A missing right has a concrete disposal boundary in this SAME history.
+Ordinary work, polling, accepted-sender-witness retirement and reported I/O
+errors cannot silently remove authority. This is not a claim that a retained
+value/future is callable or that a fresh right may be issued. -/
+theorem a_joint_history_with_no_authority_has_its_actual_disposal
+    (history : OwnedCallHistory.History images resource choreo value events cut)
+    (empty : cut.custody.authorityCount = 0) :
+    ∃ earlier later event before after,
+      events = earlier ++ event :: later ∧
+      OwnedCallHistory.History images resource choreo value earlier before ∧
+      OwnedCallHistory.Boundary images resource choreo earlier event before after ∧
+      before.custody.authorityCount = 1 ∧ after.custody.authorityCount = 0 ∧
+      (event.retirement?.isSome = true ∨ ∃ receipt, event = .fence receipt) := by
+  induction history with
+  | nil => simp [OwnedCallHistory.initial, EndpointTransfer.initial,
+      EndpointTransfer.Observation.authorityCount] at empty
+  | @tail events before event after prior boundary ih =>
+    by_cases already : before.custody.authorityCount = 0
+    · obtain ⟨earlier, later, disposed, beforeCut, next, wordAt, earlierHistory, disposal, had, lost, kind⟩ := ih already
+      exact ⟨earlier, later ++ [event], disposed, beforeCut, next,
+        by simp only [wordAt, List.append_assoc, List.cons_append],
+        earlierHistory, disposal, had, lost, kind⟩
+    · have bound := (a_joint_call_history_preserves_affine_custody prior).1
+      have had : before.custody.authorityCount = 1 := by omega
+      exact ⟨events, [], event, before, after, by simp, prior, boundary, had, empty,
+        a_joint_boundary_loses_authority_only_at_disposal boundary had empty⟩
+
+/-- Close the missing-right case on one chronological custody/physical word.
+An absent authority was explicitly retired after completing its local view,
+retired with a fault that remains in the final actor cut, or fenced on a
+direction that remains isolated. No timeout, old header or unrelated actor's
+fault can stand in for that resource's disposal. This does not establish that
+every retained right is currently callable, nor permit reissuance. -/
+theorem a_joint_physical_history_accounts_for_every_missing_authority
+    (custody : OwnedCallHistory.History images resource choreo value events cut)
+    (physical : DistributedPhysicalExecution images choreo session first last
+      (sourceWord events) entries published pending)
+    (empty : cut.custody.authorityCount = 0) :
+    (∃ disposed sample,
+      retirementMatches resource disposed sample (images sample.before.actor) choreo = true ∧
+      .retireView sample ∈ sourceWord events ∧
+      ((sample.after.fault = none ∧
+          sourceViewComplete? sample.before (images sample.before.actor) choreo sample.view = some true ∧
+          ∃ current, observedActorView? sample.before sample.view = some current ∧ current.operation = .idle) ∨
+        ∃ cause, sample.after.fault = some cause ∧
+          (last.actors sample.before.actor).1.fault = some cause ∧
+          (observedGeneration (last.actors sample.before.actor).1.fault).publicationPermitted = false)) ∨
+    ∃ receipt : Receipt, .abort receipt.frame.channel ∈ sourceWord events ∧
+      (last.carriers receipt.frame.channel).peerClosed = true ∧
+      (last.carriers receipt.frame.channel).frames = [] ∧
+      (last.carriers receipt.frame.channel).delivered = 0 := by
+  obtain ⟨earlier, later, event, before, after, wordAt, earlierHistory, boundary, had, lost, kind⟩ :=
+    a_joint_history_with_no_authority_has_its_actual_disposal custody empty
+  have present : event ∈ events := by
+    rw [wordAt]
+    exact List.mem_append_right _ List.mem_cons_self
+  rcases kind with retired | ⟨receipt, fenced⟩
+  · cases recorded : event.retirement? with
+    | none => simp only [recorded, Option.isSome_none, Bool.false_eq_true] at retired
+    | some pair =>
+      rcases pair with ⟨disposed, sample⟩
+      have qualified := a_joint_value_retirement_keeps_its_checked_source_boundary boundary recorded
+      have inWord : .retireView sample ∈ sourceWord events :=
+        List.mem_filterMap.mpr ⟨event, present, qualified.2⟩
+      refine .inl ⟨disposed, sample, qualified.1, inWord, ?_⟩
+      rcases a_joint_value_retirement_is_complete_or_faulted boundary recorded with complete | faulted
+      · exact .inl complete
+      · obtain ⟨cause, atFault, disabled⟩ := faulted
+        have reported : (sample.before.actor, cause) ∈
+            (sourceWord events).filterMap DistributedCallBoundary.recordedFault? :=
+          List.mem_filterMap.mpr ⟨.retireView sample, inWord,
+            by simp only [DistributedCallBoundary.recordedFault?, atFault, Option.map_some]⟩
+        have remains := a_distributed_physical_history_preserves_every_recorded_fault
+          physical sample.before.actor cause (.inr reported)
+        refine .inr ⟨cause, atFault, remains, ?_⟩
+        rw [remains]
+        rfl
+  · subst event
+    have inWord : .abort receipt.frame.channel ∈ sourceWord events :=
+      List.mem_filterMap.mpr ⟨.fence receipt, present, rfl⟩
+    exact .inr ⟨receipt, inWord,
+      a_distributed_physical_history_keeps_each_recorded_fence physical _ inWord⟩
+
 private theorem a_boundary_keeps_each_live_constructor
     (boundary : OwnedCallHistory.Boundary images resource choreo events event before after)
     (prior : ∀ request ∈ before.requests, OwnedCallEvent.construct request ∈ events) :
