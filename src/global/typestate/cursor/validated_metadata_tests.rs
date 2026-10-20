@@ -216,6 +216,58 @@ impl Legacy<'_> {
 fn compare(cursor: &EventCursor) {
     let old = Legacy(cursor);
     for idx in 0..=cursor.local_steps_len() {
+        let action = cursor.machine().node(idx).action();
+        assert_eq!(cursor.is_recv_at(idx), action.is_recv());
+        assert_eq!(cursor.is_send_at(idx), action.is_send());
+        assert_eq!(cursor.is_local_action_at(idx), action.is_local_action());
+        let operation = match action {
+            LocalAction::Send {
+                eff_index, lane, ..
+            }
+            | LocalAction::Local {
+                eff_index, lane, ..
+            } => Some((eff_index, false, lane)),
+            LocalAction::Recv {
+                eff_index, lane, ..
+            } => Some((eff_index, true, lane)),
+            LocalAction::Terminate => None,
+        };
+        assert_eq!(
+            cursor.event_lane_at(idx),
+            operation.map(|(_, _, lane)| lane)
+        );
+        assert_eq!(
+            cursor.logical_role_at(idx),
+            operation.map(|(effect, receiving, _)| {
+                let atom = cursor.program_ref().event_atom_at(effect.dense_ordinal());
+                if receiving { atom.to } else { atom.from }
+            })
+        );
+        for arm in [None, Some(0), Some(1)] {
+            let mut observed = std::vec::Vec::new();
+            let actual = cursor.event_actor_is_local(idx, &mut |scope| {
+                observed.push(scope);
+                arm
+            });
+            let mut expected_calls = std::vec::Vec::new();
+            let expected = match operation {
+                None => Some(false),
+                Some((effect, receiving, _)) => {
+                    let program = cursor.program_ref();
+                    match program.actor_binding_at(effect.dense_ordinal()) {
+                        None => Some(true),
+                        Some(bindings) => program
+                            .selected_actor(bindings[usize::from(receiving)], &mut |scope| {
+                                expected_calls.push(scope);
+                                arm
+                            })
+                            .map(|actor| actor == cursor.role()),
+                    }
+                }
+            };
+            assert_eq!(actual, expected);
+            assert_eq!(observed, expected_calls);
+        }
         assert_eq!(
             cursor.machine().event_conflict_for_index(idx),
             legacy_conflict(cursor, idx)
@@ -234,6 +286,23 @@ fn compare(cursor: &EventCursor) {
         );
     }
     for idx in [cursor.local_steps_len() + 1, usize::MAX] {
+        assert!(catch_unwind(AssertUnwindSafe(|| cursor.is_recv_at(idx))).is_err());
+        assert!(catch_unwind(AssertUnwindSafe(|| cursor.is_send_at(idx))).is_err());
+        assert!(catch_unwind(AssertUnwindSafe(|| cursor.is_local_action_at(idx))).is_err());
+        assert!(catch_unwind(AssertUnwindSafe(|| cursor.event_lane_at(idx))).is_err());
+        assert!(catch_unwind(AssertUnwindSafe(|| cursor.logical_role_at(idx))).is_err());
+        let mut called = false;
+        assert!(
+            catch_unwind(AssertUnwindSafe(|| cursor.event_actor_is_local(
+                idx,
+                &mut |_| {
+                    called = true;
+                    None
+                }
+            )))
+            .is_err()
+        );
+        assert!(!called);
         assert!(
             catch_unwind(AssertUnwindSafe(|| cursor
                 .machine()
@@ -306,6 +375,36 @@ fn validated_metadata_preserves_empty_tau_and_terminal_domains() {
         g::send::<0, 1, Msg<4, ()>>(),
     ));
     EventCursor::compare_validated_metadata_image(tau.role_image_ref());
+}
+
+#[test]
+fn operation_queries_preserve_delegated_and_conditional_actor_identity() {
+    type Loan = Msg<8, crate::Endpoint<'static, 10>>;
+    let loan = g::seq(
+        g::send::<0, 1, Loan>(),
+        g::seq(
+            g::send::<10, 2, Msg<9, u32>>(),
+            g::seq(g::send::<2, 10, Msg<10, u32>>(), g::send::<1, 0, Loan>()),
+        ),
+    );
+    let graph = g::route(
+        g::seq(g::send::<0, 1, Msg<1, ()>>(), loan),
+        g::seq(
+            g::send::<0, 1, Msg<2, ()>>(),
+            g::seq(
+                g::send::<10, 2, Msg<9, u32>>(),
+                g::send::<2, 10, Msg<10, u32>>(),
+            ),
+        ),
+    )
+    .roll();
+    for rows in [
+        project::<0>(&graph).role_image_ref(),
+        project::<1>(&graph).role_image_ref(),
+        project::<2>(&graph).role_image_ref(),
+    ] {
+        EventCursor::compare_validated_metadata_image(rows);
+    }
 }
 
 // Test-only old/full versus filtered projection oracle over synthetic cursor

@@ -430,6 +430,20 @@ fn resident_event_header_decoding_accepts_exact_domain() {
     assert!(decoded.is_some() == expected);
     if let Some(scope) = decoded {
         assert!(scope.raw() == scope_raw);
+        let row = super::super::PackedLocalEventRow::from_packed_parts(
+            eff_index,
+            u16::MAX,
+            u16::MAX,
+            scope_raw,
+            0,
+            flags,
+        );
+        assert!(row.eff_index == eff_index);
+        match row.direction() {
+            RoleLocalDirection::Local => assert!(flags <= 1),
+            RoleLocalDirection::Send => assert!((2..=3).contains(&flags)),
+            RoleLocalDirection::Recv => assert!((4..=5).contains(&flags)),
+        }
     }
 }
 

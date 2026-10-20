@@ -7,7 +7,7 @@
 use crate::global::{
     compiled::images::CompiledProgramRef,
     const_dsl::{ReentryMark, ScopeId, ScopeKind},
-    role_program::{LaneSetView, PackedLaneRange, RoleImageRef},
+    role_program::{LaneSetView, PackedLaneRange, RoleImageRef, RoleLocalDirection},
     typestate::{
         EventCommitMeta, LocalAction, LocalDependency, LocalNode, PackedEventConflict,
         PassiveArmChildFact, RouteScopeRows, StateIndex,
@@ -42,6 +42,30 @@ impl LocalEventProgram {
 }
 
 impl LocalEventProgram {
+    /// Read operation identity without decoding its dependency, conflict, or
+    /// message metadata. The image constructor validates their consistency.
+    #[inline(always)]
+    pub(crate) fn operation_at(
+        &self,
+        idx: usize,
+    ) -> Option<(crate::eff::EffIndex, RoleLocalDirection)> {
+        if idx == self.local_len() {
+            return None;
+        }
+        if idx > self.local_len() {
+            crate::invariant();
+        }
+        let row = self
+            .rows()
+            .lanes()
+            .local_step_event(idx)
+            .unwrap_or_else(|| crate::invariant());
+        Some((
+            crate::eff::EffIndex::from_dense_ordinal(row.eff_index as usize),
+            row.direction(),
+        ))
+    }
+
     pub(crate) fn receive_candidates(
         &self,
         role: u8,

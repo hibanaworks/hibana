@@ -266,7 +266,7 @@ impl PackedLocalEventRow {
 
     /// Direction belongs to the logical endpoint, independently of which
     /// actor holds it. Distinct facets at one actor retain send and receive.
-    pub(super) const fn direction(self) -> RoleLocalDirection {
+    pub(crate) const fn direction(self) -> RoleLocalDirection {
         match RoleLocalDirection::decode(self.flags) {
             Some(direction) => direction,
             None => crate::invariant(),

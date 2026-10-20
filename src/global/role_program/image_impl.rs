@@ -1,5 +1,6 @@
 mod blob_image;
 mod event_rows;
+pub(crate) use event_rows::RoleLocalDirection;
 #[cfg(kani)]
 mod kani;
 mod lane_image;

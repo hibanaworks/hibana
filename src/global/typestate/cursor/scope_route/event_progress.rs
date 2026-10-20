@@ -1,10 +1,9 @@
 use super::super::super::facts::LocalDependencyState;
 use super::super::{
-    CursorInvariantError, EnabledEventCommit, EventCursor, LocalAction, LocalDependency,
-    PackedEventConflict, RelocatableResidentLaneStep, ResidentLaneStep, ScopeId, StateIndex,
-    state_index_to_usize,
+    CursorInvariantError, EnabledEventCommit, EventCursor, LocalDependency, PackedEventConflict,
+    RelocatableResidentLaneStep, ResidentLaneStep, ScopeId, StateIndex, state_index_to_usize,
 };
-use crate::global::typestate::EventCommitMeta;
+use crate::global::{role_program::RoleLocalDirection, typestate::EventCommitMeta};
 
 mod recovery;
 
@@ -47,12 +46,11 @@ impl EventCursor {
         conflict: PackedEventConflict,
         selected: &mut dyn FnMut(ScopeId) -> Option<u8>,
     ) -> bool {
-        let after = match self.action_at(index) {
-            LocalAction::Send { eff_index, .. }
-            | LocalAction::Recv { eff_index, .. }
-            | LocalAction::Local { eff_index, .. } => eff_index.dense_ordinal(),
-            LocalAction::Terminate => crate::invariant(),
-        };
+        let (after, after_direction) = self
+            .machine()
+            .event_program()
+            .operation_at(index)
+            .unwrap_or_else(|| crate::invariant());
         for step in self.pending_event_steps(0..self.local_steps_len()) {
             let Some(prior) = self
                 .machine()
@@ -66,16 +64,17 @@ impl EventCursor {
             {
                 continue;
             }
-            let before = match self.action_at(prior) {
-                LocalAction::Send { eff_index, .. }
-                | LocalAction::Recv { eff_index, .. }
-                | LocalAction::Local { eff_index, .. } => eff_index.dense_ordinal(),
-                LocalAction::Terminate => crate::invariant(),
-            };
+            let (before, before_direction) = self
+                .machine()
+                .event_program()
+                .operation_at(prior)
+                .unwrap_or_else(|| crate::invariant());
             let precedes = if before == after {
-                self.is_send_at(prior) && self.is_recv_at(index)
+                before_direction == RoleLocalDirection::Send
+                    && after_direction == RoleLocalDirection::Recv
             } else {
-                self.program_ref().source_precedes(before, after)
+                self.program_ref()
+                    .source_precedes(before.dense_ordinal(), after.dense_ordinal())
             };
             if precedes
                 && self.event_actor_is_local(prior, selected) != Some(false)

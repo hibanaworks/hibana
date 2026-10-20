@@ -390,6 +390,7 @@ pub(crate) struct LocalNodeMeta {
 
 impl LocalAction {
     /// True when the node corresponds to a send action.
+    #[cfg(all(test, hibana_repo_tests))]
     #[inline(always)]
     pub(crate) const fn is_send(&self) -> bool {
         matches!(self, Self::Send { .. })
@@ -408,6 +409,7 @@ impl LocalAction {
     }
 
     /// True when the node corresponds to a local action.
+    #[cfg(all(test, hibana_repo_tests))]
     #[inline(always)]
     pub(crate) const fn is_local_action(&self) -> bool {
         matches!(self, Self::Local { .. })

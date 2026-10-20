@@ -2,6 +2,7 @@ use super::{
     EventCursor, LocalAction, LocalMeta, LocalNode, RecvMeta, ScopeId, SendMeta, StateIndex,
     state_index_to_usize,
 };
+use crate::global::role_program::RoleLocalDirection;
 impl EventCursor {
     pub(crate) fn receive_candidates(
         &self,
@@ -96,17 +97,26 @@ impl EventCursor {
 
     #[inline(always)]
     pub(crate) fn is_recv_at(&self, idx: usize) -> bool {
-        self.action_at(idx).is_recv()
+        self.machine()
+            .event_program()
+            .operation_at(idx)
+            .is_some_and(|(_, direction)| direction == RoleLocalDirection::Recv)
     }
 
     #[inline(always)]
     pub(crate) fn is_send_at(&self, idx: usize) -> bool {
-        self.action_at(idx).is_send()
+        self.machine()
+            .event_program()
+            .operation_at(idx)
+            .is_some_and(|(_, direction)| direction == RoleLocalDirection::Send)
     }
 
     #[inline(always)]
     pub(crate) fn is_local_action_at(&self, idx: usize) -> bool {
-        self.action_at(idx).is_local_action()
+        self.machine()
+            .event_program()
+            .operation_at(idx)
+            .is_some_and(|(_, direction)| direction == RoleLocalDirection::Local)
     }
 
     #[inline(always)]
@@ -131,15 +141,13 @@ impl EventCursor {
 
     /// Logical operation owner, independent of the physical actor holding it.
     pub(crate) fn logical_role_at(&self, idx: usize) -> Option<u8> {
-        let (eff, receiving) = match self.machine().node(idx).action() {
-            LocalAction::Send { eff_index, .. } | LocalAction::Local { eff_index, .. } => {
-                (eff_index, false)
-            }
-            LocalAction::Recv { eff_index, .. } => (eff_index, true),
-            LocalAction::Terminate => return None,
-        };
+        let (eff, direction) = self.machine().event_program().operation_at(idx)?;
         let atom = self.program_ref().event_atom_at(eff.dense_ordinal());
-        Some(if receiving { atom.to } else { atom.from })
+        Some(if direction == RoleLocalDirection::Recv {
+            atom.to
+        } else {
+            atom.from
+        })
     }
 
     /// An operation borrows its carrier view; an owned send also consumes its
@@ -158,19 +166,18 @@ impl EventCursor {
         idx: usize,
         selected_arm: &mut dyn FnMut(ScopeId) -> Option<u8>,
     ) -> Option<bool> {
-        let (eff, receiving) = match self.action_at(idx) {
-            LocalAction::Send { eff_index, .. } | LocalAction::Local { eff_index, .. } => {
-                (eff_index, false)
-            }
-            LocalAction::Recv { eff_index, .. } => (eff_index, true),
-            LocalAction::Terminate => return Some(false),
+        let Some((eff, direction)) = self.machine().event_program().operation_at(idx) else {
+            return Some(false);
         };
         let program = self.program_ref();
         let Some(bindings) = program.actor_binding_at(eff.dense_ordinal()) else {
             return Some(true);
         };
         program
-            .selected_actor(bindings[usize::from(receiving)], selected_arm)
+            .selected_actor(
+                bindings[usize::from(direction == RoleLocalDirection::Recv)],
+                selected_arm,
+            )
             .map(|actor| actor == self.role())
     }
 

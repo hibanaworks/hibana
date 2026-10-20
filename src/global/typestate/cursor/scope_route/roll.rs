@@ -1,4 +1,3 @@
-use super::super::super::facts::LocalAction;
 use super::super::{EventCursor, ScopeId};
 
 mod completion;
@@ -56,12 +55,10 @@ impl EventCursor {
 
     #[inline(always)]
     pub(crate) fn event_lane_at(&self, idx: usize) -> Option<u8> {
-        match self.machine().node(idx).action() {
-            LocalAction::Send { lane, .. }
-            | LocalAction::Recv { lane, .. }
-            | LocalAction::Local { lane, .. } => Some(lane),
-            LocalAction::Terminate => None,
+        if idx > self.local_steps_len() {
+            crate::invariant();
         }
+        self.machine().event_program().local_step_lane(idx)
     }
 
     #[inline(always)]
