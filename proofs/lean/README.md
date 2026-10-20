@@ -30,11 +30,24 @@ admission bits are inputs to the oracle. Every successful prefix probes every
 remaining bounded operation once, including requests that return Pending or an
 error. Missing and duplicate probes are rejected.
 
-The current cases compare `seq(roll(Start; Ack), Finish)` and
-`par(roll(Start; Ack), Finish)` over two body visits and one continuation.
-They exercise 624 attempts at 224 prefixes. Both runtime-only and model-only
-acceptances are reported, along with unfinished frontiers that have no common
-enabled operation. Three deliberately incorrect models check that this can
+The current cases compare `seq(roll(Start; Ack), Finish)`,
+`par(roll(Start; Ack), Finish)`, and `par(roll(Loan; Read; Return), Tick)`.
+The last case moves a real resource Endpoint from owner to worker, performs
+its operation and returns it over two visits, beside independent traffic.
+Three separate runtimes use `par()` borrows and the ordinary `send`/`recv`
+methods; the generator retains actual Rust values rather than a shadow owner
+table. An unavailable value is recorded separately from Pending and an
+Endpoint error. It also checks that both actors never retain usable values
+simultaneously.
+
+These cases exercise 11,177 attempts at 4,842 prefixes. Both runtime-only and
+model-only acceptances are reported, along with unfinished frontiers that have
+no common enabled operation. Each accepted source binding selects the actual
+sender and receiver images; their original logical rows must agree on the
+lane. This immutable direction map is checked once per accepted expansion,
+without caching observed readiness. Generated data is split into declarations
+to retain the default Lean elaboration work limit without dropping probes.
+Three deliberately incorrect models check that this can
 detect excessive serialization, missing causal/FIFO checks, and omitted local
 sequencing. The test does not execute old kernels or infer correctness from
 source text.

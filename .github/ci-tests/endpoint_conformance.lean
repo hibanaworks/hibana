@@ -5,14 +5,14 @@ set_option maxRecDepth 100000
 
 structure Attempt where
   commands : List Nat
-  /-- 0=accepted, 1=pending, 2=rejected by the real Endpoint. -/
+  /-- 0=accepted, 1=pending, 2=Endpoint error, 3=no owned Rust value to call. -/
   outcome : Nat
   runtime : String
 
 structure ConformanceCase where
   name : String
   choreo : Choreo
-  image : RustDescriptorImage
+  images : List RustDescriptorImage
   attempts : List Attempt
 
 inductive Oracle where
@@ -52,28 +52,45 @@ def boundedPlans (source : Source) (oracle : Oracle) : List (SourceOccurrenceCut
       checkedPlans _ _ (.par (.rollMore (.rollOnce (.oneCopy body)) (.oneCopy body)) (.oneCopy tail))
   | _ => []
 
-/-- The immutable generated lane table identifies physical directions. These
-two choreographies have every source event at role zero; resolve by original
-source identity rather than assuming that an event number is a local row. -/
-def channelFor (plan : SourceOccurrenceCut source) (image : RustDescriptorImage)
+/-- Bind both physical holders' immutable rows to the original logical
+message. Delegated roles retain their logical wire identity; the accepted
+source unfolding determines which actor's image must contain each half. -/
+def channelFor (plan : SourceOccurrenceCut source) (images : List RustDescriptorImage)
     (occurrence : Nat) : Option (Nat × Nat × Nat) := do
   let (origin, message) ← (plan.unfolding.occurrences 0)[occurrence]?
+  let (_, binding) ← plan.path.bindings.find? (fun entry => entry.1 == occurrence)
+  let image ← resolveUnique? (images.filter (fun image => image.role == binding.senderActor))
   let row ← resolveUnique? ((List.range image.eventCount).filter fun row =>
-    image.eventEffIndex? row == some origin)
+    image.eventEffIndex? row == some origin &&
+      image.eventView? row == some message.sender.role)
   let lane ← image.eventLane? row
+  let receiver ← resolveUnique? (images.filter (fun image => image.role == binding.receiverActor))
+  let incoming ← resolveUnique? ((List.range receiver.eventCount).filter fun row =>
+    receiver.eventEffIndex? row == some origin &&
+      receiver.eventView? row == some message.receiver.role)
+  let receiveLane ← receiver.eventLane? incoming
+  if lane != receiveLane then none else
   pure (message.sender.role, message.receiver.role, lane)
 
-def atFifoHead (plan : SourceOccurrenceCut source) (image : RustDescriptorImage)
+def indexedPlans (plans : List (SourceOccurrenceCut source)) (images : List RustDescriptorImage) :
+    Option (List (SourceOccurrenceCut source × Array (Nat × Nat × Nat))) :=
+  plans.mapM fun plan => do
+    let channels ← (List.range plan.expanded.eventCount).mapM (channelFor plan images)
+    pure (plan, channels.toArray)
+
+/-- These channels are immutable translations of the accepted source and
+descriptor rows, computed once. No observed admission result is cached. -/
+def atFifoHead (channels : Array (Nat × Nat × Nat))
     (points : List SourcePoint) (occurrence : Nat) : Bool :=
-  match channelFor plan image occurrence with
+  match channels[occurrence]? with
   | none => false
   | some channel =>
     points.find? (fun point => match point with
-      | .accepted event => channelFor plan image event == some channel &&
+      | .accepted event => channels[event]? == some channel &&
           !points.contains (.committed ⟨event, .receive⟩)
       | _ => false) == some (.accepted occurrence)
 
-def nextPoints (plan : SourceOccurrenceCut source) (image : RustDescriptorImage) (oracle : Oracle)
+def nextPoints (plan : SourceOccurrenceCut source) (channels : Array (Nat × Nat × Nat)) (oracle : Oracle)
     (points : List SourcePoint) (command : Nat) : List (List SourcePoint) :=
   (plan.unfolding.occurrences 0).zipIdx.filterMap fun ((origin, _), occurrence) =>
     if origin != command / 2 then none else
@@ -86,7 +103,7 @@ def nextPoints (plan : SourceOccurrenceCut source) (image : RustDescriptorImage)
     if !ready || (oracle != .unguarded && oracle != .unprojected &&
         !(occurrenceCut plan points).resumptionReady point) ||
         (side == .receive && oracle != .unguarded &&
-        !atFifoHead plan image points occurrence) then none else
+        !atFifoHead channels points occurrence) then none else
     let accepted := points ++ [point]
     if side == .receive then some accepted else
       let publication := SourcePoint.committed action
@@ -94,11 +111,11 @@ def nextPoints (plan : SourceOccurrenceCut source) (image : RustDescriptorImage)
         some (accepted ++ [publication])
       else none
 
-def permits (plans : List (SourceOccurrenceCut source)) (image : RustDescriptorImage)
+def permits (plans : List (SourceOccurrenceCut source × Array (Nat × Nat × Nat)))
     (oracle : Oracle) (commands : List Nat) : Bool :=
-  plans.any fun plan =>
+  plans.any fun (plan, channels) =>
     !(commands.foldl (fun states command =>
-      states.flatMap fun points => nextPoints plan image oracle points command) [[]]).isEmpty
+      states.flatMap fun points => nextPoints plan channels oracle points command) [[]]).isEmpty
 
 /-- Derive occurrence bounds from the accepted expansions, independently of
 the Rust enumeration loop. Every successful bounded prefix must probe every
@@ -121,7 +138,7 @@ def enumerationComplete (sample : ConformanceCase)
   let prefixes := testedPrefixes sample depth
   sample.attempts.all (fun attempt => !attempt.commands.isEmpty &&
     attempt.commands.length ≤ depth && prefixes.contains attempt.commands.dropLast &&
-    attempt.outcome ≤ 2) &&
+    attempt.outcome ≤ 3) &&
   prefixes.all fun priorCommands =>
     let candidates := sample.attempts.filter fun attempt => attempt.commands.dropLast == priorCommands
     (candidates.map fun attempt => attempt.commands.getLast!).mergeSort (· ≤ ·) ==
@@ -140,10 +157,17 @@ def checkCases (cases : List ConformanceCase) : IO Unit := do
     let some source := sample.choreo.ownershipSource?
       | throw (IO.userError s!"missing source: {sample.name}")
     let plans := boundedPlans source .source
-    let serial := boundedPlans source .serialized
     unless !plans.isEmpty do throw (IO.userError s!"no accepted bounded plans: {sample.name}")
-    unless sample.image.actorOrderCheck sample.choreo && sample.image.actorRollCheck sample.choreo do
+    let actors := (plans.flatMap fun plan => plan.path.bindings.flatMap fun (_, binding) =>
+      [binding.senderActor, binding.receiverActor]).eraseDups.mergeSort (· ≤ ·)
+    unless (sample.images.map (·.role)).mergeSort (· ≤ ·) == actors &&
+        sample.images.all (fun image =>
+          image.actorOrderCheck sample.choreo && image.actorRollCheck sample.choreo) do
       throw (IO.userError s!"descriptor/source mismatch: {sample.name}")
+    let some indexed := indexedPlans plans sample.images
+      | throw (IO.userError s!"unmatched source direction: {sample.name}")
+    let some serial := indexedPlans (boundedPlans source .serialized) sample.images
+      | throw (IO.userError s!"unmatched serialized direction: {sample.name}")
     let depth := plans.foldl (fun largest plan => max largest
       (sourceVisitActions plan.path.bindings).length) 0
     unless enumerationComplete sample plans depth do
@@ -155,24 +179,24 @@ def checkCases (cases : List ConformanceCase) : IO Unit := do
       throw (IO.userError "enumeration controls failed to detect missing/duplicate probes")
     for priorCommands in testedPrefixes sample depth do
       let candidates := sample.attempts.filter fun attempt => attempt.commands.dropLast == priorCommands
-      let ready := candidates.filter fun attempt => permits plans sample.image .source attempt.commands
+      let ready := candidates.filter fun attempt => permits indexed .source attempt.commands
       cuts := cuts + 1
       if !ready.isEmpty && !ready.any (fun attempt => attempt.outcome == 0) then
         stalled := stalled + 1
         IO.println s!"stalled {sample.name}: prefix={priorCommands} ready={ready.map (·.commands.getLast!)}"
     for attempt in sample.attempts do
-      let expected := permits plans sample.image .source attempt.commands
+      let expected := permits indexed .source attempt.commands
       let accepted := attempt.outcome == 0
       checked := checked + 1
       if expected != accepted then
         if runtimeOnly + modelOnly < 20 then
           IO.println s!"mismatch {sample.name}: commands={attempt.commands} model={expected} runtime={attempt.runtime}"
         if accepted then runtimeOnly := runtimeOnly + 1 else modelOnly := modelOnly + 1
-      if accepted && !permits serial sample.image .serialized attempt.commands then
+      if accepted && !permits serial .serialized attempt.commands then
         tooStrict := tooStrict + 1
-      if !accepted && permits plans sample.image .unguarded attempt.commands then
+      if !accepted && permits indexed .unguarded attempt.commands then
         tooLoose := tooLoose + 1
-      if !accepted && permits plans sample.image .unprojected attempt.commands then
+      if !accepted && permits indexed .unprojected attempt.commands then
         missingProjection := missingProjection + 1
   IO.println s!"Endpoint/source conformance: attempts={checked} cuts={cuts} runtime-only={runtimeOnly} model-only={modelOnly} stalled={stalled} serialized-mutant={tooStrict} unguarded-mutant={tooLoose} unprojected-mutant={missingProjection}"
   unless tooStrict > 0 && tooLoose > 0 && missingProjection > 0 do
