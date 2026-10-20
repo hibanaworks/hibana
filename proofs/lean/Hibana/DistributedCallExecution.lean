@@ -87,6 +87,7 @@ inductive DistributedCallBoundary where
   | quiet (actor : Nat)
   | retireView (sample : ViewRetirementObservation)
   | close (channel : TransportChannel)
+  | abort (channel : TransportChannel)
   | observeClosure (sample : ActorClosureObservation)
 
 def DistributedCallBoundary.acceptance? : DistributedCallBoundary → Option SourceAcceptance
@@ -433,6 +434,12 @@ inductive DistributedPhysicalExecution
       DistributedPhysicalExecution images choreo session first
         (cut.actorAt sample.before.actor (sample.after, (cut.actors sample.before.actor).2))
         (word ++ [.observeClosure sample]) accepted published pending
+  | abort {first cut : DistributedSourceCut} {word accepted published pending}
+      {channel : TransportChannel}
+      (history : DistributedPhysicalExecution images choreo session first cut word accepted published pending) :
+      DistributedPhysicalExecution images choreo session first
+        (cut.carrierAt channel (cut.carriers channel).abortPeer)
+        (word ++ [.abort channel]) accepted published pending
   | retireView {first cut : DistributedSourceCut} {word accepted published pending}
       {sample : ViewRetirementObservation}
       (history : DistributedPhysicalExecution images choreo session first cut word accepted published pending)
@@ -540,6 +547,7 @@ theorem a_physical_execution_partitions_its_actual_acceptances
   induction execution with
   | refl => exact .nil
   | close history ih => exact ih
+  | abort history ih => exact ih
   | observeClosure history checked beforeAt bound closed ih => exact ih
   | retireView history checked beforeAt ih => exact ih
   | quiet history checked _headers ih => exact ih
@@ -555,21 +563,29 @@ theorem a_physical_execution_partitions_its_actual_acceptances
 private theorem a_physical_execution_preserves_each_full_fifo
     {first last : DistributedSourceCut}
     (execution : DistributedPhysicalExecution images choreo session first last word entries published pending) :
-    (∀ channel, ∃ history, SendAdmissionTrace choreo session (first.carriers channel) history []) →
-    ∀ channel, ∃ history,
-      SendAdmissionTrace choreo session (last.carriers channel) history (sourceChannelRecords entries channel) := by
+    (∀ channel, QualifiedDirectionHistory choreo session (first.carriers channel) []) →
+    ∀ channel,
+      QualifiedDirectionHistory choreo session (last.carriers channel) (sourceChannelRecords entries channel) := by
   induction execution with
   | refl =>
     intro initial
     simpa only [sourceChannelRecords, sourceChannelEntries, List.filter_nil, List.map_nil] using initial
   | @close cut word entries published pending changed history ih =>
     intro initial channel
-    obtain ⟨prior, trace⟩ := ih initial channel
+    have trace := ih initial channel
     by_cases same : channel = changed
     · subst changed
-      exact ⟨prior, by simpa only [DistributedSourceCut.carrierAt, if_pos rfl] using
-        SendAdmissionTrace.close trace⟩
-    · exact ⟨prior, by simpa only [DistributedSourceCut.carrierAt, if_neg same] using trace⟩
+      simpa only [DistributedSourceCut.carrierAt, if_pos rfl] using
+        a_qualified_direction_keeps_its_history_through_orderly_close trace
+    · simpa only [DistributedSourceCut.carrierAt, if_neg same] using trace
+  | @abort cut word entries published pending changed history ih =>
+    intro initial channel
+    have trace := ih initial channel
+    by_cases same : channel = changed
+    · subst changed
+      simpa only [DistributedSourceCut.carrierAt, if_pos rfl] using
+        a_qualified_direction_retains_its_actual_aborted_prefix trace
+    · simpa only [DistributedSourceCut.carrierAt, if_neg same] using trace
   | observeClosure history checked beforeAt bound closed ih =>
     intro initial
     simpa only [DistributedSourceCut.actorAt] using ih initial
@@ -582,15 +598,15 @@ private theorem a_physical_execution_preserves_each_full_fifo
   | @accept cut word entries published pending sample changed sent event previousPath witness label
       data path row history imageAt checked decoded pathAt rowAt prepared slotFree freshWitness sourceAt accepted identity ih =>
     intro initial channel
-    obtain ⟨prior, trace⟩ := ih initial channel
+    have direction := ih initial channel
     by_cases same : channel = changed
     · subst changed
-      refine ⟨prior.appendOccurrence event, ?_⟩
+      obtain ⟨prior, trace⟩ := a_sending_qualified_direction_has_its_live_history direction accepted
       simpa only [DistributedSourceCut.carrierAt, if_pos rfl, call_channel_records_append] using
-        SendAdmissionTrace.accept trace checked sourceAt accepted identity
-    · refine ⟨prior, ?_⟩
+        QualifiedDirectionHistory.live (SendAdmissionTrace.accept trace checked sourceAt accepted identity)
+    ·
       simpa only [DistributedSourceCut.carrierAt, if_neg same, call_channel_records_append,
-        if_neg (Ne.symm same), List.append_nil] using trace
+        if_neg (Ne.symm same), List.append_nil] using direction
   | publish history actorAt sameWire committed ih =>
     intro initial
     simpa only [DistributedSourceCut.actorAt] using ih initial
@@ -600,23 +616,24 @@ private theorem a_physical_execution_preserves_each_full_fifo
   | @receive cut word entries published pending actor changed next frame after cleared record entry witness
       history actorRole received entryAt identity sameWire committed ih =>
     intro initial channel
-    obtain ⟨prior, trace⟩ := ih initial channel
+    have direction := ih initial channel
     by_cases same : channel = changed
     · subst changed
+      obtain ⟨prior, trace⟩ := a_receiving_qualified_direction_has_its_live_history direction received
       obtain ⟨_, _, _, following, _, _, _, _, _, _, _, _, _, advanced⟩ :=
         a_fifo_receive_has_its_actual_accepted_source_occurrence trace received
-      exact ⟨following, by simpa only [DistributedSourceCut.carrierAt,
-        DistributedSourceCut.actorAt, if_pos rfl] using advanced⟩
-    · exact ⟨prior, by simpa only [DistributedSourceCut.carrierAt,
-        DistributedSourceCut.actorAt, if_neg same] using trace⟩
+      simpa only [DistributedSourceCut.carrierAt, DistributedSourceCut.actorAt, if_pos rfl] using
+        QualifiedDirectionHistory.live advanced
+    · simpa only [DistributedSourceCut.carrierAt,
+        DistributedSourceCut.actorAt, if_neg same] using direction
 
 theorem a_physical_execution_projects_its_complete_fifo_histories
     {initial : Nat → ActorProgressObservation × Nat}
     (execution : DistributedPhysicalExecution images choreo session
       (.initial initial) last word entries published pending) :
-    ∀ channel, ∃ history,
-      SendAdmissionTrace choreo session (last.carriers channel) history (sourceChannelRecords entries channel) := by
-  exact a_physical_execution_preserves_each_full_fifo execution (fun channel => ⟨_, .initial channel⟩)
+    ∀ channel,
+      QualifiedDirectionHistory choreo session (last.carriers channel) (sourceChannelRecords entries channel) := by
+  exact a_physical_execution_preserves_each_full_fifo execution (fun channel => .live (.initial channel))
 
 /-- First-fault continuity is a property of this same physical history. A
 retirement can add a cause but cannot replace one; quiet observations cannot
@@ -630,6 +647,7 @@ theorem a_distributed_physical_history_preserves_each_first_fault
   induction execution with
   | refl => exact fun _ _ faulted => faulted
   | close history ih => simpa only [DistributedSourceCut.carrierAt] using ih
+  | abort history ih => simpa only [DistributedSourceCut.carrierAt] using ih
   | @observeClosure cut word entries published pending sample history checked beforeAt bound closed ih =>
     intro actor cause faulted
     have prior := ih actor cause faulted

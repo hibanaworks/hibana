@@ -1543,10 +1543,45 @@ seven kernel-checked claims from the real execution; the test also runs in the
 existing Miri actor-local-progress group. This fixture uses the in-memory test
 carrier; it adds no TCP or network-forwarding qualification.
 
-This qualifies orderly closure, not abrupt abort/fencing or all transport-error
-profiles. Abrupt retirement must account for accepted frames that are isolated
-instead of delivered; it cannot clear a queue and call that a successful
-receive. Those remaining profiles and general runtime correspondence remain
+Abrupt retirement is now a separate outcome of that same chronological word.
+`QualifiedDirectionHistory` contains either the current live FIFO trace or the
+exact pre-abort FIFO trace retained as evidence for an isolated direction.
+Accepted source records survive both cases. A retired direction cannot accept
+or deliver another frame. This is erased proof evidence; no queue, epoch field,
+owner table or failure state is added to the product runtime. Selected-visit
+executions without abort retain their stronger live-FIFO conclusion.
+
+An owned `fence` now projects the actual abort of its receipt's direction,
+instead of disappearing from the source word. An ordinary untracked abort is
+permitted only when the same custody cut has no tracked in-flight authority on
+that direction. The two-runtime abort fixture accepts a real loan, destroys its
+completed sender future, isolates the queued frame, and then observes EOF at
+the worker. No receiver value is created, no receive is appended to the source
+prefix, and the sender cannot issue the same resource again. Its five generated
+claims retain the same custody/source/FIFO history and reject hiding that loan
+inside an untracked discard. The fixture uses the in-memory test carrier.
+
+The failure injector closes a receive **port**, identified by session,
+receiver and lane, including all its incoming sources. It is named
+`close_port` / `abort_port` to make that scope explicit. The delegation fixtures
+map exactly one source direction to the closed port. A separate contract test
+drains two sources on one port, rejects later sends from both, and keeps another
+port open. These fixtures do not establish source-selective EOF on a
+multiplexed port.
+
+Orderly transport close is not a global choice to finish the application.
+The API returns the same `Offline` for a drained close and an abrupt failure
+with no remaining bytes. A descriptor/cursor cannot recover a missing end
+notification from that observation. `roll` permits another completed-fragment
+visit and does not communicate a choice to stop. Work completion needs an
+explicit global message/route rather than treating an ambiguous EOF as success.
+
+These results cover the represented orderly-close and abrupt-isolation
+boundaries. They do not complete general runtime/source correspondence through
+independently advancing branches and visits or all failure schedules. Accepted
+but unpublished sends and independent live traffic remain permitted by the
+physical execution model; no global stop or shared fault broadcast is imposed
+to simplify the proof. General enabled-step/failure composition remains
 completion work.
 
 This establishes finite-prefix custody/source correspondence in the observation

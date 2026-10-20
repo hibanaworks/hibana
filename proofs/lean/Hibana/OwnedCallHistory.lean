@@ -71,6 +71,7 @@ def OwnedCallEvent.source? : OwnedCallEvent → Option DistributedCallBoundary
   | .accept entry _ _ => some (.accept entry)
   | .receive key actor record _ _ => some (.receive key actor record)
   | .abandon _ sample | .dropValue _ sample => some (.retireView sample)
+  | .fence receipt => some (.abort receipt.frame.channel)
   | _ => none
 
 def sourceWord (events : List OwnedCallEvent) : List DistributedCallBoundary :=
@@ -83,12 +84,13 @@ def acceptedEntries (events : List OwnedCallEvent) : List SourceAcceptance :=
 transfer of the tracked binding. In particular a receive must identify its
 actual accepted call, including ordinary frames on the same logical FIFO. -/
 def Untracked (resource : EndpointKey) (choreo : Choreo)
-    (events : List OwnedCallEvent) : DistributedCallBoundary → Prop
+    (events : List OwnedCallEvent) (cut : Cut) : DistributedCallBoundary → Prop
   | .accept entry => tracks resource choreo entry = false
   | .receive key _ _ => ∃ entry ∈ acceptedEntries events,
       entry.callKey = key ∧ tracks resource choreo entry = false
   | .publish _ _ _ | .localCommit _ _ | .quiet _ => True
   | .close _ | .observeClosure _ => True
+  | .abort channel => ∀ receipt ∈ cut.custody.inFlight, receipt.frame.channel ≠ channel
   | .retireView sample => sample.view ≠ resource.role
 
 /-- One boundary of the same chronological run. This relation adds no admission
@@ -131,7 +133,7 @@ inductive Boundary (images : Nat → RustDescriptorImage) (resource : EndpointKe
         ⟨requests, { state with inFlight := left ++ receipt :: right }⟩
         ⟨requests, { state with inFlight := left ++ right }⟩
   | source (events : List OwnedCallEvent) (cut : Cut) (boundary : DistributedCallBoundary)
-      (untracked : Untracked resource choreo events boundary) :
+      (untracked : Untracked resource choreo events cut boundary) :
       Boundary images resource choreo events (.source boundary) cut cut
   | accept (events : List OwnedCallEvent) (state : Observation Tag Receipt)
       (left right : List Tag) (requests : List Request)

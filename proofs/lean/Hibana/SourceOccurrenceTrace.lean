@@ -93,6 +93,9 @@ inductive SourceOccurrenceTrace (images : Nat → RustDescriptorImage) (choreo :
   | observeClosure {word calls points sample}
       (prior : SourceOccurrenceTrace images choreo plan word calls points) :
       SourceOccurrenceTrace images choreo plan (word ++ [.observeClosure sample]) calls points
+  | abort {word calls points channel}
+      (prior : SourceOccurrenceTrace images choreo plan word calls points) :
+      SourceOccurrenceTrace images choreo plan (word ++ [.abort channel]) calls points
   | accept {word calls points} {entry : SourceAcceptance} {occurrence : Nat}
       (prior : SourceOccurrenceTrace images choreo plan word calls points)
       (fresh : calls.all (fun pair => decide (pair.1 ≠ entry.callKey)) = true)
@@ -142,7 +145,7 @@ private theorem trace_calls_have_observed_acceptances
     · have same := List.mem_singleton.mp current
       subst pair
       exact List.mem_append_right _ (by simp)
-  | quiet prior ih | retireView prior ih | close prior ih | observeClosure prior ih => exact ih
+  | quiet prior ih | retireView prior ih | close prior ih | abort prior ih | observeClosure prior ih => exact ih
   | publish prior callAt matched ready ih
   | receive prior callAt matched ready ih
   | localCommit prior matched ready ih =>
@@ -169,7 +172,7 @@ theorem a_source_occurrence_trace_is_its_reconstructed_execution
     SourceOccurrenceExecution (occurrenceCut plan []) (occurrenceCut plan points) points := by
   induction trace with
   | nil => exact .nil
-  | quiet prior ih | retireView prior ih | close prior ih | observeClosure prior ih => exact ih
+  | quiet prior ih | retireView prior ih | close prior ih | abort prior ih | observeClosure prior ih => exact ih
   | accept prior fresh origin matched ready ih =>
     exact .tail ih (a_checked_occurrence_call_appends_exactly_its_source_point _ _ _
       ((projected_occurrence_readiness_is_exact _ _ _).mpr ⟨_, ready, rfl⟩))
@@ -223,6 +226,11 @@ private theorem an_occurrence_call_retains_its_acceptance
     intro pair present
     obtain ⟨earlier, later, entry, wordAt, key, sourceAt, matchAt⟩ := ih pair present
     refine ⟨earlier, later ++ [.observeClosure sample], entry, ?_, key, sourceAt, matchAt⟩
+    simp only [wordAt, List.append_assoc, List.cons_append]
+  | @abort word calls points channel prior ih =>
+    intro pair present
+    obtain ⟨earlier, later, entry, wordAt, key, sourceAt, matchAt⟩ := ih pair present
+    refine ⟨earlier, later ++ [.abort channel], entry, ?_, key, sourceAt, matchAt⟩
     simp only [wordAt, List.append_assoc, List.cons_append]
   | @publish word calls points call actor occurrence record prior callAt matched ready ih =>
     intro pair present
@@ -283,8 +291,8 @@ theorem a_joint_physical_occurrence_refinement_has_custody_fifo_and_source_progr
     cut.custody.authorityCount ≤ 1 ∧
       entries.Perm (published.map Prod.fst ++ pending) ∧
       SourceOccurrenceExecution (occurrenceCut plan []) (occurrenceCut plan points) points ∧
-      (∀ channel, ∃ history, SendAdmissionTrace choreo session
-        (last.carriers channel) history (sourceChannelRecords entries channel)) ∧
+      (∀ channel, QualifiedDirectionHistory choreo session
+        (last.carriers channel) (sourceChannelRecords entries channel)) ∧
       ∃ actor point next,
         occurrenceLocalReady plan actor (occurrenceLocalHistory plan actor points) point = true ∧
         occurrenceWireReady points point = true ∧
@@ -327,8 +335,10 @@ theorem a_joint_occurrence_refinement_has_custody_fifo_and_source_progress
         occurrenceWireReady points point = true ∧
         (occurrenceCut plan (occurrenceLocalHistory plan actor points)).resumptionReady point = true ∧
         SourceOccurrenceStep (occurrenceCut plan points) point next := by
-  exact a_joint_physical_occurrence_refinement_has_custody_fifo_and_source_progress
+  have combined := a_joint_physical_occurrence_refinement_has_custody_fifo_and_source_progress
     custody (a_selected_visit_execution_has_its_same_physical_execution physical) mapped unfinished
+  exact ⟨combined.1, combined.2.1, combined.2.2.1,
+    a_distributed_call_execution_projects_its_complete_fifo_histories physical, combined.2.2.2.2⟩
 
 private def occurrenceCandidatePredecessor? (plan : SourceOccurrenceCut source)
     (image : RustDescriptorImage) (choreo : Choreo) (pathIndex : Nat)

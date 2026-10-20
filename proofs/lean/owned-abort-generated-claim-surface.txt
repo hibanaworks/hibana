@@ -1,0 +1,17 @@
+actualAbortCustodyHistory : History abortImages abortResource abortChoreo loanRequest.payload abortEvents abortCustody
+actualAbortPhysicalHistory : DistributedPhysicalExecution abortImages abortChoreo 9061 abortInitial abortFinal
+  (sourceWord abortEvents) [loanEntry] [(loanEntry, loanSend)] []
+actualAbortRetainsThePrefixWithoutInventingDeliveryOrAuthority : History abortImages abortResource abortChoreo
+    loanRequest.payload abortEvents abortCustody ∧
+  SourceOccurrenceExecution (occurrenceCut abortPlan []) (occurrenceCut abortPlan abortPoints) abortPoints ∧
+    QualifiedDirectionHistory abortChoreo 9061 (abortFinal.carriers loanChannel)
+        (sourceChannelRecords [loanEntry] loanChannel) ∧
+      abortCustody.custody.authorityCount = 0 ∧
+        abortCustody.custody.inFlight = [] ∧
+          (abortFinal.actors 1).fst.fault = some SessionFault.transportClosed ∧
+            (abortFinal.actors 0).fst.fault = none ∧
+              abortPoints.contains (SourcePoint.committed { event := 0, side := Side.receive }) = false
+actualAbortSourceHistory : SourceOccurrenceTrace abortImages abortChoreo abortPlan (sourceWord abortEvents)
+  [(loanEntry.callKey, 0)] abortPoints
+an_untracked_abort_cannot_hide_this_in_flight_owned_frame : ¬Untracked abortResource abortChoreo
+    (List.take 6 abortEvents) beforeFence (DistributedCallBoundary.abort loanChannel)

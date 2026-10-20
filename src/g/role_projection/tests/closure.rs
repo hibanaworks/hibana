@@ -12,6 +12,9 @@ use core::{
     task::{Context, Poll, Waker},
 };
 
+mod abort;
+mod ports;
+
 type Steps =
     g::Seq<g::Roll<g::Seq<g::Send<0, 1, Loan>, g::Send<1, 0, Loan>>>, g::Send<10, 2, Read>>;
 
@@ -82,7 +85,7 @@ fn an_accepted_loan_drains_before_eof_and_its_returned_value_remains_usable() {
             let loan_wire = network.queued_frame(1);
             let loan_evidence = network.accepted_frame(1, 0);
             assert!(!network.queue_is_empty());
-            network.close_lane(sid, 1, loan_wire.0.lane());
+            network.close_port(sid, 1, loan_wire.0.lane());
             // Accepted bytes survive EOF; receiving them transfers the actual value.
             let db = worker.recv::<Loan>().await.unwrap();
             assert!(network.queue_is_empty());

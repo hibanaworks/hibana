@@ -229,7 +229,7 @@ struct RoleSlot {
 pub(crate) struct TestState {
     roles: Vec<RoleSlot>,
     next_witness: u64,
-    closed_lanes: Vec<(SessionId, u8, u8)>,
+    closed_ports: Vec<(SessionId, u8, u8)>,
 }
 
 impl TestState {
@@ -237,7 +237,7 @@ impl TestState {
         Self {
             roles: Vec::new(),
             next_witness: 0,
-            closed_lanes: Vec::new(),
+            closed_ports: Vec::new(),
         }
     }
 
@@ -354,18 +354,39 @@ impl TestTransport {
         }
     }
 
-    /// Orderly EOF on one test receive direction. Accepted frames stay queued
-    /// and drain before Offline; future sends to this direction are rejected.
+    /// Orderly EOF on one receive port, including all its incoming sources.
+    /// Accepted frames drain before Offline. This is not a per-sender close.
     #[allow(
         dead_code,
         reason = "shared carrier; owned closure qualification injects EOF"
     )]
-    pub(crate) fn close_lane(&self, session: SessionId, receiver: u8, lane: u8) {
+    pub(crate) fn close_port(&self, session: SessionId, receiver: u8, lane: u8) {
         let waiter = {
             let mut state = self.state.borrow_mut();
             let direction = (session, receiver, lane);
-            if !state.closed_lanes.contains(&direction) {
-                state.closed_lanes.push(direction);
+            if !state.closed_ports.contains(&direction) {
+                state.closed_ports.push(direction);
+            }
+            state.role_mut(receiver).take_waiter(session, lane)
+        };
+        if let Some(waiter) = waiter {
+            waiter.wake();
+        }
+    }
+
+    /// Abruptly isolate the accepted tail. No discarded frame becomes a
+    /// receive observation. All incoming sources of this port stay closed.
+    #[allow(
+        dead_code,
+        reason = "shared carrier; owned failure qualification injects abort"
+    )]
+    pub(crate) fn abort_port(&self, session: SessionId, receiver: u8, lane: u8) {
+        let waiter = {
+            let mut state = self.state.borrow_mut();
+            while state.dequeue(receiver, session, lane).is_some() {}
+            let direction = (session, receiver, lane);
+            if !state.closed_ports.contains(&direction) {
+                state.closed_ports.push(direction);
             }
             state.role_mut(receiver).take_waiter(session, lane)
         };
@@ -543,7 +564,7 @@ impl TestTransport {
         let waiter = {
             let mut state = self.state.borrow_mut();
             if state
-                .closed_lanes
+                .closed_ports
                 .contains(&(frame.session_id, role, frame.lane))
             {
                 return Poll::Ready(Err(TransportError::Offline));
@@ -575,7 +596,7 @@ impl TestTransport {
                 if let Some(frame) = state.dequeue(rx.role, rx.session_id, rx.lane) {
                     Some(frame)
                 } else if state
-                    .closed_lanes
+                    .closed_ports
                     .contains(&(rx.session_id, rx.role, rx.lane))
                 {
                     return Poll::Ready(Err(TransportError::Offline));

@@ -416,4 +416,51 @@ theorem accepted_source_send_keeps_its_exact_authority_until_receive_or_fence
   · intro final suffix
     exact transfer_execution_keeps_the_frame_until_receive_or_fence suffix located
 
+/-- A direction retains its complete accepted source history even after abrupt
+retirement. The retired case stores the actual pre-abort prefix; discarded
+frames are not reclassified as delivered protocol messages. This is erased
+evidence, not another runtime queue or owner table. -/
+inductive QualifiedDirectionHistory (choreo : Choreo) (session : Nat) :
+    TransportState → List (SourceSendAdmission × Nat) → Prop where
+  | live {transport history records}
+      (trace : SendAdmissionTrace choreo session transport history records) :
+      QualifiedDirectionHistory choreo session transport records
+  | retired {transport history records}
+      (trace : SendAdmissionTrace choreo session transport history records) :
+      QualifiedDirectionHistory choreo session transport.abortPeer records
+
+theorem a_qualified_direction_keeps_its_history_through_orderly_close
+    (prior : QualifiedDirectionHistory choreo session transport records) :
+    QualifiedDirectionHistory choreo session transport.closePeer records := by
+  cases prior with
+  | live trace => exact .live (.close trace)
+  | @retired before history records trace =>
+    simpa only [TransportState.closePeer, TransportState.abortPeer] using
+      (QualifiedDirectionHistory.retired (transport := before) trace)
+
+theorem a_qualified_direction_retains_its_actual_aborted_prefix
+    (prior : QualifiedDirectionHistory choreo session transport records) :
+    QualifiedDirectionHistory choreo session transport.abortPeer records := by
+  cases prior with
+  | live trace => exact .retired trace
+  | @retired before history records trace =>
+    simpa only [TransportState.abortPeer] using
+      (QualifiedDirectionHistory.retired (transport := before) trace)
+
+theorem a_sending_qualified_direction_has_its_live_history
+    (prior : QualifiedDirectionHistory choreo session transport records)
+    (accepted : transport.send label = some sent) :
+    ∃ history, SendAdmissionTrace choreo session transport history records := by
+  cases prior with
+  | live trace => exact ⟨_, trace⟩
+  | retired trace => simp [TransportState.abortPeer, TransportState.send] at accepted
+
+theorem a_receiving_qualified_direction_has_its_live_history
+    (prior : QualifiedDirectionHistory choreo session transport records)
+    (received : transport.pollReceive = .delivered frame next) :
+    ∃ history, SendAdmissionTrace choreo session transport history records := by
+  cases prior with
+  | live trace => exact ⟨_, trace⟩
+  | retired trace => simp [TransportState.abortPeer, TransportState.pollReceive] at received
+
 end Hibana

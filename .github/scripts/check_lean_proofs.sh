@@ -24,6 +24,7 @@ PENDING_BORROW_GENERATED="${ROOT_DIR}/target/lean-proof/PendingBorrowGenerated.l
 FUTURE_INVENTORY_GENERATED="${ROOT_DIR}/target/lean-proof/OwnedFutureInventoryGenerated.lean"
 FUTURE_CUSTODY_GENERATED="${ROOT_DIR}/target/lean-proof/FutureCustodyGenerated.lean"
 OWNED_CLOSURE_GENERATED="${ROOT_DIR}/target/lean-proof/OwnedClosureGenerated.lean"
+OWNED_ABORT_GENERATED="${ROOT_DIR}/target/lean-proof/OwnedAbortGenerated.lean"
 OWNED_DROP_GENERATED="${ROOT_DIR}/target/lean-proof/OwnedDropGenerated.lean"
 COMPLETED_RETIREMENT_GENERATED="${ROOT_DIR}/target/lean-proof/CompletedViewRetirementGenerated.lean"
 SOURCE_ORDER_GENERATED="${ROOT_DIR}/target/lean-proof/SourceOrderGenerated.lean"
@@ -75,7 +76,7 @@ bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" build-serial "${PROOF_
 bash "${ROOT_DIR}/.github/scripts/check_lean_claim_surface.sh"
 static_audit_output="$(run_audit \
   theorem-inventory \
-  --static "${PROOF_DIR}" "${STATIC_CLAIM_SNAPSHOT}" 1174 728 329 117)"
+  --static "${PROOF_DIR}" "${STATIC_CLAIM_SNAPSHOT}" 1178 728 333 117)"
 printf '%s\n' "${static_audit_output}"
 printf '%s\n' "${static_audit_output}" | bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard markers static
 bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" theorem-inventory \
@@ -118,6 +119,7 @@ rm -f "${PENDING_BORROW_GENERATED}"
 rm -f "${FUTURE_INVENTORY_GENERATED}"
 rm -f "${FUTURE_CUSTODY_GENERATED}"
 rm -f "${OWNED_CLOSURE_GENERATED}"
+rm -f "${OWNED_ABORT_GENERATED}"
 rm -f "${OWNED_DROP_GENERATED}" "${COMPLETED_RETIREMENT_GENERATED}"
 rm -f "${SOURCE_ORDER_GENERATED}"
 rm -f "${OWNED_ENTRY_GENERATED}"
@@ -224,6 +226,12 @@ CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --li
 bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${OWNED_CLOSURE_GENERATED}" "owned transfer and observed EOF"
 run_audit generated-axioms --kernel "${OWNED_CLOSURE_GENERATED}" "${PROOF_DIR}" \
   "${PROOF_DIR}/owned-closure-generated-claim-surface.txt" 7
+CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib \
+  g::role_projection::tests::closure::abort::an_aborted_accepted_loan_is_fenced_without_a_receipt_or_reissued_authority \
+  -- --exact
+bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${OWNED_ABORT_GENERATED}" "owned transfer isolated before receipt"
+run_audit generated-axioms --kernel "${OWNED_ABORT_GENERATED}" "${PROOF_DIR}" \
+  "${PROOF_DIR}/owned-abort-generated-claim-surface.txt" 5
 CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib -- \
   g::role_projection::tests::send_wait::dropping_an_owned_send_cancels_the_run_before_or_during_preparation \
   g::role_projection::tests::retirement::a_completed_view_retires_without_cancelling_independent_work --exact

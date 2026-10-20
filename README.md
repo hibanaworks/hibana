@@ -421,11 +421,19 @@ Hibana has no built-in clock or failure detector. The transport decides whether
 an I/O operation has exceeded its deadline and reports `TransportError::Deadline`.
 The other transport errors are `Offline`, `Capacity`, and `Failed`.
 
-These transport errors end the current session run. The endpoint operation
-returns `EndpointError`. The runtime preserves the first fault and wakes local
+These transport errors stop the current session run in the runtime that
+observes them. The endpoint operation returns `EndpointError`. The runtime preserves the first fault and wakes local
 waiters. The failed operation does not advance the protocol. There is no
 automatic retry, deadline extension, or switch to another branch. The current
-run cannot continue after such an error.
+run cannot continue in that runtime after such an error. Accepted transfers
+are not rolled back. Other runtimes learn of a failure through their transport.
+
+A transport close does not signal successful protocol completion. `roll()`
+lets a completed fragment run again and has no end message. To tell a worker
+that work has ended, include a message or a route in the global protocol.
+Hibana does not infer that decision from EOF or from a role's absence in a
+later continuation. A drained close and an abrupt failure can both return
+`Offline` at the same local position.
 
 If a timeout or cancellation must lead to further protocol communication,
 represent it as a message or an explicit choice in the global protocol.

@@ -2073,9 +2073,8 @@ Hibana.EndpointDelegation.withOwner_same : ∀ (owners : Hibana.EndpointDelegati
                   (@Hibana.occurrenceCut source plan points) points)
                 (And
                   (∀ (channel : Hibana.TransportChannel),
-                    @Exists.{1} Hibana.ElasticAdmissionHistory fun history =>
-                      Hibana.SendAdmissionTrace choreo session (last.carriers channel) history
-                        (Hibana.sourceChannelRecords entries channel))
+                    Hibana.QualifiedDirectionHistory choreo session (last.carriers channel)
+                      (Hibana.sourceChannelRecords entries channel))
                   (@Exists.{1} Nat fun actor =>
                     @Exists.{1} Hibana.SourcePoint fun point =>
                       @Exists.{1} (Hibana.SourceOccurrenceCut source) fun next =>
@@ -3066,9 +3065,8 @@ Hibana.a_pending_payload_requires_its_own_send : ∀ (resource : Nat) (sent : Op
   Hibana.DistributedPhysicalExecution images choreo session (Hibana.DistributedSourceCut.initial initial) last word
       entries published pending →
     ∀ (channel : Hibana.TransportChannel),
-      @Exists.{1} Hibana.ElasticAdmissionHistory fun history =>
-        Hibana.SendAdmissionTrace choreo session (last.carriers channel) history
-          (Hibana.sourceChannelRecords entries channel)
+      Hibana.QualifiedDirectionHistory choreo session (last.carriers channel)
+        (Hibana.sourceChannelRecords entries channel)
 @Hibana.a_prepared_body_has_its_source_choice_reset : ∀ {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo}
   {before base : Hibana.ActorProgressObservation} {previousPath nextPath scope event : Nat}
   {roll : Hibana.DecodedRollRow},
@@ -4045,6 +4043,14 @@ Hibana.a_pending_payload_requires_its_own_send : ∀ (resource : Nat) (sent : Op
         (@some.{0} (Prod.{0, 0} Nat (Option.{0} Hibana.RouteArm)) result) →
       @Eq.{1} (Prod.{0, 0} Nat (Option.{0} Hibana.RouteArm)) result
         (@Prod.mk.{0, 0} Nat (Option.{0} Hibana.RouteArm) scope (@some.{0} Hibana.RouteArm arm))
+@Hibana.a_qualified_direction_keeps_its_history_through_orderly_close : ∀ {choreo : Hibana.Choreo} {session : Nat}
+  {transport : Hibana.TransportState} {records : List.{0} (Prod.{0, 0} Hibana.SourceSendAdmission Nat)},
+  Hibana.QualifiedDirectionHistory choreo session transport records →
+    Hibana.QualifiedDirectionHistory choreo session transport.closePeer records
+@Hibana.a_qualified_direction_retains_its_actual_aborted_prefix : ∀ {choreo : Hibana.Choreo} {session : Nat}
+  {transport : Hibana.TransportState} {records : List.{0} (Prod.{0, 0} Hibana.SourceSendAdmission Nat)},
+  Hibana.QualifiedDirectionHistory choreo session transport records →
+    Hibana.QualifiedDirectionHistory choreo session transport.abortPeer records
 @Hibana.a_ready_admitted_row_has_its_actual_carrier_custody : ∀ {sample : Hibana.ActorAdmissionObservation}
   {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo} {data : Hibana.DecodedActorOrder}
   {path : Hibana.EndpointDelegation.NormalizedPath} {row : Hibana.DecodedActorRow} {Frame : Type}
@@ -4416,6 +4422,13 @@ Hibana.a_pending_payload_requires_its_own_send : ∀ (resource : Nat) (sent : Op
                 (@List.cons.{0} View sender (@List.nil.{0} View)))
               (@Eq.{1} Nat (@Hibana.EndpointTransfer.Observation.authorityCount View Frame state)
                 (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1))))))))
+@Hibana.a_receiving_qualified_direction_has_its_live_history : ∀ {choreo : Hibana.Choreo} {session : Nat}
+  {transport : Hibana.TransportState} {records : List.{0} (Prod.{0, 0} Hibana.SourceSendAdmission Nat)}
+  {frame : Hibana.TransportFrame} {next : Hibana.TransportState},
+  Hibana.QualifiedDirectionHistory choreo session transport records →
+    @Eq.{1} Hibana.TransportPoll transport.pollReceive (Hibana.TransportPoll.delivered frame next) →
+      @Exists.{1} Hibana.ElasticAdmissionHistory fun history =>
+        Hibana.SendAdmissionTrace choreo session transport history records
 @Hibana.a_resolved_occurrence_call_has_its_same_word_acceptance : ∀ {images : Nat → Hibana.RustDescriptorImage}
   {choreo : Hibana.Choreo} {source : Hibana.EndpointDelegation.Source} {plan : Hibana.SourceOccurrenceCut source}
   {word : List.{0} Hibana.DistributedCallBoundary} {calls : Hibana.OccurrenceCalls}
@@ -4599,6 +4612,13 @@ Hibana.a_pending_payload_requires_its_own_send : ∀ (resource : Nat) (sent : Op
   {pending : List.{0} Hibana.SourceAcceptance},
   Hibana.DistributedCallExecution images choreo session first last word entries published pending →
     Hibana.DistributedPhysicalExecution images choreo session first last word entries published pending
+@Hibana.a_sending_qualified_direction_has_its_live_history : ∀ {choreo : Hibana.Choreo} {session : Nat}
+  {transport : Hibana.TransportState} {records : List.{0} (Prod.{0, 0} Hibana.SourceSendAdmission Nat)}
+  {label : Fin (@OfNat.ofNat.{0} Nat (nat_lit 256) (instOfNatNat (nat_lit 256)))} {sent : Hibana.TransportState},
+  Hibana.QualifiedDirectionHistory choreo session transport records →
+    @Eq.{1} (Option.{0} Hibana.TransportState) (transport.send label) (@some.{0} Hibana.TransportState sent) →
+      @Exists.{1} Hibana.ElasticAdmissionHistory fun history =>
+        Hibana.SendAdmissionTrace choreo session transport history records
 @Hibana.a_source_call_history_checks_every_publication : ∀ {choreo : Hibana.Choreo} {session : Nat}
   {word : List.{0} Hibana.SourceCallBoundary} {accepted pending : List.{0} Hibana.SourceAcceptance}
   {published : List.{0} (Prod.{0, 0} Hibana.SourceAcceptance Hibana.ActorCommitRecord)},
