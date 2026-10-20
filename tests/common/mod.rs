@@ -229,6 +229,7 @@ struct RoleSlot {
 pub(crate) struct TestState {
     roles: Vec<RoleSlot>,
     next_witness: u64,
+    closed_lanes: Vec<(SessionId, u8, u8)>,
 }
 
 impl TestState {
@@ -236,6 +237,7 @@ impl TestState {
         Self {
             roles: Vec::new(),
             next_witness: 0,
+            closed_lanes: Vec::new(),
         }
     }
 
@@ -349,6 +351,26 @@ impl TestTransport {
             if let Some(waker) = entry.waker {
                 waker.wake();
             }
+        }
+    }
+
+    /// Orderly EOF on one test receive direction. Accepted frames stay queued
+    /// and drain before Offline; future sends to this direction are rejected.
+    #[allow(
+        dead_code,
+        reason = "shared carrier; owned closure qualification injects EOF"
+    )]
+    pub(crate) fn close_lane(&self, session: SessionId, receiver: u8, lane: u8) {
+        let waiter = {
+            let mut state = self.state.borrow_mut();
+            let direction = (session, receiver, lane);
+            if !state.closed_lanes.contains(&direction) {
+                state.closed_lanes.push(direction);
+            }
+            state.role_mut(receiver).take_waiter(session, lane)
+        };
+        if let Some(waiter) = waiter {
+            waiter.wake();
         }
     }
 
@@ -518,7 +540,17 @@ impl TestTransport {
     pub(crate) fn poll_send_staged(&self, tx: &mut TestTx) -> Poll<Result<(), TransportError>> {
         let role = tx.pending_role.take().expect("queued role");
         let frame = tx.pending_frame.take().expect("queued frame");
-        if let Some(waiter) = self.state.borrow_mut().enqueue(role, frame) {
+        let waiter = {
+            let mut state = self.state.borrow_mut();
+            if state
+                .closed_lanes
+                .contains(&(frame.session_id, role, frame.lane))
+            {
+                return Poll::Ready(Err(TransportError::Offline));
+            }
+            state.enqueue(role, frame)
+        };
+        if let Some(waiter) = waiter {
             waiter.wake();
         }
         Poll::Ready(Ok(()))
@@ -542,6 +574,11 @@ impl TestTransport {
                 let mut state = rx.state.borrow_mut();
                 if let Some(frame) = state.dequeue(rx.role, rx.session_id, rx.lane) {
                     Some(frame)
+                } else if state
+                    .closed_lanes
+                    .contains(&(rx.session_id, rx.role, rx.lane))
+                {
+                    return Poll::Ready(Err(TransportError::Offline));
                 } else {
                     state.add_waiter(rx.role, rx.session_id, rx.lane, cx.waker().clone());
                     None

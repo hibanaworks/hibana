@@ -14,6 +14,7 @@ mod admission;
 #[cfg(not(miri))]
 mod bounded_conformance;
 mod carrier_contract;
+mod closure;
 mod commit;
 mod composed;
 mod conditional_controller;

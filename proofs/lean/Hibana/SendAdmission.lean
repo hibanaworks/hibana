@@ -151,6 +151,10 @@ inductive SendAdmissionTrace (choreo : Choreo) (session : Nat) :
   | initial (channel : TransportChannel) :
       SendAdmissionTrace choreo session (TransportState.initial channel)
         (ElasticAdmissionHistory.initial channel) []
+  | close {transport : TransportState} {history : ElasticAdmissionHistory}
+      {records : List (SourceSendAdmission × Nat)}
+      (previous : SendAdmissionTrace choreo session transport history records) :
+      SendAdmissionTrace choreo session transport.closePeer history records
   | accept {transport sent : TransportState} {history : ElasticAdmissionHistory}
       {records : List (SourceSendAdmission × Nat)}
       {sample : SourceSendAdmission} {eventId : Nat} {label : Fin 256}
@@ -201,6 +205,7 @@ theorem a_checked_source_admission_trace_keeps_exact_frame_and_occurrence_record
   | initial channel =>
     exact ⟨initial_transport_is_well_formed channel,
       elastic_admission_history_initial_well_formed channel, rfl, rfl, .nil, .nil⟩
+  | close previous ih => exact ih
   | @accept transport sent history records sample eventId label previous checked factsAt accepted identity ih =>
     obtain ⟨transportValid, historyValid, channel, delivered, frames, occurrences⟩ := ih
     have nextTransportValid := transport_send_preserves_well_formed transportValid accepted

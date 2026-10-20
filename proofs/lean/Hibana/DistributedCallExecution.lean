@@ -10,6 +10,72 @@ def actorQuietHeadersCheck (before after : ActorProgressObservation) : Bool :=
   before.viewHeaders == after.viewHeaders && before.counter == after.counter &&
     before.liveViews == after.liveViews && decide (before.fault = after.fault)
 
+/-- A receive observes EOF on its exact bound logical direction. The record
+retains the actual actor cuts; it grants no progress or resource authority. -/
+structure ActorClosureObservation where
+  channel : TransportChannel
+  event : Nat
+  pathIndex : Nat := 0
+  previousPath : Nat := 0
+  retainedRolls : List Nat := []
+  before : ActorProgressObservation
+  after : ActorProgressObservation
+
+def ActorClosureObservation.progressMatches (sample : ActorClosureObservation) : Bool :=
+  sample.after.actor == sample.before.actor && sample.after.run == sample.before.run &&
+    sample.after.counter == sample.before.counter && sample.after.liveViews == sample.before.liveViews &&
+    decide (sample.after.steps = sample.before.steps) &&
+    decide (sample.after.choices = sample.before.choices) &&
+    decide (sample.after.viewHeaders = sample.before.viewHeaders)
+
+def ActorClosureObservation.bindingMatches (sample : ActorClosureObservation)
+    (image : RustDescriptorImage) (choreo : Choreo) (session : Nat) : Bool :=
+  match image.decodeActorOrder? choreo, image.eventAtom? sample.event,
+      choreo.canonicalActorRollRows? image.role with
+  | some data, some atom, some rolls =>
+    image.actorOrderCheck choreo && image.actorRollCheck choreo &&
+      sample.before.valid && sample.after.valid &&
+      sample.before.actor == image.role && sample.before.metadataMatches image data.rows &&
+      decide sample.retainedRolls.Nodup &&
+      sample.retainedRolls.all (fun scope => rolls.any (fun roll => roll.scope == scope)) &&
+      (match data.normalized.paths[sample.pathIndex]?, data.rows[sample.event]? with
+       | some path, some row =>
+         decide (row ∈ data.activeRows path) && decide (row.actionId.side = .receive) &&
+           sourceRowViewsIssued path sample.before row &&
+           (sourceCurrentCandidateReady image choreo sample.retainedRolls data path sample.before row ||
+            sourceFreshCandidateReady image choreo sample.retainedRolls sample.before
+              sample.previousPath sample.pathIndex data path row)
+       | _, _ => false) &&
+      sample.before.viewIssued sample.channel.receiver &&
+      image.eventView? sample.event == some sample.channel.receiver &&
+      image.eventLane? sample.event == some sample.channel.lane &&
+      sample.channel.session == session && atom.sender == sample.channel.sender &&
+      atom.receiver == sample.channel.receiver && sample.channel.sender != sample.channel.receiver
+  | _, _, _ => false
+
+def ActorClosureObservation.check (sample : ActorClosureObservation)
+    (image : RustDescriptorImage) (choreo : Choreo) (session : Nat) : Bool :=
+  sample.progressMatches && sample.bindingMatches image choreo session &&
+    decide (sample.after.fault = sample.before.fault.orElse (fun _ => some .transportClosed))
+
+theorem a_checked_closure_preserves_the_existing_first_fault
+    {sample : ActorClosureObservation} {image : RustDescriptorImage}
+    {choreo : Choreo} {session : Nat} {cause : SessionFault}
+    (checked : sample.check image choreo session = true)
+    (existing : sample.before.fault = some cause) : sample.after.fault = some cause := by
+  have fault := of_decide_eq_true (Bool.and_eq_true_iff.mp checked).2
+  simpa only [existing, Option.orElse_some] using fault
+
+theorem a_checked_closure_disables_local_publication
+    {sample : ActorClosureObservation} {image : RustDescriptorImage}
+    {choreo : Choreo} {session : Nat}
+    (checked : sample.check image choreo session = true) :
+    (observedGeneration sample.after.fault).publicationPermitted = false := by
+  have fault := of_decide_eq_true (Bool.and_eq_true_iff.mp checked).2
+  rw [fault]
+  cases sample.before.fault <;>
+    simp [observedGeneration, SessionGenerationState.publicationPermitted]
+
 /-- One chronological source boundary. Sender publication is recorded separately
 from physical acceptance, including when another operation of that actor commits
 between them. The key is the existing erased carrier observation, not a wire ID. -/
@@ -20,6 +86,8 @@ inductive DistributedCallBoundary where
   | localCommit (actor : Nat) (record : ActorCommitRecord)
   | quiet (actor : Nat)
   | retireView (sample : ViewRetirementObservation)
+  | close (channel : TransportChannel)
+  | observeClosure (sample : ActorClosureObservation)
 
 def DistributedCallBoundary.acceptance? : DistributedCallBoundary → Option SourceAcceptance
   | .accept entry => some entry
@@ -349,6 +417,22 @@ inductive DistributedPhysicalExecution
       List SourceAcceptance → List (SourceAcceptance × ActorCommitRecord) →
       List SourceAcceptance → Prop where
   | refl {cut} : DistributedPhysicalExecution images choreo session cut cut [] [] [] []
+  | close {first cut : DistributedSourceCut} {word accepted published pending}
+      {channel : TransportChannel}
+      (history : DistributedPhysicalExecution images choreo session first cut word accepted published pending) :
+      DistributedPhysicalExecution images choreo session first
+        (cut.carrierAt channel (cut.carriers channel).closePeer)
+        (word ++ [.close channel]) accepted published pending
+  | observeClosure {first cut : DistributedSourceCut} {word accepted published pending}
+      {sample : ActorClosureObservation}
+      (history : DistributedPhysicalExecution images choreo session first cut word accepted published pending)
+      (checked : sample.check (images sample.before.actor) choreo session = true)
+      (beforeAt : (cut.actors sample.before.actor).1 = sample.before)
+      (bound : (cut.carriers sample.channel).channel = sample.channel)
+      (closed : (cut.carriers sample.channel).pollReceive = .peerClosed) :
+      DistributedPhysicalExecution images choreo session first
+        (cut.actorAt sample.before.actor (sample.after, (cut.actors sample.before.actor).2))
+        (word ++ [.observeClosure sample]) accepted published pending
   | retireView {first cut : DistributedSourceCut} {word accepted published pending}
       {sample : ViewRetirementObservation}
       (history : DistributedPhysicalExecution images choreo session first cut word accepted published pending)
@@ -455,6 +539,8 @@ theorem a_physical_execution_partitions_its_actual_acceptances
     entries.Perm (published.map Prod.fst ++ pending) := by
   induction execution with
   | refl => exact .nil
+  | close history ih => exact ih
+  | observeClosure history checked beforeAt bound closed ih => exact ih
   | retireView history checked beforeAt ih => exact ih
   | quiet history checked _headers ih => exact ih
   | accept history imageAt checked decoded pathAt rowAt prepared slotFree freshWitness sourceAt accepted identity ih =>
@@ -476,6 +562,17 @@ private theorem a_physical_execution_preserves_each_full_fifo
   | refl =>
     intro initial
     simpa only [sourceChannelRecords, sourceChannelEntries, List.filter_nil, List.map_nil] using initial
+  | @close cut word entries published pending changed history ih =>
+    intro initial channel
+    obtain ⟨prior, trace⟩ := ih initial channel
+    by_cases same : channel = changed
+    · subst changed
+      exact ⟨prior, by simpa only [DistributedSourceCut.carrierAt, if_pos rfl] using
+        SendAdmissionTrace.close trace⟩
+    · exact ⟨prior, by simpa only [DistributedSourceCut.carrierAt, if_neg same] using trace⟩
+  | observeClosure history checked beforeAt bound closed ih =>
+    intro initial
+    simpa only [DistributedSourceCut.actorAt] using ih initial
   | retireView history checked beforeAt ih =>
     intro initial
     simpa only [DistributedSourceCut.actorAt] using ih initial
@@ -532,6 +629,18 @@ theorem a_distributed_physical_history_preserves_each_first_fault
       (last.actors actor).1.fault = some cause := by
   induction execution with
   | refl => exact fun _ _ faulted => faulted
+  | close history ih => simpa only [DistributedSourceCut.carrierAt] using ih
+  | @observeClosure cut word entries published pending sample history checked beforeAt bound closed ih =>
+    intro actor cause faulted
+    have prior := ih actor cause faulted
+    by_cases same : actor = sample.before.actor
+    · subst actor
+      have beforeFault : sample.before.fault = some cause := by
+        rw [← beforeAt]
+        exact prior
+      simpa only [DistributedSourceCut.actorAt, if_pos rfl] using
+        a_checked_closure_preserves_the_existing_first_fault checked beforeFault
+    · simpa only [DistributedSourceCut.actorAt, if_neg same] using prior
   | @retireView cut word entries published pending sample history checked beforeAt ih =>
     intro actor cause faulted
     have prior := ih actor cause faulted

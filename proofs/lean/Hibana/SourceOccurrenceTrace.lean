@@ -87,6 +87,12 @@ inductive SourceOccurrenceTrace (images : Nat → RustDescriptorImage) (choreo :
   | retireView {word calls points sample}
       (prior : SourceOccurrenceTrace images choreo plan word calls points) :
       SourceOccurrenceTrace images choreo plan (word ++ [.retireView sample]) calls points
+  | close {word calls points channel}
+      (prior : SourceOccurrenceTrace images choreo plan word calls points) :
+      SourceOccurrenceTrace images choreo plan (word ++ [.close channel]) calls points
+  | observeClosure {word calls points sample}
+      (prior : SourceOccurrenceTrace images choreo plan word calls points) :
+      SourceOccurrenceTrace images choreo plan (word ++ [.observeClosure sample]) calls points
   | accept {word calls points} {entry : SourceAcceptance} {occurrence : Nat}
       (prior : SourceOccurrenceTrace images choreo plan word calls points)
       (fresh : calls.all (fun pair => decide (pair.1 ≠ entry.callKey)) = true)
@@ -136,7 +142,7 @@ private theorem trace_calls_have_observed_acceptances
     · have same := List.mem_singleton.mp current
       subst pair
       exact List.mem_append_right _ (by simp)
-  | quiet prior ih | retireView prior ih => exact ih
+  | quiet prior ih | retireView prior ih | close prior ih | observeClosure prior ih => exact ih
   | publish prior callAt matched ready ih
   | receive prior callAt matched ready ih
   | localCommit prior matched ready ih =>
@@ -163,7 +169,7 @@ theorem a_source_occurrence_trace_is_its_reconstructed_execution
     SourceOccurrenceExecution (occurrenceCut plan []) (occurrenceCut plan points) points := by
   induction trace with
   | nil => exact .nil
-  | quiet prior ih | retireView prior ih => exact ih
+  | quiet prior ih | retireView prior ih | close prior ih | observeClosure prior ih => exact ih
   | accept prior fresh origin matched ready ih =>
     exact .tail ih (a_checked_occurrence_call_appends_exactly_its_source_point _ _ _
       ((projected_occurrence_readiness_is_exact _ _ _).mpr ⟨_, ready, rfl⟩))
@@ -207,6 +213,16 @@ private theorem an_occurrence_call_retains_its_acceptance
     intro pair present
     obtain ⟨earlier, later, entry, wordAt, key, sourceAt, matchAt⟩ := ih pair present
     refine ⟨earlier, later ++ [.retireView sample], entry, ?_, key, sourceAt, matchAt⟩
+    simp only [wordAt, List.append_assoc, List.cons_append]
+  | @close word calls points channel prior ih =>
+    intro pair present
+    obtain ⟨earlier, later, entry, wordAt, key, sourceAt, matchAt⟩ := ih pair present
+    refine ⟨earlier, later ++ [.close channel], entry, ?_, key, sourceAt, matchAt⟩
+    simp only [wordAt, List.append_assoc, List.cons_append]
+  | @observeClosure word calls points sample prior ih =>
+    intro pair present
+    obtain ⟨earlier, later, entry, wordAt, key, sourceAt, matchAt⟩ := ih pair present
+    refine ⟨earlier, later ++ [.observeClosure sample], entry, ?_, key, sourceAt, matchAt⟩
     simp only [wordAt, List.append_assoc, List.cons_append]
   | @publish word calls points call actor occurrence record prior callAt matched ready ih =>
     intro pair present

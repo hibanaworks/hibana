@@ -1522,14 +1522,38 @@ rather than replacing it with `EndpointDropped`. Generated claims reject
 quiet fault changes and retain the observed fault through every qualified
 physical suffix. Completed-view retirement still permits independent work.
 This closes first-fault continuity for the boundaries represented by this
-word. General transport-error, fencing and observable-closure boundaries are
-not yet included, and their composition remains unfinished.
+word. Orderly carrier closure and the later receive-side EOF observation are
+now included in `DistributedPhysicalExecution`. Closing a direction preserves
+all accepted frames and their source occurrence records. EOF is observable
+only after those frames drain. Its checked logical direction must match an
+issued receiver view and a current or freshly permitted receive in the source
+projection. The observation changes the actor's first fault without changing
+progress, view headers, issuance, or the completion-write count. It cannot
+overwrite an earlier fault or broadcast a fault to another runtime.
+
+The three-runtime `closure` fixture pauses both owned sends, closes the loan
+direction while its accepted frame is queued, receives and returns the actual
+Endpoint, and only then observes EOF at the worker. The owner executes its next
+DB operation after that fault. Captured constructor/poll/Drop records, carrier
+witnesses, wire bytes, actor cuts and mutation counts qualify one chronological
+word for custody, full FIFO execution, reconstructed source progress, and the
+owner's live continuation. Negative checks reject EOF before draining, the
+wrong direction, hidden progress, and a missing fault. CI regenerates the
+seven kernel-checked claims from the real execution; the test also runs in the
+existing Miri actor-local-progress group. This fixture uses the in-memory test
+carrier; it adds no TCP or network-forwarding qualification.
+
+This qualifies orderly closure, not abrupt abort/fencing or all transport-error
+profiles. Abrupt retirement must account for accepted frames that are isolated
+instead of delivered; it cannot clear a queue and call that a successful
+receive. Those remaining profiles and general runtime correspondence remain
+completion work.
 
 This establishes finite-prefix custody/source correspondence in the observation
 model. Applying it to Rust still requires complete authentic merged observations;
 it does not derive their completeness from endpoint snapshots. It is not yet
 the enabled-step lifting result, a proof of current Rust callability, or the
-fault/closure composition. No runtime guard, wire field, shared actor memory,
+complete composition of transport failures. No runtime guard, wire field, shared actor memory,
 owner table or scheduling restriction is introduced by this model.
 This inventory covers owned-send objects. Ordinary-future and parallel-borrow
 object inventories are outside its scope and are not additional completion

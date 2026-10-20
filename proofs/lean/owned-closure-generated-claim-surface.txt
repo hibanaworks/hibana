@@ -1,0 +1,39 @@
+actualClosureCannotBeObservedBeforeTheAcceptedLoanDrains : (closureClosed.carriers loanChannel).pollReceive ≠
+  TransportPoll.peerClosed
+actualClosureCheck : actualEof.check workerImage closureChoreo 9060 = true
+actualClosureCustodyHistory : History closureImages closureResource closureChoreo loanRequest.payload closureEvents
+  closureCustody
+actualClosureKeepsReturnedAuthorityAndTheLiveContinuation : closureCustody.custody.authorityCount ≤ 1 ∧
+  closureCustody.custody.usable = [returnedValue] ∧
+    (closureFinal.actors 1).fst.fault = some SessionFault.transportClosed ∧
+      (closureFinal.actors 0).fst.fault = none ∧
+        ∃ next, SourceOccurrenceStep (occurrenceCut closurePlan closurePoints) (SourcePoint.accepted 2) next
+actualClosurePhysicalHistory : DistributedPhysicalExecution closureImages closureChoreo 9060 closureInitial closureFinal
+  (sourceWord closureEvents) [loanEntry, returnEntry] [(loanEntry, loanSend), (returnEntry, returnSend)] []
+actualClosureRejectsWrongDirectionAndHiddenProgress : (have __src := actualEof;
+        { channel := returnChannel, event := __src.event, pathIndex := __src.pathIndex,
+          previousPath := __src.previousPath, retainedRolls := __src.retainedRolls, before := __src.before,
+          after := __src.after }).check
+      workerImage closureChoreo 9060 =
+    false ∧
+  (have __src := actualEof;
+          { channel := __src.channel, event := __src.event, pathIndex := __src.pathIndex,
+            previousPath := __src.previousPath, retainedRolls := __src.retainedRolls, before := __src.before,
+            after :=
+              have __src := workerAfterEof;
+              { actor := __src.actor, run := __src.run, counter := workerAfterEof.counter + 1,
+                liveViews := __src.liveViews, views := __src.views, steps := __src.steps, choices := __src.choices,
+                fault := __src.fault } }).check
+        workerImage closureChoreo 9060 =
+      false ∧
+    (have __src := actualEof;
+          { channel := __src.channel, event := __src.event, pathIndex := __src.pathIndex,
+            previousPath := __src.previousPath, retainedRolls := __src.retainedRolls, before := __src.before,
+            after :=
+              have __src := workerAfterEof;
+              { actor := __src.actor, run := __src.run, counter := __src.counter, liveViews := __src.liveViews,
+                views := __src.views, steps := __src.steps, choices := __src.choices } }).check
+        workerImage closureChoreo 9060 =
+      false
+actualClosureSourceHistory : SourceOccurrenceTrace closureImages closureChoreo closurePlan (sourceWord closureEvents)
+  [(loanEntry.callKey, 0), (returnEntry.callKey, 1)] closurePoints

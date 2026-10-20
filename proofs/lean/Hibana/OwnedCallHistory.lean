@@ -88,6 +88,7 @@ def Untracked (resource : EndpointKey) (choreo : Choreo)
   | .receive key _ _ => ∃ entry ∈ acceptedEntries events,
       entry.callKey = key ∧ tracks resource choreo entry = false
   | .publish _ _ _ | .localCommit _ _ | .quiet _ => True
+  | .close _ | .observeClosure _ => True
   | .retireView sample => sample.view ≠ resource.role
 
 /-- One boundary of the same chronological run. This relation adds no admission

@@ -50,6 +50,7 @@ theorem an_accepted_source_occurrence_has_its_exact_fifo_prefix_ordinal
       key.globalId = record.2 ∧ key.iteration = sourceOccurrenceOrdinal records index record.2 := by
   induction trace with
   | initial channel => intro index record key missing; simp at missing
+  | close previous ih => exact ih
   | @accept transport sent history records sample event label previous checked sourceAt accepted identity ih =>
     obtain ⟨_, valid, _, _, frames, aligned⟩ :=
       a_checked_source_admission_trace_keeps_exact_frame_and_occurrence_records previous
