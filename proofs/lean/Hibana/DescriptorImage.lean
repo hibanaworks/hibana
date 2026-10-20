@@ -1951,8 +1951,19 @@ def RustDescriptorImage.eventAtom?
   let atoms ← image.decodeAtoms?
   resolveUnique? (atoms.filter fun candidate => candidate.effIndex = effIndex)
 
-/-- Independently sort decoded row identities, rather than replaying the Rust
-heapsort or trusting the index's own candidate list. Non-receives sort last. -/
+private def insertReceiveKey (entry : Nat × Nat) : List (Nat × Nat) → List (Nat × Nat)
+  | [] => [entry]
+  | head :: rest =>
+      if entry.1 < head.1 || (entry.1 == head.1 && entry.2 ≤ head.2) then
+        entry :: head :: rest
+      else head :: insertReceiveKey entry rest
+
+private def sortReceiveKeys : List (Nat × Nat) → List (Nat × Nat)
+  | [] => []
+  | head :: rest => insertReceiveKey head (sortReceiveKeys rest)
+
+/-- Structurally recursive insertion sort keeps this independent of Rust's
+heapsort and reducible by the kernel's `decide`. Non-receives sort last. -/
 def RustDescriptorImage.receiveIndexCoherent (image : RustDescriptorImage) : Bool :=
   let expected : Option (List Nat) := do
     let rows ← (List.range image.eventCount).mapM fun row => do
@@ -1961,8 +1972,7 @@ def RustDescriptorImage.receiveIndexCoherent (image : RustDescriptorImage) : Boo
       if flags < 6 then pure () else none
       let key := if flags / 2 = 2 then atom.receiver * 256 + atom.label else 65536
       pure (key, row)
-    pure ((rows.mergeSort fun a b =>
-      a.1 < b.1 || (a.1 == b.1 && a.2 ≤ b.2)).map Prod.snd)
+    pure ((sortReceiveKeys rows).map Prod.snd)
   let actual := (List.range image.eventCount).mapM fun slot =>
     readU16LE? image.roleBytes (image.roleReceiveIndexOffset + slot * productionRoleU16Stride)
   match expected, actual with
