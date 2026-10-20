@@ -8,21 +8,11 @@ async fn a_completed_resource_can_retire_without_stranding_a_fresh_peer_visit() 
         g::Seq<g::Send<0, 1, Loan>, g::Par<g::Roll<g::Send<10, 2, Read>>, g::Send<1, 3, Value>>>;
     const LANES: usize = g::ProgramProjection::<Steps, 8>::SOURCE_EFF_LIST.len();
     let () = g::ProgramProjection::<Steps, 8>::VALIDATION;
-    let owner_program = crate::global::role_program::role_program_from_image::<0>(
-        &RoleProjection::<0, Steps, 8>::IMAGE_REF,
-    );
-    let worker_program = crate::global::role_program::role_program_from_image::<1>(
-        &RoleProjection::<1, Steps, 8>::IMAGE_REF,
-    );
-    let db_program = crate::global::role_program::role_program_from_image::<10>(
-        &RoleProjection::<10, Steps, 8>::IMAGE_REF,
-    );
-    let service_program = crate::global::role_program::role_program_from_image::<2>(
-        &RoleProjection::<2, Steps, 8>::IMAGE_REF,
-    );
-    let observer_program = crate::global::role_program::role_program_from_image::<3>(
-        &RoleProjection::<3, Steps, 8>::IMAGE_REF,
-    );
+    let owner_program = crate::runtime::program::project::<0>(&g::Program::<Steps>::new());
+    let worker_program = crate::runtime::program::project::<1>(&g::Program::<Steps>::new());
+    let db_program = crate::runtime::program::project::<10>(&g::Program::<Steps>::new());
+    let service_program = crate::runtime::program::project::<2>(&g::Program::<Steps>::new());
+    let observer_program = crate::runtime::program::project::<3>(&g::Program::<Steps>::new());
     let mailboxes = Mailboxes::new(&[0, 1, 2, 3, 10], LANES).unwrap();
     // SAFETY: this is the sole initial issuer in this private native namespace;
     // the binding outlives both runtimes, every Endpoint and all queued frames.

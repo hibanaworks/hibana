@@ -108,6 +108,52 @@ ping=7, pong=8
 プロトコルには、分岐、独立した通信の並列合成、繰り返しも記述できます。
 参加者側では、同じ`send`、`recv`、`offer`を使います。
 
+## Endpointを渡す
+
+この開発ブランチでは、Endpointをメッセージとして渡せます。
+送ると、そのlogical roleを操作する権利が移ります。受取側は同じプロトコルの続きを実行します。
+
+例えば、OWNERがDB用EndpointをWORKERへ貸し、WORKERがDBとして要求と応答を実行して返します。
+
+```rust
+type Loan<'r> = g::Msg<1, hibana::Endpoint<'r, DB>>;
+type Read = g::Msg<2, u32>;
+type Value = g::Msg<3, u32>;
+
+let query = g::seq(g::send::<DB, SERVICE, Read>(), g::send::<SERVICE, DB, Value>());
+let global = g::seq(
+    g::send::<OWNER, WORKER, Loan<'_>>(),
+    g::seq(query, g::seq(g::send::<WORKER, OWNER, Loan<'_>>(), query)),
+);
+```
+
+OWNERは値をsendへmoveし、返ってきたEndpointで続きを実行します。
+
+```rust
+owner.send::<Loan<'_>>(db).await?;
+let mut db = owner.recv::<Loan<'_>>().await?;
+db.send::<Read>(&41).await?;
+let answer = db.recv::<Value>().await?;
+```
+
+WORKERも通常のsendとrecvを使います。
+
+```rust
+let mut db = worker.recv::<Loan<'_>>().await?;
+db.send::<Read>(&7).await?;
+let answer = db.recv::<Value>().await?;
+worker.send::<Loan<'_>>(db).await?;
+```
+
+move済みの値を使えないことはRustが守ります。Hibanaは、委譲・保持者・継続位置をglobalから検査します。
+資源を扱うintegrationが唯一の初期`EndpointBinding`を用意し、受取側は作り直しません。
+メッセージとして送るのはRustのアドレスではありません。
+
+[完全なTokio実行例](examples/endpoint_delegation.rs)では、`g::par`と`db.par()`を使い、
+queryの応答を待つ間に独立したaudit送信を進めます。各runtimeのメモリは別々で、
+この例のcarrierは共有のメモリ内キューです。このcheckoutで
+`cargo run --locked --example endpoint_delegation`を実行できます。
+
 ## QUICで使う
 
 [hello-quicの例](https://github.com/hibanaworks/hibana-quic/tree/main/examples/hello-quic)では、
@@ -436,7 +482,20 @@ Distributed cancellationには、相手が終了を観測できるトランス�
 `SessionId`の再利用には、前の実行のフレームが現れない新しいトランスポート状態が必要です。
 参加者集合やプロトコルを変える場合は、新しいセッションが必要です。
 トランスポートの保証が保たれるなら、通信アドレスの移行は同じ実行の中で行えます。
-このモデルはチャネル委譲を扱いません。
+Endpointをpayloadにすると、logical roleの操作権とプロトコルの継続を一緒に渡せます。
+
+資源を扱うintegrationが、唯一の初期`EndpointBinding`を所有します。同じ物理資源を
+初期発行できるruntimeやrole aliasは、同じ発行元を使います。remoteの保持者は権利を受け取り、
+bindingを新設しません。unsafeな構築時に、integrationが
+物理的な一意性を保証します。coreがdeviceやremote handleのaliasを推測することはできません。
+drop、timeout、runtimeや`SessionId`の作り直しでは発行権は復活しません。
+bindingを置き換えるには、古い権利と受理済みframeを物理操作境界で実際にfenceする必要があります。
+
+owned sendのfutureは、生成時点でpayloadのEndpointを所有します。Pending中も旧保持者は
+使えません。transportの受理で権限がframeへ移り、検証済みrecvが受取先runtimeへ公開します。
+errorやcancelで送信元へEndpointを返すことはありません。deadlineは未配送の証拠ではありません。
+carrierは、保持者の変更をまたいで、受理済みの古いframeも同じlogical方向から受信できるようにします。
+別のマシン間でRustメモリを共有する必要はありませんが、この受信継続性とFIFO・replay排除・run分離が必要です。
 
 ランタイムは、呼び出し側から渡されたストレージと借用バッファを使い、ヒープへのフォールバックはありません。
 エンドポイントはローカルなランタイムに結び付けられ、`Send`でも`Sync`でもありません。
@@ -486,10 +545,10 @@ Leanの証明は、そのモデルについてsession fidelity、protocol progre
 Rustのprojectionが成功しただけでは、distributed deadlock freedomの証明にはなりません。
 
 従来の分散`roll`モデルは、共通のリセット境界を前提にします。
-過去のメッセージが未読のまま、各ロールが独立に次の周回へ入るすべての実行を対象にはしていません。
-有限展開のモデルとEndpointとの有界な適合試験で、その一部を検査しています。
-それらすべてを対象にした一般の対応証明は未完了です。
-以下の進行に関する主張は、選んだモデルの対象範囲と前提の下で適用します。
+有限展開のモデルでは、過去のメッセージが未読のまま、各ロールが独立に次の周回へ進めます。
+受理された有限展開について、sourceの進行と、保持した資源の操作に必要な現在の権限を合成しています。
+実Endpointとモデルの照合、Rustの所有権検査、Miri、対象を絞ったKani検査で実装との境界を検査します。
+すべてのRust実行を証明したものではありません。以下の主張は、選んだモデルの対象範囲と前提の下で適用します。
 
 実行中のシステムにこれらの結果を適用するには、次の前提が必要です。
 

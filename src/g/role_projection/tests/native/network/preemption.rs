@@ -1,5 +1,5 @@
 //! A peer can finish while the original send still awaits its TCP receipt.
-use super::super::{Loan, Read, RoleProjection, Value, g, preemption};
+use super::super::{Loan, Read, Value, g, preemption};
 use super::{Broker, NetworkTransport, Process, inbox};
 use crate::{
     endpoint::proof_snapshot::view_tag,
@@ -20,13 +20,8 @@ mod publication;
 
 #[tokio::test(flavor = "current_thread")]
 async fn a_tcp_receiver_returns_the_resource_while_the_send_is_pending_between_polls() {
-    let () = g::ProgramProjection::<Global, 16>::VALIDATION;
-    let owner_program = crate::global::role_program::role_program_from_image::<0>(
-        &RoleProjection::<0, Global, 16>::IMAGE_REF,
-    );
-    let db_program = crate::global::role_program::role_program_from_image::<10>(
-        &RoleProjection::<10, Global, 16>::IMAGE_REF,
-    );
+    let owner_program = crate::runtime::program::project::<0>(&g::Program::<Global>::new());
+    let db_program = crate::runtime::program::project::<10>(&g::Program::<Global>::new());
     // SAFETY: this namespace has one issuer. Its children and inbox are fenced
     // before the binding, including while unwinding.
     let binding = unsafe { crate::runtime::transport::EndpointBinding::new() };
@@ -176,10 +171,7 @@ async fn worker_process() {
         .unwrap()
         .parse()
         .unwrap();
-    let () = g::ProgramProjection::<Global, 16>::VALIDATION;
-    let program = crate::global::role_program::role_program_from_image::<1>(
-        &RoleProjection::<1, Global, 16>::IMAGE_REF,
-    );
+    let program = crate::runtime::program::project::<1>(&g::Program::<Global>::new());
     let mut slab = vec![0; 64 * 1024];
     let mut storage = SessionKitStorage::uninit();
     let rv = storage
@@ -208,10 +200,7 @@ async fn independent_peer_process() {
         .unwrap()
         .parse()
         .unwrap();
-    let () = g::ProgramProjection::<Global, 16>::VALIDATION;
-    let program = crate::global::role_program::role_program_from_image::<2>(
-        &RoleProjection::<2, Global, 16>::IMAGE_REF,
-    );
+    let program = crate::runtime::program::project::<2>(&g::Program::<Global>::new());
     let mut slab = vec![0; 64 * 1024];
     let mut storage = SessionKitStorage::uninit();
     let rv = storage

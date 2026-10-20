@@ -65,6 +65,18 @@ run_miri_test \
   -p hibana \
   --test miri_runtime_owner
 
+# Exercise the normal public projection path without repository-only hooks.
+(
+  hibana_disable_repo_tests_cfg
+  timeout --kill-after="${MIRI_TIMEOUT_GRACE_SECONDS}s" "${MIRI_TIMEOUT_SECONDS}s" \
+    cargo +"${MIRI_TOOLCHAIN}" miri run --locked --example endpoint_delegation
+)
+echo "Miri public Endpoint delegation example passed"
+(
+  hibana_disable_repo_tests_cfg
+  run_miri_test public-carrier-requeue -p hibana --example endpoint_delegation
+)
+
 run_miri_test \
   borrowed-transport-handles \
   -p hibana \

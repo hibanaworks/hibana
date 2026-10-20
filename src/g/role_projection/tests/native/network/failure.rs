@@ -1,5 +1,5 @@
 //! Holder loss on independent TCP processes must not replenish issuance.
-use super::super::{Loan, Read, RoleProjection, failure::Global, g};
+use super::super::{Loan, Read, failure::Global, g};
 use super::{BROKER, Broker, NetworkTransport, Process};
 use crate::{
     endpoint::proof_snapshot::view_tag,
@@ -22,16 +22,9 @@ const AFTER: &str =
 
 #[tokio::test(flavor = "current_thread")]
 async fn a_tcp_holder_loss_ends_the_run_without_restoring_the_initial_authority() {
-    let () = g::ProgramProjection::<Global, 8>::VALIDATION;
-    let owner_program = crate::global::role_program::role_program_from_image::<0>(
-        &RoleProjection::<0, Global, 8>::IMAGE_REF,
-    );
-    let service_program = crate::global::role_program::role_program_from_image::<2>(
-        &RoleProjection::<2, Global, 8>::IMAGE_REF,
-    );
-    let db_program = crate::global::role_program::role_program_from_image::<10>(
-        &RoleProjection::<10, Global, 8>::IMAGE_REF,
-    );
+    let owner_program = crate::runtime::program::project::<0>(&g::Program::<Global>::new());
+    let service_program = crate::runtime::program::project::<2>(&g::Program::<Global>::new());
+    let db_program = crate::runtime::program::project::<10>(&g::Program::<Global>::new());
     // Failure injection chooses the separate child entrypoint, never a
     // runtime or choreography mode. Both cases execute the same localsides.
     for entrypoint in [BEFORE, AFTER] {
@@ -144,10 +137,7 @@ async fn worker_exits_after_receipt() {
         .unwrap()
         .parse()
         .unwrap();
-    let () = g::ProgramProjection::<Global, 8>::VALIDATION;
-    let program = crate::global::role_program::role_program_from_image::<1>(
-        &RoleProjection::<1, Global, 8>::IMAGE_REF,
-    );
+    let program = crate::runtime::program::project::<1>(&g::Program::<Global>::new());
     let mut slab = vec![0; 64 * 1024];
     let mut storage = SessionKitStorage::uninit();
     let rv = storage

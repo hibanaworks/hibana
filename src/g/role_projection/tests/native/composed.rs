@@ -11,22 +11,11 @@ const WORKER: &str = "g::role_projection::tests::native::composed::worker_proces
 
 #[tokio::test(flavor = "current_thread")]
 async fn process_handoff_preserves_resolved_choices_in_parallel_rolled_loans() {
-    let () = g::ProgramProjection::<Global, 32>::VALIDATION;
-    let owner_program = crate::global::role_program::role_program_from_image::<0>(
-        &RoleProjection::<0, Global, 32>::IMAGE_REF,
-    );
-    let service_program = crate::global::role_program::role_program_from_image::<2>(
-        &RoleProjection::<2, Global, 32>::IMAGE_REF,
-    );
-    let db_program = crate::global::role_program::role_program_from_image::<10>(
-        &RoleProjection::<10, Global, 32>::IMAGE_REF,
-    );
-    let left_program = crate::global::role_program::role_program_from_image::<3>(
-        &RoleProjection::<3, Global, 32>::IMAGE_REF,
-    );
-    let right_program = crate::global::role_program::role_program_from_image::<4>(
-        &RoleProjection::<4, Global, 32>::IMAGE_REF,
-    );
+    let owner_program = crate::runtime::program::project::<0>(&g::Program::<Global>::new());
+    let service_program = crate::runtime::program::project::<2>(&g::Program::<Global>::new());
+    let db_program = crate::runtime::program::project::<10>(&g::Program::<Global>::new());
+    let left_program = crate::runtime::program::project::<3>(&g::Program::<Global>::new());
+    let right_program = crate::runtime::program::project::<4>(&g::Program::<Global>::new());
     let mailboxes = Mailboxes::new(&[0, 1, 2, 3, 4, 10], LANES).unwrap();
     let resource_path = mailboxes.directory().join("resource");
     let mut resource = OpenOptions::new()
@@ -221,13 +210,8 @@ async fn worker_process() {
         })
         .collect();
     let io = NativeTransport::new(&directory, descriptors, None).unwrap();
-    let () = g::ProgramProjection::<Global, 32>::VALIDATION;
-    let worker_program = crate::global::role_program::role_program_from_image::<1>(
-        &RoleProjection::<1, Global, 32>::IMAGE_REF,
-    );
-    let db_program = crate::global::role_program::role_program_from_image::<10>(
-        &RoleProjection::<10, Global, 32>::IMAGE_REF,
-    );
+    let worker_program = crate::runtime::program::project::<1>(&g::Program::<Global>::new());
+    let db_program = crate::runtime::program::project::<10>(&g::Program::<Global>::new());
     let mut slab = vec![0; 64 * 1024];
     let delta = Cell::new(3u32);
     let mut storage = SessionKitStorage::uninit();

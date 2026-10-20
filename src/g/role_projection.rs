@@ -216,11 +216,5 @@ where
         panic!("projected role is outside the choreography role range");
     }
     let () = ProgramProjection::<Steps, CAPACITY>::VALIDATION;
-    // Owned operations and shared actor progress execute in private tests.
-    // Public issuance still requires the full acceptance/continuation proof and
-    // initial binding boundary. Static checks alone do not qualify execution.
-    if Steps::SOURCE_NODE.has_delegation() {
-        panic!("owned endpoint projection is not yet qualified");
-    }
     &RoleProjection::<ROLE, Steps, CAPACITY>::IMAGE_REF
 }

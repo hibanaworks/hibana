@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${ROOT_DIR}"
 
-export TOOLCHAIN="${TOOLCHAIN:-1.95.0}"
+export TOOLCHAIN="${TOOLCHAIN:-stable}"
 export CARGO_BUILD_JOBS=1
 source "${ROOT_DIR}/.github/scripts/lib/compile_pressure_guard.sh"
 bash "${ROOT_DIR}/.github/scripts/ensure_rust_toolchain.sh"

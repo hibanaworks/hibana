@@ -1,7 +1,7 @@
 //! The same resolved, rolled parallel global used by the in-memory and Unix
 //! fixtures, over separate TCP inbox and worker processes.
 use super::super::super::{
-    Loan, Read, RoleProjection, Value,
+    Loan, Read, Value,
     composed::{AfterRead, AfterValue, Finished, Global, Subtract},
 };
 use super::{BROKER, Broker, NetworkTransport, Process};
@@ -21,22 +21,11 @@ const WORKER: &str = "g::role_projection::tests::native::network::composed::work
 
 #[tokio::test(flavor = "current_thread")]
 async fn tcp_inboxes_preserve_resolved_choices_and_repeated_loans_alongside_parallel_work() {
-    let () = g::ProgramProjection::<Global, 32>::VALIDATION;
-    let owner_program = crate::global::role_program::role_program_from_image::<0>(
-        &RoleProjection::<0, Global, 32>::IMAGE_REF,
-    );
-    let service_program = crate::global::role_program::role_program_from_image::<2>(
-        &RoleProjection::<2, Global, 32>::IMAGE_REF,
-    );
-    let db_program = crate::global::role_program::role_program_from_image::<10>(
-        &RoleProjection::<10, Global, 32>::IMAGE_REF,
-    );
-    let left_program = crate::global::role_program::role_program_from_image::<3>(
-        &RoleProjection::<3, Global, 32>::IMAGE_REF,
-    );
-    let right_program = crate::global::role_program::role_program_from_image::<4>(
-        &RoleProjection::<4, Global, 32>::IMAGE_REF,
-    );
+    let owner_program = crate::runtime::program::project::<0>(&g::Program::<Global>::new());
+    let service_program = crate::runtime::program::project::<2>(&g::Program::<Global>::new());
+    let db_program = crate::runtime::program::project::<10>(&g::Program::<Global>::new());
+    let left_program = crate::runtime::program::project::<3>(&g::Program::<Global>::new());
+    let right_program = crate::runtime::program::project::<4>(&g::Program::<Global>::new());
     let mut value = 41u32;
     // SAFETY: only this service owns value and its one initial issuer.
     // During unwinding, process guards fence remote rights before the binding.
@@ -153,13 +142,8 @@ async fn worker_process() {
         .unwrap()
         .parse()
         .unwrap();
-    let () = g::ProgramProjection::<Global, 32>::VALIDATION;
-    let worker_program = crate::global::role_program::role_program_from_image::<1>(
-        &RoleProjection::<1, Global, 32>::IMAGE_REF,
-    );
-    let db_program = crate::global::role_program::role_program_from_image::<10>(
-        &RoleProjection::<10, Global, 32>::IMAGE_REF,
-    );
+    let worker_program = crate::runtime::program::project::<1>(&g::Program::<Global>::new());
+    let db_program = crate::runtime::program::project::<10>(&g::Program::<Global>::new());
     let delta = Cell::new(3u32);
     let mut slab = vec![0; 64 * 1024];
     let mut storage = SessionKitStorage::uninit();

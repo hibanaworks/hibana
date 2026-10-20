@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${ROOT_DIR}"
-export TOOLCHAIN="${TOOLCHAIN:-1.95.0}"
+export TOOLCHAIN="${TOOLCHAIN:-stable}"
 bash "${ROOT_DIR}/.github/scripts/ensure_rust_toolchain.sh" thumbv6m-none-eabi
 
 cargo +"${TOOLCHAIN}" check \

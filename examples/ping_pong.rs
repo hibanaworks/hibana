@@ -27,7 +27,7 @@ fn main() {
     let mut storage = SessionKitStorage::<InMemoryTransport>::uninit();
     let kit = storage.init();
     let rendezvous = kit
-        .rendezvous(&mut slab, InMemoryTransport::new())
+        .rendezvous(&mut slab, InMemoryTransport::new([]))
         .expect("create rendezvous");
     let session = SessionId::new(1);
     let mut client = rendezvous

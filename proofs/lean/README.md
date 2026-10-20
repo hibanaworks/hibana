@@ -8,7 +8,8 @@ The established end-to-end result covers the finite-role, non-delegating
 logical model with its re-entry premises. Its common roll-reset boundary does
 not cover every independently advancing runtime visit. The finite-occurrence
 result below combines source progress with the current authority needed by a
-projected operation. Public delegation qualification remains closed.
+projected operation. The development branch is qualifying its public path;
+final-source qualification remains incomplete.
 This is not a source-level verification of
 arbitrary Rust code or a specification of a concrete transport.
 
@@ -202,15 +203,17 @@ Extending the proof to an inventory of every ordinary future or parallel borrow
 is not a prerequisite for completing this model result. Conversely, an assumed
 application call does not prove that the kernel admits or commits it correctly.
 
-### Conditions for opening public delegation
+### Public delegation qualification
 
-Public owned projection remains closed. Its qualification has three stages:
+Public owned projection is enabled on the development branch for stage 2.
+Delegation is complete only after all three stages below pass. Enabling that
+path is not by itself a completion or release claim.
 
 1. Compose the ownership and communication-progress claims over the same
    occurrence/physical/custody execution. The result must conserve at most one
    authority and establish a next modeled operation for a normal unfinished
    cut, with the stated carrier and application premises. An unobserved fault
-   cannot stand in for an enabled operation. The remaining composition is not
+   cannot stand in for an enabled operation. The composition is not
    declared complete by passing a finite set of tests.
 2. Exercise initial binding, projection, attachment, owned `send`/`recv` and
    `par` through the normal public API. Private image construction is not
@@ -246,7 +249,7 @@ prevent dropping or forgetting an Endpoint. Without retention, the underlying
 theorem exhibits the exact value's checked complete/faulted retirement. An
 I/O error alone cannot supply that alternative. Sender publication needs no
 authority already moved to another holder. These are model results; public
-API recognition and final-source qualification in stages 2 and 3 remain open.
+API tests and final-source qualification in stages 2 and 3 are distinct checks.
 
 The bounded source inventory is fixed and explicit:
 
@@ -496,7 +499,7 @@ Lean inputs. Missing rows, premature return, lost parallel readiness, completed
 step replay and a missing payload view are rejected. This checks the observed
 selected visit. It does not derive actual Rust value availability from a header,
 nor establish fresh rolled visits, carrier delivery or general distributed
-progress. The public owned-projection guard remains closed.
+progress. Those model claims are composed separately above.
 
 `ActorCandidateAdmission.lean` extends raw cursor qualification to current
 and fresh bodies without weakening the selected-visit checker. It derives
@@ -547,9 +550,8 @@ also instantiates it across late reentry while another rolled body remains
 independent. Occurrence ordinals exist only in erased proof histories; no
 runtime field, wire byte, or coordination authority was added. Ordinary byte
 formats still rely on the existing codec-conformance contract. These results
-connect per-actor origins to individual FIFO receipts; coherence of a complete
-distributed cut across partial choices, custody, pending calls and failures
-still needs composition before the public guard can be opened.
+connect per-actor origins to individual FIFO receipts. They are components of
+the same-word occurrence composition above, not a separate progress result.
 
 `DistributedSourceExecution.lean` now puts the actor and transport boundaries
 in one chronological history. Its actors retain independent current choices
@@ -807,9 +809,9 @@ match is `src/g/role_projection/tests/logical_port_word.lean`.
 This is a joint successful-boundary refinement and concrete qualification.
 Receive-pair correspondence is an explicit obligation of the relation, not
 a proof that every possible Rust history already satisfies it. The general
-unfolded-source progress argument and composition with actual value custody,
-active-call and fault/closure histories remain required. The public owned
-projection guard stays closed.
+unfolded-source progress argument and composition with actual value custody
+are supplied by the occurrence results above. Applying those model results to
+production retains the stated Rust, application and carrier contracts.
 
 `DistributedChoiceHistory.lean` recovers a current local choice's introducing
 record in that same distributed execution. Its suffix cannot reset this route;
@@ -909,13 +911,10 @@ theorem retains complete carrier/header and originating-call histories as
 correspondence contracts. It does not derive these histories from readiness,
 or establish general distributed progress across independent visits.
 
-The public guard rejects owned choreography before returning its projected
-image. Private qualification tests obtain the image from the same production
-actor lowering and then attach and drive actual Endpoints, including owned
-encoding, receive validation, view publication, and shared actor progress.
-They do not replace the owned kernel with a mock or treat the guard's rejection
-as a successful runtime test. This still leaves public-path qualification as a
-separate release obligation.
+Focused internal tests also read immutable production images and drive real
+owned encoding, receive validation, view publication and shared actor progress.
+They supplement the normal public `project` path, now exercised by the runnable
+example and separate-process suite. They do not replace that public-path check.
 
 `carrier_contract::replaying_an_owned_frame_breaks_uniqueness_without_affine_delivery`
 is an explicit counterexample outside the carrier assumptions. It copies one
@@ -1280,8 +1279,8 @@ distributed progress. No predicate here is a runtime ownership/progress store.
 The general transfer theorems assume execution follows the stated steps.
 They do not establish that every Rust execution has that abstraction, that a
 deployment supplies a valid physical binding, or that its carrier refines the
-profile. Source/continuation correspondence and distributed progress remain
-separate obligations; public owned projection is still closed.
+profile. Source/continuation correspondence and progress are separate claims;
+their model-level composition is stated above.
 
 `ResourceHeaderTransfer.lean` derives the exact raw header changes from checked
 owned commits and retirement. It also shows that the actual prepared reentry
@@ -1313,7 +1312,8 @@ qualifies a deadline profile, not instantaneous peer closure.
 These proofs still require complete implementation observations, affine
 carrier delivery and the physical binding contract. They do not turn local
 header existence into general source progress, or complete the distributed
-delegation qualification. Public owned projection remains closed.
+delegation qualification. The development branch's public path is now being
+qualified with the example and separate-process tests described above.
 
 `SendCompletion.lean` checks copied observations from the actual non-generic
 `kernel_send` loop at its prepared-I/O boundary. A successful checked plan is
@@ -1503,10 +1503,10 @@ immutable source membership, not current progress.
 
 This is a local operation-admission component of lifting. Complete slot coverage does not prove
 that every source-ready action has an available Rust value or future, nor that
-an indefinitely pending carrier will complete. General future/value
-correspondence, source progress, custody and observable fault/closure still
-have to be composed into enabled-step lifting. The public owned projection
-guard remains closed.
+an indefinitely pending carrier will complete. Application retention and
+executor polling remain premises. The source/authority composition above does
+not extend this local observation checker into a proof of arbitrary Rust values
+or futures; implementation qualification still uses the declared test boundary.
 
 `ActorVisitProgress.lean` derives the finite point domain from the selected
 source bindings, with the path itself checked against the normalized global.

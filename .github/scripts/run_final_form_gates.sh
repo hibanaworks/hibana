@@ -28,6 +28,20 @@ if [[ "${PING_PONG_OUTPUT}" != "ping=7, pong=8" ]]; then
   echo "ping_pong example output mismatch: ${PING_PONG_OUTPUT}" >&2
   exit 1
 fi
+DELEGATION_OUTPUT="$(
+  (
+    hibana_disable_repo_tests_cfg
+    cargo +"${TOOLCHAIN}" run --quiet --locked --example endpoint_delegation 2>&1
+  )
+)"
+if [[ "${DELEGATION_OUTPUT}" != "worker=8, owner=42, audit=7" ]]; then
+  echo "endpoint_delegation example output mismatch: ${DELEGATION_OUTPUT}" >&2
+  exit 1
+fi
+(
+  hibana_disable_repo_tests_cfg
+  cargo +"${TOOLCHAIN}" test --locked --example endpoint_delegation
+)
 CARGO_PROFILE_RELEASE_LTO=true CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1 \
   cargo +"${TOOLCHAIN}" test --locked -p hibana --release \
     --test rolled_publication_exit -- --test-threads=1

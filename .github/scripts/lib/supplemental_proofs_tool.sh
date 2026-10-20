@@ -9,7 +9,7 @@ if [[ ! -x "$BINARY" || "$SOURCE" -nt "$BINARY" || "$SHARED" -nt "$BINARY" ]]; t
   mkdir -p "$BUILD"
   temporary="$(mktemp "$BUILD/supplemental-proofs.XXXXXX")"
   trap 'rm -f "$temporary"' EXIT
-  rustc +"${TOOLCHAIN:-1.95.0}" --edition=2024 -O "$SOURCE" -o "$temporary"
+  rustc +"${TOOLCHAIN:-stable}" --edition=2024 -O "$SOURCE" -o "$temporary"
   mv -f "$temporary" "$BINARY"
 fi
 exec "$BINARY" "$@"

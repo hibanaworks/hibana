@@ -5,23 +5,35 @@
 use std::{
     cell::RefCell,
     collections::VecDeque,
+    rc::Rc,
     task::{Context, Poll, Waker},
 };
 
 use hibana::runtime::{
     ids::SessionId,
-    transport::{FrameHeader, Outgoing, PortOpen, ReceivedFrame, Transport, TransportError},
+    transport::{
+        EndpointBinding, FrameHeader, Outgoing, PortOpen, ReceivedFrame, Transport, TransportError,
+    },
     wire::Payload,
 };
 
+#[derive(Clone)]
 pub(crate) struct InMemoryTransport {
+    network: Rc<Network>,
+}
+
+struct Network {
     state: RefCell<State>,
+    initial_bindings: Vec<(u8, EndpointBinding)>,
 }
 
 impl InMemoryTransport {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(bindings: impl IntoIterator<Item = (u8, EndpointBinding)>) -> Self {
         Self {
-            state: RefCell::new(State::default()),
+            network: Rc::new(Network {
+                state: RefCell::new(State::default()),
+                initial_bindings: bindings.into_iter().collect(),
+            }),
         }
     }
 }
@@ -96,6 +108,13 @@ impl Transport for InMemoryTransport {
     type Tx<'a> = Tx;
     type Rx<'a> = Rx;
 
+    fn initial_endpoint_binding(&self, role: u8) -> Option<&EndpointBinding> {
+        self.network
+            .initial_bindings
+            .iter()
+            .find_map(|(bound_role, binding)| (*bound_role == role).then_some(binding))
+    }
+
     fn open(&self, port: PortOpen) -> (Self::Tx<'_>, Self::Rx<'_>) {
         let session = port.session_id();
         let lane = port.lane();
@@ -133,7 +152,7 @@ impl Transport for InMemoryTransport {
             payload: outgoing.payload().as_bytes().to_vec(),
         };
         let wake = {
-            let mut state = self.state.borrow_mut();
+            let mut state = self.network.state.borrow_mut();
             let wake = state
                 .waiters
                 .iter()
@@ -159,7 +178,7 @@ impl Transport for InMemoryTransport {
     ) -> Poll<Result<ReceivedFrame<'a>, TransportError>> {
         rx.current = None;
         let frame = {
-            let mut state = self.state.borrow_mut();
+            let mut state = self.network.state.borrow_mut();
             let frame = state
                 .frames
                 .iter()
@@ -190,7 +209,78 @@ impl Transport for InMemoryTransport {
 
     fn requeue(&self, rx: &mut Self::Rx<'_>) -> Result<(), TransportError> {
         let frame = rx.current.take().ok_or(TransportError::Failed)?;
-        self.state.borrow_mut().frames.push_front(frame);
+        let wake = {
+            let mut state = self.network.state.borrow_mut();
+            let wake = state
+                .waiters
+                .iter()
+                .position(|waiter| waiter.is_for_frame(&frame))
+                .map(|index| state.waiters.swap_remove(index).waker);
+            state.frames.push_front(frame);
+            wake
+        };
+        if let Some(waker) = wake {
+            waker.wake();
+        }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn requeued_frame_wakes_the_waiting_replacement_receiver() {
+        use super::*;
+        use std::sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        };
+        use std::task::Wake;
+
+        struct CountWake(AtomicUsize);
+
+        impl Wake for CountWake {
+            fn wake(self: Arc<Self>) {
+                self.0.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+
+        let network = InMemoryTransport::new([]);
+        let session = SessionId::new(1);
+        let mut previous = Rx {
+            session,
+            lane: 0,
+            local_role: 2,
+            current: Some(Frame {
+                session,
+                lane: 0,
+                source: 3,
+                target: 2,
+                label: 0,
+                payload: vec![7],
+            }),
+        };
+        let mut replacement = Rx {
+            session,
+            lane: 0,
+            local_role: 2,
+            current: None,
+        };
+        let wake = Arc::new(CountWake(AtomicUsize::new(0)));
+        let waker = Waker::from(wake.clone());
+        let mut context = Context::from_waker(&waker);
+        assert!(
+            network
+                .poll_recv(&mut replacement, &mut context)
+                .is_pending()
+        );
+        network.requeue(&mut previous).unwrap();
+        assert!(previous.current.is_none());
+        assert_eq!(wake.0.load(Ordering::Relaxed), 1);
+        assert!(matches!(
+            network.poll_recv(&mut replacement, &mut context),
+            Poll::Ready(Ok(_))
+        ));
+        assert_eq!(replacement.current.unwrap().payload, [7]);
     }
 }

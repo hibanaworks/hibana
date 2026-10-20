@@ -2,7 +2,6 @@
 use super::{Global, SID};
 use crate::{
     endpoint::proof_snapshot::{ActorSnapshot, OperationCutSnapshot, operation_cut_source},
-    g::role_projection::RoleProjection,
     global::{compiled::images::RoleDescriptorRef, typestate::LocalAction},
     runtime::transport::FrameHeader,
     test_support::{lean_choreo::LeanChoreo, lean_descriptor::descriptor_source},
@@ -21,7 +20,8 @@ pub(super) fn write_observations(
     assert_eq!(snapshots[0].actor, 0);
     assert!(snapshots.iter().all(|cut| cut.actor == 0));
 
-    let image = RoleDescriptorRef::from_resident(&RoleProjection::<0, Global, 16>::IMAGE_REF);
+    let program = crate::runtime::program::project::<0>(&crate::g::Program::<Global>::new());
+    let image = RoleDescriptorRef::from_resident(program.role_image_ref());
     let mut source = std::format!(
         "import Hibana.SourcePublicationPrefix\n\nset_option maxRecDepth 10000\n\
          set_option maxHeartbeats 0\n\nopen Hibana Hibana.EndpointDelegation\n\n\

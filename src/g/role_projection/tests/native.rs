@@ -1,7 +1,7 @@
 //! Real processes share only kernel datagram queues, never runtime memory.
-//! The actor program remains the production image; only the unfinished public
-//! owned-acceptance guard is bypassed, as in the other owned execution tests.
-use super::{Loan, Read, RoleProjection, Value};
+//! Each role uses the normal public projection entry point. The type aliases
+//! retain this fixture's single global; no private role image bypass is used.
+use super::{Loan, Read, Value};
 use crate::{
     g,
     runtime::{SessionKitStorage, ids::SessionId},
@@ -74,16 +74,9 @@ impl Drop for ChildGuard {
 
 #[tokio::test(flavor = "current_thread")]
 async fn a_process_returns_the_endpoint_and_exits_before_its_continuation_runs() {
-    let () = g::ProgramProjection::<Global, 16>::VALIDATION;
-    let owner_program = crate::global::role_program::role_program_from_image::<0>(
-        &RoleProjection::<0, Global, 16>::IMAGE_REF,
-    );
-    let service_program = crate::global::role_program::role_program_from_image::<2>(
-        &RoleProjection::<2, Global, 16>::IMAGE_REF,
-    );
-    let db_program = crate::global::role_program::role_program_from_image::<10>(
-        &RoleProjection::<10, Global, 16>::IMAGE_REF,
-    );
+    let owner_program = crate::runtime::program::project::<0>(&g::Program::<Global>::new());
+    let service_program = crate::runtime::program::project::<2>(&g::Program::<Global>::new());
+    let db_program = crate::runtime::program::project::<10>(&g::Program::<Global>::new());
     let mailboxes = Mailboxes::new(&[0, 1, 2, 10], LANES).unwrap();
     let resource_path = mailboxes.directory().join("resource");
     let mut resource = OpenOptions::new()
@@ -260,13 +253,8 @@ async fn worker_process() {
         .map(|(_, socket)| socket.try_clone().unwrap())
         .collect();
     let io = NativeTransport::new(&directory, descriptors, None).unwrap();
-    let () = g::ProgramProjection::<Global, 16>::VALIDATION;
-    let worker_program = crate::global::role_program::role_program_from_image::<1>(
-        &RoleProjection::<1, Global, 16>::IMAGE_REF,
-    );
-    let db_program = crate::global::role_program::role_program_from_image::<10>(
-        &RoleProjection::<10, Global, 16>::IMAGE_REF,
-    );
+    let worker_program = crate::runtime::program::project::<1>(&g::Program::<Global>::new());
+    let db_program = crate::runtime::program::project::<10>(&g::Program::<Global>::new());
     let mut slab = vec![0; 64 * 1024];
     let mut storage = SessionKitStorage::uninit();
     let rv = storage.init().rendezvous(&mut slab, io).unwrap();

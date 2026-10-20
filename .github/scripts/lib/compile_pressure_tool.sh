@@ -8,7 +8,7 @@ if [[ ! -x "${BINARY}" || "${SOURCE}" -nt "${BINARY}" ]]; then
   mkdir -p "${BUILD_DIR}"
   temporary="$(mktemp "${BUILD_DIR}/compile-pressure.XXXXXX")"
   trap 'rm -f "${temporary}"' EXIT
-  rustc +"${TOOLCHAIN:-1.95.0}" --edition=2024 -O "${SOURCE}" -o "${temporary}"
+  rustc +"${TOOLCHAIN:-stable}" --edition=2024 -O "${SOURCE}" -o "${temporary}"
   mv -f "${temporary}" "${BINARY}"
 fi
 exec "${BINARY}" "$@"

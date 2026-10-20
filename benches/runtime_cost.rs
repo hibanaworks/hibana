@@ -72,7 +72,7 @@ async fn sequential<const S: usize>(
     let mut storage = SessionKitStorage::uninit();
     let rv = storage
         .init()
-        .rendezvous(&mut slab, InMemoryTransport::new())
+        .rendezvous(&mut slab, InMemoryTransport::new([]))
         .unwrap();
     let sid = SessionId::new(1710);
     let mut a = rv.enter(sid, a_program).unwrap();
@@ -118,7 +118,7 @@ async fn parallel<const S: usize>(
     let mut storage = SessionKitStorage::uninit();
     let rv = storage
         .init()
-        .rendezvous(&mut slab, InMemoryTransport::new())
+        .rendezvous(&mut slab, InMemoryTransport::new([]))
         .unwrap();
     let sid = SessionId::new(1711);
     let mut a = rv.enter(sid, a_program).unwrap();

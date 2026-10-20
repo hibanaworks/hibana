@@ -22,13 +22,8 @@ const WORKER: &str = "g::role_projection::tests::native::preemption::worker_proc
 
 #[tokio::test(flavor = "current_thread")]
 async fn receiver_finishes_before_the_sender_publishes_its_transfer() {
-    let () = g::ProgramProjection::<Global, 16>::VALIDATION;
-    let owner_program = crate::global::role_program::role_program_from_image::<0>(
-        &RoleProjection::<0, Global, 16>::IMAGE_REF,
-    );
-    let db_program = crate::global::role_program::role_program_from_image::<10>(
-        &RoleProjection::<10, Global, 16>::IMAGE_REF,
-    );
+    let owner_program = crate::runtime::program::project::<0>(&g::Program::<Global>::new());
+    let db_program = crate::runtime::program::project::<10>(&g::Program::<Global>::new());
     let mailboxes = Mailboxes::new(&[0, 1, 10], LANES).unwrap();
     // SAFETY: this test owns the resource namespace and the only initial
     // issuer. The child is reaped before its queues and binding are destroyed.
@@ -167,16 +162,9 @@ async fn receiver_finishes_before_the_sender_publishes_its_transfer() {
 async fn an_accepted_transport_error_releases_only_a_faulted_actor() {
     use crate::{rendezvous::SessionFaultKind, runtime::transport::TransportError};
 
-    let () = g::ProgramProjection::<Global, 16>::VALIDATION;
-    let owner_program = crate::global::role_program::role_program_from_image::<0>(
-        &RoleProjection::<0, Global, 16>::IMAGE_REF,
-    );
-    let worker_program = crate::global::role_program::role_program_from_image::<1>(
-        &RoleProjection::<1, Global, 16>::IMAGE_REF,
-    );
-    let db_program = crate::global::role_program::role_program_from_image::<10>(
-        &RoleProjection::<10, Global, 16>::IMAGE_REF,
-    );
+    let owner_program = crate::runtime::program::project::<0>(&g::Program::<Global>::new());
+    let worker_program = crate::runtime::program::project::<1>(&g::Program::<Global>::new());
+    let db_program = crate::runtime::program::project::<10>(&g::Program::<Global>::new());
     let mailboxes = Mailboxes::new(&[0, 1, 10], LANES).unwrap();
     // SAFETY: this test owns the only issuer and the entire physical queue
     // namespace. Both runtimes are destroyed before that namespace is removed.
@@ -281,13 +269,8 @@ async fn worker_process() {
         })
         .collect();
     let io = NativeTransport::new(&directory, descriptors, None).unwrap();
-    let () = g::ProgramProjection::<Global, 16>::VALIDATION;
-    let worker_program = crate::global::role_program::role_program_from_image::<1>(
-        &RoleProjection::<1, Global, 16>::IMAGE_REF,
-    );
-    let db_program = crate::global::role_program::role_program_from_image::<10>(
-        &RoleProjection::<10, Global, 16>::IMAGE_REF,
-    );
+    let worker_program = crate::runtime::program::project::<1>(&g::Program::<Global>::new());
+    let db_program = crate::runtime::program::project::<10>(&g::Program::<Global>::new());
     let mut slab = vec![0; 64 * 1024];
     let mut storage = SessionKitStorage::uninit();
     let rv = storage.init().rendezvous(&mut slab, io).unwrap();

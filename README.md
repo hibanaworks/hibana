@@ -112,6 +112,55 @@ Protocols can also describe choices, independent communication in parallel,
 and repetition. Participant code uses the same `send`, `recv`, and `offer`
 operations.
 
+## Passing an Endpoint
+
+On this development branch, a message can carry an Endpoint. Sending it moves
+the right to use that logical role. The receiver continues the same protocol
+at its current position.
+
+For example, `OWNER` lends its `DB` Endpoint to `WORKER`. The worker sends a
+request as `DB`, receives the service's reply, and returns the Endpoint:
+
+```rust
+type Loan<'r> = g::Msg<1, hibana::Endpoint<'r, DB>>;
+type Read = g::Msg<2, u32>;
+type Value = g::Msg<3, u32>;
+
+let query = g::seq(g::send::<DB, SERVICE, Read>(), g::send::<SERVICE, DB, Value>());
+let global = g::seq(
+    g::send::<OWNER, WORKER, Loan<'_>>(),
+    g::seq(query, g::seq(g::send::<WORKER, OWNER, Loan<'_>>(), query)),
+);
+```
+
+The owner's code moves the value into `send` and receives it back:
+
+```rust
+owner.send::<Loan<'_>>(db).await?;
+let mut db = owner.recv::<Loan<'_>>().await?;
+db.send::<Read>(&41).await?;
+let answer = db.recv::<Value>().await?;
+```
+
+The worker uses the same `send` and `recv` operations:
+
+```rust
+let mut db = worker.recv::<Loan<'_>>().await?;
+db.send::<Read>(&7).await?;
+let answer = db.recv::<Value>().await?;
+worker.send::<Loan<'_>>(db).await?;
+```
+
+Rust prevents use of the moved value. Hibana checks the transfer, the holder
+and the continuation against the global protocol. The resource integration
+supplies one initial `EndpointBinding`; receivers do not create another one.
+Sending an Endpoint does not send its Rust address.
+
+The [complete Tokio example](examples/endpoint_delegation.rs) also uses `g::par`
+and `db.par()` to send an audit record while a query waits for its reply.
+It supplies separate runtimes and a shared in-memory carrier. Run it in this
+checkout with `cargo run --locked --example endpoint_delegation`.
+
 ## Using it over QUIC
 
 The [hello-quic example](https://github.com/hibanaworks/hibana-quic/tree/main/examples/hello-quic)
@@ -474,7 +523,26 @@ Hibana does not perform a handshake to establish this agreement.
 Reusing a `SessionId` requires fresh transport state that cannot expose frames
 from its previous run. Changing the participant set or protocol requires a
 fresh session. Address migration can stay within a run if the transport
-preserves its guarantees. Channel delegation is not supported by this model.
+preserves its guarantees. An Endpoint payload can transfer a logical role's
+operation right while preserving its protocol continuation.
+
+The physical resource integration owns its sole initial `EndpointBinding`.
+All runtime instances and role aliases that can initially issue that resource
+must use the same authority. Remote holders receive the right and do not
+construct another binding. Its unsafe constructor requires the integration to enforce that
+physical uniqueness; the core cannot infer aliases between device or remote
+handles. Drop, timeout, runtime replacement and a new `SessionId` do not
+replenish an issued binding. Replacing it requires fencing all old rights and
+accepted frames at the physical boundary.
+
+An owned `send` future takes its Endpoint payload when constructed. The old
+holder cannot use it while the send is pending. Acceptance moves authority
+to the frame, and a validated receive publishes it in the receiver's runtime.
+Error or cancellation does not return the Endpoint to the sender. A deadline
+does not prove non-delivery. The carrier must preserve the logical receive
+direction, including earlier accepted frames, across holder changes. Separate
+machines need no shared Rust memory, but their carrier must provide this
+receive continuity as well as FIFO, non-replay and run isolation.
 
 The runtime uses caller-supplied storage and borrowed buffers, with no heap
 fallback. Endpoints are tied to their local runtime and are neither `Send`
@@ -530,12 +598,13 @@ properties for their models. The global results apply to the exact generated
 protocol data accepted by an independent checker. Successful Rust projection
 alone does not prove distributed deadlock freedom.
 
-The earlier distributed `roll` model requires a common reset boundary. It does
-not cover every schedule where roles enter new visits independently while old
-messages remain unread. The finite occurrence model and bounded Endpoint/model
-comparisons cover selected such schedules. A general refinement for all of
-them is still unfinished. The progress claim below applies within the selected
-model's scope and premises.
+The earlier distributed `roll` model requires a common reset boundary. The
+finite-occurrence model instead allows independently advancing visits and old
+unread messages. For accepted finite unfoldings, it combines source progress
+with the current authority needed by a retained resource operation. Actual
+Endpoint/model comparisons, Rust ownership checks, Miri and focused Kani checks
+support the implementation boundary. They do not prove all Rust executions.
+The progress claim below applies within the selected model's scope and premises.
 
 Applying these results to a running system requires:
 

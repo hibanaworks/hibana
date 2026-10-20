@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${ROOT_DIR}"
-TOOLCHAIN="${TOOLCHAIN:-1.95.0}"
+TOOLCHAIN="${TOOLCHAIN:-stable}"
 PACKAGE_WORK="$(mktemp -d "${TMPDIR:-/tmp}/hibana-package.XXXXXX")"
 PACKAGE_TARGET="${PACKAGE_WORK}/target"
 cleanup_package() {

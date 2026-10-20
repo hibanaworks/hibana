@@ -12,16 +12,9 @@ const AFTER: &str = "g::role_projection::tests::native::failure::worker_exits_af
 
 #[tokio::test(flavor = "current_thread")]
 async fn a_remote_holder_loss_is_observable_without_reissuing_its_endpoint() {
-    let () = g::ProgramProjection::<Global, 8>::VALIDATION;
-    let owner_program = crate::global::role_program::role_program_from_image::<0>(
-        &RoleProjection::<0, Global, 8>::IMAGE_REF,
-    );
-    let service_program = crate::global::role_program::role_program_from_image::<2>(
-        &RoleProjection::<2, Global, 8>::IMAGE_REF,
-    );
-    let db_program = crate::global::role_program::role_program_from_image::<10>(
-        &RoleProjection::<10, Global, 8>::IMAGE_REF,
-    );
+    let owner_program = crate::runtime::program::project::<0>(&g::Program::<Global>::new());
+    let service_program = crate::runtime::program::project::<2>(&g::Program::<Global>::new());
+    let db_program = crate::runtime::program::project::<10>(&g::Program::<Global>::new());
     // Failure injection belongs to the test harness. Both cases execute the
     // same global and the same parent localsides with no protocol mode flag.
     for worker_test in [BEFORE, AFTER] {
@@ -213,10 +206,7 @@ async fn worker_exits_after_receipt() {
         })
         .collect();
     let io = NativeTransport::new(&directory, descriptors, None).unwrap();
-    let () = g::ProgramProjection::<Global, 8>::VALIDATION;
-    let worker_program = crate::global::role_program::role_program_from_image::<1>(
-        &RoleProjection::<1, Global, 8>::IMAGE_REF,
-    );
+    let worker_program = crate::runtime::program::project::<1>(&g::Program::<Global>::new());
     let mut slab = vec![0; 64 * 1024];
     let mut storage = SessionKitStorage::uninit();
     let rv = storage.init().rendezvous(&mut slab, io).unwrap();

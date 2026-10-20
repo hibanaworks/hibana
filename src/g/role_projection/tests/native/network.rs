@@ -2,7 +2,7 @@
 //! physical service and byte-inbox processes. No file, queue descriptor,
 //! shared Rust memory or EndpointBinding crosses a process boundary. This is
 //! a loopback network-inbox fixture, not arbitrary transport qualification.
-use super::{Global, Loan, Queued, Read, RoleProjection, Value, g};
+use super::{Global, Loan, Queued, Read, Value, g};
 use crate::runtime::{SessionKitStorage, ids::SessionId};
 use std::{net::SocketAddr, process::Command, string::ToString, time::Duration, vec};
 
@@ -21,13 +21,8 @@ const BROKER: &str = "g::role_projection::tests::native::network::broker_process
 
 #[tokio::test(flavor = "current_thread")]
 async fn tcp_handoff_preserves_an_unread_frame_after_the_sender_process_exits() {
-    let () = g::ProgramProjection::<Global, 16>::VALIDATION;
-    let owner_program = crate::global::role_program::role_program_from_image::<0>(
-        &RoleProjection::<0, Global, 16>::IMAGE_REF,
-    );
-    let db_program = crate::global::role_program::role_program_from_image::<10>(
-        &RoleProjection::<10, Global, 16>::IMAGE_REF,
-    );
+    let owner_program = crate::runtime::program::project::<0>(&g::Program::<Global>::new());
+    let db_program = crate::runtime::program::project::<10>(&g::Program::<Global>::new());
     let broker = Broker::start(BROKER).await;
     let mut service_process = Process(
         Command::new(std::env::current_exe().unwrap())
@@ -135,13 +130,8 @@ async fn service_process() {
         .unwrap()
         .parse()
         .unwrap();
-    let () = g::ProgramProjection::<Global, 16>::VALIDATION;
-    let service_program = crate::global::role_program::role_program_from_image::<2>(
-        &RoleProjection::<2, Global, 16>::IMAGE_REF,
-    );
-    let db_program = crate::global::role_program::role_program_from_image::<10>(
-        &RoleProjection::<10, Global, 16>::IMAGE_REF,
-    );
+    let service_program = crate::runtime::program::project::<2>(&g::Program::<Global>::new());
+    let db_program = crate::runtime::program::project::<10>(&g::Program::<Global>::new());
     let mut value = 41u32;
     // SAFETY: this process exclusively owns value and its initial issuer.
     // The final return is received and dropped before the binding ends.
@@ -179,13 +169,8 @@ async fn worker_process() {
         .unwrap()
         .parse()
         .unwrap();
-    let () = g::ProgramProjection::<Global, 16>::VALIDATION;
-    let worker_program = crate::global::role_program::role_program_from_image::<1>(
-        &RoleProjection::<1, Global, 16>::IMAGE_REF,
-    );
-    let db_program = crate::global::role_program::role_program_from_image::<10>(
-        &RoleProjection::<10, Global, 16>::IMAGE_REF,
-    );
+    let worker_program = crate::runtime::program::project::<1>(&g::Program::<Global>::new());
+    let db_program = crate::runtime::program::project::<10>(&g::Program::<Global>::new());
     let mut slab = vec![0; 64 * 1024];
     let mut storage = SessionKitStorage::uninit();
     let rv = storage
