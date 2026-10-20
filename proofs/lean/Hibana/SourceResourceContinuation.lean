@@ -27,18 +27,68 @@ theorem successful_option_mapM_has_input
               · obtain ⟨input, belongs, mapped⟩ := ih tailAt output member
                 exact ⟨input, List.mem_cons_of_mem head belongs, mapped⟩
 
+private theorem inserting_issuance_keeps_its_exact_lookup
+    (value : Issuance) (rows : List Issuance) (key : EndpointKey) :
+    (insertIssuance value rows).find? (fun entry => entry.endpoint == key) =
+      if value.endpoint == key then some value else rows.find? (fun entry => entry.endpoint == key) := by
+  induction rows with
+  | nil => simp [insertIssuance]
+  | cons head tail ih =>
+    by_cases own : value.endpoint = key
+    · subst key
+      by_cases before : issuanceOrder value head = true
+      · simp [insertIssuance, before]
+      · have different : head.endpoint ≠ value.endpoint := by
+          intro same
+          simp [issuanceOrder, same] at before
+        simp [insertIssuance, before, different, ih]
+    · cases before : issuanceOrder value head with
+      | true => simp [insertIssuance, before, own]
+      | false =>
+        simp only [insertIssuance, before, Bool.false_eq_true, ite_false]
+        rw [List.find?_cons, List.find?_cons]
+        cases head.endpoint == key <;> simp [own, ih]
+
+private theorem sorting_issuance_keeps_its_exact_lookup
+    (rows : List Issuance) (key : EndpointKey) :
+    (sortIssuance rows).find? (fun entry => entry.endpoint == key) =
+      rows.find? (fun entry => entry.endpoint == key) := by
+  induction rows with
+  | nil => rfl
+  | cons head tail ih =>
+    simp only [sortIssuance, inserting_issuance_keeps_its_exact_lookup, ih, List.find?_cons]
+    cases head.endpoint == key <;> rfl
+
+private theorem sorting_issuance_preserves_instantiation
+    (rows : List Issuance) (owner : OwnerExpr) :
+    instantiate (sortIssuance rows) owner = instantiate rows owner := by
+  cases owner with
+  | actor => rfl
+  | initial key => simp only [instantiate, issuer?, sorting_issuance_keeps_its_exact_lookup]
+
+private theorem sorting_issuance_preserves_binding
+    (rows : List Issuance) (binding : SymbolicBinding) :
+    instantiateBinding (sortIssuance rows) binding = instantiateBinding rows binding := by
+  simp only [instantiateBinding, sorting_issuance_preserves_instantiation]
+
+private theorem sorting_issuance_preserves_equation
+    (rows : List Issuance) (equation : Equation) :
+    equationAccepted (sortIssuance rows) equation = equationAccepted rows equation := by
+  simp only [equationAccepted, sorting_issuance_preserves_instantiation]
+
 /-- Each accepted normalized path comes from an actual selected source
 elaboration with solved ownership equations and a total binding instantiation.
-Continuation proofs therefore do not need a separately assumed source path. -/
-theorem accepted_normalized_path_has_a_solved_source_derivation
+The exposed, sorted issuance is exactly the one used to interpret every owner;
+sorting preserves even a first matching lookup, without a uniqueness premise. -/
+theorem accepted_normalized_path_has_its_exact_issuance_derivation
     {source : Source} {normalized : Normalization} {selected : NormalizedPath}
     (accepted : normalize source = some normalized)
     (member : selected ∈ normalized.paths) :
-    ∃ issuance run,
+    ∃ run,
       elaborate source.resources (initialOwners source.resources) selected.selections source 0 = some run ∧
-      run.equations.all (equationAccepted issuance) = true ∧
+      run.equations.all (equationAccepted normalized.issuance) = true ∧
       (run.bindings.mapM fun (event, symbolic) => do
-        let binding ← instantiateBinding issuance symbolic
+        let binding ← instantiateBinding normalized.issuance symbolic
         some (event, binding)) = some selected.bindings := by
   change ((paths (source.scopes 0)).mapM fun selections => do
     let run ← elaborate source.resources (initialOwners source.resources) selections source 0
@@ -66,11 +116,29 @@ theorem accepted_normalized_path_has_a_solved_source_derivation
       dsimp only at selectionsSame sourceRunSame
       subst sourceSelections
       subst sourceRun
-      refine ⟨issuance, run, sourceAt, ?_, bindingsAt⟩
-      apply List.all_eq_true.mpr
-      intro equation equationMember
-      exact List.all_eq_true.mp solved equation
-        (List.mem_flatMap.mpr ⟨(selections, run), runMember, equationMember⟩)
+      refine ⟨run, sourceAt, ?_, ?_⟩
+      · apply List.all_eq_true.mpr
+        intro equation equationMember
+        rw [sorting_issuance_preserves_equation]
+        exact List.all_eq_true.mp solved equation
+          (List.mem_flatMap.mpr ⟨(selections, run), runMember, equationMember⟩)
+      · simpa only [sorting_issuance_preserves_binding] using bindingsAt
+
+/-- The older existential form follows from the exact normalizer output;
+there is no independently selected initial issuance. -/
+theorem accepted_normalized_path_has_a_solved_source_derivation
+    {source : Source} {normalized : Normalization} {selected : NormalizedPath}
+    (accepted : normalize source = some normalized)
+    (member : selected ∈ normalized.paths) :
+    ∃ issuance run,
+      elaborate source.resources (initialOwners source.resources) selected.selections source 0 = some run ∧
+      run.equations.all (equationAccepted issuance) = true ∧
+      (run.bindings.mapM fun (event, symbolic) => do
+        let binding ← instantiateBinding issuance symbolic
+        some (event, binding)) = some selected.bindings := by
+  obtain ⟨run, elaborated, solved, mapped⟩ :=
+    accepted_normalized_path_has_its_exact_issuance_derivation accepted member
+  exact ⟨normalized.issuance, run, elaborated, solved, mapped⟩
 
 theorem decoded_actor_order_retains_its_normalized_source
     {image : RustDescriptorImage} {choreo : Choreo} {data : DecodedActorOrder}

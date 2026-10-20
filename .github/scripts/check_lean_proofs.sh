@@ -80,7 +80,7 @@ bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" build-serial "${PROOF_
 bash "${ROOT_DIR}/.github/scripts/check_lean_claim_surface.sh"
 static_audit_output="$(run_audit \
   theorem-inventory \
-  --static "${PROOF_DIR}" "${STATIC_CLAIM_SNAPSHOT}" 1184 732 335 117)"
+  --static "${PROOF_DIR}" "${STATIC_CLAIM_SNAPSHOT}" 1188 736 335 117)"
 printf '%s\n' "${static_audit_output}"
 printf '%s\n' "${static_audit_output}" | bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard markers static
 bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" theorem-inventory \
@@ -327,7 +327,7 @@ run_audit generated-axioms --kernel "${MIXED_SEND_ADMISSION_GENERATED}" "${PROOF
   "${PROOF_DIR}/mixed-send-admission-generated-claim-surface.txt" 22
 bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${DISTRIBUTED_SOURCE_GENERATED}" "joint distributed source boundaries"
 run_audit generated-axioms --kernel "${DISTRIBUTED_SOURCE_GENERATED}" "${PROOF_DIR}" \
-  "${PROOF_DIR}/distributed-source-generated-claim-surface.txt" 23
+  "${PROOF_DIR}/distributed-source-generated-claim-surface.txt" 25
 CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib \
   g::role_projection::tests::native::network::preemption::a_tcp_receiver_returns_the_resource_while_the_send_is_pending_between_polls \
   -- --exact

@@ -68,7 +68,13 @@ def distributedOccurrencePoints : List SourcePoint := [
   .accepted 6, .committed ⟨6, .send⟩, .committed ⟨6, .receive⟩,
   .accepted 7, .committed ⟨7, .send⟩, .committed ⟨7, .receive⟩]
 
-theorem distributedLocalProjectionReconstructsItsOccurrenceHistory :
+private theorem distributedCapturedOccurrencePrefixes :
+    SourceOccurrenceTrace distributedImages distributedChoreo distributedOccurrencePlan
+      (distributedOccurrenceWord.take 9) (distributedOccurrenceCalls.take 3)
+      (distributedOccurrencePoints.take 9) ∧
+    SourceOccurrenceTrace distributedImages distributedChoreo distributedOccurrencePlan
+      (distributedOccurrenceWord.take 18) (distributedOccurrenceCalls.take 6)
+      (distributedOccurrencePoints.take 18) ∧
     SourceOccurrenceTrace distributedImages distributedChoreo distributedOccurrencePlan
       distributedOccurrenceWord distributedOccurrenceCalls distributedOccurrencePoints := by
   have h0 : SourceOccurrenceTrace distributedImages distributedChoreo distributedOccurrencePlan [] [] [] :=
@@ -121,7 +127,112 @@ theorem distributedLocalProjectionReconstructsItsOccurrenceHistory :
     (record := distributedCommit14) (occurrence := 7) h22 (by decide) (by decide) (by decide)
   have h24 := SourceOccurrenceTrace.receive (key := distributedEntry14.callKey) (actor := 0)
     (record := distributedCommit15) (occurrence := 7) h23 (by decide) (by decide) (by decide)
-  exact h24
+  exact ⟨h9, h18, h24⟩
+
+theorem distributedLocalProjectionReconstructsItsOccurrenceHistory :
+    SourceOccurrenceTrace distributedImages distributedChoreo distributedOccurrencePlan
+      distributedOccurrenceWord distributedOccurrenceCalls distributedOccurrencePoints :=
+  distributedCapturedOccurrencePrefixes.2.2
+
+private def distributedOccurrenceElaboration :=
+  (elaborate distributedOccurrencePlan.expanded.resources
+    (initialOwners distributedOccurrencePlan.expanded.resources)
+    distributedOccurrencePlan.path.selections distributedOccurrencePlan.expanded 0).get (by decide)
+
+private def distributedFirstSymbolicBinding := distributedOccurrenceElaboration.bindings[0].2
+
+private theorem distributedResourceOriginAt
+    {word calls points target binding action}
+    (trace : SourceOccurrenceTrace distributedImages distributedChoreo
+      distributedOccurrencePlan word calls points)
+    (located : distributedOccurrencePlan.path.bindings.find?
+      (fun entry => entry.1 == target.event) = some (target.event, binding))
+    (decoded : action? distributedOccurrencePlan.path.bindings target = some action)
+    (required : match target.side with
+      | .receive => binding.message.receiver = ⟨0, 10⟩
+      | .send => binding.message.sender = ⟨0, 10⟩ ∨ binding.message.payload = .endpoint ⟨0, 10⟩
+      | .local => binding.message.sender = ⟨0, 10⟩)
+    (ready : occurrenceLocalReady distributedOccurrencePlan action.actor
+      (occurrenceLocalHistory distributedOccurrencePlan action.actor points) target.entryPoint = true)
+    (wire : occurrenceWireReady points target.entryPoint = true)
+    (notFirst : target.event ≠ 0) (actorAt : action.actor = 0) :
+    ∃ occurrence key record,
+      SourcePointEdge distributedOccurrencePlan.expanded distributedOccurrencePlan.path.bindings
+        (.committed ⟨occurrence, .receive⟩) target.entryPoint ∧
+      points.contains (.committed ⟨occurrence, .receive⟩) = true ∧
+      .receive key 0 record ∈ word ∧
+      distributedOccurrencePlan.matchesAction distributedImage0 distributedChoreo 0
+        record.step.pathIndex record.step.event occurrence .receive = true ∧
+      occurrenceCall? calls key = some occurrence := by
+  obtain ⟨run, index, symbolic, elaborated, indexAt, _, _, _, origin⟩ :=
+    a_ready_occurrence_resource_has_its_initial_owner_or_same_word_receipt
+      trace located decoded required ready wire
+  rcases origin with initial | received
+  · have actualRun : run = distributedOccurrenceElaboration := Option.some.inj
+      (elaborated.symm.trans (Option.some_get _).symm)
+    subst run
+    cases index with
+    | zero =>
+      have firstAt : distributedOccurrenceElaboration.bindings[0]? =
+          some (0, distributedFirstSymbolicBinding) := by decide
+      have same := Option.some.inj (indexAt.symm.trans firstAt)
+      exact False.elim (notFirst (congrArg Prod.fst same))
+    | succ index =>
+      have firstAt : distributedOccurrenceElaboration.bindings[0]? =
+          some (0, distributedFirstSymbolicBinding) := by decide
+      have firstIn : (0, distributedFirstSymbolicBinding) ∈
+          distributedOccurrenceElaboration.bindings.take (index + 1) := by
+        apply List.mem_of_getElem? (i := 0)
+        simpa only [List.getElem?_take, Nat.zero_lt_succ, ite_true] using firstAt
+      exact False.elim (initial.2 _ firstIn (by decide))
+  · obtain ⟨occurrence, previousBinding, previousAction, earlier, previous, later, key, record,
+      _, _, _, _, _, _, _, _, edge, observed, inWord, matched, callAt⟩ := received
+    exact ⟨occurrence, key, record, edge, observed,
+      by simpa only [actorAt] using inWord, by simpa only [actorAt] using matched, callAt⟩
+
+/-- Fresh loan preparation and the later DB use require the received resource
+from these actual prefixes. Initial issuance cannot replace either return.
+The general origin theorem retains the last-handoff interval; this checks it
+on the same two-visit Endpoint execution, without a new fixture or owner flag. -/
+theorem distributedFreshResourceUsesHaveSameWordReceipts :
+    (∃ occurrence key record,
+      SourcePointEdge distributedOccurrencePlan.expanded distributedOccurrencePlan.path.bindings
+        (.committed ⟨occurrence, .receive⟩) (.accepted 3) ∧
+      (distributedOccurrencePoints.take 9).contains (.committed ⟨occurrence, .receive⟩) = true ∧
+      .receive key 0 record ∈ distributedOccurrenceWord.take 9 ∧
+      distributedOccurrencePlan.matchesAction distributedImage0 distributedChoreo 0
+        record.step.pathIndex record.step.event occurrence .receive = true ∧
+      occurrenceCall? (distributedOccurrenceCalls.take 3) key = some occurrence) ∧
+    (∃ occurrence key record,
+      SourcePointEdge distributedOccurrencePlan.expanded distributedOccurrencePlan.path.bindings
+        (.committed ⟨occurrence, .receive⟩) (.accepted 6) ∧
+      (distributedOccurrencePoints.take 18).contains (.committed ⟨occurrence, .receive⟩) = true ∧
+      .receive key 0 record ∈ distributedOccurrenceWord.take 18 ∧
+      distributedOccurrencePlan.matchesAction distributedImage0 distributedChoreo 0
+        record.step.pathIndex record.step.event occurrence .receive = true ∧
+      occurrenceCall? (distributedOccurrenceCalls.take 6) key = some occurrence) := by
+  constructor
+  · exact distributedResourceOriginAt (target := ⟨3, .send⟩)
+      (binding := distributedOccurrencePlan.path.bindings[3].2)
+      (action := { actor := 0, endpoint := ⟨0, 0⟩, side := .send })
+      distributedCapturedOccurrencePrefixes.1 (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) rfl
+
+  · exact distributedResourceOriginAt (target := ⟨6, .send⟩)
+      (binding := distributedOccurrencePlan.path.bindings[6].2)
+      (action := { actor := 0, endpoint := ⟨0, 10⟩, side := .send })
+      distributedCapturedOccurrencePrefixes.2.1 (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) rfl
+
+/-- Equal static receive identity is deliberately insufficient: the first
+return still matches the repeated source row, but its actual call resolves to
+occurrence 2, not the second return at occurrence 5. -/
+theorem distributedResourceOriginRejectsAnOldEqualReceipt :
+    distributedOccurrencePlan.matchesAction distributedImage0 distributedChoreo 0
+      distributedCommit5.step.pathIndex distributedCommit5.step.event 5 .receive = true ∧
+    occurrenceCall? (distributedOccurrenceCalls.take 6) distributedEntry4.callKey = some 2 ∧
+    occurrenceCall? (distributedOccurrenceCalls.take 6) distributedEntry4.callKey ≠ some 5 := by
+  decide
 
 /-- No ordinary frame or measured commit was dropped from this qualification.
 Both loan visits and the later resource operation finish in the source model.

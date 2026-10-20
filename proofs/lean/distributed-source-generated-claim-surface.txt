@@ -87,6 +87,28 @@ distributedFreshReceiptResetsEvenWhenItsRowBitStaysTrue : distributedBefore8.don
   distributedAfter8.doneState.done 0 = true ∧
     distributedBefore8.progress ≠ distributedAfter8.progress ∧
       distributedPreparedPair8.snd.before.doneState.done 0 = false
+distributedFreshResourceUsesHaveSameWordReceipts : (∃ occurrence key record,
+    SourcePointEdge distributedOccurrencePlan.expanded distributedOccurrencePlan.path.bindings
+        (SourcePoint.committed { event := occurrence, side := Side.receive }) (SourcePoint.accepted 3) ∧
+      (List.take 9 distributedOccurrencePoints).contains
+            (SourcePoint.committed { event := occurrence, side := Side.receive }) =
+          true ∧
+        DistributedCallBoundary.receive key 0 record ∈ List.take 9 distributedOccurrenceWord ∧
+          distributedOccurrencePlan.matchesAction distributedImage0 distributedChoreo 0 record.step.pathIndex
+                record.step.event occurrence Side.receive =
+              true ∧
+            occurrenceCall? (List.take 3 distributedOccurrenceCalls) key = some occurrence) ∧
+  ∃ occurrence key record,
+    SourcePointEdge distributedOccurrencePlan.expanded distributedOccurrencePlan.path.bindings
+        (SourcePoint.committed { event := occurrence, side := Side.receive }) (SourcePoint.accepted 6) ∧
+      (List.take 18 distributedOccurrencePoints).contains
+            (SourcePoint.committed { event := occurrence, side := Side.receive }) =
+          true ∧
+        DistributedCallBoundary.receive key 0 record ∈ List.take 18 distributedOccurrenceWord ∧
+          distributedOccurrencePlan.matchesAction distributedImage0 distributedChoreo 0 record.step.pathIndex
+                record.step.event occurrence Side.receive =
+              true ∧
+            occurrenceCall? (List.take 6 distributedOccurrenceCalls) key = some occurrence
 distributedLocalProjectionReconstructsItsOccurrenceHistory : SourceOccurrenceTrace distributedImages distributedChoreo
   distributedOccurrencePlan distributedOccurrenceWord distributedOccurrenceCalls distributedOccurrencePoints
 distributedMixedCutKeepsIndependentActorVisits : (distributedCut13.actors 0).snd = 9 ∧
@@ -127,3 +149,8 @@ distributedProspectiveReceiptHasItsSourceInstanceBeforePairValidation : ∃ hist
                     SendAdmissionTrace distributedChoreo 9062 distributedTransport14 following
                       (sourceChannelRecords distributedEntries13 distributedChannel8)
 distributedRepeatedLoanHasIdenticalBytes : distributedWire0 = distributedWire6 ∧ distributedWire6 = distributedWire8
+distributedResourceOriginRejectsAnOldEqualReceipt : distributedOccurrencePlan.matchesAction distributedImage0
+      distributedChoreo 0 distributedCommit5.step.pathIndex distributedCommit5.step.event 5 Side.receive =
+    true ∧
+  occurrenceCall? (List.take 6 distributedOccurrenceCalls) distributedEntry4.callKey = some 2 ∧
+    occurrenceCall? (List.take 6 distributedOccurrenceCalls) distributedEntry4.callKey ≠ some 5

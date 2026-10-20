@@ -1461,6 +1461,27 @@ fixture applies the general theorem to both the read and the later return.
 This establishes the receipt boundary, not possession at the final cut; that
 still requires its subsequent transfer/fault history and visit correspondence.
 
+`OccurrenceResourceOrigin.lean` derives this causal origin for an accepted
+finite unfolding, without aligning the actors' visits. Expansion preserves
+each resource's original initial owner, including overlapping continuations.
+The normalization result exposes its exact sorted issuance; sorting does not
+change owner lookup, solved equations or instantiated bindings. No second
+issuance is chosen to explain the expanded execution.
+
+For a projected resource operation, the result derives original issuance with
+no earlier handoff, or the last preceding source handoff and its actual receive
+boundary in the same chronological word. Its receive actor, occurrence and
+actual carrier call lookup are retained together with the source interval
+containing no intervening handoff.
+An equal envelope from another visit cannot replace that occurrence. The
+existing three-runtime execution applies this result before the fresh second
+loan and the later DB operation; neither origin can be initial issuance.
+The negative control retains an old return that still matches the repeated
+static receive identity, but whose call resolves to the earlier occurrence.
+These are causal receipt origins, not a proof that the received value is still
+usable at the final cut. The subsequent custody/transfer/retirement history and
+general runtime-to-occurrence correspondence must still be composed.
+
 `SourceHandoffInterval.lean` connects that static interval to measured progress.
 For an accepted source, every competing handoff of the same resource is before
 the last receipt, that receipt itself, the intended target, or causally after
