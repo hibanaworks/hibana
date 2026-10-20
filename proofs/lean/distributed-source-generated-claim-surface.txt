@@ -148,6 +148,17 @@ distributedProspectiveReceiptHasItsSourceInstanceBeforePairValidation : ∃ hist
                   history.receive? = some (key, following) ∧
                     SendAdmissionTrace distributedChoreo 9062 distributedTransport14 following
                       (sourceChannelRecords distributedEntries13 distributedChannel8)
+distributedRepeatedHandoffsRejectAForgottenReceipt : ¬SourceOccurrenceTrace distributedImages distributedChoreo
+    distributedOccurrencePlan (List.take 18 distributedOccurrenceWord) (List.take 6 distributedOccurrenceCalls)
+    (List.filter (fun point => decide (point ≠ SourcePoint.committed { event := 2, side := Side.receive }))
+      (List.take 18 distributedOccurrencePoints))
+distributedRepeatedHandoffsRetainTheirCausalReceipts : SourcePoint.committed { event := 0, side := Side.receive } ∈
+    distributedOccurrencePoints ∧
+  SourcePoint.committed { event := 2, side := Side.receive } ∈ List.take 18 distributedOccurrencePoints ∧
+    (occurrenceCut distributedOccurrencePlan distributedOccurrencePoints).ready (SourcePoint.accepted 0) = false ∧
+      (occurrenceCut distributedOccurrencePlan (List.take 18 distributedOccurrencePoints)).ready
+          (SourcePoint.accepted 2) =
+        false
 distributedRepeatedLoanHasIdenticalBytes : distributedWire0 = distributedWire6 ∧ distributedWire6 = distributedWire8
 distributedResourceOriginRejectsAnOldEqualReceipt : distributedOccurrencePlan.matchesAction distributedImage0
       distributedChoreo 0 distributedCommit5.step.pathIndex distributedCommit5.step.event 5 Side.receive =

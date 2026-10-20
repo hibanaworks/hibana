@@ -1501,7 +1501,25 @@ The negative control retains an old return that still matches the repeated
 static receive identity, but whose call resolves to the earlier occurrence.
 These causal origins alone do not establish current possession.
 
-The same module now uses the retained call lookup and physical acceptance
+`ResourceOccurrenceCausality.lean` closes the earlier-handoff side of that
+interval for an accepted finite unfolding. Every earlier transfer of the
+same resource has a causal path from its receipt to a later transfer's
+acceptance. The proof follows the source's last-receipt chain; it does not
+order independent resources or require sender publication before delivery.
+Closure is derived from the same actual `SourceOccurrenceTrace`, so recording
+the later acceptance retains all those earlier receipts and prevents an old
+acceptance from becoming ready again. It needs no common actor visit, live
+Rust value or successful final admission as an input.
+
+The existing captured two-visit execution applies this result to both loans
+and both returns. A negative control keeps the later return but removes the
+earlier return's receipt; that altered history cannot be a source trace.
+This retains the carrier's FIFO, replay exclusion and run separation
+assumptions; it does not add wire-level duplicate suppression.
+This closes a causal interval obligation, not current possession or general
+runtime-to-occurrence, enabled-operation and fault/closure composition.
+
+`OccurrenceResourceOrigin.lean` also uses the retained call lookup and physical acceptance
 check to derive the sender's exact owned resource from its source message.
 Every acceptance with that call has the same occurrence. Consequently the
 corresponding receive cannot hide as an untracked ordinary boundary in the

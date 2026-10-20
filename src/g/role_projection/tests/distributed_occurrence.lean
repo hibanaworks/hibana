@@ -309,4 +309,51 @@ theorem distributedCandidateCorrespondenceRejectsOldProgress :
         decide (point ≠ .committed ⟨3, .send⟩)) ⟨4, .send⟩ = false := by
   decide
 
+/-- The same captured two-visit word retains the first loan receipt before
+the second loan, and the first return receipt before the second return.
+These are consequences of source causality and the actual trace, rather
+than independent assumptions about a final ownership bitmap. -/
+theorem distributedRepeatedHandoffsRetainTheirCausalReceipts :
+    SourcePoint.committed ⟨0, .receive⟩ ∈ distributedOccurrencePoints ∧
+      SourcePoint.committed ⟨2, .receive⟩ ∈ distributedOccurrencePoints.take 18 ∧
+      (occurrenceCut distributedOccurrencePlan distributedOccurrencePoints).ready
+        (.accepted 0) = false ∧
+      (occurrenceCut distributedOccurrencePlan (distributedOccurrencePoints.take 18)).ready
+        (.accepted 2) = false := by
+  have loan := a_recorded_handoff_keeps_earlier_receipts_and_excludes_old_acceptances
+    (later := 3) (earlier := 0) (resource := ⟨0, 10⟩)
+    (binding := distributedOccurrencePlan.path.bindings[3].2)
+    (previous := distributedOccurrencePlan.path.bindings[0].2)
+    (sender := ⟨0, ⟨0, 0⟩, .send⟩)
+    distributedCapturedOccurrencePrefixes.2.2
+    (by decide) (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+  have returned := a_recorded_handoff_keeps_earlier_receipts_and_excludes_old_acceptances
+    (later := 5) (earlier := 2) (resource := ⟨0, 10⟩)
+    (binding := distributedOccurrencePlan.path.bindings[5].2)
+    (previous := distributedOccurrencePlan.path.bindings[2].2)
+    (sender := ⟨1, ⟨0, 1⟩, .send⟩)
+    distributedCapturedOccurrencePrefixes.2.1
+    (by decide) (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+  exact ⟨loan.1, returned.1, loan.2, returned.2⟩
+
+/-- Keeping the second return while forgetting the first return's receipt
+cannot describe this chronological execution, even though their envelopes
+have the same static identity. -/
+theorem distributedRepeatedHandoffsRejectAForgottenReceipt :
+    ¬ SourceOccurrenceTrace distributedImages distributedChoreo distributedOccurrencePlan
+      (distributedOccurrenceWord.take 18) (distributedOccurrenceCalls.take 6)
+      ((distributedOccurrencePoints.take 18).filter fun point =>
+        decide (point ≠ .committed ⟨2, .receive⟩)) := by
+  intro trace
+  have kept := a_recorded_handoff_keeps_earlier_receipts_and_excludes_old_acceptances
+    (later := 5) (earlier := 2) (resource := ⟨0, 10⟩) trace
+    (binding := distributedOccurrencePlan.path.bindings[5].2)
+    (previous := distributedOccurrencePlan.path.bindings[2].2)
+    (sender := ⟨1, ⟨0, 1⟩, .send⟩)
+    (by decide) (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+  have absent : SourcePoint.committed ⟨2, .receive⟩ ∉
+      ((distributedOccurrencePoints.take 18).filter fun point =>
+        decide (point ≠ .committed ⟨2, .receive⟩)) := by decide
+  exact absent kept.1
+
 end
