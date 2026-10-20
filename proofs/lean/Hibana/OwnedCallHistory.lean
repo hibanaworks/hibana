@@ -66,6 +66,14 @@ def OwnedCallEvent.retirement? : OwnedCallEvent → Option (Tag × ViewRetiremen
   | .dropValue value sample => some (value, sample)
   | _ => none
 
+/-- The exact value removed from local custody by this existing event. This
+is an erased projection of the recorded event, not another ownership state.
+Acceptance moves authority to a frame; retirement can discard it. -/
+def OwnedCallEvent.releasedValue? : OwnedCallEvent → Option Tag
+  | .accept _ request _ | .abandon request _ => some request.payload
+  | .dropValue value _ => some value
+  | _ => none
+
 def OwnedCallEvent.source? : OwnedCallEvent → Option DistributedCallBoundary
   | .source boundary => some boundary
   | .accept entry _ _ => some (.accept entry)
@@ -263,6 +271,73 @@ theorem a_joint_call_history_preserves_affine_custody
   have actual := a_joint_call_history_has_its_same_future_history history
   exact ⟨OwnedFutureInventory.actual_future_history_preserves_unique_authority actual,
     OwnedFutureInventory.a_complete_future_history_covers_every_private_payload actual⟩
+
+private theorem a_joint_boundary_keeps_its_value_or_records_its_exact_release
+    (boundary : OwnedCallHistory.Boundary images resource choreo events event before after)
+    (located : TransferValueLocated value before.custody) :
+    TransferValueLocated value after.custody ∨ event.releasedValue? = some value := by
+  cases boundary with
+  | construct state left right requests request =>
+    have moved := transfer_step_keeps_the_value_or_crosses_its_boundary
+      (EndpointTransfer.Step.seal state left right request.payload) located
+    exact .inl (by simpa only [reduceCtorEq, or_false] using moved)
+  | poll | retire | source => exact .inl located
+  | accept state left right requests entry request frame facts factsAt resourceAt sending present matched wire channel position =>
+    rcases located with ⟨_, empty, _⟩ | ⟨_, singleton, _⟩
+    · simp at empty
+    · have member : request.payload ∈ [value] := singleton ▸
+        List.mem_append_right left List.mem_cons_self
+      exact .inr (by simpa only [OwnedCallEvent.releasedValue?, Option.some.injEq] using
+        (List.mem_singleton.mp member))
+  | abandon state left right earlier later request sample checked =>
+    rcases located with ⟨_, empty, _⟩ | ⟨_, singleton, _⟩
+    · simp at empty
+    · have member : request.payload ∈ [value] := singleton ▸
+        List.mem_append_right left List.mem_cons_self
+      exact .inr (by simpa only [OwnedCallEvent.releasedValue?, Option.some.injEq] using
+        (List.mem_singleton.mp member))
+  | dropValue state left right requests actual sample checked =>
+    rcases located with ⟨singleton, _, _⟩ | ⟨empty, _, _⟩
+    · have member : actual ∈ [value] := singleton ▸ List.mem_append_right left List.mem_cons_self
+      exact .inr (by simpa only [OwnedCallEvent.releasedValue?, Option.some.injEq] using
+        (List.mem_singleton.mp member))
+    · simp at empty
+  | receive | fence =>
+    rcases located with ⟨_, _, frames⟩ | ⟨_, _, frames⟩ <;> simp at frames
+
+/-- A received value stays in application code/private preparation, or its
+next release is a concrete later event in this SAME chronology. A transport
+error, ordinary progress or retired sender witness cannot stand in for it.
+The result retains the actual source event for subsequent causal exclusion;
+it does not replace the suffix with an independently selected transfer trace. -/
+theorem a_joint_received_value_has_its_current_location_or_actual_release
+    (history : OwnedCallHistory.History images resource choreo initialValue events cut)
+    (received : OwnedCallEvent.receive key actor record frame value ∈ events) :
+    TransferValueLocated value cut.custody ∨
+      ∃ earlier later event before after,
+        events = earlier ++ event :: later ∧
+        OwnedCallEvent.receive key actor record frame value ∈ earlier ∧
+        OwnedCallHistory.History images resource choreo initialValue earlier before ∧
+        OwnedCallHistory.Boundary images resource choreo earlier event before after ∧
+        TransferValueLocated value before.custody ∧ event.releasedValue? = some value := by
+  induction history with
+  | nil => simp at received
+  | @tail events before event after prior boundary ih =>
+    rcases List.mem_append.mp received with old | current
+    · rcases ih old with still | ⟨earlier, later, released, first, last,
+        wordAt, receiptAt, prefixHistory, actual, located, releasedValue⟩
+      · rcases a_joint_boundary_keeps_its_value_or_records_its_exact_release boundary still with kept | released
+        · exact .inl kept
+        · exact .inr ⟨events, [], event, before, after, by simp, old, prior, boundary, still, released⟩
+      · exact .inr ⟨earlier, later ++ [event], released, first, last,
+          by simp only [wordAt, List.append_assoc, List.cons_append],
+          receiptAt, prefixHistory, actual, located, releasedValue⟩
+    · have same := List.mem_singleton.mp current
+      subst event
+      have bound := (a_joint_call_history_preserves_affine_custody (.tail prior boundary)).1
+      cases boundary with
+      | receive state rest requests key actor record frame facts factsAt resourceAt receiving actorAt wire =>
+        exact .inl (.inl (one_usable_authority_is_the_exact_value bound List.mem_cons_self))
 
 private theorem a_joint_boundary_loses_authority_only_at_disposal
     (boundary : OwnedCallHistory.Boundary images resource choreo events event before after)

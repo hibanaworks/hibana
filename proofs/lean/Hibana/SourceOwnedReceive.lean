@@ -109,14 +109,17 @@ theorem source_matched_owned_halves_have_the_same_logical_message
     sent.2.symm.trans ((congrArg Message.payload message).trans received.2)
   exact ⟨message, Payload.endpoint.inj payloadSame⟩
 
-private theorem a_checked_sender_with_owned_message_has_its_source_facts
+/-- Classification of a general accepted send comes from its source message.
+The exact resource is derived; a caller cannot supply an unrelated owned kind. -/
+theorem a_checked_sender_with_owned_message_has_its_source_facts
     {sender : SourceSendAdmission} {choreo : Choreo} {session source : Nat}
     {binding : Binding} {side : Side} {resource : EndpointKey}
     (accepted : sender.check choreo session = true)
     (identity : sourceOperationIdentity? sender.image choreo sender.pathIndex sender.event =
       some (source, binding, side))
     (payload : binding.message.payload = .endpoint resource) :
-    ∃ facts, sender.ownedFacts? choreo = some facts := by
+    ∃ facts, sender.ownedFacts? choreo = some facts ∧ facts.resource = resource := by
+  have originalIdentity := identity
   unfold sourceOperationIdentity? at identity
   simp only [Option.bind_eq_bind, Option.bind_eq_some_iff, Option.pure_def,
     Option.some.injEq] at identity
@@ -131,7 +134,14 @@ private theorem a_checked_sender_with_owned_message_has_its_source_facts
   simp only [SourceSendAdmission.payloadMatches, sourcePayload] at payloadChecked
   cases factsAt : sender.ownedFacts? choreo with
   | none => simp only [factsAt, Bool.false_eq_true] at payloadChecked
-  | some facts => exact ⟨facts, rfl⟩
+  | some facts =>
+    have actual := owned_source_facts_retain_identity_and_payload factsAt
+    have bindingSame : facts.binding = binding :=
+      congrArg (fun triple : Nat × Binding × Side => triple.2.1)
+        (Option.some.inj (actual.1.symm.trans originalIdentity))
+    have actualPayload : binding.message.payload = .endpoint facts.resource := by
+      simpa only [bindingSame] using actual.2
+    exact ⟨facts, rfl, Payload.endpoint.inj (actualPayload.symm.trans payload)⟩
 
 private theorem owned_wire_check_from_its_source_message
     {sender : SourceSendAdmission} {receiverImage : RustDescriptorImage}
@@ -294,7 +304,7 @@ theorem a_matched_owned_receive_recovers_its_accepted_sender
     identity receiver.1 sentAtoms receivedAtoms
   have payload : binding.message.payload = .endpoint receivedFacts.resource :=
     (congrArg Message.payload message).trans receiver.2
-  obtain ⟨sentFacts, sentAt⟩ := a_checked_sender_with_owned_message_has_its_source_facts
+  obtain ⟨sentFacts, sentAt, _⟩ := a_checked_sender_with_owned_message_has_its_source_facts
     accepted identity payload
   have sameEffect : sentFacts.effIndex = receivedFacts.effIndex := Option.some.inj
     ((decoded_owned_source_facts_bind_wire_columns sentAt).1.symm.trans sourceAt)

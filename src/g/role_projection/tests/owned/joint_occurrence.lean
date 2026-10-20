@@ -237,6 +237,88 @@ theorem actualJointRoundTripOccurrence :
     List.filterMap_append, List.filterMap_cons, List.filterMap_nil, OwnedCallEvent.source?,
     List.append_assoc, List.cons_append, List.nil_append] using h6
 
+/-- The earlier worker receipt is no longer local at the final cut. The
+general same-word result recovers its actual subsequent release, rather than
+assuming a Rust value still exists because the source receive is complete. -/
+theorem actualJointLoanReceiptHasItsConcreteLaterRelease :
+    ∃ frame earlier later event before after,
+      jointRoundTripEvents = earlier ++ event :: later ∧
+      OwnedCallEvent.receive jointEntry.callKey 1 jointLoanReceipt frame receivedValue ∈ earlier ∧
+      History jointImages jointResource custodyChoreo initialValue earlier before ∧
+      Boundary jointImages jointResource custodyChoreo earlier event before after ∧
+      TransferValueLocated receivedValue before.custody ∧ event.releasedValue? = some receivedValue := by
+  obtain ⟨frame, facts, _, factsAt, _, _, _, _, outcome⟩ :=
+    an_owned_occurrence_receipt_has_its_actual_value_or_subsequent_release
+      (occurrence := 0) (key := jointEntry.callKey) (actor := 1) (record := jointLoanReceipt)
+      (binding := jointOccurrencePlan.path.bindings[0].2)
+      actualJointRoundTripCustody
+      (a_selected_visit_execution_has_its_same_physical_execution actualJointRoundTripSource)
+      actualJointRoundTripOccurrence (by decide) (by decide)
+      (by simp [jointRoundTripEvents, jointEvents, sourceWord, OwnedCallEvent.source?]) (by decide)
+  have known : jointLoanReceipt.step.ownedFacts? (jointImages 1) custodyChoreo =
+      some jointLoanReceiptFacts := (Option.some_get _).symm
+  have same := Option.some.inj (factsAt.symm.trans known)
+  subst facts
+  have tag : (1, jointLoanReceiptFacts.afterView.header) = receivedValue := by decide
+  rw [tag] at outcome
+  rcases outcome with retained | released
+  · have absent : ¬ TransferValueLocated receivedValue jointReturnedCut.custody := by
+      unfold TransferValueLocated
+      decide
+    exact False.elim (absent retained)
+  · obtain ⟨earlier, later, event, before, after, wordAt, receiptAt, history, boundary, located, releaseAt⟩ := released
+    exact ⟨frame, earlier, later, event, before, after,
+      wordAt, receiptAt, history, boundary, located, releaseAt⟩
+
+/-- The latest owner receipt derives the exact retained value through the
+same-word theorem. Completed sender-witness drops cannot release this tag;
+the final usable value is not supplied as an availability premise. -/
+theorem actualJointReturnedReceiptDerivesItsRetainedValue :
+    ∃ frame,
+      OwnedCallEvent.receive jointReturnEntry.callKey 0 jointReturnReceipt frame returnedValue ∈ jointRoundTripEvents ∧
+      TransferValueLocated returnedValue jointReturnedCut.custody := by
+  obtain ⟨frame, facts, present, factsAt, _, _, _, _, outcome⟩ :=
+    an_owned_occurrence_receipt_has_its_actual_value_or_subsequent_release
+      (occurrence := 1) (key := jointReturnEntry.callKey) (actor := 0) (record := jointReturnReceipt)
+      (binding := jointOccurrencePlan.path.bindings[1].2)
+      actualJointRoundTripCustody
+      (a_selected_visit_execution_has_its_same_physical_execution actualJointRoundTripSource)
+      actualJointRoundTripOccurrence (by decide) (by decide)
+      (by simp [jointRoundTripEvents, jointEvents, sourceWord, OwnedCallEvent.source?]) (by decide)
+  have known : jointReturnReceipt.step.ownedFacts? (jointImages 0) custodyChoreo =
+      some jointReturnReceiptFacts := (Option.some_get _).symm
+  have same := Option.some.inj (factsAt.symm.trans known)
+  subst facts
+  have tag : (0, jointReturnReceiptFacts.afterView.header) = returnedValue := by decide
+  rw [tag] at present outcome
+  refine ⟨frame, present, ?_⟩
+  rcases outcome with retained | released
+  · exact retained
+  · obtain ⟨earlier, later, event, before, after, wordAt, _, _, _, _, releaseAt⟩ := released
+    have inWord : event ∈ jointRoundTripEvents := by
+      rw [wordAt]
+      exact List.mem_append_right earlier List.mem_cons_self
+    have noRelease : (jointRoundTripEvents.all fun event =>
+        decide (event.releasedValue? ≠ some returnedValue)) = true := by decide
+    exact False.elim (of_decide_eq_true (List.all_eq_true.mp noRelease event inWord) releaseAt)
+
+/-- Neither real owned receipt can be reclassified as ordinary traffic in
+this captured prefix. The general theorem derives this classification from
+the source and actual call; it does not assume an owned sender as input. -/
+theorem actualJointOwnedReceiptsCannotHideAsOrdinaryBoundaries :
+    ¬ Untracked jointResource custodyChoreo jointRoundTripEvents jointReturnedCut
+      (.receive jointEntry.callKey 1 jointLoanReceipt) ∧
+    ¬ Untracked jointResource custodyChoreo jointRoundTripEvents jointReturnedCut
+      (.receive jointReturnEntry.callKey 0 jointReturnReceipt) := by
+  have allTracked : (acceptedEntries jointRoundTripEvents).all (tracks jointResource custodyChoreo) = true := by
+    decide
+  constructor <;> intro ordinary
+  all_goals
+    obtain ⟨entry, member, _, notTracked⟩ := ordinary
+    have actual := List.all_eq_true.mp allTracked entry member
+    rw [actual] at notTracked
+    contradiction
+
 /-- The one reconstructed source prefix and the one physical/custody history
 end at the returned value. The next Read is enabled in the source and the Rust
 test immediately executes that Read through the returned Endpoint. -/

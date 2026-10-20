@@ -1478,9 +1478,39 @@ existing three-runtime execution applies this result before the fresh second
 loan and the later DB operation; neither origin can be initial issuance.
 The negative control retains an old return that still matches the repeated
 static receive identity, but whose call resolves to the earlier occurrence.
-These are causal receipt origins, not a proof that the received value is still
-usable at the final cut. The subsequent custody/transfer/retirement history and
-general runtime-to-occurrence correspondence must still be composed.
+These causal origins alone do not establish current possession.
+
+The same module now uses the retained call lookup and physical acceptance
+check to derive the sender's exact owned resource from its source message.
+Every acceptance with that call has the same occurrence. Consequently the
+corresponding receive cannot hide as an untracked ordinary boundary in the
+custody word. Its real owned-receive event, source facts and issued tag follow
+from that same history, without assuming the sender's owned kind or a live
+application value.
+
+`a_joint_received_value_has_its_current_location_or_actual_release` follows
+that tag through the chronological suffix. It is in application code/private
+preparation now, or there is an actual later event releasing that exact value,
+with its prefix history and boundary retained. The event is an acceptance,
+preparation abandonment or value retirement. Ordinary progress, I/O errors,
+pending polls and completed sender-witness retirement cannot replace it.
+`an_owned_occurrence_receipt_has_its_actual_value_or_subsequent_release`
+composes source classification, the actual receipt and this current-location
+result. No common visit, sender-publication order or independently selected
+transfer suffix is imposed.
+
+The existing two-runtime exchange applies this result to both receipts. The
+old worker tag has a concrete later release; the returned owner tag remains
+located after both completed sender futures are dropped. A negative control
+rejects treating either owned receipt as an ordinary untracked boundary.
+These claims use fresh Endpoint observations, not a new value-availability
+assumption or another runtime fixture.
+
+For a pending source operation, excluding incompatible intervening releases
+still requires its source causal interval. General runtime-to-occurrence,
+enabled-operation and fault/closure composition are not completed by this
+receipt result. Application invocation/retention and executor polling remain
+explicit premises, rather than a new arbitrary-Rust formalization target.
 
 `SourceHandoffInterval.lean` connects that static interval to measured progress.
 For an accepted source, every competing handoff of the same resource is before

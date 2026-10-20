@@ -1,5 +1,16 @@
 actualJointConstructorAcceptance : Hibana.OwnedCallHistory.History jointImages jointResource custodyChoreo initialValue
   jointEvents jointCut
+actualJointLoanReceiptHasItsConcreteLaterRelease : ∃ frame earlier later event before after,
+  jointRoundTripEvents = earlier ++ event :: later ∧
+    Hibana.OwnedCallHistory.OwnedCallEvent.receive jointEntry.callKey 1 jointLoanReceipt frame receivedValue ∈ earlier ∧
+      Hibana.OwnedCallHistory.History jointImages jointResource custodyChoreo initialValue earlier before ∧
+        Hibana.OwnedCallHistory.Boundary jointImages jointResource custodyChoreo earlier event before after ∧
+          Hibana.TransferValueLocated receivedValue before.custody ∧ event.releasedValue? = some receivedValue
+actualJointOwnedReceiptsCannotHideAsOrdinaryBoundaries : ¬Hibana.OwnedCallHistory.Untracked jointResource custodyChoreo
+      jointRoundTripEvents jointReturnedCut
+      (Hibana.DistributedCallBoundary.receive jointEntry.callKey 1 jointLoanReceipt) ∧
+  ¬Hibana.OwnedCallHistory.Untracked jointResource custodyChoreo jointRoundTripEvents jointReturnedCut
+      (Hibana.DistributedCallBoundary.receive jointReturnEntry.callKey 0 jointReturnReceipt)
 actualJointQueuedOrigin : ∃ earlier later entry request facts,
   jointEvents = earlier ++ Hibana.OwnedCallHistory.OwnedCallEvent.accept entry request jointFrame :: later ∧
     entry ∈ [jointEntry] ∧
@@ -16,6 +27,10 @@ actualJointQueuedOrigin : ∃ earlier later entry request facts,
                           jointFrame.sequence =
                             (Hibana.sourceChannelEntries (Hibana.OwnedCallHistory.acceptedEntries earlier)
                                 entry.channel).length
+actualJointReturnedReceiptDerivesItsRetainedValue : ∃ frame,
+  Hibana.OwnedCallHistory.OwnedCallEvent.receive jointReturnEntry.callKey 0 jointReturnReceipt frame returnedValue ∈
+      jointRoundTripEvents ∧
+    Hibana.TransferValueLocated returnedValue jointReturnedCut.custody
 actualJointRoundTripContinuation : jointReturnedCut.custody.authorityCount ≤ 1 ∧
   jointReturnedCut.custody.usable = [returnedValue] ∧
     Hibana.SourceOccurrenceExecution (Hibana.occurrenceCut jointOccurrencePlan [])

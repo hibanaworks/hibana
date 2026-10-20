@@ -1,5 +1,6 @@
 import Hibana.SourceOccurrenceTrace
 import Hibana.SourceReceiptDependency
+import Hibana.SourceOwnedReceive
 
 namespace Hibana
 open EndpointDelegation
@@ -55,6 +56,80 @@ private theorem an_occurrence_call_survives_an_append
   | none => simp only [present, Option.map_none, reduceCtorEq] at found
   | some value =>
     simpa only [List.find?_append, present, Option.orElse_some] using found
+
+private theorem an_accepted_occurrence_keeps_its_call_and_source
+    (trace : SourceOccurrenceTrace images choreo plan word calls points) :
+    ∀ entry, DistributedCallBoundary.accept entry ∈ word →
+      ∃ occurrence, occurrenceCall? calls entry.callKey = some occurrence ∧
+        plan.matchesAction entry.sample.image choreo entry.sample.image.role
+          entry.sample.pathIndex entry.sample.event occurrence .send = true := by
+  induction trace with
+  | nil => simp
+  | @accept word calls points entry occurrence prior fresh origin matched ready ih =>
+    intro actual member
+    rcases List.mem_append.mp member with earlier | current
+    · obtain ⟨previous, resolved, sourceAt⟩ := ih actual earlier
+      exact ⟨previous, an_occurrence_call_survives_an_append resolved _, sourceAt⟩
+    · have same := List.mem_singleton.mp current
+      cases same
+      have absent : calls.find? (fun pair => decide (pair.1 = entry.callKey)) = none := by
+        apply List.find?_eq_none.mpr
+        intro pair present
+        have different := of_decide_eq_true (List.all_eq_true.mp fresh pair present)
+        exact fun equal => different (of_decide_eq_true equal)
+      refine ⟨occurrence, ?_, matched⟩
+      simp [occurrenceCall?, List.find?_append, absent]
+  | quiet prior ih | retireView prior ih | close prior ih | abort prior ih
+  | observeClosure prior ih | transportFault prior ih
+  | publish prior callAt matched ready ih | receive prior callAt matched ready ih
+  | localCommit prior matched ready ih =>
+    intro entry member
+    exact ih entry (by simpa using member)
+
+private theorem a_matched_occurrence_has_its_exact_operation
+    {plan : SourceOccurrenceCut source}
+    (located : plan.path.bindings.find? (fun entry => entry.1 == occurrence) =
+      some (occurrence, binding))
+    (matched : plan.matchesAction image choreo actor pathIndex row occurrence side = true) :
+    ∃ eff, sourceOperationIdentity? image choreo pathIndex row = some (eff, binding, side) := by
+  unfold SourceOccurrenceCut.matchesAction at matched
+  rw [located] at matched
+  cases originAt : (plan.unfolding.occurrences 0)[occurrence]? with
+  | none => simp only [originAt, Bool.false_eq_true] at matched
+  | some origin =>
+    cases identityAt : sourceOperationIdentity? image choreo pathIndex row with
+    | none => simp only [originAt, identityAt, Bool.false_eq_true] at matched
+    | some actual =>
+      obtain ⟨eff, actualBinding, actualSide⟩ := actual
+      cases actionAt : action? plan.path.bindings ⟨occurrence, side⟩ with
+      | none => simp only [originAt, identityAt, actionAt, Bool.false_eq_true] at matched
+      | some action =>
+        simp only [originAt, identityAt, actionAt, decide_eq_true_eq] at matched
+        exact ⟨eff, by simp only [matched.2.2.1, matched.2.2.2.1]⟩
+
+private theorem a_physical_acceptance_keeps_its_source_check
+    (execution : DistributedPhysicalExecution images choreo session first last word entries published pending) :
+    ∀ entry, DistributedCallBoundary.accept entry ∈ word → entry.sample.check choreo session = true := by
+  induction execution with
+  | refl => simp
+  | accept history imageAt checked decoded pathAt rowAt prepared slotFree freshWitness sourceAt accepted identity ih =>
+    intro entry member
+    rcases List.mem_append.mp member with earlier | current
+    · exact ih entry earlier
+    · have same := List.mem_singleton.mp current
+      cases same
+      exact checked
+  | transportFault history checked beforeAt ih
+  | close history ih
+  | observeClosure history checked beforeAt bound closed ih
+  | abort history ih
+  | retireView history checked beforeAt ih
+  | quiet history checked headers ih
+  | publish history actorAt sameWire committed ih
+  | localCommit history actorRole localAt committed ih
+  | receive history actorRole received entryAt identity sameWire committed ih =>
+    intro entry member
+    exact ih entry (by simpa using member)
 
 /-- Retain the actual carrier call as well as the static source match. The
 same source row and bytes can occur in several visits; only the call lookup
@@ -193,5 +268,117 @@ theorem a_ready_occurrence_resource_has_its_initial_owner_or_same_word_receipt
         key, record, shape, transferred, untouched, instantiated, previousAt, payload,
         previousDecoded, sameActor, edge, received,
         by simpa only [actualActor] using inWord, by simpa only [actualActor] using matched, callAt⟩
+
+open OwnedCallHistory
+
+private theorem an_owned_event_has_its_same_history_boundary
+    (history : OwnedCallHistory.History images resource choreo initialValue events cut) :
+    ∀ event ∈ events, ∃ earlier later before after,
+      events = earlier ++ event :: later ∧
+      OwnedCallHistory.History images resource choreo initialValue earlier before ∧
+      OwnedCallHistory.Boundary images resource choreo earlier event before after := by
+  induction history with
+  | nil => simp
+  | @tail events before next after prior boundary ih =>
+    intro event member
+    rcases List.mem_append.mp member with old | current
+    · obtain ⟨earlier, later, first, last, shape, prefixHistory, actual⟩ := ih event old
+      exact ⟨earlier, later ++ [next], first, last,
+        by simp only [shape, List.append_assoc, List.cons_append], prefixHistory, actual⟩
+    · have same := List.mem_singleton.mp current
+      cases same
+      exact ⟨events, [], before, after, by simp, prior, boundary⟩
+
+private theorem a_prior_acceptance_survives_its_suffix
+    (member : entry ∈ acceptedEntries earlier) (later : List OwnedCallEvent) :
+    entry ∈ acceptedEntries (earlier ++ later) := by
+  simp only [acceptedEntries, sourceWord, List.filterMap_append] at member ⊢
+  exact List.mem_append_left _ member
+
+private theorem an_acceptance_is_in_its_source_word
+    {word : List DistributedCallBoundary}
+    (member : entry ∈ word.filterMap DistributedCallBoundary.acceptance?) :
+    DistributedCallBoundary.accept entry ∈ word := by
+  obtain ⟨boundary, present, projected⟩ := List.mem_filterMap.mp member
+  cases boundary <;> simp only [DistributedCallBoundary.acceptance?, reduceCtorEq] at projected
+  case accept actual =>
+    cases Option.some.inj projected
+    exact present
+
+private theorem a_tracked_receive_has_its_actual_issued_view
+    (history : OwnedCallHistory.History images resource choreo initialValue events cut)
+    (received : DistributedCallBoundary.receive key actor record ∈ sourceWord events)
+    (tracked : ∀ entry ∈ acceptedEntries events, entry.callKey = key → tracks resource choreo entry = true) :
+    ∃ frame facts,
+      OwnedCallEvent.receive key actor record frame (actor, facts.afterView.header) ∈ events ∧
+      record.step.ownedFacts? (images actor) choreo = some facts ∧ facts.resource = resource ∧
+      facts.side = .receive ∧ record.step.after.actor = actor ∧ record.wire.identifies frame := by
+  obtain ⟨event, present, projected⟩ := List.mem_filterMap.mp received
+  obtain ⟨earlier, later, before, after, shape, prior, boundary⟩ :=
+    an_owned_event_has_its_same_history_boundary history event present
+  cases boundary <;> simp only [OwnedCallEvent.source?, Option.some.injEq, reduceCtorEq] at projected
+  case source observed untracked =>
+    subst observed
+    obtain ⟨entry, member, keyAt, untrackedAt⟩ := untracked
+    have inAll := a_prior_acceptance_survives_its_suffix member
+      (OwnedCallEvent.source (.receive key actor record) :: later)
+    rw [← shape] at inAll
+    have actual := tracked entry inAll keyAt
+    rw [actual] at untrackedAt
+    contradiction
+  case receive state rest requests actualKey actualActor actualRecord frame facts factsAt resourceAt receiving actorAt wire =>
+    cases projected
+    exact ⟨frame, facts, present, factsAt, resourceAt, receiving, actorAt, wire⟩
+
+/-- The causal occurrence receipt is the actual owned receive in this SAME
+custody/physical word, not an ordinary stutter or a postulated live value.
+Its resource classification comes from the accepted source message. The
+issued tag is then retained now or has a concrete subsequent release event,
+including its source boundary for the remaining causal-interval proof.
+
+No sender-publication order, common actor visit, available Rust value, or
+successful final admission is a premise. Authentication, complete observation
+and application/executor progress remain the declared integration contracts. -/
+theorem an_owned_occurrence_receipt_has_its_actual_value_or_subsequent_release
+    {plan : SourceOccurrenceCut source} {binding : Binding}
+    (custody : OwnedCallHistory.History images resource choreo initialValue events cut)
+    (physical : DistributedPhysicalExecution images choreo session first last
+      (sourceWord events) entries published pending)
+    (trace : SourceOccurrenceTrace images choreo plan (sourceWord events) calls points)
+    (located : plan.path.bindings.find? (fun entry => entry.1 == occurrence) =
+      some (occurrence, binding))
+    (payload : binding.message.payload = .endpoint resource)
+    (received : DistributedCallBoundary.receive key actor record ∈ sourceWord events)
+    (callAt : occurrenceCall? calls key = some occurrence) :
+    ∃ frame facts,
+      OwnedCallEvent.receive key actor record frame (actor, facts.afterView.header) ∈ events ∧
+      record.step.ownedFacts? (images actor) choreo = some facts ∧ facts.resource = resource ∧
+      facts.side = .receive ∧ record.step.after.actor = actor ∧ record.wire.identifies frame ∧
+      (TransferValueLocated (actor, facts.afterView.header) cut.custody ∨
+        ∃ earlier later event before after,
+          events = earlier ++ event :: later ∧
+          OwnedCallEvent.receive key actor record frame (actor, facts.afterView.header) ∈ earlier ∧
+          OwnedCallHistory.History images resource choreo initialValue earlier before ∧
+          OwnedCallHistory.Boundary images resource choreo earlier event before after ∧
+          TransferValueLocated (actor, facts.afterView.header) before.custody ∧
+          event.releasedValue? = some (actor, facts.afterView.header)) := by
+  have tracked : ∀ entry ∈ acceptedEntries events,
+      entry.callKey = key → tracks resource choreo entry = true := by
+    intro entry member keyAt
+    have acceptedAt := an_acceptance_is_in_its_source_word member
+    obtain ⟨acceptedOccurrence, actualCall, sourceAt⟩ :=
+      an_accepted_occurrence_keeps_its_call_and_source trace entry acceptedAt
+    rw [keyAt] at actualCall
+    have same := Option.some.inj (actualCall.symm.trans callAt)
+    subst acceptedOccurrence
+    obtain ⟨eff, identity⟩ := a_matched_occurrence_has_its_exact_operation located sourceAt
+    obtain ⟨facts, factsAt, resourceAt⟩ := a_checked_sender_with_owned_message_has_its_source_facts
+      (a_physical_acceptance_keeps_its_source_check physical entry acceptedAt) identity payload
+    simp only [tracks, factsAt, resourceAt, decide_true]
+  obtain ⟨frame, facts, present, factsAt, resourceAt, receiving, actorAt, wire⟩ :=
+    a_tracked_receive_has_its_actual_issued_view custody received tracked
+  exact ⟨frame, facts, present, factsAt,
+    resourceAt, receiving, actorAt, wire,
+    a_joint_received_value_has_its_current_location_or_actual_release custody present⟩
 
 end Hibana
