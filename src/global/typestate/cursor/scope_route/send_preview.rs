@@ -623,12 +623,8 @@ impl EventCursor {
     ) -> Result<(SendMeta, StateIndex), SendPreviewError> {
         let target_label = selector.label;
         let target_payload = selector.payload_kind;
-        let mut idx = self.send_preview_start_index_for_contract(
-            selector.role,
-            target_label,
-            target_payload,
-            committed_arm_for_scope,
-        )?;
+        let mut idx =
+            self.send_preview_start_index_for_contract(selector, committed_arm_for_scope)?;
         let mut preview_route_arm: Option<SendPreviewRouteArm> = None;
 
         {

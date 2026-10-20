@@ -19,8 +19,8 @@
   "budget": {
     "thumbv6m_none_eabi_no_std_release_lib": {
       "sections": {
-        ".text": 153275,
-        ".rodata": 16690,
+        ".text": 152744,
+        ".rodata": 17221,
         ".data": 0,
         ".bss": 0,
         "flash_total": 169965
