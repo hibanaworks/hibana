@@ -8,9 +8,13 @@ impl EventCursor {
         role: u8,
         label: u8,
     ) -> impl Iterator<Item = usize> + '_ {
+        // Only explicit reentry can make a completed row available again.
+        // Reuse the existing completion authority before decoding candidates.
+        let repeatable = self.has_reentry_scopes();
         self.machine()
             .event_program()
             .receive_candidates(role, label)
+            .filter(move |&index| repeatable || !self.local_event_done(index))
     }
     /// Current typestate index.
     #[inline(always)]

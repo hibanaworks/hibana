@@ -7,6 +7,9 @@ use crate::{
 use core::mem::MaybeUninit;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
+#[path = "tests/receive_candidates.rs"]
+mod receive_candidates;
+
 fn with_rows(rows: &'static RoleImageRef, test: impl FnOnce(&mut EventCursor)) {
     let descriptor = RoleDescriptorRef::from_resident(rows);
     let mut state = MaybeUninit::<EventCursorState>::uninit();

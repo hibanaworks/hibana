@@ -11,49 +11,6 @@ impl<'r, T> OperationKernel<'_, 'r, T>
 where
     T: Transport + 'r,
 {
-    fn recv_candidate_for_observed_evidence(
-        &self,
-        idx: usize,
-        target_label: u8,
-        target_payload: crate::eff::EventPayload,
-        observed: InboundFrameKey,
-    ) -> RecvResult<Option<RecvCandidate>> {
-        let Some(meta) = self.progress.cursor.try_recv_meta_at(idx) else {
-            return Ok(None);
-        };
-        if self.progress.cursor.logical_role_at(idx) != Some(self.public_header.role())
-            || meta.label != target_label
-            || meta.payload_kind != target_payload
-        {
-            return Ok(None);
-        }
-        if meta.origin.is_session() {
-            return Err(RecvError::PhaseInvariant);
-        }
-        let lane_idx = meta.lane as usize;
-        if lane_idx >= self.progress.cursor.logical_lane_count() {
-            return Err(RecvError::PhaseInvariant);
-        }
-        let lane_wire = self.port_for_lane(lane_idx).lane().as_wire();
-        if lane_wire != meta.lane {
-            return Err(RecvError::PhaseInvariant);
-        }
-        if !observed.matches_recv(meta) {
-            return Ok(None);
-        }
-        let enabled = self.recv_event_enabled(idx, meta.into());
-        if enabled.is_err() {
-            return Ok(None);
-        }
-
-        Ok(Some(RecvCandidate {
-            desc: RecvDescriptor {
-                meta,
-                cursor_index: StateIndex::from_usize(idx),
-            },
-        }))
-    }
-
     fn recv_candidate_for_deterministic_key(
         &self,
         idx: usize,
@@ -104,16 +61,35 @@ where
             .cursor
             .receive_candidates(self.public_header.role(), target_label)
         {
-            if let Some(candidate) = self.recv_candidate_for_observed_evidence(
-                idx,
-                target_label,
-                target_payload,
-                observed,
-            )? {
-                accumulator = accumulator.add(candidate);
-                if accumulator.is_ambiguous() {
-                    break;
-                }
+            // Role and logical label came from the validated immutable index.
+            let Some(meta) = self.progress.cursor.try_recv_meta_at(idx) else {
+                continue;
+            };
+            if meta.payload_kind != target_payload {
+                continue;
+            }
+            if meta.origin.is_session() {
+                return Err(RecvError::PhaseInvariant);
+            }
+            let lane_idx = meta.lane as usize;
+            if lane_idx >= self.progress.cursor.logical_lane_count() {
+                return Err(RecvError::PhaseInvariant);
+            }
+            let lane_wire = self.port_for_lane(lane_idx).lane().as_wire();
+            if lane_wire != meta.lane {
+                return Err(RecvError::PhaseInvariant);
+            }
+            if !observed.matches_recv(meta) || self.recv_event_enabled(idx, meta.into()).is_err() {
+                continue;
+            }
+            accumulator = accumulator.add(RecvCandidate {
+                desc: RecvDescriptor {
+                    meta,
+                    cursor_index: StateIndex::from_usize(idx),
+                },
+            });
+            if accumulator.is_ambiguous() {
+                break;
             }
         }
         Ok(accumulator.finish())

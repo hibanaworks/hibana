@@ -53,9 +53,8 @@ where
             .cursor
             .receive_candidates(self.public_header.role(), target_label)
         {
+            // The checked immutable index already binds role and logical label.
             if let Some(meta) = self.progress.cursor.try_recv_meta_at(idx)
-                && self.progress.cursor.logical_role_at(idx) == Some(self.public_header.role())
-                && meta.label == target_label
                 && !meta.origin.is_session()
             {
                 let admission = self.recv_event_enabled(idx, meta.into());

@@ -105,8 +105,28 @@ theorem live_candidates_exact (key : Nat → Nat) (n query i : Nat)
     obtain ⟨a, b⟩ := exactRange.mpr same
     exact ⟨a, b, live⟩
 
+/-- The immutable key binds both message fields, without depending on schema. -/
+theorem message_key_exact (role label wantedRole wantedLabel : Nat)
+    (labelBound : label < 256) (wantedBound : wantedLabel < 256) :
+    role * 256 + label = wantedRole * 256 + wantedLabel ↔
+      role = wantedRole ∧ label = wantedLabel := by
+  constructor
+  · intro same
+    constructor <;> omega
+  · rintro ⟨rfl, rfl⟩
+    rfl
+
+/-- Completed rows can be removed only when ordinary admission already rejects
+them without reentry. Rust tests check that premise against full admission. -/
+theorem completion_prefilter_preserves_admission (repeatable completed admitted : Bool)
+    (disabled : repeatable = false → completed = true → admitted = false) :
+    ((repeatable || !completed) && admitted) = admitted := by
+  cases repeatable <;> cases completed <;> simp_all
+
 #print axioms lower_partition
 #print axioms candidate_range_exact
 #print axioms live_candidates_exact
+#print axioms message_key_exact
+#print axioms completion_prefilter_preserves_admission
 
 end Hibana.ReceiveIndex

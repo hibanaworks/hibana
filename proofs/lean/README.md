@@ -96,7 +96,7 @@ The audit separates three kinds of checks:
 
 | Check | Trusted computation |
 | --- | --- |
-| Model theorems and generated artifacts audited with `--kernel` | Lean kernel; only `propext` and `Quot.sound` are permitted |
+| Common model theorems and generated artifacts audited with `--kernel` | Lean kernel; only `propext` and `Quot.sound` are permitted |
 | Finite acceptance certificates and their derived sample claims in `Generated.lean` | `native_decide`, which also trusts Lean's compiler and native runtime |
 | JSON schedule comparisons | The compiled Lean oracle, used as an executable test |
 
@@ -112,6 +112,10 @@ must not be described as kernel-only certificates. The
 checks the exact native decision owners and their dependency closure, and
 rejects any native dependency in a kernel-only claim. `sorry` and undeclared
 axioms are rejected in every category.
+
+The [standalone implementation checks](../checks/README.md) run separately from
+this package's inventory. Their dependency output can also include
+`Classical.choice`, as in the [lowest-bit proof](../checks/runtime/pending-events/Scan.lean).
 
 Generated input and logs belong to build or temporary directories. They are not
 protocol state, and are never used to authorize application operations.

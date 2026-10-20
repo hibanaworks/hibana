@@ -47,3 +47,37 @@
 ; EXPECT: sat
 (check-sat)
 (pop)
+
+; Removing a completed row preserves a pure live-admission predicate when
+; reentry is impossible and the full guard already rejects that row.
+(declare-const repeatable Bool)
+(declare-const completed Bool)
+(declare-const admitted Bool)
+(assert (=> (and (not repeatable) completed) (not admitted)))
+(push)
+(assert (not (= admitted (and (or repeatable (not completed)) admitted))))
+; EXPECT: unsat
+(check-sat)
+(pop)
+
+; Negative control: applying the completion filter to a fresh roll loses work.
+(push)
+(assert (and repeatable completed admitted))
+(assert (not (= admitted (and (not completed) admitted))))
+; EXPECT: sat
+(check-sat)
+(pop)
+
+; The 16-bit receive key determines both u8 fields exactly.
+(declare-const role Int)
+(declare-const label Int)
+(declare-const wantedRole Int)
+(declare-const wantedLabel Int)
+(push)
+(assert (and (<= 0 role) (< role 256) (<= 0 wantedRole) (< wantedRole 256)
+             (<= 0 label) (< label 256) (<= 0 wantedLabel) (< wantedLabel 256)))
+(assert (= (+ (* role 256) label) (+ (* wantedRole 256) wantedLabel)))
+(assert (or (not (= role wantedRole)) (not (= label wantedLabel))))
+; EXPECT: unsat
+(check-sat)
+(pop)

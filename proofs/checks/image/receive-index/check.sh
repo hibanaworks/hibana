@@ -14,6 +14,8 @@ cat > "$evidence/lean.expected" <<'EOF'
 'Hibana.ReceiveIndex.lower_partition' depends on axioms: [propext, Quot.sound]
 'Hibana.ReceiveIndex.candidate_range_exact' depends on axioms: [propext, Quot.sound]
 'Hibana.ReceiveIndex.live_candidates_exact' depends on axioms: [propext, Quot.sound]
+'Hibana.ReceiveIndex.message_key_exact' depends on axioms: [propext, Quot.sound]
+'Hibana.ReceiveIndex.completion_prefilter_preserves_admission' depends on axioms: [propext]
 EOF
 diff -u "$evidence/lean.expected" "$evidence/lean.log"
 bash "$root/.github/scripts/check_smt2.sh" "$proof_dir/Lookup.smt2"
