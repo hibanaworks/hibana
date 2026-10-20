@@ -23,7 +23,8 @@ mod arm_row_index;
 mod passive_parent;
 mod route_index;
 
-const BLOB_LEN: usize = 40;
+const DATA_END: usize = 40;
+const BLOB_LEN: usize = DATA_END + ROLE_IMAGE_U16_STRIDE;
 
 #[test]
 fn active_lane_metadata_is_derived_from_one_canonical_bitmap() {
@@ -342,8 +343,10 @@ const fn event_with_out_of_bounds_dependency_range_bytes() -> [u8; BLOB_LEN] {
     bytes
 }
 
-const fn route_arm_with_foreign_lane_step_bytes() -> [u8; BLOB_LEN] {
-    let mut bytes = route_arm_bytes(1, u16::MAX as u32);
+const fn route_arm_with_foreign_lane_step_bytes() -> [u8; BLOB_LEN + ROLE_IMAGE_U16_STRIDE] {
+    let mut bytes = [0; BLOB_LEN + ROLE_IMAGE_U16_STRIDE];
+    write_u32(&mut bytes, 0, 1);
+    write_u32(&mut bytes, 4, u16::MAX as u32);
     bytes[ROLE_IMAGE_ROUTE_ARM_STRIDE] = 0;
     write_u16(&mut bytes, ROLE_IMAGE_ROUTE_ARM_STRIDE + 1, 1);
     write_u16(&mut bytes, ROLE_IMAGE_ROUTE_ARM_STRIDE + 3, 1);
@@ -432,7 +435,7 @@ static EVENT_WITH_OUT_OF_DOMAIN_DEPENDENCY_BYTES: [u8; BLOB_LEN] =
     event_with_out_of_domain_dependency_bytes();
 static EVENT_WITH_OUT_OF_BOUNDS_DEPENDENCY_RANGE_BYTES: [u8; BLOB_LEN] =
     event_with_out_of_bounds_dependency_range_bytes();
-static ROUTE_ARM_WITH_FOREIGN_LANE_STEP_BYTES: [u8; BLOB_LEN] =
+static ROUTE_ARM_WITH_FOREIGN_LANE_STEP_BYTES: [u8; BLOB_LEN + ROLE_IMAGE_U16_STRIDE] =
     route_arm_with_foreign_lane_step_bytes();
 static ZERO_LENGTH_RESIDENT_BOUNDARY_BYTES: [u8; BLOB_LEN] = resident_boundary_bytes(0);
 static OUT_OF_BOUNDS_RESIDENT_BOUNDARY_BYTES: [u8; BLOB_LEN] = resident_boundary_bytes(1);
@@ -451,7 +454,7 @@ static ROUTE_COMMIT_LEADING_PARENT_BYTES: [u8; BLOB_LEN] = route_commit_chain_by
 static PASSIVE_CHILD_WITHOUT_PARENT_BYTES: [u8; BLOB_LEN] = passive_child_without_parent_bytes();
 
 fn empty_columns() -> RoleImageColumns {
-    let empty = ColumnRange::new(EMPTY_DESCRIPTOR_BYTES.len(), 0, 1);
+    let empty = ColumnRange::new(DATA_END, 0, 1);
     RoleImageColumns {
         events: empty,
         lanes: empty,
@@ -473,7 +476,10 @@ fn empty_columns() -> RoleImageColumns {
     }
 }
 
-fn image<'a>(columns: &'a RoleImageColumns, bytes: &'static [u8; BLOB_LEN]) -> RoleLaneImage<'a> {
+fn image<'a, const N: usize>(
+    columns: &'a RoleImageColumns,
+    bytes: &'static [u8; N],
+) -> RoleLaneImage<'a> {
     RoleLaneImage::new(columns, BlobPtr::from_array(bytes, columns.blob_len()))
 }
 

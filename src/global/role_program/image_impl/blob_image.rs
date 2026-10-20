@@ -15,6 +15,7 @@ use crate::global::typestate::{PackedEventConflict, PackedLocalDependency};
 mod lanes;
 mod layout;
 mod receipts;
+mod receive_index;
 use layout::validate_role_image_layout;
 
 impl RoleImagePlan {
@@ -501,6 +502,7 @@ impl<const N: usize> RoleImageBytes<N> {
             panic!("role image plan mismatch");
         }
 
+        out.write_receive_index(eff_list, columns);
         let offset = columns.blob_len();
         if offset > u16::MAX as usize {
             panic!("role image");

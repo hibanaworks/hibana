@@ -106,6 +106,8 @@ jobs:
         run: bash proofs/checks/projection/explicit-resource-join/check.sh
       - name: Check receive lane census with Lean and Z3
         run: bash proofs/checks/runtime/recv-lane-census/check.sh
+      - name: Check immutable receive lookup with Lean and Z3
+        run: bash proofs/checks/image/receive-index/check.sh
       - name: Check completion bitmap traversal with Lean and Z3
         run: bash proofs/checks/runtime/pending-events/check.sh
       - name: Check immutable event admission with Lean and Z3

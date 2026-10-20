@@ -1669,7 +1669,7 @@ private def RustDescriptorImage.roleRuntimeColumnsCheck
       image.passiveChildColumnsCoherent &&
       image.routeCommitColumnsCoherent &&
       image.routeCommitCapacityExact &&
-      image.rollColumnsCoherent
+      image.rollColumnsCoherent && image.receiveIndexCoherent
   | _, _, _, _, _, _, _, _, _, _, _ => false
 
 theorem role_runtime_columns_check_binds_route_arm_columns

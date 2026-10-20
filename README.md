@@ -656,8 +656,10 @@ storage budgets, and endpoint and future layouts. These measurements describe
 the checked programs and builds. Memory use depends on the protocol and
 configuration.
 
-The [benchmarks](benches/README.md) measure the current runtime. Execution cost
-depends on protocol size: receive candidate lookup scans projected events.
+The [benchmarks](benches/README.md) measure the current runtime. Receive lookup
+uses an immutable index of logical roles and message labels. Checking each
+candidate's dependencies can still inspect multiple projected events, so
+execution cost depends on protocol size.
 The instruction budgets bound regressions for the measured workloads; they are
 not a constant-time guarantee.
 

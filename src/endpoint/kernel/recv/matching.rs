@@ -99,8 +99,11 @@ where
         observed: InboundFrameKey,
     ) -> RecvResult<Result<RecvCandidate, UniqueMatchFailure>> {
         let mut accumulator = UniqueMatch::NONE;
-        let mut idx = 0usize;
-        while idx < self.progress.cursor.local_steps_len() {
+        for idx in self
+            .progress
+            .cursor
+            .receive_candidates(self.public_header.role(), target_label)
+        {
             if let Some(candidate) = self.recv_candidate_for_observed_evidence(
                 idx,
                 target_label,
@@ -112,7 +115,6 @@ where
                     break;
                 }
             }
-            idx += 1;
         }
         Ok(accumulator.finish())
     }

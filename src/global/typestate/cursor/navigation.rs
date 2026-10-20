@@ -3,6 +3,15 @@ use super::{
     state_index_to_usize,
 };
 impl EventCursor {
+    pub(crate) fn receive_candidates(
+        &self,
+        role: u8,
+        label: u8,
+    ) -> impl Iterator<Item = usize> + '_ {
+        self.machine()
+            .event_program()
+            .receive_candidates(role, label)
+    }
     /// Current typestate index.
     #[inline(always)]
     pub(crate) fn index(&self) -> usize {

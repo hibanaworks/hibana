@@ -9,6 +9,8 @@ use crate::{
 };
 use std::{boxed::Box, panic::catch_unwind};
 
+mod receive_index;
+
 fn copy(rows: &RoleImageRef) -> [u8; 2048] {
     let mut bytes = [0; 2048];
     assert!(rows.columns.blob_len() <= bytes.len());

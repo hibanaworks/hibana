@@ -1,7 +1,8 @@
 use super::{
     super::{
-        ColumnRange, PackedLaneRange, PackedRouteArmRow, ROLE_IMAGE_EVENT_STRIDE, RoleImageColumns,
-        RoleImagePlan, RouteArmLaneStepRow, RuntimeRoleFacts,
+        ColumnRange, PackedLaneRange, PackedRouteArmRow, ROLE_IMAGE_EVENT_STRIDE,
+        ROLE_IMAGE_U16_STRIDE, RoleImageColumns, RoleImagePlan, RouteArmLaneStepRow,
+        RuntimeRoleFacts,
     },
     ScopeFacts, decode_binary_route_arm_index,
     event_rows::{
@@ -67,9 +68,9 @@ fn role_image_fit_probe_rejects_undersized_storage() {
     let scopes = ScopeFacts::new(&source);
     let facts = empty_role_facts();
     let plan = one_event_role_image_plan();
-    assert!(plan.blob_len() == ROLE_IMAGE_EVENT_STRIDE);
+    assert!(plan.blob_len() == ROLE_IMAGE_EVENT_STRIDE + ROLE_IMAGE_U16_STRIDE);
     assert!(
-        plan.build_if_fits::<{ ROLE_IMAGE_EVENT_STRIDE - 1 }, 1>(
+        plan.build_if_fits::<{ ROLE_IMAGE_EVENT_STRIDE + ROLE_IMAGE_U16_STRIDE - 1 }, 1>(
             (&source, &scopes),
             facts,
             super::projection::LocalRows::Role(0)
@@ -100,7 +101,7 @@ fn role_image_fit_probe_rejects_plan_mismatch() {
         logical_lane_count: 1,
     });
     let plan = one_event_role_image_plan();
-    let _ = plan.build_if_fits::<ROLE_IMAGE_EVENT_STRIDE, 1>(
+    let _ = plan.build_if_fits::<{ ROLE_IMAGE_EVENT_STRIDE + ROLE_IMAGE_U16_STRIDE }, 1>(
         (&source, &scopes),
         facts,
         super::projection::LocalRows::Role(0),

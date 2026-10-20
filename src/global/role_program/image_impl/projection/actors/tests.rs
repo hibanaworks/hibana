@@ -169,6 +169,26 @@ fn resident_actor_image_checks_both_sides_before_publication() {
             None => panic!("resident actor fixture"),
         };
     static PROGRAM: CompiledProgramRef = BYTES.compiled_ref(&SUMMARY, PLAN.columns());
+    const FACTS: RuntimeRoleFacts = RuntimeRoleFacts::from_counts(RoleCompiledCounts {
+        max_route_commit_count: 0,
+        local_step_count: 3,
+        route_scope_count: 0,
+        active_lane_count: 1,
+        endpoint_lane_slot_count: 1,
+        logical_lane_count: 1,
+    });
+    const COLUMNS: super::super::super::super::RoleImageColumns = RoleImageColumnCounts {
+        dependency_rows: 0,
+        conflict_rows: 0,
+        resident_boundaries: 0,
+        lane_bits: 1,
+        route_arm_lane_steps: 0,
+        route_commit_rows: 0,
+        roll_scopes: 0,
+        roll_entry_views: 0,
+        owned_receipts: 0,
+    }
+    .columns(FACTS);
     const fn local_bytes() -> [u8; 64] {
         let mut bytes = [0; 64];
         let mut row = 0;
@@ -185,6 +205,10 @@ fn resident_actor_image_checks_both_sides_before_publication() {
             row += 1;
         }
         bytes[3 * crate::global::role_program::ROLE_IMAGE_EVENT_STRIDE + 3] = 1;
+        let index = COLUMNS.receive_index().offset as usize;
+        bytes[index] = 0;
+        bytes[index + 2] = 2;
+        bytes[index + 4] = 1;
         bytes
     }
     static LOCAL: [u8; 64] = local_bytes();
@@ -198,38 +222,18 @@ fn resident_actor_image_checks_both_sides_before_publication() {
         bytes[crate::global::role_program::ROLE_IMAGE_EVENT_STRIDE + 9] = 0;
         bytes
     };
-    let facts = RuntimeRoleFacts::from_counts(RoleCompiledCounts {
-        max_route_commit_count: 0,
-        local_step_count: 3,
-        route_scope_count: 0,
-        active_lane_count: 1,
-        endpoint_lane_slot_count: 1,
-        logical_lane_count: 1,
-    });
-    let columns = RoleImageColumnCounts {
-        dependency_rows: 0,
-        conflict_rows: 0,
-        resident_boundaries: 0,
-        lane_bits: 1,
-        route_arm_lane_steps: 0,
-        route_commit_rows: 0,
-        roll_scopes: 0,
-        roll_entry_views: 0,
-        owned_receipts: 0,
-    }
-    .columns(facts);
-    let image = RoleImageRef::new(&PROGRAM, 1, facts, columns, &LOCAL);
+    let image = RoleImageRef::new(&PROGRAM, 1, FACTS, COLUMNS, &LOCAL);
     assert_eq!(image.local_step_count(), 3);
     assert!(image.local_step_node(1).unwrap().action().is_send());
     assert!(image.local_step_node(2).unwrap().action().is_recv());
     for malformed in [&DUPLICATED_SEND, &COLLAPSED_LOCAL] {
         assert!(
-            std::panic::catch_unwind(|| RoleImageRef::new(&PROGRAM, 1, facts, columns, malformed))
+            std::panic::catch_unwind(|| RoleImageRef::new(&PROGRAM, 1, FACTS, COLUMNS, malformed))
                 .is_err()
         );
     }
     assert!(
-        std::panic::catch_unwind(|| RoleImageRef::new(&PROGRAM, 0, facts, columns, &LOCAL))
+        std::panic::catch_unwind(|| RoleImageRef::new(&PROGRAM, 0, FACTS, COLUMNS, &LOCAL))
             .is_err()
     );
 }

@@ -682,7 +682,8 @@ def RustDescriptorImage.actorRowsCheck (image : RustDescriptorImage) (choreo : C
         source.actorCandidateActions normalized.paths image.role) &&
       normalized.paths.all fun path =>
         ((columns.actorRowsForPath markers path image.role rows).map
-          (·.sourceAction image.role)) == source.actorActions path image.role)
+          (·.sourceAction image.role)) == source.actorActions path image.role) &&
+      (image.roleBytes.length == image.roleBlobLen && image.receiveIndexCoherent)
   | _, _ => false
 
 theorem accepted_actor_rows_bind_source_operations
@@ -704,20 +705,21 @@ theorem accepted_actor_rows_bind_source_operations
       cases rowsAt : image.decodeActorRows? with
       | none => simp [RustDescriptorImage.actorRowsCheck, decoded, rowsAt] at accepted
       | some rows =>
-          have checked : ownershipColumnsMatch image choreo normalized columns atoms markers = true ∧
+          have checked : (ownershipColumnsMatch image choreo normalized columns atoms markers = true ∧
               ((rows.map (·.sourceAction image.role)) ==
                 source.actorCandidateActions normalized.paths image.role) = true ∧
               (normalized.paths.all fun path =>
                 ((columns.actorRowsForPath markers path image.role rows).map
                   (·.sourceAction image.role)) ==
-                  source.actorActions path image.role) = true := by
+                  source.actorActions path image.role) = true) ∧
+              (image.roleBytes.length == image.roleBlobLen && image.receiveIndexCoherent) = true := by
             simpa [RustDescriptorImage.actorRowsCheck, decoded, rowsAt] using accepted
           have fields := ownership_data_binds_decoders decoded
           refine ⟨source, normalized, columns, atoms, markers, rows, fields.1, fields.2.1,
             fields.2.2.1, fields.2.2.2.1, fields.2.2.2.2, rfl, ?_, ?_⟩
-          · simpa [RustDescriptorImage.ownershipCheck, decoded] using checked.1
+          · simpa [RustDescriptorImage.ownershipCheck, decoded] using checked.1.1
           · intro path member
-            exact of_decide_eq_true (by simpa using List.all_eq_true.mp checked.2.2 path member)
+            exact of_decide_eq_true (by simpa using List.all_eq_true.mp checked.1.2.2 path member)
 
 /-- Path filtering cannot hide extra rows belonging to no possible execution
 of this actor. The exact static rows remain tied to source action identities. -/
@@ -742,6 +744,6 @@ theorem accepted_actor_rows_bind_candidate_operations
             Bool.and_eq_true] at checked
           have fields := ownership_data_binds_decoders decoded
           exact ⟨source, normalized, rows, fields.1, fields.2.1, rfl,
-            beq_iff_eq.mp checked.2.1⟩
+            beq_iff_eq.mp checked.1.2.1⟩
 
 end Hibana

@@ -48,8 +48,11 @@ where
         words.fill(0);
         let mut expected_payload = None;
         let mut other_view_pending = false;
-        let mut idx = 0usize;
-        while idx < self.progress.cursor.local_steps_len() {
+        for idx in self
+            .progress
+            .cursor
+            .receive_candidates(self.public_header.role(), target_label)
+        {
             if let Some(meta) = self.progress.cursor.try_recv_meta_at(idx)
                 && self.progress.cursor.logical_role_at(idx) == Some(self.public_header.role())
                 && meta.label == target_label
@@ -74,7 +77,6 @@ where
                     }
                 }
             }
-            idx += 1;
         }
         // The existing u8 lane domain bounds this temporary set to 32 bytes.
         // Every admitted occurrence remains available to the full-key unique

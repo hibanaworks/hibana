@@ -1510,8 +1510,11 @@ def RustDescriptorImage.roleRollEntryViewOffset (image : RustDescriptorImage) : 
 def RustDescriptorImage.roleOwnedReceiptOffset (image : RustDescriptorImage) : Nat :=
   image.roleRollEntryViewOffset + image.rollEntryViewCount * productionRoleRollEntryStride
 
-def RustDescriptorImage.roleBlobLen (image : RustDescriptorImage) : Nat :=
+def RustDescriptorImage.roleReceiveIndexOffset (image : RustDescriptorImage) : Nat :=
   image.roleOwnedReceiptOffset + image.ownedReceiptCount * productionRoleU16Stride
+
+def RustDescriptorImage.roleBlobLen (image : RustDescriptorImage) : Nat :=
+  image.roleReceiveIndexOffset + image.eventCount * productionRoleU16Stride
 
 def RustDescriptorImage.decodeAtomRow?
     (image : RustDescriptorImage) (row : Nat) : Option DecodedProgramAtom := do
@@ -1947,6 +1950,24 @@ def RustDescriptorImage.eventAtom?
   let effIndex ← image.eventEffIndex? eventId
   let atoms ← image.decodeAtoms?
   resolveUnique? (atoms.filter fun candidate => candidate.effIndex = effIndex)
+
+/-- Independently sort decoded row identities, rather than replaying the Rust
+heapsort or trusting the index's own candidate list. Non-receives sort last. -/
+def RustDescriptorImage.receiveIndexCoherent (image : RustDescriptorImage) : Bool :=
+  let expected : Option (List Nat) := do
+    let rows ← (List.range image.eventCount).mapM fun row => do
+      let atom ← image.eventAtom? row
+      let flags ← image.eventFlags? row
+      if flags < 6 then pure () else none
+      let key := if flags / 2 = 2 then atom.receiver * 256 + atom.label else 65536
+      pure (key, row)
+    pure ((rows.mergeSort fun a b =>
+      a.1 < b.1 || (a.1 == b.1 && a.2 ≤ b.2)).map Prod.snd)
+  let actual := (List.range image.eventCount).mapM fun slot =>
+    readU16LE? image.roleBytes (image.roleReceiveIndexOffset + slot * productionRoleU16Stride)
+  match expected, actual with
+  | some a, some b => a == b
+  | _, _ => false
 
 theorem decoded_event_atom_is_unique
     {image : RustDescriptorImage} {eventId : Nat} {atom : DecodedProgramAtom}

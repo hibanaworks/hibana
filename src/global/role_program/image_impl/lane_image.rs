@@ -99,6 +99,13 @@ impl<'a> RoleLaneImage<'a> {
         }
     }
 
+    pub(crate) const fn receive_index_step(&self, slot: usize) -> Option<usize> {
+        match self.read_u16(self.columns.receive_index(), slot, ROLE_IMAGE_U16_STRIDE) {
+            Some(step) => Some(step as usize),
+            None => None,
+        }
+    }
+
     #[inline(always)]
     pub(crate) const fn local_step_lane(
         &self,
