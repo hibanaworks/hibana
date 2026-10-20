@@ -110,6 +110,11 @@ run_miri_test \
   -p hibana --lib \
   global::role_program::image_types::blob_tests
 
+run_miri_test \
+  immutable-receive-index \
+  -p hibana --lib \
+  global::role_program::image_impl::ref_access::tests::receive_index
+
 MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \
   parallel-endpoint-borrows \
   -p hibana --lib \

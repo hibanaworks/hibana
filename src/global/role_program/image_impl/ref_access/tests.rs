@@ -33,11 +33,16 @@ fn reject(
     let mut columns = rows.columns;
     let mut facts = rows.facts;
     edit(&mut bytes, &mut columns, &mut facts);
-    // Constructor accepts immutable static storage. These tiny malformed
-    // fixtures deliberately remain allocated, including after expected panic.
-    let bytes = Box::leak(Box::new(bytes));
+    let bytes = Box::new(bytes);
     assert!(
-        catch_unwind(|| RoleImageRef::new(rows.program, rows.role, facts, columns, bytes)).is_err()
+        catch_unwind(|| {
+            // SAFETY: the constructor requires static storage, but this test
+            // discards its result inside this closure. The Box stays alive
+            // throughout validation and no reference escapes, even on panic.
+            let temporary = unsafe { &*core::ptr::from_ref(bytes.as_ref()) };
+            let _ = RoleImageRef::new(rows.program, rows.role, facts, columns, temporary);
+        })
+        .is_err()
     );
 }
 
