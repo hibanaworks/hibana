@@ -2,7 +2,7 @@
 # Limits are the larger of two measured instruction counts plus 1%, rounded up.
 # Compiler/target changes require profile review, never an automatic budget increase.
 case	tail_events	endpoint_ops	max_instructions
-seq	8	512	136316851
-seq	256	512	251877102
-par	8	512	78369217
-par	256	512	138091075
+seq	8	512	128889098
+seq	256	512	129532009
+par	8	512	74512033
+par	256	512	74846200
