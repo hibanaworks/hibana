@@ -47,7 +47,9 @@ theorem source_unfolding_preserves_each_initial_owner
   · have actual : key ∉ expanded.resources := fun member => present (membership.mp member)
     simp [initialOwners, present, actual]
 
-private theorem an_accepted_occurrence_keeps_its_call_and_source
+/-- Every actual acceptance in this word keeps its call identity and exact
+source occurrence. Later calls cannot replace it with equal envelope bytes. -/
+theorem an_accepted_occurrence_keeps_its_call_and_source
     (trace : SourceOccurrenceTrace images choreo plan word calls points) :
     ∀ entry, DistributedCallBoundary.accept entry ∈ word →
       ∃ occurrence, occurrenceCall? calls entry.callKey = some occurrence ∧

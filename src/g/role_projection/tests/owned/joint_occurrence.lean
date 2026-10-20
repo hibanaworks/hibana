@@ -385,8 +385,40 @@ theorem actualJointRoundTripContinuation :
   have unfinished : (occurrenceCut jointOccurrencePlan jointRoundTripPoints).Unfinished := by
     refine ⟨.accepted 2, ?_, ?_⟩ <;> decide
   obtain ⟨affine, _, history, _, _⟩ :=
-    a_joint_occurrence_refinement_has_custody_fifo_and_source_progress
-      actualJointRoundTripCustody actualJointRoundTripSource actualJointRoundTripOccurrence unfinished
+    a_joint_occurrence_execution_has_retained_resource_authority_and_source_progress
+      actualJointRoundTripCustody
+      (a_selected_visit_execution_has_its_same_physical_execution actualJointRoundTripSource)
+      actualJointRoundTripOccurrence (by decide)
+      (by
+        have noneRetired : (jointRoundTripEvents.all fun event => decide (event.retirement? = none)) = true := by decide
+        intro event present
+        exact of_decide_eq_true (List.all_eq_true.mp noneRetired event present)) unfinished
   exact ⟨affine, rfl, history, a_checked_source_occurrence_has_its_exact_transition _ _ (by decide)⟩
+
+/-- Derive current authority from source readiness and the SAME captured
+round-trip word. The exact returned value is an output, not a final-cut
+availability premise. Neither completed sender's witness remains authoritative. -/
+theorem actualReadyReturnedReadDerivesItsCurrentAuthority :
+    TransferValueLocated returnedValue jointReturnedCut.custody := by
+  obtain ⟨value, actorAt, outcome⟩ :=
+    a_ready_resource_operation_has_its_authority_or_checked_retirement
+      (target := ⟨2, .send⟩) (binding := jointOccurrencePlan.path.bindings[2].2)
+      (action := { actor := 0, endpoint := jointResource, side := .send })
+      actualJointRoundTripCustody
+      (a_selected_visit_execution_has_its_same_physical_execution actualJointRoundTripSource)
+      actualJointRoundTripOccurrence (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide)
+  rcases outcome with located | ⟨event, present, sample, retired, _, _⟩
+  · have same : value = returnedValue := by
+      rcases located with ⟨usable, _, _⟩ | ⟨empty, _, _⟩
+      · change [returnedValue] = [value] at usable
+        exact (List.cons.inj usable).1.symm
+      · change [returnedValue] = [] at empty
+        contradiction
+    simpa only [same] using located
+  · have noRetirement : (jointRoundTripEvents.all fun item => decide (item.retirement? = none)) = true := by decide
+    have absent := of_decide_eq_true (List.all_eq_true.mp noRetirement event present)
+    rw [absent] at retired
+    contradiction
 
 end

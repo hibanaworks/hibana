@@ -58,6 +58,7 @@ actualJointRoundTripSource : Hibana.DistributedCallExecution jointImages custody
   [(jointEntry, jointLoanRecord), (jointReturnEntry, jointReturnRecord)] []
 actualJointSourceAcceptance : Hibana.DistributedCallExecution jointImages custodyChoreo 873 jointSourceInitial
   jointSourceAfter (Hibana.OwnedCallHistory.sourceWord jointEvents) [jointEntry] [] [jointEntry]
+actualReadyReturnedReadDerivesItsCurrentAuthority : Hibana.TransferValueLocated returnedValue jointReturnedCut.custody
 custodyAcceptStep : Step Action.accept custodyPending custodySent
 custodyActualPendingSendUsesTheSamePrivateValue : ∃ sending,
   sending = initialValue ∧

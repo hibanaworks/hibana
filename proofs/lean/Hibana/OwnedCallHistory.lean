@@ -339,6 +339,29 @@ theorem a_joint_received_value_has_its_current_location_or_actual_release
       | receive state rest requests key actor record frame facts factsAt resourceAt receiving actorAt wire =>
         exact .inl (.inl (one_usable_authority_is_the_exact_value bound List.mem_cons_self))
 
+/-- Initial issuance is subject to the same exact-release boundary as receipt.
+Ordinary source work, an I/O error and destruction of an accepted sender's
+witness cannot silently remove the initially issued authority. -/
+theorem a_joint_initial_value_has_its_current_location_or_actual_release
+    (history : OwnedCallHistory.History images resource choreo value events cut) :
+    TransferValueLocated value cut.custody ∨
+      ∃ earlier later event before after,
+        events = earlier ++ event :: later ∧
+        OwnedCallHistory.History images resource choreo value earlier before ∧
+        OwnedCallHistory.Boundary images resource choreo earlier event before after ∧
+        TransferValueLocated value before.custody ∧ event.releasedValue? = some value := by
+  induction history with
+  | nil => exact .inl (.inl ⟨rfl, rfl, rfl⟩)
+  | @tail events before event after prior boundary ih =>
+    rcases ih with still | ⟨earlier, later, released, first, last,
+      wordAt, prefixHistory, actual, located, releasedValue⟩
+    · rcases a_joint_boundary_keeps_its_value_or_records_its_exact_release boundary still with kept | released
+      · exact .inl kept
+      · exact .inr ⟨events, [], event, before, after, by simp, prior, boundary, still, released⟩
+    · exact .inr ⟨earlier, later ++ [event], released, first, last,
+        by simp only [wordAt, List.append_assoc, List.cons_append],
+        prefixHistory, actual, located, releasedValue⟩
+
 private theorem a_joint_boundary_loses_authority_only_at_disposal
     (boundary : OwnedCallHistory.Boundary images resource choreo events event before after)
     (had : before.custody.authorityCount = 1) (empty : after.custody.authorityCount = 0) :

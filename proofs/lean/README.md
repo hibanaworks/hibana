@@ -6,9 +6,10 @@ and contributes no code, metadata, memory use, or flash cost to Pico builds.
 
 The established end-to-end result covers the finite-role, non-delegating
 logical model with its re-entry premises. Its common roll-reset boundary does
-not cover every independently advancing runtime visit. The delegation and
-finite-occurrence models and their remaining reduction
-obligations are described below. This is not a source-level verification of
+not cover every independently advancing runtime visit. The finite-occurrence
+result below combines source progress with the current authority needed by a
+projected operation. Public delegation qualification remains closed.
+This is not a source-level verification of
 arbitrary Rust code or a specification of a concrete transport.
 
 Qualification work is limited to the stated protocol, ownership and
@@ -229,6 +230,23 @@ Endpoint conformance tests, Miri and focused Kani. Neither that support nor the
 model theorem should be described as a proof of all concrete Rust executions.
 Main backports and implementation of an authenticated network carrier are
 outside these core-feature conditions.
+
+The source-model composition is now stated by
+`a_joint_occurrence_execution_has_retained_resource_authority_and_source_progress`.
+For the same qualified source/physical/custody word it returns affine custody,
+FIFO/call matching, source execution and an enabled projected transition.
+If that transition needs the tracked retained resource, its authority is at
+the operation's actor in application code or a private future. Initial issuer
+identity is an input; current value availability is derived. This statement
+quantifies over accepted finite unfoldings, not the bounded test inventory.
+
+Retention here means that this active resource has no recorded retirement in
+the word. It is the application retention premise, not a claim that Rust can
+prevent dropping or forgetting an Endpoint. Without retention, the underlying
+theorem exhibits the exact value's checked complete/faulted retirement. An
+I/O error alone cannot supply that alternative. Sender publication needs no
+authority already moved to another holder. These are model results; public
+API recognition and final-source qualification in stages 2 and 3 remain open.
 
 The bounded source inventory is fixed and explicit:
 
@@ -1622,11 +1640,26 @@ checks the fresh loan after the prior return, despite equal envelope bytes.
 Both reuse the original captured words; no new fixture or runtime guard is
 introduced.
 
-For a pending source operation, excluding incompatible intervening releases
-still requires its source causal interval. General runtime-to-occurrence,
-enabled-operation and fault/closure composition are not completed by this
-receipt result. Application invocation/retention and executor polling remain
-explicit premises, rather than a new arbitrary-Rust formalization target.
+The pending-operation gap is closed by composing that interval with the same
+custody word. `required_resource_operations_causally_precede_a_later_handoff`
+derives a causal path from every earlier required resource operation to the
+later transfer. Ordinary resource operations must commit first. Sending that
+very resource requires only acceptance, preserving remote receipt/re-entry
+before the former sender publishes. The proof follows derived holders and
+receipts; it does not order independent resources or add a runtime guard.
+
+`a_ready_resource_operation_has_its_authority_or_checked_retirement` uses the
+initial source issuer or last actual receipt, excludes every incompatible
+accepted handoff and returns current authority or its checked retirement.
+Initial issuance and received authority use the same exact-release rule.
+No live value, future inventory or successful final admission is supplied as
+a premise. The joint theorem above then connects the enabled source operation
+to this retained authority. The existing captured two-runtime round trip
+applies it after both completed sender witnesses are dropped and derives the
+returned resource's current authority before its next Read. No new runtime
+fixture is added. Application invocation/retention, executor polling and the
+declared carrier conditions remain premises. Public-path qualification is
+still required; this is not a proof of all production Rust executions.
 
 `SourceHandoffInterval.lean` connects that static interval to measured progress.
 For an accepted source, every competing handoff of the same resource is before

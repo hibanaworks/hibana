@@ -56,7 +56,9 @@ private theorem instantiated_binding_retains_key_lookup
                     some (event, symbolic) := by simpa [same] using located
                 simpa [same] using ih tailLocated tailAt
 
-private theorem elaboration_only_emits_valid_messages
+/-- Every emitted source message keeps the validation performed by elaboration,
+including the separation of an owned payload from its carrier endpoints. -/
+theorem elaboration_only_emits_valid_messages
     {source : Source} {resources : List EndpointKey} {owners : OwnerMap}
     {path : List Selection} {start event : Nat} {run : Elaboration} {binding : SymbolicBinding}
     (accepted : elaborate resources owners path source start = some run)

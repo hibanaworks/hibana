@@ -169,7 +169,9 @@ private theorem trace_calls_have_observed_acceptances
     intro pair member
     exact List.mem_append_left _ (ih pair member)
 
-private theorem a_resolved_call_has_actual_acceptance_evidence
+/-- A call lookup in this same word carries its observed acceptance. Repeated
+envelope bytes or a call from another word cannot provide this evidence. -/
+theorem a_resolved_call_has_actual_acceptance_evidence
     (trace : SourceOccurrenceTrace images choreo plan word calls points)
     (found : occurrenceCall? calls key = some occurrence) :
     points.contains (SourcePoint.accepted occurrence) = true := by
