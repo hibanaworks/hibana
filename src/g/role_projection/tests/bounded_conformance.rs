@@ -22,12 +22,25 @@ type Loan = g::Msg<224, Endpoint<'static, 10>>;
 type Return = g::Msg<225, Endpoint<'static, 10>>;
 type Read = g::Msg<226, u32>;
 type Tick = g::Msg<227, u32>;
+type Done = g::Msg<228, u32>;
+type SequentialContinuation =
+    g::Seq<g::Roll<Body>, g::Seq<g::Send<1, 0, Finish>, g::Send<0, 1, Done>>>;
 type LoanBody = g::Seq<g::Send<0, 1, Loan>, g::Seq<g::Send<10, 2, Read>, g::Send<1, 0, Return>>>;
 type OwnedParallel = g::Par<g::Roll<LoanBody>, g::Send<0, 2, Tick>>;
 
 // (source operation = 2 * event + receive, physical caller). Alternate
 // resource holders probe the same logical operation, not another protocol step.
 const EXCHANGE_PROBES: &[(u8, u8)] = &[(0, 0), (1, 1), (2, 1), (3, 0), (4, 1), (5, 0)];
+const CONTINUATION_PROBES: &[(u8, u8)] = &[
+    (0, 0),
+    (1, 1),
+    (2, 1),
+    (3, 0),
+    (4, 1),
+    (5, 0),
+    (6, 0),
+    (7, 1),
+];
 const OWNED_PROBES: &[(u8, u8)] = &[
     (0, 0),
     (1, 1),
@@ -101,6 +114,8 @@ async fn replay<Steps: ProgramShape>(commands: &[u8]) -> Outcome {
             3 => observe!(a.recv::<Ack>()),
             4 => observe!(b.send::<Finish>(&7)),
             5 => observe!(a.recv::<Finish>()),
+            6 => observe!(a.send::<Done>(&7)),
+            7 => observe!(b.recv::<Done>()),
             _ => unreachable!(),
         };
         if index + 1 != commands.len() {
@@ -236,9 +251,7 @@ async fn enumerate(
     let mut observations = String::new();
     let mut attempts = 0_usize;
     let mut completed = 0;
-    // Partition declarations, not tested schedules. Each declaration stays
-    // below Lean's default elaboration work limit as the data set grows.
-    const PROBES_PER_DECL: usize = 256;
+    observations.push('[');
     // Test bounds do not add runtime admission rules. Lean independently
     // derives these bounds and requires every remaining candidate probe.
     let depth = caps.iter().map(|&cap| usize::from(cap)).sum();
@@ -260,22 +273,14 @@ async fn enumerate(
                 trace.push(command);
                 let outcome = replay(&trace).await;
                 let detail = format!("{outcome:?}");
-                if attempts.is_multiple_of(PROBES_PER_DECL) {
-                    if attempts != 0 {
-                        writeln!(observations, "]").unwrap();
-                    }
-                    writeln!(
-                        observations,
-                        "def {name}Attempts{} : List Attempt := [",
-                        attempts / PROBES_PER_DECL
-                    )
-                    .unwrap();
+                if attempts != 0 {
+                    observations.push(',');
                 }
                 writeln!(
                     observations,
-                    "{{ commands := {trace:?}, outcome := {}, runtime := {:?} }},",
+                    "{{\"commands\":{trace:?},\"outcome\":{},\"runtime\":{}}}",
                     outcome.code(),
-                    detail,
+                    json_string(&detail),
                 )
                 .unwrap();
                 attempts += 1;
@@ -291,28 +296,35 @@ async fn enumerate(
     }
     assert!(
         completed > 0,
-        "the generator must reach complete bounded runs"
+        "the generator must reach complete bounded runs: {name}"
     );
-    writeln!(observations, "]").unwrap();
-    writeln!(observations, "def {name}Probes : List Probe := [").unwrap();
-    for &(operation, actor) in probes {
-        writeln!(
-            observations,
-            "{{ operation := {operation}, actor := {actor} }},"
-        )
-        .unwrap();
-    }
-    writeln!(observations, "]").unwrap();
-    writeln!(
-        observations,
-        "def {name}Attempts : List Attempt := {}",
-        (0..attempts.div_ceil(PROBES_PER_DECL))
-            .map(|chunk| format!("{name}Attempts{chunk}"))
-            .collect::<Vec<_>>()
-            .join(" ++ ")
-    )
-    .unwrap();
+    observations.push(']');
     (observations, attempts, completed)
+}
+
+fn json_string(value: &str) -> String {
+    use core::fmt::Write;
+    let mut encoded = String::from("\"");
+    for character in value.chars() {
+        match character {
+            '"' => encoded.push_str("\\\""),
+            '\\' => encoded.push_str("\\\\"),
+            '\u{0}'..='\u{1f}' => write!(encoded, "\\u{:04x}", u32::from(character)).unwrap(),
+            _ => encoded.push(character),
+        }
+    }
+    encoded.push('"');
+    encoded
+}
+
+fn probe_source(probes: &[(u8, u8)]) -> String {
+    use core::fmt::Write;
+    let mut output = String::from("[");
+    for &(operation, actor) in probes {
+        writeln!(output, "{{ operation := {operation}, actor := {actor} }},").unwrap();
+    }
+    output.push(']');
+    output
 }
 
 #[test]
@@ -321,7 +333,7 @@ async fn enumerate(
     ignore = "native exhaustive schedules; actual holder replays have a separate Miri test"
 )]
 fn bounded_public_schedules_emit_executable_lean_conformance_cases() {
-    let (sequential, parallel, owned) = tokio::runtime::Builder::new_current_thread()
+    let (sequential, parallel, owned, continuation) = tokio::runtime::Builder::new_current_thread()
         .enable_time()
         .start_paused(true)
         .build()
@@ -349,17 +361,21 @@ fn bounded_public_schedules_emit_executable_lean_conformance_cases() {
                     replay_owned,
                 )
                 .await,
+                enumerate(
+                    "seqRollContinuation",
+                    &[2, 2, 2, 2, 1, 1, 1, 1],
+                    CONTINUATION_PROBES,
+                    replay::<SequentialContinuation>,
+                )
+                .await,
             )
         });
-    let generated = format!(
-        "{}\n{}\n{}\n\
-        def main : IO Unit := checkCases [\n\
-        {{ name := \"seq-roll\", choreo := {}, images := [{}, {}], probes := seqRollProbes, attempts := seqRollAttempts }},\n\
-        {{ name := \"par-roll\", choreo := {}, images := [{}, {}], probes := parRollProbes, attempts := parRollAttempts }},\n\
-        {{ name := \"owned-par-roll\", choreo := {}, images := [{}, {}, {}], probes := ownedParRollProbes, attempts := ownedParRollAttempts }}]\n",
-        sequential.0,
-        parallel.0,
-        owned.0,
+    let inputs = format!(
+        "def conformanceInputs : List ConformanceCase := [\n\
+        {{ name := \"seq-roll\", choreo := {}, images := [{}, {}], probes := {}, attempts := [] }},\n\
+        {{ name := \"par-roll\", choreo := {}, images := [{}, {}], probes := {}, attempts := [] }},\n\
+        {{ name := \"owned-par-roll\", choreo := {}, images := [{}, {}, {}], probes := {}, attempts := [] }},\n\
+        {{ name := \"seq-roll-continuation\", choreo := {}, images := [{}, {}], probes := {}, attempts := [] }}]\n",
         Sequential::lean_source(),
         descriptor_source(RoleDescriptorRef::from_resident(
             &RoleProjection::<0, Sequential, 16>::IMAGE_REF
@@ -367,6 +383,7 @@ fn bounded_public_schedules_emit_executable_lean_conformance_cases() {
         descriptor_source(RoleDescriptorRef::from_resident(
             &RoleProjection::<1, Sequential, 16>::IMAGE_REF
         )),
+        probe_source(EXCHANGE_PROBES),
         Parallel::lean_source(),
         descriptor_source(RoleDescriptorRef::from_resident(
             &RoleProjection::<0, Parallel, 16>::IMAGE_REF
@@ -374,6 +391,7 @@ fn bounded_public_schedules_emit_executable_lean_conformance_cases() {
         descriptor_source(RoleDescriptorRef::from_resident(
             &RoleProjection::<1, Parallel, 16>::IMAGE_REF
         )),
+        probe_source(EXCHANGE_PROBES),
         OwnedParallel::lean_source(),
         descriptor_source(RoleDescriptorRef::from_resident(
             &RoleProjection::<0, OwnedParallel, 16>::IMAGE_REF
@@ -384,18 +402,41 @@ fn bounded_public_schedules_emit_executable_lean_conformance_cases() {
         descriptor_source(RoleDescriptorRef::from_resident(
             &RoleProjection::<2, OwnedParallel, 16>::IMAGE_REF
         )),
+        probe_source(OWNED_PROBES),
+        SequentialContinuation::lean_source(),
+        descriptor_source(RoleDescriptorRef::from_resident(
+            &RoleProjection::<0, SequentialContinuation, 16>::IMAGE_REF
+        )),
+        descriptor_source(RoleDescriptorRef::from_resident(
+            &RoleProjection::<1, SequentialContinuation, 16>::IMAGE_REF
+        )),
+        probe_source(CONTINUATION_PROBES),
     );
     let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/lean-proof");
     std::fs::create_dir_all(&directory).unwrap();
-    std::fs::write(directory.join("EndpointConformanceCases.lean"), generated).unwrap();
+    std::fs::write(directory.join("EndpointConformanceInputs.lean"), inputs).unwrap();
+    let observations = format!(
+        "[{{\"name\":\"seq-roll\",\"attempts\":{}}},\
+        {{\"name\":\"par-roll\",\"attempts\":{}}},\
+        {{\"name\":\"owned-par-roll\",\"attempts\":{}}},\
+        {{\"name\":\"seq-roll-continuation\",\"attempts\":{}}}]\n",
+        sequential.0, parallel.0, owned.0, continuation.0,
+    );
+    std::fs::write(
+        directory.join("EndpointConformanceCases.json"),
+        observations,
+    )
+    .unwrap();
     std::println!(
-        "bounded Endpoint schedules: seq attempts={} complete={}, par attempts={} complete={}, owned attempts={} complete={}",
+        "bounded Endpoint schedules: seq attempts={} complete={}, par attempts={} complete={}, owned attempts={} complete={}, continuation attempts={} complete={}",
         sequential.1,
         sequential.2,
         parallel.1,
         parallel.2,
         owned.1,
         owned.2,
+        continuation.1,
+        continuation.2,
     );
 }
 
@@ -411,6 +452,27 @@ fn actual_holder_values_survive_two_visits_and_refuse_another_callers_operation(
             assert_eq!(replay_owned(&[0, 1, 8]).await, Outcome::Unavailable);
             assert_eq!(
                 replay_owned(&[0, 1, 2, 3, 4, 5, 0, 1, 2, 3, 4, 5, 6, 7]).await,
+                Outcome::Accepted
+            );
+        });
+}
+
+#[test]
+fn multiple_continuation_steps_keep_their_local_order_after_reentry() {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .start_paused(true)
+        .build()
+        .unwrap()
+        .block_on(async {
+            // The old Finish can be received before the new Ack. The outgoing
+            // Done must still follow this role's new body, even after Finish.
+            assert!(matches!(
+                replay::<SequentialContinuation>(&[0, 1, 2, 3, 4, 0, 1, 2, 5, 6]).await,
+                Outcome::Rejected(_)
+            ));
+            assert_eq!(
+                replay::<SequentialContinuation>(&[0, 1, 2, 3, 4, 0, 1, 2, 5, 3, 6, 7]).await,
                 Outcome::Accepted
             );
         });

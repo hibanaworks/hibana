@@ -361,7 +361,7 @@ theorem actualOrdinaryReadCanOnlyRetireWithFault {action : EndpointTransfer.Acti
     (outcome : SourceMessageBoundaryOutcome intervalImage intervalChoreo intervalData intervalPath resource readRow action) :
     (action = .abandonPreparation ∨ action = .dropValue) ∧
       ∃ sample : ViewRetirementObservation, sample.check intervalImage intervalChoreo = true ∧
-        sample.view = resource.role ∧ sample.afterFault ≠ none :=
+        sample.view = resource.role ∧ sample.after.fault ≠ none :=
   the_measured_boundary_of_an_ordinary_use_is_a_fault (binding := readBinding) (by decide) (by decide) outcome
 
 theorem actualSendingReturnBoundaryKeepsItsExactSourceAction {action : EndpointTransfer.Action}

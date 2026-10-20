@@ -1,4 +1,5 @@
 import Hibana.SourceOccurrenceTrace
+import Lean.Data.Json
 
 open Hibana Hibana.EndpointDelegation
 set_option maxRecDepth 100000
@@ -8,6 +9,12 @@ structure Attempt where
   /-- 0=accepted, 1=pending, 2=Endpoint error, 3=no owned Rust value to call. -/
   outcome : Nat
   runtime : String
+  deriving Lean.FromJson
+
+structure CaseObservations where
+  name : String
+  attempts : List Attempt
+  deriving Lean.FromJson
 
 structure Probe where
   operation : Nat

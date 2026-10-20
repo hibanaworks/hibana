@@ -63,7 +63,7 @@ actualMeasuredMiddleInterval : actorCommitMutationHistoryCheck intervalImage int
   SourceMessageBoundaryOutcome intervalImage intervalChoreo intervalData intervalPath resource readRow action →
     (action = EndpointTransfer.Action.abandonPreparation ∨ action = EndpointTransfer.Action.dropValue) ∧
       ∃ sample,
-        sample.check intervalImage intervalChoreo = true ∧ sample.view = resource.role ∧ sample.afterFault ≠ none
+        sample.check intervalImage intervalChoreo = true ∧ sample.view = resource.role ∧ sample.after.fault ≠ none
 actualOwnReturnBecomesReadyAfterTheTarget : sourceRowReady intervalData intervalPath afterRead nextReturn = true
 actualReadHasItsReceiptIntervalOrigin : SourceIntervalOrigin intervalData intervalPath readRow readBinding resource
   current

@@ -8,10 +8,10 @@ RUNTIME_GENERATED="${ROOT_DIR}/target/lean-proof/RuntimeGenerated.lean"
 PUBLIC_OPERATION_GENERATED="${ROOT_DIR}/target/lean-proof/PublicOperationGenerated.lean"
 PUBLIC_OPERATION_CUT_GENERATED="${ROOT_DIR}/target/lean-proof/ParallelOperationCutGenerated.lean"
 ELASTIC_CONTINUATION_GENERATED="${ROOT_DIR}/target/lean-proof/ElasticContinuationGenerated.lean"
-CONFORMANCE_CASES="${ROOT_DIR}/target/lean-proof/EndpointConformanceCases.lean"
+CONFORMANCE_INPUTS="${ROOT_DIR}/target/lean-proof/EndpointConformanceInputs.lean"
+CONFORMANCE_CASES="${ROOT_DIR}/target/lean-proof/EndpointConformanceCases.json"
 CONFORMANCE_GENERATED="${ROOT_DIR}/target/lean-proof/EndpointConformanceGenerated.lean"
-PHASE_CASES="${ROOT_DIR}/target/lean-proof/EndpointPhaseCases.lean"
-PHASE_GENERATED="${ROOT_DIR}/target/lean-proof/EndpointPhasesGenerated.lean"
+PHASE_CASES="${ROOT_DIR}/target/lean-proof/EndpointPhaseCases.json"
 CAUSAL_GENERATED="${ROOT_DIR}/target/lean-proof/CausalGenerated.lean"
 PARALLEL_GENERATED="${ROOT_DIR}/target/lean-proof/ParallelGenerated.lean"
 PROGRAM_COLUMNS_GENERATED="${ROOT_DIR}/target/lean-proof/ProgramColumnsGenerated.lean"
@@ -94,23 +94,32 @@ mkdir -p "$(dirname "${GENERATED}")"
 # source-string checks. Empty output prevents stale data from passing if a
 # test filter ever stops matching.
 : > "${CONFORMANCE_CASES}"
+: > "${CONFORMANCE_INPUTS}"
 CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib \
   g::role_projection::tests::bounded_conformance::bounded_public_schedules_emit_executable_lean_conformance_cases \
   -- --exact --nocapture
 bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${CONFORMANCE_CASES}" "bounded Endpoint schedules"
-cat "${ROOT_DIR}/.github/ci-tests/endpoint_conformance.lean" "${CONFORMANCE_CASES}" > "${CONFORMANCE_GENERATED}"
-(cd "${PROOF_DIR}" && lake env lean --run "${CONFORMANCE_GENERATED}")
-# Keep physical acceptance separate from sender completion. The two first
-# outgoing directions have every I/O release order enumerated under Tokio;
-# the remaining owned/par/roll program executes without scheduler overrides.
+bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${CONFORMANCE_INPUTS}" "Endpoint source/image inputs"
+# Keep physical acceptance separate from sender completion. The first loan,
+# independent tick, return and next loan enumerate all enabled I/O releases;
+# the owned/par/roll localsides run as ordinary concurrent Tokio tasks.
 : > "${PHASE_CASES}"
 CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib \
   g::role_projection::tests::bounded_conformance::phases::bounded_acceptance_and_completion_schedules_emit_lean_cases \
   -- --exact --nocapture
 bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${PHASE_CASES}" "split Endpoint acceptance/completion"
+# Compile the same independent Lean oracle once. Only small source/image inputs
+# enter elaboration; all observed schedules are parsed from JSON at execution.
 cat "${ROOT_DIR}/.github/ci-tests/endpoint_conformance.lean" \
-  "${ROOT_DIR}/.github/ci-tests/endpoint_phases.lean" "${PHASE_CASES}" > "${PHASE_GENERATED}"
-(cd "${PROOF_DIR}" && lake env lean --run "${PHASE_GENERATED}")
+  "${ROOT_DIR}/.github/ci-tests/endpoint_phases.lean" "${CONFORMANCE_INPUTS}" \
+  "${ROOT_DIR}/.github/ci-tests/endpoint_conformance_main.lean" > "${CONFORMANCE_GENERATED}"
+# Build imported native objects serially too; Lake's final executable link then
+# has no uncached independent import compilations to start concurrently.
+bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" build-serial "${PROOF_DIR}" \
+  --native Hibana.SourceOccurrenceTrace
+(cd "${PROOF_DIR}" && lake build endpointConformance)
+"${PROOF_DIR}/.lake/build/bin/endpoint-conformance" completed "${CONFORMANCE_CASES}"
+"${PROOF_DIR}/.lake/build/bin/endpoint-conformance" phased "${PHASE_CASES}"
 rm -f "${GENERATED}" "${RUNTIME_GENERATED}" "${PUBLIC_OPERATION_GENERATED}" "${CAUSAL_GENERATED}" "${PARALLEL_GENERATED}" "${PROGRAM_COLUMNS_GENERATED}" "${PARTIAL_CHOICE_GENERATED}" "${CONTROLLER_GENERATED}" "${INGRESS_GENERATED}" "${REENTRY_GENERATED}" "${ACTOR_COMMIT_GENERATED}" "${ACTOR_REENTRY_COMMIT_GENERATED}" "${ACTOR_PARALLEL_REENTRY_GENERATED}" "${ACTOR_ROUTE_LEFT_REENTRY_GENERATED}" "${ACTOR_ROUTE_RIGHT_REENTRY_GENERATED}"
 rm -f "${OWNED_RECOVERY_GENERATED}"
 rm -f "${PUBLIC_OPERATION_CUT_GENERATED}"

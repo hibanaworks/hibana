@@ -22,9 +22,15 @@ continues without expanding that target.
 ### Bounded runtime/model conformance
 
 The CI Lean launcher regenerates completed-operation schedules by driving real
-Endpoints under Tokio, then runs `.github/ci-tests/endpoint_conformance.lean`
-over those observations. The reference interpreter uses accepted source
-unfoldings, actor-local projection and the image's independently checked lane
+Endpoints under Tokio, then compiles `.github/ci-tests/endpoint_conformance.lean`
+and `endpoint_phases.lean` into one native Lean checker. Small regenerated
+source/image/probe inputs enter elaboration; schedule observations are JSON
+parsed by that same checker at execution. Missing, duplicate and unknown case
+names, malformed JSON and schema errors cannot silently omit observations.
+No second Rust oracle or old kernel is used. Native imports are compiled in
+dependency order, one at a time, before linking the checker.
+The reference checker uses accepted source unfoldings, actor-local projection
+and the image's independently checked lane
 table. FIFO heads follow from the acceptance/receive word. No observed runtime
 admission bits are inputs to the oracle. Every successful prefix probes every
 remaining bounded operation once, including requests that return Pending or an
@@ -38,8 +44,14 @@ Removing or duplicating a caller probe is rejected; the inventory is not
 inferred from operations the runtime happened to accept.
 
 The current cases compare `seq(roll(Start; Ack), Finish)`,
-`par(roll(Start; Ack), Finish)`, and `par(roll(Loan; Read; Return), Tick)`.
-The last case moves a real resource Endpoint from owner to worker, performs
+`par(roll(Start; Ack), Finish)`, `par(roll(Loan; Read; Return), Tick)` and
+`seq(roll(Start; Ack), seq(Finish, Done))`. The last continuation has two local
+steps for each role. A retained incoming Finish can complete before the new
+Ack, but the outgoing Done still waits for that role's current body. Its
+exhaustive probes and a separate native/Miri replay check both sides of this
+boundary.
+
+The owned case moves a real resource Endpoint from owner to worker, performs
 its operation and returns it over two visits, beside independent traffic.
 Three separate runtimes use `par()` borrows and the ordinary `send`/`recv`
 methods; the generator retains actual Rust values rather than a shadow owner
@@ -51,24 +63,26 @@ both when it holds the actual Endpoint and when that value has been moved away.
 Alternate callers share the same source-occurrence bound; adding a caller
 does not add a protocol step or another allowed use of the resource.
 
-These cases exercise 11,981 attempts at 4,842 prefixes. Both runtime-only and
+These cases exercise 12,310 attempts at 4,936 prefixes. Both runtime-only and
 model-only acceptances are reported, along with unfinished frontiers that have
 no common enabled operation. Each accepted source binding selects the actual
 sender and receiver images; their original logical rows must agree on the
 lane. This immutable direction map is checked once per accepted expansion,
-without caching observed readiness. Generated data is split into declarations
-to retain the default Lean elaboration work limit without dropping probes.
+without caching observed readiness. JSON observations do not enlarge Lean
+declarations as the schedule set grows; no probes are dropped to fit elaboration.
 Four deliberately incorrect models check that this can
 detect excessive serialization, missing causal/FIFO checks, and omitted local
 sequencing, and acceptance by the wrong holder. The holder-ignoring model
-disagrees with 330 observed refusals or unavailable values. The test does not
+disagrees with 330 observed refusals or unavailable values. The model omitting
+local resumption order disagrees in 26 probes, including 25 in the new
+multi-step continuation case. The test does not
 execute old kernels or infer correctness from source text.
 
 This comparison exposed one distinction in the finite source abstraction:
 expanding a resumed sequential body beside its continuation as global `par`
 alone allows too much. Once an actor enters a new body, its outgoing
 continuation must still follow that local body. An incoming old continuation
-can instead use retained completion. The bounded interpreter applies this
+can instead use retained completion. The bounded checker applies this
 existing projection rule from the actor's own word, without a runtime visit
 counter. Explicit source `par` retains its independent progress. Omitting that
 rule reproduces the discrepancy, rather than silently ignoring it. This query
@@ -82,27 +96,34 @@ choreographies, and are not a source-level refinement proof. Extending a test
 case must target an identified gap or counterexample.
 
 The phased comparison keeps the same owned/par/roll program and uses ordinary
-Tokio tasks for its localsides. The test carrier gates only the first send on
-each of two independent outgoing directions. It accepts a frame separately
-from releasing its sender's completion. All 52 bounded release probes cover
-the six legal orders of those four I/O boundaries. Other traffic and the second
-loan visit run normally. The append-only observations distinguish public call
+Tokio tasks for its localsides. The test carrier gates the first loan, the
+same actor's independent tick, the return and the next loan. It accepts a
+frame separately from releasing its sender's completion. All 3,448 bounded
+release probes cover 196 legal orders of those eight I/O boundaries. The
+remaining traffic runs normally. Gate availability is computed independently
+from source/projection/FIFO transitions, saturating ungated operations; observed
+call construction and observed success are not permission inputs.
+The append-only observations distinguish public call
 start, actual carrier acceptance, actual carrier delivery and successful public
 completion. Carrier witnesses pair the copied bytes; actor images and the
 accepted source unfolding supply directions, lanes, wire labels and ordering.
 Call construction stutters rather than assuming the call was admitted.
 
-The phased checker rejects an atomic-send model in 50 probes and an
-actor-wide serialization model in 26. Missing/duplicate probes and missing/
+The representative replay accepts the return and completes an independent par
+send before the old loan sender publishes; it then accepts the next loan while
+the old return sender is still pending. The phased checker rejects an atomic-send
+model in 3,442 probes and an actor-wide serialization model in 2,620.
+Missing/duplicate probes and missing/
 duplicate acceptance records are negative controls. Every complete run also
-finishes its source word. This exhausts the stated two-direction release
+finishes its source word. This exhausts the stated four-call release
 window, not all future polls, failure schedules or arbitrary choreographies.
 The carrier is an in-memory test seam, not another network qualification.
 
 The exhaustive completed-operation and phased enumerators run natively and
-are checked by Lean. Miri instead executes representative real-holder and
-reverse-completion replays through those same functions, alongside the existing
-directed runtime tests. The previous module-wide Miri exclusion has been
+are checked by Lean. Miri instead executes representative real-holder,
+reverse-completion and multi-step continuation replays through those same
+functions, alongside the existing directed runtime tests. The previous
+module-wide Miri exclusion has been
 replaced with explicit exclusions on just the two exhaustive generators.
 This enables the representative paths without repeating the native
 combinatorial search under Miri. The split does not remove any native/Lean

@@ -1,6 +1,5 @@
-//! Split first-send acceptance and completion without changing localside.
-//! The I/O script controls two directions only; the complete owned/par/roll
-//! program runs normally, including the second loan visit.
+//! Split acceptance/completion of the loan, independent par send, return and
+//! next loan without changing localside. Other traffic runs normally.
 use super::*;
 use core::cell::RefCell;
 use std::rc::Rc;
@@ -184,10 +183,10 @@ fn bounded_acceptance_and_completion_schedules_emit_lean_cases() {
         .block_on(async {
             let mut frontier = vec![Vec::<u8>::new()];
             let mut attempts = Vec::new();
-            for _ in 0..4 {
+            for _ in 0..8 {
                 let mut next = Vec::new();
                 for prefix in frontier {
-                    for command in 0..4 {
+                    for command in 0..8 {
                         let mut trace = prefix.clone();
                         trace.push(command);
                         let attempt = replay(&trace).await;
@@ -202,42 +201,30 @@ fn bounded_acceptance_and_completion_schedules_emit_lean_cases() {
             attempts
         });
     let complete = attempts.iter().filter(|attempt| attempt.finished).count();
-    let mut output = format!(
-        "def phasedChoreo : Choreo := {}\n\
-         def phasedImages : List RustDescriptorImage := [{}, {}, {}]\n",
-        OwnedParallel::lean_source(),
-        descriptor_source(RoleDescriptorRef::from_resident(
-            &RoleProjection::<0, OwnedParallel, 16>::IMAGE_REF
-        )),
-        descriptor_source(RoleDescriptorRef::from_resident(
-            &RoleProjection::<1, OwnedParallel, 16>::IMAGE_REF
-        )),
-        descriptor_source(RoleDescriptorRef::from_resident(
-            &RoleProjection::<2, OwnedParallel, 16>::IMAGE_REF
-        )),
-    );
+    let mut output = String::from("[");
     for (index, attempt) in attempts.iter().enumerate() {
-        writeln!(output, "def phasedAttempt{index} : PhaseAttempt := {{ commands := {:?}, accepted := {}, finished := {}, events := [",
-            attempt.commands, attempt.accepted, attempt.finished).unwrap();
-        for event in &attempt.events {
-            writeln!(output, "{{ kind := {}, operation := {}, visit := {}, actor := {}, wire := {:?}, witness := {} }},",
+        if index != 0 {
+            output.push(',');
+        }
+        writeln!(
+            output,
+            "{{\"commands\":{:?},\"accepted\":{},\"finished\":{},\"events\":[",
+            attempt.commands, attempt.accepted, attempt.finished
+        )
+        .unwrap();
+        for (index, event) in attempt.events.iter().enumerate() {
+            if index != 0 {
+                output.push(',');
+            }
+            writeln!(output, "{{\"kind\":{},\"operation\":{},\"visit\":{},\"actor\":{},\"wire\":{:?},\"witness\":{}}}",
                 event.kind, event.operation, event.visit, event.actor, event.wire, event.witness).unwrap();
         }
-        writeln!(output, "] }}\n").unwrap();
+        writeln!(output, "]}}").unwrap();
     }
-    writeln!(
-        output,
-        "def phasedAttempts : List PhaseAttempt := [{}]\n\
-        def main : IO Unit := checkPhases phasedChoreo phasedImages phasedAttempts",
-        (0..attempts.len())
-            .map(|index| format!("phasedAttempt{index}"))
-            .collect::<Vec<_>>()
-            .join(", ")
-    )
-    .unwrap();
+    output.push(']');
     let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/lean-proof");
     std::fs::create_dir_all(&directory).unwrap();
-    std::fs::write(directory.join("EndpointPhaseCases.lean"), output).unwrap();
+    std::fs::write(directory.join("EndpointPhaseCases.json"), output).unwrap();
     std::println!(
         "phased Endpoint schedules: attempts={} complete={complete}",
         attempts.len()
@@ -252,30 +239,34 @@ fn one_actors_reverse_completions_preserve_the_real_returned_endpoint() {
         .build()
         .unwrap()
         .block_on(async {
-            let attempt = replay(&[0, 2, 3, 1]).await;
+            let attempt = replay(&[0, 4, 2, 3, 1, 6, 5, 7]).await;
             assert!(attempt.accepted && attempt.finished);
-            let position = |kind, operation| {
+            let position = |kind, operation, visit| {
                 attempt
                     .events
                     .iter()
                     .position(|event| {
-                        event.kind == kind && event.operation == operation && event.visit == 0
+                        event.kind == kind && event.operation == operation && event.visit == visit
                     })
                     .unwrap()
             };
-            let accepted = position(1, 0);
-            let published = position(3, 0);
+            let accepted = position(1, 0, 0);
+            let published = position(3, 0, 0);
             assert!(
-                accepted < position(3, 1),
+                accepted < position(3, 1, 0),
                 "worker receives before old sender publishes"
             );
             assert!(
-                position(3, 4) < published,
-                "worker returns the resource before old sender publishes"
+                position(1, 4, 0) < published,
+                "return is accepted before old loan sender publishes"
             );
             assert!(
-                position(3, 6) < published,
+                position(3, 6, 0) < published,
                 "the same actor's independent send completes first"
+            );
+            assert!(
+                position(1, 0, 1) < position(3, 4, 0),
+                "the next loan is accepted before the old return sender publishes"
             );
         });
 }

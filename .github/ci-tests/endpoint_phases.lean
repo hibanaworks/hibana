@@ -9,13 +9,14 @@ structure PhaseBoundary where
   actor : Nat
   wire : List Nat
   witness : Nat
-  deriving BEq
+  deriving BEq, Lean.FromJson
 
 structure PhaseAttempt where
   commands : List Nat
   accepted : Bool
   finished : Bool
   events : List PhaseBoundary
+  deriving Lean.FromJson
 
 structure PhaseState where
   points : List SourcePoint := []
@@ -99,31 +100,65 @@ def phaseRun (plan : SourceOccurrenceCut source) (images : List RustDescriptorIm
     (events : List PhaseBoundary) : Option PhaseState :=
   events.foldlM (phaseStep plan images channels 9076 oracle) {}
 
-def validIoWord (commands : List Nat) : Bool :=
-  (commands.foldlM (fun seen command =>
-    if command ≥ 4 || seen.contains command ||
-        (command % 2 == 1 && !seen.contains (command - 1)) then none
-    else some (seen ++ [command])) ([] : List Nat)).isSome
+/-- Physical test delays select the first loan, independent tick, first
+return and next loan. These are not extra choreography dependencies. -/
+def gatedCalls : List (Nat × Nat) := [(0, 0), (6, 0), (4, 0), (0, 1)]
+
+def ioCommands : List Nat := List.range (2 * gatedCalls.length)
+
+def gatePoint? (plan : SourceOccurrenceCut source) (command : Nat) : Option SourcePoint := do
+  let (operation, visit) ← gatedCalls[command / 2]?
+  let occurrence ← phaseOccurrence? plan ⟨0, operation, visit, 0, [], 0⟩
+  pure (if command % 2 == 0 then .accepted occurrence else .committed ⟨occurrence, .send⟩)
+
+def phasePointReady (plan : SourceOccurrenceCut source) (channels : Array (Nat × Nat × Nat))
+    (points : List SourcePoint) (point : SourcePoint) : Bool :=
+  let cut := occurrenceCut plan points
+  cut.ready point && cut.resumptionReady point && (match point with
+    | .committed ⟨occurrence, .receive⟩ => atFifoHead channels points occurrence
+    | _ => true)
+
+/-- The actual localsides drive all other operations normally. Saturate those
+source transitions, keeping each selected acceptance/publication blocked until
+its I/O command. Readiness comes from source/projection/FIFO, never observations
+of which calls the runtime happened to construct or admit. Each pass can only
+add an unobserved source point; the finite point inventory supplies the fuel. -/
+def automaticPhasePoints (plan : SourceOccurrenceCut source)
+    (channels : Array (Nat × Nat × Nat)) (points : List SourcePoint) : List SourcePoint :=
+  let domain := sourceVisitPoints plan.path.bindings
+  let gated := ioCommands.filterMap (gatePoint? plan)
+  (List.range domain.length).foldl (fun points _ =>
+    domain.foldl (fun points point =>
+      if !gated.contains point && phasePointReady plan channels points point then
+        points ++ [point] else points) points) points
+
+def validIoWord (plan : SourceOccurrenceCut source) (channels : Array (Nat × Nat × Nat))
+    (commands : List Nat) : Bool :=
+  (commands.foldlM (fun points command => do
+    let point ← gatePoint? plan command
+    let ready := automaticPhasePoints plan channels points
+    if !ioCommands.contains command || !phasePointReady plan channels ready point then none
+    else some (ready ++ [point])) ([] : List SourcePoint)).isSome
 
 def gatedWord (events : List PhaseBoundary) : List Nat :=
   events.filterMap fun event =>
-    if event.visit != 0 || (event.kind != 1 && event.kind != 3) ||
+    if (event.kind != 1 && event.kind != 3) ||
         event.operation % 2 != 0 then none
-    else if event.operation == 0 then some (if event.kind == 1 then 0 else 1)
-    else if event.operation == 6 then some (if event.kind == 1 then 2 else 3)
-    else none
+    else ((gatedCalls.zipIdx.find? (fun (call, _) =>
+      call == (event.operation, event.visit))).map fun (_, index) =>
+        2 * index + if event.kind == 1 then 0 else 1)
 
 def phasePrefixes (attempts : List PhaseAttempt) : List (List Nat) :=
   ([] :: attempts.filterMap (fun attempt =>
-    if attempt.accepted && attempt.commands.length < 4 then some attempt.commands else none)).eraseDups
+    if attempt.accepted && attempt.commands.length < ioCommands.length then some attempt.commands else none)).eraseDups
 
 def phaseEnumerationComplete (attempts : List PhaseAttempt) : Bool :=
   let prefixes := phasePrefixes attempts
-  attempts.all (fun attempt => !attempt.commands.isEmpty && attempt.commands.length ≤ 4 &&
+  attempts.all (fun attempt => !attempt.commands.isEmpty && attempt.commands.length ≤ ioCommands.length &&
     prefixes.contains attempt.commands.dropLast) &&
   prefixes.all fun priorCommands =>
     ((attempts.filter (fun attempt => attempt.commands.dropLast == priorCommands)).map fun attempt =>
-      attempt.commands.getLast!).mergeSort (· ≤ ·) == [0, 1, 2, 3]
+      attempt.commands.getLast!).mergeSort (· ≤ ·) == ioCommands
 
 def checkPhases (choreo : Choreo) (images : List RustDescriptorImage)
     (attempts : List PhaseAttempt) : IO Unit := do
@@ -148,8 +183,8 @@ def checkPhases (choreo : Choreo) (images : List RustDescriptorImage)
   let mut atomic := 0
   let mut actorwide := 0
   for attempt in attempts do
-    unless attempt.accepted == validIoWord attempt.commands &&
-        attempt.finished == (attempt.accepted && attempt.commands.length == 4) &&
+    unless attempt.accepted == indexed.any (fun (plan, channels) => validIoWord plan channels attempt.commands) &&
+        attempt.finished == (attempt.accepted && attempt.commands.length == ioCommands.length) &&
         gatedWord attempt.events == (if attempt.accepted then attempt.commands else
           attempt.commands.dropLast) && permits .source attempt.events do
       throw (IO.userError s!"phased mismatch commands={attempt.commands} accepted={attempt.accepted} finished={attempt.finished}")

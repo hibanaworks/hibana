@@ -36,7 +36,7 @@ fn visit(
     Ok(())
 }
 
-fn run(root: &Path) -> AuditResult<()> {
+fn run(root: &Path, native: Option<&str>) -> AuditResult<()> {
     let root = root.canonicalize().map_err(|error| error.to_string())?;
     let mut files = lean_files(&root.join("Hibana"))?;
     files.push(root.join("Hibana.lean"));
@@ -87,15 +87,26 @@ fn run(root: &Path) -> AuditResult<()> {
     let mut order = Vec::new();
     let mut active = BTreeSet::new();
     let mut built = BTreeSet::new();
-    for module in graph.keys() {
+    if let Some(module) = native {
+        require(
+            graph.contains_key(module),
+            format!("unknown native root {module}"),
+        )?;
         visit(module, &graph, &mut active, &mut built, &mut order)?;
+    } else {
+        for module in graph.keys() {
+            visit(module, &graph, &mut active, &mut built, &mut order)?;
+        }
+        require(order.len() == graph.len(), "incomplete Lean build order")?;
     }
-    require(order.len() == graph.len(), "incomplete Lean build order")?;
     for (index, module) in order.iter().enumerate() {
         println!("Lean serial build {}/{} {module}", index + 1, order.len());
         let status = Command::new("lake")
             .arg("build")
-            .arg(format!("+{module}"))
+            .arg(format!(
+                "+{module}{}",
+                if native.is_some() { ":o" } else { "" }
+            ))
             .current_dir(&root)
             .status()
             .map_err(|error| error.to_string())?;
@@ -106,25 +117,34 @@ fn run(root: &Path) -> AuditResult<()> {
     }
     // Preserve the package's normal default-target check after all module
     // artifacts have been built. It cannot start independent uncached imports.
-    let status = Command::new("lake")
-        .arg("build")
-        .current_dir(&root)
-        .status()
-        .map_err(|error| error.to_string())?;
-    require(
-        status.success(),
-        format!("Lean default targets failed: {status}"),
-    )?;
-    println!("Lean serial module build passed modules={}", order.len());
+    if native.is_none() {
+        let status = Command::new("lake")
+            .arg("build")
+            .current_dir(&root)
+            .status()
+            .map_err(|error| error.to_string())?;
+        require(
+            status.success(),
+            format!("Lean default targets failed: {status}"),
+        )?;
+    }
+    println!(
+        "Lean serial module build passed modules={} native={}",
+        order.len(),
+        native.is_some()
+    );
     Ok(())
 }
 
 fn main() -> ExitCode {
     let args: Vec<_> = std::env::args_os().collect();
-    let result = if args.len() == 2 {
-        run(Path::new(&args[1]))
-    } else {
-        Err("usage: build_lean_serial PROOF_DIRECTORY".into())
+    let result = match args.as_slice() {
+        [_, root] => run(Path::new(root), None),
+        [_, root, flag, module] if flag == "--native" => module
+            .to_str()
+            .ok_or_else(|| "non-UTF8 native module".into())
+            .and_then(|module| run(Path::new(root), Some(module))),
+        _ => Err("usage: build_lean_serial PROOF_DIRECTORY [--native MODULE]".into()),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,

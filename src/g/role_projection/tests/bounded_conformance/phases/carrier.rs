@@ -1,5 +1,5 @@
-//! Test I/O controls, never choreography authority. Each first outgoing
-//! direction can be accepted while its sender still awaits completion.
+//! Test I/O controls, never choreography authority. The first loan, tick,
+//! return and next loan each split acceptance from sender completion.
 use super::*;
 use crate::{
     test_support::transport::{FrameEvidence, TestRx, TestTx},
@@ -26,7 +26,7 @@ struct Gate {
 pub(super) struct Network {
     inner: TestTransport,
     actor: u8,
-    gates: Rc<RefCell<[Option<Gate>; 2]>>,
+    gates: Rc<RefCell<[Option<Gate>; 4]>>,
     pub(super) events: Rc<RefCell<Vec<Boundary>>>,
 }
 
@@ -48,7 +48,7 @@ impl Network {
         Self {
             inner: TestTransport::new(),
             actor: 0,
-            gates: Rc::new(RefCell::new([None, None])),
+            gates: Rc::new(RefCell::new([None, None, None, None])),
             events: Rc::new(RefCell::new(Vec::new())),
         }
     }
@@ -162,11 +162,13 @@ impl Transport for Network {
                 .count();
             tx.packet = Some((origin, visit));
             tx.encoded = outgoing.payload().as_bytes().to_vec();
-            // Only the first packet on these two logical directions is gated.
-            // This is test I/O readiness, not a source or ownership decision.
-            let gate = match (tx.raw.local_role, receiver) {
-                (0, 1) => Some(0),
-                (0, 2) => Some(1),
+            // Source event/visit names select only physical test I/O delays.
+            // Endpoints still decide whether the actual operation is permitted.
+            let gate = match (origin, visit) {
+                (0, 0) => Some(0), // First loan.
+                (3, 0) => Some(1), // Independent tick from the same owner actor.
+                (2, 0) => Some(2), // Return can arrive before its sender completes.
+                (0, 1) => Some(3), // Next loan can be accepted during that return.
                 _ => None,
             };
             if let Some(index) = gate {
