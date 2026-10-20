@@ -49,21 +49,20 @@ impl LocalEventProgram {
         &self,
         idx: usize,
     ) -> Option<(crate::eff::EffIndex, RoleLocalDirection)> {
-        if idx == self.local_len() {
-            return None;
+        let count = self.local_len();
+        let row = if idx < count {
+            self.rows().lanes().local_step_event(idx)
+        } else {
+            None
+        };
+        match row {
+            Some(row) => Some((
+                crate::eff::EffIndex::from_dense_ordinal(row.eff_index as usize),
+                row.direction(),
+            )),
+            None if idx == count => None,
+            None => crate::invariant(),
         }
-        if idx > self.local_len() {
-            crate::invariant();
-        }
-        let row = self
-            .rows()
-            .lanes()
-            .local_step_event(idx)
-            .unwrap_or_else(|| crate::invariant());
-        Some((
-            crate::eff::EffIndex::from_dense_ordinal(row.eff_index as usize),
-            row.direction(),
-        ))
     }
 
     pub(crate) fn receive_candidates(
