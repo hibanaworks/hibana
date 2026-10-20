@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "description": "The provisional runtime stack budget is 5 KiB (5120 bytes) per workload during Endpoint delegation completion. Modeled SRAM budgets include the same stack allowance and 64 bytes of headroom. Latest-stable decoder, immutable parallel-mask, public-projection and initial-issuer measurements move 1333 bytes of the section allowance from text to rodata without increasing the 169965-byte total flash budget. Slab, resident storage and SRAM limits are unchanged. See runtime-stack-20261017.md, decode-inlining-20261019.md, parallel-lane-masks-20261019.md, delegation-public-projection-20261020.md and endpoint-initial-issuer-20261020.md for scope and measurements.",
+  "description": "Runtime stack is limited to 5 KiB (5120 bytes) per measured workload. Modeled SRAM includes this stack allowance and 64 bytes of headroom. Section limits and the 169965-byte total flash limit are checked independently. These budgets apply to the targets, profiles and workloads specified below.",
   "toolchain": "1.99.1",
   "flash_measurement": {
     "target": "thumbv6m-none-eabi",

@@ -139,8 +139,8 @@ theorem first_failure_precedes_later_frame {Frame : Type} (error : Nat)
   rw [pending_prefix_preserves_scan leading (.failed error :: rest) pending]
   rfl
 
--- The previous selected-only continuation has no branch to this observed frame.
-theorem historical_blocking_witness :
+-- An observed frame must be considered even without a selected continuation.
+theorem observed_frame_enables_selection :
     collect (Frame := Nat) none .waiting = .waiting ∧
     (advance 17 none .waiting (.frame 42)).next = .selecting 42 := by
   exact ⟨rfl, rfl⟩
@@ -158,6 +158,6 @@ theorem historical_blocking_witness :
 #print axioms scan_frame_was_observed
 #print axioms pending_prefix_preserves_scan
 #print axioms first_failure_precedes_later_frame
-#print axioms historical_blocking_witness
+#print axioms observed_frame_enables_selection
 
 end Hibana.ParallelOfferIngress

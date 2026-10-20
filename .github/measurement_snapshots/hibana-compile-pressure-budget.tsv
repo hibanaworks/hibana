@@ -1,8 +1,6 @@
-# Compile-pressure guardrails are local observations plus explicit headroom.
-# Limit = observed + headroom. This is not a runtime capacity or public contract.
-# Short-case RSS observations are from the pinned Linux ARM CI host; see
-# compile-pressure-observations.md. Keep the existing headroom, not the missed
-# 1MiB/4MiB process samples from the original local baseline.
+# Compile-time limits are baseline measurements plus explicit headroom.
+# The measurements use the Linux ARM CI host. These are build regression
+# limits, not runtime capacities or public API limits.
 label	observed_seconds	observed_rss_mib	seconds_headroom	rss_headroom_mib
 cold_parallel_route_nesting	9	834	31	190
 offer_branch_recv_evidence	2	228	30	256
