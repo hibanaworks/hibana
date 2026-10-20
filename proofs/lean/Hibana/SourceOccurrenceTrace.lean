@@ -12,6 +12,20 @@ abbrev OccurrenceCalls := List ((TransportChannel × Nat) × Nat)
 def occurrenceCall? (calls : OccurrenceCalls) (key : TransportChannel × Nat) : Option Nat :=
   (calls.find? fun pair => decide (pair.1 = key)).map Prod.snd
 
+/-- Appending later calls cannot replace an already resolved carrier witness.
+This is a property of the erased chronological correspondence, not a runtime
+lookup table or an assumption about repeated envelope bytes. -/
+theorem a_resolved_occurrence_call_survives_a_prefix
+    (prefixCalls : earlier <+: later)
+    (found : occurrenceCall? earlier key = some occurrence) :
+    occurrenceCall? later key = some occurrence := by
+  obtain ⟨suffix, rfl⟩ := prefixCalls
+  unfold occurrenceCall? at found ⊢
+  cases present : earlier.find? (fun entry => decide (entry.1 = key)) with
+  | none => simp only [present, Option.map_none, reduceCtorEq] at found
+  | some value =>
+    simpa only [List.find?_append, present, Option.orElse_some] using found
+
 /-- Match one observed operation to a static message origin and one occurrence
 in the accepted unfolding. Physical actor, logical peers, payload kind, label
 and direction all come from the same source binding. -/

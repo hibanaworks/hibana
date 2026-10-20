@@ -14,7 +14,7 @@ pub(super) fn write(
     captured: (&[OwnedFutureBoundary], [&FrameEvidence; 2]),
 ) {
     let mut source = std::format!(
-        "import Hibana.SourceResourceAvailability\nimport Hibana.OwnedCallHistory\nimport Hibana.OccurrenceResourceOrigin\n\nset_option maxRecDepth 10000\n\n\
+        "import Hibana.SourceResourceAvailability\nimport Hibana.OwnedCallHistory\nimport Hibana.OccurrenceResourceOrigin\nimport Hibana.OccurrenceResourceCustody\n\nset_option maxRecDepth 10000\n\n\
          def custodyChoreo : Hibana.Choreo := {choreography}\n\n\
          def ownerImage : Hibana.RustDescriptorImage := {}\n\n\
          def workerImage : Hibana.RustDescriptorImage := {}\n\n",

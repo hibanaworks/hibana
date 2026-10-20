@@ -278,7 +278,7 @@ theorem actualJointReturnedReceiptDerivesItsRetainedValue :
       OwnedCallEvent.receive jointReturnEntry.callKey 0 jointReturnReceipt frame returnedValue ∈ jointRoundTripEvents ∧
       TransferValueLocated returnedValue jointReturnedCut.custody := by
   obtain ⟨frame, facts, present, factsAt, _, _, _, _, outcome⟩ :=
-    an_owned_occurrence_receipt_has_its_actual_value_or_subsequent_release
+    an_owned_occurrence_receipt_has_its_value_later_handoff_or_retirement
       (occurrence := 1) (key := jointReturnEntry.callKey) (actor := 0) (record := jointReturnReceipt)
       (binding := jointOccurrencePlan.path.bindings[1].2)
       actualJointRoundTripCustody
@@ -294,13 +294,66 @@ theorem actualJointReturnedReceiptDerivesItsRetainedValue :
   refine ⟨frame, present, ?_⟩
   rcases outcome with retained | released
   · exact retained
-  · obtain ⟨earlier, later, event, before, after, wordAt, _, _, _, _, releaseAt⟩ := released
+  · obtain ⟨earlier, later, event, before, after, wordAt, _, _, _, _, releaseAt, _⟩ := released
     have inWord : event ∈ jointRoundTripEvents := by
       rw [wordAt]
       exact List.mem_append_right earlier List.mem_cons_self
     have noRelease : (jointRoundTripEvents.all fun event =>
         decide (event.releasedValue? ≠ some returnedValue)) = true := by decide
     exact False.elim (of_decide_eq_true (List.all_eq_true.mp noRelease event inWord) releaseAt)
+
+/-- The worker's actual release of the received tag is the later return
+occurrence, not a second acceptance of the old loan. Its prefix still
+contains the concrete receipt that issued this tag. -/
+theorem actualJointReleaseHasItsLaterSourceOccurrence :
+    ∃ frame earlier later entry request outgoing before after nextBinding,
+      jointRoundTripEvents = earlier ++ OwnedCallEvent.accept entry request outgoing :: later ∧
+      OwnedCallEvent.receive jointEntry.callKey 1 jointLoanReceipt frame receivedValue ∈ earlier ∧
+      History jointImages jointResource custodyChoreo initialValue earlier before ∧
+      Boundary jointImages jointResource custodyChoreo earlier (.accept entry request outgoing) before after ∧
+      request.payload = receivedValue ∧
+      occurrenceCall? [(jointEntry.callKey, 0), (jointReturnEntry.callKey, 1)] entry.callKey = some 1 ∧
+      jointOccurrencePlan.path.bindings.find? (fun row => row.1 == 1) = some (1, nextBinding) ∧
+      nextBinding.message.payload = .endpoint jointResource := by
+  obtain ⟨frame, facts, _, factsAt, _, _, _, _, outcome⟩ :=
+    an_owned_occurrence_receipt_has_its_value_later_handoff_or_retirement
+      (occurrence := 0) (key := jointEntry.callKey) (actor := 1) (record := jointLoanReceipt)
+      (binding := jointOccurrencePlan.path.bindings[0].2)
+      actualJointRoundTripCustody
+      (a_selected_visit_execution_has_its_same_physical_execution actualJointRoundTripSource)
+      actualJointRoundTripOccurrence (by decide) (by decide)
+      (by simp [jointRoundTripEvents, jointEvents, sourceWord, OwnedCallEvent.source?]) (by decide)
+  have known : jointLoanReceipt.step.ownedFacts? (jointImages 1) custodyChoreo =
+      some jointLoanReceiptFacts := (Option.some_get _).symm
+  have same := Option.some.inj (factsAt.symm.trans known)
+  subst facts
+  have tag : (1, jointLoanReceiptFacts.afterView.header) = receivedValue := by decide
+  rw [tag] at outcome
+  rcases outcome with retained | ⟨earlier, later, event, before, after,
+    wordAt, receiptAt, history, boundary, _, released, classified⟩
+  · have absent : ¬ TransferValueLocated receivedValue jointReturnedCut.custody := by
+      unfold TransferValueLocated
+      decide
+    exact False.elim (absent retained)
+  · rcases classified with handoff | retired
+    · obtain ⟨entry, request, outgoing, next, nextBinding, eventAt, forward, callAt, nextAt, payload⟩ := handoff
+      subst event
+      have bounds : (jointOccurrencePlan.path.bindings.all fun row =>
+          decide (row.2.message.payload = .endpoint jointResource → row.1 ≤ 1)) = true := by decide
+      have atMost : next ≤ 1 :=
+        (of_decide_eq_true (List.all_eq_true.mp bounds _ (List.mem_of_find?_eq_some nextAt))) payload
+      have nextIsReturn : next = 1 := by omega
+      subst next
+      exact ⟨frame, earlier, later, entry, request, outgoing, before, after, nextBinding,
+        wordAt, receiptAt, history, boundary, Option.some.inj released, callAt, nextAt, payload⟩
+    · obtain ⟨sample, recorded, _, _⟩ := retired
+      have inWord : event ∈ jointRoundTripEvents := by
+        rw [wordAt]
+        exact List.mem_append_right earlier List.mem_cons_self
+      have noneRetired : (jointRoundTripEvents.all fun event => decide (event.retirement? = none)) = true := by decide
+      have absent := of_decide_eq_true (List.all_eq_true.mp noneRetired event inWord)
+      rw [absent] at recorded
+      contradiction
 
 /-- Neither real owned receipt can be reclassified as ordinary traffic in
 this captured prefix. The general theorem derives this classification from

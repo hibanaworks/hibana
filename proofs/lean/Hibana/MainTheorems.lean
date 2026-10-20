@@ -27,6 +27,7 @@ import Hibana.SourceOccurrenceProgress
 import Hibana.SourceOccurrenceTrace
 import Hibana.OccurrenceResourceOrigin
 import Hibana.ResourceOccurrenceCausality
+import Hibana.OccurrenceResourceCustody
 import Hibana.SourceReadyReceipt
 import Hibana.SourceHandoffInterval
 import Hibana.MeasuredResourceAvailability

@@ -27,6 +27,16 @@ actualJointQueuedOrigin : ∃ earlier later entry request facts,
                           jointFrame.sequence =
                             (Hibana.sourceChannelEntries (Hibana.OwnedCallHistory.acceptedEntries earlier)
                                 entry.channel).length
+actualJointReleaseHasItsLaterSourceOccurrence : ∃ frame earlier later entry request outgoing before after nextBinding,
+  jointRoundTripEvents = earlier ++ Hibana.OwnedCallHistory.OwnedCallEvent.accept entry request outgoing :: later ∧
+    Hibana.OwnedCallHistory.OwnedCallEvent.receive jointEntry.callKey 1 jointLoanReceipt frame receivedValue ∈ earlier ∧
+      Hibana.OwnedCallHistory.History jointImages jointResource custodyChoreo initialValue earlier before ∧
+        Hibana.OwnedCallHistory.Boundary jointImages jointResource custodyChoreo earlier
+            (Hibana.OwnedCallHistory.OwnedCallEvent.accept entry request outgoing) before after ∧
+          request.payload = receivedValue ∧
+            Hibana.occurrenceCall? [(jointEntry.callKey, 0), (jointReturnEntry.callKey, 1)] entry.callKey = some 1 ∧
+              List.find? (fun row => row.fst == 1) jointOccurrencePlan.path.bindings = some (1, nextBinding) ∧
+                nextBinding.message.payload = Hibana.EndpointDelegation.Payload.endpoint jointResource
 actualJointReturnedReceiptDerivesItsRetainedValue : ∃ frame,
   Hibana.OwnedCallHistory.OwnedCallEvent.receive jointReturnEntry.callKey 0 jointReturnReceipt frame returnedValue ∈
       jointRoundTripEvents ∧

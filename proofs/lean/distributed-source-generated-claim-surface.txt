@@ -64,6 +64,11 @@ distributedFifoHistories : ∀ (channel : TransportChannel),
 distributedFirstAcceptedSendHasItsUnpublishedPrefix : ∃ pending,
   actorAcceptedSends distributedEntries1 0 = pending ∧
     pending.length = 1 ∧ ∀ (entry : SourceAcceptance), entry ∈ pending → entry.stamps 0 (distributedCut1.actors 0).snd
+distributedFreshLoanHasItsLaterHandoffOccurrence : ∃ binding,
+  occurrenceCall? distributedOccurrenceCalls distributedEntry6.callKey = some 3 ∧
+    List.find? (fun row => row.fst == 3) distributedOccurrencePlan.path.bindings = some (3, binding) ∧
+      binding.message.payload = Payload.endpoint { component := 0, role := 10 } ∧
+        distributedEntry0.sample.wire.payload = distributedEntry6.sample.wire.payload ∧ 2 < 3
 distributedFreshMixedSourceIdentityBeforeItsNewReceivePair : distributedEntry6.sample.effIndex? =
   distributedImage1.eventEffIndex? distributedCommit8.step.event
 distributedFreshOwnedHeadKindComesFromItsPreparedSource : ∃ sentFacts,

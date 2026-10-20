@@ -310,7 +310,7 @@ pub(super) fn write_observations(
     );
     source.insert_str(
         0,
-        "import Hibana.FifoOccurrenceOrigin\nimport Hibana.SourcePublicationPrefix\nimport Hibana.SourceOwnedReceive\nimport Hibana.OccurrenceResourceOrigin\nimport Hibana.ResourceOccurrenceCausality\n",
+        "import Hibana.FifoOccurrenceOrigin\nimport Hibana.SourcePublicationPrefix\nimport Hibana.SourceOwnedReceive\nimport Hibana.OccurrenceResourceOrigin\nimport Hibana.ResourceOccurrenceCausality\nimport Hibana.OccurrenceResourceCustody\n",
     );
     use std::fmt::Write;
     writeln!(source, "private theorem distributedBeforeFreshReceiptExecution : DistributedSourceExecution distributedImages distributedChoreo 9062\n  (distributedCut0, distributedEntries0) (distributedCut13, distributedEntries13) (distributedRecords.take 8) := by\n  exact {}\n",

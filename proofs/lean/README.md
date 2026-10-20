@@ -1545,6 +1545,25 @@ rejects treating either owned receipt as an ordinary untracked boundary.
 These claims use fresh Endpoint observations, not a new value-availability
 assumption or another runtime fixture.
 
+`OccurrenceResourceCustody.lean` connects a subsequent accepted release to
+that receipt's causal interval. It cuts the same chronological source trace
+at the actual acceptance boundary, preserving earlier carrier-call lookups.
+A handoff after the receipt must resolve to a strictly later occurrence of
+the same resource; a completed older occurrence cannot become ready again.
+This uses the accepted source and projected local checks, not a global-ready
+premise, common visit or sender-publication-before-receipt rule.
+
+The combined result retains the issued tag now in application/private-future
+custody, or identifies its actual later handoff or checked retirement. The
+handoff retains its source binding and actual call correspondence. Retirement
+requires a fault or a completed local view. Ordinary work, I/O errors and
+dropping an accepted sender witness cannot replace these release boundaries.
+The existing two-runtime exchange derives the return's later occurrence and
+the returned tag's retained value. The existing two-visit execution separately
+checks the fresh loan after the prior return, despite equal envelope bytes.
+Both reuse the original captured words; no new fixture or runtime guard is
+introduced.
+
 For a pending source operation, excluding incompatible intervening releases
 still requires its source causal interval. General runtime-to-occurrence,
 enabled-operation and fault/closure composition are not completed by this

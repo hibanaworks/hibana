@@ -47,16 +47,6 @@ theorem source_unfolding_preserves_each_initial_owner
   · have actual : key ∉ expanded.resources := fun member => present (membership.mp member)
     simp [initialOwners, present, actual]
 
-/-- Later independent acceptances do not replace an existing call's origin. -/
-private theorem an_occurrence_call_survives_an_append
-    (found : occurrenceCall? calls key = some occurrence) (pair : (TransportChannel × Nat) × Nat) :
-    occurrenceCall? (calls ++ [pair]) key = some occurrence := by
-  unfold occurrenceCall? at found ⊢
-  cases present : calls.find? (fun entry => decide (entry.1 = key)) with
-  | none => simp only [present, Option.map_none, reduceCtorEq] at found
-  | some value =>
-    simpa only [List.find?_append, present, Option.orElse_some] using found
-
 private theorem an_accepted_occurrence_keeps_its_call_and_source
     (trace : SourceOccurrenceTrace images choreo plan word calls points) :
     ∀ entry, DistributedCallBoundary.accept entry ∈ word →
@@ -69,7 +59,8 @@ private theorem an_accepted_occurrence_keeps_its_call_and_source
     intro actual member
     rcases List.mem_append.mp member with earlier | current
     · obtain ⟨previous, resolved, sourceAt⟩ := ih actual earlier
-      exact ⟨previous, an_occurrence_call_survives_an_append resolved _, sourceAt⟩
+      exact ⟨previous, a_resolved_occurrence_call_survives_a_prefix
+        (List.prefix_append _ _) resolved, sourceAt⟩
     · have same := List.mem_singleton.mp current
       cases same
       have absent : calls.find? (fun pair => decide (pair.1 = entry.callKey)) = none := by
@@ -150,7 +141,7 @@ theorem an_observed_occurrence_receipt_has_its_same_word_boundary
   | accept prior fresh origin matched ready ih =>
     obtain ⟨key, actor, record, present, actual, callAt⟩ := ih (by simpa using observed)
     exact ⟨key, actor, record, List.mem_append_left _ present, actual,
-      an_occurrence_call_survives_an_append callAt _⟩
+      a_resolved_occurrence_call_survives_a_prefix (List.prefix_append _ _) callAt⟩
   | publish prior callAt matched ready ih
   | localCommit prior matched ready ih =>
     obtain ⟨key, actor, record, present, actual, resolved⟩ := ih (by simpa using observed)

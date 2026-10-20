@@ -356,4 +356,27 @@ theorem distributedRepeatedHandoffsRejectAForgottenReceipt :
         decide (point ≠ .committed ⟨2, .receive⟩)) := by decide
   exact absent kept.1
 
+/-- The actual second loan is accepted after the first return receipt. Equal
+rolled envelope bytes do not let that acceptance reuse an older occurrence. -/
+theorem distributedFreshLoanHasItsLaterHandoffOccurrence :
+    ∃ binding,
+      occurrenceCall? distributedOccurrenceCalls distributedEntry6.callKey = some 3 ∧
+      distributedOccurrencePlan.path.bindings.find? (fun row => row.1 == 3) = some (3, binding) ∧
+      binding.message.payload = .endpoint ⟨0, 10⟩ ∧
+      distributedEntry0.sample.wire.payload = distributedEntry6.sample.wire.payload ∧ 2 < 3 := by
+  have accepted := SourceOccurrenceTrace.accept (entry := distributedEntry6) (occurrence := 3)
+    distributedCapturedOccurrencePrefixes.1 (by decide) (by decide) (by decide) (by decide)
+  obtain ⟨next, binding, forward, callAt, nextAt, payload⟩ :=
+    a_handoff_after_a_resource_receipt_has_a_later_occurrence
+      (receipt := 2) (key := distributedEntry4.callKey) (actor := 0) (record := distributedCommit5)
+      (receiptBinding := distributedOccurrencePlan.path.bindings[2].2)
+      (facts := distributedFreshSentFacts) (resource := ⟨0, 10⟩)
+      (finalCalls := distributedOccurrenceCalls)
+      accepted ⟨distributedOccurrenceCalls.drop 4, by decide⟩
+      (List.mem_of_getElem? (i := 8) rfl)
+      (by decide) (by decide) (by decide) (Option.some_get _).symm (by decide) (by decide)
+  have nextIsFresh : next = 3 := Option.some.inj (callAt.symm.trans (by decide))
+  subst next
+  exact ⟨binding, callAt, nextAt, payload, by decide, forward⟩
+
 end

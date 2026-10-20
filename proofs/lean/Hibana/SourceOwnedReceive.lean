@@ -3,7 +3,10 @@ import Hibana.SourcePortWord
 namespace Hibana
 open EndpointDelegation
 
-private theorem owned_source_facts_retain_identity_and_payload
+/-- Decoded owned facts retain their exact logical source identity and payload.
+The same result supports both physical receipt matching and later handoff
+classification; neither infers ownership from an envelope alone. -/
+theorem owned_source_facts_retain_identity_and_payload
     {image : RustDescriptorImage} {choreo : Choreo} {pathIndex event : Nat}
     {facts : OwnedSourceFacts}
     (decoded : image.ownedSourceFacts? choreo pathIndex event = some facts) :
