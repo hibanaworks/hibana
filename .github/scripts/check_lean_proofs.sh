@@ -12,6 +12,7 @@ CONFORMANCE_INPUTS="${ROOT_DIR}/target/lean-proof/EndpointConformanceInputs.lean
 CONFORMANCE_CASES="${ROOT_DIR}/target/lean-proof/EndpointConformanceCases.json"
 CONFORMANCE_GENERATED="${ROOT_DIR}/target/lean-proof/EndpointConformanceGenerated.lean"
 PHASE_CASES="${ROOT_DIR}/target/lean-proof/EndpointPhaseCases.json"
+FAULT_PHASE_CASES="${ROOT_DIR}/target/lean-proof/EndpointFaultPhaseCases.json"
 CAUSAL_GENERATED="${ROOT_DIR}/target/lean-proof/CausalGenerated.lean"
 PARALLEL_GENERATED="${ROOT_DIR}/target/lean-proof/ParallelGenerated.lean"
 PROGRAM_COLUMNS_GENERATED="${ROOT_DIR}/target/lean-proof/ProgramColumnsGenerated.lean"
@@ -108,10 +109,16 @@ CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --li
   g::role_projection::tests::bounded_conformance::phases::bounded_acceptance_and_completion_schedules_emit_lean_cases \
   -- --exact --nocapture
 bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${PHASE_CASES}" "split Endpoint acceptance/completion"
+: > "${FAULT_PHASE_CASES}"
+CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib \
+  g::role_projection::tests::bounded_conformance::phases::faults::bounded_close_and_abort_schedules_emit_lean_cases \
+  -- --exact --nocapture
+bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${FAULT_PHASE_CASES}" "split Endpoint close/abort schedules"
 # Compile the same independent Lean oracle once. Only small source/image inputs
 # enter elaboration; all observed schedules are parsed from JSON at execution.
 cat "${ROOT_DIR}/.github/ci-tests/endpoint_conformance.lean" \
-  "${ROOT_DIR}/.github/ci-tests/endpoint_phases.lean" "${CONFORMANCE_INPUTS}" \
+  "${ROOT_DIR}/.github/ci-tests/endpoint_phases.lean" \
+  "${ROOT_DIR}/.github/ci-tests/endpoint_fault_phases.lean" "${CONFORMANCE_INPUTS}" \
   "${ROOT_DIR}/.github/ci-tests/endpoint_conformance_main.lean" > "${CONFORMANCE_GENERATED}"
 # Build imported native objects serially too; Lake's final executable link then
 # has no uncached independent import compilations to start concurrently.
@@ -119,7 +126,8 @@ bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" build-serial "${PROOF_
   --native Hibana.SourceOccurrenceTrace
 (cd "${PROOF_DIR}" && lake build endpointConformance)
 "${PROOF_DIR}/.lake/build/bin/endpoint-conformance" completed "${CONFORMANCE_CASES}"
-"${PROOF_DIR}/.lake/build/bin/endpoint-conformance" phased "${PHASE_CASES}"
+# The combined mode validates the normal source-derived prefix inventory too.
+"${PROOF_DIR}/.lake/build/bin/endpoint-conformance" fault-phased "${PHASE_CASES}" "${FAULT_PHASE_CASES}"
 rm -f "${GENERATED}" "${RUNTIME_GENERATED}" "${PUBLIC_OPERATION_GENERATED}" "${CAUSAL_GENERATED}" "${PARALLEL_GENERATED}" "${PROGRAM_COLUMNS_GENERATED}" "${PARTIAL_CHOICE_GENERATED}" "${CONTROLLER_GENERATED}" "${INGRESS_GENERATED}" "${REENTRY_GENERATED}" "${ACTOR_COMMIT_GENERATED}" "${ACTOR_REENTRY_COMMIT_GENERATED}" "${ACTOR_PARALLEL_REENTRY_GENERATED}" "${ACTOR_ROUTE_LEFT_REENTRY_GENERATED}" "${ACTOR_ROUTE_RIGHT_REENTRY_GENERATED}"
 rm -f "${OWNED_RECOVERY_GENERATED}"
 rm -f "${PUBLIC_OPERATION_CUT_GENERATED}"

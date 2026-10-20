@@ -201,6 +201,64 @@ Extending the proof to an inventory of every ordinary future or parallel borrow
 is not a prerequisite for completing this model result. Conversely, an assumed
 application call does not prove that the kernel admits or commits it correctly.
 
+### Conditions for opening public delegation
+
+Public owned projection remains closed. Its qualification has three stages:
+
+1. Compose the ownership and communication-progress claims over the same
+   occurrence/physical/custody execution. The result must conserve at most one
+   authority and establish a next modeled operation for a normal unfinished
+   cut, with the stated carrier and application premises. An unobserved fault
+   cannot stand in for an enabled operation. The remaining composition is not
+   declared complete by passing a finite set of tests.
+2. Exercise initial binding, projection, attachment, owned `send`/`recv` and
+   `par` through the normal public API. Private image construction is not
+   public-path evidence. Round trips, branch/repetition/parallel combinations,
+   cancellation and separate-process receive continuity must work there.
+   A runnable public example and the user README must show the global and
+   localside operations, initial binding, carrier premises and failure behavior.
+   The current unsupported-delegation statement is replaced when that path is
+   qualified, not ahead of it.
+3. Qualify that final source with the applicable Rust, Lean, Z3, Miri, Kani,
+   no-allocator/target-layout and performance gates, and inspect its feature
+   CI. Reuse unchanged evidence only at its actual source and claim boundary.
+
+Complete source-level refinement of arbitrary Rust values, futures or executors
+is not a fourth stage. Rust/model correspondence is supported by types, actual
+Endpoint conformance tests, Miri and focused Kani. Neither that support nor the
+model theorem should be described as a proof of all concrete Rust executions.
+Main backports and implementation of an authenticated network carrier are
+outside these core-feature conditions.
+
+The bounded source inventory is fixed and explicit:
+
+| Case | Source shape |
+| --- | --- |
+| `seq-roll` | `seq(roll(Start; Ack), Finish)` |
+| `par-roll` | `par(roll(Start; Ack), Finish)` |
+| `owned-par-roll` | `par(roll(Loan; Read; Return), Tick)` |
+| `seq-roll-continuation` | `seq(roll(Start; Ack), seq(Finish, Done))` |
+
+Completed-operation cases use up to two visits. Phased cases use the owned
+parallel source, gating acceptance and publication of the first loan, tick,
+first return and next loan. The single-fault extension inserts one close or
+abort at every quiescent prefix of those eight I/O releases, then enumerates
+the remaining releases. It does not enumerate arbitrary poll interleavings,
+every source shape, every direction's failure, or real network fault schedules.
+
+The close/abort target is the loan receive port. The independent checker
+verifies that its immutable source/channel inventory has only one incoming
+logical direction; the test carrier's port-wide injector is not represented
+as a source-selective close on a multiplexed port. Close preserves accepted
+frames for draining. Abort isolates only the undelivered tail, without turning
+it into a receipt or restoring an issuer. Public errors, successful completion
+and parked peers are recorded separately. Test teardown is not an observed
+fault, and a parked remote peer is not successful cancellation termination.
+The checker verifies both candidate release availability and quiescence of
+automatic work. Mutants discard accepted frames on close, drain aborted frames,
+or broadcast a local error to every actor. These controls and missing/duplicate
+observation checks are bounded validation, not additional general theorems.
+
 ## Delegation reduction target and network boundary
 
 The outstanding delegation result concerns independently stored actor runtimes,

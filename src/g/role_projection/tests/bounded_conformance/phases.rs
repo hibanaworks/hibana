@@ -5,12 +5,14 @@ use core::cell::RefCell;
 use std::rc::Rc;
 
 mod carrier;
+mod faults;
 use carrier::Network;
 
 #[derive(Clone, Debug)]
 struct Boundary {
     // 0=public call start, 1=physical acceptance, 2=physical delivery,
-    // 3=successful public call completion. Observations never grant progress.
+    // 3=successful public completion, 4=close, 5=abort, 6=transport error,
+    // 7=public error, 8=test I/O release. Observations never grant progress.
     kind: u8,
     operation: usize,
     visit: usize,
@@ -24,11 +26,13 @@ struct Attempt {
     accepted: bool,
     finished: bool,
     events: Vec<Boundary>,
+    // 0=parked, 1=Ok, 2=Endpoint error. Test teardown is not an observed fault.
+    actors: [u8; 3],
 }
 
 const SID: SessionId = SessionId::new(9076);
 
-async fn replay(commands: &[u8]) -> Attempt {
+async fn replay(commands: &[u8], injection: Option<(usize, bool)>) -> Attempt {
     let () = g::ProgramProjection::<OwnedParallel, 16>::VALIDATION;
     let network = Network::new();
     let owner_io = network.for_actor(0);
@@ -53,24 +57,31 @@ async fn replay(commands: &[u8]) -> Attempt {
                 let mut endpoint = rv.enter(SID, &program).unwrap();
                 let db = rv.enter(SID, &db_program).unwrap();
                 let [mut loans, mut ticker] = endpoint.par().unwrap();
-                tokio::join!(
+                let (loans_result, tick_result) = tokio::join!(
                     async {
                         let mut db = db;
                         for visit in 0..2 {
                             owner_io.call(0, 0, visit);
-                            loans.send::<Loan>(db).await.unwrap();
-                            owner_io.call(3, 0, visit);
+                            let result = loans.send::<Loan>(db).await;
+                            owner_io.call(if result.is_ok() { 3 } else { 7 }, 0, visit);
+                            result?;
                             owner_io.call(0, 5, visit);
-                            db = loans.recv::<Return>().await.unwrap();
-                            owner_io.call(3, 5, visit);
+                            let result = loans.recv::<Return>().await;
+                            owner_io.call(if result.is_ok() { 3 } else { 7 }, 5, visit);
+                            db = result?;
                         }
+                        Ok::<(), crate::endpoint::EndpointError>(())
                     },
                     async {
                         owner_io.call(0, 6, 0);
-                        ticker.send::<Tick>(&7).await.unwrap();
-                        owner_io.call(3, 6, 0);
+                        let result = ticker.send::<Tick>(&7).await;
+                        owner_io.call(if result.is_ok() { 3 } else { 7 }, 6, 0);
+                        result
                     },
                 );
+                loans_result?;
+                tick_result?;
+                Ok::<(), crate::endpoint::EndpointError>(())
             });
             let worker = tokio::task::spawn_local(async move {
                 let program = crate::global::role_program::role_program_from_image::<1>(
@@ -85,15 +96,19 @@ async fn replay(commands: &[u8]) -> Attempt {
                 let mut endpoint = rv.enter(SID, &program).unwrap();
                 for visit in 0..2 {
                     worker_io.call(0, 1, visit);
-                    let mut db = endpoint.recv::<Loan>().await.unwrap();
-                    worker_io.call(3, 1, visit);
+                    let result = endpoint.recv::<Loan>().await;
+                    worker_io.call(if result.is_ok() { 3 } else { 7 }, 1, visit);
+                    let mut db = result?;
                     worker_io.call(0, 2, visit);
-                    db.send::<Read>(&7).await.unwrap();
-                    worker_io.call(3, 2, visit);
+                    let result = db.send::<Read>(&7).await;
+                    worker_io.call(if result.is_ok() { 3 } else { 7 }, 2, visit);
+                    result?;
                     worker_io.call(0, 4, visit);
-                    endpoint.send::<Return>(db).await.unwrap();
-                    worker_io.call(3, 4, visit);
+                    let result = endpoint.send::<Return>(db).await;
+                    worker_io.call(if result.is_ok() { 3 } else { 7 }, 4, visit);
+                    result?;
                 }
+                Ok::<(), crate::endpoint::EndpointError>(())
             });
             let service = tokio::task::spawn_local(async move {
                 let program = crate::global::role_program::role_program_from_image::<2>(
@@ -107,26 +122,39 @@ async fn replay(commands: &[u8]) -> Attempt {
                     .unwrap();
                 let mut endpoint = rv.enter(SID, &program).unwrap();
                 let [mut reader, mut ticks] = endpoint.par().unwrap();
-                tokio::join!(
+                let (reads_result, tick_result) = tokio::join!(
                     async {
                         for visit in 0..2 {
                             service_io.call(0, 3, visit);
-                            assert_eq!(reader.recv::<Read>().await.unwrap(), 7);
-                            service_io.call(3, 3, visit);
+                            let result = reader.recv::<Read>().await;
+                            service_io.call(if result.is_ok() { 3 } else { 7 }, 3, visit);
+                            assert_eq!(result?, 7);
                         }
+                        Ok::<(), crate::endpoint::EndpointError>(())
                     },
                     async {
                         service_io.call(0, 7, 0);
-                        assert_eq!(ticks.recv::<Tick>().await.unwrap(), 7);
-                        service_io.call(3, 7, 0);
+                        let result = ticks.recv::<Tick>().await;
+                        service_io.call(if result.is_ok() { 3 } else { 7 }, 7, 0);
+                        assert_eq!(result?, 7);
+                        Ok::<(), crate::endpoint::EndpointError>(())
                     },
                 );
+                reads_result?;
+                tick_result?;
+                Ok::<(), crate::endpoint::EndpointError>(())
             });
             // With paused Tokio time and no external I/O, this timer advances only
             // after runnable local work has parked. It never grants an Endpoint op.
             tokio::time::sleep(core::time::Duration::from_millis(1)).await;
             let mut accepted = true;
             for (index, &command) in commands.iter().enumerate() {
+                if let Some((at, abort)) = injection
+                    && at == index
+                {
+                    network.close_loan(abort);
+                    tokio::time::sleep(core::time::Duration::from_millis(1)).await;
+                }
                 if !network.release(command) {
                     assert_eq!(
                         index + 1,
@@ -136,21 +164,25 @@ async fn replay(commands: &[u8]) -> Attempt {
                     accepted = false;
                     break;
                 }
+                if injection.is_some() {
+                    network.call(8, usize::from(command), 0);
+                }
                 tokio::time::sleep(core::time::Duration::from_millis(1)).await;
             }
-            let finished = owner.is_finished() && worker.is_finished() && service.is_finished();
+            if let Some((at, abort)) = injection
+                && at == commands.len()
+            {
+                network.close_loan(abort);
+                tokio::time::sleep(core::time::Duration::from_millis(1)).await;
+            }
             let events = network.events.borrow().clone();
-            if finished {
-                owner.await.unwrap();
-                worker.await.unwrap();
-                service.await.unwrap();
-                assert!(network.inner_queue_is_empty());
-            } else {
-                owner.abort();
-                worker.abort();
-                service.abort();
-                for result in [owner.await, worker.await, service.await] {
-                    if let Err(error) = result {
+            let mut actors = [0; 3];
+            for (index, task) in [owner, worker, service].into_iter().enumerate() {
+                if task.is_finished() {
+                    actors[index] = if task.await.unwrap().is_ok() { 1 } else { 2 };
+                } else {
+                    task.abort();
+                    if let Err(error) = task.await {
                         if error.is_panic() {
                             std::panic::resume_unwind(error.into_panic());
                         }
@@ -158,11 +190,16 @@ async fn replay(commands: &[u8]) -> Attempt {
                     }
                 }
             }
+            let finished = actors == [1; 3];
+            if finished {
+                assert!(network.inner_queue_is_empty());
+            }
             Attempt {
                 commands: commands.to_vec(),
                 accepted,
                 finished,
                 events,
+                actors,
             }
         })
         .await
@@ -189,7 +226,7 @@ fn bounded_acceptance_and_completion_schedules_emit_lean_cases() {
                     for command in 0..8 {
                         let mut trace = prefix.clone();
                         trace.push(command);
-                        let attempt = replay(&trace).await;
+                        let attempt = replay(&trace, None).await;
                         if attempt.accepted {
                             next.push(trace);
                         }
@@ -239,7 +276,7 @@ fn one_actors_reverse_completions_preserve_the_real_returned_endpoint() {
         .build()
         .unwrap()
         .block_on(async {
-            let attempt = replay(&[0, 4, 2, 3, 1, 6, 5, 7]).await;
+            let attempt = replay(&[0, 4, 2, 3, 1, 6, 5, 7], None).await;
             assert!(attempt.accepted && attempt.finished);
             let position = |kind, operation, visit| {
                 attempt

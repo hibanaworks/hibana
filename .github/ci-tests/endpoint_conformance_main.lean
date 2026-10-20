@@ -39,4 +39,14 @@ def main (args : List String) : IO UInt32 := do
       | throw (IO.userError "missing phased source/image input")
     checkPhases input.choreo input.images attempts
     pure 0
-  | _ => throw (IO.userError "usage: endpoint-conformance completed|phased OBSERVATIONS.json")
+  | ["fault-phased", normalPath, path] =>
+    let normal : List PhaseAttempt ← readObservationFile normalPath
+    let attempts : List FaultPhaseAttempt ← readObservationFile path
+    let some input := resolveUnique? (conformanceInputs.filter (·.name == "owned-par-roll"))
+      | throw (IO.userError "missing fault source/image input")
+    -- Fault injection sites come from the normal prefix inventory. Validate
+    -- its outcomes against the source before using it to bound exploration.
+    checkPhases input.choreo input.images normal
+    checkFaultPhases input.choreo input.images normal attempts
+    pure 0
+  | _ => throw (IO.userError "usage: endpoint-conformance completed|phased OBSERVATIONS.json | fault-phased NORMAL.json FAULTS.json")

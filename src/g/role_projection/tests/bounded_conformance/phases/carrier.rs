@@ -75,6 +75,27 @@ impl Network {
         });
     }
 
+    pub(super) fn close_loan(&self, abort: bool) {
+        let lane = RoleProjection::<1, OwnedParallel, 16>::IMAGE_REF
+            .local_step_lane(0)
+            .expect("loan receive lane");
+        // The checker independently requires a single incoming logical source
+        // on this port. TestTransport's injector closes an entire receive port.
+        self.events.borrow_mut().push(Boundary {
+            kind: if abort { 5 } else { 4 },
+            operation: 0,
+            visit: 0,
+            actor: 0,
+            wire: vec![0, 1, lane],
+            witness: 0,
+        });
+        if abort {
+            self.inner.abort_port(SID, 1, lane);
+        } else {
+            self.inner.close_port(SID, 1, lane);
+        }
+    }
+
     pub(super) fn release(&self, command: u8) -> bool {
         let wake = {
             let mut gates = self.gates.borrow_mut();
@@ -204,10 +225,17 @@ impl Transport for Network {
             match receipt {
                 Receipt::Queued | Receipt::Accepted => return Poll::Pending,
                 Receipt::Accept => {
-                    assert_eq!(
-                        self.inner.poll_send_staged(&mut tx.raw),
-                        Poll::Ready(Ok(()))
-                    );
+                    match self.inner.poll_send_staged(&mut tx.raw) {
+                        Poll::Ready(Ok(())) => {}
+                        Poll::Ready(Err(error)) => {
+                            let (origin, visit) = tx.packet.unwrap();
+                            self.call(6, 2 * origin, visit);
+                            self.gates.borrow_mut()[index].as_mut().unwrap().receipt =
+                                Receipt::Cancelled;
+                            return Poll::Ready(Err(error));
+                        }
+                        Poll::Pending => panic!("synchronous test queue returned Pending"),
+                    }
                     self.accepted(tx, receiver);
                     self.gates.borrow_mut()[index].as_mut().unwrap().receipt = Receipt::Accepted;
                     return Poll::Pending;
@@ -259,6 +287,16 @@ impl Transport for Network {
                 (sent.operation / 2, sent.visit)
             };
             self.packet(2, origin, visit, &packet);
+        } else if matches!(result, Poll::Ready(Err(_))) {
+            assert_eq!(rx.port.local_role(), 1, "only the loan port was closed");
+            let visit = self
+                .events
+                .borrow()
+                .iter()
+                .rfind(|event| event.kind == 0 && event.actor == self.actor && event.operation == 1)
+                .expect("started loan receive")
+                .visit;
+            self.call(6, 1, visit);
         }
         result
     }
