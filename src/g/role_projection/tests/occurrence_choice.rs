@@ -385,12 +385,14 @@ theorem distributedCurrentChoiceComesFromItsActualAcceptedFrame :
 "#);
     let directory = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/lean-proof");
     std::fs::create_dir_all(&directory).unwrap();
-    // Generated equal-data checks can use reflexivity without synthesizing a
-    // Decidable instance. Arithmetic obligations still use ordinary decide;
-    // both paths produce proofs checked by the same Lean kernel.
+    // Kernel-checked auxiliary lemmas share repeated decidable facts. Structural
+    // equalities involving functions use reflexivity without Decidable instances.
     std::fs::write(
         directory.join("DistributedChoiceGenerated.lean"),
-        source.replace("by decide", "by first | rfl | decide"),
+        source
+            .replace("by decide", "by first | decide +kernel | rfl")
+            .replace("· decide", "· decide +kernel")
+            .replace("; decide", "; decide +kernel"),
     )
     .unwrap();
 }

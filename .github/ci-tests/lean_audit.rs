@@ -299,9 +299,17 @@ pub fn allowed_axiom(axiom: &str) -> Option<&str> {
 }
 pub fn run_lean(root: &Path, source: &str) -> AuditResult<Output> {
     let mut child = Command::new("lake")
-        // A single process may otherwise elaborate several large proof terms
-        // concurrently. Keep all claims while bounding that internal work.
-        .args(["env", "lean", "-j", "1", "--stdin"])
+        // One worker can still queue asynchronous declaration elaboration.
+        // Check complete declarations synchronously without retaining that queue.
+        .args([
+            "env",
+            "lean",
+            "-j",
+            "1",
+            "-D",
+            "Elab.async=false",
+            "--stdin",
+        ])
         .current_dir(root)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

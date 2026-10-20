@@ -45,6 +45,7 @@ fi
 CARGO_PROFILE_RELEASE_LTO=true CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1 \
   cargo +"${TOOLCHAIN}" test --locked -p hibana --release \
     --test rolled_publication_exit -- --test-threads=1
+bash ./.github/scripts/check_lean_proofs.sh
 bash ./.github/scripts/check_miri.sh
 exhaustive_output="$(mktemp "${TMPDIR:-/tmp}/hibana-exhaustive.XXXXXX")"
 trap 'rm -f "$exhaustive_output"' EXIT
@@ -61,7 +62,6 @@ bash .github/scripts/lib/test_result_tool.sh check \
   "$exhaustive_output" exhaustive-route-correlation "$exhaustive_status"
 rm -f "$exhaustive_output"
 trap - EXIT
-bash ./.github/scripts/check_lean_proofs.sh
 bash proofs/checks/runtime/controller-offer/check.sh
 bash proofs/checks/runtime/live-descendant-preview/check.sh
 bash proofs/checks/runtime/nested-resolver-reentry/check.sh

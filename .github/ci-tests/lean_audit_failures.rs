@@ -40,7 +40,7 @@ fn lean_auditors_fail_closed_on_mutants_and_process_failures() {
     assert!(run().status.success());
     assert_eq!(
         fs::read_to_string(root.join("arguments")).unwrap(),
-        "env\nlean\n-j\n1\n--stdin\n",
+        "env\nlean\n-j\n1\n-D\nElab.async=false\n--stdin\n",
     );
     for (label, mutant) in [
         (
