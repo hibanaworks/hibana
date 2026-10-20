@@ -1,3 +1,0 @@
-'Hibana.WireAllocatorCapacityScope.unrelated_role_can_omit_invalid_row' does not depend on any axioms
-'Hibana.WireAllocatorCapacityScope.participating_role_retains_invalid_row' does not depend on any axioms
-'Hibana.WireAllocatorCapacityScope.retained_overflow_rejects_role_admission' depends on axioms: [propext, Quot.sound]

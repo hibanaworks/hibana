@@ -1,44 +1,20 @@
-//! Protocol-neutral runtime surface for protocol implementors.
+//! Storage, projection, codecs and transport integration.
 //!
-//! Protocol crates use this module to project a choreography, provide runtime
-//! buffers, bind transport I/O, and return an attached [`crate::Endpoint`].
+//! Use [`project`](crate::runtime::program::project) to derive a role's local protocol.
+//! Initialize [`SessionKitStorage`](crate::runtime::SessionKitStorage), pass your
+//! byte slab and transport to [`rendezvous`](crate::runtime::SessionKit::rendezvous),
+//! then attach the role with [`enter`](crate::runtime::RendezvousKit::enter).
+//! The returned [`crate::Endpoint`] borrows that runtime's storage.
 //!
-//! The canonical runtime path is:
+//! - [`program`](crate::runtime::program) contains projection and local protocol data.
+//! - [`wire`](crate::runtime::wire) contains payload encoders, validators and decoders.
+//! - [`transport`](crate::runtime::transport) defines buffers, frames and asynchronous I/O.
+//! - [`resolver`](crate::runtime::resolver) registers application decisions for protocol choices.
 //!
-//! ```text
-//! g choreography
-//!   -> runtime::program::project(&program)
-//!   -> SessionKitStorage::uninit().init()
-//!   -> kit.rendezvous(&mut slab, transport)
-//!   -> registered rendezvous `.enter(sid, &role_program)`
-//!   -> Endpoint
-//! ```
-//!
-//! The everyday owners are:
-//!
-//! - [`runtime::program`] for projection and
-//!   role-local witnesses;
-//! - [`runtime::wire`] for payload codecs;
-//! - [`runtime::transport`] and
-//!   [`runtime::transport::Transport`] for I/O readiness and ingress
-//!   demux evidence;
-//! - [`runtime::resolver`] for explicit
-//!   route resolver sites.
-//!
-//! Transport observation and resolver authority stay under their owning modules;
-//! the runtime surface does not expose parallel mirrors.
-//!
-//! Runtime APIs surface attach and resolver failures as domain-specific
-//! evidence. They do not add a public timeout, cancellation, restart helper, or
-//! wide `HibanaError` layer; any fresh attempt is a runtime decision that
-//! starts a new session generation.
-//!
-//! # Unsafe Owner Contract
-//!
-//! This module owns host-facing in-place construction. Unsafe operations are
-//! limited to initializing caller-provided storage, reborrowing that
-//! initialized kit for the guard lifetime, and dropping it exactly once through
-//! the storage owner.
+//! Attach and resolver operations return their own error types. Transport
+//! deadlines are reported through [`TransportError`](crate::runtime::transport::TransportError). Restarting
+//! after a transport failure requires a fresh run whose transport cannot expose
+//! frames from the previous run.
 
 pub use crate::session::cluster::error::AttachError;
 

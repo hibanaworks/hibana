@@ -8,123 +8,85 @@
 #![doc(html_no_source)]
 #![recursion_limit = "256"]
 
-//! Hibana is a Rust 2024 `no_std` / no-alloc-oriented runtime whose
-//! choreography-derived enforcement kernel executes compact per-role protocol
-//! descriptors.
+//! Choreographic programming in Rust.
 //!
-//! The crate intentionally has two faces:
+//! Describe communication once as a global protocol. Hibana projects the
+//! protocol for each role, then checks that role's sends and receives at runtime.
+//! You write the participants' computations and drive their asynchronous operations
+//! with an executor. Participants can run in one program or on separate machines.
 //!
-//! - app authors use [`g`] and [`Endpoint`];
-//! - protocol implementors use [`runtime`] and [`runtime::program`].
+//! The core is `no_std`, has no normal dependencies and allocates no heap memory.
+//! Runtime storage and transport buffers are supplied by your program.
 //!
-//! Everything starts from one global choreography and ends in a compact
-//! role-local endpoint:
+//! # Define a protocol
 //!
-//! ```text
-//! g choreography -> project role program -> attach endpoint -> drive endpoint
+//! ```
+//! use hibana::{g, runtime::program::project};
+//!
+//! type Request = g::Msg<1, u32>;
+//! type Reply = g::Msg<2, u32>;
+//!
+//! let global = g::seq(
+//!     g::send::<0, 1, Request>(),
+//!     g::send::<1, 0, Reply>(),
+//! );
+//! let client_program = project::<0>(&global);
+//! let server_program = project::<1>(&global);
 //! ```
 //!
-//! ## App path
+//! [`g`] provides sequential composition, choice, parallel composition and
+//! repetition. Projection checks the protocol structure, ownership and branch
+//! knowledge. A role's handwritten Rust code is checked when it calls its Endpoint.
 //!
-//! Start with the complete two-role example from a Hibana repository checkout:
+//! # Use an Endpoint
 //!
-//! ```text
-//! cargo run --example ping_pong
-//! ```
+//! [`Endpoint::send`] and [`Endpoint::recv`] perform the next permitted operation.
+//! [`Endpoint::offer`] previews a choice without advancing the protocol. Use
+//! [`RouteBranch::label`] to inspect it and [`RouteBranch::send`] or
+//! [`RouteBranch::recv`] to perform its first operation.
 //!
-//! The [runnable source](https://github.com/hibanaworks/hibana/blob/main/examples/ping_pong.rs)
-//! defines one [`g`] choreography, projects both roles, attaches their endpoints,
-//! and executes the protocol. Application code then drives the endpoint that its
-//! protocol crate attached.
+//! [`Endpoint::par`] borrows the independent fragments of a projected parallel
+//! region. Poll their operations concurrently with your executor. The parent
+//! Endpoint is unavailable while these borrows exist.
 //!
-//! The endpoint API is deliberately small:
+//! Ordinary payloads are borrowed for sends. An Endpoint payload is moved into
+//! the send future, and its receiver gets the same logical role's continuation.
+//! The sender cannot use the moved value. Dropping or failing the send does not
+//! restore its ownership.
 //!
-//! - [`Endpoint::send`] sends the next projected message;
-//! - [`Endpoint::recv`] receives a message after descriptor evidence matches;
-//! - [`Endpoint::offer`] observes a route branch;
-//! - [`RouteBranch::label`] reports the selected arm's first logical label;
-//! - [`RouteBranch::recv`] receives the first payload in a selected receive arm;
-//! - [`RouteBranch::send`] sends the first payload in a selected send arm.
+//! The runnable examples show complete setup and participant code:
 //!
-//! A route branch whose selected arm begins with a send is handled by
-//! [`RouteBranch::send`]. Dropping the returned future restores the branch
-//! preview before any progress commits.
-//! Successful sends, receives, and route branch first-step operations consume
-//! progress.
+//! - [`ping_pong`](https://github.com/hibanaworks/hibana/blob/feature/endpoint-delegation/examples/ping_pong.rs)
+//!   sends a number and returns its successor.
+//! - [`endpoint_delegation`](https://github.com/hibanaworks/hibana/blob/feature/endpoint-delegation/examples/endpoint_delegation.rs)
+//!   lends an Endpoint to another runtime, performs independent work in parallel,
+//!   and returns the Endpoint to its original holder.
 //!
-//! ```rust,ignore
-//! let branch = server.offer().await?;
-//! match branch.label() {
-//!     10 => {
-//!         let value = branch.recv::<g::Msg<10, [u8; 4]>>().await?;
-//!     }
-//!     11 => {
-//!         branch.recv::<g::Msg<11, ()>>().await?;
-//!     }
-//!     label => panic!("unexpected route label {label}"),
-//! }
-//! ```
+//! # Set up storage and transport
 //!
-//! ## Protocol path
+//! [`runtime::program`] projects roles. [`runtime::SessionKitStorage`] holds the
+//! runtime's storage, and [`runtime::SessionKit::rendezvous`] combines a byte slab
+//! with a transport. Attach each role with [`runtime::RendezvousKit::enter`].
+//! The transport implements [`runtime::transport::Transport`]. Custom message
+//! formats use [`runtime::wire::WireEncode`] and [`runtime::wire::WirePayload`].
 //!
-//! Protocol crates compose prefixes around an app choreography, project a
-//! role-local witness, bind transport state, and return an attached endpoint.
+//! For Endpoint delegation, the resource integration supplies one
+//! [`runtime::transport::EndpointBinding`]. Attach the initial holder's role
+//! before attaching that resource's Endpoint, in the same runtime and session.
+//! The transport must keep accepted messages available across holder changes.
 //!
-//! ```rust,ignore
-//! use hibana::{g, runtime};
-//! use hibana::runtime::program::{RoleProgram, project};
+//! # Errors and guarantees
 //!
-//! let program = g::seq(transport_prefix, app);
-//! let role0: RoleProgram<0> = project(&program);
+//! A successful send means that the transport accepted a frame. It does not
+//! mean the peer has received it. Transport errors stop the local session run
+//! and never undo a remote effect or restore transferred ownership.
 //!
-//! // `runtime_slab: &mut [u8]` is supplied from the measured deployment budget.
-//! let mut kit_storage = runtime::SessionKitStorage::<MyTransport>::uninit();
-//! let kit = kit_storage.init();
-//! let rv = kit.rendezvous(runtime_slab, transport)?;
-//! let endpoint = rv.enter(sid, &role0)?;
-//! ```
-//!
-//! Runtime capacities are derived from Hibana's wire/domain limits and
-//! projected descriptors, not chosen by callers.
-//! Hidden timeout fuses are not protocol API or attach config.
-//! Protocol-invisible carrier watchdogs live inside the transport implementation:
-//! terminal I/O waits are reported as [`runtime::transport::TransportError`]
-//! from `poll_send` or `poll_recv`, not as Hibana timeout branches.
-//!
-//! [`runtime::transport::Transport`] owns I/O readiness, wire buffers, and
-//! ingress demux evidence. [`runtime::resolver`] owns dynamic resolver input.
-//! None of those layers become app concepts.
-//!
-//! ## Payloads, receive evidence, and resolvers
-//!
-//! Payload types implement [`runtime::wire::WireEncode`] for sends and
-//! [`runtime::wire::WirePayload`] for receives. Decoded values may borrow from
-//! the received frame. Built-in exact codecs cover `()`, integers, `bool`,
-//! byte slices, and fixed byte arrays.
-//!
-//! Branch choice is either an in-band protocol message, a projected first
-//! visible endpoint operation confirmed by descriptor-checked receive evidence,
-//! or an explicit resolver decision. Transport evidence is descriptor evidence
-//! only; it is not route authority and it does not create a public
-//! branch-authority catalogue.
-//!
-//! ## Boundary contract
-//!
-//! Hibana keeps the public API small because the projection boundary carries the
-//! proof work:
-//!
-//! - route shape, ambiguous simultaneous endpoint operations, and intrinsic
-//!   route controller mismatch are rejected before runtime;
-//! - parallel composition rejects empty arms and ambiguous simultaneous endpoint
-//!   operations;
-//! - labels are choreography identities, while transport frame labels are
-//!   descriptor facts;
-//! - endpoint progress is affine: successful sends, receives, and route branch
-//!   first-step operations commit progress, while dropped previews restore the
-//!   endpoint;
-//! - `EndpointError` fails closed, carries compact endpoint operation evidence,
-//!   and never authorizes hidden progress.
-//!
+//! Protocol progress requires participants to follow the same global protocol,
+//! invoke and poll permitted operations, and use a transport that provides peer
+//! binding, FIFO delivery, replay exclusion and separation of session runs.
+//! Arbitrary Rust computations and dependency cycles between separate sessions
+//! are outside that guarantee.
+
 #[cfg(test)]
 extern crate self as hibana;
 
@@ -187,12 +149,7 @@ pub(crate) fn invariant_ok<T, E>(value: Result<T, E>) -> T {
     }
 }
 
-/// Rendezvous owner for local session, lane, and route state.
-///
-/// Application code uses [`Endpoint`] for choreography execution and
-/// [`runtime::SessionKit`] for runtime coordination. This module stays internal;
-/// tests reach it through crate-private coverage, not through a third public
-/// face.
+/// Local storage and session registration.
 mod rendezvous;
 
 // ============================================================================

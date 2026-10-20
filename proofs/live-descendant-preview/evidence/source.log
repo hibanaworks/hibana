@@ -1,6 +1,0 @@
-src/endpoint/kernel/core/route_commit_helpers.rs: OK
-src/endpoint/kernel/core/route_preview.rs: OK
-src/global/typestate/cursor/scope_route.rs: OK
-tests/rolled_publication_exit.rs: OK
-proofs/live-descendant-preview/LiveDescendantPreview.lean: OK
-proofs/live-descendant-preview/LiveDescendantPreview.smt2: OK

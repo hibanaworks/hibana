@@ -1,7 +1,0 @@
-'Hibana.ParticipantMask.collect_exact' depends on axioms: [propext]
-'Hibana.ParticipantMask.absence_search_none' depends on axioms: [propext]
-'Hibana.ParticipantMask.observer_validation_exact' depends on axioms: [propext, Quot.sound]
-'Hibana.ParticipantMask.pipeline_exact' depends on axioms: [propext, Quot.sound]
-'Hibana.ParticipantMask.role_count_bounds' depends on axioms: [propext, Classical.choice, Quot.sound]
-'Hibana.ParticipantMask.participant_below_bound' depends on axioms: [propext, Classical.choice, Quot.sound]
-'Hibana.ParticipantMask.byte_index_bounds' depends on axioms: [propext, Classical.choice, Quot.sound]

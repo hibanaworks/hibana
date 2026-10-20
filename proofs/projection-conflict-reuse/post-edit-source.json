@@ -1,8 +1,0 @@
-{
-  "completed_utc": "2026-10-03T01:16:05.357509+00:00",
-  "source_sha256": {
-    "src/global/role_program/image_impl/projection.rs": "e9f4ad6dc81c25cf6c7cf53755c6e3368d3f9dc85fd2f0443ee2afe67f8be088",
-    "src/global/role_program/image_impl/blob_image.rs": "8eb7b627e8d6b4ea602777db9d142f3adbc84740e0797bf1a57717ed9560ff1f"
-  },
-  "production_patch_sha256": "bb707babc658e999f451f11fc4f58dc6091f85d0dea4db9984af6581115df7bb"
-}

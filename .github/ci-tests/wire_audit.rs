@@ -12,7 +12,9 @@ const MODULES: &[(&str, &str)] = &[
 fn inventory(repo: &Path) -> AuditResult<Names> {
     let mut result = Names::new();
     for (module, namespace) in MODULES {
-        let source = read(&repo.join(format!("proofs/wire-frame-refinement/{module}.lean")))?;
+        let source = read(&repo.join(format!(
+            "proofs/checks/projection/wire-frame-refinement/{module}.lean"
+        )))?;
         let code = erase_non_code(&source)?;
         require(
             forbidden(

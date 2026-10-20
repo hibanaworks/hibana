@@ -1,30 +1,27 @@
-//! Choreography language used by app authors.
+//! Build a global protocol and project it for each participant.
 //!
-//! `g` is the only app-facing language layer. Build local choreography terms
-//! with [`send`], [`seq`], [`route`], and [`par`], then let a protocol crate
-//! project and attach them.
+//! [`send`] describes one message, [`seq`] orders fragments, [`par`] describes
+//! independent work, and [`route`] describes a choice. [`Program::roll`] makes
+//! a completed fragment repeatable. A choice can use an application decision
+//! registered through [`runtime::resolver`](crate::runtime::resolver).
 //!
-//! ```rust,ignore
-//! use hibana::g;
+//! ```
+//! use hibana::{g, runtime::program::project};
 //!
-//! let request = g::send::<0, 1, g::Msg<1, u32>>();
-//! let reply = g::send::<1, 0, g::Msg<2, u32>>();
-//! let program = g::seq(request, reply);
+//! type Request = g::Msg<1, u32>;
+//! type Reply = g::Msg<2, u32>;
+//! let global = g::seq(
+//!     g::send::<0, 1, Request>(),
+//!     g::send::<1, 0, Reply>(),
+//! );
+//! let client = project::<0>(&global);
+//! let server = project::<1>(&global);
 //! ```
 //!
-//! A [`Msg`] is a typed message descriptor:
-//!
-//! ```text
-//! Msg<LOGICAL_LABEL, Payload>
-//! ```
-//!
-//! Labels identify choreography messages. Intrinsic routes derive branch
-//! authority from first-visible endpoint evidence; resolved routes derive it
-//! from [`ResolverRef::decide`](crate::runtime::resolver::ResolverRef::decide).
-//! Labels do not encode transport demux or hidden runtime semantics.
-//!
-//! Dynamic branch resolver is supplied by runtime resolvers. Runtime hints or
-//! payload contents do not create route authority by themselves.
+//! [`Msg`] associates a logical message label with its payload type. An Endpoint
+//! payload transfers the right to continue that logical role. Message labels
+//! are protocol identifiers. The transport's frame labels are assigned during
+//! projection.
 
 mod source;
 mod terms;
@@ -45,7 +42,7 @@ pub use diagnostic::{
     DiagnosticEvent, DiagnosticRange, ProjectionDiagnostic, ProjectionProblem, diagnose,
 };
 
-/// Canonical message descriptor.
+/// A logical message label and its payload type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Msg<const LOGICAL_LABEL: u8, Payload>(PhantomData<Payload>);
 
@@ -62,14 +59,11 @@ pub(crate) enum ProgramSourceError {
 
 /// A typed choreography term.
 ///
-/// `Program<Steps>` is a zero-sized compile-time choreography value. Projection
-/// validates it and returns the proof-carrying `RoleProgram`; the unprojected
-/// term is not a runtime image, not an attached endpoint, and not a transport
-/// handle.
+/// `Program<Steps>` is a zero-sized global protocol value. Projection validates
+/// it and produces a [`RoleProgram`](crate::runtime::program::RoleProgram).
 ///
-/// On stable Rust, do not hoist `Program<_>` into `const` or `static` items.
-/// Compose programs through a local `let` choreography term and immediately
-/// project them through `project(&program)`.
+/// Compose protocols with local `let` bindings so Rust infers `Steps`, then use
+/// [`project`](crate::runtime::program::project) for each role.
 pub struct Program<Steps> {
     steps: PhantomData<Steps>,
 }
@@ -268,22 +262,22 @@ where
     };
 }
 
-/// Single global send witness.
+/// A message from `FROM` to `TO`, constructed by [`send`].
 pub struct Send<const FROM: u8, const TO: u8, M>(PhantomData<M>);
 
-/// Sequential composition witness.
+/// Sequential composition, constructed by [`seq`].
 pub struct Seq<Left, Right>(PhantomData<(Left, Right)>);
 
-/// Binary route witness.
+/// A binary choice, constructed by [`route`].
 pub struct Route<Left, Right>(PhantomData<(Left, Right)>);
 
-/// Binary parallel composition witness.
+/// Independent parallel composition, constructed by [`par`].
 pub struct Par<Left, Right>(PhantomData<(Left, Right)>);
 
-/// Explicit route resolver witness.
+/// A choice selected by a registered application resolver.
 pub struct Resolve<Inner, const RESOLVER_ID: u16>(PhantomData<Inner>);
 
-/// Reentry-scope witness.
+/// A repeatable protocol fragment, constructed by [`Program::roll`].
 pub struct Roll<Inner>(PhantomData<Inner>);
 
 pub(crate) const fn project_image<const ROLE: u8, Steps>() -> (

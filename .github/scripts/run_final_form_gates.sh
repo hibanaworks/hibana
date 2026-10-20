@@ -62,16 +62,16 @@ bash .github/scripts/lib/test_result_tool.sh check \
 rm -f "$exhaustive_output"
 trap - EXIT
 bash ./.github/scripts/check_lean_proofs.sh
-bash proofs/controller-offer/check.sh
-bash proofs/live-descendant-preview/check.sh
-bash proofs/nested-resolver-reentry/check.sh
-bash proofs/ordinary-offer-ingress/check.sh
-bash proofs/offer-prefix-dependency/check.sh
-bash proofs/endpoint-delegation/check.sh
+bash proofs/checks/runtime/controller-offer/check.sh
+bash proofs/checks/runtime/live-descendant-preview/check.sh
+bash proofs/checks/runtime/nested-resolver-reentry/check.sh
+bash proofs/checks/runtime/ordinary-offer-ingress/check.sh
+bash proofs/checks/runtime/offer-prefix-dependency/check.sh
+bash proofs/checks/projection/endpoint-delegation/check.sh
 ELAN_TOOLCHAIN=leanprover/lean4:v4.30.0 \
-  bash proofs/elastic-roll-colors/check_all.sh --lean lean
+  bash proofs/checks/projection/elastic-roll-colors/check_all.sh --lean lean
 ELAN_TOOLCHAIN=leanprover/lean4:v4.30.0 \
-  bash proofs/wire-frame-refinement/check_all.sh --lean lean
+  bash proofs/checks/projection/wire-frame-refinement/check_all.sh --lean lean
 bash ./.github/scripts/check_unix_carrier_proof.sh
 bash ./.github/scripts/check_final_form_measurements.sh
 bash ./.github/scripts/check_runtime_performance_hygiene.sh

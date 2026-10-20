@@ -1,6 +1,0 @@
-'Hibana.RoutePathRefinement.refinement_exact' depends on axioms: [propext, Classical.choice, Quot.sound]
-'Hibana.RoutePathRefinement.class_equality_iff_original' depends on axioms: [propext, Classical.choice, Quot.sound]
-'Hibana.RoutePathRefinement.classes_bound' depends on axioms: [propext, Quot.sound]
-'Hibana.RoutePathRefinement.stored_id_avoids_u16_sentinel' depends on axioms: [propext, Quot.sound]
-'Hibana.RoutePathRefinement.uniform_same_membership' depends on axioms: [propext, Classical.choice, Quot.sound]
-'Hibana.RoutePathRefinement.routes_exact' depends on axioms: [propext, Classical.choice, Quot.sound]

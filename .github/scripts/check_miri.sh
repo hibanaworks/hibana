@@ -757,7 +757,7 @@ run_miri_test \
 
 run_miri_test \
   endpoint-delegation-projection \
-  --manifest-path proofs/endpoint-delegation/compiler/Cargo.toml \
+  --manifest-path proofs/checks/projection/endpoint-delegation/compiler/Cargo.toml \
   --locked --lib
 
 TOOLCHAIN="${MIRI_TOOLCHAIN}" bash "${ROOT_DIR}/.github/scripts/lib/test_result_tool.sh" miri-total "${MIRI_TOOLCHAIN}" "${miri_totals}"

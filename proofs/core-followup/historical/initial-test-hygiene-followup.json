@@ -1,7 +1,0 @@
-{
-  "reason": "Source hygiene only. Remove explicit test thread stack override; retain exact 65535/65536 boundary assertions on the standard test stack. Rename frozen oracle symbols/comments; production code unchanged.",
-  "former_oracle_sha256": "877e576ceb6d5e5df847b0fb423a0e503854faef04d2f699399673a233538276",
-  "new_oracle_sha256": "187816b9c493069455724f789f5608951d64fbbee530497e3d66fd69d02e89ca",
-  "old_path": "src/global/compiled/lowering/seal/tests/legacy_participant_validation.rs",
-  "new_path": "src/global/compiled/lowering/seal/tests/participant_reference.rs"
-}

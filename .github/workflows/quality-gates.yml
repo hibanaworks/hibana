@@ -54,7 +54,7 @@ jobs:
       - name: Check delegation equation roots
         run: >-
           bash .github/scripts/lib/resource_guard.sh
-          cargo kani --manifest-path proofs/endpoint-delegation/kani/Cargo.toml
+          cargo kani --manifest-path proofs/checks/projection/endpoint-delegation/kani/Cargo.toml
           --lib --jobs 1 --output-format terse
 
   final-form:
@@ -91,32 +91,32 @@ jobs:
           bash .github/scripts/lib/resource_guard.sh
           bash ./.github/scripts/run_final_form_gates.sh
       - name: Check elastic roll endpoint selectors with Lean and Z3
-        run: bash proofs/roll-reentry-selectors/check.sh
+        run: bash proofs/checks/runtime/roll-reentry-selectors/check.sh
       - name: Check conditional roll continuation dependencies with Lean and Z3
-        run: bash proofs/roll-continuation-dependency/check.sh
+        run: bash proofs/checks/runtime/roll-continuation-dependency/check.sh
       - name: Check parallel resolver progress with Lean and Z3
-        run: bash proofs/parallel-resolver-progress/check.sh
+        run: bash proofs/checks/runtime/parallel-resolver-progress/check.sh
       - name: Check rolled-route ownership with Lean and Z3
-        run: bash proofs/rolled-route-ownership/check.sh
+        run: bash proofs/checks/runtime/rolled-route-ownership/check.sh
       - name: Check projection diagnostic models with Lean and Z3
         run: |
-          ELAN_TOOLCHAIN=leanprover/lean4:v4.30.0 lean proofs/projection-diagnostics/Diagnostics.lean
-          bash .github/scripts/check_smt2.sh proofs/projection-diagnostics/Diagnostics.smt2
+          ELAN_TOOLCHAIN=leanprover/lean4:v4.30.0 lean proofs/checks/projection/projection-diagnostics/Diagnostics.lean
+          bash .github/scripts/check_smt2.sh proofs/checks/projection/projection-diagnostics/Diagnostics.smt2
       - name: Check explicit resource join integration with Lean and Z3
-        run: bash proofs/explicit-resource-join/check.sh
+        run: bash proofs/checks/projection/explicit-resource-join/check.sh
       - name: Check receive lane census with Lean and Z3
-        run: bash proofs/recv-lane-census/check.sh
+        run: bash proofs/checks/runtime/recv-lane-census/check.sh
       - name: Check completion bitmap traversal with Lean and Z3
-        run: bash proofs/pending-events/check.sh
+        run: bash proofs/checks/runtime/pending-events/check.sh
       - name: Check immutable event admission with Lean and Z3
-        run: bash proofs/event-admission/check.sh
+        run: bash proofs/checks/runtime/event-admission/check.sh
       - name: Check parallel offer ingress handoff with Lean and Z3
-        run: bash proofs/parallel-offer-ingress/check.sh
+        run: bash proofs/checks/runtime/parallel-offer-ingress/check.sh
       - name: Check immutable resolver lookup and dispatch subtree
         run: |
-          ELAN_TOOLCHAIN=leanprover/lean4:v4.30.0 lean proofs/route-index/SortedRouteIndex.lean
-          bash .github/scripts/check_smt2.sh proofs/resolver-index/Lookup.smt2
-          ELAN_TOOLCHAIN=leanprover/lean4:v4.30.0 lean proofs/dispatch-subtree/Dispatch.lean
-          bash proofs/dispatch-subtree/check.sh
-          ELAN_TOOLCHAIN=leanprover/lean4:v4.30.0 lean proofs/route-column-access/Bounds.lean
-          bash .github/scripts/check_smt2.sh proofs/route-column-access/Bounds.smt2
+          ELAN_TOOLCHAIN=leanprover/lean4:v4.30.0 lean proofs/checks/image/route-index/SortedRouteIndex.lean
+          bash .github/scripts/check_smt2.sh proofs/checks/image/resolver-index/Lookup.smt2
+          ELAN_TOOLCHAIN=leanprover/lean4:v4.30.0 lean proofs/checks/image/dispatch-subtree/Dispatch.lean
+          bash proofs/checks/image/dispatch-subtree/check.sh
+          ELAN_TOOLCHAIN=leanprover/lean4:v4.30.0 lean proofs/checks/image/route-column-access/Bounds.lean
+          bash .github/scripts/check_smt2.sh proofs/checks/image/route-column-access/Bounds.smt2

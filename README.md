@@ -30,17 +30,17 @@ connection and for application messages sent over QUIC.
 
 ## Add to your project
 
-Run this in your project directory:
+Install the published crate:
 
 ```sh
 cargo add hibana@0.9.9
 ```
 
-This adds the following dependency to `Cargo.toml`:
+The Endpoint delegation and `par()` APIs below require this repository revision.
+To use them, install the branch instead:
 
-```toml
-[dependencies]
-hibana = "0.9.9"
+```sh
+cargo add hibana --git https://github.com/hibanaworks/hibana.git --branch feature/endpoint-delegation
 ```
 
 ## A small exchange
@@ -97,9 +97,9 @@ also checks the message kind and payload format before completing an operation.
 Clone the repository and run the example:
 
 ```sh
-git clone https://github.com/hibanaworks/hibana.git
+git clone --branch feature/endpoint-delegation https://github.com/hibanaworks/hibana.git
 cd hibana
-cargo +1.95.0 run --locked --example ping_pong
+cargo +stable run --locked --example ping_pong
 ```
 
 It prints:
@@ -114,7 +114,7 @@ operations.
 
 ## Passing an Endpoint
 
-On this development branch, a message can carry an Endpoint. Sending it moves
+A message can carry an Endpoint. Sending it moves
 the right to use that logical role. The receiver continues the same protocol
 at its current position.
 
@@ -122,7 +122,14 @@ For example, `OWNER` lends its `DB` Endpoint to `WORKER`. The worker sends a
 request as `DB`, receives the service's reply, and returns the Endpoint:
 
 ```rust
-type Loan<'r> = g::Msg<1, hibana::Endpoint<'r, DB>>;
+use hibana::{g, Endpoint};
+
+const OWNER: u8 = 0;
+const WORKER: u8 = 1;
+const DB: u8 = 2;
+const SERVICE: u8 = 3;
+
+type Loan<'r> = g::Msg<1, Endpoint<'r, DB>>;
 type Read = g::Msg<2, u32>;
 type Value = g::Msg<3, u32>;
 
@@ -184,7 +191,8 @@ correctness of its QUIC or TLS implementation.
 ### Global and local protocols
 
 In multiparty session types (MPST), a **global protocol** describes communication
-among all participants. A **role** identifies a participant in that protocol.
+among all participants. A **role** is a participant's logical identity in that
+protocol. In Hibana, a participant can hold several roles through their Endpoints.
 **Endpoint projection** derives a **local protocol** for each role.
 
 For the exchange above, projection gives:
@@ -308,13 +316,6 @@ requires guarded repetition. Each repetition reuses the compiled protocol
 data, and the fragment's steps can be executed again. FIFO delivery, replay
 exclusion, and separation of session runs are required to distinguish new
 messages from old ones. A repeated protocol may run indefinitely.
-
-Each role keeps one completion bit per repeated region alongside its current
-event completions. This lets it receive an earlier continuation after starting
-another visit. New sends and operations inside the region still need their
-current predecessors. Restarting an outer region clears its children's retained
-completions. This bit does not identify a message's visit or replace the
-transport's ordering and replay guarantees.
 
 Repetition can coexist with a later continuation. Projection rejects an
 outgoing operation that could start a repeated fragment and also select that
@@ -461,7 +462,7 @@ direction must not remain pending forever.
 
 These requirements apply to the transport implementation, not just its Rust
 interface. The
-[Unix datagram example](https://github.com/hibanaworks/hibana/tree/main/proofs/unix-carrier)
+[Unix datagram example](https://github.com/hibanaworks/hibana/tree/main/proofs/carriers/unix)
 tests them for one implementation.
 
 ### Deadlines, errors, and cancellation
@@ -535,14 +536,14 @@ handles. Drop, timeout, runtime replacement and a new `SessionId` do not
 replenish an issued binding. Replacing it requires fencing all old rights and
 accepted frames at the physical boundary.
 
-Attach the source-assigned initial actor before its resource Endpoint, in the
-same runtime and `SessionId`. An absent actor, including one already dropped,
-returns `AttachError` with the expected actor before reserving the binding.
-This setup error does not consume the resource's initial authority.
+Attach the role that initially holds the resource before attaching the resource
+Endpoint, in the same runtime and `SessionId`. The global protocol determines
+that initial holder. If its role is absent or has been dropped, attachment returns
+`AttachError` without consuming the binding.
 
 An owned `send` future takes its Endpoint payload when constructed. The old
 holder cannot use it while the send is pending. Acceptance moves authority
-to the frame, and a validated receive publishes it in the receiver's runtime.
+to the frame, and a validated receive gives it to the receiver's runtime.
 Error or cancellation does not return the Endpoint to the sender. A deadline
 does not prove non-delivery. The carrier must preserve the logical receive
 direction, including earlier accepted frames, across holder changes. Separate
@@ -592,71 +593,50 @@ skip projection checks or increase the protocol's byte limits.
 
 ## Guarantees and verification
 
-Runtime checks enforce each endpoint's local protocol. Before an operation
-commits, the runtime checks direction, peer, lane, message identity, and payload
-schema. An endpoint can complete a local step at most once before moving on.
-Repetition can make that step available again. A failed operation does not
-advance the protocol.
+Hibana checks each send and receive before it advances the local protocol.
+It checks the direction, peer, lane, message identity and payload format.
+Moving an Endpoint transfers the right to continue its logical role. A failed
+operation does not advance the protocol or restore a transferred Endpoint.
 
-The Lean proofs establish session fidelity, protocol progress, and cancellation
-properties for their models. The global results apply to the exact generated
-protocol data accepted by an independent checker. Successful Rust projection
-alone does not prove distributed deadlock freedom.
+The Lean models establish session fidelity, affine ownership and protocol
+progress under their stated assumptions. For accepted finite unfoldings, the
+occurrence model relates message order, source progress and the authority of
+resources retained by the participants. It includes choices, parallel work,
+repetition and Endpoint transfers. Roles can start another repetition while
+messages from a previous repetition remain queued.
 
-The earlier distributed `roll` model requires a common reset boundary. The
-finite-occurrence model instead allows independently advancing visits and old
-unread messages. For accepted finite unfoldings, it combines source progress
-with the current authority needed by a retained resource operation. Actual
-Endpoint/model comparisons, Rust ownership checks, Miri and focused Kani checks
-support the implementation boundary. They do not prove all Rust executions.
-The progress claim below applies within the selected model's scope and premises.
+Applying those results to a running system requires:
 
-Applying these results to a running system requires:
+1. All participants follow local protocols derived from the same global protocol.
+2. Peers agree on payload formats and use codecs that implement those formats.
+3. The transport binds messages to the right peer and direction, preserves FIFO
+   order, excludes duplicates and replay, isolates session runs, and keeps
+   accepted messages available to the next Endpoint holder.
+4. Participants call the permitted operations, retain their Endpoints, futures
+   and parallel borrows until completion or ordinary drop, and drive independent
+   fragments concurrently when progress requires it. The executor keeps polling
+   their futures.
+5. The runtime implements the model's operation and ownership rules.
 
-1. Every role follows the accepted local protocol derived from the same global
-   protocol.
-2. Peers agree on wire formats and use conforming codecs.
-3. The transport provides the peer binding, ordering, replay exclusion, and
-   observable closure required by the selected model.
-4. The application eventually issues the communication required by its local
-   continuation, and the executor continues polling its pending futures.
-   Authority-bearing futures and fragments remain reachable until they complete
-   or are dropped normally.
-5. The runtime implementation follows the model's operation and ownership rules.
+Under these assumptions, a live, unfinished modeled session has an enabled
+communication or local transition. This is **protocol deadlock freedom within
+one session**. It does not prove termination of repeated communication, progress
+of arbitrary Rust computations, or absence of dependency cycles between separate
+sessions. `mem::forget` can prevent progress because it runs neither the pending
+operation nor its cancellation.
 
-Creating a future and polling it are separate responsibilities. For independent
-parallel fragments, use `endpoint.par()` and drive the fragments concurrently
-when progress needs both. Polling a receive cannot create an independent send
-that the application never calls. These application and executor assumptions
-do not establish that a particular Endpoint is owned, callable or admitted;
-the runtime and its implementation correspondence must still establish those
-properties.
+Deadlines and failure detection belong to the transport. An I/O error cannot
+restore ownership or roll back a remote operation. Branch agreement also
+requires the choosing participant to follow its Endpoint. Authentication alone
+does not prevent a participant from sending conflicting choices to different peers.
 
-Leaking an authority-bearing future or fragment with `mem::forget` violates
-the progress assumptions. Its `Drop` does not run, so the runtime does not
-automatically cancel it, report a fault or restore its authority. The peer may
-keep waiting until the transport reports a deadline or closure. This does not
-duplicate authority, but it can prevent progress.
-
-Under these assumptions, a live, unfinished protocol has an enabled
-communication transition. This is **protocol deadlock freedom within one
-session**. It does not establish termination of repeated communication, freedom
-from deadlocks inside arbitrary Rust computations, or absence of dependency
-cycles between separate sessions.
-
-The cancellation results cover the specified finite transport states and rules
-for disabling a direction. Deadlines and failure detection are assumptions
-about the transport. Branch agreement also assumes that the choosing role
-follows its endpoint. Authentication alone cannot ensure agreement if a
-participant sends conflicting choices to different peers.
-
-[The Lean proof notes](https://github.com/hibanaworks/hibana/tree/main/proofs/lean)
-state the exact claims and assumptions. They do not verify every line of Rust
-or every `Transport` implementation. Kani checks bounded kernel cases. Miri
-checks borrowing, pointer provenance, and drop behavior in the executed tests.
-Rust tests cover projection failures, operation ordering, payload validation,
-and transport contracts. Rust/Lean comparisons check agreement for generated
-test cases.
+[Verification](proofs/README.md) describes the models and their connection to
+the implementation. Lean checks the model theorems. Rust/model conformance tests
+compare both allowed and rejected operations over bounded schedules. Kani checks
+bounded implementation properties, and Miri checks borrowing, pointer provenance
+and drop behavior in executed tests. These checks do not verify every line of
+Rust or every transport implementation. Rust projection alone is not a proof of
+distributed deadlock freedom for an application.
 
 ## Reference
 
@@ -670,9 +650,9 @@ The crate uses Rust 2024, has empty default features, and has no normal
 dependencies. Run these checks from the repository root:
 
 ```sh
-cargo +1.95.0 check --no-default-features --lib -p hibana
-cargo +1.95.0 test -p hibana
-cargo +1.95.0 doc -p hibana --no-deps --no-default-features
+cargo +stable check --no-default-features --lib -p hibana
+cargo +stable test -p hibana
+cargo +stable doc -p hibana --no-deps --no-default-features
 ```
 
 The [CI workflow](https://github.com/hibanaworks/hibana/blob/main/.github/workflows/quality-gates.yml)

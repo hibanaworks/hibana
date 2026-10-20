@@ -169,7 +169,7 @@ fn run(args: &[String]) -> Result<()> {
         }
     }
     let repo = fs::canonicalize(repo).map_err(|e| e.to_string())?;
-    let here = repo.join("proofs/wire-frame-refinement");
+    let here = repo.join("proofs/checks/projection/wire-frame-refinement");
     let proofs = repo.join("proofs/lean");
     let lean = executable(&lean)?;
     let lake = lean

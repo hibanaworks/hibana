@@ -1,10 +1,9 @@
 use super::AttachError;
 
-/// Protocol-neutral session kit facade for protocol implementors.
+/// Local runtime storage and session registration for a transport.
 ///
-/// The runtime is intentionally local-only: `SessionKit` is neither `Send` nor
-/// `Sync`, and mutation is centralised inside the single-thread runtime
-/// owner.
+/// A `SessionKit` is neither `Send` nor `Sync`. Drive its Endpoints on one
+/// executor thread. A transport connects it to other runtimes or machines.
 #[repr(transparent)]
 pub struct SessionKit<'cfg, T>
 where
@@ -75,7 +74,7 @@ where
     }
 }
 
-/// Registered rendezvous witness.
+/// A runtime byte slab and transport registered with a [`SessionKit`].
 pub struct RendezvousKit<'kit, 'cfg, T>
 where
     T: crate::transport::Transport + 'cfg,

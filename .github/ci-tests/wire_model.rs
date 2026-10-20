@@ -641,8 +641,9 @@ fn integer(value: &kani_json::Json) -> usize {
         _ => panic!("expected graph integer"),
     }
 }
-fn historical(repo: &Path) -> usize {
-    let fixture = repo.join("proofs/elastic-roll-colors/roll-membership-capacity-model.json.gz");
+fn fixture_graphs(repo: &Path) -> usize {
+    let fixture =
+        repo.join("proofs/checks/projection/elastic-roll-colors/fixtures/roll-graphs.json.gz");
     let output = Command::new("gzip")
         .arg("-dc")
         .arg(fixture)
@@ -705,7 +706,7 @@ fn historical(repo: &Path) -> usize {
         }
         graphs.push(graph);
     }
-    assert_eq!(graphs.len(), 11, "historical model inventory changed");
+    assert_eq!(graphs.len(), 11, "graph fixture inventory changed");
     for g in &graphs {
         let (expected, failed) = compare_valid(&g.rows, &g.markers);
         assert!(failed.is_none(), "{}", g.name);
@@ -746,12 +747,12 @@ fn main() {
     let count = exhaustive();
     mutation_controls();
     raw_controls();
-    let models = historical(Path::new(&repo));
+    let models = fixture_graphs(Path::new(&repo));
     println!(
-        "Wire correspondence: {count} bounded cases; 9 named fixtures; {models} historical models; 3 executed mutants."
+        "Wire correspondence: {count} bounded cases; 9 named fixtures; {models} graph fixtures; 3 executed mutants."
     );
     println!(
-        "External allocator: {count} bounded cases; 10 named fixtures; {models} historical models; 5 raw-marker controls."
+        "External allocator: {count} bounded cases; 10 named fixtures; {models} graph fixtures; 5 raw-marker controls."
     );
     println!(
         "LIMIT: independent finite transcriptions; runtime coverage and well-formed-marker bridge remain explicit premises."

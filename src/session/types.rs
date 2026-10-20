@@ -36,7 +36,9 @@ impl Lane {
     }
 }
 
-/// Session identifier (newtype for type safety).
+/// Session identifier carried by transport frames.
+///
+/// Reuse requires transport state that isolates all frames from the previous run.
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct SessionId(u32);

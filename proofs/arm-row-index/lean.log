@@ -1,4 +1,0 @@
-'Hibana.ArmRowIndex.certified_direct_equals_original' depends on axioms: [propext, Quot.sound]
-'Hibana.ArmRowIndex.guarded_hybrid_equals_original' depends on axioms: [propext, Quot.sound]
-'Hibana.ArmRowIndex.source_prefix_no_u32_overflow' depends on axioms: [propext, Classical.choice, Quot.sound]
-'Hibana.ArmRowIndex.query_guards_preserve_every_outcome' depends on axioms: [propext, Quot.sound]

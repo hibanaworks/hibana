@@ -1,14 +1,15 @@
+/// Project a global protocol and inspect its compiled local protocol data.
 pub mod program {
     pub use crate::global::program::Projectable;
     pub use crate::global::role_program::{RoleProgram, project};
 }
 
-/// Protocol-neutral identifiers used by runtime crates.
+/// Session identifiers.
 pub mod ids {
     pub use crate::session::types::SessionId;
 }
 
-/// Read-only tap observation surface.
+/// Observe protocol and transport events without changing their execution.
 pub mod tap {
     pub use crate::observe::core::{Evidence, TapEvent, TapPort};
     pub use crate::observe::ids::{
@@ -20,17 +21,17 @@ pub mod tap {
     };
 }
 
-/// Resolver and decision-input surface for explicit route resolution.
+/// Register application decisions for protocol choices.
 pub mod resolver {
     pub use crate::session::cluster::core::{DecisionArm, ResolverError, ResolverRef};
 }
 
-/// Wire payload codec surface.
+/// Encode and validate message payloads in supplied buffers.
 pub mod wire {
     pub use crate::transport::wire::{CodecError, Payload, WireEncode, WirePayload};
 }
 
-/// Transport I/O surface plus observation/detail owners.
+/// Implement asynchronous I/O, frame buffers and resource bindings.
 pub mod transport {
     pub use crate::transport::{
         EndpointBinding, FrameHeader, FrameLabel, Outgoing, PortOpen, ReceivedFrame, Transport,

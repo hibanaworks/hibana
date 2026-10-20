@@ -1,5 +1,0 @@
-'SourceBridge.generated_role0_labels_match' depends on axioms: [propext]
-'SourceBridge.generated_role1_labels_match' depends on axioms: [propext]
-'SourceBridge.structural_baseline_mismatch_is_real' depends on axioms: [propext]
-'SourceBridge.source_emitted_nested_domains' does not depend on any axioms
-'SourceBridge.source_owners_are_inner_inner_outer' depends on axioms: [propext]

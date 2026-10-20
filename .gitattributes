@@ -1,7 +1,0 @@
-# Preserve hash-pinned raw tool output and patch context byte-for-byte.
-# Source, proof programs, and documentation retain normal whitespace checks.
-proofs/core-followup/validation/*.log -whitespace
-proofs/core-followup/integration-d906/*.log -whitespace
-proofs/passive-child-window/*.log -whitespace
-proofs/projection-conflict-reuse/*.log -whitespace
-proofs/projection-conflict-reuse/*.patch -whitespace

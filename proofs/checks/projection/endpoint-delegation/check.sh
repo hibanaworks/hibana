@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+set -euo pipefail
+ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)
+export TOOLCHAIN="${TOOLCHAIN:-stable}"
+PROOFS="$ROOT/proofs/checks/projection/endpoint-delegation"
+MODEL="$ROOT/proofs/lean/Hibana/EndpointOwnership.lean"
+MODEL_PATH="$ROOT/proofs/lean/.lake/build/lib/lean"
+EVIDENCE=${1:-$(mktemp -d /tmp/hibana-delegation-projection.XXXXXX)}
+mkdir -p "$EVIDENCE"
+EVIDENCE=$(cd "$EVIDENCE" && pwd)
+cd "$ROOT"
+export ELAN_TOOLCHAIN=leanprover/lean4:v4.30.0
+# The standalone model has its own tests. Core-only repository fixtures must
+# not be enabled in this independently compiled package.
+source "$ROOT/.github/scripts/repo_rustflags.sh"
+hibana_disable_repo_tests_cfg
+source "$ROOT/.github/scripts/lib/proof_audit.sh"
+FAILED=0
+check_trusted_proof_sources 'endpoint delegation projection' "$MODEL" "$PROOFS/Claims.lean" "$PROOFS/Knowledge.lean" "$PROOFS/Issuance.lean" "$PROOFS/Causality.lean" "$PROOFS/ReceiptWait.lean"
+[[ "$FAILED" -eq 0 ]]
+lean --version | bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" version
+cargo +"$TOOLCHAIN" fmt --manifest-path "$PROOFS/compiler/Cargo.toml" --check
+cargo +"$TOOLCHAIN" test --manifest-path "$PROOFS/compiler/Cargo.toml" --locked --lib > "$EVIDENCE/rust-tests.log" 2>&1
+cargo +"$TOOLCHAIN" clippy --manifest-path "$PROOFS/compiler/Cargo.toml" --locked --all-targets -- -D warnings > "$EVIDENCE/clippy.log" 2>&1
+cargo +"$TOOLCHAIN" check --manifest-path "$PROOFS/compiler/Cargo.toml" --locked --lib --no-default-features > "$EVIDENCE/no-std-host.log" 2>&1
+cargo +"$TOOLCHAIN" check --manifest-path "$PROOFS/compiler/Cargo.toml" --locked --lib --no-default-features --target thumbv6m-none-eabi > "$EVIDENCE/no-std-thumb.log" 2>&1
+cargo +"$TOOLCHAIN" run --manifest-path "$PROOFS/compiler/Cargo.toml" --locked -- "$EVIDENCE/Generated.lean" > "$EVIDENCE/export.log" 2>&1
+check_trusted_proof_sources 'generated endpoint delegation projection' "$EVIDENCE/Generated.lean"
+[[ "$FAILED" -eq 0 ]]
+(
+  cd "$ROOT/proofs/lean"
+  lake build Hibana.EndpointOwnership
+) > "$EVIDENCE/lean-model-build.log" 2>&1
+LEAN_PATH="$MODEL_PATH" lean "$PROOFS/Claims.lean" > "$EVIDENCE/lean-model.log" 2>&1
+bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" lean "$EVIDENCE/lean-model.log" 14
+LEAN_PATH="$EVIDENCE:$MODEL_PATH" lean -o "$EVIDENCE/Knowledge.olean" "$PROOFS/Knowledge.lean" > "$EVIDENCE/lean-knowledge.log" 2>&1
+bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" lean "$EVIDENCE/lean-knowledge.log" 3
+LEAN_PATH="$EVIDENCE:$MODEL_PATH" lean -o "$EVIDENCE/Causality.olean" "$PROOFS/Causality.lean" > "$EVIDENCE/lean-causality.log" 2>&1
+bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" lean "$EVIDENCE/lean-causality.log" 4
+lean -o "$EVIDENCE/Issuance.olean" "$PROOFS/Issuance.lean" > "$EVIDENCE/lean-issuance.log" 2>&1
+bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" lean "$EVIDENCE/lean-issuance.log" 4
+lean -j1 "$PROOFS/ReceiptWait.lean" > "$EVIDENCE/lean-receipt-wait.log" 2>&1
+bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" lean "$EVIDENCE/lean-receipt-wait.log" 3
+LEAN_PATH="$EVIDENCE:$MODEL_PATH" lean "$EVIDENCE/Generated.lean" > "$EVIDENCE/lean-generated.log" 2>&1
+bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" lean "$EVIDENCE/lean-generated.log" 193
+model_count=0
+for model in "$PROOFS"/*.smt2; do
+  name="${model##*/}"
+  bash "$ROOT/.github/scripts/check_smt2.sh" "$model" > "$EVIDENCE/z3-${name%.smt2}.log"
+  model_count=$((model_count + 1))
+done
+printf 'Endpoint delegation: all %s SMT models passed EXPECT checks; per-model logs: %s/z3-*.log\n' "$model_count" "$EVIDENCE"
+printf 'Endpoint ownership projection: Rust tests passed; 17 projection/knowledge, 4 issuance, 4 causal-path and 3 receipt-wait general Lean theorems; 193 generated. Evidence: %s\n' "$EVIDENCE"

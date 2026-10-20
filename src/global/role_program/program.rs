@@ -1,5 +1,9 @@
 use super::{RoleProgramView, private};
 
+/// The compiled local protocol for `ROLE`.
+///
+/// Created by [`project`] and passed to [`crate::runtime::RendezvousKit::enter`].
+/// It describes permitted communication; the attached Endpoint tracks execution.
 pub struct RoleProgram<const ROLE: u8> {
     _private: (),
     image: &'static crate::global::role_program::RoleImageRef,

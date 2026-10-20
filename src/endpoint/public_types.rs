@@ -1,11 +1,15 @@
-/// App-facing affine executor for a projected role.
+/// Exclusive access to one logical role's local protocol.
 ///
-/// The endpoint is intentionally local-only and moves forward one descriptor
-/// step at a time. Successful sends, receives, and route branch first-step
-/// operations consume progress. Dropped unpolled sends do not publish runtime
-/// progress; dropped in-flight sends and route previews restore the endpoint to
-/// its detached step. Once a committed fault is observed, the same session
-/// generation cannot produce a new continuation.
+/// Successful operations advance the protocol. [`Endpoint::offer`] previews a
+/// choice without advancing it, and [`Endpoint::par`] borrows independent parts
+/// for concurrent execution.
+///
+/// An Endpoint cannot be cloned. It can be moved as a message payload when the
+/// global protocol permits, transferring the same role's continuation. A failed
+/// or cancelled send never returns that transferred right to the sender.
+///
+/// The value borrows its local runtime for `'r` and is neither `Send` nor `Sync`.
+/// Communication with another runtime goes through the transport.
 pub struct Endpoint<'r, const ROLE: u8> {
     pub(super) owner: super::owner::EndpointOwner,
     pub(super) _borrow: core::marker::PhantomData<&'r mut ()>,
@@ -13,10 +17,10 @@ pub struct Endpoint<'r, const ROLE: u8> {
 
 /// Preview of a selected route branch returned by [`Endpoint::offer`].
 ///
-/// `RouteBranch` exposes the selected logical label. If the selected arm begins
-/// with a receive, call [`RouteBranch::recv`]. If it begins with a send, call
-/// [`RouteBranch::send`]. The label is descriptor/resolver evidence, not the
-/// result of parsing payload bytes.
+/// Inspect [`RouteBranch::label`], then use [`RouteBranch::recv`] or
+/// [`RouteBranch::send`] for its first operation. Dropping a preview does not
+/// advance the protocol. A self-role unit step is consumed with `recv` as a
+/// local operation, without transport I/O.
 pub struct RouteBranch<'e, 'r, const ROLE: u8> {
     pub(super) target: super::target::OperationTarget<'e, 'r, ROLE, u8>,
 }

@@ -35,16 +35,15 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     }
 
     #[inline]
-    /// Send the next projected message as `M`.
+    /// Send the next message permitted by the local protocol.
     ///
-    /// Wire payloads are borrowed; Endpoint payloads move into the future.
-    /// Cancelling an owned send does not restore the transferred operation
-    /// right. Dropping an unfinished resource ends the current run.
+    /// Ordinary payloads are borrowed. An Endpoint payload moves into the send
+    /// future when it is created, so the sender can no longer use that value.
+    /// Cancelling or failing the send does not return the transferred right.
     ///
-    /// The endpoint previews the projected send descriptor on first poll.
-    /// Dropping the future before completion leaves the endpoint on the same
-    /// typestate step. A preview mismatch reports its exact send failure and
-    /// makes the current session generation terminal.
+    /// Success means the transport accepted the frame, not that the peer has
+    /// received it. Dropping a pending send invokes the transport's cancellation
+    /// contract. A protocol mismatch faults the local session run.
     pub fn send<'a, 'e, M>(
         &'e mut self,
         payload: <M::Payload as crate::global::PayloadSpec>::SendArgument<'a, 'r>,
@@ -62,15 +61,16 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     }
 
     #[inline]
-    /// Receive the next message as `M` after descriptor evidence matches.
+    /// Receive the next message permitted by the local protocol.
     ///
-    /// The projected descriptor must expect the same choreography label and
-    /// payload family as `M`. Payload decoding is exact: fixed-size payloads reject
-    /// trailing bytes, while borrowed payloads may return views tied to the
-    /// endpoint borrow. A committed receive fault poisons the session generation
-    /// before the error is returned.
-    /// Endpoint payloads return a uniquely issued continuation tied to the
-    /// receiving runtime, independent of this temporary receive borrow.
+    /// The message label and payload format must match `M`. Fixed-size payloads
+    /// reject trailing bytes. Decoded data may borrow the receive buffer until
+    /// this endpoint borrow ends.
+    ///
+    /// An Endpoint payload returns the transferred role's continuation, tied to
+    /// the receiving runtime rather than the temporary frame borrow. The caller
+    /// can retain it while using this endpoint for other protocol operations.
+    /// A rejected frame or transport error faults the local session run.
     pub fn recv<'e, M>(
         &'e mut self,
     ) -> impl core::future::Future<
@@ -89,16 +89,14 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     }
 
     #[inline]
-    /// Observe the next route decision.
+    /// Preview the next protocol choice without advancing it.
     ///
     /// This is a preview operation. It returns a [`RouteBranch`] whose
     /// [`RouteBranch::label`] is the selected arm's first logical label.
     /// Dropping the future before completion leaves endpoint progress unchanged.
     /// Consume ordinary receive steps with [`Endpoint::recv`]; they are not
     /// returned as route previews, even when they precede a later choice.
-    /// Dynamic branches must be selected by an explicit resolver decision at a
-    /// projected route point; transport observations and payload labels are demux
-    /// evidence only.
+    /// Choices resolved by the application require a registered resolver.
     pub fn offer<'e>(
         &'e mut self,
     ) -> impl core::future::Future<

@@ -71,7 +71,7 @@ fn proof_trust_audits_reject_tool_failures_before_running_proofs() {
         ".github/ci-tests",
         "target/ci-tools",
         "proofs/lean",
-        "proofs/rolled-route-ownership",
+        "proofs/checks/runtime/rolled-route-ownership",
     ] {
         fs::create_dir_all(root.join(directory)).unwrap();
     }
@@ -82,7 +82,7 @@ fn proof_trust_audits_reject_tool_failures_before_running_proofs() {
         ".github/ci-tests/supplemental_proofs.rs",
         ".github/ci-tests/check_lean_proof_guard.rs",
         ".github/ci-tests/lean_audit.rs",
-        "proofs/rolled-route-ownership/check.sh",
+        "proofs/checks/runtime/rolled-route-ownership/check.sh",
     ] {
         fs::copy(repo.join(file), root.join(file)).unwrap();
     }
@@ -109,7 +109,7 @@ fn proof_trust_audits_reject_tool_failures_before_running_proofs() {
     }
     let binary = root.join("target/ci-tools/check_lean_proof_guard");
     let marker = root.join("proof-ran");
-    let source = root.join("proofs/rolled-route-ownership/Fixture.lean");
+    let source = root.join("proofs/checks/runtime/rolled-route-ownership/Fixture.lean");
     for case in ["missing", "error", "forbidden", "unreadable", "clean"] {
         let _ = fs::remove_file(&marker);
         let _ = fs::remove_file(&binary);
@@ -130,7 +130,7 @@ fn proof_trust_audits_reject_tool_failures_before_running_proofs() {
             _ => {}
         }
         let output = Command::new("/bin/bash")
-            .arg(root.join("proofs/rolled-route-ownership/check.sh"))
+            .arg(root.join("proofs/checks/runtime/rolled-route-ownership/check.sh"))
             .arg(root.join("evidence"))
             .env("PATH", root.join("bin"))
             .env("PROOF_AUDIT_MARKER", &marker)
@@ -325,8 +325,8 @@ fn standalone_proof_logs_preserve_failed_tool_status_and_diagnostics() {
         "event-admission",
         "parallel-offer-ingress",
     ] {
-        let relative = format!("proofs/{family}/check.sh");
-        fs::create_dir_all(root.join(format!("proofs/{family}"))).unwrap();
+        let relative = format!("proofs/checks/runtime/{family}/check.sh");
+        fs::create_dir_all(root.join(format!("proofs/checks/runtime/{family}"))).unwrap();
         fs::copy(repo.join(&relative), root.join(&relative)).unwrap();
         let evidence = root.join(format!("evidence-{family}"));
         let run = |code: &str| {

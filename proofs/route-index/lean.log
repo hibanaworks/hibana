@@ -1,2 +1,0 @@
-'Hibana.RouteIndex.indexed_equals_scan' depends on axioms: [propext, Quot.sound]
-'Hibana.RouteIndex.certified_scan_equals_direct' depends on axioms: [propext, Quot.sound]

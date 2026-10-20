@@ -114,14 +114,8 @@ fn main() {
             true,
         );
     }
-    let here = repo.join("proofs/elastic-roll-colors");
-    for module in [
-        "LeanColorGate",
-        "LeanMinimalTrace",
-        "LeanRollMembership",
-        "LeanNestedReverse",
-        "NoRollFastPath",
-    ] {
+    let here = repo.join("proofs/checks/projection/elastic-roll-colors");
+    for module in ["LeanColorGate", "LeanRollMembership", "NoRollFastPath"] {
         run(
             &lean,
             &[
@@ -159,7 +153,7 @@ fn main() {
                 vec!["ConflictReuse"],
             ),
         ] {
-            let root = repo.join("proofs").join(directory);
+            let root = repo.join("proofs/checks/projection").join(directory);
             let replay = build.join(directory);
             fs::create_dir(&replay).unwrap();
             for module in leans {

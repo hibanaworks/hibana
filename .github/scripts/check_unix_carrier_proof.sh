@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-MANIFEST="${ROOT_DIR}/proofs/unix-carrier/Cargo.toml"
+MANIFEST="${ROOT_DIR}/proofs/carriers/unix/Cargo.toml"
 TOOLCHAIN="${TOOLCHAIN:-stable}"
 TARGET_DIR="${CARGO_TARGET_DIR:-${ROOT_DIR}/target/unix-carrier-proof}"
 

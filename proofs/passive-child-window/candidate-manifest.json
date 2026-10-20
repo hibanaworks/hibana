@@ -1,9 +1,0 @@
-{
-  "production_changed_after_gate_utc": "2026-10-03T00:35:15.917449+00:00",
-  "base_commit": "ff6d167ed23f2f566d16affdeedd3b2ca8569cc2",
-  "files": {
-    "src/global/const_dsl/scope_ranges/route.rs": "a85340702a5e0641fa764123bf4a8f1356c86c2957218e81a8fb4d20ac16f15c",
-    "src/global/const_dsl/scope_ranges/tests.rs": "4b3b69a4d886cac2d2ca793d7f70bfd9ce255822067bb2c7a370337c766ee092"
-  },
-  "patch_sha256": "aff87c8eb48ea1920ca4cc714a1d3051e163715162ba95915fb8b63793e02634"
-}

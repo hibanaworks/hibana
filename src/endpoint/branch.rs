@@ -16,8 +16,7 @@ impl<'e, 'r, const ROLE: u8> RouteBranch<'e, 'r, ROLE> {
 
     /// Return the selected arm's first logical label.
     ///
-    /// This is not branch authority for resolved routes; resolver decisions own
-    /// that authority before the branch is materialized.
+    /// Reading the label does not advance the protocol or invoke a resolver.
     #[inline]
     pub fn label(&self) -> u8 {
         *self.target.metadata()
@@ -25,10 +24,10 @@ impl<'e, 'r, const ROLE: u8> RouteBranch<'e, 'r, ROLE> {
 
     /// Receive the first payload of a selected route arm.
     ///
-    /// This consumes the branch preview on success. The message `M` must match
-    /// the selected branch label and payload family. Physical frame-label or
-    /// descriptor mismatches are reported as invariant failures, not as route
-    /// choices. A decode failure is terminal for the current generation.
+    /// On success, this consumes the preview and advances its first operation.
+    /// The label and payload format must match `M`. For a self-role unit step,
+    /// it consumes `()` locally without receiving a frame. A rejected payload
+    /// faults the local session run.
     #[inline]
     pub fn recv<M>(
         self,
@@ -47,10 +46,10 @@ impl<'e, 'r, const ROLE: u8> RouteBranch<'e, 'r, ROLE> {
 
     /// Send the first payload of a selected route arm.
     ///
-    /// This consumes the branch preview only when the selected arm begins with
-    /// a send. Dropping the returned future before completion restores the
-    /// branch preview so the route can be offered again. A descriptor mismatch
-    /// is terminal for the current session generation.
+    /// The selected arm must begin with a send. On success, this advances that
+    /// first operation. Ordinary payloads are borrowed. An Endpoint payload moves
+    /// into the future. Dropping the future does not advance the protocol or
+    /// return a moved Endpoint. A protocol mismatch faults the local session run.
     #[inline]
     pub fn send<'a, M>(
         self,

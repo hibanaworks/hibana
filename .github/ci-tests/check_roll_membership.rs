@@ -42,10 +42,6 @@ fn command(program: &str, args: &[&str], input: Option<&[u8]>) -> String {
 fn number(s: &str) -> usize {
     s.parse().expect("unsigned integer")
 }
-fn field(line: &str, key: &str) -> usize {
-    let rest = line.split_once(key).expect("inventory field").1;
-    number(rest.split(|c: char| !c.is_ascii_digit()).next().unwrap())
-}
 #[derive(Debug, Clone)]
 struct Event {
     id: usize,
@@ -84,23 +80,18 @@ pub fn run(args: &[String]) {
             "Replay output must be a new file"
         );
     }
-    let inventory = fs::read_to_string(root.join("evidence/run-inventory.log")).unwrap();
-    validate_inventory(&inventory);
+    let receives = fs::read_to_string(root.join("fixtures/receives.json")).unwrap();
+    validate_receives(&kani_json::parse(&receives).expect("receive fixture JSON"));
     let raw = command(
         "gzip",
         &[
             "-dc",
-            root.join("roll-membership-capacity-model.json.gz")
-                .to_str()
-                .unwrap(),
+            root.join("fixtures/roll-graphs.json.gz").to_str().unwrap(),
         ],
         None,
     );
     let graphs = decode_graphs(&kani_json::parse(&raw).expect("fixture JSON"));
     validate_graphs(&graphs);
-    let recorded =
-        kani_json::parse(&fs::read_to_string(root.join("roll-membership-z3.json")).unwrap())
-            .expect("historical JSON");
     let model = fs::read_to_string(root.join("RollMembership.smt2")).unwrap();
     let names: Vec<_> = model
         .lines()
@@ -113,26 +104,13 @@ pub fn run(args: &[String]) {
         .lines()
         .filter_map(|l| l.strip_prefix("; EXPECT: "))
         .collect();
-    let historical: Vec<Vec<_>> = array(get(&recorded, "checks"))
-        .iter()
-        .map(|c| {
-            ["name", "expected", "actual"]
-                .iter()
-                .map(|key| string(get(c, key)))
-                .collect()
-        })
-        .collect();
     assert_eq!(names.len(), 31);
     assert_eq!(outcomes.len(), 31);
-    assert_eq!(historical.len(), 31);
     let graph_queries: BTreeSet<_> = names
         .iter()
         .filter_map(|n| n.strip_suffix("_concrete_coloring_all_edges"))
         .collect();
     assert_eq!(graph_queries, graphs.keys().map(String::as_str).collect());
-    for i in 0..31 {
-        assert_eq!(historical[i], vec![names[i], outcomes[i], outcomes[i]]);
-    }
     let actual = command(
         "z3",
         &["-T:300", root.join("RollMembership.smt2").to_str().unwrap()],
@@ -163,7 +141,7 @@ pub fn run(args: &[String]) {
         let report = format!(
             "{{\"passed\":{passed},\"z3_version\":{},\"claim_limit\":{},\"checks\":{checks}}}\n",
             quote(version),
-            quote(string(get(&recorded, "claim_limit")))
+            quote("Runtime coverage and same-class uniqueness are explicit premises.")
         );
         let mut file = fs::OpenOptions::new()
             .write(true)
@@ -174,7 +152,7 @@ pub fn run(args: &[String]) {
     }
     assert!(
         passed,
-        "solver result differs from historical gate (unknown fails closed)"
+        "solver result differs from the model's EXPECT declarations (unknown fails closed)"
     );
     println!("PASS exact 31-query replay; universal Rust Covers/SameClassUnique remains unproved");
 }
@@ -265,31 +243,24 @@ fn validate_graphs(graphs: &BTreeMap<String, Graph>) {
         }
     }
 }
-fn validate_inventory(inventory: &str) {
+fn validate_receives(receives: &Json) {
     let mut observed = BTreeMap::new();
-    for line in inventory
-        .lines()
-        .filter(|s| s.contains("INVENTORY recv idx="))
-    {
-        let idx = field(line, "INVENTORY recv idx=");
-        let enabled = line
-            .split_once("enabled=")
-            .unwrap()
-            .1
-            .split_whitespace()
-            .next()
-            .unwrap();
-        assert!(enabled == "true" || enabled == "false");
-        observed.insert(
-            idx,
+    for row in array(receives) {
+        let enabled = match get(row, "enabled") {
+            Json::Bool(enabled) => *enabled,
+            _ => panic!("expected receive eligibility boolean"),
+        };
+        let previous = observed.insert(
+            integer(get(row, "index")),
             (
-                enabled == "true",
-                field(line, "peer: "),
-                field(line, "label: "),
-                field(line, "frame_label: "),
-                field(line, "lane: "),
+                enabled,
+                integer(get(row, "peer")),
+                integer(get(row, "label")),
+                integer(get(row, "frame_label")),
+                integer(get(row, "lane")),
             ),
         );
+        assert!(previous.is_none(), "duplicate receive fixture index");
     }
     assert_eq!(
         observed.keys().copied().collect::<Vec<_>>(),
@@ -305,7 +276,7 @@ fn validate_inventory(inventory: &str) {
             }
         }
     }
-    // Bind the exported SMT collision disjunction to the live inventory.
+    // Match the SMT collision disjunction to the explicit receive fixture.
     assert_eq!(
         pairs,
         [
@@ -485,14 +456,25 @@ mod tests {
         fs::remove_file(path).unwrap();
     }
     #[test]
-    fn inventory_mutations_fail_closed() {
-        let original = include_str!("../../proofs/elastic-roll-colors/evidence/run-inventory.log");
-        validate_inventory(original);
-        for bad in [
-            original.replace("idx=6 enabled=true", "idx=6 enabled=false"),
-            original.replace("label: 52,", "label: 99,"),
+    fn receive_fixture_mutations_are_rejected() {
+        let original = include_str!(
+            "../../proofs/checks/projection/elastic-roll-colors/fixtures/receives.json"
+        );
+        validate_receives(&kani_json::parse(original).unwrap());
+        for (index, field, replacement) in [
+            (4, "enabled", Json::Bool(false)),
+            (1, "label", Json::Number("99".into())),
+            (4, "index", Json::Number("2".into())),
         ] {
-            assert!(std::panic::catch_unwind(|| validate_inventory(&bad)).is_err());
+            let mut altered = kani_json::parse(original).unwrap();
+            let Json::Array(rows) = &mut altered else {
+                unreachable!()
+            };
+            let Json::Object(row) = &mut rows[index] else {
+                unreachable!()
+            };
+            row.insert(field.into(), replacement);
+            assert!(std::panic::catch_unwind(|| validate_receives(&altered)).is_err());
         }
     }
 }

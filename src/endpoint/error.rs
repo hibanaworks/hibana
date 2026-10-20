@@ -9,12 +9,12 @@ pub(crate) enum EndpointOp {
     Par,
 }
 
-/// Domain error for endpoint progress.
+/// An error from an Endpoint or branch operation.
 ///
-/// This error records which endpoint operation failed, so callers can use `?` without extra
-/// context types. The diagnostic kind is deliberately private: application code
-/// should not match endpoint failures to continue the same generation on an
-/// alternate route.
+/// Its `Display` and `Debug` output identify the failed operation and cause.
+/// Protocol violations and transport failures fault the local session run.
+/// Starting another run requires fresh transport state that excludes frames
+/// from the previous run.
 #[derive(Clone, Copy)]
 pub struct EndpointError {
     op: EndpointOp,

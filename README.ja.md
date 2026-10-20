@@ -28,17 +28,17 @@ Hibanaは、通信の流れをまとめて記述するchoreographic programming�
 
 ## プロジェクトに追加する
 
-プロジェクトのディレクトリで実行します。
+公開済みのクレートを追加します。
 
 ```sh
 cargo add hibana@0.9.9
 ```
 
-`Cargo.toml`に次の依存関係が追加されます。
+以下のEndpoint委譲と`par()`を使う場合は、このリポジトリの版が必要です。
+その場合はこちらを指定します。
 
-```toml
-[dependencies]
-hibana = "0.9.9"
+```sh
+cargo add hibana --git https://github.com/hibanaworks/hibana.git --branch feature/endpoint-delegation
 ```
 
 ## 小さな通信例
@@ -94,9 +94,9 @@ Hibanaは、操作を完了する前にメッセージの種類とペイロー�
 リポジトリを複製して、例を実行します。
 
 ```sh
-git clone https://github.com/hibanaworks/hibana.git
+git clone --branch feature/endpoint-delegation https://github.com/hibanaworks/hibana.git
 cd hibana
-cargo +1.95.0 run --locked --example ping_pong
+cargo +stable run --locked --example ping_pong
 ```
 
 出力は次のとおりです。
@@ -110,13 +110,20 @@ ping=7, pong=8
 
 ## Endpointを渡す
 
-この開発ブランチでは、Endpointをメッセージとして渡せます。
+Endpointをメッセージとして渡せます。
 送ると、そのlogical roleを操作する権利が移ります。受取側は同じプロトコルの続きを実行します。
 
 例えば、OWNERがDB用EndpointをWORKERへ貸し、WORKERがDBとして要求と応答を実行して返します。
 
 ```rust
-type Loan<'r> = g::Msg<1, hibana::Endpoint<'r, DB>>;
+use hibana::{g, Endpoint};
+
+const OWNER: u8 = 0;
+const WORKER: u8 = 1;
+const DB: u8 = 2;
+const SERVICE: u8 = 3;
+
+type Loan<'r> = g::Msg<1, Endpoint<'r, DB>>;
 type Read = g::Msg<2, u32>;
 type Value = g::Msg<3, u32>;
 
@@ -174,7 +181,8 @@ hibana-quicは実験的な実装です。コアのプロトコル証明は、QUI
 ### Global protocolとlocal protocol
 
 Multiparty session types（MPST）では、**global protocol**が全参加者の通信を表します。
-**role**は、そのプロトコルの参加者を表します。
+**role**は、プロトコル上の通信主体を表します。
+Hibanaでは、一つのプログラムやtaskが複数roleのEndpointを保持できます。
 **endpoint projection**は、global protocolから各ロールの**local protocol**を導出します。
 
 先ほどの例をprojectionすると、次の手順になります。
@@ -283,12 +291,6 @@ Projectionはguarded repetitionを要求します。
 繰り返しではコンパイル済みデータを再利用し、その部分の操作を再度実行できます。
 新しいメッセージと古いメッセージを区別するには、FIFO配送、リプレイの排除、セッションの実行間の分離が必要です。
 繰り返すプロトコルは、無期限に実行し続ける場合があります。
-
-各roleは、現在のイベントの完了情報と同じカーソルに、反復部分ごとの完了を1ビットで保持します。
-これにより、次の反復を始めた後でも、先に送られた後続メッセージを受信できます。
-新しい送信や反復内部の操作には、現在の前提操作の完了が必要です。
-外側の反復をやり直すと、内側に保持した完了情報は消えます。
-このビットはメッセージの周回番号ではなく、transportの順序・replay排除の保証を代替しません。
 
 繰り返しへの再入と後続の継続は、同時に選べる場合があります。
 その開始に使う送信と後続の送信が同じロール・ラベル・ペイロードスキーマで競合する場合、
@@ -422,7 +424,7 @@ Laneに結び付けられた受信と要求されたメッセージが、実行�
 終了が分かっている方向が、永久にpendingのままになってはいけません。
 
 これはRustのインターフェースだけではなく、トランスポート実装に対する要件です。
-[Unix datagramの例](https://github.com/hibanaworks/hibana/tree/main/proofs/unix-carrier)で、
+[Unix datagramの例](https://github.com/hibanaworks/hibana/tree/main/proofs/carriers/unix)で、
 一つの実装についてこの要件をテストしています。
 
 ### 期限、エラー、cancellation
@@ -491,12 +493,12 @@ bindingを新設しません。unsafeな構築時に、integrationが
 drop、timeout、runtimeや`SessionId`の作り直しでは発行権は復活しません。
 bindingを置き換えるには、古い権利と受理済みframeを物理操作境界で実際にfenceする必要があります。
 
-資源Endpointを初期発行する前に、sourceが定める初期保持者のactorを同じruntimeと
-`SessionId`へattachします。そのactorが未attach、またはdrop済みなら、bindingの予約前に
-期待するactorを含む`AttachError`を返します。このsetup errorでは初期発行権を消費しません。
+資源Endpointより先に、その資源を最初に保持するroleを同じruntimeと`SessionId`へattachします。
+最初の保持者はglobal protocolから定まります。そのroleが未attachまたはdrop済みなら、
+bindingを消費せずに`AttachError`を返します。
 
 owned sendのfutureは、生成時点でpayloadのEndpointを所有します。Pending中も旧保持者は
-使えません。transportの受理で権限がframeへ移り、検証済みrecvが受取先runtimeへ公開します。
+使えません。transportの受理で権限がframeへ移り、検証済みrecvが受取先runtimeへ渡します。
 errorやcancelで送信元へEndpointを返すことはありません。deadlineは未配送の証拠ではありません。
 carrierは、保持者の変更をまたいで、受理済みの古いframeも同じlogical方向から受信できるようにします。
 別のマシン間でRustメモリを共有する必要はありませんが、この受信継続性とFIFO・replay排除・run分離が必要です。
@@ -539,56 +541,40 @@ Projectionは通信に応じてlaneを割り当て、所有権が競合しなけ
 
 ## 保証と検証
 
-ランタイムは、各エンドポイントの操作がlocal protocolに従うかを検査します。
-コミット前に方向、通信相手、lane、メッセージの識別、ペイロードのスキーマを検査します。
-エンドポイントは、次に進むまでに一つのlocal操作を高々一度完了できます。
-繰り返しでは、その操作が再び実行可能になります。失敗した操作でプロトコルは進みません。
+Hibanaはlocal protocolを進める前に、sendとrecvの方向、通信相手、lane、
+メッセージの識別、ペイロード形式を検査します。Endpointをmoveすると、そのlogical roleの
+続きを実行する権利が移ります。失敗した操作では進行せず、移譲したEndpointも復活しません。
 
-Leanの証明は、そのモデルについてsession fidelity、protocol progress、cancellationの性質を示します。
-全体の実行に関する結果は、独立した検査器に受理された、正確な生成プロトコルデータに適用します。
-Rustのprojectionが成功しただけでは、distributed deadlock freedomの証明にはなりません。
+Leanのモデルは、明記した前提の下でsession fidelity、affineな所有権、protocol progressを示します。
+受理された有限展開について、各メッセージの出現を扱うモデルが、通信順序、sourceの進行、
+参加者が保持する資源の操作権を結び付けます。分岐、並行処理、繰り返し、Endpoint委譲を含みます。
+前の周回のメッセージが未読のまま、各ロールが次の周回を始める実行も扱います。
 
-従来の分散`roll`モデルは、共通のリセット境界を前提にします。
-有限展開のモデルでは、過去のメッセージが未読のまま、各ロールが独立に次の周回へ進めます。
-受理された有限展開について、sourceの進行と、保持した資源の操作に必要な現在の権限を合成しています。
-実Endpointとモデルの照合、Rustの所有権検査、Miri、対象を絞ったKani検査で実装との境界を検査します。
-すべてのRust実行を証明したものではありません。以下の主張は、選んだモデルの対象範囲と前提の下で適用します。
+実行中のシステムに適用するには、次の前提が必要です。
 
-実行中のシステムにこれらの結果を適用するには、次の前提が必要です。
-
-1. 各ロールが、同じglobal protocolから導出されて受理されたlocal protocolに従う。
-2. 両側がwire形式に合意し、その形式に従うコーデックを使う。
-3. トランスポートが、選んだモデルに必要な通信相手との結び付け、順序、リプレイ排除、観測可能な終了を提供する。
-4. アプリがlocal protocolの続きを進める通信を最終的に呼び出し、executorがその待機中のfutureをpollし続ける。
-   権限を持つfutureや断片は、完了するか通常のDropを行うまで到達可能な状態に保つ。
+1. 全参加者が、同じglobal protocolから導いたlocal protocolに従う。
+2. 両側がペイロード形式に合意し、その形式を実装したコーデックを使う。
+3. トランスポートが通信相手と方向を正しく結び付け、方向ごとのFIFO、重複とリプレイの排除、
+   session runの分離を守る。受理済みのメッセージは、移譲後の保持者も受信できる。
+4. 参加者が許された操作を呼び出し、Endpoint、future、並行部分の借用を、完了または通常のDropまで
+   保持する。進行に独立した断片が必要なら並行に駆動し、executorがfutureをpollし続ける。
 5. ランタイム実装が、モデルの操作と所有権の規則に従う。
 
-Futureを作ることとpollすることは別の責務です。
-独立した並行断片の両方が進行に必要なら、`endpoint.par()`で借用して並行に駆動します。
-受信をpollしていても、アプリが呼ばない独立した送信は始まりません。
-これらのアプリとexecutorの前提だけでは、特定のEndpointを所有し、呼び出せて、
-その操作が受理されることの証明にはなりません。その対応はランタイム側でも示す必要があります。
+この前提の下で、実行中で未完了のモデル上のセッションには、実行可能な通信またはlocal操作があります。
+これが**一つのセッション内のprotocol deadlock freedom**です。繰り返しの終了、任意のRust計算の進行、
+別々のセッション間の依存循環の不在までは示しません。`mem::forget`は操作もcancellationも実行しないため、
+進行を止めることがあります。
 
-権限を持つfutureや断片を`mem::forget`で手放すと、進行の前提に反します。
-Dropが呼ばれないため、自動的なキャンセル、faultの通知、権限の復活は起きません。
-相手はトランスポートが期限切れや終了を報告するまで待ち続ける場合があります。
-権限が複製されるわけではありませんが、進行は止まり得ます。
+期限と障害検知はトランスポートの責務です。I/Oエラーで所有権を復活させたり、remoteの操作を
+巻き戻したりはできません。分岐の合意には、選択する参加者もEndpointに従う必要があります。
+参加者が相手ごとに矛盾する選択を送る場合、認証だけで合意は保証できません。
 
-この前提の下では、実行中で未完了のプロトコルに、実行可能な通信遷移があります。
-これが**一つのセッション内のprotocol deadlock freedom**です。
-繰り返す通信の終了、任意のRust計算内部のデッドロックの不在、別々のセッション間の依存循環の不在までは示しません。
-
-Cancellationの結果は、定められた有限のトランスポート状態と、方向を使えなくする規則を対象にします。
-期限と障害検知はトランスポートについての前提です。
-分岐の合意には、選択するロールもエンドポイントに従うことが必要です。
-参加者が相手ごとに矛盾する選択を送る場合、認証だけで合意を保証することはできません。
-
-[Leanの証明の説明](https://github.com/hibanaworks/hibana/tree/main/proofs/lean)に、正確な主張と前提を記載しています。
-Rustの全行や、すべての`Transport`実装を検証したものではありません。
-Kaniは有界なカーネルのケースを検査します。
-Miriは実行したテストについて、借用、ポインターの由来、破棄の動作を検査します。
-Rustのテストはprojectionの拒否、操作順序、ペイロード検証、トランスポート契約を確認します。
-RustとLeanの比較は、生成したテストケースについて一致を確認します。
+[検証の説明](proofs/README.md)に、モデルと実装の対応を記載しています。
+Leanはモデルの定理を検査します。Rustとモデルの適合試験は、有界な操作順について、
+受理すべき操作と拒否すべき操作の両方を照合します。Kaniは実装の有界な性質を、Miriは
+実行したテストの借用、ポインターの由来、Dropを検査します。Rustの全行や、すべてのtransportを
+検証したものではありません。Rustのprojectionが通ることだけで、アプリの分散デッドロック自由を
+証明したことにもなりません。
 
 ## 参考文献
 
@@ -602,9 +588,9 @@ RustとLeanの比較は、生成したテストケースについて一致を確
 リポジトリのルートで次を実行します。
 
 ```sh
-cargo +1.95.0 check --no-default-features --lib -p hibana
-cargo +1.95.0 test -p hibana
-cargo +1.95.0 doc -p hibana --no-deps --no-default-features
+cargo +stable check --no-default-features --lib -p hibana
+cargo +stable test -p hibana
+cargo +stable doc -p hibana --no-deps --no-default-features
 ```
 
 [CIワークフロー](https://github.com/hibanaworks/hibana/blob/main/.github/workflows/quality-gates.yml)では、

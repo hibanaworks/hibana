@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 PROOF_DIR="${ROOT_DIR}/proofs/lean"
 CLAIMS="${PROOF_DIR}/ClaimSurface.lean"
-SNAPSHOT="${PROOF_DIR}/claim-surface.txt"
+SNAPSHOT="${PROOF_DIR}/claims/claim-surface.txt"
 
 actual="$(mktemp "${TMPDIR:-/tmp}/hibana-lean-claim-surface.XXXXXX")"
 cleanup() {
