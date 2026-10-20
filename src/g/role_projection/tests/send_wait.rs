@@ -155,7 +155,7 @@ fn an_owned_send_rejects_a_predecessor_that_needs_its_payload_view() {
             use crate::test_support::{lean_choreo::LeanChoreo, lean_descriptor::descriptor_source};
             let choreo = DbLoan::lean_source();
             let image = descriptor_source(RoleDescriptorRef::from_resident(
-                &RoleProjection::<1, DbLoan, 8>::IMAGE_REF,
+                worker_program.role_image_ref(),
             ));
             let source = std::format!(r#"import Hibana.MeasuredResourceAvailability
 open Hibana Hibana.EndpointDelegation
@@ -433,7 +433,7 @@ fn dropping_an_owned_send_cancels_the_run_before_or_during_preparation() {
                 Steps::lean_source(),
                 descriptor_source(
                     crate::global::compiled::images::RoleDescriptorRef::from_resident(
-                        &RoleProjection::<0, Steps, 8>::IMAGE_REF,
+                        owner_program.role_image_ref(),
                     ),
                 ),
                 &retirement_observations,

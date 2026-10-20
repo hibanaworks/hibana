@@ -66,11 +66,12 @@ fn actual_rolled_colors_refine_route_paths_and_elastic_owners() {
     actual_colors::<Nested>("nested", &mut source);
     actual_colors::<Branch>("branch", &mut source);
     actual_colors::<Parallel>("parallel", &mut source);
+    let branch_program = crate::runtime::program::project::<0>(&g::Program::<Branch>::new());
     writeln!(
         source,
         "def branchWordImage : RustDescriptorImage := {}\n",
         descriptor_source(RoleDescriptorRef::from_resident(
-            &RoleProjection::<0, Branch, 32>::IMAGE_REF
+            branch_program.role_image_ref()
         ))
     )
     .unwrap();

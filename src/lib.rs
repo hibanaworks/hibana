@@ -57,9 +57,9 @@
 //!
 //! The runnable examples show complete setup and participant code:
 //!
-//! - [`ping_pong`](https://github.com/hibanaworks/hibana/blob/feature/endpoint-delegation/examples/ping_pong.rs)
+//! - [`ping_pong`](https://github.com/hibanaworks/hibana/blob/v0.10.0/examples/ping_pong.rs)
 //!   sends a number and returns its successor.
-//! - [`endpoint_delegation`](https://github.com/hibanaworks/hibana/blob/feature/endpoint-delegation/examples/endpoint_delegation.rs)
+//! - [`endpoint_delegation`](https://github.com/hibanaworks/hibana/blob/v0.10.0/examples/endpoint_delegation.rs)
 //!   lends an Endpoint to another runtime, performs independent work in parallel,
 //!   and returns the Endpoint to its original holder.
 //!

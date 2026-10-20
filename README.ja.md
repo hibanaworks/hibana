@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="https://raw.githubusercontent.com/hibanaworks/hibana/v0.9.9/.github/assets/hibana-header.svg" width="600" alt="HIBANA — Choreographic Programming in Rust" />
+  <img src="https://raw.githubusercontent.com/hibanaworks/hibana/v0.10.0/.github/assets/hibana-header.svg" width="600" alt="HIBANA — Choreographic Programming in Rust" />
 
   <p>
     <a href="https://github.com/hibanaworks/hibana/actions/workflows/quality-gates.yml"><img src="https://github.com/hibanaworks/hibana/actions/workflows/quality-gates.yml/badge.svg" alt="Quality gates" /></a>
@@ -28,10 +28,10 @@ Hibanaは、通信の流れをまとめて記述するchoreographic programming�
 
 ## プロジェクトに追加する
 
-以下の例はHibana 0.10.0を使います。この版をGitから追加します。
+プロジェクトにHibanaを追加します。
 
 ```sh
-cargo add hibana --git https://github.com/hibanaworks/hibana.git --branch feature/endpoint-delegation
+cargo add hibana@0.10.0
 ```
 
 ## 小さな通信例
@@ -87,7 +87,7 @@ Hibanaは、操作を完了する前にメッセージの種類とペイロー�
 リポジトリを複製して、例を実行します。
 
 ```sh
-git clone --branch feature/endpoint-delegation https://github.com/hibanaworks/hibana.git
+git clone --branch v0.10.0 https://github.com/hibanaworks/hibana.git
 cd hibana
 cargo +stable run --locked --example ping_pong
 ```

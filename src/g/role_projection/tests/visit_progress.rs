@@ -188,21 +188,28 @@ fn a_complete_actor_visit_exposes_real_parallel_admissions_and_completion() {
                 std::eprintln!("{}: accepted={:?}", cut.name, cut.accepted);
             }
             #[cfg(not(miri))]
-            write_observations(&cuts, &wires);
+            write_observations(
+                [
+                    owner_program.role_image_ref(),
+                    worker_program.role_image_ref(),
+                    reader_program.role_image_ref(),
+                    peer_program.role_image_ref(),
+                ],
+                &cuts,
+                &wires,
+            );
             drop(db);
         });
 }
 
 /// Encode copied evidence. No Endpoint operation or authorization lives here.
 #[cfg(not(miri))]
-fn write_observations(cuts: &[Cut], wires: &[(crate::transport::FrameHeader, Vec<u8>)]) {
+fn write_observations(
+    images: [&'static RoleImageRef; 4],
+    cuts: &[Cut],
+    wires: &[(crate::transport::FrameHeader, Vec<u8>)],
+) {
     use crate::test_support::{lean_choreo::LeanChoreo, lean_descriptor::descriptor_source};
-    let images = [
-        &RoleProjection::<0, Steps, 8>::IMAGE_REF,
-        &RoleProjection::<1, Steps, 8>::IMAGE_REF,
-        &RoleProjection::<3, Steps, 8>::IMAGE_REF,
-        &RoleProjection::<4, Steps, 8>::IMAGE_REF,
-    ];
     let mut source = std::format!(
         "import Hibana.ActorVisitProgress\n\nset_option maxRecDepth 10000\n\n\
          def visitChoreo : Hibana.Choreo := {}\n\n\

@@ -77,6 +77,7 @@ fn a_queued_old_continuation_survives_a_new_body_visit() {
 /// Serialize read-only evidence; all Endpoint operations remain above.
 #[cfg(not(miri))]
 fn write_retained_admission(
+    projected: &'static RoleImageRef,
     snapshot: &crate::endpoint::proof_snapshot::ActorSnapshot,
     admitted: &[bool],
     after: &crate::endpoint::proof_snapshot::ActorSnapshot,
@@ -84,9 +85,7 @@ fn write_retained_admission(
 ) {
     use crate::test_support::{lean_choreo::LeanChoreo, lean_descriptor::descriptor_source};
     use std::string::ToString;
-    let image = descriptor_source(RoleDescriptorRef::from_resident(
-        &RoleProjection::<0, BranchSteps, 32>::IMAGE_REF,
-    ));
+    let image = descriptor_source(RoleDescriptorRef::from_resident(projected));
     let choreo = BranchSteps::lean_source();
     let state = super::commit::observation_source(snapshot);
     let after_state = super::commit::observation_source(after);
@@ -287,7 +286,13 @@ fn a_queued_old_branch_does_not_skip_the_fresh_body_receive() {
                     assert!(!after.steps[2].done);
                     #[cfg(not(miri))]
                     if expected_label == 203 {
-                        write_retained_admission(&before, &admitted, &after, &wire);
+                        write_retained_admission(
+                            a_program.role_image_ref(),
+                            &before,
+                            &admitted,
+                            &after,
+                            &wire,
+                        );
                     }
                     let branch = a.offer().await.unwrap();
                     assert_eq!(branch.label(), 208);

@@ -155,6 +155,10 @@ fn owned_commits_publish_the_shared_actor_step_and_resource_view_together() {
 
             #[cfg(not(miri))]
             write_observations(
+                [
+                    owner_program.role_image_ref(),
+                    worker_program.role_image_ref(),
+                ],
                 &[
                     CommitObservation {
                         name: "ownerLoan",
@@ -280,10 +284,12 @@ struct CommitObservation<'a> {
 }
 
 #[cfg(not(miri))]
-fn write_observations(observations: &[CommitObservation<'_>], sid: SessionId) {
+fn write_observations(
+    [owner_image, worker_image]: [&'static RoleImageRef; 2],
+    observations: &[CommitObservation<'_>],
+    sid: SessionId,
+) {
     use crate::test_support::{lean_choreo::LeanChoreo, lean_descriptor::descriptor_source};
-    let owner_image = &RoleProjection::<0, Steps, 16>::IMAGE_REF;
-    let worker_image = &RoleProjection::<1, Steps, 16>::IMAGE_REF;
     let mut source = std::format!(
         "import Hibana.PublicAdmissionCustody\n\nset_option maxRecDepth 10000\n\n\
          def actorCommitChoreo : Hibana.Choreo := {}\n\n\

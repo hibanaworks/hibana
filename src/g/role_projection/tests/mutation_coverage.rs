@@ -53,7 +53,7 @@ fn actual_reset_and_recommit_cannot_disappear_between_equal_snapshots() {
                 use crate::test_support::{lean_choreo::LeanChoreo, lean_descriptor::descriptor_source};
                 let choreo = Steps::lean_source();
                 let image = descriptor_source(RoleDescriptorRef::from_resident(
-                    &RoleProjection::<0, Steps, 8>::IMAGE_REF,
+                    owner_program.role_image_ref(),
                 ));
                 let source = std::format!(r#"import Hibana.ActorMutationCoverage
 

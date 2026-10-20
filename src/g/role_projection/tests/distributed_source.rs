@@ -79,7 +79,8 @@ pub(super) fn check_observations(operations: &[OperationObservation]) {
 /// Serialize the already completed execution. No endpoint operation reads
 /// these records, and no source identity is inferred from a frame label.
 #[cfg(not(miri))]
-pub(super) fn execution_source<Steps, const CAPACITY: usize>(
+pub(super) fn execution_source<Steps>(
+    images: [&'static super::RoleImageRef; 3],
     initial: &[ActorSnapshot; 3],
     operations: &[OperationObservation],
     paths: &[(usize, usize)],
@@ -87,7 +88,7 @@ pub(super) fn execution_source<Steps, const CAPACITY: usize>(
 where
     Steps: crate::g::ProgramShape + crate::test_support::lean_choreo::LeanChoreo,
 {
-    use super::{RoleDescriptorRef, RoleProjection};
+    use super::RoleDescriptorRef;
     use crate::test_support::lean_descriptor::descriptor_source;
     use std::{collections::BTreeMap, fmt::Write};
     let session = operations[0].frame().header.session().raw();
@@ -97,11 +98,8 @@ where
          def distributedChoreo : Choreo := {}\n\n",
         Steps::lean_source()
     );
-    for (actor, image) in [
-        (0, &RoleProjection::<0, Steps, CAPACITY>::IMAGE_REF),
-        (1, &RoleProjection::<1, Steps, CAPACITY>::IMAGE_REF),
-        (3, &RoleProjection::<3, Steps, CAPACITY>::IMAGE_REF),
-    ] {
+    for image in images {
+        let actor = image.role();
         writeln!(
             source,
             "def distributedImage{actor} : RustDescriptorImage := {}\n",
@@ -299,11 +297,13 @@ fn write_frame_words(initial: &[ActorSnapshot; 3], source: &mut std::string::Str
 
 #[cfg(not(miri))]
 pub(super) fn write_observations(
+    images: [&'static super::RoleImageRef; 3],
     initial: &[ActorSnapshot; 3],
     operations: &[OperationObservation],
     candidates: &[(ActorSnapshot, std::vec::Vec<bool>)],
 ) {
-    let mut source = execution_source::<super::mixed_send_admission::Steps, 16>(
+    let mut source = execution_source::<super::mixed_send_admission::Steps>(
+        images,
         initial,
         operations,
         &std::vec![(0, 0); operations.len()],

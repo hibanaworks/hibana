@@ -135,10 +135,10 @@ fn a_last_receipt_keeps_past_and_future_handoffs_outside_pending_parallel_work()
                 use crate::test_support::{lean_choreo::LeanChoreo, lean_descriptor::descriptor_source};
                 let choreo = Steps::lean_source();
                 let image = descriptor_source(RoleDescriptorRef::from_resident(
-                    &RoleProjection::<1, Steps, 16>::IMAGE_REF,
+                    worker_program.role_image_ref(),
                 ));
                 let owner_image = descriptor_source(RoleDescriptorRef::from_resident(
-                    &RoleProjection::<0, Steps, 16>::IMAGE_REF,
+                    owner_program.role_image_ref(),
                 ));
                 let mut source = std::format!(
                     "import Hibana.MeasuredResourceAvailability\n\nset_option maxRecDepth 10000\n\

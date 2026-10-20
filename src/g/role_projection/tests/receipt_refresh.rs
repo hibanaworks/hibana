@@ -170,6 +170,7 @@ fn a_reentered_earlier_body_refreshes_the_value_after_a_later_source_receipt() {
             assert!(observed.1[4][read]);
             #[cfg(not(miri))]
             write_observations(
+                owner_program.role_image_ref(),
                 &observed.0,
                 &observed.1,
                 &outside_wire,
@@ -181,6 +182,7 @@ fn a_reentered_earlier_body_refreshes_the_value_after_a_later_source_receipt() {
 
 #[cfg(not(miri))]
 fn write_observations(
+    image: &'static RoleImageRef,
     snapshots: &[ActorSnapshot; 7],
     admitted: &[std::vec::Vec<bool>; 5],
     outside_wire: &(crate::transport::FrameHeader, std::vec::Vec<u8>),
@@ -196,9 +198,7 @@ fn write_observations(
          def refreshImage : Hibana.RustDescriptorImage := {}\n\n",
         Steps::lean_source(),
         DbLoan::lean_source(),
-        descriptor_source(RoleDescriptorRef::from_resident(
-            &RoleProjection::<0, Steps, 16>::IMAGE_REF,
-        )),
+        descriptor_source(RoleDescriptorRef::from_resident(image,)),
     );
     for (name, snapshot) in [
         "initial",

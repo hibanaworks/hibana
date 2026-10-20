@@ -158,7 +158,7 @@ fn source_ready_rows_match_actual_admission_across_a_parallel_owned_visit() {
                 };
                 let choreo = Steps::lean_source();
                 let image = descriptor_source(RoleDescriptorRef::from_resident(
-                    &RoleProjection::<1, Steps, 8>::IMAGE_REF,
+                    worker_program.role_image_ref(),
                 ));
                 let mut source = std::format!(
                     "import Hibana.ActorCommitHistory\nimport Hibana.ResourceValueCorrespondence\nimport Hibana.SourceReadyReceipt\nimport Hibana.ActorMutationCoverage\n\nset_option maxRecDepth 10000\n\n\
@@ -537,7 +537,7 @@ theorem actualSourceReadyReturnDerivesItsReceipt :
 
 "#);
                 let owner_image = descriptor_source(RoleDescriptorRef::from_resident(
-                    &RoleProjection::<0, Steps, 8>::IMAGE_REF,
+                    owner_program.role_image_ref(),
                 ));
                 source.push_str(&std::format!(
                     "def ownerImage : Hibana.RustDescriptorImage := {owner_image}\n\n"

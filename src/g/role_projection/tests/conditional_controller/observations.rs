@@ -7,26 +7,16 @@ use crate::{
 };
 
 pub(super) fn write(
+    [remote_image, observer_image]: [&'static RoleImageRef; 2],
     outer: DecisionArm,
     remote: &[(ActorSnapshot, ActorSnapshot, ActorSnapshot)],
     local: &[(ActorSnapshot, ActorSnapshot, ActorSnapshot)],
     observer: &[(ActorSnapshot, ActorSnapshot, ActorSnapshot)],
 ) {
     let (name, outer_arm, controller, controller_image) = match outer {
-        DecisionArm::Left => (
-            "Left",
-            0,
-            remote,
-            &RoleProjection::<1, Steps, 32>::IMAGE_REF,
-        ),
-        DecisionArm::Right => (
-            "Right",
-            1,
-            local,
-            &RoleProjection::<3, Steps, 32>::IMAGE_REF,
-        ),
+        DecisionArm::Left => ("Left", 0, remote, remote_image),
+        DecisionArm::Right => ("Right", 1, local, observer_image),
     };
-    let observer_image = &RoleProjection::<3, Steps, 32>::IMAGE_REF;
     assert_eq!(controller.len(), 5);
     assert_eq!(observer.len(), 5);
     let mut source = std::format!(

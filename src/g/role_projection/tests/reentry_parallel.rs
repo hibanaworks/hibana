@@ -129,8 +129,8 @@ fn parallel_loan_reentry_preserves_the_other_body_and_completed_tail() {
                 .expect("AUTH loan source lane");
             assert_ne!(auth_lane, wire.0.lane());
             for ((before, after), image) in observations.iter().zip([
-                &RoleProjection::<0, Steps, 32>::IMAGE_REF,
-                &RoleProjection::<1, Steps, 32>::IMAGE_REF,
+                owner_program.role_image_ref(),
+                worker_program.role_image_ref(),
             ]) {
                 assert!(before.steps.iter().all(|step| step.done));
                 let event = before
@@ -161,7 +161,15 @@ fn parallel_loan_reentry_preserves_the_other_body_and_completed_tail() {
                     == (!(first..stop).contains(&index) || index == event)));
             }
             #[cfg(not(miri))]
-            write_observations(&observations, &[first_wire, wire], &initial);
+            write_observations(
+                [
+                    owner_program.role_image_ref(),
+                    worker_program.role_image_ref(),
+                ],
+                &observations,
+                &[first_wire, wire],
+                &initial,
+            );
             #[cfg(miri)]
             assert_eq!(wire.1[0], 10);
         });
@@ -169,16 +177,13 @@ fn parallel_loan_reentry_preserves_the_other_body_and_completed_tail() {
 
 #[cfg(not(miri))]
 fn write_observations(
+    images: [&'static RoleImageRef; 2],
     observations: &[(ActorSnapshot, ActorSnapshot)],
     wires: &[(crate::transport::FrameHeader, std::vec::Vec<u8>); 2],
     initial: &ActorSnapshot,
 ) {
     use crate::test_support::{lean_choreo::LeanChoreo, lean_descriptor::descriptor_source};
     let wire = &wires[1];
-    let images = [
-        &RoleProjection::<0, Steps, 32>::IMAGE_REF,
-        &RoleProjection::<1, Steps, 32>::IMAGE_REF,
-    ];
     let mut source = std::format!(
         "import Hibana.ActorMeasuredExecution\nimport Hibana.SendAdmission\n\nset_option maxRecDepth 10000\n\n\
          def parallelReentryChoreo : Hibana.Choreo := {}\n\n",

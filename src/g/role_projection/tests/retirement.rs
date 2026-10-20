@@ -100,7 +100,7 @@ fn a_completed_view_retires_without_cancelling_independent_work() {
                 Steps::lean_source(),
                 descriptor_source(
                     crate::global::compiled::images::RoleDescriptorRef::from_resident(
-                        &RoleProjection::<1, Steps, 8>::IMAGE_REF,
+                        worker_program.role_image_ref(),
                     ),
                 ),
                 &[RetirementSample {

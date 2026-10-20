@@ -163,7 +163,7 @@ fn a_local_branch_waits_for_another_view_to_receive_its_entry_resource() {
                      def localReturnChoreo : Hibana.Choreo := {}\n\n\
                      def localReturnImage : Hibana.RustDescriptorImage := {}\n\n",
                     Steps::lean_source(),
-                    descriptor_source(RoleDescriptorRef::from_resident(&RoleProjection::<0, Steps, ROWS>::IMAGE_REF)),
+                    descriptor_source(RoleDescriptorRef::from_resident(owner_program.role_image_ref())),
                 );
                 for (name, snapshot) in [
                     ("localBeforeWait", &before_wait),

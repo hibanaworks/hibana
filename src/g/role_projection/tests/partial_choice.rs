@@ -175,11 +175,11 @@ fn a_service_uses_the_delegated_peer_without_knowing_its_physical_holder() {
             Steps::lean_source(),
         );
         for (actor, image) in [
-            (0, &RoleProjection::<0, Steps, 32>::IMAGE_REF),
-            (1, &RoleProjection::<1, Steps, 32>::IMAGE_REF),
-            (2, &RoleProjection::<2, Steps, 32>::IMAGE_REF),
-            (3, &RoleProjection::<3, Steps, 32>::IMAGE_REF),
-            (4, &RoleProjection::<4, Steps, 32>::IMAGE_REF),
+            (0, owner_program.role_image_ref()),
+            (1, first_program.role_image_ref()),
+            (2, second_program.role_image_ref()),
+            (3, third_program.role_image_ref()),
+            (4, service_program.role_image_ref()),
         ] {
             writeln!(
                 text,

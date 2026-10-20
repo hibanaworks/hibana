@@ -167,7 +167,14 @@ fn every_send_error_preserves_an_accepted_loan_and_the_remote_holder() {
         ));
     }
     #[cfg(not(miri))]
-    observations::write("Send", &samples);
+    observations::write(
+        [
+            owner_program.role_image_ref(),
+            worker_program.role_image_ref(),
+        ],
+        "Send",
+        &samples,
+    );
     #[cfg(miri)]
     let _ = samples;
 }
@@ -274,7 +281,14 @@ fn every_receive_error_keeps_the_frame_queued_without_issuing_its_resource() {
         ));
     }
     #[cfg(not(miri))]
-    observations::write("Receive", &samples);
+    observations::write(
+        [
+            owner_program.role_image_ref(),
+            worker_program.role_image_ref(),
+        ],
+        "Receive",
+        &samples,
+    );
     #[cfg(miri)]
     let _ = samples;
 }

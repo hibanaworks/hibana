@@ -4,7 +4,11 @@ use crate::test_support::{lean_choreo::LeanChoreo, lean_descriptor::descriptor_s
 use core::{fmt::Write, task::Poll};
 use std::format;
 
-pub(super) fn write(direction: &str, samples: &[Sample]) {
+pub(super) fn write(
+    [owner_image, worker_image]: [&'static RoleImageRef; 2],
+    direction: &str,
+    samples: &[Sample],
+) {
     let mut source = format!(
         "import Hibana.SourceOccurrenceTrace\n\nopen Hibana Hibana.EndpointDelegation Hibana.OwnedCallHistory\n\n\
          def faultChoreo : Choreo := {}\n\
@@ -12,12 +16,8 @@ pub(super) fn write(direction: &str, samples: &[Sample]) {
          def workerImage : RustDescriptorImage := {}\n\
          def faultImages (actor : Nat) : RustDescriptorImage := if actor = 1 then workerImage else ownerImage\n\n",
         Steps::lean_source(),
-        descriptor_source(RoleDescriptorRef::from_resident(
-            &RoleProjection::<0, Steps, 8>::IMAGE_REF
-        )),
-        descriptor_source(RoleDescriptorRef::from_resident(
-            &RoleProjection::<1, Steps, 8>::IMAGE_REF
-        )),
+        descriptor_source(RoleDescriptorRef::from_resident(owner_image)),
+        descriptor_source(RoleDescriptorRef::from_resident(worker_image)),
     );
     for (index, sample) in samples.iter().enumerate() {
         writeln!(source, "namespace Case{index}\n").unwrap();

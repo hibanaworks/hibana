@@ -284,8 +284,24 @@ fn changing_rolled_loans_teach_only_the_received_occurrences_choices() {
             }
             #[cfg(not(miri))]
             {
-                write_observations(&sends, &receipts, (&_notice_before, &_notice_after));
-                write_distributed(&initial, &operations);
+                write_observations(
+                    [
+                        owner_program.role_image_ref(),
+                        worker_program.role_image_ref(),
+                    ],
+                    &sends,
+                    &receipts,
+                    (&_notice_before, &_notice_after),
+                );
+                write_distributed(
+                    [
+                        owner_program.role_image_ref(),
+                        worker_program.role_image_ref(),
+                        service_program.role_image_ref(),
+                    ],
+                    &initial,
+                    &operations,
+                );
             }
         });
 }
@@ -294,7 +310,11 @@ fn changing_rolled_loans_teach_only_the_received_occurrences_choices() {
 /// Role 1 deliberately chooses the opposite unentered sibling from role 0.
 /// This runs only after execution and cannot decide a route or an operation.
 #[cfg(not(miri))]
-fn write_distributed(initial: &[ActorSnapshot; 3], operations: &[OperationObservation]) {
+fn write_distributed(
+    images: [&'static RoleImageRef; 3],
+    initial: &[ActorSnapshot; 3],
+    operations: &[OperationObservation],
+) {
     let path = |snapshot: &ActorSnapshot| {
         let selected = snapshot
             .choices
@@ -308,7 +328,7 @@ fn write_distributed(initial: &[ActorSnapshot; 3], operations: &[OperationObserv
         .map(|operation| (path(&operation.before), path(&operation.after)))
         .collect::<std::vec::Vec<_>>();
     let mut source =
-        super::distributed_source::execution_source::<Steps, 32>(initial, operations, &paths);
+        super::distributed_source::execution_source::<Steps>(images, initial, operations, &paths);
     source.insert_str(0, "import Hibana.DistributedChoiceHistory\n");
     source.push_str(r#"
 theorem distributedCurrentChoice2HasItsActualGlobalOrigin :
@@ -399,6 +419,7 @@ theorem distributedCurrentChoiceComesFromItsActualAcceptedFrame :
 
 #[cfg(not(miri))]
 fn write_observations(
+    [owner_image, worker_image]: [&'static RoleImageRef; 2],
     sends: &[(ActorSnapshot, Wire)],
     receipts: &[(ActorSnapshot, ActorSnapshot, ActorSnapshot, Wire)],
     notice: (&ActorSnapshot, &ActorSnapshot),
@@ -410,14 +431,8 @@ fn write_observations(
         Steps::lean_source(),
     );
     for (name, image) in [
-        (
-            "occurrenceOwnerImage",
-            &RoleProjection::<0, Steps, 32>::IMAGE_REF,
-        ),
-        (
-            "occurrenceWorkerImage",
-            &RoleProjection::<1, Steps, 32>::IMAGE_REF,
-        ),
+        ("occurrenceOwnerImage", owner_image),
+        ("occurrenceWorkerImage", worker_image),
     ] {
         source.push_str(&std::format!(
             "def {name} : Hibana.RustDescriptorImage := {}\n\n",

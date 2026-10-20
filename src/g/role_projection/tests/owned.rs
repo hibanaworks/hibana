@@ -283,12 +283,12 @@ fn dropping_a_completed_owned_send_does_not_retire_the_returned_resource_view() 
                 [
                     descriptor_source(
                         crate::global::compiled::images::RoleDescriptorRef::from_resident(
-                            &RoleProjection::<0, Steps, 16>::IMAGE_REF,
+                            owner_program.role_image_ref(),
                         ),
                     ),
                     descriptor_source(
                         crate::global::compiled::images::RoleDescriptorRef::from_resident(
-                            &RoleProjection::<1, Steps, 16>::IMAGE_REF,
+                            worker_program.role_image_ref(),
                         ),
                     ),
                 ],
@@ -771,7 +771,7 @@ fn two_received_resources_select_parallel_routes_without_serializing_their_views
     let worker_program = crate::runtime::program::project::<1>(&g::Program::<Steps>::new());
     let db_service_program = crate::runtime::program::project::<3>(&g::Program::<Steps>::new());
     let auth_service_program = crate::runtime::program::project::<4>(&g::Program::<Steps>::new());
-    let image = &RoleProjection::<1, Steps, 64>::IMAGE_REF;
+    let image = worker_program.role_image_ref();
     assert_ne!(
         image.program().event_atom_at(2).lane,
         image.program().event_atom_at(6).lane

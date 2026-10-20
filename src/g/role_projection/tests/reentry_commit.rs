@@ -6,12 +6,10 @@ use crate::{
 };
 use std::{format, fs};
 
-pub(super) fn write_observations(observations: &[(u8, ActorSnapshot, ActorSnapshot)]) {
-    let images = [
-        &RoleProjection::<0, reentry_choice::Steps, 32>::IMAGE_REF,
-        &RoleProjection::<1, reentry_choice::Steps, 32>::IMAGE_REF,
-        &RoleProjection::<3, reentry_choice::Steps, 32>::IMAGE_REF,
-    ];
+pub(super) fn write_observations(
+    images: [&'static RoleImageRef; 3],
+    observations: &[(u8, ActorSnapshot, ActorSnapshot)],
+) {
     let mut source = format!(
         "import Hibana.ActorReentryCommit\n\nset_option maxRecDepth 10000\n\n\
          def reentryCommitChoreo : Hibana.Choreo := {}\n\n",

@@ -179,6 +179,9 @@ fn an_enclosing_choice_survives_two_delegated_roll_visits() {
                 assert!(before.choices.iter().any(|(_, arm)| arm.is_some()));
             }
             #[cfg(not(miri))]
-            super::reentry_commit::write_observations(&observations);
+            super::reentry_commit::write_observations(
+                [owner_program.role_image_ref(), worker_program.role_image_ref(), service_program.role_image_ref()],
+                &observations,
+            );
         });
 }

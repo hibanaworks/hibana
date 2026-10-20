@@ -264,7 +264,7 @@ fn a_pending_owned_send_keeps_its_payload_unavailable_for_resource_dependent_ree
                      theorem pendingBorrowOwnSendCanFinish :\n  \
                      Hibana.observedRollEntryBorrowMatches pendingBorrowBefore pendingBorrowImage {tick_scope} {loan} 11 = true := by decide\n\n",
                     Global::lean_source(),
-                    descriptor_source(RoleDescriptorRef::from_resident(&RoleProjection::<0, Global, 16>::IMAGE_REF)),
+                    descriptor_source(RoleDescriptorRef::from_resident(owner_program.role_image_ref())),
                     super::commit::observation_source(&pending_snapshot),
                 );
                 for (visit, (before, after)) in independent_observations.iter().enumerate() {

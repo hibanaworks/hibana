@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="https://raw.githubusercontent.com/hibanaworks/hibana/v0.9.9/.github/assets/hibana-header.svg" width="600" alt="HIBANA — Choreographic Programming in Rust" />
+  <img src="https://raw.githubusercontent.com/hibanaworks/hibana/v0.10.0/.github/assets/hibana-header.svg" width="600" alt="HIBANA — Choreographic Programming in Rust" />
 
   <p>
     <a href="https://github.com/hibanaworks/hibana/actions/workflows/quality-gates.yml"><img src="https://github.com/hibanaworks/hibana/actions/workflows/quality-gates.yml/badge.svg" alt="Quality gates" /></a>
@@ -30,10 +30,10 @@ connection and for application messages sent over QUIC.
 
 ## Add to your project
 
-The examples below use Hibana 0.10.0. Install this revision from Git:
+Add Hibana to your project:
 
 ```sh
-cargo add hibana --git https://github.com/hibanaworks/hibana.git --branch feature/endpoint-delegation
+cargo add hibana@0.10.0
 ```
 
 ## A small exchange
@@ -90,7 +90,7 @@ also checks the message kind and payload format before completing an operation.
 Clone the repository and run the example:
 
 ```sh
-git clone --branch feature/endpoint-delegation https://github.com/hibanaworks/hibana.git
+git clone --branch v0.10.0 https://github.com/hibanaworks/hibana.git
 cd hibana
 cargo +stable run --locked --example ping_pong
 ```

@@ -224,7 +224,8 @@ fn a_logical_wire_word_keeps_its_order_when_the_sender_changes_holder() {
             #[cfg(not(miri))]
             {
                 use std::fmt::Write;
-                let mut source = super::distributed_source::execution_source::<Steps, 16>(
+                let mut source = super::distributed_source::execution_source::<Steps>(
+                    [owner_program.role_image_ref(), worker_program.role_image_ref(), service_program.role_image_ref()],
                     &initial,
                     &operations,
                     &std::vec![(0, 0); operations.len()],

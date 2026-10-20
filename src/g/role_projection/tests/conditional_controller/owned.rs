@@ -228,6 +228,7 @@ fn a_conditional_controller_does_not_take_authority_from_its_co_resident_observe
         }
         #[cfg(not(miri))]
         observations::write(
+            [a_program.role_image_ref(), service_program.role_image_ref()],
             outer,
             &a_observations,
             &controller_observations,

@@ -212,18 +212,35 @@ fn ordinary_and_owned_acceptances_keep_the_same_fifo_through_reentry() {
             }
             #[cfg(not(miri))]
             {
-                write_observations(&sends, &receipts);
+                write_observations(
+                    [
+                        owner_program.role_image_ref(),
+                        worker_program.role_image_ref(),
+                    ],
+                    &sends,
+                    &receipts,
+                );
                 let candidates = sends
                     .iter()
                     .map(|(before, _, admitted)| (before.clone(), admitted.clone()))
                     .collect::<std::vec::Vec<_>>();
-                super::distributed_source::write_observations(&initial, &operations, &candidates);
+                super::distributed_source::write_observations(
+                    [
+                        owner_program.role_image_ref(),
+                        worker_program.role_image_ref(),
+                        service_program.role_image_ref(),
+                    ],
+                    &initial,
+                    &operations,
+                    &candidates,
+                );
             }
         });
 }
 
 #[cfg(not(miri))]
 fn write_observations(
+    [owner_image, worker_image]: [&'static RoleImageRef; 2],
     sends: &[(ActorSnapshot, Wire, std::vec::Vec<bool>)],
     receipts: &[(ActorSnapshot, ActorSnapshot)],
 ) {
@@ -234,14 +251,8 @@ fn write_observations(
         Steps::lean_source(),
     );
     for (name, image) in [
-        (
-            "mixedOwnerImage",
-            &RoleProjection::<0, Steps, 16>::IMAGE_REF,
-        ),
-        (
-            "mixedWorkerImage",
-            &RoleProjection::<1, Steps, 16>::IMAGE_REF,
-        ),
+        ("mixedOwnerImage", owner_image),
+        ("mixedWorkerImage", worker_image),
     ] {
         source.push_str(&std::format!(
             "def {name} : Hibana.RustDescriptorImage := {}\n\n",

@@ -165,6 +165,10 @@ fn an_accepted_loan_drains_before_eof_and_its_returned_value_remains_usable() {
             assert_eq!(unsafe { owner_tag.snapshot::<TestTransport>() }.fault, None);
             #[cfg(not(miri))]
             write_observations(
+                [
+                    owner_program.role_image_ref(),
+                    worker_program.role_image_ref(),
+                ],
                 sid,
                 &[
                     ("ownerBefore", &owner_before),
@@ -201,6 +205,7 @@ fn an_accepted_loan_drains_before_eof_and_its_returned_value_remains_usable() {
 
 #[cfg(not(miri))]
 fn write_observations(
+    [owner_image, worker_image]: [&'static RoleImageRef; 2],
     sid: SessionId,
     snapshots: &[(&str, &crate::endpoint::proof_snapshot::ActorSnapshot)],
     loan: &(crate::transport::FrameHeader, std::vec::Vec<u8>),
@@ -217,12 +222,8 @@ fn write_observations(
          def ownerImage : Hibana.RustDescriptorImage := {}\n\n\
          def workerImage : Hibana.RustDescriptorImage := {}\n\n",
         Steps::lean_source(),
-        descriptor_source(RoleDescriptorRef::from_resident(
-            &RoleProjection::<0, Steps, 8>::IMAGE_REF
-        )),
-        descriptor_source(RoleDescriptorRef::from_resident(
-            &RoleProjection::<1, Steps, 8>::IMAGE_REF
-        )),
+        descriptor_source(RoleDescriptorRef::from_resident(owner_image)),
+        descriptor_source(RoleDescriptorRef::from_resident(worker_image)),
     );
     for (name, snapshot) in snapshots {
         source.push_str(&std::format!(
