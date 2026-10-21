@@ -97,3 +97,6 @@ path = "check_lean_proof_guard.rs"
 [[bin]]
 name = "test-result"
 path = "test_result.rs"
+
+[lints.rust]
+long_running_const_eval = "forbid"

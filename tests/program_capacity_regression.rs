@@ -1,5 +1,5 @@
 // Sequential choices retain every projected message within const-eval limits.
-#![deny(long_running_const_eval)]
+#![forbid(long_running_const_eval)]
 
 use hibana::g::{self, Msg};
 use hibana::runtime::program::{RoleProgram, project};

@@ -13,3 +13,6 @@ hibana = { path = "../../.." }
 [lints.clippy]
 all = "deny"
 pedantic = "deny"
+
+[lints.rust]
+long_running_const_eval = "forbid"

@@ -14,4 +14,5 @@ name = "hibana_pico_projection_example"
 hibana = { path = "../..", default-features = false }
 
 [lints.rust]
+long_running_const_eval = "forbid"
 warnings = "deny"
