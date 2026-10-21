@@ -59,6 +59,27 @@ theorem admission_equivalent (done live : Nat → Prop) (start finish : Nat) :
   · intro pending i low high incomplete
     exact pending i ⟨low, high, incomplete⟩
 
+-- A completed scope must have a participant. Searching only unfinished events
+-- for blockers preserves that requirement for arbitrary selected local domains.
+theorem scope_completion_equivalent (done live : Nat → Bool) (start finish : Nat) :
+    ((∃ i, start ≤ i ∧ i < finish ∧ live i = true) ∧
+      (∀ i, start ≤ i → i < finish → live i = true → done i = true)) ↔
+    ((¬ ∃ i, start ≤ i ∧ i < finish ∧ done i = false ∧ live i = true) ∧
+      (∃ i, start ≤ i ∧ i < finish ∧ live i = true)) := by
+  constructor
+  · rintro ⟨present, complete⟩
+    refine ⟨?_, present⟩
+    rintro ⟨i, low, high, unfinished, participates⟩
+    have finished := complete i low high participates
+    rw [finished] at unfinished
+    contradiction
+  · rintro ⟨unblocked, present⟩
+    refine ⟨present, ?_⟩
+    intro i low high participates
+    cases finished : done i
+    · exact False.elim (unblocked ⟨i, low, high, finished, participates⟩)
+    · rfl
+
 -- Compact event indices, word advances and yielded steps stay within 32-bit
 -- usize; the implementation introduces neither storage nor mutation authority.
 theorem compact_word_arithmetic (length word : Nat)
@@ -72,6 +93,7 @@ theorem compact_word_arithmetic (length word : Nat)
 #print axioms word_in_backing
 #print axioms yielded_step_in_range
 #print axioms admission_equivalent
+#print axioms scope_completion_equivalent
 #print axioms compact_word_arithmetic
 
 end Hibana.PendingEvents

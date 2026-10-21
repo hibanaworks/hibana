@@ -12,7 +12,7 @@ mod receive_candidates;
 #[path = "tests/send_candidates.rs"]
 mod send_candidates;
 
-fn with_rows(rows: &'static RoleImageRef, test: impl FnOnce(&mut EventCursor)) {
+pub(super) fn with_rows(rows: &'static RoleImageRef, test: impl FnOnce(&mut EventCursor)) {
     let descriptor = RoleDescriptorRef::from_resident(rows);
     let mut state = MaybeUninit::<EventCursorState>::uninit();
     let mut cursor = MaybeUninit::<EventCursor>::uninit();

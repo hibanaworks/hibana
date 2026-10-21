@@ -21,6 +21,19 @@
        (bvule low bit) (bvult bit high)))))
 (check-sat)
 (pop)
+(declare-const live (_ BitVec 32))
+(define-fun members () (_ BitVec 32) (bvand live mask))
+(push)
+(assert (bvule low #x00000020))
+(assert (bvule high #x00000020))
+; Arbitrary selected local events, including an absent/empty scope.
+(check-sat)
+; All selected events are done iff no selected pending event remains.
+; Both formulations require a nonempty selected local domain.
+(assert (not (= (and (not (= members #x00000000)) (= (bvand members done) members))
+  (and (= (bvand pending live) #x00000000) (not (= members #x00000000))))))
+(check-sat)
+(pop)
 (declare-const value (_ BitVec 32))
 (push)
 (assert (bvult bit #x00000020))

@@ -4,6 +4,9 @@ mod completion;
 mod nesting;
 mod reentry;
 
+#[cfg(all(test, hibana_repo_tests))]
+mod tests;
+
 impl EventCursor {
     #[inline(always)]
     fn same_scope(left: ScopeId, right: ScopeId) -> bool {
@@ -84,30 +87,26 @@ impl EventCursor {
         row: crate::global::event_program::LocalEventRowSet,
         selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
     ) -> bool {
-        let mut found = false;
-        let mut idx = row.start();
-        while idx < row.end() {
-            if let Some(lane) = self.event_lane_at(idx) {
-                let conflict = self.machine().event_conflict_for_index(idx);
-                if self.event_actor_is_local(idx, selected_arm_for_scope) == Some(false)
-                    || !self.event_conflict_row_allows(
-                        conflict,
-                        ScopeId::none(),
-                        None,
-                        selected_arm_for_scope,
-                    )
-                {
-                    idx += 1;
-                    continue;
-                }
-                found = true;
-                if !self.node_event_done_for_lane(idx, lane) {
-                    return false;
-                }
-            }
-            idx += 1;
+        let mut participates = |idx| {
+            self.event_lane_at(idx).is_some()
+                && self.event_actor_is_local(idx, &mut *selected_arm_for_scope) != Some(false)
+                && self.event_conflict_row_allows(
+                    self.machine().event_conflict_for_index(idx),
+                    ScopeId::none(),
+                    None,
+                    &mut *selected_arm_for_scope,
+                )
+        };
+        // Completion is the existing bitmap's authority. Only its clear bits
+        // can block this scope; do not decode its completed prefix repeatedly.
+        if self
+            .pending_event_steps(row.start()..row.end())
+            .any(&mut participates)
+        {
+            return false;
         }
-        found
+        // A scope with no participating event is absent, rather than complete.
+        (row.start()..row.end()).any(participates)
     }
 
     #[inline(never)]

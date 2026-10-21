@@ -9,5 +9,5 @@ lean proofs/checks/runtime/pending-events/Scan.lean 2>&1 | tee "$scan_evidence/l
 # Check the produced proof boundary, rather than linting source spellings/paths.
 bash .github/scripts/lib/supplemental_proofs_tool.sh lean-clean "$scan_evidence/lean.log"
 z3 proofs/checks/runtime/pending-events/Scan.smt2 | tee "$scan_evidence/z3.log"
-bash .github/scripts/lib/supplemental_proofs_tool.sh smt-sequence "$scan_evidence/z3.log" sat unsat sat unsat unsat unsat
-printf 'Pending-event scan: Lean 7 theorems; Z3 4 UNSAT obligations, 2 SAT premises. Evidence: %s\n' "$scan_evidence"
+bash .github/scripts/lib/supplemental_proofs_tool.sh smt-sequence "$scan_evidence/z3.log" sat unsat sat unsat sat unsat unsat unsat
+printf 'Pending-event scan: Lean 8 theorems; Z3 5 UNSAT obligations, 3 SAT premises. Evidence: %s\n' "$scan_evidence"
