@@ -406,3 +406,56 @@ fn resolved_parents_can_commit_message_selected_children() {
             }
         });
 }
+
+#[test]
+fn an_inner_roll_retains_its_enclosing_choice_until_the_outer_reentry() {
+    tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap()
+        .block_on(async {
+            use core::cell::Cell;
+            type Again = Msg<221, ()>;
+            type Other = Msg<222, ()>;
+            let global = g::route(g::send::<0, 1, Again>().roll(), g::send::<0, 1, Other>())
+                .resolve::<319>()
+                .roll();
+            let p0 = project::<0>(&global);
+            let p1 = project::<1>(&global);
+            let calls = Cell::new(0);
+            let network = TestTransport::new();
+            let mut slab = [0; 32 * 1024];
+            let mut storage = SessionKitStorage::uninit();
+            let rv = storage
+                .init()
+                .rendezvous(&mut slab, network.clone())
+                .unwrap();
+            rv.set_resolver(
+                &p0,
+                ResolverRef::<319>::decision_state(&calls, |calls| {
+                    let count = calls.get();
+                    calls.set(count + 1);
+                    Ok(if count == 0 {
+                        DecisionArm::Left
+                    } else {
+                        DecisionArm::Right
+                    })
+                }),
+            )
+            .unwrap();
+            let sid = SessionId::new(9280);
+            let mut sender = rv.enter(sid, &p0).unwrap();
+            let mut receiver = rv.enter(sid, &p1).unwrap();
+            sender.send::<Again>(&()).await.unwrap();
+            receiver.recv::<Again>().await.unwrap();
+            sender
+                .send::<Again>(&())
+                .await
+                .expect("the inner visit retains the outer decision");
+            receiver.recv::<Again>().await.unwrap();
+            assert_eq!(calls.get(), 1);
+            sender.send::<Other>(&()).await.unwrap();
+            receiver.recv::<Other>().await.unwrap();
+            assert_eq!(calls.get(), 2);
+            assert!(network.queue_is_empty());
+        });
+}

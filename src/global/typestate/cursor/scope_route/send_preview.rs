@@ -267,6 +267,24 @@ impl EventCursor {
             at_arm_entry || at_decision || self.route_scope_has_dynamic_resolver(scope_id);
         if at_decision
             && self.route_scope_reentry(scope_id)
+            && let Some(arm) = (ctx.committed_arm_for_scope)(scope_id)
+            && let Some(lane) = self.send_preview_lane_at(*idx)
+            && self.node_event_done_for_lane(*idx, lane)
+            && let Some(body) =
+                self.complete_roll_body_scope_for_index(*idx, ctx.committed_arm_for_scope)
+            && !self.route_scope_contained_in_roll_scope(scope_id, body)
+        {
+            // Entering a child visit retains the enclosing choice. The outer
+            // resolver runs only when the candidate enters its own roll again.
+            *ctx.preview_route_arm = Some(SendPreviewRouteArm {
+                lane,
+                scope: scope_id,
+                arm,
+            });
+            return Ok(());
+        }
+        if at_decision
+            && self.route_scope_reentry(scope_id)
             && !self.route_scope_has_dynamic_resolver(scope_id)
             && let Some((arm, entry_idx)) = self
                 .intrinsic_send_preview_controller_arm_entry_for_contract(

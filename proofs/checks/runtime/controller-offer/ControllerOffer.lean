@@ -278,6 +278,42 @@ theorem checking_only_the_canonical_entry_can_accept_the_wrong_arm :
     permitsSendPath [(some false, true), (none, false)] = false := by
   decide
 
+def choiceSites : Tree → List Nat
+  | .leaf _ => []
+  | .route site left right => site :: (choiceSites left ++ choiceSites right)
+
+-- The reset subtree determines which choices can be made again. Completion
+-- of an ancestor alone does not erase a choice outside that subtree.
+def resumeWithin (body : Tree) (retained fresh : Nat → Option Bool) (site : Nat) : Option Bool :=
+  if site ∈ choiceSites body then fresh site else retained site
+
+theorem entering_a_child_preserves_choices_outside_its_body
+    (body : Tree) (retained fresh : Nat → Option Bool) (site : Nat)
+    (outside : site ∉ choiceSites body) :
+    resumeWithin body retained fresh site = retained site := by
+  simp [resumeWithin, outside]
+
+theorem every_selected_unreset_ancestor_keeps_its_decision
+    (body tree : Tree) (retained fresh : Nat → Option Bool)
+    (label : Nat) (path : List (Nat × Bool))
+    (selected : select (resumeWithin body retained fresh) tree = some (label, path))
+    (site : Nat) (arm : Bool) (member : (site, arm) ∈ path)
+    (outside : site ∉ choiceSites body) : retained site = some arm := by
+  have decision := every_selected_ancestor_has_its_own_decision
+    (resumeWithin body retained fresh) tree label path selected site arm member
+  simpa [resumeWithin, outside] using decision
+
+theorem refreshing_a_completed_parent_can_reject_a_valid_child_visit :
+    select (resumeWithin (.leaf 221) (fun _ => some false) (fun _ => some true))
+      (.route 319 (.leaf 221) (.leaf 222)) = some (221, [(319, false)]) ∧
+    select (fun _ => some true) (.route 319 (.leaf 221) (.leaf 222)) =
+      some (222, [(319, true)]) := by
+  decide
+
+#print axioms entering_a_child_preserves_choices_outside_its_body
+#print axioms every_selected_unreset_ancestor_keeps_its_decision
+#print axioms refreshing_a_completed_parent_can_reject_a_valid_child_visit
+
 #print axioms every_admitted_send_checks_its_resolved_ancestors
 #print axioms an_intrinsic_child_preserves_its_parents_send_admission
 #print axioms an_intrinsic_child_has_no_resolver_audit
