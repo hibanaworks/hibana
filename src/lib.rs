@@ -11,11 +11,12 @@
 
 //! Choreographic programming in Rust.
 //!
-//! Describe communication once as a global protocol. Hibana uses multiparty
-//! session type (MPST) projection to compile local protocol data. You write each
-//! participant's Rust function, including its sends and receives. Hibana checks
-//! those operations against the local protocol at runtime. Drive the operations
-//! with an executor. Participants can run in one program or on separate machines.
+//! You write a global protocol and each participant's Rust code. Hibana projects
+//! the protocol and checks each send and receive at runtime.
+//!
+//! Projection derives local protocols using multiparty session types (MPST).
+//! Drive the participant functions' asynchronous operations with an executor.
+//! Participants can run in one program or on separate machines.
 //!
 //! The core is `no_std`, has no normal dependencies and allocates no heap memory.
 //! Runtime storage and transport buffers are supplied by your program.

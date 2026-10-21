@@ -11,15 +11,13 @@
 
 # Hibana — Choreographic Programming in Rust
 
+You write a global protocol and each participant's Rust code. Hibana projects
+the protocol and checks each send and receive at runtime.
+
 [日本語](README.ja.md)
 
-Hibana is a Rust library for describing and checking multiparty communication.
-You describe who sends what to whom, and in what order, in a shared protocol.
+The global protocol describes who sends what to whom, and in what order.
 Participants can be tasks in one program or programs on different machines.
-
-Hibana uses multiparty session type (MPST) projection to derive each
-participant's local protocol. You write the participant functions in Rust.
-Hibana checks their sends and receives against that protocol at runtime.
 
 The core uses `no_std`, requires no heap allocator, and runs on stable Rust 1.95
 or newer. The runtime uses memory supplied by your program.
@@ -197,10 +195,12 @@ among all participants. A **role** is a participant's logical identity in that
 protocol. In Hibana, a participant can hold several roles through their endpoints.
 **Endpoint projection** derives a **local protocol** for each role.
 
-In [choreographic programming](https://arxiv.org/abs/2102.10698), projection
-generates participant programs from a choreography. Hibana projects the
-communication protocol into data. You write the participant functions and
-their computations, and the runtime checks their communication.
+Many choreographic programming languages derive each participant's implementation
+from the choreography, as in
+[Carbone and Montesi (POPL 2013)](https://doi.org/10.1145/2429069.2429101).
+Montesi's [Endpoint Projection chapter](https://www.cambridge.org/core/books/introduction-to-choreographies/endpoint-projection/15B92B24200EC1EFC1B70DFFDDFF9546)
+describes this compilation. Hibana uses MPST-based projection to derive each
+role's local protocol and checks handwritten participant code against it at runtime.
 
 For the exchange above, projection gives:
 

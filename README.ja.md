@@ -11,14 +11,13 @@
 
 # Hibana — Choreographic Programming in Rust
 
+グローバルプロトコルと各参加者のRustコードを書きます。
+Hibanaはプロトコルを投影し、各送受信を実行時に検査します。
+
 [English](README.md)
 
-Hibanaは、複数の参加者の通信を記述し、検査するRustライブラリです。
-誰が、誰に、何を、どの順序で送るかを、参加者共通のプロトコルとして書きます。
+グローバルプロトコルは、誰が、誰に、何を、どの順序で送るかを表します。
 参加者は同じプログラム内のタスクでも、別のマシンで動くプログラムでも構いません。
-
-Hibanaはmultiparty session types（MPST）の投影を使い、共通のプロトコルから各参加者の通信手順を導出します。
-参加者の関数は自分でRustコードとして書きます。Hibanaは実行時に、その送受信が手順に従っているかを検査します。
 
 コアは`no_std`で、ヒープアロケータを必要としません。stable Rust 1.95以降で動作します。
 ランタイムが使うメモリは、プログラム側から渡します。
@@ -186,9 +185,10 @@ Multiparty session types（MPST）では、**global protocol**が全参加者の
 Hibanaでは、一つのプログラムやtaskが複数roleのEndpointを保持できます。
 **endpoint projection**は、global protocolから各ロールの**local protocol**を導出します。
 
-[Choreographic programming](https://arxiv.org/abs/2102.10698)では、choreographyから
-参加者のプログラムを生成します。Hibanaが投影で生成するのは通信手順のデータです。
-参加者の関数とその中の計算は自分で書き、通信はランタイムが検査します。
+Choreographic programmingの言語には、choreographyから各参加者の実装を導出するものが多くあります。
+[CarboneとMontesiのPOPL 2013論文](https://doi.org/10.1145/2429069.2429101)は、その方式の一例です。
+Montesiの本の[Endpoint Projectionの章](https://www.cambridge.org/core/books/introduction-to-choreographies/endpoint-projection/15B92B24200EC1EFC1B70DFFDDFF9546)でも、この変換を説明しています。
+HibanaはMPSTに基づく投影で各ロールのlocal protocolを導出し、手書きの参加者コードの通信を実行時に照合します。
 
 先ほどの例をprojectionすると、次の手順になります。
 
