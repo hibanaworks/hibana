@@ -16,6 +16,7 @@ the protocol and checks each send and receive at runtime.
 
 [日本語](README.ja.md)
 
+Projection uses multiparty session types (MPST).
 The global protocol describes who sends what to whom, and in what order.
 Participants can be tasks in one program or programs on different machines.
 
