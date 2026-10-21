@@ -2,6 +2,18 @@
 //! or treats a missing/empty profile as a zero-cost kernel.
 use std::{collections::BTreeMap, env, fs, path::Path};
 
+// Three warmups and one sample: runtime_cost has 128 endpoint operations per
+// window; roll_cost has 512. The parameter is tail events or body round trips.
+const CASES: [(&str, u32, u64); 7] = [
+    ("seq", 8, 512),
+    ("seq", 256, 512),
+    ("par", 8, 512),
+    ("par", 256, 512),
+    ("roll", 1, 2048),
+    ("roll", 8, 2048),
+    ("roll", 32, 2048),
+];
+
 fn instructions(text: &str) -> Result<u64, String> {
     let mut events = None;
     let mut total = None;
@@ -62,24 +74,29 @@ fn budgets(text: &str) -> Result<BTreeMap<(String, u32), u64>, String> {
             continue;
         }
         let fields: Vec<_> = line.split('\t').collect();
-        if fields.len() != 4 || !matches!(fields[0], "seq" | "par") || fields[2] != "512" {
+        if fields.len() != 4 {
             return Err(format!("invalid instruction budget row: {line}"));
         }
-        let tail = fields[1]
+        let parameter = fields[1]
             .parse::<u32>()
+            .map_err(|error| error.to_string())?;
+        let operations = fields[2]
+            .parse::<u64>()
             .map_err(|error| error.to_string())?;
         let limit = fields[3]
             .parse::<u64>()
             .map_err(|error| error.to_string())?;
-        if !matches!(tail, 8 | 256)
+        if !CASES.contains(&(fields[0], parameter, operations))
             || limit == 0
-            || result.insert((fields[0].into(), tail), limit).is_some()
+            || result
+                .insert((fields[0].into(), parameter), limit)
+                .is_some()
         {
             return Err(format!("invalid or duplicate instruction budget: {line}"));
         }
     }
-    if result.len() != 4 {
-        return Err("instruction budgets must cover all four cases exactly once".into());
+    if result.len() != CASES.len() {
+        return Err("instruction budgets must cover all seven cases exactly once".into());
     }
     Ok(result)
 }
@@ -91,28 +108,23 @@ fn main() -> Result<(), String> {
     }
     let root = Path::new(&args[0]);
     let limits = budgets(&fs::read_to_string(&args[1]).map_err(|error| error.to_string())?)?;
-    // runtime_cost performs three warmups plus one measured sample, all within
-    // the same explicitly instrumented operation windows: 4 * 128 operations.
-    const OPERATIONS: u64 = 512;
-    println!("case\ttail_events\tendpoint_ops\trun\tinstructions\tinstructions_per_op");
-    for case in ["seq", "par"] {
-        for tail in [8, 256] {
-            for run in [1, 2] {
-                let file = root.join(format!("{case}-{tail}-{run}.callgrind"));
-                let text = fs::read_to_string(&file)
-                    .map_err(|error| format!("{}: {error}", file.display()))?;
-                let count =
-                    instructions(&text).map_err(|error| format!("{}: {error}", file.display()))?;
-                println!(
-                    "{case}\t{tail}\t{OPERATIONS}\t{run}\t{count}\t{:.3}",
-                    count as f64 / OPERATIONS as f64,
-                );
-                let limit = limits[&(case.into(), tail)];
-                if count > limit {
-                    return Err(format!(
-                        "{case}/{tail} run {run}: {count} instructions exceed {limit}"
-                    ));
-                }
+    println!("case\tparameter\tendpoint_ops\trun\tinstructions\tinstructions_per_op");
+    for (case, parameter, operations) in CASES {
+        for run in [1, 2] {
+            let file = root.join(format!("{case}-{parameter}-{run}.callgrind"));
+            let text = fs::read_to_string(&file)
+                .map_err(|error| format!("{}: {error}", file.display()))?;
+            let count =
+                instructions(&text).map_err(|error| format!("{}: {error}", file.display()))?;
+            println!(
+                "{case}\t{parameter}\t{operations}\t{run}\t{count}\t{:.3}",
+                count as f64 / operations as f64,
+            );
+            let limit = limits[&(case.into(), parameter)];
+            if count > limit {
+                return Err(format!(
+                    "{case}/{parameter} run {run}: {count} instructions exceed {limit}"
+                ));
             }
         }
     }
@@ -152,11 +164,24 @@ mod tests {
 
     #[test]
     fn requires_one_finite_budget_for_every_measurement_case() {
-        let valid = "seq\t8\t512\t100\nseq\t256\t512\t200\npar\t8\t512\t300\npar\t256\t512\t400\n";
-        assert_eq!(budgets(valid).unwrap().len(), 4);
+        let valid = "seq\t8\t512\t100\nseq\t256\t512\t200\npar\t8\t512\t300\npar\t256\t512\t400\nroll\t1\t2048\t500\nroll\t8\t2048\t600\nroll\t32\t2048\t700\n";
+        assert_eq!(budgets(valid).unwrap().len(), 7);
         assert!(budgets("").is_err());
         assert!(budgets(&valid.replace("seq\t8", "par\t8")).is_err());
         assert!(budgets(&valid.replace("512", "128")).is_err());
         assert!(budgets(&valid.replace("400", "0")).is_err());
+        assert!(budgets(&valid.replace("2048", "512")).is_err());
+        assert!(budgets(&valid.replace("roll\t32", "roll\t64")).is_err());
+        assert!(
+            budgets(
+                valid
+                    .lines()
+                    .take(6)
+                    .collect::<Vec<_>>()
+                    .join("\n")
+                    .as_str()
+            )
+            .is_err()
+        );
     }
 }

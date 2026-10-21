@@ -1,8 +1,13 @@
-# Linux x86-64, Rust 1.99.1, Valgrind 3.22.0, 512 endpoint operations per case.
+# Linux x86-64, Rust 1.99.1, Valgrind 3.22.0.
 # Limits are the larger of two measured instruction counts plus 1%, rounded up.
 # Compiler/target changes require profile review, never an automatic budget increase.
-case	tail_events	endpoint_ops	max_instructions
+# Roll profiles: a7434e6baa69f37b8d95e2bbad9c86ca32cdd02a, CI run 39535945508.
+# The parameter is tail events for seq/par and body round trips for roll.
+case	parameter	endpoint_ops	max_instructions
 seq	8	512	23351454
 seq	256	512	23994503
 par	8	512	19446979
 par	256	512	19781148
+roll	1	2048	46686660
+roll	8	2048	100035005
+roll	32	2048	290027988

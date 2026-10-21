@@ -29,7 +29,7 @@ The `runtime-instructions` CI job separately runs this same benchmark under
 Callgrind on Linux x86-64. Client requests enable instrumentation only around
 the operation windows above, excluding attachment, parallel-borrow setup and
 tail draining. Each process executes three warmups and one sample, so its
-inclusive `Ir` count covers 512 endpoint operations. Each of the four cases is
+inclusive `Ir` count covers 512 endpoint operations. Each seq/par case is
 run twice; raw profiles, exact tool versions and counts are uploaded. Profiling
 uses no alternate kernel, old implementation or extra core dependency. Other
 hosts retain the same benchmark without the platform-specific client requests.
@@ -62,5 +62,10 @@ Tokio polls both participants concurrently on its current-thread executor.
 inputs. The default is three warmups and 30 measured samples per body size.
 Callgrind windows use the same boundaries as the timer; with one measured
 sample their totals cover 2,048 endpoint operations. These workloads do not
-exercise nested repetition, branching or endpoint delegation, and do not yet
-have an instruction-count budget.
+exercise nested repetition, branching or endpoint delegation. CI runs each body
+size twice under Callgrind and enforces a separate instruction budget for each.
+These budgets use the same tool versions and 1% margin described above. The
+`parameter` column records tail events for seq/par and body round trips for roll;
+the operation count is 512 for seq/par and 2,048 for roll. Reusing a label at many
+positions still increases candidate search cost; the budgets guard the measured
+workloads without claiming that this search is constant-time.

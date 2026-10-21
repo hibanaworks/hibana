@@ -48,6 +48,9 @@ for body in 1 8 32; do
         2> "$results/roll-$body-$run.stderr"
   done
 done
+rustc +"$TOOLCHAIN" --edition=2024 -D warnings --test \
+  .github/ci-tests/runtime_instructions.rs -o "$build/test-instructions"
+"$build/test-instructions"
 rustc +"$TOOLCHAIN" --edition=2024 -D warnings -O \
   .github/ci-tests/runtime_instructions.rs -o "$build/read-instructions"
 "$build/read-instructions" "$results" \
