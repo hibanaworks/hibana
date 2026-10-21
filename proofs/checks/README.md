@@ -50,7 +50,7 @@ requires the model's coverage and same-class uniqueness assumptions.
 | [ordinary-offer-ingress](runtime/ordinary-offer-ingress) | [`kernel/offer`](../../src/endpoint/kernel/offer): ordinary messages preceding a choice |
 | [offer-prefix-dependency](runtime/offer-prefix-dependency) | [`kernel/offer`](../../src/endpoint/kernel/offer): preceding communication remains a dependency |
 | [parallel-offer-ingress](runtime/parallel-offer-ingress) | [`kernel/offer`](../../src/endpoint/kernel/offer) and [`parallel.rs`](../../src/endpoint/parallel.rs): branch preview and independent fragments |
-| [parallel-resolver-progress](runtime/parallel-resolver-progress) | [`decision_resolver`](../../src/endpoint/kernel/core/decision_resolver): independent application-resolved choices |
+| [parallel-resolver-progress](runtime/parallel-resolver-progress) | [`decision_resolver`](../../src/endpoint/kernel/core/decision_resolver) and [`parallel.rs`](../../src/endpoint/kernel/core/parallel.rs): independent choices and borrowing a parallel continuation after a completed repetition |
 | [nested-resolver-reentry](runtime/nested-resolver-reentry) | [`decision_resolver`](../../src/endpoint/kernel/core/decision_resolver) and [`scope_route/roll`](../../src/global/typestate/cursor/scope_route/roll): nested choices on reentry |
 | [roll-reentry-selectors](runtime/roll-reentry-selectors) | [`source validation`](../../src/g/source) and [`send_preview.rs`](../../src/global/typestate/cursor/scope_route/send_preview.rs): distinguish repeated sends from a continuation |
 | [roll-continuation-dependency](runtime/roll-continuation-dependency) | [`event_progress.rs`](../../src/global/typestate/cursor/scope_route/event_progress.rs): event membership and prerequisite completion are distinct |

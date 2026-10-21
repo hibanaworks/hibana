@@ -60,52 +60,62 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
     }
 
     fn parallel_region_covers_frontier(&self, source: core::ops::Range<usize>) -> bool {
-        let mut enabled = (0..self.progress.cursor.local_steps_len())
-            .filter_map(|index| {
-                if self.progress.cursor.logical_role_at(index) != Some(self.public_header.role())
-                    || !self.permits_event(index)
-                {
-                    return None;
-                }
-                let event: EventCommitMeta =
-                    if let Some(meta) = self.progress.cursor.try_send_meta_at(index) {
-                        meta.into()
-                    } else if let Some(meta) = self.progress.cursor.try_recv_meta_at(index) {
-                        meta.into()
-                    } else {
-                        let meta = self.progress.cursor.try_local_meta_at(index)?;
-                        EventCommitMeta::new(
-                            meta.eff_index,
-                            meta.label,
-                            meta.origin,
-                            meta.scope,
-                            meta.route_arm,
-                            meta.lane,
-                        )
-                    };
-                let conflict = self.progress.cursor.event_conflict_for_index(index);
-                self.progress
-                    .cursor
-                    .event_enabled(index, event, &mut |scope, view| match view {
-                        // A fresh preview can select another arm, but cannot
-                        // change which arm completed the preceding roll visit.
-                        EventArmView::Committed => self.selected_arm_for_scope(scope),
-                        EventArmView::Preview => self
-                            .operation
-                            .public_route_branch
-                            .as_ref()
-                            .and_then(|branch| {
-                                (branch.branch_meta.scope_id == scope)
-                                    .then_some(branch.branch_meta.selected_arm)
-                            })
-                            .or_else(|| self.selected_arm_for_recv_event(conflict, scope, view))
-                            .or_else(|| self.preview_live_selected_arm_for_scope(scope)),
-                    })
-                    .is_ok()
-                    .then_some(event.eff_index.dense_ordinal())
-            })
-            .peekable();
-        enabled.peek().is_some() && enabled.all(|event| source.contains(&event))
+        let enabled = (0..self.progress.cursor.local_steps_len()).filter_map(|index| {
+            if self.progress.cursor.logical_role_at(index) != Some(self.public_header.role())
+                || !self.permits_event(index)
+            {
+                return None;
+            }
+            let event: EventCommitMeta =
+                if let Some(meta) = self.progress.cursor.try_send_meta_at(index) {
+                    meta.into()
+                } else if let Some(meta) = self.progress.cursor.try_recv_meta_at(index) {
+                    meta.into()
+                } else {
+                    let meta = self.progress.cursor.try_local_meta_at(index)?;
+                    EventCommitMeta::new(
+                        meta.eff_index,
+                        meta.label,
+                        meta.origin,
+                        meta.scope,
+                        meta.route_arm,
+                        meta.lane,
+                    )
+                };
+            let conflict = self.progress.cursor.event_conflict_for_index(index);
+            self.progress
+                .cursor
+                .event_enabled(index, event, &mut |scope, view| match view {
+                    // A fresh preview can select another arm, but cannot
+                    // change which arm completed the preceding roll visit.
+                    EventArmView::Committed => self.selected_arm_for_scope(scope),
+                    EventArmView::Preview => self
+                        .operation
+                        .public_route_branch
+                        .as_ref()
+                        .and_then(|branch| {
+                            (branch.branch_meta.scope_id == scope)
+                                .then_some(branch.branch_meta.selected_arm)
+                        })
+                        .or_else(|| self.selected_arm_for_recv_event(conflict, scope, view))
+                        .or_else(|| self.preview_live_selected_arm_for_scope(scope)),
+                })
+                .is_ok()
+                .then_some((index, event.eff_index.dense_ordinal()))
+        });
+        let mut inside = false;
+        for (index, event) in enabled {
+            if source.contains(&event) {
+                inside = true;
+            } else if !self.progress.cursor.completed_roll_prefix_before(
+                index,
+                source.start,
+                &mut |scope| self.selected_arm_for_scope(scope),
+            ) {
+                return false;
+            }
+        }
+        inside
     }
 
     /// Flatten only associative parallel composition. Sequential prefixes and

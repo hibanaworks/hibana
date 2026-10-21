@@ -8,6 +8,36 @@ mod reentry;
 mod tests;
 
 impl EventCursor {
+    /// An enabled retry of a completed sequential prefix does not have to be
+    /// borrowed with its continuation. Independent siblings and an unfinished
+    /// current visit still belong to the active parallel frontier.
+    pub(crate) fn completed_roll_prefix_before(
+        &self,
+        index: usize,
+        continuation: usize,
+        selected: &mut dyn FnMut(ScopeId) -> Option<u8>,
+    ) -> bool {
+        let program = self.program_ref();
+        for marker in 0..program.source_scope_marker_count() {
+            let Some((scope, _, end)) = program.source_roll_at(marker) else {
+                continue;
+            };
+            if end > continuation || !program.source_precedes(end - 1, continuation) {
+                continue;
+            }
+            let Some(row) = self.machine().roll_scope_row(scope) else {
+                continue;
+            };
+            if row.start() <= index
+                && index < row.end()
+                && self.roll_scope_events_complete(row, selected)
+            {
+                return true;
+            }
+        }
+        false
+    }
+
     #[inline(always)]
     fn same_scope(left: ScopeId, right: ScopeId) -> bool {
         !left.is_none() && left == right

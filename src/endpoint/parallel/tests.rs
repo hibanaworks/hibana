@@ -6,6 +6,7 @@ use crate::{
 
 mod associative;
 mod choice;
+mod delegation_phase;
 #[cfg(not(miri))]
 mod operation_cut;
 mod reentrant;

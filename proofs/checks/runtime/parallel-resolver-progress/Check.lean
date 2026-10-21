@@ -89,6 +89,27 @@ theorem the_other_send_choice_allows_its_accepted_reply :
 theorem completing_a_send_does_not_authorize_its_other_arm :
     acceptedReply [.send 0, .recv 0, .send 1] = false := by decide
 
+def prefixThenParallel : Choreo := .seq
+  (.roll (.seq (.send 0 1 21 0) (.send 1 0 22 0)))
+  (.par (.send 0 1 33 0) (.send 1 0 23 0))
+
+def acceptedParallel (trace : List GlobalOperation) : Bool :=
+  (run (GlobalConfig.initial 1 2 prefixThenParallel) trace).isSome
+
+def completedPrefix : List GlobalOperation := [.send 0, .recv 0, .send 1, .recv 1]
+
+theorem a_completed_roll_allows_the_parallel_continuation :
+    acceptedParallel (completedPrefix ++ [.send 2, .send 3, .recv 3, .recv 2]) = true := by decide
+
+theorem the_parallel_continuation_keeps_the_other_schedule :
+    acceptedParallel (completedPrefix ++ [.send 3, .send 2, .recv 2, .recv 3]) = true := by decide
+
+theorem an_unfinished_prefix_does_not_authorize_the_next_send :
+    acceptedParallel [.send 0, .recv 0, .send 2] = false := by decide
+
+theorem a_new_unfinished_visit_still_blocks_the_continuation_send :
+    acceptedParallel (completedPrefix ++ [.roll 0, .send 0, .recv 0, .send 2]) = false := by decide
+
 #print axioms a_scheduled_entry_is_eligible
 #print axioms an_in_progress_choice_cannot_change_arm
 #print axioms right_then_left_remains_enabled
@@ -99,4 +120,8 @@ theorem completing_a_send_does_not_authorize_its_other_arm :
 #print axioms a_completed_send_choice_allows_its_stopped_reply
 #print axioms the_other_send_choice_allows_its_accepted_reply
 #print axioms completing_a_send_does_not_authorize_its_other_arm
+#print axioms a_completed_roll_allows_the_parallel_continuation
+#print axioms the_parallel_continuation_keeps_the_other_schedule
+#print axioms an_unfinished_prefix_does_not_authorize_the_next_send
+#print axioms a_new_unfinished_visit_still_blocks_the_continuation_send
 end ParallelResolverProgress
