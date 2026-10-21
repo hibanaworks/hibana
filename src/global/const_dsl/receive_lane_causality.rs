@@ -171,6 +171,23 @@ impl<const E: usize> CausalFlow<'_, E> {
         if self.occurrence(range.end) <= self.earlier {
             return Ok(Some(facts));
         }
+        // An independent arm cannot relay a fact that it never received.
+        // If it contains neither the seed nor a target, its whole subtree
+        // contributes the empty set, regardless of its choices and scopes.
+        if facts.is_empty() && !self.contains(range, self.earlier) {
+            let mut event = range.start;
+            let mut has_target = false;
+            while event < range.end && self.occurrence(event) < self.goal.stop() {
+                if self.goal.sender_change(self.eff_list.atom_at(event)) {
+                    has_target = true;
+                    break;
+                }
+                event += 1;
+            }
+            if !has_target {
+                return Ok(Some(facts));
+            }
+        }
         while range.start < range.end && self.occurrence(range.start) < self.goal.stop() {
             // Relays cannot create evidence from an empty input. Before the
             // seed, seek directly to it or to the next structural boundary;

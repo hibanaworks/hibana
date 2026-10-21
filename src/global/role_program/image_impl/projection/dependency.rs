@@ -116,9 +116,7 @@ impl<'a, const E: usize> DependencyCursor<'a, E> {
 
     const fn process_join(&mut self, exit_index: usize) {
         let markers = self.eff_list.scope_markers();
-        let enter_index = markers
-            .first_enter_index(markers.at(exit_index).scope_id)
-            .expect("composition scope without entry");
+        let enter_index = self.scopes.first_enter(markers.at(exit_index).scope_id);
         let enter = markers.at(enter_index);
         let exit_eff = markers.at(exit_index).offset();
         if matches!(enter.scope_id.kind(), Some(ScopeKind::Route)) {
@@ -262,9 +260,7 @@ impl<'a, const E: usize> DependencyCursor<'a, E> {
                 LocalConflict::Unconditional => return candidate,
                 LocalConflict::SharedRoute => return CandidateKey::NONE,
                 LocalConflict::RouteArm { scope: parent, arm } => {
-                    let enter = markers
-                        .first_enter_index(parent)
-                        .expect("route input without entry");
+                    let enter = self.scopes.first_enter(parent);
                     let [(start, split), (_, end)] =
                         route_arm_ranges_from_first_enter(markers, enter);
                     if start <= event

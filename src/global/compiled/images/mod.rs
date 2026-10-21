@@ -5,7 +5,7 @@ pub(crate) use self::{
     image::{
         ACTOR_DECISION_CAPACITY, COMPACT_DESCRIPTOR_BYTE_CAPACITY, CompiledProgramRef,
         ProgramImageBytes, ProgramImageColumns, ProgramImagePlan, RoleDescriptorRef,
-        RoleImageSlice,
+        RoleImageSlice, SourceOrderIndex,
     },
     program::EventSemanticKind,
 };

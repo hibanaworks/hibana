@@ -72,7 +72,7 @@ fn owned_image_construction_rejects_a_self_referencing_decision() {
 #[kani::unwind(16)]
 fn source_order_keeps_parallel_and_route_arms_independent_through_roll() {
     use crate::global::compiled::{
-        images::{ProgramImageBytes, ProgramImagePlan},
+        images::{ProgramImageBytes, ProgramImagePlan, SourceOrderIndex},
         lowering::CompiledProgramImage,
     };
     use crate::{Endpoint, g};
@@ -93,10 +93,18 @@ fn source_order_keeps_parallel_and_route_arms_independent_through_roll() {
             None => panic!("source order fixture storage"),
         };
     const IMAGE: CompiledProgramRef = BYTES.compiled_ref(&SUMMARY, PLAN.columns());
+    const INDEX: SourceOrderIndex<16> = match SourceOrderIndex::from_program(&IMAGE) {
+        Some(index) => index,
+        None => panic!("source order index"),
+    };
     let before: usize = kani::any();
     let after: usize = kani::any();
     assert_eq!(
         IMAGE.source_precedes(before, after),
         before < 2 && (after == 2 || after == 3)
+    );
+    assert_eq!(
+        INDEX.before(before, after),
+        IMAGE.source_precedes(before, after)
     );
 }

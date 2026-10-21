@@ -213,8 +213,10 @@ fn insufficient_actor_image_storage_cannot_publish_a_partial_rebuild() {
             left: &LEFT,
             right: &RIGHT,
             resolver: None,
+            events: 2,
         },
         &WORK,
+        3,
     );
     let mut scratch = Scratch::<5, 3>::new();
     let mut image = ActorImage::<3, 0>::new();

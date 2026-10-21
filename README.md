@@ -609,10 +609,8 @@ use balanced composition. Deeply nested protocols may need a larger Rust
 `recursion_limit`. Source compilation limits and runtime storage limits are
 separate.
 
-Large protocols can also reach Rust's `long_running_const_eval` limit during
-projection. If this happens, add `#![allow(long_running_const_eval)]` to the
-crate that calls `project`. This permits longer const evaluation. It does not
-skip projection checks or increase the protocol's byte limits.
+Projection runs in Rust's const evaluator. Its compilation cost depends on
+protocol size, nesting, and the number of participants projected.
 
 ## Guarantees and verification
 

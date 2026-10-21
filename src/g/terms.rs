@@ -29,7 +29,7 @@ where
     Right: ProgramShape,
 {
     const SOURCE_NODE: ProgramSourceNode =
-        ProgramSourceNode::Seq(&Left::SOURCE_NODE, &Right::SOURCE_NODE);
+        ProgramSourceNode::Seq(&Left::SOURCE_NODE, &Right::SOURCE_NODE, Self::EVENT_COUNT);
     const EVENT_COUNT: usize = checked_source_count(Left::EVENT_COUNT, Right::EVENT_COUNT, 0);
     const SCOPE_MARKER_COUNT: usize =
         checked_source_count(Left::SCOPE_MARKER_COUNT, Right::SCOPE_MARKER_COUNT, 0);
@@ -46,6 +46,7 @@ where
         left: &Left::SOURCE_NODE,
         right: &Right::SOURCE_NODE,
         resolver: None,
+        events: Self::EVENT_COUNT,
     };
     const EVENT_COUNT: usize = checked_source_count(Left::EVENT_COUNT, Right::EVENT_COUNT, 0);
     const SCOPE_MARKER_COUNT: usize =
@@ -60,7 +61,7 @@ where
     Right: ProgramShape,
 {
     const SOURCE_NODE: ProgramSourceNode =
-        ProgramSourceNode::Par(&Left::SOURCE_NODE, &Right::SOURCE_NODE);
+        ProgramSourceNode::Par(&Left::SOURCE_NODE, &Right::SOURCE_NODE, Self::EVENT_COUNT);
     const EVENT_COUNT: usize = checked_source_count(Left::EVENT_COUNT, Right::EVENT_COUNT, 0);
     const SCOPE_MARKER_COUNT: usize =
         checked_source_count(Left::SCOPE_MARKER_COUNT, Right::SCOPE_MARKER_COUNT, 3);
@@ -77,6 +78,7 @@ where
         left: &Left::SOURCE_NODE,
         right: &Right::SOURCE_NODE,
         resolver: Some(RESOLVER_ID),
+        events: Self::EVENT_COUNT,
     };
     const EVENT_COUNT: usize = <Route<Left, Right> as ProgramShape>::EVENT_COUNT;
     const SCOPE_MARKER_COUNT: usize = <Route<Left, Right> as ProgramShape>::SCOPE_MARKER_COUNT;
@@ -91,7 +93,8 @@ impl<Inner> ProgramShape for Roll<Inner>
 where
     Inner: ProgramShape,
 {
-    const SOURCE_NODE: ProgramSourceNode = ProgramSourceNode::Roll(&Inner::SOURCE_NODE);
+    const SOURCE_NODE: ProgramSourceNode =
+        ProgramSourceNode::Roll(&Inner::SOURCE_NODE, Self::EVENT_COUNT);
     const EVENT_COUNT: usize = Inner::EVENT_COUNT;
     const SCOPE_MARKER_COUNT: usize = checked_source_count(Inner::SCOPE_MARKER_COUNT, 0, 2);
     const RESOLVER_MARKER_COUNT: usize = Inner::RESOLVER_MARKER_COUNT;

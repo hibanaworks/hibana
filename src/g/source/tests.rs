@@ -25,6 +25,30 @@ fn validate(source: &tree::Source<'_>) -> Result<(), ownership::ErrorKind> {
 }
 
 #[test]
+fn subtree_event_counts_match_the_typed_shape_and_all_message_leaves() {
+    fn count_leaves(node: &tree::Source<'_>) -> usize {
+        let leaves = match node {
+            tree::Source::Send(_) => 1,
+            tree::Source::Seq(left, right, _)
+            | tree::Source::Par(left, right, _)
+            | tree::Source::Route { left, right, .. } => count_leaves(left) + count_leaves(right),
+            tree::Source::Roll(body, _) => count_leaves(body),
+        };
+        assert_eq!(node.event_count(), leaves);
+        leaves
+    }
+    type Step = g::Send<0, 1, Work>;
+    type Pair = g::Seq<Step, Step>;
+    type Steps = g::Seq<
+        g::Par<g::Roll<g::Route<Pair, Step>>, g::Seq<Pair, Step>>,
+        g::Resolve<g::Route<Step, Pair>, 11>,
+    >;
+    let leaves = count_leaves(&Steps::SOURCE_NODE);
+    assert_eq!(leaves, Steps::EVENT_COUNT);
+    assert_eq!(leaves, 9);
+}
+
+#[test]
 fn typed_owned_message_has_no_wire_codec_or_pointer_representation() {
     let source = source(g::send::<P, A, GrantDb>());
     let tree::Source::Send(message) = source else {
@@ -376,7 +400,7 @@ fn typed_resolved_choice_keeps_conditional_ownership_in_its_continuation() {
         )
         .roll(),
     ));
-    let tree::Source::Seq(tree::Source::Route { resolver, .. }, _) = source else {
+    let tree::Source::Seq(tree::Source::Route { resolver, .. }, _, _) = source else {
         panic!("resolved route followed by a rolled continuation");
     };
     assert_eq!(*resolver, Some(65535));

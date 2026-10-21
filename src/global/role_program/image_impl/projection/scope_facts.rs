@@ -12,6 +12,7 @@ const SCOPE_ORDINAL_COUNT: usize = ScopeId::LOCAL_CAPACITY as usize;
 /// no event-count ceiling or runtime storage is introduced.
 pub(crate) struct ScopeFacts {
     parents: [[Option<LocalConflict>; SCOPE_ORDINAL_COUNT]; SCOPE_KIND_COUNT],
+    entries: [[u16; SCOPE_ORDINAL_COUNT]; SCOPE_KIND_COUNT],
     route_count: usize,
 }
 
@@ -20,6 +21,7 @@ impl ScopeFacts {
         let markers = source.scope_markers();
         let mut facts = Self {
             parents: [[None; SCOPE_ORDINAL_COUNT]; SCOPE_KIND_COUNT],
+            entries: [[u16::MAX; SCOPE_ORDINAL_COUNT]; SCOPE_KIND_COUNT],
             route_count: 0,
         };
         let mut index = 0usize;
@@ -34,6 +36,10 @@ impl ScopeFacts {
                 }
                 facts.parents[kind][ordinal] =
                     Some(dependency_conflict_for_scope(markers, source.len(), scope));
+                if index >= u16::MAX as usize {
+                    crate::invariant();
+                }
+                facts.entries[kind][ordinal] = index as u16;
                 if matches!(scope.kind(), Some(ScopeKind::Route)) {
                     facts.route_count += 1;
                 }
@@ -62,6 +68,18 @@ impl ScopeFacts {
             Some(conflict) => conflict,
             None => panic!("scope projection fact missing"),
         }
+    }
+
+    #[inline(always)]
+    pub(in crate::global::role_program::image_impl) const fn first_enter(
+        &self,
+        scope: ScopeId,
+    ) -> usize {
+        let index = self.entries[Self::kind_index(scope)][scope.local_ordinal() as usize];
+        if index == u16::MAX {
+            panic!("scope projection fact missing");
+        }
+        index as usize
     }
 
     #[inline(always)]
@@ -97,6 +115,7 @@ mod tests {
         for index in 0..markers.len() {
             let marker = markers.at(index);
             if marker.event.is_primary_enter() {
+                assert_eq!(facts.first_enter(marker.scope_id), index);
                 assert_eq!(
                     facts.conflict(marker.scope_id),
                     dependency_conflict_for_scope(markers, source.len(), marker.scope_id)
@@ -132,6 +151,10 @@ mod tests {
         );
         let facts = ScopeFacts::new(&source);
         assert_eq!(facts.conflict(scope), LocalConflict::Unconditional);
+        assert_eq!(
+            facts.first_enter(scope),
+            source.scope_markers().first_enter_index(scope).unwrap()
+        );
         assert_eq!(facts.route_count(), 1);
     }
 

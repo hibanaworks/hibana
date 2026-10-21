@@ -32,6 +32,8 @@
 
 ### Performance
 
+- Reused subtree sizes, scope entries and branch conditions during projection.
+  Local dependency checks still compare the generated order with the typed source.
 - Indexed receive candidates by logical role and message label.
 - Filtered completed and unrelated send candidates before decoding their full
   metadata.

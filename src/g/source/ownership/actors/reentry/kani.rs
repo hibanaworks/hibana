@@ -30,10 +30,10 @@ const TICK: Source<'static> = wire(2, 1);
 const READ: Source<'static> = wire(10, 4);
 const PERMIT: Source<'static> = wire(1, 2);
 const UNRELATED: Source<'static> = wire(6, 7);
-const WORK: Source<'static> = Source::Seq(&TICK, &READ);
-const PERMITTED: Source<'static> = Source::Seq(&PERMIT, &WORK);
-const PARALLEL_PERMIT: Source<'static> = Source::Par(&PERMIT, &WORK);
-const PARALLEL_UNRELATED: Source<'static> = Source::Par(&READ, &UNRELATED);
+const WORK: Source<'static> = Source::Seq(&TICK, &READ, 2);
+const PERMITTED: Source<'static> = Source::Seq(&PERMIT, &WORK, 3);
+const PARALLEL_PERMIT: Source<'static> = Source::Par(&PERMIT, &WORK, 3);
+const PARALLEL_UNRELATED: Source<'static> = Source::Par(&READ, &UNRELATED, 2);
 
 fn actors() -> (u8, u8) {
     (kani::any(), kani::any())

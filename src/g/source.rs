@@ -116,7 +116,7 @@ impl<const CAPACITY: usize> SourceLowering<CAPACITY> {
                 });
                 1
             }
-            ProgramSourceNode::Seq(left, right) => {
+            ProgramSourceNode::Seq(left, right, _) => {
                 let left_span = self.emit(left, route_reentry);
                 let right_span = self.emit(right, route_reentry);
                 max_lane_span(left_span, right_span)
@@ -125,6 +125,7 @@ impl<const CAPACITY: usize> SourceLowering<CAPACITY> {
                 left,
                 right,
                 resolver,
+                ..
             } => {
                 let scope = self.allocate_scope(ScopeKind::Route);
                 let left_start = self.eff.len();
@@ -145,7 +146,7 @@ impl<const CAPACITY: usize> SourceLowering<CAPACITY> {
                 }
                 max_lane_span(left_span, right_span)
             }
-            ProgramSourceNode::Par(left, right) => {
+            ProgramSourceNode::Par(left, right, _) => {
                 let scope = self.allocate_scope(ScopeKind::Parallel);
                 let left_start = self.eff.len();
                 let left_span = self.emit(left, route_reentry);
@@ -164,7 +165,7 @@ impl<const CAPACITY: usize> SourceLowering<CAPACITY> {
                     right_span,
                 )
             }
-            ProgramSourceNode::Roll(inner) => {
+            ProgramSourceNode::Roll(inner, _) => {
                 let scope = self.allocate_scope(ScopeKind::Roll);
                 let start = self.eff.len();
                 let lane_span = self.emit(inner, ReentryMark::Reentrant);

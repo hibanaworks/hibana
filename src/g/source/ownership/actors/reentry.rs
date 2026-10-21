@@ -81,7 +81,7 @@ impl<const E: usize, const D: usize> Checker<'_, E, D> {
     ) -> Result<bool, Scope> {
         match source {
             Source::Send(_) => Ok(true),
-            Source::Seq(left, right) | Source::Par(left, right) => {
+            Source::Seq(left, right, _) | Source::Par(left, right, _) => {
                 let split = start + left.event_count();
                 if event < split {
                     Self::present(left, start, event, path)
@@ -103,7 +103,7 @@ impl<const E: usize, const D: usize> Checker<'_, E, D> {
                     Some(_) => Ok(false),
                 }
             }
-            Source::Roll(body) => Self::present(body, start, event, path),
+            Source::Roll(body, _) => Self::present(body, start, event, path),
         }
     }
 
@@ -496,7 +496,7 @@ impl<const E: usize, const D: usize> Checker<'_, E, D> {
     const fn nested(&self, source: &Source<'_>, start: usize, path: &Context<'_>) -> bool {
         match source {
             Source::Send(_) => true,
-            Source::Seq(left, right) | Source::Par(left, right) => {
+            Source::Seq(left, right, _) | Source::Par(left, right, _) => {
                 self.nested(left, start, path)
                     && self.nested(right, start + left.event_count(), path)
             }
@@ -523,7 +523,7 @@ impl<const E: usize, const D: usize> Checker<'_, E, D> {
                     }),
                 )
             }
-            Source::Roll(inner) => {
+            Source::Roll(inner, _) => {
                 let mut event = 0;
                 while event < self.image.event_len {
                     if let Payload::Endpoint(key) = self.root.message_at(event).payload

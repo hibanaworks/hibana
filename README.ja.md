@@ -554,9 +554,8 @@ Projectionは通信に応じてlaneを割り当て、所有権が競合しなけ
 深く入れ子になったプロトコルには、より大きなRustの`recursion_limit`が必要な場合があります。
 ソースコードのコンパイル制限とランタイムのストレージ制限は別です。
 
-大きなプロトコルでは、projection中にRustの`long_running_const_eval`制限に達する場合もあります。
-その場合は、`project`を呼ぶクレートに`#![allow(long_running_const_eval)]`を指定すると、
-より長いconst評価を許可できます。Projectionの検査を省いたり、プロトコルのバイト数の上限を増やしたりする指定ではありません。
+ProjectionはRustのconst評価で実行します。コンパイルの負荷は、プロトコルの大きさ、
+入れ子の深さ、投影する参加者の数に依存します。
 
 ## 保証と検証
 

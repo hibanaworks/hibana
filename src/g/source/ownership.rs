@@ -138,15 +138,15 @@ impl<const S: usize, const E: usize> Scratch<S, E> {
                 }
                 Ok(())
             }
-            Source::Seq(left, right)
-            | Source::Par(left, right)
+            Source::Seq(left, right, _)
+            | Source::Par(left, right, _)
             | Source::Route { left, right, .. } => {
                 if let Err(error) = self.collect(left) {
                     return Err(error);
                 }
                 self.collect(right)
             }
-            Source::Roll(body) => self.collect(body),
+            Source::Roll(body, _) => self.collect(body),
         }
     }
 
@@ -303,13 +303,13 @@ impl<const S: usize, const E: usize> Scratch<S, E> {
     ) -> Result<(), Error> {
         match source {
             Source::Send(message) => self.emit(root, *message, context),
-            Source::Seq(left, right) => {
+            Source::Seq(left, right, _) => {
                 if let Err(error) = self.visit(root, left, context) {
                     return Err(error);
                 }
                 self.visit(root, right, context)
             }
-            Source::Par(left, right) => {
+            Source::Par(left, right, _) => {
                 let mut index = 0;
                 while index < self.symbol_len {
                     let Some(symbol) = self.symbols[index] else {
@@ -352,7 +352,7 @@ impl<const S: usize, const E: usize> Scratch<S, E> {
                 });
                 self.visit(root, right, &right_path)
             }
-            Source::Roll(body) => {
+            Source::Roll(body, _) => {
                 let start = self.event_len;
                 if let Err(error) = self.visit(root, body, context) {
                     return Err(error);

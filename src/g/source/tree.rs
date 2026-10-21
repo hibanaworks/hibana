@@ -33,14 +33,15 @@ pub struct Message {
 #[derive(Clone, Copy, Debug)]
 pub enum Source<'a> {
     Send(Message),
-    Seq(&'a Self, &'a Self),
-    Par(&'a Self, &'a Self),
+    Seq(&'a Self, &'a Self, usize),
+    Par(&'a Self, &'a Self, usize),
     Route {
         left: &'a Self,
         right: &'a Self,
         resolver: Option<u16>,
+        events: usize,
     },
-    Roll(&'a Self),
+    Roll(&'a Self, usize),
 }
 
 impl Source<'_> {
@@ -49,7 +50,9 @@ impl Source<'_> {
         match self {
             Self::Send(message) if event == 0 => *message,
             Self::Send(_) => panic!("source event outside fragment"),
-            Self::Seq(left, right) | Self::Par(left, right) | Self::Route { left, right, .. } => {
+            Self::Seq(left, right, _)
+            | Self::Par(left, right, _)
+            | Self::Route { left, right, .. } => {
                 let split = left.event_count();
                 if event < split {
                     left.message_at(event)
@@ -57,7 +60,7 @@ impl Source<'_> {
                     right.message_at(event - split)
                 }
             }
-            Self::Roll(body) => body.message_at(event),
+            Self::Roll(body, _) => body.message_at(event),
         }
     }
 
@@ -66,37 +69,40 @@ impl Source<'_> {
     pub const fn before(&self, first: usize, second: usize) -> bool {
         match self {
             Self::Send(_) => false,
-            Self::Seq(left, right) | Self::Par(left, right) | Self::Route { left, right, .. } => {
+            Self::Seq(left, right, _)
+            | Self::Par(left, right, _)
+            | Self::Route { left, right, .. } => {
                 let split = left.event_count();
                 if first < split && second < split {
                     left.before(first, second)
                 } else if first >= split && second >= split {
                     right.before(first - split, second - split)
                 } else {
-                    matches!(self, Self::Seq(_, _)) && first < split && second >= split
+                    matches!(self, Self::Seq(..)) && first < split && second >= split
                 }
             }
-            Self::Roll(body) => body.before(first, second),
+            Self::Roll(body, _) => body.before(first, second),
         }
     }
 
     pub const fn has_delegation(&self) -> bool {
         match self {
             Self::Send(message) => matches!(message.payload, Payload::Endpoint(_)),
-            Self::Seq(left, right) | Self::Par(left, right) | Self::Route { left, right, .. } => {
-                left.has_delegation() || right.has_delegation()
-            }
-            Self::Roll(body) => body.has_delegation(),
+            Self::Seq(left, right, _)
+            | Self::Par(left, right, _)
+            | Self::Route { left, right, .. } => left.has_delegation() || right.has_delegation(),
+            Self::Roll(body, _) => body.has_delegation(),
         }
     }
 
+    /// The typed constructors compute this once for each subtree.
     pub const fn event_count(&self) -> usize {
         match self {
             Self::Send(_) => 1,
-            Self::Seq(left, right) | Self::Par(left, right) | Self::Route { left, right, .. } => {
-                left.event_count() + right.event_count()
-            }
-            Self::Roll(body) => body.event_count(),
+            Self::Seq(_, _, events)
+            | Self::Par(_, _, events)
+            | Self::Route { events, .. }
+            | Self::Roll(_, events) => *events,
         }
     }
 
@@ -107,10 +113,10 @@ impl Source<'_> {
                     || message.to.same(key)
                     || matches!(message.payload, Payload::Endpoint(payload) if payload.same(key))
             }
-            Self::Seq(left, right) | Self::Par(left, right) | Self::Route { left, right, .. } => {
-                left.uses(key) || right.uses(key)
-            }
-            Self::Roll(body) => body.uses(key),
+            Self::Seq(left, right, _)
+            | Self::Par(left, right, _)
+            | Self::Route { left, right, .. } => left.uses(key) || right.uses(key),
+            Self::Roll(body, _) => body.uses(key),
         }
     }
 
@@ -119,10 +125,10 @@ impl Source<'_> {
             Self::Send(message) => {
                 matches!(message.payload, Payload::Endpoint(payload) if payload.same(key))
             }
-            Self::Seq(left, right) | Self::Par(left, right) | Self::Route { left, right, .. } => {
-                left.transfers(key) || right.transfers(key)
-            }
-            Self::Roll(body) => body.transfers(key),
+            Self::Seq(left, right, _)
+            | Self::Par(left, right, _)
+            | Self::Route { left, right, .. } => left.transfers(key) || right.transfers(key),
+            Self::Roll(body, _) => body.transfers(key),
         }
     }
 }

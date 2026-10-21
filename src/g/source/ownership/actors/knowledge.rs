@@ -107,7 +107,7 @@ impl<const E: usize, const D: usize> Checker<'_, E, D> {
                 !message.from.same(message.to)
                     && self.equivalent(self.image.events[start].receiver, actor, path)
             }
-            Source::Seq(left, right) | Source::Par(left, right) => {
+            Source::Seq(left, right, _) | Source::Par(left, right, _) => {
                 self.after(left, start, actor, path)
                     || self.after(right, start + left.event_count(), actor, path)
             }
@@ -124,7 +124,7 @@ impl<const E: usize, const D: usize> Checker<'_, E, D> {
                 self.after(left, start, actor, &left_path)
                     && self.after(right, scope.split as usize, actor, &right_path)
             }
-            Source::Roll(body) => self.after(body, start, actor, path),
+            Source::Roll(body, _) => self.after(body, start, actor, path),
         }
     }
 
@@ -142,7 +142,7 @@ impl<const E: usize, const D: usize> Checker<'_, E, D> {
         }
         match source {
             Source::Send(_) => false,
-            Source::Seq(left, right) => {
+            Source::Seq(left, right, _) => {
                 let split = start + left.event_count();
                 if event < split {
                     self.before(left, start, event, actor, controller, path)
@@ -151,7 +151,7 @@ impl<const E: usize, const D: usize> Checker<'_, E, D> {
                         || self.before(right, split, event, actor, controller, path)
                 }
             }
-            Source::Par(left, right) => {
+            Source::Par(left, right, _) => {
                 let split = start + left.event_count();
                 // A sibling's receive cannot authorize an independently
                 // enabled send before the parallel join.
@@ -184,7 +184,7 @@ impl<const E: usize, const D: usize> Checker<'_, E, D> {
                     )
                 }
             }
-            Source::Roll(body) => self.before(body, start, event, actor, controller, path),
+            Source::Roll(body, _) => self.before(body, start, event, actor, controller, path),
         }
     }
 
@@ -302,11 +302,11 @@ impl<const E: usize, const D: usize> Checker<'_, E, D> {
     const fn nested(&self, source: &Source<'_>, start: usize, path: &Context<'_>) -> bool {
         match source {
             Source::Send(_) => true,
-            Source::Seq(left, right) | Source::Par(left, right) => {
+            Source::Seq(left, right, _) | Source::Par(left, right, _) => {
                 self.nested(left, start, path)
                     && self.nested(right, start + left.event_count(), path)
             }
-            Source::Roll(body) => self.nested(body, start, path),
+            Source::Roll(body, _) => self.nested(body, start, path),
             Source::Route { left, right, .. } => {
                 let scope = route_scope(start, left, right);
                 let controller = self.image.events[start].sender;

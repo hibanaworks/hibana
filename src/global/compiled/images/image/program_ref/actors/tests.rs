@@ -8,6 +8,51 @@ use crate::global::{
 };
 
 #[test]
+fn source_order_matches_the_typed_tree_at_nested_and_adjacent_boundaries() {
+    use crate::{
+        g,
+        global::compiled::{images::SourceOrderIndex, lowering::CompiledProgramImage},
+    };
+
+    type Message = g::Msg<2, ()>;
+    type Step = g::Send<0, 1, Message>;
+    type Pair = g::Seq<Step, Step>;
+    type Choice = g::Resolve<g::Route<Pair, Step>, 11>;
+    type Steps = g::Seq<
+        g::Par<g::Seq<Choice, Step>, g::Roll<g::Par<Step, Pair>>>,
+        g::Seq<Choice, g::Par<Step, Step>>,
+    >;
+    const SOURCE: g::ProgramSourceData<64> = g::ProgramSourceData::lower::<Steps>();
+    const PLAN: ProgramImagePlan = ProgramImagePlan::from_source(&SOURCE);
+    const SUMMARY: CompiledProgramImage = CompiledProgramImage::scan_const(SOURCE.eff_list());
+    static BYTES: ProgramImageBytes<512> =
+        match ProgramImageBytes::from_source_if_fits(&SOURCE, PLAN.columns()) {
+            Some(bytes) => bytes,
+            None => panic!("nested source order fixture storage"),
+        };
+    const IMAGE: CompiledProgramRef = BYTES.compiled_ref(&SUMMARY, PLAN.columns());
+    const INDEX: SourceOrderIndex<64> = match SourceOrderIndex::from_program(&IMAGE) {
+        Some(index) => index,
+        None => panic!("nested source order index"),
+    };
+    let tree = &<Steps as g::ProgramShape>::SOURCE_NODE;
+    for before in 0..tree.event_count() {
+        for after in 0..tree.event_count() {
+            assert_eq!(
+                IMAGE.source_precedes(before, after),
+                tree.before(before, after),
+                "source pair {before} -> {after}"
+            );
+            assert_eq!(INDEX.before(before, after), tree.before(before, after));
+        }
+        assert!(!IMAGE.source_precedes(before, tree.event_count()));
+        assert!(!IMAGE.source_precedes(usize::MAX, before));
+        assert!(!INDEX.before(before, tree.event_count()));
+        assert!(!INDEX.before(usize::MAX, before));
+    }
+}
+
+#[test]
 fn actor_selection_uses_the_exact_choice_and_never_guesses_an_unknown_holder() {
     for actor in 0..=u8::MAX {
         assert_eq!(

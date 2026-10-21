@@ -95,7 +95,7 @@ fn expand<const E: usize>(
             run.edges.push((2 * index, 2 * index + 1));
             vec![run]
         }
-        tree::Source::Seq(left, right) | tree::Source::Par(left, right) => {
+        tree::Source::Seq(left, right, _) | tree::Source::Par(left, right, _) => {
             let start = run.rows.len();
             let mut result = Vec::new();
             for run in expand(left, event, run, source) {
@@ -127,7 +127,7 @@ fn expand<const E: usize>(
             }
             result
         }
-        tree::Source::Roll(body) => {
+        tree::Source::Roll(body, _) => {
             let start = run.rows.len();
             let mut result = vec![run];
             for _ in 0..2 {

@@ -155,7 +155,7 @@ impl<'a> Query<'a> {
                     previous
                 }
             }
-            Source::Seq(left, right) | Source::Par(left, right) => {
+            Source::Seq(left, right, _) | Source::Par(left, right, _) => {
                 let prior = self.after(left, start, at, previous, context);
                 self.after(right, start + left.event_count(), at, prior, context)
             }
@@ -183,7 +183,7 @@ impl<'a> Query<'a> {
                     None => previous,
                 }
             }
-            Source::Roll(body) => self.after(body, start, at, previous, context),
+            Source::Roll(body, _) => self.after(body, start, at, previous, context),
         }
     }
 }

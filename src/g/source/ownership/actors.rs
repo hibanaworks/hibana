@@ -376,7 +376,7 @@ impl<const E: usize, const D: usize> ActorImage<E, D> {
                 self.events[cut] = ActorPair { sender, receiver };
                 Ok(())
             }
-            Source::Seq(left, right) | Source::Par(left, right) => {
+            Source::Seq(left, right, _) | Source::Par(left, right, _) => {
                 if let Err(error) = self.emit(root, left, scratch, cut, context) {
                     return Err(error);
                 }
@@ -402,7 +402,7 @@ impl<const E: usize, const D: usize> ActorImage<E, D> {
                 });
                 self.emit(root, right, scratch, split, &right_context)
             }
-            Source::Roll(body) => self.emit(root, body, scratch, cut, context),
+            Source::Roll(body, _) => self.emit(root, body, scratch, cut, context),
         }
     }
 }

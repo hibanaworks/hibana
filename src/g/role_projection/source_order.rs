@@ -13,16 +13,30 @@ use crate::{
     },
 };
 
+use crate::global::compiled::images::SourceOrderIndex;
+mod presence;
+use presence::SourcePresence;
+
+impl<Steps: ProgramShape, const E: usize> ProgramProjection<Steps, E> {
+    const SOURCE_PRESENCE: SourcePresence<E> = SourcePresence::new(&Steps::SOURCE_NODE);
+}
+
 pub(super) const fn check<Steps: ProgramShape, const E: usize>(image: &RoleImageRef) -> bool {
     let data = &ProgramProjection::<Steps, E>::SOURCE;
     if data.actors().is_none() {
         return true;
     }
+    let Some(order) = SourceOrderIndex::from_program(image.program()) else {
+        return false;
+    };
     let mut check = SourceOrder {
         source: &Steps::SOURCE_NODE,
         data,
         image,
         rows: [[None; 2]; E],
+        order,
+        presence: &ProgramProjection::<Steps, E>::SOURCE_PRESENCE,
+        expected: [[false; 2]; E],
     };
     if !check.same_source() {
         return false;
@@ -41,22 +55,34 @@ pub(super) const fn check<Steps: ProgramShape, const E: usize>(image: &RoleImage
         });
         row += 1;
     }
-    let mut after = 0;
-    while after < image.local_step_count() {
-        let mut before = 0;
-        while before < image.local_step_count() {
-            let (first, _) = SourceOrder::<E>::coordinates(check.operation(before));
-            let (second, _) = SourceOrder::<E>::coordinates(check.operation(after));
-            if image.program().source_precedes(first, second) != check.source.before(first, second)
-            {
+    let mut before = 0;
+    while before < image.local_step_count() {
+        let left = check.operation(before);
+        let (first, _) = SourceOrder::<E>::coordinates(left);
+        let mut after = 0;
+        while after < image.local_step_count() {
+            let right = check.operation(after);
+            let (second, _) = SourceOrder::<E>::coordinates(right);
+            let precedes = check.source.before(first, second);
+            if check.order.before(first, second) != precedes {
                 return false;
             }
+            check.expected[after / 2][after % 2] = if first == second {
+                matches!(left, LocalAction::Send { .. })
+                    && matches!(right, LocalAction::Recv { .. })
+            } else {
+                precedes
+            };
+            after += 1;
+        }
+        let mut after = 0;
+        while after < image.local_step_count() {
             if !check.every_selection(before, after, &SourceContext::new(&[])) {
                 return false;
             }
-            before += 1;
+            after += 1;
         }
-        after += 1;
+        before += 1;
     }
     true
 }
@@ -68,6 +94,9 @@ struct SourceOrder<'a, const E: usize> {
     // A source message contributes at most a send and a receive locally.
     // Decode the immutable image once in compiler scratch, not per edge.
     rows: [[Option<SourceRow>; 2]; E],
+    order: SourceOrderIndex<E>,
+    presence: &'a SourcePresence<E>,
+    expected: [[bool; 2]; E],
 }
 
 #[derive(Clone, Copy)]
@@ -176,48 +205,10 @@ impl<const E: usize> SourceOrder<'_, E> {
         }
     }
 
-    const fn present(
-        source: &ProgramSourceNode,
-        start: usize,
-        event: usize,
-        path: &SourceContext<'_>,
-    ) -> Result<bool, SourceScope> {
-        match source {
-            ProgramSourceNode::Send(_) => Ok(true),
-            ProgramSourceNode::Seq(left, right) | ProgramSourceNode::Par(left, right) => {
-                let split = start + left.event_count();
-                if event < split {
-                    Self::present(left, start, event, path)
-                } else {
-                    Self::present(right, split, event, path)
-                }
-            }
-            ProgramSourceNode::Roll(body) => Self::present(body, start, event, path),
-            ProgramSourceNode::Route { left, right, .. } => {
-                let split = start + left.event_count();
-                let scope = SourceScope {
-                    start: start as u16,
-                    split: split as u16,
-                    stop: (split + right.event_count()) as u16,
-                };
-                match path.get(scope) {
-                    None => Err(scope),
-                    Some(SourceArm::Left) if event < split => {
-                        Self::present(left, start, event, path)
-                    }
-                    Some(SourceArm::Right) if event >= split => {
-                        Self::present(right, split, event, path)
-                    }
-                    Some(_) => Ok(false),
-                }
-            }
-        }
-    }
-
     const fn active(&self, row: usize, path: &SourceContext<'_>) -> Result<bool, SourceScope> {
         let operation = self.operation(row);
         let (event, _) = Self::coordinates(operation);
-        match Self::present(self.source, 0, event, path) {
+        match self.presence.active(event, path) {
             Ok(true) => (),
             other => return other,
         }
@@ -243,18 +234,6 @@ impl<const E: usize> SourceOrder<'_, E> {
             };
         }
         Ok(actor == self.image.role() as u16)
-    }
-
-    const fn expected(&self, before: usize, after: usize) -> bool {
-        let left = self.operation(before);
-        let right = self.operation(after);
-        let (first, _) = Self::coordinates(left);
-        let (second, _) = Self::coordinates(right);
-        if first == second {
-            matches!(left, LocalAction::Send { .. }) && matches!(right, LocalAction::Recv { .. })
-        } else {
-            self.source.before(first, second)
-        }
     }
 
     const fn actual(
@@ -297,11 +276,14 @@ impl<const E: usize> SourceOrder<'_, E> {
         after: usize,
         path: &SourceContext<'_>,
     ) -> Result<bool, SourceScope> {
-        let expected = self.expected(before, after);
+        let expected = self.expected[after / 2][after % 2];
         let actual = self.actual(before, after, path);
-        // No source edge and no possible local guard is vacuous under every
-        // choice. Do not split unrelated branch contexts for such a pair.
-        if !expected && matches!(actual, Ok(false)) {
+        // Equal unconditional answers hold under every choice. Only a
+        // missing or conditional edge needs path-specific activity checks.
+        // A reversed local order must still be rejected when both rows occur.
+        if (!expected && matches!(actual, Ok(false)))
+            || (expected && before < after && matches!(actual, Ok(true)))
+        {
             return Ok(true);
         }
         match self.active(after, path) {
@@ -334,7 +316,7 @@ impl<const E: usize> SourceOrder<'_, E> {
             if matches!(actual, Ok(false)) {
                 continue;
             }
-            if self.expected(before, middle) {
+            if self.expected[middle / 2][middle % 2] {
                 match self.active(middle, path) {
                     Ok(true) => match actual {
                         Ok(true) => return Ok(true),

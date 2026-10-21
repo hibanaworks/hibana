@@ -12,7 +12,7 @@ pub(crate) use self::{
         ACTOR_DECISION_CAPACITY, COMPACT_DESCRIPTOR_BYTE_CAPACITY, ProgramImageColumns,
         ProgramImagePlan,
     },
-    program_ref::CompiledProgramRef,
+    program_ref::{CompiledProgramRef, SourceOrderIndex},
     role_descriptor_ref::RoleDescriptorRef,
 };
 

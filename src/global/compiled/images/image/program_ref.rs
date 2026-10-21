@@ -8,6 +8,8 @@ use crate::{
 };
 
 mod actors;
+mod source_order;
+pub(crate) use source_order::SourceOrderIndex;
 
 const fn decode_program_atom(
     bytes: [u8; PROGRAM_IMAGE_ATOM_STRIDE],
