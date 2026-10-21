@@ -181,6 +181,10 @@ name = "rolled_resolver_reentry"
 path = "tests/rolled_resolver_reentry.rs"
 
 [[test]]
+name = "passive_parallel_target"
+path = "tests/passive_parallel_target.rs"
+
+[[test]]
 name = "send_route_authority"
 path = "tests/send_route_authority.rs"
 

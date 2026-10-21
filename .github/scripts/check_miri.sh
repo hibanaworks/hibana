@@ -87,6 +87,11 @@ run_miri_test \
   run_miri_test public-initial-issuance -p hibana --test endpoint_initial_issuance
 )
 
+(
+  hibana_disable_repo_tests_cfg
+  run_miri_test public-passive-parallel-target -p hibana --test passive_parallel_target
+)
+
 MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \
   endpoint-owner-move \
   -p hibana \

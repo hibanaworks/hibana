@@ -145,6 +145,36 @@ theorem observed_frame_enables_selection :
     (advance 17 none .waiting (.frame 42)).next = .selecting 42 := by
   exact ⟨rfl, rfl⟩
 
+-- Resolving keeps the unique enabled receive selected from the carried frame.
+-- A cached child may describe another parallel lane in the same selected arm.
+inductive PassivePreview where
+  | receive (row : Nat)
+  | descend (scope : Nat)
+  | ready
+  deriving DecidableEq
+
+def passivePreview (exactTarget child : Option Nat) : PassivePreview :=
+  match exactTarget with
+  | some row => .receive row
+  | none => match child with
+    | some scope => .descend scope
+    | none => .ready
+
+theorem an_exact_receive_keeps_its_row (row : Nat) (child : Option Nat) :
+    passivePreview (some row) child = .receive row := rfl
+
+theorem an_exact_receive_cannot_restart_at_a_child (row scope : Nat) :
+    passivePreview (some row) (some scope) ≠ .descend scope := by
+  simp [passivePreview]
+
+theorem passive_descent_requires_an_unresolved_target (target child : Option Nat)
+    (scope : Nat) (descended : passivePreview target child = .descend scope) :
+    target = none ∧ child = some scope := by
+  cases target <;> cases child <;> simp_all [passivePreview]
+
+theorem an_unresolved_target_can_descend (scope : Nat) :
+    passivePreview none (some scope) = .descend scope := rfl
+
 #print axioms owned_is_evidence
 #print axioms waiting_requires_empty
 #print axioms carried_frame_bypasses_active
@@ -159,5 +189,9 @@ theorem observed_frame_enables_selection :
 #print axioms pending_prefix_preserves_scan
 #print axioms first_failure_precedes_later_frame
 #print axioms observed_frame_enables_selection
+#print axioms an_exact_receive_keeps_its_row
+#print axioms an_exact_receive_cannot_restart_at_a_child
+#print axioms passive_descent_requires_an_unresolved_target
+#print axioms an_unresolved_target_can_descend
 
 end Hibana.ParallelOfferIngress

@@ -371,6 +371,11 @@ where
     ) -> RecvResult<bool> {
         let scope_id = selection.scope_id;
         let selected_arm = resolved.selected_arm;
+        // An exact enabled receive already names the operation to preview.
+        // Its arm can also contain a nested choice on an independent lane.
+        if selection.observed_target_index().is_some() {
+            return Ok(false);
+        }
         let materialization_meta = self.selection_materialization_meta(selection);
         let Some(nested_scope) =
             materialization_meta.passive_child_scope(Arm::from_raw(selected_arm))
