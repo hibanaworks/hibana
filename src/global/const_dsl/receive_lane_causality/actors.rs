@@ -395,3 +395,84 @@ pub(crate) const fn validate_owned_receive_lane_causality<const E: usize, const 
     }
     true
 }
+
+/// Locate the rejected receive pair without changing projection admission.
+pub(crate) const fn owned_receive_lane_conflict<const E: usize, const D: usize>(
+    events: &EffList<E>,
+    actors: &SourceActorImage<E, D>,
+) -> Option<(usize, usize, Option<u16>)> {
+    let context = SourceContext::new(&[]);
+    let paths = Paths {
+        shared: &context,
+        current: &context,
+        next: &context,
+    };
+    let mut region = 0;
+    let markers = events.scope_markers();
+    while region <= markers.len() {
+        let (start, stop, repeated, scope) = if region == 0 {
+            (0, events.len(), None, None)
+        } else {
+            let marker = markers.at(region - 1);
+            if !marker.event.is_primary_enter()
+                || !matches!(marker.scope_id.kind(), Some(ScopeKind::Roll))
+            {
+                region += 1;
+                continue;
+            }
+            let Some((start, stop)) = roll_body_range_from_enter(markers, region - 1) else {
+                return None;
+            };
+            (
+                start,
+                stop,
+                Some(RollBodyRange::new(start, stop)),
+                Some(marker.scope_id.local_ordinal()),
+            )
+        };
+        let mut earlier = start;
+        while earlier < stop {
+            let atom = events.atom_at(earlier);
+            let range = FlowRange {
+                start: if repeated.is_some() {
+                    start
+                } else {
+                    earlier + 1
+                },
+                end: stop,
+                marker_floor: 0,
+            };
+            if atom.from != atom.to
+                && let Some(end) = sender_change_end(events, range, atom)
+                && !(Obligation {
+                    events,
+                    actors,
+                    earlier,
+                    end,
+                    repeated,
+                })
+                .check(paths)
+            {
+                let mut later = range.start;
+                while later < end {
+                    if (FlowGoal::ReceiveLane(atom, later + 1)).sender_change(events.atom_at(later))
+                        && !(Obligation {
+                            events,
+                            actors,
+                            earlier,
+                            end: later + 1,
+                            repeated,
+                        })
+                        .check(paths)
+                    {
+                        return Some((earlier, later, scope));
+                    }
+                    later += 1;
+                }
+            }
+            earlier += 1;
+        }
+        region += 1;
+    }
+    None
+}

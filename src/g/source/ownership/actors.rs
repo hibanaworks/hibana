@@ -137,6 +137,14 @@ impl<const E: usize, const D: usize> ActorImage<E, D> {
         knowledge::check(source, self)
     }
 
+    /// Locate a rejected choice without changing its acceptance rule.
+    pub(crate) const fn branch_knowledge_conflict(
+        &self,
+        source: &Source<'_>,
+    ) -> Option<(Scope, Option<u8>, Option<usize>)> {
+        knowledge::conflict(source, self)
+    }
+
     /// A resource-changing continuation cannot leave a remote reentry sender
     /// able to initiate another visit without the entry owner's permission.
     pub const fn has_reentry_knowledge(&self, source: &Source<'_>) -> bool {

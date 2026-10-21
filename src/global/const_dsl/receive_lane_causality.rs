@@ -4,8 +4,8 @@ use super::{
 };
 
 mod actors;
-pub(crate) use actors::validate_owned_receive_lane_causality;
 use actors::{ActorMap, NeedChoice};
+pub(crate) use actors::{owned_receive_lane_conflict, validate_owned_receive_lane_causality};
 
 const CAUSAL_ROLE_COUNT: usize = u8::MAX as usize + 1;
 const CAUSAL_ROLE_WORDS: usize = CAUSAL_ROLE_COUNT / u64::BITS as usize;

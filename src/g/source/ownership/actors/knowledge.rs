@@ -1,8 +1,4 @@
-//! Construction-only knowledge of choice over the existing typed source.
-//! Public owned projection stays closed until the complete acceptance boundary
-//! and its independent verification are connected.
-//! Ownership references denote actor functions of canonical source choices.
-//! No current-holder table or runtime branch authority is introduced here.
+//! Knowledge of choice for the actors that hold the projected endpoints.
 
 use super::super::{Arm, Context, Scope, Selection, Source};
 use super::{ActorImage, ActorRef};
@@ -15,10 +11,17 @@ pub(super) const fn check<const E: usize, const D: usize>(
     source: &Source<'_>,
     image: &ActorImage<E, D>,
 ) -> bool {
+    conflict(source, image).is_none()
+}
+
+pub(super) const fn conflict<const E: usize, const D: usize>(
+    source: &Source<'_>,
+    image: &ActorImage<E, D>,
+) -> Option<(Scope, Option<u8>, Option<usize>)> {
     if source.event_count() != image.event_len {
         panic!("choice-knowledge source and actor image disagree");
     }
-    Checker { image }.nested(source, 0, &Context::new(&[]))
+    Checker { image }.nested_conflict(source, 0, &Context::new(&[]))
 }
 
 struct Checker<'a, const E: usize, const D: usize> {
@@ -299,14 +302,21 @@ impl<const E: usize, const D: usize> Checker<'_, E, D> {
             && self.matching_presence(scope, role, controller, &right_path)
     }
 
-    const fn nested(&self, source: &Source<'_>, start: usize, path: &Context<'_>) -> bool {
+    const fn nested_conflict(
+        &self,
+        source: &Source<'_>,
+        start: usize,
+        path: &Context<'_>,
+    ) -> Option<(Scope, Option<u8>, Option<usize>)> {
         match source {
-            Source::Send(_) => true,
+            Source::Send(_) => None,
             Source::Seq(left, right, _) | Source::Par(left, right, _) => {
-                self.nested(left, start, path)
-                    && self.nested(right, start + left.event_count(), path)
+                if let Some(conflict) = self.nested_conflict(left, start, path) {
+                    return Some(conflict);
+                }
+                self.nested_conflict(right, start + left.event_count(), path)
             }
-            Source::Roll(body, _) => self.nested(body, start, path),
+            Source::Roll(body, _) => self.nested_conflict(body, start, path),
             Source::Route { left, right, .. } => {
                 let scope = route_scope(start, left, right);
                 let controller = self.image.events[start].sender;
@@ -315,7 +325,7 @@ impl<const E: usize, const D: usize> Checker<'_, E, D> {
                 let mut role = 0usize;
                 while role < 256 {
                     if !self.matching_presence(scope, role as u8, controller, path) {
-                        return false;
+                        return Some((scope, Some(role as u8), None));
                     }
                     role += 1;
                 }
@@ -327,10 +337,35 @@ impl<const E: usize, const D: usize> Checker<'_, E, D> {
                     scope,
                     arm: Arm::Right,
                 });
-                self.arm(left, start, controller, &left_path)
-                    && self.arm(right, scope.split as usize, controller, &right_path)
-                    && self.nested(left, start, &left_path)
-                    && self.nested(right, scope.split as usize, &right_path)
+                let arms = [
+                    (left, start, &left_path),
+                    (right, scope.split as usize, &right_path),
+                ];
+                let mut arm = 0;
+                while arm < arms.len() {
+                    let (body, begin, selected) = arms[arm];
+                    if !self.arm(body, begin, controller, selected) {
+                        let mut event = begin;
+                        while event < begin + body.event_count() {
+                            let actor = self.image.events[event].sender;
+                            if !self.before(body, begin, event, actor, controller, selected) {
+                                let actor = self.selected(actor, selected);
+                                let role = if actor.0 < 256 {
+                                    Some(actor.0 as u8)
+                                } else {
+                                    None
+                                };
+                                return Some((scope, role, Some(event)));
+                            }
+                            event += 1;
+                        }
+                    }
+                    arm += 1;
+                }
+                if let Some(conflict) = self.nested_conflict(left, start, &left_path) {
+                    return Some(conflict);
+                }
+                self.nested_conflict(right, scope.split as usize, &right_path)
             }
         }
     }

@@ -201,7 +201,71 @@ where
         match Self::ERROR {
             None => None,
             Some(error) => Some(if Steps::SOURCE_NODE.has_delegation() {
-                ProjectionDiagnostic::from_error(error)
+                let mut diagnostic = ProjectionDiagnostic::from_error(error);
+                if matches!(error, ProgramSourceError::ReceiveLaneCausalityConflict)
+                    && let Some(actors) = Self::SOURCE.actors()
+                    && let Some((first, second, scope)) =
+                        crate::global::const_dsl::owned_receive_lane_conflict(
+                            Self::SOURCE_EFF_LIST,
+                            actors,
+                        )
+                {
+                    let earlier = Self::SOURCE_EFF_LIST.atom_at(first);
+                    diagnostic.role = Some(earlier.to);
+                    diagnostic.scope = scope;
+                    diagnostic.first = Some(DiagnosticEvent::from_atom(first, earlier));
+                    diagnostic.second = Some(DiagnosticEvent::from_atom(
+                        second,
+                        Self::SOURCE_EFF_LIST.atom_at(second),
+                    ));
+                }
+                if matches!(error, ProgramSourceError::ProjectionRouteUnprojectable)
+                    && let Some(actors) = Self::SOURCE.actors()
+                    && let Some((scope, role, event)) =
+                        actors.branch_knowledge_conflict(&Steps::SOURCE_NODE)
+                {
+                    diagnostic.problem = ProjectionProblem::MissingBranchKnowledge;
+                    diagnostic.role = role;
+                    diagnostic.arms = Some([
+                        DiagnosticRange {
+                            start: scope.start as usize,
+                            end: scope.split as usize,
+                        },
+                        DiagnosticRange {
+                            start: scope.split as usize,
+                            end: scope.stop as usize,
+                        },
+                    ]);
+                    let markers = Self::SOURCE_EFF_LIST.scope_markers();
+                    let mut index = 0;
+                    while index < markers.len() {
+                        let marker = markers.at(index);
+                        if marker.event.is_primary_enter()
+                            && matches!(
+                                marker.scope_id.kind(),
+                                Some(crate::global::const_dsl::ScopeKind::Route)
+                            )
+                            && marker.offset() == scope.start as usize
+                            && marker.segment_end() == scope.split as usize
+                        {
+                            diagnostic.scope = Some(marker.scope_id.local_ordinal());
+                            break;
+                        }
+                        index += 1;
+                    }
+                    if let Some(event) = event {
+                        let witness = Some(DiagnosticEvent::from_atom(
+                            event,
+                            Self::SOURCE_EFF_LIST.atom_at(event),
+                        ));
+                        if event < scope.split as usize {
+                            diagnostic.first = witness;
+                        } else {
+                            diagnostic.second = witness;
+                        }
+                    }
+                }
+                diagnostic
             } else {
                 crate::global::compiled::lowering::projection_diagnostic(
                     &Self::IMAGE,
