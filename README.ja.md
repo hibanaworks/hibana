@@ -13,12 +13,12 @@
 
 [English](README.md)
 
-Hibanaは、通信の流れをまとめて記述するchoreographic programmingのためのRustライブラリです。
+Hibanaは、複数の参加者の通信を記述し、検査するRustライブラリです。
 誰が、誰に、何を、どの順序で送るかを、参加者共通のプロトコルとして書きます。
 参加者は同じプログラム内のタスクでも、別のマシンで動くプログラムでも構いません。
 
-各参加者のRustコードも自分で書きます。Hibanaは共通のプロトコルから各参加者の通信手順を導出し、
-実行時に、その送受信が手順に従っているかを検査します。
+Hibanaはmultiparty session types（MPST）の投影を使い、共通のプロトコルから各参加者の通信手順を導出します。
+参加者の関数は自分でRustコードとして書きます。Hibanaは実行時に、その送受信が手順に従っているかを検査します。
 
 コアは`no_std`で、ヒープアロケータを必要としません。stable Rust 1.95以降で動作します。
 ランタイムが使うメモリは、プログラム側から渡します。
@@ -186,6 +186,10 @@ Multiparty session types（MPST）では、**global protocol**が全参加者の
 Hibanaでは、一つのプログラムやtaskが複数roleのEndpointを保持できます。
 **endpoint projection**は、global protocolから各ロールの**local protocol**を導出します。
 
+[Choreographic programming](https://arxiv.org/abs/2102.10698)では、choreographyから
+参加者のプログラムを生成します。Hibanaが投影で生成するのは通信手順のデータです。
+参加者の関数とその中の計算は自分で書き、通信はランタイムが検査します。
+
 先ほどの例をprojectionすると、次の手順になります。
 
 | Global protocolの通信 | クライアントのlocal protocol | サーバーのlocal protocol |
@@ -197,8 +201,13 @@ Hibanaでは、一つのプログラムやtaskが複数roleのEndpointを保持�
 残った操作の順序と依存関係は、逐次合成と並列合成から決まります。
 
 Hibanaの着想は[affine multiparty session types（AMPST）](https://arxiv.org/abs/2204.13464)です。
-ここで*affine*とは、通信のためのリソースを高々一度使えることを意味します。
-プロトコルを完了する前に破棄することもできます。
+ここで*affineな所有権*とは、エンドポイントを複製できず、moveするか、プロトコルの完了前に
+破棄できることを意味します。各ステップは一周につき高々一度だけ完了できます。
+同じエンドポイントで、その後のステップを続けて実行できます。
+
+AMPSTには、ほかの参加者へ取り消しを伝播する仕組みがあります。Hibanaは障害をローカルに記録し、
+相手への終了通知はトランスポートが担います。論文のcancellation terminationの結果が、
+Hibanaのトランスポートへそのまま適用されるわけではありません。
 
 AMPSTの実装であるMultiCrustyは、local session typeをRustの型で表します。
 Hibanaでは、プロトコルが大きくなるにつれて、残りの通信手順をすべてエンドポイントの型で表すと型が複雑になりました。
@@ -240,10 +249,6 @@ runtimeはそれらのroleの進行を一つにまとめて管理し、各Endpoi
 Projectionは、ロールが必要な選択を知ることができるか、並列の操作を区別できるかを検査します。
 この検査を満たさないプロトコルは、コンパイル時に拒否します。
 
-Projectionが生成するのは通信のデータです。参加者の関数と、その中の計算は自分でRustコードとして書きます。
-Global protocolはコンパイル時に検査します。
-各関数の送受信は、実行時にlocal protocolと照合します。
-
 ### Selection、branching、knowledge of choice
 
 **selection**は、選択するロールの操作です。
@@ -267,7 +272,7 @@ Projectionは、それぞれのロールのlocal protocolを両分岐につい�
 分岐の最初の送受信が成功すると、プロトコルが進みます。
 確認するだけ、またはプレビューを破棄するだけでは進みません。
 
-選択に`.resolve::<ID>()`を付けると、アプリケーションの決定関数に接続できます。
+選択に`.resolve::<ID>()`を付けると、枝を選ぶローカルな関数（**resolver**）に接続できます。
 選択の方法は変わりますが、ほかのロールのprojection検査を省略したり、別のマシンへ決定を伝えたりはしません。
 選択を知らせるメッセージの受信より前に合意が必要なら、アプリケーションか配布・設定がその合意を用意します。
 

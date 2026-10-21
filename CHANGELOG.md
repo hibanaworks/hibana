@@ -5,7 +5,7 @@
 ### Added
 
 - Endpoint delegation through the existing `send` and `recv` operations. An
-  Endpoint payload moves its logical role and current continuation to the
+  `Endpoint` payload moves its logical role and current continuation to the
   receiver. Initial issuance uses one `EndpointBinding` supplied by the resource
   integration. Dropping a value or timing out does not restore transferred
   ownership.
@@ -19,7 +19,7 @@
 - `Endpoint::par()` and nested parallel borrows. An array pattern selects the
   number of independent fragments, such as
   `let [mut left, mut right] = endpoint.par()?;`. The executor can poll both
-  fragments concurrently. The parent Endpoint remains borrowed until they end.
+  fragments concurrently. The parent endpoint remains borrowed until they end.
 
 ### Fixed
 
@@ -29,8 +29,6 @@
 - Preserved queued continuation messages when another role reenters a rolled
   body. In 0.9.9, an accepted continuation could later fail with `PhaseInvariant`
   after a new visit began.
-- Preserved branch knowledge, causal order and independent operations across
-  nested routes, rolled protocols and Endpoint holder changes.
 
 ### Performance
 

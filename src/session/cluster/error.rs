@@ -16,11 +16,9 @@ pub(crate) enum AttachOp {
     Enter,
 }
 
-/// Errors raised while attaching cursor endpoints to the session cluster.
+/// Error when setting up runtime storage or attaching an endpoint.
 ///
-/// Attach failures are public evidence for rendezvous/endpoint setup. They are
-/// intentionally separate from endpoint progress errors so `?` can preserve the
-/// failing boundary without a wide crate-level error enum.
+/// The debug output identifies the failed operation and its cause.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct AttachError {
     op: AttachOp,

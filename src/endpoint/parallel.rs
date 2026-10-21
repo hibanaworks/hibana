@@ -47,26 +47,28 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     ///
     /// The array length is inferred from the binding pattern. Fragments follow
     /// global source order, omitting fragments in which this role has no action.
-    /// Associative `par` groups are flattened; sequential prefixes and enclosing
-    /// `roll` scopes keep their own boundaries. A fragment can be borrowed again
-    /// when it reaches a nested parallel phase.
+    /// Adjacent `par` groups are flattened. Sequential prefixes and enclosing
+    /// `roll` scopes keep their boundaries. A fragment can be borrowed again
+    /// when it reaches a nested `par`.
     ///
     /// Array positions identify fragments; variable names do not select them.
     /// The fragment types do not encode their individual protocols. An
     /// operation not permitted by its fragment is rejected at runtime.
     ///
-    /// This operation does not perform I/O, advance the protocol, choose a
-    /// branch, or schedule work. Poll the resulting operations concurrently with
-    /// your executor. A single-threaded executor is sufficient.
+    /// The parent stays borrowed until all fragments are dropped. Poll their
+    /// operations concurrently with your executor, which can be single-threaded.
+    /// Calling `par` only creates borrows. The fragment operations perform the
+    /// communication and advance the protocol.
     ///
     /// Returns an error if there is no unambiguous current parallel fragment,
     /// the array length differs from its width, or an earlier operation remains
-    /// active. A rejected borrow leaves the parent protocol unchanged. Observe
-    /// an enclosing route with `offer` before borrowing its parallel fragments:
-    /// `let label = endpoint.offer().await?.label();` releases the temporary
-    /// preview handle while retaining its materialized choice. The borrows then
-    /// reuse that preview without waiting for its first message to commit or
-    /// rerunning its resolver. Matching ordinary `send`/`recv` consumes it.
+    /// active. A rejected borrow leaves the parent protocol unchanged.
+    ///
+    /// Inside a choice, first call
+    /// `let label = endpoint.offer().await?.label();`, then borrow the selected
+    /// branch's fragments. They keep that choice, including any buffered first
+    /// message. Their matching `send` or `recv` advances the protocol. Independent
+    /// fragments can run while that first operation waits.
     ///
     /// ```
     /// use hibana::{Endpoint, EndpointError, g};

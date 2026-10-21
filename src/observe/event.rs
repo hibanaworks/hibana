@@ -2,12 +2,12 @@
 
 use crate::observe::ids;
 
-/// Opaque 16-byte tap record with a compact causal key for evidence correlation.
+/// A 16-byte runtime diagnostic event.
 ///
 /// Layout: `ts32, id16, causal_key16, arg0_32, arg1_32`
 /// - `ts`: Ring ordinal, saturated at `u32::MAX`; not wall-clock time
 /// - `id`: Event identifier (from `crate::observe::ids::*`)
-/// - `causal_key`: Causal key for reversible evidence correlation
+/// - `causal_key`: Groups related events using event-specific fields
 ///   - High 8 bits: role or lane discriminator
 ///   - Low 8 bits: event-specific sequence, result, or reason code
 /// - `arg0`, `arg1`: Context-dependent diagnostic words.

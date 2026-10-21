@@ -77,10 +77,10 @@ pub enum TransportError {
     /// Logical direction is unavailable (e.g. link down). This does not prove
     /// that no frame was accepted before the failure became observable.
     Offline,
-    /// Operation exceeded a carrier-local deadline. This does not establish
-    /// peer death, non-delivery, or permission to reclaim transferred authority.
+    /// Operation exceeded the transport's deadline. This does not establish
+    /// peer death, non-delivery, or permission to reclaim a transferred endpoint.
     Deadline,
-    /// Carrier-local queue, ring, slab, or demux capacity was exhausted.
+    /// Transport queue, ring, slab, or routing capacity was exhausted.
     Capacity,
     /// Transport encountered a fatal error (driver reset, etc.).
     Failed,
@@ -100,15 +100,14 @@ impl core::fmt::Debug for TransportError {
 
 /// Transport-owned header for one receive frame.
 ///
-/// This is carrier observation, not session or descriptor authority. Hibana
-/// runtime compares it against the endpoint's expected context before any
-/// progress is committed.
+/// Hibana checks the session, lane, roles and frame label against the local
+/// protocol before advancing it. The transport is responsible for peer binding.
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FrameHeader([u8; 8]);
 
 impl FrameHeader {
-    /// Wrap the carrier-observed eight-byte header without validating it.
+    /// Wrap the received eight-byte header for validation by the runtime.
     ///
     /// Layout: big-endian session ID (four bytes), lane, source role, target
     /// role, and wire frame label. The runtime checks these fields on receive.
@@ -223,9 +222,8 @@ impl IngressEvidence {
 
 /// Transport-owned receive frame.
 ///
-/// The payload and carrier evidence cross the transport boundary as one value.
-/// Hibana compares evidence against descriptor/session authority before endpoint
-/// progress can consume the payload.
+/// Contains borrowed payload bytes and, for a framed receive, their header.
+/// Hibana checks both against the local protocol before advancing it.
 #[derive(Clone, Copy, Debug)]
 pub struct ReceivedFrame<'f> {
     evidence: IngressEvidence,
@@ -248,8 +246,8 @@ impl<'f> ReceivedFrame<'f> {
 
     /// Pair observed header bytes with the payload from the same received frame.
     ///
-    /// This does not authenticate or validate the header. The transport supplies
-    /// peer binding and delivery guarantees; Hibana checks the projected step.
+    /// The runtime validates the header against the local protocol. The
+    /// transport must bind these bytes to the expected peer and direction.
     #[inline]
     pub const fn framed(header: FrameHeader, payload: Payload<'f>) -> Self {
         Self {
@@ -270,11 +268,9 @@ impl<'f> ReceivedFrame<'f> {
     }
 }
 
-/// Descriptor-derived fact for opening one transport port.
+/// Role, session and lane for a port opened by the runtime.
 ///
-/// This is produced by endpoint materialization, not by app code. Transport
-/// implementations receive one opaque value instead of recombining raw role,
-/// session, and lane scalars themselves.
+/// Bind the returned send and receive handles to these values.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PortOpen {
     local_role: u8,
@@ -317,73 +313,56 @@ impl PortOpen {
 
 /// Asynchronous transport interface with explicit Tx/Rx handles.
 ///
-/// The trait uses GATs so that implementations can borrow buffers from the
-/// surrounding environment without forcing allocations. Pending I/O state stays
-/// in transport-owned handles instead of leaking transport future types into
-/// higher layers.
+/// Handles may borrow buffers from the transport. Keep pending I/O state and
+/// task wakers in those handles or in transport-owned storage.
 ///
-/// # Endpoint enforcement boundary and delivery premise
-/// A framed [`poll_recv`](Transport::poll_recv) yields one carrier observation.
-/// Hibana checks its session, lane, roles, frame label, and exact
-/// descriptor occurrence before commit but cannot authenticate carrier identity.
-/// A deterministic result has no header and is accepted only when its lane-bound
-/// Rx plus the requested label and schema identify one enabled descriptor receive.
-/// Unexpected, repeated, missing, or ambiguous evidence fails closed; it is
-/// never normalized into progress; successful `poll_send` does not prove delivery.
-/// Global fidelity and progress additionally assume affine delivery: accepted
-/// observations are bound to the mapped peer/direction, FIFO without unsolicited
-/// replay, and eventually arrive or end in terminal closure. Otherwise the
-/// protocol must make loss, retry, and freshness explicit. Exact local safety remains,
-/// but global theorems require that premise; `requeue` never creates a commit.
-/// A terminal fault may abandon locally accepted sends not yet exposed to the
-/// receiver. Such frames must not appear after closure or in another generation.
-/// Reusing `SessionId` requires fresh carrier-owned receive state. A fresh
-/// transport instance provides it. Address migration or identifier rotation within the
-/// same instance preserves it; a fresh instance begins a new generation.
+/// # Frame checks
+/// Each framed receive is checked against the local protocol: its session,
+/// lane, sender, receiver, frame label and payload format must match a permitted
+/// receive. A mismatch returns an error and stops the local session run.
+/// [`ReceivedFrame::deterministic`] has no header and requires a uniquely
+/// identified receive, as described on that constructor.
 ///
-/// This trait neither receives nor negotiates compiled protocol images. Initial
-/// all-role protocol agreement belongs to the protocol deployment or an
-/// application-level bootstrap, while Hibana checks every received frame against
-/// the local descriptor. A carrier must not add a transport handshake merely to
-/// implement this trait. Replayable early data may be exposed only after the
-/// carrier or application profile has made it safe for Hibana's no-replay
-/// contract; otherwise it must be rejected or delayed.
-/// The strong affine-delivery profile also requires observable peer closure:
-/// after accepted FIFO frames drain, a parked or later
-/// [`poll_recv`](Transport::poll_recv) must wake and return
-/// [`TransportError::Offline`] or [`TransportError::Failed`]. This is the
-/// distributed cancellation boundary when a faulted endpoint retires handles.
-/// It is a logical Hibana direction, not necessarily the physical connection:
-/// a multiplexed carrier can retire one substream and leave others alive.
-/// Retiring every handle for that direction must signal the remote direction.
-/// Any reported transport error stops the observing runtime's current session
-/// run and preserves its first fault. This is not a distributed rollback or
-/// an instantaneous stop of remote runtimes: already accepted authority may
-/// still be received and used there. An error alone neither closes a remote
-/// direction nor drains or isolates its accepted prefix. Carrier closure or
-/// fencing must make those effects observable separately. A deadline is a
-/// carrier's local outcome, not proof that its peer crashed or received nothing.
-/// Returning `Pending` forever after known peer closure violates the strong
-/// profile. A raw carrier may instead expose protocol-defined close or timeout
-/// as ordinary observations; without either, no global cancellation-termination
-/// conclusion applies.
+/// These checks do not authenticate senders or detect every replay. The
+/// transport must bind frames to the expected peer and direction. Participants
+/// must agree on the global protocol through deployment or application setup.
 ///
-/// # Logical channels across Endpoint handoff
-/// Endpoint transfer carries logical protocol authority, not a Rust pointer,
-/// socket, or shared-memory reference. Every runtime owns its own storage.
-/// A receiving actor opens the same logical session/role/lane through its own
-/// transport. Deployment must make that logical direction usable there,
-/// including frames accepted before the handoff. The FIFO and no-replay
-/// requirements span holders; starting a new physical connection does not start
-/// a new logical direction or discard its unread prefix. Carrier buffering and
-/// `requeue` must not strand an uncommitted frame at an earlier holder.
+/// # Delivery and closure
+/// Protocol fidelity and progress require the transport to:
 ///
-/// These requirements do not impose shared memory or one global FIFO. Independent
-/// projected directions remain independent. A network transport may use a stable
-/// logical inbox; changing physical destinations instead requires preserving the
-/// accepted prefix during forwarding. Neither mechanism is supplied by this
-/// trait, and passing a same-host shared-queue test does not validate either
-/// mechanism across machines.
+/// - Preserve FIFO order within each logical direction, without duplication or
+///   replay. Independent directions can progress independently.
+/// - Eventually deliver an accepted frame or make closure of its direction
+///   observable. A successful send means acceptance, not peer receipt.
+/// - On closure, drain or isolate accepted frames, wake waiting receivers and
+///   return [`TransportError::Offline`] or [`TransportError::Failed`]. Frames
+///   isolated by closure must never reappear. Known closure cannot stay pending.
+/// - Make retirement of all handles for a direction observable at its peer.
+///   A transport can close a logical substream while keeping its connection open.
+/// - Isolate session runs. Reusing a [`SessionId`] requires fresh receive state
+///   that excludes all frames from the earlier run, including buffered frames.
+///   Address migration within a run must preserve its delivery guarantees.
+/// - Delay or reject replayable early data until it meets the no-replay contract.
+///
+/// An error stops the observing runtime's run and preserves its first fault.
+/// Other runtimes may still receive and use accepted endpoints. An error alone
+/// neither rolls back a transfer nor closes the remote direction. The transport
+/// must separately deliver or isolate accepted frames and make closure visible.
+/// A deadline does not prove peer death or non-delivery. Protocol-defined close
+/// or timeout messages can instead be ordinary messages in the global protocol.
+/// Remote participants learn of cancellation through closure or those messages.
+///
+/// # Endpoint delegation
+/// Each runtime has its own storage. After delegation, the new holder opens the
+/// same logical session, role and lane through its own transport. It must be able
+/// to receive earlier accepted frames as well as new ones, preserving FIFO and
+/// replay exclusion across holders. Transport buffers and [`Self::requeue`]
+/// must keep unread frames available to that holder.
+///
+/// Across machines, this can use a stable network inbox or forwarding that keeps
+/// unread frames in order when the destination changes. The transport implements
+/// this routing. Passing an endpoint transfers its protocol continuation, rather
+/// than a Rust address or a socket.
 pub trait Transport {
     /// Send handle, which may borrow storage from this transport for `'a`.
     ///
@@ -398,43 +377,32 @@ pub trait Transport {
     where
         Self: 'a;
 
-    /// Return the physical resource's sole initial Endpoint issuer.
+    /// Return the binding used to create this resource's first endpoint.
     ///
-    /// Only attachment of a logical role carried as an Endpoint payload calls
-    /// this method. Ordinary wire-only roles do not require a binding. A
-    /// transport without the binding cannot issue that initial resource view;
-    /// it can still receive an Endpoint through the projected choreography.
+    /// Called when attaching the initial endpoint of a role that the protocol
+    /// can delegate. Ordinary message-only roles do not need a binding.
+    /// Returning `None` prevents initial attachment of a delegated role, but
+    /// still allows receiving that endpoint through the protocol.
     ///
-    /// All handles and runtime instances for the same exclusive resource must
-    /// return the same durable authority, including when its logical role or
-    /// SessionId differs. The physical owner establishes that identity at the
-    /// binding's construction boundary. A fresh transport or runtime does not
-    /// replenish an issued binding. This method supplies identity, never a
-    /// branch choice, current holder, or continuation position.
-    /// `session` lets an integration select different physical resources with
-    /// the same role number. Aliases of one resource must still return the same
-    /// binding across sessions; the session does not renew issuance authority.
+    /// Use `session` and `role` to select the physical resource. All aliases of
+    /// one resource must return the same [`EndpointBinding`], across runtimes
+    /// and sessions. Distinct resources can have separate bindings even when
+    /// their role numbers match. Starting a session does not renew a used binding.
     fn initial_endpoint_binding(&self, _session: SessionId, _role: u8) -> Option<&EndpointBinding> {
         None
     }
 
-    /// Open Tx/Rx handles bound to the lifetime of this transport reference.
-    /// Their internal borrows may last for the handle's lifetime. Each poll or
-    /// cancellation separately borrows that handle for only its own operation;
-    /// it does not lend a reference for the handle's internal lifetime.
+    /// Open handles for the role, session and lane in `port`.
     ///
-    /// `port` carries the projected role/session/lane fact for the returned Tx/Rx
-    /// handles. Carriers backed by a shared physical medium must preserve this
-    /// lane in frame metadata and demultiplex received frames before returning
-    /// payload bytes to the endpoint; framed carriers attach observed metadata
-    /// to the same [`ReceivedFrame`] value as the payload.
+    /// Handles may borrow storage for `'a`. Each poll or cancellation borrows
+    /// the handle separately for that call. On a shared medium, route incoming
+    /// frames to the matching port and return their headers with their payloads.
     fn open<'a>(&'a self, port: PortOpen) -> (Self::Tx<'a>, Self::Rx<'a>);
 
     /// Progress a send operation using the provided Tx handle.
     ///
-    /// Transport implementations select any carrier-local framing or protection
-    /// state internally. Hibana passes descriptor-checked bytes; it does not
-    /// expose protocol-specific transport phases as core concepts.
+    /// `Ready(Ok(()))` accepts one frame. Choose framing and protection in the
+    /// transport. The runtime has already checked the requested protocol step.
     ///
     /// After returning [`Poll::Pending`], implementations may retain progress in
     /// `tx` but must not retain the payload pointer. A later poll provides the
@@ -450,28 +418,21 @@ pub trait Transport {
 
     /// Cancel any transport-owned pending send state bound to `tx`.
     ///
-    /// Public endpoint send futures are affine and may be dropped after
-    /// `poll_send` parks. When a transport stages frame state inside `Tx` or
-    /// transport-owned shared state before returning `Poll::Pending`, it must
-    /// discard that staged state here so cancelled payload bytes cannot be
-    /// flushed by a subsequent operation. If carrier bytes have already become
-    /// irrevocable, cancellation must retire that logical direction so a later
-    /// send reports a terminal [`TransportError`]; it must not resume after a
-    /// partial frame or publish the cancelled frame.
+    /// Called when a pending send future is dropped. Discard staged bytes so a
+    /// later send cannot transmit them. If some bytes can no longer be withdrawn,
+    /// disable the logical send direction for the rest of the run. Later sends
+    /// must return a terminal [`TransportError`] rather than resume a partial or
+    /// cancelled frame.
     /// The mutable handle borrow ends when this call returns.
     fn cancel_send(&self, tx: &mut Self::Tx<'_>);
 
     /// Progress a receive operation using the provided Rx handle.
     ///
-    /// The returned [`ReceivedFrame`] view is borrowed from the
-    /// transport-managed receive slab and carries any carrier-observed frame
-    /// header together with the payload. Borrowing ties the lifetime `'a` to
-    /// this mutable borrow of `rx`, independently of `Rx`'s internal lifetime,
-    /// allowing higher layers such as [`crate::Endpoint`]
-    /// to enforce that the view is released before the next receive.
-    /// Implementations should store the current waker whenever the poll parks so
-    /// that hardware interrupts or other I/O notifications can wake the task
-    /// directly instead of relying on polling loops.
+    /// Return payload bytes and their header in one borrowed [`ReceivedFrame`].
+    /// Its lifetime `'a` is tied to this call's borrow of `rx`, separately from
+    /// `Rx`'s internal storage lifetime. The caller must release the frame before
+    /// using that receive handle again. On `Pending`, store the current waker so
+    /// an I/O event can wake the task.
     fn poll_recv<'a>(
         &'a self,
         rx: &'a mut Self::Rx<'_>,
@@ -480,11 +441,9 @@ pub trait Transport {
 
     /// Requeue the most recent frame obtained from [`poll_recv`](Transport::poll_recv).
     ///
-    /// Implementations must make that frame observable again by a later
-    /// `poll_recv` on the same `Rx` handle. An empty requeue violates the
-    /// endpoint restore contract: higher layers call this only after a
-    /// descriptor-checked operation consumed transport state that it ultimately
-    /// could not commit.
+    /// The runtime calls this after taking a frame without advancing the local
+    /// protocol. Make that same frame available to the next receive on this
+    /// `Rx`, before later frames. Returning it again must not duplicate a message.
     fn requeue<'a>(&self, rx: &mut Self::Rx<'a>) -> Result<(), TransportError>;
 }
 

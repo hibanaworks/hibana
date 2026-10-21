@@ -48,11 +48,9 @@ enum ResolverErrorKind {
     Cluster(ClusterError),
 }
 
-/// Semantic fail-closed error returned by resolver setup and dynamic resolvers.
+/// Error when registering a decision function or selecting a branch.
 ///
-/// A resolver error is diagnostic evidence. It rejects the resolver step and
-/// does not grant route authority to transport hints, payload labels, or caller
-/// alternate route logic.
+/// A rejected decision leaves the protocol unchanged.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct ResolverError {
     pub(crate) op: ResolverOp,
@@ -178,12 +176,11 @@ impl<'cfg> ErasedResolverRef<'cfg> {
     }
 }
 
-/// Resolver-id typed dynamic resolver handle.
+/// A local decision function and the application state it borrows.
 ///
-/// The const `RESOLVER_ID` is part of the public handle type so a resolver for one
-/// choreography resolver point cannot be registered at another resolver point by
-/// accident. The cluster table stores an erased copy internally after
-/// `set_resolver::<RESOLVER_ID>(...)` has checked the type.
+/// Register this value with [`crate::runtime::RendezvousKit::set_resolver`] for
+/// choices marked with `.resolve::<RESOLVER_ID>()`. The ID is part of the type,
+/// so registration can check that it matches the choice.
 #[derive(Clone, Copy)]
 pub struct ResolverRef<'cfg, const RESOLVER_ID: u16> {
     inner: ErasedResolverRef<'cfg>,
@@ -212,11 +209,9 @@ impl<'cfg, const RESOLVER_ID: u16> ResolverRef<'cfg, RESOLVER_ID> {
         }
     }
 
-    /// Decide through this typed resolver without erasing its resolver id.
+    /// Call the decision function now and return its selected branch.
     ///
-    /// This is for typed resolver owners and resolver combinators. It does not
-    /// commit route/session progress. It does not expose the erased storage
-    /// handle.
+    /// Calling the function alone does not advance a session's protocol.
     #[inline]
     pub fn decide(self) -> Result<DecisionArm, ResolverError> {
         self.inner.resolve_decision()

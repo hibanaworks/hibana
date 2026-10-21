@@ -127,12 +127,12 @@ pub const fn seq<
     Program::new()
 }
 
-/// Construct a binary route.
+/// Construct a choice between two protocol fragments.
 ///
-/// Intrinsic routes derive branch authority from first-visible endpoint
-/// evidence; their arms must agree on the first-visible controller. Resolved
-/// routes use [`ResolverRef::decide`](crate::runtime::resolver::ResolverRef::decide) as
-/// branch authority instead.
+/// Both branches must have the same choosing role. By default, the first
+/// distinguishable message identifies the branch. Use [`Program::resolve`] to
+/// select it with a registered local function instead. Projection checks that
+/// other participants can learn the choice before acting on it.
 pub const fn route<
     Left: crate::global::program::Projectable,
     Right: crate::global::program::Projectable,
@@ -157,11 +157,12 @@ pub const fn par<
 }
 
 impl<LeftSteps, RightSteps> Program<Route<LeftSteps, RightSteps>> {
-    /// Attach an explicit route resolver to this route site.
+    /// Select this choice with a registered local function, called a resolver.
     ///
-    /// This is for routes decided by external local state rather than by the
-    /// first protocol message in each arm. The resolver is attached to the
-    /// route site itself.
+    /// Register the function under `RESOLVER_ID` with
+    /// [`set_resolver`](crate::runtime::RendezvousKit::set_resolver). It can use
+    /// application state to choose a branch. Other participants still need
+    /// protocol messages to learn that choice.
     pub const fn resolve<const RESOLVER_ID: u16>(
         self,
     ) -> Program<Resolve<Route<LeftSteps, RightSteps>, RESOLVER_ID>> {

@@ -136,8 +136,8 @@ impl RingPort<'_> {
 /// An iterator over the runtime's bounded diagnostic ring.
 ///
 /// It starts at the oldest retained event and can read events appended later.
-/// Events overwritten before they are read are skipped. This is diagnostic
-/// observation, not a complete execution log or protocol authority.
+/// Events overwritten before they are read are skipped. Use the retained
+/// events to diagnose recent operations.
 pub struct TapPort<'a> {
     ring: RingPort<'a>,
 }

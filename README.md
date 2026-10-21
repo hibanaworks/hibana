@@ -13,13 +13,13 @@
 
 [日本語](README.ja.md)
 
-Hibana is a Rust library for choreographic programming. You describe who sends
-what to whom, and in what order, in a shared protocol. Participants can be tasks
-in one program or programs on different machines.
+Hibana is a Rust library for describing and checking multiparty communication.
+You describe who sends what to whom, and in what order, in a shared protocol.
+Participants can be tasks in one program or programs on different machines.
 
-You write each participant's Rust code. Hibana derives its communication steps
-from the shared protocol and checks its sends and receives against those steps
-at runtime.
+Hibana uses multiparty session type (MPST) projection to derive each
+participant's local protocol. You write the participant functions in Rust.
+Hibana checks their sends and receives against that protocol at runtime.
 
 The core uses `no_std`, requires no heap allocator, and runs on stable Rust 1.95
 or newer. The runtime uses memory supplied by your program.
@@ -105,19 +105,19 @@ Protocols can also describe choices, independent communication in parallel,
 and repetition. Participant code uses the same `send`, `recv`, and `offer`
 operations.
 
-## Passing an Endpoint
+## Passing an endpoint
 
-A message can carry an Endpoint. Sending it moves
+A message can carry an `Endpoint`. Sending it moves
 the right to use that logical role. The receiver continues the same protocol
 at its current position.
 
-The Endpoint stays in the same session run. The sender and receiver are roles
+The endpoint stays in the same session run. The sender and receiver are roles
 named in the global protocol. To choose among workers at runtime, put those
 alternatives in a `g::route`. Passing a channel from an unrelated session is
 not supported.
 
-For example, `OWNER` lends its `DB` Endpoint to `WORKER`. The worker sends a
-request as `DB`, receives the service's reply, and returns the Endpoint:
+For example, `OWNER` lends its `DB` endpoint to `WORKER`. The worker sends a
+request as `DB`, receives the service's reply, and returns the endpoint:
 
 ```rust
 use hibana::{g, Endpoint};
@@ -159,15 +159,15 @@ worker.send::<Loan<'_>>(db).await?;
 Rust prevents use of the moved value. Hibana checks the transfer, the holder
 and the continuation against the global protocol. The resource integration
 supplies one initial `EndpointBinding`; receivers do not create another one.
-Sending an Endpoint does not send its Rust address.
+Sending an endpoint does not send its Rust address.
 
 Dropping an unfinished owned-send future, including when a timeout in `tokio::select!` drops
-it, abandons the Endpoint and faults the local run. It does not return the
-Endpoint to the sender. Put a recoverable timeout decision in the protocol.
+it, abandons the endpoint and faults the local run. It does not return the
+endpoint to the sender. Put a recoverable timeout decision in the protocol.
 
 The [complete Tokio example](examples/endpoint_delegation.rs) also uses `g::par`
 and `db.par()` to send an audit record while a query waits for its reply.
-It supplies separate runtimes and a shared in-memory carrier. Run it in this
+It supplies separate runtimes and a shared in-memory transport. Run it in this
 checkout with `cargo run --locked --example endpoint_delegation`.
 
 ## Using it over QUIC
@@ -194,8 +194,13 @@ correctness of its QUIC or TLS implementation.
 
 In multiparty session types (MPST), a **global protocol** describes communication
 among all participants. A **role** is a participant's logical identity in that
-protocol. In Hibana, a participant can hold several roles through their Endpoints.
+protocol. In Hibana, a participant can hold several roles through their endpoints.
 **Endpoint projection** derives a **local protocol** for each role.
+
+In [choreographic programming](https://arxiv.org/abs/2102.10698), projection
+generates participant programs from a choreography. Hibana projects the
+communication protocol into data. You write the participant functions and
+their computations, and the runtime checks their communication.
 
 For the exchange above, projection gives:
 
@@ -210,8 +215,14 @@ its remaining operations.
 
 Hibana began with
 [affine multiparty session types (AMPST)](https://arxiv.org/abs/2204.13464).
-Here, *affine* means that a communication resource can be used at most once.
-It may be dropped without completing the protocol.
+Here, *affine ownership* means that an endpoint cannot be copied and may be
+moved or dropped before the protocol ends. Each step can complete at most once
+per repetition. The same endpoint can execute successive steps.
+
+AMPST includes propagation of cancellation to other participants. Hibana records
+faults locally and relies on the transport to make closure observable to peers.
+The paper's cancellation-termination result does not automatically apply to a
+Hibana transport.
 
 The AMPST implementation, MultiCrusty, represents local session types as Rust
 types. As Hibana's protocols grew, representing every remaining communication
@@ -251,17 +262,12 @@ communication channels can progress independently. The transport API calls
 these channels **lanes**.
 
 Projection also includes the steps of roles that the participant can receive
-as Endpoints. Its runtime keeps one shared progress record for those roles.
-Each Endpoint gives access to one role within that record.
+as endpoints. Its runtime keeps one shared progress record for those roles.
+Each endpoint gives access to one role within that record.
 
 Projection checks whether roles can learn the choices they need to follow and
 whether parallel operations can be distinguished. Protocols that fail these
 checks are rejected during compilation.
-
-Projection generates communication data, not participant functions. You write
-the functions and their computations in Rust. The global protocol is checked
-at compile time. Each function's sends and receives are checked against its
-local protocol at runtime.
 
 ### Selection, branching, and knowledge of choice
 
@@ -287,13 +293,13 @@ At runtime, the received frame identifies a permitted branch. `offer()` returns
 a `RouteBranch`, which lets the participant inspect the selected branch without
 advancing the protocol. `label()` returns that branch's first logical message
 label. The branch's first successful send or receive advances the protocol.
-Reading or dropping the
-preview does not.
+Reading or dropping the preview does not.
 
-Adding `.resolve::<ID>()` to a choice connects it to an application decision
-function. This changes how the choice is made, but does not bypass other roles'
-projection checks or send the decision to another machine. The application or
-deployment must supply any agreement needed before a choice message arrives.
+Adding `.resolve::<ID>()` to a choice connects it to a **resolver**, a local
+application function that selects a branch. This changes how the choice is
+made, but does not bypass other roles' projection checks or send the decision
+to another machine. The application or deployment must supply any agreement
+needed before a choice message arrives.
 
 ### Parallel communication and repetition
 
@@ -455,9 +461,9 @@ message.
 Frame validation rejects structural mismatches. It does not establish data
 integrity or detect every replay. Ordered messages can reuse a frame label,
 and schema IDs are not sent in the header. For example, a `bool` encoded as
-`[1]` is also a valid `u8`. If the carrier duplicates that bool frame before a
+`[1]` is also a valid `u8`. If the transport duplicates that bool frame before a
 following u8 message with the same wire label, the u8 receive can accept `1`.
-It cannot recover the intended value from these bytes. The carrier must provide
+It cannot recover the intended value from these bytes. The transport must provide
 replay exclusion and any sequence numbers, authentication or end-to-end
 protection required by the deployment.
 
@@ -478,9 +484,10 @@ an I/O operation has exceeded its deadline and reports `TransportError::Deadline
 The other transport errors are `Offline`, `Capacity`, and `Failed`.
 
 These transport errors stop the current session run in the runtime that
-observes them. The endpoint operation returns `EndpointError`. The runtime preserves the first fault and wakes local
-waiters. The failed operation does not advance the protocol. There is no
-automatic retry, deadline extension, or switch to another branch. The current
+observes them. The endpoint operation returns `EndpointError`. The runtime
+preserves the first fault and wakes local waiters. The failed operation does
+not advance the protocol. There is no automatic retry, deadline extension, or
+switch to another branch. The current
 run cannot continue in that runtime after such an error. Accepted transfers
 are not rolled back. Other runtimes learn of a failure through their transport.
 
@@ -534,12 +541,12 @@ Hibana does not perform a handshake to establish this agreement.
 Reusing a `SessionId` requires fresh transport state that cannot expose frames
 from its previous run. Changing the participant set or protocol requires a
 fresh session. Address migration can stay within a run if the transport
-preserves its guarantees. An Endpoint payload can transfer a logical role's
+preserves its guarantees. An `Endpoint` payload can transfer a logical role's
 operation right while preserving its protocol continuation.
 
 The physical resource integration owns its sole initial `EndpointBinding`.
 All runtime instances and role aliases that can initially issue that resource
-must use the same authority. Remote holders receive the right and do not
+must use the same binding. Remote holders receive the endpoint and do not
 construct another binding. Its unsafe constructor requires the integration to enforce that
 physical uniqueness; the core cannot infer aliases between device or remote
 handles. Drop, timeout, runtime replacement and a new `SessionId` do not
@@ -552,17 +559,17 @@ resource must return the same binding across sessions. Local completion alone
 does not fence earlier remote rights or frames, so it does not renew issuance.
 
 Attach the role that initially holds the resource before attaching the resource
-Endpoint, in the same runtime and `SessionId`. The global protocol determines
+endpoint, in the same runtime and `SessionId`. The global protocol determines
 that initial holder. If its role is absent or has been dropped, attachment returns
 `AttachError` without consuming the binding.
 
-An owned `send` future takes its Endpoint payload when constructed. The old
-holder cannot use it while the send is pending. Acceptance moves authority
-to the frame, and a validated receive gives it to the receiver's runtime.
-Error or cancellation does not return the Endpoint to the sender. A deadline
-does not prove non-delivery. The carrier must preserve the logical receive
+An owned `send` future takes its `Endpoint` payload when constructed. The old
+holder cannot use it while the send is pending. Once the transport accepts the
+frame, only its receiver can obtain the endpoint by a validated receive.
+Error or cancellation does not return the endpoint to the sender. A deadline
+does not prove non-delivery. The transport must preserve the logical receive
 direction, including earlier accepted frames, across holder changes. Separate
-machines need no shared Rust memory, but their carrier must provide this
+machines need no shared Rust memory, but their transport must provide this
 receive continuity as well as FIFO, non-replay and run isolation.
 
 The runtime uses caller-supplied storage and borrowed buffers, with no heap
@@ -610,14 +617,14 @@ skip projection checks or increase the protocol's byte limits.
 
 Hibana checks each send and receive before it advances the local protocol.
 It checks the direction, peer, lane, message identity and payload format.
-Moving an Endpoint transfers the right to continue its logical role. A failed
-operation does not advance the protocol or restore a transferred Endpoint.
+Moving an endpoint transfers the right to continue its logical role. A failed
+operation does not advance the protocol or restore a transferred endpoint.
 
 The Lean models establish session fidelity, affine ownership and protocol
 progress under their stated assumptions. For accepted finite unfoldings, the
-occurrence model relates message order, source progress and the authority of
+occurrence model relates message order, source progress and the ownership of
 resources retained by the participants. It includes choices, parallel work,
-repetition and Endpoint transfers. Roles can start another repetition while
+repetition and endpoint transfers. Roles can start another repetition while
 messages from a previous repetition remain queued.
 
 Applying those results to a running system requires:
@@ -626,8 +633,8 @@ Applying those results to a running system requires:
 2. Peers agree on payload formats and use codecs that implement those formats.
 3. The transport binds messages to the right peer and direction, preserves FIFO
    order, excludes duplicates and replay, isolates session runs, and keeps
-   accepted messages available to the next Endpoint holder.
-4. Participants call the permitted operations, retain their Endpoints, futures
+   accepted messages available to the next endpoint holder.
+4. Participants call the permitted operations, retain their endpoints, futures
    and parallel borrows until completion or ordinary drop, and drive independent
    fragments concurrently when progress requires it. The executor keeps polling
    their futures.
@@ -642,7 +649,7 @@ operation nor its cancellation.
 
 Deadlines and failure detection belong to the transport. An I/O error cannot
 restore ownership or roll back a remote operation. Branch agreement also
-requires the choosing participant to follow its Endpoint. Authentication alone
+requires the choosing participant to follow its endpoint. Authentication alone
 does not prevent a participant from sending conflicting choices to different peers.
 
 [Verification](proofs/README.md) describes the models and their connection to

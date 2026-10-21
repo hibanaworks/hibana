@@ -37,7 +37,7 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     #[inline]
     /// Send the next message permitted by the local protocol.
     ///
-    /// Ordinary payloads are borrowed. An Endpoint payload moves into the send
+    /// Ordinary payloads are borrowed. An [`Endpoint`] payload moves into the send
     /// future when it is created, so the sender can no longer use that value.
     /// Cancelling or failing the send does not return the transferred right.
     /// Dropping an unfinished owned-send future faults the local session run,
@@ -70,7 +70,7 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     /// reject trailing bytes. Decoded data may borrow the receive buffer until
     /// this endpoint borrow ends.
     ///
-    /// An Endpoint payload returns the transferred role's continuation, tied to
+    /// An [`Endpoint`] payload returns the transferred role's continuation, tied to
     /// the receiving runtime rather than the temporary frame borrow. The caller
     /// can retain it while using this endpoint for other protocol operations.
     /// A rejected frame or transport error faults the local session run.

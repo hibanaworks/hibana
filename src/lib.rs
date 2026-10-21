@@ -11,9 +11,10 @@
 
 //! Choreographic programming in Rust.
 //!
-//! Describe communication once as a global protocol. Hibana projects the
-//! protocol for each role, then checks that role's sends and receives at runtime.
-//! You write the participants' computations and drive their asynchronous operations
+//! Describe communication once as a global protocol. Hibana uses multiparty
+//! session type (MPST) projection to compile local protocol data. You write each
+//! participant's Rust function, including its sends and receives. Hibana checks
+//! those operations against the local protocol at runtime. Drive the operations
 //! with an executor. Participants can run in one program or on separate machines.
 //!
 //! The core is `no_std`, has no normal dependencies and allocates no heap memory.
@@ -37,9 +38,9 @@
 //!
 //! [`g`] provides sequential composition, choice, parallel composition and
 //! repetition. Projection checks the protocol structure, ownership and branch
-//! knowledge. A role's handwritten Rust code is checked when it calls its Endpoint.
+//! knowledge. A role's handwritten Rust code is checked when it calls its endpoint.
 //!
-//! # Use an Endpoint
+//! # Use an endpoint
 //!
 //! [`Endpoint::send`] and [`Endpoint::recv`] perform the next permitted operation.
 //! [`Endpoint::offer`] previews a choice without advancing the protocol. Use
@@ -48,20 +49,26 @@
 //!
 //! [`Endpoint::par`] borrows the independent fragments of a projected parallel
 //! region. Poll their operations concurrently with your executor. The parent
-//! Endpoint is unavailable while these borrows exist.
+//! endpoint is unavailable while these borrows exist.
 //!
-//! Ordinary payloads are borrowed for sends. An Endpoint payload is moved into
+//! Ordinary payloads are borrowed for sends. An [`Endpoint`] payload is moved into
 //! the send future, and its receiver gets the same logical role's continuation.
 //! The sender cannot use the moved value. Dropping or failing the send does not
 //! restore its ownership.
+//!
+//! Ownership is affine: an endpoint can be moved or dropped, but cannot be
+//! copied. It can execute successive protocol steps, each at most once per
+//! repetition. Remote participants observe cancellation through the transport.
+//! This differs from the cancellation propagation algorithm in
+//! [affine multiparty session types (AMPST)](https://arxiv.org/abs/2204.13464).
 //!
 //! The runnable examples show complete setup and participant code:
 //!
 //! - [`ping_pong`](https://github.com/hibanaworks/hibana/blob/v0.10.0/examples/ping_pong.rs)
 //!   sends a number and returns its successor.
 //! - [`endpoint_delegation`](https://github.com/hibanaworks/hibana/blob/v0.10.0/examples/endpoint_delegation.rs)
-//!   lends an Endpoint to another runtime, performs independent work in parallel,
-//!   and returns the Endpoint to its original holder.
+//!   lends an endpoint to another runtime, performs independent work in parallel,
+//!   and returns the endpoint to its original holder.
 //!
 //! # Set up storage and transport
 //!
@@ -71,9 +78,9 @@
 //! The transport implements [`runtime::transport::Transport`]. Custom message
 //! formats use [`runtime::wire::WireEncode`] and [`runtime::wire::WirePayload`].
 //!
-//! For Endpoint delegation, the resource integration supplies one
+//! For endpoint delegation, the resource integration supplies one
 //! [`runtime::transport::EndpointBinding`]. Attach the initial holder's role
-//! before attaching that resource's Endpoint, in the same runtime and session.
+//! before attaching that resource's endpoint, in the same runtime and session.
 //! The transport must keep accepted messages available across holder changes.
 //!
 //! # Errors and guarantees

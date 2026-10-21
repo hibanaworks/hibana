@@ -68,7 +68,9 @@ impl DiagnosticEvent {
         }
     }
 }
-/// Structured explanation of a rejection. Missing witnesses stay `None`.
+/// Explains why projection rejected a protocol.
+///
+/// Fields are `None` when the check cannot locate the corresponding source detail.
 ///
 /// For a lane conflict, `first` and `second` are the conflicting receives;
 /// `scope` is present when the second receive occurs on rolled reentry.

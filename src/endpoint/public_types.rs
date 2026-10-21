@@ -4,7 +4,7 @@
 /// choice without advancing it, and [`Endpoint::par`] borrows independent parts
 /// for concurrent execution.
 ///
-/// An Endpoint cannot be cloned. It can be moved as a message payload when the
+/// An endpoint cannot be cloned. It can be moved as a message payload when the
 /// global protocol permits, transferring the same role's continuation. A failed
 /// or cancelled send never returns that transferred right to the sender.
 ///

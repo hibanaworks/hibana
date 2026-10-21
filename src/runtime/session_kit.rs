@@ -158,10 +158,9 @@ where
         self.base.kit.enter_attached(self.base.rv, sid, program)
     }
 
-    /// Install a resolver for an explicit route resolution site on this role.
+    /// Register a local decision function for this role's protocol choices.
     ///
-    /// Dynamic resolution exists only where projection produced a matching
-    /// resolver site.
+    /// The protocol must contain a choice marked with `.resolve::<RESOLVER>()`.
     #[inline]
     pub fn set_resolver<const ROLE: u8, const RESOLVER: u16>(
         &self,

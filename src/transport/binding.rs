@@ -1,18 +1,17 @@
-//! One initial issuance authority at the physical resource boundary.
+//! Creating the first endpoint of an exclusive resource.
 use core::cell::Cell;
 
-/// Sole initial Endpoint issuer for one exclusive resource binding.
+/// Permission to create the first endpoint of a delegated role.
 ///
-/// The resource integration owns this value, independently of any session kit,
-/// runtime, role number, or transport handle. Every transport exposing the same
-/// resource returns a reference to this same authority. The runtime reserves it
-/// before attachment and consumes it only when the initial view is published.
-/// Moving the Endpoint, dropping it, losing delivery, or dropping a runtime
-/// never replenishes the authority. Subsequent owners arise only from checked
-/// owned receives in the choreography.
+/// The code that controls access to a physical resource creates one binding.
+/// Every transport that can create an endpoint for that resource must return
+/// the same binding from [`super::Transport::initial_endpoint_binding`], across
+/// all runtimes, role numbers and sessions.
 ///
-/// This is integration metadata, not a current-owner table or a second protocol
-/// cursor. It records no holder, branch, continuation, or message progress.
+/// The binding is consumed once, when the first endpoint is created. Failure
+/// before that point leaves it available. Later owners receive the endpoint
+/// through the global protocol. Dropping an endpoint or runtime, losing a
+/// message, or starting another session does not make the binding available again.
 pub struct EndpointBinding {
     issuance: Cell<InitialIssuance>,
 }
@@ -25,20 +24,19 @@ enum InitialIssuance {
 }
 
 impl EndpointBinding {
-    /// Establish the unique initial authority for an exclusive physical resource.
+    /// Create the binding for an exclusive physical resource.
     ///
     /// # Safety
-    /// The caller must own the resource's exclusive operation boundary. Every
-    /// integration path to that resource, including other runtime instances and
-    /// role aliases, must use this same binding. No other live binding or
-    /// untracked operation right may authorize the same resource. This binding
-    /// must outlive every local or remote right it issues. Replacing it requires
-    /// fencing all earlier rights and accepted frames at the physical boundary.
-    /// Neither a timeout nor destruction of a local runtime establishes a fence.
+    /// The caller must control all access to the resource. Every path that can
+    /// create its endpoint must use this binding, including other runtimes and
+    /// role aliases. The resource must also reject operations that bypass its
+    /// endpoint. This binding must outlive all local and remote endpoints it
+    /// creates, including endpoints in pending or accepted messages.
     ///
-    /// The constructor is an integration trust boundary because Rust cannot
-    /// infer whether two file, device, or remote-service handles name the same
-    /// physical resource. Ordinary Endpoint users do not construct bindings.
+    /// Before replacing the binding, the caller must make all earlier endpoints
+    /// and accepted messages unusable at the resource. A timeout or local runtime
+    /// drop alone cannot establish this. Rust cannot determine whether two file,
+    /// device or remote-service handles refer to the same physical resource.
     pub const unsafe fn new() -> Self {
         Self {
             issuance: Cell::new(InitialIssuance::Available),

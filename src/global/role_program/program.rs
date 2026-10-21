@@ -3,7 +3,7 @@ use super::{RoleProgramView, private};
 /// The compiled local protocol for `ROLE`.
 ///
 /// Created by [`project`] and passed to [`crate::runtime::RendezvousKit::enter`].
-/// It describes permitted communication; the attached Endpoint tracks execution.
+/// It describes permitted communication; the attached endpoint tracks execution.
 pub struct RoleProgram<const ROLE: u8> {
     _private: (),
     image: &'static crate::global::role_program::RoleImageRef,
@@ -41,7 +41,7 @@ impl<const ROLE: u8> RoleProgramView<ROLE> for RoleProgram<ROLE> {
 /// Projection validates associated constants during code generation. Use
 /// `cargo build` or `cargo test` to check a changed choreography; `cargo check`
 /// alone need not evaluate this validation. [`crate::g::diagnose`] exposes a
-/// projection diagnostic without attaching an Endpoint. Participant functions
+/// projection diagnostic without attaching an endpoint. Participant functions
 /// still have their sends and receives checked at runtime.
 pub fn project<const ROLE: u8>(
     program: &impl crate::global::program::Projectable,

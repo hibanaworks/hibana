@@ -21,7 +21,10 @@ pub mod tap {
     };
 }
 
-/// Register application decisions for protocol choices.
+/// Register local functions that select branches of protocol choices.
+///
+/// A resolver is such a function. Connect it to a choice with
+/// [`resolve`](crate::g::Program::resolve).
 pub mod resolver {
     pub use crate::session::cluster::core::{DecisionArm, ResolverError, ResolverRef};
 }
