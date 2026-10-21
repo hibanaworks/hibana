@@ -51,6 +51,10 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     /// `roll` scopes keep their own boundaries. A fragment can be borrowed again
     /// when it reaches a nested parallel phase.
     ///
+    /// Array positions identify fragments; variable names do not select them.
+    /// The fragment types do not encode their individual protocols. An
+    /// operation not permitted by its fragment is rejected at runtime.
+    ///
     /// This operation does not perform I/O, advance the protocol, choose a
     /// branch, or schedule work. Poll the resulting operations concurrently with
     /// your executor. A single-threaded executor is sufficient.

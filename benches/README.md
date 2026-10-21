@@ -48,3 +48,19 @@ target changes require reviewing the new profiles, without automatically
 increasing the limits. The budgets detect cost growth in these workloads.
 They do not establish constant-time execution for arbitrary protocols.
 Instruction counts and elapsed time are separate measurements.
+
+Run `cargo +stable bench --locked --bench roll_cost` to measure repeated
+request/reply communication. The roll body contains 1, 8, or 32 round trips.
+Every sample executes the same 128 round trips (512 endpoint operations),
+completing 128, 16, or 4 visits respectively. Request and reply labels are reused
+at every position in the body, exercising the search among matching messages.
+Projection, attachment and
+destruction are outside the timer. Payload assertions remain enabled, and
+Tokio polls both participants concurrently on its current-thread executor.
+
+`HIBANA_PERF_BODY` (`1`, `8`, `32`, or `all`) and `HIBANA_PERF_SAMPLES` select
+inputs. The default is three warmups and 30 measured samples per body size.
+Callgrind windows use the same boundaries as the timer; with one measured
+sample their totals cover 2,048 endpoint operations. These workloads do not
+exercise nested repetition, branching or endpoint delegation, and do not yet
+have an instruction-count budget.
