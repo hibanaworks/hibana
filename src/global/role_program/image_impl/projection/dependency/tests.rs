@@ -178,10 +178,78 @@ fn assert_cursor_matches_reference<const E: usize>(eff_list: &EffList<E>, role: 
 }
 
 #[test]
-fn reentrant_route_parallel_dependencies_match_the_direct_definition() {
+fn reentrant_route_parallel_dependencies_preserve_source_order_in_each_alternative() {
+    use crate::g::ProgramShape;
     let source = ProgramSourceData::<32>::lower::<ReentrantRoute>();
-    assert_cursor_matches_reference(source.eff_list(), 0);
-    assert_cursor_matches_reference(source.eff_list(), 1);
+    let effects = source.eff_list();
+    let markers = effects.scope_markers();
+    let enter = (0..markers.len())
+        .find(|&index| {
+            markers.at(index).event.is_primary_enter()
+                && matches!(markers.at(index).scope_id.kind(), Some(ScopeKind::Route))
+        })
+        .unwrap();
+    let scope = markers.at(enter).scope_id;
+    let [(start, split), (_, end)] = route_arm_ranges_from_first_enter(markers, enter);
+    for role in 0..=1 {
+        let scopes = ScopeFacts::new(effects);
+        let rows: std::vec::Vec<_> = (0..effects.len())
+            .filter(|&event| {
+                let atom = effects.atom_at(event);
+                atom.from == role || atom.to == role
+            })
+            .collect();
+        let mut cursor = DependencyCursor::new(effects, &scopes, LocalRows::Role(role));
+        for (target, &event) in rows.iter().enumerate() {
+            let lane = effects.atom_at(event).lane;
+            let actual = cursor.next(event, lane, target).to_dependency(rows.len());
+            let reference =
+                reference_dependency(effects, role, event, lane, target).to_dependency(rows.len());
+            for (arm, (low, high)) in [(0, (start, split)), (1, (split, end))] {
+                if !(low..high).contains(&event) {
+                    continue;
+                }
+                let predecessors = |dependency: Option<LocalDependency>| {
+                    rows[..target]
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(row, &before)| {
+                            if !(low..high).contains(&before) {
+                                return None;
+                            }
+                            let depends = dependency.is_some_and(|dependency| {
+                                let enabled = match dependency.conflict() {
+                                    LocalConflict::Unconditional => true,
+                                    LocalConflict::SharedRoute => false,
+                                    LocalConflict::RouteArm {
+                                        scope: selected,
+                                        arm: chosen,
+                                    } => {
+                                        assert_eq!(selected, scope);
+                                        chosen == arm
+                                    }
+                                };
+                                enabled && dependency.start() <= row && row < dependency.end()
+                            });
+                            (effects.atom_at(before).lane == lane || depends).then_some(before)
+                        })
+                        .collect::<std::vec::Vec<_>>()
+                };
+                let expected: std::vec::Vec<_> = rows[..target]
+                    .iter()
+                    .copied()
+                    .filter(|&before| {
+                        (low..high).contains(&before)
+                            && ReentrantRoute::SOURCE_NODE.before(before, event)
+                    })
+                    .collect();
+                // An inactive branch's rows may be omitted or retained behind
+                // a guard. Compare their selected predecessors, not encodings.
+                assert_eq!(predecessors(actual), expected);
+                assert_eq!(predecessors(reference), expected);
+            }
+        }
+    }
 }
 
 #[test]

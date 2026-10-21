@@ -2,7 +2,7 @@ use super::{LocalRows, ScopeFacts, local_step_range_for_eff_range, scope_markers
 use crate::global::{
     const_dsl::{EffList, ScopeEvent, ScopeId, ScopeKind, route_arm_ranges_from_first_enter},
     role_program::LANE_DOMAIN_SIZE,
-    typestate::{LocalDependency, PackedLocalDependency},
+    typestate::{LocalConflict, LocalDependency, PackedLocalDependency},
 };
 
 #[cfg(all(test, hibana_repo_tests))]
@@ -56,9 +56,9 @@ impl CandidateKey {
 }
 
 #[derive(Clone, Copy)]
-struct ParallelInput {
+struct CompositionInput {
     barrier: CandidateKey,
-    outer_floor: usize,
+    outer_floor: u16,
 }
 
 pub(in crate::global::role_program::image_impl) struct DependencyCursor<'a, const E: usize> {
@@ -70,7 +70,7 @@ pub(in crate::global::role_program::image_impl) struct DependencyCursor<'a, cons
     previous_eff: Option<(usize, usize)>,
     branch_barrier: CandidateKey,
     branch_floor: usize,
-    parallel_inputs: [Option<ParallelInput>; ScopeId::LOCAL_CAPACITY as usize],
+    inputs: [[Option<CompositionInput>; ScopeId::LOCAL_CAPACITY as usize]; 2],
     lane_candidates: [CandidateKey; LANE_DOMAIN_SIZE],
     has_parallel: bool,
 }
@@ -91,7 +91,7 @@ impl<'a, const E: usize> DependencyCursor<'a, E> {
             previous_eff: None,
             branch_barrier: CandidateKey::NONE,
             branch_floor: 0,
-            parallel_inputs: [None; ScopeId::LOCAL_CAPACITY as usize],
+            inputs: [[None; ScopeId::LOCAL_CAPACITY as usize]; 2],
             lane_candidates: [CandidateKey::NONE; LANE_DOMAIN_SIZE],
             has_parallel: scope_markers_contain_kind(markers, ScopeKind::Parallel),
         }
@@ -129,6 +129,12 @@ impl<'a, const E: usize> DependencyCursor<'a, E> {
                 return;
             }
         }
+        let kind = Self::composition_kind(enter.scope_id);
+        let input = self.inputs[kind][enter.scope_id.local_ordinal() as usize]
+            .take()
+            .expect("composition exit without input");
+        self.branch_floor = input.outer_floor as usize;
+        self.branch_barrier = input.barrier;
         let row =
             local_step_range_for_eff_range(self.eff_list, enter.offset(), exit_eff, self.rows);
         if row.is_absent_or_zero_len() {
@@ -137,10 +143,47 @@ impl<'a, const E: usize> DependencyCursor<'a, E> {
         let candidate = CandidateKey::new(enter_index, row.start(), row.end());
         self.update_lane_candidates(enter.offset(), exit_eff, candidate);
 
-        // A join covers the whole composition. Route-row conflicts exclude
-        // the unchosen arm; retaining only its last par would lose the other
-        // arm's dependencies after the route. Parallel splits restore input.
+        // The join covers both arms. Their selected rows supply the preceding
+        // work; each arm starts from the composition's saved input.
         self.branch_barrier = candidate;
+    }
+
+    const fn composition_kind(scope: ScopeId) -> usize {
+        match scope.kind() {
+            Some(ScopeKind::Parallel) => 0,
+            Some(ScopeKind::Route) => 1,
+            _ => crate::invariant(),
+        }
+    }
+
+    const fn enter_composition(&mut self, index: usize, local_step: usize) {
+        let marker = self.eff_list.scope_markers().at(index);
+        let kind = Self::composition_kind(marker.scope_id);
+        let slot = marker.scope_id.local_ordinal() as usize;
+        if self.inputs[kind][slot].is_some()
+            || self.branch_floor > local_step
+            || self.branch_floor > u16::MAX as usize
+        {
+            crate::invariant();
+        }
+        if self.branch_floor < local_step {
+            self.branch_barrier =
+                self.branch_barrier
+                    .later(CandidateKey::new(index, self.branch_floor, local_step));
+        }
+        self.inputs[kind][slot] = Some(CompositionInput {
+            barrier: self.branch_barrier,
+            outer_floor: self.branch_floor as u16,
+        });
+        self.branch_floor = local_step;
+    }
+
+    const fn start_sibling(&mut self, scope: ScopeId, local_step: usize) {
+        self.branch_barrier = self.inputs[Self::composition_kind(scope)]
+            [scope.local_ordinal() as usize]
+            .expect("composition sibling without input")
+            .barrier;
+        self.branch_floor = local_step;
     }
 
     const fn process_boundaries_through(&mut self, current_eff: usize, local_step: usize) {
@@ -167,46 +210,23 @@ impl<'a, const E: usize> DependencyCursor<'a, E> {
                 while index < self.marker_index {
                     let marker = markers.at(index);
                     if matches!(marker.scope_id.kind(), Some(ScopeKind::Parallel)) {
-                        let slot = marker.scope_id.local_ordinal() as usize;
                         match (pass, marker.event) {
-                            (0, ScopeEvent::Exit) => {
-                                let input = self.parallel_inputs[slot]
-                                    .take()
-                                    .expect("parallel exit without input");
-                                self.branch_floor = input.outer_floor;
-                                self.process_join(index);
-                            }
+                            (0, ScopeEvent::Exit) => self.process_join(index),
                             (1, ScopeEvent::Split) => {
-                                self.branch_barrier = self.parallel_inputs[slot]
-                                    .expect("parallel split without input")
-                                    .barrier;
-                                self.branch_floor = local_step;
+                                self.start_sibling(marker.scope_id, local_step);
                             }
                             (2, ScopeEvent::Enter(_)) => {
-                                if self.parallel_inputs[slot].is_some()
-                                    || self.branch_floor > local_step
-                                {
-                                    crate::invariant();
-                                }
-                                // Share only the sequential prefix, excluding enclosing siblings.
-                                if self.branch_floor < local_step {
-                                    self.branch_barrier = self.branch_barrier.later(
-                                        CandidateKey::new(index, self.branch_floor, local_step),
-                                    );
-                                }
-                                self.parallel_inputs[slot] = Some(ParallelInput {
-                                    barrier: self.branch_barrier,
-                                    outer_floor: self.branch_floor,
-                                });
-                                self.branch_floor = local_step;
+                                self.enter_composition(index, local_step);
                             }
                             _ => {}
                         }
-                    } else if pass == 0
-                        && matches!(marker.scope_id.kind(), Some(ScopeKind::Route))
-                        && matches!(marker.event, ScopeEvent::Exit)
-                    {
-                        self.process_join(index);
+                    } else if matches!(marker.scope_id.kind(), Some(ScopeKind::Route)) {
+                        match (pass, marker.event.route_arm(), marker.event) {
+                            (0, _, ScopeEvent::Exit) => self.process_join(index),
+                            (1, Some(1), _) => self.start_sibling(marker.scope_id, local_step),
+                            (2, Some(0), _) => self.enter_composition(index, local_step),
+                            _ => (),
+                        }
                     }
                     index += 1;
                 }
@@ -229,6 +249,34 @@ impl<'a, const E: usize> DependencyCursor<'a, E> {
             candidate.local_start as usize,
             candidate.local_end as usize,
         ))
+    }
+
+    const fn applicable_candidate(&self, candidate: CandidateKey, event: usize) -> CandidateKey {
+        if candidate.is_none() {
+            return candidate;
+        }
+        let markers = self.eff_list.scope_markers();
+        let mut scope = markers.at(candidate.marker_index as usize).scope_id;
+        loop {
+            match self.scopes.conflict(scope) {
+                LocalConflict::Unconditional => return candidate,
+                LocalConflict::SharedRoute => return CandidateKey::NONE,
+                LocalConflict::RouteArm { scope: parent, arm } => {
+                    let enter = markers
+                        .first_enter_index(parent)
+                        .expect("route input without entry");
+                    let [(start, split), (_, end)] =
+                        route_arm_ranges_from_first_enter(markers, enter);
+                    if start <= event
+                        && event < end
+                        && ((event < split && arm != 0) || (event >= split && arm != 1))
+                    {
+                        return CandidateKey::NONE;
+                    }
+                    scope = parent;
+                }
+            }
+        }
     }
 
     pub(in crate::global::role_program::image_impl) const fn next(
@@ -257,8 +305,10 @@ impl<'a, const E: usize> DependencyCursor<'a, E> {
         }
         self.process_boundaries_through(current_eff, local_step);
         let candidate = self
-            .branch_barrier
-            .later(self.lane_candidates[current_lane as usize]);
+            .applicable_candidate(self.branch_barrier, current_eff)
+            .later(
+                self.applicable_candidate(self.lane_candidates[current_lane as usize], current_eff),
+            );
         if !candidate.is_none() && candidate.local_end as usize > local_step {
             crate::invariant();
         }

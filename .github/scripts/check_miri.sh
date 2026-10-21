@@ -277,6 +277,12 @@ MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_t
   -- --exact
 
 MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \
+  actor-nested-parallel-reply-prefix \
+  -p hibana --lib \
+  g::role_projection::tests::source_order::nested_parallel_replies_preserve_the_prefix_in_every_alternative \
+  -- --exact
+
+MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \
   actor-resource-return-reentry \
   -p hibana --lib \
   g::role_projection::tests::return_reentry::

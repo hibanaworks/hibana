@@ -1,3 +1,4 @@
+parallelReplyImagePreservesSourceOrder : parallelReplyImage.actorOrderCheck parallelReplyChoreo = true
 sourceOrderExtraOrderRejected : sourceOrderExtraOrder.actorRowsCheck sourceOrderChoreo = true ∧
   sourceOrderExtraOrder.actorOrderCheck sourceOrderChoreo = false
 sourceOrderMissingJoinRejected : sourceOrderMissingJoin.actorRowsCheck sourceOrderChoreo = true ∧
