@@ -71,9 +71,12 @@ const EXCHANGE: Source<'static> = Source::Seq(
         &wire(DB, SERVER, 2),
         &Source::Seq(
             &wire(SERVER, DB, 3),
-            &Source::Seq(&wire(SERVER, A, 4), &transfer(A, P, 5, DB)),
+            &Source::Seq(&wire(SERVER, A, 4), &transfer(A, P, 5, DB), 2),
+            3,
         ),
+        4,
     ),
+    5,
 );
 const EXCHANGE_EVENTS: usize = EXCHANGE.event_count();
 const EXCHANGE_SYMBOLS: usize = 3 * EXCHANGE_EVENTS;
@@ -117,8 +120,10 @@ fn lane_actor_membership_is_the_union_of_both_complete_ownership_paths() {
             left: &transfer(P, A, 1, DB),
             right: &transfer(P, B, 2, DB),
             resolver: None,
+            events: 2,
         },
         &wire(DB, SERVER, 3),
+        3,
     );
     const EVENTS: usize = SOURCE.event_count();
     let mut scratch = Scratch::<{ 3 * EVENTS }, EVENTS>::new();
@@ -137,9 +142,10 @@ fn lane_actor_membership_is_the_union_of_both_complete_ownership_paths() {
 #[test]
 fn receiving_an_owned_endpoint_teaches_its_holder_before_resource_sends() {
     const SOURCE: Source<'static> = Source::Route {
-        left: &Source::Seq(&transfer(P, A, 1, DB), &wire(DB, SERVER, 3)),
-        right: &Source::Seq(&transfer(P, A, 2, DB), &wire(DB, SERVER, 4)),
+        left: &Source::Seq(&transfer(P, A, 1, DB), &wire(DB, SERVER, 3), 2),
+        right: &Source::Seq(&transfer(P, A, 2, DB), &wire(DB, SERVER, 4), 2),
         resolver: None,
+        events: 4,
     };
     const EVENTS: usize = SOURCE.event_count();
     let mut scratch = Scratch::<{ 3 * EVENTS }, EVENTS>::new();
@@ -153,10 +159,12 @@ fn a_parallel_siblings_receive_does_not_teach_an_independent_resource_send() {
     const SOURCE: Source<'static> = Source::Seq(
         &transfer(P, A, 1, DB),
         &Source::Route {
-            left: &Source::Par(&wire(P, A, 2), &wire(DB, SERVER, 4)),
-            right: &Source::Par(&wire(P, A, 3), &wire(DB, SERVER, 5)),
+            left: &Source::Par(&wire(P, A, 2), &wire(DB, SERVER, 4), 2),
+            right: &Source::Par(&wire(P, A, 3), &wire(DB, SERVER, 5), 2),
             resolver: None,
+            events: 4,
         },
+        5,
     );
     const EVENTS: usize = SOURCE.event_count();
     let mut scratch = Scratch::<{ 3 * EVENTS }, EVENTS>::new();
@@ -169,15 +177,18 @@ fn a_parallel_siblings_receive_does_not_teach_an_independent_resource_send() {
 fn a_prior_conditional_holder_can_control_the_next_resource_choice() {
     const SOURCE: Source<'static> = Source::Seq(
         &Source::Route {
-            left: &Source::Seq(&transfer(P, A, 1, DB), &wire(P, B, 2)),
-            right: &Source::Seq(&transfer(P, B, 3, DB), &wire(P, A, 4)),
+            left: &Source::Seq(&transfer(P, A, 1, DB), &wire(P, B, 2), 2),
+            right: &Source::Seq(&transfer(P, B, 3, DB), &wire(P, A, 4), 2),
             resolver: None,
+            events: 4,
         },
         &Source::Route {
             left: &wire(DB, SERVER, 5),
             right: &wire(DB, SERVER, 6),
             resolver: None,
+            events: 2,
         },
+        6,
     );
     const EVENTS: usize = SOURCE.event_count();
     let mut scratch = Scratch::<{ 3 * EVENTS }, EVENTS>::new();
@@ -190,18 +201,22 @@ fn a_prior_conditional_holder_can_control_the_next_resource_choice() {
 fn candidate_actor_unions_cannot_hide_missing_knowledge_on_an_actual_path() {
     const SOURCE: Source<'static> = Source::Seq(
         &Source::Route {
-            left: &Source::Seq(&transfer(P, A, 1, DB), &transfer(P, B, 2, AUTH)),
-            right: &Source::Seq(&transfer(P, B, 3, DB), &transfer(P, A, 4, AUTH)),
+            left: &Source::Seq(&transfer(P, A, 1, DB), &transfer(P, B, 2, AUTH), 2),
+            right: &Source::Seq(&transfer(P, B, 3, DB), &transfer(P, A, 4, AUTH), 2),
             resolver: None,
+            events: 4,
         },
         &Source::Seq(
             &Source::Route {
                 left: &wire(P, DB, 5),
                 right: &wire(P, AUTH, 6),
                 resolver: None,
+                events: 2,
             },
             &wire(A, SERVER, 7),
+            3,
         ),
+        7,
     );
     const EVENTS: usize = SOURCE.event_count();
     let mut scratch = Scratch::<{ 3 * EVENTS }, EVENTS>::new();
@@ -258,8 +273,11 @@ fn related_components_share_actor_order_without_merging_wire_endpoint_keys() {
             &Source::Seq(
                 &wire(CONTROL_SERVER, CONTROL_A, 3),
                 &transfer(A, P, 4, CROSS_DB),
+                2,
             ),
+            3,
         ),
+        4,
     );
     const EVENTS: usize = SOURCE.event_count();
     let mut scratch = Scratch::<{ 3 * EVENTS }, EVENTS>::new();
@@ -280,14 +298,22 @@ fn related_components_share_actor_order_without_merging_wire_endpoint_keys() {
 fn independent_parallel_loans_and_nested_rolls_preserve_both_flows() {
     const LEFT: Source<'static> = Source::Seq(
         &transfer(P, A, 1, DB),
-        &Source::Seq(&wire(DB, SERVER, 2), &transfer(A, P, 3, DB)),
+        &Source::Seq(&wire(DB, SERVER, 2), &transfer(A, P, 3, DB), 2),
+        3,
     );
     const RIGHT: Source<'static> = Source::Seq(
         &transfer(P, B, 4, AUTH),
-        &Source::Seq(&wire(AUTH, OTHER_SERVER, 5), &transfer(B, P, 6, AUTH)),
+        &Source::Seq(&wire(AUTH, OTHER_SERVER, 5), &transfer(B, P, 6, AUTH), 2),
+        3,
     );
-    const SOURCE: Source<'static> =
-        Source::Roll(&Source::Par(&Source::Roll(&LEFT), &Source::Roll(&RIGHT)));
+    const SOURCE: Source<'static> = Source::Roll(
+        &Source::Par(
+            &Source::Roll(&LEFT, LEFT.event_count()),
+            &Source::Roll(&RIGHT, RIGHT.event_count()),
+            LEFT.event_count() + RIGHT.event_count(),
+        ),
+        LEFT.event_count() + RIGHT.event_count(),
+    );
     const EVENTS: usize = SOURCE.event_count();
     let mut scratch = Scratch::<{ 3 * EVENTS }, EVENTS>::new();
     let mut plan = Plan::new();
@@ -319,9 +345,11 @@ fn stable_owned_endpoint_allows_independent_parallel_operations() {
     const SOURCE: Source<'static> = Source::Seq(
         &transfer(P, A, 1, DB),
         &Source::Seq(
-            &Source::Par(&wire(DB, SERVER, 2), &wire(DB, OTHER_SERVER, 3)),
+            &Source::Par(&wire(DB, SERVER, 2), &wire(DB, OTHER_SERVER, 3), 2),
             &transfer(A, P, 4, DB),
+            3,
         ),
+        4,
     );
     const EVENTS: usize = SOURCE.event_count();
     let mut scratch = Scratch::<{ 3 * EVENTS }, EVENTS>::new();
@@ -337,7 +365,7 @@ fn stable_owned_endpoint_allows_independent_parallel_operations() {
 
 #[test]
 fn competing_parallel_transfers_cannot_both_own_the_same_endpoint() {
-    const SOURCE: Source<'static> = Source::Par(&transfer(P, A, 1, DB), &transfer(P, B, 2, DB));
+    const SOURCE: Source<'static> = Source::Par(&transfer(P, A, 1, DB), &transfer(P, B, 2, DB), 2);
     const EVENTS: usize = SOURCE.event_count();
     let mut scratch = Scratch::<{ 3 * EVENTS }, EVENTS>::new();
     let mut plan = Plan::new();
@@ -353,7 +381,7 @@ fn competing_parallel_transfers_cannot_both_own_the_same_endpoint() {
 
 #[test]
 fn parallel_handoff_cannot_race_an_operation_on_the_moved_endpoint() {
-    const SOURCE: Source<'static> = Source::Par(&transfer(P, A, 1, DB), &wire(DB, SERVER, 2));
+    const SOURCE: Source<'static> = Source::Par(&transfer(P, A, 1, DB), &wire(DB, SERVER, 2), 2);
     const EVENTS: usize = SOURCE.event_count();
     let mut scratch = Scratch::<{ 3 * EVENTS }, EVENTS>::new();
     let mut plan = Plan::new();
@@ -370,19 +398,23 @@ fn parallel_handoff_cannot_race_an_operation_on_the_moved_endpoint() {
 fn closed_resolved_choice_keeps_branch_local_owner_and_common_return() {
     const LEFT: Source<'static> = Source::Seq(
         &transfer(P, A, 1, DB),
-        &Source::Seq(&wire(DB, SERVER, 2), &transfer(A, P, 3, DB)),
+        &Source::Seq(&wire(DB, SERVER, 2), &transfer(A, P, 3, DB), 2),
+        3,
     );
     const RIGHT: Source<'static> = Source::Seq(
         &transfer(P, B, 4, DB),
-        &Source::Seq(&wire(DB, SERVER, 5), &transfer(B, P, 6, DB)),
+        &Source::Seq(&wire(DB, SERVER, 5), &transfer(B, P, 6, DB), 2),
+        3,
     );
     const SOURCE: Source<'static> = Source::Seq(
         &Source::Route {
             left: &LEFT,
             right: &RIGHT,
             resolver: Some(701),
+            events: LEFT.event_count() + RIGHT.event_count(),
         },
         &wire(DB, SERVER, 7),
+        LEFT.event_count() + RIGHT.event_count() + 1,
     );
     const EVENTS: usize = SOURCE.event_count();
     let mut scratch = Scratch::<{ 3 * EVENTS }, EVENTS>::new();
@@ -401,6 +433,7 @@ fn terminal_choice_can_leave_the_endpoint_in_different_hands() {
         left: &transfer(P, A, 1, DB),
         right: &transfer(P, B, 2, DB),
         resolver: None,
+        events: 2,
     };
     const EVENTS: usize = SOURCE.event_count();
     let mut scratch = Scratch::<{ 3 * EVENTS }, EVENTS>::new();
@@ -419,8 +452,9 @@ fn unrelated_continuation_does_not_require_a_redundant_endpoint_return() {
         left: &transfer(P, A, 1, DB),
         right: &transfer(P, B, 2, DB),
         resolver: Some(701),
+        events: 2,
     };
-    const SOURCE: Source<'static> = Source::Seq(&CHOICE, &wire(A, B, 3));
+    const SOURCE: Source<'static> = Source::Seq(&CHOICE, &wire(A, B, 3), CHOICE.event_count() + 1);
     const EVENTS: usize = SOURCE.event_count();
     let mut scratch = Scratch::<{ 3 * EVENTS }, EVENTS>::new();
     let mut plan = Plan::new();
@@ -437,8 +471,10 @@ fn live_path_dependent_ownership_follows_the_original_route() {
         left: &transfer(P, A, 1, DB),
         right: &transfer(P, B, 2, DB),
         resolver: None,
+        events: 2,
     };
-    const SOURCE: Source<'static> = Source::Seq(&CHOICE, &wire(DB, SERVER, 3));
+    const SOURCE: Source<'static> =
+        Source::Seq(&CHOICE, &wire(DB, SERVER, 3), CHOICE.event_count() + 1);
     const EVENTS: usize = SOURCE.event_count();
     let mut scratch = Scratch::<{ 3 * EVENTS }, EVENTS>::new();
     let mut plan = Plan::new();
@@ -473,8 +509,10 @@ fn later_owned_payload_counts_as_a_live_endpoint_use() {
         left: &transfer(P, A, 1, DB),
         right: &transfer(P, B, 2, DB),
         resolver: None,
+        events: 2,
     };
-    const SOURCE: Source<'static> = Source::Seq(&CHOICE, &transfer(A, P, 3, DB));
+    const SOURCE: Source<'static> =
+        Source::Seq(&CHOICE, &transfer(A, P, 3, DB), CHOICE.event_count() + 1);
     const EVENTS: usize = SOURCE.event_count();
     let mut scratch = Scratch::<{ 3 * EVENTS }, EVENTS>::new();
     let mut plan = Plan::new();
@@ -493,8 +531,9 @@ fn next_roll_visit_keeps_a_terminal_branch_endpoint_live() {
         left: &transfer(P, A, 1, DB),
         right: &transfer(P, B, 2, DB),
         resolver: None,
+        events: 2,
     };
-    const SOURCE: Source<'static> = Source::Roll(&CHOICE);
+    const SOURCE: Source<'static> = Source::Roll(&CHOICE, CHOICE.event_count());
     const EVENTS: usize = SOURCE.event_count();
     let mut scratch = Scratch::<{ 3 * EVENTS }, EVENTS>::new();
     let mut plan = Plan::new();
@@ -513,9 +552,11 @@ fn nested_terminal_branch_still_checks_the_enclosing_continuation() {
         left: &transfer(P, A, 1, DB),
         right: &transfer(P, B, 2, DB),
         resolver: None,
+        events: 2,
     };
-    const INNER: Source<'static> = Source::Seq(&wire(P, A, 3), &CHOICE);
-    const SOURCE: Source<'static> = Source::Seq(&INNER, &wire(SERVER, DB, 4));
+    const INNER: Source<'static> = Source::Seq(&wire(P, A, 3), &CHOICE, 1 + CHOICE.event_count());
+    const SOURCE: Source<'static> =
+        Source::Seq(&INNER, &wire(SERVER, DB, 4), INNER.event_count() + 1);
     const EVENTS: usize = SOURCE.event_count();
     let mut scratch = Scratch::<{ 3 * EVENTS }, EVENTS>::new();
     let mut plan = Plan::new();
@@ -554,7 +595,7 @@ fn nested_terminal_branch_still_checks_the_enclosing_continuation() {
 
 #[test]
 fn roll_cannot_implicitly_reissue_a_transferred_endpoint_on_the_next_visit() {
-    const SOURCE: Source<'static> = Source::Roll(&transfer(P, A, 1, DB));
+    const SOURCE: Source<'static> = Source::Roll(&transfer(P, A, 1, DB), 1);
     const EVENTS: usize = SOURCE.event_count();
     let mut scratch = Scratch::<{ 3 * EVENTS }, EVENTS>::new();
     let mut plan = Plan::new();
@@ -571,7 +612,8 @@ fn roll_cannot_implicitly_reissue_a_transferred_endpoint_on_the_next_visit() {
 fn resource_carrier_uses_its_current_holder_without_changing_its_wire_role() {
     const SOURCE: Source<'static> = Source::Seq(
         &transfer(P, B, 1, DB),
-        &Source::Seq(&transfer(A, B, 2, AUTH), &transfer(AUTH, P, 3, DB)),
+        &Source::Seq(&transfer(A, B, 2, AUTH), &transfer(AUTH, P, 3, DB), 2),
+        3,
     );
     const EVENTS: usize = SOURCE.event_count();
     let mut scratch = Scratch::<{ 3 * EVENTS }, EVENTS>::new();
@@ -587,7 +629,8 @@ fn resource_carrier_uses_its_current_holder_without_changing_its_wire_role() {
 fn moving_a_carrier_does_not_silently_move_another_endpoint_held_by_the_old_actor() {
     const SOURCE: Source<'static> = Source::Seq(
         &transfer(P, A, 1, DB),
-        &Source::Seq(&transfer(P, B, 2, AUTH), &transfer(AUTH, P, 3, DB)),
+        &Source::Seq(&transfer(P, B, 2, AUTH), &transfer(AUTH, P, 3, DB), 2),
+        3,
     );
     const EVENTS: usize = SOURCE.event_count();
     let mut scratch = Scratch::<{ 3 * EVENTS }, EVENTS>::new();
@@ -608,7 +651,12 @@ fn unresolved_circular_initial_issuance_is_rejected() {
     };
     const SOURCE: Source<'static> = Source::Seq(
         &transfer(DB, AUTH, 1, THIRD),
-        &Source::Seq(&transfer(AUTH, THIRD, 2, DB), &transfer(THIRD, DB, 3, AUTH)),
+        &Source::Seq(
+            &transfer(AUTH, THIRD, 2, DB),
+            &transfer(THIRD, DB, 3, AUTH),
+            2,
+        ),
+        3,
     );
     const EVENTS: usize = SOURCE.event_count();
     let mut scratch = Scratch::<{ 3 * EVENTS }, EVENTS>::new();
@@ -626,7 +674,8 @@ fn unresolved_circular_initial_issuance_is_rejected() {
 fn initial_resource_operations_are_assigned_to_the_inferred_issuer() {
     const SOURCE: Source<'static> = Source::Seq(
         &wire(DB, SERVER, 1),
-        &Source::Seq(&transfer(P, A, 2, DB), &wire(DB, SERVER, 3)),
+        &Source::Seq(&transfer(P, A, 2, DB), &wire(DB, SERVER, 3), 2),
+        3,
     );
     const EVENTS: usize = SOURCE.event_count();
     let mut scratch = Scratch::<{ 3 * EVENTS }, EVENTS>::new();
@@ -638,7 +687,7 @@ fn initial_resource_operations_are_assigned_to_the_inferred_issuer() {
 
 #[test]
 fn failed_recompile_does_not_leave_a_previous_accepted_plan_visible() {
-    const INVALID: Source<'static> = Source::Par(&transfer(P, A, 1, DB), &transfer(P, B, 2, DB));
+    const INVALID: Source<'static> = Source::Par(&transfer(P, A, 1, DB), &transfer(P, B, 2, DB), 2);
     let mut scratch = Scratch::<EXCHANGE_SYMBOLS, EXCHANGE_EVENTS>::new();
     let mut plan = Plan::new();
     compile_into(&EXCHANGE, &mut scratch, &mut plan).unwrap();
@@ -688,7 +737,7 @@ fn endpoint_cannot_be_the_same_owned_value_as_its_send_or_receive_carrier() {
 
 #[test]
 fn one_actor_can_own_both_message_facets_without_collapsing_the_payload() {
-    const SOURCE: Source<'static> = Source::Seq(&transfer(P, A, 1, DB), &wire(DB, A, 2));
+    const SOURCE: Source<'static> = Source::Seq(&transfer(P, A, 1, DB), &wire(DB, A, 2), 2);
     const EVENTS: usize = SOURCE.event_count();
     let mut scratch = Scratch::<{ 3 * EVENTS }, EVENTS>::new();
     let mut plan = Plan::new();
@@ -715,15 +764,17 @@ fn one_actor_can_own_both_message_facets_without_collapsing_the_payload() {
 
 #[test]
 fn correlated_resources_can_be_returned_through_their_current_carrier() {
-    const LEFT: Source<'static> = Source::Seq(&transfer(P, A, 1, DB), &transfer(P, A, 2, AUTH));
-    const RIGHT: Source<'static> = Source::Seq(&transfer(P, B, 3, DB), &transfer(P, B, 4, AUTH));
+    const LEFT: Source<'static> = Source::Seq(&transfer(P, A, 1, DB), &transfer(P, A, 2, AUTH), 2);
+    const RIGHT: Source<'static> = Source::Seq(&transfer(P, B, 3, DB), &transfer(P, B, 4, AUTH), 2);
     const SOURCE: Source<'static> = Source::Seq(
         &Source::Route {
             left: &LEFT,
             right: &RIGHT,
             resolver: Some(701),
+            events: LEFT.event_count() + RIGHT.event_count(),
         },
-        &Source::Seq(&transfer(AUTH, P, 5, DB), &wire(DB, SERVER, 6)),
+        &Source::Seq(&transfer(AUTH, P, 5, DB), &wire(DB, SERVER, 6), 2),
+        LEFT.event_count() + RIGHT.event_count() + 2,
     );
     const EVENTS: usize = SOURCE.event_count();
     let mut scratch = Scratch::<{ 3 * EVENTS }, EVENTS>::new();
@@ -751,15 +802,18 @@ fn parallel_choices_keep_independent_resource_holders_in_all_four_paths() {
         left: &transfer(P, A, 1, DB),
         right: &transfer(P, B, 2, DB),
         resolver: None,
+        events: 2,
     };
     const RIGHT: Source<'static> = Source::Route {
         left: &transfer(P, A, 3, AUTH),
         right: &transfer(P, B, 4, AUTH),
         resolver: None,
+        events: 2,
     };
     const SOURCE: Source<'static> = Source::Seq(
-        &Source::Par(&LEFT, &RIGHT),
-        &Source::Par(&wire(DB, SERVER, 5), &wire(AUTH, OTHER_SERVER, 6)),
+        &Source::Par(&LEFT, &RIGHT, LEFT.event_count() + RIGHT.event_count()),
+        &Source::Par(&wire(DB, SERVER, 5), &wire(AUTH, OTHER_SERVER, 6), 2),
+        LEFT.event_count() + RIGHT.event_count() + 2,
     );
     const EVENTS: usize = SOURCE.event_count();
     let mut scratch = Scratch::<{ 3 * EVENTS }, EVENTS>::new();
@@ -799,8 +853,10 @@ fn a_branch_dependent_carrier_does_not_move_an_unrelated_initial_owner() {
         left: &transfer(P, A, 1, DB),
         right: &transfer(P, B, 2, DB),
         resolver: None,
+        events: 2,
     };
-    const SOURCE: Source<'static> = Source::Seq(&CHOICE, &transfer(DB, P, 3, AUTH));
+    const SOURCE: Source<'static> =
+        Source::Seq(&CHOICE, &transfer(DB, P, 3, AUTH), CHOICE.event_count() + 1);
     const EVENTS: usize = SOURCE.event_count();
     let mut scratch = Scratch::<{ 3 * EVENTS }, EVENTS>::new();
     let mut plan = Plan::new();
@@ -820,8 +876,10 @@ fn inconsistent_or_foreign_selection_records_never_choose_a_holder() {
         left: &transfer(P, A, 1, DB),
         right: &transfer(P, B, 2, DB),
         resolver: None,
+        events: 2,
     };
-    const SOURCE: Source<'static> = Source::Seq(&CHOICE, &wire(DB, SERVER, 3));
+    const SOURCE: Source<'static> =
+        Source::Seq(&CHOICE, &wire(DB, SERVER, 3), CHOICE.event_count() + 1);
     const EVENTS: usize = SOURCE.event_count();
     let mut scratch = Scratch::<{ 3 * EVENTS }, EVENTS>::new();
     let mut plan = Plan::new();
@@ -859,19 +917,22 @@ fn inconsistent_or_foreign_selection_records_never_choose_a_holder() {
 
 #[test]
 fn rolled_work_preserves_the_conditional_holder_chosen_before_the_loop() {
-    const LEFT: Source<'static> = Source::Seq(&transfer(P, A, 1, DB), &transfer(P, A, 2, AUTH));
-    const RIGHT: Source<'static> = Source::Seq(&transfer(P, B, 3, DB), &transfer(P, B, 4, AUTH));
+    const LEFT: Source<'static> = Source::Seq(&transfer(P, A, 1, DB), &transfer(P, A, 2, AUTH), 2);
+    const RIGHT: Source<'static> = Source::Seq(&transfer(P, B, 3, DB), &transfer(P, B, 4, AUTH), 2);
     const BODY: Source<'static> = Source::Seq(
         &wire(DB, SERVER, 5),
-        &Source::Seq(&transfer(AUTH, P, 6, DB), &transfer(P, AUTH, 7, DB)),
+        &Source::Seq(&transfer(AUTH, P, 6, DB), &transfer(P, AUTH, 7, DB), 2),
+        3,
     );
     const SOURCE: Source<'static> = Source::Seq(
         &Source::Route {
             left: &LEFT,
             right: &RIGHT,
             resolver: Some(701),
+            events: LEFT.event_count() + RIGHT.event_count(),
         },
-        &Source::Roll(&BODY),
+        &Source::Roll(&BODY, BODY.event_count()),
+        LEFT.event_count() + RIGHT.event_count() + BODY.event_count(),
     );
     const EVENTS: usize = SOURCE.event_count();
     const SYMBOLS: usize = 3 * EVENTS;
@@ -899,15 +960,17 @@ fn rolled_work_preserves_the_conditional_holder_chosen_before_the_loop() {
 
 #[test]
 fn correlated_resources_share_the_same_compiled_actor_decision() {
-    const LEFT: Source<'static> = Source::Seq(&transfer(P, A, 1, DB), &transfer(P, A, 2, AUTH));
-    const RIGHT: Source<'static> = Source::Seq(&transfer(P, B, 3, DB), &transfer(P, B, 4, AUTH));
+    const LEFT: Source<'static> = Source::Seq(&transfer(P, A, 1, DB), &transfer(P, A, 2, AUTH), 2);
+    const RIGHT: Source<'static> = Source::Seq(&transfer(P, B, 3, DB), &transfer(P, B, 4, AUTH), 2);
     const SOURCE: Source<'static> = Source::Seq(
         &Source::Route {
             left: &LEFT,
             right: &RIGHT,
             resolver: Some(701),
+            events: LEFT.event_count() + RIGHT.event_count(),
         },
-        &Source::Par(&wire(DB, SERVER, 5), &wire(AUTH, OTHER_SERVER, 6)),
+        &Source::Par(&wire(DB, SERVER, 5), &wire(AUTH, OTHER_SERVER, 6), 2),
+        LEFT.event_count() + RIGHT.event_count() + 2,
     );
     const E: usize = SOURCE.event_count();
     let mut scratch = Scratch::<{ 3 * E }, E>::new();
@@ -937,8 +1000,10 @@ fn actor_image_capacity_failure_publishes_neither_events_nor_decisions() {
             left: &transfer(P, A, 1, DB),
             right: &transfer(P, B, 2, DB),
             resolver: Some(701),
+            events: 2,
         },
         &wire(DB, SERVER, 3),
+        3,
     );
     const E: usize = SOURCE.event_count();
     let mut scratch = Scratch::<{ 3 * E }, E>::new();

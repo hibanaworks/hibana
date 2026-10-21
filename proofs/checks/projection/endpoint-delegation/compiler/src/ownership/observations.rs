@@ -235,17 +235,19 @@ impl<const S: usize, const E: usize> Plan<'_, S, E> {
 const fn source_precedes(source: &Source<'_>, before: usize, after: usize) -> bool {
     match source {
         Source::Send(_) => false,
-        Source::Seq(left, right) | Source::Par(left, right) | Source::Route { left, right, .. } => {
+        Source::Seq(left, right, _)
+        | Source::Par(left, right, _)
+        | Source::Route { left, right, .. } => {
             let split = left.event_count();
             if before < split && after < split {
                 source_precedes(left, before, after)
             } else if before >= split && after >= split {
                 source_precedes(right, before - split, after - split)
             } else {
-                matches!(source, Source::Seq(_, _)) && before < split && after >= split
+                matches!(source, Source::Seq(..)) && before < split && after >= split
             }
         }
-        Source::Roll(body) => source_precedes(body, before, after),
+        Source::Roll(body, _) => source_precedes(body, before, after),
     }
 }
 
@@ -254,7 +256,9 @@ const fn source_precedes(source: &Source<'_>, before: usize, after: usize) -> bo
 const fn active(source: &Source<'_>, start: usize, event: usize, context: &Context<'_>) -> bool {
     match source {
         Source::Send(_) => start == event,
-        Source::Seq(left, right) | Source::Par(left, right) | Source::Route { left, right, .. } => {
+        Source::Seq(left, right, _)
+        | Source::Par(left, right, _)
+        | Source::Route { left, right, .. } => {
             let split = start + left.event_count();
             if let Source::Route { .. } = source {
                 let scope = Scope {
@@ -276,14 +280,16 @@ const fn active(source: &Source<'_>, start: usize, event: usize, context: &Conte
                 active(right, split, event, context)
             }
         }
-        Source::Roll(body) => active(body, start, event, context),
+        Source::Roll(body, _) => active(body, start, event, context),
     }
 }
 
 const fn contains_scope(source: &Source<'_>, start: usize, scope: Scope) -> bool {
     match source {
         Source::Send(_) => false,
-        Source::Seq(left, right) | Source::Par(left, right) | Source::Route { left, right, .. } => {
+        Source::Seq(left, right, _)
+        | Source::Par(left, right, _)
+        | Source::Route { left, right, .. } => {
             let split = start + left.event_count();
             if let Source::Route { .. } = source
                 && scope.same(Scope {
@@ -296,7 +302,7 @@ const fn contains_scope(source: &Source<'_>, start: usize, scope: Scope) -> bool
             }
             contains_scope(left, start, scope) || contains_scope(right, split, scope)
         }
-        Source::Roll(body) => contains_scope(body, start, scope),
+        Source::Roll(body, _) => contains_scope(body, start, scope),
     }
 }
 

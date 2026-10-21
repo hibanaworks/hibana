@@ -62,21 +62,27 @@ const EXCHANGE: Source<'static> = Source::Seq(
         &wire(DB, SERVER, 2),
         &Source::Seq(
             &wire(SERVER, DB, 3),
-            &Source::Seq(&wire(SERVER, A, 4), &transfer(A, P, 5, DB)),
+            &Source::Seq(&wire(SERVER, A, 4), &transfer(A, P, 5, DB), 2),
+            3,
         ),
+        4,
     ),
+    5,
 );
 const DB_ROUND: Source<'static> = Source::Seq(
     &transfer(P, A, 1, DB),
-    &Source::Seq(&wire(DB, SERVER, 2), &transfer(A, P, 3, DB)),
+    &Source::Seq(&wire(DB, SERVER, 2), &transfer(A, P, 3, DB), 2),
+    3,
 );
 const AUTH_ROUND: Source<'static> = Source::Seq(
     &transfer(P, B, 4, AUTH),
-    &Source::Seq(&wire(AUTH, SERVER, 5), &transfer(B, P, 6, AUTH)),
+    &Source::Seq(&wire(AUTH, SERVER, 5), &transfer(B, P, 6, AUTH), 2),
+    3,
 );
 const ALTERNATE_ROUND: Source<'static> = Source::Seq(
     &transfer(P, B, 4, DB),
-    &Source::Seq(&wire(DB, SERVER, 5), &transfer(B, P, 6, DB)),
+    &Source::Seq(&wire(DB, SERVER, 5), &transfer(B, P, 6, DB), 2),
+    3,
 );
 const CROSS_DB: EndpointKey = EndpointKey {
     component: 7,
@@ -95,21 +101,25 @@ const CONTROL_SERVER: EndpointKey = EndpointKey {
     role: SERVER.role,
 };
 
-const PAIRED_LEFT: Source<'static> = Source::Seq(&transfer(P, A, 1, DB), &transfer(P, A, 2, AUTH));
-const PAIRED_RIGHT: Source<'static> = Source::Seq(&transfer(P, B, 3, DB), &transfer(P, B, 4, AUTH));
+const PAIRED_LEFT: Source<'static> =
+    Source::Seq(&transfer(P, A, 1, DB), &transfer(P, A, 2, AUTH), 2);
+const PAIRED_RIGHT: Source<'static> =
+    Source::Seq(&transfer(P, B, 3, DB), &transfer(P, B, 4, AUTH), 2);
 const PAIRED: Source<'static> = Source::Route {
     left: &PAIRED_LEFT,
     right: &PAIRED_RIGHT,
     resolver: Some(701),
+    events: PAIRED_LEFT.event_count() + PAIRED_RIGHT.event_count(),
 };
 
 const CASES: &[(&str, &Source<'static>)] = &[
     (
         "owned-receive-teaches-holder",
         &Source::Route {
-            left: &Source::Seq(&transfer(P, A, 1, DB), &wire(DB, SERVER, 3)),
-            right: &Source::Seq(&transfer(P, A, 2, DB), &wire(DB, SERVER, 4)),
+            left: &Source::Seq(&transfer(P, A, 1, DB), &wire(DB, SERVER, 3), 2),
+            right: &Source::Seq(&transfer(P, A, 2, DB), &wire(DB, SERVER, 4), 2),
             resolver: None,
+            events: 4,
         },
     ),
     (
@@ -117,52 +127,65 @@ const CASES: &[(&str, &Source<'static>)] = &[
         &Source::Seq(
             &transfer(P, A, 1, DB),
             &Source::Route {
-                left: &Source::Par(&wire(P, A, 2), &wire(DB, SERVER, 4)),
-                right: &Source::Par(&wire(P, A, 3), &wire(DB, SERVER, 5)),
+                left: &Source::Par(&wire(P, A, 2), &wire(DB, SERVER, 4), 2),
+                right: &Source::Par(&wire(P, A, 3), &wire(DB, SERVER, 5), 2),
                 resolver: None,
+                events: 4,
             },
+            5,
         ),
     ),
     (
         "conditional-holder-controls-later-choice",
         &Source::Seq(
             &Source::Route {
-                left: &Source::Seq(&transfer(P, A, 1, DB), &wire(P, B, 2)),
-                right: &Source::Seq(&transfer(P, B, 3, DB), &wire(P, A, 4)),
+                left: &Source::Seq(&transfer(P, A, 1, DB), &wire(P, B, 2), 2),
+                right: &Source::Seq(&transfer(P, B, 3, DB), &wire(P, A, 4), 2),
                 resolver: None,
+                events: 4,
             },
             &Source::Route {
                 left: &wire(DB, SERVER, 5),
                 right: &wire(DB, SERVER, 6),
                 resolver: None,
+                events: 2,
             },
+            6,
         ),
     ),
     (
         "equal-unions-different-actual-participants",
         &Source::Seq(
             &Source::Route {
-                left: &Source::Seq(&transfer(P, A, 1, DB), &transfer(P, B, 2, AUTH)),
-                right: &Source::Seq(&transfer(P, B, 3, DB), &transfer(P, A, 4, AUTH)),
+                left: &Source::Seq(&transfer(P, A, 1, DB), &transfer(P, B, 2, AUTH), 2),
+                right: &Source::Seq(&transfer(P, B, 3, DB), &transfer(P, A, 4, AUTH), 2),
                 resolver: None,
+                events: 4,
             },
             &Source::Seq(
                 &Source::Route {
                     left: &wire(P, DB, 5),
                     right: &wire(P, AUTH, 6),
                     resolver: None,
+                    events: 2,
                 },
                 &wire(A, SERVER, 7),
+                3,
             ),
+            7,
         ),
     ),
     ("handoff-work-control-return", &EXCHANGE),
     (
         "parallel-closed-loans",
-        &Source::Roll(&Source::Par(
-            &Source::Roll(&DB_ROUND),
-            &Source::Roll(&AUTH_ROUND),
-        )),
+        &Source::Roll(
+            &Source::Par(
+                &Source::Roll(&DB_ROUND, DB_ROUND.event_count()),
+                &Source::Roll(&AUTH_ROUND, AUTH_ROUND.event_count()),
+                DB_ROUND.event_count() + AUTH_ROUND.event_count(),
+            ),
+            DB_ROUND.event_count() + AUTH_ROUND.event_count(),
+        ),
     ),
     (
         "choice-closed",
@@ -171,8 +194,10 @@ const CASES: &[(&str, &Source<'static>)] = &[
                 left: &DB_ROUND,
                 right: &ALTERNATE_ROUND,
                 resolver: Some(701),
+                events: DB_ROUND.event_count() + ALTERNATE_ROUND.event_count(),
             },
             &wire(DB, SERVER, 7),
+            DB_ROUND.event_count() + ALTERNATE_ROUND.event_count() + 1,
         ),
     ),
     (
@@ -184,22 +209,27 @@ const CASES: &[(&str, &Source<'static>)] = &[
                 &Source::Seq(
                     &wire(CONTROL_SERVER, CONTROL_A, 3),
                     &transfer(A, P, 4, CROSS_DB),
+                    2,
                 ),
+                3,
             ),
+            4,
         ),
     ),
     (
         "nested-carrier",
         &Source::Seq(
             &transfer(P, B, 1, DB),
-            &Source::Seq(&transfer(A, B, 2, AUTH), &transfer(AUTH, P, 3, DB)),
+            &Source::Seq(&transfer(A, B, 2, AUTH), &transfer(AUTH, P, 3, DB), 2),
+            3,
         ),
     ),
     (
         "early-resource-work",
         &Source::Seq(
             &wire(DB, SERVER, 1),
-            &Source::Seq(&transfer(P, A, 2, DB), &wire(DB, SERVER, 3)),
+            &Source::Seq(&transfer(P, A, 2, DB), &wire(DB, SERVER, 3), 2),
+            3,
         ),
     ),
     (
@@ -207,14 +237,16 @@ const CASES: &[(&str, &Source<'static>)] = &[
         &Source::Seq(
             &transfer(P, A, 1, DB),
             &Source::Seq(
-                &Source::Par(&wire(DB, SERVER, 2), &wire(DB, B, 3)),
+                &Source::Par(&wire(DB, SERVER, 2), &wire(DB, B, 3), 2),
                 &transfer(A, P, 4, DB),
+                3,
             ),
+            4,
         ),
     ),
     (
         "same-actor-two-views",
-        &Source::Seq(&transfer(P, A, 1, DB), &wire(DB, A, 2)),
+        &Source::Seq(&transfer(P, A, 1, DB), &wire(DB, A, 2), 2),
     ),
     (
         "local-unit",
@@ -227,22 +259,27 @@ const CASES: &[(&str, &Source<'static>)] = &[
     ),
     (
         "parallel-double-grant",
-        &Source::Par(&transfer(P, A, 1, DB), &transfer(P, B, 2, DB)),
+        &Source::Par(&transfer(P, A, 1, DB), &transfer(P, B, 2, DB), 2),
     ),
     (
         "parallel-move-and-use",
-        &Source::Par(&transfer(P, A, 1, DB), &wire(DB, SERVER, 2)),
+        &Source::Par(&transfer(P, A, 1, DB), &wire(DB, SERVER, 2), 2),
     ),
-    ("roll-owner-drift", &Source::Roll(&transfer(P, A, 1, DB))),
+    ("roll-owner-drift", &Source::Roll(&transfer(P, A, 1, DB), 1)),
     (
         "wrong-return-owner",
-        &Source::Seq(&transfer(P, A, 1, DB), &transfer(B, P, 2, DB)),
+        &Source::Seq(&transfer(P, A, 1, DB), &transfer(B, P, 2, DB), 2),
     ),
     (
         "unrooted-issuance",
         &Source::Seq(
             &transfer(DB, AUTH, 1, THIRD),
-            &Source::Seq(&transfer(AUTH, THIRD, 2, DB), &transfer(THIRD, DB, 3, AUTH)),
+            &Source::Seq(
+                &transfer(AUTH, THIRD, 2, DB),
+                &transfer(THIRD, DB, 3, AUTH),
+                2,
+            ),
+            3,
         ),
     ),
     (
@@ -251,6 +288,7 @@ const CASES: &[(&str, &Source<'static>)] = &[
             left: &transfer(P, A, 1, DB),
             right: &transfer(P, B, 2, DB),
             resolver: None,
+            events: 2,
         },
     ),
     (
@@ -260,8 +298,10 @@ const CASES: &[(&str, &Source<'static>)] = &[
                 left: &transfer(P, A, 1, DB),
                 right: &transfer(P, B, 2, DB),
                 resolver: Some(701),
+                events: 2,
             },
             &wire(A, B, 3),
+            3,
         ),
     ),
     (
@@ -271,17 +311,23 @@ const CASES: &[(&str, &Source<'static>)] = &[
                 left: &transfer(P, A, 1, DB),
                 right: &transfer(P, B, 2, DB),
                 resolver: None,
+                events: 2,
             },
             &wire(DB, SERVER, 3),
+            3,
         ),
     ),
     (
         "different-owners-next-visit",
-        &Source::Roll(&Source::Route {
-            left: &transfer(P, A, 1, DB),
-            right: &transfer(P, B, 2, DB),
-            resolver: None,
-        }),
+        &Source::Roll(
+            &Source::Route {
+                left: &transfer(P, A, 1, DB),
+                right: &transfer(P, B, 2, DB),
+                resolver: None,
+                events: 2,
+            },
+            2,
+        ),
     ),
     (
         "different-owners-nested-continuation",
@@ -292,9 +338,12 @@ const CASES: &[(&str, &Source<'static>)] = &[
                     left: &transfer(P, A, 1, DB),
                     right: &transfer(P, B, 2, DB),
                     resolver: None,
+                    events: 2,
                 },
+                3,
             ),
             &wire(SERVER, DB, 4),
+            4,
         ),
     ),
     (
@@ -304,8 +353,10 @@ const CASES: &[(&str, &Source<'static>)] = &[
                 left: &transfer(P, A, 1, DB),
                 right: &transfer(P, B, 2, DB),
                 resolver: None,
+                events: 2,
             },
             &transfer(A, P, 3, DB),
+            3,
         ),
     ),
     ("self-owned-carrier", &transfer(DB, A, 1, DB)),
@@ -313,7 +364,8 @@ const CASES: &[(&str, &Source<'static>)] = &[
         "correlated-resources-return-through-current-carrier",
         &Source::Seq(
             &PAIRED,
-            &Source::Seq(&transfer(AUTH, P, 5, DB), &wire(DB, SERVER, 6)),
+            &Source::Seq(&transfer(AUTH, P, 5, DB), &wire(DB, SERVER, 6), 2),
+            PAIRED.event_count() + 2,
         ),
     ),
     (
@@ -324,24 +376,33 @@ const CASES: &[(&str, &Source<'static>)] = &[
                     left: &transfer(P, A, 1, DB),
                     right: &transfer(P, B, 2, DB),
                     resolver: None,
+                    events: 2,
                 },
                 &Source::Route {
                     left: &transfer(P, A, 3, AUTH),
                     right: &transfer(P, B, 4, AUTH),
                     resolver: None,
+                    events: 2,
                 },
+                4,
             ),
-            &Source::Par(&wire(DB, SERVER, 5), &wire(AUTH, CONTROL_SERVER, 6)),
+            &Source::Par(&wire(DB, SERVER, 5), &wire(AUTH, CONTROL_SERVER, 6), 2),
+            6,
         ),
     ),
     (
         "conditional-loop-entry-owner",
         &Source::Seq(
             &PAIRED,
-            &Source::Roll(&Source::Seq(
-                &wire(DB, SERVER, 5),
-                &Source::Seq(&transfer(AUTH, P, 6, DB), &transfer(P, AUTH, 7, DB)),
-            )),
+            &Source::Roll(
+                &Source::Seq(
+                    &wire(DB, SERVER, 5),
+                    &Source::Seq(&transfer(AUTH, P, 6, DB), &transfer(P, AUTH, 7, DB), 2),
+                    3,
+                ),
+                3,
+            ),
+            PAIRED.event_count() + 3,
         ),
     ),
     (
@@ -351,8 +412,10 @@ const CASES: &[(&str, &Source<'static>)] = &[
                 left: &transfer(P, A, 1, DB),
                 right: &transfer(P, B, 2, DB),
                 resolver: None,
+                events: 2,
             },
             &transfer(DB, P, 3, AUTH),
+            3,
         ),
     ),
 ];
@@ -403,7 +466,9 @@ fn source(output: &mut String, value: &Source<'_>) {
             output.push_str(".send ");
             message(output, *value);
         }
-        Source::Seq(left, right) | Source::Par(left, right) | Source::Route { left, right, .. } => {
+        Source::Seq(left, right, _)
+        | Source::Par(left, right, _)
+        | Source::Route { left, right, .. } => {
             match value {
                 Source::Seq(..) => output.push_str(".seq"),
                 Source::Par(..) => output.push_str(".par"),
@@ -422,7 +487,7 @@ fn source(output: &mut String, value: &Source<'_>) {
             source(output, right);
             output.push(')');
         }
-        Source::Roll(body) => {
+        Source::Roll(body, _) => {
             output.push_str(".roll (");
             source(output, body);
             output.push(')');
@@ -500,7 +565,9 @@ fn normalization(output: &mut String, issuance: &[Issuance], paths: &[PathArtifa
 fn collect_scopes(source: &Source<'_>, start: usize, output: &mut Vec<Scope>) {
     match source {
         Source::Send(_) => {}
-        Source::Seq(left, right) | Source::Par(left, right) | Source::Route { left, right, .. } => {
+        Source::Seq(left, right, _)
+        | Source::Par(left, right, _)
+        | Source::Route { left, right, .. } => {
             let split = start + left.event_count();
             if matches!(source, Source::Route { .. }) {
                 output.push(Scope {
@@ -512,7 +579,7 @@ fn collect_scopes(source: &Source<'_>, start: usize, output: &mut Vec<Scope>) {
             collect_scopes(left, start, output);
             collect_scopes(right, split, output);
         }
-        Source::Roll(body) => collect_scopes(body, start, output),
+        Source::Roll(body, _) => collect_scopes(body, start, output),
     }
 }
 
