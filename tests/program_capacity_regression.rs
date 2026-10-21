@@ -1,6 +1,5 @@
-// This capacity regression intentionally pushes const evaluation to prove the
-// public projection budget does not collapse to a segment-marker shortcut.
-#![allow(long_running_const_eval)]
+// Sequential choices retain every projected message within const-eval limits.
+#![deny(long_running_const_eval)]
 
 use hibana::g::{self, Msg};
 use hibana::runtime::program::{RoleProgram, project};
