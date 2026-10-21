@@ -379,7 +379,7 @@ fn standalone_proof_logs_preserve_failed_tool_status_and_diagnostics() {
         let lean_success = if let Some((_, rest)) = source.split_once("<<'EOF'\n") {
             rest.split_once("\nEOF").unwrap().0.to_owned() + "\n"
         } else if family == "parallel-offer-ingress" {
-            (0..14)
+            (0..18)
                 .map(|i| format!("'Fixture{i}' depends on axioms: [propext]\n"))
                 .collect()
         } else {
