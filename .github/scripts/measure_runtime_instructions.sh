@@ -12,7 +12,7 @@ results="$build/results"
 mkdir -p "$results"
 rustc +"$TOOLCHAIN" --version > "$results/rustc.txt"
 valgrind --version > "$results/valgrind.txt"
-cargo +"$TOOLCHAIN" build --locked --release --bench runtime_cost --target-dir "$build"
+cargo +"$TOOLCHAIN" build --locked --release --bench runtime_cost --bench roll_cost --target-dir "$build"
 
 executables=()
 for candidate in "$build"/release/deps/runtime_cost-*; do
@@ -30,6 +30,22 @@ for case in seq par; do
           "${executables[0]}" > "$results/$case-$tail-$run.stdout" \
           2> "$results/$case-$tail-$run.stderr"
     done
+  done
+done
+roll_executables=()
+for candidate in "$build"/release/deps/roll_cost-*; do
+  if [[ -f "$candidate" && -x "$candidate" ]]; then
+    roll_executables+=("$candidate")
+  fi
+done
+test "${#roll_executables[@]}" -eq 1
+for body in 1 8 32; do
+  for run in 1 2; do
+    HIBANA_PERF_SAMPLES=1 HIBANA_PERF_BODY="$body" \
+      valgrind --tool=callgrind --instr-atstart=no --cache-sim=no \
+        --callgrind-out-file="$results/roll-$body-$run.callgrind" \
+        "${roll_executables[0]}" > "$results/roll-$body-$run.stdout" \
+        2> "$results/roll-$body-$run.stderr"
   done
 done
 rustc +"$TOOLCHAIN" --edition=2024 -D warnings -O \

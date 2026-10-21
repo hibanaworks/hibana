@@ -9,6 +9,13 @@
   receiver. Initial issuance uses one `EndpointBinding` supplied by the resource
   integration. Dropping a value or timing out does not restore transferred
   ownership.
+- Session-aware initial binding selection through
+  `Transport::initial_endpoint_binding(session, role)`. A transport can select
+  distinct resources with the same role in concurrent sessions. A new session
+  does not renew issuance for an existing physical resource.
+- Endpoint ownership diagnostics returned as values by `g::diagnose`.
+- `OutOfOrder` errors for unfinished local predecessors, distinct from internal
+  progress invariant errors. Both stop the affected local session run.
 - `Endpoint::par()` and nested parallel borrows. An array pattern selects the
   number of independent fragments, such as
   `let [mut left, mut right] = endpoint.par()?;`. The executor can poll both
@@ -24,18 +31,13 @@
   after a new visit began.
 - Preserved branch knowledge, causal order and independent operations across
   nested routes, rolled protocols and Endpoint holder changes.
-- Returned Endpoint ownership errors from `g::diagnose` as diagnostic values.
-- Distinguished an unfinished local predecessor (`OutOfOrder`) from other
-  progress invariant errors. Both stop the affected local session run.
-- Passed the session to `Transport::initial_endpoint_binding`, allowing one
-  transport to select distinct resources with the same role in concurrent
-  sessions. It does not renew issuance for an existing physical resource.
 
 ### Performance
 
 - Indexed receive candidates by logical role and message label.
 - Filtered completed and unrelated send candidates before decoding their full
   metadata.
+- Skipped completed events before inspecting roll completion dependencies.
 - Read immutable descriptor fields directly and reused projected lane masks.
   Dependency checks can still inspect several events, so operation cost can
   depend on the protocol.
