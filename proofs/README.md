@@ -42,12 +42,27 @@ can detect incorrect ownership, unwanted serialization and lost dependencies.
 This is executable correspondence testing, not a complete Rust refinement proof.
 
 The generated-shape check builds protocol trees around an Endpoint loan and
-return. It combines a sequential prefix, independent parallel work, choices with
-and without a resolver, and repetition. Choice arms have independently generated
-subtrees. The default operator budget is two; a budget of five enumerates 61,192
-three- and four-role protocols in this grammar. Each `roll` runs twice in the
-complete traces, including nested repetition. Parallel children run in both
-orders. Endpoints move between separate runtimes through the public API.
+return. It combines sequential prefixes, parallel work, choices with and without
+a resolver, and repetition. Choice arms have independently generated subtrees.
+A second family places compound resource and ordinary-message protocols in
+parallel, in both source orders. Such a pair also replaces each loan leaf of
+the generated sequential, parallel, choice and repetition contexts. Prefixes
+include a message received by the choosing participant before its choice.
+Swapping participants zero and one
+exercises both controllers. Ordinary leaves include one message and a complete
+request/reply exchange. The default operator budget is two; a budget of
+five enumerates 834,940 three- and four-role test cases in these families. This
+budget counts generated constructors across both choice arms and the containing
+context, rather than binary-tree depth. The fixed loan and exchange leaves each
+contain four sequential messages; their internal constructors are not counted.
+
+Each `roll` runs twice, including nested repetition. Choices and parallel-child
+order vary independently between visits. Receivers use `offer`, drop and retake
+the preview, and receive the first selected message through `RouteBranch::recv`.
+Root parallel groups also run through `Endpoint::par` with concurrently polled
+Tokio futures. Each such run checks that independent borrows of one participant
+were pending together. Endpoints move between separate runtimes through the
+public API.
 
 Every message is also tried as the first send and receive, for every resolver
 assignment. A compiled Lean checker compares these observations with the existing
@@ -55,9 +70,17 @@ source occurrence semantics. It rejects missing observations, and controls check
 false admission, false rejection and invalid input. Complete traces exercise
 execution but do not enumerate every schedule. Run
 `bash .github/scripts/check_protocol_shapes.sh [BUDGET [SHARD SHARDS]]` under the
-resource guard. The output records the compiler, source revision, and separate
-compilation, execution and comparison times. This family does not yet cover
-compound work in both children of `par` or choices that change between visits.
+resource guard. The output records the compiler, source revision, source and
+input hashes, and separate compilation, execution and comparison times. Source
+hashes are checked again after execution. The generated families use distinct
+message labels and one resource role. Initial admission is compared with Lean.
+Later traces check successful execution, with both parallel-child orders and
+concurrent root groups; they do not enumerate every interleaving of nested
+parallel operations or I/O polls.
+The grammar inserts one compound parallel pair into a context at a time;
+arbitrary binary trees, multiple resources, reused labels and choices controlled
+through a delegated role are outside this grammar. A generated catalog is a
+test domain, not evidence that all its cases passed.
 
 Kani checks bounded properties of production functions. Miri checks aliasing,
 pointer provenance and destruction in executed tests. Native tests exercise
