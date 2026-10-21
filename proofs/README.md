@@ -41,6 +41,24 @@ completion, close and abort. Mutation checks establish that the comparisons
 can detect incorrect ownership, unwanted serialization and lost dependencies.
 This is executable correspondence testing, not a complete Rust refinement proof.
 
+The generated-shape check builds protocol trees around an Endpoint loan and
+return. It combines a sequential prefix, independent parallel work, choices with
+and without a resolver, and repetition. Choice arms have independently generated
+subtrees. The default operator budget is two; a budget of five enumerates 61,192
+three- and four-role protocols in this grammar. Each `roll` runs twice in the
+complete traces, including nested repetition. Parallel children run in both
+orders. Endpoints move between separate runtimes through the public API.
+
+Every message is also tried as the first send and receive, for every resolver
+assignment. A compiled Lean checker compares these observations with the existing
+source occurrence semantics. It rejects missing observations, and controls check
+false admission, false rejection and invalid input. Complete traces exercise
+execution but do not enumerate every schedule. Run
+`bash .github/scripts/check_protocol_shapes.sh [BUDGET [SHARD SHARDS]]` under the
+resource guard. The output records the compiler, source revision, and separate
+compilation, execution and comparison times. This family does not yet cover
+compound work in both children of `par` or choices that change between visits.
+
 Kani checks bounded properties of production functions. Miri checks aliasing,
 pointer provenance and destruction in executed tests. Native tests exercise
 actual Endpoints, codecs, borrowed buffers and separate-process communication.

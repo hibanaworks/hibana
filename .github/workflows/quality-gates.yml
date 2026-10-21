@@ -10,10 +10,11 @@ on:
         type: choice
         required: true
         default: all
-        options: [all, final-form]
+        options: [all, final-form, protocol-shapes]
 
 jobs:
   runtime-instructions:
+    if: github.event_name != 'workflow_dispatch' || inputs.check != 'protocol-shapes'
     runs-on: ubuntu-24.04
     env:
       TOOLCHAIN: stable
@@ -33,6 +34,55 @@ jobs:
         with:
           name: runtime-instructions
           path: target/runtime-instructions/results/
+
+  protocol-shapes:
+    if: github.event_name == 'workflow_dispatch' && inputs.check == 'protocol-shapes'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        partition: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+    env:
+      TOOLCHAIN: stable
+      CARGO_BUILD_JOBS: 1
+      CARGO_INCREMENTAL: 0
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Rust and Lean
+        run: |
+          rustup toolchain install stable --profile minimal
+          ELAN_TMP="$(mktemp -d)"
+          curl --proto '=https' --tlsv1.2 -sSfL \
+            https://github.com/leanprover/elan/releases/download/v4.2.3/elan-aarch64-unknown-linux-gnu.tar.gz \
+            -o "${ELAN_TMP}/elan.tar.gz"
+          echo "cb69af0803b04157bc30201c29c12fca882bb3ad8b43476b8d2d3064810bc3ac  ${ELAN_TMP}/elan.tar.gz" | sha256sum --check -
+          tar -xzf "${ELAN_TMP}/elan.tar.gz" -C "${ELAN_TMP}"
+          "${ELAN_TMP}/elan-init" -y --default-toolchain none
+          rm -rf "${ELAN_TMP}"
+          echo "${HOME}/.elan/bin" >> "${GITHUB_PATH}"
+      - name: Check every assigned depth-five shape
+        run: |
+          for part in $(seq 0 7); do
+            shard=$(( ${{ matrix.partition }} + 16 * part ))
+            bash .github/scripts/lib/resource_guard.sh \
+              bash .github/scripts/check_protocol_shapes.sh 5 "$shard" 128
+          done
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: protocol-shapes-${{ matrix.partition }}
+          retention-days: 3
+          path: |
+            target/protocol-shapes/depth-5/**/inventory.txt
+            target/protocol-shapes/depth-5/**/compiler.txt
+            target/protocol-shapes/depth-5/**/revision.txt
+            target/protocol-shapes/depth-5/**/compile.time
+            target/protocol-shapes/depth-5/**/execute.time
+            target/protocol-shapes/depth-5/**/oracle.time
+            target/protocol-shapes/depth-5/**/oracle.log
+            target/protocol-shapes/depth-5/**/inputs.json
+            target/protocol-shapes/depth-5/**/observations/*.json
 
   kani:
     if: github.event_name != 'workflow_dispatch' || inputs.check == 'all'
@@ -58,6 +108,7 @@ jobs:
           --lib --jobs 1 --output-format terse
 
   final-form:
+    if: github.event_name != 'workflow_dispatch' || inputs.check != 'protocol-shapes'
     runs-on: ubuntu-24.04-arm
     env:
       TOOLCHAIN: stable
@@ -90,6 +141,10 @@ jobs:
         run: >-
           bash .github/scripts/lib/resource_guard.sh
           bash ./.github/scripts/run_final_form_gates.sh
+      - name: Check generated protocol shapes through public endpoints
+        run: >-
+          bash .github/scripts/lib/resource_guard.sh
+          bash .github/scripts/check_protocol_shapes.sh
       - name: Check elastic roll endpoint selectors with Lean and Z3
         run: bash proofs/checks/runtime/roll-reentry-selectors/check.sh
       - name: Check conditional roll continuation dependencies with Lean and Z3

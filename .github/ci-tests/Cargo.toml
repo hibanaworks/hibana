@@ -100,3 +100,11 @@ path = "test_result.rs"
 
 [lints.rust]
 long_running_const_eval = "forbid"
+
+[[bin]]
+name = "protocol-shapes"
+path = "protocol_shapes.rs"
+
+[[bin]]
+name = "protocol-shape-controls"
+path = "protocol_shape_controls.rs"

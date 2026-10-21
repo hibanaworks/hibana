@@ -12,3 +12,9 @@ name = "endpointConformance"
 root = "EndpointConformanceGenerated"
 srcDir = "../../target/lean-proof"
 exeName = "endpoint-conformance"
+
+[[lean_exe]]
+name = "protocolShapes"
+root = "ProtocolShapesGenerated"
+srcDir = "../../target/lean-proof"
+exeName = "protocol-shapes"
