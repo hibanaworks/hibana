@@ -241,6 +241,48 @@ theorem nested_right_decisions_select_the_actual_leaf :
     select observedDecision observedTree = some (3, [(101, true), (102, true)]) := by
   decide
 
+-- Direct sends may enter a parallel arm at any of its enabled events. Every
+-- resolved ancestor still constrains that event; a message-selected child is
+-- committed normally but has no resolver audit to publish.
+abbrev SendChoiceRow := Option Bool × Bool
+
+def permitsSendRow (row : SendChoiceRow) : Bool :=
+  match row.1 with
+  | none => true
+  | some selected => selected == row.2
+
+def permitsSendPath (rows : List SendChoiceRow) : Bool := rows.all permitsSendRow
+
+def sendResolverAudits (rows : List SendChoiceRow) : List Bool :=
+  rows.filterMap fun row => row.1.map fun _ => row.2
+
+theorem every_admitted_send_checks_its_resolved_ancestors
+    (rows : List SendChoiceRow) (row : SendChoiceRow) (selected : Bool)
+    (member : row ∈ rows) (resolved : row.1 = some selected)
+    (admitted : permitsSendPath rows = true) : selected = row.2 := by
+  have checked := List.all_eq_true.mp admitted row member
+  simpa [permitsSendRow, resolved] using checked
+
+theorem an_intrinsic_child_preserves_its_parents_send_admission
+    (arm : Bool) (rows : List SendChoiceRow) :
+    permitsSendPath ((none, arm) :: rows) = permitsSendPath rows := by
+  simp [permitsSendPath, permitsSendRow]
+
+theorem an_intrinsic_child_has_no_resolver_audit
+    (arm : Bool) (rows : List SendChoiceRow) :
+    sendResolverAudits ((none, arm) :: rows) = sendResolverAudits rows := by
+  simp [sendResolverAudits]
+
+theorem checking_only_the_canonical_entry_can_accept_the_wrong_arm :
+    (if false then permitsSendRow (some false, true) else true) = true ∧
+    permitsSendPath [(some false, true), (none, false)] = false := by
+  decide
+
+#print axioms every_admitted_send_checks_its_resolved_ancestors
+#print axioms an_intrinsic_child_preserves_its_parents_send_admission
+#print axioms an_intrinsic_child_has_no_resolver_audit
+#print axioms checking_only_the_canonical_entry_can_accept_the_wrong_arm
+
 #print axioms leaf_has_no_decisions
 #print axioms rejected_parent_cannot_reach_a_descendant
 #print axioms every_selected_ancestor_has_its_own_decision

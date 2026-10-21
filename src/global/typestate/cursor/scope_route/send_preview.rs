@@ -261,7 +261,10 @@ impl EventCursor {
         ctx: &mut SendPreviewDecisionContext<'_>,
     ) -> Result<(), SendPreviewError> {
         let at_arm_entry = self.send_preview_is_at_controller_arm_entry(scope_id, *idx);
-        let at_decision = at_arm_entry || at_decision;
+        // Any independent send in the chosen arm can be its first operation.
+        // A candidate away from the canonical entry still needs the resolver.
+        let at_decision =
+            at_arm_entry || at_decision || self.route_scope_has_dynamic_resolver(scope_id);
         if at_decision
             && self.route_scope_reentry(scope_id)
             && !self.route_scope_has_dynamic_resolver(scope_id)

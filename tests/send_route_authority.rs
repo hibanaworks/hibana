@@ -259,3 +259,150 @@ fn dropping_pending_resolved_send_future_does_not_publish_success_evidence() {
         });
     });
 }
+
+#[test]
+fn every_parallel_entry_checks_its_containing_resolver_before_sending() {
+    type LeftFirst = Msg<201, ()>;
+    type LeftParallel = Msg<202, ()>;
+    type RightFirst = Msg<203, ()>;
+    type RightParallel = Msg<204, ()>;
+    let global = g::route(
+        g::par(
+            g::send::<0, 1, LeftFirst>(),
+            g::send::<0, 2, LeftParallel>(),
+        ),
+        g::par(
+            g::send::<0, 1, RightFirst>(),
+            g::send::<0, 2, RightParallel>(),
+        ),
+    )
+    .resolve::<317>();
+    let owner_program = project::<0>(&global);
+    let receiver_program = project::<2>(&global);
+    let first_program = project::<1>(&global);
+    tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap()
+        .block_on(async {
+            for choice in [DecisionArm::Left, DecisionArm::Right] {
+                for requested_right in [false, true] {
+                    for first_entry in [false, true] {
+                        let network = TestTransport::new();
+                        let mut slab = [0; 32 * 1024];
+                        let mut storage = SessionKitStorage::uninit();
+                        let rv = storage
+                            .init()
+                            .rendezvous(&mut slab, network.clone())
+                            .unwrap();
+                        rv.set_resolver(
+                            &owner_program,
+                            ResolverRef::<317>::decision_state(&choice, choose_arm),
+                        )
+                        .unwrap();
+                        let sid = SessionId::new(9278);
+                        let mut owner = rv.enter(sid, &owner_program).unwrap();
+                        let mut receiver = rv.enter(sid, &receiver_program).unwrap();
+                        let mut first_receiver = rv.enter(sid, &first_program).unwrap();
+                        let result = if first_entry {
+                            if requested_right {
+                                owner.send::<RightFirst>(&()).await
+                            } else {
+                                owner.send::<LeftFirst>(&()).await
+                            }
+                        } else if requested_right {
+                            owner.send::<RightParallel>(&()).await
+                        } else {
+                            owner.send::<LeftParallel>(&()).await
+                        };
+                        let expected = requested_right == (choice == DecisionArm::Right);
+                        assert_eq!(
+                            result.is_ok(),
+                            expected,
+                            "{choice:?} right={requested_right} first={first_entry}: {result:?}"
+                        );
+                        if expected && first_entry {
+                            if requested_right {
+                                first_receiver.recv::<RightFirst>().await.unwrap();
+                            } else {
+                                first_receiver.recv::<LeftFirst>().await.unwrap();
+                            }
+                        } else if expected {
+                            if requested_right {
+                                receiver.recv::<RightParallel>().await.unwrap();
+                            } else {
+                                receiver.recv::<LeftParallel>().await.unwrap();
+                            }
+                        }
+                        assert!(
+                            network.queue_is_empty(),
+                            "a rejected send must not enqueue a frame"
+                        );
+                    }
+                }
+            }
+        });
+}
+
+#[test]
+fn resolved_parents_can_commit_message_selected_children() {
+    type A = Msg<211, ()>;
+    type B = Msg<212, ()>;
+    type C = Msg<213, ()>;
+    type D = Msg<214, ()>;
+    let global = g::route(
+        g::route(g::send::<0, 1, A>(), g::send::<0, 1, B>()),
+        g::route(g::send::<0, 1, C>(), g::send::<0, 1, D>()),
+    )
+    .resolve::<318>();
+    let owner_program = project::<0>(&global);
+    let receiver_program = project::<1>(&global);
+    tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap()
+        .block_on(async {
+            for choice in [DecisionArm::Left, DecisionArm::Right] {
+                for right_child in [false, true] {
+                    let network = TestTransport::new();
+                    let mut slab = [0; 32 * 1024];
+                    let mut storage = SessionKitStorage::uninit();
+                    let rv = storage
+                        .init()
+                        .rendezvous(&mut slab, network.clone())
+                        .unwrap();
+                    rv.set_resolver(
+                        &owner_program,
+                        ResolverRef::<318>::decision_state(&choice, choose_arm),
+                    )
+                    .unwrap();
+                    let sid = SessionId::new(9279);
+                    let mut owner = rv.enter(sid, &owner_program).unwrap();
+                    let mut receiver = rv.enter(sid, &receiver_program).unwrap();
+                    match (choice, right_child) {
+                        (DecisionArm::Left, false) => {
+                            owner.send::<A>(&()).await.unwrap();
+                            receiver.recv::<A>().await.unwrap();
+                        }
+                        (DecisionArm::Left, true) => {
+                            owner.send::<B>(&()).await.unwrap();
+                            receiver.recv::<B>().await.unwrap();
+                        }
+                        (DecisionArm::Right, false) => {
+                            owner.send::<C>(&()).await.unwrap();
+                            receiver.recv::<C>().await.unwrap();
+                        }
+                        (DecisionArm::Right, true) => {
+                            owner.send::<D>(&()).await.unwrap();
+                            receiver.recv::<D>().await.unwrap();
+                        }
+                    }
+                    assert!(network.queue_is_empty());
+                    let events = rv.tap().collect::<Vec<_>>();
+                    assert_eq!(
+                        resolver_audits(&events).len(),
+                        1,
+                        "only the parent has a resolver"
+                    );
+                }
+            }
+        });
+}

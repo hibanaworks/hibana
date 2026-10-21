@@ -45,7 +45,7 @@ requires the model's coverage and same-class uniqueness assumptions.
 | [event-admission](runtime/event-admission) | [`event_progress.rs`](../../src/global/typestate/cursor/scope_route/event_progress.rs): dependency and completion guards |
 | [pending-events](runtime/pending-events) | [`pending_events.rs`](../../src/global/typestate/cursor/pending_events.rs) and [`roll.rs`](../../src/global/typestate/cursor/scope_route/roll.rs): completion-bit traversal and selected scope completion |
 | [recv-lane-census](runtime/recv-lane-census) | [`contract.rs`](../../src/endpoint/kernel/recv/contract.rs): enabled receive lanes |
-| [controller-offer](runtime/controller-offer) | [`kernel/offer`](../../src/endpoint/kernel/offer): controller selection and conflict-chain order |
+| [controller-offer](runtime/controller-offer) | [`kernel/offer`](../../src/endpoint/kernel/offer): controller selection, direct-send resolver admission and conflict-chain order |
 | [live-descendant-preview](runtime/live-descendant-preview) | [`first_recv_dispatch.rs`](../../src/global/typestate/cursor/first_recv_dispatch.rs): preview follows a live descendant |
 | [ordinary-offer-ingress](runtime/ordinary-offer-ingress) | [`kernel/offer`](../../src/endpoint/kernel/offer): ordinary messages preceding a choice |
 | [offer-prefix-dependency](runtime/offer-prefix-dependency) | [`kernel/offer`](../../src/endpoint/kernel/offer): preceding communication remains a dependency |

@@ -4,12 +4,6 @@ use super::super::{
     prepare_event_selected_route_commit_rows_from_resident_route_commit_range,
 };
 
-#[derive(Clone, Copy)]
-enum SendRouteEvidencePhase {
-    Begin,
-    Continue,
-}
-
 impl<'r, T> OperationKernel<'_, 'r, T>
 where
     T: Transport + 'r,
@@ -43,12 +37,7 @@ where
     }
 
     #[inline(never)]
-    fn commit_send_route_row_evidence(
-        &mut self,
-        route_row: SelectedRouteCommitRow,
-        lane_wire: u8,
-        phase: SendRouteEvidencePhase,
-    ) {
+    fn commit_send_route_row_evidence(&mut self, route_row: SelectedRouteCommitRow, lane_wire: u8) {
         let scope_id = route_row.scope();
         let selected_arm = route_row.selected_arm();
         let has_resolver = self
@@ -56,9 +45,6 @@ where
             .cursor
             .route_scope_resolver(scope_id)
             .is_some();
-        if matches!(phase, SendRouteEvidencePhase::Begin) && !has_resolver {
-            crate::invariant();
-        }
         if has_resolver {
             let arm = Arm::from_raw(selected_arm);
             self.emit_route_arm_selection(scope_id, RouteArmToken::from_resolver(arm), lane_wire);
@@ -83,15 +69,19 @@ where
         let mut idx = 0usize;
         while idx < routes.len() {
             let route_row = crate::invariant_some(routes.get(&self.progress.cursor, idx));
-            let phase = if begin_route_start.is_some_and(|start| idx >= start) {
-                if !delta.route_is_fresh(idx) {
-                    crate::invariant();
-                }
-                SendRouteEvidencePhase::Begin
-            } else {
-                SendRouteEvidencePhase::Continue
-            };
-            self.commit_send_route_row_evidence(route_row, route_lane, phase);
+            // A resolver's fresh selection may contain message-based choices.
+            // Only rows with a resolver publish resolver success evidence.
+            if begin_route_start.is_some_and(|start| idx >= start)
+                && self
+                    .progress
+                    .cursor
+                    .route_scope_resolver(route_row.scope())
+                    .is_some()
+                && !delta.route_is_fresh(idx)
+            {
+                crate::invariant();
+            }
+            self.commit_send_route_row_evidence(route_row, route_lane);
             idx += 1;
         }
     }
