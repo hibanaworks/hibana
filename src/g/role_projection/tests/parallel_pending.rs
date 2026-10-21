@@ -37,6 +37,90 @@ type Body = g::Seq<
 type Steps = g::Roll<Body>;
 
 #[test]
+fn independent_roll_and_route_progress_while_another_roll_waits_for_input() {
+    type A = g::Msg<5, ()>;
+    type B = g::Msg<6, ()>;
+    type C = g::Msg<7, ()>;
+    type D = g::Msg<8, ()>;
+    type Start = g::Msg<9, ()>;
+    type Left = g::Msg<10, ()>;
+    type Right = g::Msg<11, ()>;
+    type X = g::Msg<12, ()>;
+    type Y = g::Msg<13, ()>;
+    let graph = g::par(
+        g::par(
+            g::route(
+                g::seq(g::send::<1, 0, A>(), g::send::<0, 1, B>()),
+                g::seq(g::send::<1, 0, C>(), g::send::<0, 1, D>()),
+            )
+            .roll(),
+            g::par(g::send::<0, 2, X>(), g::send::<0, 2, Y>()),
+        ),
+        g::seq(
+            g::send::<0, 2, Start>(),
+            g::route(g::send::<2, 0, Left>(), g::send::<2, 0, Right>()),
+        )
+        .roll(),
+    );
+    let p0 = crate::runtime::program::project::<0>(&graph);
+    let p1 = crate::runtime::program::project::<1>(&graph);
+    let p2 = crate::runtime::program::project::<2>(&graph);
+    tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .start_paused(true)
+        .build()
+        .unwrap()
+        .block_on(async {
+            let mut slab = [0; 64 * 1024];
+            let mut storage = SessionKitStorage::uninit();
+            let rv = storage
+                .init()
+                .rendezvous(&mut slab, TestTransport::new())
+                .unwrap();
+            let sid = SessionId::new(9061);
+            let mut a = rv.enter(sid, &p0).unwrap();
+            let mut b = rv.enter(sid, &p1).unwrap();
+            let mut c = rv.enter(sid, &p2).unwrap();
+            let [mut waiting, mut x, mut y, mut request] = a.par().unwrap();
+            let [mut x_peer, mut y_peer, mut reply] = c.par().unwrap();
+            {
+                let mut receive = pin!(waiting.recv::<A>());
+                assert!(futures::poll!(receive.as_mut()).is_pending());
+                tokio::time::timeout(core::time::Duration::from_millis(100), async {
+                    tokio::join!(
+                        async {
+                            x.send::<X>(&()).await.unwrap();
+                        },
+                        async {
+                            x_peer.recv::<X>().await.unwrap();
+                        },
+                        async {
+                            y.send::<Y>(&()).await.unwrap();
+                        },
+                        async {
+                            y_peer.recv::<Y>().await.unwrap();
+                        },
+                        async {
+                            request.send::<Start>(&()).await.unwrap();
+                            request.offer().await.unwrap().recv::<Left>().await.unwrap();
+                        },
+                        async {
+                            reply.recv::<Start>().await.unwrap();
+                            reply.send::<Left>(&()).await.unwrap();
+                        },
+                    );
+                })
+                .await
+                .expect("independent operations must not wait for the other roll");
+                b.send::<A>(&()).await.unwrap();
+                receive.await.unwrap();
+            }
+            waiting.send::<B>(&()).await.unwrap();
+            b.recv::<B>().await.unwrap();
+        });
+}
+
+#[test]
 fn distinct_owned_sends_can_both_park_and_the_returned_views_can_run_in_parallel() {
     let () = g::ProgramProjection::<Steps, 32>::VALIDATION;
     let owner_program = crate::runtime::program::project::<0>(&g::Program::<Steps>::new());

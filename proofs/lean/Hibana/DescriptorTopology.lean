@@ -182,23 +182,27 @@ private def applyCanonicalDependency
         if applies && replaces then current.set step (some dependency) else current
   ) dependencies
 
-private def parallelInputFloor
+private def compositionInputFloor
     (source : CanonicalProgramSource) (enterIndex enterOffset exitOffset : Nat) : Nat :=
   (List.range enterIndex).foldl (fun floor parentIndex =>
     match source.markers[parentIndex]? with
     | none => floor
     | some parent =>
-      if parent.tag % 4 = 0 && parent.scope / 8192 = 2 then
-        match source.markers.find? (fun marker =>
-            marker.scope = parent.scope && marker.tag % 4 = 1),
-            scopeExitForEnter? source.markers parentIndex with
-        | some split, some stop =>
-            if parent.offset ≤ enterOffset && exitOffset ≤ split.offset then
-              max floor parent.offset
-            else if split.offset ≤ enterOffset && exitOffset ≤ stop then
-              max floor split.offset
+      if parent.tag % 4 = 0 then
+        let arms := if parent.scope / 8192 = 0 then
+          routeArmRanges? source.markers parent.scope
+        else if parent.scope / 8192 = 2 then do
+          let split ← source.markers.find? (fun marker =>
+            marker.scope = parent.scope && marker.tag % 4 = 1)
+          let stop ← scopeExitForEnter? source.markers parentIndex
+          pure ((parent.offset, split.offset), (split.offset, stop))
+        else none
+        match arms with
+        | some (left, right) =>
+            if left.1 ≤ enterOffset && exitOffset ≤ left.2 then max floor left.1
+            else if right.1 ≤ enterOffset && exitOffset ≤ right.2 then max floor right.1
             else floor
-        | _, _ => floor
+        | none => floor
       else floor
   ) 0
 
@@ -249,10 +253,12 @@ private def Choreo.canonicalRoleDependenciesByEvent
           | none => dependencies
           | some exitEff =>
               let inputRange := canonicalLocalEventRange atoms
-                (parallelInputFloor source markerIndex marker.offset exitEff) marker.offset
+                (compositionInputFloor source markerIndex marker.offset exitEff) marker.offset
               let inputStart := inputRange.1
               let inputStop := inputStart + inputRange.2
-              let withInput := if marker.scope / 8192 = 2 && inputStart < inputStop then
+              let primary := marker.scope / 8192 = 2 ||
+                (routeBounds? source.markers marker.scope).map Prod.fst == some marker.offset
+              let withInput := if primary && inputStart < inputStop then
                 applyCanonicalInput atoms marker.offset exitEff {
                   start := inputStart
                   stop := inputStop

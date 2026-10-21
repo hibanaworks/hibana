@@ -11,7 +11,7 @@ const STATIC_PREFIX: &str = "Lean static theorem audit passed ";
 fn markers(kind: &str) -> AuditResult<&'static [(&'static str, &'static str)]> {
     match kind {
         "parallel" => Ok(&[(
-            "Generated Lean kernel artifact audit passed artifact=ParallelGenerated theorems=182 claims=182",
+            "Generated Lean kernel artifact audit passed artifact=ParallelGenerated theorems=186 claims=186",
             "parallel descriptor correspondence",
         )]),
         "causal" => Ok(&[(
