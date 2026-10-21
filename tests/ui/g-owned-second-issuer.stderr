@@ -1,19 +1,27 @@
-error[E0080]: evaluation panicked: owned endpoint has conflicting initial actors
- --> $RUST/core/src/panic.rs
+error[E0080]: evaluation panicked: owned endpoint has conflicting initial actors; role=10; help: give each transferred Endpoint one initial holder
+ --> src/g.rs
   |
-  |         $crate::panicking::panic_fmt($crate::const_format_args!($($t)+));
-  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `hibana::g::source::SourceActors::<hibana::g::Seq<hibana::g::Send<0, 1, hibana::g::Msg<1, hibana::Endpoint<'_, 10>>>, hibana::g::Send<2, 1, hibana::g::Msg<1, hibana::Endpoint<'_, 10>>>>, 8>::IMAGE` failed here
+  |     const SOURCE: ProgramSourceData<CAPACITY> = ProgramSourceData::lower::<Steps>();
+  |                                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `hibana::g::ProgramProjection::<hibana::g::Seq<hibana::g::Send<0, 1, hibana::g::Msg<1, hibana::Endpoint<'_, 10>>>, hibana::g::Send<2, 1, hibana::g::Msg<1, hibana::Endpoint<'_, 10>>>>, 8>::SOURCE` failed inside this call
   |
- ::: src/g/source.rs
-  |
-  |                     panic!("owned endpoint has conflicting initial actors")
-  |                     ------------------------------------------------------- in this macro invocation
-
-note: erroneous constant encountered
+note: inside `g::source::ProgramSourceData::<8>::lower::<Seq<hibana::g::Send<0, 1, Msg<1, Endpoint<'_, 10>>>, hibana::g::Send<2, 1, Msg<1, Endpoint<'_, 10>>>>>`
  --> src/g/source.rs
   |
-  |         let actors = match &SourceActors::<Steps, CAPACITY>::IMAGE {
-  |                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |               Err(error) => super::diagnostic_message::panic_diagnostic(
+  |  ___________________________^
+  | |                 super::ProjectionDiagnostic::from_ownership_error(*error),
+  | |             ),
+  | |_____________^
+note: inside `g::diagnostic_message::panic_diagnostic`
+ --> $RUST/core/src/panic.rs
+  |
+  |         $crate::panicking::panic_display(&$arg);
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the failure occurred here
+  |
+ ::: src/g/diagnostic_message.rs
+  |
+  |         Ok(message) => panic!("{}", message),
+  |                        --------------------- in this macro invocation
 
 note: erroneous constant encountered
  --> src/g.rs

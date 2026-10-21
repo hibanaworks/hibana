@@ -6,6 +6,20 @@ use crate::global::program::Projectable;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ProjectionProblem {
+    /// Ownership analysis exceeded the compact source domain.
+    OwnershipCapacity,
+    /// A self-role message carries a payload other than unit.
+    NonUnitSelfMessage,
+    /// A transferred Endpoint is also its own sender or receiver.
+    EndpointIsItsOwnCarrier,
+    /// The same Endpoint would require different initial holders.
+    ConflictingInitialOwners,
+    /// No unique initial holder can be derived for an Endpoint.
+    UnrootedInitialOwner,
+    /// One parallel fragment transfers an Endpoint used by another.
+    ParallelOwnershipConflict,
+    /// Repetition does not restore its incoming Endpoint ownership.
+    RollChangesOwner,
     /// Both arms must have the same first-visible controller.
     RouteControllerMismatch,
     /// A shared receive lane changes sender without a causal handoff.
@@ -80,6 +94,31 @@ pub struct ProjectionDiagnostic {
     pub second: Option<DiagnosticEvent>,
 }
 impl ProjectionDiagnostic {
+    pub(crate) const fn from_ownership_error(error: super::source::ownership::Error) -> Self {
+        use super::source::ownership::ErrorKind;
+        Self {
+            problem: match error.kind {
+                ErrorKind::Capacity => ProjectionProblem::OwnershipCapacity,
+                ErrorKind::NonUnitSelfMessage => ProjectionProblem::NonUnitSelfMessage,
+                ErrorKind::EndpointIsItsOwnCarrier => ProjectionProblem::EndpointIsItsOwnCarrier,
+                ErrorKind::ConflictingInitialOwners => ProjectionProblem::ConflictingInitialOwners,
+                ErrorKind::UnrootedInitialOwner => ProjectionProblem::UnrootedInitialOwner,
+                ErrorKind::ParallelOwnershipConflict => {
+                    ProjectionProblem::ParallelOwnershipConflict
+                }
+                ErrorKind::RollChangesOwner => ProjectionProblem::RollChangesOwner,
+            },
+            role: match error.endpoint {
+                Some(endpoint) => Some(endpoint.role),
+                None => None,
+            },
+            scope: None,
+            controller: None,
+            arms: None,
+            first: None,
+            second: None,
+        }
+    }
     pub(crate) const fn from_error(error: ProgramSourceError) -> Self {
         let problem = match error {
             ProgramSourceError::RouteControllerMismatch => {
@@ -114,6 +153,23 @@ impl ProjectionDiagnostic {
     /// A repair direction, not permission to bypass the rejected obligation.
     pub const fn help(&self) -> &'static str {
         match self.problem {
+            ProjectionProblem::OwnershipCapacity => {
+                "reduce the source to fit the compact descriptor domain"
+            }
+            ProjectionProblem::NonUnitSelfMessage => "use unit for a self-role action",
+            ProjectionProblem::EndpointIsItsOwnCarrier => {
+                "transfer the Endpoint through distinct control roles"
+            }
+            ProjectionProblem::ConflictingInitialOwners
+            | ProjectionProblem::UnrootedInitialOwner => {
+                "give each transferred Endpoint one initial holder"
+            }
+            ProjectionProblem::ParallelOwnershipConflict => {
+                "keep the transfer and dependent resource operations in sequence"
+            }
+            ProjectionProblem::RollChangesOwner => {
+                "return each transferred Endpoint to its incoming holder inside the roll"
+            }
             ProjectionProblem::RouteControllerMismatch => {
                 "give both route arms the same first-visible controller"
             }
@@ -170,10 +226,9 @@ impl core::fmt::Display for ProjectionDiagnostic {
 ///
 /// `None` means the projection acceptance checks found no error. It does not
 /// validate payload algorithms, physical I/O, or application progress. Malformed
-/// source-domain invariants can still panic during lowering. The function uses
-/// projection's static obligations, with bounded, allocation-free data. Owned
-/// execution currently remains unavailable at the public witness boundary even
-/// when these source checks succeed.
+/// source-domain invariants can still panic during construction or lowering.
+/// Endpoint ownership errors are returned as diagnostic values. The function
+/// uses projection's static obligations, with bounded, allocation-free data.
 pub fn diagnose<P: Projectable>(program: &P) -> Option<ProjectionDiagnostic> {
     let _ = program;
     const {

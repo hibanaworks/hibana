@@ -106,6 +106,10 @@ ping=7, pong=8
 Endpointをメッセージとして渡せます。
 送ると、そのlogical roleを操作する権利が移ります。受取側は同じプロトコルの続きを実行します。
 
+Endpointは同じsession runの中で渡します。送り手と受取側はglobalに書いたroleです。
+実行時にworkerを選ぶ場合は、候補を`g::route`の枝として書きます。
+別セッションのchannelを渡す方式には対応していません。
+
 例えば、OWNERがDB用EndpointをWORKERへ貸し、WORKERがDBとして要求と応答を実行して返します。
 
 ```rust
@@ -148,6 +152,10 @@ worker.send::<Loan<'_>>(db).await?;
 move済みの値を使えないことはRustが守ります。Hibanaは、委譲・保持者・継続位置をglobalから検査します。
 資源を扱うintegrationが唯一の初期`EndpointBinding`を用意し、受取側は作り直しません。
 メッセージとして送るのはRustのアドレスではありません。
+
+未完了のowned送信futureをdropすると、Endpointを手放してローカルの実行をfaultさせます。
+`tokio::select!`のタイムアウトでdropする場合も同じです。送り手へEndpointは戻りません。
+タイムアウト後も通信を続けたい場合は、その判断をプロトコルの分岐に書きます。
 
 [完全なTokio実行例](examples/endpoint_delegation.rs)では、`g::par`と`db.par()`を使い、
 queryの応答を待つ間に独立したaudit送信を進めます。各runtimeのメモリは別々で、
@@ -225,6 +233,9 @@ Global protocolを変えたら、`cargo build`または`cargo test`で確認し�
 `RoleProgram`は、送受信、通信相手、メッセージラベル、ペイロードのスキーマ、依存関係、分岐への所属を記録します。
 どの通信チャネルが独立して進められるかも記録します。
 トランスポートAPIでは、このチャネルを**lane**と呼びます。
+
+Projectionには、その参加者がEndpointとして受け取りうるroleの操作も含まれます。
+runtimeはそれらのroleの進行を一つにまとめて管理し、各Endpointはその中の一つのroleを操作します。
 
 Projectionは、ロールが必要な選択を知ることができるか、並列の操作を区別できるかを検査します。
 この検査を満たさないプロトコルは、コンパイル時に拒否します。
@@ -426,6 +437,10 @@ Hibanaには組み込みの時計や障害検知器はありません。
 I/O操作が期限を超えたかどうかはトランスポートが判断し、`TransportError::Deadline`を返します。
 ほかのトランスポートエラーは`Offline`、`Capacity`、`Failed`です。
 
+呼び出したviewや送るEndpointに未完了の先行操作がある場合は、`OutOfOrder`を返し、
+ローカルの実行をprotocol violationとして停止します。`PhaseInvariant`は、それ以外の
+操作の進行や記述子の不整合を表します。
+
 これらのエラーを観測したランタイムでは、現在のセッション実行を停止します。
 エンドポイント操作は`EndpointError`を返します。
 ランタイムは最初の障害を保持し、同じランタイム内の待機者を起こします。
@@ -485,6 +500,11 @@ bindingを新設しません。unsafeな構築時に、integrationが
 物理的な一意性を保証します。coreがdeviceやremote handleのaliasを推測することはできません。
 drop、timeout、runtimeや`SessionId`の作り直しでは発行権は復活しません。
 bindingを置き換えるには、古い権利と受理済みframeを物理操作境界で実際にfenceする必要があります。
+
+`initial_endpoint_binding(session, role)`により、同じrole番号を使う並行セッションへ
+別々の物理資源を割り当てられます。同じ物理資源のaliasなら、セッションをまたいでも
+同じbindingを返します。ローカルの正常完了だけではremoteの権利やframeを失効できないため、
+発行権は復活しません。
 
 資源Endpointより先に、その資源を最初に保持するroleを同じruntimeと`SessionId`へattachします。
 最初の保持者はglobal protocolから定まります。そのroleが未attachまたはdrop済みなら、

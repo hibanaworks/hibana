@@ -6,7 +6,7 @@ use crate::{
     },
 };
 
-mod ownership;
+pub(super) mod ownership;
 pub(crate) use ownership::{
     Arm as SourceArm, Context as SourceContext, Scope as SourceScope, Selection as SourceSelection,
 };
@@ -45,40 +45,21 @@ pub(crate) type SourceActorImage<
 struct SourceActors<Steps, const CAPACITY: usize>(core::marker::PhantomData<Steps>);
 
 impl<Steps: ProgramShape, const CAPACITY: usize> SourceActors<Steps, CAPACITY> {
-    const IMAGE: Option<SourceActorImage<CAPACITY>> = if !Steps::SOURCE_NODE.has_delegation() {
-        // References to associated constants can be evaluated eagerly even in
-        // an untaken caller branch. Keep the guard inside the referenced value
-        // so ordinary sources never enter ownership analysis or build its DAG.
-        None
-    } else {
-        let mut scratch = ownership::Scratch::<256, CAPACITY>::new();
-        let mut image = ownership::ActorImage::new();
-        match ownership::compile_actor_image_into(&Steps::SOURCE_NODE, &mut scratch, &mut image) {
-            Ok(()) => (),
-            Err(error) => match error.kind {
-                ownership::ErrorKind::Capacity => panic!("owned endpoint source capacity"),
-                ownership::ErrorKind::NonUnitSelfMessage => {
-                    panic!("self-role actions require the unit payload")
-                }
-                ownership::ErrorKind::EndpointIsItsOwnCarrier => {
-                    panic!("an owned endpoint cannot carry its own delegation")
-                }
-                ownership::ErrorKind::ConflictingInitialOwners => {
-                    panic!("owned endpoint has conflicting initial actors")
-                }
-                ownership::ErrorKind::UnrootedInitialOwner => {
-                    panic!("owned endpoint has no unique initial actor")
-                }
-                ownership::ErrorKind::ParallelOwnershipConflict => {
-                    panic!("parallel endpoint delegation conflicts with another use")
-                }
-                ownership::ErrorKind::RollChangesOwner => {
-                    panic!("rolled endpoint delegation must restore its incoming ownership")
-                }
-            },
-        }
-        Some(image)
-    };
+    const IMAGE: Result<Option<SourceActorImage<CAPACITY>>, ownership::Error> =
+        if !Steps::SOURCE_NODE.has_delegation() {
+            // References to associated constants can be evaluated eagerly even in
+            // an untaken caller branch. Keep the guard inside the referenced value
+            // so ordinary sources never enter ownership analysis or build its DAG.
+            Ok(None)
+        } else {
+            let mut scratch = ownership::Scratch::<256, CAPACITY>::new();
+            let mut image = ownership::ActorImage::new();
+            match ownership::compile_actor_image_into(&Steps::SOURCE_NODE, &mut scratch, &mut image)
+            {
+                Ok(()) => Ok(Some(image)),
+                Err(error) => Err(error),
+            }
+        };
 }
 
 struct SourceLowering<const CAPACITY: usize> {
@@ -197,6 +178,14 @@ impl<const CAPACITY: usize> SourceLowering<CAPACITY> {
 }
 
 impl<const CAPACITY: usize> ProgramSourceData<CAPACITY> {
+    pub(crate) const fn ownership_diagnostic<Steps: ProgramShape>()
+    -> Option<super::ProjectionDiagnostic> {
+        match &SourceActors::<Steps, CAPACITY>::IMAGE {
+            Err(error) => Some(super::ProjectionDiagnostic::from_ownership_error(*error)),
+            Ok(_) => None,
+        }
+    }
+
     pub(crate) const fn lower<Steps>() -> Self
     where
         Steps: ProgramShape,
@@ -205,8 +194,11 @@ impl<const CAPACITY: usize> ProgramSourceData<CAPACITY> {
             panic!("source bucket selection");
         }
         let actors = match &SourceActors::<Steps, CAPACITY>::IMAGE {
-            Some(image) => Some(image),
-            None => None,
+            Ok(Some(image)) => Some(image),
+            Ok(None) => None,
+            Err(error) => super::diagnostic_message::panic_diagnostic(
+                super::ProjectionDiagnostic::from_ownership_error(*error),
+            ),
         };
         let mut lowering = SourceLowering::new(
             Steps::EVENT_COUNT,

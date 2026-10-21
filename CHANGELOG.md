@@ -24,6 +24,12 @@
   after a new visit began.
 - Preserved branch knowledge, causal order and independent operations across
   nested routes, rolled protocols and Endpoint holder changes.
+- Returned Endpoint ownership errors from `g::diagnose` as diagnostic values.
+- Distinguished an unfinished local predecessor (`OutOfOrder`) from other
+  progress invariant errors. Both stop the affected local session run.
+- Passed the session to `Transport::initial_endpoint_binding`, allowing one
+  transport to select distinct resources with the same role in concurrent
+  sessions. It does not renew issuance for an existing physical resource.
 
 ### Performance
 

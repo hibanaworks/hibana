@@ -47,6 +47,11 @@ actual Endpoints, codecs, borrowed buffers and separate-process communication.
 The Unix and TCP fixtures do not establish authentication or forwarding
 correctness for other deployments.
 
+The TCP peer fixture also places inboxes in the participant processes, without
+a central broker. A remote holder reads bytes queued at the old peer and returns
+the Endpoint before exiting. Logical inbox addresses stay fixed; this does not
+qualify dynamic address migration or recovery after loss of the inbox host.
+
 ## Run the checks
 
 Use the latest stable Rust for ordinary builds. Lean is pinned by

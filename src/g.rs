@@ -186,6 +186,16 @@ where
     };
 
     const DIAGNOSTIC: Option<ProjectionDiagnostic> = {
+        if let Some(diagnostic) = ProgramSourceData::<CAPACITY>::ownership_diagnostic::<Steps>() {
+            Some(diagnostic)
+        } else {
+            // Defer references to the lowered constants until ownership has
+            // succeeded; rustc can evaluate associated constants eagerly.
+            Self::lowered_diagnostic()
+        }
+    };
+
+    const fn lowered_diagnostic() -> Option<ProjectionDiagnostic> {
         Self::IMAGE.validate_projection_program();
         match Self::ERROR {
             None => None,
@@ -199,7 +209,7 @@ where
                 )
             }),
         }
-    };
+    }
 
     // Separate constant queries bound compiler work per proof obligation.
     // The verdict below retains the same ordered rejection priority.

@@ -18,8 +18,11 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
         match self.preflight_roll_entry_views(Some(event)) {
             Ok(()) => (),
             Err(EventAdmissionError::OtherViewPending) => return Poll::Pending,
-            Err(EventAdmissionError::Invariant | EventAdmissionError::PredecessorPending) => {
+            Err(EventAdmissionError::Invariant) => {
                 return Poll::Ready(Err(SendError::PhaseInvariant));
+            }
+            Err(EventAdmissionError::PredecessorPending) => {
+                return Poll::Ready(Err(SendError::OutOfOrder));
             }
         }
         let index = self
@@ -68,8 +71,11 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
         ) {
             Ok(enabled) => enabled,
             Err(EventAdmissionError::OtherViewPending) => return Poll::Pending,
-            Err(EventAdmissionError::Invariant | EventAdmissionError::PredecessorPending) => {
+            Err(EventAdmissionError::Invariant) => {
                 return Poll::Ready(Err(SendError::PhaseInvariant));
+            }
+            Err(EventAdmissionError::PredecessorPending) => {
+                return Poll::Ready(Err(SendError::OutOfOrder));
             }
         };
         if enabled.progress_step() != event.progress_step()

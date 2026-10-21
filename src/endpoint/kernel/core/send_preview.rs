@@ -28,10 +28,12 @@ where
         match self.preflight_roll_entry_views(Some(event)) {
             Ok(()) => Poll::Ready(Ok(())),
             Err(crate::global::typestate::EventAdmissionError::OtherViewPending) => Poll::Pending,
-            Err(
-                crate::global::typestate::EventAdmissionError::Invariant
-                | crate::global::typestate::EventAdmissionError::PredecessorPending,
-            ) => Poll::Ready(Err(SendError::PhaseInvariant)),
+            Err(crate::global::typestate::EventAdmissionError::Invariant) => {
+                Poll::Ready(Err(SendError::PhaseInvariant))
+            }
+            Err(crate::global::typestate::EventAdmissionError::PredecessorPending) => {
+                Poll::Ready(Err(SendError::OutOfOrder))
+            }
         }
     }
 
@@ -40,6 +42,7 @@ where
         match error {
             SendPreviewError::OtherViewPending => Poll::Pending,
             SendPreviewError::Invariant => Poll::Ready(SendError::PhaseInvariant),
+            SendPreviewError::OutOfOrder => Poll::Ready(SendError::OutOfOrder),
             SendPreviewError::LabelMismatch { expected, actual } => {
                 Poll::Ready(SendError::LabelMismatch { expected, actual })
             }

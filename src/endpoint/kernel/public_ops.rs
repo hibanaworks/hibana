@@ -467,6 +467,7 @@ where
             RecvError::Codec(_) => SessionFaultKind::DecodeFailed,
             RecvError::PhaseInvariant => SessionFaultKind::ProgressInvariantViolated,
             RecvError::LabelMismatch { .. }
+            | RecvError::OutOfOrder
             | RecvError::PayloadMismatch { .. }
             | RecvError::ResolverReject { .. } => SessionFaultKind::ProtocolViolation,
         };
@@ -482,6 +483,7 @@ where
             SendError::Transport(_) => SessionFaultKind::TransportClosed,
             SendError::SessionFault(kind) => *kind,
             SendError::Codec(_)
+            | SendError::OutOfOrder
             | SendError::LabelMismatch { .. }
             | SendError::PayloadMismatch { .. }
             | SendError::ResolverReject { .. } => SessionFaultKind::ProtocolViolation,

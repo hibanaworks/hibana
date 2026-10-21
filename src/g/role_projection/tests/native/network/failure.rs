@@ -47,7 +47,7 @@ async fn a_tcp_holder_loss_ends_the_run_without_restoring_the_initial_authority(
                 .init()
                 .rendezvous(
                     &mut slab,
-                    NetworkTransport::new(broker.address, Some((10, &binding))),
+                    NetworkTransport::new([broker.address; 256], Some((10, &binding))),
                 )
                 .unwrap();
             let mut owner = rv.enter(SID, &owner_program).unwrap();
@@ -92,7 +92,7 @@ async fn a_tcp_holder_loss_ends_the_run_without_restoring_the_initial_authority(
                 .init()
                 .rendezvous(
                     &mut slab,
-                    NetworkTransport::new(broker.address, Some((10, &binding))),
+                    NetworkTransport::new([broker.address; 256], Some((10, &binding))),
                 )
                 .unwrap();
             assert!(
@@ -142,7 +142,7 @@ async fn worker_exits_after_receipt() {
     let mut storage = SessionKitStorage::uninit();
     let rv = storage
         .init()
-        .rendezvous(&mut slab, NetworkTransport::new(address, None))
+        .rendezvous(&mut slab, NetworkTransport::new([address; 256], None))
         .unwrap();
     let mut worker = rv.enter(SID, &program).unwrap();
     drop(worker.recv::<Loan>().await.unwrap());

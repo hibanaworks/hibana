@@ -50,7 +50,8 @@ fn main() {
     // The carrier keeps one logical inbox across holder changes. This host
     // example is not an authenticated network transport.
     let binding = unsafe { EndpointBinding::new() };
-    let network = InMemoryTransport::new([(DB, binding)]);
+    let session = SessionId::new(1);
+    let network = InMemoryTransport::new([((session, DB), binding)]);
     let mut owner_slab = [0; 32 * 1024];
     let mut worker_slab = [0; 32 * 1024];
     let mut service_slab = [0; 32 * 1024];
@@ -75,7 +76,6 @@ fn main() {
         .init()
         .rendezvous(&mut audit_slab, network)
         .unwrap();
-    let session = SessionId::new(1);
     let mut owner = owner_runtime.enter(session, &owner_program).unwrap();
     let db = owner_runtime.enter(session, &db_program).unwrap();
     let mut worker = worker_runtime.enter(session, &worker_program).unwrap();

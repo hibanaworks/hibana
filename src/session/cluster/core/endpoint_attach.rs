@@ -292,7 +292,7 @@ where
             }
             Some(
                 rv.transport()
-                    .initial_endpoint_binding(ROLE)
+                    .initial_endpoint_binding(sid, ROLE)
                     .and_then(crate::transport::EndpointBinding::reserve)
                     .ok_or(AttachError::endpoint_binding_unavailable(ROLE))?,
             )

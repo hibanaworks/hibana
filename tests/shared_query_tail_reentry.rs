@@ -304,7 +304,7 @@ fn a_completed_reply_cannot_be_reused_without_receiving_a_fresh_query() {
                 } else {
                     owner.send::<Msg<114, ()>>(&()).await.unwrap_err()
                 };
-                assert!(format!("{error:?}").contains("PhaseInvariant"));
+                assert!(format!("{error:?}").contains("OutOfOrder"));
                 let poisoned = owner.send::<Msg<120, ()>>(&()).await.unwrap_err();
                 assert!(format!("{poisoned:?}").contains("SessionFault"));
             });

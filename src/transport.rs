@@ -411,7 +411,10 @@ pub trait Transport {
     /// binding's construction boundary. A fresh transport or runtime does not
     /// replenish an issued binding. This method supplies identity, never a
     /// branch choice, current holder, or continuation position.
-    fn initial_endpoint_binding(&self, _role: u8) -> Option<&EndpointBinding> {
+    /// `session` lets an integration select different physical resources with
+    /// the same role number. Aliases of one resource must still return the same
+    /// binding across sessions; the session does not renew issuance authority.
+    fn initial_endpoint_binding(&self, _session: SessionId, _role: u8) -> Option<&EndpointBinding> {
         None
     }
 

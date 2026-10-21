@@ -177,7 +177,11 @@ impl Transport for NativeTransport<'_> {
     where
         Self: 'a;
 
-    fn initial_endpoint_binding(&self, role: u8) -> Option<&EndpointBinding> {
+    fn initial_endpoint_binding(
+        &self,
+        _session: hibana::runtime::ids::SessionId,
+        role: u8,
+    ) -> Option<&EndpointBinding> {
         self.initial
             .filter(|&(bound, _)| bound == role)
             .map(|(_, binding)| binding)

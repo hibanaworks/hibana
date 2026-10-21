@@ -50,7 +50,7 @@ async fn a_tcp_receiver_returns_the_resource_while_the_send_is_pending_between_p
             .init()
             .rendezvous(
                 &mut slab,
-                NetworkTransport::new(broker.address, Some((10, &binding))),
+                NetworkTransport::new([broker.address; 256], Some((10, &binding))),
             )
             .unwrap();
         let mut owner = rv.enter(SID, &owner_program).unwrap();
@@ -176,7 +176,7 @@ async fn worker_process() {
     let mut storage = SessionKitStorage::uninit();
     let rv = storage
         .init()
-        .rendezvous(&mut slab, NetworkTransport::new(address, None))
+        .rendezvous(&mut slab, NetworkTransport::new([address; 256], None))
         .unwrap();
     let mut worker = rv.enter(SID, &program).unwrap();
     let mut db = worker.recv::<Loan>().await.unwrap();
@@ -205,7 +205,7 @@ async fn independent_peer_process() {
     let mut storage = SessionKitStorage::uninit();
     let rv = storage
         .init()
-        .rendezvous(&mut slab, NetworkTransport::new(address, None))
+        .rendezvous(&mut slab, NetworkTransport::new([address; 256], None))
         .unwrap();
     let mut peer = rv.enter(SID, &program).unwrap();
     assert_eq!(peer.recv::<Independent>().await.unwrap(), 77);

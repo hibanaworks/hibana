@@ -12,6 +12,7 @@ use inbox::{Broker, NetworkTransport, Process};
 
 mod composed;
 mod failure;
+mod peers;
 mod preemption;
 
 const SID: SessionId = SessionId::new(9020);
@@ -45,7 +46,10 @@ async fn tcp_handoff_preserves_an_unread_frame_after_the_sender_process_exits() 
         let mut storage = SessionKitStorage::uninit();
         let rv = storage
             .init()
-            .rendezvous(&mut slab, NetworkTransport::new(broker.address, None))
+            .rendezvous(
+                &mut slab,
+                NetworkTransport::new([broker.address; 256], None),
+            )
             .unwrap();
         assert!(rv.enter(SID, &db_program).is_err());
         let mut owner = rv.enter(SID, &owner_program).unwrap();
@@ -142,7 +146,7 @@ async fn service_process() {
         .init()
         .rendezvous(
             &mut slab,
-            NetworkTransport::new(address, Some((10, &binding))),
+            NetworkTransport::new([address; 256], Some((10, &binding))),
         )
         .unwrap();
     let mut service = rv.enter(SID, &service_program).unwrap();
@@ -175,7 +179,7 @@ async fn worker_process() {
     let mut storage = SessionKitStorage::uninit();
     let rv = storage
         .init()
-        .rendezvous(&mut slab, NetworkTransport::new(address, None))
+        .rendezvous(&mut slab, NetworkTransport::new([address; 256], None))
         .unwrap();
     assert!(rv.enter(SID, &db_program).is_err());
     let mut worker = rv.enter(SID, &worker_program).unwrap();

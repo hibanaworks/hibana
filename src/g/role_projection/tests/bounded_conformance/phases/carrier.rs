@@ -142,9 +142,13 @@ impl Transport for Network {
     type Tx<'a> = Tx;
     type Rx<'a> = Rx<'a>;
 
-    fn initial_endpoint_binding(&self, role: u8) -> Option<&crate::transport::EndpointBinding> {
+    fn initial_endpoint_binding(
+        &self,
+        session: crate::runtime::ids::SessionId,
+        role: u8,
+    ) -> Option<&crate::transport::EndpointBinding> {
         if self.actor == 0 && role == 10 {
-            self.inner.initial_endpoint_binding(role)
+            self.inner.initial_endpoint_binding(session, role)
         } else {
             None
         }

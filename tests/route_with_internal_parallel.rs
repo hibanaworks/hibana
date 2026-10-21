@@ -164,7 +164,7 @@ async fn assert_join_rejected(local: &mut hibana::Endpoint<'static, LOCAL_ROLE>,
         .expect_err(context);
     let rendered = format!("{error:?}");
     assert!(
-        rendered.contains("LabelMismatch") || rendered.contains("PhaseInvariant"),
+        rendered.contains("LabelMismatch") || rendered.contains("OutOfOrder"),
         "join must be rejected by progress evidence: {rendered}"
     );
 }

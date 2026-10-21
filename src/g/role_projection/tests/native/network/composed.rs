@@ -48,18 +48,24 @@ async fn tcp_inboxes_preserve_resolved_choices_and_repeated_loans_alongside_para
         let mut side_storage = SessionKitStorage::uninit();
         let owner_rv = owner_storage
             .init()
-            .rendezvous(&mut owner_slab, NetworkTransport::new(broker.address, None))
+            .rendezvous(
+                &mut owner_slab,
+                NetworkTransport::new([broker.address; 256], None),
+            )
             .unwrap();
         let service_rv = service_storage
             .init()
             .rendezvous(
                 &mut service_slab,
-                NetworkTransport::new(broker.address, Some((10, &binding))),
+                NetworkTransport::new([broker.address; 256], Some((10, &binding))),
             )
             .unwrap();
         let side_rv = side_storage
             .init()
-            .rendezvous(&mut side_slab, NetworkTransport::new(broker.address, None))
+            .rendezvous(
+                &mut side_slab,
+                NetworkTransport::new([broker.address; 256], None),
+            )
             .unwrap();
         assert!(owner_rv.enter(SID, &db_program).is_err());
         let mut owner = owner_rv.enter(SID, &owner_program).unwrap();
@@ -149,7 +155,7 @@ async fn worker_process() {
     let mut storage = SessionKitStorage::uninit();
     let rv = storage
         .init()
-        .rendezvous(&mut slab, NetworkTransport::new(address, None))
+        .rendezvous(&mut slab, NetworkTransport::new([address; 256], None))
         .unwrap();
     rv.set_resolver(
         &db_program,

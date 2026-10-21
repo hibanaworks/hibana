@@ -133,20 +133,46 @@ async fn write_packet(stream: &mut TcpStream, packet: &[u8]) -> io::Result<()> {
     stream.write_all(packet).await
 }
 
-pub async fn serve(acknowledgement_delay: fn(FrameHeader) -> Duration) {
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    std::println!("inbox={}", listener.local_addr().unwrap());
-    io::stdout().flush().unwrap();
-    let server = Arc::new(Server {
-        inboxes: Mutex::new(BTreeMap::new()),
-        journal: Mutex::new(Vec::new()),
-        acknowledgement_delay,
-    });
-    loop {
-        let (stream, _) = listener.accept().await.unwrap();
-        let server = Arc::clone(&server);
-        tokio::spawn(async move { server.connection(stream).await });
+pub struct Peer {
+    pub address: SocketAddr,
+    task: tokio::task::JoinHandle<()>,
+}
+
+impl Peer {
+    pub async fn start(acknowledgement_delay: fn(FrameHeader) -> Duration) -> Self {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = Arc::new(Server {
+            inboxes: Mutex::new(BTreeMap::new()),
+            journal: Mutex::new(Vec::new()),
+            acknowledgement_delay,
+        });
+        let task = tokio::spawn(async move {
+            loop {
+                let (stream, _) = listener.accept().await.unwrap();
+                let server = Arc::clone(&server);
+                tokio::spawn(async move { server.connection(stream).await });
+            }
+        });
+        Self { address, task }
     }
+
+    pub async fn journal(&self) -> Vec<(u8, Vec<u8>)> {
+        journal(self.address).await
+    }
+}
+
+impl Drop for Peer {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
+}
+
+pub async fn serve(acknowledgement_delay: fn(FrameHeader) -> Duration) {
+    let peer = Peer::start(acknowledgement_delay).await;
+    std::println!("inbox={}", peer.address);
+    io::stdout().flush().unwrap();
+    std::future::pending::<()>().await;
 }
 
 pub struct Process(pub Child);
@@ -212,31 +238,35 @@ impl Broker {
     }
 
     pub async fn journal(&self) -> Vec<(u8, Vec<u8>)> {
-        tokio::time::timeout(DEADLINE, async {
-            let mut stream = TcpStream::connect(self.address).await.unwrap();
-            stream.write_u8(JOURNAL).await.unwrap();
-            let length = stream.read_u32().await.unwrap();
-            let mut journal = Vec::new();
-            for _ in 0..length {
-                let operation = stream.read_u8().await.unwrap();
-                assert!(matches!(operation, SEND | RECV));
-                journal.push((operation, read_packet(&mut stream).await.unwrap()));
-            }
-            journal
-        })
-        .await
-        .unwrap()
+        journal(self.address).await
     }
 }
 
+async fn journal(address: SocketAddr) -> Vec<(u8, Vec<u8>)> {
+    tokio::time::timeout(DEADLINE, async {
+        let mut stream = TcpStream::connect(address).await.unwrap();
+        stream.write_u8(JOURNAL).await.unwrap();
+        let length = stream.read_u32().await.unwrap();
+        let mut journal = Vec::new();
+        for _ in 0..length {
+            let operation = stream.read_u8().await.unwrap();
+            assert!(matches!(operation, SEND | RECV));
+            journal.push((operation, read_packet(&mut stream).await.unwrap()));
+        }
+        journal
+    })
+    .await
+    .unwrap()
+}
+
 pub struct NetworkTransport<'a> {
-    address: SocketAddr,
+    addresses: [SocketAddr; 256],
     initial: Option<(u8, &'a EndpointBinding)>,
 }
 
 impl<'a> NetworkTransport<'a> {
-    pub fn new(address: SocketAddr, initial: Option<(u8, &'a EndpointBinding)>) -> Self {
-        Self { address, initial }
+    pub fn new(addresses: [SocketAddr; 256], initial: Option<(u8, &'a EndpointBinding)>) -> Self {
+        Self { addresses, initial }
     }
 }
 
@@ -281,7 +311,11 @@ impl Transport for NetworkTransport<'_> {
     where
         Self: 'a;
 
-    fn initial_endpoint_binding(&self, role: u8) -> Option<&EndpointBinding> {
+    fn initial_endpoint_binding(
+        &self,
+        _session: hibana::runtime::ids::SessionId,
+        role: u8,
+    ) -> Option<&EndpointBinding> {
         self.initial
             .filter(|&(expected, _)| expected == role)
             .map(|(_, binding)| binding)
@@ -320,7 +354,7 @@ impl Transport for NetworkTransport<'_> {
                 outgoing.frame_label().raw(),
             ]);
             packet.extend_from_slice(outgoing.payload().as_bytes());
-            let address = self.address;
+            let address = self.addresses[usize::from(outgoing.target_role())];
             tx.state = SendIo::Pending(std::boxed::Box::pin(deadline(async move {
                 let mut stream = TcpStream::connect(address).await?;
                 stream.write_u8(SEND).await?;
@@ -370,7 +404,7 @@ impl Transport for NetworkTransport<'_> {
             rx.state = ReceiveIo::Delivered(packet);
         }
         if matches!(rx.state, ReceiveIo::Idle) {
-            let address = self.address;
+            let address = self.addresses[usize::from(rx.port.local_role())];
             let port = rx.port;
             rx.state = ReceiveIo::Pending(std::boxed::Box::pin(deadline(async move {
                 let mut stream = TcpStream::connect(address).await?;

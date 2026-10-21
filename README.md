@@ -111,6 +111,11 @@ A message can carry an Endpoint. Sending it moves
 the right to use that logical role. The receiver continues the same protocol
 at its current position.
 
+The Endpoint stays in the same session run. The sender and receiver are roles
+named in the global protocol. To choose among workers at runtime, put those
+alternatives in a `g::route`. Passing a channel from an unrelated session is
+not supported.
+
 For example, `OWNER` lends its `DB` Endpoint to `WORKER`. The worker sends a
 request as `DB`, receives the service's reply, and returns the Endpoint:
 
@@ -155,6 +160,10 @@ Rust prevents use of the moved value. Hibana checks the transfer, the holder
 and the continuation against the global protocol. The resource integration
 supplies one initial `EndpointBinding`; receivers do not create another one.
 Sending an Endpoint does not send its Rust address.
+
+Dropping an unfinished owned-send future, including when a timeout in `tokio::select!` drops
+it, abandons the Endpoint and faults the local run. It does not return the
+Endpoint to the sender. Put a recoverable timeout decision in the protocol.
 
 The [complete Tokio example](examples/endpoint_delegation.rs) also uses `g::par`
 and `db.par()` to send an audit record while a query waits for its reply.
@@ -240,6 +249,10 @@ Each `RoleProgram` records sends and receives, peers, message labels, payload
 schemas, dependencies, and branch membership. It also records which
 communication channels can progress independently. The transport API calls
 these channels **lanes**.
+
+Projection also includes the steps of roles that the participant can receive
+as Endpoints. Its runtime keeps one shared progress record for those roles.
+Each Endpoint gives access to one role within that record.
 
 Projection checks whether roles can learn the choices they need to follow and
 whether parallel operations can be distinguished. Protocols that fail these
@@ -471,6 +484,10 @@ automatic retry, deadline extension, or switch to another branch. The current
 run cannot continue in that runtime after such an error. Accepted transfers
 are not rolled back. Other runtimes learn of a failure through their transport.
 
+An unfinished predecessor on the calling view or its owned payload produces
+`OutOfOrder` and faults the local run as a protocol violation. `PhaseInvariant`
+reports other inconsistencies in the operation's progress or descriptor facts.
+
 A transport close does not signal successful protocol completion. `roll()`
 lets a completed fragment run again and has no end message. To tell a worker
 that work has ended, include a message or a route in the global protocol.
@@ -528,6 +545,11 @@ physical uniqueness; the core cannot infer aliases between device or remote
 handles. Drop, timeout, runtime replacement and a new `SessionId` do not
 replenish an issued binding. Replacing it requires fencing all old rights and
 accepted frames at the physical boundary.
+
+`initial_endpoint_binding(session, role)` can select distinct physical resources
+for concurrent sessions that use the same role number. Aliases of one physical
+resource must return the same binding across sessions. Local completion alone
+does not fence earlier remote rights or frames, so it does not renew issuance.
 
 Attach the role that initially holds the resource before attaching the resource
 Endpoint, in the same runtime and `SessionId`. The global protocol determines

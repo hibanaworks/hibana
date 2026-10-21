@@ -57,6 +57,7 @@ impl EndpointError {
 pub(super) enum EndpointErrorKind {
     Codec(CodecError),
     Transport(TransportError),
+    OutOfOrder,
     PhaseInvariant,
     LabelMismatch {
         expected: u8,
@@ -78,6 +79,7 @@ impl fmt::Debug for EndpointErrorKind {
             Self::Codec(error) => formatter.debug_tuple("Codec").field(error).finish(),
             Self::Transport(error) => formatter.debug_tuple("Transport").field(error).finish(),
             Self::PhaseInvariant => formatter.write_str("PhaseInvariant"),
+            Self::OutOfOrder => formatter.write_str("OutOfOrder"),
             Self::LabelMismatch { expected, actual } => formatter
                 .debug_struct("LabelMismatch")
                 .field("expected", expected)
@@ -104,6 +106,7 @@ impl From<SendError> for EndpointErrorKind {
             SendError::Codec(error) => Self::Codec(error),
             SendError::Transport(error) => Self::Transport(error),
             SendError::PhaseInvariant => Self::PhaseInvariant,
+            SendError::OutOfOrder => Self::OutOfOrder,
             SendError::LabelMismatch { expected, actual } => {
                 Self::LabelMismatch { expected, actual }
             }
@@ -123,6 +126,7 @@ impl From<RecvError> for EndpointErrorKind {
             RecvError::Transport(error) => Self::Transport(error),
             RecvError::Codec(error) => Self::Codec(error),
             RecvError::PhaseInvariant => Self::PhaseInvariant,
+            RecvError::OutOfOrder => Self::OutOfOrder,
             RecvError::LabelMismatch { expected, actual } => {
                 Self::LabelMismatch { expected, actual }
             }
@@ -142,6 +146,8 @@ pub(crate) enum SendError {
     Codec(CodecError),
     /// Transport returned an error while transmitting the frame.
     Transport(TransportError),
+    /// A preceding operation on this view or its owned payload is unfinished.
+    OutOfOrder,
     /// Endpoint typestate or descriptor facts did not permit this send.
     PhaseInvariant,
     /// Attempted to send a message whose label does not match the typestate step.
@@ -164,6 +170,8 @@ pub(crate) enum RecvError {
     Transport(TransportError),
     /// Payload decoding failed.
     Codec(CodecError),
+    /// A preceding operation on this view is unfinished.
+    OutOfOrder,
     /// Endpoint typestate or descriptor facts did not permit this receive.
     PhaseInvariant,
     /// Choreography logical label did not match the projected typestate step.

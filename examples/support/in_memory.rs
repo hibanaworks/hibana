@@ -24,11 +24,13 @@ pub(crate) struct InMemoryTransport {
 
 struct Network {
     state: RefCell<State>,
-    initial_bindings: Vec<(u8, EndpointBinding)>,
+    initial_bindings: Vec<((SessionId, u8), EndpointBinding)>,
 }
 
 impl InMemoryTransport {
-    pub(crate) fn new(bindings: impl IntoIterator<Item = (u8, EndpointBinding)>) -> Self {
+    pub(crate) fn new(
+        bindings: impl IntoIterator<Item = ((SessionId, u8), EndpointBinding)>,
+    ) -> Self {
         Self {
             network: Rc::new(Network {
                 state: RefCell::new(State::default()),
@@ -108,11 +110,11 @@ impl Transport for InMemoryTransport {
     type Tx<'a> = Tx;
     type Rx<'a> = Rx;
 
-    fn initial_endpoint_binding(&self, role: u8) -> Option<&EndpointBinding> {
+    fn initial_endpoint_binding(&self, session: SessionId, role: u8) -> Option<&EndpointBinding> {
         self.network
             .initial_bindings
             .iter()
-            .find_map(|(bound_role, binding)| (*bound_role == role).then_some(binding))
+            .find_map(|(key, binding)| (*key == (session, role)).then_some(binding))
     }
 
     fn open(&self, port: PortOpen) -> (Self::Tx<'_>, Self::Rx<'_>) {

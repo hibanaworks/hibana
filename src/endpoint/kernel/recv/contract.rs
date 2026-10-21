@@ -47,6 +47,7 @@ where
     ) -> RecvResult<LaneSetView<'lanes>> {
         words.fill(0);
         let mut expected_payload = None;
+        let mut blocked = None;
         let mut other_view_pending = false;
         for idx in self
             .progress
@@ -71,6 +72,11 @@ where
                     && meta.payload_kind == target_payload
                 {
                     other_view_pending = true;
+                }
+                if matches!(admission, Err(EventAdmissionError::PredecessorPending))
+                    && meta.payload_kind == target_payload
+                {
+                    blocked = Some(RecvError::OutOfOrder);
                 }
                 if admission.is_ok() {
                     if meta.payload_kind == target_payload {
@@ -111,7 +117,7 @@ where
                 expected,
                 actual: target_payload,
             }),
-            None => Err(RecvError::PhaseInvariant),
+            None => Err(blocked.unwrap_or(RecvError::PhaseInvariant)),
         }
     }
 }

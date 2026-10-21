@@ -146,7 +146,7 @@ fn outer_left_kills_nested_right_route_program<const ROLE: u8>() -> RoleProgram<
 
 fn assert_join_blocked(rendered: &str) {
     assert!(
-        rendered.contains("LabelMismatch") || rendered.contains("PhaseInvariant"),
+        rendered.contains("LabelMismatch") || rendered.contains("OutOfOrder"),
         "post-par join must be rejected by resident progress evidence: {rendered}"
     );
 }

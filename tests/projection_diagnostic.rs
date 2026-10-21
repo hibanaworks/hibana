@@ -2,6 +2,50 @@ use hibana::g::{self, Msg, ProjectionProblem};
 use hibana::runtime::program::{RoleProgram, project};
 
 #[test]
+fn endpoint_cannot_carry_itself_is_a_diagnostic_value() {
+    type Grant = Msg<1, hibana::Endpoint<'static, 0>>;
+    let program = g::send::<0, 1, Grant>();
+    let diagnostic = g::diagnose(&program).unwrap();
+    assert_eq!(
+        diagnostic.problem,
+        ProjectionProblem::EndpointIsItsOwnCarrier
+    );
+    assert_eq!(diagnostic.role, Some(0));
+}
+
+#[test]
+fn parallel_transfer_and_use_is_a_diagnostic_value() {
+    type Grant = Msg<1, hibana::Endpoint<'static, 10>>;
+    let program = g::par(g::send::<0, 1, Grant>(), g::send::<10, 3, Msg<2, u32>>());
+    let diagnostic = g::diagnose(&program).unwrap();
+    assert_eq!(
+        diagnostic.problem,
+        ProjectionProblem::ParallelOwnershipConflict
+    );
+    assert_eq!(diagnostic.role, Some(10));
+}
+
+#[test]
+fn conflicting_initial_holders_are_a_diagnostic_value() {
+    type Grant = Msg<1, hibana::Endpoint<'static, 10>>;
+    let program = g::seq(g::send::<0, 1, Grant>(), g::send::<2, 1, Grant>());
+    let diagnostic = g::diagnose(&program).unwrap();
+    assert_eq!(
+        diagnostic.problem,
+        ProjectionProblem::ConflictingInitialOwners
+    );
+    assert_eq!(diagnostic.role, Some(10));
+}
+
+#[test]
+fn a_roll_that_does_not_return_ownership_is_a_diagnostic_value() {
+    type Grant = Msg<1, hibana::Endpoint<'static, 10>>;
+    let diagnostic = g::diagnose(&g::send::<0, 1, Grant>().roll()).unwrap();
+    assert_eq!(diagnostic.problem, ProjectionProblem::RollChangesOwner);
+    assert_eq!(diagnostic.role, Some(10));
+}
+
+#[test]
 fn lane_conflict_reports_actual_receiver_and_logical_messages() {
     let program = g::seq(
         g::send::<8, 9, Msg<168, u64>>(),

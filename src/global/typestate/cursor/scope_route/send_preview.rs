@@ -446,7 +446,11 @@ impl EventCursor {
             *idx = end;
             return Ok(true);
         }
-        Err(SendPreviewError::Invariant)
+        Err(if self.try_recv_meta_at(*idx).is_some() {
+            SendPreviewError::OutOfOrder
+        } else {
+            SendPreviewError::Invariant
+        })
     }
 
     #[inline(never)]
@@ -456,8 +460,10 @@ impl EventCursor {
         idx: usize,
         preview_route_arm: Option<SendPreviewRouteArm>,
     ) -> Result<SendMeta, SendPreviewError> {
-        if self.logical_role_at(idx) != Some(role) {
-            return Err(SendPreviewError::Invariant);
+        match self.logical_role_at(idx) {
+            Some(actual) if actual != role => return Err(SendPreviewError::OutOfOrder),
+            Some(_) => (),
+            None => return Err(SendPreviewError::Invariant),
         }
         let mut current_meta = if self.is_local_action_at(idx) {
             let local = self
@@ -583,8 +589,8 @@ impl EventCursor {
             )
             .map_err(|error| match error {
                 super::EventAdmissionError::OtherViewPending => SendPreviewError::OtherViewPending,
-                super::EventAdmissionError::Invariant
-                | super::EventAdmissionError::PredecessorPending => SendPreviewError::Invariant,
+                super::EventAdmissionError::Invariant => SendPreviewError::Invariant,
+                super::EventAdmissionError::PredecessorPending => SendPreviewError::OutOfOrder,
             })?;
             return Ok(Some((current_meta, StateIndex::from_usize(*idx))));
         }

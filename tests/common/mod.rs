@@ -692,6 +692,7 @@ impl Transport for TestTransport {
 
     fn initial_endpoint_binding(
         &self,
+        _session: SessionId,
         role: u8,
     ) -> Option<&hibana::runtime::transport::EndpointBinding> {
         self.bindings

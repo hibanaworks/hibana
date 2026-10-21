@@ -44,6 +44,13 @@ impl Text {
 pub(super) const fn panic_diagnostic(d: ProjectionDiagnostic) -> ! {
     let mut text = Text::new();
     text.push(match d.problem {
+        ProjectionProblem::OwnershipCapacity => "owned endpoint source capacity",
+        ProjectionProblem::NonUnitSelfMessage => "self-role actions require the unit payload",
+        ProjectionProblem::EndpointIsItsOwnCarrier => "an owned endpoint cannot carry its own delegation",
+        ProjectionProblem::ConflictingInitialOwners => "owned endpoint has conflicting initial actors",
+        ProjectionProblem::UnrootedInitialOwner => "owned endpoint has no unique initial actor",
+        ProjectionProblem::ParallelOwnershipConflict => "parallel endpoint delegation conflicts with another use",
+        ProjectionProblem::RollChangesOwner => "rolled endpoint delegation must restore its incoming ownership",
         ProjectionProblem::RouteControllerMismatch => "route arms use different first visible controllers",
         ProjectionProblem::ReceiveLaneCausality => "receive lane sender change requires a causal handoff or exclusive route arms",
         ProjectionProblem::ParallelSelector => "parallel endpoint operations must be unambiguous",
