@@ -31,17 +31,32 @@ pub struct Selection {
 /// when a branch is inspected. A choice always refers to its source scope.
 pub(crate) struct Context<'a> {
     base: &'a [Selection],
+    indexed: Option<&'a [Option<Selection>]>,
     extra: Option<(Selection, &'a Context<'a>)>,
 }
 
 impl<'a> Context<'a> {
     pub(crate) const fn new(base: &'a [Selection]) -> Self {
-        Self { base, extra: None }
+        Self {
+            base,
+            indexed: None,
+            extra: None,
+        }
+    }
+
+    /// Read-only compiler choices indexed by the source's binary split.
+    pub(crate) const fn from_index(indexed: &'a [Option<Selection>]) -> Self {
+        Self {
+            base: &[],
+            indexed: Some(indexed),
+            extra: None,
+        }
     }
 
     pub(crate) const fn select<'b>(&'b self, selection: Selection) -> Context<'b> {
         Context {
             base: self.base,
+            indexed: self.indexed,
             extra: Some((selection, self)),
         }
     }
@@ -53,6 +68,15 @@ impl<'a> Context<'a> {
                 return Some(selection.arm);
             }
             context = parent;
+        }
+        if let Some(indexed) = context.indexed {
+            if (scope.split as usize) < indexed.len()
+                && let Some(selection) = indexed[scope.split as usize]
+                && selection.scope.same(scope)
+            {
+                return Some(selection.arm);
+            }
+            return None;
         }
         let mut index = 0;
         while index < context.base.len() {

@@ -44,26 +44,34 @@ pub(super) const fn check<Steps: ProgramShape, const E: usize>(image: &RoleImage
     if image.local_step_count() > E * 2 {
         return false;
     }
+    let mut lane_heads = [u16::MAX; u8::MAX as usize + 1];
     let mut row = 0;
     while row < image.local_step_count() {
         let Some(node) = image.local_step_node(row) else {
             crate::invariant()
         };
+        let coordinates = SourceOrder::<E>::coordinates(node.action());
         check.rows[row / 2][row % 2] = Some(SourceRow {
             action: node.action(),
             dependency: image.dependency_for_index(row),
+            coordinates,
+            previous_lane: lane_heads[coordinates.1 as usize],
         });
+        lane_heads[coordinates.1 as usize] = row as u16;
         row += 1;
     }
+    let mut selections = [None; E];
     let mut before = 0;
     while before < image.local_step_count() {
         let left = check.operation(before);
-        let (first, _) = SourceOrder::<E>::coordinates(left);
+        let (first, _) = check.row(before).coordinates;
+        let mut source_successors = [false; E];
+        mark_source_successors(check.source, 0, first, &mut source_successors);
         let mut after = 0;
         while after < image.local_step_count() {
             let right = check.operation(after);
-            let (second, _) = SourceOrder::<E>::coordinates(right);
-            let precedes = check.source.before(first, second);
+            let (second, _) = check.row(after).coordinates;
+            let precedes = source_successors[second];
             if check.order.before(first, second) != precedes {
                 return false;
             }
@@ -77,14 +85,55 @@ pub(super) const fn check<Steps: ProgramShape, const E: usize>(image: &RoleImage
         }
         let mut after = 0;
         while after < image.local_step_count() {
-            if !check.every_selection(before, after, &SourceContext::new(&[])) {
-                return false;
+            let (second, _) = check.row(after).coordinates;
+            if check.presence.merge_path(first, &mut selections)
+                && check.presence.merge_path(second, &mut selections)
+            {
+                // Inactive pairs impose no obligation. Check precisely the
+                // common paths on which both source events can occur.
+                if !check.every_selection(before, after, &SourceContext::from_index(&selections)) {
+                    return false;
+                }
             }
+            check.presence.clear_path(first, &mut selections);
+            check.presence.clear_path(second, &mut selections);
             after += 1;
         }
         before += 1;
     }
     true
+}
+
+/// Evaluate one row of the typed source's strict order in a single descent.
+/// Seq marks its entire right side; par and route only descend into the side
+/// containing the first event. Roll preserves its body's single-visit order.
+const fn mark_source_successors<const E: usize>(
+    source: &ProgramSourceNode,
+    start: usize,
+    first: usize,
+    successors: &mut [bool; E],
+) {
+    match source {
+        ProgramSourceNode::Send(_) => (),
+        ProgramSourceNode::Roll(body, _) => mark_source_successors(body, start, first, successors),
+        ProgramSourceNode::Seq(left, right, _)
+        | ProgramSourceNode::Par(left, right, _)
+        | ProgramSourceNode::Route { left, right, .. } => {
+            let split = start + left.event_count();
+            if first < split {
+                mark_source_successors(left, start, first, successors);
+                if matches!(source, ProgramSourceNode::Seq(..)) {
+                    let mut event = split;
+                    while event < split + right.event_count() {
+                        successors[event] = true;
+                        event += 1;
+                    }
+                }
+            } else {
+                mark_source_successors(right, split, first, successors);
+            }
+        }
+    }
 }
 
 struct SourceOrder<'a, const E: usize> {
@@ -103,6 +152,8 @@ struct SourceOrder<'a, const E: usize> {
 struct SourceRow {
     action: LocalAction,
     dependency: Option<LocalDependency>,
+    coordinates: (usize, u8),
+    previous_lane: u16,
 }
 
 impl<const E: usize> SourceOrder<'_, E> {
@@ -184,10 +235,14 @@ impl<const E: usize> SourceOrder<'_, E> {
     }
 
     const fn operation(&self, row: usize) -> LocalAction {
+        self.row(row).action
+    }
+
+    const fn row(&self, row: usize) -> SourceRow {
         let Some(row) = self.rows[row / 2][row % 2] else {
             crate::invariant()
         };
-        row.action
+        row
     }
 
     const fn coordinates(action: LocalAction) -> (usize, u8) {
@@ -207,7 +262,7 @@ impl<const E: usize> SourceOrder<'_, E> {
 
     const fn active(&self, row: usize, path: &SourceContext<'_>) -> Result<bool, SourceScope> {
         let operation = self.operation(row);
-        let (event, _) = Self::coordinates(operation);
+        let (event, _) = self.row(row).coordinates;
         match self.presence.active(event, path) {
             Ok(true) => (),
             other => return other,
@@ -242,8 +297,8 @@ impl<const E: usize> SourceOrder<'_, E> {
         after: usize,
         path: &SourceContext<'_>,
     ) -> Result<bool, SourceScope> {
-        let (_, left_lane) = Self::coordinates(self.operation(before));
-        let (_, right_lane) = Self::coordinates(self.operation(after));
+        let (_, left_lane) = self.row(before).coordinates;
+        let (_, right_lane) = self.row(after).coordinates;
         if before < after && left_lane == right_lane {
             return Ok(true);
         }
@@ -256,6 +311,14 @@ impl<const E: usize> SourceOrder<'_, E> {
         if before < dependency.start() || before >= dependency.end() {
             return Ok(false);
         }
+        self.dependency_active(dependency, path)
+    }
+
+    const fn dependency_active(
+        &self,
+        dependency: LocalDependency,
+        path: &SourceContext<'_>,
+    ) -> Result<bool, SourceScope> {
         match dependency.conflict() {
             LocalConflict::Unconditional => Ok(true),
             LocalConflict::SharedRoute => Ok(false),
@@ -309,30 +372,48 @@ impl<const E: usize> SourceOrder<'_, E> {
         // source ancestors sufficient. Check each obligation separately, so
         // independent route scopes do not form a Cartesian path enumeration.
         let mut unknown = None;
-        let mut middle = after;
-        while middle > 0 {
-            middle -= 1;
-            let actual = self.actual(middle, after, path);
-            if matches!(actual, Ok(false)) {
-                continue;
-            }
+        let row = self.row(after);
+        let mut previous = row.previous_lane;
+        while previous != u16::MAX {
+            let middle = previous as usize;
             if self.expected[middle / 2][middle % 2] {
                 match self.active(middle, path) {
-                    Ok(true) => match actual {
-                        Ok(true) => return Ok(true),
-                        Ok(false) => (),
-                        Err(scope) => {
-                            if unknown.is_none() {
-                                unknown = Some(scope);
-                            }
-                        }
-                    },
+                    Ok(true) => return Ok(true),
                     Ok(false) => (),
                     Err(scope) => {
                         if unknown.is_none() {
                             unknown = Some(scope);
                         }
                     }
+                }
+            }
+            previous = self.row(middle).previous_lane;
+        }
+        if let Some(dependency) = row.dependency {
+            let edge = self.dependency_active(dependency, path);
+            if !matches!(edge, Ok(false)) {
+                let mut middle = dependency.start();
+                while middle < after && middle < dependency.end() {
+                    if self.expected[middle / 2][middle % 2] {
+                        match self.active(middle, path) {
+                            Ok(true) => match edge {
+                                Ok(true) => return Ok(true),
+                                Ok(false) => (),
+                                Err(scope) => {
+                                    if unknown.is_none() {
+                                        unknown = Some(scope);
+                                    }
+                                }
+                            },
+                            Ok(false) => (),
+                            Err(scope) => {
+                                if unknown.is_none() {
+                                    unknown = Some(scope);
+                                }
+                            }
+                        }
+                    }
+                    middle += 1;
                 }
             }
         }

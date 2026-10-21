@@ -67,6 +67,9 @@ impl Source<'_> {
     /// Strict order comes from seq, never from enumeration, par, or two
     /// different route arms. Roll contributes its single-visit body order.
     pub const fn before(&self, first: usize, second: usize) -> bool {
+        if first >= second {
+            return false;
+        }
         match self {
             Self::Send(_) => false,
             Self::Seq(left, right, _)

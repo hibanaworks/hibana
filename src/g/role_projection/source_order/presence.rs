@@ -92,6 +92,101 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn source_rows_and_merged_paths_match_exhaustive_choice_assignments() {
+        type Step = g::Send<0, 1, g::Msg<1, ()>>;
+        type Steps = g::Seq<
+            g::Route<g::Seq<Step, g::Route<Step, Step>>, g::Par<g::Route<Step, Step>, Step>>,
+            g::Roll<Step>,
+        >;
+        let source = &Steps::SOURCE_NODE;
+        let presence = SourcePresence::<32>::new(source);
+        let scopes = [
+            SourceScope {
+                start: 0,
+                split: 3,
+                stop: 6,
+            },
+            SourceScope {
+                start: 1,
+                split: 2,
+                stop: 3,
+            },
+            SourceScope {
+                start: 3,
+                split: 4,
+                stop: 5,
+            },
+        ];
+        let occurs = |event, arms: [bool; 3]| match event {
+            0 => arms[0],
+            1 => arms[0] && arms[1],
+            2 => arms[0] && !arms[1],
+            3 => !arms[0] && arms[2],
+            4 => !arms[0] && !arms[2],
+            5 => !arms[0],
+            6 => true,
+            _ => unreachable!(),
+        };
+        let mut indexed = [None; 32];
+        for first in 0..source.event_count() {
+            let mut successors = [false; 32];
+            super::super::mark_source_successors(source, 0, first, &mut successors);
+            for (second, &expected) in successors.iter().enumerate().take(source.event_count()) {
+                assert_eq!(expected, source.before(first, second));
+                assert!(presence.merge_path(first, &mut indexed));
+                let compatible = presence.merge_path(second, &mut indexed);
+                let mut common = 0;
+                for full in 0..8 {
+                    let arms = [full & 1 == 0, full & 2 == 0, full & 4 == 0];
+                    let selected = core::array::from_fn::<_, 3, _>(|i| SourceSelection {
+                        scope: scopes[i],
+                        arm: if arms[i] {
+                            SourceArm::Left
+                        } else {
+                            SourceArm::Right
+                        },
+                    });
+                    let path = SourceContext::new(&selected);
+                    let matches = indexed
+                        .iter()
+                        .flatten()
+                        .all(|choice| path.get(choice.scope) == Some(choice.arm));
+                    if occurs(first, arms) && occurs(second, arms) {
+                        common += 1;
+                        assert!(matches);
+                    }
+                    if compatible {
+                        assert_eq!(matches, occurs(first, arms) && occurs(second, arms));
+                    }
+                }
+                assert_eq!(compatible, common != 0);
+                if compatible {
+                    let path = SourceContext::from_index(&indexed);
+                    assert!(matches!(presence.active(first, &path), Ok(true)));
+                    assert!(matches!(presence.active(second, &path), Ok(true)));
+                    for choice in indexed.iter().flatten() {
+                        assert_eq!(path.get(choice.scope), Some(choice.arm));
+                    }
+                    let different_scope = SourceScope {
+                        start: 1,
+                        split: 3,
+                        stop: 6,
+                    };
+                    assert!(path.get(different_scope).is_none());
+                    let extra = path.select(SourceSelection {
+                        scope: different_scope,
+                        arm: SourceArm::Right,
+                    });
+                    assert!(matches!(extra.get(different_scope), Some(SourceArm::Right)));
+                }
+                presence.clear_path(first, &mut indexed);
+                presence.clear_path(second, &mut indexed);
+                assert!(indexed.iter().all(Option::is_none));
+            }
+        }
+    }
 }
 
 pub(super) struct SourcePresence<const E: usize> {
@@ -155,6 +250,50 @@ impl<const E: usize> SourcePresence<E> {
                 self.collect(left, start, first as u16, next);
                 self.collect(right, split, (first + 1) as u16, next);
             }
+        }
+    }
+
+    /// Merge an event's required choices into compiler scratch. Binary source
+    /// splits are unique; compare the full scope before sharing an entry.
+    pub(super) const fn merge_path(
+        &self,
+        event: usize,
+        selections: &mut [Option<SourceSelection>; E],
+    ) -> bool {
+        let mut link = self.heads[event];
+        while link != u16::MAX {
+            let Some(condition) = self.conditions[link as usize] else {
+                crate::invariant();
+            };
+            let slot = condition.selection.scope.split as usize;
+            if let Some(previous) = selections[slot] {
+                if previous.scope.start != condition.selection.scope.start
+                    || previous.scope.stop != condition.selection.scope.stop
+                {
+                    crate::invariant();
+                }
+                if previous.arm as u8 != condition.selection.arm as u8 {
+                    return false;
+                }
+            }
+            selections[slot] = Some(condition.selection);
+            link = condition.parent;
+        }
+        true
+    }
+
+    pub(super) const fn clear_path(
+        &self,
+        event: usize,
+        selections: &mut [Option<SourceSelection>; E],
+    ) {
+        let mut link = self.heads[event];
+        while link != u16::MAX {
+            let Some(condition) = self.conditions[link as usize] else {
+                crate::invariant();
+            };
+            selections[condition.selection.scope.split as usize] = None;
+            link = condition.parent;
         }
     }
 

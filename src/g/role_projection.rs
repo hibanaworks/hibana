@@ -144,18 +144,14 @@ where
             Some(build) => build,
             None => panic!("role bucket selection"),
         };
-        let image = build.image_ref(
+        build.image_ref(
             &ProgramProjection::<Steps, CAPACITY>::PROGRAM_REF,
             Self::ACTOR,
             Self::FACTS,
-        );
-        if !source_order::check::<Steps, CAPACITY>(&image) {
-            panic!("actor projection does not preserve source operation dependencies");
-        }
-        image
+        )
     }
 
-    const IMAGE_REF: crate::global::role_program::RoleImageRef = if Self::BLOB_LEN <= 32 {
+    const BUILT_IMAGE_REF: crate::global::role_program::RoleImageRef = if Self::BLOB_LEN <= 32 {
         Self::image_ref::<32>()
     } else if Self::BLOB_LEN <= 64 {
         Self::image_ref::<64>()
@@ -187,6 +183,15 @@ where
         Self::image_ref::<{ COMPACT_DESCRIPTOR_BYTE_CAPACITY }>()
     } else {
         panic!("role image exceeds compact offset domain")
+    };
+
+    const SOURCE_ORDER_VALID: bool = source_order::check::<Steps, CAPACITY>(&Self::BUILT_IMAGE_REF);
+
+    const IMAGE_REF: crate::global::role_program::RoleImageRef = {
+        if !Self::SOURCE_ORDER_VALID {
+            panic!("actor projection does not preserve source operation dependencies");
+        }
+        Self::BUILT_IMAGE_REF
     };
 }
 
