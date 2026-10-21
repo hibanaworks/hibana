@@ -110,6 +110,27 @@ theorem an_unfinished_prefix_does_not_authorize_the_next_send :
 theorem a_new_unfinished_visit_still_blocks_the_continuation_send :
     acceptedParallel (completedPrefix ++ [.roll 0, .send 0, .recv 0, .send 2]) = false := by decide
 
+def enclosingParallel : Choreo := .roll (.seq (.send 0 1 231 0)
+  (.roll (.par (.send 0 1 232 0) (.send 0 2 233 0))))
+
+def acceptedEnclosing (trace : List GlobalOperation) : Bool :=
+  (run (GlobalConfig.initial 1 3 enclosingParallel) trace).isSome
+
+def enclosingVisit : List GlobalOperation :=
+  [.send 0, .recv 0, .send 1, .send 2, .recv 1, .recv 2]
+
+theorem an_enclosing_repeat_does_not_force_its_prefix_before_an_inner_repeat :
+    acceptedEnclosing (enclosingVisit ++ [.roll 0, .send 2, .send 1, .recv 2, .recv 1]) = true := by decide
+
+theorem a_completed_body_can_instead_restart_its_enclosing_prefix :
+    acceptedEnclosing (enclosingVisit ++ [.roll 1, .send 0, .recv 0]) = true := by decide
+
+theorem a_fresh_enclosing_visit_still_requires_its_prefix :
+    acceptedEnclosing (enclosingVisit ++ [.roll 1, .send 1]) = false := by decide
+
+theorem an_unfinished_parallel_arm_cannot_restart_the_enclosing_prefix :
+    acceptedEnclosing [.send 0, .recv 0, .send 1, .recv 1, .roll 1] = false := by decide
+
 #print axioms a_scheduled_entry_is_eligible
 #print axioms an_in_progress_choice_cannot_change_arm
 #print axioms right_then_left_remains_enabled
@@ -124,4 +145,8 @@ theorem a_new_unfinished_visit_still_blocks_the_continuation_send :
 #print axioms the_parallel_continuation_keeps_the_other_schedule
 #print axioms an_unfinished_prefix_does_not_authorize_the_next_send
 #print axioms a_new_unfinished_visit_still_blocks_the_continuation_send
+#print axioms an_enclosing_repeat_does_not_force_its_prefix_before_an_inner_repeat
+#print axioms a_completed_body_can_instead_restart_its_enclosing_prefix
+#print axioms a_fresh_enclosing_visit_still_requires_its_prefix
+#print axioms an_unfinished_parallel_arm_cannot_restart_the_enclosing_prefix
 end ParallelResolverProgress

@@ -65,6 +65,10 @@ name = "affine_progression"
 path = "tests/affine_progression.rs"
 
 [[test]]
+name = "enclosing_roll_parallel"
+path = "tests/enclosing_roll_parallel.rs"
+
+[[test]]
 name = "callsite_regression"
 path = "tests/callsite_regression.rs"
 

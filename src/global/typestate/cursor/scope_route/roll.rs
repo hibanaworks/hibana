@@ -8,10 +8,11 @@ mod reentry;
 mod tests;
 
 impl EventCursor {
-    /// An enabled retry of a completed sequential prefix does not have to be
-    /// borrowed with its continuation. Independent siblings and an unfinished
-    /// current visit still belong to the active parallel frontier.
-    pub(crate) fn completed_roll_prefix_before(
+    /// A completed repeat before a parallel region is an alternative, not a
+    /// required member of its borrow. This also covers an enclosing repeat's
+    /// head: the caller may continue its completed body instead of restarting
+    /// the enclosing prefix. Unfinished prefixes and siblings remain required.
+    pub(crate) fn completed_roll_alternative_before(
         &self,
         index: usize,
         continuation: usize,
@@ -19,10 +20,20 @@ impl EventCursor {
     ) -> bool {
         let program = self.program_ref();
         for marker in 0..program.source_scope_marker_count() {
-            let Some((scope, _, end)) = program.source_roll_at(marker) else {
+            let Some((scope, start, end)) = program.source_roll_at(marker) else {
                 continue;
             };
-            if end > continuation || !program.source_precedes(end - 1, continuation) {
+            let prefix = end <= continuation && program.source_precedes(end - 1, continuation);
+            let enclosing = start <= continuation
+                && continuation < end
+                && self
+                    .machine()
+                    .event_program()
+                    .operation_at(index)
+                    .is_some_and(|(event, _)| {
+                        program.source_precedes(event.dense_ordinal(), continuation)
+                    });
+            if !prefix && !enclosing {
                 continue;
             }
             let Some(row) = self.machine().roll_scope_row(scope) else {

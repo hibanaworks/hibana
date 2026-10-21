@@ -58,15 +58,18 @@
 (assert retainedChoice)
 (check-sat)
 (pop)
-; A parallel borrow may omit only retries of a completed sequential prefix.
+; Completed prefix and enclosing-head retries are alternatives to the borrow.
 (declare-const insideReady Bool)
 (declare-const outsideReady Bool)
 (declare-const prefixComplete Bool)
 (declare-const rollEnd Int)
+(declare-const rollStart Int)
 (declare-const continuationStart Int)
 (declare-const sequential Bool)
 (define-fun completedPrefix () Bool
-  (and prefixComplete (<= rollEnd continuationStart) sequential))
+  (and prefixComplete sequential
+    (or (<= rollEnd continuationStart)
+        (and (<= rollStart continuationStart) (< continuationStart rollEnd)))))
 (define-fun borrowAllowed () Bool
   (and insideReady (or (not outsideReady) completedPrefix)))
 (push)
@@ -85,10 +88,18 @@
 (check-sat)
 (pop)
 (push)
-(assert (and borrowAllowed outsideReady (> rollEnd continuationStart)))
+(assert (and borrowAllowed outsideReady (> rollEnd continuationStart)
+  (> rollStart continuationStart)))
 (check-sat)
 (pop)
 (push)
 (assert (and borrowAllowed (not insideReady)))
+(check-sat)
+(pop)
+(push)
+(assert (and insideReady outsideReady prefixComplete sequential
+  (<= rollStart continuationStart) (< continuationStart rollEnd)))
+(check-sat)
+(assert (not borrowAllowed))
 (check-sat)
 (pop)

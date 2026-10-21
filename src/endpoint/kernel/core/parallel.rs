@@ -107,7 +107,7 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
         for (index, event) in enabled {
             if source.contains(&event) {
                 inside = true;
-            } else if !self.progress.cursor.completed_roll_prefix_before(
+            } else if !self.progress.cursor.completed_roll_alternative_before(
                 index,
                 source.start,
                 &mut |scope| self.selected_arm_for_scope(scope),

@@ -15,4 +15,4 @@ output=$(mktemp)
 trap 'rm -f "$output"' EXIT
 z3 proofs/checks/runtime/parallel-resolver-progress/Check.smt2 > "$output"
 cat "$output"
-bash .github/scripts/lib/supplemental_proofs_tool.sh smt-sequence "$output" sat unsat sat unsat sat unsat sat sat unsat sat unsat sat unsat sat unsat unsat unsat unsat unsat
+bash .github/scripts/lib/supplemental_proofs_tool.sh smt-sequence "$output" sat unsat sat unsat sat unsat sat sat unsat sat unsat sat unsat sat unsat unsat unsat unsat unsat sat unsat
