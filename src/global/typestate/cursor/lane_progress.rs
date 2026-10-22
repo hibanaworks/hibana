@@ -268,6 +268,7 @@ impl EventCursor {
         refresh
     }
 
+    #[inline(always)]
     pub(crate) fn relocatable_step_done(&self, target: RelocatableResidentLaneStep) -> bool {
         let target = target.0;
         self.local_event_done(target.step_idx as usize)

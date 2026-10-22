@@ -10,23 +10,26 @@ impl EventCursor {
         selector: crate::global::typestate::MessageSelector,
     ) -> impl Iterator<Item = usize> + '_ {
         let repeatable = self.has_reentry_scopes();
-        (0..self.local_steps_len()).filter(move |&index| {
-            // Only roll can reopen a completed step. Match the immutable
-            // source header before decoding a full operation; each surviving
-            // candidate still goes through live admission.
-            if !repeatable && self.local_event_done(index) {
-                return false;
-            }
-            let (event, direction) =
-                crate::invariant_some(self.machine().event_program().operation_at(index));
-            if direction == RoleLocalDirection::Recv {
-                return false;
-            }
-            let atom = self.program_ref().event_atom_at(event.dense_ordinal());
-            atom.from == selector.role
-                && atom.label == selector.label
-                && atom.payload == selector.payload_kind
-        })
+        (0..self.local_steps_len()).filter(
+            #[inline(always)]
+            move |&index| {
+                // Only roll can reopen a completed step. Match the immutable
+                // source header before decoding a full operation; each surviving
+                // candidate still goes through live admission.
+                if !repeatable && self.local_event_done(index) {
+                    return false;
+                }
+                let (event, direction) =
+                    crate::invariant_some(self.machine().event_program().operation_at(index));
+                if direction == RoleLocalDirection::Recv {
+                    return false;
+                }
+                let atom = self.program_ref().event_atom_at(event.dense_ordinal());
+                atom.from == selector.role
+                    && atom.label == selector.label
+                    && atom.payload == selector.payload_kind
+            },
+        )
     }
 
     #[inline]
@@ -41,7 +44,10 @@ impl EventCursor {
         self.machine()
             .event_program()
             .receive_candidates(role, label)
-            .filter(move |&index| repeatable || !self.local_event_done(index))
+            .filter(
+                #[inline(always)]
+                move |&index| repeatable || !self.local_event_done(index),
+            )
     }
     /// Current typestate index.
     #[inline(always)]
