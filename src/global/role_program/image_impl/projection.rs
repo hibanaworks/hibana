@@ -287,7 +287,6 @@ const fn first_recv_eff_for_route_arm<const E: usize>(
 pub(super) const fn local_event_row_for_eff<const E: usize>(
     eff_list: &EffList<E>,
     eff_idx: usize,
-    frame_label: u8,
     rows: LocalRows<'_, E>,
     side: usize,
 ) -> (PackedLocalEventRow, PackedEventConflict) {
@@ -312,7 +311,7 @@ pub(super) const fn local_event_row_for_eff<const E: usize>(
         }
     };
     (
-        PackedLocalEventRow::new(eff_idx, scope, frame_label, choice, direction),
+        PackedLocalEventRow::new(eff_idx, scope, choice, direction),
         conflict,
     )
 }

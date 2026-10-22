@@ -183,7 +183,7 @@ theorem dropping_carrier_has_no_affine_refinement :
     receiver := 1
   }
   have sent := refinement.sendExact
-    (droppingCarrierSemantics.initial channel) (0 : Fin 256)
+    (droppingCarrierSemantics.initial channel) (0 : Fin 65536)
   have initialExact := refinement.initialExact channel
   change abstraction (TransportBoundaryState.initial channel) =
     TransportBoundaryState.initial channel at initialExact

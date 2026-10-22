@@ -50,7 +50,7 @@ where
                 branch_kind,
                 lane_wire,
                 preview_meta.peer,
-                preview_meta.frame_label,
+                preview_meta.eff_index.dense_ordinal() as u16,
                 transport_payload,
             )
             .inspect_err(|_| {
@@ -64,7 +64,7 @@ where
             eff_index: preview_meta.eff_index,
             label: preview_meta.label,
             origin: preview_meta.origin,
-            frame_label: preview_meta.frame_label,
+            frame_label: preview_meta.eff_index.dense_ordinal() as u16,
             kind: branch_kind,
             profile,
             route_token,
@@ -103,7 +103,7 @@ where
         branch_kind: BranchKind,
         lane_wire: u8,
         source_role: u8,
-        frame_label: u8,
+        frame_label: u16,
         transport_payload: Option<lane_port::PreambleFrame<'r>>,
     ) -> RecvResult<Option<lane_port::ReceivedFrame<'r>>> {
         let Some(payload) = transport_payload else {

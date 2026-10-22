@@ -69,9 +69,7 @@ bash proofs/checks/runtime/ordinary-offer-ingress/check.sh
 bash proofs/checks/runtime/offer-prefix-dependency/check.sh
 bash proofs/checks/projection/endpoint-delegation/check.sh
 ELAN_TOOLCHAIN=leanprover/lean4:v4.30.0 \
-  bash proofs/checks/projection/elastic-roll-colors/check_all.sh --lean lean
-ELAN_TOOLCHAIN=leanprover/lean4:v4.30.0 \
-  bash proofs/checks/projection/wire-frame-refinement/check_all.sh --lean lean
+  bash .github/scripts/check_projection_algorithms.sh --lean lean
 bash ./.github/scripts/check_unix_carrier_proof.sh
 bash ./.github/scripts/check_final_form_measurements.sh
 bash ./.github/scripts/check_runtime_performance_hygiene.sh

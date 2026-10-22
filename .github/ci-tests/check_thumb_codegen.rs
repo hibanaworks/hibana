@@ -16,9 +16,9 @@ const PROBE: &str = r#"#![no_std]
 use hibana::runtime::transport::FrameHeader;
 #[unsafe(no_mangle)]
 pub extern "C" fn hibana_frame_header_codegen_probe(a: u8, b: u8) -> u8 {
-    let header = FrameHeader::from_bytes([0, 0, 0, a, b, 3, 4, 5]);
+    let header = FrameHeader::from_bytes([0, 0, 0, a, b, 3, 4, 5, 6]);
     let bytes = header.bytes();
-    bytes[3] ^ bytes[4] ^ bytes[5] ^ bytes[6] ^ bytes[7]
+    bytes[3] ^ bytes[4] ^ bytes[5] ^ bytes[6] ^ bytes[7] ^ bytes[8]
 }
 "#;
 

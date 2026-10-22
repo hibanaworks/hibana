@@ -17,6 +17,7 @@ pub(super) use super::super::recv_frame_receipt::RecvFrameReceiptState;
 pub(crate) struct FrameObservation {
     session: u32,
     meta: u32,
+    lane: u8,
 }
 
 #[repr(u8)]
@@ -50,7 +51,7 @@ struct ReceivedFrameCore<'r> {
     payload_lifetime: core::marker::PhantomData<&'r [u8]>,
     receipt: PortRecvFrameReceipt,
     observed_source_label: ObservedSourceLabel,
-    source_label: u16,
+    source_label: u32,
     lane_wire: u8,
 }
 
@@ -94,14 +95,12 @@ impl FrameObservation {
         lane_wire: u8,
         source_role: u8,
         target_role: u8,
-        label: u8,
+        label: u16,
     ) -> Self {
         Self {
             session: session_raw,
-            meta: ((lane_wire as u32) << 24)
-                | ((source_role as u32) << 16)
-                | ((target_role as u32) << 8)
-                | (label as u32),
+            meta: ((source_role as u32) << 24) | ((target_role as u32) << 16) | (label as u32),
+            lane: lane_wire,
         }
     }
 
@@ -128,22 +127,22 @@ impl FrameObservation {
 
     #[inline]
     pub(crate) const fn lane_wire(self) -> u8 {
-        (self.meta >> 24) as u8
+        self.lane
     }
 
     #[inline]
     pub(crate) const fn source_role(self) -> u8 {
-        (self.meta >> 16) as u8
+        (self.meta >> 24) as u8
     }
 
     #[inline]
     pub(crate) const fn target_role(self) -> u8 {
-        (self.meta >> 8) as u8
+        (self.meta >> 16) as u8
     }
 
     #[inline]
-    pub(crate) const fn label_raw(self) -> u8 {
-        self.meta as u8
+    pub(crate) const fn label_raw(self) -> u16 {
+        self.meta as u16
     }
 
     #[inline(always)]
@@ -153,7 +152,7 @@ impl FrameObservation {
         lane_wire: u8,
         source_role: u8,
         target_role: u8,
-        label: u8,
+        label: u16,
     ) -> Option<FrameMismatchKind> {
         if self.session_raw() != session_raw {
             Some(FrameMismatchKind::Session)
@@ -219,7 +218,7 @@ impl FrameMismatch {
     pub(crate) const fn source_label_mismatch(
         observation: FrameObservation,
         source_role: u8,
-        label: u8,
+        label: u16,
     ) -> Self {
         let kind = if observation.source_role() != source_role {
             FrameMismatchKind::SourceRole
@@ -236,6 +235,8 @@ impl FrameMismatch {
         let reason = self.kind.tap_reason();
         let observed = if self.kind == FrameMismatchKind::Session {
             self.observation.session_raw()
+        } else if self.kind == FrameMismatchKind::Lane {
+            self.observation.lane_wire() as u32
         } else {
             self.observation.meta()
         };
@@ -252,6 +253,7 @@ impl FrameMismatch {
 #[inline]
 pub(crate) fn transport_frame_tap_event(observation: FrameObservation) -> TapEvent {
     events::raw_event(ids::TRANSPORT_FRAME)
+        .with_causal_key(TapEvent::make_causal_key(observation.lane_wire(), 0))
         .with_arg0(observation.session_raw())
         .with_arg1(observation.meta())
 }
@@ -261,7 +263,10 @@ impl ObservedSourceLabel {
 
     #[inline]
     const fn from_observation(observation: FrameObservation) -> Self {
-        Self(source_label(observation.source_role(), observation.label_raw()) as u32)
+        Self(source_label(
+            observation.source_role(),
+            observation.label_raw(),
+        ))
     }
 
     #[inline]
@@ -270,8 +275,8 @@ impl ObservedSourceLabel {
     }
 
     #[inline]
-    const fn from_source_label(source_role: u8, label: u8) -> Self {
-        Self(source_label(source_role, label) as u32)
+    const fn from_source_label(source_role: u8, label: u16) -> Self {
+        Self(source_label(source_role, label))
     }
 
     #[inline]
@@ -295,16 +300,16 @@ impl ObservedSourceLabel {
 
     #[inline]
     const fn source_role(self) -> u8 {
-        (self.0 >> 8) as u8
+        (self.0 >> 16) as u8
     }
 
     #[inline]
-    const fn label_raw(self) -> u8 {
-        self.0 as u8
+    const fn label_raw(self) -> u16 {
+        self.0 as u16
     }
 
     #[inline]
-    const fn mismatch_expected(self, source_role: u8, label: u8) -> Option<FrameMismatchKind> {
+    const fn mismatch_expected(self, source_role: u8, label: u16) -> Option<FrameMismatchKind> {
         if self.source_role() != source_role {
             Some(FrameMismatchKind::SourceRole)
         } else if self.label_raw() != label {
@@ -337,7 +342,7 @@ impl<'r> ReceivedFrameCore<'r> {
         port: &Port<'r, T>,
         payload: Payload<'r>,
         source_role: u8,
-        label: u8,
+        label: u16,
         observed_source_label: ObservedSourceLabel,
     ) -> Self
     where
@@ -364,12 +369,12 @@ impl<'r> ReceivedFrameCore<'r> {
     }
 
     #[inline]
-    const fn frame_label_raw(&self) -> u8 {
-        self.source_label as u8
+    const fn frame_label_raw(&self) -> u16 {
+        self.source_label as u16
     }
 
     #[inline]
-    const fn observed_frame_label_raw(&self) -> u8 {
+    const fn observed_frame_label_raw(&self) -> u16 {
         self.observed_source_label.label_raw()
     }
 
@@ -506,7 +511,7 @@ impl<'r> PreambleFrame<'r> {
         expected_session_raw: u32,
         expected_target_role: u8,
         source_role: u8,
-        frame_label: u8,
+        frame_label: u16,
     ) -> Result<ReceivedFrame<'r>, FrameMismatch> {
         let mut core = self.core;
         if !core.observed_source_label.is_deterministic()
@@ -537,7 +542,7 @@ impl<'r> PreambleFrame<'r> {
     }
 
     #[inline]
-    pub(crate) fn observed_frame_label_raw(&self) -> u8 {
+    pub(crate) fn observed_frame_label_raw(&self) -> u16 {
         if self.core.observed_source_label.is_deterministic() {
             crate::invariant();
         }
@@ -600,8 +605,8 @@ impl<'r> PreambleFrame<'r> {
 }
 
 #[inline(always)]
-const fn source_label(source_role: u8, label: u8) -> u16 {
-    ((source_role as u16) << 8) | (label as u16)
+const fn source_label(source_role: u8, label: u16) -> u32 {
+    ((source_role as u32) << 16) | (label as u32)
 }
 
 impl<'r> ReceivedFrame<'r> {
@@ -610,7 +615,7 @@ impl<'r> ReceivedFrame<'r> {
         port: &Port<'r, T>,
         payload: Payload<'r>,
         source_role: u8,
-        label: u8,
+        label: u16,
     ) -> Self
     where
         T: Transport + 'r,
@@ -632,7 +637,7 @@ impl<'r> ReceivedFrame<'r> {
     }
 
     #[inline]
-    pub(crate) const fn frame_label_raw(&self) -> u8 {
+    pub(crate) const fn frame_label_raw(&self) -> u16 {
         self.core.frame_label_raw()
     }
 

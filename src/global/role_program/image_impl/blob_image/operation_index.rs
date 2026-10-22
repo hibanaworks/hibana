@@ -19,7 +19,7 @@ impl<const N: usize> RoleImageBytes<N> {
         let effect = self.bytes[offset] as u16 | (self.bytes[offset + 1] as u16) << 8;
         let atom = source.atom_at(effect as usize);
         super::super::event_rows::operation_index_key(
-            self.bytes[offset + 9],
+            self.bytes[offset + 8],
             atom.from,
             atom.to,
             atom.label,

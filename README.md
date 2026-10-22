@@ -444,15 +444,16 @@ cannot keep that handle borrow after returning. A receive may return a frame
 borrowed for its current call. That frame must be released before the same
 receive handle is used again.
 
-A framed receive uses this eight-byte header:
+A framed receive uses this nine-byte header:
 
 ```text
-session id (4 bytes, big endian) | lane | source role | target role | frame label
+session id (4 bytes, big endian) | lane | source role | target role | message position (2 bytes, big endian)
 ```
 
-The transport owns these bytes. The frame label is a wire identifier assigned
-during projection, distinct from the logical message label in `Msg`. The
-runtime checks the header and requested message against the local protocol.
+The transport owns these bytes. The frame label identifies a message's position
+in the shared global protocol. It differs from the logical label in `Msg`,
+which can be reused. Distinct message sites have distinct frame labels.
+The runtime checks the header and requested message against the local protocol.
 
 `ReceivedFrame::deterministic` omits the header. It is valid only when the
 lane-bound receive and requested message identify exactly one enabled local
@@ -467,13 +468,11 @@ an uncommitted frame through `requeue` must not make it count as a second
 message.
 
 Frame validation rejects structural mismatches. It does not establish data
-integrity or detect every replay. Ordered messages can reuse a frame label,
-and schema IDs are not sent in the header. For example, a `bool` encoded as
-`[1]` is also a valid `u8`. If the transport duplicates that bool frame before a
-following u8 message with the same wire label, the u8 receive can accept `1`.
-It cannot recover the intended value from these bytes. The transport must provide
-replay exclusion and any sequence numbers, authentication or end-to-end
-protection required by the deployment.
+integrity or detect every replay. For example, changing an encoded `u8` from
+`[1]` to `[2]` still gives a valid payload. Repetition also reuses each message
+site's identifier, so the transport must exclude frames from earlier visits.
+Sequence numbers, authentication and end-to-end protection belong to the
+transport when the deployment needs them.
 
 An accepted frame must eventually arrive, or closure of its direction must
 become observable. After accepted frames have been drained or isolated,
@@ -598,18 +597,17 @@ and restart policy.
 | Branch and repetition regions | Limited by protocol bytes, at least ten bytes per region |
 | Decision function identifiers | 65,536, the full `u16` range |
 | Transport lanes | 256 |
-| Competing wire identifiers | 256 for one source, receiver, and lane |
+| Wire message identifiers | One per source event, within the event identifier limit |
 
 Both the global and local protocols must fit their byte limits. Branches,
 repetition, and dependencies consume additional bytes, so the event identifier
 range alone does not determine how many events fit. Branch metadata also uses
 this byte budget.
 
-Wire identifiers distinguish receives that can compete. Ordered messages can
-reuse identifiers, as can messages from different sources. The 256-identifier
-limit is not a limit of 256 messages per protocol. Projection allocates lanes
-according to the communication and can reuse them when ownership does not
-conflict.
+Each message site uses its source position as its wire identifier, including
+ordered messages and messages on different lanes. Repetition reuses that
+position. Projection allocates lanes according to the communication and can
+reuse them when ownership does not conflict.
 
 The source protocol remains a Rust type tree. Large generated protocols should
 use balanced composition. Deeply nested protocols may need a larger Rust

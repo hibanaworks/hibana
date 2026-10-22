@@ -81,11 +81,11 @@ bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" build-serial "${PROOF_
 bash "${ROOT_DIR}/.github/scripts/check_lean_claim_surface.sh"
 static_audit_output="$(run_audit \
   theorem-inventory \
-  --static "${PROOF_DIR}" "${STATIC_CLAIM_SNAPSHOT}" 1208 754 337 117)"
+  --static "${PROOF_DIR}" "${STATIC_CLAIM_SNAPSHOT}" 1196 740 333 123)"
 printf '%s\n' "${static_audit_output}"
 printf '%s\n' "${static_audit_output}" | bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard markers static
 bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" theorem-inventory \
-  --example-types "${PROOF_DIR}" "${EXAMPLE_CLAIM_SNAPSHOT}" 36
+  --example-types "${PROOF_DIR}" "${EXAMPLE_CLAIM_SNAPSHOT}" 35
 
 source "${ROOT_DIR}/.github/scripts/repo_rustflags.sh"
 hibana_enable_repo_tests_cfg
@@ -168,11 +168,11 @@ rm -f "${SOURCE_ORDER_GENERATED}"
 rm -f "${OWNED_ENTRY_GENERATED}"
 rm -f "${PEER_WITNESS_GENERATED}"
 CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib \
-  g::role_projection::tests::frame_domains::actual_rolled_colors_refine_route_paths_and_elastic_owners \
+  g::role_projection::tests::frame_domains::actual_rolled_frame_identity_keeps_each_source_site_distinct \
   -- --exact
 bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${FRAME_DOMAINS_GENERATED}" "source frame domains"
 run_audit generated-axioms --kernel "${FRAME_DOMAINS_GENERATED}" "${PROOF_DIR}" \
-  "${PROOF_DIR}/claims/frame-domains-generated-claim-surface.txt" 9
+  "${PROOF_DIR}/claims/frame-domains-generated-claim-surface.txt" 18
 CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib \
   g::role_projection::tests::admission::source_ready_rows_match_actual_admission_across_a_parallel_owned_visit \
   -- --exact

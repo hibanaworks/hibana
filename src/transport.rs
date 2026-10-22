@@ -104,21 +104,22 @@ impl core::fmt::Debug for TransportError {
 /// protocol before advancing it. The transport is responsible for peer binding.
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct FrameHeader([u8; 8]);
+pub struct FrameHeader([u8; 9]);
 
 impl FrameHeader {
-    /// Wrap the received eight-byte header for validation by the runtime.
+    /// Wrap the received nine-byte header for validation by the runtime.
     ///
     /// Layout: big-endian session ID (four bytes), lane, source role, target
-    /// role, and wire frame label. The runtime checks these fields on receive.
+    /// role, and a big-endian two-byte message position in the global protocol.
+    /// The runtime checks these fields on receive.
     #[inline]
-    pub const fn from_bytes(bytes: [u8; 8]) -> Self {
+    pub const fn from_bytes(bytes: [u8; 9]) -> Self {
         Self(bytes)
     }
 
     /// Return the header bytes in their wire order.
     #[inline]
-    pub const fn bytes(self) -> [u8; 8] {
+    pub const fn bytes(self) -> [u8; 9] {
         self.0
     }
 
@@ -131,6 +132,7 @@ impl FrameHeader {
         label: FrameLabel,
     ) -> Self {
         let session = session.raw().to_be_bytes();
+        let event = label.raw().to_be_bytes();
         Self([
             session[0],
             session[1],
@@ -139,7 +141,8 @@ impl FrameHeader {
             lane,
             source_role,
             target_role,
-            label.raw(),
+            event[0],
+            event[1],
         ])
     }
 
@@ -167,7 +170,7 @@ impl FrameHeader {
 
     #[inline]
     pub(crate) const fn label(self) -> FrameLabel {
-        FrameLabel::new(self.0[7])
+        FrameLabel::new(u16::from_be_bytes([self.0[7], self.0[8]]))
     }
 }
 

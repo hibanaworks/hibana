@@ -138,7 +138,6 @@ pub(super) fn projection_certificate_source<const ROLE: u8>(
     let exact_name = format!("{name}Exact");
     let lane_mismatch_name = format!("{exact_name}LaneMismatch");
     let eff_index_mismatch_name = format!("{exact_name}EffIndexMismatch");
-    let frame_label_mismatch_name = format!("{exact_name}FrameLabelMismatch");
     let event_scope_mismatch_name = format!("{exact_name}EventScopeMismatch");
     let event_flag_mismatch_name = format!("{exact_name}EventFlagMismatch");
     let global_action_mismatch_name = format!("{exact_name}GlobalActionMismatch");
@@ -148,7 +147,6 @@ pub(super) fn projection_certificate_source<const ROLE: u8>(
     let mismatched_first_global_origin = program.proof_byte_at(9) ^ 1;
     let mismatched_first_global_lane = program.proof_byte_at(10).wrapping_add(1);
     let mismatched_first_eff_index = descriptor.proof_byte_at(0).wrapping_add(1);
-    let mismatched_first_frame_label = descriptor.proof_byte_at(8).wrapping_add(1);
     let first_event_scope =
         u16::from(descriptor.proof_byte_at(6)) | (u16::from(descriptor.proof_byte_at(7)) << 8);
     let mismatched_first_event_scope = if first_event_scope == u16::MAX {
@@ -156,7 +154,7 @@ pub(super) fn projection_certificate_source<const ROLE: u8>(
     } else {
         u16::MAX
     };
-    let mismatched_first_event_flag = descriptor.proof_byte_at(9) ^ 1;
+    let mismatched_first_event_flag = descriptor.proof_byte_at(8) ^ 1;
     let scope_marker_mismatch_source = if program_columns.scope_marker_count() == 0 {
         String::new()
     } else {
@@ -380,17 +378,13 @@ pub(super) fn projection_certificate_source<const ROLE: u8>(
          {exact_name} with\n  image := {{ {exact_name}.image with\n    roleBytes := \
          {exact_name}.image.roleBytes.set 0 {mismatched_first_eff_index}\n  }}\n}}\n\n\
          theorem {eff_index_mismatch_name}Rejected : {eff_index_mismatch_name}.check = false := by\n  decide\
-         \n\ndef {frame_label_mismatch_name} : Hibana.ExactDescriptorCertificate := {{\n  \
-         {exact_name} with\n  image := {{ {exact_name}.image with\n    roleBytes := \
-         {exact_name}.image.roleBytes.set 8 {mismatched_first_frame_label}\n  }}\n}}\n\n\
-         theorem {frame_label_mismatch_name}Rejected : {frame_label_mismatch_name}.check = false := by\n  decide\
          \n\ndef {event_scope_mismatch_name} : Hibana.ExactDescriptorCertificate := {{\n  \
          {exact_name} with\n  image := {{ {exact_name}.image with\n    roleBytes := \
          ({exact_name}.image.roleBytes.set 6 {}).set 7 {}\n  }}\n}}\n\n\
          theorem {event_scope_mismatch_name}Rejected : {event_scope_mismatch_name}.check = false := by\n  decide\
          \n\ndef {event_flag_mismatch_name} : Hibana.ExactDescriptorCertificate := {{\n  \
          {exact_name} with\n  image := {{ {exact_name}.image with\n    roleBytes := \
-         {exact_name}.image.roleBytes.set 9 {mismatched_first_event_flag}\n  }}\n}}\n\n\
+         {exact_name}.image.roleBytes.set 8 {mismatched_first_event_flag}\n  }}\n}}\n\n\
          theorem {event_flag_mismatch_name}Rejected : {event_flag_mismatch_name}.check = false := by\n  decide\
          \n\ndef {global_action_mismatch_name} : Hibana.ExactDescriptorCertificate := {{\n  \
          {exact_name} with\n  image := {{ {exact_name}.image with\n    programBytes := \

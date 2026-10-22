@@ -23,6 +23,156 @@ type ValueB = g::Msg<9, u32>;
 type ReturnB = g::Msg<10, Endpoint<'static, 3>>;
 
 #[test]
+fn an_unselected_route_entry_cannot_consume_a_queued_continuation() {
+    type M0 = g::Msg<0, ()>;
+    type M1 = g::Msg<1, ()>;
+    type M2 = g::Msg<2, ()>;
+    type M3 = g::Msg<3, ()>;
+    type M4 = g::Msg<4, ()>;
+    type M5 = g::Msg<5, ()>;
+    type M6 = g::Msg<6, ()>;
+    type M7 = g::Msg<7, ()>;
+    type M8 = g::Msg<8, ()>;
+    type M9 = g::Msg<9, ()>;
+    type M10 = g::Msg<10, ()>;
+    let global = g::seq(
+        g::route(
+            g::seq(
+                g::send::<0, 1, M0>(),
+                g::seq(g::send::<0, 2, M1>(), g::send::<1, 2, M2>()),
+            ),
+            g::seq(
+                g::send::<0, 1, M3>(),
+                g::seq(
+                    g::send::<1, 2, M4>(),
+                    g::seq(g::send::<2, 1, M5>(), g::send::<1, 0, M6>()),
+                ),
+            ),
+        ),
+        g::seq(
+            g::send::<0, 1, M7>(),
+            g::seq(
+                g::send::<1, 2, M8>(),
+                g::seq(g::send::<2, 1, M9>(), g::send::<1, 0, M10>()),
+            ),
+        ),
+    );
+    assert_eq!(g::diagnose(&global), None);
+    let p0 = project::<0>(&global);
+    let p1 = project::<1>(&global);
+    let p2 = project::<2>(&global);
+    let network = common::TestTransport::new();
+    let [mut slab0, mut slab1, mut slab2] = [[0; 32 * 1024]; 3];
+    let mut s0 = SessionKitStorage::uninit();
+    let mut s1 = SessionKitStorage::uninit();
+    let mut s2 = SessionKitStorage::uninit();
+    let rv0 = s0.init().rendezvous(&mut slab0, network.clone()).unwrap();
+    let rv1 = s1.init().rendezvous(&mut slab1, network.clone()).unwrap();
+    let rv2 = s2.init().rendezvous(&mut slab2, network.clone()).unwrap();
+    let sid = SessionId::new(1814);
+    let mut a = rv0.enter(sid, &p0).unwrap();
+    let mut b = rv1.enter(sid, &p1).unwrap();
+    let _c = rv2.enter(sid, &p2).unwrap();
+    tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap()
+        .block_on(async {
+            a.send::<M0>(&()).await.unwrap();
+            a.send::<M1>(&()).await.unwrap();
+            a.send::<M7>(&()).await.unwrap();
+            let (entry, _) = network.queued_frame_at(1, 0);
+            let (continuation, _) = network.queued_frame_at(1, 1);
+            assert_ne!(&entry.bytes()[7..], &continuation.bytes()[7..]);
+            let future = b.recv::<M3>();
+            tokio::pin!(future);
+            let outcome =
+                core::future::poll_fn(|cx| core::task::Poll::Ready(future.as_mut().poll(cx))).await;
+            assert!(
+                !matches!(outcome, core::task::Poll::Ready(Ok(()))),
+                "a frame from the continuation was accepted as the unselected entry: {outcome:?}"
+            );
+        });
+}
+
+#[test]
+fn an_early_continuation_does_not_hide_the_selected_route_entry() {
+    type M0 = g::Msg<0, ()>;
+    type M1 = g::Msg<1, ()>;
+    type M2 = g::Msg<2, ()>;
+    type M3 = g::Msg<3, ()>;
+    type M4 = g::Msg<4, ()>;
+    type M5 = g::Msg<5, ()>;
+    type M6 = g::Msg<6, ()>;
+    type M7 = g::Msg<7, ()>;
+    type M8 = g::Msg<8, ()>;
+    type M9 = g::Msg<9, ()>;
+    type M10 = g::Msg<10, ()>;
+    let global = g::seq(
+        g::route(
+            g::seq(
+                g::send::<0, 1, M0>(),
+                g::seq(g::send::<0, 2, M1>(), g::send::<1, 2, M2>()),
+            ),
+            g::seq(
+                g::send::<0, 1, M3>(),
+                g::seq(
+                    g::send::<1, 2, M4>(),
+                    g::seq(g::send::<2, 1, M5>(), g::send::<1, 0, M6>()),
+                ),
+            ),
+        ),
+        g::seq(
+            g::send::<0, 1, M7>(),
+            g::seq(
+                g::send::<1, 2, M8>(),
+                g::seq(g::send::<2, 1, M9>(), g::send::<1, 0, M10>()),
+            ),
+        ),
+    );
+    assert_eq!(g::diagnose(&global), None);
+    let p0 = project::<0>(&global);
+    let p1 = project::<1>(&global);
+    let p2 = project::<2>(&global);
+    let network = common::TestTransport::new();
+    let [mut slab0, mut slab1, mut slab2] = [[0; 32 * 1024]; 3];
+    let mut s0 = SessionKitStorage::uninit();
+    let mut s1 = SessionKitStorage::uninit();
+    let mut s2 = SessionKitStorage::uninit();
+    let rv0 = s0.init().rendezvous(&mut slab0, network.clone()).unwrap();
+    let rv1 = s1.init().rendezvous(&mut slab1, network.clone()).unwrap();
+    let rv2 = s2.init().rendezvous(&mut slab2, network.clone()).unwrap();
+    let sid = SessionId::new(1814);
+    let mut a = rv0.enter(sid, &p0).unwrap();
+    let mut b = rv1.enter(sid, &p1).unwrap();
+    let mut c = rv2.enter(sid, &p2).unwrap();
+    tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap()
+        .block_on(async {
+            a.send::<M0>(&()).await.unwrap();
+            a.send::<M1>(&()).await.unwrap();
+            a.send::<M7>(&()).await.unwrap();
+            let (entry, _) = network.queued_frame_at(1, 0);
+            let (continuation, _) = network.queued_frame_at(1, 1);
+            assert_ne!(&entry.bytes()[7..], &continuation.bytes()[7..]);
+            let branch = b.offer().await.unwrap();
+            assert_eq!(branch.label(), 0);
+            branch.recv::<M0>().await.unwrap();
+            c.recv::<M1>().await.unwrap();
+            b.send::<M2>(&()).await.unwrap();
+            c.recv::<M2>().await.unwrap();
+            b.recv::<M7>().await.unwrap();
+            b.send::<M8>(&()).await.unwrap();
+            c.recv::<M8>().await.unwrap();
+            c.send::<M9>(&()).await.unwrap();
+            b.recv::<M9>().await.unwrap();
+            b.send::<M10>(&()).await.unwrap();
+            a.recv::<M10>().await.unwrap();
+            assert!(network.queue_is_empty());
+        });
+}
+
+#[test]
 fn a_choice_inside_parallel_can_offer_a_four_way_arm() {
     type Outside = g::Msg<80, ()>;
     type First = g::Msg<81, ()>;

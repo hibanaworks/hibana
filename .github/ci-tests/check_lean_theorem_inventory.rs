@@ -52,8 +52,8 @@ fn validate_source(root: &Path) -> AuditResult<Names> {
         declared.extend(named);
     }
     require(
-        decisions == 32,
-        format!("native regression inventory changed: expected 32, found {decisions}"),
+        decisions == 31,
+        format!("native regression inventory changed: expected 31, found {decisions}"),
     )?;
     Ok(declared)
 }
@@ -428,8 +428,8 @@ fn main_result(args: &[String]) -> AuditResult<i32> {
                 mode == "--write-example-types",
             )?;
             println!(
-                "Lean anonymous example type audit passed examples={total} native=32 kernel={}",
-                total as i128 - 32
+                "Lean anonymous example type audit passed examples={total} native=31 kernel={}",
+                total as i128 - 31
             );
         }
         _ => {

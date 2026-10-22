@@ -287,10 +287,10 @@ async fn worker_process() {
                     );
                     continue;
                 }
-                assert_eq!(length, 12);
+                assert_eq!(length, 13);
                 assert_eq!(bytes[..4], SID.raw().to_be_bytes());
                 assert_eq!(bytes[5..7], [2, 10]);
-                assert_eq!(bytes[8..12], 123u32.to_be_bytes());
+                assert_eq!(bytes[9..13], 123u32.to_be_bytes());
                 std::println!("unread service frame observed before Endpoint return");
                 return;
             }

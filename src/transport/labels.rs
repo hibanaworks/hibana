@@ -18,23 +18,24 @@ impl LogicalLabel {
     }
 }
 
-/// Transport-facing discriminator for a projected local frame.
+/// Position of a message in the shared global protocol.
 ///
-/// Application choreography labels remain logical branch/message identities.
-/// `FrameLabel` is the compact demux value consumed by transports and bindings.
+/// Distinct message sites have distinct values, including ordered messages
+/// with the same logical `g::Msg` label. Repetition reuses the same site;
+/// transports must still exclude replay and isolate session runs.
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct FrameLabel(u8);
+pub struct FrameLabel(u16);
 
 impl FrameLabel {
     #[inline]
-    pub(crate) const fn new(raw: u8) -> Self {
+    pub(crate) const fn new(raw: u16) -> Self {
         Self(raw)
     }
 
-    /// Return the one-byte wire discriminator assigned during projection.
+    /// Return this message's position in the shared global protocol.
     #[inline]
-    pub const fn raw(self) -> u8 {
+    pub const fn raw(self) -> u16 {
         self.0
     }
 }

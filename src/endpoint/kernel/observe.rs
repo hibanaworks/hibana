@@ -136,7 +136,7 @@ where
         lane_idx: usize,
         lane_wire: u8,
         source_role: u8,
-        frame_label: u8,
+        frame_label: u16,
         frame: lane_port::PreambleFrame<'r>,
     ) -> RecvResult<lane_port::ReceivedFrame<'r>> {
         let observed = match frame.preamble_observation(

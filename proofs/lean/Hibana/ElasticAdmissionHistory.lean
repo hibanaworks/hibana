@@ -285,7 +285,7 @@ is added to `TransportFrame`. -/
 theorem elastic_admission_tracks_transport_send
     {transport sent : TransportState}
     {history : ElasticAdmissionHistory}
-    {frameLabel : Fin 256}
+    {frameLabel : Fin 65536}
     {globalId : Nat}
     (channelAligned : history.channel = transport.channel)
     (lengthAligned : history.accepted.length = transport.frames.length)
@@ -378,7 +378,7 @@ structure ElasticPipelinedSemantics : Prop where
   transportSendAligned : forall
     {transport sent : TransportState}
     {history : ElasticAdmissionHistory}
-    {frameLabel : Fin 256}
+    {frameLabel : Fin 65536}
     {globalId : Nat},
     history.channel = transport.channel ->
     history.accepted.length = transport.frames.length ->

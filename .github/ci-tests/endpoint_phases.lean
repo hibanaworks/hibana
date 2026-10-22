@@ -44,12 +44,12 @@ def phaseWireCheck (plan : SourceOccurrenceCut source) (images : List RustDescri
   let (sender, receiver, lane) ← channelFor plan images occurrence
   let color ← image.eventFrameLabel? row
   let header := [session / 16777216 % 256, session / 65536 % 256,
-    session / 256 % 256, session % 256, lane, sender, receiver, color]
+    session / 256 % 256, session % 256, lane, sender, receiver, color / 256, color % 256]
   let payload := match message.payload with
     | .wire _ => true -- Canonical codec and value checks remain Rust obligations.
-    | .endpoint key => event.wire.drop 8 ==
+    | .endpoint key => event.wire.drop 9 ==
         [key.role, (event.operation / 2) / 256, (event.operation / 2) % 256]
-  pure (event.wire.length ≥ 8 && event.wire.take 8 == header && payload)
+  pure (event.wire.length ≥ 9 && event.wire.take 9 == header && payload)
 
 def phaseStep (plan : SourceOccurrenceCut source) (images : List RustDescriptorImage)
     (channels : Array (Nat × Nat × Nat)) (session : Nat) (oracle : PhaseOracle)

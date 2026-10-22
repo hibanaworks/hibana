@@ -1,19 +1,23 @@
-actualBranchAndOutsidePathsDoNotAlias : bodyRecolored[0].frameLabel ≠ bodyRecolored[2].frameLabel ∧
-  bodyRecolored[0].frameLabel ≠ bodyRecolored[4].frameLabel ∧ bodyRecolored[2].frameLabel ≠ bodyRecolored[4].frameLabel
-actualConditionalTwoLetterClassKeepsBothSourcePaths : ∃ group,
-  group.rows = branchWordImage.frameClassRows conditionalPairKey ∧
-    group.rows.length = 2 ∧ group.data.normalized.paths.length = 2
-actualInnerAndOuterDomainsRemainDistinct : elasticFrameOwner (canonicalControlSource nestedChoreo).markers 0 ≠
-    elasticFrameOwner (canonicalControlSource nestedChoreo).markers 1 ∧
-  nestedAfter[0].frameLabel ≠ nestedAfter[1].frameLabel
-actualOrderedAliasKeepsItsCompleteSourceRoutePath : bodyRows[0] = bodyRows[1]
-actualOuterAliasHasItsOriginalColorAndOwner : nestedBefore[0].frameLabel = nestedBefore[3].frameLabel ∧
-  elasticFrameOwner (canonicalControlSource nestedChoreo).markers 0 =
-    elasticFrameOwner (canonicalControlSource nestedChoreo).markers 3
-branchColorsMatchActualRust : List.map ProgramAtomBody.frameLabel (canonicalProgramSource branchChoreo).atoms =
-  branchRustColors
-exhaustedElasticColorsCannotBecomeAnAcceptedByte : firstElasticFrameColor (List.range 256) = 256
-nestedColorsMatchActualRust : List.map ProgramAtomBody.frameLabel (canonicalProgramSource nestedChoreo).atoms =
-  nestedRustColors
-parallelColorsMatchActualRust : List.map ProgramAtomBody.frameLabel (canonicalProgramSource parallelChoreo).atoms =
-  parallelRustColors
+branchDistinctSourceSitesHaveDistinctWireIdentities : List.Pairwise (fun x1 x2 => x1 ≠ x2) branchRustSites
+branchSitesMatchTheExecutedImage : branchImage.decodeEventFrameLabels? = some branchRustSites
+branchSitesMatchTheGlobalProtocol : branchRustSites = branchChoreo.canonicalRoleEffIndices 0
+nestedDistinctSourceSitesHaveDistinctWireIdentities : List.Pairwise (fun x1 x2 => x1 ≠ x2) nestedRustSites
+nestedSitesMatchTheExecutedImage : nestedImage.decodeEventFrameLabels? = some nestedRustSites
+nestedSitesMatchTheGlobalProtocol : nestedRustSites = nestedChoreo.canonicalRoleEffIndices 0
+parallelDistinctSourceSitesHaveDistinctWireIdentities : List.Pairwise (fun x1 x2 => x1 ≠ x2) parallelRustSites
+parallelSitesMatchTheExecutedImage : parallelImage.decodeEventFrameLabels? = some parallelRustSites
+parallelSitesMatchTheGlobalProtocol : parallelRustSites = parallelChoreo.canonicalRoleEffIndices 0
+pipelinedOwnerDistinctSourceSitesHaveDistinctWireIdentities : List.Pairwise (fun x1 x2 => x1 ≠ x2)
+  pipelinedOwnerRustSites
+pipelinedOwnerSitesMatchTheExecutedImage : pipelinedOwnerImage.decodeEventFrameLabels? = some pipelinedOwnerRustSites
+pipelinedOwnerSitesMatchTheGlobalProtocol : pipelinedOwnerRustSites = pipelinedOwnerChoreo.canonicalRoleEffIndices 0
+pipelinedServiceDistinctSourceSitesHaveDistinctWireIdentities : List.Pairwise (fun x1 x2 => x1 ≠ x2)
+  pipelinedServiceRustSites
+pipelinedServiceSitesMatchTheExecutedImage : pipelinedServiceImage.decodeEventFrameLabels? =
+  some pipelinedServiceRustSites
+pipelinedServiceSitesMatchTheGlobalProtocol : pipelinedServiceRustSites =
+  pipelinedServiceChoreo.canonicalRoleEffIndices 2
+pipelinedWorkerDistinctSourceSitesHaveDistinctWireIdentities : List.Pairwise (fun x1 x2 => x1 ≠ x2)
+  pipelinedWorkerRustSites
+pipelinedWorkerSitesMatchTheExecutedImage : pipelinedWorkerImage.decodeEventFrameLabels? = some pipelinedWorkerRustSites
+pipelinedWorkerSitesMatchTheGlobalProtocol : pipelinedWorkerRustSites = pipelinedWorkerChoreo.canonicalRoleEffIndices 1

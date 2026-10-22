@@ -6,5 +6,5 @@ error[E0624]: associated function `new` is private
   |
  ::: src/transport/labels.rs
   |
-  |     pub(crate) const fn new(raw: u8) -> Self {
-  |     ---------------------------------------- private associated function defined here
+  |     pub(crate) const fn new(raw: u16) -> Self {
+  |     ----------------------------------------- private associated function defined here

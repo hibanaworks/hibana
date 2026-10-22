@@ -5,7 +5,7 @@ import Hibana.ProgramImageColumns
 
 namespace Hibana
 
-def productionRoleEventStride : Nat := 10
+def productionRoleEventStride : Nat := 9
 
 def productionRoleLaneStride : Nat := 1
 
@@ -1000,7 +1000,7 @@ def productionRoleEventOnlyCapacity : Nat :=
   productionDescriptorByteCapacity / productionRoleEventStride
 
 theorem production_role_event_only_capacity_exact :
-    productionRoleEventOnlyCapacity = 6553 := by
+    productionRoleEventOnlyCapacity = 7281 := by
   decide
 
 theorem descriptor_bytes_dominate_local_step_field :
@@ -1090,7 +1090,6 @@ structure ProgramAtomBody where
   schema : Nat
   origin : Nat
   lane : Nat
-  frameLabel : Nat
 
 structure CanonicalControlSource where
   resolvers : List DecodedRouteResolver
@@ -1112,7 +1111,6 @@ def CompiledOccurrence.programAtomBody
   schema := occurrence.schema
   origin := 0
   lane := occurrence.lane
-  frameLabel := occurrence.frameLabel
 }
 
 def DecodedScopeMarker.rebase
@@ -1237,85 +1235,11 @@ def canonicalControlSource : Choreo -> CanonicalControlSource
         scopeBudget := 1 + original.scopeBudget
       }
 
-/-- Innermost elastic owner: the narrowest containing Roll interval, with the
-later preorder ordinal resolving coextensive wrappers. Zero means no Roll. -/
-def elasticFrameOwner (markers : List DecodedScopeMarker) (index : Nat) : Nat :=
-  let selected := markers.foldl (fun best marker =>
-    if marker.scope / 8192 == 1 && marker.tag % 4 == 0 && marker.offset ≤ index then
-      match markers.find? (fun closing =>
-          closing.scope == marker.scope && closing.tag % 4 == 2) with
-      | none => best
-      | some closing =>
-          if index < closing.offset then
-            let span := closing.offset - marker.offset
-            let owner := marker.scope % 8192 + 1
-            match best with
-            | none => some (span, owner)
-            | some (oldSpan, oldOwner) =>
-                if span < oldSpan || (span == oldSpan && oldOwner < owner) then
-                  some (span, owner)
-                else best
-          else best
-    else best) (none : Option (Nat × Nat))
-  match selected with
-  | none => 0
-  | some (_, owner) => owner
-
-structure ElasticFrameAssignment where
-  original : ProgramAtomBody
-  owner : Nat
-  color : Nat
-
-/-- 256 is deliberately unencodable, corresponding to Rust's exhausted palette
-rejection. It cannot silently alias any successful byte color. -/
-def firstElasticFrameColor (used : List Nat) : Nat :=
-  match (List.range 256).find? (fun color => !used.contains color) with
-  | some color => color
-  | none => 256
-
-def elasticFrameUsedColors (prior : List ElasticFrameAssignment)
-    (atom : ProgramAtomBody) (owner : Nat) : List Nat :=
-  prior.filterMap fun entry =>
-    if entry.original.sender == atom.sender &&
-        entry.original.receiver == atom.receiver && entry.original.lane == atom.lane &&
-        (entry.original.frameLabel != atom.frameLabel || entry.owner != owner) then
-      some entry.color
-    else none
-
-def elasticFrameAssignment (markers : List DecodedScopeMarker)
-    (prior : List ElasticFrameAssignment) (index : Nat) (atom : ProgramAtomBody) :
-    ElasticFrameAssignment :=
-  let owner := elasticFrameOwner markers index
-  { original := atom, owner,
-    color := if atom.sender == atom.receiver then atom.frameLabel
-      else firstElasticFrameColor (elasticFrameUsedColors prior atom owner) }
-
-def separateElasticFrameDomainsFrom
-    (markers : List DecodedScopeMarker)
-    (prior : List ElasticFrameAssignment) (index : Nat) :
-    List ProgramAtomBody → List ProgramAtomBody
-  | [] => []
-  | atom :: rest =>
-      let assignment := elasticFrameAssignment markers prior index atom
-      { atom with frameLabel := assignment.color } ::
-        separateElasticFrameDomainsFrom markers
-          (prior ++ [assignment]) (index + 1) rest
-
-/-- Final wire allocation refines the route coloring after all source scopes are
-known. Logical events and lanes retain the preceding allocation's identity. -/
-def separateElasticFrameDomains
-    (markers : List DecodedScopeMarker) (atoms : List ProgramAtomBody) :
-    List ProgramAtomBody :=
-  if markers.any (fun marker => marker.scope / 8192 == 1 && marker.tag % 4 == 0) then
-    separateElasticFrameDomainsFrom markers [] 0 atoms
-  else atoms
-
 def canonicalProgramSource (choreo : Choreo) : CanonicalProgramSource :=
   let control := canonicalControlSource choreo
   let compiled := choreo.compiledOccurrences
   {
-    atoms := separateElasticFrameDomains control.markers
-      (compiled.occurrences.map CompiledOccurrence.programAtomBody)
+    atoms := compiled.occurrences.map CompiledOccurrence.programAtomBody
     resolvers := control.resolvers
     markers := control.markers
     scopeBudget := control.scopeBudget
@@ -1569,38 +1493,11 @@ def ProgramAtomBody.globalEventFrom
 theorem canonical_program_source_lane_span (choreo : Choreo) :
     (canonicalProgramSource choreo).laneSpan = choreo.laneSpan := rfl
 
-theorem canonical_program_source_frame_labels (choreo : Choreo) :
-    (canonicalProgramSource choreo).atoms.map ProgramAtomBody.frameLabel =
-      (separateElasticFrameDomains (canonicalControlSource choreo).markers
-        (choreo.compiledOccurrences.occurrences.map CompiledOccurrence.programAtomBody)).map
-          ProgramAtomBody.frameLabel := rfl
-
 theorem canonical_program_source_global_events_from
     (choreo : Choreo) (laneBase : Nat) :
     (canonicalProgramSource choreo).atoms.map (·.globalEventFrom laneBase) =
       choreo.globalEventsFrom laneBase := by
-  have preserveFrom : ∀ (markers : List DecodedScopeMarker)
-      (prior : List ElasticFrameAssignment) (index : Nat) (atoms : List ProgramAtomBody),
-      (separateElasticFrameDomainsFrom markers prior index atoms).map
-        (·.globalEventFrom laneBase) = atoms.map (·.globalEventFrom laneBase) := by
-    intro markers prior index atoms
-    induction atoms generalizing prior index with
-    | nil => rfl
-    | cons atom rest ih =>
-        simp only [separateElasticFrameDomainsFrom, List.map_cons]
-        rw [ih]
-        rfl
-  have preserve : ∀ (markers : List DecodedScopeMarker) (atoms : List ProgramAtomBody),
-      (separateElasticFrameDomains markers atoms).map (·.globalEventFrom laneBase) =
-        atoms.map (·.globalEventFrom laneBase) := by
-    intro markers atoms
-    unfold separateElasticFrameDomains
-    split
-    · exact preserveFrom markers [] 0 atoms
-    · rfl
-  simp only [canonicalProgramSource]
-  rw [preserve]
-  simp [Choreo.globalEventsFrom,
+  simp [canonicalProgramSource, Choreo.globalEventsFrom,
     CompiledOccurrence.programAtomBody, ProgramAtomBody.globalEventFrom,
     CompiledOccurrence.globalEventFrom, List.map_map, Nat.add_comm]
 
@@ -1635,16 +1532,17 @@ def Choreo.canonicalRoleEffIndices (choreo : Choreo) (role : Nat) : List Nat :=
   choreo.canonicalProgramAtoms.filterMap fun atom =>
     if (atom.localAction? role).isSome then some atom.effIndex else none
 
-def Choreo.canonicalFrameLabel (choreo : Choreo) (index : Nat) : Nat :=
-  match (canonicalProgramSource choreo).atoms[index]? with
-  | some atom => atom.frameLabel
-  | none => 256
+/-- Framed messages carry their source position. Repetitions keep the same
+position; FIFO delivery and run isolation distinguish their occurrences. -/
+def Choreo.canonicalFrameLabel (_choreo : Choreo) (index : Nat) : Nat := index
 
 def Choreo.canonicalRoleFrameLabels (choreo : Choreo) (role : Nat) : List Nat :=
-  (canonicalProgramSource choreo).atoms.filterMap fun atom =>
-    if (Choreo.localAction? role atom.sender atom.receiver atom.label atom.schema).isSome then
-      some atom.frameLabel
-    else none
+  choreo.canonicalRoleEffIndices role
+
+theorem equal_wire_message_positions_identify_the_same_source_site
+    (choreo : Choreo) (left right : Nat)
+    (same : choreo.canonicalFrameLabel left = choreo.canonicalFrameLabel right) :
+    left = right := same
 
 structure ScopeSelection where
   scope : Nat
@@ -1888,9 +1786,8 @@ def RustDescriptorImage.eventLane?
   readByte? image.roleBytes (image.roleLaneOffset + eventId)
 
 def RustDescriptorImage.eventFrameLabel?
-    (image : RustDescriptorImage) (eventId : Nat) : Option Nat := do
-  if eventId < image.eventCount then pure () else none
-  readByte? image.roleBytes (eventId * productionRoleEventStride + 8)
+    (image : RustDescriptorImage) (eventId : Nat) : Option Nat :=
+  image.eventEffIndex? eventId
 
 def RustDescriptorImage.eventScope?
     (image : RustDescriptorImage) (eventId : Nat) : Option Nat := do
@@ -1900,7 +1797,7 @@ def RustDescriptorImage.eventScope?
 def RustDescriptorImage.eventFlags?
     (image : RustDescriptorImage) (eventId : Nat) : Option Nat := do
   if eventId < image.eventCount then pure () else none
-  readByte? image.roleBytes (eventId * productionRoleEventStride + 9)
+  readByte? image.roleBytes (eventId * productionRoleEventStride + 8)
 
 def RustDescriptorImage.eventConflictRow?
     (image : RustDescriptorImage) (eventId : Nat) : Option Nat := do
@@ -2060,8 +1957,8 @@ def RustDescriptorImage.eventAction?
   else none
 
 /-- Complete resident identity of one descriptor operation. `eventId` is the
-local occurrence selected by the cursor; `lane` and `frameLabel` are decoded
-from the exact role image rather than recomputed by the monitor. -/
+local occurrence selected by the cursor. The image supplies its lane and
+global source position, which is also its frame label. -/
 structure DescriptorOperation where
   eventId : Nat
   lane : Nat

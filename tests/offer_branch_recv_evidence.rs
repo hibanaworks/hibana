@@ -278,7 +278,7 @@ impl Transport for DeterministicRecvTransport {
 #[derive(Clone)]
 struct LabelRewriteTransport {
     inner: TestTransport,
-    frame_label: u8,
+    frame_label: u16,
 }
 
 struct LabelRewriteRx<'a> {
@@ -289,7 +289,7 @@ struct LabelRewriteRx<'a> {
 }
 
 impl LabelRewriteTransport {
-    fn new(frame_label: u8) -> Self {
+    fn new(frame_label: u16) -> Self {
         Self {
             inner: TestTransport::new(),
             frame_label,
@@ -684,7 +684,7 @@ fn offer_materialized_label_mismatch_fails_closed() {
     with_runtime_workspace(|slab| {
         // A valid alternate-arm label would be an undetectable violation of the
         // carrier's exact-frame contract, not an endpoint-level label mismatch.
-        let transport = LabelRewriteTransport::new(u8::MAX);
+        let transport = LabelRewriteTransport::new(u16::MAX);
         with_resident_tls_ref(&LABEL_REWRITE_SESSION_SLOT, |cluster| {
             let rv = cluster
                 .rendezvous(slab, transport.clone())

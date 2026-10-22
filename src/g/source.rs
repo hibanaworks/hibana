@@ -1,8 +1,7 @@
 use crate::{
     eff::EffAtom,
     global::const_dsl::{
-        EffList, ReentryMark, ScopeId, ScopeKind, assign_receive_lanes, color_roll_frame_labels,
-        merge_parallel_lanes, merge_route_frame_labels, separate_roll_frame_domains,
+        EffList, ReentryMark, ScopeId, ScopeKind, assign_receive_lanes, merge_parallel_lanes,
     },
 };
 
@@ -175,31 +174,6 @@ impl<const CAPACITY: usize> SourceLowering<CAPACITY> {
             }
         }
     }
-
-    const fn color_frames(&mut self, node: &ProgramSourceNode, start: usize) {
-        match node {
-            ProgramSourceNode::Send(_) => {}
-            ProgramSourceNode::Seq(left, right, _)
-            | ProgramSourceNode::Par(left, right, _)
-            | ProgramSourceNode::Route { left, right, .. } => {
-                let split = start + left.event_count();
-                self.color_frames(left, start);
-                self.color_frames(right, split);
-                if matches!(node, ProgramSourceNode::Route { .. }) {
-                    merge_route_frame_labels(
-                        &mut self.eff,
-                        start,
-                        split,
-                        split + right.event_count(),
-                    );
-                }
-            }
-            ProgramSourceNode::Roll(body, count) => {
-                self.color_frames(body, start);
-                color_roll_frame_labels(&mut self.eff, start, start + *count);
-            }
-        }
-    }
 }
 
 impl<const CAPACITY: usize> ProgramSourceData<CAPACITY> {
@@ -239,8 +213,6 @@ impl<const CAPACITY: usize> ProgramSourceData<CAPACITY> {
             panic!("type tree and lowered source disagree");
         }
         let receive_causal = assign_receive_lanes(&mut lowering.eff, actors);
-        lowering.color_frames(&Steps::SOURCE_NODE, 0);
-        separate_roll_frame_domains(&mut lowering.eff);
         Self {
             eff: lowering.eff,
             actors,

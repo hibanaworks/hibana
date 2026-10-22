@@ -11,12 +11,12 @@ use super::RecvMeta;
 pub(crate) struct InboundFrameKey {
     pub(crate) source_role: u8,
     pub(crate) lane: u8,
-    pub(crate) frame_label: u8,
+    pub(crate) frame_label: u16,
 }
 
 impl InboundFrameKey {
     #[inline(always)]
-    pub(crate) const fn new(source_role: u8, lane: u8, frame_label: u8) -> Self {
+    pub(crate) const fn new(source_role: u8, lane: u8, frame_label: u16) -> Self {
         Self {
             source_role,
             lane,
@@ -30,7 +30,7 @@ impl InboundFrameKey {
     }
 
     #[inline(always)]
-    pub(super) const fn matches_parts(self, source_role: u8, lane: u8, frame_label: u8) -> bool {
+    pub(super) const fn matches_parts(self, source_role: u8, lane: u8, frame_label: u16) -> bool {
         self.source_role == source_role && self.lane == lane && self.frame_label == frame_label
     }
 }

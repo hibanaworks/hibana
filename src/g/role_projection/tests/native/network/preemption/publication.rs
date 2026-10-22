@@ -43,7 +43,7 @@ pub(super) fn write_observations(
         .iter()
         .enumerate()
         .filter_map(|(witness, (operation, packet))| {
-            let header = FrameHeader::from_bytes(packet[..8].try_into().unwrap());
+            let header = FrameHeader::from_bytes(packet[..9].try_into().unwrap());
             (*operation == 1 && header.source_role() == 0).then_some((witness, header, packet))
         })
         .collect();
@@ -71,7 +71,7 @@ pub(super) fn write_observations(
         writeln!(source, "def asyncWire{index} : OwnedWireObservation := {{ session := {}, lane := {}, sender := {}, receiver := {}, frameLabel := {}, payload := {:?} }}\n\n\
             def asyncEntry{index} : SourceAcceptance := {{ sample := {{ image := asyncImage, base := asyncCut{base}, pathIndex := 0, event := {event}, wire := asyncWire{index} }}, channel := {{ session := {}, generation := 0, lane := {}, sender := {}, receiver := {} }}, event := {}, mutation := {}, carrierWitness := {witness} }}\n\n\
             def asyncCommit{index} : ActorCommitRecord := {{ step := {{ pathIndex := 0, event := {event}, view := 0, before := asyncCut{before}, after := asyncCut{after} }}, wire := asyncWire{index} }}\n",
-            SID.raw(), header.lane(), header.source_role(), header.target_role(), header.label().raw(), &packet[8..],
+            SID.raw(), header.lane(), header.source_role(), header.target_role(), header.label().raw(), &packet[9..],
             SID.raw(), header.lane(), header.source_role(), header.target_role(), eff_index.dense_ordinal(), snapshots[base].completion_mutations).unwrap();
     }
     source.push_str(include_str!("publication.lean"));

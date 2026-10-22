@@ -316,40 +316,34 @@ Hibana.anonymousRegression_StaticProjectabilityExamples_018 : @Eq.{1} Bool
         (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0))))))
   true
 Hibana.anonymousRegression_StaticProjectabilityExamples_019 : @Eq.{1} (List.{0} Nat)
-  (@List.map.{0, 0} Hibana.CompiledOccurrence Nat Hibana.CompiledOccurrence.frameLabel
-    Hibana.sourceAwareRouteColoring.compiledOccurrences.occurrences)
-  (@List.cons.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0)))
-    (@List.cons.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0))) (@List.nil.{0} Nat)))
-Hibana.anonymousRegression_StaticProjectabilityExamples_020 : @Eq.{1} (List.{0} Nat)
-  (@List.map.{0, 0} Hibana.CompiledOccurrence Nat Hibana.CompiledOccurrence.frameLabel
-    Hibana.nestedRollFrameColoring.compiledOccurrences.occurrences)
+  (Hibana.nestedMessageSites.canonicalRoleFrameLabels (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1))))
   (@List.cons.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0)))
     (@List.cons.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1)))
       (@List.cons.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 2) (instOfNatNat (nat_lit 2)))
         (@List.cons.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 3) (instOfNatNat (nat_lit 3))) (@List.nil.{0} Nat)))))
+Hibana.anonymousRegression_StaticProjectabilityExamples_020 : @Eq.{1} Bool
+  Hibana.nestedMessageSites.checkInboundOccurrenceColoring true
 Hibana.anonymousRegression_StaticProjectabilityExamples_021 : @Eq.{1} Bool
-  Hibana.nestedRollFrameColoring.checkInboundOccurrenceColoring true
-Hibana.anonymousRegression_StaticProjectabilityExamples_022 : @Eq.{1} Bool
   (Hibana.repeatedInboundEvidence
       (@OfNat.ofNat.{0} Nat (nat_lit 255) (instOfNatNat (nat_lit 255)))).checkInboundOccurrenceColoring
   true
-Hibana.anonymousRegression_StaticProjectabilityExamples_023 : @Eq.{1} Bool
+Hibana.anonymousRegression_StaticProjectabilityExamples_022 : @Eq.{1} Bool
   (Hibana.repeatedInboundEvidence
       (@OfNat.ofNat.{0} Nat (nat_lit 256) (instOfNatNat (nat_lit 256)))).checkInboundOccurrenceColoring
   true
-Hibana.anonymousRegression_StaticProjectabilityExamples_024 : @Eq.{1} Bool
+Hibana.anonymousRegression_StaticProjectabilityExamples_023 : @Eq.{1} Bool
   (@Option.isSome.{0} (Prod.{0, 0} Nat Hibana.GlobalEvent)
     (Hibana.transportAdmissionRegressionConfig.admitTransportFrame?
       (Hibana.transportAdmissionRegressionFrame (@OfNat.ofNat.{0} Nat (nat_lit 7) (instOfNatNat (nat_lit 7)))
         (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0))))))
   true
-Hibana.anonymousRegression_StaticProjectabilityExamples_025 : @Eq.{1} Bool
+Hibana.anonymousRegression_StaticProjectabilityExamples_024 : @Eq.{1} Bool
   (@Option.isSome.{0} (Prod.{0, 0} Nat Hibana.GlobalEvent)
     (Hibana.transportAdmissionRegressionConfig.admitTransportFrame?
       (Hibana.transportAdmissionRegressionFrame (@OfNat.ofNat.{0} Nat (nat_lit 7) (instOfNatNat (nat_lit 7)))
         (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1))))))
   false
-Hibana.anonymousRegression_StaticProjectabilityExamples_026 : @Eq.{1} Bool
+Hibana.anonymousRegression_StaticProjectabilityExamples_025 : @Eq.{1} Bool
   (@Option.isSome.{0} (Prod.{0, 0} Nat Hibana.GlobalEvent)
     (Hibana.transportAdmissionRegressionConfig.admitTransportFrame?
       (Hibana.transportAdmissionRegressionFrame (@OfNat.ofNat.{0} Nat (nat_lit 8) (instOfNatNat (nat_lit 8)))

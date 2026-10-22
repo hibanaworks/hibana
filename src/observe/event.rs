@@ -218,7 +218,12 @@ impl TapEvent {
             Evidence {
                 kind: id,
                 reason: 0,
-                input: [self.arg0(), self.arg1(), 0, (id as u32) << 16],
+                input: [
+                    self.arg0(),
+                    self.arg1(),
+                    0,
+                    ((id as u32) << 16) | ((self.causal_role() as u32) << 8),
+                ],
             }
         } else if id == ids::TRANSPORT_MISMATCH || id == ids::TRANSPORT_FAULT {
             self.transport_evidence()

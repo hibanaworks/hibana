@@ -64,7 +64,7 @@ async fn tcp_handoff_preserves_an_unread_frame_after_the_sender_process_exits() 
             loop {
                 let journal = broker.journal().await;
                 let queued = journal.iter().find(|(operation, packet)| {
-                    *operation == 1 && packet[6] == 10 && packet[8..] == 123u32.to_be_bytes()
+                    *operation == 1 && packet[6] == 10 && packet[9..] == 123u32.to_be_bytes()
                 });
                 if let Some((_, queued)) = queued {
                     assert!(

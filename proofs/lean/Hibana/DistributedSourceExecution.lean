@@ -349,7 +349,7 @@ inductive DistributedSourceStep
         (cut.actorAt actor (after, (cut.actors actor).2), entries) none
   | accept {cut : DistributedSourceCut} {entries : List SourceAcceptance}
       {sample : SourceSendAdmission} {channel : TransportChannel} {sent : TransportState}
-      {event previousPath witness : Nat} {label : Fin 256}
+      {event previousPath witness : Nat} {label : Fin 65536}
       {data : DecodedActorOrder} {path : NormalizedPath} {row : DecodedActorRow}
       (imageAt : sample.image = images sample.image.role)
       (checked : sample.check choreo session = true)

@@ -33,7 +33,8 @@ use tokio::{
 const SEND: u8 = 1;
 const RECV: u8 = 2;
 const JOURNAL: u8 = 3;
-const MAX_PACKET: usize = 8 + 60 * 1024;
+const HEADER: usize = 9;
+const MAX_PACKET: usize = HEADER + 60 * 1024;
 const DEADLINE: Duration = Duration::from_secs(5);
 
 type Key = (u32, u8, u8);
@@ -60,7 +61,7 @@ impl Server {
         match stream.read_u8().await? {
             SEND => {
                 let packet = read_packet(&mut stream).await?;
-                let header: [u8; 8] = packet[..8].try_into().unwrap();
+                let header: [u8; HEADER] = packet[..HEADER].try_into().unwrap();
                 let key = (
                     u32::from_be_bytes(header[..4].try_into().unwrap()),
                     header[6],
@@ -118,7 +119,7 @@ impl Server {
 
 async fn read_packet(stream: &mut TcpStream) -> io::Result<Vec<u8>> {
     let length = usize::try_from(stream.read_u32().await?).unwrap();
-    if !(8..=MAX_PACKET).contains(&length) {
+    if !(HEADER..=MAX_PACKET).contains(&length) {
         return Err(io::Error::from(io::ErrorKind::InvalidData));
     }
     let mut packet = vec![0; length];
@@ -342,7 +343,7 @@ impl Transport for NetworkTransport<'_> {
     ) -> Poll<Result<(), TransportError>> {
         if matches!(tx.state, SendIo::Idle) {
             if outgoing.lane() != tx.port.lane()
-                || outgoing.payload().as_bytes().len() > MAX_PACKET - 8
+                || outgoing.payload().as_bytes().len() > MAX_PACKET - HEADER
             {
                 return Poll::Ready(Err(TransportError::Capacity));
             }
@@ -351,8 +352,8 @@ impl Transport for NetworkTransport<'_> {
                 tx.port.lane(),
                 tx.port.local_role(),
                 outgoing.target_role(),
-                outgoing.frame_label().raw(),
             ]);
+            packet.extend_from_slice(&outgoing.frame_label().raw().to_be_bytes());
             packet.extend_from_slice(outgoing.payload().as_bytes());
             let address = self.addresses[usize::from(outgoing.target_role())];
             tx.state = SendIo::Pending(std::boxed::Box::pin(deadline(async move {
@@ -429,8 +430,8 @@ impl Transport for NetworkTransport<'_> {
             unreachable!()
         };
         Poll::Ready(Ok(ReceivedFrame::framed(
-            FrameHeader::from_bytes(packet[..8].try_into().unwrap()),
-            Payload::new(&packet[8..]),
+            FrameHeader::from_bytes(packet[..HEADER].try_into().unwrap()),
+            Payload::new(&packet[HEADER..]),
         )))
     }
 

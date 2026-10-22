@@ -247,7 +247,7 @@ fn audit(
         Some(surface) => claim_names(surface, false)?,
         None => theorems.clone(),
     };
-    let count = kernel_count.unwrap_or(506);
+    let count = kernel_count.unwrap_or(484);
     require(
         expected_names.len() == count,
         format!(
@@ -460,6 +460,13 @@ fn main_result(args: &[String]) -> AuditResult<i32> {
                 mode == "--write-kernel",
             )
         }
+        [mode, generated, root, snapshot] if mode == "--write-generated" => audit(
+            Path::new(generated),
+            Path::new(root),
+            Path::new(snapshot),
+            None,
+            true,
+        ),
         [generated, root, snapshot] => audit(
             Path::new(generated),
             Path::new(root),
@@ -469,7 +476,7 @@ fn main_result(args: &[String]) -> AuditResult<i32> {
         ),
         _ => {
             eprintln!(
-                "usage: check-generated-lean-axioms --self-test | GENERATED PROOF_DIR CLAIM_SNAPSHOT | --kernel|--write-kernel GENERATED PROOF_DIR CLAIM_SNAPSHOT EXPECTED_THEOREMS"
+                "usage: check-generated-lean-axioms --self-test | [--write-generated] GENERATED PROOF_DIR CLAIM_SNAPSHOT | --kernel|--write-kernel GENERATED PROOF_DIR CLAIM_SNAPSHOT EXPECTED_THEOREMS"
             );
             Ok(2)
         }

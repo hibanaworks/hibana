@@ -1,7 +1,7 @@
 use super::LANE_DOMAIN_SIZE;
 use super::lane_set::lane_word_count;
 pub(crate) const PACKED_LANE_RANGE_EMPTY: u32 = u32::MAX;
-pub(crate) const ROLE_IMAGE_EVENT_STRIDE: usize = 10;
+pub(crate) const ROLE_IMAGE_EVENT_STRIDE: usize = 9;
 pub(crate) const ROLE_IMAGE_LANE_STRIDE: usize = 1;
 pub(crate) const ROLE_IMAGE_DEPENDENCY_STRIDE: usize = 8;
 pub(crate) const ROLE_IMAGE_CONFLICT_STRIDE: usize = 2;
@@ -330,7 +330,6 @@ pub(crate) struct PackedLocalEventRow {
     pub(crate) dependency_row: u16,
     pub(crate) conflict_row: u16,
     pub(crate) scope: crate::global::const_dsl::ScopeId,
-    pub(crate) frame_label: u8,
     pub(crate) flags: u8,
 }
 

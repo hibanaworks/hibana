@@ -206,7 +206,7 @@ Hibana.EndpointDelegation.withOwner_same : ∀ (owners : Hibana.EndpointDelegati
   Hibana.CarrierProfile.ordered.Holds carrier abstraction Fairness →
     ∀ {current accepted : carrier.State} {before : Hibana.TransportState}
       {state : Hibana.EndpointTransfer.Observation View Hibana.TransportFrame} {left right : List.{0} View}
-      (initialView sending : View) (label : Fin (@OfNat.ofNat.{0} Nat (nat_lit 256) (instOfNatNat (nat_lit 256)))),
+      (initialView sending : View) (label : Fin (@OfNat.ofNat.{0} Nat (nat_lit 65536) (instOfNatNat (nat_lit 65536)))),
       @Hibana.EndpointTransfer.Execution View Hibana.TransportFrame
           (@Hibana.EndpointTransfer.initial View Hibana.TransportFrame initialView) state →
         @Eq.{1} (List.{0} View) (@Hibana.EndpointTransfer.Observation.preparing View Hibana.TransportFrame state)
@@ -239,7 +239,7 @@ Hibana.EndpointDelegation.withOwner_same : ∀ (owners : Hibana.EndpointDelegati
                             (And (@Eq.{1} Hibana.TransportChannel frame.channel before.channel)
                               (And (@Eq.{1} Nat frame.sequence (@List.length.{0} Hibana.TransportFrame before.frames))
                                 (And
-                                  (@Eq.{1} (Fin (@OfNat.ofNat.{0} Nat (nat_lit 256) (instOfNatNat (nat_lit 256))))
+                                  (@Eq.{1} (Fin (@OfNat.ofNat.{0} Nat (nat_lit 65536) (instOfNatNat (nat_lit 65536))))
                                     frame.frameLabel label)
                                   (@Eq.{1} (List.{0} Hibana.TransportFrame)
                                     (@Hibana.EndpointTransfer.Observation.inFlight View Hibana.TransportFrame next)
@@ -353,58 +353,6 @@ Hibana.EndpointDelegation.withOwner_same : ∀ (owners : Hibana.EndpointDelegati
   @Eq.{1} Bool (cut.matches image) true →
     @Eq.{1} Bool cut.target.otherActive true →
       ∀ (edge : Hibana.PublicOperationEdge), @Eq.{1} Bool (cut.permitsFreshCall edge) false
-@Hibana.a_canonical_rolled_wire_alias_retains_its_actual_source_domain : ∀ {choreo : Hibana.Choreo} {left right : Nat}
-  {leftSource rightSource leftOutput rightOutput : Hibana.ProgramAtomBody},
-  @Eq.{1} Bool
-      (@List.any.{0} Hibana.DecodedScopeMarker (Hibana.canonicalControlSource choreo).markers fun marker =>
-        (@BEq.beq.{0} Nat (@instBEqOfDecidableEq.{0} Nat instDecidableEqNat)
-              (@HDiv.hDiv.{0, 0, 0} Nat Nat Nat (@instHDiv.{0} Nat Nat.instDiv) marker.scope
-                (@OfNat.ofNat.{0} Nat (nat_lit 8192) (instOfNatNat (nat_lit 8192))))
-              (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1)))).and
-          (@BEq.beq.{0} Nat (@instBEqOfDecidableEq.{0} Nat instDecidableEqNat)
-            (@HMod.hMod.{0, 0, 0} Nat Nat Nat (@instHMod.{0} Nat Nat.instMod) marker.tag
-              (@OfNat.ofNat.{0} Nat (nat_lit 4) (instOfNatNat (nat_lit 4))))
-            (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0)))))
-      true →
-    @LT.lt.{0} Nat instLTNat left right →
-      @Eq.{1} (Option.{0} Hibana.ProgramAtomBody)
-          (@getElem?.{0, 0, 0} (List.{0} Hibana.ProgramAtomBody) Nat Hibana.ProgramAtomBody
-            (fun as i => @LT.lt.{0} Nat instLTNat i (@List.length.{0} Hibana.ProgramAtomBody as))
-            (@List.instGetElem?NatLtLength.{0} Hibana.ProgramAtomBody)
-            (@List.map.{0, 0} Hibana.CompiledOccurrence Hibana.ProgramAtomBody Hibana.CompiledOccurrence.programAtomBody
-              choreo.compiledOccurrences.occurrences)
-            left)
-          (@some.{0} Hibana.ProgramAtomBody leftSource) →
-        @Eq.{1} (Option.{0} Hibana.ProgramAtomBody)
-            (@getElem?.{0, 0, 0} (List.{0} Hibana.ProgramAtomBody) Nat Hibana.ProgramAtomBody
-              (fun as i => @LT.lt.{0} Nat instLTNat i (@List.length.{0} Hibana.ProgramAtomBody as))
-              (@List.instGetElem?NatLtLength.{0} Hibana.ProgramAtomBody)
-              (@List.map.{0, 0} Hibana.CompiledOccurrence Hibana.ProgramAtomBody
-                Hibana.CompiledOccurrence.programAtomBody choreo.compiledOccurrences.occurrences)
-              right)
-            (@some.{0} Hibana.ProgramAtomBody rightSource) →
-          @Eq.{1} (Option.{0} Hibana.ProgramAtomBody)
-              (@getElem?.{0, 0, 0} (List.{0} Hibana.ProgramAtomBody) Nat Hibana.ProgramAtomBody
-                (fun as i => @LT.lt.{0} Nat instLTNat i (@List.length.{0} Hibana.ProgramAtomBody as))
-                (@List.instGetElem?NatLtLength.{0} Hibana.ProgramAtomBody) (Hibana.canonicalProgramSource choreo).atoms
-                left)
-              (@some.{0} Hibana.ProgramAtomBody leftOutput) →
-            @Eq.{1} (Option.{0} Hibana.ProgramAtomBody)
-                (@getElem?.{0, 0, 0} (List.{0} Hibana.ProgramAtomBody) Nat Hibana.ProgramAtomBody
-                  (fun as i => @LT.lt.{0} Nat instLTNat i (@List.length.{0} Hibana.ProgramAtomBody as))
-                  (@List.instGetElem?NatLtLength.{0} Hibana.ProgramAtomBody)
-                  (Hibana.canonicalProgramSource choreo).atoms right)
-                (@some.{0} Hibana.ProgramAtomBody rightOutput) →
-              @Eq.{1} Nat leftSource.sender rightSource.sender →
-                @Eq.{1} Nat leftSource.receiver rightSource.receiver →
-                  @Eq.{1} Nat leftSource.lane rightSource.lane →
-                    @Ne.{1} Nat rightSource.sender rightSource.receiver →
-                      @LT.lt.{0} Nat instLTNat rightOutput.frameLabel
-                          (@OfNat.ofNat.{0} Nat (nat_lit 256) (instOfNatNat (nat_lit 256))) →
-                        @Eq.{1} Nat leftOutput.frameLabel rightOutput.frameLabel →
-                          And (@Eq.{1} Nat leftSource.frameLabel rightSource.frameLabel)
-                            (@Eq.{1} Nat (Hibana.elasticFrameOwner (Hibana.canonicalControlSource choreo).markers left)
-                              (Hibana.elasticFrameOwner (Hibana.canonicalControlSource choreo).markers right))
 @Hibana.a_causal_resource_guard_covers_the_remote_absence : ∀ {Action : Type} {before : Action → Action → Prop}
   {occurred : Action → Prop} {guardSend resourceSend resourceReturn guardReceive : Action},
   (∀ {earlier later : Action}, before earlier later → occurred later → occurred earlier) →
@@ -3778,7 +3726,8 @@ Hibana.a_pending_payload_requires_its_own_send : ∀ (resource : Nat) (sent : Op
                                           (selected entry.event)) →
                                     @Eq.{1} Bool
                                         (colors
-                                          (@Fin.val (@OfNat.ofNat.{0} Nat (nat_lit 256) (instOfNatNat (nat_lit 256)))
+                                          (@Fin.val
+                                            (@OfNat.ofNat.{0} Nat (nat_lit 65536) (instOfNatNat (nat_lit 65536)))
                                             frame.frameLabel))
                                         true →
                                       @Eq.{1} (List.{0} (Option.{0} Nat))
@@ -3846,7 +3795,7 @@ Hibana.a_pending_payload_requires_its_own_send : ∀ (resource : Nat) (sent : Op
                 (colors entry.sample.wire.frameLabel))
               (selected entry.event)) →
         @Eq.{1} Bool
-            (colors (@Fin.val (@OfNat.ofNat.{0} Nat (nat_lit 256) (instOfNatNat (nat_lit 256))) frame.frameLabel))
+            (colors (@Fin.val (@OfNat.ofNat.{0} Nat (nat_lit 65536) (instOfNatNat (nat_lit 65536))) frame.frameLabel))
             true →
           @Exists.{1} Hibana.SourceSendAdmission fun sample =>
             @Exists.{1} Nat fun event =>
@@ -3947,7 +3896,7 @@ Hibana.a_pending_payload_requires_its_own_send : ∀ (resource : Nat) (sent : Op
                               (selected entry.event)) →
                         @Eq.{1} Bool
                             (colors
-                              (@Fin.val (@OfNat.ofNat.{0} Nat (nat_lit 256) (instOfNatNat (nat_lit 256)))
+                              (@Fin.val (@OfNat.ofNat.{0} Nat (nat_lit 65536) (instOfNatNat (nat_lit 65536)))
                                 frame.frameLabel))
                             true →
                           @Eq.{1} (List.{0} (Option.{0} Nat))
@@ -4226,7 +4175,7 @@ Hibana.a_pending_payload_requires_its_own_send : ∀ (resource : Nat) (sent : Op
                 (colors entry.sample.wire.frameLabel))
               (selected entry.event)) →
         @Eq.{1} Bool
-            (colors (@Fin.val (@OfNat.ofNat.{0} Nat (nat_lit 256) (instOfNatNat (nat_lit 256))) frame.frameLabel))
+            (colors (@Fin.val (@OfNat.ofNat.{0} Nat (nat_lit 65536) (instOfNatNat (nat_lit 65536))) frame.frameLabel))
             true →
           @Exists.{1} Hibana.SourceSendAdmission fun sample =>
             @Exists.{1} Nat fun event =>
@@ -4343,7 +4292,7 @@ Hibana.a_pending_payload_requires_its_own_send : ∀ (resource : Nat) (sent : Op
                               (selected entry.event)) →
                         @Eq.{1} Bool
                             (colors
-                              (@Fin.val (@OfNat.ofNat.{0} Nat (nat_lit 256) (instOfNatNat (nat_lit 256)))
+                              (@Fin.val (@OfNat.ofNat.{0} Nat (nat_lit 65536) (instOfNatNat (nat_lit 65536)))
                                 frame.frameLabel))
                             true →
                           @Eq.{1} (List.{0} (Option.{0} Nat))
@@ -5326,7 +5275,7 @@ Hibana.a_pending_payload_requires_its_own_send : ∀ (resource : Nat) (sent : Op
     Hibana.DistributedPhysicalExecution images choreo session first last word entries published pending
 @Hibana.a_sending_qualified_direction_has_its_live_history : ∀ {choreo : Hibana.Choreo} {session : Nat}
   {transport : Hibana.TransportState} {records : List.{0} (Prod.{0, 0} Hibana.SourceSendAdmission Nat)}
-  {label : Fin (@OfNat.ofNat.{0} Nat (nat_lit 256) (instOfNatNat (nat_lit 256)))} {sent : Hibana.TransportState},
+  {label : Fin (@OfNat.ofNat.{0} Nat (nat_lit 65536) (instOfNatNat (nat_lit 65536)))} {sent : Hibana.TransportState},
   Hibana.QualifiedDirectionHistory choreo session transport records →
     @Eq.{1} (Option.{0} Hibana.TransportState) (transport.send label) (@some.{0} Hibana.TransportState sent) →
       @Exists.{1} Hibana.ElasticAdmissionHistory fun history =>
@@ -5761,6 +5710,11 @@ Hibana.a_pending_payload_requires_its_own_send : ∀ (resource : Nat) (sent : Op
           (@Prod.snd.{0, 0} Nat (Prod.{0, 0} Nat Nat)
             (@Prod.snd.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)) tag)))
         snapshot.counter
+@Hibana.a_wire_class_contains_only_one_static_source_position : ∀ {image : Hibana.RustDescriptorImage}
+  {key : Hibana.SourceFrameKey} {left right : Nat},
+  @Membership.mem.{0, 0} Nat (List.{0} Nat) (@List.instMembership.{0} Nat) (image.frameClassRows key) left →
+    @Membership.mem.{0, 0} Nat (List.{0} Nat) (@List.instMembership.{0} Nat) (image.frameClassRows key) right →
+      @Eq.{1} (Option.{0} Nat) (image.eventEffIndex? left) (image.eventEffIndex? right)
 @Hibana.a_zero_write_measured_gap_preserves_committed_choices : ∀ {image : Hibana.RustDescriptorImage}
   {choreo : Hibana.Choreo} {session : Nat} {first final : Hibana.ActorProgressObservation} {before after : Nat},
   @Eq.{1} Bool
@@ -6271,7 +6225,8 @@ Hibana.abort_peer_is_well_formed : ∀ (state : Hibana.TransportState), state.ab
                           (@some.{0} Hibana.CommitState next))))))))
 @Hibana.accepted_descriptor_establishes_pipelined_send_refinement : ∀ {descriptor : Hibana.ExactDescriptorCertificate},
   @Eq.{1} Bool descriptor.check true → Hibana.ExactDescriptorPipelinedSendRefinement descriptor
-@Hibana.accepted_descriptor_frame_labels_bind_compiled_coloring : ∀ {certificate : Hibana.ExactDescriptorCertificate},
+@Hibana.accepted_descriptor_frame_labels_identify_source_positions : ∀
+  {certificate : Hibana.ExactDescriptorCertificate},
   @Eq.{1} Bool certificate.check true →
     @Eq.{1} (Option.{0} (List.{0} Nat)) certificate.image.decodeEventFrameLabels?
       (@some.{0} (List.{0} Nat) (certificate.choreo.canonicalRoleFrameLabels certificate.image.role))
@@ -7075,7 +7030,7 @@ Hibana.abort_peer_is_well_formed : ∀ (state : Hibana.TransportState), state.ab
                 Hibana.TransportFrame}
             {left right : List.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)))}
             (initialView sending : Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)))
-            (label : Fin (@OfNat.ofNat.{0} Nat (nat_lit 256) (instOfNatNat (nat_lit 256)))),
+            (label : Fin (@OfNat.ofNat.{0} Nat (nat_lit 65536) (instOfNatNat (nat_lit 65536)))),
             @Eq.{1} (Option.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))))
                 (@Option.map.{0, 0} Hibana.ActorViewObservation
                   (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)))
@@ -8393,14 +8348,6 @@ Hibana.canonical_program_atoms_global_events : ∀ (choreo : Hibana.Choreo),
     (@List.map.{0, 0} Hibana.DecodedProgramAtom Hibana.GlobalEvent Hibana.DecodedProgramAtom.globalEvent
       choreo.canonicalProgramAtoms)
     choreo.globalEvents
-Hibana.canonical_program_source_frame_labels : ∀ (choreo : Hibana.Choreo),
-  @Eq.{1} (List.{0} Nat)
-    (@List.map.{0, 0} Hibana.ProgramAtomBody Nat Hibana.ProgramAtomBody.frameLabel
-      (Hibana.canonicalProgramSource choreo).atoms)
-    (@List.map.{0, 0} Hibana.ProgramAtomBody Nat Hibana.ProgramAtomBody.frameLabel
-      (Hibana.separateElasticFrameDomains (Hibana.canonicalControlSource choreo).markers
-        (@List.map.{0, 0} Hibana.CompiledOccurrence Hibana.ProgramAtomBody Hibana.CompiledOccurrence.programAtomBody
-          choreo.compiledOccurrences.occurrences)))
 Hibana.canonical_program_source_global_events_from : ∀ (choreo : Hibana.Choreo) (laneBase : Nat),
   @Eq.{1} (List.{0} Hibana.GlobalEvent)
     (@List.map.{0, 0} Hibana.ProgramAtomBody Hibana.GlobalEvent (fun x => x.globalEventFrom laneBase)
@@ -9177,7 +9124,7 @@ Hibana.close_and_receipt_requeue_commute : ∀ (before after : Hibana.TransportS
       Hibana.TransportBoundaryState.closePeer
       ((Hibana.TransportBoundaryState.offered before frame after).resolve Hibana.ReceiptResolution.requeue))
 @Hibana.closed_transport_rejects_send : ∀ {state : Hibana.TransportState}
-  {frameLabel : Fin (@OfNat.ofNat.{0} Nat (nat_lit 256) (instOfNatNat (nat_lit 256)))},
+  {frameLabel : Fin (@OfNat.ofNat.{0} Nat (nat_lit 65536) (instOfNatNat (nat_lit 65536)))},
   @Eq.{1} Bool state.peerClosed true →
     @Eq.{1} (Option.{0} Hibana.TransportState) (state.send frameLabel) (@none.{0} Hibana.TransportState)
 @Hibana.closing_deployment_establishes_affine_carrier_refinement : ∀ {Fairness : Prop}
@@ -9331,13 +9278,6 @@ Hibana.close_and_receipt_requeue_commute : ∀ (before after : Hibana.TransportS
               (@Eq.{1} (Option.{0} Hibana.GlobalConfig) (config.step? operation)
                 (@some.{0} Hibana.GlobalConfig globalNext))
               (@Eq.{1} Hibana.CompactGlobalState next (Hibana.CompactGlobalState.fromGlobalConfig globalNext)))
-Hibana.compiled_occurrence_action_update_frame_label : ∀ (role frameLabel : Nat)
-  (occurrence : Hibana.CompiledOccurrence),
-  @Eq.{1} (Option.{0} Hibana.LocalAction)
-    ({ sender := occurrence.sender, receiver := occurrence.receiver, label := occurrence.label,
-          schema := occurrence.schema, lane := occurrence.lane, frameLabel := frameLabel }.action?
-      role)
-    (occurrence.action? role)
 @Hibana.compiled_occurrence_lane_bound : ∀ {occurrence : Hibana.CompiledOccurrence}
   {occurrences : List.{0} Hibana.CompiledOccurrence},
   @Membership.mem.{0, 0} Hibana.CompiledOccurrence (List.{0} Hibana.CompiledOccurrence)
@@ -9767,6 +9707,10 @@ Hibana.decode_packed_lane_range_accepts_bounded : ∀ (raw capacity : Nat),
           (@some.{0} Hibana.LocalAction operation.action))
         (And (@Eq.{1} (Option.{0} Nat) (image.eventLane? eventId) (@some.{0} Nat operation.lane))
           (@Eq.{1} (Option.{0} Nat) (image.eventFrameLabel? eventId) (@some.{0} Nat operation.frameLabel))))
+@Hibana.decoded_frame_key_retains_its_source_position : ∀ {image : Hibana.RustDescriptorImage} {row : Nat}
+  {key : Hibana.SourceFrameKey},
+  @Eq.{1} (Option.{0} Hibana.SourceFrameKey) (image.frameKey? row) (@some.{0} Hibana.SourceFrameKey key) →
+    @Eq.{1} (Option.{0} Nat) (image.eventEffIndex? row) (@some.{0} Nat key.color)
 @Hibana.decoded_operations_member_binds_exact_event_columns : ∀ {image : Hibana.RustDescriptorImage}
   {operations : List.{0} Hibana.DescriptorOperation} {operation : Hibana.DescriptorOperation},
   @Eq.{1} (Option.{0} (List.{0} Hibana.DescriptorOperation)) image.decodeOperations?
@@ -10440,7 +10384,7 @@ And pipelined.WellFormed
       next.WellFormed
 @Hibana.elastic_admission_tracks_transport_send : ∀ {transport sent : Hibana.TransportState}
   {history : Hibana.ElasticAdmissionHistory}
-  {frameLabel : Fin (@OfNat.ofNat.{0} Nat (nat_lit 256) (instOfNatNat (nat_lit 256)))} {globalId : Nat},
+  {frameLabel : Fin (@OfNat.ofNat.{0} Nat (nat_lit 65536) (instOfNatNat (nat_lit 65536)))} {globalId : Nat},
   @Eq.{1} Hibana.TransportChannel history.channel transport.channel →
     @Eq.{1} Nat (@List.length.{0} Hibana.ElasticOccurrenceKey history.accepted)
         (@List.length.{0} Hibana.TransportFrame transport.frames) →
@@ -10508,9 +10452,6 @@ Hibana.elastic_iteration_queue_send_appends_exact_generation : ∀ (queue : Hiba
 @Hibana.elastic_occurrence_erasure_forgets_iteration : ∀ {left right : Hibana.ElasticOccurrenceKey},
   @Eq.{1} Nat left.globalId right.globalId → @Eq.{1} Nat left.erase right.erase
 Hibana.elastic_pipelined_semantics_holds : Hibana.ElasticPipelinedSemantics
-@Hibana.elastic_roll_paths_have_distinct_inbound_evidence : ∀ {left right : Hibana.StaticInboundColor},
-  Hibana.InboundColorsSeparate left right →
-    Hibana.RollPathsCompete left right → @Ne.{1} Hibana.StaticInboundEvidence left.evidence right.evidence
 Hibana.elastic_route_history_initial_well_formed : Hibana.ElasticRouteHistory.initial.WellFormed
 Hibana.elastic_route_history_models_alternating_pipelining : have first :=
   Hibana.ElasticRouteHistory.initial.publish (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0)))
@@ -10603,14 +10544,14 @@ Hibana.elastic_send_occurrence_has_exact_iteration : ∀ (queue : Hibana.Elastic
         (@instHAppendOfAppend.{0} (List.{0} Nat) (@List.instAppend.{0} Nat)) queue.pending
         (@List.cons.{0} Nat queue.sent (@List.nil.{0} Nat))))
 Hibana.elastic_transport_erasure_initial : ∀
-  (frameLabelOf : Nat → Fin (@OfNat.ofNat.{0} Nat (nat_lit 256) (instOfNatNat (nat_lit 256))))
+  (frameLabelOf : Nat → Fin (@OfNat.ofNat.{0} Nat (nat_lit 65536) (instOfNatNat (nat_lit 65536))))
   (channel : Hibana.TransportChannel),
   Hibana.ElasticAdmissionHistory.ErasesToTransport frameLabelOf (Hibana.ElasticAdmissionHistory.initial channel)
     (Hibana.TransportState.initial channel)
 @Hibana.elastic_transport_erasure_preserved_by_receive : ∀ {transport nextTransport : Hibana.TransportState}
   {frame : Hibana.TransportFrame} {history nextHistory : Hibana.ElasticAdmissionHistory}
   {key : Hibana.ElasticOccurrenceKey}
-  {frameLabelOf : Nat → Fin (@OfNat.ofNat.{0} Nat (nat_lit 256) (instOfNatNat (nat_lit 256)))},
+  {frameLabelOf : Nat → Fin (@OfNat.ofNat.{0} Nat (nat_lit 65536) (instOfNatNat (nat_lit 65536)))},
   Hibana.ElasticAdmissionHistory.ErasesToTransport frameLabelOf history transport →
     @Eq.{1} (Option.{0} (Prod.{0, 0} Hibana.ElasticOccurrenceKey Hibana.ElasticAdmissionHistory)) history.receive?
         (@some.{0} (Prod.{0, 0} Hibana.ElasticOccurrenceKey Hibana.ElasticAdmissionHistory)
@@ -10619,21 +10560,23 @@ Hibana.elastic_transport_erasure_initial : ∀
         Hibana.ElasticAdmissionHistory.ErasesToTransport frameLabelOf nextHistory nextTransport
 @Hibana.elastic_transport_erasure_preserved_by_send : ∀ {transport sent : Hibana.TransportState}
   {history : Hibana.ElasticAdmissionHistory}
-  {frameLabel : Fin (@OfNat.ofNat.{0} Nat (nat_lit 256) (instOfNatNat (nat_lit 256)))} {globalId : Nat}
-  {frameLabelOf : Nat → Fin (@OfNat.ofNat.{0} Nat (nat_lit 256) (instOfNatNat (nat_lit 256)))},
+  {frameLabel : Fin (@OfNat.ofNat.{0} Nat (nat_lit 65536) (instOfNatNat (nat_lit 65536)))} {globalId : Nat}
+  {frameLabelOf : Nat → Fin (@OfNat.ofNat.{0} Nat (nat_lit 65536) (instOfNatNat (nat_lit 65536)))},
   Hibana.ElasticAdmissionHistory.ErasesToTransport frameLabelOf history transport →
-    @Eq.{1} (Fin (@OfNat.ofNat.{0} Nat (nat_lit 256) (instOfNatNat (nat_lit 256)))) (frameLabelOf globalId) frameLabel →
+    @Eq.{1} (Fin (@OfNat.ofNat.{0} Nat (nat_lit 65536) (instOfNatNat (nat_lit 65536)))) (frameLabelOf globalId)
+        frameLabel →
       @Eq.{1} (Option.{0} Hibana.TransportState) (transport.send frameLabel) (@some.{0} Hibana.TransportState sent) →
         Hibana.ElasticAdmissionHistory.ErasesToTransport frameLabelOf (history.appendOccurrence globalId) sent
 @Hibana.elastic_transport_trace_is_exact_erasure : ∀
-  {frameLabelOf : Nat → Fin (@OfNat.ofNat.{0} Nat (nat_lit 256) (instOfNatNat (nat_lit 256)))}
+  {frameLabelOf : Nat → Fin (@OfNat.ofNat.{0} Nat (nat_lit 65536) (instOfNatNat (nat_lit 65536)))}
   {history : Hibana.ElasticAdmissionHistory} {transport : Hibana.TransportState},
   Hibana.ElasticAdmissionHistory.ErasesToTransport frameLabelOf history transport →
-    @Eq.{1} (List.{0} (Fin (@OfNat.ofNat.{0} Nat (nat_lit 256) (instOfNatNat (nat_lit 256)))))
-      (@List.map.{0, 0} Nat (Fin (@OfNat.ofNat.{0} Nat (nat_lit 256) (instOfNatNat (nat_lit 256)))) frameLabelOf
+    @Eq.{1} (List.{0} (Fin (@OfNat.ofNat.{0} Nat (nat_lit 65536) (instOfNatNat (nat_lit 65536)))))
+      (@List.map.{0, 0} Nat (Fin (@OfNat.ofNat.{0} Nat (nat_lit 65536) (instOfNatNat (nat_lit 65536)))) frameLabelOf
         history.erasedTrace)
-      (@List.map.{0, 0} Hibana.TransportFrame (Fin (@OfNat.ofNat.{0} Nat (nat_lit 256) (instOfNatNat (nat_lit 256))))
-        Hibana.TransportFrame.frameLabel transport.frames)
+      (@List.map.{0, 0} Hibana.TransportFrame
+        (Fin (@OfNat.ofNat.{0} Nat (nat_lit 65536) (instOfNatNat (nat_lit 65536)))) Hibana.TransportFrame.frameLabel
+        transport.frames)
 Hibana.empty_ready_evidence_consumption_is_empty : ∀ (arm : Hibana.RouteArm),
   @Eq.{1} Hibana.ScopeReadyEvidence (Hibana.consumeScopeReadyArm Hibana.ScopeReadyEvidence.empty arm)
     Hibana.ScopeReadyEvidence.empty
@@ -10720,14 +10663,14 @@ Hibana.empty_ready_evidence_consumption_is_empty : ∀ (arm : Hibana.RouteArm),
   {certificate : Hibana.VerifiedProtocolCertificate} {session roleCount : Nat} {choreo : Hibana.Choreo}
   {deployment : Hibana.DeploymentEvidence} {kernel : Hibana.PreparedKernelSemantics},
   Hibana.AssumptionIndexedEndToEndRefinement profile Fairness certificate session roleCount choreo deployment kernel →
-    ∀ {frameLabelOf : Nat → Fin (@OfNat.ofNat.{0} Nat (nat_lit 256) (instOfNatNat (nat_lit 256)))}
+    ∀ {frameLabelOf : Nat → Fin (@OfNat.ofNat.{0} Nat (nat_lit 65536) (instOfNatNat (nat_lit 65536)))}
       {history : Hibana.ElasticAdmissionHistory} {transport : Hibana.TransportState},
       Hibana.ElasticAdmissionHistory.ErasesToTransport frameLabelOf history transport →
-        @Eq.{1} (List.{0} (Fin (@OfNat.ofNat.{0} Nat (nat_lit 256) (instOfNatNat (nat_lit 256)))))
-          (@List.map.{0, 0} Nat (Fin (@OfNat.ofNat.{0} Nat (nat_lit 256) (instOfNatNat (nat_lit 256)))) frameLabelOf
+        @Eq.{1} (List.{0} (Fin (@OfNat.ofNat.{0} Nat (nat_lit 65536) (instOfNatNat (nat_lit 65536)))))
+          (@List.map.{0, 0} Nat (Fin (@OfNat.ofNat.{0} Nat (nat_lit 65536) (instOfNatNat (nat_lit 65536)))) frameLabelOf
             history.erasedTrace)
           (@List.map.{0, 0} Hibana.TransportFrame
-            (Fin (@OfNat.ofNat.{0} Nat (nat_lit 256) (instOfNatNat (nat_lit 256)))) Hibana.TransportFrame.frameLabel
+            (Fin (@OfNat.ofNat.{0} Nat (nat_lit 65536) (instOfNatNat (nat_lit 65536)))) Hibana.TransportFrame.frameLabel
             transport.frames)
 Hibana.endpoint_lease_full_slot_count_is_representable : Hibana.endpointLeaseSlotCountRepresentable
   Hibana.endpointLeaseSlotDomain
@@ -10766,6 +10709,13 @@ Hibana.equal_contract_wrong_peer_is_rejected : @Eq.{1} (Option.{0} Hibana.Event)
           (@OfNat.ofNat.{0} Nat (nat_lit 7) (instOfNatNat (nat_lit 7)))
           (@OfNat.ofNat.{0} Nat (nat_lit 8) (instOfNatNat (nat_lit 8))) })
   (@none.{0} Hibana.Event)
+@Hibana.equal_frame_keys_keep_the_same_static_source_position : ∀ {leftImage rightImage : Hibana.RustDescriptorImage}
+  {left right : Nat} {key : Hibana.SourceFrameKey},
+  @Eq.{1} (Option.{0} Hibana.SourceFrameKey) (leftImage.frameKey? left) (@some.{0} Hibana.SourceFrameKey key) →
+    @Eq.{1} (Option.{0} Hibana.SourceFrameKey) (rightImage.frameKey? right) (@some.{0} Hibana.SourceFrameKey key) →
+      @Eq.{1} (Option.{0} Nat) (leftImage.eventEffIndex? left) (rightImage.eventEffIndex? right)
+Hibana.equal_wire_message_positions_identify_the_same_source_site : ∀ (choreo : Hibana.Choreo) (left right : Nat),
+  @Eq.{1} Nat (choreo.canonicalFrameLabel left) (choreo.canonicalFrameLabel right) → @Eq.{1} Nat left right
 Hibana.erased_cursor_target_observation_has_exact_source : ∀ (entry : Nat)
   (observations : List.{0} Hibana.ActiveOfferObservation) (erased : Hibana.ErasedCursorObservation),
   Iff
@@ -10998,16 +10948,6 @@ Hibana.explicit_child_roll_keeps_its_parent_prefix : @Eq.{1} Bool
                   (@List.map.{0, 0} Hibana.TransportState Nat (fun state => state.channel.receiver) transports) role) →
           (Hibana.AsyncCancellationConfig.fromTransportSnapshot (protocol.beginCancellation reporter cause)
               transports).RetirementReady
-Hibana.filter_map_recolored_frame_labels : ∀ (role : Nat) (occurrences : List.{0} Hibana.CompiledOccurrence)
-  (recolor : Hibana.CompiledOccurrence → Nat),
-  @Eq.{1} (List.{0} Hibana.LocalAction)
-    (@List.filterMap.{0, 0} Hibana.CompiledOccurrence Hibana.LocalAction (fun x => x.action? role)
-      (@List.map.{0, 0} Hibana.CompiledOccurrence Hibana.CompiledOccurrence
-        (fun occurrence =>
-          { sender := occurrence.sender, receiver := occurrence.receiver, label := occurrence.label,
-            schema := occurrence.schema, lane := occurrence.lane, frameLabel := recolor occurrence })
-        occurrences))
-    (@List.filterMap.{0, 0} Hibana.CompiledOccurrence Hibana.LocalAction (fun x => x.action? role) occurrences)
 Hibana.filter_map_recolored_lanes : ∀ (role : Nat) (occurrences : List.{0} Hibana.CompiledOccurrence)
   (recolor : Nat → Nat),
   @Eq.{1} (List.{0} Hibana.LocalAction)
@@ -11015,7 +10955,7 @@ Hibana.filter_map_recolored_lanes : ∀ (role : Nat) (occurrences : List.{0} Hib
       (@List.map.{0, 0} Hibana.CompiledOccurrence Hibana.CompiledOccurrence
         (fun occurrence =>
           { sender := occurrence.sender, receiver := occurrence.receiver, label := occurrence.label,
-            schema := occurrence.schema, lane := recolor occurrence.lane, frameLabel := occurrence.frameLabel })
+            schema := occurrence.schema, lane := recolor occurrence.lane })
         occurrences))
     (@List.filterMap.{0, 0} Hibana.CompiledOccurrence Hibana.LocalAction (fun x => x.action? role) occurrences)
 @Hibana.finite_cancellation_observations_reach_retired : ∀ {config : Hibana.GlobalConfig} {cause : Hibana.SessionFault}
@@ -11026,19 +10966,6 @@ Hibana.filter_map_recolored_lanes : ∀ (role : Nat) (occurrences : List.{0} Hib
         And (Hibana.CancellationReachable config retired)
           (And (@Eq.{1} Hibana.GlobalSessionStatus retired.status (Hibana.GlobalSessionStatus.retired cause))
             (@Eq.{1} Hibana.ParticipantResourceOwners retired.resources Hibana.ParticipantResourceOwners.empty))
-@Hibana.first_available_frame_label_complete : ∀ {used : List.{0} Nat},
-  @LT.lt.{0} Nat instLTNat (@List.length.{0} Nat used)
-      (@OfNat.ofNat.{0} Nat (nat_lit 256) (instOfNatNat (nat_lit 256))) →
-    @Exists.{1} Nat fun label =>
-      And (@Eq.{1} (Option.{0} Nat) (Hibana.firstAvailableFrameLabel used) (@some.{0} Nat label))
-        (And (@LT.lt.{0} Nat instLTNat label (@OfNat.ofNat.{0} Nat (nat_lit 256) (instOfNatNat (nat_lit 256))))
-          (Not (@Membership.mem.{0, 0} Nat (List.{0} Nat) (@List.instMembership.{0} Nat) used label)))
-@Hibana.first_elastic_frame_color_avoids_its_actual_used_colors : ∀ {used : List.{0} Nat},
-  @LT.lt.{0} Nat instLTNat (Hibana.firstElasticFrameColor used)
-      (@OfNat.ofNat.{0} Nat (nat_lit 256) (instOfNatNat (nat_lit 256))) →
-    Not
-      (@Membership.mem.{0, 0} Nat (List.{0} Nat) (@List.instMembership.{0} Nat) used
-        (Hibana.firstElasticFrameColor used))
 @Hibana.first_owning_lane_is_exact_owner : ∀ {target : Hibana.ActiveOfferKey} {lanes : List.{0} Hibana.ActiveOfferLane}
   {owner : Hibana.ActiveOfferLane},
   @Eq.{1} (Option.{0} Hibana.ActiveOfferLane) (Hibana.firstOwningLane target lanes)
@@ -11098,11 +11025,6 @@ Hibana.foreign_parallel_root_is_not_frontier_progress_admissible : ∀
       (Hibana.productionFrontierProgressAdmissible currentScope currentEntry (@some.{0} Nat currentParallelRoot)
         visitedEntries candidate)
       false
-@Hibana.frame_label_allocation_complete : ∀ {used : List.{0} Nat} {count : Nat},
-  @LE.le.{0} Nat instLENat
-      (@HAdd.hAdd.{0, 0, 0} Nat Nat Nat (@instHAdd.{0} Nat instAddNat) (@List.length.{0} Nat used) count)
-      (@OfNat.ofNat.{0} Nat (nat_lit 256) (instOfNatNat (nat_lit 256))) →
-    @Ne.{1} (Option.{0} (List.{0} Nat)) (Hibana.allocateFrameLabels used count) (@none.{0} (List.{0} Nat))
 Hibana.fresh_alignment_source_is_recorded_exactly : ∀ (source : Nat) (visited : List.{0} Nat),
   Not (@Membership.mem.{0, 0} Nat (List.{0} Nat) (@List.instMembership.{0} Nat) visited source) →
     @Eq.{1} (Option.{0} (List.{0} Nat)) (Hibana.recordAlignmentSource source visited)
@@ -12771,7 +12693,7 @@ Hibana.production_logical_lane_count_is_exact_descriptor_span : ∀ (witness : H
           (@List.instMembership.{0} Hibana.StaticDeploymentEntry) staticCertificate.entries entry)
         (Hibana.RoleImagesExact primary.certificate entry.roleImages)
 Hibana.production_role_event_only_capacity_exact : @Eq.{1} Nat Hibana.productionRoleEventOnlyCapacity
-  (@OfNat.ofNat.{0} Nat (nat_lit 6553) (instOfNatNat (nat_lit 6553)))
+  (@OfNat.ofNat.{0} Nat (nat_lit 7281) (instOfNatNat (nat_lit 7281)))
 Hibana.production_route_history_capacity_covers_every_live_state : ∀ (witness : Hibana.RouteHistoryCapacityWitness),
   @LE.le.{0} Nat instLENat witness.liveRouteStateCount (Hibana.productionRouteHistoryCapacity witness)
 Hibana.production_route_history_capacity_fits_the_compact_descriptor_domain : ∀
@@ -13202,53 +13124,6 @@ Hibana.receipt_resolution_is_exact : ∀ (before after : Hibana.TransportState) 
   {earlier later : Hibana.StaticGlobalOccurrence},
   @Eq.{1} Bool (Hibana.receivePrecedesLaterSend flow roleCount earlier later) true →
     Hibana.MustCausalHandoff flow later.event.sender
-Hibana.recolor_roll_local_effect_head_is_unchanged : ∀ (conflictRows : List.{0} (List.{0} Hibana.ConflictArm))
-  (classes : List.{0} Hibana.RollFrameLabelClass) (index : Nat) (occurrence : Hibana.CompiledOccurrence)
-  (rest : List.{0} Hibana.CompiledOccurrence),
-  @Eq.{1} Nat occurrence.sender occurrence.receiver →
-    @Eq.{1} (List.{0} Hibana.CompiledOccurrence)
-      (Hibana.recolorRollOccurrencesFrom conflictRows classes index
-        (@List.cons.{0} Hibana.CompiledOccurrence occurrence rest))
-      (@List.cons.{0} Hibana.CompiledOccurrence occurrence
-        (Hibana.recolorRollOccurrencesFrom conflictRows classes
-          (@HAdd.hAdd.{0, 0, 0} Nat Nat Nat (@instHAdd.{0} Nat instAddNat) index
-            (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1))))
-          rest))
-Hibana.recolor_roll_missing_conflict_row_is_unencodable : ∀ (conflictRows : List.{0} (List.{0} Hibana.ConflictArm))
-  (classes : List.{0} Hibana.RollFrameLabelClass) (index : Nat) (occurrence : Hibana.CompiledOccurrence)
-  (rest : List.{0} Hibana.CompiledOccurrence),
-  @Ne.{1} Nat occurrence.sender occurrence.receiver →
-    @Eq.{1} (Option.{0} (List.{0} Hibana.ConflictArm))
-        (@getElem?.{0, 0, 0} (List.{0} (List.{0} Hibana.ConflictArm)) Nat (List.{0} Hibana.ConflictArm)
-          (fun as i => @LT.lt.{0} Nat instLTNat i (@List.length.{0} (List.{0} Hibana.ConflictArm) as))
-          (@List.instGetElem?NatLtLength.{0} (List.{0} Hibana.ConflictArm)) conflictRows index)
-        (@none.{0} (List.{0} Hibana.ConflictArm)) →
-      @Eq.{1} (Option.{0} Hibana.CompiledOccurrence)
-        (@List.head?.{0} Hibana.CompiledOccurrence
-          (Hibana.recolorRollOccurrencesFrom conflictRows classes index
-            (@List.cons.{0} Hibana.CompiledOccurrence occurrence rest)))
-        (@some.{0} Hibana.CompiledOccurrence
-          { sender := occurrence.sender, receiver := occurrence.receiver, label := occurrence.label,
-            schema := occurrence.schema, lane := occurrence.lane,
-            frameLabel := @OfNat.ofNat.{0} Nat (nat_lit 256) (instOfNatNat (nat_lit 256)) })
-Hibana.recolor_roll_occurrences_from_actions : ∀ (role : Nat) (conflictRows : List.{0} (List.{0} Hibana.ConflictArm))
-  (classes : List.{0} Hibana.RollFrameLabelClass) (index : Nat) (occurrences : List.{0} Hibana.CompiledOccurrence),
-  @Eq.{1} (List.{0} Hibana.LocalAction)
-    (@List.filterMap.{0, 0} Hibana.CompiledOccurrence Hibana.LocalAction (fun x => x.action? role)
-      (Hibana.recolorRollOccurrencesFrom conflictRows classes index occurrences))
-    (@List.filterMap.{0, 0} Hibana.CompiledOccurrence Hibana.LocalAction (fun x => x.action? role) occurrences)
-Hibana.recolor_roll_occurrences_from_length : ∀ (conflictRows : List.{0} (List.{0} Hibana.ConflictArm))
-  (classes : List.{0} Hibana.RollFrameLabelClass) (index : Nat) (occurrences : List.{0} Hibana.CompiledOccurrence),
-  @Eq.{1} Nat
-    (@List.length.{0} Hibana.CompiledOccurrence
-      (Hibana.recolorRollOccurrencesFrom conflictRows classes index occurrences))
-    (@List.length.{0} Hibana.CompiledOccurrence occurrences)
-Hibana.recolor_roll_source_actions : ∀ (role : Nat) (source : Hibana.CompiledOccurrenceSource)
-  (conflictRows : List.{0} (List.{0} Hibana.ConflictArm)),
-  @Eq.{1} (List.{0} Hibana.LocalAction)
-    (@List.filterMap.{0, 0} Hibana.CompiledOccurrence Hibana.LocalAction (fun x => x.action? role)
-      (Hibana.recolorRollSource source conflictRows).occurrences)
-    (@List.filterMap.{0, 0} Hibana.CompiledOccurrence Hibana.LocalAction (fun x => x.action? role) source.occurrences)
 @Hibana.recv_step_consumes_unique_message : ∀ {config next : Hibana.GlobalConfig} {globalId : Nat},
   @Eq.{1} (Option.{0} Hibana.GlobalConfig) (config.recvStep? globalId) (@some.{0} Hibana.GlobalConfig next) →
     @Exists.{1} Hibana.GlobalEvent fun event =>
@@ -13373,10 +13248,6 @@ Hibana.reference_carrier_satisfies_mediated_contract : Hibana.MediatedCarrierCon
   @Eq.{1} (Option.{0} kernel.Prepared) (kernel.prepare state input) (@none.{0} kernel.Prepared) →
     @Eq.{1} (Option.{0} (Prod.{0, 0} Hibana.RuntimeEffect kernel.State)) (kernel.transition? state input)
       (@none.{0} (Prod.{0, 0} Hibana.RuntimeEffect kernel.State))
-Hibana.remap_route_frame_label_preserves_local_effect : ∀ (remap : List.{0} Hibana.FrameLabelRemap)
-  (occurrence : Hibana.CompiledOccurrence),
-  @Eq.{1} Nat occurrence.sender occurrence.receiver →
-    @Eq.{1} Nat (Hibana.remapRouteFrameLabel remap occurrence) occurrence.frameLabel
 Hibana.repeated_alignment_source_is_rejected : ∀ (source : Nat) (visited : List.{0} Nat),
   @Membership.mem.{0, 0} Nat (List.{0} Nat) (@List.instMembership.{0} Nat) visited source →
     @Eq.{1} (Option.{0} (List.{0} Nat)) (Hibana.recordAlignmentSource source visited) (@none.{0} (List.{0} Nat))
@@ -13996,7 +13867,7 @@ Hibana.roll_causal_flow_composes_fresh_visits : ∀ (body : Hibana.Choreo) (earl
 @Hibana.roll_step_with_admitted_transport_frame_is_fresh_occurrence : ∀ {config next : Hibana.GlobalConfig}
   {rollId globalId : Nat} {event : Hibana.GlobalEvent} {transports : List.{0} Hibana.TransportState}
   {transport sent after : Hibana.TransportState} {frame : Hibana.TransportFrame}
-  {frameLabel : Fin (@OfNat.ofNat.{0} Nat (nat_lit 256) (instOfNatNat (nat_lit 256)))},
+  {frameLabel : Fin (@OfNat.ofNat.{0} Nat (nat_lit 65536) (instOfNatNat (nat_lit 65536)))},
   @Eq.{1} (Option.{0} Hibana.GlobalConfig) (config.rollStep? rollId) (@some.{0} Hibana.GlobalConfig next) →
     (@Exists.{1} Hibana.GlobalRoll fun roll =>
         And
@@ -14023,7 +13894,7 @@ Hibana.roll_causal_flow_composes_fresh_visits : ∀ (body : Hibana.Choreo) (earl
                       (And (@Eq.{1} Hibana.TransportChannel frame.channel transport.channel)
                         (And (@Eq.{1} Nat frame.sequence (@List.length.{0} Hibana.TransportFrame transport.frames))
                           (And
-                            (@Eq.{1} (Fin (@OfNat.ofNat.{0} Nat (nat_lit 256) (instOfNatNat (nat_lit 256))))
+                            (@Eq.{1} (Fin (@OfNat.ofNat.{0} Nat (nat_lit 65536) (instOfNatNat (nat_lit 65536))))
                               frame.frameLabel frameLabel)
                             (And (@Eq.{1} Nat frame.channel.session next.session)
                               (And (Hibana.TransportAdmission next.choreo frame globalId event)
@@ -14032,7 +13903,7 @@ Hibana.roll_causal_flow_composes_fresh_visits : ∀ (body : Hibana.Choreo) (earl
                                     (@Eq.{1} Nat frame.channel.lane event.lane)))))))))
 @Hibana.roll_step_with_drained_transport_has_fresh_next_frame : ∀ {config next : Hibana.GlobalConfig}
   {rollId globalId : Nat} {transports : List.{0} Hibana.TransportState} {transport sent : Hibana.TransportState}
-  {frameLabel : Fin (@OfNat.ofNat.{0} Nat (nat_lit 256) (instOfNatNat (nat_lit 256)))},
+  {frameLabel : Fin (@OfNat.ofNat.{0} Nat (nat_lit 65536) (instOfNatNat (nat_lit 65536)))},
   @Eq.{1} (Option.{0} Hibana.GlobalConfig) (config.rollStep? rollId) (@some.{0} Hibana.GlobalConfig next) →
     (@Exists.{1} Hibana.GlobalRoll fun roll =>
         And
@@ -14057,7 +13928,7 @@ Hibana.roll_causal_flow_composes_fresh_visits : ∀ (body : Hibana.Choreo) (earl
                         (And (@Eq.{1} Hibana.TransportChannel frame.channel transport.channel)
                           (And (@Eq.{1} Nat frame.sequence (@List.length.{0} Hibana.TransportFrame transport.frames))
                             (And
-                              (@Eq.{1} (Fin (@OfNat.ofNat.{0} Nat (nat_lit 256) (instOfNatNat (nat_lit 256))))
+                              (@Eq.{1} (Fin (@OfNat.ofNat.{0} Nat (nat_lit 65536) (instOfNatNat (nat_lit 65536))))
                                 frame.frameLabel frameLabel)
                               (∀ (old : Hibana.TransportFrame),
                                 @Membership.mem.{0, 0} Hibana.TransportFrame (List.{0} Hibana.TransportFrame)
@@ -14284,45 +14155,6 @@ Hibana.runtime_fault_classification_is_total : ∀ (fault : Hibana.RuntimeFault)
 @Hibana.runtime_transition_certificate_sound : ∀ {certificate : Hibana.RuntimeTransitionCertificate}
   {session roleCount : Nat} {choreo : Hibana.Choreo},
   @Eq.{1} Bool (certificate.check session roleCount choreo) true → certificate.Refines session roleCount choreo
-@Hibana.same_elastic_wire_color_retains_its_original_and_owner : ∀ {markers : List.{0} Hibana.DecodedScopeMarker}
-  {prior : List.{0} Hibana.ElasticFrameAssignment} {index left right : Nat} {atoms : List.{0} Hibana.ProgramAtomBody}
-  {leftSource rightSource leftOutput rightOutput : Hibana.ProgramAtomBody},
-  @LT.lt.{0} Nat instLTNat left right →
-    @Eq.{1} (Option.{0} Hibana.ProgramAtomBody)
-        (@getElem?.{0, 0, 0} (List.{0} Hibana.ProgramAtomBody) Nat Hibana.ProgramAtomBody
-          (fun as i => @LT.lt.{0} Nat instLTNat i (@List.length.{0} Hibana.ProgramAtomBody as))
-          (@List.instGetElem?NatLtLength.{0} Hibana.ProgramAtomBody) atoms left)
-        (@some.{0} Hibana.ProgramAtomBody leftSource) →
-      @Eq.{1} (Option.{0} Hibana.ProgramAtomBody)
-          (@getElem?.{0, 0, 0} (List.{0} Hibana.ProgramAtomBody) Nat Hibana.ProgramAtomBody
-            (fun as i => @LT.lt.{0} Nat instLTNat i (@List.length.{0} Hibana.ProgramAtomBody as))
-            (@List.instGetElem?NatLtLength.{0} Hibana.ProgramAtomBody) atoms right)
-          (@some.{0} Hibana.ProgramAtomBody rightSource) →
-        @Eq.{1} (Option.{0} Hibana.ProgramAtomBody)
-            (@getElem?.{0, 0, 0} (List.{0} Hibana.ProgramAtomBody) Nat Hibana.ProgramAtomBody
-              (fun as i => @LT.lt.{0} Nat instLTNat i (@List.length.{0} Hibana.ProgramAtomBody as))
-              (@List.instGetElem?NatLtLength.{0} Hibana.ProgramAtomBody)
-              (Hibana.separateElasticFrameDomainsFrom markers prior index atoms) left)
-            (@some.{0} Hibana.ProgramAtomBody leftOutput) →
-          @Eq.{1} (Option.{0} Hibana.ProgramAtomBody)
-              (@getElem?.{0, 0, 0} (List.{0} Hibana.ProgramAtomBody) Nat Hibana.ProgramAtomBody
-                (fun as i => @LT.lt.{0} Nat instLTNat i (@List.length.{0} Hibana.ProgramAtomBody as))
-                (@List.instGetElem?NatLtLength.{0} Hibana.ProgramAtomBody)
-                (Hibana.separateElasticFrameDomainsFrom markers prior index atoms) right)
-              (@some.{0} Hibana.ProgramAtomBody rightOutput) →
-            @Eq.{1} Nat leftSource.sender rightSource.sender →
-              @Eq.{1} Nat leftSource.receiver rightSource.receiver →
-                @Eq.{1} Nat leftSource.lane rightSource.lane →
-                  @Ne.{1} Nat rightSource.sender rightSource.receiver →
-                    @LT.lt.{0} Nat instLTNat rightOutput.frameLabel
-                        (@OfNat.ofNat.{0} Nat (nat_lit 256) (instOfNatNat (nat_lit 256))) →
-                      @Eq.{1} Nat leftOutput.frameLabel rightOutput.frameLabel →
-                        And (@Eq.{1} Nat leftSource.frameLabel rightSource.frameLabel)
-                          (@Eq.{1} Nat
-                            (Hibana.elasticFrameOwner markers
-                              (@HAdd.hAdd.{0, 0, 0} Nat Nat Nat (@instHAdd.{0} Nat instAddNat) index left))
-                            (Hibana.elasticFrameOwner markers
-                              (@HAdd.hAdd.{0, 0, 0} Nat Nat Nat (@instHAdd.{0} Nat instAddNat) index right)))
 Hibana.same_entry_foreign_scope_is_not_alternative_cursor_candidate : ∀ (current : Hibana.ActiveOfferKey)
   (foreign : Hibana.ActiveOfferObservation) (observations : List.{0} Hibana.ActiveOfferObservation),
   @Eq.{1} Nat foreign.key.entry current.entry →
@@ -14332,50 +14164,6 @@ Hibana.same_entry_foreign_scope_is_not_alternative_cursor_candidate : ∀ (curre
         (Hibana.alternativeCursorObservations current
           (@List.cons.{0} Hibana.ActiveOfferObservation foreign observations))
         foreign)
-@Hibana.same_roll_wire_color_retains_its_exact_source_route_path : ∀ {occurrences : List.{0} Hibana.CompiledOccurrence}
-  {conflictRows : List.{0} (List.{0} Hibana.ConflictArm)} {left right : Nat}
-  {leftSource rightSource leftOutput rightOutput : Hibana.CompiledOccurrence}
-  {leftPath rightPath : List.{0} Hibana.ConflictArm},
-  @Eq.{1} (Option.{0} Hibana.CompiledOccurrence)
-      (@getElem?.{0, 0, 0} (List.{0} Hibana.CompiledOccurrence) Nat Hibana.CompiledOccurrence
-        (fun as i => @LT.lt.{0} Nat instLTNat i (@List.length.{0} Hibana.CompiledOccurrence as))
-        (@List.instGetElem?NatLtLength.{0} Hibana.CompiledOccurrence) occurrences left)
-      (@some.{0} Hibana.CompiledOccurrence leftSource) →
-    @Eq.{1} (Option.{0} Hibana.CompiledOccurrence)
-        (@getElem?.{0, 0, 0} (List.{0} Hibana.CompiledOccurrence) Nat Hibana.CompiledOccurrence
-          (fun as i => @LT.lt.{0} Nat instLTNat i (@List.length.{0} Hibana.CompiledOccurrence as))
-          (@List.instGetElem?NatLtLength.{0} Hibana.CompiledOccurrence) occurrences right)
-        (@some.{0} Hibana.CompiledOccurrence rightSource) →
-      @Eq.{1} (Option.{0} Hibana.CompiledOccurrence)
-          (@getElem?.{0, 0, 0} (List.{0} Hibana.CompiledOccurrence) Nat Hibana.CompiledOccurrence
-            (fun as i => @LT.lt.{0} Nat instLTNat i (@List.length.{0} Hibana.CompiledOccurrence as))
-            (@List.instGetElem?NatLtLength.{0} Hibana.CompiledOccurrence)
-            (Hibana.recolorRollOccurrences occurrences conflictRows) left)
-          (@some.{0} Hibana.CompiledOccurrence leftOutput) →
-        @Eq.{1} (Option.{0} Hibana.CompiledOccurrence)
-            (@getElem?.{0, 0, 0} (List.{0} Hibana.CompiledOccurrence) Nat Hibana.CompiledOccurrence
-              (fun as i => @LT.lt.{0} Nat instLTNat i (@List.length.{0} Hibana.CompiledOccurrence as))
-              (@List.instGetElem?NatLtLength.{0} Hibana.CompiledOccurrence)
-              (Hibana.recolorRollOccurrences occurrences conflictRows) right)
-            (@some.{0} Hibana.CompiledOccurrence rightOutput) →
-          @Eq.{1} (Option.{0} (List.{0} Hibana.ConflictArm))
-              (@getElem?.{0, 0, 0} (List.{0} (List.{0} Hibana.ConflictArm)) Nat (List.{0} Hibana.ConflictArm)
-                (fun as i => @LT.lt.{0} Nat instLTNat i (@List.length.{0} (List.{0} Hibana.ConflictArm) as))
-                (@List.instGetElem?NatLtLength.{0} (List.{0} Hibana.ConflictArm)) conflictRows left)
-              (@some.{0} (List.{0} Hibana.ConflictArm) leftPath) →
-            @Eq.{1} (Option.{0} (List.{0} Hibana.ConflictArm))
-                (@getElem?.{0, 0, 0} (List.{0} (List.{0} Hibana.ConflictArm)) Nat (List.{0} Hibana.ConflictArm)
-                  (fun as i => @LT.lt.{0} Nat instLTNat i (@List.length.{0} (List.{0} Hibana.ConflictArm) as))
-                  (@List.instGetElem?NatLtLength.{0} (List.{0} Hibana.ConflictArm)) conflictRows right)
-                (@some.{0} (List.{0} Hibana.ConflictArm) rightPath) →
-              @Eq.{1} Nat leftSource.sender rightSource.sender →
-                @Eq.{1} Nat leftSource.receiver rightSource.receiver →
-                  @Eq.{1} Nat leftSource.lane rightSource.lane →
-                    @Ne.{1} Nat rightSource.sender rightSource.receiver →
-                      @LT.lt.{0} Nat instLTNat rightOutput.frameLabel
-                          (@OfNat.ofNat.{0} Nat (nat_lit 256) (instOfNatNat (nat_lit 256))) →
-                        @Eq.{1} Nat leftOutput.frameLabel rightOutput.frameLabel →
-                          @Eq.{1} (List.{0} Hibana.ConflictArm) leftPath rightPath
 @Hibana.scan_frontier_progress_retains_first_admissible : ∀ {α : Type} (admissible matchesFrontier : α → Bool)
   (selection : Hibana.FrontierProgressSelectionModel α) (candidates : List.{0} α),
   @Eq.{1} (Option.{0} α)
@@ -15187,7 +14975,7 @@ Hibana.source_candidate_without_retained_completion_is_current : ∀ (image : Hi
                   Hibana.TransportFrame}
               {left right : List.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)))}
               (initialView sending : Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)))
-              (label : Fin (@OfNat.ofNat.{0} Nat (nat_lit 256) (instOfNatNat (nat_lit 256)))),
+              (label : Fin (@OfNat.ofNat.{0} Nat (nat_lit 65536) (instOfNatNat (nat_lit 65536)))),
               @Eq.{1} (Option.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))))
                   (@Option.map.{0, 0} Hibana.ActorViewObservation
                     (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)))
@@ -16402,7 +16190,7 @@ Hibana.trace_checker_sound : ∀ (graph : Hibana.EventGraph) (state : Hibana.Com
             (And (@Eq.{1} Nat frame.channel.receiver event.receiver)
               (And (@Eq.{1} Nat frame.channel.lane event.lane)
                 (@Eq.{1} Nat
-                  (@Fin.val (@OfNat.ofNat.{0} Nat (nat_lit 256) (instOfNatNat (nat_lit 256))) frame.frameLabel)
+                  (@Fin.val (@OfNat.ofNat.{0} Nat (nat_lit 65536) (instOfNatNat (nat_lit 65536))) frame.frameLabel)
                   (choreo.canonicalFrameLabel globalId))))))
 @Hibana.transport_admission_checker_sound : ∀ {choreo : Hibana.Choreo} {frame : Hibana.TransportFrame} {globalId : Nat}
   {event : Hibana.GlobalEvent},
@@ -16556,7 +16344,7 @@ Hibana.trace_checker_sound : ∀ (graph : Hibana.EventGraph) (state : Hibana.Com
   state.WellFormed →
     @Eq.{1} Hibana.TransportPoll state.pollReceive (Hibana.TransportPoll.delivered frame next) → next.WellFormed
 @Hibana.transport_send_after_drain_is_fresh : ∀ {state sent : Hibana.TransportState}
-  {frameLabel : Fin (@OfNat.ofNat.{0} Nat (nat_lit 256) (instOfNatNat (nat_lit 256)))},
+  {frameLabel : Fin (@OfNat.ofNat.{0} Nat (nat_lit 65536) (instOfNatNat (nat_lit 65536)))},
   state.WellFormed →
     @Eq.{1} Nat state.delivered (@List.length.{0} Hibana.TransportFrame state.frames) →
       @Eq.{1} (Option.{0} Hibana.TransportState) (state.send frameLabel) (@some.{0} Hibana.TransportState sent) →
@@ -16566,14 +16354,14 @@ Hibana.trace_checker_sound : ∀ (graph : Hibana.EventGraph) (state : Hibana.Com
               (And (@Eq.{1} Hibana.TransportChannel frame.channel state.channel)
                 (And (@Eq.{1} Nat frame.sequence (@List.length.{0} Hibana.TransportFrame state.frames))
                   (And
-                    (@Eq.{1} (Fin (@OfNat.ofNat.{0} Nat (nat_lit 256) (instOfNatNat (nat_lit 256)))) frame.frameLabel
-                      frameLabel)
+                    (@Eq.{1} (Fin (@OfNat.ofNat.{0} Nat (nat_lit 65536) (instOfNatNat (nat_lit 65536))))
+                      frame.frameLabel frameLabel)
                     (∀ (old : Hibana.TransportFrame),
                       @Membership.mem.{0, 0} Hibana.TransportFrame (List.{0} Hibana.TransportFrame)
                           (@List.instMembership.{0} Hibana.TransportFrame) state.frames old →
                         @LT.lt.{0} Nat instLTNat old.sequence frame.sequence))))
 @Hibana.transport_send_preserves_well_formed : ∀ {state next : Hibana.TransportState}
-  {frameLabel : Fin (@OfNat.ofNat.{0} Nat (nat_lit 256) (instOfNatNat (nat_lit 256)))},
+  {frameLabel : Fin (@OfNat.ofNat.{0} Nat (nat_lit 65536) (instOfNatNat (nat_lit 65536)))},
   state.WellFormed →
     @Eq.{1} (Option.{0} Hibana.TransportState) (state.send frameLabel) (@some.{0} Hibana.TransportState next) →
       next.WellFormed

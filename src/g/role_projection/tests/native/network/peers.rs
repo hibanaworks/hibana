@@ -106,7 +106,7 @@ async fn old_peer_forwards_queued_bytes_to_the_remote_holder_without_a_broker() 
         loop {
             let journal = peer.journal().await;
             if journal.iter().any(|(op, packet)| {
-                *op == 1 && packet[6] == 10 && packet[8..] == 7u32.to_be_bytes()
+                *op == 1 && packet[6] == 10 && packet[9..] == 7u32.to_be_bytes()
             }) {
                 assert!(!journal.iter().any(|(op, _)| *op == 2));
                 break;

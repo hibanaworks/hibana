@@ -280,7 +280,7 @@ const fn event_bytes(dependency_row: u16, conflict_row: u16, flags: u8) -> [u8; 
     write_u16(&mut bytes, 2, dependency_row);
     write_u16(&mut bytes, 4, conflict_row);
     write_u16(&mut bytes, 6, u16::MAX);
-    bytes[9] = flags;
+    bytes[8] = flags;
     bytes
 }
 
@@ -293,7 +293,7 @@ const fn event_header_bytes(eff_index: u16, scope: u16) -> [u8; BLOB_LEN] {
 
 const fn local_event_with_lane_bytes(lane: u8) -> [u8; BLOB_LEN] {
     let mut bytes = event_header_bytes(0, u16::MAX);
-    bytes[9] = 2;
+    bytes[8] = 2;
     bytes[ROLE_IMAGE_EVENT_STRIDE] = lane;
     bytes
 }

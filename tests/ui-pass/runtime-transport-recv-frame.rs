@@ -8,7 +8,7 @@ fn main() {
     let deterministic = ReceivedFrame::deterministic(Payload::new(&payload));
     let _ = deterministic.payload();
 
-    let header = FrameHeader::from_bytes([0, 0, 0, 1, 2, 3, 4, 5]);
+    let header = FrameHeader::from_bytes([0, 0, 0, 1, 2, 3, 4, 0, 5]);
     let framed = ReceivedFrame::framed(header, Payload::new(&payload));
     let _ = framed.payload();
     let _ = header.bytes();

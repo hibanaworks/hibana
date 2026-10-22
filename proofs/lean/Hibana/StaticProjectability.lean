@@ -105,62 +105,13 @@ instance (left right : List ParallelArm) :
   unfold ParallelListsIndependent
   infer_instance
 
-structure StaticInboundColor where
-  evidence : StaticInboundEvidence
-  conflicts : List ConflictArm
-  parallelArms : List ParallelArm
-  rolls : List Nat
-  deriving Repr, DecidableEq
-
-private def enumerateStaticInboundColors :
-    List StaticInboundEvidence -> List (List ConflictArm) ->
-      List (List ParallelArm) -> List (List Nat) -> List StaticInboundColor
-  | evidence :: evidenceRows, conflicts :: conflictRows,
-      parallelArms :: parallelRows, rolls :: rollRows =>
-      { evidence, conflicts, parallelArms, rolls } ::
-        enumerateStaticInboundColors evidenceRows conflictRows parallelRows rollRows
-  | _, _, _, _ => []
-
-def Choreo.staticInboundColors (choreo : Choreo) : List StaticInboundColor :=
-  enumerateStaticInboundColors choreo.canonicalInboundEvidence
-    choreo.globalEventConflicts choreo.globalEventParallelArms
-    choreo.globalEventRollMemberships
-
-def RollPathsCompete (left right : StaticInboundColor) : Prop :=
-  left.conflicts ≠ right.conflicts /\
-    ∃ roll ∈ left.rolls, roll ∈ right.rolls
-
-instance (left right : StaticInboundColor) :
-    Decidable (RollPathsCompete left right) := by
-  unfold RollPathsCompete
-  infer_instance
-
-def InboundColorsSeparate (left right : StaticInboundColor) : Prop :=
-  ConflictListsMutuallyExclusive left.conflicts right.conflicts \/
-      ParallelListsIndependent left.parallelArms right.parallelArms \/
-      RollPathsCompete left right ->
-    left.evidence ≠ right.evidence
-
-instance (left right : StaticInboundColor) :
-    Decidable (InboundColorsSeparate left right) := by
-  unfold InboundColorsSeparate
-  infer_instance
-
-theorem elastic_roll_paths_have_distinct_inbound_evidence
-    {left right : StaticInboundColor}
-    (separate : InboundColorsSeparate left right)
-    (compete : RollPathsCompete left right) :
-    left.evidence ≠ right.evidence :=
-  separate (Or.inr (Or.inr compete))
-
-/-- Frame colors distinguish route alternatives, parallel frontiers, and exact
-route paths sharing an elastic roll. Locally ordered occurrences on one route
-path may reuse the same eight-byte header evidence. -/
+/-- Source positions distinguish every message site, including continuations
+that may arrive before a role observes a choice on another lane. -/
 def Choreo.InboundOccurrenceColoring (choreo : Choreo) : Prop :=
-  let colors := choreo.staticInboundColors
-  colors.length = choreo.globalEvents.length /\
-    colors.all (fun color => color.evidence.frameLabel < 256) = true /\
-    colors.Pairwise InboundColorsSeparate
+  let evidence := choreo.canonicalInboundEvidence
+  evidence.length = choreo.globalEvents.length /\
+    evidence.all (fun item => item.frameLabel < 65536) = true /\
+    evidence.Pairwise (fun left right => left ≠ right)
 
 instance (choreo : Choreo) : Decidable choreo.InboundOccurrenceColoring := by
   unfold Choreo.InboundOccurrenceColoring

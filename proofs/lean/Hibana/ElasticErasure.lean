@@ -17,7 +17,7 @@ from the accepted descriptor, not stored in the carrier. The relation checks
 both histories, channel identity, affine delivery, and the complete admitted
 label trace while retaining no roll iteration or per-occurrence epoch. -/
 def ElasticAdmissionHistory.ErasesToTransport
-    (frameLabelOf : Nat -> Fin 256)
+    (frameLabelOf : Nat -> Fin 65536)
     (history : ElasticAdmissionHistory)
     (transport : TransportState) : Prop :=
   history.WellFormed /\
@@ -63,7 +63,7 @@ theorem elastic_admission_receive_commutes_with_trace_erasure
     exactReceive.2.2.2.1⟩
 
 theorem elastic_transport_erasure_initial
-    (frameLabelOf : Nat -> Fin 256)
+    (frameLabelOf : Nat -> Fin 65536)
     (channel : TransportChannel) :
     (ElasticAdmissionHistory.initial channel).ErasesToTransport frameLabelOf
       (TransportState.initial channel) := by
@@ -76,7 +76,7 @@ theorem elastic_transport_erasure_initial
   ⟩
 
 theorem elastic_transport_trace_is_exact_erasure
-    {frameLabelOf : Nat -> Fin 256}
+    {frameLabelOf : Nat -> Fin 65536}
     {history : ElasticAdmissionHistory}
     {transport : TransportState}
     (erases : history.ErasesToTransport frameLabelOf transport) :
@@ -87,9 +87,9 @@ theorem elastic_transport_trace_is_exact_erasure
 theorem elastic_transport_erasure_preserved_by_send
     {transport sent : TransportState}
     {history : ElasticAdmissionHistory}
-    {frameLabel : Fin 256}
+    {frameLabel : Fin 65536}
     {globalId : Nat}
-    {frameLabelOf : Nat -> Fin 256}
+    {frameLabelOf : Nat -> Fin 65536}
     (erases : history.ErasesToTransport frameLabelOf transport)
     (labelExact : frameLabelOf globalId = frameLabel)
     (accepted : transport.send frameLabel = some sent) :
@@ -127,7 +127,7 @@ theorem elastic_transport_erasure_preserved_by_receive
     {frame : TransportFrame}
     {history nextHistory : ElasticAdmissionHistory}
     {key : ElasticOccurrenceKey}
-    {frameLabelOf : Nat -> Fin 256}
+    {frameLabelOf : Nat -> Fin 65536}
     (erases : history.ErasesToTransport frameLabelOf transport)
     (historyReceived : history.receive? = some (key, nextHistory))
     (transportReceived :
@@ -187,9 +187,9 @@ structure ElasticErasureRefinement : Prop where
   transportSend : forall
     {transport sent : TransportState}
     {history : ElasticAdmissionHistory}
-    {frameLabel : Fin 256}
+    {frameLabel : Fin 65536}
     {globalId : Nat}
-    {frameLabelOf : Nat -> Fin 256},
+    {frameLabelOf : Nat -> Fin 65536},
     history.ErasesToTransport frameLabelOf transport ->
     frameLabelOf globalId = frameLabel ->
     transport.send frameLabel = some sent ->
@@ -199,13 +199,13 @@ structure ElasticErasureRefinement : Prop where
     {frame : TransportFrame}
     {history nextHistory : ElasticAdmissionHistory}
     {key : ElasticOccurrenceKey}
-    {frameLabelOf : Nat -> Fin 256},
+    {frameLabelOf : Nat -> Fin 65536},
     history.ErasesToTransport frameLabelOf transport ->
     history.receive? = some (key, nextHistory) ->
     transport.pollReceive = .delivered frame nextTransport ->
       nextHistory.ErasesToTransport frameLabelOf nextTransport
   transportTraceExact : forall
-    {frameLabelOf : Nat -> Fin 256}
+    {frameLabelOf : Nat -> Fin 65536}
     {history : ElasticAdmissionHistory}
     {transport : TransportState},
     history.ErasesToTransport frameLabelOf transport ->

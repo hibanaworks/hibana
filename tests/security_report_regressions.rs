@@ -33,7 +33,7 @@ use std::{cell::RefCell, rc::Rc, task::Waker};
 struct Captured {
     target: u8,
     lane: u8,
-    label: u8,
+    label: u16,
     bytes: Vec<u8>,
 }
 

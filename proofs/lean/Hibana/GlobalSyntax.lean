@@ -51,7 +51,6 @@ structure CompiledOccurrence where
   label : Nat
   schema : Nat
   lane : Nat
-  frameLabel : Nat
   deriving Repr, DecidableEq
 
 structure CompiledOccurrenceSource where
@@ -170,13 +169,13 @@ def parallelLaneRemap
     (reused, leftSpan)).1
 
 private def constrainedLaneLeft : List CompiledOccurrence := [
-  { sender := 0, receiver := 1, label := 0, schema := 0, lane := 0, frameLabel := 0 },
-  { sender := 2, receiver := 3, label := 0, schema := 0, lane := 1, frameLabel := 0 }
+  { sender := 0, receiver := 1, label := 0, schema := 0, lane := 0 },
+  { sender := 2, receiver := 3, label := 0, schema := 0, lane := 1 }
 ]
 
 private def constrainedLaneRight : List CompiledOccurrence := [
-  { sender := 4, receiver := 5, label := 0, schema := 0, lane := 0, frameLabel := 0 },
-  { sender := 2, receiver := 6, label := 0, schema := 0, lane := 1, frameLabel := 0 }
+  { sender := 4, receiver := 5, label := 0, schema := 0, lane := 0 },
+  { sender := 2, receiver := 6, label := 0, schema := 0, lane := 1 }
 ]
 
 /-- The augmenting path moves the unconstrained class instead of allocating an
@@ -199,169 +198,9 @@ def mergeParallelOccurrences
     { occurrence with lane := remapParallelLane remap occurrence.lane }
   compiledSourceFrom (left.occurrences ++ recoloredRight)
 
-structure FrameLabelRemap where
-  sender : Nat
-  receiver : Nat
-  lane : Nat
-  oldLabel : Nat
-  newLabel : Nat
-  deriving Repr, DecidableEq
-
-def firstAvailableFrameLabel (used : List Nat) : Option Nat :=
-  (List.range 256).find? fun candidate => !used.contains candidate
-
-def FrameLabelRemap.matches
-    (entry : FrameLabelRemap) (occurrence : CompiledOccurrence) : Bool :=
-  entry.sender == occurrence.sender && entry.receiver == occurrence.receiver &&
-    entry.lane == occurrence.lane && entry.oldLabel == occurrence.frameLabel
-
-def routeFrameLabelRemap
-    (left right : List CompiledOccurrence) : List FrameLabelRemap :=
-  right.foldl (fun remap occurrence =>
-    if occurrence.sender == occurrence.receiver then
-      remap
-    else if remap.any (·.matches occurrence) then
-      remap
-    else
-      let usedLeft := (left.filter fun candidate =>
-        candidate.sender == occurrence.sender &&
-          candidate.receiver == occurrence.receiver &&
-          candidate.lane == occurrence.lane).map CompiledOccurrence.frameLabel
-      let usedRight := (remap.filter fun entry =>
-        entry.sender == occurrence.sender &&
-          entry.receiver == occurrence.receiver &&
-          entry.lane == occurrence.lane).map FrameLabelRemap.newLabel
-      let selected := match firstAvailableFrameLabel (usedLeft ++ usedRight) with
-        | some label => label
-        | none => 256
-      remap ++ [{
-        sender := occurrence.sender
-        receiver := occurrence.receiver
-        lane := occurrence.lane
-        oldLabel := occurrence.frameLabel
-        newLabel := selected
-      }]) []
-
-def remapRouteFrameLabel
-    (remap : List FrameLabelRemap) (occurrence : CompiledOccurrence) : Nat :=
-  if occurrence.sender == occurrence.receiver then
-    occurrence.frameLabel
-  else
-    match remap.find? (·.matches occurrence) with
-    | some entry => entry.newLabel
-    | none => 256
-
-@[simp]
-theorem remap_route_frame_label_preserves_local_effect
-    (remap : List FrameLabelRemap) (occurrence : CompiledOccurrence)
-    (localEffect : occurrence.sender = occurrence.receiver) :
-    remapRouteFrameLabel remap occurrence = occurrence.frameLabel := by
-  have sameRole : (occurrence.sender == occurrence.receiver) = true :=
-    beq_iff_eq.mpr localEffect
-  unfold remapRouteFrameLabel
-  rw [sameRole]
-  rfl
-
 def mergeRouteOccurrences
     (left right : CompiledOccurrenceSource) : CompiledOccurrenceSource :=
-  let remap := routeFrameLabelRemap left.occurrences right.occurrences
-  let recoloredRight := right.occurrences.map fun occurrence =>
-    { occurrence with frameLabel := remapRouteFrameLabel remap occurrence }
-  compiledSourceFrom (left.occurrences ++ recoloredRight)
-
-structure RollFrameLabelClass where
-  sender : Nat
-  receiver : Nat
-  lane : Nat
-  conflicts : List ConflictArm
-  frameLabel : Nat
-  deriving Repr, DecidableEq
-
-def RollFrameLabelClass.matches
-    (entry : RollFrameLabelClass) (occurrence : CompiledOccurrence)
-    (conflicts : List ConflictArm) : Bool :=
-  entry.sender == occurrence.sender && entry.receiver == occurrence.receiver &&
-    entry.lane == occurrence.lane && entry.conflicts == conflicts
-
-def RollFrameLabelClass.sameInboundKey
-    (entry : RollFrameLabelClass) (occurrence : CompiledOccurrence) : Bool :=
-  entry.sender == occurrence.sender && entry.receiver == occurrence.receiver &&
-    entry.lane == occurrence.lane
-
-/-- Roll compilation retains one frame color for each exact route path of an
-inbound operation key. Equal paths preserve ordered reuse; distinct paths are
-the elastic reentry frontier and therefore receive distinct colors. -/
-def recolorRollOccurrence
-    (conflictRows : List (List ConflictArm))
-    (classes : List RollFrameLabelClass) (index : Nat) (occurrence : CompiledOccurrence) :
-    CompiledOccurrence × List RollFrameLabelClass :=
-      if occurrence.sender == occurrence.receiver then
-        (occurrence, classes)
-      else
-        match conflictRows[index]? with
-        | none =>
-            ({ occurrence with frameLabel := 256 }, classes)
-        | some conflicts =>
-            match classes.find? (fun entry => entry.matches occurrence conflicts) with
-            | some entry =>
-                ({ occurrence with frameLabel := entry.frameLabel }, classes)
-            | none =>
-                let used := (classes.filter fun entry =>
-                  entry.sameInboundKey occurrence).map RollFrameLabelClass.frameLabel
-                let selected := match firstAvailableFrameLabel used with
-                  | some label => label
-                  | none => 256
-                let nextClass : RollFrameLabelClass := {
-                  sender := occurrence.sender
-                  receiver := occurrence.receiver
-                  lane := occurrence.lane
-                  conflicts
-                  frameLabel := selected
-                }
-                ({ occurrence with frameLabel := selected }, classes ++ [nextClass])
-
-def recolorRollOccurrencesFrom
-    (conflictRows : List (List ConflictArm)) :
-    List RollFrameLabelClass -> Nat -> List CompiledOccurrence ->
-      List CompiledOccurrence
-  | _, _, [] => []
-  | classes, index, occurrence :: rest =>
-      let step := recolorRollOccurrence conflictRows classes index occurrence
-      step.1 :: recolorRollOccurrencesFrom conflictRows step.2 (index + 1) rest
-
-def recolorRollOccurrences
-    (occurrences : List CompiledOccurrence)
-    (conflictRows : List (List ConflictArm)) : List CompiledOccurrence :=
-  recolorRollOccurrencesFrom conflictRows [] 0 occurrences
-
-@[simp]
-theorem recolor_roll_local_effect_head_is_unchanged
-    (conflictRows : List (List ConflictArm))
-    (classes : List RollFrameLabelClass) (index : Nat)
-    (occurrence : CompiledOccurrence) (rest : List CompiledOccurrence)
-    (localEffect : occurrence.sender = occurrence.receiver) :
-    recolorRollOccurrencesFrom conflictRows classes index (occurrence :: rest) =
-      occurrence :: recolorRollOccurrencesFrom conflictRows classes (index + 1) rest := by
-  have sameRole : (occurrence.sender == occurrence.receiver) = true :=
-    beq_iff_eq.mpr localEffect
-  cases rest <;> simp only [recolorRollOccurrencesFrom, recolorRollOccurrence, sameRole, if_true]
-
-theorem recolor_roll_missing_conflict_row_is_unencodable
-    (conflictRows : List (List ConflictArm))
-    (classes : List RollFrameLabelClass) (index : Nat)
-    (occurrence : CompiledOccurrence) (rest : List CompiledOccurrence)
-    (remote : occurrence.sender ≠ occurrence.receiver)
-    (missing : conflictRows[index]? = none) :
-    (recolorRollOccurrencesFrom conflictRows classes index (occurrence :: rest)).head? =
-      some { occurrence with frameLabel := 256 } := by
-  have differentRole : (occurrence.sender == occurrence.receiver) = false :=
-    beq_eq_false_iff_ne.mpr remote
-  simp [recolorRollOccurrencesFrom, recolorRollOccurrence, differentRole, missing]
-
-def recolorRollSource
-    (source : CompiledOccurrenceSource)
-    (conflictRows : List (List ConflictArm)) : CompiledOccurrenceSource :=
-  compiledSourceFrom (recolorRollOccurrences source.occurrences conflictRows)
+  compiledSourceFrom (left.occurrences ++ right.occurrences)
 
 theorem filter_map_recolored_lanes
     (role : Nat) (occurrences : List CompiledOccurrence) (recolor : Nat -> Nat) :
@@ -373,20 +212,6 @@ theorem filter_map_recolored_lanes
   | cons head tail tailIH =>
       have headAction :
           ({ head with lane := recolor head.lane } : CompiledOccurrence).action? role =
-            head.action? role := rfl
-      simp only [List.map_cons, List.filterMap_cons, headAction, tailIH]
-
-theorem filter_map_recolored_frame_labels
-    (role : Nat) (occurrences : List CompiledOccurrence)
-    (recolor : CompiledOccurrence -> Nat) :
-    (occurrences.map fun occurrence =>
-        { occurrence with frameLabel := recolor occurrence }).filterMap (·.action? role) =
-      occurrences.filterMap (·.action? role) := by
-  induction occurrences with
-  | nil => rfl
-  | cons head tail tailIH =>
-      have headAction :
-          ({ head with frameLabel := recolor head } : CompiledOccurrence).action? role =
             head.action? role := rfl
       simp only [List.map_cons, List.filterMap_cons, headAction, tailIH]
 
@@ -405,60 +230,7 @@ theorem merge_route_occurrence_actions
     (mergeRouteOccurrences left right).occurrences.filterMap (·.action? role) =
       left.occurrences.filterMap (·.action? role) ++
         right.occurrences.filterMap (·.action? role) := by
-  simp only [mergeRouteOccurrences, compiledSourceFrom, List.filterMap_append]
-  rw [filter_map_recolored_frame_labels]
-
-@[simp]
-theorem recolor_roll_occurrences_from_length
-    (conflictRows : List (List ConflictArm))
-    (classes : List RollFrameLabelClass) (index : Nat)
-    (occurrences : List CompiledOccurrence) :
-    (recolorRollOccurrencesFrom conflictRows classes index occurrences).length =
-      occurrences.length := by
-  induction occurrences generalizing classes index with
-  | nil => rfl
-  | cons head tail tailIH =>
-      simp only [recolorRollOccurrencesFrom, recolorRollOccurrence]
-      split
-      · simp [tailIH]
-      · split
-        · simp [tailIH]
-        · split <;> simp [tailIH]
-
-@[simp]
-theorem compiled_occurrence_action_update_frame_label
-    (role frameLabel : Nat) (occurrence : CompiledOccurrence) :
-    ({ occurrence with frameLabel } : CompiledOccurrence).action? role =
-      occurrence.action? role := rfl
-
-@[simp]
-theorem recolor_roll_occurrences_from_actions
-    (role : Nat) (conflictRows : List (List ConflictArm))
-    (classes : List RollFrameLabelClass) (index : Nat)
-    (occurrences : List CompiledOccurrence) :
-    (recolorRollOccurrencesFrom conflictRows classes index occurrences).filterMap
-        (·.action? role) = occurrences.filterMap (·.action? role) := by
-  induction occurrences generalizing classes index with
-  | nil => rfl
-  | cons head tail tailIH =>
-      simp only [recolorRollOccurrencesFrom, recolorRollOccurrence]
-      split
-      · simp only [List.filterMap_cons]
-        rw [tailIH]
-      · split
-        · simp only [List.filterMap_cons, compiled_occurrence_action_update_frame_label]
-          rw [tailIH]
-        · split <;>
-            simp only [List.filterMap_cons, compiled_occurrence_action_update_frame_label] <;>
-            rw [tailIH]
-
-@[simp]
-theorem recolor_roll_source_actions
-    (role : Nat) (source : CompiledOccurrenceSource)
-    (conflictRows : List (List ConflictArm)) :
-    (recolorRollSource source conflictRows).occurrences.filterMap (·.action? role) =
-      source.occurrences.filterMap (·.action? role) := by
-  simp [recolorRollSource, recolorRollOccurrences, compiledSourceFrom]
+  simp [mergeRouteOccurrences, compiledSourceFrom]
 
 def Choreo.routeCount : Choreo -> Nat
   | .send _ _ _ _ => 0
@@ -483,8 +255,8 @@ def Choreo.globalEventConflictsFrom (conflictBase : Nat) : Choreo -> List (List 
 def Choreo.globalEventConflicts (choreo : Choreo) : List (List ConflictArm) :=
   choreo.globalEventConflictsFrom 0
 
-/-- Host-only production allocation. Event order is the choreography preorder;
-lane and frame-label colors are erased into the compact descriptor rows. -/
+/-- Source event order and independent transport lanes. Wire identities are
+the resulting event positions, shared by all participant projections. -/
 def Choreo.compiledOccurrences : Choreo -> CompiledOccurrenceSource
   | .send sender receiver label schema => compiledSourceFrom [{
       sender
@@ -492,7 +264,6 @@ def Choreo.compiledOccurrences : Choreo -> CompiledOccurrenceSource
       label
       schema
       lane := 0
-      frameLabel := 0
     }]
   | .seq left right => compiledSourceFrom
       (left.compiledOccurrences.occurrences ++ right.compiledOccurrences.occurrences)
@@ -500,7 +271,7 @@ def Choreo.compiledOccurrences : Choreo -> CompiledOccurrenceSource
       left.compiledOccurrences right.compiledOccurrences
   | .route _ left right => mergeRouteOccurrences
       left.compiledOccurrences right.compiledOccurrences
-  | .roll body => recolorRollSource body.compiledOccurrences body.globalEventConflicts
+  | .roll body => body.compiledOccurrences
 
 def Choreo.laneSpan (choreo : Choreo) : Nat :=
   choreo.compiledOccurrences.laneSpan
@@ -534,8 +305,7 @@ theorem compiled_occurrences_length (choreo : Choreo) :
       simp [Choreo.compiledOccurrences, mergeRouteOccurrences, compiledSourceFrom,
         Choreo.eventCount, leftIH, rightIH]
   | roll body bodyIH =>
-      simp [Choreo.compiledOccurrences, recolorRollSource, recolorRollOccurrences,
-        compiledSourceFrom, Choreo.eventCount, bodyIH]
+      simpa [Choreo.compiledOccurrences, Choreo.eventCount] using bodyIH
 
 @[simp]
 theorem global_events_length (choreo : Choreo) :
@@ -564,7 +334,7 @@ theorem compiled_occurrences_lane_span_exact (choreo : Choreo) :
   | seq => rfl
   | par => rfl
   | route => rfl
-  | roll => rfl
+  | roll body bodyIH => exact bodyIH
 
 theorem global_events_from_lane_bounds
     (choreo : Choreo)

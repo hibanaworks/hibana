@@ -299,7 +299,7 @@ pub(crate) enum LocalAction {
         eff_index: EffIndex,
         peer: u8,
         label: u8,
-        frame_label: u8,
+        frame_label: u16,
         origin: EventOrigin,
         /// Type-level lane for parallel composition; lane 0 is the primary lane.
         lane: u8,
@@ -309,7 +309,7 @@ pub(crate) enum LocalAction {
         eff_index: EffIndex,
         peer: u8,
         label: u8,
-        frame_label: u8,
+        frame_label: u16,
         origin: EventOrigin,
         /// Type-level lane for parallel composition; lane 0 is the primary lane.
         lane: u8,
@@ -318,7 +318,7 @@ pub(crate) enum LocalAction {
     Local {
         eff_index: EffIndex,
         label: u8,
-        frame_label: u8,
+        frame_label: u16,
         origin: EventOrigin,
         /// Type-level lane for parallel composition; lane 0 is the primary lane.
         lane: u8,
@@ -333,7 +333,7 @@ enum PackedLocalAction {
         eff_index: EffIndex,
         peer: u8,
         label: u8,
-        frame_label: u8,
+        frame_label: u16,
         origin: EventOrigin,
         lane: u8,
     },
@@ -341,14 +341,14 @@ enum PackedLocalAction {
         eff_index: EffIndex,
         peer: u8,
         label: u8,
-        frame_label: u8,
+        frame_label: u16,
         origin: EventOrigin,
         lane: u8,
     },
     Local {
         eff_index: EffIndex,
         label: u8,
-        frame_label: u8,
+        frame_label: u16,
         origin: EventOrigin,
         lane: u8,
     },
@@ -360,7 +360,7 @@ enum PackedLocalAction {
 pub(crate) struct LocalAtomFacts {
     pub(crate) eff_index: EffIndex,
     pub(crate) label: u8,
-    pub(crate) frame_label: u8,
+    pub(crate) frame_label: u16,
     pub(crate) origin: EventOrigin,
     pub(crate) lane: u8,
 }

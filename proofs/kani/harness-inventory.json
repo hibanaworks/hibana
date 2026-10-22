@@ -182,7 +182,6 @@
     ],
     "../../src/global/const_dsl/allocation/kani.rs": [
       "global::const_dsl::allocation::kani::lane_endpoint_index_aggregates_exact_symbolic_membership",
-      "global::const_dsl::allocation::kani::two_arm_route_frame_coloring_is_exact",
       "global::const_dsl::allocation::kani::two_by_two_parallel_lane_matching_has_minimum_span"
     ],
     "../../src/global/const_dsl/allocation/kani/maximum_certificate.rs": [
@@ -193,10 +192,8 @@
       "global::const_dsl::allocation::kani::production_coloring::parallel_lane_coloring_reuses_disjoint_class",
       "global::const_dsl::allocation::kani::production_coloring::parallel_lane_coloring_separates_conflicting_class"
     ],
-    "../../src/global/const_dsl/allocation/kani/roll_coloring.rs": [
-      "global::const_dsl::allocation::kani::roll_coloring::local_effect_frame_labels_are_erased_from_the_wire_coloring_domain",
-      "global::const_dsl::allocation::kani::roll_coloring::nested_roll_frame_coloring_uses_the_complete_inbound_key",
-      "global::const_dsl::allocation::kani::roll_coloring::route_scope_publication_is_closed_and_atomic"
+    "../../src/global/const_dsl/allocation/kani/scopes.rs": [
+      "global::const_dsl::allocation::kani::scopes::route_scope_publication_is_closed_and_atomic"
     ],
     "../../src/global/const_dsl/endpoint_controller/kani.rs": [
       "global::const_dsl::endpoint_controller::kani::controller_merge_accepts_exact_single_role_domain"
@@ -420,10 +417,13 @@
       "transport::wire::kani::fixed_array_schema_identity_rejects_the_first_colliding_width"
     ]
   },
-  "contract-harnesses": {},
-  "contracts": [],
+  "contract-harnesses": {
+  },
+  "contracts": [
+
+  ],
   "totals": {
-    "standard-harnesses": 299,
+    "standard-harnesses": 296,
     "contract-harnesses": 0,
     "functions-under-contract": 0
   }

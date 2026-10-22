@@ -51,13 +51,14 @@ struct Frame {
     lane: u8,
     source: u8,
     target: u8,
-    label: u8,
+    label: u16,
     payload: Vec<u8>,
 }
 
 impl Frame {
     fn received(&self) -> ReceivedFrame<'_> {
         let session = self.session.raw().to_be_bytes();
+        let label = self.label.to_be_bytes();
         let header = FrameHeader::from_bytes([
             session[0],
             session[1],
@@ -66,7 +67,8 @@ impl Frame {
             self.lane,
             self.source,
             self.target,
-            self.label,
+            label[0],
+            label[1],
         ]);
         ReceivedFrame::framed(header, Payload::new(&self.payload))
     }

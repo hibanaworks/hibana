@@ -323,7 +323,7 @@ private theorem dropping_carrier_is_not_ordered :
     receiver := 1
   }
   have impossible := ordered.sendExact
-    (TransportBoundaryState.initial channel) (0 : Fin 256)
+    (TransportBoundaryState.initial channel) (0 : Fin 65536)
   simp [droppingCarrierSemantics, channel, TransportBoundaryState.initial,
     TransportBoundaryState.send, TransportState.initial, TransportState.send]
     at impossible

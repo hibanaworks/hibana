@@ -40,7 +40,6 @@ const fn first_recv_eff_for_route_arm<const E: usize>(
 pub(super) const fn local_event_row_for_eff<const E: usize>(
     eff_list: &EffList<E>,
     eff_idx: usize,
-    frame_label: u8,
     role: u8,
 ) -> PackedLocalEventRow {
     let scope = projection::scope_at(eff_list, eff_idx);
@@ -59,7 +58,7 @@ pub(super) const fn local_event_row_for_eff<const E: usize>(
             Some(direction) => direction,
             None => crate::invariant(),
         };
-    PackedLocalEventRow::new(eff_idx, scope, frame_label, choice, direction)
+    PackedLocalEventRow::new(eff_idx, scope, choice, direction)
 }
 
 impl<const N: usize> RoleImageBytes<N> {
@@ -91,12 +90,7 @@ impl<const N: usize> RoleImageBytes<N> {
                 if atom.lane as usize >= footprint.logical_lane_count {
                     panic!("local event lane outside role logical domain");
                 }
-                let mut event = local_event_row_for_eff(
-                    eff_list,
-                    eff_idx,
-                    eff_list.frame_label_at(eff_idx),
-                    role,
-                );
+                let mut event = local_event_row_for_eff(eff_list, eff_idx, role);
                 let dependency = dependencies.next(eff_idx, atom.lane, local_step);
                 if !dependency.is_none() {
                     out.write_dependency_row(columns.dependencies, dependency_row, dependency);

@@ -27,7 +27,7 @@ use hibana::runtime::{
 
 const DATA: u8 = 0;
 const CLOSE: u8 = 1;
-const HEADER_LEN: usize = 8;
+const HEADER_LEN: usize = 9;
 const LENGTH_LEN: usize = 4;
 const DATA_PREFIX_LEN: usize = 1 + HEADER_LEN + LENGTH_LEN;
 const CLOSE_LEN: usize = 1 + HEADER_LEN;
@@ -52,8 +52,9 @@ impl ChannelKey {
         }
     }
 
-    fn header(self, label: u8) -> [u8; HEADER_LEN] {
+    fn header(self, label: u16) -> [u8; HEADER_LEN] {
         let session = self.session.to_be_bytes();
+        let label = label.to_be_bytes();
         [
             session[0],
             session[1],
@@ -62,7 +63,8 @@ impl ChannelKey {
             self.lane,
             self.source,
             self.target,
-            label,
+            label[0],
+            label[1],
         ]
     }
 

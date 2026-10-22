@@ -219,8 +219,9 @@ fn a_logical_wire_word_keeps_its_order_when_the_sender_changes_holder() {
                 [0, 1, 0, 1]
             );
             for request in &requests[1..] {
-                assert_eq!(request.frame().header, requests[0].frame().header);
+                assert_eq!(request.frame().header.bytes()[..7], requests[0].frame().header.bytes()[..7]);
             }
+            assert_eq!(requests.iter().map(|request| request.frame().header.label().raw()).collect::<std::vec::Vec<_>>(), [0, 3, 0, 3]);
             #[cfg(not(miri))]
             {
                 use std::fmt::Write;

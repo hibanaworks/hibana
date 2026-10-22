@@ -51,21 +51,6 @@ private theorem mem_remove_first_of_ne
           simp [removeFirst, different] at member ⊢
           exact member
 
-private theorem range_nodup_constructive : ∀ count, (List.range count).Nodup
-  | 0 => by simp
-  | count + 1 => by
-      rw [List.range_succ]
-      exact List.nodup_append.mpr ⟨
-        range_nodup_constructive count,
-        by simp,
-        by
-          intro value valueMember other otherMember
-          have bound := List.mem_range.mp valueMember
-          have otherEq : other = count := by simpa using otherMember
-          subst other
-          exact Nat.ne_of_lt bound
-      ⟩
-
 private theorem nodup_subset_length_le
     {α : Type} [BEq α] [LawfulBEq α]
     {items domain : List α}
@@ -219,58 +204,6 @@ theorem lane_matching_certificate_is_maximum
     · exact Or.inr (by simpa using rightMember)
   have bound := lane_matching_cardinality_le_vertex_cover candidateDistinct covered
   omega
-
-/-- The production first-free search cannot reject while fewer than all 256
-wire labels are represented by competing classes. -/
-theorem first_available_frame_label_complete
-    {used : List Nat} (capacity : used.length < 256) :
-    ∃ label, firstAvailableFrameLabel used = some label ∧
-      label < 256 ∧ label ∉ used := by
-  have available : firstAvailableFrameLabel used ≠ none := by
-    intro unavailable
-    have allUsed : ∀ label, label ∈ List.range 256 → label ∈ used := by
-      intro label labelMember
-      have rejected := List.find?_eq_none.mp unavailable label labelMember
-      simpa using rejected
-    have rangeBound := nodup_subset_length_le (range_nodup_constructive 256) allUsed
-    simp only [List.length_range] at rangeBound
-    omega
-  cases selected : firstAvailableFrameLabel used with
-  | none => exact False.elim (available selected)
-  | some label =>
-      have labelMember : label ∈ List.range 256 :=
-        List.mem_of_find?_eq_some selected
-      have labelUnused : label ∉ used := by
-        have selectedPredicate := List.find?_some selected
-        simpa using selectedPredicate
-      exact ⟨label, rfl, List.mem_range.mp labelMember, labelUnused⟩
-
-def allocateFrameLabels (used : List Nat) : Nat → Option (List Nat)
-  | 0 => some []
-  | count + 1 => do
-      let label ← firstAvailableFrameLabel used
-      let rest ← allocateFrameLabels (label :: used) count
-      pure (label :: rest)
-
-/-- Repeated production-order first-free allocation is complete whenever the
-existing and pending competing classes fit the one-byte frame-label domain. -/
-theorem frame_label_allocation_complete
-    {used : List Nat} {count : Nat}
-    (capacity : used.length + count ≤ 256) :
-    allocateFrameLabels used count ≠ none := by
-  induction count generalizing used with
-  | zero => simp [allocateFrameLabels]
-  | succ count countIH =>
-      have usedCapacity : used.length < 256 := by omega
-      obtain ⟨label, selected, _, _⟩ :=
-        first_available_frame_label_complete usedCapacity
-      have remainingCapacity : (label :: used).length + count ≤ 256 := by
-        simp only [List.length_cons]
-        omega
-      cases rest : allocateFrameLabels (label :: used) count with
-      | none => exact False.elim ((countIH remainingCapacity) rest)
-      | some labels => simp [allocateFrameLabels, selected, rest]
-
 
 /-- Reassign lane classes inside a selected set of source occurrences. -/
 def routeAlignedLane {α : Type} (inside : α → Bool) (lane : α → Nat)

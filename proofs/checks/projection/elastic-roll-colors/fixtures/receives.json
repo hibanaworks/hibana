@@ -1,9 +1,0 @@
-[
-  {"index": 0, "enabled": false, "peer": 0, "label": 40, "frame_label": 0, "lane": 0},
-  {"index": 2, "enabled": true, "peer": 0, "label": 52, "frame_label": 0, "lane": 0},
-  {"index": 3, "enabled": true, "peer": 0, "label": 42, "frame_label": 1, "lane": 0},
-  {"index": 5, "enabled": false, "peer": 0, "label": 71, "frame_label": 0, "lane": 0},
-  {"index": 6, "enabled": true, "peer": 0, "label": 55, "frame_label": 0, "lane": 0},
-  {"index": 7, "enabled": true, "peer": 0, "label": 72, "frame_label": 1, "lane": 0},
-  {"index": 9, "enabled": false, "peer": 0, "label": 74, "frame_label": 2, "lane": 0}
-]

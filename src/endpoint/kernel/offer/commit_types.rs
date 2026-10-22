@@ -54,7 +54,7 @@ pub(crate) struct BranchMeta {
     /// Origin of the previewed branch step.
     pub(crate) origin: EventOrigin,
     /// Transport/ingress discriminator expected for this branch.
-    pub(crate) frame_label: u8,
+    pub(crate) frame_label: u16,
     /// Branch first-step category.
     pub(crate) kind: BranchKind,
     /// Route-shape profile captured during offer materialization.

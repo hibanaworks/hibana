@@ -7,7 +7,6 @@ private structure DecodedRoleEventRow where
   dependencyRow : Nat
   conflictRow : Nat
   scope : Nat
-  frameLabel : Nat
   flags : Nat
 
 structure DecodedDependencyRow where
@@ -1030,18 +1029,17 @@ private def RustDescriptorImage.decodeRoleEventRow?
     (image : RustDescriptorImage) (row : Nat) : Option DecodedRoleEventRow := do
   if row < image.eventCount then pure () else none
   let offset := row * productionRoleEventStride
-  let effIndex ← readU16LE? image.roleBytes offset
+  let effIndex ← image.eventEffIndex? row
   let dependencyRow ← readU16LE? image.roleBytes (offset + 2)
-  let conflictRow ← readU16LE? image.roleBytes (offset + 4)
-  let scope ← readU16LE? image.roleBytes (offset + 6)
-  let frameLabel ← readByte? image.roleBytes (offset + 8)
-  let flags ← readByte? image.roleBytes (offset + 9)
+  let conflictRow ← image.eventConflictRow? row
+  let scope ← image.eventScope? row
+  let flags ← image.eventFlags? row
   if effIndex < productionEventIdentityCapacity ∧
       (dependencyRow = packedU16Absent ∨ dependencyRow < image.dependencyRowCount) ∧
       (conflictRow = packedU16Absent ∨ conflictRow < image.conflictRowCount) ∧
       validPackedScope scope = true ∧
       flags < 6 then
-    pure { effIndex, dependencyRow, conflictRow, scope, frameLabel, flags }
+    pure { effIndex, dependencyRow, conflictRow, scope, flags }
   else
     none
 

@@ -111,8 +111,7 @@ impl<const N: usize> RoleImageBytes<N> {
         self.write_u16(offset + 2, event.dependency_row);
         self.write_u16(offset + 4, event.conflict_row);
         self.write_u16(offset + 6, event.scope().raw());
-        self.write_u8(offset + 8, event.frame_label);
-        self.write_u8(offset + 9, event.flags);
+        self.write_u8(offset + 8, event.flags);
     }
 
     #[inline(always)]
@@ -194,13 +193,8 @@ impl<const N: usize> RoleImageBytes<N> {
                 if atom.lane as usize >= footprint.logical_lane_count {
                     panic!("local event lane outside role logical domain");
                 }
-                let (mut event, event_conflict) = projection::local_event_row_for_eff(
-                    eff_list,
-                    eff_idx,
-                    eff_list.frame_label_at(eff_idx),
-                    rows,
-                    side,
-                );
+                let (mut event, event_conflict) =
+                    projection::local_event_row_for_eff(eff_list, eff_idx, rows, side);
                 let dependency = dependencies.next(eff_idx, atom.lane, local_step);
                 if !dependency.is_none() {
                     out.write_dependency_row(columns.dependencies, dependency_row, dependency);

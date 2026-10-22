@@ -198,7 +198,7 @@ theorem end_to_end_transport_trace_is_exact_elastic_erasure
     {kernel : PreparedKernelSemantics}
     (verified : AssumptionIndexedEndToEndRefinement profile Fairness certificate
       session roleCount choreo deployment kernel)
-    {frameLabelOf : Nat -> Fin 256}
+    {frameLabelOf : Nat -> Fin 65536}
     {history : ElasticAdmissionHistory}
     {transport : TransportState}
     (erases : history.ErasesToTransport frameLabelOf transport) :

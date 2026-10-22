@@ -102,8 +102,8 @@ impl FrameOwned {
             bytes.len() <= PAYLOAD_CAPACITY,
             "large choreography runtime payload exceeds fixed capacity"
         );
-        self.meta = ((outgoing.lane() as u32) << 16)
-            | ((source_role as u32) << 8)
+        self.meta = ((outgoing.lane() as u32) << 24)
+            | ((source_role as u32) << 16)
             | (outgoing.frame_label().raw() as u32);
         self.len = bytes.len() as u8;
         self.payload[..bytes.len()].copy_from_slice(bytes);
@@ -111,17 +111,17 @@ impl FrameOwned {
 
     #[inline(always)]
     const fn lane(&self) -> u8 {
-        (self.meta >> 16) as u8
+        (self.meta >> 24) as u8
     }
 
     #[inline(always)]
     const fn source_role(&self) -> u8 {
-        (self.meta >> 8) as u8
+        (self.meta >> 16) as u8
     }
 
     #[inline(always)]
-    const fn frame_label(&self) -> u8 {
-        self.meta as u8
+    const fn frame_label(&self) -> u16 {
+        self.meta as u16
     }
 
     fn as_slice(&self) -> &[u8] {
@@ -272,7 +272,8 @@ fn large_choreography_header(frame: &FrameOwned, target_role: u8) -> FrameHeader
         frame.lane(),
         frame.source_role(),
         target_role,
-        frame.frame_label(),
+        frame.frame_label().to_be_bytes()[0],
+        frame.frame_label().to_be_bytes()[1],
     ])
 }
 

@@ -25,7 +25,7 @@ use std::{
 };
 use tokio::{io::ReadBuf, net::UnixDatagram as AsyncDatagram, time::Sleep};
 
-const HEADER: usize = 8;
+const HEADER: usize = 9;
 const MAX_PACKET: usize = HEADER + 60 * 1024;
 const IO_DEADLINE: Duration = Duration::from_secs(3);
 
@@ -230,12 +230,8 @@ impl Transport for NativeTransport<'_> {
         }
         let mut packet = Vec::with_capacity(HEADER + payload.len());
         packet.extend_from_slice(&tx.session.to_be_bytes());
-        packet.extend_from_slice(&[
-            tx.lane,
-            tx.role,
-            outgoing.target_role(),
-            outgoing.frame_label().raw(),
-        ]);
+        packet.extend_from_slice(&[tx.lane, tx.role, outgoing.target_role()]);
+        packet.extend_from_slice(&outgoing.frame_label().raw().to_be_bytes());
         packet.extend_from_slice(payload);
         let target = address(&self.directory, outgoing.target_role(), tx.lane);
         match tx.socket.poll_send_to(cx, &packet, target) {

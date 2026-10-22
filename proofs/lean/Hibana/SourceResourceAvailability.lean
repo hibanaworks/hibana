@@ -184,7 +184,7 @@ theorem source_checked_send_keeps_the_exact_frame_until_receive_or_fence
     {current accepted : carrier.State} {before : TransportState}
     {state : Observation (Nat × Nat × Nat × Nat) TransportFrame}
     {left right : List (Nat × Nat × Nat × Nat)}
-    (initialView sending : Nat × Nat × Nat × Nat) (label : Fin 256)
+    (initialView sending : Nat × Nat × Nat × Nat) (label : Fin 65536)
     (held : (observedActorView? sample.before facts.resource.role).map
       (fun view => (sample.before.actor, view.header)) = some sending)
     (execution : Execution (initial initialView) state)

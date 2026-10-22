@@ -44,7 +44,7 @@ run_subsystem_budget_test \
 run_subsystem_budget_test \
   --manifest-path "${MANIFEST_PATH}" \
   --lib \
-  global::typestate::facts::tests::inbound_frame_key_is_exact_three_byte_identity \
+  global::typestate::facts::tests::inbound_frame_key_keeps_the_full_source_site \
   -- \
   --exact \
   --nocapture

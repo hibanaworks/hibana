@@ -93,7 +93,6 @@ impl<'a> RoleLaneImage<'a> {
                 self.read_u16_at(offset + 4),
                 self.read_u16_at(offset + 6),
                 self.byte_at(offset + 8),
-                self.byte_at(offset + 9),
             )),
             None => None,
         }

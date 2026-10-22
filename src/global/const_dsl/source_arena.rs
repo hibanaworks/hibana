@@ -14,7 +14,7 @@ pub(crate) struct ScopeMarker {
 #[derive(Clone, Copy)]
 pub(super) enum SourceRow {
     Empty,
-    Event { atom: EffAtom, frame_label: u8 },
+    Event { atom: EffAtom },
     Scope(ScopeMarker),
     Resolver(RouteResolverMarker),
 }

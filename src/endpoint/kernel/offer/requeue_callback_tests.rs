@@ -129,6 +129,7 @@ impl Transport for ReentrantRequeueTransport {
             rx.lane,
             0,
             rx.local_role,
+            0,
             REQUEUE_LABEL,
         ]);
         Poll::Ready(Ok(ReceivedFrame::framed(header, Payload::new(&self.bytes))))

@@ -18,9 +18,10 @@ pub(crate) const fn frame_header_from_parts(
     lane: u8,
     source_role: u8,
     target_role: u8,
-    label: u8,
+    label: u16,
 ) -> FrameHeader {
     let session = session.raw().to_be_bytes();
+    let label = label.to_be_bytes();
     FrameHeader::from_bytes([
         session[0],
         session[1],
@@ -29,7 +30,8 @@ pub(crate) const fn frame_header_from_parts(
         lane,
         source_role,
         target_role,
-        label,
+        label[0],
+        label[1],
     ])
 }
 
@@ -99,7 +101,7 @@ pub(crate) struct FrameOwned {
     session_id: SessionId,
     lane: u8,
     source_role: u8,
-    frame_label: u8,
+    frame_label: u16,
     hint_drained: bool,
     len: usize,
     payload: [u8; TEST_FRAME_PAYLOAD_CAPACITY],
@@ -110,7 +112,7 @@ impl FrameOwned {
         session_id: SessionId,
         lane: u8,
         source_role: u8,
-        frame_label: u8,
+        frame_label: u16,
         bytes: &[u8],
     ) -> Self {
         assert!(
@@ -549,7 +551,7 @@ impl TestTransport {
         tx: &mut TestTx,
         role: u8,
         lane: u8,
-        frame_label: u8,
+        frame_label: u16,
         payload: &[u8],
     ) {
         if tx.pending_frame.is_none() {
@@ -570,7 +572,7 @@ impl TestTransport {
         session_id: SessionId,
         role: u8,
         lane: u8,
-        frame_label: u8,
+        frame_label: u16,
         payload: &[u8],
     ) {
         if tx.pending_frame.is_none() {
@@ -685,7 +687,7 @@ const _: fn(&TestTransport, u8) -> (FrameHeader, Vec<u8>) = TestTransport::queue
 const _: fn(&TestTransport, u8, usize) -> (FrameHeader, Vec<u8>) = TestTransport::queued_frame_at;
 const _: fn(&TestTransport, u8, usize) = TestTransport::truncate_next_payload;
 const _: for<'a> fn(&'a TestTransport, SessionId, u8, u8) -> TestRx<'a> = TestTransport::open_rx;
-const _: fn(&TestTransport, &mut TestTx, SessionId, u8, u8, u8, &[u8]) =
+const _: fn(&TestTransport, &mut TestTx, SessionId, u8, u8, u16, &[u8]) =
     TestTransport::stage_send_with_session;
 
 impl Transport for TestTransport {

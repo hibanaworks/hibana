@@ -12,7 +12,6 @@ mod allocation;
 mod eff_list;
 mod endpoint_controller;
 mod endpoint_selectors;
-mod event_relations;
 mod receive_lane_causality;
 mod route;
 mod scope_ranges;
@@ -22,10 +21,7 @@ use crate::eff;
 
 mod scope;
 
-pub(crate) use self::allocation::{
-    assign_receive_lanes, color_roll_frame_labels, merge_parallel_lanes, merge_route_frame_labels,
-    separate_roll_frame_domains,
-};
+pub(crate) use self::allocation::{assign_receive_lanes, merge_parallel_lanes};
 #[cfg(all(test, hibana_repo_tests))]
 pub(crate) use self::eff_list::const_send_typed;
 pub(crate) use self::endpoint_controller::first_visible_controller;

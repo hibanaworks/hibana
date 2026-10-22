@@ -24,7 +24,7 @@ pub(super) struct FrameExpectation {
     pub(super) lane_wire: u8,
     pub(super) source_role: u8,
     pub(super) target_role: u8,
-    pub(super) label: u8,
+    pub(super) label: u16,
 }
 
 #[derive(Clone, Copy)]

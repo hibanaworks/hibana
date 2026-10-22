@@ -2,7 +2,7 @@ use super::*;
 use crate::{
     eff::{EffAtom, EventOrigin},
     global::const_dsl::{
-        ReentryMark, ScopeId, merge_route_frame_labels, validate_parallel_endpoint_selectors,
+        ReentryMark, ScopeId, validate_parallel_endpoint_selectors,
         validate_receive_lane_causality, validate_roll_reentry_endpoint_selectors,
     },
 };
@@ -62,11 +62,6 @@ fn route_commit_count_257_source() -> EffList<SOURCE_CAPACITY> {
         route += 1;
     }
 
-    route = ROUTE_DEPTH;
-    while route > 0 {
-        route -= 1;
-        merge_route_frame_labels(&mut source, route, route + 1, EVENT_COUNT);
-    }
     source
 }
 

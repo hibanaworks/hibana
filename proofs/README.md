@@ -11,7 +11,7 @@ Rust programs or arbitrary implementations of `Transport`.
 | --- | --- |
 | [lean](lean/README.md) | Protocol, ownership, runtime and transport models in one Lean package |
 | [lean/claims](lean/claims) | The theorem inventories checked by the Lean gate |
-| [checks/projection](checks/README.md#projection) | Source ownership, branch knowledge, dependencies and frame allocation |
+| [checks/projection](checks/README.md#projection) | Source ownership, branch knowledge, dependencies, lane allocation and message identity |
 | [checks/image](checks/README.md#protocol-images) | Packed descriptor fields, lookup and bounds |
 | [checks/runtime](checks/README.md#local-execution) | Operation admission, choice, parallel work and repetition |
 | [kani](kani/README.md) | Reviewed inventory and entry point for production Kani harnesses |
@@ -165,9 +165,9 @@ operator budget applies to the whole tree, not separately to each child.
 Multiple resources and reused labels remain outside this grammar. A generated catalog is a test domain,
 not evidence that all its cases passed.
 
-Choice-arm lane alignment prefers existing colors, then uses the remaining
-wire-lane domain when necessary. It can map a whole arm or separate one
-conflicting occurrence within an arm. Sequential operations on different lanes
+Receive lane allocation prefers existing colors, then uses the remaining
+wire-lane domain when necessary. It can map a whole choice arm or separate one
+conflicting occurrence inside or outside a choice. Sequential operations on different lanes
 retain their source dependencies. `GlobalAllocationCorrectness` proves that an
 injective matching introduces no incompatible collision when its cross-boundary
 constraints are satisfied. Native tests compare pairwise receive constraints

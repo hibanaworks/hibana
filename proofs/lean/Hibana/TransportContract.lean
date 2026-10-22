@@ -15,7 +15,7 @@ structure TransportChannel where
 structure TransportFrame where
   channel : TransportChannel
   sequence : Nat
-  frameLabel : Fin 256
+  frameLabel : Fin 65536
   deriving Repr, DecidableEq
 
 /-- Strong affine-delivery profile for one session/lane/peer direction. The
@@ -39,7 +39,7 @@ def TransportState.initial (channel : TransportChannel) : TransportState := {
 
 def TransportState.send
     (state : TransportState)
-    (frameLabel : Fin 256) : Option TransportState :=
+    (frameLabel : Fin 65536) : Option TransportState :=
   if state.peerClosed then
     none
   else
@@ -101,7 +101,7 @@ private theorem get_append_singleton
     omega
 
 theorem transport_send_preserves_well_formed
-    {state next : TransportState} {frameLabel : Fin 256}
+    {state next : TransportState} {frameLabel : Fin 65536}
     (wellFormed : state.WellFormed)
     (sent : state.send frameLabel = some next) :
     next.WellFormed := by
@@ -234,7 +234,7 @@ theorem abort_peer_is_well_formed (state : TransportState) :
     simp [TransportState.abortPeer] at present
 
 theorem closed_transport_rejects_send
-    {state : TransportState} {frameLabel : Fin 256}
+    {state : TransportState} {frameLabel : Fin 65536}
     (closed : state.peerClosed = true) :
     state.send frameLabel = none := by
   simp [TransportState.send, closed]
@@ -243,7 +243,7 @@ theorem closed_transport_rejects_send
 next sequence and every frame from the prior iteration has a smaller sequence. -/
 theorem transport_send_after_drain_is_fresh
     {state sent : TransportState}
-    {frameLabel : Fin 256}
+    {frameLabel : Fin 65536}
     (wellFormed : state.WellFormed)
     (drained : state.delivered = state.frames.length)
     (accepted : state.send frameLabel = some sent) :

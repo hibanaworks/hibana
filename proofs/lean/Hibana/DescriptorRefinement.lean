@@ -155,11 +155,9 @@ theorem accepted_descriptor_global_events_bind_canonical_lanes
   unfold ExactDescriptorCertificate.Matches at agreement
   exact agreement.2.2.1.1
 
-/-- Every accepted role image carries exactly the final frame-label coloring:
-route classes refined by the canonical scope markers' elastic owners. This
-same production pipeline binds the resident bytes without a separate label
-authority. -/
-theorem accepted_descriptor_frame_labels_bind_compiled_coloring
+/-- Every accepted role image uses the global message position as its wire
+identity. The exact-image check binds the decoded local rows to those positions. -/
+theorem accepted_descriptor_frame_labels_identify_source_positions
     {certificate : ExactDescriptorCertificate}
     (accepted : certificate.check = true) :
     certificate.image.decodeEventFrameLabels? =

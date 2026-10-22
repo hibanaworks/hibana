@@ -25,17 +25,17 @@ fn state_index_rejects_the_reserved_absent_identity() {
 }
 
 #[test]
-fn inbound_frame_key_is_exact_three_byte_identity() {
-    let key = InboundFrameKey::new(253, 254, 255);
+fn inbound_frame_key_keeps_the_full_source_site() {
+    let key = InboundFrameKey::new(253, 254, 0x12ff);
 
-    assert_eq!(core::mem::size_of::<InboundFrameKey>(), 3);
+    assert_eq!(core::mem::size_of::<InboundFrameKey>(), 4);
     assert_eq!(key.source_role, 253);
     assert_eq!(key.lane, 254);
-    assert_eq!(key.frame_label, 255);
-    assert!(key.matches_parts(253, 254, 255));
-    assert!(!key.matches_parts(252, 254, 255));
-    assert!(!key.matches_parts(253, 253, 255));
-    assert!(!key.matches_parts(253, 254, 254));
+    assert_eq!(key.frame_label, 0x12ff);
+    assert!(key.matches_parts(253, 254, 0x12ff));
+    assert!(!key.matches_parts(252, 254, 0x12ff));
+    assert!(!key.matches_parts(253, 253, 0x12ff));
+    assert!(!key.matches_parts(253, 254, 0x13ff));
 }
 
 #[test]

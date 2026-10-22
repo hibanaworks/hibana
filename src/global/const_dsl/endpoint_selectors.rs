@@ -30,8 +30,7 @@ impl EndpointSelector {
         if atom_idx >= crate::eff::meta::COMPACT_EVENT_IDENTITY_CAPACITY {
             None
         } else {
-            // Projection validation uses the same compact event identity later
-            // carried by the descriptor; frame-label reuse remains independent.
+            // The descriptor and wire header use this same source position.
             Some(Self(
                 (Self::INBOUND_EVIDENCE << Self::KIND_SHIFT) | atom_idx as u64,
             ))

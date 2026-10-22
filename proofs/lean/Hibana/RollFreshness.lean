@@ -15,7 +15,7 @@ theorem roll_step_with_drained_transport_has_fresh_next_frame
     {rollId globalId : Nat}
     {transports : List TransportState}
     {transport sent : TransportState}
-    {frameLabel : Fin 256}
+    {frameLabel : Fin 65536}
     (rolled : config.rollStep? rollId = some next)
     (owned : ∃ roll, config.choreo.globalRolls[rollId]? = some roll /\
       globalId ∈ roll.events)
@@ -48,7 +48,7 @@ theorem roll_step_with_admitted_transport_frame_is_fresh_occurrence
     {transports : List TransportState}
     {transport sent after : TransportState}
     {frame : TransportFrame}
-    {frameLabel : Fin 256}
+    {frameLabel : Fin 65536}
     (rolled : config.rollStep? rollId = some next)
     (owned : ∃ roll, config.choreo.globalRolls[rollId]? = some roll /\
       globalId ∈ roll.events)

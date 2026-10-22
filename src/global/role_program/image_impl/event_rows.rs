@@ -133,14 +133,12 @@ mod tests {
         let send = PackedLocalEventRow::new(
             1,
             ScopeId::none(),
-            0,
             RouteChoiceMark::Ordinary,
             RoleLocalDirection::Send,
         );
         let recv = PackedLocalEventRow::new(
             1,
             ScopeId::none(),
-            0,
             RouteChoiceMark::Ordinary,
             RoleLocalDirection::Recv,
         );
@@ -182,7 +180,6 @@ impl PackedLocalEventRow {
         dependency_row: u16,
         conflict_row: u16,
         scope_raw: u16,
-        frame_label: u8,
         flags: u8,
     ) -> Self {
         let scope = match decode_resident_event_header(eff_index, scope_raw, flags) {
@@ -194,7 +191,6 @@ impl PackedLocalEventRow {
             dependency_row,
             conflict_row,
             scope,
-            frame_label,
             flags,
         }
     }
@@ -208,7 +204,6 @@ impl PackedLocalEventRow {
     pub(crate) const fn new(
         eff_idx: usize,
         scope: ScopeId,
-        frame_label: u8,
         choice: RouteChoiceMark,
         direction: RoleLocalDirection,
     ) -> Self {
@@ -224,7 +219,6 @@ impl PackedLocalEventRow {
             dependency_row: u16::MAX,
             conflict_row: u16::MAX,
             scope,
-            frame_label,
             flags,
         }
     }
@@ -298,7 +292,7 @@ impl PackedLocalEventRow {
         let facts = LocalAtomFacts {
             eff_index,
             label: atom.label,
-            frame_label: self.frame_label,
+            frame_label: self.eff_index,
             origin: atom.origin,
             lane: atom.lane,
         };

@@ -436,7 +436,6 @@ fn resident_event_header_decoding_accepts_exact_domain() {
             u16::MAX,
             u16::MAX,
             scope_raw,
-            0,
             flags,
         );
         assert!(row.eff_index == eff_index);

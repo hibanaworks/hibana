@@ -31,6 +31,9 @@
   after a new visit began.
 - Assigned separate lanes to sequential receives from unrelated senders and
   preserved their source order across lane changes.
+- Distinguished every static message position on the wire. An early message
+  after a choice could otherwise be accepted as the first receive of an
+  unselected branch when the selected branch used another lane.
 
 ### Performance
 
@@ -77,6 +80,11 @@ that tie the handle borrow to its internal lifetime, such as
 Do not retain an outgoing payload pointer across `Pending`. Keep pending I/O
 state in the transport. Cancellation must discard staged bytes or disable that
 logical send direction if its bytes can no longer be withdrawn.
+
+The frame header is nine bytes: session ID (four, big endian), lane, source,
+target, and the global message position (two, big endian). Preserve all nine
+bytes when forwarding a framed message. Repetitions reuse their static message
+position, so the transport must still prevent duplication and replay.
 
 A transport that supports delegation must keep a logical inbox available to the
 new holder, including frames accepted before the transfer. It must provide peer

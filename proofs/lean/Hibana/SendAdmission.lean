@@ -157,7 +157,7 @@ inductive SendAdmissionTrace (choreo : Choreo) (session : Nat) :
       SendAdmissionTrace choreo session transport.closePeer history records
   | accept {transport sent : TransportState} {history : ElasticAdmissionHistory}
       {records : List (SourceSendAdmission × Nat)}
-      {sample : SourceSendAdmission} {eventId : Nat} {label : Fin 256}
+      {sample : SourceSendAdmission} {eventId : Nat} {label : Fin 65536}
       (previous : SendAdmissionTrace choreo session transport history records)
       (checked : sample.check choreo session = true)
       (factsAt : sample.effIndex? = some eventId)
@@ -364,7 +364,7 @@ theorem accepted_source_send_keeps_its_exact_authority_until_receive_or_fence
     {current accepted : carrier.State} {before : TransportState}
     {state : EndpointTransfer.Observation (Nat × Nat × Nat × Nat) TransportFrame}
     {left right : List (Nat × Nat × Nat × Nat)}
-    (initialView sending : Nat × Nat × Nat × Nat) (label : Fin 256)
+    (initialView sending : Nat × Nat × Nat × Nat) (label : Fin 65536)
     (held : (observedActorView? sample.base facts.resource.role).map
       (fun view => (sample.base.actor, view.header)) = some sending)
     (execution : EndpointTransfer.Execution (EndpointTransfer.initial initialView) state)

@@ -43,7 +43,7 @@ def TransportBoundaryState.initial
 
 def TransportBoundaryState.send
     (state : TransportBoundaryState)
-    (frameLabel : Fin 256) : Option TransportBoundaryState :=
+    (frameLabel : Fin 65536) : Option TransportBoundaryState :=
   match state with
   | .idle transport => (transport.send frameLabel).map .idle
   | .offered _ _ _ => none
@@ -215,7 +215,7 @@ related to Hibana's reference boundary. -/
 structure CarrierSemantics where
   State : Type
   initial : TransportChannel -> State
-  send : State -> Fin 256 -> Option State
+  send : State -> Fin 65536 -> Option State
   closePeer : State -> State
   abortPeer : State -> State
   pollReceive : State -> CarrierPoll State

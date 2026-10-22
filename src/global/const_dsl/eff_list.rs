@@ -60,29 +60,8 @@ impl<const E: usize> EffList<E> {
         if offset >= self.len {
             panic!("EffList atom offset out of bounds");
         }
-        let frame_label = match self.rows[offset] {
-            SourceRow::Event { frame_label, .. } => frame_label,
-            SourceRow::Empty | SourceRow::Scope(_) | SourceRow::Resolver(_) => crate::invariant(),
-        };
-        self.rows[offset] = SourceRow::Event { atom, frame_label };
-    }
-
-    pub(crate) const fn frame_label_at(&self, offset: usize) -> u8 {
-        if offset >= self.len {
-            panic!("frame label event offset out of bounds");
-        }
-        match self.rows[offset] {
-            SourceRow::Event { frame_label, .. } => frame_label,
-            SourceRow::Empty | SourceRow::Scope(_) | SourceRow::Resolver(_) => crate::invariant(),
-        }
-    }
-
-    pub(super) const fn set_frame_label(&mut self, offset: usize, frame_label: u8) {
-        if offset >= self.len {
-            panic!("frame label event offset out of bounds");
-        }
-        let atom = self.atom_at(offset);
-        self.rows[offset] = SourceRow::Event { atom, frame_label };
+        let _ = self.atom_at(offset);
+        self.rows[offset] = SourceRow::Event { atom };
     }
 
     /// Append a single node to the accumulator.
@@ -96,10 +75,7 @@ impl<const E: usize> EffList<E> {
         if self.len >= self.scope_marker_start {
             panic!("EffList capacity exceeded");
         }
-        self.rows[self.len] = SourceRow::Event {
-            atom,
-            frame_label: 0,
-        };
+        self.rows[self.len] = SourceRow::Event { atom };
         self.len += 1;
     }
 

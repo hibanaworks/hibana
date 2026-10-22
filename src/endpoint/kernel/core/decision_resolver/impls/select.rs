@@ -46,7 +46,6 @@ where
             eff_index: meta.eff_index,
             peer: meta.peer,
             label: meta.label,
-            frame_label: meta.frame_label,
             origin: meta.origin,
             lane: meta.lane,
             flags: CachedRecvMeta::FLAG_RECV_STEP | CachedRecvMeta::next_presence_flag(next),
@@ -66,7 +65,6 @@ where
             eff_index: meta.eff_index,
             peer: meta.peer,
             label: meta.label,
-            frame_label: meta.frame_label,
             origin: meta.origin,
             lane: meta.lane,
             flags: CachedRecvMeta::next_presence_flag(next),
@@ -90,7 +88,6 @@ where
             eff_index: meta.eff_index,
             peer: self.public_header.role(),
             label: meta.label,
-            frame_label: meta.frame_label,
             origin: meta.origin,
             lane: meta.lane,
             flags: CachedRecvMeta::next_presence_flag(next),
@@ -112,7 +109,6 @@ where
             eff_index: EffIndex::ZERO,
             peer: self.public_header.role(),
             label,
-            frame_label: 0,
             origin: EventOrigin::Session,
             lane,
             flags: CachedRecvMeta::FLAG_NEXT_PRESENT,
@@ -392,7 +388,7 @@ where
             if !meta.is_empty()
                 && meta.peer == key.source_role
                 && meta.lane == key.lane
-                && meta.frame_label == key.frame_label
+                && meta.eff_index.dense_ordinal() == usize::from(key.frame_label)
                 && exact_target == Some(state_index_to_usize(meta.cursor_index))
             {
                 return Ok(false);

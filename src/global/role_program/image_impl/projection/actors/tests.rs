@@ -200,7 +200,7 @@ fn resident_actor_image_checks_both_sides_before_publication() {
                 bytes[row * crate::global::role_program::ROLE_IMAGE_EVENT_STRIDE + field] = 255;
                 field += 1;
             }
-            bytes[row * crate::global::role_program::ROLE_IMAGE_EVENT_STRIDE + 9] =
+            bytes[row * crate::global::role_program::ROLE_IMAGE_EVENT_STRIDE + 8] =
                 if row == 1 { 2 } else { 4 };
             row += 1;
         }
@@ -214,12 +214,12 @@ fn resident_actor_image_checks_both_sides_before_publication() {
     static LOCAL: [u8; 64] = local_bytes();
     static DUPLICATED_SEND: [u8; 64] = {
         let mut bytes = local_bytes();
-        bytes[2 * crate::global::role_program::ROLE_IMAGE_EVENT_STRIDE + 9] = 2;
+        bytes[2 * crate::global::role_program::ROLE_IMAGE_EVENT_STRIDE + 8] = 2;
         bytes
     };
     static COLLAPSED_LOCAL: [u8; 64] = {
         let mut bytes = local_bytes();
-        bytes[crate::global::role_program::ROLE_IMAGE_EVENT_STRIDE + 9] = 0;
+        bytes[crate::global::role_program::ROLE_IMAGE_EVENT_STRIDE + 8] = 0;
         bytes
     };
     let image = RoleImageRef::new(&PROGRAM, 1, FACTS, COLUMNS, &LOCAL);

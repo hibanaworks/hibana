@@ -171,6 +171,7 @@ fn lean_auditors_fail_closed_on_mutants_and_process_failures() {
 #[test]
 fn static_inventory_rejects_hidden_claims_and_changed_closures() {
     use std::os::unix::fs::PermissionsExt;
+    const NATIVE_REGRESSIONS: usize = 31;
     let root = std::env::temp_dir().join(format!(
         "hibana-static-audit-failures-{}",
         std::process::id()
@@ -181,7 +182,7 @@ fn static_inventory_rejects_hidden_claims_and_changed_closures() {
     fs::write(&source, "theorem fixture : True := by trivial\n").unwrap();
     fs::write(
         root.join("Hibana/StaticProjectabilityExamples.lean"),
-        "example : True := by native_decide\n".repeat(32),
+        "example : True := by native_decide\n".repeat(NATIVE_REGRESSIONS),
     )
     .unwrap();
     let snapshot = root.join("claims.txt");
@@ -250,7 +251,7 @@ fn static_inventory_rejects_hidden_claims_and_changed_closures() {
     fs::write(&source, "theorem fixture : True := by trivial\n").unwrap();
     fs::write(
         root.join("Hibana/StaticProjectabilityExamples.lean"),
-        "example : True := by native_decide\n".repeat(31),
+        "example : True := by native_decide\n".repeat(NATIVE_REGRESSIONS - 1),
     )
     .unwrap();
     assert!(

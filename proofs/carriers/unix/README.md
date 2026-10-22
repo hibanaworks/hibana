@@ -4,7 +4,7 @@ This host-only crate implements `Transport` over a connected Unix datagram pair
 and tests it with two independent Hibana runtimes.
 
 The connected Unix datagram pair supplies one fresh, peer-bound carrier
-generation. The adapter preserves Hibana's exact eight-byte observation header,
+generation. The adapter preserves Hibana's exact nine-byte frame header,
 publishes data atomically, drains data before a same-direction close marker,
 rejects malformed or wrong-peer packets, consumes each datagram once, wakes
 receivers on logical close, and keeps requeue local to the unresolved receipt.

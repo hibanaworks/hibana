@@ -220,7 +220,7 @@ theorem EndpointTransfer.ordered_carrier_send_preserves_unique_authority
     (profile : CarrierProfile.ordered.Holds carrier abstraction Fairness)
     {current accepted : carrier.State} {before : TransportState}
     {state : Observation View TransportFrame} {left right : List View}
-    (initialView sending : View) (label : Fin 256)
+    (initialView sending : View) (label : Fin 65536)
     (execution : Execution (initial initialView) state)
     (preparing : state.preparing = left ++ sending :: right)
     (currentExact : abstraction current = .idle before)

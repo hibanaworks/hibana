@@ -214,7 +214,7 @@ fn malformed_header(
     lane: u8,
     source_role: u8,
     target_role: u8,
-    frame_label: u8,
+    frame_label: u16,
 ) -> hibana::runtime::transport::FrameHeader {
     let session = session_id.raw().to_be_bytes();
     hibana::runtime::transport::FrameHeader::from_bytes([
@@ -225,7 +225,8 @@ fn malformed_header(
         lane,
         source_role,
         target_role,
-        frame_label,
+        frame_label.to_be_bytes()[0],
+        frame_label.to_be_bytes()[1],
     ])
 }
 

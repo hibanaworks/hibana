@@ -1,4 +1,3 @@
-mod frame_labels;
 #[cfg(kani)]
 mod kani;
 mod lane_matching;
@@ -6,9 +5,6 @@ mod receive_lanes;
 #[cfg(all(test, hibana_repo_tests))]
 mod tests;
 
-pub(crate) use frame_labels::{
-    color_roll_frame_labels, merge_route_frame_labels, separate_roll_frame_domains,
-};
 pub(crate) use lane_matching::merge_parallel_lanes;
 pub(crate) use receive_lanes::assign_receive_lanes;
 

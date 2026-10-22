@@ -111,9 +111,9 @@ fn validated_metadata_constructor_rejects_every_skipped_metadata_class() {
     ));
     let rows = program.role_image_ref();
     let event = rows.columns.events.offset as usize;
-    reject(rows, |b, _, _| b[event + 9] = 0x80); // event flags
-    reject(rows, |b, _, _| b[event + 9] ^= 0b110); // receive changed into send
-    reject(rows, |b, _, _| b[event + 9] &= 1); // wire receive changed into local action
+    reject(rows, |b, _, _| b[event + 8] = 0x80); // event flags
+    reject(rows, |b, _, _| b[event + 8] ^= 0b110); // receive changed into send
+    reject(rows, |b, _, _| b[event + 8] &= 1); // wire receive changed into local action
     reject(rows, |b, _, _| put(b, event + 6, 0x8000)); // event scope
     reject(rows, |b, _, _| put(b, event, 100)); // missing program atom
     reject(rows, |b, _, _| put(b, event + 2, 100)); // missing dependency
@@ -179,7 +179,7 @@ fn validated_metadata_constructor_rejects_every_skipped_metadata_class() {
     reject(rows, |b, c, _| {
         // directory/bitmap lanes stay valid, atom lane differs
         let at = c.events.offset as usize;
-        let raw = u16_at(b, at + 10);
+        let raw = u16_at(b, at + crate::global::role_program::ROLE_IMAGE_EVENT_STRIDE);
         put(b, at, raw);
     });
     let foreign: RoleProgram<2> = project(&g::seq(
@@ -262,12 +262,11 @@ fn validated_metadata_constructor_accepts_unique_unsorted_route_ids() {
 }
 
 #[test]
-fn validated_metadata_preserves_wire_label_and_session_origin() {
+fn validated_metadata_derives_wire_identity_and_preserves_session_origin() {
     use crate::eff::EventOrigin;
     let projected: RoleProgram<1> = project(&g::send::<0, 1, Msg<1, ()>>());
     let original = projected.role_image_ref();
-    let mut role_bytes = copy(original);
-    role_bytes[original.columns.events.offset as usize + 8] = 199;
+    let role_bytes = copy(original);
     let role_bytes = Box::leak(Box::new(role_bytes));
     let user = RoleImageRef::new(
         original.program,
@@ -279,7 +278,7 @@ fn validated_metadata_preserves_wire_label_and_session_origin() {
     assert!(matches!(
         user.local_step_node(0).unwrap().action(),
         LocalAction::Recv {
-            frame_label: 199,
+            frame_label: 0,
             label: 1,
             origin: EventOrigin::User,
             ..
@@ -314,7 +313,7 @@ fn validated_metadata_preserves_wire_label_and_session_origin() {
         session.local_step_node(0).unwrap().action(),
         LocalAction::Recv {
             origin: EventOrigin::Session,
-            frame_label: 199,
+            frame_label: 0,
             ..
         }
     ));

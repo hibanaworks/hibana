@@ -156,10 +156,10 @@ async fn a_remote_holder_loss_is_observable_without_reissuing_its_endpoint() {
                     );
                     continue;
                 }
-                assert_eq!(length, 11);
+                assert_eq!(length, 12);
                 assert_eq!(bytes[..4], SID.raw().to_be_bytes());
                 assert_eq!(bytes[5..7], [0, 1]);
-                assert_eq!(bytes[8], 10);
+                assert_eq!(bytes[9], 10);
                 queued += 1;
             }
             match worker_test {

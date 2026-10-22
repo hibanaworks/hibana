@@ -9,9 +9,8 @@ private instance : ReflBEq Nat where
     change decide (a = a) = true
     exact decide_eq_true rfl
 
-/-- The actual wire selector of a remote actor-local operation. Logical
-message labels and payload schemas are deliberately absent: ordinary and
-owned operations sharing a wire selector belong to the same source word. -/
+/-- Wire direction and static message position of an actor-local operation.
+Repeated visits reuse the key; transport order distinguishes their occurrences. -/
 structure SourceFrameKey where
   side : Side
   view : Nat
@@ -29,8 +28,48 @@ def RustDescriptorImage.frameKey? (image : RustDescriptorImage) (event : Nat) : 
   | .recv peer _ _ => pure ⟨.receive, view, peer, lane, color⟩
   | .local _ _ => none
 
+theorem decoded_frame_key_retains_its_source_position
+    {image : RustDescriptorImage} {row : Nat} {key : SourceFrameKey}
+    (decoded : image.frameKey? row = some key) :
+    image.eventEffIndex? row = some key.color := by
+  unfold RustDescriptorImage.frameKey? at decoded
+  simp only [Option.bind_eq_bind, Option.bind_eq_some_iff] at decoded
+  obtain ⟨view, _, lane, _, color, atColor, action, _, shape⟩ := decoded
+  change image.eventEffIndex? row = some key.color
+  have atSource : image.eventEffIndex? row = some color := atColor
+  cases action with
+  | send peer label schema =>
+      simp only [Option.pure_def, Option.some.injEq] at shape
+      cases shape
+      exact atSource
+  | recv peer label schema =>
+      simp only [Option.pure_def, Option.some.injEq] at shape
+      cases shape
+      exact atSource
+  | «local» label schema =>
+      cases shape
+
+theorem equal_frame_keys_keep_the_same_static_source_position
+    {leftImage rightImage : RustDescriptorImage} {left right : Nat}
+    {key : SourceFrameKey}
+    (leftAt : leftImage.frameKey? left = some key)
+    (rightAt : rightImage.frameKey? right = some key) :
+    leftImage.eventEffIndex? left = rightImage.eventEffIndex? right := by
+  rw [decoded_frame_key_retains_its_source_position leftAt,
+    decoded_frame_key_retains_its_source_position rightAt]
+
 def RustDescriptorImage.frameClassRows (image : RustDescriptorImage) (key : SourceFrameKey) : List Nat :=
   (List.range image.eventCount).filter fun event => decide (image.frameKey? event = some key)
+
+theorem a_wire_class_contains_only_one_static_source_position
+    {image : RustDescriptorImage} {key : SourceFrameKey} {left right : Nat}
+    (leftMember : left ∈ image.frameClassRows key)
+    (rightMember : right ∈ image.frameClassRows key) :
+    image.eventEffIndex? left = image.eventEffIndex? right := by
+  simp only [RustDescriptorImage.frameClassRows, List.mem_filter,
+    decide_eq_true_eq] at leftMember rightMember
+  exact equal_frame_keys_keep_the_same_static_source_position
+    leftMember.2 rightMember.2
 
 def RustDescriptorImage.frameClassChoices? (image : RustDescriptorImage) (choreo : Choreo)
     (key : SourceFrameKey) : Option (List (Nat × RouteArm)) := do

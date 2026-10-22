@@ -211,7 +211,7 @@ inductive DistributedCallExecution
         (word ++ [.quiet actor]) accepted published pending
   | accept {first cut : DistributedSourceCut} {word entries published pending}
       {sample : SourceSendAdmission} {channel : TransportChannel} {sent : TransportState}
-      {event previousPath witness : Nat} {label : Fin 256}
+      {event previousPath witness : Nat} {label : Fin 65536}
       {data : DecodedActorOrder} {path : NormalizedPath} {row : DecodedActorRow}
       (history : DistributedCallExecution images choreo session first cut word entries published pending)
       (imageAt : sample.image = images sample.image.role)
@@ -537,7 +537,7 @@ inductive DistributedPhysicalExecution
         (word ++ [.quiet actor]) accepted published pending
   | accept {first cut : DistributedSourceCut} {word entries published pending}
       {sample : SourceSendAdmission} {channel : TransportChannel} {sent : TransportState}
-      {event previousPath witness : Nat} {label : Fin 256}
+      {event previousPath witness : Nat} {label : Fin 65536}
       {data : DecodedActorOrder} {path : NormalizedPath} {row : DecodedActorRow}
       (history : DistributedPhysicalExecution images choreo session first cut word entries published pending)
       (imageAt : sample.image = images sample.image.role)

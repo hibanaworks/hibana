@@ -1,6 +1,4 @@
 import Hibana.Allocation
-import Hibana.ElasticFrameDomains
-import Hibana.RollFrameDomains
 import Hibana.Authority
 import Hibana.Commit
 import Hibana.RollBoundary

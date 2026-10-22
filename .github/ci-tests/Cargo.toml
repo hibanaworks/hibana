@@ -35,14 +35,6 @@ name = "lean_audit_failures"
 path = "lean_audit_failures.rs"
 
 [[bin]]
-name = "wire-model"
-path = "wire_model.rs"
-
-[[bin]]
-name = "wire-audit"
-path = "wire_audit.rs"
-
-[[bin]]
 name = "check-kani-source"
 path = "check_kani_source.rs"
 
@@ -63,20 +55,12 @@ name = "final-measurements"
 path = "final_measurements.rs"
 
 [[bin]]
-name = "check-roll-membership"
-path = "check_roll_membership.rs"
-
-[[bin]]
-name = "elastic-proof-runner"
-path = "elastic_proof_runner.rs"
+name = "projection-checks"
+path = "projection_checks.rs"
 
 [[bin]]
 name = "size-snapshot"
 path = "size_snapshot.rs"
-
-[[bin]]
-name = "wire-proof-runner"
-path = "wire_proof_runner.rs"
 
 [[bin]]
 name = "check-thumb-codegen"

@@ -8,7 +8,7 @@ fn inbound_frame_key_matching_is_exact_on_every_wire_axis() {
     let key = InboundFrameKey::new(kani::any(), kani::any(), kani::any());
     let source_role: u8 = kani::any();
     let lane: u8 = kani::any();
-    let frame_label: u8 = kani::any();
+    let frame_label: u16 = kani::any();
 
     assert_eq!(
         key.matches_parts(source_role, lane, frame_label),
@@ -20,7 +20,7 @@ fn inbound_frame_key_matching_is_exact_on_every_wire_axis() {
 fn inbound_frame_key_rejects_each_single_axis_mismatch() {
     let source_role: u8 = kani::any();
     let lane: u8 = kani::any();
-    let frame_label: u8 = kani::any();
+    let frame_label: u16 = kani::any();
     let key = InboundFrameKey::new(source_role, lane, frame_label);
 
     assert!(!key.matches_parts(source_role.wrapping_add(1), lane, frame_label));

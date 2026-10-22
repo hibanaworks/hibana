@@ -406,7 +406,7 @@ impl<'a> OfferedFrame<'a> {
     }
 
     #[inline]
-    pub(crate) const fn transport_frame_label(&self) -> u8 {
+    pub(crate) const fn transport_frame_label(&self) -> u16 {
         self.frame.frame_label_raw()
     }
 
@@ -447,7 +447,7 @@ impl SendPreview {
     }
 
     #[inline]
-    pub(crate) const fn frame_label(self) -> u8 {
+    pub(crate) const fn frame_label(self) -> u16 {
         self.meta.frame_label
     }
 

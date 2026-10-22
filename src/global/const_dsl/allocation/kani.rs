@@ -1,7 +1,6 @@
 use super::{
     BYTE_DOMAIN_MASK_BYTES,
     lane_matching::{LaneEndpointIndex, maximum_lane_matching},
-    merge_route_frame_labels,
 };
 use crate::{
     eff::{EffAtom, EventOrigin},
@@ -10,7 +9,7 @@ use crate::{
 
 mod maximum_certificate;
 mod production_coloring;
-mod roll_coloring;
+mod scopes;
 
 const fn atom(from: u8, to: u8, lane: u8) -> EffAtom {
     EffAtom {
@@ -125,26 +124,4 @@ fn lane_endpoint_index_aggregates_exact_symbolic_membership() {
         || (query_lane == second_lane && (query_role == second_from || query_role == second_to));
 
     assert!(actual == expected);
-}
-
-#[kani::proof]
-fn two_arm_route_frame_coloring_is_exact() {
-    let left_from: u8 = kani::any();
-    let left_to: u8 = kani::any();
-    let left_lane: u8 = kani::any();
-    let right_from: u8 = kani::any();
-    let right_to: u8 = kani::any();
-    let right_lane: u8 = kani::any();
-    let mut source = EffList::<2>::new()
-        .push(atom(left_from, left_to, left_lane))
-        .push(atom(right_from, right_to, right_lane));
-
-    merge_route_frame_labels(&mut source, 0, 1, 2);
-    let same_inbound_key = right_from != right_to
-        && left_from == right_from
-        && left_to == right_to
-        && left_lane == right_lane;
-
-    assert!(source.frame_label_at(0) == 0);
-    assert!(source.frame_label_at(1) == if same_inbound_key { 1 } else { 0 });
 }

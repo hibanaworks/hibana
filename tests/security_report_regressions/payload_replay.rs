@@ -1,8 +1,8 @@
-//! Deliberately violate carrier replay exclusion to show the integrity boundary.
+//! A duplicate retains the identity of its original message.
 use super::*;
 
 #[test]
-fn a_replayed_bool_frame_can_be_valid_bytes_for_the_next_u8() {
+fn a_replayed_bool_frame_cannot_impersonate_the_following_u8() {
     let global = g::seq(
         g::send::<0, 1, Msg<1, bool>>(),
         g::send::<0, 1, Msg<2, u8>>(),
@@ -31,7 +31,7 @@ fn a_replayed_bool_frame_can_be_valid_bytes_for_the_next_u8() {
     let frames = captured.borrow().clone();
     assert_eq!(frames.len(), 2);
     assert_eq!(frames[0].lane, frames[1].lane);
-    assert_eq!(frames[0].label, frames[1].label);
+    assert_ne!(frames[0].label, frames[1].label);
     assert_eq!(frames[0].bytes, [1]);
     assert_eq!(frames[1].bytes, [99]);
 
@@ -49,9 +49,9 @@ fn a_replayed_bool_frame_can_be_valid_bytes_for_the_next_u8() {
     inject(&carrier, 0, &frames[0]);
     runtime.block_on(async {
         assert!(receiver.recv::<Msg<1, bool>>().await.unwrap());
-        // 1 is a canonical u8. Schema checking cannot recover its origin or
-        // distinguish this duplicate from the application's intended value 99.
-        assert_eq!(receiver.recv::<Msg<2, u8>>().await.unwrap(), 1);
+        // The bytes are a canonical u8, but the frame identifies the earlier
+        // bool message. Payload compatibility must not advance the next step.
+        assert!(receiver.recv::<Msg<2, u8>>().await.is_err());
     });
     assert!(carrier.queue_is_empty());
 }

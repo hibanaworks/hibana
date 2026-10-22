@@ -13,18 +13,17 @@ every Rust execution follows it.
 | [endpoint-delegation](projection/endpoint-delegation/README.md) | [`g/source`](../../src/g/source): initial ownership, transfers, branch knowledge and actor order |
 | [compiler-participant-mask](projection/compiler-participant-mask) | [`seal.rs`](../../src/global/compiled/lowering/seal.rs): exact set of participating roles |
 | [passive-child-window](projection/passive-child-window) | [`seal/passive_child.rs`](../../src/global/compiled/lowering/seal/passive_child.rs): lower bounds with duplicate offsets |
-| [route-path-refinement](projection/route-path-refinement) | [`event_relations.rs`](../../src/global/const_dsl/event_relations.rs): route-path classes preserve membership equality |
 | [projection-conflict-reuse](projection/projection-conflict-reuse) | [`projection.rs`](../../src/global/role_program/image_impl/projection.rs): reuse of an immutable conflict calculation preserves results and errors |
 | [projection-diagnostics](projection/projection-diagnostics) | [`g/diagnostic.rs`](../../src/g/diagnostic.rs): rejected protocol classifications |
-| [elastic-roll-colors](projection/elastic-roll-colors) | [`frame_labels`](../../src/global/const_dsl/allocation/frame_labels): distinct frame labels for competing repeated events |
-| [wire-frame-refinement](projection/wire-frame-refinement) | [`frame_labels`](../../src/global/const_dsl/allocation/frame_labels) and [`DescriptorImage`](../lean/Hibana/DescriptorImage.lean): allocation, scope ownership and exact generated images |
+| [lane-allocation](projection/lane-allocation) | [`allocation.rs`](../../src/global/const_dsl/allocation.rs): choice-arm lane remapping |
+| [message-identity](projection/message-identity) | [`event_rows.rs`](../../src/global/role_program/image_impl/event_rows.rs), [`FrameHeader`](../../src/transport.rs) and [`DescriptorImage`](../lean/Hibana/DescriptorImage.lean): static source positions distinguish message sites |
 | [explicit-resource-join](projection/explicit-resource-join) | [`g/source/ownership.rs`](../../src/g/source/ownership.rs): independent resource work and its join |
 
-`projection/elastic-roll-colors/check_all.sh` runs the participant, route-path,
-passive-child and conflict-reuse checks as well as frame-allocation checks.
-`projection/wire-frame-refinement/check_all.sh` checks exported production
-descriptors and finite allocation fixtures. Runtime frame matching still
-requires the model's coverage and same-class uniqueness assumptions.
+`.github/scripts/check_projection_algorithms.sh` runs the participant,
+passive-child, conflict-reuse, lane and framed-message identity checks.
+The common Lean model and generated public projection tests separately compare
+wire identities with source positions. Repeated visits to one site share an
+identity and require FIFO delivery, nonduplication and run isolation.
 
 ## Protocol images
 
@@ -58,6 +57,6 @@ requires the model's coverage and same-class uniqueness assumptions.
 
 Run a directory's `check.sh` from the repository root through the resource guard.
 Checks without a shell entry point are invoked directly by the
-[workflow](../../.github/workflows/quality-gates.yml) or by the two projection
-runners above. The common Lean models and generated Rust observations are
-checked by `.github/scripts/check_lean_proofs.sh`.
+[workflow](../../.github/workflows/quality-gates.yml) or by the projection runner
+above. The common Lean models and generated Rust observations are checked by
+`.github/scripts/check_lean_proofs.sh`.

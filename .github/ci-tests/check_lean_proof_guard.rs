@@ -28,7 +28,7 @@ fn markers(kind: &str) -> AuditResult<&'static [(&'static str, &'static str)]> {
                 "production evidence",
             ),
             (
-                "Generated Lean axiom audit passed theorems=506 kernel=466 native=40 contracts=48 obligations=458 native-decisions=16 claims=506",
+                "Generated Lean axiom audit passed theorems=484 kernel=444 native=40 contracts=48 obligations=436 native-decisions=16 claims=484",
                 "generated axiom boundary",
             ),
         ]),

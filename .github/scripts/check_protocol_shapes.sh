@@ -14,6 +14,7 @@ source_hashes() {
     cd "${ROOT_DIR}"
     git ls-files --cached --others --exclude-standard -z -- \
       src tests examples proofs/lean .github Cargo.toml Cargo.lock |
+      perl -0ne 'print "$_\0" for grep { -f $_ } split /\0/' |
       xargs -0 shasum -a 256 --
   )
 }

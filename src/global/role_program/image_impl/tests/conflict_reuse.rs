@@ -116,11 +116,10 @@ fn case_source(source: &EffList<512>, totals: &mut [usize; 4]) {
             totals[0] += 1;
         }
         for index in 0..source.len() {
-            let label = source.frame_label_at(index);
             let old = outcome(|| {
                 format!(
                     "{:?}",
-                    original::local_event_row_for_eff(source, index, label, role)
+                    original::local_event_row_for_eff(source, index, role)
                 )
             });
             let new = outcome(|| {
@@ -129,7 +128,6 @@ fn case_source(source: &EffList<512>, totals: &mut [usize; 4]) {
                     projection::local_event_row_for_eff(
                         source,
                         index,
-                        label,
                         projection::LocalRows::Role(role),
                         0
                     )
@@ -146,7 +144,6 @@ fn case_source(source: &EffList<512>, totals: &mut [usize; 4]) {
             let (_, reused) = projection::local_event_row_for_eff(
                 source,
                 index,
-                label,
                 projection::LocalRows::Role(role),
                 0,
             );
@@ -212,12 +209,11 @@ fn case_source(source: &EffList<512>, totals: &mut [usize; 4]) {
         ));
         totals[1] += 1;
         // Packed event-index overflow preserves the exact original panic text.
-        let old = outcome(|| original::local_event_row_for_eff(source, usize::MAX, 255, role));
+        let old = outcome(|| original::local_event_row_for_eff(source, usize::MAX, role));
         let new = outcome(|| {
             projection::local_event_row_for_eff(
                 source,
                 usize::MAX,
-                255,
                 projection::LocalRows::Role(role),
                 0,
             )
@@ -250,7 +246,7 @@ fn overlapping_marker_failures_match() {
             let old = outcome(|| {
                 format!(
                     "{:?}",
-                    original::local_event_row_for_eff(&source, index, 255, role)
+                    original::local_event_row_for_eff(&source, index, role)
                 )
             });
             let new = outcome(|| {
@@ -259,7 +255,6 @@ fn overlapping_marker_failures_match() {
                     projection::local_event_row_for_eff(
                         &source,
                         index,
-                        255,
                         projection::LocalRows::Role(role),
                         0
                     )
