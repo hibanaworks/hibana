@@ -75,8 +75,12 @@ fn compare(rows: &'static RoleImageRef) -> (usize, usize) {
                 cursor.completed_event_words().to_vec(),
             );
             for &selector in &contracts {
+                let indexed = cursor
+                    .machine()
+                    .event_program()
+                    .outbound_candidates(selector.role, selector.label);
                 let candidates: std::vec::Vec<_> = cursor
-                    .outbound_candidates(selector, 0..usize::MAX)
+                    .outbound_candidates(selector, 0..usize::MAX, indexed.clone())
                     .collect();
                 let mut expected = std::vec::Vec::new();
                 for &(index, role, event, payload) in &events {
@@ -129,7 +133,7 @@ fn compare(rows: &'static RoleImageRef) -> (usize, usize) {
                             .collect();
                         assert_eq!(
                             cursor
-                                .outbound_candidates(selector, source.clone())
+                                .outbound_candidates(selector, source.clone(), indexed.clone())
                                 .collect::<std::vec::Vec<_>>(),
                             scoped
                         );
@@ -140,7 +144,7 @@ fn compare(rows: &'static RoleImageRef) -> (usize, usize) {
                                 && source.contains(&event.eff_index.dense_ordinal())
                         });
                         assert_eq!(
-                            cursor.source_has_outbound_contract(selector, source),
+                            cursor.source_has_outbound_contract(selector, source, indexed.clone()),
                             contains
                         );
                     }

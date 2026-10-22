@@ -79,7 +79,7 @@ impl LocalEventProgram {
         &self,
         role: u8,
         label: u8,
-    ) -> impl Iterator<Item = usize> + '_ {
+    ) -> impl Iterator<Item = usize> + Clone + '_ {
         self.rows().outbound_candidates(role, label)
     }
 

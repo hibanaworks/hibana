@@ -24,11 +24,22 @@ impl EventCursor {
     fn send_preview_progress_start_index_for_contract(
         &self,
         selector: MessageSelector,
-        source: core::ops::Range<usize>,
+        source: Option<core::ops::Range<usize>>,
         committed_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
     ) -> Result<Option<usize>, SendPreviewError> {
+        let indexed = self
+            .machine()
+            .event_program()
+            .outbound_candidates(selector.role, selector.label);
+        // Reuse one immutable lookup for scope checking and live admission.
+        // Check membership before completion filtering or resolver callbacks.
+        if let Some(source) = &source
+            && !self.source_has_outbound_contract(selector, source.clone(), indexed.clone())
+        {
+            return Err(SendPreviewError::OutOfOrder);
+        }
         let mut other_view_pending = false;
-        for idx in self.outbound_candidates(selector, source) {
+        for idx in self.outbound_candidates(selector, source.unwrap_or(0..usize::MAX), indexed) {
             let event = crate::invariant_some(self.send_preview_outbound_event_at(idx));
             let preview_conflict = self.machine().event_conflict_for_index(idx);
             let mut arms = |scope, view| match view {
@@ -56,7 +67,7 @@ impl EventCursor {
     pub(super) fn send_preview_start_index_for_contract(
         &self,
         selector: MessageSelector,
-        source: core::ops::Range<usize>,
+        source: Option<core::ops::Range<usize>>,
         selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
     ) -> Result<usize, SendPreviewError> {
         if let Some(idx) = self.send_preview_progress_start_index_for_contract(

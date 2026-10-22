@@ -89,14 +89,6 @@ where
                 target_label,
                 target_payload,
             );
-            if !self.region.is_whole()
-                && !self
-                    .progress
-                    .cursor
-                    .source_has_outbound_contract(selector, self.region.bounds())
-            {
-                return Poll::Ready(Err(SendError::OutOfOrder));
-            }
             let preview_error = Cell::new(None::<SendError>);
             let preview_result = {
                 let endpoint = &*self;
@@ -125,7 +117,7 @@ where
                 };
                 endpoint.progress.cursor.send_preview_meta_for_contract(
                     selector,
-                    endpoint.region.bounds(),
+                    (!endpoint.region.is_whole()).then(|| endpoint.region.bounds()),
                     &mut committed_arm_for_scope,
                     &mut preview_controller_arm_for_scope,
                     &mut selected_arm_for_scope,

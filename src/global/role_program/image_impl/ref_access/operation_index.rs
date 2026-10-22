@@ -69,7 +69,7 @@ impl RoleImageRef {
         &self,
         role: u8,
         label: u8,
-    ) -> impl Iterator<Item = usize> + '_ {
+    ) -> impl Iterator<Item = usize> + Clone + '_ {
         let key = (1 << 16) | (u32::from(role) << 8) | u32::from(label);
         let range = self.operation_bound(key, false)..self.operation_bound(key, true);
         range.map(|slot| self.operation_step_at(slot))

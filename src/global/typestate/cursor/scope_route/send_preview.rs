@@ -643,7 +643,7 @@ impl EventCursor {
     pub(crate) fn send_preview_meta_for_contract(
         &self,
         selector: crate::global::typestate::MessageSelector,
-        source: core::ops::Range<usize>,
+        source: Option<core::ops::Range<usize>>,
         committed_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
         preview_controller_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
         selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
