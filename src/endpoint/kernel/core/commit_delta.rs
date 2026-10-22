@@ -3,7 +3,7 @@ use super::{
     RelocatableResidentLaneStep, SelectedRouteCommitRow, SelectedRouteCommitRowsRef, Transport,
     state_index_to_usize,
 };
-use crate::global::const_dsl::ReentryMark;
+use crate::global::const_dsl::{ReentryMark, ScopeId};
 use crate::global::typestate::{EnabledEventCommit, StateIndex};
 
 #[cfg(any(kani, all(test, hibana_repo_tests)))]
@@ -150,12 +150,12 @@ where
     pub(in crate::endpoint::kernel) fn preflight_commit_delta(
         &self,
         delta: &CommitDelta,
-    ) -> Result<(), CursorInvariantError> {
-        if let Some(event) = delta.event() {
+    ) -> Result<Option<ScopeId>, CursorInvariantError> {
+        let body_reentry = if let Some(event) = delta.event() {
             if !self.region.contains(event.eff_index().dense_ordinal()) {
                 return Err(CursorInvariantError::INVARIANT);
             }
-            self.preflight_roll_entry_views(Some(event))?;
+            let body_reentry = self.preflight_roll_entry_views(Some(event))?;
             let idx = self
                 .progress
                 .cursor
@@ -188,14 +188,18 @@ where
                 return Err(CursorInvariantError::INVARIANT);
             }
             self.preflight_event_selected_route_chain(idx, delta)?;
-        } else if delta.selected_routes().is_empty() {
-            self.preflight_cursor_realign_delta(delta)?;
+            body_reentry
         } else {
-            self.preflight_route_only_cursor_after(delta)?;
-        }
+            if delta.selected_routes().is_empty() {
+                self.preflight_cursor_realign_delta(delta)?;
+            } else {
+                self.preflight_route_only_cursor_after(delta)?;
+            }
+            None
+        };
         self.preflight_selected_route_rows(delta)?;
         self.preflight_lane_relocation(delta.lane_relocation())?;
-        Ok(())
+        Ok(body_reentry)
     }
 
     #[inline]
@@ -453,7 +457,7 @@ where
         &mut self,
         delta: CommitDelta,
     ) -> Result<PreparedCommitDelta, CursorInvariantError> {
-        self.preflight_commit_delta(&delta)?;
+        let body_reentry = self.preflight_commit_delta(&delta)?;
         let fresh_route_start = self.fresh_route_suffix_start(&delta)?;
         let selected_routes = self
             .progress
@@ -464,7 +468,7 @@ where
             delta,
             selected_routes,
             fresh_route_start,
-            self.prepared_body_reentry_scope(delta.event()),
+            body_reentry,
         ))
     }
 
@@ -475,7 +479,7 @@ where
         enabled: EnabledEventCommit,
     ) -> Result<PreparedCommitDelta, CursorInvariantError> {
         let event = delta.event().ok_or(CursorInvariantError::INVARIANT)?;
-        self.preflight_roll_entry_views(Some(event))?;
+        let body_reentry = self.preflight_roll_entry_views(Some(event))?;
         if event.progress_step() != enabled.progress_step()
             || delta.cursor_after() != enabled.cursor_after()
         {
@@ -495,7 +499,7 @@ where
             delta,
             selected_routes,
             fresh_route_start,
-            self.prepared_body_reentry_scope(delta.event()),
+            body_reentry,
         ))
     }
 

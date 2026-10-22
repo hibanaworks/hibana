@@ -16,7 +16,7 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
             return Poll::Ready(Err(SendError::PhaseInvariant));
         }
         match self.preflight_roll_entry_views(Some(event)) {
-            Ok(()) => (),
+            Ok(_) => (),
             Err(EventAdmissionError::OtherViewPending) => return Poll::Pending,
             Err(EventAdmissionError::Invariant) => {
                 return Poll::Ready(Err(SendError::PhaseInvariant));

@@ -26,7 +26,7 @@ where
             step,
         );
         match self.preflight_roll_entry_views(Some(event)) {
-            Ok(()) => Poll::Ready(Ok(())),
+            Ok(_) => Poll::Ready(Ok(())),
             Err(crate::global::typestate::EventAdmissionError::OtherViewPending) => Poll::Pending,
             Err(crate::global::typestate::EventAdmissionError::Invariant) => {
                 Poll::Ready(Err(SendError::PhaseInvariant))

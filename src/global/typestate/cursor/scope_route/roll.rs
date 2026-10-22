@@ -292,10 +292,10 @@ impl EventCursor {
         }
         // A predecessor on another lane is cleared by the same reset. The
         // candidate must be a source head, as well as a head of its own lane.
-        let Some(row) = self.machine().event_program().event_row_at(idx) else {
+        if idx >= self.local_steps_len() {
             return false;
-        };
-        if let Some(dependency) = row.dependency()
+        }
+        if let Some(dependency) = self.machine().event_program().dependency_for_index(idx)
             && Self::dependency_applies(dependency, &mut *selected_arm_for_scope)
         {
             let rows = self
@@ -305,9 +305,11 @@ impl EventCursor {
             for prior in rows.start()..rows.end() {
                 if self.roll_scope_contains_index(scope, prior)
                     && self.event_actor_is_local(prior, &mut *selected_arm_for_scope) != Some(false)
-                    && let Some(row) = self.machine().event_program().event_row_at(prior)
+                    && prior < self.local_steps_len()
                     && self.event_conflict_row_allows_with_preview(
-                        row.conflict(),
+                        self.machine()
+                            .event_program()
+                            .event_conflict_for_index(prior),
                         preview_conflict,
                         &mut *selected_arm_for_scope,
                     )

@@ -20,6 +20,7 @@ fn prefix_mask(len: usize) -> u32 {
 }
 
 impl<'a> PendingEvents<'a> {
+    #[inline]
     fn new(words: &'a [u32], range: Range<usize>) -> Self {
         let word = range.start / u32::BITS as usize;
         let pending = if range.is_empty() {
@@ -41,6 +42,7 @@ impl<'a> PendingEvents<'a> {
 impl Iterator for PendingEvents<'_> {
     type Item = usize;
 
+    #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         loop {
             if self.pending != 0 {
@@ -59,6 +61,7 @@ impl Iterator for PendingEvents<'_> {
 }
 
 impl EventCursor {
+    #[inline]
     pub(super) fn pending_event_steps(
         &self,
         range: Range<usize>,

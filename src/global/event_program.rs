@@ -65,6 +65,7 @@ impl LocalEventProgram {
         }
     }
 
+    #[inline]
     pub(crate) fn receive_candidates(
         &self,
         role: u8,
@@ -367,6 +368,11 @@ impl LocalEventProgram {
             Some(fact) => Some(fact),
             None => crate::invariant(),
         }
+    }
+
+    #[inline(always)]
+    pub(crate) fn dependency_for_index(&self, idx: usize) -> Option<LocalDependency> {
+        self.rows().dependency_for_index(idx)
     }
 
     #[inline(always)]

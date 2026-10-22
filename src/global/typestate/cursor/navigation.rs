@@ -4,6 +4,7 @@ use super::{
 };
 use crate::global::role_program::RoleLocalDirection;
 impl EventCursor {
+    #[inline]
     pub(super) fn outbound_candidates(
         &self,
         selector: crate::global::typestate::MessageSelector,
@@ -28,6 +29,7 @@ impl EventCursor {
         })
     }
 
+    #[inline]
     pub(crate) fn receive_candidates(
         &self,
         role: u8,

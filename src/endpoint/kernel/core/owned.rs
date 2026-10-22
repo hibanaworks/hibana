@@ -93,9 +93,9 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
     pub(in crate::endpoint::kernel) fn preflight_roll_entry_views(
         &self,
         event: Option<CommitEventRow>,
-    ) -> Result<(), EventAdmissionError> {
+    ) -> Result<Option<crate::global::const_dsl::ScopeId>, EventAdmissionError> {
         let Some(scope) = self.prepared_body_reentry_scope(event) else {
-            return Ok(());
+            return Ok(None);
         };
         if !self.progress.cursor.roll_reentry_epochs_available(scope) {
             return Err(EventAdmissionError::Invariant);
@@ -124,7 +124,7 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
             .cursor
             .roll_entry_views(scope)
             .ok_or(EventAdmissionError::Invariant)?;
-        let mut verdict = Ok(());
+        let mut verdict = Ok(Some(scope));
         for (role, owner, receipts) in rows {
             let view = actor.views.get(role);
             if let Some(view) = view {

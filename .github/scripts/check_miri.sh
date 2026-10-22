@@ -100,7 +100,17 @@ run_miri_test \
 (
   hibana_disable_repo_tests_cfg
   MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" \
-    run_miri_test public-nested-parallel-reentry -p hibana --test nested_parallel_reentry
+    run_miri_test public-repeat-entry -p hibana --test nested_parallel_reentry \
+      -- --skip nested_parallel_
+  MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" \
+    run_miri_test public-nested-parallel-borrows -p hibana --test nested_parallel_reentry \
+      nested_parallel_ -- --skip nested_parallel_delegation --skip nested_parallel_resolver
+  MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" \
+    run_miri_test public-nested-parallel-delegation -p hibana --test nested_parallel_reentry \
+      nested_parallel_delegation
+  MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" \
+    run_miri_test public-nested-parallel-resolver -p hibana --test nested_parallel_reentry \
+      nested_parallel_resolver
 )
 
 (
