@@ -18,6 +18,8 @@ source_hashes() {
   )
 }
 source_hashes > "${OUTPUT}/source.sha256"
+cargo +"${TOOLCHAIN:-stable}" test --locked --manifest-path "${ROOT_DIR}/.github/ci-tests/Cargo.toml" \
+  --bin protocol-shapes
 cargo +"${TOOLCHAIN:-stable}" run --locked --manifest-path "${ROOT_DIR}/.github/ci-tests/Cargo.toml" \
   --bin protocol-shapes -- "${ROOT_DIR}" "${OUTPUT}" "${DEPTH}" "${SHARD}" "${SHARDS}" \
   | tee "${OUTPUT}/catalog-inventory.txt"
