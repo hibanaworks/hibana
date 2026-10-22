@@ -212,6 +212,10 @@ impl EventCursor {
             slot += 1;
         }
         let best = best?;
+        // With one roll row, the second scan cannot find an ancestor.
+        if slot == 1 {
+            return Some(best);
+        }
         let mut sequential_reentry = None;
         if let Some(lane) = lane {
             let mut slot = 0usize;
@@ -260,7 +264,12 @@ impl EventCursor {
         lane: u8,
         selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
     ) -> bool {
-        if !self.roll_scope_contains_index(scope, idx) {
+        let roll_row = self.machine().roll_scope_row(scope);
+        let contains = |index| match roll_row {
+            Some(row) => row.start() <= index && index < row.end(),
+            None => self.roll_scope_contains_index(scope, index),
+        };
+        if !contains(idx) {
             return false;
         }
         let Some(candidate_lane) = self.event_lane_at(idx) else {
@@ -270,11 +279,14 @@ impl EventCursor {
             return false;
         }
         let preview_conflict = self.machine().event_conflict_for_index(idx);
-        let Some((mut scan, end)) = self.reentry_scope_event_bounds(scope) else {
+        let Some((mut scan, end)) = roll_row
+            .map(|row| (row.start(), row.end()))
+            .or_else(|| self.reentry_scope_event_bounds(scope))
+        else {
             crate::invariant();
         };
         while scan < idx && scan < end && self.contains_node_index(scan) {
-            if self.roll_scope_contains_index(scope, scan)
+            if contains(scan)
                 && self.event_actor_is_local(scan, selected_arm_for_scope) != Some(false)
                 && let Some(prior_lane) = self.event_lane_at(scan)
                 && prior_lane == lane
@@ -303,7 +315,7 @@ impl EventCursor {
                 .event_program()
                 .dependency_row_set(dependency);
             for prior in rows.start()..rows.end() {
-                if self.roll_scope_contains_index(scope, prior)
+                if contains(prior)
                     && self.event_actor_is_local(prior, &mut *selected_arm_for_scope) != Some(false)
                     && prior < self.local_steps_len()
                     && self.event_conflict_row_allows_with_preview(

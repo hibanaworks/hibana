@@ -11,6 +11,97 @@ type Ack = g::Msg<233, ()>;
 type Tick = g::Msg<234, ()>;
 
 #[test]
+fn a_parallel_borrow_rejects_its_own_cross_lane_prefix() {
+    type Note = g::Msg<246, ()>;
+    let global = g::par(
+        g::seq(
+            g::send::<0, 1, Prefix>(),
+            g::par(
+                g::seq(g::send::<0, 1, Work>(), g::send::<1, 0, Ack>()),
+                g::send::<0, 2, Tick>(),
+            )
+            .roll(),
+        ),
+        g::send::<0, 3, Note>(),
+    )
+    .roll();
+    let p0 = project::<0>(&global);
+    let p1 = project::<1>(&global);
+    let p2 = project::<2>(&global);
+    let p3 = project::<3>(&global);
+    let network = common::TestTransport::new();
+    let [mut slab0, mut slab1, mut slab2, mut slab3] = [[0; 32 * 1024]; 4];
+    let mut storage0 = SessionKitStorage::uninit();
+    let mut storage1 = SessionKitStorage::uninit();
+    let mut storage2 = SessionKitStorage::uninit();
+    let mut storage3 = SessionKitStorage::uninit();
+    let rv0 = storage0
+        .init()
+        .rendezvous(&mut slab0, network.clone())
+        .unwrap();
+    let rv1 = storage1
+        .init()
+        .rendezvous(&mut slab1, network.clone())
+        .unwrap();
+    let rv2 = storage2
+        .init()
+        .rendezvous(&mut slab2, network.clone())
+        .unwrap();
+    let rv3 = storage3
+        .init()
+        .rendezvous(&mut slab3, network.clone())
+        .unwrap();
+    let sid = SessionId::new(9390);
+    let mut a = rv0.enter(sid, &p0).unwrap();
+    let mut b = rv1.enter(sid, &p1).unwrap();
+    let mut c = rv2.enter(sid, &p2).unwrap();
+    let mut d = rv3.enter(sid, &p3).unwrap();
+    tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .start_paused(true)
+        .build()
+        .unwrap()
+        .block_on(async {
+            for _ in 0..2 {
+                let [mut flow, mut note] = a.par().unwrap();
+                tokio::try_join!(
+                    async {
+                        flow.send::<Prefix>(&()).await?;
+                        let [mut work, mut tick] = flow.par()?;
+                        tokio::try_join!(
+                            async {
+                                work.send::<Work>(&()).await?;
+                                work.recv::<Ack>().await?;
+                                Ok::<_, hibana::EndpointError>(())
+                            },
+                            tick.send::<Tick>(&()),
+                        )?;
+                        Ok::<_, hibana::EndpointError>(())
+                    },
+                    note.send::<Note>(&()),
+                    async {
+                        b.recv::<Prefix>().await?;
+                        b.recv::<Work>().await?;
+                        b.send::<Ack>(&()).await?;
+                        Ok::<_, hibana::EndpointError>(())
+                    },
+                    c.recv::<Tick>(),
+                    d.recv::<Note>(),
+                )
+                .unwrap();
+            }
+            assert!(network.queue_is_empty());
+            let [mut flow, _note] = a.par().unwrap();
+            let result =
+                tokio::time::timeout(core::time::Duration::from_millis(1), flow.send::<Tick>(&()))
+                    .await
+                    .expect("the borrow must reject its own prefix instead of waiting for it");
+            assert!(result.is_err());
+            assert!(network.queue_is_empty());
+        });
+}
+
+#[test]
 fn a_child_repeat_keeps_its_prefix_on_another_lane() {
     tokio::runtime::Builder::new_current_thread()
         .enable_time()
