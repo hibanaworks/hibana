@@ -68,6 +68,12 @@ budget counts generated constructors across both choice arms and the containing
 context, rather than binary-tree depth. The fixed outer loan and ordinary
 exchange leaves contain four messages; a delegated-body exchange has two.
 Their internal constructors are not counted.
+The `protocol-shapes` workflow accepts budgets three, four and five. Budgets
+three and four use window zero. Budget five requires all sixteen windows,
+zero through fifteen. A Rust check assigns each shard to exactly one job and
+window and rejects invalid scopes. One successful window does not establish
+complete coverage. The workflow saves each job's assigned shard list with its
+source hashes, inputs and observations for thirty days.
 Projection diagnostics run before endpoint code is compiled. Accepted cases
 continue through execution and model comparison even when another case is
 rejected. `catalog.json` retains every generated tree, and `diagnostics.tsv`
@@ -81,12 +87,13 @@ Rejected protocols are never run as if they were legal executions.
 
 Each `roll` runs twice, including nested repetition. Choices and parallel-child
 order vary independently between visits. Receivers use `offer`, drop and retake
-the preview, and receive the first selected message through `RouteBranch::recv`.
+the preview before continuing. Prefix probes also consume previews through
+`RouteBranch::recv`.
 Root parallel groups also run through `Endpoint::par` with concurrently polled
 Tokio futures. Each such run checks that independent borrows of one participant
 were pending together. Endpoints move between separate runtimes through the
 public API.
-Delegated-body cases additionally generate direct local Rust code. Every
+Every case generates direct local Rust code. Every
 nested parallel composition uses public `par()` borrows and Tokio futures.
 Each source execution retains its branch choices, parallel-child order and
 two visits of every `roll`. The generated localsides keep the corresponding
@@ -95,9 +102,17 @@ and with concurrent Tokio futures, including different choices in later visits.
 Distinct visit boundaries remain separate inputs when their message words
 are equal. The complete set of executed words is checked against the trace
 inventory. A flat word alone does not specify which repeated group has ended.
+The observer counts successful sends and receives and compares their complete
+multiset with the source execution. It also observes pending branch previews,
+so a waiting `offer` counts towards concurrent work. Observation never chooses
+the next operation or endpoint owner.
 
-Generated tests use optimized Rust with debug assertions and overflow checks
-enabled. A test checks both settings. The Lean checker computes each prefix
+Generated localsides use optimization level 1 and Hibana uses level 2, with
+debug assertions and overflow checks enabled. Tests check both settings and
+the schedule's message order. Generated
+test binaries contain at most 128 cases to bound rustc memory; all binaries
+are built and run.
+The Lean checker computes each prefix
 once for adjacent probes, while retaining every probe in its original order.
 
 Every message is also tried as the first send and receive, for every resolver

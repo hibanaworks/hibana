@@ -7,8 +7,19 @@ use std::{
     path::PathBuf,
 };
 
+fn write_if_changed(path: &std::path::Path, text: &str) -> std::io::Result<()> {
+    match fs::read(path) {
+        Ok(current) if current == text.as_bytes() => Ok(()),
+        Ok(_) => fs::write(path, text),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => fs::write(path, text),
+        Err(error) => Err(error),
+    }
+}
+
 #[path = "protocol_shape_delegated.rs"]
 mod delegated;
+#[path = "protocol_shape_localside.rs"]
+mod localside;
 
 #[derive(Clone, Eq, PartialEq, Ord, PartialOrd)]
 struct Trace {
@@ -174,36 +185,6 @@ impl Protocol {
             _ if self.repetition_count() == 0 => 1,
             _ => 0,
         }
-    }
-    fn parallel_groups(&self) -> Vec<Vec<u8>> {
-        fn collect(protocol: &Protocol, groups: &mut Vec<Vec<u8>>) {
-            match protocol {
-                Protocol::Par(a, b) => {
-                    collect(a, groups);
-                    collect(b, groups);
-                }
-                _ => {
-                    let mut messages = Vec::new();
-                    protocol.messages(&mut messages);
-                    groups.push(
-                        messages
-                            .into_iter()
-                            .map(|m| {
-                                let Protocol::Message { label, .. } = m else {
-                                    unreachable!()
-                                };
-                                *label
-                            })
-                            .collect(),
-                    );
-                }
-            }
-        }
-        let mut groups = Vec::new();
-        if matches!(self, Self::Par(..)) {
-            collect(self, &mut groups);
-        }
-        groups
     }
     fn resolver_choices(
         &self,
@@ -795,16 +776,19 @@ name = "hibana-generated-protocol-shapes-{depth}-{shard}"
 version = "0.0.0"
 edition = "2024"
 publish = false
+autolib = false
 [workspace]
 [dependencies]
 hibana = {{ path = {:?} }}
 tokio = {{ version = "=1.48.0", features = ["macros", "rt", "time", "test-util"] }}
 [profile.dev]
-opt-level = 2
+opt-level = 1
 debug = 0
 debug-assertions = true
 overflow-checks = true
 incremental = false
+[profile.dev.package.hibana]
+opt-level = 2
 [lints.rust]
 long_running_const_eval = "forbid"
 "#,
@@ -990,7 +974,7 @@ long_running_const_eval = "forbid"
         )?;
     }
     fs::create_dir_all(output.join("src/bin"))?;
-    fs::write(output.join("src/bin/diagnose.rs"), diagnostic_source)?;
+    write_if_changed(&output.join("src/bin/diagnose.rs"), &diagnostic_source)?;
     let classifications = if let Some(path) = args.get(5) {
         let mut found = BTreeMap::new();
         for line in fs::read_to_string(path)?.lines() {
@@ -1028,32 +1012,15 @@ long_running_const_eval = "forbid"
         "#![cfg(test)]\n#![forbid(long_running_const_eval)]\n#[path={:?}]\nmod in_memory;\n",
         root.join("examples/support/in_memory.rs")
     );
-    let registers = (0..max_resolvers)
+    let registers = (0..max_resolvers.max(1))
         .map(|id| format!("register!({id});\n"))
         .collect::<String>();
     let dispatch = (0..max_label)
         .map(|label| format!("{label} => execute!({label}),\n"))
         .collect::<String>();
-    let max_width = cases
-        .iter()
-        .map(|(_, _, _, _, g, _)| g.parallel_groups().len())
-        .max()
-        .unwrap()
-        .max(2);
-    let splits = (2..=max_width)
-        .map(|width| {
-            format!("{width} => endpoint.par::<{width}>().unwrap().into_iter().collect(),\n")
-        })
-        .collect::<String>();
-    let joins = (2..=max_width).map(|width| {
-        let declarations = (0..width).map(|i| format!("let f{i} = work.next().unwrap();")).collect::<String>();
-        let arguments = (0..width).map(|i| format!("f{i}")).collect::<Vec<_>>().join(",");
-        let results = (0..width).map(|i| format!("outputs.{i}")).collect::<Vec<_>>().join(",");
-        format!("{width} => {{ {declarations} let outputs = tokio::join!({arguments}); vec![{results}] }},\n")
-    }).collect::<String>();
     let mut driver = fs::read_to_string(root.join(".github/ci-tests/protocol_shape_driver.rs"))?;
     driver.push_str(&fs::read_to_string(
-        root.join(".github/ci-tests/protocol_shape_parallel_driver.rs"),
+        root.join(".github/ci-tests/protocol_shape_observations.rs"),
     )?);
     // This source is part of the generated test module, not a nested module.
     source.push_str(
@@ -1064,13 +1031,13 @@ long_running_const_eval = "forbid"
                 1,
             )
             .replace("register_resolvers!();", &registers)
-            .replace("0 => dispatch_labels!(),", &dispatch)
-            .replace("2 => split_widths!(),", &splits)
-            .replace("2 => join_widths!(),", &joins),
+            .replace("0 => dispatch_labels!(),", &dispatch),
     );
     let (mut probes, mut trace_count, mut operations, mut concurrent_traces) = (0, 0, 0, 0);
     let (mut continuation_shapes, mut trace_prefix_probes) = (0, 0);
     let mut delegated_concurrent_runs = 0;
+    let mut scoped_executions = 0;
+    let mut localsides = Vec::new();
     let mut inputs = Vec::new();
     let mut catalog_inputs = Vec::new();
     let mut rejected = 0;
@@ -1095,7 +1062,6 @@ long_running_const_eval = "forbid"
         let mut messages = Vec::new();
         global.messages(&mut messages);
         let traces = global.traces().into_iter().collect::<BTreeSet<_>>();
-        let groups = global.parallel_groups();
         let mut decisions = BTreeMap::new();
         global.resolver_choices(&mut Vec::new(), &mut decisions);
         let patterns = (0..(1u32 << resolvers)).collect::<Vec<_>>();
@@ -1114,6 +1080,7 @@ long_running_const_eval = "forbid"
             trace_prefix_probes += prefixes.len() * patterns.len() * messages.len() * 2;
         }
         inputs.push(input);
+        let start = source.len();
         writeln!(
             source,
             "#[tokio::test(flavor=\"current_thread\",start_paused=true)]\nasync fn shape_{case}() {{"
@@ -1147,8 +1114,27 @@ long_running_const_eval = "forbid"
                 usize::from(*resolvers)
             ]
         )?;
+        source.push_str("let messages_for_scoped_runs:&[Message]=&[");
+        for message in &messages {
+            let Protocol::Message {
+                from,
+                to,
+                label,
+                owned,
+            } = message
+            else {
+                unreachable!()
+            };
+            writeln!(
+                source,
+                "Message{{from:{from},to:{to},label:{label},owned:{owned},decisions:&{:?}}},",
+                decisions[label]
+            )?;
+        }
+        source.push_str("];\n");
+        source.push_str(&localside::runs(global, *owner, *service == 2));
+        scoped_executions += global.executions().len();
         if delegated_cases.contains(case) {
-            source.push_str(&delegated::concurrent_rust(global, *owner));
             delegated_concurrent_runs += global.executions().len();
         }
         writeln!(
@@ -1186,27 +1172,42 @@ long_running_const_eval = "forbid"
         )?;
         writeln!(
             source,
-            "],traces:include_str!(\"../traces/{case}.txt\"),expected_traces:{},parallel_groups:&[{}],prefix_visits:{},scoped_traces:{}}}).await;\n}}",
+            "],traces:include_str!(\"../traces/{case}.txt\"),expected_traces:{},prefix_visits:{},scoped_traces:&completed_scoped_traces}}).await;\n}}",
             traces.len(),
-            groups
-                .iter()
-                .map(|labels| format!("&{labels:?}"))
-                .collect::<Vec<_>>()
-                .join(","),
             global.prefix_visits(),
-            if delegated_cases.contains(case) {
-                "Some(&completed_scoped_traces)"
-            } else {
-                "None"
-            }
         )?;
+        localsides.push(source.split_off(start));
         probes += messages.len() * 2 * patterns.len();
         trace_count += traces.len();
-        if !groups.is_empty() {
+        if matches!(global, Protocol::Par(..)) {
             concurrent_traces += traces.len();
         }
     }
-    fs::write(output.join("src/lib.rs"), source)?;
+    // Separate rustc invocations keep generated async types within the local
+    // memory guard. Every case remains in the same Cargo test invocation.
+    let mut manifest = fs::read_to_string(output.join("Cargo.toml"))?;
+    let mut paths = BTreeSet::new();
+    for (unit, cases) in localsides.chunks(128).enumerate() {
+        let name = format!("shapes_{unit}");
+        let path = if unit == 0 {
+            "src/lib.rs".to_owned()
+        } else {
+            format!("src/{name}.rs")
+        };
+        let destination = output.join(&path);
+        write_if_changed(&destination, &format!("{source}{}", cases.concat()))?;
+        paths.insert(destination);
+        writeln!(manifest, "\n[[test]]\nname={name:?}\npath={path:?}")?;
+    }
+    for entry in fs::read_dir(output.join("src"))? {
+        let entry = entry?;
+        if entry.file_name().to_string_lossy().starts_with("shapes_")
+            && !paths.contains(&entry.path())
+        {
+            fs::remove_file(entry.path())?;
+        }
+    }
+    fs::write(output.join("Cargo.toml"), manifest)?;
     fs::write(
         output.join("inputs.json"),
         format!("[{}]\n", inputs.join(",")),
@@ -1220,7 +1221,7 @@ long_running_const_eval = "forbid"
         format!("{rejected}\n"),
     )?;
     println!(
-        "generated shapes={} initial_probes={probes} continuation_shapes={continuation_shapes} trace_prefix_probes={trace_prefix_probes} finite_short_prefix_depth=4 complete_traces={trace_count} trace_operations={operations} concurrent_traces={concurrent_traces} delegated_concurrent_runs={delegated_concurrent_runs} depth={depth} shard={shard}/{shards} catalog_shapes={} unclassified_rejections={rejected} total_shapes={}",
+        "generated shapes={} initial_probes={probes} continuation_shapes={continuation_shapes} trace_prefix_probes={trace_prefix_probes} finite_short_prefix_depth=4 complete_traces={trace_count} trace_operations={operations} concurrent_traces={concurrent_traces} delegated_concurrent_runs={delegated_concurrent_runs} scoped_executions={scoped_executions} depth={depth} shard={shard}/{shards} catalog_shapes={} unclassified_rejections={rejected} total_shapes={}",
         inputs.len(),
         cases.len(),
         total_cases

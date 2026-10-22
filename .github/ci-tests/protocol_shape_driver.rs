@@ -23,10 +23,8 @@ fn generated_profile_keeps_debug_and_overflow_checks() {
     );
 }
 
-#[derive(Clone)]
 enum Decisions {
     Constant(u32),
-    ByMessage(Vec<std::cell::Cell<Option<bool>>>),
     AfterPrefix {
         choice: u32,
         values: Vec<std::cell::Cell<bool>>,
@@ -36,9 +34,6 @@ impl Decisions {
     fn choose(&self, id: usize) -> DecisionArm {
         let right = match self {
             Self::Constant(choice) => choice & (1 << id) != 0,
-            Self::ByMessage(choices) => choices[id].get().unwrap_or_else(|| {
-                panic!("resolver {id} invoked outside the message's source path")
-            }),
             Self::AfterPrefix { values, .. } => values[id].get(),
         };
         if right {
@@ -48,14 +43,6 @@ impl Decisions {
         }
     }
     fn prepare(&self, scopes: &[u16], message: Message, probe: bool) {
-        if let Self::ByMessage(choices) = self {
-            for id in scopes {
-                choices[usize::from(*id)].set(None);
-            }
-            for (id, arm) in message.decisions {
-                choices[usize::from(*id)].set(Some(*arm));
-            }
-        }
         if let Self::AfterPrefix { choice, values } = self {
             for id in scopes {
                 values[usize::from(*id)].set(choice & (1 << id) != 0);
@@ -137,6 +124,21 @@ impl Script {
             .collect::<Vec<_>>()
             .join(",")
     }
+}
+
+#[test]
+fn scoped_scripts_keep_order_choices_and_visit_boundaries() {
+    static A: Script = Script::Message(1);
+    static B: Script = Script::Message(2);
+    static CHOICE: Script = Script::Branch(&A, false);
+    static REPEAT: Script = Script::Roll([&A, &B]);
+    let forward = Script::Seq(&CHOICE, &REPEAT);
+    let reverse = Script::Par(&CHOICE, &REPEAT, true);
+    assert_eq!(forward.line(), "1?,1,2");
+    assert_eq!(reverse.line(), "1,2,1?");
+    assert_eq!(Script::Par(&CHOICE, &REPEAT, false).line(), forward.line());
+    assert!(matches!(CHOICE, Script::Branch(_, false)));
+    assert_eq!(Script::Branch(&A, true).line(), CHOICE.line());
 }
 
 macro_rules! receive {
@@ -348,9 +350,8 @@ struct Scenario<'a> {
     choices: &'a [u32],
     traces: &'a str,
     expected_traces: usize,
-    parallel_groups: &'a [&'a [u8]],
     prefix_visits: usize,
-    scoped_traces: Option<&'a std::collections::BTreeSet<String>>,
+    scoped_traces: &'a std::collections::BTreeSet<String>,
 }
 
 async fn qualify(programs: Programs, scenario: Scenario<'_>) {
@@ -362,7 +363,6 @@ async fn qualify(programs: Programs, scenario: Scenario<'_>) {
         choices,
         traces,
         expected_traces,
-        parallel_groups,
         prefix_visits,
         scoped_traces,
     } = scenario;
@@ -403,14 +403,6 @@ async fn qualify(programs: Programs, scenario: Scenario<'_>) {
     let mut seen = std::collections::BTreeSet::new();
     for line in traces.lines() {
         assert!(seen.insert(line), "duplicate generated trace");
-        // Choices follow the intended source path for this input message.
-        // Nested completed rolls can share the same wire trace with different
-        // visit groupings, so syntax-tree unfoldings do not count callbacks.
-        let decisions = Decisions::ByMessage(
-            (0..resolver_count)
-                .map(|_| std::cell::Cell::new(None))
-                .collect(),
-        );
         let commands = line
             .split(',')
             .flat_map(|label| {
@@ -437,16 +429,10 @@ async fn qualify(programs: Programs, scenario: Scenario<'_>) {
                 ]
             })
             .collect::<Vec<_>>();
-        let concurrent_decisions = decisions.clone();
-        if let Some(completed) = scoped_traces {
-            assert!(
-                completed.contains(line),
-                "shape={name} missing scoped trace={line}"
-            );
-        } else {
-            let actual = replay(&programs, resolver_count, &decisions, &commands).await;
-            assert_eq!(actual, Outcome::Accepted, "shape={name} full trace={line}");
-        }
+        assert!(
+            scoped_traces.contains(line),
+            "shape={name} missing scoped trace={line}"
+        );
         if prefix_visits != 0 {
             let mut key = Vec::new();
             for (index, command) in commands.iter().enumerate() {
@@ -456,31 +442,17 @@ async fn qualify(programs: Programs, scenario: Scenario<'_>) {
                     .or_insert_with(|| commands[..=index].to_vec());
             }
         }
-        if !parallel_groups.is_empty() {
-            // The source tree fixes the fragment membership before any endpoint runs.
-            parallel_replay(
-                &programs,
-                resolver_count,
-                &concurrent_decisions,
-                messages,
-                &commands,
-                parallel_groups,
-            )
-            .await;
-        }
     }
     assert_eq!(
         seen.len(),
         expected_traces,
         "missing or additional generated traces"
     );
-    if let Some(completed) = scoped_traces {
-        assert_eq!(
-            seen,
-            completed.iter().map(String::as_str).collect(),
-            "scoped runs and generated message words differ"
-        );
-    }
+    assert_eq!(
+        seen,
+        scoped_traces.iter().map(String::as_str).collect(),
+        "scoped runs and generated message words differ"
+    );
     let mut checked_prefixes = std::collections::BTreeSet::new();
     while let Some((key, prefix)) = prefixes.pop_first() {
         assert!(

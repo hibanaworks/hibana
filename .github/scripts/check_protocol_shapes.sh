@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 DEPTH="${1:-2}"
 SHARD="${2:-0}"
 SHARDS="${3:-1}"
@@ -14,9 +14,7 @@ source_hashes() {
     cd "${ROOT_DIR}"
     git ls-files --cached --others --exclude-standard -z -- \
       src tests examples proofs/lean .github Cargo.toml Cargo.lock |
-      while IFS= read -r -d '' file; do
-        shasum -a 256 -- "$file"
-      done
+      xargs -0 shasum -a 256 --
   )
 }
 source_hashes > "${OUTPUT}/source.sha256"
@@ -40,7 +38,7 @@ cargo +"${TOOLCHAIN:-stable}" run --locked --manifest-path "${ROOT_DIR}/.github/
 (
   cd "${OUTPUT}"
   shopt -s nullglob
-  shasum -a 256 Cargo.toml catalog.json inputs.json src/lib.rs src/bin/diagnose.rs \
+  shasum -a 256 Cargo.toml catalog.json inputs.json src/*.rs src/bin/diagnose.rs \
     diagnostics.tsv unclassified-rejections.txt traces/*.txt \
     rejected/Cargo.toml rejected/inventory.tsv rejected/src/bin/*.rs > inputs.sha256
 )

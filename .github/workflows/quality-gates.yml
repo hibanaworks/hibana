@@ -11,6 +11,17 @@ on:
         required: true
         default: all
         options: [all, final-form, protocol-shapes]
+      shape-budget:
+        description: Generated constructor budget for protocol-shapes
+        type: choice
+        required: true
+        default: '3'
+        options: ['3', '4', '5']
+      shape-window:
+        description: Window (0 for budgets 3/4, 0 through 15 for budget 5)
+        type: string
+        required: true
+        default: '0'
 
 jobs:
   runtime-instructions:
@@ -35,25 +46,41 @@ jobs:
           name: runtime-instructions
           path: target/runtime-instructions/results/
 
+  protocol-shape-matrix:
+    if: github.event_name == 'workflow_dispatch' && inputs.check == 'protocol-shapes'
+    runs-on: ubuntu-24.04-arm
+    outputs:
+      matrix: ${{ steps.scope.outputs.matrix }}
+    env:
+      SHAPE_BUDGET: ${{ inputs.shape-budget }}
+      SHAPE_WINDOW: ${{ inputs.shape-window }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Rust
+        run: rustup toolchain install stable --profile minimal
+      - name: Validate the complete shard assignment
+        id: scope
+        run: |
+          set -euo pipefail
+          cargo +stable test --locked --manifest-path .github/ci-tests/Cargo.toml --bin protocol-shape-partitions
+          matrix=$(cargo +stable run --locked --manifest-path .github/ci-tests/Cargo.toml \
+            --bin protocol-shape-partitions -- matrix "$SHAPE_BUDGET" "$SHAPE_WINDOW")
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+
   protocol-shapes:
     if: github.event_name == 'workflow_dispatch' && inputs.check == 'protocol-shapes'
+    needs: protocol-shape-matrix
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 240
     strategy:
       fail-fast: false
-      matrix:
-        partition: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
-          16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31,
-          32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47,
-          48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63,
-          64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79,
-          80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95,
-          96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111,
-          112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 127]
+      matrix: ${{ fromJSON(needs.protocol-shape-matrix.outputs.matrix) }}
     env:
       TOOLCHAIN: stable
       CARGO_BUILD_JOBS: 1
       CARGO_INCREMENTAL: 0
+      SHAPE_BUDGET: ${{ inputs.shape-budget }}
+      SHAPE_WINDOW: ${{ inputs.shape-window }}
     steps:
       - uses: actions/checkout@v7
       - name: Install Rust and Lean
@@ -68,52 +95,52 @@ jobs:
           "${ELAN_TMP}/elan-init" -y --default-toolchain none
           rm -rf "${ELAN_TMP}"
           echo "${HOME}/.elan/bin" >> "${GITHUB_PATH}"
-      - name: Check every assigned shape with five operators
+      - name: Check every assigned generated protocol
         run: |
-          result=0
-          for part in $(seq 0 7); do
-            shard=$(( ${{ matrix.partition }} + 128 * part ))
-            if ! bash .github/scripts/lib/resource_guard.sh \
-              bash .github/scripts/check_protocol_shapes.sh 5 "$shard" 1024; then
-              result=1
-            fi
-          done
-          exit "$result"
+          set -euo pipefail
+          cargo +stable run --locked --manifest-path .github/ci-tests/Cargo.toml \
+            --bin protocol-shape-partitions -- shards "$SHAPE_BUDGET" "$SHAPE_WINDOW" \
+            '${{ matrix.partition }}' > assigned-shards.tsv
+          while IFS=$'\t' read -r shard shards; do
+            bash .github/scripts/lib/resource_guard.sh \
+              bash .github/scripts/check_protocol_shapes.sh "$SHAPE_BUDGET" "$shard" "$shards"
+          done < assigned-shards.tsv
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: protocol-shapes-${{ matrix.partition }}
-          retention-days: 3
+          name: protocol-shapes-${{ inputs.shape-budget }}-${{ inputs.shape-window }}-${{ matrix.partition }}
+          retention-days: 30
           path: |
-            target/protocol-shapes/depth-5/**/inventory.txt
-            target/protocol-shapes/depth-5/**/catalog-inventory.txt
-            target/protocol-shapes/depth-5/**/catalog.json
-            target/protocol-shapes/depth-5/**/diagnostics.tsv
-            target/protocol-shapes/depth-5/**/unclassified-rejections.txt
-            target/protocol-shapes/depth-5/**/diagnose.time
-            target/protocol-shapes/depth-5/**/diagnosis-source.sha256
-            target/protocol-shapes/depth-5/**/compiler.txt
-            target/protocol-shapes/depth-5/**/revision.txt
-            target/protocol-shapes/depth-5/**/source.patch
-            target/protocol-shapes/depth-5/**/source.sha256
-            target/protocol-shapes/depth-5/**/source-after.sha256
-            target/protocol-shapes/depth-5/**/inputs.sha256
-            target/protocol-shapes/depth-5/**/inputs-check.log
-            target/protocol-shapes/depth-5/**/Cargo.lock
-            target/protocol-shapes/depth-5/**/dependencies.sha256
-            target/protocol-shapes/depth-5/**/dependencies-check.log
-            target/protocol-shapes/depth-5/**/compile.time
-            target/protocol-shapes/depth-5/**/execute.time
-            target/protocol-shapes/depth-5/**/oracle.time
-            target/protocol-shapes/depth-5/**/oracle.log
-            target/protocol-shapes/depth-5/**/inputs.json
-            target/protocol-shapes/depth-5/**/observations/*.json
-            target/protocol-shapes/depth-5/**/rejected/inventory.tsv
-            target/protocol-shapes/depth-5/**/rejected/Cargo.toml
-            target/protocol-shapes/depth-5/**/rejected/Cargo.lock
-            target/protocol-shapes/depth-5/**/rejected/src/bin/*.rs
-            target/protocol-shapes/depth-5/**/rejected/*.jsonl
-            target/protocol-shapes/depth-5/**/rejected/*.stderr
+            assigned-shards.tsv
+            target/protocol-shapes/depth-*/**/inventory.txt
+            target/protocol-shapes/depth-*/**/catalog-inventory.txt
+            target/protocol-shapes/depth-*/**/catalog.json
+            target/protocol-shapes/depth-*/**/diagnostics.tsv
+            target/protocol-shapes/depth-*/**/unclassified-rejections.txt
+            target/protocol-shapes/depth-*/**/diagnose.time
+            target/protocol-shapes/depth-*/**/diagnosis-source.sha256
+            target/protocol-shapes/depth-*/**/compiler.txt
+            target/protocol-shapes/depth-*/**/revision.txt
+            target/protocol-shapes/depth-*/**/source.patch
+            target/protocol-shapes/depth-*/**/source.sha256
+            target/protocol-shapes/depth-*/**/source-after.sha256
+            target/protocol-shapes/depth-*/**/inputs.sha256
+            target/protocol-shapes/depth-*/**/inputs-check.log
+            target/protocol-shapes/depth-*/**/Cargo.lock
+            target/protocol-shapes/depth-*/**/dependencies.sha256
+            target/protocol-shapes/depth-*/**/dependencies-check.log
+            target/protocol-shapes/depth-*/**/compile.time
+            target/protocol-shapes/depth-*/**/execute.time
+            target/protocol-shapes/depth-*/**/oracle.time
+            target/protocol-shapes/depth-*/**/oracle.log
+            target/protocol-shapes/depth-*/**/inputs.json
+            target/protocol-shapes/depth-*/**/observations/*.json
+            target/protocol-shapes/depth-*/**/rejected/inventory.tsv
+            target/protocol-shapes/depth-*/**/rejected/Cargo.toml
+            target/protocol-shapes/depth-*/**/rejected/Cargo.lock
+            target/protocol-shapes/depth-*/**/rejected/src/bin/*.rs
+            target/protocol-shapes/depth-*/**/rejected/*.jsonl
+            target/protocol-shapes/depth-*/**/rejected/*.stderr
 
   kani:
     if: github.event_name != 'workflow_dispatch' || inputs.check == 'all'

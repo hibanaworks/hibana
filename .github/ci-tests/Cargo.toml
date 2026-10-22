@@ -106,6 +106,10 @@ name = "protocol-shapes"
 path = "protocol_shapes.rs"
 
 [[bin]]
+name = "protocol-shape-partitions"
+path = "protocol_shape_partitions.rs"
+
+[[bin]]
 name = "protocol-shape-controls"
 path = "protocol_shape_controls.rs"
 
