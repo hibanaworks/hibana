@@ -1,9 +1,10 @@
 //! Build protocol subtrees performed through a received endpoint.
-use super::{Protocol, message};
+use super::{Count, Population, Protocol, message};
 
-#[derive(Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) enum Body {
     Exchange,
+    Converging,
     Seq(Box<Self>, Box<Self>),
     Par(Box<Self>, Box<Self>),
     Route(Box<Self>, Box<Self>),
@@ -14,22 +15,29 @@ pub(super) enum Body {
 }
 
 pub(super) struct Counts {
-    local: Vec<usize>,
-    mobile: Vec<usize>,
+    local: Vec<Count>,
+    mobile: Vec<Count>,
 }
 impl Counts {
     pub(super) fn new(budget: usize) -> Self {
         let mut counts = Self {
-            local: vec![1],
-            mobile: vec![1],
+            local: vec![Count {
+                exchange: 1,
+                any: 2,
+            }],
+            mobile: vec![Count {
+                exchange: 1,
+                any: 2,
+            }],
         };
         for cost in 1..=budget {
             let mut local = 2 * counts.local[cost - 1];
             let mut mobile = 3 * counts.mobile[cost - 1];
             for left in 0..cost {
                 let right = cost - 1 - left;
-                local += 4 * counts.local[left] * counts.local[right];
-                mobile += 3 * counts.mobile[left] * counts.mobile[right]
+                local = local + 4 * counts.local[left] * counts.local[right];
+                mobile = mobile
+                    + 3 * counts.mobile[left] * counts.mobile[right]
                     + counts.local[left] * counts.local[right];
             }
             counts.local.push(local);
@@ -37,26 +45,29 @@ impl Counts {
         }
         counts
     }
-    pub(super) fn total(&self) -> usize {
-        self.mobile.iter().sum()
+    pub(super) fn total(&self, population: Population) -> usize {
+        self.mobile.iter().map(|count| count.get(population)).sum()
     }
-    pub(super) fn shape(&self, mut rank: usize) -> Body {
+    pub(super) fn shape(&self, mut rank: usize, population: Population) -> Body {
         let mut cost = 0;
-        while rank >= self.mobile[cost] {
-            rank -= self.mobile[cost];
+        while rank >= self.mobile[cost].get(population) {
+            rank -= self.mobile[cost].get(population);
             cost += 1;
         }
-        self.at(cost, rank, true)
+        self.at(cost, rank, true, population)
     }
-    fn at(&self, cost: usize, mut rank: usize, mobile: bool) -> Body {
+    fn at(&self, cost: usize, mut rank: usize, mobile: bool, population: Population) -> Body {
         if cost == 0 {
-            assert_eq!(rank, 0);
-            return Body::Exchange;
+            return match (population, rank) {
+                (Population::Exchange | Population::Any, 0) => Body::Exchange,
+                (Population::Converging, 0) | (Population::Any, 1) => Body::Converging,
+                _ => unreachable!("delegated leaf rank"),
+            };
         }
         let rows = if mobile { &self.mobile } else { &self.local };
         for operator in 0..if mobile { 3 } else { 2 } {
-            if rank < rows[cost - 1] {
-                let child = Box::new(self.at(cost - 1, rank, mobile));
+            if rank < rows[cost - 1].get(population) {
+                let child = Box::new(self.at(cost - 1, rank, mobile, population));
                 return match operator {
                     0 => Body::Roll(child),
                     1 => Body::Receive(child),
@@ -64,7 +75,7 @@ impl Counts {
                     _ => unreachable!(),
                 };
             }
-            rank -= rows[cost - 1];
+            rank -= rows[cost - 1].get(population);
         }
         for left in 0..cost {
             let right = cost - 1 - left;
@@ -77,20 +88,24 @@ impl Counts {
                 } else {
                     &self.local
                 };
-                let width = children[right];
-                let pairs = children[left] * width;
-                if rank < pairs {
-                    let a = Box::new(self.at(left, rank / width, child_mobile));
-                    let b = Box::new(self.at(right, rank % width, child_mobile));
-                    return match operator {
-                        0 => Body::Seq(a, b),
-                        1 => Body::Par(a, b),
-                        2 => Body::Route(a, b),
-                        3 => Body::Resolved(a, b),
-                        _ => unreachable!(),
-                    };
+                for &(left_population, right_population) in population.children() {
+                    let width = children[right].get(right_population);
+                    let pairs = children[left].get(left_population) * width;
+                    if rank < pairs {
+                        let a =
+                            Box::new(self.at(left, rank / width, child_mobile, left_population));
+                        let b =
+                            Box::new(self.at(right, rank % width, child_mobile, right_population));
+                        return match operator {
+                            0 => Body::Seq(a, b),
+                            1 => Body::Par(a, b),
+                            2 => Body::Route(a, b),
+                            3 => Body::Resolved(a, b),
+                            _ => unreachable!(),
+                        };
+                    }
+                    rank -= pairs;
                 }
-                rank -= pairs;
             }
         }
         unreachable!("delegated body rank")
@@ -103,7 +118,7 @@ impl Body {
     // A prefix outside that roll grants no permission for its later visits.
     pub(super) fn has_uninformed_reentry(&self, holder: u8, final_owner: u8) -> bool {
         match self {
-            Self::Exchange => false,
+            Self::Exchange | Self::Converging => false,
             Self::Seq(a, b) | Self::Par(a, b) | Self::Route(a, b) | Self::Resolved(a, b) => {
                 a.has_uninformed_reentry(holder, final_owner)
                     || b.has_uninformed_reentry(holder, final_owner)
@@ -120,7 +135,7 @@ impl Body {
     fn has_uninformed_origin(&self) -> bool {
         match self {
             Self::Receive(_) => true,
-            Self::Exchange | Self::Route(..) | Self::Resolved(..) => false,
+            Self::Exchange | Self::Converging | Self::Route(..) | Self::Resolved(..) => false,
             Self::Seq(a, _) => a.has_uninformed_origin(),
             Self::Par(a, b) => a.has_uninformed_origin() || b.has_uninformed_origin(),
             Self::Roll(body) | Self::Forward(body) => body.has_uninformed_origin(),
@@ -132,6 +147,13 @@ impl Body {
             Self::Exchange => Protocol::Seq(
                 Box::new(message(next, 3, 2, false)),
                 Box::new(message(next, 2, 3, false)),
+            ),
+            Self::Converging => Protocol::Seq(
+                Box::new(message(next, 3, 2, false)),
+                Box::new(Protocol::Seq(
+                    Box::new(message(next, holder, 2, false)),
+                    Box::new(message(next, 2, 3, false)),
+                )),
             ),
             Self::Seq(a, b) | Self::Par(a, b) => {
                 let a = Box::new(a.build(next, resolver, holder));
@@ -196,7 +218,81 @@ impl Body {
 
 #[cfg(test)]
 mod tests {
-    use super::Body;
+    use super::{Body, Population};
+    use std::collections::BTreeSet;
+
+    fn trees(cost: usize, mobile: bool) -> BTreeSet<Body> {
+        if cost == 0 {
+            return BTreeSet::from([Body::Exchange, Body::Converging]);
+        }
+        let mut found = BTreeSet::new();
+        for child in trees(cost - 1, mobile) {
+            found.insert(Body::Roll(Box::new(child.clone())));
+            found.insert(Body::Receive(Box::new(child.clone())));
+            if mobile {
+                found.insert(Body::Forward(Box::new(child)));
+            }
+        }
+        for left in 0..cost {
+            let right = cost - 1 - left;
+            for a in trees(left, mobile) {
+                for b in trees(right, mobile) {
+                    found.insert(Body::Seq(Box::new(a.clone()), Box::new(b.clone())));
+                    found.insert(Body::Route(Box::new(a.clone()), Box::new(b.clone())));
+                    found.insert(Body::Resolved(Box::new(a.clone()), Box::new(b)));
+                }
+            }
+            for a in trees(left, false) {
+                for b in trees(right, false) {
+                    found.insert(Body::Par(Box::new(a.clone()), Box::new(b)));
+                }
+            }
+        }
+        found
+    }
+
+    fn converging(tree: &Body) -> bool {
+        match tree {
+            Body::Exchange => false,
+            Body::Converging => true,
+            Body::Seq(a, b) | Body::Par(a, b) | Body::Route(a, b) | Body::Resolved(a, b) => {
+                converging(a) || converging(b)
+            }
+            Body::Roll(body) | Body::Receive(body) | Body::Forward(body) => converging(body),
+        }
+    }
+
+    #[test]
+    fn ranked_delegated_populations_equal_independently_constructed_trees() {
+        for budget in 0..=2 {
+            let expected: BTreeSet<_> = (0..=budget).flat_map(|cost| trees(cost, true)).collect();
+            let counts = super::Counts::new(budget);
+            for population in [
+                Population::Exchange,
+                Population::Any,
+                Population::Converging,
+            ] {
+                let actual: Vec<_> = (0..counts.total(population))
+                    .map(|rank| counts.shape(rank, population))
+                    .collect();
+                let unique: BTreeSet<_> = actual.iter().cloned().collect();
+                assert_eq!(unique.len(), actual.len(), "duplicate ranked tree");
+                let filtered: BTreeSet<_> = expected
+                    .iter()
+                    .filter(|tree| match population {
+                        Population::Exchange => !converging(tree),
+                        Population::Any => true,
+                        Population::Converging => converging(tree),
+                    })
+                    .cloned()
+                    .collect();
+                assert_eq!(
+                    unique, filtered,
+                    "budget={budget} population={population:?}"
+                );
+            }
+        }
+    }
 
     fn remote_loop() -> Body {
         Body::Roll(Box::new(Body::Receive(Box::new(Body::Exchange))))
@@ -238,8 +334,8 @@ mod tests {
     #[test]
     fn swapping_holders_preserves_the_classification_of_every_bounded_body() {
         let counts = super::Counts::new(3);
-        for rank in 0..counts.total() {
-            let body = counts.shape(rank);
+        for rank in 0..counts.total(Population::Any) {
+            let body = counts.shape(rank, Population::Any);
             assert_eq!(
                 body.has_uninformed_reentry(1, 0),
                 body.has_uninformed_reentry(0, 1),

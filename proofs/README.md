@@ -62,8 +62,14 @@ transfer can surround parallel work, but a child cannot move its borrowed
 parent. Choices notify the service and the other possible holder explicitly.
 Swapping participants zero and one
 exercises both controllers. Ordinary leaves include one message and a complete
-request/reply exchange. The default operator budget is two; a budget of
-five enumerates 2,946,142 three- and four-role candidate cases in these families. This
+request/reply exchange. The binary and delegated-body families also mix exchanges
+with sends from different roles to one receiver. In an ordinary leaf, a
+participant tells a worker to start, then both send to a collector. In a
+delegated leaf, the resource role and its holder both send to the service
+before its reply. These three-message leaves can occur alongside request/reply
+leaves in either child of any constructor. The collector is attached whenever
+the source mentions it, even when the resource is served by the initial owner.
+The default operator budget is two. Larger budgets enumerate the same grammar. This
 budget counts generated constructors across both choice arms and the containing
 context, rather than binary-tree depth. The fixed outer loan and ordinary
 exchange leaves contain four messages; a delegated-body exchange has two.
@@ -79,9 +85,11 @@ continue through execution and model comparison even when another case is
 rejected. `catalog.json` retains every generated tree, and `diagnostics.tsv`
 records every result. An unclassified rejection fails the overall check.
 It is not counted as a successful negative test or removed from the catalog.
-Known invalid resource-dependent reentry is checked by a separate build. Each
+Invalid resource-dependent reentry and choices where the collector participates
+in only one arm are derived from the source and checked by a separate build. Each
 delegated-body candidate also produces a parallel transfer/use conflict. Every
 such case is built independently and must fail with the expected `E0080`
+diagnostic rule, affected role and help. Source locations may add detail to that
 diagnostic. A different compiler error or successful build fails the check.
 Rejected protocols are never run as if they were legal executions.
 
@@ -110,7 +118,7 @@ the next operation or endpoint owner.
 Generated localsides use optimization level 1 and Hibana uses level 2, with
 debug assertions and overflow checks enabled. Tests check both settings and
 the schedule's message order. Generated
-test binaries contain at most 128 cases to bound rustc memory; all binaries
+test binaries contain at most 32 cases to bound rustc memory; all binaries
 are built and run.
 The Lean checker computes each prefix
 once for adjacent probes, while retaining every probe in its original order.

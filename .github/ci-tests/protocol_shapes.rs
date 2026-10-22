@@ -20,8 +20,11 @@ fn write_if_changed(path: &std::path::Path, text: &str) -> std::io::Result<()> {
 mod delegated;
 #[path = "protocol_shape_localside.rs"]
 mod localside;
+#[path = "protocol_shape_population.rs"]
+mod population;
 #[path = "protocol_shape_scope_probes.rs"]
 mod scope_probes;
+use population::{Count, Population};
 
 #[derive(Clone, Eq, PartialEq, Ord, PartialOrd)]
 struct Trace {
@@ -211,6 +214,20 @@ impl Protocol {
             Self::Roll(body) => 1 + body.repetition_count(),
         }
     }
+    fn has_one_sided_choice(&self, role: u8) -> bool {
+        match self {
+            Self::Message { .. } => false,
+            Self::Seq(a, b) | Self::Par(a, b) => {
+                a.has_one_sided_choice(role) || b.has_one_sided_choice(role)
+            }
+            Self::Route(a, b) | Self::Resolved(a, b, _) => {
+                localside::present(a, role, None) != localside::present(b, role, None)
+                    || a.has_one_sided_choice(role)
+                    || b.has_one_sided_choice(role)
+            }
+            Self::Roll(body) => body.has_one_sided_choice(role),
+        }
+    }
     fn prefix_visits(&self) -> usize {
         match self {
             Self::Roll(body) if body.repetition_count() == 0 => 2,
@@ -323,10 +340,11 @@ enum Shape {
     Resolved(Box<Self>, Box<Self>),
     Roll(Box<Self>),
 }
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum OrdinaryLeaf {
     Message,
     Exchange,
+    Converging,
 }
 impl Shape {
     fn ordinary(
@@ -344,7 +362,7 @@ impl Shape {
                     service
                 }
             }
-            OrdinaryLeaf::Exchange => 1,
+            OrdinaryLeaf::Exchange | OrdinaryLeaf::Converging => 1,
         };
         match self {
             Self::Loan => match leaf {
@@ -357,6 +375,13 @@ impl Shape {
                             Box::new(message(next, service, 1, false)),
                             Box::new(message(next, 1, 0, false)),
                         )),
+                    )),
+                ),
+                OrdinaryLeaf::Converging => Protocol::Seq(
+                    Box::new(message(next, 0, 1, false)),
+                    Box::new(Protocol::Seq(
+                        Box::new(message(next, 0, 2, false)),
+                        Box::new(message(next, 1, 2, false)),
                     )),
                 ),
             },
@@ -492,9 +517,9 @@ fn shapes(budget: usize) -> BTreeSet<Shape> {
 // One complete resource loan is the leaf. Every binary constructor can have
 // independently generated children; a parallel child uses ordinary exchanges
 // so the same resource is never lent along two independent paths.
-#[derive(Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum BinaryShape {
-    Leaf,
+    Leaf(OrdinaryLeaf),
     Seq(Box<Self>, Box<Self>),
     Par(Box<Self>, Box<Self>, bool),
     Route(Box<Self>, Box<Self>),
@@ -504,32 +529,55 @@ enum BinaryShape {
 }
 
 struct BinaryCounts {
-    resource: Vec<usize>,
-    ordinary: Vec<usize>,
+    resource: Vec<Count>,
+    ordinary: Vec<Count>,
 }
 impl BinaryCounts {
-    fn for_kind(&self, owned: bool) -> &[usize] {
+    fn for_kind(&self, owned: bool) -> &[Count] {
         if owned {
             &self.resource
         } else {
             &self.ordinary
         }
     }
+    fn total(&self, owned: bool, population: Population) -> usize {
+        self.for_kind(owned)
+            .iter()
+            .map(|count| count.get(population))
+            .sum()
+    }
+
+    fn shape(&self, mut rank: usize, owned: bool, population: Population) -> BinaryShape {
+        let rows = self.for_kind(owned);
+        let mut cost = 0;
+        while rank >= rows[cost].get(population) {
+            rank -= rows[cost].get(population);
+            cost += 1;
+        }
+        BinaryShape::at(cost, rank, self, owned, population)
+    }
 }
 fn binary_counts(budget: usize) -> BinaryCounts {
     let mut counts = BinaryCounts {
-        resource: vec![1],
-        ordinary: vec![1],
+        resource: vec![Count {
+            exchange: 1,
+            any: 1,
+        }],
+        ordinary: vec![Count {
+            exchange: 1,
+            any: 2,
+        }],
     };
     for cost in 1..=budget {
         let mut resource = 2 * counts.resource[cost - 1];
         let mut ordinary = 2 * counts.ordinary[cost - 1];
         for left in 0..cost {
             let right = cost - 1 - left;
-            resource += 3 * counts.resource[left] * counts.resource[right]
+            resource = resource
+                + 3 * counts.resource[left] * counts.resource[right]
                 + counts.resource[left] * counts.ordinary[right]
                 + counts.ordinary[left] * counts.resource[right];
-            ordinary += 4 * counts.ordinary[left] * counts.ordinary[right];
+            ordinary = ordinary + 4 * counts.ordinary[left] * counts.ordinary[right];
         }
         counts.resource.push(resource);
         counts.ordinary.push(ordinary);
@@ -538,15 +586,25 @@ fn binary_counts(budget: usize) -> BinaryCounts {
 }
 
 impl BinaryShape {
-    fn at(cost: usize, mut index: usize, counts: &BinaryCounts, owned: bool) -> Self {
-        assert!(index < counts.for_kind(owned)[cost]);
+    fn at(
+        cost: usize,
+        mut index: usize,
+        counts: &BinaryCounts,
+        owned: bool,
+        population: Population,
+    ) -> Self {
+        assert!(index < counts.for_kind(owned)[cost].get(population));
         if cost == 0 {
-            return Self::Leaf;
+            return Self::Leaf(match (population, index) {
+                (Population::Exchange | Population::Any, 0) => OrdinaryLeaf::Exchange,
+                (Population::Converging, 0) | (Population::Any, 1) => OrdinaryLeaf::Converging,
+                _ => unreachable!("binary leaf rank"),
+            });
         }
-        let unary = counts.for_kind(owned)[cost - 1];
+        let unary = counts.for_kind(owned)[cost - 1].get(population);
         for operator in 0..2 {
             if index < unary {
-                let child = Box::new(Self::at(cost - 1, index, counts, owned));
+                let child = Box::new(Self::at(cost - 1, index, counts, owned, population));
                 return match operator {
                     0 => Self::Roll(child),
                     1 => Self::Receive(child),
@@ -563,21 +621,36 @@ impl BinaryShape {
                 }
                 let left_owned = owned && operator != 2;
                 let right_owned = owned && operator != 1;
-                let rights = counts.for_kind(right_owned)[right_cost];
-                let pairs = counts.for_kind(left_owned)[left_cost] * rights;
-                if index < pairs {
-                    let left = Box::new(Self::at(left_cost, index / rights, counts, left_owned));
-                    let right = Box::new(Self::at(right_cost, index % rights, counts, right_owned));
-                    return match operator {
-                        0 => Self::Seq(left, right),
-                        1 => Self::Par(left, right, false),
-                        2 => Self::Par(left, right, true),
-                        3 => Self::Route(left, right),
-                        4 => Self::Resolved(left, right),
-                        _ => unreachable!(),
-                    };
+                for &(left_population, right_population) in population.children() {
+                    let rights = counts.for_kind(right_owned)[right_cost].get(right_population);
+                    let pairs =
+                        counts.for_kind(left_owned)[left_cost].get(left_population) * rights;
+                    if index < pairs {
+                        let left = Box::new(Self::at(
+                            left_cost,
+                            index / rights,
+                            counts,
+                            left_owned,
+                            left_population,
+                        ));
+                        let right = Box::new(Self::at(
+                            right_cost,
+                            index % rights,
+                            counts,
+                            right_owned,
+                            right_population,
+                        ));
+                        return match operator {
+                            0 => Self::Seq(left, right),
+                            1 => Self::Par(left, right, false),
+                            2 => Self::Par(left, right, true),
+                            3 => Self::Route(left, right),
+                            4 => Self::Resolved(left, right),
+                            _ => unreachable!(),
+                        };
+                    }
+                    index -= pairs;
                 }
-                index -= pairs;
             }
         }
         unreachable!("binary shape index");
@@ -585,8 +658,8 @@ impl BinaryShape {
 
     fn build(&self, next: &mut u8, resolver: &mut u16, service: u8, owned: bool) -> Protocol {
         match self {
-            Self::Leaf if owned => loan(next, service),
-            Self::Leaf => Shape::Loan.ordinary(next, resolver, service, OrdinaryLeaf::Exchange),
+            Self::Leaf(_) if owned => loan(next, service),
+            Self::Leaf(leaf) => Shape::Loan.ordinary(next, resolver, service, *leaf),
             Self::Seq(a, b) => Protocol::Seq(
                 Box::new(a.build(next, resolver, service, owned)),
                 Box::new(b.build(next, resolver, service, owned)),
@@ -622,7 +695,7 @@ impl BinaryShape {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 enum CaseShape {
     Delegated(delegated::Body),
     Binary(BinaryShape),
@@ -829,101 +902,113 @@ long_running_const_eval = "forbid"
     )?;
     let all = catalog(depth);
     let counts = binary_counts(depth);
-    let binary_total = counts.resource.iter().sum::<usize>();
+    let binary_total = counts.total(true, Population::Exchange);
     let resource_total = all.len() + binary_total;
-    let ordinary_total = counts.ordinary.iter().sum::<usize>();
+    let ordinary_total = counts.total(false, Population::Exchange);
     let delegated_counts = delegated::Counts::new(depth);
-    let total = resource_total + ordinary_total + delegated_counts.total();
-    let total_cases = 4 * resource_total + 2 * (ordinary_total + delegated_counts.total());
+    let delegated_total = delegated_counts.total(Population::Exchange);
+    let exchange_cases = 4 * resource_total + 2 * (ordinary_total + delegated_total);
+    let resource_converging_end = exchange_cases + 4 * counts.total(true, Population::Converging);
+    let ordinary_converging_end =
+        resource_converging_end + 2 * counts.total(false, Population::Converging);
+    let total_cases = ordinary_converging_end + 2 * delegated_counts.total(Population::Converging);
     let mut cases = Vec::new();
     let mut delegated_cases = BTreeSet::new();
     let mut expected_rejections = BTreeMap::new();
     let mut negative_sources = BTreeMap::new();
     let mut max_label = 0;
     let mut max_resolvers = 0;
-    for index in 0..total {
-        let (base, variants): (usize, &[(u8, bool)]) = if index < resource_total {
-            (4 * index, &[(2, false), (0, false), (2, true), (0, true)])
-        } else {
+    // Unrank only the cases assigned to this shard. The exchange-only prefix
+    // retains its IDs; mixed-leaf populations add no duplicate trees to it.
+    for case in (shard..total_cases).step_by(shards) {
+        let resource_variant =
+            |variant: usize| (if variant.is_multiple_of(2) { 2 } else { 0 }, variant >= 2);
+        let (word, service, swap) = if case < 4 * resource_total {
+            let index = case / 4;
+            let shape = all.get(index).cloned().unwrap_or_else(|| {
+                CaseShape::Binary(counts.shape(index - all.len(), true, Population::Exchange))
+            });
+            let (service, swap) = resource_variant(case % 4);
+            (shape, service, swap)
+        } else if case < exchange_cases {
+            let index = (case - 4 * resource_total) / 2;
+            let shape = if index < ordinary_total {
+                CaseShape::OrdinaryBinary(counts.shape(index, false, Population::Exchange))
+            } else {
+                CaseShape::Delegated(
+                    delegated_counts.shape(index - ordinary_total, Population::Exchange),
+                )
+            };
+            (shape, 2, (case - 4 * resource_total) % 2 == 1)
+        } else if case < resource_converging_end {
+            let offset = case - exchange_cases;
+            let (service, swap) = resource_variant(offset % 4);
             (
-                4 * resource_total + 2 * (index - resource_total),
-                &[(2, false), (2, true)],
+                CaseShape::Binary(counts.shape(offset / 4, true, Population::Converging)),
+                service,
+                swap,
+            )
+        } else if case < ordinary_converging_end {
+            let offset = case - resource_converging_end;
+            (
+                CaseShape::OrdinaryBinary(counts.shape(offset / 2, false, Population::Converging)),
+                2,
+                offset % 2 == 1,
+            )
+        } else {
+            let offset = case - ordinary_converging_end;
+            (
+                CaseShape::Delegated(delegated_counts.shape(offset / 2, Population::Converging)),
+                2,
+                offset % 2 == 1,
             )
         };
-        if !(0..variants.len()).any(|variant| (base + variant) % shards == shard) {
-            continue;
+        let mut count = 0;
+        let mut resolvers = 0;
+        let mut global = word.build(&mut count, &mut resolvers, service);
+        if swap {
+            global.swap_participants();
         }
-        let binary;
-        let word = if index >= resource_total + ordinary_total {
-            binary = CaseShape::Delegated(
-                delegated_counts.shape(index - resource_total - ordinary_total),
-            );
-            &binary
-        } else if let Some(word) = all.get(index) {
-            word
-        } else {
-            let owned = index < resource_total;
-            let mut offset = if owned {
-                index - all.len()
-            } else {
-                index - resource_total
-            };
-            let kind_counts = counts.for_kind(owned);
-            let mut cost = 0;
-            while offset >= kind_counts[cost] {
-                offset -= kind_counts[cost];
-                cost += 1;
-            }
-            let shape = BinaryShape::at(cost, offset, &counts, owned);
-            binary = if owned {
-                CaseShape::Binary(shape)
-            } else {
-                CaseShape::OrdinaryBinary(shape)
-            };
-            &binary
-        };
-        for (variant, &(service, swap)) in variants.iter().enumerate() {
-            let case = base + variant;
-            if case % shards != shard {
-                continue;
-            }
-            let mut count = 0;
-            let mut resolvers = 0;
-            let mut global = word.build(&mut count, &mut resolvers, service);
-            if swap {
-                global.swap_participants();
-            }
-            if matches!(word, CaseShape::Delegated(_)) {
-                delegated_cases.insert(case);
-                let mut bad_label = count;
-                negative_sources.insert(format!("parallel_{case}"),(
+        if matches!(&word, CaseShape::Delegated(_)) {
+            delegated_cases.insert(case);
+            let mut bad_label = count;
+            negative_sources.insert(format!("parallel_{case}"),(
                     Protocol::Par(Box::new(global.clone()),Box::new(message(&mut bad_label,3,2,false))),
                     "parallel endpoint delegation conflicts with another use; role=3; help: keep the transfer and dependent resource operations in sequence"
                 ));
-                if let CaseShape::Delegated(body) = word
-                    && body.has_uninformed_reentry(1, 0)
-                {
-                    expected_rejections.insert(case, "ReentryResourceKnowledge");
-                    negative_sources.insert(
+            if let CaseShape::Delegated(body) = &word
+                && body.has_uninformed_reentry(1, 0)
+            {
+                expected_rejections.insert(case, "ReentryResourceKnowledge");
+                negative_sources.insert(
                         format!("reentry_{case}"),
                         (
                             global.clone(),
                             "rolled reentry requires permission from the resource's entry owner; help: let the resource's entry owner authorize each visit inside the roll",
                         ),
                     );
-                }
             }
-            max_label = max_label.max(count);
-            max_resolvers = max_resolvers.max(resolvers);
-            cases.push((
-                case,
-                format!("{word:?}"),
-                service,
-                u8::from(swap),
-                global,
-                resolvers,
-            ));
         }
+        // Role 2 never holds the resource. A collector present in only one
+        // choice arm has no notification when the other arm is selected.
+        // Derive this violation from source, before consulting diagnostics.
+        if !expected_rejections.contains_key(&case) && global.has_one_sided_choice(2) {
+            expected_rejections.insert(case, "MissingBranchKnowledge");
+            negative_sources.insert(
+                format!("knowledge_{case}"),
+                (global.clone(), "Route unprojectable for this role: invalid, ambiguous endpoint operation, or ambiguous first-visible endpoint operation; role=2; help: notify the affected role of the branch, or make its local paths mergeable; keep terminal acknowledgments within the selected arm"),
+            );
+        }
+        max_label = max_label.max(count);
+        max_resolvers = max_resolvers.max(resolvers);
+        cases.push((
+            case,
+            format!("{word:?}"),
+            service,
+            u8::from(swap),
+            global,
+            resolvers,
+        ));
     }
     if cases.is_empty() {
         return Err("empty shard".into());
@@ -1142,7 +1227,7 @@ long_running_const_eval = "forbid"
             } else {
                 "None"
             },
-            *service == 2,
+            localside::present(global, 2, None),
             vec![
                 if delegated_cases.contains(case) {
                     3
@@ -1170,7 +1255,12 @@ long_running_const_eval = "forbid"
             )?;
         }
         source.push_str("];\n");
-        source.push_str(&localside::runs(global, *owner, *service == 2, *case));
+        source.push_str(&localside::runs(
+            global,
+            *owner,
+            localside::present(global, 2, None),
+            *case,
+        ));
         let (scope_records, scope_count) = scope_probes::inventory(global, *owner);
         let scope_input = format!(r#"{{"name":{case},"probes":[{scope_records}]}}"#);
         let scope_path = scope_directory.join(format!("{case}.json"));
@@ -1236,7 +1326,7 @@ long_running_const_eval = "forbid"
     // memory guard. Every case remains in the same Cargo test invocation.
     let mut manifest = fs::read_to_string(output.join("Cargo.toml"))?;
     let mut paths = BTreeSet::new();
-    for (unit, cases) in localsides.chunks(128).enumerate() {
+    for (unit, cases) in localsides.chunks(32).enumerate() {
         let name = format!("shapes_{unit}");
         let path = if unit == 0 {
             "src/lib.rs".to_owned()
@@ -1287,4 +1377,115 @@ long_running_const_eval = "forbid"
     );
     println!("planned borrowed-scope rejection probes={borrowed_scope_probes}");
     Ok(())
+}
+
+#[cfg(test)]
+mod population_tests {
+    use super::*;
+
+    #[test]
+    fn a_collector_must_participate_in_both_choice_arms() {
+        let mut label = 0;
+        let absent = message(&mut label, 0, 1, false);
+        let present = message(&mut label, 0, 2, false);
+        let route = Protocol::Route(Box::new(absent.clone()), Box::new(present.clone()));
+        assert!(route.has_one_sided_choice(2));
+        assert!(Protocol::Roll(Box::new(route.clone())).has_one_sided_choice(2));
+        assert!(
+            Protocol::Seq(Box::new(present.clone()), Box::new(route.clone()))
+                .has_one_sided_choice(2)
+        );
+        assert!(Protocol::Par(Box::new(route), Box::new(present.clone())).has_one_sided_choice(2));
+        assert!(
+            !Protocol::Route(Box::new(absent.clone()), Box::new(absent)).has_one_sided_choice(2)
+        );
+        assert!(
+            !Protocol::Resolved(Box::new(present.clone()), Box::new(present), 0)
+                .has_one_sided_choice(2)
+        );
+    }
+
+    fn trees(cost: usize, owned: bool) -> BTreeSet<BinaryShape> {
+        if cost == 0 {
+            let mut leaves = BTreeSet::from([BinaryShape::Leaf(OrdinaryLeaf::Exchange)]);
+            if !owned {
+                leaves.insert(BinaryShape::Leaf(OrdinaryLeaf::Converging));
+            }
+            return leaves;
+        }
+        let mut found = BTreeSet::new();
+        for child in trees(cost - 1, owned) {
+            found.insert(BinaryShape::Roll(Box::new(child.clone())));
+            found.insert(BinaryShape::Receive(Box::new(child)));
+        }
+        for left in 0..cost {
+            let right = cost - 1 - left;
+            for a in trees(left, owned) {
+                for b in trees(right, owned) {
+                    found.insert(BinaryShape::Seq(Box::new(a.clone()), Box::new(b.clone())));
+                    found.insert(BinaryShape::Route(Box::new(a.clone()), Box::new(b.clone())));
+                    found.insert(BinaryShape::Resolved(Box::new(a.clone()), Box::new(b)));
+                }
+            }
+            for a in trees(left, owned) {
+                for b in trees(right, false) {
+                    found.insert(BinaryShape::Par(Box::new(a.clone()), Box::new(b), false));
+                }
+            }
+            if owned {
+                for a in trees(left, false) {
+                    for b in trees(right, true) {
+                        found.insert(BinaryShape::Par(Box::new(a.clone()), Box::new(b), true));
+                    }
+                }
+            }
+        }
+        found
+    }
+
+    fn converging(tree: &BinaryShape) -> bool {
+        match tree {
+            BinaryShape::Leaf(leaf) => *leaf == OrdinaryLeaf::Converging,
+            BinaryShape::Seq(a, b)
+            | BinaryShape::Par(a, b, _)
+            | BinaryShape::Route(a, b)
+            | BinaryShape::Resolved(a, b) => converging(a) || converging(b),
+            BinaryShape::Roll(body) | BinaryShape::Receive(body) => converging(body),
+        }
+    }
+
+    #[test]
+    fn ranked_binary_populations_equal_independently_constructed_trees() {
+        for owned in [false, true] {
+            for budget in 0..=2 {
+                let expected: BTreeSet<_> =
+                    (0..=budget).flat_map(|cost| trees(cost, owned)).collect();
+                let counts = binary_counts(budget);
+                for population in [
+                    Population::Exchange,
+                    Population::Any,
+                    Population::Converging,
+                ] {
+                    let actual: Vec<_> = (0..counts.total(owned, population))
+                        .map(|rank| counts.shape(rank, owned, population))
+                        .collect();
+                    let unique: BTreeSet<_> = actual.iter().cloned().collect();
+                    assert_eq!(unique.len(), actual.len(), "duplicate ranked tree");
+                    let filtered: BTreeSet<_> = expected
+                        .iter()
+                        .filter(|tree| match population {
+                            Population::Exchange => !converging(tree),
+                            Population::Any => true,
+                            Population::Converging => converging(tree),
+                        })
+                        .cloned()
+                        .collect();
+                    assert_eq!(
+                        unique, filtered,
+                        "owned={owned} budget={budget} population={population:?}"
+                    );
+                }
+            }
+        }
+    }
 }

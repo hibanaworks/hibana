@@ -4,9 +4,27 @@ mod json;
 use json::Json;
 use std::{collections::BTreeSet, env, fs, path::PathBuf, process::Command};
 
+fn matches_reason(message: &str, reason: &str) -> bool {
+    let Some(message) = message.strip_prefix("evaluation panicked: ") else {
+        return false;
+    };
+    let required: Vec<_> = reason.split("; ").collect();
+    let actual: Vec<_> = message.split("; ").collect();
+    // Require the rule, role and help supplied by the source classifier.
+    // Projection may also identify source ranges and events. Those locations
+    // are compiler output, not inputs to the independent source classifier.
+    actual.first() == required.first()
+        && required.iter().all(|field| actual.contains(field))
+        && actual.iter().all(|field| {
+            required.contains(field)
+                || ["scope=", "controller=", "arms=", "event#"]
+                    .iter()
+                    .any(|prefix| field.starts_with(prefix))
+        })
+}
+
 fn check_diagnostics(output: &str, reason: &str) -> Result<(), String> {
     let mut found = false;
-    let expected = Json::String(format!("evaluation panicked: {reason}"));
     for line in output.lines() {
         let record = json::parse(line)?;
         if record.get("reason") != Some(&Json::String("compiler-message".into())) {
@@ -18,7 +36,7 @@ fn check_diagnostics(output: &str, reason: &str) -> Result<(), String> {
         }
         if diagnostic.get("code").and_then(|code| code.get("code"))
             != Some(&Json::String("E0080".into()))
-            || diagnostic.get("message") != Some(&expected)
+            || !matches!(diagnostic.get("message"), Some(Json::String(message)) if matches_reason(message, reason))
         {
             return Err("unexpected compiler error alongside the expected rejection".into());
         }
@@ -95,6 +113,24 @@ mod tests {
     use super::check_diagnostics;
 
     const EXPECTED: &str = r#"{"reason":"compiler-message","message":{"level":"error","code":{"code":"E0080"},"message":"evaluation panicked: expected"}}"#;
+
+    #[test]
+    fn source_locations_do_not_replace_the_required_rule_role_or_help() {
+        let reason = "branch knowledge; role=2; help: notify the role";
+        assert!(super::matches_reason(
+            "evaluation panicked: branch knowledge; role=2; scope=1; controller=0; arms=2..5|5..8; event#3(0->2 label=3 lane=0); help: notify the role",
+            reason,
+        ));
+        for message in [
+            "evaluation panicked: another rule; role=2; scope=1; help: notify the role",
+            "evaluation panicked: branch knowledge; role=1; scope=1; help: notify the role",
+            "evaluation panicked: branch knowledge; scope=1; help: notify the role",
+            "evaluation panicked: branch knowledge; role=2; scope=1; help: another fix",
+            "evaluation panicked: branch knowledge; role=2; unrecognized=1; help: notify the role",
+        ] {
+            assert!(!super::matches_reason(message, reason), "{message}");
+        }
+    }
 
     #[test]
     fn the_expected_const_error_and_instantiation_notes_are_accepted() {
