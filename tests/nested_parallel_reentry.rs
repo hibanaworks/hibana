@@ -11,6 +11,95 @@ type Ack = g::Msg<233, ()>;
 type Tick = g::Msg<234, ()>;
 
 #[test]
+fn a_parallel_repeat_can_continue_before_an_enclosing_choice_restarts() {
+    use hibana::runtime::resolver::{DecisionArm, ResolverRef};
+    type First = g::Msg<140, ()>;
+    type FirstReply = g::Msg<141, ()>;
+    type Second = g::Msg<142, ()>;
+    type SecondReply = g::Msg<143, ()>;
+    type Other = g::Msg<144, ()>;
+    type OtherReply = g::Msg<145, ()>;
+    let global = g::route(
+        g::par(
+            g::seq(g::send::<0, 1, First>(), g::send::<1, 0, FirstReply>()),
+            g::seq(g::send::<0, 1, Second>(), g::send::<1, 0, SecondReply>()),
+        )
+        .roll(),
+        g::seq(g::send::<0, 1, Other>(), g::send::<1, 0, OtherReply>()),
+    )
+    .resolve::<0>()
+    .roll();
+    let p0 = project::<0>(&global);
+    let p1 = project::<1>(&global);
+    let network = common::TestTransport::new();
+    let [mut slab0, mut slab1] = [[0; 32 * 1024]; 2];
+    let mut s0 = SessionKitStorage::uninit();
+    let mut s1 = SessionKitStorage::uninit();
+    let rv0 = s0.init().rendezvous(&mut slab0, network.clone()).unwrap();
+    let rv1 = s1.init().rendezvous(&mut slab1, network.clone()).unwrap();
+    rv0.set_resolver(
+        &p0,
+        ResolverRef::<0>::decision_state(&(), |_| Ok(DecisionArm::Left)),
+    )
+    .unwrap();
+    let sid = SessionId::new(9392);
+    let mut sender = rv0.enter(sid, &p0).unwrap();
+    let mut receiver = rv1.enter(sid, &p1).unwrap();
+    tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .start_paused(true)
+        .build()
+        .unwrap()
+        .block_on(async {
+            tokio::time::timeout(core::time::Duration::from_secs(1), async {
+                tokio::try_join!(
+                    biased;
+                    async {
+                        assert_eq!(sender.offer().await?.label(), 140);
+                        for _ in 0..2 {
+                            let [mut first, mut second] = sender.par()?;
+                            tokio::try_join!(
+                                async {
+                                    first.send::<First>(&()).await?;
+                                    first.recv::<FirstReply>().await
+                                },
+                                async {
+                                    second.send::<Second>(&()).await?;
+                                    second.recv::<SecondReply>().await
+                                },
+                            )?;
+                        }
+                        Ok::<_, hibana::EndpointError>(())
+                    },
+                    async {
+                        assert_eq!(receiver.offer().await?.label(), 140);
+                        for visit in 0..2 {
+                            let [mut first, mut second] = receiver.par().unwrap_or_else(|error| {
+                                panic!("receiver par visit={visit}: {error:?}")
+                            });
+                            tokio::try_join!(
+                                async {
+                                    first.recv::<First>().await?;
+                                    first.send::<FirstReply>(&()).await
+                                },
+                                async {
+                                    second.recv::<Second>().await?;
+                                    second.send::<SecondReply>(&()).await
+                                },
+                            )?;
+                        }
+                        Ok::<_, hibana::EndpointError>(())
+                    },
+                )
+            })
+            .await
+            .expect("parallel repeat must finish")
+            .unwrap();
+            assert!(network.queue_is_empty());
+        });
+}
+
+#[test]
 fn a_rolled_parallel_borrow_can_repeat_before_its_sequential_tail() {
     type RequestA = g::Msg<120, ()>;
     type ReplyA = g::Msg<121, ()>;

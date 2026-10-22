@@ -8,39 +8,51 @@ mod reentry;
 mod tests;
 
 impl EventCursor {
-    /// A completed repeat before a parallel region is an alternative, not a
-    /// required member of its borrow. This also covers an enclosing repeat's
-    /// head: the caller may continue its completed body instead of restarting
-    /// the enclosing prefix. Unfinished prefixes and siblings remain required.
-    pub(crate) fn completed_roll_alternative_before(
+    /// A completed repeat may restart instead of continuing its current body.
+    /// Its next visit may also choose another arm. Neither alternative belongs
+    /// to a borrow of the current arm. Unfinished prefixes and parallel siblings
+    /// remain required members of the frontier.
+    pub(crate) fn completed_roll_alternative_to(
         &self,
         index: usize,
         continuation: usize,
         selected: &mut dyn FnMut(ScopeId) -> Option<u8>,
     ) -> bool {
         let program = self.program_ref();
+        let Some((event, _)) = self.machine().event_program().operation_at(index) else {
+            return false;
+        };
+        let source = event.dense_ordinal();
+        if source == continuation {
+            return false;
+        }
         for marker in 0..program.source_scope_marker_count() {
             let Some((scope, start, end)) = program.source_roll_at(marker) else {
                 continue;
             };
-            let prefix = end <= continuation && program.source_precedes(end - 1, continuation);
-            let enclosing = start <= continuation
-                && continuation < end
-                && self
-                    .machine()
-                    .event_program()
-                    .operation_at(index)
-                    .is_some_and(|(event, _)| {
-                        program.source_precedes(event.dense_ordinal(), continuation)
-                    });
-            if !prefix && !enclosing {
-                continue;
-            }
             let Some(row) = self.machine().roll_scope_row(scope) else {
                 continue;
             };
-            if row.start() <= index
-                && index < row.end()
+            if !(row.start() <= index && index < row.end()) {
+                continue;
+            }
+            let prefix = end <= continuation && program.source_precedes(end - 1, continuation);
+            let enclosing = start <= continuation
+                && continuation < end
+                && program.source_precedes(source, continuation);
+            let other_arm = || {
+                start <= source
+                    && source < end
+                    && start <= continuation
+                    && continuation < end
+                    && (0..self.machine().route_scope_slot_count()).any(|slot| {
+                        let Some(route) = self.machine().route_scope_rows_by_slot(slot) else {
+                            return false;
+                        };
+                        program.source_route_separates(route.scope(), source, continuation)
+                    })
+            };
+            if (prefix || enclosing || other_arm())
                 && self.roll_scope_events_complete(row, selected)
             {
                 return true;

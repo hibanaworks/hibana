@@ -299,9 +299,15 @@
       "global::typestate::cursor::kani::retained_roll_completion_is_scoped_and_cannot_authorize_an_outgoing_step"
     ],
     "../../src/global/typestate/cursor/parallel_reentry_tests.rs": [
+      "global::typestate::cursor::parallel_reentry_tests::a_completed_choice_can_instead_offer_its_other_arm",
+      "global::typestate::cursor::parallel_reentry_tests::a_completed_choice_keeps_its_first_parallel_head_required",
+      "global::typestate::cursor::parallel_reentry_tests::a_completed_choice_keeps_its_second_parallel_head_required",
       "global::typestate::cursor::parallel_reentry_tests::a_later_locator_cannot_replay_a_completed_step",
       "global::typestate::cursor::parallel_reentry_tests::a_later_locator_does_not_authorize_another_committed_branch",
       "global::typestate::cursor::parallel_reentry_tests::a_later_locator_keeps_an_independent_receive_enabled",
+      "global::typestate::cursor::parallel_reentry_tests::an_unfinished_choice_cannot_hide_its_other_arm",
+      "global::typestate::cursor::parallel_reentry_tests::an_unfinished_choice_keeps_its_first_parallel_head_required",
+      "global::typestate::cursor::parallel_reentry_tests::an_unfinished_choice_keeps_its_second_parallel_head_required",
       "global::typestate::cursor::parallel_reentry_tests::completed_parallel_reentry_allows_its_sequential_continuation",
       "global::typestate::cursor::parallel_reentry_tests::completed_parallel_reentry_requires_a_live_completed_origin",
       "global::typestate::cursor::parallel_reentry_tests::completed_parallel_reentry_retains_independent_siblings",
@@ -417,7 +423,7 @@
   "contract-harnesses": {},
   "contracts": [],
   "totals": {
-    "standard-harnesses": 293,
+    "standard-harnesses": 299,
     "contract-harnesses": 0,
     "functions-under-contract": 0
   }

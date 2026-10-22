@@ -314,6 +314,30 @@ theorem equal_messages_do_not_determine_the_parallel_cut :
     acceptedParallelTail (twoParallelVisits ++ [.send 2]) = true ∧
     acceptedParallelTail (anotherParallelCut ++ [.send 2]) = false := by decide
 
+def repeatedChoiceArm : Choreo := .roll (.route (.dynamic 0)
+  (.roll (.par
+    (.seq (.send 0 1 140 0) (.send 1 0 141 0))
+    (.seq (.send 0 1 142 0) (.send 1 0 143 0))))
+  (.seq (.send 0 1 144 0) (.send 1 0 145 0)))
+
+def acceptedRepeatedArm (trace : List GlobalOperation) : Bool :=
+  (run (GlobalConfig.initial 1 2 repeatedChoiceArm) trace).isSome
+
+def repeatedArmVisit : List GlobalOperation :=
+  [.send 0, .recv 0, .send 1, .recv 1, .send 2, .recv 2, .send 3, .recv 3]
+
+theorem a_completed_choice_arm_can_repeat_without_reselecting_its_outer_route :
+    acceptedRepeatedArm ([.resolve 0 0 0 .left] ++ repeatedArmVisit ++
+      [.roll 0] ++ repeatedArmVisit) = true := by decide
+
+theorem that_completed_arm_can_instead_start_the_other_outer_choice :
+    acceptedRepeatedArm ([.resolve 0 0 0 .left] ++ repeatedArmVisit ++
+      [.roll 1, .resolve 0 0 0 .right, .send 4, .recv 4, .send 5, .recv 5]) = true := by decide
+
+theorem the_other_arm_is_not_part_of_the_current_inner_visit :
+    acceptedRepeatedArm ([.resolve 0 0 0 .left] ++ repeatedArmVisit ++
+      [.roll 0, .send 4]) = false := by decide
+
 #print axioms a_scheduled_entry_is_eligible
 #print axioms an_in_progress_choice_cannot_change_arm
 #print axioms right_then_left_remains_enabled
@@ -358,4 +382,7 @@ theorem equal_messages_do_not_determine_the_parallel_cut :
 #print axioms that_parallel_group_can_instead_take_its_tail
 #print axioms a_fresh_parallel_group_cannot_skip_to_its_tail
 #print axioms equal_messages_do_not_determine_the_parallel_cut
+#print axioms a_completed_choice_arm_can_repeat_without_reselecting_its_outer_route
+#print axioms that_completed_arm_can_instead_start_the_other_outer_choice
+#print axioms the_other_arm_is_not_part_of_the_current_inner_visit
 end ParallelResolverProgress

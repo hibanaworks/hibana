@@ -106,7 +106,36 @@ impl CompiledProgramRef {
         start: usize,
         end: usize,
     ) -> Option<u8> {
-        if !matches!(scope.kind(), Some(ScopeKind::Route)) || start >= end {
+        if start >= end {
+            return None;
+        }
+        let Some((first, split, boundary)) = self.source_route_bounds(scope) else {
+            return None;
+        };
+        if first <= start && end <= split {
+            Some(0)
+        } else if split <= start && end <= boundary {
+            Some(1)
+        } else {
+            None
+        }
+    }
+
+    pub(crate) const fn source_route_separates(
+        &self,
+        scope: ScopeId,
+        left: usize,
+        right: usize,
+    ) -> bool {
+        let Some((first, split, end)) = self.source_route_bounds(scope) else {
+            return false;
+        };
+        (first <= left && left < split && split <= right && right < end)
+            || (first <= right && right < split && split <= left && left < end)
+    }
+
+    const fn source_route_bounds(&self, scope: ScopeId) -> Option<(usize, usize, usize)> {
+        if !matches!(scope.kind(), Some(ScopeKind::Route)) {
             return None;
         }
         let markers = self
@@ -124,13 +153,7 @@ impl CompiledProgramRef {
                         let boundary = self.read_u16_at(at) as usize;
                         match (first, split) {
                             (Some(first), Some(split)) => {
-                                return if first <= start && end <= split {
-                                    Some(0)
-                                } else if split <= start && end <= boundary {
-                                    Some(1)
-                                } else {
-                                    None
-                                };
+                                return Some((first, split, boundary));
                             }
                             (Some(_), None) => split = Some(boundary),
                             _ => crate::invariant(),

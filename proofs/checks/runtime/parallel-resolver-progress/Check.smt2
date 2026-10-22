@@ -72,9 +72,18 @@
         (and (<= rollStart continuationStart) (< continuationStart rollEnd)))))
 (declare-const reentryComplete Bool)
 (declare-const afterReentry Bool)
+(declare-const otherSource Int)
+(declare-const differentArms Bool)
+(define-fun otherArmAlternative () Bool
+  (and prefixComplete differentArms
+    (<= rollStart otherSource) (< otherSource rollEnd)
+    (<= rollStart continuationStart) (< continuationStart rollEnd)))
 (define-fun borrowAllowed () Bool
   (and insideReady (or (not outsideReady) completedPrefix
-    (and reentryComplete sequential afterReentry))))
+    (and reentryComplete sequential afterReentry) otherArmAlternative)))
+; Prefixes and parallel siblings do not occupy different choice arms.
+(push)
+(assert (not differentArms))
 (push)
 (assert (and insideReady outsideReady prefixComplete sequential
   (<= rollEnd continuationStart)))
@@ -171,5 +180,33 @@
 (pop)
 (push)
 (assert (and borrowAllowed outsideReady (not completedPrefix) (not afterReentry)))
+(check-sat)
+(pop)
+(pop)
+
+; A completed outer visit can either restart with another choice or continue
+; the current arm's inner repeat. A different arm is not a parallel sibling.
+(push)
+(assert (and insideReady outsideReady prefixComplete differentArms
+  (<= rollStart otherSource) (< otherSource rollEnd)
+  (<= rollStart continuationStart) (< continuationStart rollEnd)
+  (not sequential) (not reentryComplete)))
+(check-sat)
+(assert (not borrowAllowed))
+(check-sat)
+(pop)
+(push)
+(assert (and borrowAllowed outsideReady differentArms (not prefixComplete)
+  (not reentryComplete)))
+(check-sat)
+(pop)
+(push)
+(assert (and borrowAllowed outsideReady prefixComplete differentArms
+  (>= otherSource rollEnd) (not sequential) (not reentryComplete)))
+(check-sat)
+(pop)
+(push)
+(assert (and borrowAllowed outsideReady prefixComplete differentArms
+  (< continuationStart rollStart) (not sequential) (not reentryComplete)))
 (check-sat)
 (pop)

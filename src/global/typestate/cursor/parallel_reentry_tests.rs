@@ -89,6 +89,109 @@ fn check_parallel_continuation_lifetime() {
     );
 }
 
+fn check_completed_choice_alternative(candidate: u8, complete: bool) {
+    let global = g::route(
+        g::par(
+            g::send::<0, 1, g::Msg<0, ()>>(),
+            g::send::<0, 1, g::Msg<1, ()>>(),
+        )
+        .roll(),
+        g::send::<0, 1, g::Msg<2, ()>>(),
+    )
+    .resolve::<0>()
+    .roll();
+    let projected = crate::runtime::program::project::<1>(&global);
+    let descriptor = RoleDescriptorRef::from_resident(projected.role_image_ref());
+    let mut state = MaybeUninit::<EventCursorState>::uninit();
+    let mut cursor = MaybeUninit::<EventCursor>::uninit();
+    let mut heads = [0u16; 2];
+    let mut labels = [0u16; 2];
+    let mut completed = [0u32; 5];
+    assert_eq!(descriptor.logical_lane_count(), heads.len());
+    assert_eq!(
+        projected
+            .role_image_ref()
+            .footprint()
+            .completion_bit_count()
+            .div_ceil(32),
+        completed.len()
+    );
+    // SAFETY: these disjoint arrays fit the checked image and outlive both
+    // cursor objects, including every completion bit and borrow epoch word.
+    unsafe {
+        EventCursor::init_from_compiled(
+            cursor.as_mut_ptr(),
+            state.as_mut_ptr(),
+            heads.as_mut_ptr(),
+            labels.as_mut_ptr(),
+            completed.as_mut_ptr(),
+            descriptor,
+        );
+    }
+    // SAFETY: the initializer wrote both cursor objects above.
+    let cursor = unsafe { cursor.assume_init_mut() };
+    cursor.mark_local_event_done(0);
+    if complete {
+        cursor.mark_local_event_done(1);
+    }
+    assert_eq!(
+        cursor.completed_roll_alternative_to(usize::from(candidate), 0, &mut |_| Some(0)),
+        complete && candidate == 2,
+    );
+}
+
+#[cfg(all(test, hibana_repo_tests))]
+#[test]
+fn completed_choice_alternatives_keep_unfinished_and_parallel_work_required() {
+    for candidate in 0..3 {
+        for complete in [false, true] {
+            check_completed_choice_alternative(candidate, complete);
+        }
+    }
+}
+
+#[cfg(kani)]
+#[kani::proof]
+#[kani::unwind(24)]
+fn an_unfinished_choice_keeps_its_first_parallel_head_required() {
+    check_completed_choice_alternative(0, false);
+}
+
+#[cfg(kani)]
+#[kani::proof]
+#[kani::unwind(24)]
+fn an_unfinished_choice_keeps_its_second_parallel_head_required() {
+    check_completed_choice_alternative(1, false);
+}
+
+#[cfg(kani)]
+#[kani::proof]
+#[kani::unwind(24)]
+fn an_unfinished_choice_cannot_hide_its_other_arm() {
+    check_completed_choice_alternative(2, false);
+}
+
+#[cfg(kani)]
+#[kani::proof]
+#[kani::unwind(24)]
+fn a_completed_choice_keeps_its_first_parallel_head_required() {
+    check_completed_choice_alternative(0, true);
+}
+
+#[cfg(kani)]
+#[kani::proof]
+#[kani::unwind(24)]
+fn a_completed_choice_keeps_its_second_parallel_head_required() {
+    check_completed_choice_alternative(1, true);
+}
+
+#[cfg(kani)]
+#[kani::proof]
+#[kani::unwind(24)]
+fn a_completed_choice_can_instead_offer_its_other_arm() {
+    check_completed_choice_alternative(2, true);
+}
+
 #[cfg(all(test, hibana_repo_tests))]
 #[test]
 fn completed_parallel_reentry_omits_only_its_causal_continuation() {
