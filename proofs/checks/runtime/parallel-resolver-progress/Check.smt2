@@ -70,8 +70,11 @@
   (and prefixComplete sequential
     (or (<= rollEnd continuationStart)
         (and (<= rollStart continuationStart) (< continuationStart rollEnd)))))
+(declare-const reentryComplete Bool)
+(declare-const afterReentry Bool)
 (define-fun borrowAllowed () Bool
-  (and insideReady (or (not outsideReady) completedPrefix)))
+  (and insideReady (or (not outsideReady) completedPrefix
+    (and reentryComplete sequential afterReentry))))
 (push)
 (assert (and insideReady outsideReady prefixComplete sequential
   (<= rollEnd continuationStart)))
@@ -134,7 +137,7 @@
 (check-sat)
 (pop)
 (push)
-(assert (and borrowAllowed outsideReady (not prefixComplete)))
+(assert (and borrowAllowed outsideReady (not prefixComplete) (not reentryComplete)))
 (check-sat)
 (pop)
 (push)
@@ -143,7 +146,7 @@
 (pop)
 (push)
 (assert (and borrowAllowed outsideReady (> rollEnd continuationStart)
-  (> rollStart continuationStart)))
+  (> rollStart continuationStart) (not afterReentry)))
 (check-sat)
 (pop)
 (push)
@@ -155,5 +158,18 @@
   (<= rollStart continuationStart) (< continuationStart rollEnd)))
 (check-sat)
 (assert (not borrowAllowed))
+(check-sat)
+(pop)
+
+; A completed group's sequential suffix is an alternative to repeating it.
+; An independent sibling cannot be omitted under that rule.
+(push)
+(assert (and insideReady outsideReady (not prefixComplete) reentryComplete sequential afterReentry))
+(check-sat)
+(assert (not borrowAllowed))
+(check-sat)
+(pop)
+(push)
+(assert (and borrowAllowed outsideReady (not completedPrefix) (not afterReentry)))
 (check-sat)
 (pop)

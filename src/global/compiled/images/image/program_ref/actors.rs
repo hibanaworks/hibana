@@ -144,6 +144,19 @@ impl CompiledProgramRef {
         None
     }
 
+    pub(crate) const fn roll_precedes(&self, scope: ScopeId, after: usize) -> bool {
+        let mut marker = 0;
+        while marker < self.source_scope_marker_count() {
+            if let Some((candidate, _, end)) = self.source_roll_at(marker)
+                && candidate.same(scope)
+            {
+                return self.source_precedes(end - 1, after);
+            }
+            marker += 1;
+        }
+        false
+    }
+
     /// Strict single-visit source order. Enumeration orders sequential terms,
     /// except for operations separated by parallel or alternative arms.
     /// Read the existing immutable markers; do not create a dependency ledger.

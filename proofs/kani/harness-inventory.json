@@ -302,6 +302,11 @@
       "global::typestate::cursor::parallel_reentry_tests::a_later_locator_cannot_replay_a_completed_step",
       "global::typestate::cursor::parallel_reentry_tests::a_later_locator_does_not_authorize_another_committed_branch",
       "global::typestate::cursor::parallel_reentry_tests::a_later_locator_keeps_an_independent_receive_enabled",
+      "global::typestate::cursor::parallel_reentry_tests::completed_parallel_reentry_allows_its_sequential_continuation",
+      "global::typestate::cursor::parallel_reentry_tests::completed_parallel_reentry_requires_a_live_completed_origin",
+      "global::typestate::cursor::parallel_reentry_tests::completed_parallel_reentry_retains_independent_siblings",
+      "global::typestate::cursor::parallel_reentry_tests::completed_parallel_reentry_retains_its_first_arm",
+      "global::typestate::cursor::parallel_reentry_tests::completed_parallel_reentry_retains_its_second_arm",
       "global::typestate::cursor::parallel_reentry_tests::cross_lane_child_admission_requires_only_its_own_fresh_steps",
       "global::typestate::cursor::parallel_reentry_tests::cross_lane_parent_admission_requires_its_prefix",
       "global::typestate::cursor::parallel_reentry_tests::parallel_entry_accepts_the_independent_parent_arm",
@@ -412,7 +417,7 @@
   "contract-harnesses": {},
   "contracts": [],
   "totals": {
-    "standard-harnesses": 288,
+    "standard-harnesses": 293,
     "contract-harnesses": 0,
     "functions-under-contract": 0
   }

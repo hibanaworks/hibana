@@ -277,6 +277,43 @@ theorem that_sibling_does_not_authorize_another_committed_branch :
 theorem that_sibling_does_not_allow_a_completed_receive_to_repeat :
     acceptedLaterChoice [.send 3, .recv 3, .send 1, .recv 1, .recv 1] = false := by decide
 
+def parallelThenTail : Choreo := .par
+  (.seq (.roll (.par (.send 0 1 120 0) (.roll (.send 0 1 122 0))))
+    (.send 0 1 124 0))
+  (.send 0 1 126 0)
+
+def acceptedParallelTail (trace : List GlobalOperation) : Bool :=
+  (run (GlobalConfig.initial 1 2 parallelThenTail) trace).isSome
+
+def completedParallelVisit : List GlobalOperation :=
+  [.send 0, .recv 0, .send 1, .recv 1, .roll 0, .send 1, .recv 1]
+
+theorem a_completed_parallel_group_can_repeat_instead_of_its_tail :
+    acceptedParallelTail (completedParallelVisit ++ [.roll 1, .send 0, .recv 0,
+      .send 1, .recv 1]) = true := by decide
+
+theorem that_parallel_group_can_instead_take_its_tail :
+    acceptedParallelTail (completedParallelVisit ++ [.send 2, .recv 2, .send 3, .recv 3]) = true := by decide
+
+theorem a_fresh_parallel_group_cannot_skip_to_its_tail :
+    acceptedParallelTail (completedParallelVisit ++ [.roll 1, .send 2]) = false := by decide
+
+def twoParallelVisits : List GlobalOperation := completedParallelVisit ++
+  [.roll 1, .send 1, .recv 1, .roll 0, .send 1, .recv 1, .send 0, .recv 0]
+
+def anotherParallelCut : List GlobalOperation := completedParallelVisit ++
+  [.roll 0, .send 1, .recv 1, .roll 0, .send 1, .recv 1, .roll 1, .send 0, .recv 0]
+
+def withoutRolls (trace : List GlobalOperation) : List GlobalOperation :=
+  trace.filter fun | .roll _ => false | _ => true
+
+theorem equal_messages_do_not_determine_the_parallel_cut :
+    withoutRolls twoParallelVisits = withoutRolls anotherParallelCut ∧
+    acceptedParallelTail twoParallelVisits = true ∧
+    acceptedParallelTail anotherParallelCut = true ∧
+    acceptedParallelTail (twoParallelVisits ++ [.send 2]) = true ∧
+    acceptedParallelTail (anotherParallelCut ++ [.send 2]) = false := by decide
+
 #print axioms a_scheduled_entry_is_eligible
 #print axioms an_in_progress_choice_cannot_change_arm
 #print axioms right_then_left_remains_enabled
@@ -317,4 +354,8 @@ theorem that_sibling_does_not_allow_a_completed_receive_to_repeat :
 #print axioms completing_a_parallel_sibling_keeps_the_nested_choice
 #print axioms that_sibling_does_not_authorize_another_committed_branch
 #print axioms that_sibling_does_not_allow_a_completed_receive_to_repeat
+#print axioms a_completed_parallel_group_can_repeat_instead_of_its_tail
+#print axioms that_parallel_group_can_instead_take_its_tail
+#print axioms a_fresh_parallel_group_cannot_skip_to_its_tail
+#print axioms equal_messages_do_not_determine_the_parallel_cut
 end ParallelResolverProgress

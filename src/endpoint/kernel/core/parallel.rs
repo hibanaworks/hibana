@@ -128,8 +128,14 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
         .then_some(event.eff_index.dense_ordinal())
     }
 
-    fn parallel_region_covers_frontier(&self, source: core::ops::Range<usize>) -> bool {
+    fn parallel_region_covers_frontier(
+        &self,
+        source: core::ops::Range<usize>,
+        reentry: Option<crate::global::const_dsl::ScopeId>,
+    ) -> bool {
         let mut inside = false;
+        // Repeating a completed group and taking its sequential continuation
+        // are alternatives. Independent siblings still belong to the frontier.
         for (index, event) in self.enabled_view_events() {
             if source.contains(&event) {
                 inside = true;
@@ -137,7 +143,9 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
                 index,
                 source.start,
                 &mut |scope| self.selected_arm_for_scope(scope),
-            ) {
+            ) && !reentry
+                .is_some_and(|scope| self.context.program.roll_precedes(scope, event))
+            {
                 return false;
             }
         }
@@ -182,82 +190,12 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
         {
             return Err(SendError::PhaseInvariant);
         }
-        for marker in 0..self.context.program.source_scope_marker_count() {
-            let Some((start, split, end)) = self.context.program.source_parallel_at(marker) else {
-                continue;
-            };
+        let mut repeated = None;
+        let current = (0..self.context.program.source_scope_marker_count()).find_map(|marker| {
+            let (start, split, end) = self.context.program.source_parallel_at(marker)?;
             let parent = self.region.bounds();
-            if start < parent.start
-                || end > parent.end
-                || !self.parallel_region_covers_frontier(start..end)
-            {
-                continue;
-            }
-            let left = self.arm_lane(start..split);
-            let right = self.arm_lane(split..end);
-            if left.is_some() && left == right {
-                return Err(SendError::PhaseInvariant);
-            }
-            let mut count = 0;
-            for (start, end, lane) in [(start, split, left), (split, end, right)] {
-                if let Some(lane) = lane {
-                    let slot = regions.get_mut(count).ok_or(SendError::PhaseInvariant)?;
-                    *slot = OperationRegion::parallel(start, end, lane)
-                        .ok_or(SendError::PhaseInvariant)?;
-                    count += 1;
-                }
-            }
-            if count == 0 {
-                continue;
-            }
-            let mut index = 0;
-            while index < count {
-                let Some((start, split, end)) = self.associative_parallel_at(regions[index]) else {
-                    index += 1;
-                    continue;
-                };
-                match (self.arm_lane(start..split), self.arm_lane(split..end)) {
-                    (Some(left), Some(right)) => {
-                        if count == regions.len() {
-                            return Err(SendError::PhaseInvariant);
-                        }
-                        regions.copy_within(index + 1..count, index + 2);
-                        regions[index] = OperationRegion::parallel(start, split, left)
-                            .ok_or(SendError::PhaseInvariant)?;
-                        regions[index + 1] = OperationRegion::parallel(split, end, right)
-                            .ok_or(SendError::PhaseInvariant)?;
-                        count += 1;
-                    }
-                    (Some(lane), None) => {
-                        regions[index] = OperationRegion::parallel(start, split, lane)
-                            .ok_or(SendError::PhaseInvariant)?;
-                    }
-                    (None, Some(lane)) => {
-                        regions[index] = OperationRegion::parallel(split, end, lane)
-                            .ok_or(SendError::PhaseInvariant)?;
-                    }
-                    (None, None) => return Err(SendError::PhaseInvariant),
-                }
-            }
-            if count != regions.len() {
-                return Err(SendError::PhaseInvariant);
-            }
-            for (index, region) in regions.iter().enumerate() {
-                if regions[..index]
-                    .iter()
-                    .any(|previous| previous.lane(0) == region.lane(0))
-                {
-                    return Err(SendError::PhaseInvariant);
-                }
-            }
-            for region in regions.iter_mut() {
-                let source = region.bounds();
-                let mask = self
-                    .progress
-                    .cursor
-                    .parallel_borrow_mask(self.public_header.role(), source.start, source.end)
-                    .ok_or(SendError::PhaseInvariant)?;
-                region.bind_mask(mask);
+            if start < parent.start || end > parent.end {
+                return None;
             }
             let origin = self
                 .region
@@ -281,13 +219,95 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
                         },
                     )
                 });
-            for region in regions.iter_mut() {
-                region.bind_reentry(origin);
+            let candidate = ((start, split, end), origin);
+            if self.parallel_region_covers_frontier(start..end, None) {
+                Some(candidate)
+            } else {
+                if repeated.is_none()
+                    && self
+                        .parallel_region_covers_frontier(start..end, origin.map(|(scope, _)| scope))
+                {
+                    repeated = Some(candidate);
+                }
+                None
             }
-            self.move_parked_branch_to_parallel_borrow(regions)?;
-            return Ok(());
+        });
+        let ((start, split, end), origin) =
+            current.or(repeated).ok_or(SendError::PhaseInvariant)?;
+
+        // Preserve the current forward group before choosing an alternative
+        // restart. Scope selection precedes width checks and borrow issuance.
+        let left = self.arm_lane(start..split);
+        let right = self.arm_lane(split..end);
+        if left.is_some() && left == right {
+            return Err(SendError::PhaseInvariant);
         }
-        Err(SendError::PhaseInvariant)
+        let mut count = 0;
+        for (start, end, lane) in [(start, split, left), (split, end, right)] {
+            if let Some(lane) = lane {
+                let slot = regions.get_mut(count).ok_or(SendError::PhaseInvariant)?;
+                *slot =
+                    OperationRegion::parallel(start, end, lane).ok_or(SendError::PhaseInvariant)?;
+                count += 1;
+            }
+        }
+        if count == 0 {
+            return Err(SendError::PhaseInvariant);
+        }
+        let mut index = 0;
+        while index < count {
+            let Some((start, split, end)) = self.associative_parallel_at(regions[index]) else {
+                index += 1;
+                continue;
+            };
+            match (self.arm_lane(start..split), self.arm_lane(split..end)) {
+                (Some(left), Some(right)) => {
+                    if count == regions.len() {
+                        return Err(SendError::PhaseInvariant);
+                    }
+                    regions.copy_within(index + 1..count, index + 2);
+                    regions[index] = OperationRegion::parallel(start, split, left)
+                        .ok_or(SendError::PhaseInvariant)?;
+                    regions[index + 1] = OperationRegion::parallel(split, end, right)
+                        .ok_or(SendError::PhaseInvariant)?;
+                    count += 1;
+                }
+                (Some(lane), None) => {
+                    regions[index] = OperationRegion::parallel(start, split, lane)
+                        .ok_or(SendError::PhaseInvariant)?;
+                }
+                (None, Some(lane)) => {
+                    regions[index] = OperationRegion::parallel(split, end, lane)
+                        .ok_or(SendError::PhaseInvariant)?;
+                }
+                (None, None) => return Err(SendError::PhaseInvariant),
+            }
+        }
+        if count != regions.len() {
+            return Err(SendError::PhaseInvariant);
+        }
+        for (index, region) in regions.iter().enumerate() {
+            if regions[..index]
+                .iter()
+                .any(|previous| previous.lane(0) == region.lane(0))
+            {
+                return Err(SendError::PhaseInvariant);
+            }
+        }
+        for region in regions.iter_mut() {
+            let source = region.bounds();
+            let mask = self
+                .progress
+                .cursor
+                .parallel_borrow_mask(self.public_header.role(), source.start, source.end)
+                .ok_or(SendError::PhaseInvariant)?;
+            region.bind_mask(mask);
+        }
+        for region in regions.iter_mut() {
+            region.bind_reentry(origin);
+        }
+        self.move_parked_branch_to_parallel_borrow(regions)?;
+        Ok(())
     }
 
     /// A parked preview belongs to the fragment containing its exact first

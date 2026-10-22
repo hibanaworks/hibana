@@ -2,6 +2,137 @@ use super::{EventCursor, EventCursorState};
 use crate::{g, global::compiled::images::RoleDescriptorRef};
 use core::mem::MaybeUninit;
 
+fn parallel_continuation_global() -> impl crate::runtime::program::Projectable {
+    g::par(
+        g::seq(
+            g::par(
+                g::send::<0, 1, g::Msg<0, ()>>(),
+                g::send::<0, 1, g::Msg<1, ()>>(),
+            )
+            .roll(),
+            g::send::<0, 1, g::Msg<2, ()>>(),
+        ),
+        g::send::<0, 1, g::Msg<3, ()>>(),
+    )
+}
+
+fn check_parallel_continuation_order(candidate: u8) {
+    let global = parallel_continuation_global();
+    let projected = crate::runtime::program::project::<1>(&global);
+    let program = projected.role_image_ref().program();
+    let descriptor = RoleDescriptorRef::from_resident(projected.role_image_ref());
+    let scope = descriptor
+        .local_event_rows()
+        .roll_scope_row(0)
+        .unwrap()
+        .scope();
+    assert_eq!(
+        program.roll_precedes(scope, usize::from(candidate)),
+        candidate == 2
+    );
+}
+
+fn check_parallel_continuation_lifetime() {
+    let global = parallel_continuation_global();
+    let projected = crate::runtime::program::project::<1>(&global);
+    let descriptor = RoleDescriptorRef::from_resident(projected.role_image_ref());
+    let mut state = MaybeUninit::<EventCursorState>::uninit();
+    let mut cursor = MaybeUninit::<EventCursor>::uninit();
+    let mut heads = [0u16; 3];
+    let mut labels = [0u16; 3];
+    let mut completed = [0u32; 3];
+    assert_eq!(descriptor.logical_lane_count(), heads.len());
+    assert_eq!(
+        projected
+            .role_image_ref()
+            .footprint()
+            .completion_bit_count()
+            .div_ceil(32),
+        completed.len()
+    );
+    // SAFETY: these disjoint arrays fit the checked image and outlive the
+    // initialized cursor, including its roll-completion and borrow epoch words.
+    unsafe {
+        EventCursor::init_from_compiled(
+            cursor.as_mut_ptr(),
+            state.as_mut_ptr(),
+            heads.as_mut_ptr(),
+            labels.as_mut_ptr(),
+            completed.as_mut_ptr(),
+            descriptor,
+        );
+    }
+    // SAFETY: the production initializer wrote both cursor objects above.
+    let cursor = unsafe { cursor.assume_init_mut() };
+    assert!(
+        cursor
+            .completed_parallel_reentry(0, 2, &mut |_, _| None)
+            .is_none()
+    );
+    cursor.mark_local_event_done(0);
+    assert!(
+        cursor
+            .completed_parallel_reentry(0, 2, &mut |_, _| None)
+            .is_none()
+    );
+    cursor.mark_local_event_done(1);
+    let (scope, epoch) = cursor
+        .completed_parallel_reentry(0, 2, &mut |_, _| None)
+        .unwrap();
+    assert!(cursor.borrowed_roll_reentry_is_current(scope, epoch, &mut |_| None));
+    cursor.clear_reentry_scope_events(scope);
+    assert!(!cursor.borrowed_roll_reentry_is_current(scope, epoch, &mut |_| None));
+    assert!(
+        cursor
+            .completed_parallel_reentry(0, 2, &mut |_, _| None)
+            .is_none()
+    );
+}
+
+#[cfg(all(test, hibana_repo_tests))]
+#[test]
+fn completed_parallel_reentry_omits_only_its_causal_continuation() {
+    check_parallel_continuation_lifetime();
+    for candidate in 0..4 {
+        check_parallel_continuation_order(candidate);
+    }
+}
+
+#[cfg(kani)]
+#[kani::proof]
+#[kani::unwind(16)]
+fn completed_parallel_reentry_requires_a_live_completed_origin() {
+    check_parallel_continuation_lifetime();
+}
+
+#[cfg(kani)]
+#[kani::proof]
+#[kani::unwind(16)]
+fn completed_parallel_reentry_retains_its_first_arm() {
+    check_parallel_continuation_order(0);
+}
+
+#[cfg(kani)]
+#[kani::proof]
+#[kani::unwind(16)]
+fn completed_parallel_reentry_retains_its_second_arm() {
+    check_parallel_continuation_order(1);
+}
+
+#[cfg(kani)]
+#[kani::proof]
+#[kani::unwind(16)]
+fn completed_parallel_reentry_allows_its_sequential_continuation() {
+    check_parallel_continuation_order(2);
+}
+
+#[cfg(kani)]
+#[kani::proof]
+#[kani::unwind(16)]
+fn completed_parallel_reentry_retains_independent_siblings() {
+    check_parallel_continuation_order(3);
+}
+
 fn check_parallel_offer_scope(candidate: u8) {
     let global = g::par(
         g::send::<0, 1, g::Msg<80, ()>>(),

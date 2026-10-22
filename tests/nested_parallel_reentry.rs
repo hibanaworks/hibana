@@ -11,6 +11,122 @@ type Ack = g::Msg<233, ()>;
 type Tick = g::Msg<234, ()>;
 
 #[test]
+fn a_rolled_parallel_borrow_can_repeat_before_its_sequential_tail() {
+    type RequestA = g::Msg<120, ()>;
+    type ReplyA = g::Msg<121, ()>;
+    type RequestB = g::Msg<122, ()>;
+    type ReplyB = g::Msg<123, ()>;
+    type Tail = g::Msg<124, ()>;
+    type TailReply = g::Msg<125, ()>;
+    type Outside = g::Msg<126, ()>;
+    type OutsideReply = g::Msg<127, ()>;
+    let global = g::par(
+        g::seq(
+            g::par(
+                g::seq(g::send::<0, 1, RequestA>(), g::send::<1, 0, ReplyA>()),
+                g::seq(g::send::<0, 1, RequestB>(), g::send::<1, 0, ReplyB>()).roll(),
+            )
+            .roll(),
+            g::seq(g::send::<0, 1, Tail>(), g::send::<1, 0, TailReply>()),
+        ),
+        g::seq(g::send::<0, 1, Outside>(), g::send::<1, 0, OutsideReply>()),
+    );
+    let p0 = project::<0>(&global);
+    let p1 = project::<1>(&global);
+    let network = common::TestTransport::new();
+    let [mut slab0, mut slab1] = [[0; 32 * 1024]; 2];
+    let mut storage0 = SessionKitStorage::uninit();
+    let mut storage1 = SessionKitStorage::uninit();
+    let rv0 = storage0
+        .init()
+        .rendezvous(&mut slab0, network.clone())
+        .unwrap();
+    let rv1 = storage1
+        .init()
+        .rendezvous(&mut slab1, network.clone())
+        .unwrap();
+    let sid = SessionId::new(9391);
+    let mut a = rv0.enter(sid, &p0).unwrap();
+    let mut b = rv1.enter(sid, &p1).unwrap();
+    tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .start_paused(true)
+        .build()
+        .unwrap()
+        .block_on(async {
+            tokio::time::timeout(core::time::Duration::from_secs(1), async {
+                let [mut flow_a, mut outside_a] = a.par()?;
+                let [mut flow_b, mut outside_b] = b.par()?;
+                tokio::try_join!(
+                    async {
+                        for visit in 0..2 {
+                            let [mut first, mut repeated] = flow_a.par().unwrap_or_else(|error| {
+                                panic!("sender par visit={visit}: {error:?}")
+                            });
+                            tokio::try_join!(
+                                async {
+                                    first.send::<RequestA>(&()).await?;
+                                    first.recv::<ReplyA>().await?;
+                                    Ok::<_, hibana::EndpointError>(())
+                                },
+                                async {
+                                    for _ in 0..2 {
+                                        repeated.send::<RequestB>(&()).await?;
+                                        repeated.recv::<ReplyB>().await?;
+                                    }
+                                    Ok::<_, hibana::EndpointError>(())
+                                },
+                            )?;
+                        }
+                        flow_a.send::<Tail>(&()).await?;
+                        flow_a.recv::<TailReply>().await?;
+                        Ok::<_, hibana::EndpointError>(())
+                    },
+                    async {
+                        for visit in 0..2 {
+                            let [mut first, mut repeated] = flow_b.par().unwrap_or_else(|error| {
+                                panic!("receiver par visit={visit}: {error:?}")
+                            });
+                            tokio::try_join!(
+                                async {
+                                    first.recv::<RequestA>().await?;
+                                    first.send::<ReplyA>(&()).await?;
+                                    Ok::<_, hibana::EndpointError>(())
+                                },
+                                async {
+                                    for _ in 0..2 {
+                                        repeated.recv::<RequestB>().await?;
+                                        repeated.send::<ReplyB>(&()).await?;
+                                    }
+                                    Ok::<_, hibana::EndpointError>(())
+                                },
+                            )?;
+                        }
+                        flow_b.recv::<Tail>().await?;
+                        flow_b.send::<TailReply>(&()).await?;
+                        Ok::<_, hibana::EndpointError>(())
+                    },
+                    async {
+                        outside_a.send::<Outside>(&()).await?;
+                        outside_a.recv::<OutsideReply>().await?;
+                        Ok::<_, hibana::EndpointError>(())
+                    },
+                    async {
+                        outside_b.recv::<Outside>().await?;
+                        outside_b.send::<OutsideReply>(&()).await?;
+                        Ok::<_, hibana::EndpointError>(())
+                    },
+                )?;
+                Ok::<_, hibana::EndpointError>(())
+            })
+            .await
+            .expect("nested repeated borrows must finish")
+            .unwrap();
+        });
+    assert!(network.queue_is_empty());
+}
+
+#[test]
 fn a_parallel_borrow_rejects_its_own_cross_lane_prefix() {
     type Note = g::Msg<246, ()>;
     let global = g::par(
@@ -1166,5 +1282,115 @@ fn nested_parallel_resolver_keeps_its_pending_delegation_choice() {
         8,
         "one decision per loan, including pending sends"
     );
+    assert!(network.queue_is_empty());
+}
+
+#[test]
+fn a_received_endpoint_keeps_two_parallel_visits_distinct() {
+    use hibana::Endpoint;
+    type Loan = g::Msg<118, Endpoint<'static, 3>>;
+    type Returned = g::Msg<119, Endpoint<'static, 3>>;
+    type RequestA = g::Msg<120, ()>;
+    type ReplyA = g::Msg<121, ()>;
+    type RequestB = g::Msg<122, ()>;
+    type ReplyB = g::Msg<123, ()>;
+    type Tail = g::Msg<124, ()>;
+    type TailReply = g::Msg<125, ()>;
+    type Outside = g::Msg<126, ()>;
+    type OutsideReply = g::Msg<127, ()>;
+    let global = g::seq(
+        g::send::<0, 1, Loan>(),
+        g::seq(
+            g::par(
+                g::seq(
+                    g::par(
+                        g::seq(g::send::<3, 2, RequestA>(), g::send::<2, 3, ReplyA>()),
+                        g::seq(g::send::<3, 2, RequestB>(), g::send::<2, 3, ReplyB>()).roll(),
+                    )
+                    .roll(),
+                    g::seq(g::send::<3, 2, Tail>(), g::send::<2, 3, TailReply>()),
+                ),
+                g::seq(g::send::<3, 2, Outside>(), g::send::<2, 3, OutsideReply>()),
+            ),
+            g::send::<1, 0, Returned>(),
+        ),
+    );
+    let p0 = project::<0>(&global);
+    let p1 = project::<1>(&global);
+    let p2 = project::<2>(&global);
+    let p3 = project::<3>(&global);
+    let network = common::TestTransport::new();
+    let [mut slab0, mut slab1, mut slab2] = [[0; 32 * 1024]; 3];
+    let mut s0 = SessionKitStorage::uninit();
+    let mut s1 = SessionKitStorage::uninit();
+    let mut s2 = SessionKitStorage::uninit();
+    let rv0 = s0.init().rendezvous(&mut slab0, network.clone()).unwrap();
+    let rv1 = s1.init().rendezvous(&mut slab1, network.clone()).unwrap();
+    let rv2 = s2.init().rendezvous(&mut slab2, network.clone()).unwrap();
+    let sid = SessionId::new(9392);
+    let mut owner = rv0.enter(sid, &p0).unwrap();
+    let mut worker = rv1.enter(sid, &p1).unwrap();
+    let mut service = rv2.enter(sid, &p2).unwrap();
+    let db = rv0.enter(sid, &p3).unwrap();
+    tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .start_paused(true)
+        .build()
+        .unwrap()
+        .block_on(async {
+            tokio::time::timeout(core::time::Duration::from_secs(1), async {
+                owner.send::<Loan>(db).await?;
+                let mut db = worker.recv::<Loan>().await?;
+                {
+                    let [mut flow, mut outside] = db.par()?;
+                    let [mut peer_flow, mut peer_outside] = service.par()?;
+                    // The second visit completes its other arm first. Keeping
+                    // the borrows distinguishes this cut from four repetitions
+                    // of that arm in the first visit.
+                    for order in [[0, 1, 1], [1, 1, 0]] {
+                        let [mut first, mut repeated] = flow.par()?;
+                        let [mut peer_first, mut peer_repeated] = peer_flow.par()?;
+                        for part in order {
+                            match part {
+                                0 => {
+                                    tokio::try_join!(
+                                        first.send::<RequestA>(&()),
+                                        peer_first.recv::<RequestA>()
+                                    )?;
+                                    tokio::try_join!(
+                                        peer_first.send::<ReplyA>(&()),
+                                        first.recv::<ReplyA>()
+                                    )?;
+                                }
+                                1 => {
+                                    tokio::try_join!(
+                                        repeated.send::<RequestB>(&()),
+                                        peer_repeated.recv::<RequestB>()
+                                    )?;
+                                    tokio::try_join!(
+                                        peer_repeated.send::<ReplyB>(&()),
+                                        repeated.recv::<ReplyB>()
+                                    )?;
+                                }
+                                _ => unreachable!(),
+                            }
+                        }
+                    }
+                    tokio::try_join!(flow.send::<Tail>(&()), peer_flow.recv::<Tail>())?;
+                    tokio::try_join!(peer_flow.send::<TailReply>(&()), flow.recv::<TailReply>())?;
+                    tokio::try_join!(outside.send::<Outside>(&()), peer_outside.recv::<Outside>())?;
+                    tokio::try_join!(
+                        peer_outside.send::<OutsideReply>(&()),
+                        outside.recv::<OutsideReply>()
+                    )?;
+                }
+                worker.send::<Returned>(db).await?;
+                let _returned = owner.recv::<Returned>().await?;
+                Ok::<_, hibana::EndpointError>(())
+            })
+            .await
+            .expect("the scoped source visit must finish")
+            .unwrap();
+        });
     assert!(network.queue_is_empty());
 }
