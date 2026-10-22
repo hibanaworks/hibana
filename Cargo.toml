@@ -197,6 +197,10 @@ name = "nested_roll_admission"
 path = "tests/nested_roll_admission.rs"
 
 [[test]]
+name = "resumed_roll_admission"
+path = "tests/resumed_roll_admission.rs"
+
+[[test]]
 name = "send_route_authority"
 path = "tests/send_route_authority.rs"
 

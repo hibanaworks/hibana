@@ -234,8 +234,8 @@ def decodeScoped (bytes : ByteArray) : Except String (List ScopedQuery) := do
 end NestedRollAdmission
 
 def main (args : List String) : IO UInt32 := do
-  let [output, scopedOutput] := args
-    | throw (IO.userError "usage: nested-roll-admission OUTPUT.bin SCOPED.bin")
+  let [output, scopedOutput, resumedOutput] := args
+    | throw (IO.userError "usage: nested-roll-admission OUTPUT.bin SCOPED.bin RESUMED.bin")
   let (expected, witnesses, plans) := NestedRollAdmission.reference 7
   let encoded := NestedRollAdmission.encode expected
   let queries ←
@@ -274,4 +274,5 @@ def main (args : List String) : IO UInt32 := do
   IO.FS.writeBinFile output encoded
   IO.FS.writeBinFile scopedOutput scopedEncoded
   IO.println s!"Nested-roll source cases: plans={plans} queries={expected.length} scoped={witnesses.length} roundtrip=pass controls=pass"
+  ResumedRollAdmission.write resumedOutput
   pure 0

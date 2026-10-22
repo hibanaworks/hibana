@@ -152,11 +152,20 @@ borrowed, as checked separately by compile-fail tests. A flat-call check rejects
 any runtime admission outside the source language. It does not require a call at
 one concrete cut to admit alternatives from a different grouping of the same
 message prefix. Lean examples demonstrate why those cuts differ.
-The check regenerates both complete query inventories and tests missing,
+The check regenerates its complete query inventories and tests missing,
 duplicated, incorrect and malformed inputs. It covers complete exchanges and
 ticks, rather than partially polled operations. Run
 `bash .github/scripts/check_nested_roll_admission.sh` under the resource guard.
 The command fails if either the runtime or the source comparison fails.
+
+The same command checks `(Prefix; Exchange+; Tail)+`, with ordinary messages
+and with an endpoint loan, resource request, response and return. Its source
+unfoldings include inner repetitions before, after and alongside the tail.
+For every reachable prefix of at most seven complete operations, public
+endpoints try all three next sends. Each attempt starts a fresh run. This
+checks late inner resumption and fresh outer entry, including rejected sends.
+These cases complete each exchange before the next probe; they do not enumerate
+partially polled sends or every nested parallel borrow.
 
 Repeat-entry checks compare the chosen scope with the operation's projected
 predecessors. They cover a child continuing after its tail, a prefix on another

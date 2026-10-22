@@ -9,25 +9,31 @@ git diff HEAD --binary > "${OUTPUT}/source.patch"
 rustc +"${TOOLCHAIN:-stable}" --version > "${OUTPUT}/compiler.txt"
 source_hashes() {
   git ls-files --cached --others --exclude-standard -z -- src Cargo.toml Cargo.lock \
-    tests/nested_roll_admission.rs tests/nested_parallel_reentry.rs \
-    tests/data/nested_roll_admission.bin tests/data/nested_roll_scopes.bin tests/common \
-    .github/ci-tests/nested_roll_admission.lean .github/scripts/check_nested_roll_admission.sh \
+    tests/nested_roll_admission.rs tests/nested_parallel_reentry.rs tests/resumed_roll_admission.rs \
+    tests/data/nested_roll_admission.bin tests/data/nested_roll_scopes.bin \
+    tests/data/resumed_roll_admission.bin tests/common \
+    .github/ci-tests/nested_roll_admission.lean .github/ci-tests/resumed_roll_admission.lean \
+    .github/scripts/check_nested_roll_admission.sh \
     .github/ci-tests/endpoint_conformance.lean proofs/lean |
     while IFS= read -r -d '' file; do shasum -a 256 -- "$file"; done
 }
 source_hashes > "${OUTPUT}/source.sha256"
-cat .github/ci-tests/endpoint_conformance.lean .github/ci-tests/nested_roll_admission.lean \
+cat .github/ci-tests/endpoint_conformance.lean .github/ci-tests/resumed_roll_admission.lean \
+  .github/ci-tests/nested_roll_admission.lean \
   > target/lean-proof/NestedRollAdmissionGenerated.lean
 bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" build-serial \
   "${ROOT_DIR}/proofs/lean" --native Hibana.SourceOccurrenceTrace
 (cd proofs/lean && lake build nestedRollAdmission)
 timeout --kill-after=10s 300s proofs/lean/.lake/build/bin/nested-roll-admission \
-  "${OUTPUT}/reference.bin" "${OUTPUT}/scoped.bin" | tee "${OUTPUT}/source-model.log"
+    "${OUTPUT}/reference.bin" "${OUTPUT}/scoped.bin" "${OUTPUT}/resumed.bin" \
+    | tee "${OUTPUT}/source-model.log"
 cmp "${OUTPUT}/reference.bin" tests/data/nested_roll_admission.bin
 cmp "${OUTPUT}/scoped.bin" tests/data/nested_roll_scopes.bin
+cmp "${OUTPUT}/resumed.bin" tests/data/resumed_roll_admission.bin
 runtime_status=0
 if timeout --kill-after=10s 180s cargo +"${TOOLCHAIN:-stable}" test --locked \
-    --test nested_parallel_reentry --test nested_roll_admission -- --nocapture > "${OUTPUT}/runtime.log" 2>&1; then
+    --test nested_parallel_reentry --test nested_roll_admission --test resumed_roll_admission \
+    -- --nocapture > "${OUTPUT}/runtime.log" 2>&1; then
   runtime_status=0
 else
   runtime_status=$?
