@@ -7,6 +7,9 @@ use std::{
     path::PathBuf,
 };
 
+#[path = "protocol_shape_delegated.rs"]
+mod delegated;
+
 #[derive(Clone, Eq, PartialEq, Ord, PartialOrd)]
 struct Trace {
     messages: Vec<(u8, bool)>,
@@ -108,25 +111,6 @@ impl Protocol {
             Self::Roll(a) => a.swap_participants(),
         }
     }
-    fn first(&self, choice: u32, labels: &mut BTreeSet<u8>) {
-        match self {
-            Self::Message { label, .. } => {
-                labels.insert(*label);
-            }
-            Self::Seq(a, _) | Self::Roll(a) => a.first(choice, labels),
-            Self::Resolved(a, b, id) => {
-                if choice & (1 << id) == 0 {
-                    a.first(choice, labels)
-                } else {
-                    b.first(choice, labels)
-                }
-            }
-            Self::Par(a, b) | Self::Route(a, b) => {
-                a.first(choice, labels);
-                b.first(choice, labels);
-            }
-        }
-    }
     fn messages<'a>(&'a self, out: &mut Vec<&'a Self>) {
         match self {
             Self::Message { .. } => out.push(self),
@@ -135,6 +119,22 @@ impl Protocol {
                 b.messages(out);
             }
             Self::Roll(a) => a.messages(out),
+        }
+    }
+    fn repetition_count(&self) -> usize {
+        match self {
+            Self::Message { .. } => 0,
+            Self::Seq(a, b) | Self::Par(a, b) | Self::Route(a, b) | Self::Resolved(a, b, _) => {
+                a.repetition_count() + b.repetition_count()
+            }
+            Self::Roll(body) => 1 + body.repetition_count(),
+        }
+    }
+    fn prefix_visits(&self) -> usize {
+        match self {
+            Self::Roll(body) if body.repetition_count() == 0 => 2,
+            _ if self.repetition_count() == 0 => 1,
+            _ => 0,
         }
     }
     fn parallel_groups(&self) -> Vec<Vec<u8>> {
@@ -421,8 +421,145 @@ fn shapes(budget: usize) -> BTreeSet<Shape> {
     }
     levels.into_iter().flatten().collect()
 }
+
+// One complete resource loan is the leaf. Every binary constructor can have
+// independently generated children; a parallel child uses ordinary exchanges
+// so the same resource is never lent along two independent paths.
+#[derive(Debug)]
+enum BinaryShape {
+    Leaf,
+    Seq(Box<Self>, Box<Self>),
+    Par(Box<Self>, Box<Self>, bool),
+    Route(Box<Self>, Box<Self>),
+    Resolved(Box<Self>, Box<Self>),
+    Roll(Box<Self>),
+    Receive(Box<Self>),
+}
+
+struct BinaryCounts {
+    resource: Vec<usize>,
+    ordinary: Vec<usize>,
+}
+impl BinaryCounts {
+    fn for_kind(&self, owned: bool) -> &[usize] {
+        if owned {
+            &self.resource
+        } else {
+            &self.ordinary
+        }
+    }
+}
+fn binary_counts(budget: usize) -> BinaryCounts {
+    let mut counts = BinaryCounts {
+        resource: vec![1],
+        ordinary: vec![1],
+    };
+    for cost in 1..=budget {
+        let mut resource = 2 * counts.resource[cost - 1];
+        let mut ordinary = 2 * counts.ordinary[cost - 1];
+        for left in 0..cost {
+            let right = cost - 1 - left;
+            resource += 3 * counts.resource[left] * counts.resource[right]
+                + counts.resource[left] * counts.ordinary[right]
+                + counts.ordinary[left] * counts.resource[right];
+            ordinary += 4 * counts.ordinary[left] * counts.ordinary[right];
+        }
+        counts.resource.push(resource);
+        counts.ordinary.push(ordinary);
+    }
+    counts
+}
+
+impl BinaryShape {
+    fn at(cost: usize, mut index: usize, counts: &BinaryCounts, owned: bool) -> Self {
+        assert!(index < counts.for_kind(owned)[cost]);
+        if cost == 0 {
+            return Self::Leaf;
+        }
+        let unary = counts.for_kind(owned)[cost - 1];
+        for operator in 0..2 {
+            if index < unary {
+                let child = Box::new(Self::at(cost - 1, index, counts, owned));
+                return match operator {
+                    0 => Self::Roll(child),
+                    1 => Self::Receive(child),
+                    _ => unreachable!(),
+                };
+            }
+            index -= unary;
+        }
+        for left_cost in 0..cost {
+            let right_cost = cost - 1 - left_cost;
+            for operator in 0..5 {
+                if !owned && operator == 2 {
+                    continue;
+                }
+                let left_owned = owned && operator != 2;
+                let right_owned = owned && operator != 1;
+                let rights = counts.for_kind(right_owned)[right_cost];
+                let pairs = counts.for_kind(left_owned)[left_cost] * rights;
+                if index < pairs {
+                    let left = Box::new(Self::at(left_cost, index / rights, counts, left_owned));
+                    let right = Box::new(Self::at(right_cost, index % rights, counts, right_owned));
+                    return match operator {
+                        0 => Self::Seq(left, right),
+                        1 => Self::Par(left, right, false),
+                        2 => Self::Par(left, right, true),
+                        3 => Self::Route(left, right),
+                        4 => Self::Resolved(left, right),
+                        _ => unreachable!(),
+                    };
+                }
+                index -= pairs;
+            }
+        }
+        unreachable!("binary shape index");
+    }
+
+    fn build(&self, next: &mut u8, resolver: &mut u16, service: u8, owned: bool) -> Protocol {
+        match self {
+            Self::Leaf if owned => loan(next, service),
+            Self::Leaf => Shape::Loan.ordinary(next, resolver, service, OrdinaryLeaf::Exchange),
+            Self::Seq(a, b) => Protocol::Seq(
+                Box::new(a.build(next, resolver, service, owned)),
+                Box::new(b.build(next, resolver, service, owned)),
+            ),
+            Self::Par(a, b, reversed) => Protocol::Par(
+                Box::new(a.build(next, resolver, service, owned && !reversed)),
+                Box::new(b.build(next, resolver, service, owned && *reversed)),
+            ),
+            Self::Route(a, b) => Protocol::Route(
+                Box::new(a.build(next, resolver, service, owned)),
+                Box::new(b.build(next, resolver, service, owned)),
+            ),
+            Self::Resolved(a, b) => {
+                let id = *resolver;
+                *resolver += 1;
+                Protocol::Resolved(
+                    Box::new(a.build(next, resolver, service, owned)),
+                    Box::new(b.build(next, resolver, service, owned)),
+                    id,
+                )
+            }
+            Self::Roll(body) => {
+                Protocol::Roll(Box::new(body.build(next, resolver, service, owned)))
+            }
+            Self::Receive(body) => Protocol::Seq(
+                Box::new(message(next, 0, 1, false)),
+                Box::new(Protocol::Seq(
+                    Box::new(message(next, 1, 0, false)),
+                    Box::new(body.build(next, resolver, service, owned)),
+                )),
+            ),
+        }
+    }
+}
+
 #[derive(Debug)]
 enum CaseShape {
+    Delegated(delegated::Body),
+    Binary(BinaryShape),
+    OrdinaryBinary(BinaryShape),
     Owned(Shape),
     Incoming(Shape),
     Mixed(Shape, Shape, bool, OrdinaryLeaf),
@@ -439,6 +576,9 @@ enum CaseShape {
 impl CaseShape {
     fn build(&self, next: &mut u8, resolvers: &mut u16, service: u8) -> Protocol {
         match self {
+            Self::Delegated(body) => body.global(next, resolvers),
+            Self::Binary(shape) => shape.build(next, resolvers, service, true),
+            Self::OrdinaryBinary(shape) => shape.build(next, resolvers, service, false),
             Self::NestedParallel {
                 context,
                 site,
@@ -568,8 +708,10 @@ fn catalog(budget: usize) -> Vec<CaseShape> {
 }
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = env::args().skip(1).collect::<Vec<_>>();
-    if args.len() != 3 && args.len() != 5 {
-        return Err("usage: protocol-shapes REPOSITORY OUTPUT DEPTH [SHARD SHARDS]".into());
+    if args.len() != 3 && args.len() != 5 && args.len() != 6 {
+        return Err(
+            "usage: protocol-shapes REPOSITORY OUTPUT DEPTH [SHARD SHARDS [DIAGNOSTICS]]".into(),
+        );
     }
     let root = PathBuf::from(&args[0]).canonicalize()?;
     let output = PathBuf::from(&args[1]);
@@ -577,7 +719,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if depth > 5 {
         return Err("depth exceeds message-label domain".into());
     }
-    let (shard, shards) = if args.len() == 5 {
+    let (shard, shards) = if args.len() >= 5 {
         (args[3].parse::<usize>()?, args[4].parse::<usize>()?)
     } else {
         (0, 1)
@@ -610,15 +752,62 @@ long_running_const_eval = "forbid"
         ),
     )?;
     let all = catalog(depth);
+    let counts = binary_counts(depth);
+    let binary_total = counts.resource.iter().sum::<usize>();
+    let resource_total = all.len() + binary_total;
+    let ordinary_total = counts.ordinary.iter().sum::<usize>();
+    let delegated_counts = delegated::Counts::new(depth);
+    let total = resource_total + ordinary_total + delegated_counts.total();
+    let total_cases = 4 * resource_total + 2 * (ordinary_total + delegated_counts.total());
     let mut cases = Vec::new();
+    let mut delegated_cases = BTreeSet::new();
+    let mut expected_rejections = BTreeMap::new();
+    let mut negative_sources = BTreeMap::new();
     let mut max_label = 0;
     let mut max_resolvers = 0;
-    for (index, word) in all.iter().enumerate() {
-        for (variant, (service, swap)) in [(2, false), (0, false), (2, true), (0, true)]
-            .into_iter()
-            .enumerate()
-        {
-            let case = 4 * index + variant;
+    for index in 0..total {
+        let (base, variants): (usize, &[(u8, bool)]) = if index < resource_total {
+            (4 * index, &[(2, false), (0, false), (2, true), (0, true)])
+        } else {
+            (
+                4 * resource_total + 2 * (index - resource_total),
+                &[(2, false), (2, true)],
+            )
+        };
+        if !(0..variants.len()).any(|variant| (base + variant) % shards == shard) {
+            continue;
+        }
+        let binary;
+        let word = if index >= resource_total + ordinary_total {
+            binary = CaseShape::Delegated(
+                delegated_counts.shape(index - resource_total - ordinary_total),
+            );
+            &binary
+        } else if let Some(word) = all.get(index) {
+            word
+        } else {
+            let owned = index < resource_total;
+            let mut offset = if owned {
+                index - all.len()
+            } else {
+                index - resource_total
+            };
+            let kind_counts = counts.for_kind(owned);
+            let mut cost = 0;
+            while offset >= kind_counts[cost] {
+                offset -= kind_counts[cost];
+                cost += 1;
+            }
+            let shape = BinaryShape::at(cost, offset, &counts, owned);
+            binary = if owned {
+                CaseShape::Binary(shape)
+            } else {
+                CaseShape::OrdinaryBinary(shape)
+            };
+            &binary
+        };
+        for (variant, &(service, swap)) in variants.iter().enumerate() {
+            let case = base + variant;
             if case % shards != shard {
                 continue;
             }
@@ -628,14 +817,153 @@ long_running_const_eval = "forbid"
             if swap {
                 global.swap_participants();
             }
+            if matches!(word, CaseShape::Delegated(_)) {
+                delegated_cases.insert(case);
+                let mut bad_label = count;
+                negative_sources.insert(format!("parallel_{case}"),(
+                    Protocol::Par(Box::new(global.clone()),Box::new(message(&mut bad_label,3,2,false))),
+                    "parallel endpoint delegation conflicts with another use; role=3; help: keep the transfer and dependent resource operations in sequence"
+                ));
+                if let CaseShape::Delegated(delegated::Body::Roll(body)) = word
+                    && matches!(**body, delegated::Body::Receive(_))
+                {
+                    expected_rejections.insert(case, "ReentryResourceKnowledge");
+                    negative_sources.insert(
+                        format!("reentry_{case}"),
+                        (
+                            global.clone(),
+                            "rolled reentry requires permission from the resource's entry owner; help: let the resource's entry owner authorize each visit inside the roll",
+                        ),
+                    );
+                }
+            }
             max_label = max_label.max(count);
             max_resolvers = max_resolvers.max(resolvers);
-            cases.push((case, word, service, u8::from(swap), global, resolvers));
+            cases.push((
+                case,
+                format!("{word:?}"),
+                service,
+                u8::from(swap),
+                global,
+                resolvers,
+            ));
         }
     }
     if cases.is_empty() {
         return Err("empty shard".into());
     }
+    let negative_root = output.join("rejected");
+    if negative_root.exists() {
+        fs::remove_dir_all(&negative_root)?;
+    }
+    fs::create_dir_all(negative_root.join("src/bin"))?;
+    fs::write(
+        negative_root.join("Cargo.toml"),
+        format!(
+            "[package]\nname=\"hibana-rejected-shapes-{depth}-{shard}\"\nversion=\"0.0.0\"\nedition=\"2024\"\npublish=false\n[workspace]\n[dependencies]\nhibana={{path={root:?}}}\n[lints.rust]\nlong_running_const_eval=\"forbid\"\n"
+        ),
+    )?;
+    let mut negative_inventory = String::new();
+    for (name, (global, reason)) in &negative_sources {
+        let mut source = String::from(
+            "#![forbid(long_running_const_eval)]\nuse hibana::{Endpoint,g,runtime::program::project};\nfn main(){\n",
+        );
+        let mut messages = Vec::new();
+        global.messages(&mut messages);
+        for message in messages {
+            let Protocol::Message { label, owned, .. } = message else {
+                unreachable!()
+            };
+            writeln!(
+                source,
+                "type M{label}<'r>=g::Msg<{label},{}>;",
+                if *owned { "Endpoint<'r,3>" } else { "()" }
+            )?;
+        }
+        writeln!(
+            source,
+            "let global={};let _=project::<0>(&global);}}",
+            global.rust()
+        )?;
+        fs::write(
+            negative_root.join("src/bin").join(format!("{name}.rs")),
+            source,
+        )?;
+        writeln!(negative_inventory, "{name}\t{reason}")?;
+    }
+    fs::write(negative_root.join("inventory.tsv"), negative_inventory)?;
+    let mut diagnostic_source =
+        String::from("#![forbid(long_running_const_eval)]\nuse hibana::g;\n");
+    if cases.iter().any(|(_, _, _, _, global, _)| {
+        let mut messages = Vec::new();
+        global.messages(&mut messages);
+        messages
+            .iter()
+            .any(|m| matches!(m, Protocol::Message { owned: true, .. }))
+    }) {
+        diagnostic_source.push_str("use hibana::Endpoint;\n");
+    }
+    diagnostic_source.push_str("fn main(){\n");
+    for (case, ..) in &cases {
+        writeln!(diagnostic_source, "shape_{case}();")?;
+        // Each case has its own type aliases, just as in the endpoint driver.
+    }
+    diagnostic_source.push_str("}\n");
+    for (case, _, _, _, global, _) in &cases {
+        writeln!(diagnostic_source, "fn shape_{case}(){{")?;
+        let mut messages = Vec::new();
+        global.messages(&mut messages);
+        for m in messages {
+            let Protocol::Message { label, owned, .. } = m else {
+                unreachable!()
+            };
+            let payload = if *owned { "Endpoint<'r,3>" } else { "()" };
+            writeln!(
+                diagnostic_source,
+                "type M{label}<'r>=g::Msg<{label},{payload}>;"
+            )?;
+        }
+        writeln!(
+            diagnostic_source,
+            "let global={};match g::diagnose(&global){{None=>println!(\"{case}\\taccepted\"),Some(reason)=>println!(\"{case}\\trejected:{{reason:?}}\")}}\n}}",
+            global.rust()
+        )?;
+    }
+    fs::create_dir_all(output.join("src/bin"))?;
+    fs::write(output.join("src/bin/diagnose.rs"), diagnostic_source)?;
+    let classifications = if let Some(path) = args.get(5) {
+        let mut found = BTreeMap::new();
+        for line in fs::read_to_string(path)?.lines() {
+            let (case, verdict) = line.split_once('\t').ok_or("invalid diagnostic record")?;
+            let case = case.parse::<usize>()?;
+            if verdict != "accepted"
+                && !verdict
+                    .strip_prefix("rejected:")
+                    .is_some_and(|reason| !reason.is_empty())
+            {
+                return Err(format!("invalid diagnostic verdict for shape {case}").into());
+            }
+            if let Some(expected) = expected_rejections.get(&case)
+                && !verdict.starts_with(&format!(
+                    "rejected:ProjectionDiagnostic {{ problem: {expected},"
+                ))
+            {
+                return Err(format!(
+                    "known illegal shape {case} did not report {expected}: {verdict}"
+                )
+                .into());
+            }
+            if found.insert(case, verdict == "accepted").is_some() {
+                return Err(format!("duplicate diagnostic for shape {case}").into());
+            }
+        }
+        if found.keys().copied().collect::<BTreeSet<_>>() != cases.iter().map(|c| c.0).collect() {
+            return Err("missing or unknown shape diagnostic".into());
+        }
+        Some(found)
+    } else {
+        None
+    };
     let mut source = format!(
         "#![cfg(test)]\n#![forbid(long_running_const_eval)]\n#[path={:?}]\nmod in_memory;\n",
         root.join("examples/support/in_memory.rs")
@@ -652,9 +980,11 @@ long_running_const_eval = "forbid"
         .max()
         .unwrap()
         .max(2);
-    let splits = (2..=max_width).map(|width| format!(
-        "{width} => endpoint.par::<{width}>().unwrap().into_iter().map(Fragment::Parallel).collect(),\n"
-    )).collect::<String>();
+    let splits = (2..=max_width)
+        .map(|width| {
+            format!("{width} => endpoint.par::<{width}>().unwrap().into_iter().collect(),\n")
+        })
+        .collect::<String>();
     let joins = (2..=max_width).map(|width| {
         let declarations = (0..width).map(|i| format!("let f{i} = work.next().unwrap();")).collect::<String>();
         let arguments = (0..width).map(|i| format!("f{i}")).collect::<Vec<_>>().join(",");
@@ -679,8 +1009,29 @@ long_running_const_eval = "forbid"
             .replace("2 => join_widths!(),", &joins),
     );
     let (mut probes, mut trace_count, mut operations, mut concurrent_traces) = (0, 0, 0, 0);
+    let (mut continuation_shapes, mut trace_prefix_probes) = (0, 0);
+    let mut delegated_concurrent_runs = 0;
     let mut inputs = Vec::new();
+    let mut catalog_inputs = Vec::new();
+    let mut rejected = 0;
     for (case, word, service, owner, global, resolvers) in &cases {
+        let mut nodes = Vec::new();
+        global.json_nodes(&mut nodes);
+        let input = format!(
+            r#"{{"name":{case},"nodes":[{}],"resolvers":{resolvers}}}"#,
+            nodes.join(",")
+        );
+        catalog_inputs.push(input.clone());
+        if expected_rejections.contains_key(case) {
+            continue;
+        }
+        if classifications
+            .as_ref()
+            .is_some_and(|verdicts| !verdicts[case])
+        {
+            rejected += 1;
+            continue;
+        }
         let mut messages = Vec::new();
         global.messages(&mut messages);
         let traces = global.traces().into_iter().collect::<BTreeSet<_>>();
@@ -688,12 +1039,21 @@ long_running_const_eval = "forbid"
         let mut decisions = BTreeMap::new();
         global.resolver_choices(&mut Vec::new(), &mut decisions);
         let patterns = (0..(1u32 << resolvers)).collect::<Vec<_>>();
-        let mut nodes = Vec::new();
-        global.json_nodes(&mut nodes);
-        inputs.push(format!(
-            r#"{{"name":{case},"nodes":[{}],"resolvers":{resolvers}}}"#,
-            nodes.join(",")
-        ));
+        if global.prefix_visits() != 0 {
+            continuation_shapes += 1;
+            let mut prefixes = BTreeSet::new();
+            for trace in &traces {
+                let mut prefix = Vec::new();
+                for &(label, _) in &trace.messages {
+                    for receive in [false, true] {
+                        prefix.push(2 * u16::from(label) + u16::from(receive));
+                        prefixes.insert(prefix.clone());
+                    }
+                }
+            }
+            trace_prefix_probes += prefixes.len() * patterns.len() * messages.len() * 2;
+        }
+        inputs.push(input);
         writeln!(
             source,
             "#[tokio::test(flavor=\"current_thread\",start_paused=true)]\nasync fn shape_{case}() {{"
@@ -707,13 +1067,33 @@ long_running_const_eval = "forbid"
         }
         writeln!(
             source,
-            "let global={};\nlet programs=Programs{{p0:project::<0>(&global),p1:project::<1>(&global),p2:project::<2>(&global),p3:project::<3>(&global),third_actor:{},owner:{owner}}};",
+            "let global={};\nlet programs=Programs{{p0:project::<0>(&global),p1:project::<1>(&global),p2:project::<2>(&global),p3:{},third_actor:{},owner:{owner},resolver_roles:&{:?}}};",
             global.rust(),
-            *service == 2
+            if messages
+                .iter()
+                .any(|m| matches!(m, Protocol::Message { owned: true, .. }))
+            {
+                "Some(project::<3>(&global))"
+            } else {
+                "None"
+            },
+            *service == 2,
+            vec![
+                if delegated_cases.contains(case) {
+                    3
+                } else {
+                    *owner
+                };
+                usize::from(*resolvers)
+            ]
         )?;
+        if delegated_cases.contains(case) {
+            source.push_str(&delegated::concurrent_rust(global, *owner));
+            delegated_concurrent_runs += 1usize << delegated::resolver_bits(global).0;
+        }
         writeln!(
             source,
-            "qualify(programs,Scenario{{resolver_count:{resolvers},id:{case},name:\"{word:?}/service={service}/owner={owner}\",messages:&["
+            "qualify(programs,Scenario{{resolver_count:{resolvers},id:{case},name:\"{word}/service={service}/owner={owner}\",messages:&["
         )?;
         for m in &messages {
             let Protocol::Message {
@@ -731,15 +1111,9 @@ long_running_const_eval = "forbid"
                 decisions[label]
             )?;
         }
-        source.push_str("],initial:&[\n");
+        source.push_str("],choices:&[\n");
         for choice in &patterns {
-            let mut first = BTreeSet::new();
-            global.first(*choice, &mut first);
-            writeln!(
-                source,
-                "({choice},&{:?}),",
-                first.into_iter().collect::<Vec<_>>()
-            )?;
+            writeln!(source, "{choice},")?;
         }
         let mut trace_data = String::new();
         for trace in &traces {
@@ -752,13 +1126,14 @@ long_running_const_eval = "forbid"
         )?;
         writeln!(
             source,
-            "],traces:include_str!(\"../traces/{case}.txt\"),expected_traces:{},parallel_groups:&[{}]}}).await;\n}}",
+            "],traces:include_str!(\"../traces/{case}.txt\"),expected_traces:{},parallel_groups:&[{}],prefix_visits:{}}}).await;\n}}",
             traces.len(),
             groups
                 .iter()
                 .map(|labels| format!("&{labels:?}"))
                 .collect::<Vec<_>>()
-                .join(",")
+                .join(","),
+            global.prefix_visits()
         )?;
         probes += messages.len() * 2 * patterns.len();
         trace_count += traces.len();
@@ -771,10 +1146,19 @@ long_running_const_eval = "forbid"
         output.join("inputs.json"),
         format!("[{}]\n", inputs.join(",")),
     )?;
+    fs::write(
+        output.join("catalog.json"),
+        format!("[{}]\n", catalog_inputs.join(",")),
+    )?;
+    fs::write(
+        output.join("unclassified-rejections.txt"),
+        format!("{rejected}\n"),
+    )?;
     println!(
-        "generated shapes={} initial_probes={probes} complete_traces={trace_count} trace_operations={operations} concurrent_traces={concurrent_traces} depth={depth} shard={shard}/{shards} total_shapes={}",
+        "generated shapes={} initial_probes={probes} continuation_shapes={continuation_shapes} trace_prefix_probes={trace_prefix_probes} finite_short_prefix_depth=4 complete_traces={trace_count} trace_operations={operations} concurrent_traces={concurrent_traces} delegated_concurrent_runs={delegated_concurrent_runs} depth={depth} shard={shard}/{shards} catalog_shapes={} unclassified_rejections={rejected} total_shapes={}",
+        inputs.len(),
         cases.len(),
-        4 * all.len()
+        total_cases
     );
     Ok(())
 }

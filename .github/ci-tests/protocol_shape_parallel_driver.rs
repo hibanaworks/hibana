@@ -1,9 +1,3 @@
-// Test operands are real whole endpoints or their public parallel borrows.
-enum Fragment<'p, 'r, const ROLE: u8> {
-    Whole(&'p mut Endpoint<'r, ROLE>),
-    Parallel(hibana::ParallelEndpoint<'p, 'r, ROLE>),
-}
-
 #[derive(Default)]
 struct PendingCalls {
     calls: std::cell::RefCell<std::collections::BTreeSet<(u8, usize)>>,
@@ -39,10 +33,10 @@ async fn record_pending<F: core::future::Future>(
 fn fragments<'p, 'r, const ROLE: u8>(
     endpoint: &'p mut Endpoint<'r, ROLE>,
     count: usize,
-) -> Vec<Fragment<'p, 'r, ROLE>> {
+) -> Vec<hibana::ParallelEndpoint<'p, 'r, ROLE>> {
     match count {
         0 => Vec::new(),
-        1 => vec![Fragment::Whole(endpoint)],
+        1 => endpoint.par::<1>().unwrap().into_iter().collect(),
         2 => split_widths!(),
         _ => panic!("parallel width outside source inventory"),
     }
@@ -60,7 +54,7 @@ fn participant(command: &Command, owner: u8) -> u8 {
 }
 
 async fn drive_participant<'p, 'r, const ROLE: u8>(
-    mut endpoint: Option<Fragment<'p, 'r, ROLE>>,
+    mut endpoint: Option<hibana::ParallelEndpoint<'p, 'r, ROLE>>,
     mut resource: Option<Endpoint<'r, 3>>,
     commands: &[Command],
     decision_input: (&Decisions, &[u16], u8),
@@ -77,22 +71,27 @@ async fn drive_participant<'p, 'r, const ROLE: u8>(
     {
         tokio::task::yield_now().await;
         if ROLE == decision_input.2 {
-            decision_input.0.prepare(decision_input.1, command.message);
+            decision_input
+                .0
+                .prepare(decision_input.1, command.message, false);
         }
         macro_rules! send {
             ($message:ty, $payload:expr) => {
-                match endpoint.as_mut().expect("missing participant fragment") {
-                    Fragment::Whole(endpoint) => endpoint.send::<$message>($payload).await,
-                    Fragment::Parallel(endpoint) => endpoint.send::<$message>($payload).await,
-                }
+                endpoint
+                    .as_mut()
+                    .expect("missing participant fragment")
+                    .send::<$message>($payload)
+                    .await
             };
         }
         macro_rules! recv {
             ($message:ty) => {
-                match endpoint.as_mut().expect("missing participant fragment") {
-                    Fragment::Whole(endpoint) => receive!(&mut **endpoint, $message, command).await,
-                    Fragment::Parallel(endpoint) => receive!(endpoint, $message, command).await,
-                }
+                receive!(
+                    endpoint.as_mut().expect("missing participant fragment"),
+                    $message,
+                    command
+                )
+                .await
             };
         }
         macro_rules! execute {
@@ -148,8 +147,10 @@ async fn parallel_replay(
 ) {
     assert!(groups.len() >= 2);
     let sid = SessionId::new(1);
-    // SAFETY: this replay owns an isolated resource and its only issuer.
-    let network = InMemoryTransport::new([((sid, 3), unsafe { EndpointBinding::new() })]);
+    let network = InMemoryTransport::new(programs.p3.as_ref().map(|_| {
+        // SAFETY: this replay owns the resource and its only initial issuer.
+        ((sid, 3), unsafe { EndpointBinding::new() })
+    }));
     let [mut slab0, mut slab1, mut slab2] = [
         vec![0; 128 * 1024],
         vec![0; 128 * 1024],
@@ -171,7 +172,15 @@ async fn parallel_replay(
         ($id:literal) => {
             if resolver_count > $id {
                 let resolver = ResolverRef::<$id>::decision_state(decisions, |c| Ok(c.choose($id)));
-                if programs.owner == 0 {
+                if programs.resolver_roles[$id] == 3 {
+                    let program = programs.p3.as_ref().unwrap();
+                    rv0.set_resolver(program, resolver).unwrap();
+                    rv1.set_resolver(
+                        program,
+                        ResolverRef::<$id>::decision_state(decisions, |c| Ok(c.choose($id))),
+                    )
+                    .unwrap();
+                } else if programs.owner == 0 {
                     rv0.set_resolver(&programs.p0, resolver).unwrap();
                 } else {
                     rv1.set_resolver(&programs.p1, resolver).unwrap();
@@ -185,10 +194,12 @@ async fn parallel_replay(
     let mut e2 = programs
         .third_actor
         .then(|| rv2.enter(sid, &programs.p2).unwrap());
-    let mut resource = Some(if programs.owner == 0 {
-        rv0.enter(sid, &programs.p3).unwrap()
-    } else {
-        rv1.enter(sid, &programs.p3).unwrap()
+    let mut resource = programs.p3.as_ref().map(|program| {
+        if programs.owner == 0 {
+            rv0.enter(sid, program).unwrap()
+        } else {
+            rv1.enter(sid, program).unwrap()
+        }
     });
 
     let present = groups
@@ -292,7 +303,10 @@ async fn parallel_replay(
             _ => panic!("concurrent width outside source inventory"),
         };
         assert!(work.next().is_none());
-        assert_eq!(returned.iter().filter(|loan| loan.is_some()).count(), 1);
+        assert_eq!(
+            returned.iter().filter(|loan| loan.is_some()).count(),
+            usize::from(programs.p3.is_some())
+        );
     })
     .await
     .expect("independent projected fragments stalled");

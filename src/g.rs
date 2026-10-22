@@ -278,13 +278,7 @@ where
 
     // Separate constant queries bound compiler work per proof obligation.
     // The verdict below retains the same ordered rejection priority.
-    const RECEIVE_CAUSAL: bool = match Self::SOURCE.actors() {
-        Some(actors) => crate::global::const_dsl::validate_owned_receive_lane_causality(
-            Self::SOURCE_EFF_LIST,
-            actors,
-        ),
-        None => crate::global::const_dsl::validate_receive_lane_causality(Self::SOURCE_EFF_LIST),
-    };
+    const RECEIVE_CAUSAL: bool = Self::SOURCE.receive_causal();
     const PARALLEL_SELECTORS: bool =
         crate::global::const_dsl::validate_parallel_endpoint_selectors(Self::SOURCE_EFF_LIST);
     const REENTRY_SELECTORS: bool =

@@ -48,13 +48,36 @@ A second family places compound resource and ordinary-message protocols in
 parallel, in both source orders. Such a pair also replaces each loan leaf of
 the generated sequential, parallel, choice and repetition contexts. Prefixes
 include a message received by the choosing participant before its choice.
+The binary family constructs both children of `seq`, `par` and `route`
+recursively. Within each parallel pair, only one side lends the resource;
+the other side contains ordinary request/reply exchanges. Both source orders
+are generated. A request followed by its reply can precede any subtree, so
+the choosing participant can depend on a receive rather than its own send.
+The same binary grammar also generates ordinary three-role protocols without
+an Endpoint loan. These runs attach no resource endpoint or initial binding.
+The delegated-body family puts `seq`, `par`, choices, resolvers and repetition
+inside the received resource role. It also passes that endpoint onward and
+back. Both parallel children can have compound local subtrees. An onward
+transfer can surround parallel work, but a child cannot move its borrowed
+parent. Choices notify the service and the other possible holder explicitly.
 Swapping participants zero and one
 exercises both controllers. Ordinary leaves include one message and a complete
 request/reply exchange. The default operator budget is two; a budget of
-five enumerates 834,940 three- and four-role test cases in these families. This
+five enumerates 2,946,142 three- and four-role candidate cases in these families. This
 budget counts generated constructors across both choice arms and the containing
-context, rather than binary-tree depth. The fixed loan and exchange leaves each
-contain four sequential messages; their internal constructors are not counted.
+context, rather than binary-tree depth. The fixed outer loan and ordinary
+exchange leaves contain four messages; a delegated-body exchange has two.
+Their internal constructors are not counted.
+Projection diagnostics run before endpoint code is compiled. Accepted cases
+continue through execution and model comparison even when another case is
+rejected. `catalog.json` retains every generated tree, and `diagnostics.tsv`
+records every result. An unclassified rejection fails the overall check.
+It is not counted as a successful negative test or removed from the catalog.
+Known invalid resource-dependent reentry is checked by a separate build. Each
+delegated-body candidate also produces a parallel transfer/use conflict. Every
+such case is built independently and must fail with the expected `E0080`
+diagnostic. A different compiler error or successful build fails the check.
+Rejected protocols are never run as if they were legal executions.
 
 Each `roll` runs twice, including nested repetition. Choices and parallel-child
 order vary independently between visits. Receivers use `offer`, drop and retake
@@ -63,24 +86,82 @@ Root parallel groups also run through `Endpoint::par` with concurrently polled
 Tokio futures. Each such run checks that independent borrows of one participant
 were pending together. Endpoints move between separate runtimes through the
 public API.
+Delegated-body cases additionally generate direct local Rust code. Every
+nested parallel composition uses public `par()` borrows and Tokio futures.
+These executions cover every fixed assignment of the choices in each tree;
+the separate trace replay varies choices between loop visits.
 
 Every message is also tried as the first send and receive, for every resolver
 assignment. A compiled Lean checker compares these observations with the existing
-source occurrence semantics. It rejects missing observations, and controls check
-false admission, false rejection and invalid input. Complete traces exercise
-execution but do not enumerate every schedule. Run
+source occurrence semantics. The expected initial operations come from that
+model, rather than the first textual message: an uninvolved sender may queue
+a later frame before the initial loan.
+
+For trees without `roll`, every prefix of the generated complete traces also
+probes every send and receive, including already completed and unselected
+operations. Prefixes include the cut between a send and its matching receive,
+and continue through choices, delegation and the final return. Each probe uses
+a fresh runtime that replays the prefix first. Lean derives the required prefix
+inventory from the source tree and advances its occurrence model through those
+operations. These trees also exhaust every permitted order of the first four
+public operations, probing every next operation at those cuts. Missing or
+duplicate probes fail the comparison. Separate controls
+change a continuation result and omit or duplicate a continuation probe.
+A single outer `roll` with a finite body probes every prefix of its two-visit
+traces. The source model has three copies, allowing the next probe to start
+another visit. Previously observed choices stay fixed; fresh choices try every
+resolver assignment. These probes include the cut after a send and before its
+matching receive. More complex repetitions still use complete execution traces
+and initial admission checks. Their later negative probes require
+continuation-aware occurrence unfoldings; a one-copy bound cannot determine
+whether another visit is permitted.
+
+Complete traces do not enumerate every schedule. Run
 `bash .github/scripts/check_protocol_shapes.sh [BUDGET [SHARD SHARDS]]` under the
 resource guard. The output records the compiler, source revision, source and
 input hashes, and separate compilation, execution and comparison times. Source
 hashes are checked again after execution. The generated families use distinct
-message labels and one resource role. Initial admission is compared with Lean.
-Later traces check successful execution, with both parallel-child orders and
-concurrent root groups; they do not enumerate every interleaving of nested
-parallel operations or I/O polls.
-The grammar inserts one compound parallel pair into a context at a time;
-arbitrary binary trees, multiple resources, reused labels and choices controlled
-through a delegated role are outside this grammar. A generated catalog is a
-test domain, not evidence that all its cases passed.
+message labels and one resource role. Initial admission and the finite-prefix
+probes are compared with Lean. Other traces check successful execution, with
+both parallel-child orders and concurrent root groups; they do not enumerate
+every interleaving of nested parallel operations or I/O polls.
+The binary family allows multiple compound parallel pairs in one tree. Its
+operator budget applies to the whole tree, not separately to each child.
+Multiple resources and reused labels remain outside this grammar. A generated catalog is a test domain,
+not evidence that all its cases passed.
+
+Choice-arm lane alignment prefers existing colors, then uses the remaining
+wire-lane domain when necessary. It can map a whole arm or separate one
+conflicting occurrence within an arm. Sequential operations on different lanes
+retain their source dependencies. `GlobalAllocationCorrectness` proves that an
+injective matching introduces no incompatible collision when its cross-boundary
+constraints are satisfied. Native tests compare pairwise receive constraints
+with the bulk causal check and an independent schedule analysis, both before
+and after lane alignment. The theorem does not prove equivalence
+of those Rust checks or completeness of the lane search. Public endpoint tests
+cover differing parallel-child orders, delayed notices and retained previews;
+Miri checks their buffer and borrow use.
+
+The nested-roll check uses `(Prefix; (Exchange+ | Tick)+)+`, where `|` is
+parallel composition. It enumerates prefixes of at most seven complete exchanges
+or ticks using accepted source unfoldings with at most twenty message occurrences.
+For every permitted next send, it retains every distinct parallel-group boundary
+in those unfoldings and drives public `par`/`send`/`recv` operations with Tokio.
+Forbidden sends are also tried; the parent cannot be used while its children are
+borrowed, as checked separately by compile-fail tests. A flat-call check rejects
+any runtime admission outside the source language. It does not require a call at
+one concrete cut to admit alternatives from a different grouping of the same
+message prefix. Lean examples demonstrate why those cuts differ.
+The check regenerates both complete query inventories and tests missing,
+duplicated, incorrect and malformed inputs. It covers complete exchanges and
+ticks, rather than partially polled operations. Run
+`bash .github/scripts/check_nested_roll_admission.sh` under the resource guard.
+The command fails if either the runtime or the source comparison fails.
+
+Repeat-entry checks compare the chosen scope with the operation's projected
+predecessors. They cover a child continuing after its tail, a prefix on another
+lane, and a fresh parent that must execute its own prefix. Source-model examples,
+public endpoint tests and independently compiled Kani cases cover these boundaries.
 
 Kani checks bounded properties of production functions. Miri checks aliasing,
 pointer provenance and destruction in executed tests. Native tests exercise

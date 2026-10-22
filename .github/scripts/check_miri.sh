@@ -97,6 +97,18 @@ run_miri_test \
   run_miri_test public-enclosing-roll-parallel -p hibana --test enclosing_roll_parallel
 )
 
+(
+  hibana_disable_repo_tests_cfg
+  MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" \
+    run_miri_test public-nested-parallel-reentry -p hibana --test nested_parallel_reentry
+)
+
+(
+  hibana_disable_repo_tests_cfg
+  MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" \
+    run_miri_test public-route-lane-alignment -p hibana --test route_lane_alignment
+)
+
 MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \
   endpoint-owner-move \
   -p hibana \
@@ -223,6 +235,9 @@ MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_t
   --skip g::role_projection::tests::mutation_coverage:: \
   --skip g::role_projection::tests::handoff_interval:: \
   --skip g::role_projection::tests::receipt_refresh:: \
+  --skip g::role_projection::tests::source_order::nested_parallel_replies_preserve_the_prefix_in_every_alternative \
+  --skip g::role_projection::tests::logical_view_word::a_logical_wire_word_keeps_its_order_when_the_sender_changes_holder \
+  --skip g::role_projection::tests::visit_progress::a_complete_actor_visit_exposes_real_parallel_admissions_and_completion \
   --skip g::role_projection::tests::send_wait::an_owned_send_rejects_a_predecessor_that_needs_its_payload_view \
   --skip g::role_projection::tests::admission:: \
   --skip g::role_projection::tests::parallel_pending:: \

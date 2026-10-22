@@ -171,6 +171,10 @@ pub fn run(root: &Path) -> Audit<()> {
                 // large merged equation for the conditional actor image.
                 command.args(["--paths", "lifo"]);
             }
+        } else if group.label == "parallel-reentry" {
+            // Exhaust the same paths without retaining a merged equation for
+            // all descriptor lookups. Keep every assertion and unwind check.
+            command.args(["--cbmc-args", "--paths", "lifo"]);
         }
         let mut child = command
             .stdout(Stdio::piped())

@@ -7,6 +7,44 @@ use crate::global::role_program::{
 };
 
 impl RoleImageRef {
+    /// Reset tokens are needed when a view can borrow a parallel fragment
+    /// inside a repeated region. A participant may hold separate endpoints
+    /// for the different fragments. Use source scopes and validated local rows.
+    pub(super) const fn parallel_reentry_is_borrowable(&self) -> bool {
+        if self.columns.roll_scopes.len == 0 {
+            return false;
+        }
+        let mut marker = 0;
+        while marker < self.program.source_scope_marker_count() {
+            if let Some((start, _, end)) = self.program.source_parallel_at(marker) {
+                let mut repeated = false;
+                let mut roll_marker = 0;
+                while roll_marker < self.program.source_scope_marker_count() {
+                    if let Some((scope, body_start, body_end)) =
+                        self.program.source_roll_at(roll_marker)
+                        && body_start <= start
+                        && end <= body_end
+                    {
+                        let mut slot = 0;
+                        while let Some(row) = self.roll_scope_row(slot) {
+                            if row.scope().raw() == scope.raw() {
+                                repeated = true;
+                                break;
+                            }
+                            slot += 1;
+                        }
+                    }
+                    roll_marker += 1;
+                }
+                if repeated && self.mask_row_start(start) < self.mask_row_start(end) {
+                    return true;
+                }
+            }
+            marker += 1;
+        }
+        false
+    }
+
     const fn mask_byte(&self, offset: usize) -> u8 {
         if offset >= self.columns.lane_bits.len as usize {
             invalid_resident_descriptor();
@@ -172,6 +210,81 @@ mod tests {
     use super::*;
     use crate::{g, global::role_program::project};
     use std::{boxed::Box, panic::catch_unwind};
+
+    #[test]
+    fn reset_epochs_exist_only_for_projected_repeated_parallel_fragments() {
+        type A = g::Msg<101, ()>;
+        type B = g::Msg<102, ()>;
+        let sequential = g::seq(g::send::<0, 1, A>(), g::send::<1, 0, B>()).roll();
+        let separate = g::par(g::send::<0, 1, A>().roll(), g::send::<0, 2, B>().roll());
+        let repeated = g::par(g::send::<0, 1, A>(), g::send::<0, 2, B>()).roll();
+        let wrapped = g::route(
+            g::par(g::send::<0, 1, A>(), g::send::<0, 2, B>()),
+            g::par(
+                g::send::<0, 1, g::Msg<103, ()>>(),
+                g::send::<0, 2, g::Msg<104, ()>>(),
+            ),
+        )
+        .resolve::<7>()
+        .roll();
+        let seq_program = project::<0>(&sequential);
+        let seq = seq_program.role_image_ref().footprint();
+        assert_eq!(seq.borrow_epoch_count, 0);
+        assert_eq!(
+            seq.completion_bit_count(),
+            seq.local_step_count + seq.roll_scope_count
+        );
+        assert_eq!(
+            project::<0>(&separate)
+                .role_image_ref()
+                .footprint()
+                .borrow_epoch_count,
+            0
+        );
+        assert_eq!(
+            project::<0>(&repeated)
+                .role_image_ref()
+                .footprint()
+                .borrow_epoch_count,
+            1
+        );
+        assert_eq!(
+            project::<1>(&repeated)
+                .role_image_ref()
+                .footprint()
+                .borrow_epoch_count,
+            1
+        );
+        assert_eq!(
+            project::<2>(&repeated)
+                .role_image_ref()
+                .footprint()
+                .borrow_epoch_count,
+            1
+        );
+        let outside = g::seq(repeated, g::send::<0, 9, g::Msg<105, ()>>());
+        assert_eq!(
+            project::<9>(&outside)
+                .role_image_ref()
+                .footprint()
+                .borrow_epoch_count,
+            0
+        );
+        assert_eq!(
+            project::<0>(&wrapped)
+                .role_image_ref()
+                .footprint()
+                .borrow_epoch_count,
+            1
+        );
+        assert_eq!(
+            project::<1>(&wrapped)
+                .role_image_ref()
+                .footprint()
+                .borrow_epoch_count,
+            1
+        );
+    }
 
     #[test]
     fn parallel_masks_are_bound_to_their_source_even_when_raw_columns_are_coherent() {

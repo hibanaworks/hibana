@@ -47,11 +47,7 @@ where
             let preview_conflict = self.progress.cursor.event_conflict_for_index(idx);
             let mut selected =
                 |scope, view| self.selected_arm_for_recv_event(preview_conflict, scope, view);
-            match self
-                .progress
-                .cursor
-                .event_enabled(idx, meta.into(), &mut selected)
-            {
+            match self.event_enabled(idx, meta.into(), &mut selected) {
                 Ok(_) => {}
                 Err(
                     EventAdmissionError::PredecessorPending | EventAdmissionError::OtherViewPending,

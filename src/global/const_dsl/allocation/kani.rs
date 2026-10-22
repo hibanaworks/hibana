@@ -28,7 +28,14 @@ const fn two_by_two_result(conflicts: u8) -> [Option<u16>; 2] {
         LaneEndpointIndex::<1>::from_two_role_masks(conflicts & 0b0011, conflicts & 0b1100);
     let right_index =
         LaneEndpointIndex::<1>::from_two_role_masks(conflicts & 0b0101, conflicts & 0b1010);
-    let matching = maximum_lane_matching(&left_index, &right_index, 2, 2);
+    let matching = maximum_lane_matching(
+        super::lane_matching::LaneCompatibility::Parallel {
+            left: &left_index,
+            right: &right_index,
+        },
+        2,
+        2,
+    );
     super::lane_matching::validate_maximum_certificate(&left_index, &right_index, 2, 2, &matching);
     [matching.left_for_right(0), matching.left_for_right(1)]
 }

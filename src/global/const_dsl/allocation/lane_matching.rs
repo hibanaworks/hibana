@@ -4,6 +4,8 @@ use crate::global::const_dsl::EffList;
 #[cfg(kani)]
 mod certificate;
 mod index;
+#[cfg(all(test, hibana_repo_tests))]
+mod tests;
 
 pub(super) use index::LaneEndpointIndex;
 
@@ -24,6 +26,42 @@ const fn validate_lane_span<const E: usize>(
 
 const NO_MATCH: u16 = u16::MAX;
 
+pub(super) enum LaneCompatibility<'a, const ROLE_BYTES: usize> {
+    Parallel {
+        left: &'a LaneEndpointIndex<ROLE_BYTES>,
+        right: &'a LaneEndpointIndex<ROLE_BYTES>,
+    },
+    Constraints {
+        rows: &'a [u8],
+        row_bytes: usize,
+    },
+}
+
+impl<const ROLE_BYTES: usize> LaneCompatibility<'_, ROLE_BYTES> {
+    const fn allows(&self, right: u16, left: u16) -> bool {
+        match self {
+            Self::Parallel {
+                left: lhs,
+                right: rhs,
+            } => rhs
+                .endpoint_set(right as u8)
+                .is_disjoint(lhs.endpoint_set(left as u8)),
+            Self::Constraints { rows, row_bytes } => {
+                rows[right as usize * *row_bytes + left as usize / 8] & (1 << (left % 8)) != 0
+            }
+        }
+    }
+
+    const fn validate(&self, left: u16, right: u16) {
+        if let Self::Constraints { rows, row_bytes } = self
+            && (*row_bytes != (left as usize).div_ceil(8)
+                || rows.len() != *row_bytes * right as usize)
+        {
+            panic!("lane matching constraints do not cover their domains");
+        }
+    }
+}
+
 const fn validate_dense_lane_classes<const ROLE_BYTES: usize>(
     index: &LaneEndpointIndex<ROLE_BYTES>,
     lane_span: u16,
@@ -43,8 +81,7 @@ const fn validate_dense_lane_classes<const ROLE_BYTES: usize>(
 /// visited in ascending wire order. Every successful extension increases the
 /// number of reused left lanes by exactly one.
 const fn augment_lane_matching<const ROLE_BYTES: usize>(
-    left_index: &LaneEndpointIndex<ROLE_BYTES>,
-    right_index: &LaneEndpointIndex<ROLE_BYTES>,
+    compatibility: &LaneCompatibility<'_, ROLE_BYTES>,
     left_lane_span: u16,
     right_lane: u16,
     seen_left: &mut [bool; BYTE_DOMAIN],
@@ -59,15 +96,12 @@ const fn augment_lane_matching<const ROLE_BYTES: usize>(
 
     loop {
         let active_right = right_stack[depth];
-        let right_roles = right_index.endpoint_set(active_right as u8);
         let mut selected = None;
         while next_left[depth] < left_lane_span {
             let left_lane = next_left[depth];
             next_left[depth] += 1;
             let left_slot = left_lane as usize;
-            if !seen_left[left_slot]
-                && right_roles.is_disjoint(left_index.endpoint_set(left_lane as u8))
-            {
+            if !seen_left[left_slot] && compatibility.allows(active_right, left_lane) {
                 seen_left[left_slot] = true;
                 selected = Some(left_lane);
                 break;
@@ -123,14 +157,14 @@ impl LaneMatching {
 }
 
 pub(super) const fn maximum_lane_matching<const ROLE_BYTES: usize>(
-    left_index: &LaneEndpointIndex<ROLE_BYTES>,
-    right_index: &LaneEndpointIndex<ROLE_BYTES>,
+    compatibility: LaneCompatibility<'_, ROLE_BYTES>,
     left_lane_span: u16,
     right_lane_span: u16,
 ) -> LaneMatching {
     if left_lane_span as usize > BYTE_DOMAIN || right_lane_span as usize > BYTE_DOMAIN {
         panic!("parallel lane matching span exceeds wire domain");
     }
+    compatibility.validate(left_lane_span, right_lane_span);
 
     let mut right_to_left = [NO_MATCH; BYTE_DOMAIN];
     let mut left_to_right = [NO_MATCH; BYTE_DOMAIN];
@@ -138,8 +172,7 @@ pub(super) const fn maximum_lane_matching<const ROLE_BYTES: usize>(
     while right_lane < right_lane_span {
         let mut seen_left = [false; BYTE_DOMAIN];
         let _ = augment_lane_matching(
-            left_index,
-            right_index,
+            &compatibility,
             left_lane_span,
             right_lane,
             &mut seen_left,
@@ -208,8 +241,14 @@ pub(crate) const fn merge_parallel_lanes<const E: usize>(
     validate_dense_lane_classes(&left_index, left_lane_span);
     validate_dense_lane_classes(&right_index, right_lane_span);
 
-    let matching =
-        maximum_lane_matching(&left_index, &right_index, left_lane_span, right_lane_span);
+    let matching = maximum_lane_matching(
+        LaneCompatibility::Parallel {
+            left: &left_index,
+            right: &right_index,
+        },
+        left_lane_span,
+        right_lane_span,
+    );
 
     let mut remap = [0u8; BYTE_DOMAIN];
     let mut result_span = left_lane_span;

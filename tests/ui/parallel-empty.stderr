@@ -1,0 +1,17 @@
+error[E0080]: evaluation panicked: assertion failed: N >= 1 && N <= u8::MAX as usize + 1
+ --> src/endpoint/parallel.rs
+  |
+  |         const { assert!(N >= 1 && N <= u8::MAX as usize + 1) };
+  |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `hibana::endpoint::parallel::<impl hibana::endpoint::target::OperationTarget<'_, '_, 0>>::split::<0>::{constant#1}` failed here
+
+note: erroneous constant encountered
+ --> src/endpoint/parallel.rs
+  |
+  |         const { assert!(N >= 1 && N <= u8::MAX as usize + 1) };
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+note: the above error was encountered while instantiating `fn hibana::endpoint::parallel::<impl hibana::endpoint::target::OperationTarget<'_, '_, 0>>::split::<0>`
+ --> src/endpoint/parallel.rs
+  |
+  |         OperationTarget::new(self).split()
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

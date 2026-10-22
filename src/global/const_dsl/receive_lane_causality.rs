@@ -4,6 +4,7 @@ use super::{
 };
 
 mod actors;
+pub(crate) use actors::receive_pair_is_causal;
 use actors::{ActorMap, NeedChoice};
 pub(crate) use actors::{owned_receive_lane_conflict, validate_owned_receive_lane_causality};
 
@@ -72,6 +73,7 @@ enum FlowGoal {
     #[cfg(any(kani, all(test, hibana_repo_tests)))]
     Target(usize),
     ReceiveLane(crate::eff::EffAtom, usize),
+    ReceiveEvent(crate::eff::EffAtom, usize),
     Closure,
 }
 
@@ -81,6 +83,7 @@ impl FlowGoal {
             #[cfg(any(kani, all(test, hibana_repo_tests)))]
             Self::Target(index) => index,
             Self::ReceiveLane(_, end) => end,
+            Self::ReceiveEvent(_, event) => event + 1,
             Self::Closure => usize::MAX,
         }
     }
@@ -91,16 +94,22 @@ impl FlowGoal {
         match self {
             #[cfg(any(kani, all(test, hibana_repo_tests)))]
             Self::Target(index) => index,
-            Self::ReceiveLane(_, _) | Self::Closure => usize::MAX,
+            Self::ReceiveLane(_, _) | Self::ReceiveEvent(_, _) | Self::Closure => usize::MAX,
         }
     }
 
-    const fn sender_change(self, candidate: crate::eff::EffAtom) -> bool {
+    const fn sender_change(self, occurrence: usize, candidate: crate::eff::EffAtom) -> bool {
         match self {
             Self::ReceiveLane(earlier, _) => {
                 candidate.from != candidate.to
                     && earlier.to == candidate.to
                     && earlier.lane == candidate.lane
+                    && earlier.from != candidate.from
+            }
+            Self::ReceiveEvent(earlier, event) => {
+                occurrence == event
+                    && candidate.from != candidate.to
+                    && earlier.to == candidate.to
                     && earlier.from != candidate.from
             }
             #[cfg(any(kani, all(test, hibana_repo_tests)))]
@@ -178,7 +187,10 @@ impl<const E: usize> CausalFlow<'_, E> {
             let mut event = range.start;
             let mut has_target = false;
             while event < range.end && self.occurrence(event) < self.goal.stop() {
-                if self.goal.sender_change(self.eff_list.atom_at(event)) {
+                if self
+                    .goal
+                    .sender_change(self.occurrence(event), self.eff_list.atom_at(event))
+                {
                     has_target = true;
                     break;
                 }
@@ -314,7 +326,7 @@ impl<const E: usize> CausalFlow<'_, E> {
                             Err(choice) => return Err(choice),
                         };
                     if self.occurrence(range.start) > self.earlier
-                        && self.goal.sender_change(atom)
+                        && self.goal.sender_change(self.occurrence(range.start), atom)
                         && !known_sender
                     {
                         return Ok(None);
@@ -480,7 +492,7 @@ const fn sender_change_end<const E: usize>(
     let mut end = None;
     let mut index = range.start;
     while index < range.end {
-        if goal.sender_change(eff_list.atom_at(index)) {
+        if goal.sender_change(index, eff_list.atom_at(index)) {
             end = Some(index + 1);
         }
         index += 1;

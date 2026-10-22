@@ -17,8 +17,36 @@ const fn production_result(conflicts: u16) -> [u16; 3] {
         conflicts & 0b010_010_010,
         conflicts & 0b100_100_100,
     ]);
-    let matching = maximum_lane_matching(&left, &right, 3, 3);
+    let matching = maximum_lane_matching(
+        super::super::lane_matching::LaneCompatibility::Parallel {
+            left: &left,
+            right: &right,
+        },
+        3,
+        3,
+    );
     validate_maximum_certificate(&left, &right, 3, 3, &matching);
+    let mut rows = [0u8; 3];
+    let mut r = 0;
+    while r < 3 {
+        let mut l = 0;
+        while l < 3 {
+            if conflicts & (1 << (l * 3 + r)) == 0 {
+                rows[r] |= 1 << l;
+            }
+            l += 1;
+        }
+        r += 1;
+    }
+    let constrained = maximum_lane_matching::<0>(
+        super::super::lane_matching::LaneCompatibility::Constraints {
+            rows: &rows,
+            row_bytes: 1,
+        },
+        3,
+        3,
+    );
+    validate_maximum_certificate(&left, &right, 3, 3, &constrained);
     let mut result = [u16::MAX; 3];
     let mut index = 0;
     while index < 3 {
@@ -26,6 +54,11 @@ const fn production_result(conflicts: u16) -> [u16; 3] {
             Some(left) => left,
             None => u16::MAX,
         };
+        let explicit = match constrained.left_for_right(index as u16) {
+            Some(left) => left,
+            None => u16::MAX,
+        };
+        assert!(explicit == result[index]);
         index += 1;
     }
     result

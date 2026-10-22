@@ -131,6 +131,116 @@ theorem a_fresh_enclosing_visit_still_requires_its_prefix :
 theorem an_unfinished_parallel_arm_cannot_restart_the_enclosing_prefix :
     acceptedEnclosing [.send 0, .recv 0, .send 1, .recv 1, .roll 1] = false := by decide
 
+def prefixedExchange : Choreo := .roll (.par
+  (.seq (.send 0 1 231 0) (.roll (.seq (.send 0 1 232 0) (.send 1 0 233 0))))
+  (.send 0 2 234 0))
+
+def acceptedExchange (trace : List GlobalOperation) : Bool :=
+  (run (GlobalConfig.initial 1 3 prefixedExchange) trace).isSome
+
+def completedExchange : List GlobalOperation :=
+  [.send 0, .recv 0, .send 1, .recv 1, .send 2, .recv 2, .send 3, .recv 3]
+
+theorem restarting_the_parallel_parent_requires_its_own_prefix :
+    acceptedExchange (completedExchange ++ [.roll 1, .send 1]) = false := by decide
+
+theorem restarting_only_the_exchange_keeps_its_parent_prefix :
+    acceptedExchange (completedExchange ++ [.roll 0, .send 1, .recv 1, .send 2, .recv 2]) = true := by decide
+
+theorem a_fresh_parallel_visit_can_start_with_its_independent_arm :
+    acceptedExchange (completedExchange ++ [.roll 1, .send 3, .recv 3,
+      .send 0, .recv 0, .send 1, .recv 1, .send 2, .recv 2]) = true := by decide
+
+theorem a_fresh_parallel_visit_can_start_with_its_prefix :
+    acceptedExchange (completedExchange ++ [.roll 1, .send 0, .recv 0,
+      .send 1, .recv 1, .send 2, .recv 2, .send 3, .recv 3]) = true := by decide
+
+def choiceWrappedParallel : Choreo := .roll (.route (.dynamic 7)
+  (.par (.roll (.seq (.send 0 1 232 0) (.send 1 0 233 0))) (.send 0 2 234 0))
+  (.par (.roll (.seq (.send 0 1 241 0) (.send 1 0 242 0))) (.send 0 2 243 0)))
+
+def acceptedWrapped (trace : List GlobalOperation) : Bool :=
+  (run (GlobalConfig.initial 1 3 choiceWrappedParallel) trace).isSome
+
+def completedWrappedLeft : List GlobalOperation :=
+  [.resolve 0 0 7 .left, .send 0, .recv 0, .send 1, .recv 1, .send 2, .recv 2,
+    .roll 0, .send 0, .recv 0, .send 1, .recv 1]
+
+theorem a_choice_wrapped_parallel_body_can_repeat_the_same_arm :
+    acceptedWrapped (completedWrappedLeft ++ [.roll 2, .resolve 0 0 7 .left,
+      .send 0, .recv 0, .send 1, .recv 1, .send 2, .recv 2]) = true := by decide
+
+theorem a_choice_wrapped_parallel_body_can_change_its_next_arm :
+    acceptedWrapped (completedWrappedLeft ++ [.roll 2, .resolve 0 0 7 .right,
+      .send 3, .recv 3, .send 4, .recv 4, .send 5, .recv 5]) = true := by decide
+
+theorem a_choice_wrapped_fresh_body_does_not_reuse_its_old_request :
+    acceptedWrapped (completedWrappedLeft ++ [.roll 2, .resolve 0 0 7 .left,
+      .send 1]) = false := by decide
+
+def nestedExchange : Choreo := .roll (.seq (.send 0 1 231 0)
+  (.roll (.par (.roll (.seq (.send 0 1 232 0) (.send 1 0 233 0)))
+    (.send 0 2 234 0))))
+
+def acceptedNested (trace : List GlobalOperation) : Bool :=
+  (run (GlobalConfig.initial 1 3 nestedExchange) trace).isSome
+
+def nestedVisit : List GlobalOperation :=
+  [.send 0, .recv 0, .send 1, .recv 1, .send 2, .recv 2, .send 3, .recv 3]
+
+def anotherExchange : List GlobalOperation := [.send 1, .recv 1, .send 2, .recv 2]
+
+-- These prefixes have identical communication but different roll entries.
+-- Their next operations must be compared at those distinct source cuts.
+theorem an_old_parallel_group_can_finish_after_another_inner_exchange :
+    acceptedNested (nestedVisit ++ [.roll 0] ++ anotherExchange ++
+      [.roll 2, .send 0, .recv 0]) = true := by decide
+
+theorem a_new_parallel_group_still_requires_its_tick :
+    acceptedNested (nestedVisit ++ [.roll 1] ++ anotherExchange ++
+      [.roll 2, .send 0]) = false := by decide
+
+theorem that_new_parallel_group_can_finish_after_its_tick :
+    acceptedNested (nestedVisit ++ [.roll 1] ++ anotherExchange ++
+      [.send 3, .recv 3, .roll 2, .send 0, .recv 0]) = true := by decide
+
+def sameLaneRepeat : Choreo := .roll (.seq (.send 0 1 231 0)
+  (.seq (.roll (.seq (.send 0 1 232 0) (.send 1 0 233 0)))
+    (.send 0 1 234 0)))
+
+def acceptedSameLane (trace : List GlobalOperation) : Bool :=
+  (run (GlobalConfig.initial 1 2 sameLaneRepeat) trace).isSome
+
+theorem a_child_repeat_after_its_same_lane_tail_keeps_the_old_prefix :
+    acceptedSameLane (nestedVisit ++ [.roll 0] ++ anotherExchange) = true := by decide
+
+theorem the_completed_child_then_allows_a_new_enclosing_prefix :
+    acceptedSameLane (nestedVisit ++ [.roll 0] ++ anotherExchange ++
+      [.roll 1, .send 0, .recv 0]) = true := by decide
+
+theorem an_unfinished_child_still_blocks_the_enclosing_restart :
+    acceptedSameLane (nestedVisit ++ [.roll 0, .send 1, .recv 1, .roll 1]) = false := by decide
+
+theorem a_new_enclosing_visit_cannot_skip_its_prefix :
+    acceptedSameLane (nestedVisit ++ [.roll 1, .send 1]) = false := by decide
+
+def crossLaneRepeat : Choreo := .roll (.seq (.send 0 1 231 0)
+  (.seq (.roll (.par (.send 0 1 232 0) (.send 0 2 234 0)))
+    (.par (.send 0 1 244 0) (.send 0 2 245 0))))
+
+def acceptedCrossLane (trace : List GlobalOperation) : Bool :=
+  (run (GlobalConfig.initial 1 3 crossLaneRepeat) trace).isSome
+
+def completedCrossLane : List GlobalOperation :=
+  [.send 0, .recv 0, .send 1, .send 2, .recv 1, .recv 2,
+    .send 3, .send 4, .recv 3, .recv 4]
+
+theorem a_child_repeat_keeps_its_prefix_before_both_parallel_heads :
+    acceptedCrossLane (completedCrossLane ++ [.roll 0, .send 2, .recv 2, .send 1, .recv 1]) = true := by decide
+
+theorem a_fresh_parent_cannot_skip_the_prefix_on_another_lane :
+    acceptedCrossLane (completedCrossLane ++ [.roll 1, .send 2]) = false := by decide
+
 #print axioms a_scheduled_entry_is_eligible
 #print axioms an_in_progress_choice_cannot_change_arm
 #print axioms right_then_left_remains_enabled
@@ -149,4 +259,20 @@ theorem an_unfinished_parallel_arm_cannot_restart_the_enclosing_prefix :
 #print axioms a_completed_body_can_instead_restart_its_enclosing_prefix
 #print axioms a_fresh_enclosing_visit_still_requires_its_prefix
 #print axioms an_unfinished_parallel_arm_cannot_restart_the_enclosing_prefix
+#print axioms restarting_the_parallel_parent_requires_its_own_prefix
+#print axioms restarting_only_the_exchange_keeps_its_parent_prefix
+#print axioms a_fresh_parallel_visit_can_start_with_its_independent_arm
+#print axioms a_fresh_parallel_visit_can_start_with_its_prefix
+#print axioms a_choice_wrapped_parallel_body_can_repeat_the_same_arm
+#print axioms a_choice_wrapped_parallel_body_can_change_its_next_arm
+#print axioms a_choice_wrapped_fresh_body_does_not_reuse_its_old_request
+#print axioms an_old_parallel_group_can_finish_after_another_inner_exchange
+#print axioms a_new_parallel_group_still_requires_its_tick
+#print axioms that_new_parallel_group_can_finish_after_its_tick
+#print axioms a_child_repeat_after_its_same_lane_tail_keeps_the_old_prefix
+#print axioms the_completed_child_then_allows_a_new_enclosing_prefix
+#print axioms an_unfinished_child_still_blocks_the_enclosing_restart
+#print axioms a_new_enclosing_visit_cannot_skip_its_prefix
+#print axioms a_child_repeat_keeps_its_prefix_before_both_parallel_heads
+#print axioms a_fresh_parent_cannot_skip_the_prefix_on_another_lane
 end ParallelResolverProgress

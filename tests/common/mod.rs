@@ -344,6 +344,13 @@ impl TestTransport {
         blocked.push(BlockedSend { role, waker: None });
     }
 
+    pub(crate) fn paused_send_is_waiting(&self, role: u8) -> bool {
+        self.blocked_sends
+            .borrow()
+            .iter()
+            .any(|entry| entry.role == role && entry.waker.is_some())
+    }
+
     pub(crate) fn resume_send(&self) {
         let blocked = core::mem::take(&mut *self.blocked_sends.borrow_mut());
         assert!(!blocked.is_empty(), "paused sender");
@@ -672,6 +679,7 @@ impl Clone for TestTransport {
 
 const _: fn(&TestTransport) -> bool = TestTransport::queue_is_empty;
 const _: fn(&TestTransport, u8) = TestTransport::pause_send;
+const _: fn(&TestTransport, u8) -> bool = TestTransport::paused_send_is_waiting;
 const _: fn(&TestTransport) = TestTransport::resume_send;
 const _: fn(&TestTransport, u8) -> (FrameHeader, Vec<u8>) = TestTransport::queued_frame;
 const _: fn(&TestTransport, u8, usize) -> (FrameHeader, Vec<u8>) = TestTransport::queued_frame_at;

@@ -8,6 +8,54 @@ use crate::global::{
 };
 
 #[test]
+fn a_shared_route_preview_requires_the_entire_borrow_to_be_inside_one_arm() {
+    use crate::{g, global::compiled::lowering::CompiledProgramImage};
+    type Step = g::Send<0, 1, g::Msg<1, ()>>;
+    type Steps = g::Route<g::Seq<g::Route<Step, Step>, Step>, Step>;
+    const SOURCE: g::ProgramSourceData<32> = g::ProgramSourceData::lower::<Steps>();
+    const PLAN: ProgramImagePlan = ProgramImagePlan::from_source(&SOURCE);
+    const SUMMARY: CompiledProgramImage = CompiledProgramImage::scan_const(SOURCE.eff_list());
+    static BYTES: ProgramImageBytes<256> =
+        match ProgramImageBytes::from_source_if_fits(&SOURCE, PLAN.columns()) {
+            Some(bytes) => bytes,
+            None => panic!("route range fixture storage"),
+        };
+    const IMAGE: CompiledProgramRef = BYTES.compiled_ref(&SUMMARY, PLAN.columns());
+    let markers = SOURCE.eff_list().scope_markers();
+    for (scope, left, split, right) in [
+        (markers.at(0).scope_id, 0, 3, 4),
+        (markers.at(1).scope_id, 0, 1, 2),
+    ] {
+        for start in 0..=5 {
+            for end in 0..=5 {
+                let expected = if start >= end {
+                    None
+                } else if left <= start && end <= split {
+                    Some(0)
+                } else if split <= start && end <= right {
+                    Some(1)
+                } else {
+                    None
+                };
+                assert_eq!(
+                    IMAGE.source_route_arm_for_range(scope, start, end),
+                    expected
+                );
+            }
+        }
+        assert_eq!(IMAGE.source_route_arm_for_range(scope, 0, usize::MAX), None);
+    }
+    assert_eq!(
+        IMAGE.source_route_arm_for_range(ScopeId::none(), 0, 1),
+        None
+    );
+    assert_eq!(
+        IMAGE.source_route_arm_for_range(ScopeId::parallel(0), 0, 1),
+        None
+    );
+}
+
+#[test]
 fn source_order_matches_the_typed_tree_at_nested_and_adjacent_boundaries() {
     use crate::{
         g,

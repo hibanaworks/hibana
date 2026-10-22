@@ -47,6 +47,15 @@ fn actual_completion_writes_are_observed_even_when_the_bits_repeat() {
     let mut heads = [0u16; 1];
     let mut labels = [0u16; 1];
     let mut completed = [0u32; 1];
+    assert_eq!(descriptor.logical_lane_count(), heads.len());
+    assert_eq!(
+        projected
+            .role_image_ref()
+            .footprint()
+            .completion_bit_count()
+            .div_ceil(32),
+        completed.len()
+    );
     // SAFETY: the concrete two-step descriptor requires one lane/word. All
     // backing allocations stay stationary and disjoint for the whole proof.
     unsafe {
@@ -104,6 +113,15 @@ fn retained_roll_completion_is_scoped_and_cannot_authorize_an_outgoing_step() {
     let mut heads = [0u16; 1];
     let mut labels = [0u16; 1];
     let mut completed = [0u32; 1];
+    assert_eq!(descriptor.logical_lane_count(), heads.len());
+    assert_eq!(
+        projected
+            .role_image_ref()
+            .footprint()
+            .completion_bit_count()
+            .div_ceil(32),
+        completed.len()
+    );
     // SAFETY: three event bits and two scope bits fit the one supplied word;
     // the stationary arrays are disjoint and outlive the actual cursor.
     unsafe {

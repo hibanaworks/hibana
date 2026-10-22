@@ -271,4 +271,46 @@ theorem frame_label_allocation_complete
       | none => exact False.elim ((countIH remainingCapacity) rest)
       | some labels => simp [allocateFrameLabels, selected, rest]
 
+
+/-- Reassign lane classes inside a selected set of source occurrences. -/
+def routeAlignedLane {α : Type} (inside : α → Bool) (lane : α → Nat)
+    (remap : Nat → Nat) (event : α) : Nat :=
+  if inside event then remap (lane event) else lane event
+
+/-- The matching graph excludes each incompatible cross-boundary pair; an
+injective arm map preserves the inside pairs. No new collision can appear. -/
+theorem route_lane_alignment_introduces_no_conflict
+    {α : Type} {inside : α → Bool} {lane : α → Nat} {remap : Nat → Nat}
+    {conflict : α → α → Prop}
+    (injective : ∀ a b, inside a = true → inside b = true →
+      remap (lane a) = remap (lane b) → lane a = lane b)
+    (cross : ∀ a b, inside a = true → inside b = false →
+      (conflict a b ∨ conflict b a) → remap (lane a) ≠ lane b)
+    {a b : α} (incompatible : conflict a b)
+    (collision : routeAlignedLane inside lane remap a = routeAlignedLane inside lane remap b) :
+    lane a = lane b := by
+  cases ha : inside a <;> cases hb : inside b
+  · simpa [routeAlignedLane, ha, hb] using collision
+  · exact False.elim ((cross b a hb ha (Or.inr incompatible))
+      (by simpa [routeAlignedLane, ha, hb] using collision.symm))
+  · exact False.elim ((cross a b ha hb (Or.inl incompatible))
+      (by simpa [routeAlignedLane, ha, hb] using collision))
+  · exact injective a b ha hb (by simpa [routeAlignedLane, ha, hb] using collision)
+
+/-- A valid coloring stays valid after a matching that meets the arm's graph. -/
+theorem route_lane_alignment_preserves_valid_coloring
+    {α : Type} {inside : α → Bool} {lane : α → Nat} {remap : Nat → Nat}
+    {conflict : α → α → Prop}
+    (injective : ∀ a b, inside a = true → inside b = true →
+      remap (lane a) = remap (lane b) → lane a = lane b)
+    (cross : ∀ a b, inside a = true → inside b = false →
+      (conflict a b ∨ conflict b a) → remap (lane a) ≠ lane b)
+    (valid : ∀ a b, conflict a b → lane a ≠ lane b) :
+    ∀ a b, conflict a b →
+      routeAlignedLane inside lane remap a ≠ routeAlignedLane inside lane remap b := by
+  intro a b incompatible collision
+  exact valid a b incompatible
+    (route_lane_alignment_introduces_no_conflict injective cross incompatible collision)
+
+
 end Hibana

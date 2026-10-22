@@ -534,7 +534,7 @@ pub(crate) unsafe fn actor_admissions<const ROLE: u8>(endpoint: &Endpoint<'_, RO
                         }
                         LocalAction::Terminate => crate::invariant(),
                     };
-                    cursor
+                    kernel
                         .event_enabled(index, meta, &mut |scope, _| {
                             kernel.selected_arm_for_scope(scope)
                         })

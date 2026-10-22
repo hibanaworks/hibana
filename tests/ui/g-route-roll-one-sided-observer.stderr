@@ -1,4 +1,4 @@
-error[E0080]: evaluation panicked: receive lane sender change requires a causal handoff or exclusive route arms; role=2; event#1(0->2 label=2 lane=0); event#2(1->2 label=3 lane=0); help: add a causal handoff from the earlier receiver to the later sender; on reentry, close that handoff inside the roll
+error[E0080]: evaluation panicked: Route unprojectable for this role: invalid, ambiguous endpoint operation, or ambiguous first-visible endpoint operation; role=1; scope=1; controller=0; arms=0..1|1..3; event#2(1->2 label=3 lane=1); help: notify the affected role of the branch, or make its local paths mergeable; keep terminal acknowledgments within the selected arm
  --> src/g.rs
   |
   |             diagnostic_message::panic_diagnostic(diagnostic);

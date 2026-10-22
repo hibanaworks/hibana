@@ -1,11 +1,14 @@
 /// Immutable source interval and resident I/O slot for a scoped borrow.
-/// This carries no cursor, choice, holder, visit or completion state.
+/// A reentry origin is an immutable snapshot, consumed by the actor's commit.
+/// The borrow owns no independent protocol progress.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct OperationRegion {
     start: u16,
     end: u16,
     lane: u16,
     mask: u16,
+    reentry: crate::global::const_dsl::ScopeId,
+    reentry_epoch: u64,
 }
 
 impl OperationRegion {
@@ -14,6 +17,8 @@ impl OperationRegion {
         end: u16::MAX,
         lane: 256,
         mask: u16::MAX,
+        reentry: crate::global::const_dsl::ScopeId::none(),
+        reentry_epoch: 0,
     };
 
     pub(crate) fn parallel(start: usize, end: usize, lane: usize) -> Option<Self> {
@@ -25,7 +30,23 @@ impl OperationRegion {
             end: u16::try_from(end).ok()?,
             lane: lane as u16,
             mask: u16::MAX,
+            reentry: crate::global::const_dsl::ScopeId::none(),
+            reentry_epoch: 0,
         })
+    }
+
+    pub(crate) fn bind_reentry(
+        &mut self,
+        origin: Option<(crate::global::const_dsl::ScopeId, u64)>,
+    ) {
+        if let Some((scope, epoch)) = origin {
+            self.reentry = scope;
+            self.reentry_epoch = epoch;
+        }
+    }
+
+    pub(crate) fn reentry(self) -> Option<(crate::global::const_dsl::ScopeId, u64)> {
+        (!self.reentry.is_none()).then_some((self.reentry, self.reentry_epoch))
     }
 
     pub(crate) fn bind_mask(&mut self, mask: u16) {

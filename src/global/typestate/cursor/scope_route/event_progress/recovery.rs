@@ -17,9 +17,14 @@ impl EventCursor {
         event: EventCommitMeta,
         arms: &mut dyn FnMut(ScopeId, EventArmView) -> Option<u8>,
     ) -> EventAdmissionError {
-        let Some(scope) = self.complete_roll_body_scope_for_index(index, &mut |scope| {
-            arms(scope, EventArmView::Committed)
-        }) else {
+        let Some(scope) = (!event.body_reentry.is_none())
+            .then_some(event.body_reentry)
+            .or_else(|| {
+                self.complete_roll_body_scope_for_index(index, &mut |scope| {
+                    arms(scope, EventArmView::Committed)
+                })
+            })
+        else {
             return EventAdmissionError::Invariant;
         };
         let role = crate::invariant_some(self.logical_role_at(index));

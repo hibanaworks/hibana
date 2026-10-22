@@ -86,6 +86,12 @@ jobs:
           retention-days: 3
           path: |
             target/protocol-shapes/depth-5/**/inventory.txt
+            target/protocol-shapes/depth-5/**/catalog-inventory.txt
+            target/protocol-shapes/depth-5/**/catalog.json
+            target/protocol-shapes/depth-5/**/diagnostics.tsv
+            target/protocol-shapes/depth-5/**/unclassified-rejections.txt
+            target/protocol-shapes/depth-5/**/diagnose.time
+            target/protocol-shapes/depth-5/**/diagnosis-source.sha256
             target/protocol-shapes/depth-5/**/compiler.txt
             target/protocol-shapes/depth-5/**/revision.txt
             target/protocol-shapes/depth-5/**/source.patch
@@ -102,6 +108,12 @@ jobs:
             target/protocol-shapes/depth-5/**/oracle.log
             target/protocol-shapes/depth-5/**/inputs.json
             target/protocol-shapes/depth-5/**/observations/*.json
+            target/protocol-shapes/depth-5/**/rejected/inventory.tsv
+            target/protocol-shapes/depth-5/**/rejected/Cargo.toml
+            target/protocol-shapes/depth-5/**/rejected/Cargo.lock
+            target/protocol-shapes/depth-5/**/rejected/src/bin/*.rs
+            target/protocol-shapes/depth-5/**/rejected/*.jsonl
+            target/protocol-shapes/depth-5/**/rejected/*.stderr
 
   kani:
     if: github.event_name != 'workflow_dispatch' || inputs.check == 'all'
@@ -160,6 +172,10 @@ jobs:
         run: >-
           bash .github/scripts/lib/resource_guard.sh
           bash .github/scripts/check_protocol_shapes.sh
+      - name: Check nested roll send admission
+        run: >-
+          bash .github/scripts/lib/resource_guard.sh
+          bash .github/scripts/check_nested_roll_admission.sh
       - name: Run final-form gates
         run: >-
           bash .github/scripts/lib/resource_guard.sh

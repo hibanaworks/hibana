@@ -20,6 +20,23 @@ where
         scratch: &mut FrontierScratchWorkspace<'_>,
     ) -> RecvResult<crate::global::const_dsl::ScopeId> {
         loop {
+            let index = self.progress.cursor.index();
+            let scope = self.current_offer_scope_id();
+            let wrong_arm = self
+                .preview_live_selected_arm_for_scope(scope)
+                .is_some_and(|arm| {
+                    !self
+                        .progress
+                        .cursor
+                        .route_offer_entry_allows_current(scope, index, Some(arm))
+                });
+            if !self.permits_event(index) || wrong_arm {
+                let next = self.enabled_view_events().next();
+                if let Some((entry_idx, _)) = next {
+                    self.commit_offer_alignment_realign(entry_idx, visited)?;
+                    continue;
+                }
+            }
             let node_scope = self.progress.cursor.node_scope_id();
             if node_scope.is_none()
                 && let Some(entry_idx) = self.progress.cursor.first_pending_step_index()

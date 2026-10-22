@@ -1,8 +1,8 @@
 use crate::{
     eff::EffAtom,
     global::const_dsl::{
-        EffList, ReentryMark, ScopeId, ScopeKind, color_roll_frame_labels, merge_parallel_lanes,
-        merge_route_frame_labels, separate_roll_frame_domains,
+        EffList, ReentryMark, ScopeId, ScopeKind, assign_route_lanes, color_roll_frame_labels,
+        merge_parallel_lanes, merge_route_frame_labels, separate_roll_frame_domains,
     },
 };
 
@@ -35,6 +35,7 @@ pub trait ProgramShape {
 pub(crate) struct ProgramSourceData<const CAPACITY: usize> {
     eff: EffList<CAPACITY>,
     actors: Option<&'static SourceActorImage<CAPACITY>>,
+    receive_causal: bool,
 }
 
 pub(crate) type SourceActorImage<
@@ -140,7 +141,6 @@ impl<const CAPACITY: usize> SourceLowering<CAPACITY> {
                     right_end,
                     route_reentry,
                 );
-                merge_route_frame_labels(&mut self.eff, left_start, right_start, right_end);
                 if let Some(resolver_id) = *resolver {
                     self.eff.push_route_resolver_mut(scope, resolver_id);
                 }
@@ -171,8 +171,32 @@ impl<const CAPACITY: usize> SourceLowering<CAPACITY> {
                 let lane_span = self.emit(inner, ReentryMark::Reentrant);
                 let end = self.eff.len();
                 self.eff.push_roll_scope_mut(scope, start, end);
-                color_roll_frame_labels(&mut self.eff, start, end);
                 lane_span
+            }
+        }
+    }
+
+    const fn color_frames(&mut self, node: &ProgramSourceNode, start: usize) {
+        match node {
+            ProgramSourceNode::Send(_) => {}
+            ProgramSourceNode::Seq(left, right, _)
+            | ProgramSourceNode::Par(left, right, _)
+            | ProgramSourceNode::Route { left, right, .. } => {
+                let split = start + left.event_count();
+                self.color_frames(left, start);
+                self.color_frames(right, split);
+                if matches!(node, ProgramSourceNode::Route { .. }) {
+                    merge_route_frame_labels(
+                        &mut self.eff,
+                        start,
+                        split,
+                        split + right.event_count(),
+                    );
+                }
+            }
+            ProgramSourceNode::Roll(body, count) => {
+                self.color_frames(body, start);
+                color_roll_frame_labels(&mut self.eff, start, start + *count);
             }
         }
     }
@@ -214,10 +238,13 @@ impl<const CAPACITY: usize> ProgramSourceData<CAPACITY> {
         {
             panic!("type tree and lowered source disagree");
         }
+        let receive_causal = assign_route_lanes(&mut lowering.eff, actors);
+        lowering.color_frames(&Steps::SOURCE_NODE, 0);
         separate_roll_frame_domains(&mut lowering.eff);
         Self {
             eff: lowering.eff,
             actors,
+            receive_causal,
         }
     }
 
@@ -228,6 +255,10 @@ impl<const CAPACITY: usize> ProgramSourceData<CAPACITY> {
 
     pub(crate) const fn actors(&self) -> Option<&'static SourceActorImage<CAPACITY>> {
         self.actors
+    }
+
+    pub(crate) const fn receive_causal(&self) -> bool {
+        self.receive_causal
     }
 
     pub(crate) const fn actor_branch_knowledge(&self, source: &ProgramSourceNode) -> bool {

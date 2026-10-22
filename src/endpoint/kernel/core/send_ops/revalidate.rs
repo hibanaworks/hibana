@@ -57,7 +57,7 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
                     })
             }
         };
-        let enabled = match self.progress.cursor.event_enabled(
+        let enabled = match self.event_enabled(
             index,
             EventCommitMeta::new(
                 event.eff_index(),

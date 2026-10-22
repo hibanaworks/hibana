@@ -1,6 +1,7 @@
 //! These tests invoke receive-order validation independently of route
 //! projectability, selector validation and the runtime. No source-text checks.
 use super::*;
+use crate::g::source::{ProgramSourceData, SourceLowering};
 use crate::global::const_dsl::{
     validate_owned_receive_lane_causality, validate_receive_lane_causality,
 };
@@ -9,12 +10,63 @@ mod schedules;
 
 fn check<Steps: ProgramShape>(_: g::Program<Steps>, wire: bool, owned: bool) {
     let source = const { crate::g::source::ProgramSourceData::<128>::lower::<Steps>() };
+    let mut lowering = SourceLowering::new(
+        Steps::EVENT_COUNT,
+        Steps::SCOPE_MARKER_COUNT,
+        Steps::RESOLVER_MARKER_COUNT,
+        source.actors(),
+    );
+    lowering.emit(
+        &Steps::SOURCE_NODE,
+        crate::global::const_dsl::ReentryMark::SinglePass,
+    );
+    // Test the stated shared-lane hazards before route coloring. The allocator
+    // may make a safe program by assigning those receives different lanes.
+    let uncolored = ProgramSourceData {
+        receive_causal: validate_owned_receive_lane_causality(
+            &lowering.eff,
+            source.actors().unwrap(),
+        ),
+        eff: lowering.eff,
+        actors: source.actors(),
+    };
+    check_source::<Steps>(&uncolored, wire, owned);
+    let wire = validate_receive_lane_causality(source.eff_list());
+    let owned = validate_owned_receive_lane_causality(source.eff_list(), source.actors().unwrap());
+    assert_eq!(source.receive_causal(), owned);
+    check_source::<Steps>(&source, wire, owned);
+}
+
+fn check_source<Steps: ProgramShape>(source: &ProgramSourceData<128>, wire: bool, owned: bool) {
     assert_eq!(validate_receive_lane_causality(source.eff_list()), wire);
     assert_eq!(
         validate_owned_receive_lane_causality(source.eff_list(), source.actors().unwrap()),
         owned
     );
-    assert_eq!(schedules::check(&Steps::SOURCE_NODE, &source), owned);
+    assert_eq!(schedules::check(&Steps::SOURCE_NODE, source), owned);
+    for actors in [None, source.actors()] {
+        let mut pairwise = true;
+        for first in 0..source.eff_list().len() {
+            for second in 0..source.eff_list().len() {
+                if source.eff_list().atom_at(first).lane == source.eff_list().atom_at(second).lane {
+                    pairwise &= crate::global::const_dsl::receive_pair_is_causal(
+                        source.eff_list(),
+                        actors,
+                        first,
+                        second,
+                    );
+                }
+            }
+        }
+        let expected = match actors {
+            None => wire,
+            Some(_) => owned,
+        };
+        assert_eq!(
+            pairwise, expected,
+            "point and bulk receive queries disagree"
+        );
+    }
 }
 
 #[test]

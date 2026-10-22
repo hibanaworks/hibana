@@ -15,6 +15,7 @@ pub(crate) struct PreparedCommitDelta {
     pub(in crate::endpoint::kernel::core) fresh_route_start: u16,
     lane_relocation: Option<RelocatableResidentLaneStep>,
     cursor_after: StateIndex,
+    body_reentry: crate::global::const_dsl::ScopeId,
 }
 
 impl PreparedCommitDelta {
@@ -25,6 +26,7 @@ impl PreparedCommitDelta {
         delta: CommitDelta,
         selected_routes: PreparedRouteCommitRows,
         fresh_route_start: Option<usize>,
+        body_reentry: Option<crate::global::const_dsl::ScopeId>,
     ) -> Self {
         let fresh_route_start = match fresh_route_start {
             Some(start) if start < selected_routes.len() && start < u16::MAX as usize => {
@@ -39,12 +41,19 @@ impl PreparedCommitDelta {
             fresh_route_start,
             lane_relocation: delta.lane_relocation(),
             cursor_after: delta.cursor_after(),
+            body_reentry: body_reentry.unwrap_or(crate::global::const_dsl::ScopeId::none()),
         }
     }
 
     #[inline(always)]
     pub(crate) const fn event(&self) -> Option<CommitEventRow> {
         self.event
+    }
+
+    pub(in crate::endpoint::kernel::core) const fn body_reentry(
+        &self,
+    ) -> crate::global::const_dsl::ScopeId {
+        self.body_reentry
     }
 
     #[inline(always)]
@@ -161,7 +170,7 @@ where
                     self.selected_arm_for_scope(scope)
                 }
             };
-            let enabled = self.progress.cursor.event_enabled(
+            let enabled = self.event_enabled(
                 idx,
                 crate::global::typestate::EventCommitMeta::new(
                     event.eff_index(),
@@ -455,6 +464,7 @@ where
             delta,
             selected_routes,
             fresh_route_start,
+            self.prepared_body_reentry_scope(delta.event()),
         ))
     }
 
@@ -485,6 +495,7 @@ where
             delta,
             selected_routes,
             fresh_route_start,
+            self.prepared_body_reentry_scope(delta.event()),
         ))
     }
 

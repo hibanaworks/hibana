@@ -69,6 +69,10 @@ name = "enclosing_roll_parallel"
 path = "tests/enclosing_roll_parallel.rs"
 
 [[test]]
+name = "nested_parallel_reentry"
+path = "tests/nested_parallel_reentry.rs"
+
+[[test]]
 name = "callsite_regression"
 path = "tests/callsite_regression.rs"
 
@@ -189,6 +193,10 @@ name = "passive_parallel_target"
 path = "tests/passive_parallel_target.rs"
 
 [[test]]
+name = "nested_roll_admission"
+path = "tests/nested_roll_admission.rs"
+
+[[test]]
 name = "send_route_authority"
 path = "tests/send_route_authority.rs"
 
@@ -246,6 +254,10 @@ path = "tests/nested_resolver_reentry.rs"
 [[bench]]
 name = "runtime_cost"
 harness = false
+
+[[test]]
+name = "route_lane_alignment"
+path = "tests/route_lane_alignment.rs"
 
 [[bench]]
 name = "roll_cost"

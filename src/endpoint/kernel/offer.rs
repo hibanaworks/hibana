@@ -446,7 +446,7 @@ where
                         let selection = self.offer_scope_selection_for_scope_lane(
                             child,
                             entry,
-                            stage.selection().offer_lane,
+                            self.offer_lane_for_scope(child),
                         )?;
                         let facts = self.prepare_frontier_facts(selection, frontier_visited);
                         nested = Some((

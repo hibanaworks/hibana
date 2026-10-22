@@ -24,7 +24,7 @@ pub struct ParallelEndpoint<'p, 'r, const ROLE: u8> {
 
 impl<'e, 'r, const ROLE: u8> OperationTarget<'e, 'r, ROLE> {
     fn split<const N: usize>(self) -> Result<[ParallelEndpoint<'e, 'r, ROLE>; N], EndpointError> {
-        const { assert!(N >= 2 && N <= u8::MAX as usize + 1) };
+        const { assert!(N >= 1 && N <= u8::MAX as usize + 1) };
         let (ptr, handle) = self.parts();
         let mut regions = [super::carrier::OperationRegion::WHOLE; N];
         // SAFETY: the exclusive parent borrow is transferred to the disjoint
@@ -47,9 +47,19 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     ///
     /// The array length is inferred from the binding pattern. Fragments follow
     /// global source order, omitting fragments in which this role has no action.
+    /// The array can have one element when this endpoint participates in only
+    /// one fragment. Other endpoints held by the participant can borrow their
+    /// own fragments and run alongside it.
     /// Adjacent `par` groups are flattened. Sequential prefixes and enclosing
     /// `roll` scopes keep their boundaries. A fragment can be borrowed again
     /// when it reaches a nested `par`.
+    /// Borrowing a completed repeated group prepares its next repetition. The
+    /// first successful send or receive starts it. Nested borrows keep that
+    /// same entry until an operation advances the protocol.
+    /// Keep a fragment borrowed to continue a repeat inside the current group.
+    /// End the completed group and call `par()` again to repeat that group.
+    /// With nested repeats, identical message sequences can have different
+    /// boundaries; the borrow determines which group its operations belong to.
     ///
     /// Array positions identify fragments; variable names do not select them.
     /// The fragment types do not encode their individual protocols. An
@@ -94,7 +104,7 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     /// }
     /// ```
     ///
-    /// At least two fragments are required, with at most 256 fragments per
+    /// At least one fragment is required, with at most 256 fragments per
     /// borrow, matching the transport lane range. The core uses no heap storage.
     pub fn par<'p, const N: usize>(
         &'p mut self,

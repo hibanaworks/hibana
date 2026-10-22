@@ -17,7 +17,7 @@ pub(crate) const fn receive_lane_conflict<const E: usize>(
             let mut later_idx = earlier_idx + 1;
             while later_idx < eff_list.len() {
                 let goal = FlowGoal::ReceiveLane(earlier, later_idx + 1);
-                if goal.sender_change(eff_list.atom_at(later_idx)) {
+                if goal.sender_change(later_idx, eff_list.atom_at(later_idx)) {
                     let flow = CausalFlow {
                         eff_list,
                         earlier: earlier_idx,
@@ -63,7 +63,7 @@ pub(crate) const fn receive_lane_conflict<const E: usize>(
                         while later_idx < end {
                             let goal =
                                 FlowGoal::ReceiveLane(earlier, end - start + later_idx + 1 - start);
-                            if goal.sender_change(eff_list.atom_at(later_idx)) {
+                            if goal.sender_change(later_idx, eff_list.atom_at(later_idx)) {
                                 let next = CausalFlow {
                                     goal,
                                     iteration_start: end - start,

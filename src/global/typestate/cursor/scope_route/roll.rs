@@ -55,7 +55,7 @@ impl EventCursor {
     }
 
     #[inline(never)]
-    fn roll_scope_contains_index(&self, scope: ScopeId, idx: usize) -> bool {
+    pub(super) fn roll_scope_contains_index(&self, scope: ScopeId, idx: usize) -> bool {
         if matches!(
             scope.kind(),
             Some(crate::global::const_dsl::ScopeKind::Roll)
@@ -228,6 +228,15 @@ impl EventCursor {
                         lane,
                         &mut *selected_arm_for_scope,
                     )
+                    // A later completed step does not let this event skip an
+                    // enclosing prefix. Promote only to an ancestor whose
+                    // next visit can actually begin with this event.
+                    && self.roll_scope_head_allows_index(
+                        scope,
+                        idx,
+                        lane,
+                        &mut *selected_arm_for_scope,
+                    )
                 {
                     sequential_reentry = Some(match sequential_reentry {
                         Some(current) => self.outer_roll_scope(current, scope),
@@ -244,7 +253,7 @@ impl EventCursor {
     }
 
     #[inline(never)]
-    fn roll_scope_lane_allows_index(
+    pub(super) fn roll_scope_head_allows_index(
         &self,
         scope: ScopeId,
         idx: usize,
@@ -280,6 +289,32 @@ impl EventCursor {
                 }
             }
             scan += 1;
+        }
+        // A predecessor on another lane is cleared by the same reset. The
+        // candidate must be a source head, as well as a head of its own lane.
+        let Some(row) = self.machine().event_program().event_row_at(idx) else {
+            return false;
+        };
+        if let Some(dependency) = row.dependency()
+            && Self::dependency_applies(dependency, &mut *selected_arm_for_scope)
+        {
+            let rows = self
+                .machine()
+                .event_program()
+                .dependency_row_set(dependency);
+            for prior in rows.start()..rows.end() {
+                if self.roll_scope_contains_index(scope, prior)
+                    && self.event_actor_is_local(prior, &mut *selected_arm_for_scope) != Some(false)
+                    && let Some(row) = self.machine().event_program().event_row_at(prior)
+                    && self.event_conflict_row_allows_with_preview(
+                        row.conflict(),
+                        preview_conflict,
+                        &mut *selected_arm_for_scope,
+                    )
+                {
+                    return false;
+                }
+            }
         }
         true
     }
@@ -317,6 +352,6 @@ impl EventCursor {
         let mut selected_arm_for_scope = |scope| arm_for_scope(scope, super::EventArmView::Preview);
         // Only an explicit completed roll admits a new visit, at its head.
         // An inherited route mark cannot create an independent loop.
-        self.roll_scope_lane_allows_index(scope, idx, lane, &mut selected_arm_for_scope)
+        self.roll_scope_head_allows_index(scope, idx, lane, &mut selected_arm_for_scope)
     }
 }

@@ -23,12 +23,9 @@ where
             return Err(EventAdmissionError::Invariant);
         }
         let conflict = self.progress.cursor.event_conflict_for_index(index);
-        let enabled = self
-            .progress
-            .cursor
-            .event_enabled(index, meta, &mut |scope, view| {
-                self.selected_arm_for_recv_event(conflict, scope, view)
-            })?;
+        let enabled = self.event_enabled(index, meta, &mut |scope, view| {
+            self.selected_arm_for_recv_event(conflict, scope, view)
+        })?;
         self.preflight_roll_entry_views(Some(CommitEventRow::new(
             meta.eff_index,
             meta.label,

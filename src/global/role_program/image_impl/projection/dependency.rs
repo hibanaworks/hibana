@@ -59,6 +59,7 @@ impl CandidateKey {
 struct CompositionInput {
     barrier: CandidateKey,
     outer_floor: u16,
+    context: u16,
 }
 
 pub(in crate::global::role_program::image_impl) struct DependencyCursor<'a, const E: usize> {
@@ -70,9 +71,10 @@ pub(in crate::global::role_program::image_impl) struct DependencyCursor<'a, cons
     previous_eff: Option<(usize, usize)>,
     branch_barrier: CandidateKey,
     branch_floor: usize,
+    context: u16,
     inputs: [[Option<CompositionInput>; ScopeId::LOCAL_CAPACITY as usize]; 2],
     lane_candidates: [CandidateKey; LANE_DOMAIN_SIZE],
-    has_parallel: bool,
+    needs_dependencies: bool,
 }
 
 impl<'a, const E: usize> DependencyCursor<'a, E> {
@@ -82,6 +84,12 @@ impl<'a, const E: usize> DependencyCursor<'a, E> {
         rows: LocalRows<'a, E>,
     ) -> Self {
         let markers = eff_list.scope_markers();
+        let mut cross_lane = false;
+        let mut event = 1;
+        while event < eff_list.len() && !cross_lane {
+            cross_lane = eff_list.atom_at(event).lane != eff_list.atom_at(0).lane;
+            event += 1;
+        }
         Self {
             eff_list,
             scopes,
@@ -91,9 +99,11 @@ impl<'a, const E: usize> DependencyCursor<'a, E> {
             previous_eff: None,
             branch_barrier: CandidateKey::NONE,
             branch_floor: 0,
+            context: u16::MAX,
             inputs: [[None; ScopeId::LOCAL_CAPACITY as usize]; 2],
             lane_candidates: [CandidateKey::NONE; LANE_DOMAIN_SIZE],
-            has_parallel: scope_markers_contain_kind(markers, ScopeKind::Parallel),
+            needs_dependencies: cross_lane
+                || scope_markers_contain_kind(markers, ScopeKind::Parallel),
         }
     }
 
@@ -133,6 +143,7 @@ impl<'a, const E: usize> DependencyCursor<'a, E> {
             .expect("composition exit without input");
         self.branch_floor = input.outer_floor as usize;
         self.branch_barrier = input.barrier;
+        self.context = input.context;
         let row =
             local_step_range_for_eff_range(self.eff_list, enter.offset(), exit_eff, self.rows);
         if row.is_absent_or_zero_len() {
@@ -172,8 +183,13 @@ impl<'a, const E: usize> DependencyCursor<'a, E> {
         self.inputs[kind][slot] = Some(CompositionInput {
             barrier: self.branch_barrier,
             outer_floor: self.branch_floor as u16,
+            context: self.context,
         });
         self.branch_floor = local_step;
+        if index >= u16::MAX as usize {
+            crate::invariant();
+        }
+        self.context = index as u16;
     }
 
     const fn start_sibling(&mut self, scope: ScopeId, local_step: usize) {
@@ -182,6 +198,11 @@ impl<'a, const E: usize> DependencyCursor<'a, E> {
             .expect("composition sibling without input")
             .barrier;
         self.branch_floor = local_step;
+        let enter = self.scopes.first_enter(scope);
+        if enter >= u16::MAX as usize {
+            crate::invariant();
+        }
+        self.context = enter as u16;
     }
 
     const fn process_boundaries_through(&mut self, current_eff: usize, local_step: usize) {
@@ -294,17 +315,31 @@ impl<'a, const E: usize> DependencyCursor<'a, E> {
         if atom.lane != current_lane {
             crate::invariant();
         }
+        let crosses_lane = match self.previous_eff {
+            Some((previous, _)) => self.eff_list.atom_at(previous).lane != current_lane,
+            None => false,
+        };
         self.previous_eff = Some((current_eff, side));
         self.next_local_step += 1;
-        if !self.has_parallel {
+        if !self.needs_dependencies {
             return PackedLocalDependency::none();
         }
         self.process_boundaries_through(current_eff, local_step);
-        let candidate = self
+        let mut candidate = self
             .applicable_candidate(self.branch_barrier, current_eff)
             .later(
                 self.applicable_candidate(self.lane_candidates[current_lane as usize], current_eff),
             );
+        if crosses_lane && self.context != u16::MAX && self.branch_floor < local_step {
+            // A source-sequential segment may switch lane inside one arm.
+            // Its prefix excludes independent siblings; joins restore the
+            // containing segment before another sequential operation begins.
+            candidate = candidate.later(CandidateKey::new(
+                self.context as usize,
+                self.branch_floor,
+                local_step,
+            ));
+        }
         if !candidate.is_none() && candidate.local_end as usize > local_step {
             crate::invariant();
         }

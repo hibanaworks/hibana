@@ -17,6 +17,7 @@ fn frontier_visit_capacity_is_exact_nonempty_cursor_position_domain() {
     let has_route_scope = kani::any::<bool>();
     let footprint = RuntimeRoleFootprint {
         roll_scope_count: 0,
+        borrow_epoch_count: 0,
         max_route_commit_count: 0,
         route_arm_state_capacity: 0,
         local_step_count,

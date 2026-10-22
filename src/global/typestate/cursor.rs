@@ -24,6 +24,8 @@ mod first_recv_dispatch;
 mod kani;
 mod lane_progress;
 mod navigation;
+#[cfg(any(kani, all(test, hibana_repo_tests)))]
+mod parallel_reentry_tests;
 mod pending_events;
 mod scope_route;
 #[cfg(all(test, hibana_repo_tests))]
@@ -661,11 +663,7 @@ impl EventCursor {
     #[inline(always)]
     fn write_completion_bit(&mut self, index: usize, completed: bool) {
         #[cfg(any(kani, all(test, hibana_repo_tests)))]
-        let next_mutation = self
-            .state()
-            .completion_mutations
-            .checked_add(1)
-            .expect("qualification mutation count exhausted");
+        self.record_completion_mutation();
         let count = self
             .machine()
             .event_program()
@@ -682,10 +680,15 @@ impl EventCursor {
         } else {
             *word &= !bit;
         }
-        #[cfg(any(kani, all(test, hibana_repo_tests)))]
-        {
-            self.state_mut().completion_mutations = next_mutation;
-        }
+    }
+
+    #[cfg(any(kani, all(test, hibana_repo_tests)))]
+    fn record_completion_mutation(&mut self) {
+        self.state_mut().completion_mutations = self
+            .state()
+            .completion_mutations
+            .checked_add(1)
+            .expect("qualification mutation count exhausted");
     }
 
     #[cfg(any(kani, all(test, hibana_repo_tests)))]

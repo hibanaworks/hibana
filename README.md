@@ -318,6 +318,9 @@ operations. The parent endpoint is unavailable until the borrows end. The
 global protocol determines the fragments; `par()` only borrows them and does
 not schedule work or choose a branch. Adjacent parallel groups are flattened,
 so the local bindings do not repeat the global protocol's binary grouping.
+A role present in only one fragment borrows a one-element array, such as
+`let [mut work] = endpoint.par()?;`. Separate endpoints held by one participant
+can borrow their own fragments and be polled together.
 For parallel work inside a choice, first observe it with
 `let label = endpoint.offer().await?.label();`, then borrow its fragments.
 They reuse the observed choice without waiting for the first message to finish.
@@ -329,6 +332,10 @@ requires guarded repetition. Each repetition reuses the compiled protocol
 data, and the fragment's steps can be executed again. FIFO delivery, replay
 exclusion, and separation of session runs are required to distinguish new
 messages from old ones. A repeated protocol may run indefinitely.
+
+Inside a borrowed parallel group, an inner `roll` continues within that group.
+To repeat the whole group, end its completed borrows and call `par()` again.
+These boundaries matter when nested repeats can produce the same message sequence.
 
 Repetition can coexist with a later continuation. Projection rejects an
 outgoing operation that could start a repeated fragment and also select that

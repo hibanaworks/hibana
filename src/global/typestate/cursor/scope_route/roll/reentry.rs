@@ -30,7 +30,7 @@ impl EventCursor {
         let mut preview = |scope| arm_for_scope(scope, super::super::EventArmView::Preview);
         self.route_scope_reentry(scope)
             && self.route_scope_contained_in_roll_scope(scope, body)
-            && self.roll_scope_lane_allows_index(body, idx, lane, &mut preview)
+            && self.roll_scope_head_allows_index(body, idx, lane, &mut preview)
     }
 
     #[inline(never)]
@@ -58,7 +58,7 @@ impl EventCursor {
                 selected_arm_for_scope,
             )
         };
-        self.roll_scope_lane_allows_index(scope, idx, lane, &mut preview)
+        self.roll_scope_head_allows_index(scope, idx, lane, &mut preview)
             .then_some(scope)
     }
 

@@ -215,7 +215,7 @@ where
                 continue;
             }
             let conflict = cursor.event_conflict_for_index(index);
-            if cursor
+            if self
                 .event_enabled(index, meta.into(), &mut |scope, view| {
                     self.selected_arm_for_recv_event(conflict, scope, view)
                 })

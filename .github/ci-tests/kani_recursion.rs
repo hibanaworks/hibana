@@ -75,24 +75,49 @@ fn partition(names: BTreeSet<String>) -> Audit<Vec<Group>> {
             "receive proof family must retain every seed partition and both source shapes".into(),
         );
     }
-    let mut groups =
-        ["ordinary", "owned-linear", "owned-parallel", "owned-route"].map(|label| Group {
-            label,
-            harnesses: Vec::new(),
-            recursion: None,
-        });
+    let mut groups = [
+        "ordinary",
+        "owned-linear",
+        "owned-parallel",
+        "owned-route",
+        "parallel-reentry",
+    ]
+    .map(|label| Group {
+        label,
+        harnesses: Vec::new(),
+        recursion: None,
+    });
     for name in names {
         let part = match name.strip_prefix(PREFIX) {
             Some(name) if name.starts_with("owned_linear_seed_word") => 1,
             Some(name) if name.starts_with("owned_parallel_seed_word") => 2,
             Some(name) if name.starts_with("source_scan_") => 3,
+            _ if name.starts_with("global::typestate::cursor::parallel_reentry_tests::") => 4,
             _ => 0,
         };
         groups[part].harnesses.push(name);
     }
     Ok(groups
         .into_iter()
-        .filter(|group| !group.harnesses.is_empty())
+        .flat_map(|group| {
+            if group.label == "parallel-reentry" {
+                // Keep code generation and its reachable callback set local to
+                // each proof, as well as solving its paths separately.
+                group
+                    .harnesses
+                    .into_iter()
+                    .map(|name| Group {
+                        label: "parallel-reentry",
+                        harnesses: vec![name],
+                        recursion: None,
+                    })
+                    .collect::<Vec<_>>()
+            } else if group.harnesses.is_empty() {
+                Vec::new()
+            } else {
+                vec![group]
+            }
+        })
         .collect())
 }
 
@@ -270,7 +295,7 @@ pub(super) fn prepare(
         return Err("compiled Kani harnesses differ from the reviewed inventory".into());
     }
     let mut groups = partition(names)?;
-    if groups.iter().any(|group| group.label != "ordinary") {
+    if groups.iter().any(|group| group.label.starts_with("owned-")) {
         let status = cargo(root, target)
             .args(["--only-codegen", "--harness", PREFIX.trim_end_matches("::")])
             .status()
@@ -332,17 +357,19 @@ mod tests {
             total
         );
         for group in groups {
-            assert_eq!(group.recursion.is_some(), group.label != "ordinary");
+            assert_eq!(group.recursion.is_some(), group.label.starts_with("owned-"));
         }
     }
     #[test]
     fn partition_retains_all_harnesses_without_duplicating_ordinary_proofs() {
         let mut names = family();
         names.insert("ordinary_proof".into());
+        names.insert("global::typestate::cursor::parallel_reentry_tests::proof_a".into());
+        names.insert("global::typestate::cursor::parallel_reentry_tests::proof_b".into());
         let groups = partition(names.clone()).unwrap();
         assert_eq!(
             groups.iter().map(|g| g.harnesses.len()).collect::<Vec<_>>(),
-            [2, 4, 4, 4]
+            [2, 4, 4, 4, 1, 1]
         );
         assert_eq!(
             groups

@@ -556,6 +556,7 @@ pub(crate) struct RuntimeRoleFootprint {
     pub(crate) route_arm_state_capacity: usize,
     pub(crate) local_step_count: usize,
     pub(crate) roll_scope_count: usize,
+    pub(crate) borrow_epoch_count: usize,
     pub(crate) route_scope_count: usize,
     pub(crate) active_lane_count: usize,
     pub(crate) endpoint_lane_slot_count: usize,
@@ -581,11 +582,16 @@ pub(crate) const fn local_cursor_position_count(local_step_count: usize) -> usiz
 }
 
 impl RuntimeRoleFootprint {
-    /// Current event completions and completed visits retained for their
-    /// enclosing continuation share the cursor's one progress bitset.
+    /// Current completions and retained visits precede one reset epoch per
+    /// roll. Epoch words are aligned within the same cursor allocation.
     #[inline(always)]
     pub(crate) const fn completion_bit_count(self) -> usize {
-        self.local_step_count + self.roll_scope_count
+        let completions = self.local_step_count + self.roll_scope_count;
+        if self.borrow_epoch_count == 0 {
+            completions
+        } else {
+            completions.next_multiple_of(32) + 64 * self.borrow_epoch_count
+        }
     }
 
     #[inline(always)]
@@ -634,6 +640,7 @@ mod frontier_visit_footprint_tests {
                     route_arm_state_capacity: 0,
                     local_step_count,
                     roll_scope_count: 0,
+                    borrow_epoch_count: 0,
                     route_scope_count,
                     active_lane_count: usize::from(local_step_count != 0),
                     endpoint_lane_slot_count: 1,

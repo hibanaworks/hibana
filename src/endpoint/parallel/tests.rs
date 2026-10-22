@@ -15,11 +15,11 @@ mod reentrant;
 fn the_immutable_lane_reference_keeps_parallel_handles_and_futures_compact() {
     use crate::endpoint::carrier::{OperationHandle, OperationRegion};
     use core::mem::size_of;
-    assert_eq!(size_of::<OperationRegion>(), 8);
-    assert_eq!(size_of::<OperationHandle>(), 16);
+    assert_eq!(size_of::<OperationRegion>(), 24);
+    assert_eq!(size_of::<OperationHandle>(), 32);
     assert_eq!(
         size_of::<crate::ParallelEndpoint<'static, 'static, 0>>(),
-        size_of::<usize>() + 16
+        size_of::<usize>() + 32
     );
     assert!(size_of::<crate::Endpoint<'static, 0>>() <= 3 * size_of::<usize>());
     std::println!(

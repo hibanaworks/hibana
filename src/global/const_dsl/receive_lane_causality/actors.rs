@@ -194,14 +194,18 @@ impl<const E: usize, const D: usize> ActorMap<'_, E, D> {
 
 struct Obligation<'a, const E: usize, const D: usize> {
     events: &'a EffList<E>,
-    actors: &'a SourceActorImage<E, D>,
+    actors: Option<&'a SourceActorImage<E, D>>,
     earlier: usize,
     end: usize,
     repeated: Option<RollBodyRange>,
 }
 
 impl<const E: usize, const D: usize> Obligation<'_, E, D> {
-    const fn run(&self, actors: ActorMap<'_, E, D>) -> Result<bool, NeedChoice> {
+    const fn run(
+        &self,
+        actors: ActorMap<'_, E, D>,
+        target: Option<usize>,
+    ) -> Result<bool, NeedChoice> {
         let earlier = self.events.atom_at(self.earlier);
         let body = match self.repeated {
             Some(body) => body,
@@ -217,7 +221,10 @@ impl<const E: usize, const D: usize> Obligation<'_, E, D> {
             earlier: self.earlier - body.start,
             goal: match self.repeated {
                 Some(_) => FlowGoal::Closure,
-                None => FlowGoal::ReceiveLane(earlier, self.end),
+                None => match target {
+                    Some(event) => FlowGoal::ReceiveEvent(earlier, event),
+                    None => FlowGoal::ReceiveLane(earlier, self.end),
+                },
             },
             body_start: body.start,
             iteration_start: 0,
@@ -231,7 +238,10 @@ impl<const E: usize, const D: usize> Obligation<'_, E, D> {
             return Ok(true);
         }
         let next = CausalFlow {
-            goal: FlowGoal::ReceiveLane(earlier, body.len() + self.end - body.start),
+            goal: match target {
+                Some(event) => FlowGoal::ReceiveEvent(earlier, body.len() + event - body.start),
+                None => FlowGoal::ReceiveLane(earlier, body.len() + self.end - body.start),
+            },
             iteration_start: body.len(),
             ..flow
         };
@@ -241,12 +251,16 @@ impl<const E: usize, const D: usize> Obligation<'_, E, D> {
         }
     }
 
-    const fn check(&self, paths: Paths<'_>) -> bool {
-        let choice = match self.run(ActorMap::Owned {
-            image: self.actors,
-            paths,
-            repeated: self.repeated,
-        }) {
+    const fn check(&self, paths: Paths<'_>, target: Option<usize>) -> bool {
+        let actors = match self.actors {
+            Some(image) => ActorMap::Owned {
+                image,
+                paths,
+                repeated: self.repeated,
+            },
+            None => ActorMap::Logical,
+        };
+        let choice = match self.run(actors, target) {
             Ok(result) => return result,
             Err(choice) => choice,
         };
@@ -300,14 +314,83 @@ impl<const E: usize, const D: usize> Obligation<'_, E, D> {
             && self.earlier < choice.scope.stop as usize
         {
             if self.earlier < choice.scope.split as usize {
-                self.check(left)
+                self.check(left, target)
             } else {
-                self.check(right)
+                self.check(right, target)
             }
         } else {
-            self.check(left) && self.check(right)
+            self.check(left, target) && self.check(right, target)
         }
     }
+}
+
+/// The ordering obligation for one possible shared receive direction. Lane
+/// numbers do not enter this query: allocation uses it before choosing them.
+pub(crate) const fn receive_pair_is_causal<const E: usize, const D: usize>(
+    events: &EffList<E>,
+    actors: Option<&SourceActorImage<E, D>>,
+    earlier: usize,
+    later: usize,
+) -> bool {
+    if earlier >= events.len() || later >= events.len() {
+        return false;
+    }
+    let before = events.atom_at(earlier);
+    let after = events.atom_at(later);
+    if before.from == before.to
+        || after.from == after.to
+        || before.to != after.to
+        || before.from == after.from
+    {
+        return true;
+    }
+    let empty = SourceContext::new(&[]);
+    let paths = Paths {
+        shared: &empty,
+        current: &empty,
+        next: &empty,
+    };
+    if earlier < later
+        && !(Obligation {
+            events,
+            actors,
+            earlier,
+            end: later + 1,
+            repeated: None,
+        })
+        .check(paths, Some(later))
+    {
+        return false;
+    }
+    let markers = events.scope_markers();
+    let mut index = 0;
+    while index < markers.len() {
+        let marker = markers.at(index);
+        if marker.event.is_primary_enter()
+            && matches!(marker.scope_id.kind(), Some(ScopeKind::Roll))
+        {
+            let Some((start, end)) = roll_body_range_from_enter(markers, index) else {
+                return false;
+            };
+            if start <= earlier
+                && earlier < end
+                && start <= later
+                && later < end
+                && !(Obligation {
+                    events,
+                    actors,
+                    earlier,
+                    end: later + 1,
+                    repeated: Some(RollBodyRange::new(start, end)),
+                })
+                .check(paths, Some(later))
+            {
+                return false;
+            }
+        }
+        index += 1;
+    }
+    true
 }
 
 pub(crate) const fn validate_owned_receive_lane_causality<const E: usize, const D: usize>(
@@ -339,12 +422,12 @@ pub(crate) const fn validate_owned_receive_lane_causality<const E: usize, const 
             )
             && !(Obligation {
                 events,
-                actors,
+                actors: Some(actors),
                 earlier,
                 end,
                 repeated: None,
             })
-            .check(paths)
+            .check(paths, None)
         {
             return false;
         }
@@ -379,12 +462,12 @@ pub(crate) const fn validate_owned_receive_lane_causality<const E: usize, const 
                     )
                     && !(Obligation {
                         events,
-                        actors,
+                        actors: Some(actors),
                         earlier,
                         end,
                         repeated: Some(body),
                     })
-                    .check(paths)
+                    .check(paths, None)
                 {
                     return false;
                 }
@@ -446,24 +529,25 @@ pub(crate) const fn owned_receive_lane_conflict<const E: usize, const D: usize>(
                 && let Some(end) = sender_change_end(events, range, atom)
                 && !(Obligation {
                     events,
-                    actors,
+                    actors: Some(actors),
                     earlier,
                     end,
                     repeated,
                 })
-                .check(paths)
+                .check(paths, None)
             {
                 let mut later = range.start;
                 while later < end {
-                    if (FlowGoal::ReceiveLane(atom, later + 1)).sender_change(events.atom_at(later))
+                    if (FlowGoal::ReceiveLane(atom, later + 1))
+                        .sender_change(later, events.atom_at(later))
                         && !(Obligation {
                             events,
-                            actors,
+                            actors: Some(actors),
                             earlier,
                             end: later + 1,
                             repeated,
                         })
-                        .check(paths)
+                        .check(paths, None)
                     {
                         return Some((earlier, later, scope));
                     }

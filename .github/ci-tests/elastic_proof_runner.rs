@@ -130,6 +130,7 @@ fn main() {
     }
     check_roll_membership::run(&[here.to_str().unwrap().into()]);
     smt(&here.join("NoRollFastPath.smt2"), build);
+    smt(&here.join("RouteAlignment.smt2"), build);
     if !skip {
         for (directory, leans, models) in [
             (

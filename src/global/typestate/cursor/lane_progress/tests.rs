@@ -167,7 +167,7 @@ fn pending_prefix_preserves_rejection_for_every_completion_and_route_choice() {
     let mut cursor = MaybeUninit::<EventCursor>::uninit();
     let mut heads = [0u16; 256];
     let mut labels = [0u16; 256];
-    let mut done = std::vec![0u32; len.div_ceil(32)];
+    let mut done = std::vec![0u32; rows.footprint().completion_bit_count().div_ceil(32)];
     // As in the lane-head differential fixture: disjoint unpublished storage
     // outlives every cursor access, including deliberate completion resets.
     unsafe {

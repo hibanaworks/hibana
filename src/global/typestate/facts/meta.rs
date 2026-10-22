@@ -50,6 +50,7 @@ pub(crate) struct EventCommitMeta {
     pub(crate) scope: ScopeId,
     pub(crate) route_arm: Option<u8>,
     pub(crate) lane: u8,
+    pub(crate) body_reentry: ScopeId,
 }
 
 impl EventCommitMeta {
@@ -69,6 +70,7 @@ impl EventCommitMeta {
             scope,
             route_arm,
             lane,
+            body_reentry: ScopeId::none(),
         }
     }
 }

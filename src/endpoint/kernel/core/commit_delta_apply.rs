@@ -66,6 +66,9 @@ where
     ) -> Option<ScopeId> {
         let event = event?;
         let mut selected_arm_for_scope = |scope| self.selected_arm_for_scope(scope);
+        if let Some(scope) = self.borrowed_reentry_scope() {
+            return Some(scope);
+        }
         self.progress
             .cursor
             .roll_body_reentry_scope_for_step(event.progress_step(), &mut selected_arm_for_scope)

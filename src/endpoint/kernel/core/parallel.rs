@@ -5,6 +5,33 @@ use crate::{
 };
 
 impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
+    pub(in crate::endpoint::kernel) fn borrowed_reentry_scope(
+        &self,
+    ) -> Option<crate::global::const_dsl::ScopeId> {
+        let (scope, epoch) = self.region.reentry()?;
+        self.progress
+            .cursor
+            .borrowed_roll_reentry_is_current(scope, epoch, &mut |scope| {
+                self.selected_arm_for_scope(scope)
+            })
+            .then_some(scope)
+    }
+
+    pub(crate) fn event_enabled(
+        &self,
+        index: usize,
+        mut event: EventCommitMeta,
+        arms: &mut dyn FnMut(crate::global::const_dsl::ScopeId, EventArmView) -> Option<u8>,
+    ) -> Result<
+        crate::global::typestate::EnabledEventCommit,
+        crate::global::typestate::EventAdmissionError,
+    > {
+        event.body_reentry = self
+            .borrowed_reentry_scope()
+            .unwrap_or_else(crate::global::const_dsl::ScopeId::none);
+        self.progress.cursor.event_enabled(index, event, arms)
+    }
+
     pub(crate) fn has_other_active_operations(&self) -> bool {
         // This admission check runs before a fresh borrow starts, rather than
         // in the transport poll loop. Forgotten children cannot be overwritten
@@ -59,52 +86,51 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
         })
     }
 
+    pub(in crate::endpoint::kernel) fn enabled_view_events(
+        &self,
+    ) -> impl Iterator<Item = (usize, usize)> + '_ {
+        (0..self.progress.cursor.local_steps_len())
+            .filter_map(|index| self.enabled_view_event(index).map(|source| (index, source)))
+    }
+
+    fn enabled_view_event(&self, index: usize) -> Option<usize> {
+        if self.progress.cursor.logical_role_at(index) != Some(self.public_header.role())
+            || !self.permits_event(index)
+        {
+            return None;
+        }
+        let event: EventCommitMeta =
+            if let Some(meta) = self.progress.cursor.try_send_meta_at(index) {
+                meta.into()
+            } else if let Some(meta) = self.progress.cursor.try_recv_meta_at(index) {
+                meta.into()
+            } else {
+                let meta = self.progress.cursor.try_local_meta_at(index)?;
+                EventCommitMeta::new(
+                    meta.eff_index,
+                    meta.label,
+                    meta.origin,
+                    meta.scope,
+                    meta.route_arm,
+                    meta.lane,
+                )
+            };
+        let conflict = self.progress.cursor.event_conflict_for_index(index);
+        self.event_enabled(index, event, &mut |scope, view| match view {
+            // A fresh preview can select another arm, but cannot
+            // change which arm completed the preceding roll visit.
+            EventArmView::Committed => self.selected_arm_for_scope(scope),
+            EventArmView::Preview => self
+                .preview_live_selected_arm_for_scope(scope)
+                .or_else(|| self.selected_arm_for_recv_event(conflict, scope, view)),
+        })
+        .is_ok()
+        .then_some(event.eff_index.dense_ordinal())
+    }
+
     fn parallel_region_covers_frontier(&self, source: core::ops::Range<usize>) -> bool {
-        let enabled = (0..self.progress.cursor.local_steps_len()).filter_map(|index| {
-            if self.progress.cursor.logical_role_at(index) != Some(self.public_header.role())
-                || !self.permits_event(index)
-            {
-                return None;
-            }
-            let event: EventCommitMeta =
-                if let Some(meta) = self.progress.cursor.try_send_meta_at(index) {
-                    meta.into()
-                } else if let Some(meta) = self.progress.cursor.try_recv_meta_at(index) {
-                    meta.into()
-                } else {
-                    let meta = self.progress.cursor.try_local_meta_at(index)?;
-                    EventCommitMeta::new(
-                        meta.eff_index,
-                        meta.label,
-                        meta.origin,
-                        meta.scope,
-                        meta.route_arm,
-                        meta.lane,
-                    )
-                };
-            let conflict = self.progress.cursor.event_conflict_for_index(index);
-            self.progress
-                .cursor
-                .event_enabled(index, event, &mut |scope, view| match view {
-                    // A fresh preview can select another arm, but cannot
-                    // change which arm completed the preceding roll visit.
-                    EventArmView::Committed => self.selected_arm_for_scope(scope),
-                    EventArmView::Preview => self
-                        .operation
-                        .public_route_branch
-                        .as_ref()
-                        .and_then(|branch| {
-                            (branch.branch_meta.scope_id == scope)
-                                .then_some(branch.branch_meta.selected_arm)
-                        })
-                        .or_else(|| self.selected_arm_for_recv_event(conflict, scope, view))
-                        .or_else(|| self.preview_live_selected_arm_for_scope(scope)),
-                })
-                .is_ok()
-                .then_some((index, event.eff_index.dense_ordinal()))
-        });
         let mut inside = false;
-        for (index, event) in enabled {
+        for (index, event) in self.enabled_view_events() {
             if source.contains(&event) {
                 inside = true;
             } else if !self.progress.cursor.completed_roll_alternative_before(
@@ -147,7 +173,7 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
         if let Some(fault) = self.session_fault() {
             return Err(SendError::SessionFault(fault));
         }
-        if regions.len() < 2
+        if regions.is_empty()
             || !matches!(
                 self.operation.public_active_op,
                 PublicActiveOp::Idle | PublicActiveOp::RestoredRouteBranch
@@ -167,21 +193,23 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
             {
                 continue;
             }
-            let (Some(left), Some(right)) =
-                (self.arm_lane(start..split), self.arm_lane(split..end))
-            else {
-                continue;
-            };
-            if left == right {
+            let left = self.arm_lane(start..split);
+            let right = self.arm_lane(split..end);
+            if left.is_some() && left == right {
                 return Err(SendError::PhaseInvariant);
             }
-            let left =
-                OperationRegion::parallel(start, split, left).ok_or(SendError::PhaseInvariant)?;
-            let right =
-                OperationRegion::parallel(split, end, right).ok_or(SendError::PhaseInvariant)?;
-            regions[0] = left;
-            regions[1] = right;
-            let mut count = 2;
+            let mut count = 0;
+            for (start, end, lane) in [(start, split, left), (split, end, right)] {
+                if let Some(lane) = lane {
+                    let slot = regions.get_mut(count).ok_or(SendError::PhaseInvariant)?;
+                    *slot = OperationRegion::parallel(start, end, lane)
+                        .ok_or(SendError::PhaseInvariant)?;
+                    count += 1;
+                }
+            }
+            if count == 0 {
+                continue;
+            }
             let mut index = 0;
             while index < count {
                 let Some((start, split, end)) = self.associative_parallel_at(regions[index]) else {
@@ -230,6 +258,31 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
                     .parallel_borrow_mask(self.public_header.role(), source.start, source.end)
                     .ok_or(SendError::PhaseInvariant)?;
                 region.bind_mask(mask);
+            }
+            let origin = self
+                .region
+                .reentry()
+                .filter(|&(scope, epoch)| {
+                    self.progress.cursor.borrowed_roll_reentry_is_current(
+                        scope,
+                        epoch,
+                        &mut |scope| self.selected_arm_for_scope(scope),
+                    )
+                })
+                .or_else(|| {
+                    self.progress.cursor.completed_parallel_reentry(
+                        start,
+                        end,
+                        &mut |scope, view| match view {
+                            EventArmView::Committed => self.selected_arm_for_scope(scope),
+                            EventArmView::Preview => self
+                                .preview_live_selected_arm_for_scope(scope)
+                                .or_else(|| self.selected_arm_for_scope(scope)),
+                        },
+                    )
+                });
+            for region in regions.iter_mut() {
+                region.bind_reentry(origin);
             }
             self.move_parked_branch_to_parallel_borrow(regions)?;
             return Ok(());

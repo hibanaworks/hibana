@@ -218,6 +218,9 @@ where
         let branch_scope = publish_branch.scope_id;
         let cursor_index = publish_branch.cursor_index;
         let mut frame = Some(frame);
+        let body_reentry = self
+            .borrowed_reentry_scope()
+            .unwrap_or_else(crate::global::const_dsl::ScopeId::none);
         let result = (|| {
             let crate::endpoint::kernel::core::ActorProgress {
                 cursor,
@@ -250,14 +253,18 @@ where
             let enabled = cursor
                 .event_enabled(
                     state_index_to_usize(cursor_index),
-                    crate::global::typestate::EventCommitMeta::new(
-                        branch_meta.eff_index,
-                        branch_meta.label,
-                        branch_meta.origin,
-                        branch_meta.scope,
-                        branch_meta.route_arm,
-                        branch_meta.lane,
-                    ),
+                    {
+                        let mut event = crate::global::typestate::EventCommitMeta::new(
+                            branch_meta.eff_index,
+                            branch_meta.label,
+                            branch_meta.origin,
+                            branch_meta.scope,
+                            branch_meta.route_arm,
+                            branch_meta.lane,
+                        );
+                        event.body_reentry = body_reentry;
+                        event
+                    },
                     &mut selected_arm,
                 )
                 .map_err(|_| branch_recv_phase_invariant())?;

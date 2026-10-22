@@ -90,15 +90,73 @@ where
         match (selected, ready) {
             (Some(selected), Some(ready)) if selected != ready => crate::invariant(),
             (Some(selected), _) => Some(selected),
-            (None, ready) => ready,
+            (None, Some(ready)) => Some(ready),
+            (None, None) => self.parked_preview_arm_for_scope(scope_id),
         }
+    }
+
+    pub(in crate::endpoint::kernel::core) fn parked_preview_arm_for_scope(
+        &self,
+        scope: ScopeId,
+    ) -> Option<u8> {
+        let from_branch = |branch: &super::BranchMeta| {
+            if branch.scope_id == scope {
+                Some(branch.selected_arm)
+            } else {
+                self.progress
+                    .cursor
+                    .route_scope_conflict_arm_for_scope(branch.scope_id, scope)
+            }
+        };
+        let mut selected = self
+            .operation
+            .public_route_branch
+            .as_ref()
+            .and_then(|branch| from_branch(&branch.branch_meta));
+        if self.region.is_whole() {
+            return selected;
+        }
+        let bounds = self.region.bounds();
+        if self
+            .context
+            .program
+            .source_route_arm_for_range(scope, bounds.start, bounds.end)
+            .is_none()
+        {
+            return selected;
+        }
+        for operation in self.operations.iter().flatten() {
+            if core::ptr::eq(operation.state.get(), self.operation) {
+                continue;
+            }
+            // SAFETY: the common actor borrow excludes mutation of the other
+            // slots. The current mutable operation was excluded above.
+            let operation = unsafe { &*operation.state.get() };
+            if matches!(
+                operation.public_active_op,
+                super::PublicActiveOp::Idle | super::PublicActiveOp::Poisoned
+            ) {
+                continue;
+            }
+            if let Some(arm) = operation
+                .public_route_branch
+                .as_ref()
+                .and_then(|branch| from_branch(&branch.branch_meta))
+            {
+                if selected.is_some_and(|selected| selected != arm) {
+                    crate::invariant();
+                }
+                selected = Some(arm);
+            }
+        }
+        selected
     }
 
     #[inline]
     pub(crate) fn current_offer_scope_id(&self) -> ScopeId {
         let mut selected_arm_for_scope = |scope| self.selected_live_arm_for_scope(scope);
         let mut preview_selected_arm_for_scope =
-            |scope| self.poll_arm_from_ready_mask(scope).map(Arm::as_u8);
+            |scope| self.preview_live_selected_arm_for_scope(scope);
         self.progress.cursor.current_offer_scope_id(
             &mut selected_arm_for_scope,
             &mut preview_selected_arm_for_scope,

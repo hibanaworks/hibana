@@ -59,6 +59,7 @@ fn frontier_entry_capacity_preserves_the_full_lane_domain() {
     };
     let footprint = RuntimeRoleFootprint {
         roll_scope_count: 0,
+        borrow_epoch_count: 0,
         max_route_commit_count: 0,
         route_arm_state_capacity: 0,
         local_step_count: 0,

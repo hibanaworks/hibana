@@ -34,12 +34,32 @@ type Closed = g::Roll<g::Seq<OrderedBody, g::Send<1, 2, Complete>>>;
 #[test]
 fn branch_and_reentry_sender_changes_require_receive_causality() {
     const {
-        assert!(!g::ProgramProjection::<Unordered, 32>::RECEIVE_CAUSAL);
+        let source = g::ProgramProjection::<Unordered, 32>::SOURCE_EFF_LIST;
+        let mut merged = crate::global::const_dsl::EffList::<32>::new_partitioned(5, 6, 0);
+        let mut event = 0;
+        while event < source.len() {
+            let mut atom = source.atom_at(event);
+            atom.lane = 0;
+            merged.push_event_mut(atom);
+            event += 1;
+        }
+        merged.push_route_scope_mut(
+            crate::global::const_dsl::ScopeId::route(0),
+            0,
+            2,
+            4,
+            crate::global::const_dsl::ReentryMark::Reentrant,
+        );
+        merged.push_roll_scope_mut(crate::global::const_dsl::ScopeId::roll_scope(0), 0, 5);
+        assert!(!crate::global::const_dsl::validate_receive_lane_causality(
+            &merged
+        ));
+        assert!(g::ProgramProjection::<Unordered, 32>::RECEIVE_CAUSAL);
         // The ACK orders the right branch's notification before its tail.
         assert!(g::ProgramProjection::<OrderedBody, 32>::RECEIVE_CAUSAL);
-        // Repeating also requires that next visit's chooser cannot overtake the
-        // previous ACK at role 0. Completion communicates that dependency.
-        assert!(!g::ProgramProjection::<Ordered, 32>::RECEIVE_CAUSAL);
+        // Distinct receive lanes also separate a later visit's notice from
+        // the earlier acknowledgment. The public test delays that ACK.
+        assert!(g::ProgramProjection::<Ordered, 32>::RECEIVE_CAUSAL);
         assert!(g::ProgramProjection::<Closed, 32>::ERROR.is_none());
         let () = g::ProgramProjection::<Closed, 32>::VALIDATION;
     }

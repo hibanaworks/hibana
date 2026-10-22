@@ -90,36 +90,8 @@ where
         if let Some(arm) = self.selected_live_arm_for_scope(scope_id) {
             return Ok(Some(arm));
         }
-        // A parked offer retains the decision before its first event commits.
-        // The enclosing actor borrow keeps every operation slot stable here.
-        let mut materialized = None;
-        for slot in self.operations.iter().flatten() {
-            let operation = if core::ptr::eq(slot.state.get(), self.operation) {
-                &*self.operation
-            } else {
-                // SAFETY: this distinct slot is read under the actor's exclusive
-                // kernel borrow. Child futures retain no slot borrow while Pending.
-                unsafe { &*slot.state.get() }
-            };
-            let Some(branch) = operation.public_route_branch.as_ref() else {
-                continue;
-            };
-            let selected = if branch.branch_meta.scope_id == scope_id {
-                Some(branch.branch_meta.selected_arm)
-            } else {
-                self.progress
-                    .cursor
-                    .route_scope_conflict_arm_for_scope(branch.branch_meta.scope_id, scope_id)
-            };
-            if let Some(arm) = selected {
-                if materialized.is_some_and(|selected| selected != arm) {
-                    return Err(SendError::PhaseInvariant);
-                }
-                materialized = Some(arm);
-            }
-        }
-        if materialized.is_some() {
-            return Ok(materialized);
+        if let Some(arm) = self.parked_preview_arm_for_scope(scope_id) {
+            return Ok(Some(arm));
         }
         self.preview_dynamic_resolver_arm_for_scope(scope_id, lane)
     }

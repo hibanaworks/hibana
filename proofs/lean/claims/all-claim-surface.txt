@@ -14143,6 +14143,32 @@ Hibana.route_join_one_sided_handoff_rejected : @Eq.{1} Bool
             (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1)))))).checkReceiveLaneCausality
     (@OfNat.ofNat.{0} Nat (nat_lit 5) (instOfNatNat (nat_lit 5))))
   false
+@Hibana.route_lane_alignment_introduces_no_conflict : ∀ {α : Type} {inside : α → Bool} {lane : α → Nat}
+  {remap : Nat → Nat} {conflict : α → α → Prop},
+  (∀ (a b : α),
+      @Eq.{1} Bool (inside a) true →
+        @Eq.{1} Bool (inside b) true → @Eq.{1} Nat (remap (lane a)) (remap (lane b)) → @Eq.{1} Nat (lane a) (lane b)) →
+    (∀ (a b : α),
+        @Eq.{1} Bool (inside a) true →
+          @Eq.{1} Bool (inside b) false → Or (conflict a b) (conflict b a) → @Ne.{1} Nat (remap (lane a)) (lane b)) →
+      ∀ {a b : α},
+        conflict a b →
+          @Eq.{1} Nat (@Hibana.routeAlignedLane α inside lane remap a)
+              (@Hibana.routeAlignedLane α inside lane remap b) →
+            @Eq.{1} Nat (lane a) (lane b)
+@Hibana.route_lane_alignment_preserves_valid_coloring : ∀ {α : Type} {inside : α → Bool} {lane : α → Nat}
+  {remap : Nat → Nat} {conflict : α → α → Prop},
+  (∀ (a b : α),
+      @Eq.{1} Bool (inside a) true →
+        @Eq.{1} Bool (inside b) true → @Eq.{1} Nat (remap (lane a)) (remap (lane b)) → @Eq.{1} Nat (lane a) (lane b)) →
+    (∀ (a b : α),
+        @Eq.{1} Bool (inside a) true →
+          @Eq.{1} Bool (inside b) false → Or (conflict a b) (conflict b a) → @Ne.{1} Nat (remap (lane a)) (lane b)) →
+      (∀ (a b : α), conflict a b → @Ne.{1} Nat (lane a) (lane b)) →
+        ∀ (a b : α),
+          conflict a b →
+            @Ne.{1} Nat (@Hibana.routeAlignedLane α inside lane remap a)
+              (@Hibana.routeAlignedLane α inside lane remap b)
 @Hibana.route_selection_observation_has_exact_queued_evidence : ∀ {config next : Hibana.DistributedConfig}
   {role globalId : Nat},
   @Eq.{1} (Option.{0} Hibana.DistributedConfig) (config.observeQueuedRouteEvidence? role globalId)

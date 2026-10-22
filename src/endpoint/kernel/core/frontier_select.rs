@@ -243,12 +243,7 @@ where
                     self.selected_arm_for_recv_event(conflict, candidate, view)
                 }
             };
-            if self
-                .progress
-                .cursor
-                .event_enabled(idx, event, &mut selected)
-                .is_ok()
-            {
+            if self.event_enabled(idx, event, &mut selected).is_ok() {
                 return true;
             }
         }

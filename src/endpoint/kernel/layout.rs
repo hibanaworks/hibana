@@ -421,6 +421,7 @@ mod tests {
             route_arm_state_capacity,
             local_step_count,
             roll_scope_count: 0,
+            borrow_epoch_count: 0,
             route_scope_count,
             active_lane_count,
             endpoint_lane_slot_count,

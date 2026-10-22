@@ -29,7 +29,7 @@ pub(crate) struct RoleImageRef {
     columns: RoleImageColumns,
     blob: BlobPtr,
     first_active_lane: u16,
-    route_lookup_index: u8,
+    lookup_indexes: u8,
 }
 
 #[inline(always)]
@@ -81,6 +81,7 @@ impl RuntimeRoleFacts {
             route_arm_state_capacity: 0,
             local_step_count: self.words[Self::LOCAL_STEP_COUNT] as usize,
             roll_scope_count: 0,
+            borrow_epoch_count: 0,
             route_scope_count: self.words[Self::ROUTE_SCOPE_COUNT] as usize,
             active_lane_count: self.words[Self::ACTIVE_LANE_COUNT] as usize,
             endpoint_lane_slot_count: self.words[Self::ENDPOINT_LANE_SLOT_COUNT] as usize,
@@ -91,6 +92,7 @@ impl RuntimeRoleFacts {
 
 const SORTED_ROUTE_INDEX: u8 = 1;
 const PASSIVE_PARENT_INDEX: u8 = 2;
+const PARALLEL_REENTRY_INDEX: u8 = 4;
 
 impl RoleImageRef {
     pub(crate) const fn new<const N: usize>(
@@ -109,23 +111,23 @@ impl RoleImageRef {
             Some(metadata) => metadata,
             None => invalid_resident_descriptor(),
         };
-        let mut route_lookup_index = 0;
+        let mut lookup_indexes = 0;
         if route_scopes_are_sorted(bytes, columns.route_scopes) {
-            route_lookup_index |= SORTED_ROUTE_INDEX;
+            lookup_indexes |= SORTED_ROUTE_INDEX;
             if columns.route_scopes.len as usize == footprint.route_scope_count
                 && passive_parent_rows_are_coherent(bytes, columns)
             {
-                route_lookup_index |= PASSIVE_PARENT_INDEX;
+                lookup_indexes |= PASSIVE_PARENT_INDEX;
             }
         }
-        let image = Self {
+        let mut image = Self {
             program,
             role,
             facts,
             columns,
             blob,
             first_active_lane: metadata.first_active_lane,
-            route_lookup_index,
+            lookup_indexes,
         };
         if metadata.active_lane_count != footprint.active_lane_count
             || metadata.logical_lane_count != footprint.logical_lane_count
@@ -150,6 +152,9 @@ impl RoleImageRef {
         }
         image.validate_resident_events();
         image.validate_parallel_borrow_masks();
+        if image.parallel_reentry_is_borrowable() {
+            image.lookup_indexes |= PARALLEL_REENTRY_INDEX;
+        }
         image
     }
 
@@ -184,12 +189,12 @@ impl RoleImageRef {
 
     #[inline(always)]
     pub(crate) const fn has_sorted_route_index(&self) -> bool {
-        self.route_lookup_index & SORTED_ROUTE_INDEX != 0
+        self.lookup_indexes & SORTED_ROUTE_INDEX != 0
     }
 
     #[inline(always)]
     pub(crate) const fn has_passive_parent_index(&self) -> bool {
-        self.route_lookup_index & PASSIVE_PARENT_INDEX != 0
+        self.lookup_indexes & PASSIVE_PARENT_INDEX != 0
     }
 
     #[inline(always)]
@@ -202,6 +207,11 @@ impl RoleImageRef {
         let mut footprint = self.facts.footprint();
         footprint.route_arm_state_capacity = self.columns.route_arm_lane_step_rows.len as usize;
         footprint.roll_scope_count = self.columns.roll_scopes.len as usize;
+        footprint.borrow_epoch_count = if self.lookup_indexes & PARALLEL_REENTRY_INDEX != 0 {
+            footprint.roll_scope_count
+        } else {
+            0
+        };
         footprint
     }
 

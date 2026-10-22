@@ -100,6 +100,50 @@ impl CompiledProgramRef {
         crate::invariant()
     }
 
+    pub(crate) const fn source_route_arm_for_range(
+        &self,
+        scope: ScopeId,
+        start: usize,
+        end: usize,
+    ) -> Option<u8> {
+        if !matches!(scope.kind(), Some(ScopeKind::Route)) || start >= end {
+            return None;
+        }
+        let markers = self
+            .columns
+            .scope_markers_for(self.source_scope_marker_count());
+        let mut first = None;
+        let mut split = None;
+        let mut index = 0;
+        while index < markers.len as usize {
+            let at = markers.offset as usize + index * PROGRAM_IMAGE_SCOPE_MARKER_STRIDE;
+            if self.read_u16_at(at + 2) == scope.raw() {
+                match self.byte_at(at + 4) & 3 {
+                    0 if first.is_none() => first = Some(self.read_u16_at(at) as usize),
+                    2 => {
+                        let boundary = self.read_u16_at(at) as usize;
+                        match (first, split) {
+                            (Some(first), Some(split)) => {
+                                return if first <= start && end <= split {
+                                    Some(0)
+                                } else if split <= start && end <= boundary {
+                                    Some(1)
+                                } else {
+                                    None
+                                };
+                            }
+                            (Some(_), None) => split = Some(boundary),
+                            _ => crate::invariant(),
+                        }
+                    }
+                    _ => (),
+                }
+            }
+            index += 1;
+        }
+        None
+    }
+
     /// Strict single-visit source order. Enumeration orders sequential terms,
     /// except for operations separated by parallel or alternative arms.
     /// Read the existing immutable markers; do not create a dependency ledger.

@@ -92,6 +92,7 @@ fn observe(boundary: ResultClass) -> Observation {
                     CommitDelta::cursor_only(StateIndex::new(0)),
                     PreparedRouteCommitRows::empty(),
                     None,
+                    None,
                 ),
                 route_audit: SendRouteAudit::None,
             },

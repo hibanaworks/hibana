@@ -71,7 +71,7 @@ where
                     )
             }
         };
-        let enabled = match self.progress.cursor.event_enabled(
+        let enabled = match self.event_enabled(
             preview_idx,
             crate::global::typestate::EventCommitMeta::from(meta),
             &mut selected_arm,

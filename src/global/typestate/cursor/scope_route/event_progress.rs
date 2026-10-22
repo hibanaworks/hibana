@@ -143,6 +143,14 @@ impl EventCursor {
         event: EventCommitMeta,
         arm_for_scope: &mut dyn FnMut(ScopeId, EventArmView) -> Option<u8>,
     ) -> Result<(), EventAdmissionError> {
+        if !event.body_reentry.is_none() {
+            let mut preview = |scope| arm_for_scope(scope, EventArmView::Preview);
+            if !self.roll_scope_head_allows_index(event.body_reentry, idx, event.lane, &mut preview)
+            {
+                return Err(self.reentry_view_wait(idx, event, arm_for_scope));
+            }
+            return Ok(());
+        }
         // Unchosen events keep a clear completion bit even after lane progress
         // has passed their region. They need a fresh roll visit just as consumed
         // events do; a previous visit's prefix cannot authorize a past suffix.

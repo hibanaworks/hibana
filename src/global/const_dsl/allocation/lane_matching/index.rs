@@ -2,7 +2,7 @@ use super::super::BYTE_DOMAIN;
 use crate::global::const_dsl::EffList;
 
 #[derive(Clone, Copy)]
-pub(super) struct EndpointSet<const ROLE_BYTES: usize>([u8; ROLE_BYTES]);
+pub(in super::super) struct EndpointSet<const ROLE_BYTES: usize>([u8; ROLE_BYTES]);
 
 impl<const ROLE_BYTES: usize> EndpointSet<ROLE_BYTES> {
     const EMPTY: Self = Self([0; ROLE_BYTES]);
@@ -45,7 +45,7 @@ impl<const ROLE_BYTES: usize> EndpointSet<ROLE_BYTES> {
     }
 
     #[inline(always)]
-    pub(super) const fn is_disjoint(self, other: Self) -> bool {
+    pub(in super::super) const fn is_disjoint(self, other: Self) -> bool {
         let mut byte = 0;
         while byte < ROLE_BYTES {
             if self.0[byte] & other.0[byte] != 0 {
@@ -115,7 +115,7 @@ impl<const ROLE_BYTES: usize> LaneEndpointIndex<ROLE_BYTES> {
         index
     }
 
-    pub(super) const fn endpoint_set(&self, lane: u8) -> EndpointSet<ROLE_BYTES> {
+    pub(in super::super) const fn endpoint_set(&self, lane: u8) -> EndpointSet<ROLE_BYTES> {
         let slot = self.slot_by_lane[lane as usize];
         if slot == u16::MAX {
             EndpointSet::EMPTY
@@ -124,7 +124,7 @@ impl<const ROLE_BYTES: usize> LaneEndpointIndex<ROLE_BYTES> {
         }
     }
 
-    pub(super) const fn contains_lane(&self, lane: u8) -> bool {
+    pub(in super::super) const fn contains_lane(&self, lane: u8) -> bool {
         self.slot_by_lane[lane as usize] != u16::MAX
     }
 

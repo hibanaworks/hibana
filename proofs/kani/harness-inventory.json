@@ -298,6 +298,15 @@
       "global::typestate::cursor::kani::local_event_bit_exists_exactly_inside_the_local_step_domain",
       "global::typestate::cursor::kani::retained_roll_completion_is_scoped_and_cannot_authorize_an_outgoing_step"
     ],
+    "../../src/global/typestate/cursor/parallel_reentry_tests.rs": [
+      "global::typestate::cursor::parallel_reentry_tests::cross_lane_child_admission_requires_only_its_own_fresh_steps",
+      "global::typestate::cursor::parallel_reentry_tests::cross_lane_parent_admission_requires_its_prefix",
+      "global::typestate::cursor::parallel_reentry_tests::parallel_entry_accepts_the_independent_parent_arm",
+      "global::typestate::cursor::parallel_reentry_tests::parallel_entry_accepts_the_new_parents_required_prefix",
+      "global::typestate::cursor::parallel_reentry_tests::parallel_entry_rejects_a_completed_childs_prefix_for_the_new_parent",
+      "global::typestate::cursor::parallel_reentry_tests::same_lane_tail_preserves_the_childs_enclosing_prefix",
+      "global::typestate::cursor::parallel_reentry_tests::selected_reentry_scope_preserves_cross_lane_predecessors"
+    ],
     "../../src/global/typestate/facts/kani.rs": [
       "global::typestate::facts::kani::checked_state_index_acceptance_is_the_exact_present_identity_domain",
       "global::typestate::facts::kani::deterministic_inbound_key_matching_is_exact_on_every_available_axis",
@@ -394,7 +403,7 @@
   "contract-harnesses": {},
   "contracts": [],
   "totals": {
-    "standard-harnesses": 272,
+    "standard-harnesses": 279,
     "contract-harnesses": 0,
     "functions-under-contract": 0
   }

@@ -18,3 +18,9 @@ name = "protocolShapes"
 root = "ProtocolShapesGenerated"
 srcDir = "../../target/lean-proof"
 exeName = "protocol-shapes"
+
+[[lean_exe]]
+name = "nestedRollAdmission"
+root = "NestedRollAdmissionGenerated"
+srcDir = "../../target/lean-proof"
+exeName = "nested-roll-admission"

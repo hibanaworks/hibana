@@ -49,14 +49,17 @@ pub(super) fn receive_conflict<const E: usize, const D: usize>(
     let empty = SourceContext::new(&[]);
     Obligation {
         events,
-        actors,
+        actors: Some(actors),
         earlier: 0,
         end: events.len(),
         repeated: None,
     }
-    .check(Paths {
-        shared: &empty,
-        current: &empty,
-        next: &empty,
-    })
+    .check(
+        Paths {
+            shared: &empty,
+            current: &empty,
+            next: &empty,
+        },
+        None,
+    )
 }

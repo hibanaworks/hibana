@@ -22,11 +22,43 @@ source_hashes() {
 source_hashes > "${OUTPUT}/source.sha256"
 cargo +"${TOOLCHAIN:-stable}" run --locked --manifest-path "${ROOT_DIR}/.github/ci-tests/Cargo.toml" \
   --bin protocol-shapes -- "${ROOT_DIR}" "${OUTPUT}" "${DEPTH}" "${SHARD}" "${SHARDS}" \
-  | tee "${OUTPUT}/inventory.txt"
+  | tee "${OUTPUT}/catalog-inventory.txt"
 (
   cd "${OUTPUT}"
-  shasum -a 256 Cargo.toml inputs.json src/lib.rs traces/*.txt > inputs.sha256
+  shasum -a 256 src/bin/diagnose.rs > diagnosis-source.sha256
 )
+/usr/bin/time -p -o "${OUTPUT}/diagnose.time" \
+  cargo +"${TOOLCHAIN:-stable}" run --manifest-path "${OUTPUT}/Cargo.toml" --bin diagnose \
+    > "${OUTPUT}/diagnostics.tsv"
+cargo +"${TOOLCHAIN:-stable}" run --locked --manifest-path "${ROOT_DIR}/.github/ci-tests/Cargo.toml" \
+  --bin protocol-shapes -- "${ROOT_DIR}" "${OUTPUT}" "${DEPTH}" "${SHARD}" "${SHARDS}" \
+    "${OUTPUT}/diagnostics.tsv" | tee "${OUTPUT}/inventory.txt"
+(
+  cd "${OUTPUT}"
+  shasum -a 256 --check diagnosis-source.sha256
+)
+(
+  cd "${OUTPUT}"
+  shopt -s nullglob
+  shasum -a 256 Cargo.toml catalog.json inputs.json src/lib.rs src/bin/diagnose.rs \
+    diagnostics.tsv unclassified-rejections.txt traces/*.txt \
+    rejected/Cargo.toml rejected/inventory.tsv rejected/src/bin/*.rs > inputs.sha256
+)
+cargo +"${TOOLCHAIN:-stable}" test --locked --manifest-path "${ROOT_DIR}/.github/ci-tests/Cargo.toml" \
+  --bin protocol-shape-rejections
+cargo +"${TOOLCHAIN:-stable}" run --locked --manifest-path "${ROOT_DIR}/.github/ci-tests/Cargo.toml" \
+  --bin protocol-shape-rejections -- "${OUTPUT}" "${TOOLCHAIN:-stable}"
+if [[ "$(cat "${OUTPUT}/inputs.json")" == '[]' ]]; then
+  source_hashes > "${OUTPUT}/source-after.sha256"
+  cmp "${OUTPUT}/source.sha256" "${OUTPUT}/source-after.sha256"
+  (cd "${OUTPUT}" && shasum -a 256 --check inputs.sha256 > inputs-check.log)
+  if [[ "$(cat "${OUTPUT}/unclassified-rejections.txt")" != 0 ]]; then
+    echo "Unclassified projection rejections remain; see ${OUTPUT}/diagnostics.tsv" >&2
+    exit 1
+  fi
+  echo "This shard contains expected compile-fail cases only; no runtime coverage is claimed."
+  exit 0
+fi
 rm -rf "${OUTPUT}/observations"
 /usr/bin/time -p -o "${OUTPUT}/compile.time" \
   cargo +"${TOOLCHAIN:-stable}" test --manifest-path "${OUTPUT}/Cargo.toml" --no-run
@@ -49,10 +81,14 @@ bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" build-serial \
 /usr/bin/time -p -o "${OUTPUT}/oracle.time" \
   "${ROOT_DIR}/proofs/lean/.lake/build/bin/protocol-shapes" \
   "${OUTPUT}/inputs.json" "${OUTPUT}/observations" | tee "${OUTPUT}/oracle.log"
-cat "${OUTPUT}/compile.time" "${OUTPUT}/execute.time" "${OUTPUT}/oracle.time"
+cat "${OUTPUT}/diagnose.time" "${OUTPUT}/compile.time" "${OUTPUT}/execute.time" "${OUTPUT}/oracle.time"
 cargo +"${TOOLCHAIN:-stable}" run --locked --manifest-path "${ROOT_DIR}/.github/ci-tests/Cargo.toml" \
   --bin protocol-shape-controls -- "${ROOT_DIR}/proofs/lean/.lake/build/bin/protocol-shapes" "${OUTPUT}"
 source_hashes > "${OUTPUT}/source-after.sha256"
 cmp "${OUTPUT}/source.sha256" "${OUTPUT}/source-after.sha256"
 (cd "${OUTPUT}" && shasum -a 256 --check inputs.sha256 > inputs-check.log)
 (cd "${OUTPUT}" && shasum -a 256 --check dependencies.sha256 > dependencies-check.log)
+if [[ "$(cat "${OUTPUT}/unclassified-rejections.txt")" != 0 ]]; then
+  echo "Unclassified projection rejections remain; see ${OUTPUT}/diagnostics.tsv" >&2
+  exit 1
+fi

@@ -22,6 +22,71 @@ pub(in crate::endpoint::kernel) enum PreparedViewCommit {
 }
 
 impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
+    /// A private payload can supply the entry owner for its own prepared
+    /// iteration. An independent sibling does not borrow that payload.
+    fn independent_pending_entry_transfer(
+        &self,
+        role: u8,
+        scope: crate::global::const_dsl::ScopeId,
+        event: CommitEventRow,
+    ) -> bool {
+        let current = event.eff_index().dense_ordinal();
+        let atom = self.context.program.event_atom_at(current);
+        if atom.from == role || atom.to == role || atom.payload == EventPayload::Endpoint(role) {
+            return false;
+        }
+        for view in self.views.as_slice() {
+            for operation in view.operations() {
+                if core::ptr::eq(operation.state.get(), self.operation) {
+                    continue;
+                }
+                // SAFETY: the actor's common kernel borrow excludes mutation
+                // of the other resident operations. The current mutable cell
+                // was excluded before creating this shared reference.
+                let operation = unsafe { &*operation.state.get() };
+                let super::SendState::Sending { pending } = &operation.public_send_state else {
+                    continue;
+                };
+                let Some(plan) = pending.commit_plan.as_ref() else {
+                    continue;
+                };
+                if plan.proof.progress.delta.body_reentry() != scope {
+                    continue;
+                }
+                let (Some(transfer), Some(pending_event)) =
+                    (plan.proof.transfer, plan.proof.progress.delta.event())
+                else {
+                    continue;
+                };
+                let Some(payload_view) = self.views.get(role) else {
+                    continue;
+                };
+                if transfer.ptr != NonNull::from(&payload_view.public_header)
+                    || !transfer.handle.matches_header(&payload_view.public_header)
+                {
+                    continue;
+                }
+                let pending = pending_event.eff_index().dense_ordinal();
+                for marker in 0..self.context.program.source_scope_marker_count() {
+                    if let Some((start, split, end)) =
+                        self.context.program.source_parallel_at(marker)
+                        && ((start <= current
+                            && current < split
+                            && split <= pending
+                            && pending < end)
+                            || (start <= pending
+                                && pending < split
+                                && split <= current
+                                && current < end))
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+
     /// A completed visit does not restore an Endpoint transferred by a later
     /// continuation. Entry owners are immutable source-prefix facts; live
     /// issuance is read from the existing affine headers, not a holder table.
@@ -32,6 +97,9 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
         let Some(scope) = self.prepared_body_reentry_scope(event) else {
             return Ok(());
         };
+        if !self.progress.cursor.roll_reentry_epochs_available(scope) {
+            return Err(EventAdmissionError::Invariant);
+        }
         // SAFETY: the current kernel retains this pinned actor allocation.
         let actor = unsafe {
             self.public_header
@@ -67,7 +135,11 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
                 } else {
                     unsafe { &*view.primary_operation().state.get() }.public_active_op
                 };
-                if operation.check_payload_borrow(role, sent).is_err() {
+                if operation.check_payload_borrow(role, sent).is_err()
+                    && !event.is_some_and(|event| {
+                        self.independent_pending_entry_transfer(role, scope, event)
+                    })
+                {
                     verdict = Err(EventAdmissionError::OtherViewPending);
                     continue;
                 }
