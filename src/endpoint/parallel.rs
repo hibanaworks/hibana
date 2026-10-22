@@ -50,6 +50,8 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     /// The array can have one element when this endpoint participates in only
     /// one fragment. Other endpoints held by the participant can borrow their
     /// own fragments and run alongside it.
+    /// A fragment may wait for a preceding operation on another held endpoint.
+    /// Borrowing it leaves that dependency in place for its sends and receives.
     /// Adjacent `par` groups are flattened. Sequential prefixes and enclosing
     /// `roll` scopes keep their boundaries. A fragment can be borrowed again
     /// when it reaches a nested `par`.

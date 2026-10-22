@@ -23,6 +23,130 @@ type Seal = g::Msg<7, ()>;
 type Done = g::Msg<8, ()>;
 
 #[test]
+fn a_carrier_borrows_its_parallel_arm_before_the_resources_prefix() {
+    type First = g::Msg<21, ()>;
+    type Second = g::Msg<22, ()>;
+    type Reply = g::Msg<23, ()>;
+    type Other = g::Msg<24, ()>;
+    type OtherReply = g::Msg<25, ()>;
+    let global = g::seq(
+        g::send::<OWNER, WORKER, Loan<'_>>(),
+        g::seq(
+            g::par(
+                g::seq(
+                    g::send::<DB, SERVICE, First>(),
+                    g::seq(
+                        g::send::<WORKER, SERVICE, Second>(),
+                        g::send::<SERVICE, DB, Reply>(),
+                    ),
+                ),
+                g::seq(
+                    g::send::<DB, SERVICE, Other>(),
+                    g::send::<SERVICE, DB, OtherReply>(),
+                ),
+            ),
+            g::send::<WORKER, OWNER, Loan<'_>>(),
+        ),
+    );
+    let p0 = project::<OWNER>(&global);
+    let p1 = project::<WORKER>(&global);
+    let p2 = project::<SERVICE>(&global);
+    let p3 = project::<DB>(&global);
+    let sid = SessionId::new(96);
+    // SAFETY: this fixture owns one resource and creates its sole issuer.
+    let network = InMemoryTransport::new([((sid, DB), unsafe { EndpointBinding::new() })]);
+    let [mut slab0, mut slab1, mut slab2] = [
+        vec![0; 128 * 1024],
+        vec![0; 128 * 1024],
+        vec![0; 128 * 1024],
+    ];
+    let mut s0 = SessionKitStorage::uninit();
+    let mut s1 = SessionKitStorage::uninit();
+    let mut s2 = SessionKitStorage::uninit();
+    let rv0 = s0.init().rendezvous(&mut slab0, network.clone()).unwrap();
+    let rv1 = s1.init().rendezvous(&mut slab1, network.clone()).unwrap();
+    let rv2 = s2.init().rendezvous(&mut slab2, network.clone()).unwrap();
+    let mut owner = rv0.enter(sid, &p0).unwrap();
+    let mut worker = rv1.enter(sid, &p1).unwrap();
+    let mut service = rv2.enter(sid, &p2).unwrap();
+    let db = rv0.enter(sid, &p3).unwrap();
+    tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .start_paused(true)
+        .build()
+        .unwrap()
+        .block_on(async {
+            tokio::time::timeout(Duration::from_secs(1), async {
+                tokio::try_join!(
+                    async {
+                        owner.send::<Loan<'_>>(db).await?;
+                        let _db = owner.recv::<Loan<'_>>().await?;
+                        Ok::<_, EndpointError>(())
+                    },
+                    async {
+                        assert!(
+                            worker.par::<1>().is_err(),
+                            "the carrier must first receive its loan"
+                        );
+                        let mut db = worker.recv::<Loan<'_>>().await?;
+                        {
+                            let [mut carrier] = worker
+                                .par()
+                                .expect("carrier arm is borrowable before the DB prefix");
+                            let [mut left, mut right] = db
+                                .par()
+                                .expect("both DB arms are borrowable with the carrier arm");
+                            let second = carrier.send::<Second>(&());
+                            tokio::pin!(second);
+                            assert!(
+                                core::future::poll_fn(|cx| Poll::Ready(second.as_mut().poll(cx)))
+                                    .await
+                                    .is_pending(),
+                                "borrowing must not discharge the DB prefix"
+                            );
+                            tokio::try_join!(
+                                second,
+                                async {
+                                    left.send::<First>(&()).await?;
+                                    left.recv::<Reply>().await?;
+                                    Ok::<_, EndpointError>(())
+                                },
+                                async {
+                                    right.send::<Other>(&()).await?;
+                                    right.recv::<OtherReply>().await?;
+                                    Ok::<_, EndpointError>(())
+                                },
+                            )?;
+                        }
+                        worker.send::<Loan<'_>>(db).await?;
+                        Ok::<_, EndpointError>(())
+                    },
+                    async {
+                        let [mut left, mut right] = service.par()?;
+                        tokio::try_join!(
+                            async {
+                                left.recv::<First>().await?;
+                                left.recv::<Second>().await?;
+                                left.send::<Reply>(&()).await?;
+                                Ok::<_, EndpointError>(())
+                            },
+                            async {
+                                right.recv::<Other>().await?;
+                                right.send::<OtherReply>(&()).await?;
+                                Ok::<_, EndpointError>(())
+                            },
+                        )?;
+                        Ok::<_, EndpointError>(())
+                    },
+                )
+            })
+            .await
+            .expect("both arms complete concurrently")
+            .unwrap();
+        });
+}
+
+#[test]
 fn delegated_parallel_rolls_keep_their_cross_lane_continuation() {
     tokio::runtime::Builder::new_current_thread()
         .enable_time()

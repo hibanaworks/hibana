@@ -94,6 +94,17 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
     }
 
     pub(in crate::endpoint::kernel) fn enabled_view_event(&self, index: usize) -> Option<usize> {
+        let (source, admission) = self.view_event_admission(index)?;
+        admission.is_ok().then_some(source)
+    }
+
+    fn view_event_admission(
+        &self,
+        index: usize,
+    ) -> Option<(
+        usize,
+        Result<(), crate::global::typestate::EventAdmissionError>,
+    )> {
         if self.progress.cursor.logical_role_at(index) != Some(self.public_header.role())
             || !self.permits_event(index)
         {
@@ -116,16 +127,15 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
                 )
             };
         let conflict = self.progress.cursor.event_conflict_for_index(index);
-        self.event_enabled(index, event, &mut |scope, view| match view {
+        let admission = self.event_enabled(index, event, &mut |scope, view| match view {
             // A fresh preview can select another arm, but cannot
             // change which arm completed the preceding roll visit.
             EventArmView::Committed => self.selected_arm_for_scope(scope),
             EventArmView::Preview => self
                 .preview_live_selected_arm_for_scope(scope)
                 .or_else(|| self.selected_arm_for_recv_event(conflict, scope, view)),
-        })
-        .is_ok()
-        .then_some(event.eff_index.dense_ordinal())
+        });
+        Some((event.eff_index.dense_ordinal(), admission.map(|_| ())))
     }
 
     fn parallel_region_covers_frontier(
@@ -136,7 +146,19 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
         let mut inside = false;
         // Repeating a completed group and taking its sequential continuation
         // are alternatives. Independent siblings still belong to the frontier.
-        for (index, event) in self.enabled_view_events() {
+        for index in 0..self.progress.cursor.local_steps_len() {
+            let Some((event, admission)) = self.view_event_admission(index) else {
+                continue;
+            };
+            // A borrow performs no operation. This view can borrow its next
+            // fragment while another held view supplies its prefix; the send
+            // or receive still waits for that prefix through event_enabled.
+            if !matches!(
+                admission,
+                Ok(()) | Err(crate::global::typestate::EventAdmissionError::OtherViewPending)
+            ) {
+                continue;
+            }
             if source.contains(&event) {
                 inside = true;
             } else if !self.progress.cursor.completed_roll_alternative_to(
