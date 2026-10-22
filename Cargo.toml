@@ -263,6 +263,10 @@ harness = false
 name = "route_lane_alignment"
 path = "tests/route_lane_alignment.rs"
 
+[[test]]
+name = "receive_lane_alignment"
+path = "tests/receive_lane_alignment.rs"
+
 [[bench]]
 name = "roll_cost"
 harness = false

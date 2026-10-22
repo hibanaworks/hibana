@@ -46,20 +46,13 @@ fn a_roll_that_does_not_return_ownership_is_a_diagnostic_value() {
 }
 
 #[test]
-fn lane_conflict_reports_actual_receiver_and_logical_messages() {
+fn unrelated_senders_receive_separate_lanes() {
     let program = g::seq(
         g::send::<8, 9, Msg<168, u64>>(),
         g::send::<27, 9, Msg<190, u64>>(),
     );
-    let d = g::diagnose(&program).unwrap();
-    assert_eq!(d.problem, ProjectionProblem::ReceiveLaneCausality);
-    assert_eq!(d.role, Some(9));
-    assert_eq!(d.scope, None);
-    let a = d.first.unwrap();
-    let b = d.second.unwrap();
-    assert_eq!((a.index, a.from, a.to, a.label), (0, 8, 9, 168));
-    assert_eq!((b.index, b.from, b.to, b.label), (1, 27, 9, 190));
-    assert!(d.to_string().contains("event#1(27->9 label=190 lane=0)"));
+    assert_eq!(g::diagnose(&program), None);
+    let _: RoleProgram<9> = project(&program);
 }
 
 #[test]
@@ -76,7 +69,7 @@ fn real_handoff_accepts_and_still_projects() {
 }
 
 #[test]
-fn roll_requires_handoff_back_to_next_iteration_sender() {
+fn rolled_sender_changes_can_use_separate_lanes_or_a_causal_handoff() {
     let open = g::seq(
         g::send::<8, 9, Msg<168, u64>>(),
         g::seq(
@@ -85,12 +78,8 @@ fn roll_requires_handoff_back_to_next_iteration_sender() {
         ),
     )
     .roll();
-    let d = g::diagnose(&open).unwrap();
-    assert_eq!(d.problem, ProjectionProblem::ReceiveLaneCausality);
-    assert_eq!(d.role, Some(9));
-    assert!(d.scope.is_some());
-    assert_eq!(d.first.unwrap().from, 27);
-    assert_eq!(d.second.unwrap().from, 8);
+    assert_eq!(g::diagnose(&open), None);
+    let _: RoleProgram<9> = project(&open);
     let closed = g::seq(
         g::seq(
             g::send::<8, 9, Msg<168, u64>>(),

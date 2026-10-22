@@ -1,4 +1,4 @@
-//! Choice arms share lane storage subject to receive order and parallel ownership.
+//! Assign lanes that preserve receive order and parallel ownership.
 use super::lane_matching::{LaneCompatibility, LaneEndpointIndex, maximum_lane_matching};
 use super::{BYTE_DOMAIN, BYTE_DOMAIN_MASK_BYTES};
 use crate::global::const_dsl::receive_pair_is_causal;
@@ -18,7 +18,7 @@ const fn causal<const E: usize>(events: &EffList<E>, actors: Option<&SourceActor
     }
 }
 
-const fn align_arm<const E: usize>(
+const fn align_range<const E: usize>(
     events: &mut EffList<E>,
     actors: Option<&SourceActorImage<E>>,
     arm: (usize, usize),
@@ -145,11 +145,11 @@ const fn align_arm<const E: usize>(
     true
 }
 
-/// Solve choice-arm colorings against receive and parallel constraints. Prefer
+/// Solve source colorings against receive and parallel constraints. Prefer
 /// the existing colors; use the wire domain when no such coloring exists.
 /// All actor and causal facts come from this source.
 /// The returned verdict is checked before any endpoint program is published.
-pub(crate) const fn assign_route_lanes<const E: usize>(
+pub(crate) const fn assign_receive_lanes<const E: usize>(
     events: &mut EffList<E>,
     actors: Option<&SourceActorImage<E>>,
 ) -> bool {
@@ -203,21 +203,15 @@ pub(crate) const fn assign_route_lanes<const E: usize>(
                         arm_index -= 1;
                         let (start, end) = arms[arm_index];
                         if (start <= first && first < end) != (start <= second && second < end) {
-                            changed = align_arm(events, actors, (start, end), span, colors);
-                        }
-                        if !changed
-                            && start <= first
-                            && first < end
-                            && start <= second
-                            && second < end
-                        {
-                            // These occurrences already share an arm and an
-                            // old color. Refine that class at the conflicting
-                            // occurrence using the same outside constraints.
-                            changed = align_arm(events, actors, (second, second + 1), span, colors);
+                            changed = align_range(events, actors, (start, end), span, colors);
                         }
                     }
                 }
+            }
+            if !changed {
+                // Refine the conflicting occurrence when no whole choice arm
+                // can move. The same constraints apply inside and outside routes.
+                changed = align_range(events, actors, (second, second + 1), span, colors);
             }
             palette += 1;
         }

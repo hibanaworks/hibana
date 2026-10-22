@@ -1,7 +1,7 @@
 use crate::{
     eff::EffAtom,
     global::const_dsl::{
-        EffList, ReentryMark, ScopeId, ScopeKind, assign_route_lanes, color_roll_frame_labels,
+        EffList, ReentryMark, ScopeId, ScopeKind, assign_receive_lanes, color_roll_frame_labels,
         merge_parallel_lanes, merge_route_frame_labels, separate_roll_frame_domains,
     },
 };
@@ -238,7 +238,7 @@ impl<const CAPACITY: usize> ProgramSourceData<CAPACITY> {
         {
             panic!("type tree and lowered source disagree");
         }
-        let receive_causal = assign_route_lanes(&mut lowering.eff, actors);
+        let receive_causal = assign_receive_lanes(&mut lowering.eff, actors);
         lowering.color_frames(&Steps::SOURCE_NODE, 0);
         separate_roll_frame_domains(&mut lowering.eff);
         Self {

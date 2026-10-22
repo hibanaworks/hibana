@@ -23,7 +23,7 @@ use crate::eff;
 mod scope;
 
 pub(crate) use self::allocation::{
-    assign_route_lanes, color_roll_frame_labels, merge_parallel_lanes, merge_route_frame_labels,
+    assign_receive_lanes, color_roll_frame_labels, merge_parallel_lanes, merge_route_frame_labels,
     separate_roll_frame_domains,
 };
 #[cfg(all(test, hibana_repo_tests))]

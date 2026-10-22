@@ -3,9 +3,9 @@ use crate::global::const_dsl::{ScopeId, ScopeKind};
 
 /// Role-local dependency row guarding an event.
 ///
-/// This is a descriptor fact: the row says which local dependency scope must be
-/// complete before the guarded event is enabled, plus the route conflict that
-/// decides whether the dependency applies.
+/// The predecessor range must finish before the guarded event. A route
+/// condition can restrict that obligation to one branch. Unconditional
+/// sequential ranges need no enclosing parallel or route scope.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct LocalDependency {
     scope: ScopeId,
@@ -22,7 +22,10 @@ impl LocalDependency {
         start: usize,
         end: usize,
     ) -> Self {
-        if !matches!(scope.kind(), Some(ScopeKind::Parallel | ScopeKind::Route)) {
+        if (scope.is_none() && !matches!(conflict, LocalConflict::Unconditional))
+            || (!scope.is_none()
+                && !matches!(scope.kind(), Some(ScopeKind::Parallel | ScopeKind::Route)))
+        {
             crate::invariant();
         }
         if start > u16::MAX as usize || end > u16::MAX as usize {
@@ -193,7 +196,10 @@ impl PackedLocalDependency {
             return None;
         }
         let scope = match ScopeId::decode_raw(self.dep_scope) {
-            Some(scope) if matches!(scope.kind(), Some(ScopeKind::Parallel | ScopeKind::Route)) => {
+            Some(scope)
+                if scope.is_none()
+                    || matches!(scope.kind(), Some(ScopeKind::Parallel | ScopeKind::Route)) =>
+            {
                 scope
             }
             _ => return None,
@@ -230,6 +236,9 @@ impl PackedLocalDependency {
                 arm: 1,
             }
         };
+        if scope.is_none() && !matches!(conflict, LocalConflict::Unconditional) {
+            return None;
+        }
         Some(Some(LocalDependency::with_conflict_range(
             scope,
             conflict,
@@ -311,14 +320,30 @@ mod tests {
     }
 
     #[test]
-    #[should_panic]
-    fn local_dependency_rejects_absent_scope() {
-        let _ = LocalDependency::with_conflict_range(
+    fn unconditional_sequence_range_needs_no_composition_scope() {
+        let dependency = LocalDependency::with_conflict_range(
             ScopeId::none(),
             LocalConflict::Unconditional,
             0,
             1,
         );
+        let packed = PackedLocalDependency::from_dependency(dependency);
+        assert!(!packed.is_none());
+        assert_eq!(packed.decode(), Some(Some(dependency)));
+        assert_eq!(packed.decode_for_event_count(0), None);
+        for conflict in [1, 2, 3, 4, u16::MAX] {
+            assert_eq!(
+                PackedLocalDependency::from_packed_parts(0, 1, u16::MAX, conflict).decode(),
+                None,
+            );
+        }
+    }
+
+    #[test]
+    #[should_panic]
+    fn conditional_dependency_requires_a_composition_scope() {
+        let _ =
+            LocalDependency::with_conflict_range(ScopeId::none(), LocalConflict::SharedRoute, 0, 1);
     }
 
     #[test]

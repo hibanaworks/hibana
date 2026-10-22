@@ -1074,7 +1074,8 @@ private def RustDescriptorImage.decodeDependencyRow?
   if start < stop ∧
       stop < productionLocalStepCapacity ∧
       stop ≤ image.eventCount ∧
-      (scope / productionScopeCapacity = 0 ∨ scope / productionScopeCapacity = 2) ∧
+      (scope / productionScopeCapacity = 0 ∨ scope / productionScopeCapacity = 2 ∨
+        (scope = packedU16Absent ∧ conflict = 0)) ∧
       validPackedDependencyConflict conflict = true then
     pure { start, stop, scope, conflict }
   else

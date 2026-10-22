@@ -3,10 +3,79 @@
 use super::*;
 use crate::g::source::{ProgramSourceData, SourceLowering};
 use crate::global::const_dsl::{
-    validate_owned_receive_lane_causality, validate_receive_lane_causality,
+    ReentryMark, validate_owned_receive_lane_causality, validate_receive_lane_causality,
 };
 
 mod schedules;
+
+fn check_shared_lane_conflict<Steps: ProgramShape>(
+    program: g::Program<Steps>,
+    expected: (usize, usize, Option<u16>),
+) {
+    let source = const { ProgramSourceData::<128>::lower::<Steps>() };
+    let actors = source.actors().unwrap();
+    let mut lowering = SourceLowering::new(
+        Steps::EVENT_COUNT,
+        Steps::SCOPE_MARKER_COUNT,
+        Steps::RESOLVER_MARKER_COUNT,
+        Some(actors),
+    );
+    lowering.emit(&Steps::SOURCE_NODE, ReentryMark::SinglePass);
+    assert_eq!(
+        crate::global::const_dsl::owned_receive_lane_conflict(&lowering.eff, actors),
+        Some(expected),
+    );
+    assert!(!validate_owned_receive_lane_causality(
+        &lowering.eff,
+        actors
+    ));
+    assert!(source.receive_causal());
+    assert_eq!(g::diagnose(&program), None);
+    let _ = crate::runtime::program::project::<2>(&program);
+}
+
+#[test]
+fn separate_lanes_repair_a_delegated_receive_without_a_causal_handoff() {
+    type Keys = g::Msg<240, Endpoint<'static, 36>>;
+    check_shared_lane_conflict(
+        g::seq(
+            g::send::<3, 2, g::Msg<160, ()>>(),
+            g::seq(
+                g::send::<1, 2, Keys>(),
+                g::seq(
+                    g::send::<36, 1, g::Msg<241, ()>>(),
+                    g::send::<1, 36, g::Msg<249, ()>>(),
+                ),
+            ),
+        ),
+        (0, 1, None),
+    );
+}
+
+#[test]
+fn separate_lanes_repair_a_delegated_receive_between_roll_visits() {
+    type Keys = g::Msg<240, Endpoint<'static, 36>>;
+    check_shared_lane_conflict(
+        g::seq(
+            g::send::<1, 2, Keys>(),
+            g::seq(
+                g::send::<36, 1, g::Msg<241, ()>>(),
+                g::seq(
+                    g::send::<1, 36, g::Msg<249, ()>>(),
+                    g::seq(
+                        g::send::<2, 1, Keys>(),
+                        g::seq(
+                            g::send::<2, 3, g::Msg<10, ()>>(),
+                            g::send::<3, 2, g::Msg<11, ()>>(),
+                        ),
+                    ),
+                ),
+            ),
+        )
+        .roll(),
+        (5, 0, Some(0)),
+    );
+}
 
 fn check<Steps: ProgramShape>(_: g::Program<Steps>, wire: bool, owned: bool) {
     let source = const { crate::g::source::ProgramSourceData::<128>::lower::<Steps>() };

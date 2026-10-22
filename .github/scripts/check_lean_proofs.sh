@@ -220,7 +220,7 @@ CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --li
   -- --exact
 bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${SOURCE_ORDER_GENERATED}" "source operation dependencies"
 run_audit generated-axioms --kernel "${SOURCE_ORDER_GENERATED}" "${PROOF_DIR}" \
-  "${PROOF_DIR}/claims/source-order-generated-claim-surface.txt" 4
+  "${PROOF_DIR}/claims/source-order-generated-claim-surface.txt" 6
 CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib \
   g::role_projection::tests::entry_image::missing_wrong_owner_and_unrelated_roll_entry_resources_are_rejected \
   -- --exact

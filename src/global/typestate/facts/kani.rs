@@ -149,7 +149,9 @@ fn packed_local_dependency_decoding_accepts_exact_domain() {
     let conflict_tag = conflict_route & 0b11;
     let route_ordinal = conflict_route >> 2;
     let present = start < end
-        && (dep_scope < 8192 || (16384..24576).contains(&dep_scope))
+        && (dep_scope < 8192
+            || (16384..24576).contains(&dep_scope)
+            || (dep_scope == u16::MAX && conflict_route == 0))
         && (conflict_route & 0x8000) == 0
         && (if conflict_tag >= 2 {
             route_ordinal < crate::global::const_dsl::ScopeId::LOCAL_CAPACITY
@@ -159,6 +161,7 @@ fn packed_local_dependency_decoding_accepts_exact_domain() {
 
     kani::cover!(present && start <= 4095 && end > 4095);
     kani::cover!(present && end == u16::MAX);
+    kani::cover!(present && dep_scope == u16::MAX);
     assert!(decoded.is_some() == (absent || present));
     assert!(matches!(decoded, Some(None)) == absent);
     if let Some(Some(dependency)) = decoded {
@@ -181,7 +184,9 @@ fn packed_local_dependency_event_bounds_are_exact() {
     let route_ordinal = conflict_route >> 2;
     let present = start < end
         && end <= event_count
-        && (dep_scope < 8192 || (16384..24576).contains(&dep_scope))
+        && (dep_scope < 8192
+            || (16384..24576).contains(&dep_scope)
+            || (dep_scope == u16::MAX && conflict_route == 0))
         && (conflict_route & 0x8000) == 0
         && (if conflict_tag >= 2 {
             route_ordinal < crate::global::const_dsl::ScopeId::LOCAL_CAPACITY
@@ -190,6 +195,7 @@ fn packed_local_dependency_event_bounds_are_exact() {
         });
 
     kani::cover!(present && start <= 4095 && end > 4095);
+    kani::cover!(present && dep_scope == u16::MAX);
     assert!(decoded.is_some() == (absent || present));
     assert!(matches!(decoded, Some(None)) == absent);
     if let Some(Some(dependency)) = decoded {

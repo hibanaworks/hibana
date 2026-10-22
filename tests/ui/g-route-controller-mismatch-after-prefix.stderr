@@ -1,8 +1,8 @@
-error[E0080]: evaluation panicked: receive lane sender change requires a causal handoff or exclusive route arms; role=2; event#0(0->2 label=1 lane=0); event#2(1->2 label=3 lane=0); help: add a causal handoff from the earlier receiver to the later sender; on reentry, close that handoff inside the roll
+error[E0080]: evaluation panicked: route arms use different first visible controllers; scope=0; arms=1..2|2..3; event#1(2->1 label=2 lane=0); event#2(3->4 label=4 lane=0); help: give both route arms the same first-visible controller
  --> src/g.rs
   |
   |             diagnostic_message::panic_diagnostic(diagnostic);
-  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `hibana::g::ProgramProjection::<hibana::g::Seq<hibana::g::Par<hibana::g::Send<0, 2, hibana::g::Msg<1, ()>>, hibana::g::Send<2, 1, hibana::g::Msg<2, ()>>>, hibana::g::Send<1, 2, hibana::g::Msg<3, ()>>>, 8>::VALIDATION` failed inside this call
+  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `hibana::g::ProgramProjection::<hibana::g::Seq<hibana::g::Send<0, 2, hibana::g::Msg<1, ()>>, hibana::g::Seq<hibana::g::Resolve<hibana::g::Route<hibana::g::Send<2, 1, hibana::g::Msg<2, ()>>, hibana::g::Send<3, 4, hibana::g::Msg<4, ()>>>, 7>, hibana::g::Send<1, 2, hibana::g::Msg<3, ()>>>>, 32>::VALIDATION` failed inside this call
   |
 note: inside `g::diagnostic_message::panic_diagnostic`
  --> $RUST/core/src/panic.rs
@@ -27,8 +27,8 @@ note: erroneous constant encountered
   |     crate::global::program::bind_projection(program, const { crate::g::project_image::<ROLE, _>() })
   |                                                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-note: the above error was encountered while instantiating `fn project::<2, Program<Seq<Par<hibana::g::Send<0, 2, Msg<1, ()>>, hibana::g::Send<2, 1, Msg<2, ()>>>, hibana::g::Send<1, 2, Msg<3, ()>>>>>`
-  --> tests/ui/g-receive-lane-parallel-false-causality.rs:11:47
+note: the above error was encountered while instantiating `fn project::<2, Program<Seq<hibana::g::Send<0, 2, Msg<1, ()>>, Seq<Resolve<Route<hibana::g::Send<2, 1, Msg<2, ()>>, hibana::g::Send<3, 4, Msg<4, ()>>>, 7>, hibana::g::Send<1, 2, Msg<3, ()>>>>>>`
+  --> tests/ui/g-route-controller-mismatch-after-prefix.rs:13:47
    |
-11 |     let _: runtime::program::RoleProgram<2> = runtime::program::project(&protocol);
+13 |     let _: runtime::program::RoleProgram<2> = runtime::program::project(&protocol);
    |                                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

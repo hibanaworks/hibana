@@ -310,9 +310,72 @@ fn source_order_rejects_a_missing_join_and_spurious_parallel_order() {
             descriptor_source(RoleDescriptorRef::from_resident(extra_order)),
             ParallelReplies::lean_source(),
             descriptor_source(RoleDescriptorRef::from_resident(replies.role_image_ref())),
-        );
+        ) + &root_sequence_certificate();
         let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/lean-proof");
         std::fs::create_dir_all(&directory).unwrap();
         std::fs::write(directory.join("SourceOrderGenerated.lean"), source).unwrap();
     }
+}
+
+#[cfg(not(miri))]
+fn root_sequence_certificate() -> std::string::String {
+    use crate::test_support::{lean_choreo::LeanChoreo, lean_descriptor::descriptor_source};
+    type Loan = g::Msg<30, Endpoint<'static, 3>>;
+    type First = g::Msg<31, ()>;
+    type Second = g::Msg<32, ()>;
+    type Steps = g::Seq<
+        g::Send<0, 1, Loan>,
+        g::Seq<g::Send<3, 2, First>, g::Seq<g::Send<1, 2, Second>, g::Send<1, 0, Loan>>>,
+    >;
+    const N: usize = RoleProjection::<1, Steps, 8>::IMAGE_REF
+        .columns()
+        .blob_len();
+    let global = g::Program::<Steps>::new();
+    let projected = crate::runtime::program::project::<1>(&global);
+    let original = projected.role_image_ref();
+    assert!(crate::g::role_projection::source_order::check::<Steps, 8>(
+        original
+    ));
+    let row = (0..original.local_step_count())
+        .find(|&row| {
+            matches!(
+                original.local_step_node(row).unwrap().action(),
+                LocalAction::Send { label: 32, .. }
+            )
+        })
+        .unwrap();
+    let dependency = original.dependency_for_index(row).unwrap();
+    assert!(dependency.scope().is_none());
+    assert!(dependency.start() < dependency.end() && dependency.end() <= row);
+    let descriptor = RoleDescriptorRef::from_resident(original);
+    assert_eq!(original.columns().blob_len(), N);
+    let mut bytes = [0; N];
+    for (offset, byte) in bytes.iter_mut().enumerate() {
+        *byte = descriptor.proof_byte_at(offset);
+    }
+    let reference = original.columns().events.offset as usize + row * ROLE_IMAGE_EVENT_STRIDE + 2;
+    bytes[reference..reference + 2].copy_from_slice(&u16::MAX.to_le_bytes());
+    let missing = std::boxed::Box::leak(std::boxed::Box::new(RoleImageRef::new(
+        original.program(),
+        original.role(),
+        original.facts(),
+        original.columns(),
+        std::boxed::Box::leak(std::boxed::Box::new(bytes)),
+    )));
+    assert!(!crate::g::role_projection::source_order::check::<Steps, 8>(
+        missing
+    ));
+    std::format!(
+        "\ndef rootSequenceChoreo : Hibana.Choreo := {}\n\n\
+         def rootSequenceImage : Hibana.RustDescriptorImage := {}\n\n\
+         def rootSequenceMissing : Hibana.RustDescriptorImage := {}\n\n\
+         theorem rootSequenceImagePreservesSourceOrder :\n  \
+         rootSequenceImage.actorOrderCheck rootSequenceChoreo = true := by decide\n\n\
+         theorem rootSequenceMissingDependencyRejected :\n  \
+         rootSequenceMissing.actorRowsCheck rootSequenceChoreo = true ∧\n  \
+         rootSequenceMissing.actorOrderCheck rootSequenceChoreo = false := by decide\n",
+        Steps::lean_source(),
+        descriptor_source(descriptor),
+        descriptor_source(RoleDescriptorRef::from_resident(missing)),
+    )
 }

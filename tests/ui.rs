@@ -72,12 +72,8 @@ fn parse_rustc_minor_version(version: &str) -> Option<u32> {
 const RUSTC_1_95_STDERR_CASES: &[&str] = &[
     "tests/ui/g-self-send-non-unit.rs",
     "tests/ui/g-roleprogram-witness-mismatch.rs",
-    "tests/ui/g-receive-lane-multiple-senders.rs",
-    "tests/ui/g-receive-lane-parallel-false-causality.rs",
-    "tests/ui/g-receive-lane-route-false-causality.rs",
-    "tests/ui/g-roll-reentry-false-causality.rs",
+    "tests/ui/g-route-controller-mismatch-after-prefix.rs",
     "tests/ui/g-roll-route-cross-iteration-causality.rs",
-    "tests/ui/g-roll-same-label-distinct-inbound-evidence.rs",
     "tests/ui/g-route-one-sided-observer.rs",
     "tests/ui/g-route-passive-outbound-without-evidence.rs",
     "tests/ui/g-route-roll-one-sided-observer.rs",
@@ -155,15 +151,8 @@ fn g_compile_fails() {
     compile_fail(&t, "tests/ui/g-resolver-data-send.rs");
     compile_fail(&t, "tests/ui/g-self-send-non-unit.rs");
     compile_fail(&t, "tests/ui/g-roleprogram-witness-mismatch.rs");
-    compile_fail(&t, "tests/ui/g-receive-lane-multiple-senders.rs");
-    compile_fail(&t, "tests/ui/g-receive-lane-parallel-false-causality.rs");
-    compile_fail(&t, "tests/ui/g-receive-lane-route-false-causality.rs");
-    compile_fail(&t, "tests/ui/g-roll-reentry-false-causality.rs");
+    compile_fail(&t, "tests/ui/g-route-controller-mismatch-after-prefix.rs");
     compile_fail(&t, "tests/ui/g-roll-route-cross-iteration-causality.rs");
-    compile_fail(
-        &t,
-        "tests/ui/g-roll-same-label-distinct-inbound-evidence.rs",
-    );
     compile_fail(&t, "tests/ui/g-par-ambiguous-endpoint-op.rs");
     compile_fail(&t, "tests/ui/g-roll-ambiguous-reentry-exit-outbound.rs");
     compile_fail(&t, "tests/ui/g-roll-late-reentry-outbound.rs");
@@ -202,6 +191,10 @@ fn g_compile_fails() {
     t.pass("tests/ui-pass/g-par-same-label-distinct-inbound-same-endpoint.rs");
     t.pass("tests/ui-pass/g-session-template-instances.rs");
     t.pass("tests/ui-pass/g-receive-lane-causal-handoff.rs");
+    t.pass("tests/ui-pass/g-receive-lane-multiple-senders.rs");
+    t.pass("tests/ui-pass/g-receive-lane-parallel-join.rs");
+    t.pass("tests/ui-pass/g-roll-receive-lane-reentry.rs");
+    t.pass("tests/ui-pass/g-roll-same-label-distinct-inbound-evidence.rs");
     t.pass("tests/ui-pass/g-roll-reentry-causal-handoff.rs");
     t.pass("tests/ui-pass/g-roll-route-cross-iteration-handoff.rs");
     t.pass("tests/ui-pass/g-route-first-visible-passive-dispatch.rs");

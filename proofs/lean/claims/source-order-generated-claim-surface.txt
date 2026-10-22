@@ -1,4 +1,7 @@
 parallelReplyImagePreservesSourceOrder : parallelReplyImage.actorOrderCheck parallelReplyChoreo = true
+rootSequenceImagePreservesSourceOrder : rootSequenceImage.actorOrderCheck rootSequenceChoreo = true
+rootSequenceMissingDependencyRejected : rootSequenceMissing.actorRowsCheck rootSequenceChoreo = true ∧
+  rootSequenceMissing.actorOrderCheck rootSequenceChoreo = false
 sourceOrderExtraOrderRejected : sourceOrderExtraOrder.actorRowsCheck sourceOrderChoreo = true ∧
   sourceOrderExtraOrder.actorOrderCheck sourceOrderChoreo = false
 sourceOrderMissingJoinRejected : sourceOrderMissingJoin.actorRowsCheck sourceOrderChoreo = true ∧

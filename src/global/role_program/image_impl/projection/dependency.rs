@@ -22,22 +22,24 @@ impl CandidateKey {
         local_end: u16::MAX,
     };
 
-    const fn new(marker_index: usize, local_start: usize, local_end: usize) -> Self {
-        if marker_index >= u16::MAX as usize
-            || local_start >= local_end
-            || local_end > u16::MAX as usize
-        {
+    const fn new(marker_index: Option<usize>, local_start: usize, local_end: usize) -> Self {
+        if local_start >= local_end || local_end > u16::MAX as usize {
             crate::invariant();
         }
+        let marker_index = match marker_index {
+            Some(index) if index < u16::MAX as usize => index as u16,
+            Some(_) => crate::invariant(),
+            None => u16::MAX,
+        };
         Self {
-            marker_index: marker_index as u16,
+            marker_index,
             local_start: local_start as u16,
             local_end: local_end as u16,
         }
     }
 
     const fn is_none(self) -> bool {
-        self.marker_index == u16::MAX
+        self.local_start == u16::MAX
     }
 
     const fn later(self, candidate: Self) -> Self {
@@ -149,7 +151,7 @@ impl<'a, const E: usize> DependencyCursor<'a, E> {
         if row.is_absent_or_zero_len() {
             return;
         }
-        let candidate = CandidateKey::new(enter_index, row.start(), row.end());
+        let candidate = CandidateKey::new(Some(enter_index), row.start(), row.end());
         self.update_lane_candidates(enter.offset(), exit_eff, candidate);
 
         // The join covers both arms. Their selected rows supply the preceding
@@ -176,9 +178,11 @@ impl<'a, const E: usize> DependencyCursor<'a, E> {
             crate::invariant();
         }
         if self.branch_floor < local_step {
-            self.branch_barrier =
-                self.branch_barrier
-                    .later(CandidateKey::new(index, self.branch_floor, local_step));
+            self.branch_barrier = self.branch_barrier.later(CandidateKey::new(
+                Some(index),
+                self.branch_floor,
+                local_step,
+            ));
         }
         self.inputs[kind][slot] = Some(CompositionInput {
             barrier: self.branch_barrier,
@@ -258,6 +262,14 @@ impl<'a, const E: usize> DependencyCursor<'a, E> {
         if candidate.is_none() {
             return PackedLocalDependency::none();
         }
+        if candidate.marker_index == u16::MAX {
+            return PackedLocalDependency::from_dependency(LocalDependency::with_conflict_range(
+                ScopeId::none(),
+                LocalConflict::Unconditional,
+                candidate.local_start as usize,
+                candidate.local_end as usize,
+            ));
+        }
         let markers = self.eff_list.scope_markers();
         let marker_index = candidate.marker_index as usize;
         let marker = markers.at(marker_index);
@@ -271,7 +283,7 @@ impl<'a, const E: usize> DependencyCursor<'a, E> {
     }
 
     const fn applicable_candidate(&self, candidate: CandidateKey, event: usize) -> CandidateKey {
-        if candidate.is_none() {
+        if candidate.is_none() || candidate.marker_index == u16::MAX {
             return candidate;
         }
         let markers = self.eff_list.scope_markers();
@@ -330,12 +342,16 @@ impl<'a, const E: usize> DependencyCursor<'a, E> {
             .later(
                 self.applicable_candidate(self.lane_candidates[current_lane as usize], current_eff),
             );
-        if crosses_lane && self.context != u16::MAX && self.branch_floor < local_step {
-            // A source-sequential segment may switch lane inside one arm.
-            // Its prefix excludes independent siblings; joins restore the
-            // containing segment before another sequential operation begins.
+        if crosses_lane && self.branch_floor < local_step {
+            // Lane FIFO cannot order a sequential prefix on another lane.
+            // The floor excludes parallel siblings; composition exits restore
+            // the enclosing segment before its continuation starts.
             candidate = candidate.later(CandidateKey::new(
-                self.context as usize,
+                if self.context == u16::MAX {
+                    None
+                } else {
+                    Some(self.context as usize)
+                },
                 self.branch_floor,
                 local_step,
             ));

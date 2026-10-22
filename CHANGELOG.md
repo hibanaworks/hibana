@@ -29,6 +29,8 @@
 - Preserved queued continuation messages when another role reenters a rolled
   body. In 0.9.9, an accepted continuation could later fail with `PhaseInvariant`
   after a new visit began.
+- Assigned separate lanes to sequential receives from unrelated senders and
+  preserved their source order across lane changes.
 
 ### Performance
 
