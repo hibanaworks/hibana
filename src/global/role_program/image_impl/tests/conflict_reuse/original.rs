@@ -1,4 +1,4 @@
-// Reference route emitter. Parallel-mask and receive-index serialization are
+// Reference route emitter. Parallel-mask and operation-index serialization are
 // shared; their source membership is checked by the resident-image validator
 // and independent decoded-row comparisons.
 use super::super::*;
@@ -364,7 +364,7 @@ impl<const N: usize> RoleImageBytes<N> {
             panic!("role image plan mismatch");
         }
 
-        out.write_receive_index(eff_list, columns);
+        out.write_operation_index(eff_list, columns);
         let offset = columns.blob_len();
         if offset > u16::MAX as usize {
             panic!("role image");

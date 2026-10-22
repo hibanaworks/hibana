@@ -1,7 +1,7 @@
 //! Emit typed localsides from the same immutable syntax as the test input.
 use super::{Execution, Protocol};
 
-fn contains(source: &Protocol, label: u8) -> bool {
+pub(super) fn contains(source: &Protocol, label: u8) -> bool {
     let mut messages = Vec::new();
     source.messages(&mut messages);
     messages
@@ -9,7 +9,7 @@ fn contains(source: &Protocol, label: u8) -> bool {
         .any(|m| matches!(m, Protocol::Message { label: candidate, .. } if *candidate == label))
 }
 
-fn mobile(source: &Protocol) -> bool {
+pub(super) fn mobile(source: &Protocol) -> bool {
     let mut messages = Vec::new();
     source.messages(&mut messages);
     messages
@@ -17,7 +17,7 @@ fn mobile(source: &Protocol) -> bool {
         .any(|m| matches!(m, Protocol::Message { owned: true, .. }))
 }
 
-fn final_holder(source: &Protocol, holder: u8) -> u8 {
+pub(super) fn final_holder(source: &Protocol, holder: u8) -> u8 {
     match source {
         Protocol::Message {
             from,
@@ -50,7 +50,7 @@ fn final_holder(source: &Protocol, holder: u8) -> u8 {
     }
 }
 
-fn present(source: &Protocol, role: u8, primed: Option<u8>) -> bool {
+pub(super) fn present(source: &Protocol, role: u8, primed: Option<u8>) -> bool {
     match source {
         Protocol::Message {
             from, to, label, ..
@@ -112,7 +112,7 @@ fn db_activity(source: &Protocol, actor: u8, holder: u8) -> (usize, bool) {
     }
 }
 
-fn parallel_parts<'a>(source: &'a Protocol, parts: &mut Vec<&'a Protocol>) {
+pub(super) fn parallel_parts<'a>(source: &'a Protocol, parts: &mut Vec<&'a Protocol>) {
     if let Protocol::Par(a, b) = source {
         parallel_parts(a, parts);
         parallel_parts(b, parts);
@@ -163,11 +163,52 @@ fn heads<'a>(source: &'a Protocol, out: &mut Vec<&'a Protocol>) {
     }
 }
 
-struct Emitter {
+struct Emitter<'a> {
+    source: &'a Protocol,
     paths: std::collections::BTreeMap<u8, Vec<(u16, bool)>>,
 }
 
-impl Emitter {
+impl Emitter<'_> {
+    fn scope_probe(
+        &self,
+        source: &Protocol,
+        part: &Protocol,
+        role: u8,
+        actor: u8,
+        endpoint: &str,
+    ) -> String {
+        let Protocol::Par(a, b) = source else {
+            unreachable!()
+        };
+        let group = (
+            super::scope_probes::first_label(a),
+            super::scope_probes::first_label(b),
+        );
+        let mut arms = String::new();
+        for (message, receive) in super::scope_probes::outside_messages(self.source, part, role) {
+            let Protocol::Message { label, .. } = message else {
+                unreachable!()
+            };
+            let call = if receive {
+                format!("{endpoint}.recv::<M{label}<'_>>()")
+            } else {
+                format!("{endpoint}.send::<M{label}<'_>>(&())")
+            };
+            arms += &format!(
+                "({label},{receive})=>{{let future={call};tokio::pin!(future);future.as_mut().poll(cx)}},"
+            );
+        }
+        if arms.is_empty() {
+            return String::new();
+        }
+        format!(
+            "if let Some(probe)=probe.filter(|p|p.group==({}, {}) && p.part=={} && p.occurrence==script.first_occurrence() && p.actor=={actor} && p.role=={role}){{let result=core::future::poll_fn(|cx|core::task::Poll::Ready(match (probe.label,probe.receive){{{arms}_=>panic!(\"unknown borrowed-scope probe\")}})).await;match result{{core::task::Poll::Ready(Err(error))=>{{observed.scope_rejections.borrow_mut().push(probe);return Err(error)}},other=>panic!(\"operation outside borrowed scope was not rejected: {{probe:?}} {{other:?}}\")}}}}",
+            group.0,
+            group.1,
+            super::scope_probes::first_label(part)
+        )
+    }
+
     fn operation(
         &self,
         message: &Protocol,
@@ -232,7 +273,7 @@ impl Emitter {
                 if code.is_empty() {
                     code
                 } else {
-                    format!("assert!(matches!(script,Script::Message({label})));{code}")
+                    format!("assert!(matches!(script,Script::Message({label},_)));{code}")
                 }
             }
             Protocol::Seq(a, b) => {
@@ -372,6 +413,7 @@ impl Emitter {
                 parallel_parts(source, &mut parts);
                 let mut part_names = vec![names.clone(); parts.len()];
                 let mut declarations = String::new();
+                let mut scope_checks = String::new();
                 for role in 0..4 {
                     if (if role == 3 { usize::from(before) } else { role }) != usize::from(actor)
                         || (role == 3 && mobile(source))
@@ -392,14 +434,19 @@ impl Emitter {
                             let used = present(parts[*i], role as u8, primed);
                             let name = format!("{}p{role}_{i}", if used { "" } else { "_" });
                             part_names[*i][role] = name.clone();
+                            if used {
+                                scope_checks +=
+                                    &self.scope_probe(source, parts[*i], role as u8, actor, &name);
+                            }
                             format!("{}{name}", if used { "mut " } else { "" })
                         })
                         .collect::<Vec<_>>()
                         .join(",");
                     declarations += &format!("let [{bindings}]={}.par()?;", names[role]);
                 }
+                declarations += &scope_checks;
                 fn schedule(
-                    e: &Emitter,
+                    e: &Emitter<'_>,
                     source: &Protocol,
                     actor: u8,
                     holder: u8,
@@ -492,11 +539,11 @@ impl Emitter {
     }
 }
 
-pub(super) fn runs(source: &Protocol, owner: u8, third_actor: bool) -> String {
+pub(super) fn runs(source: &Protocol, owner: u8, third_actor: bool, case: usize) -> String {
     let executions = source.executions();
     let mut paths = std::collections::BTreeMap::new();
     source.resolver_choices(&mut Vec::new(), &mut paths);
-    let e = Emitter { paths };
+    let e = Emitter { source, paths };
     let resolvers = e
         .paths
         .values()
@@ -507,7 +554,10 @@ pub(super) fn runs(source: &Protocol, owner: u8, third_actor: bool) -> String {
         r#"
     let mut completed_scoped_traces=std::collections::BTreeSet::new();
     let scripts:&[Script]=&[{}];
-    for script in scripts {{ for concurrent in [false,true] {{
+    let scope_plans=load_scope_plans(include_str!("../scope-plans/{case}.json"),{case},scripts.len());
+    let mut scoped_rejections=Vec::new();
+    for (script_index,script) in scripts.iter().enumerate() {{ let probes=&scope_plans[script_index];for concurrent in [false,true] {{
+    for probe in core::iter::once(None).chain(probes.iter().copied().map(Some)) {{
       let _=concurrent;
       let decisions:Vec<std::cell::Cell<Option<bool>>>=(0..{}).map(|_|std::cell::Cell::new(None)).collect();let _=&decisions;
       let sid=SessionId::new(2);
@@ -585,7 +635,9 @@ pub(super) fn runs(source: &Protocol, owner: u8, third_actor: bool) -> String {
             }
         );
     }
-    code += r#"tokio::time::timeout(core::time::Duration::from_secs(1),async{tokio::try_join!(run0,run1,run2)}).await.expect("generated localside stalled").unwrap();
+    code += r#"let result=tokio::time::timeout(core::time::Duration::from_secs(1),async{tokio::try_join!(run0,run1,run2)}).await.expect("generated localside stalled");
+    if let Some(probe)=probe{assert!(result.is_err(),"scope probe did not stop its run");assert_eq!(*observed.scope_rejections.borrow(),[probe],"planned borrowed-scope probe was not reached");scoped_rejections.push(probe.json(script_index,concurrent));continue;}
+    result.unwrap();
     assert!(observed.calls.borrow().is_empty());
     let mut actual=observed.completed.borrow().clone();actual.sort();
     let mut expected=Vec::new();let mut holder=programs.owner;
@@ -599,6 +651,6 @@ pub(super) fn runs(source: &Protocol, owner: u8, third_actor: bool) -> String {
     if matches!(source, Protocol::Par(..)) {
         code += "if concurrent{assert!(observed.overlapped.get(),\"independent borrows never overlapped while pending\");}";
     }
-    code += "}completed_scoped_traces.insert(script.line());}";
+    code += "}}completed_scoped_traces.insert(script.line());}";
     code
 }

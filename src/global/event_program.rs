@@ -74,6 +74,15 @@ impl LocalEventProgram {
         self.rows().receive_candidates(role, label)
     }
 
+    #[inline]
+    pub(crate) fn outbound_candidates(
+        &self,
+        role: u8,
+        label: u8,
+    ) -> impl Iterator<Item = usize> + '_ {
+        self.rows().outbound_candidates(role, label)
+    }
+
     pub(crate) fn parallel_borrow_mask(&self, view: u8, start: usize, stop: usize) -> Option<u16> {
         self.rows().parallel_borrow_mask(view, start, stop)
     }

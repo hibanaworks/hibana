@@ -24,10 +24,11 @@ impl EventCursor {
     fn send_preview_progress_start_index_for_contract(
         &self,
         selector: MessageSelector,
+        source: core::ops::Range<usize>,
         committed_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
     ) -> Result<Option<usize>, SendPreviewError> {
         let mut other_view_pending = false;
-        for idx in self.outbound_candidates(selector) {
+        for idx in self.outbound_candidates(selector, source) {
             let event = crate::invariant_some(self.send_preview_outbound_event_at(idx));
             let preview_conflict = self.machine().event_conflict_for_index(idx);
             let mut arms = |scope, view| match view {
@@ -55,11 +56,14 @@ impl EventCursor {
     pub(super) fn send_preview_start_index_for_contract(
         &self,
         selector: MessageSelector,
+        source: core::ops::Range<usize>,
         selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
     ) -> Result<usize, SendPreviewError> {
-        if let Some(idx) =
-            self.send_preview_progress_start_index_for_contract(selector, selected_arm_for_scope)?
-        {
+        if let Some(idx) = self.send_preview_progress_start_index_for_contract(
+            selector,
+            source,
+            selected_arm_for_scope,
+        )? {
             return Ok(idx);
         }
         if self.enclosing_route_scope_rows_at(self.index()).is_some() {

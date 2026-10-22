@@ -683,7 +683,7 @@ def RustDescriptorImage.actorRowsCheck (image : RustDescriptorImage) (choreo : C
       normalized.paths.all fun path =>
         ((columns.actorRowsForPath markers path image.role rows).map
           (·.sourceAction image.role)) == source.actorActions path image.role) &&
-      (image.roleBytes.length == image.roleBlobLen && image.receiveIndexCoherent)
+      (image.roleBytes.length == image.roleBlobLen && image.operationIndexCoherent)
   | _, _ => false
 
 theorem accepted_actor_rows_bind_source_operations
@@ -712,7 +712,7 @@ theorem accepted_actor_rows_bind_source_operations
                 ((columns.actorRowsForPath markers path image.role rows).map
                   (·.sourceAction image.role)) ==
                   source.actorActions path image.role) = true) ∧
-              (image.roleBytes.length == image.roleBlobLen && image.receiveIndexCoherent) = true := by
+              (image.roleBytes.length == image.roleBlobLen && image.operationIndexCoherent) = true := by
             simpa [RustDescriptorImage.actorRowsCheck, decoded, rowsAt] using accepted
           have fields := ownership_data_binds_decoders decoded
           refine ⟨source, normalized, columns, atoms, markers, rows, fields.1, fields.2.1,

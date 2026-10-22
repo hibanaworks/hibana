@@ -41,6 +41,93 @@ const DEEP_ROUTE_RESOLVER_4: u16 = 0x9d;
 static LEFT_ARM: DecisionArm = DecisionArm::Left;
 static UNIT: () = ();
 
+#[test]
+fn a_parallel_borrow_rejects_a_siblings_send_before_calling_any_resolver() {
+    use core::cell::Cell;
+    type A = Msg<210, ()>;
+    type B = Msg<211, ()>;
+    type C = Msg<212, ()>;
+    type D = Msg<213, ()>;
+    let global = g::par(
+        g::route(g::send::<0, 1, A>(), g::send::<0, 1, B>()).resolve::<0>(),
+        g::route(g::send::<0, 1, C>(), g::send::<0, 1, D>()).resolve::<1>(),
+    )
+    .roll();
+    let sender_program = project::<0>(&global);
+    let receiver_program = project::<1>(&global);
+    tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .start_paused(true)
+        .build()
+        .unwrap()
+        .block_on(async {
+            for visit in 0..2 {
+                for borrow_right in [false, true] {
+                    let calls = [Cell::new(0usize), Cell::new(0usize)];
+                    let network = TestTransport::new();
+                    let [mut slab0, mut slab1] = [[0; 32 * 1024]; 2];
+                    let mut s0 = SessionKitStorage::uninit();
+                    let mut s1 = SessionKitStorage::uninit();
+                    let rv0 = s0.init().rendezvous(&mut slab0, network.clone()).unwrap();
+                    let rv1 = s1.init().rendezvous(&mut slab1, network.clone()).unwrap();
+                    rv0.set_resolver(
+                        &sender_program,
+                        ResolverRef::<0>::decision_state(&calls, |calls| {
+                            calls[0].set(calls[0].get() + 1);
+                            Ok(DecisionArm::Left)
+                        }),
+                    )
+                    .unwrap();
+                    rv0.set_resolver(
+                        &sender_program,
+                        ResolverRef::<1>::decision_state(&calls, |calls| {
+                            calls[1].set(calls[1].get() + 1);
+                            Ok(DecisionArm::Left)
+                        }),
+                    )
+                    .unwrap();
+                    let sid = SessionId::new(9290);
+                    let mut sender = rv0.enter(sid, &sender_program).unwrap();
+                    let mut receiver = rv1.enter(sid, &receiver_program).unwrap();
+                    if visit == 1 {
+                        let [mut a, mut b] = sender.par().unwrap();
+                        let [mut c, mut d] = receiver.par().unwrap();
+                        tokio::time::timeout(core::time::Duration::from_secs(1), async {
+                            tokio::try_join!(
+                                a.send::<A>(&()),
+                                b.send::<C>(&()),
+                                c.recv::<A>(),
+                                d.recv::<C>()
+                            )
+                        })
+                        .await
+                        .expect("independent resolver branches stalled")
+                        .unwrap();
+                    }
+                    assert_eq!([calls[0].get(), calls[1].get()], [visit, visit]);
+                    let [mut a, mut b] = sender.par().unwrap();
+                    let rejected =
+                        tokio::time::timeout(core::time::Duration::from_secs(1), async {
+                            if borrow_right {
+                                b.send::<A>(&()).await
+                            } else {
+                                a.send::<C>(&()).await
+                            }
+                        })
+                        .await
+                        .expect("out-of-scope send must be rejected");
+                    assert!(rejected.is_err());
+                    assert_eq!(
+                        [calls[0].get(), calls[1].get()],
+                        [visit, visit],
+                        "an out-of-scope call must not invoke either resolver"
+                    );
+                    assert!(network.queue_is_empty());
+                }
+            }
+        });
+}
+
 std::thread_local! {
     static SESSION_SLOT: UnsafeCell<TestKitStorage> = const {
         UnsafeCell::new(SessionKitStorage::uninit())

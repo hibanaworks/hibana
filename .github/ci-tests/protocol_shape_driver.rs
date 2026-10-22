@@ -90,7 +90,7 @@ enum Outcome {
 // Immutable schedule input, generated from the source before any endpoint runs.
 // A nested repeat's visit boundaries cannot be recovered from message labels.
 enum Script {
-    Message(u8),
+    Message(u8, usize),
     Seq(&'static Self, &'static Self),
     Par(&'static Self, &'static Self, bool),
     Branch(&'static Self, bool),
@@ -99,7 +99,7 @@ enum Script {
 impl Script {
     fn trace(&self) -> Vec<(u8, bool)> {
         match self {
-            Self::Message(label) => vec![(*label, false)],
+            Self::Message(label, _) => vec![(*label, false)],
             Self::Seq(a, b) | Self::Par(a, b, false) | Self::Roll([a, b]) => {
                 let mut trace = a.trace();
                 trace.extend(b.trace());
@@ -124,12 +124,20 @@ impl Script {
             .collect::<Vec<_>>()
             .join(",")
     }
+    fn first_occurrence(&self) -> usize {
+        match self {
+            Self::Message(_, occurrence) => *occurrence,
+            Self::Seq(a, _) | Self::Par(a, _, _) | Self::Branch(a, _) | Self::Roll([a, _]) => {
+                a.first_occurrence()
+            }
+        }
+    }
 }
 
 #[test]
 fn scoped_scripts_keep_order_choices_and_visit_boundaries() {
-    static A: Script = Script::Message(1);
-    static B: Script = Script::Message(2);
+    static A: Script = Script::Message(1, 0);
+    static B: Script = Script::Message(2, 1);
     static CHOICE: Script = Script::Branch(&A, false);
     static REPEAT: Script = Script::Roll([&A, &B]);
     let forward = Script::Seq(&CHOICE, &REPEAT);
@@ -139,6 +147,8 @@ fn scoped_scripts_keep_order_choices_and_visit_boundaries() {
     assert_eq!(Script::Par(&CHOICE, &REPEAT, false).line(), forward.line());
     assert!(matches!(CHOICE, Script::Branch(_, false)));
     assert_eq!(Script::Branch(&A, true).line(), CHOICE.line());
+    assert_eq!(reverse.first_occurrence(), 0);
+    assert_eq!(B.first_occurrence(), 1);
 }
 
 macro_rules! receive {

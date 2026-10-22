@@ -1,16 +1,16 @@
-; Integer keys are (logical receiver << 8) | logical label, or 65536
-; for a non-receive row. The upper-bound comparator equals key < query+1.
+; Integer keys bind direction, logical role and label. Outbound keys add
+; 65536 to the sender/label pair. The upper comparator is key < query+1.
 (set-logic QF_AUFLIA)
 (declare-const key Int)
 (declare-const query Int)
-(assert (and (<= 0 key) (<= key 65536) (<= 0 query) (<= query 65535)))
+(assert (and (<= 0 key) (< key 131072) (<= 0 query) (< query 131072)))
 (push)
 (assert (not (= (or (< key query) (= key query)) (< key (+ query 1)))))
 ; EXPECT: unsat
 (check-sat)
 (pop)
 (push)
-(assert (= key 65536))
+(assert (and (>= key 65536) (< query 65536)))
 (assert (and (not (< key query)) (< key (+ query 1))))
 ; EXPECT: unsat
 (check-sat)
@@ -82,6 +82,18 @@
              (<= 0 label) (< label 256) (<= 0 wantedLabel) (< wantedLabel 256)))
 (assert (= (+ (* role 256) label) (+ (* wantedRole 256) wantedLabel)))
 (assert (or (not (= role wantedRole)) (not (= label wantedLabel))))
+; EXPECT: unsat
+(check-sat)
+(pop)
+
+(declare-const outbound Bool)
+(declare-const wantedOutbound Bool)
+(push)
+(assert (and (<= 0 role) (< role 256) (<= 0 wantedRole) (< wantedRole 256)
+             (<= 0 label) (< label 256) (<= 0 wantedLabel) (< wantedLabel 256)))
+(assert (= (+ (ite outbound 65536 0) (* role 256) label)
+           (+ (ite wantedOutbound 65536 0) (* wantedRole 256) wantedLabel)))
+(assert (or (not (= outbound wantedOutbound)) (not (= role wantedRole)) (not (= label wantedLabel))))
 ; EXPECT: unsat
 (check-sat)
 (pop)

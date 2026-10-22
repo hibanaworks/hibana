@@ -1,8 +1,8 @@
 import Std
 
-namespace Hibana.ReceiveIndex
+namespace Hibana.OperationIndex
 
-/- Model of the half-open lower-bound search over immutable receive keys.
+/- Model of the half-open lower-bound search over immutable operation keys.
    Sorting, ordinal coverage and row decoding are checked by the Rust image
    constructor and independent decoded-row tests. Live admission is unchanged. -/
 def lower (key : Nat → Nat) (query lo hi : Nat) : Nat → Nat
@@ -116,6 +116,48 @@ theorem message_key_exact (role label wantedRole wantedLabel : Nat)
   · rintro ⟨rfl, rfl⟩
     rfl
 
+def operationKey (outbound : Bool) (role label : Nat) : Nat :=
+  (if outbound then 65536 else 0) + role * 256 + label
+
+/-- Direction, logical role and label have disjoint encodings in the existing
+two-byte ordinal index. No new runtime state participates in lookup. -/
+theorem operation_key_exact (outbound wantedOutbound : Bool)
+    (role label wantedRole wantedLabel : Nat)
+    (roleBound : role < 256) (wantedRoleBound : wantedRole < 256)
+    (labelBound : label < 256) (wantedLabelBound : wantedLabel < 256) :
+    operationKey outbound role label = operationKey wantedOutbound wantedRole wantedLabel ↔
+      outbound = wantedOutbound ∧ role = wantedRole ∧ label = wantedLabel := by
+  cases outbound <;> cases wantedOutbound <;> constructor
+  · intro same
+    exact ⟨rfl, (message_key_exact role label wantedRole wantedLabel labelBound wantedLabelBound).mp
+      (by simpa [operationKey] using same)⟩
+  · rintro ⟨_, rfl, rfl⟩
+    rfl
+  · intro same
+    dsimp [operationKey] at same
+    omega
+  · rintro ⟨impossible, _, _⟩
+    cases impossible
+  · intro same
+    dsimp [operationKey] at same
+    omega
+  · rintro ⟨impossible, _, _⟩
+    cases impossible
+  · intro same
+    have fields : role * 256 + label = wantedRole * 256 + wantedLabel := by
+      dsimp [operationKey] at same
+      omega
+    exact ⟨rfl, (message_key_exact role label wantedRole wantedLabel labelBound wantedLabelBound).mp fields⟩
+  · rintro ⟨_, rfl, rfl⟩
+    rfl
+
+theorem source_restriction_preserves_exact_candidates (key origin : Nat → Nat)
+    (n query i start stop : Nat) (ordered : Ordered key n) (inside : i < n) :
+    (lower key query 0 n (n + 1) ≤ i ∧
+      i < lower key (query + 1) 0 n (n + 1) ∧ start ≤ origin i ∧ origin i < stop) ↔
+      key i = query ∧ start ≤ origin i ∧ origin i < stop := by
+  exact live_candidates_exact key n query i ordered inside _
+
 /-- Elimination preserves both acceptance and a legitimate wait for another
 view. Rust tests check both rejection conditions against full admission. -/
 theorem completion_prefilter_preserves_admission
@@ -130,6 +172,8 @@ theorem completion_prefilter_preserves_admission
 #print axioms candidate_range_exact
 #print axioms live_candidates_exact
 #print axioms message_key_exact
+#print axioms operation_key_exact
+#print axioms source_restriction_preserves_exact_candidates
 #print axioms completion_prefilter_preserves_admission
 
-end Hibana.ReceiveIndex
+end Hibana.OperationIndex

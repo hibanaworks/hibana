@@ -136,7 +136,18 @@ traces. The source model has three copies, allowing the next probe to start
 another visit. Previously observed choices stay fixed; fresh choices try every
 resolver assignment. These probes include the cut after a send and before its
 matching receive. More complex repetitions still use complete execution traces
-and initial admission checks. Their later negative probes require
+and initial admission checks. At every nested parallel borrow, including later
+visits, additional probes try each ordinary message outside the borrowed
+fragment on that fragment's endpoint. The source tree determines scope
+membership; each visit has a separate occurrence number. Every probe starts
+a fresh run, executes the actual prefix with its choices and borrows, and must
+return an error immediately. The check compares the planned and observed
+probe inventories and rejects missing, duplicate or accepted probes. Controls
+verify those failures. Probe plans are read from generated JSON at runtime;
+the generated Rust contains the protocol operations and visit structure.
+These checks cover scope exclusion at borrow entry,
+not every operation within a fragment or every asynchronous cut.
+Other later negative probes require
 continuation-aware occurrence unfoldings; a one-copy bound cannot determine
 whether another visit is permitted.
 

@@ -1510,11 +1510,11 @@ def RustDescriptorImage.roleRollEntryViewOffset (image : RustDescriptorImage) : 
 def RustDescriptorImage.roleOwnedReceiptOffset (image : RustDescriptorImage) : Nat :=
   image.roleRollEntryViewOffset + image.rollEntryViewCount * productionRoleRollEntryStride
 
-def RustDescriptorImage.roleReceiveIndexOffset (image : RustDescriptorImage) : Nat :=
+def RustDescriptorImage.roleOperationIndexOffset (image : RustDescriptorImage) : Nat :=
   image.roleOwnedReceiptOffset + image.ownedReceiptCount * productionRoleU16Stride
 
 def RustDescriptorImage.roleBlobLen (image : RustDescriptorImage) : Nat :=
-  image.roleReceiveIndexOffset + image.eventCount * productionRoleU16Stride
+  image.roleOperationIndexOffset + image.eventCount * productionRoleU16Stride
 
 def RustDescriptorImage.decodeAtomRow?
     (image : RustDescriptorImage) (row : Nat) : Option DecodedProgramAtom := do
@@ -1951,30 +1951,32 @@ def RustDescriptorImage.eventAtom?
   let atoms ← image.decodeAtoms?
   resolveUnique? (atoms.filter fun candidate => candidate.effIndex = effIndex)
 
-private def insertReceiveKey (entry : Nat × Nat) : List (Nat × Nat) → List (Nat × Nat)
+private def insertOperationKey (entry : Nat × Nat) : List (Nat × Nat) → List (Nat × Nat)
   | [] => [entry]
   | head :: rest =>
       if entry.1 < head.1 || (entry.1 == head.1 && entry.2 ≤ head.2) then
         entry :: head :: rest
-      else head :: insertReceiveKey entry rest
+      else head :: insertOperationKey entry rest
 
-private def sortReceiveKeys : List (Nat × Nat) → List (Nat × Nat)
+private def sortOperationKeys : List (Nat × Nat) → List (Nat × Nat)
   | [] => []
-  | head :: rest => insertReceiveKey head (sortReceiveKeys rest)
+  | head :: rest => insertOperationKey head (sortOperationKeys rest)
 
 /-- Structurally recursive insertion sort keeps this independent of Rust's
-heapsort and reducible by the kernel's `decide`. Non-receives sort last. -/
-def RustDescriptorImage.receiveIndexCoherent (image : RustDescriptorImage) : Bool :=
+heapsort and reducible by the kernel's `decide`. Receive and outbound keys
+each bind their logical role and message label. -/
+def RustDescriptorImage.operationIndexCoherent (image : RustDescriptorImage) : Bool :=
   let expected : Option (List Nat) := do
     let rows ← (List.range image.eventCount).mapM fun row => do
       let atom ← image.eventAtom? row
       let flags ← image.eventFlags? row
       if flags < 6 then pure () else none
-      let key := if flags / 2 = 2 then atom.receiver * 256 + atom.label else 65536
+      let key := if flags / 2 = 2 then atom.receiver * 256 + atom.label
+        else 65536 + atom.sender * 256 + atom.label
       pure (key, row)
-    pure ((sortReceiveKeys rows).map Prod.snd)
+    pure ((sortOperationKeys rows).map Prod.snd)
   let actual := (List.range image.eventCount).mapM fun slot =>
-    readU16LE? image.roleBytes (image.roleReceiveIndexOffset + slot * productionRoleU16Stride)
+    readU16LE? image.roleBytes (image.roleOperationIndexOffset + slot * productionRoleU16Stride)
   match expected, actual with
   | some a, some b => a == b
   | _, _ => false

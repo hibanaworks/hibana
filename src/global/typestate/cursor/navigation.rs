@@ -8,28 +8,56 @@ impl EventCursor {
     pub(super) fn outbound_candidates(
         &self,
         selector: crate::global::typestate::MessageSelector,
+        source: core::ops::Range<usize>,
     ) -> impl Iterator<Item = usize> + '_ {
         let repeatable = self.has_reentry_scopes();
-        (0..self.local_steps_len()).filter(
-            #[inline(always)]
-            move |&index| {
-                // Only roll can reopen a completed step. Match the immutable
-                // source header before decoding a full operation; each surviving
-                // candidate still goes through live admission.
-                if !repeatable && self.local_event_done(index) {
-                    return false;
-                }
-                let (event, direction) =
+        self.machine()
+            .event_program()
+            .outbound_candidates(selector.role, selector.label)
+            .filter(
+                #[inline(always)]
+                move |&index| {
+                    // Only roll can reopen a completed step. Match the immutable
+                    // source header before decoding a full operation; each surviving
+                    // candidate still goes through live admission.
+                    if !repeatable && self.local_event_done(index) {
+                        return false;
+                    }
+                    let (event, direction) =
+                        crate::invariant_some(self.machine().event_program().operation_at(index));
+                    if direction == RoleLocalDirection::Recv
+                        || !source.contains(&event.dense_ordinal())
+                    {
+                        return false;
+                    }
+                    let atom = self.program_ref().event_atom_at(event.dense_ordinal());
+                    atom.from == selector.role
+                        && atom.label == selector.label
+                        && atom.payload == selector.payload_kind
+                },
+            )
+    }
+
+    /// Check immutable borrowed-scope membership before invoking user code.
+    /// Completed rows still identify a contract and cannot authorize a sibling.
+    pub(crate) fn source_has_outbound_contract(
+        &self,
+        selector: crate::global::typestate::MessageSelector,
+        source: core::ops::Range<usize>,
+    ) -> bool {
+        self.machine()
+            .event_program()
+            .outbound_candidates(selector.role, selector.label)
+            .any(|index| {
+                let (event, _) =
                     crate::invariant_some(self.machine().event_program().operation_at(index));
-                if direction == RoleLocalDirection::Recv {
-                    return false;
-                }
-                let atom = self.program_ref().event_atom_at(event.dense_ordinal());
-                atom.from == selector.role
-                    && atom.label == selector.label
-                    && atom.payload == selector.payload_kind
-            },
-        )
+                source.contains(&event.dense_ordinal())
+                    && self
+                        .program_ref()
+                        .event_atom_at(event.dense_ordinal())
+                        .payload
+                        == selector.payload_kind
+            })
     }
 
     #[inline]

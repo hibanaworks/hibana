@@ -20,6 +20,8 @@ fn write_if_changed(path: &std::path::Path, text: &str) -> std::io::Result<()> {
 mod delegated;
 #[path = "protocol_shape_localside.rs"]
 mod localside;
+#[path = "protocol_shape_scope_probes.rs"]
+mod scope_probes;
 
 #[derive(Clone, Eq, PartialEq, Ord, PartialOrd)]
 struct Trace {
@@ -52,14 +54,44 @@ impl Execution {
         }
     }
     fn rust(&self) -> String {
+        self.numbered_rust(&mut 0)
+    }
+    fn numbered_rust(&self, next: &mut usize) -> String {
         match self {
-            Self::Message(label) => format!("Script::Message({label})"),
-            Self::Seq(a, b) => format!("Script::Seq(&{},&{})", a.rust(), b.rust()),
-            Self::Par(a, b, reverse) => {
-                format!("Script::Par(&{},&{},{reverse})", a.rust(), b.rust())
+            Self::Message(label) => {
+                let occurrence = *next;
+                *next += 1;
+                format!("Script::Message({label},{occurrence})")
             }
-            Self::Branch(body, right) => format!("Script::Branch(&{},{right})", body.rust()),
-            Self::Roll(a, b) => format!("Script::Roll([&{},&{}])", a.rust(), b.rust()),
+            Self::Seq(a, b) => format!(
+                "Script::Seq(&{},&{})",
+                a.numbered_rust(next),
+                b.numbered_rust(next)
+            ),
+            Self::Par(a, b, reverse) => {
+                format!(
+                    "Script::Par(&{},&{},{reverse})",
+                    a.numbered_rust(next),
+                    b.numbered_rust(next)
+                )
+            }
+            Self::Branch(body, right) => {
+                format!("Script::Branch(&{},{right})", body.numbered_rust(next))
+            }
+            Self::Roll(a, b) => format!(
+                "Script::Roll([&{},&{}])",
+                a.numbered_rust(next),
+                b.numbered_rust(next)
+            ),
+        }
+    }
+    fn message_count(&self) -> usize {
+        match self {
+            Self::Message(_) => 1,
+            Self::Seq(a, b) | Self::Par(a, b, _) | Self::Roll(a, b) => {
+                a.message_count() + b.message_count()
+            }
+            Self::Branch(body, _) => body.message_count(),
         }
     }
 }
@@ -1009,8 +1041,9 @@ long_running_const_eval = "forbid"
         None
     };
     let mut source = format!(
-        "#![cfg(test)]\n#![forbid(long_running_const_eval)]\n#[path={:?}]\nmod in_memory;\n",
-        root.join("examples/support/in_memory.rs")
+        "#![cfg(test)]\n#![forbid(long_running_const_eval)]\n#[path={:?}]\nmod in_memory;\n#[path={:?}]\nmod planned_json;\n",
+        root.join("examples/support/in_memory.rs"),
+        root.join(".github/ci-tests/kani_json.rs")
     );
     let registers = (0..max_resolvers.max(1))
         .map(|id| format!("register!({id});\n"))
@@ -1040,6 +1073,11 @@ long_running_const_eval = "forbid"
     let mut localsides = Vec::new();
     let mut inputs = Vec::new();
     let mut catalog_inputs = Vec::new();
+    let mut scope_inputs = Vec::new();
+    let scope_directory = output.join("scope-plans");
+    fs::create_dir_all(&scope_directory)?;
+    let mut scope_paths = BTreeSet::new();
+    let mut borrowed_scope_probes = 0usize;
     let mut rejected = 0;
     for (case, word, service, owner, global, resolvers) in &cases {
         let mut nodes = Vec::new();
@@ -1132,7 +1170,18 @@ long_running_const_eval = "forbid"
             )?;
         }
         source.push_str("];\n");
-        source.push_str(&localside::runs(global, *owner, *service == 2));
+        source.push_str(&localside::runs(global, *owner, *service == 2, *case));
+        let (scope_records, scope_count) = scope_probes::inventory(global, *owner);
+        let scope_input = format!(r#"{{"name":{case},"probes":[{scope_records}]}}"#);
+        let scope_path = scope_directory.join(format!("{case}.json"));
+        write_if_changed(&scope_path, &scope_input)?;
+        scope_paths.insert(scope_path);
+        scope_inputs.push(scope_input);
+        borrowed_scope_probes += scope_count;
+        writeln!(
+            source,
+            r#"let scope_directory=std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("scope-observations");std::fs::create_dir_all(&scope_directory).unwrap();std::fs::write(scope_directory.join("{case}.json"),format!("{{{{\"name\":{case},\"probes\":[{{}}]}}}}",scoped_rejections.join(","))).unwrap();"#
+        )?;
         scoped_executions += global.executions().len();
         if delegated_cases.contains(case) {
             delegated_concurrent_runs += global.executions().len();
@@ -1208,9 +1257,19 @@ long_running_const_eval = "forbid"
         }
     }
     fs::write(output.join("Cargo.toml"), manifest)?;
+    for entry in fs::read_dir(scope_directory)? {
+        let path = entry?.path();
+        if !scope_paths.contains(&path) {
+            fs::remove_file(path)?;
+        }
+    }
     fs::write(
         output.join("inputs.json"),
         format!("[{}]\n", inputs.join(",")),
+    )?;
+    fs::write(
+        output.join("scope-inputs.json"),
+        format!("[{}]\n", scope_inputs.join(",")),
     )?;
     fs::write(
         output.join("catalog.json"),
@@ -1226,5 +1285,6 @@ long_running_const_eval = "forbid"
         cases.len(),
         total_cases
     );
+    println!("planned borrowed-scope rejection probes={borrowed_scope_probes}");
     Ok(())
 }

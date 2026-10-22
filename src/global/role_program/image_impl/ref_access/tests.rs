@@ -9,7 +9,7 @@ use crate::{
 };
 use std::{boxed::Box, panic::catch_unwind};
 
-mod receive_index;
+mod operation_index;
 
 fn copy(rows: &RoleImageRef) -> [u8; 2048] {
     let mut bytes = [0; 2048];

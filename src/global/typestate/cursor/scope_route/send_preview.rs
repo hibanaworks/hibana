@@ -643,6 +643,7 @@ impl EventCursor {
     pub(crate) fn send_preview_meta_for_contract(
         &self,
         selector: crate::global::typestate::MessageSelector,
+        source: core::ops::Range<usize>,
         committed_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
         preview_controller_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
         selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
@@ -651,7 +652,7 @@ impl EventCursor {
         let target_label = selector.label;
         let target_payload = selector.payload_kind;
         let mut idx =
-            self.send_preview_start_index_for_contract(selector, committed_arm_for_scope)?;
+            self.send_preview_start_index_for_contract(selector, source, committed_arm_for_scope)?;
         let mut preview_route_arm: Option<SendPreviewRouteArm> = None;
 
         {

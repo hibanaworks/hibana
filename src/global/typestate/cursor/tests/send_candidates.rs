@@ -75,7 +75,9 @@ fn compare(rows: &'static RoleImageRef) -> (usize, usize) {
                 cursor.completed_event_words().to_vec(),
             );
             for &selector in &contracts {
-                let candidates: std::vec::Vec<_> = cursor.outbound_candidates(selector).collect();
+                let candidates: std::vec::Vec<_> = cursor
+                    .outbound_candidates(selector, 0..usize::MAX)
+                    .collect();
                 let mut expected = std::vec::Vec::new();
                 for &(index, role, event, payload) in &events {
                     if role != selector.role
@@ -106,6 +108,43 @@ fn compare(rows: &'static RoleImageRef) -> (usize, usize) {
                     }
                 }
                 assert_eq!(candidates, expected);
+                let end = events
+                    .iter()
+                    .map(|(_, _, event, _)| event.eff_index.dense_ordinal() + 1)
+                    .max()
+                    .unwrap_or(0);
+                for start in 0..=end {
+                    for stop in start..=end {
+                        let source = start..stop;
+                        let scoped: std::vec::Vec<_> = expected
+                            .iter()
+                            .copied()
+                            .filter(|index| {
+                                let (_, _, event, _) = events
+                                    .iter()
+                                    .find(|(candidate, _, _, _)| candidate == index)
+                                    .unwrap();
+                                source.contains(&event.eff_index.dense_ordinal())
+                            })
+                            .collect();
+                        assert_eq!(
+                            cursor
+                                .outbound_candidates(selector, source.clone())
+                                .collect::<std::vec::Vec<_>>(),
+                            scoped
+                        );
+                        let contains = events.iter().any(|(_, role, event, payload)| {
+                            *role == selector.role
+                                && event.label == selector.label
+                                && *payload == selector.payload_kind
+                                && source.contains(&event.eff_index.dense_ordinal())
+                        });
+                        assert_eq!(
+                            cursor.source_has_outbound_contract(selector, source),
+                            contains
+                        );
+                    }
+                }
             }
             assert_eq!(
                 (

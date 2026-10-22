@@ -14,8 +14,8 @@ use crate::global::{
 };
 
 mod entry_resources;
+mod operation_index;
 mod parallel_masks;
-mod receive_index;
 #[cfg(all(test, hibana_repo_tests))]
 mod tests;
 mod validation;

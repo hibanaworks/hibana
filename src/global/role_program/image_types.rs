@@ -439,10 +439,10 @@ pub(crate) struct RoleImageColumns {
 impl RoleImageColumns {
     #[inline(always)]
     pub(crate) const fn blob_len(&self) -> usize {
-        self.receive_index().end_offset(ROLE_IMAGE_U16_STRIDE)
+        self.operation_index().end_offset(ROLE_IMAGE_U16_STRIDE)
     }
 
-    pub(crate) const fn receive_index(&self) -> ColumnRange {
+    pub(crate) const fn operation_index(&self) -> ColumnRange {
         ColumnRange::new(
             self.owned_receipts().end_offset(ROLE_IMAGE_U16_STRIDE),
             self.events.len as usize,
@@ -484,7 +484,7 @@ impl RoleImageColumns {
     // Validate all earlier spans once before publishing its immutable pointer.
     pub(crate) const fn validate_blob_bound(&self) {
         let columns = [
-            (self.receive_index(), ROLE_IMAGE_U16_STRIDE),
+            (self.operation_index(), ROLE_IMAGE_U16_STRIDE),
             (self.roll_entry_ranges(), ROLE_IMAGE_LANE_RANGE_STRIDE),
             (self.roll_entry_views(), ROLE_IMAGE_ROLL_ENTRY_STRIDE),
             (self.owned_receipts(), ROLE_IMAGE_U16_STRIDE),

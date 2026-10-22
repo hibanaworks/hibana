@@ -205,7 +205,7 @@ fn resident_actor_image_checks_both_sides_before_publication() {
             row += 1;
         }
         bytes[3 * crate::global::role_program::ROLE_IMAGE_EVENT_STRIDE + 3] = 1;
-        let index = COLUMNS.receive_index().offset as usize;
+        let index = COLUMNS.operation_index().offset as usize;
         bytes[index] = 0;
         bytes[index + 2] = 2;
         bytes[index + 4] = 1;

@@ -66,7 +66,7 @@ fn largest_program_section(
 fn largest_role_section(rows: &RoleImageRef) -> usize {
     let columns = rows.columns();
     rbl(columns.events, ROLE_IMAGE_EVENT_STRIDE)
-        .max(rbl(columns.receive_index(), ROLE_IMAGE_U16_STRIDE))
+        .max(rbl(columns.operation_index(), ROLE_IMAGE_U16_STRIDE))
         .max(rbl(columns.lanes, ROLE_IMAGE_LANE_STRIDE))
         .max(rbl(columns.dependencies, ROLE_IMAGE_DEPENDENCY_STRIDE))
         .max(rbl(columns.conflicts, ROLE_IMAGE_CONFLICT_STRIDE))

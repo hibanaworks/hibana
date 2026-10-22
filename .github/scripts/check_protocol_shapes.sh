@@ -40,8 +40,8 @@ cargo +"${TOOLCHAIN:-stable}" run --locked --manifest-path "${ROOT_DIR}/.github/
 (
   cd "${OUTPUT}"
   shopt -s nullglob
-  shasum -a 256 Cargo.toml catalog.json inputs.json src/*.rs src/bin/diagnose.rs \
-    diagnostics.tsv unclassified-rejections.txt traces/*.txt \
+  shasum -a 256 Cargo.toml catalog.json inputs.json scope-inputs.json src/*.rs src/bin/diagnose.rs \
+    diagnostics.tsv unclassified-rejections.txt traces/*.txt scope-plans/*.json \
     rejected/Cargo.toml rejected/inventory.tsv rejected/src/bin/*.rs > inputs.sha256
 )
 cargo +"${TOOLCHAIN:-stable}" test --locked --manifest-path "${ROOT_DIR}/.github/ci-tests/Cargo.toml" \
@@ -59,7 +59,7 @@ if [[ "$(cat "${OUTPUT}/inputs.json")" == '[]' ]]; then
   echo "This shard contains expected compile-fail cases only; no runtime coverage is claimed."
   exit 0
 fi
-rm -rf "${OUTPUT}/observations"
+rm -rf "${OUTPUT}/observations" "${OUTPUT}/scope-observations"
 /usr/bin/time -p -o "${OUTPUT}/compile.time" \
   cargo +"${TOOLCHAIN:-stable}" test --manifest-path "${OUTPUT}/Cargo.toml" --no-run
 (cd "${OUTPUT}" && shasum -a 256 Cargo.lock > dependencies.sha256)
@@ -82,6 +82,8 @@ bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" build-serial \
   "${ROOT_DIR}/proofs/lean/.lake/build/bin/protocol-shapes" \
   "${OUTPUT}/inputs.json" "${OUTPUT}/observations" | tee "${OUTPUT}/oracle.log"
 cat "${OUTPUT}/diagnose.time" "${OUTPUT}/compile.time" "${OUTPUT}/execute.time" "${OUTPUT}/oracle.time"
+cargo +"${TOOLCHAIN:-stable}" test --locked --manifest-path "${ROOT_DIR}/.github/ci-tests/Cargo.toml" \
+  --bin protocol-shape-controls
 cargo +"${TOOLCHAIN:-stable}" run --locked --manifest-path "${ROOT_DIR}/.github/ci-tests/Cargo.toml" \
   --bin protocol-shape-controls -- "${ROOT_DIR}/proofs/lean/.lake/build/bin/protocol-shapes" "${OUTPUT}"
 source_hashes > "${OUTPUT}/source-after.sha256"

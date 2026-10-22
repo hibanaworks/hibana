@@ -22,7 +22,7 @@ impl RoleImageRef {
         self.validate_roll_entry_resources();
         self.validate_owned_receipts();
         self.validate_roll_entry_receipts();
-        self.validate_receive_index();
+        self.validate_operation_index();
         let lanes = self.lanes();
         let mut slot = 0;
         while slot < scopes {

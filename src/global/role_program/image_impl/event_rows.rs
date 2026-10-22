@@ -33,12 +33,14 @@ impl RoleLocalDirection {
     }
 }
 
-/// Receive keys precede send and local rows. The original step ordinal breaks
-/// ties in the index, preserving source order for every requested contract.
-pub(super) const fn receive_index_key(flags: u8, to: u8, label: u8) -> u32 {
+/// Receive keys precede outbound keys. The original step ordinal breaks ties,
+/// preserving source order for every requested direction, role and label.
+pub(super) const fn operation_index_key(flags: u8, from: u8, to: u8, label: u8) -> u32 {
     match RoleLocalDirection::decode(flags) {
         Some(RoleLocalDirection::Recv) => ((to as u32) << 8) | label as u32,
-        Some(RoleLocalDirection::Local | RoleLocalDirection::Send) => 1 << 16,
+        Some(RoleLocalDirection::Local | RoleLocalDirection::Send) => {
+            (1 << 16) | ((from as u32) << 8) | label as u32
+        }
         None => crate::invariant(),
     }
 }

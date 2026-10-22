@@ -134,7 +134,10 @@ jobs:
             target/protocol-shapes/depth-*/**/oracle.time
             target/protocol-shapes/depth-*/**/oracle.log
             target/protocol-shapes/depth-*/**/inputs.json
+            target/protocol-shapes/depth-*/**/scope-inputs.json
+            target/protocol-shapes/depth-*/**/scope-plans/*.json
             target/protocol-shapes/depth-*/**/observations/*.json
+            target/protocol-shapes/depth-*/**/scope-observations/*.json
             target/protocol-shapes/depth-*/**/rejected/inventory.tsv
             target/protocol-shapes/depth-*/**/rejected/Cargo.toml
             target/protocol-shapes/depth-*/**/rejected/Cargo.lock
@@ -223,8 +226,8 @@ jobs:
         run: bash proofs/checks/projection/explicit-resource-join/check.sh
       - name: Check receive lane census with Lean and Z3
         run: bash proofs/checks/runtime/recv-lane-census/check.sh
-      - name: Check immutable receive lookup with Lean and Z3
-        run: bash proofs/checks/image/receive-index/check.sh
+      - name: Check immutable operation lookup with Lean and Z3
+        run: bash proofs/checks/image/operation-index/check.sh
       - name: Check completion bitmap traversal with Lean and Z3
         run: bash proofs/checks/runtime/pending-events/check.sh
       - name: Check immutable event admission with Lean and Z3

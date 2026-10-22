@@ -7,12 +7,23 @@ fn compare(rows: &RoleImageRef) {
     let mut labels = BTreeSet::from([0, 254, 255]);
     for step in 0..rows.local_step_count() {
         let node = rows.local_step_node(step).unwrap();
-        if let LocalAction::Recv {
-            eff_index, label, ..
-        } = node.action()
-        {
-            roles.insert(rows.program().event_atom_at(eff_index.dense_ordinal()).to);
-            labels.insert(label);
+        match node.action() {
+            LocalAction::Recv {
+                eff_index, label, ..
+            } => {
+                roles.insert(rows.program().event_atom_at(eff_index.dense_ordinal()).to);
+                labels.insert(label);
+            }
+            LocalAction::Send {
+                eff_index, label, ..
+            }
+            | LocalAction::Local {
+                eff_index, label, ..
+            } => {
+                roles.insert(rows.program().event_atom_at(eff_index.dense_ordinal()).from);
+                labels.insert(label);
+            }
+            LocalAction::Terminate => {}
         }
     }
     for role in roles {
@@ -41,12 +52,39 @@ fn compare(rows: &RoleImageRef) {
                     .collect::<std::vec::Vec<_>>(),
                 expected
             );
+            let expected_outbound: std::vec::Vec<_> = (0..rows.local_step_count())
+                .filter(|&step| {
+                    let node = rows.local_step_node(step).unwrap();
+                    match node.action() {
+                        LocalAction::Send {
+                            eff_index,
+                            label: candidate,
+                            ..
+                        }
+                        | LocalAction::Local {
+                            eff_index,
+                            label: candidate,
+                            ..
+                        } => {
+                            candidate == label
+                                && rows.program().event_atom_at(eff_index.dense_ordinal()).from
+                                    == role
+                        }
+                        LocalAction::Recv { .. } | LocalAction::Terminate => false,
+                    }
+                })
+                .collect();
+            assert_eq!(
+                rows.outbound_candidates(role, label)
+                    .collect::<std::vec::Vec<_>>(),
+                expected_outbound
+            );
         }
     }
 }
 
 #[test]
-fn indexed_receives_match_decoded_rows_with_duplicates_parallelism_and_choices() {
+fn indexed_operations_match_decoded_rows_with_duplicates_parallelism_and_choices() {
     type A = Msg<7, u32>;
     type B = Msg<7, bool>;
     type C = Msg<255, ()>;
@@ -70,7 +108,7 @@ fn indexed_receives_match_decoded_rows_with_duplicates_parallelism_and_choices()
 }
 
 #[test]
-fn actor_receive_index_preserves_logical_roles_and_rolled_rows() {
+fn actor_operation_index_preserves_logical_roles_and_rolled_rows() {
     type Loan = Msg<1, Endpoint<'static, 10>>;
     type Read = Msg<3, u32>;
     type Value = Msg<4, u32>;
@@ -90,14 +128,14 @@ fn actor_receive_index_preserves_logical_roles_and_rolled_rows() {
 }
 
 #[test]
-fn malformed_receive_index_cannot_publish_an_image() {
+fn malformed_operation_index_cannot_publish_an_image() {
     let global = g::seq(
         g::send::<0, 1, Msg<9, ()>>(),
         g::seq(g::send::<0, 1, Msg<3, ()>>(), g::send::<0, 1, Msg<9, ()>>()),
     );
     let program = project::<1>(&global);
     let rows = program.role_image_ref();
-    let offset = rows.columns.receive_index().offset as usize;
+    let offset = rows.columns.operation_index().offset as usize;
     reject(rows, |bytes, _, _| put(bytes, offset, u16::MAX));
     reject(rows, |bytes, _, _| {
         let first = u16_at(bytes, offset);
