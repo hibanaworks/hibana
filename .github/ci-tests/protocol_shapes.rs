@@ -868,8 +868,8 @@ long_running_const_eval = "forbid"
                     Protocol::Par(Box::new(global.clone()),Box::new(message(&mut bad_label,3,2,false))),
                     "parallel endpoint delegation conflicts with another use; role=3; help: keep the transfer and dependent resource operations in sequence"
                 ));
-                if let CaseShape::Delegated(delegated::Body::Roll(body)) = word
-                    && matches!(**body, delegated::Body::Receive(_))
+                if let CaseShape::Delegated(body) = word
+                    && body.has_uninformed_reentry(1, 0)
                 {
                     expected_rejections.insert(case, "ReentryResourceKnowledge");
                     negative_sources.insert(

@@ -98,6 +98,35 @@ impl Counts {
 }
 
 impl Body {
+    // Every global below finally returns its single resource to role 0.
+    // A roll at another holder needs fresh causal permission for service 2.
+    // A prefix outside that roll grants no permission for its later visits.
+    pub(super) fn has_uninformed_reentry(&self, holder: u8, final_owner: u8) -> bool {
+        match self {
+            Self::Exchange => false,
+            Self::Seq(a, b) | Self::Par(a, b) | Self::Route(a, b) | Self::Resolved(a, b) => {
+                a.has_uninformed_reentry(holder, final_owner)
+                    || b.has_uninformed_reentry(holder, final_owner)
+            }
+            Self::Roll(body) => {
+                (holder != final_owner && body.has_uninformed_origin())
+                    || body.has_uninformed_reentry(holder, final_owner)
+            }
+            Self::Receive(body) => body.has_uninformed_reentry(holder, final_owner),
+            Self::Forward(body) => body.has_uninformed_reentry(holder ^ 1, final_owner),
+        }
+    }
+
+    fn has_uninformed_origin(&self) -> bool {
+        match self {
+            Self::Receive(_) => true,
+            Self::Exchange | Self::Route(..) | Self::Resolved(..) => false,
+            Self::Seq(a, _) => a.has_uninformed_origin(),
+            Self::Par(a, b) => a.has_uninformed_origin() || b.has_uninformed_origin(),
+            Self::Roll(body) | Self::Forward(body) => body.has_uninformed_origin(),
+        }
+    }
+
     pub(super) fn build(&self, next: &mut u8, resolver: &mut u16, holder: u8) -> Protocol {
         match self {
             Self::Exchange => Protocol::Seq(
@@ -162,5 +191,60 @@ impl Body {
                 Box::new(message(next, 1, 0, true)),
             )),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Body;
+
+    fn remote_loop() -> Body {
+        Body::Roll(Box::new(Body::Receive(Box::new(Body::Exchange))))
+    }
+
+    #[test]
+    fn an_outer_choice_does_not_authorize_later_loop_visits() {
+        let outer = Body::Resolved(Box::new(remote_loop()), Box::new(Body::Exchange));
+        let per_visit = Body::Roll(Box::new(Body::Resolved(
+            Box::new(Body::Receive(Box::new(Body::Exchange))),
+            Box::new(Body::Exchange),
+        )));
+        assert!(outer.has_uninformed_reentry(1, 0));
+        assert!(!per_visit.has_uninformed_reentry(1, 0));
+    }
+
+    #[test]
+    fn a_parallel_exchange_is_not_a_causal_permit_for_the_other_arm() {
+        let parallel = Body::Roll(Box::new(Body::Par(
+            Box::new(Body::Exchange),
+            Box::new(Body::Receive(Box::new(Body::Exchange))),
+        )));
+        let sequential = Body::Roll(Box::new(Body::Seq(
+            Box::new(Body::Exchange),
+            Box::new(Body::Receive(Box::new(Body::Exchange))),
+        )));
+        assert!(parallel.has_uninformed_reentry(1, 0));
+        assert!(!sequential.has_uninformed_reentry(1, 0));
+    }
+
+    #[test]
+    fn reentry_at_the_final_owner_survives_a_temporary_absence() {
+        let returned = Body::Forward(Box::new(remote_loop()));
+        assert!(!returned.has_uninformed_reentry(1, 0));
+        let outer = Body::Roll(Box::new(returned));
+        assert!(outer.has_uninformed_reentry(1, 0));
+    }
+
+    #[test]
+    fn swapping_holders_preserves_the_classification_of_every_bounded_body() {
+        let counts = super::Counts::new(3);
+        for rank in 0..counts.total() {
+            let body = counts.shape(rank);
+            assert_eq!(
+                body.has_uninformed_reentry(1, 0),
+                body.has_uninformed_reentry(0, 1),
+                "{body:?}"
+            );
+        }
     }
 }
