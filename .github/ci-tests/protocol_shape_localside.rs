@@ -258,14 +258,21 @@ impl Emitter {
                 let before = *holder;
                 let first = self.emit(body, actor, holder, names, primed);
                 assert_eq!(*holder, before);
-                if first.is_empty() {
-                    return first;
-                }
                 if primed.is_some() {
                     let second = self.emit(body, actor, holder, names, None);
+                    if first.is_empty() && second.is_empty() {
+                        return String::new();
+                    }
+                    let first = if first.is_empty() {
+                        String::new()
+                    } else {
+                        format!("{{let script=_first;{first}}}")
+                    };
                     format!(
-                        "{{let [_first,_second]=match script{{Script::Roll(visits)=>*visits,_=>panic!(\"expected repeated script\")}};{{let script=_first;{first}}}{{let script=_second;{second}}}}}"
+                        "{{let [_first,_second]=match script{{Script::Roll(visits)=>*visits,_=>panic!(\"expected repeated script\")}};{first}{{let script=_second;{second}}}}}"
                     )
+                } else if first.is_empty() {
+                    String::new()
                 } else {
                     format!(
                         "for &script in match script{{Script::Roll(visits)=>visits,_=>panic!(\"expected repeated script\")}}{{{first}}}"
