@@ -241,6 +241,42 @@ theorem a_child_repeat_keeps_its_prefix_before_both_parallel_heads :
 theorem a_fresh_parent_cannot_skip_the_prefix_on_another_lane :
     acceptedCrossLane (completedCrossLane ++ [.roll 1, .send 2]) = false := by decide
 
+def fourWayChoice : Choreo := .par (.send 0 1 80 0)
+  (.route .intrinsic
+    (.par (.par (.par (.send 0 1 81 0) (.send 0 1 82 0))
+      (.send 0 1 83 0)) (.send 0 1 84 0))
+    (.send 0 1 85 0))
+
+def acceptedFourWay (trace : List GlobalOperation) : Bool :=
+  (run (GlobalConfig.initial 1 2 fourWayChoice) trace).isSome
+
+theorem every_parallel_head_can_reveal_the_enclosing_choice :
+    [1, 2, 3, 4].all (fun event => acceptedFourWay [.send event, .recv event]) = true := by decide
+
+theorem the_selected_parallel_arm_can_finish_before_its_outer_sibling :
+    acceptedFourWay [.send 3, .recv 3, .send 4, .recv 4,
+      .send 2, .recv 2, .send 1, .recv 1, .send 0, .recv 0] = true := by decide
+
+theorem a_parallel_head_does_not_authorize_the_other_choice_arm :
+    acceptedFourWay [.send 1, .recv 1, .send 5] = false := by decide
+
+def laterNestedChoice : Choreo := .route .intrinsic
+  (.route .intrinsic (.send 0 1 0 0)
+    (.par (.route .intrinsic (.send 0 1 1 0) (.send 0 1 2 0)) (.send 0 1 3 0)))
+  (.par (.send 0 1 4 0) (.send 0 1 5 0))
+
+def acceptedLaterChoice (trace : List GlobalOperation) : Bool :=
+  (run (GlobalConfig.initial 1 2 laterNestedChoice) trace).isSome
+
+theorem completing_a_parallel_sibling_keeps_the_nested_choice :
+    acceptedLaterChoice [.send 3, .recv 3, .send 1, .recv 1] = true := by decide
+
+theorem that_sibling_does_not_authorize_another_committed_branch :
+    acceptedLaterChoice [.send 3, .recv 3, .send 4] = false := by decide
+
+theorem that_sibling_does_not_allow_a_completed_receive_to_repeat :
+    acceptedLaterChoice [.send 3, .recv 3, .send 1, .recv 1, .recv 1] = false := by decide
+
 #print axioms a_scheduled_entry_is_eligible
 #print axioms an_in_progress_choice_cannot_change_arm
 #print axioms right_then_left_remains_enabled
@@ -275,4 +311,10 @@ theorem a_fresh_parent_cannot_skip_the_prefix_on_another_lane :
 #print axioms a_new_enclosing_visit_cannot_skip_its_prefix
 #print axioms a_child_repeat_keeps_its_prefix_before_both_parallel_heads
 #print axioms a_fresh_parent_cannot_skip_the_prefix_on_another_lane
+#print axioms every_parallel_head_can_reveal_the_enclosing_choice
+#print axioms the_selected_parallel_arm_can_finish_before_its_outer_sibling
+#print axioms a_parallel_head_does_not_authorize_the_other_choice_arm
+#print axioms completing_a_parallel_sibling_keeps_the_nested_choice
+#print axioms that_sibling_does_not_authorize_another_committed_branch
+#print axioms that_sibling_does_not_allow_a_completed_receive_to_repeat
 end ParallelResolverProgress

@@ -236,7 +236,13 @@ async fn replay(
                             assert!(owner_db.replace(db).is_none());
                             Outcome::Accepted
                         }
-                        Ok(Err(_)) => Outcome::Rejected,
+                        Ok(Err(error)) => {
+                            assert_eq!(
+                                index + 1, commands.len(),
+                                "owned prefix failed at {index}: {command:?}: {error:?}"
+                            );
+                            Outcome::Rejected
+                        },
                         Err(_) => Outcome::Pending,
                     },
                     (1, true, true) => match tokio::time::timeout(
@@ -249,7 +255,13 @@ async fn replay(
                             assert!(worker_db.replace(db).is_none());
                             Outcome::Accepted
                         }
-                        Ok(Err(_)) => Outcome::Rejected,
+                        Ok(Err(error)) => {
+                            assert_eq!(
+                                index + 1, commands.len(),
+                                "owned prefix failed at {index}: {command:?}: {error:?}"
+                            );
+                            Outcome::Rejected
+                        },
                         Err(_) => Outcome::Pending,
                     },
                     _ => panic!("unrecognized generated command: {command:?}"),

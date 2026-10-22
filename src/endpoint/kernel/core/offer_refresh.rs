@@ -128,7 +128,11 @@ where
                             .is_some())
                 {
                     (state_index_to_usize(entry), reentry_scope)
-                } else if self.progress.cursor.has_route_scope(scope_id) {
+                } else if let Some(scope_id) = self
+                    .progress
+                    .cursor
+                    .route_scope_for_offer_node(scope_id, idx)
+                {
                     (idx, scope_id)
                 } else {
                     let (scope_id, entry) = reentry_offer

@@ -7,41 +7,31 @@ use std::{
     path::Path,
 };
 // Admission.smt2 prints one named premise/witness group before each query group.
-// The ten premise groups assert a satisfiable premise, then its impossible
-// violation; the other six groups assert concrete satisfiable witnesses.
+// The nine premise groups assert a satisfiable premise, then its impossible
+// violation; the other five groups assert concrete satisfiable witnesses.
 const ADMISSION_GROUPS: &[(&str, &[&str])] = &[
     (
-        "fresh head excludes outside-visit completion: premises SAT, violation UNSAT",
+        "unfinished current event admitted: premises SAT, violation UNSAT",
         &["sat", "unsat"],
     ),
     (
-        "parked lane needs later completion: premises SAT, violation UNSAT",
-        &["sat", "unsat"],
-    ),
-    ("parked past suffix with commit evidence: SAT", &["sat"]),
-    ("old unselected suffix witness: SAT", &["sat"]),
-    (
-        "committed history survives a different preview: SAT",
-        &["sat"],
-    ),
-    (
-        "past requires reentry: premises SAT, violation UNSAT",
+        "committed branch respected: premises SAT, violation UNSAT",
         &["sat", "unsat"],
     ),
     (
-        "no new admissions: premises SAT, violation UNSAT",
+        "completed event requires reentry: premises SAT, violation UNSAT",
         &["sat", "unsat"],
     ),
     (
-        "forward preserved: premises SAT, violation UNSAT",
+        "completed roll requires reentry: premises SAT, violation UNSAT",
         &["sat", "unsat"],
     ),
     (
-        "completed guard preserved: premises SAT, violation UNSAT",
+        "explicit reentry requires its head: premises SAT, violation UNSAT",
         &["sat", "unsat"],
     ),
     (
-        "elastic preserved: premises SAT, violation UNSAT",
+        "automatic reentry preserves completed events: premises SAT, violation UNSAT",
         &["sat", "unsat"],
     ),
     (
@@ -56,7 +46,9 @@ const ADMISSION_GROUPS: &[(&str, &[&str])] = &[
         "unique eligible candidate is selected: premises SAT, violation UNSAT",
         &["sat", "unsat"],
     ),
-    ("current Continue211 positive: SAT", &["sat"]),
+    ("unfinished receive beyond lookup head: SAT", &["sat"]),
+    ("parked unfinished receive: SAT", &["sat"]),
+    ("authorized fresh head replaces old choice: SAT", &["sat"]),
     ("authorized elastic head positive: SAT", &["sat"]),
     ("ambiguity rejects: SAT", &["sat"]),
 ];
@@ -182,8 +174,8 @@ mod tests {
             .iter()
             .flat_map(|(label, outcomes)| std::iter::once(*label).chain(outcomes.iter().copied()))
             .collect::<Vec<_>>();
-        assert_eq!(expected.iter().filter(|&&line| line == "sat").count(), 16);
-        assert_eq!(expected.iter().filter(|&&line| line == "unsat").count(), 10);
+        assert_eq!(expected.iter().filter(|&&line| line == "sat").count(), 14);
+        assert_eq!(expected.iter().filter(|&&line| line == "unsat").count(), 9);
         let valid = expected.join("\n") + "\n";
         assert!(admission(&valid).is_ok());
         for index in 0..expected.len() {

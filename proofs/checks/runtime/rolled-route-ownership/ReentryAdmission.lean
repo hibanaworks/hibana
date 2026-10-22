@@ -1,90 +1,61 @@
 import Std.Tactic
 namespace ReentryAdmission
-/- Source bridge: event_progress.rs validate_event_enabled_reentry tests both
-relocatable_step_done and event_progress_passed, retaining
-roll_reentry_event_allows_index as the only reset authorization. Other
-row/dependency/conflict/lane guards remain conjuncts. This is not Rust refinement. -/
+/- Model of validate_event_enabled_reentry in event_progress.rs. Completion,
+committed choices and explicit or automatic roll reentry determine admission.
+A resident lane's lookup position is not progress. Row, source dependencies,
+actor ownership and lane binding are additional guards. This is not Rust refinement. -/
 
-structure ProgressEvent where
- lane : Nat
- step : Nat
- done : Bool
+def admission (done completedRoll compatible explicit headAllowed reentryAllowed : Bool) : Bool :=
+ if explicit then headAllowed
+ else if done || completedRoll then reentryAllowed
+ else compatible
 
-def passed (lane step : Nat) (events : List ProgressEvent) : Bool :=
- events.any (fun e => decide (e.lane = lane ∧ step < e.step ∧ e.done = true))
+theorem an_unfinished_current_event_is_admitted (headAllowed reentryAllowed : Bool) :
+ admission false false true false headAllowed reentryAllowed = true := by
+ cases headAllowed <;> cases reentryAllowed <;> decide
 
-def progressPassed (head : Option Nat) (lane step : Nat) (events : List ProgressEvent) : Bool :=
- match head with
- | some current => decide (step < current)
- | none => passed lane step events
+theorem a_committed_branch_cannot_be_replaced (headAllowed reentryAllowed : Bool) :
+ admission false false false false headAllowed reentryAllowed = false := by
+ cases headAllowed <;> cases reentryAllowed <;> decide
 
-theorem fresh_reset_bounds_the_new_visit :
- progressPassed (some 0) 0 0 [⟨0, 11, true⟩] = false := by decide
+theorem a_completed_event_requires_reentry
+ (completedRoll compatible headAllowed reentryAllowed : Bool)
+ (accepted : admission true completedRoll compatible false headAllowed reentryAllowed = true) :
+ reentryAllowed = true := by simpa [admission] using accepted
 
-theorem parked_progress_uses_commit_evidence (lane step : Nat) (events : List ProgressEvent) :
- progressPassed none lane step events = passed lane step events := by rfl
+theorem a_completed_roll_requires_reentry
+ (done compatible headAllowed reentryAllowed : Bool)
+ (accepted : admission done true compatible false headAllowed reentryAllowed = true) :
+ reentryAllowed = true := by
+ cases done <;> simpa [admission] using accepted
 
-theorem passed_requires_a_later_committed_event
- (lane step : Nat) (events : List ProgressEvent) (h : passed lane step events = true) :
- ∃ e ∈ events, e.lane = lane ∧ step < e.step ∧ e.done = true := by
- obtain ⟨e, mem, guard⟩ := List.any_eq_true.mp h
- exact ⟨e, mem, of_decide_eq_true guard⟩
+theorem explicit_reentry_requires_its_head
+ (done completedRoll compatible headAllowed reentryAllowed : Bool)
+ (accepted : admission done completedRoll compatible true headAllowed reentryAllowed = true) :
+ headAllowed = true := by simpa [admission] using accepted
 
-theorem parked_lane_without_later_commits_is_not_past
- (lane step : Nat) (events : List ProgressEvent)
- (noLater : ∀ e ∈ events, e.lane = lane → step < e.step → e.done = false) :
- passed lane step events = false := by
- cases h : passed lane step events with
- | false => rfl
- | true =>
-   obtain ⟨e, mem, sameLane, later, done⟩ := passed_requires_a_later_committed_event lane step events h
-   have := noLater e mem sameLane later
-   simp [done] at this
+theorem an_authorized_fresh_head_can_replace_old_choices
+ (done completedRoll compatible reentryAllowed : Bool) :
+ admission done completedRoll compatible true true reentryAllowed = true := by rfl
 
-theorem independent_lane_commit_does_not_pass_a_suffix :
- passed 0 4 [⟨1, 11, true⟩] = false := by decide
+theorem authorized_automatic_reentry_preserves_completed_events
+ (completedRoll compatible headAllowed : Bool) :
+ admission true completedRoll compatible false headAllowed true = true := by rfl
 
-theorem later_same_lane_commit_passes_an_unchosen_suffix :
- passed 0 4 [⟨0, 11, true⟩] = true := by decide
-def old (done reentry : Bool) : Bool := !done || reentry
-def revised (done beforeProgress reentry : Bool) : Bool :=
- !(done || beforeProgress) || reentry
-
-theorem old_unselected_past_suffix_is_admitted : old false false = true := by decide
-theorem revised_unselected_past_suffix_is_rejected : revised false true false = false := by decide
-theorem current_unfinished_sibling_preserved : revised false false false = true := by decide
-
-theorem preserves_forward (done reentry : Bool) :
- revised done false reentry = old done reentry := by cases done <;> cases reentry <;> decide
-
-theorem preserves_done (beforeProgress reentry : Bool) :
- revised true beforeProgress reentry = old true reentry := by
- cases beforeProgress <;> cases reentry <;> decide
-
-theorem preserves_authorized_elastic (done beforeProgress : Bool) :
- revised done beforeProgress true = true := by cases done <;> cases beforeProgress <;> decide
-
-theorem past_requires_reentry (done reentry : Bool)
- (admitted : revised done true reentry = true) : reentry = true := by
- cases done <;> cases reentry <;> simp_all [revised]
-
-theorem no_new_admissions (done beforeProgress reentry : Bool)
- (admitted : revised done beforeProgress reentry = true) : old done reentry = true := by
- cases done <;> cases beforeProgress <;> cases reentry <;> simp_all [revised,old]
-
-/-- The unified observed-frame selector uses the same event eligibility as
-typed receive. Offer entry includes first-visible and per-lane route arm
-route entries; it does not bypass event eligibility. -/
+/-- Offer uses the same event eligibility as typed receive, in addition to its
+exact frame and branch-entry checks. -/
 def offer (exact offerEntry eventEnabled : Bool) : Bool :=
  exact && offerEntry && eventEnabled
 
 theorem offer_cannot_select_disabled (exact offerEntry : Bool) :
  offer exact offerEntry false = false := by cases exact <;> cases offerEntry <;> decide
-#print axioms past_requires_reentry
-#print axioms no_new_admissions
-#print axioms preserves_authorized_elastic
+
+#print axioms an_unfinished_current_event_is_admitted
+#print axioms a_committed_branch_cannot_be_replaced
+#print axioms a_completed_event_requires_reentry
+#print axioms a_completed_roll_requires_reentry
+#print axioms explicit_reentry_requires_its_head
+#print axioms an_authorized_fresh_head_can_replace_old_choices
+#print axioms authorized_automatic_reentry_preserves_completed_events
 #print axioms offer_cannot_select_disabled
-#print axioms passed_requires_a_later_committed_event
-#print axioms parked_lane_without_later_commits_is_not_past
-#print axioms fresh_reset_bounds_the_new_visit
 end ReentryAdmission

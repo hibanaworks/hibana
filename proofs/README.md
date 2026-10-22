@@ -172,6 +172,12 @@ predecessors. They cover a child continuing after its tail, a prefix on another
 lane, and a fresh parent that must execute its own prefix. Source-model examples,
 public endpoint tests and independently compiled Kani cases cover these boundaries.
 
+Offer checks cover choices inside nested parallel branches and receives left
+enabled after independent work completes. Scope lookup retains the enclosing
+choice. Moving the lookup position preserves completion and branch selection.
+Public endpoint tests, source-model examples and Kani checks cover these
+receives, rejected alternatives and attempts to execute a completed step again.
+
 Kani checks bounded properties of production functions. Miri checks aliasing,
 pointer provenance and destruction in executed tests. Native tests exercise
 actual Endpoints, codecs, borrowed buffers and separate-process communication.

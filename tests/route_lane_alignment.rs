@@ -23,6 +23,227 @@ type ValueB = g::Msg<9, u32>;
 type ReturnB = g::Msg<10, Endpoint<'static, 3>>;
 
 #[test]
+fn a_choice_inside_parallel_can_offer_a_four_way_arm() {
+    type Outside = g::Msg<80, ()>;
+    type First = g::Msg<81, ()>;
+    type Second = g::Msg<82, ()>;
+    type Third = g::Msg<83, ()>;
+    let global = g::par(
+        g::send::<0, 1, Outside>(),
+        g::route(
+            g::par(
+                g::par(
+                    g::par(g::send::<0, 1, First>(), g::send::<0, 1, Second>()),
+                    g::send::<0, 1, Third>(),
+                ),
+                g::seq(
+                    g::send::<0, 1, LoanA>(),
+                    g::seq(
+                        g::send::<3, 2, ReadA>(),
+                        g::seq(g::send::<2, 3, ValueA>(), g::send::<1, 0, ReturnA>()),
+                    ),
+                ),
+            ),
+            g::seq(
+                g::send::<0, 1, LoanB>(),
+                g::seq(
+                    g::send::<3, 2, ReadB>(),
+                    g::seq(g::send::<2, 3, ValueB>(), g::send::<1, 0, ReturnB>()),
+                ),
+            ),
+        ),
+    );
+    assert_eq!(g::diagnose(&global), None);
+    let p0 = project::<0>(&global);
+    let p1 = project::<1>(&global);
+    let p2 = project::<2>(&global);
+    let p3 = project::<3>(&global);
+    let network = common::TestTransport::new();
+    let [mut slab0, mut slab1, mut slab2] = [[0; 32 * 1024]; 3];
+    let mut s0 = SessionKitStorage::uninit();
+    let mut s1 = SessionKitStorage::uninit();
+    let mut s2 = SessionKitStorage::uninit();
+    let rv0 = s0.init().rendezvous(&mut slab0, network.clone()).unwrap();
+    let rv1 = s1.init().rendezvous(&mut slab1, network.clone()).unwrap();
+    let rv2 = s2.init().rendezvous(&mut slab2, network.clone()).unwrap();
+    let sid = SessionId::new(9312);
+    let mut owner = rv0.enter(sid, &p0).unwrap();
+    let mut worker = rv1.enter(sid, &p1).unwrap();
+    let mut service = rv2.enter(sid, &p2).unwrap();
+    let db = rv0.enter(sid, &p3).unwrap();
+    tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .start_paused(true)
+        .build()
+        .unwrap()
+        .block_on(async {
+            tokio::time::timeout(core::time::Duration::from_secs(1), async {
+                {
+                    use core::{
+                        future::Future as _,
+                        task::{Context, Poll, Waker},
+                    };
+                    let mut waiting = core::pin::pin!(worker.offer());
+                    let mut cx = Context::from_waker(Waker::noop());
+                    assert!(matches!(waiting.as_mut().poll(&mut cx), Poll::Pending));
+                }
+                owner.send::<First>(&()).await?;
+                let branch = worker.offer().await?;
+                assert_eq!(branch.label(), 81);
+                drop(branch);
+                worker.offer().await?.recv::<First>().await?;
+                tokio::try_join!(owner.send::<Second>(&()), worker.recv::<Second>())?;
+                tokio::try_join!(owner.send::<Third>(&()), worker.recv::<Third>())?;
+                let (_returned, (), ()) = tokio::try_join!(
+                    async {
+                        owner.send::<LoanA>(db).await?;
+                        owner.recv::<ReturnA>().await
+                    },
+                    async {
+                        let mut db = worker.recv::<LoanA>().await?;
+                        db.send::<ReadA>(&41).await?;
+                        assert_eq!(db.recv::<ValueA>().await?, 42);
+                        worker.send::<ReturnA>(db).await
+                    },
+                    async {
+                        let number = service.recv::<ReadA>().await?;
+                        service.send::<ValueA>(&(number + 1)).await
+                    },
+                )?;
+                tokio::try_join!(owner.send::<Outside>(&()), worker.recv::<Outside>())?;
+                Ok::<_, hibana::EndpointError>(())
+            })
+            .await
+            .expect("the selected parallel arm must complete")
+            .unwrap();
+        });
+    assert!(network.queue_is_empty());
+}
+
+#[test]
+fn a_completed_parallel_exchange_keeps_the_nested_loan_choice() {
+    type UnusedLoan = g::Msg<85, Endpoint<'static, 3>>;
+    type UnusedRead = g::Msg<86, ()>;
+    type UnusedValue = g::Msg<87, ()>;
+    type UnusedReturn = g::Msg<88, Endpoint<'static, 3>>;
+    type OtherLoan = g::Msg<90, Endpoint<'static, 3>>;
+    type OtherRead = g::Msg<91, ()>;
+    type OtherValue = g::Msg<92, ()>;
+    type OtherReturn = g::Msg<93, Endpoint<'static, 3>>;
+    type Tick = g::Msg<94, ()>;
+    type Notice = g::Msg<11, ()>;
+    type Request = g::Msg<12, ()>;
+    type Reply = g::Msg<13, ()>;
+    type Ack = g::Msg<14, ()>;
+    let global = g::route(
+        g::route(
+            g::seq(
+                g::send::<0, 1, UnusedLoan>(),
+                g::seq(
+                    g::send::<3, 2, UnusedRead>(),
+                    g::seq(
+                        g::send::<2, 3, UnusedValue>(),
+                        g::send::<1, 0, UnusedReturn>(),
+                    ),
+                ),
+            ),
+            g::par(
+                g::route(
+                    g::seq(
+                        g::send::<0, 1, LoanA>(),
+                        g::seq(
+                            g::send::<3, 2, ReadA>(),
+                            g::seq(g::send::<2, 3, ValueA>(), g::send::<1, 0, ReturnA>()),
+                        ),
+                    ),
+                    g::seq(
+                        g::send::<0, 1, LoanB>(),
+                        g::seq(
+                            g::send::<3, 2, ReadB>(),
+                            g::seq(g::send::<2, 3, ValueB>(), g::send::<1, 0, ReturnB>()),
+                        ),
+                    ),
+                ),
+                g::seq(
+                    g::send::<0, 1, Notice>(),
+                    g::seq(
+                        g::send::<1, 2, Request>(),
+                        g::seq(g::send::<2, 1, Reply>(), g::send::<1, 0, Ack>()),
+                    ),
+                ),
+            ),
+        ),
+        g::par(
+            g::seq(
+                g::send::<0, 1, OtherLoan>(),
+                g::seq(
+                    g::send::<3, 2, OtherRead>(),
+                    g::seq(
+                        g::send::<2, 3, OtherValue>(),
+                        g::send::<1, 0, OtherReturn>(),
+                    ),
+                ),
+            ),
+            g::send::<0, 2, Tick>(),
+        ),
+    );
+    assert_eq!(g::diagnose(&global), None);
+    let p0 = project::<0>(&global);
+    let p1 = project::<1>(&global);
+    let p2 = project::<2>(&global);
+    let p3 = project::<3>(&global);
+    let network = common::TestTransport::new();
+    let [mut slab0, mut slab1, mut slab2] = [[0; 32 * 1024]; 3];
+    let mut s0 = SessionKitStorage::uninit();
+    let mut s1 = SessionKitStorage::uninit();
+    let mut s2 = SessionKitStorage::uninit();
+    let rv0 = s0.init().rendezvous(&mut slab0, network.clone()).unwrap();
+    let rv1 = s1.init().rendezvous(&mut slab1, network.clone()).unwrap();
+    let rv2 = s2.init().rendezvous(&mut slab2, network.clone()).unwrap();
+    let sid = SessionId::new(9313);
+    let mut owner = rv0.enter(sid, &p0).unwrap();
+    let mut worker = rv1.enter(sid, &p1).unwrap();
+    let mut service = rv2.enter(sid, &p2).unwrap();
+    let db = rv0.enter(sid, &p3).unwrap();
+    tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .start_paused(true)
+        .build()
+        .unwrap()
+        .block_on(async {
+            tokio::time::timeout(core::time::Duration::from_secs(1), async {
+                owner.send::<Notice>(&()).await?;
+                worker.offer().await?.recv::<Notice>().await?;
+                worker.send::<Request>(&()).await?;
+                service.recv::<Request>().await?;
+                service.send::<Reply>(&()).await?;
+                worker.recv::<Reply>().await?;
+                worker.send::<Ack>(&()).await?;
+                owner.recv::<Ack>().await?;
+                owner.send::<LoanA>(db).await?;
+                let branch = worker
+                    .offer()
+                    .await
+                    .expect("independent nested loan choice");
+                assert_eq!(branch.label(), 3);
+                drop(branch);
+                let mut db = worker.offer().await?.recv::<LoanA>().await?;
+                db.send::<ReadA>(&41).await?;
+                let number = service.recv::<ReadA>().await?;
+                service.send::<ValueA>(&(number + 1)).await?;
+                assert_eq!(db.recv::<ValueA>().await?, 42);
+                worker.send::<ReturnA>(db).await?;
+                let _returned = owner.recv::<ReturnA>().await?;
+                Ok::<_, hibana::EndpointError>(())
+            })
+            .await
+            .expect("the independent nested choice must complete")
+            .unwrap();
+        });
+    assert!(network.queue_is_empty());
+}
+
+#[test]
 fn a_later_visit_notice_can_arrive_before_the_earlier_ack() {
     use core::{
         future::Future as _,

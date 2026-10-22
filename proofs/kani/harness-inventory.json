@@ -299,11 +299,20 @@
       "global::typestate::cursor::kani::retained_roll_completion_is_scoped_and_cannot_authorize_an_outgoing_step"
     ],
     "../../src/global/typestate/cursor/parallel_reentry_tests.rs": [
+      "global::typestate::cursor::parallel_reentry_tests::a_later_locator_cannot_replay_a_completed_step",
+      "global::typestate::cursor::parallel_reentry_tests::a_later_locator_does_not_authorize_another_committed_branch",
+      "global::typestate::cursor::parallel_reentry_tests::a_later_locator_keeps_an_independent_receive_enabled",
       "global::typestate::cursor::parallel_reentry_tests::cross_lane_child_admission_requires_only_its_own_fresh_steps",
       "global::typestate::cursor::parallel_reentry_tests::cross_lane_parent_admission_requires_its_prefix",
       "global::typestate::cursor::parallel_reentry_tests::parallel_entry_accepts_the_independent_parent_arm",
       "global::typestate::cursor::parallel_reentry_tests::parallel_entry_accepts_the_new_parents_required_prefix",
       "global::typestate::cursor::parallel_reentry_tests::parallel_entry_rejects_a_completed_childs_prefix_for_the_new_parent",
+      "global::typestate::cursor::parallel_reentry_tests::parallel_offer_first_head_keeps_its_choice",
+      "global::typestate::cursor::parallel_reentry_tests::parallel_offer_fourth_head_keeps_its_choice",
+      "global::typestate::cursor::parallel_reentry_tests::parallel_offer_other_arm_keeps_its_choice",
+      "global::typestate::cursor::parallel_reentry_tests::parallel_offer_outside_step_has_no_choice",
+      "global::typestate::cursor::parallel_reentry_tests::parallel_offer_second_head_keeps_its_choice",
+      "global::typestate::cursor::parallel_reentry_tests::parallel_offer_third_head_keeps_its_choice",
       "global::typestate::cursor::parallel_reentry_tests::same_lane_tail_preserves_the_childs_enclosing_prefix",
       "global::typestate::cursor::parallel_reentry_tests::selected_reentry_scope_preserves_cross_lane_predecessors"
     ],
@@ -403,7 +412,7 @@
   "contract-harnesses": {},
   "contracts": [],
   "totals": {
-    "standard-harnesses": 279,
+    "standard-harnesses": 288,
     "contract-harnesses": 0,
     "functions-under-contract": 0
   }

@@ -1,7 +1,7 @@
 use super::super::super::facts::LocalDependencyState;
 use super::super::{
     CursorInvariantError, EnabledEventCommit, EventCursor, LocalDependency, PackedEventConflict,
-    RelocatableResidentLaneStep, ResidentLaneStep, ScopeId, StateIndex, state_index_to_usize,
+    RelocatableResidentLaneStep, ScopeId, StateIndex, state_index_to_usize,
 };
 use crate::global::{role_program::RoleLocalDirection, typestate::EventCommitMeta};
 
@@ -112,29 +112,6 @@ impl EventCursor {
         }
     }
 
-    #[inline(never)]
-    fn event_progress_passed(&self, target: RelocatableResidentLaneStep) -> bool {
-        if let Some(head) = self.step_index_at_lane(usize::from(target.0.lane)) {
-            // A reset head bounds the fresh visit; completed events beyond the
-            // enclosing roll must not leak into its new progress.
-            return usize::from(target.0.step_idx) < head;
-        }
-        // A parked lane has no materialized head, including at a parallel join.
-        // Only a later committed event proves that this visit passed a suffix.
-        let event_program = self.machine().event_program();
-        for step_idx in usize::from(target.0.step_idx) + 1..self.local_steps_len() {
-            if event_program.local_step_lane(step_idx) == Some(target.0.lane)
-                && self.relocatable_step_done(RelocatableResidentLaneStep(ResidentLaneStep {
-                    step_idx: step_idx as u16,
-                    lane: target.0.lane,
-                }))
-            {
-                return true;
-            }
-        }
-        false
-    }
-
     #[inline]
     fn validate_event_enabled_reentry(
         &self,
@@ -151,11 +128,10 @@ impl EventCursor {
             }
             return Ok(());
         }
-        // Unchosen events keep a clear completion bit even after lane progress
-        // has passed their region. They need a fresh roll visit just as consumed
-        // events do; a previous visit's prefix cannot authorize a past suffix.
-        if !self.relocatable_step_done(progress_step) && !self.event_progress_passed(progress_step)
-        {
+        // A lane head is a relocatable lookup position. Independent parallel
+        // work can move it past an unfinished step. Completion and committed
+        // choices determine whether this step belongs to the current visit.
+        if !self.relocatable_step_done(progress_step) {
             // A clear bit can belong to an unchosen arm at the lane head.
             // Without a completed explicit roll, committed choices still own
             // this visit. A candidate preview cannot replace that authority.
