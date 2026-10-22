@@ -56,7 +56,7 @@ impl<const S: usize, const E: usize> Plan<'_, S, E> {
 
     pub const fn has_branch_knowledge(&self) -> bool {
         match self.source {
-            Some(source) => self.actors.has_branch_knowledge(source),
+            Some(source) => self.actors.branch_knowledge_conflict(source).is_none(),
             None => false,
         }
     }
@@ -89,7 +89,14 @@ impl<const S: usize, const E: usize> Plan<'_, S, E> {
         let Some(message) = self.messages[event] else {
             return None;
         };
-        let context = Context::new(selections);
+        let mut indexed = [None; E];
+        let mut index = 0;
+        while index < selections.len() {
+            let selection = selections[index];
+            indexed[selection.scope.split as usize] = Some(selection);
+            index += 1;
+        }
+        let context = Context::from_index(&indexed);
         if !active(source, 0, event, &context) {
             return None;
         }
