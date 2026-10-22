@@ -634,11 +634,24 @@ impl EventCursor {
     }
 
     #[inline(always)]
+    fn local_event_words(&self) -> &[u32] {
+        let len = u32_word_count(self.local_steps_len());
+        if len == 0 {
+            &[]
+        } else {
+            // SAFETY: the initialized completion allocation covers every local
+            // event bit. Retained roll bits and epochs are outside the query's
+            // index range. The shared slice stays within this cursor borrow.
+            unsafe { slice::from_raw_parts(self.state().completed_event_words, len) }
+        }
+    }
+
+    #[inline(always)]
     fn local_event_done(&self, step_idx: usize) -> bool {
         let Some((word_idx, bit)) = local_event_bit(step_idx, self.local_steps_len()) else {
             crate::invariant();
         };
-        let Some(word) = self.completed_event_words().get(word_idx) else {
+        let Some(word) = self.local_event_words().get(word_idx) else {
             crate::invariant();
         };
         (word & bit) != 0

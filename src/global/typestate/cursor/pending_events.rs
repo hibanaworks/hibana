@@ -69,7 +69,7 @@ impl EventCursor {
         if range.start > range.end || range.end > self.local_steps_len() {
             crate::invariant();
         }
-        PendingEvents::new(self.completed_event_words(), range)
+        PendingEvents::new(self.local_event_words(), range)
     }
 }
 

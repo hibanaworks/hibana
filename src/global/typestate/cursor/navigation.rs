@@ -41,13 +41,19 @@ impl EventCursor {
         // Only explicit reentry can make a completed row available again.
         // Reuse the existing completion authority before decoding candidates.
         let repeatable = self.has_reentry_scopes();
-        self.machine()
+        let mut candidates = self
+            .machine()
             .event_program()
-            .receive_candidates(role, label)
-            .filter(
-                #[inline(always)]
-                move |&index| repeatable || !self.local_event_done(index),
-            )
+            .receive_candidates(role, label);
+        core::iter::from_fn(
+            #[inline(always)]
+            move || loop {
+                let index = candidates.next()?;
+                if repeatable || !self.local_event_done(index) {
+                    return Some(index);
+                }
+            },
+        )
     }
     /// Current typestate index.
     #[inline(always)]

@@ -87,6 +87,23 @@ theorem compact_word_arithmetic (length word : Nat)
     (word + 1) * 32 + 31 < 4294967296 := by
   omega
 
+def completionBits (events rolls epochs : Nat) : Nat :=
+  if epochs = 0 then events + rolls
+  else ((events + rolls + 31) / 32) * 32 + 64 * epochs
+
+-- The event bitmap is a prefix of the same allocation even when retained
+-- roll bits and aligned epochs occupy the following words.
+theorem local_event_words_fit_storage (events rolls epochs : Nat) :
+    (events + 31) / 32 ≤ (completionBits events rolls epochs + 31) / 32 := by
+  unfold completionBits
+  split <;> omega
+
+theorem compact_completion_extent_fits_usize (events rolls epochs : Nat)
+    (e : events ≤ 65535) (r : rolls ≤ 65535) (ep : epochs ≤ rolls) :
+    completionBits events rolls epochs + 31 < 4294967296 := by
+  unfold completionBits
+  split <;> omega
+
 #print axioms mask_exact
 #print axioms clear_selected
 #print axioms lowest_present
@@ -95,5 +112,7 @@ theorem compact_word_arithmetic (length word : Nat)
 #print axioms admission_equivalent
 #print axioms scope_completion_equivalent
 #print axioms compact_word_arithmetic
+#print axioms local_event_words_fit_storage
+#print axioms compact_completion_extent_fits_usize
 
 end Hibana.PendingEvents
