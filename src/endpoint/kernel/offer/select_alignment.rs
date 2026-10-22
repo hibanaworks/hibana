@@ -2,6 +2,7 @@ use super::{
     FrontierScratchWorkspace, FrontierVisitSet, OfferEntryKey, OperationKernel, RecvError,
     RecvResult, Transport,
 };
+use crate::global::const_dsl::ScopeKind;
 
 mod candidates;
 mod model;
@@ -30,7 +31,14 @@ where
                         .cursor
                         .route_offer_entry_allows_current(scope, index, Some(arm))
                 });
-            if !self.permits_event(index) || wrong_arm {
+            // A completed parallel sibling can move the lookup position to a
+            // blocked join. Select from the source-ready operations, rather
+            // than treating that lookup position as the current frontier.
+            if !self.permits_event(index)
+                || wrong_arm
+                || (!matches!(scope.kind(), Some(ScopeKind::Route))
+                    && self.enabled_view_event(index).is_none())
+            {
                 let next = self.enabled_view_events().next();
                 if let Some((entry_idx, _)) = next {
                     self.commit_offer_alignment_realign(entry_idx, visited)?;

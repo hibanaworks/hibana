@@ -277,6 +277,25 @@ theorem that_sibling_does_not_authorize_another_committed_branch :
 theorem that_sibling_does_not_allow_a_completed_receive_to_repeat :
     acceptedLaterChoice [.send 3, .recv 3, .send 1, .recv 1, .recv 1] = false := by decide
 
+def choiceBeforeJoin : Choreo := .seq
+  (.par (.route .intrinsic (.send 0 1 230 0) (.send 0 1 231 0)) (.send 0 1 232 0))
+  (.send 0 1 233 0)
+
+def acceptedChoiceJoin (trace : List GlobalOperation) : Bool :=
+  (run (GlobalConfig.initial 1 2 choiceBeforeJoin) trace).isSome
+
+theorem a_completed_sibling_keeps_the_left_receive_before_the_join :
+    acceptedChoiceJoin [.send 2, .recv 2, .send 0, .recv 0, .send 3, .recv 3] = true := by decide
+
+theorem a_completed_sibling_keeps_the_right_receive_before_the_join :
+    acceptedChoiceJoin [.send 2, .recv 2, .send 1, .recv 1, .send 3, .recv 3] = true := by decide
+
+theorem a_branch_frame_cannot_be_consumed_as_the_join_receive :
+    acceptedChoiceJoin [.send 2, .recv 2, .send 0, .recv 3] = false := by decide
+
+theorem a_completed_sibling_does_not_authorize_the_join_send :
+    acceptedChoiceJoin [.send 2, .recv 2, .send 3] = false := by decide
+
 def parallelThenTail : Choreo := .par
   (.seq (.roll (.par (.send 0 1 120 0) (.roll (.send 0 1 122 0))))
     (.send 0 1 124 0))
@@ -378,6 +397,10 @@ theorem the_other_arm_is_not_part_of_the_current_inner_visit :
 #print axioms completing_a_parallel_sibling_keeps_the_nested_choice
 #print axioms that_sibling_does_not_authorize_another_committed_branch
 #print axioms that_sibling_does_not_allow_a_completed_receive_to_repeat
+#print axioms a_completed_sibling_keeps_the_left_receive_before_the_join
+#print axioms a_completed_sibling_keeps_the_right_receive_before_the_join
+#print axioms a_branch_frame_cannot_be_consumed_as_the_join_receive
+#print axioms a_completed_sibling_does_not_authorize_the_join_send
 #print axioms a_completed_parallel_group_can_repeat_instead_of_its_tail
 #print axioms that_parallel_group_can_instead_take_its_tail
 #print axioms a_fresh_parallel_group_cannot_skip_to_its_tail

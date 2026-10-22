@@ -93,7 +93,7 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
             .filter_map(|index| self.enabled_view_event(index).map(|source| (index, source)))
     }
 
-    fn enabled_view_event(&self, index: usize) -> Option<usize> {
+    pub(in crate::endpoint::kernel) fn enabled_view_event(&self, index: usize) -> Option<usize> {
         if self.progress.cursor.logical_role_at(index) != Some(self.public_header.role())
             || !self.permits_event(index)
         {

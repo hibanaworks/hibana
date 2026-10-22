@@ -23,6 +23,178 @@ use hibana::runtime::{
 use runtime_support::with_runtime_workspace;
 use tls_ref_support::with_resident_tls_ref;
 
+#[test]
+fn a_choice_after_a_parallel_join_survives_repeated_preview() {
+    type First = Msg<220, ()>;
+    type FirstReply = Msg<221, ()>;
+    type Second = Msg<222, ()>;
+    type SecondReply = Msg<223, ()>;
+    type Left = Msg<224, ()>;
+    type Right = Msg<225, ()>;
+    let global = g::seq(
+        g::par(
+            g::seq(g::send::<0, 1, First>(), g::send::<1, 0, FirstReply>()),
+            g::seq(g::send::<0, 1, Second>(), g::send::<1, 0, SecondReply>()),
+        ),
+        g::route(g::send::<0, 1, Left>(), g::send::<0, 1, Right>()).resolve::<0>(),
+    );
+    let p0 = project::<0>(&global);
+    let p1 = project::<1>(&global);
+    let network = TestTransport::new();
+    let [mut slab0, mut slab1] = [[0; 32 * 1024]; 2];
+    let mut s0 = SessionKitStorage::uninit();
+    let mut s1 = SessionKitStorage::uninit();
+    let rv0 = s0.init().rendezvous(&mut slab0, network.clone()).unwrap();
+    let rv1 = s1.init().rendezvous(&mut slab1, network.clone()).unwrap();
+    rv0.set_resolver(
+        &p0,
+        ResolverRef::<0>::decision_state(&(), |_| Ok(DecisionArm::Left)),
+    )
+    .unwrap();
+    let sid = SessionId::new(9483);
+    let mut sender = rv0.enter(sid, &p0).unwrap();
+    let mut receiver = rv1.enter(sid, &p1).unwrap();
+    tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .start_paused(true)
+        .build()
+        .unwrap()
+        .block_on(async {
+            tokio::time::timeout(core::time::Duration::from_secs(1), async {
+                {
+                    let [mut first, mut second] = sender.par().unwrap();
+                    let [mut first_peer, mut second_peer] = receiver.par().unwrap();
+                    tokio::join!(
+                        async {
+                            first.send::<First>(&()).await.unwrap();
+                            first.recv::<FirstReply>().await.unwrap();
+                        },
+                        async {
+                            second.send::<Second>(&()).await.unwrap();
+                            second.recv::<SecondReply>().await.unwrap();
+                        },
+                        async {
+                            first_peer.recv::<First>().await.unwrap();
+                            first_peer.send::<FirstReply>(&()).await.unwrap();
+                        },
+                        async {
+                            second_peer.recv::<Second>().await.unwrap();
+                            second_peer.send::<SecondReply>(&()).await.unwrap();
+                        }
+                    );
+                }
+                sender
+                    .offer()
+                    .await
+                    .unwrap()
+                    .send::<Left>(&())
+                    .await
+                    .unwrap();
+                let preview = receiver.offer().await.unwrap();
+                assert_eq!(preview.label(), 224);
+                drop(preview);
+                let branch = receiver.offer().await.unwrap();
+                assert_eq!(branch.label(), 224);
+                branch.recv::<Left>().await.unwrap();
+                assert!(network.queue_is_empty());
+            })
+            .await
+            .expect("the joined protocol must retain its choice");
+        });
+}
+
+#[test]
+fn a_completed_parallel_sibling_does_not_authorize_the_join_receive() {
+    type Left = Msg<230, ()>;
+    type Right = Msg<231, ()>;
+    type Independent = Msg<232, ()>;
+    type Tail = Msg<233, ()>;
+    let global = g::seq(
+        g::par(
+            g::route(g::send::<0, 1, Left>(), g::send::<0, 1, Right>()),
+            g::send::<0, 1, Independent>(),
+        ),
+        g::send::<0, 1, Tail>(),
+    );
+    let p0 = project::<0>(&global);
+    let p1 = project::<1>(&global);
+    let network = TestTransport::new();
+    let [mut slab0, mut slab1] = [[0; 32 * 1024]; 2];
+    let mut s0 = SessionKitStorage::uninit();
+    let mut s1 = SessionKitStorage::uninit();
+    let rv0 = s0.init().rendezvous(&mut slab0, network.clone()).unwrap();
+    let rv1 = s1.init().rendezvous(&mut slab1, network.clone()).unwrap();
+    let sid = SessionId::new(9482);
+    let mut sender = rv0.enter(sid, &p0).unwrap();
+    let mut receiver = rv1.enter(sid, &p1).unwrap();
+    tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .start_paused(true)
+        .build()
+        .unwrap()
+        .block_on(async {
+            sender.send::<Independent>(&()).await.unwrap();
+            receiver.recv::<Independent>().await.unwrap();
+            sender.send::<Left>(&()).await.unwrap();
+            let tail = tokio::time::timeout(
+                core::time::Duration::from_millis(1),
+                receiver.recv::<Tail>(),
+            )
+            .await;
+            tail.expect("an out-of-order receive must return without waiting")
+                .expect_err("the branch frame was consumed as its sequential continuation");
+        });
+}
+
+#[test]
+fn a_completed_parallel_sibling_keeps_the_other_choice_observable() {
+    type Left = Msg<230, ()>;
+    type Right = Msg<231, ()>;
+    type Independent = Msg<232, ()>;
+    type Tail = Msg<233, ()>;
+    let global = g::seq(
+        g::par(
+            g::route(g::send::<0, 1, Left>(), g::send::<0, 1, Right>()),
+            g::send::<0, 1, Independent>(),
+        ),
+        g::send::<0, 1, Tail>(),
+    );
+    let p0 = project::<0>(&global);
+    let p1 = project::<1>(&global);
+    let network = TestTransport::new();
+    let [mut slab0, mut slab1] = [[0; 32 * 1024]; 2];
+    let mut s0 = SessionKitStorage::uninit();
+    let mut s1 = SessionKitStorage::uninit();
+    let rv0 = s0.init().rendezvous(&mut slab0, network.clone()).unwrap();
+    let rv1 = s1.init().rendezvous(&mut slab1, network.clone()).unwrap();
+    let sid = SessionId::new(9481);
+    let mut sender = rv0.enter(sid, &p0).unwrap();
+    let mut receiver = rv1.enter(sid, &p1).unwrap();
+    tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .start_paused(true)
+        .build()
+        .unwrap()
+        .block_on(async {
+            tokio::time::timeout(core::time::Duration::from_secs(1), async {
+                sender.send::<Independent>(&()).await.unwrap();
+                receiver.recv::<Independent>().await.unwrap();
+                sender.send::<Left>(&()).await.unwrap();
+                let branch = receiver.offer().await.unwrap();
+                assert_eq!(branch.label(), 230);
+                drop(branch);
+                let branch = receiver.offer().await.unwrap();
+                assert_eq!(branch.label(), 230);
+                branch.recv::<Left>().await.unwrap();
+                sender.send::<Tail>(&()).await.unwrap();
+                receiver.recv::<Tail>().await.unwrap();
+                assert!(network.queue_is_empty());
+            })
+            .await
+            .expect("the remaining choice must stay observable");
+        });
+}
+
 type TestKitStorage = SessionKitStorage<'static, TestTransport>;
 type DeterministicKitStorage = SessionKitStorage<'static, DeterministicRecvTransport>;
 type LabelRewriteKitStorage = SessionKitStorage<'static, LabelRewriteTransport>;
