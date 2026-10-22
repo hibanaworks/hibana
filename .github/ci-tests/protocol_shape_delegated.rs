@@ -226,13 +226,7 @@ fn first_local(source: &Protocol, actor: u8, holder: u8) -> (u8, u8) {
 /// Emit direct public endpoint operations, including every nested par borrow.
 /// The source is test input. No runtime result selects a schedule or an owner.
 pub(super) fn local_rust(source: &Protocol, actor: u8, initial: u8) -> String {
-    fn emit(
-        source: &Protocol,
-        actor: u8,
-        holder: &mut u8,
-        names: &[String; 4],
-        choices: &mut usize,
-    ) -> String {
+    fn emit(source: &Protocol, actor: u8, holder: &mut u8, names: &[String; 4]) -> String {
         match source {
             Protocol::Message {
                 from,
@@ -260,29 +254,50 @@ pub(super) fn local_rust(source: &Protocol, actor: u8, initial: u8) -> String {
                     assert_eq!(*holder, *from);
                     *holder = *to;
                 }
-                code
+                if code.is_empty() {
+                    code
+                } else {
+                    format!("assert!(matches!(script,Script::Message({label})));{code}")
+                }
             }
             Protocol::Seq(a, b) => {
-                emit(a, actor, holder, names, choices) + &emit(b, actor, holder, names, choices)
+                let a = emit(a, actor, holder, names);
+                let b = emit(b, actor, holder, names);
+                if a.is_empty() && b.is_empty() {
+                    String::new()
+                } else {
+                    let bind = |name: &str, body: &str| {
+                        if body.is_empty() {
+                            String::new()
+                        } else {
+                            format!("{{let script={name};{body}}}")
+                        }
+                    };
+                    format!(
+                        "{{let (_left,_right)=match script{{Script::Seq(a,b)=>(*a,*b),_=>panic!(\"expected sequential script\")}};{}{}}}",
+                        bind("_left", &a),
+                        bind("_right", &b)
+                    )
+                }
             }
             Protocol::Roll(body) => {
                 let before = *holder;
-                let body = emit(body, actor, holder, names, choices);
+                let body = emit(body, actor, holder, names);
                 assert_eq!(*holder, before);
                 if body.is_empty() {
                     body
                 } else {
-                    format!("for _ in 0..2{{{body}}}")
+                    format!(
+                        "for &script in match script{{Script::Roll(visits)=>visits,_=>panic!(\"expected repeated script\")}}{{{body}}}"
+                    )
                 }
             }
             Protocol::Route(a, b) | Protocol::Resolved(a, b, _) => {
-                let bit = *choices;
-                *choices += 1;
                 let before = *holder;
-                let left = emit(a, actor, holder, names, choices);
+                let left = emit(a, actor, holder, names);
                 let after = *holder;
                 *holder = before;
-                let right = emit(b, actor, holder, names, choices);
+                let right = emit(b, actor, holder, names);
                 assert_eq!(*holder, after);
                 if left.is_empty() && right.is_empty() {
                     return String::new();
@@ -290,12 +305,36 @@ pub(super) fn local_rust(source: &Protocol, actor: u8, initial: u8) -> String {
                 let (view, left_label) = first_local(a, actor, before);
                 let (right_view, right_label) = first_local(b, actor, before);
                 assert_eq!(view, right_view);
+                let select = "let (script,right)=match script{Script::Branch(body,right)=>(*body,*right),_=>panic!(\"expected branch script\")};";
                 if actor == before && matches!(source, Protocol::Route(..)) {
-                    format!("if choice & (1<<{bit})==0{{{left}}}else{{{right}}}")
+                    format!("{{{select}if right{{{right}}}else{{{left}}}}}")
                 } else {
+                    let decision = match source {
+                        Protocol::Resolved(_, _, id) if actor == before => {
+                            format!("decisions[{id}].set(Some(right));")
+                        }
+                        _ => String::new(),
+                    };
+                    let endpoint = &names[usize::from(view)];
+                    let consume_preview = |body: String, label: u8| {
+                        let call = format!(
+                            "{endpoint}.{}::<M{label}<'_>>",
+                            if actor == before { "send" } else { "recv" }
+                        );
+                        assert!(body.contains(&call), "missing first branch operation");
+                        body.replacen(
+                            &call,
+                            &format!(
+                                "branch.{}::<M{label}<'_>>",
+                                if actor == before { "send" } else { "recv" }
+                            ),
+                            1,
+                        )
+                    };
+                    let left = consume_preview(left, left_label);
+                    let right = consume_preview(right, right_label);
                     format!(
-                        "{{let branch={}.offer().await?;let label=branch.label();drop(branch);match label{{{left_label}=>{{{left}}},{right_label}=>{{{right}}},_=>panic!(\"unexpected generated branch {{label}}\")}}}}",
-                        names[usize::from(view)]
+                        "{{{select}{decision}let branch={endpoint}.offer().await?;let label=branch.label();drop(branch);let branch={endpoint}.offer().await?;assert_eq!(branch.label(),label);assert_eq!(label,if right{{{right_label}}}else{{{left_label}}});if right{{{right}}}else{{{left}}}}}"
                     )
                 }
             }
@@ -331,22 +370,46 @@ pub(super) fn local_rust(source: &Protocol, actor: u8, initial: u8) -> String {
                         .join(",");
                     declarations += &format!("let [{bindings}]={}.par()?;", names[role]);
                 }
-                let mut futures = Vec::new();
-                for (i, part) in parts.into_iter().enumerate() {
-                    let mut local_holder = *holder;
-                    let body = emit(part, actor, &mut local_holder, &part_names[i], choices);
-                    assert_eq!(local_holder, *holder);
-                    if !body.is_empty() {
-                        futures.push(format!("async{{{body}Ok::<_,hibana::EndpointError>(())}}"));
+                fn schedule(
+                    source: &Protocol,
+                    actor: u8,
+                    holder: u8,
+                    names: &[[String; 4]],
+                    part: &mut usize,
+                ) -> String {
+                    if let Protocol::Par(a, b) = source {
+                        let left = schedule(a, actor, holder, names, part);
+                        let right = schedule(b, actor, holder, names, part);
+                        if left.is_empty() && right.is_empty() {
+                            return String::new();
+                        }
+                        let future = |plan: &str, body: &str| {
+                            let binding = if body.is_empty() {
+                                String::new()
+                            } else {
+                                format!("let script={plan};")
+                            };
+                            format!("async{{{binding}{body}Ok::<_,hibana::EndpointError>(())}}")
+                        };
+                        format!(
+                            "{{let (_left,_right,reverse)=match script{{Script::Par(a,b,reverse)=>(*a,*b,*reverse),_=>panic!(\"expected parallel script\")}};let left={};let right={};if concurrent{{tokio::try_join!(left,right)?;}}else if reverse{{right.await?;left.await?;}}else{{left.await?;right.await?;}}}}",
+                            future("_left", &left),
+                            future("_right", &right)
+                        )
+                    } else {
+                        let names = &names[*part];
+                        *part += 1;
+                        let mut after = holder;
+                        let body = emit(source, actor, &mut after, names);
+                        assert_eq!(after, holder);
+                        body
                     }
                 }
-                match futures.len() {
-                    0 => String::new(),
-                    1 => format!("{{{declarations}{}.await?;}}", futures[0]),
-                    _ => format!(
-                        "{{{declarations}tokio::try_join!({})?;}}",
-                        futures.join(",")
-                    ),
+                let body = schedule(source, actor, *holder, &part_names, &mut 0);
+                if body.is_empty() {
+                    body
+                } else {
+                    format!("{{{declarations}{body}}}")
                 }
             }
         }
@@ -357,40 +420,27 @@ pub(super) fn local_rust(source: &Protocol, actor: u8, initial: u8) -> String {
         actor,
         &mut holder,
         &["e0".into(), "e1".into(), "e2".into(), "db".into()],
-        &mut 0,
     )
 }
 
-pub(super) fn resolver_bits(source: &Protocol) -> (usize, Vec<(u16, usize)>) {
-    fn collect(source: &Protocol, bit: &mut usize, resolvers: &mut Vec<(u16, usize)>) {
-        match source {
-            Protocol::Message { .. } => (),
-            Protocol::Route(a, b) | Protocol::Resolved(a, b, _) => {
-                if let Protocol::Resolved(_, _, id) = source {
-                    resolvers.push((*id, *bit));
-                }
-                *bit += 1;
-                collect(a, bit, resolvers);
-                collect(b, bit, resolvers);
-            }
-            Protocol::Seq(a, b) | Protocol::Par(a, b) => {
-                collect(a, bit, resolvers);
-                collect(b, bit, resolvers);
-            }
-            Protocol::Roll(body) => collect(body, bit, resolvers),
-        }
-    }
-    let mut bits = 0;
-    let mut resolvers = Vec::new();
-    collect(source, &mut bits, &mut resolvers);
-    (bits, resolvers)
-}
-
 pub(super) fn concurrent_rust(source: &Protocol, owner: u8) -> String {
-    let (bits, resolvers) = resolver_bits(source);
+    let executions = source.executions();
+    let mut paths = std::collections::BTreeMap::new();
+    source.resolver_choices(&mut Vec::new(), &mut paths);
+    let resolvers = paths
+        .values()
+        .flatten()
+        .map(|(id, _)| *id)
+        .collect::<std::collections::BTreeSet<_>>();
     let mut code = format!(
         r#"
-    for {} in 0..{}u32 {{
+    let mut completed_scoped_traces=std::collections::BTreeSet::new();
+    let scripts:&[Script]=&[{}];
+    for script in scripts {{
+      for concurrent in [false,true] {{
+        let _=concurrent;
+        let decisions:Vec<std::cell::Cell<Option<bool>>>=(0..{}).map(|_|std::cell::Cell::new(None)).collect();
+        let _=&decisions;
         let sid=SessionId::new(2);
         // SAFETY: each execution owns its resource and its only initial issuer.
         let network=InMemoryTransport::new([((sid,3),unsafe{{EndpointBinding::new()}})]);
@@ -400,13 +450,17 @@ pub(super) fn concurrent_rust(source: &Protocol, owner: u8) -> String {
         let rv1=s1.init().rendezvous(&mut slab1,network.clone()).unwrap();
         let rv2=s2.init().rendezvous(&mut slab2,network.clone()).unwrap();
     "#,
-        if bits == 0 { "_" } else { "choice" },
-        1usize << bits
+        executions
+            .iter()
+            .map(super::Execution::rust)
+            .collect::<Vec<_>>()
+            .join(","),
+        resolvers.len()
     );
-    for (id, bit) in resolvers {
+    for id in resolvers {
         for actor in 0..2 {
             code += &format!(
-                "rv{actor}.set_resolver(programs.p3.as_ref().unwrap(),ResolverRef::<{id}>::decision_state(&choice,|choice|Ok(if choice & (1<<{bit})==0{{DecisionArm::Left}}else{{DecisionArm::Right}}))).unwrap();"
+                "rv{actor}.set_resolver(programs.p3.as_ref().unwrap(),ResolverRef::<{id}>::decision_state(&decisions,|decisions|Ok(if decisions[{id}].get().expect(\"resolver called before its planned choice\"){{DecisionArm::Right}}else{{DecisionArm::Left}}))).unwrap();"
             );
         }
     }
@@ -432,6 +486,8 @@ pub(super) fn concurrent_rust(source: &Protocol, owner: u8) -> String {
     }
     code += r#"
         tokio::time::timeout(core::time::Duration::from_secs(1),async{tokio::try_join!(run0,run1,run2)}).await.expect("generated delegated localside stalled").unwrap();
+      }
+      completed_scoped_traces.insert(script.line());
     }
     "#;
     code

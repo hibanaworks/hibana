@@ -14,6 +14,44 @@ mod delegated;
 struct Trace {
     messages: Vec<(u8, bool)>,
 }
+
+#[derive(Clone)]
+enum Execution {
+    Message(u8),
+    Seq(Box<Self>, Box<Self>),
+    Par(Box<Self>, Box<Self>, bool),
+    Branch(Box<Self>, bool),
+    Roll(Box<Self>, Box<Self>),
+}
+impl Execution {
+    fn trace(&self) -> Trace {
+        match self {
+            Self::Message(label) => Trace {
+                messages: vec![(*label, false)],
+            },
+            Self::Seq(a, b) | Self::Roll(a, b) | Self::Par(a, b, false) => {
+                a.trace().followed_by(&b.trace())
+            }
+            Self::Par(a, b, true) => b.trace().followed_by(&a.trace()),
+            Self::Branch(body, _) => {
+                let mut trace = body.trace();
+                trace.messages.first_mut().unwrap().1 = true;
+                trace
+            }
+        }
+    }
+    fn rust(&self) -> String {
+        match self {
+            Self::Message(label) => format!("Script::Message({label})"),
+            Self::Seq(a, b) => format!("Script::Seq(&{},&{})", a.rust(), b.rust()),
+            Self::Par(a, b, reverse) => {
+                format!("Script::Par(&{},&{},{reverse})", a.rust(), b.rust())
+            }
+            Self::Branch(body, right) => format!("Script::Branch(&{},{right})", body.rust()),
+            Self::Roll(a, b) => format!("Script::Roll([&{},&{}])", a.rust(), b.rust()),
+        }
+    }
+}
 impl Trace {
     fn followed_by(&self, other: &Self) -> Self {
         let mut combined = self.clone();
@@ -193,39 +231,55 @@ impl Protocol {
     // Complete finite traces are derived from syntax, not accepted runtime calls.
     // Two visits per roll exercise re-entry; parallel children run in both orders.
     fn traces(&self) -> Vec<Trace> {
+        self.executions().iter().map(Execution::trace).collect()
+    }
+
+    // Retain each visit and parallel boundary even when two executions have
+    // the same message word. The public borrow API observes these boundaries.
+    fn executions(&self) -> Vec<Execution> {
         match self {
-            Self::Message { label, .. } => vec![Trace {
-                messages: vec![(*label, false)],
-            }],
+            Self::Message { label, .. } => vec![Execution::Message(*label)],
             Self::Seq(a, b) | Self::Par(a, b) => {
-                let left = a.traces();
-                let right = b.traces();
+                let left = a.executions();
+                let right = b.executions();
                 let mut out = Vec::new();
                 for a in &left {
                     for b in &right {
-                        out.push(a.followed_by(b));
                         if matches!(self, Self::Par(..)) {
-                            out.push(b.followed_by(a));
+                            out.push(Execution::Par(
+                                Box::new(a.clone()),
+                                Box::new(b.clone()),
+                                false,
+                            ));
+                            out.push(Execution::Par(
+                                Box::new(a.clone()),
+                                Box::new(b.clone()),
+                                true,
+                            ));
+                        } else {
+                            out.push(Execution::Seq(Box::new(a.clone()), Box::new(b.clone())));
                         }
                     }
                 }
                 out
             }
-            Self::Route(a, b) | Self::Resolved(a, b, _) => a
-                .traces()
+            Self::Route(a, b) | Self::Resolved(a, b, _) => [(a, false), (b, true)]
                 .into_iter()
-                .chain(b.traces())
-                .map(|mut trace| {
-                    trace.messages.first_mut().unwrap().1 = true;
-                    trace
+                .flat_map(|(arm, right)| {
+                    arm.executions()
+                        .into_iter()
+                        .map(move |body| Execution::Branch(Box::new(body), right))
                 })
                 .collect(),
             Self::Roll(body) => {
-                let visits = body.traces();
+                let visits = body.executions();
                 let mut out = Vec::new();
                 for first in &visits {
                     for second in &visits {
-                        out.push(first.followed_by(second));
+                        out.push(Execution::Roll(
+                            Box::new(first.clone()),
+                            Box::new(second.clone()),
+                        ));
                     }
                 }
                 out
@@ -745,6 +799,12 @@ publish = false
 [dependencies]
 hibana = {{ path = {:?} }}
 tokio = {{ version = "=1.48.0", features = ["macros", "rt", "time", "test-util"] }}
+[profile.dev]
+opt-level = 2
+debug = 0
+debug-assertions = true
+overflow-checks = true
+incremental = false
 [lints.rust]
 long_running_const_eval = "forbid"
 "#,
@@ -1089,7 +1149,7 @@ long_running_const_eval = "forbid"
         )?;
         if delegated_cases.contains(case) {
             source.push_str(&delegated::concurrent_rust(global, *owner));
-            delegated_concurrent_runs += 1usize << delegated::resolver_bits(global).0;
+            delegated_concurrent_runs += global.executions().len();
         }
         writeln!(
             source,
@@ -1126,14 +1186,19 @@ long_running_const_eval = "forbid"
         )?;
         writeln!(
             source,
-            "],traces:include_str!(\"../traces/{case}.txt\"),expected_traces:{},parallel_groups:&[{}],prefix_visits:{}}}).await;\n}}",
+            "],traces:include_str!(\"../traces/{case}.txt\"),expected_traces:{},parallel_groups:&[{}],prefix_visits:{},scoped_traces:{}}}).await;\n}}",
             traces.len(),
             groups
                 .iter()
                 .map(|labels| format!("&{labels:?}"))
                 .collect::<Vec<_>>()
                 .join(","),
-            global.prefix_visits()
+            global.prefix_visits(),
+            if delegated_cases.contains(case) {
+                "Some(&completed_scoped_traces)"
+            } else {
+                "None"
+            }
         )?;
         probes += messages.len() * 2 * patterns.len();
         trace_count += traces.len();

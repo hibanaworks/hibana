@@ -88,8 +88,17 @@ were pending together. Endpoints move between separate runtimes through the
 public API.
 Delegated-body cases additionally generate direct local Rust code. Every
 nested parallel composition uses public `par()` borrows and Tokio futures.
-These executions cover every fixed assignment of the choices in each tree;
-the separate trace replay varies choices between loop visits.
+Each source execution retains its branch choices, parallel-child order and
+two visits of every `roll`. The generated localsides keep the corresponding
+borrows until each visit completes. These executions run in both child orders
+and with concurrent Tokio futures, including different choices in later visits.
+Distinct visit boundaries remain separate inputs when their message words
+are equal. The complete set of executed words is checked against the trace
+inventory. A flat word alone does not specify which repeated group has ended.
+
+Generated tests use optimized Rust with debug assertions and overflow checks
+enabled. A test checks both settings. The Lean checker computes each prefix
+once for adjacent probes, while retaining every probe in its original order.
 
 Every message is also tried as the first send and receive, for every resolver
 assignment. A compiled Lean checker compares these observations with the existing

@@ -11,6 +11,18 @@ use hibana::{
 };
 use in_memory::InMemoryTransport;
 
+#[test]
+fn generated_profile_keeps_debug_and_overflow_checks() {
+    assert!(cfg!(debug_assertions));
+    assert!(
+        std::panic::catch_unwind(|| {
+            let maximum = std::hint::black_box(u8::MAX);
+            let _ = maximum + std::hint::black_box(1u8);
+        })
+        .is_err()
+    );
+}
+
 #[derive(Clone)]
 enum Decisions {
     Constant(u32),
@@ -86,6 +98,45 @@ enum Outcome {
     Pending,
     Rejected,
     Unavailable,
+}
+
+// Immutable schedule input, generated from the source before any endpoint runs.
+// A nested repeat's visit boundaries cannot be recovered from message labels.
+enum Script {
+    Message(u8),
+    Seq(&'static Self, &'static Self),
+    Par(&'static Self, &'static Self, bool),
+    Branch(&'static Self, bool),
+    Roll([&'static Self; 2]),
+}
+impl Script {
+    fn trace(&self) -> Vec<(u8, bool)> {
+        match self {
+            Self::Message(label) => vec![(*label, false)],
+            Self::Seq(a, b) | Self::Par(a, b, false) | Self::Roll([a, b]) => {
+                let mut trace = a.trace();
+                trace.extend(b.trace());
+                trace
+            }
+            Self::Par(a, b, true) => {
+                let mut trace = b.trace();
+                trace.extend(a.trace());
+                trace
+            }
+            Self::Branch(body, _) => {
+                let mut trace = body.trace();
+                trace.first_mut().unwrap().1 = true;
+                trace
+            }
+        }
+    }
+    fn line(&self) -> String {
+        self.trace()
+            .into_iter()
+            .map(|(label, preview)| format!("{label}{}", if preview { "?" } else { "" }))
+            .collect::<Vec<_>>()
+            .join(",")
+    }
 }
 
 macro_rules! receive {
@@ -238,11 +289,12 @@ async fn replay(
                         }
                         Ok(Err(error)) => {
                             assert_eq!(
-                                index + 1, commands.len(),
+                                index + 1,
+                                commands.len(),
                                 "owned prefix failed at {index}: {command:?}: {error:?}"
                             );
                             Outcome::Rejected
-                        },
+                        }
                         Err(_) => Outcome::Pending,
                     },
                     (1, true, true) => match tokio::time::timeout(
@@ -257,11 +309,12 @@ async fn replay(
                         }
                         Ok(Err(error)) => {
                             assert_eq!(
-                                index + 1, commands.len(),
+                                index + 1,
+                                commands.len(),
                                 "owned prefix failed at {index}: {command:?}: {error:?}"
                             );
                             Outcome::Rejected
-                        },
+                        }
                         Err(_) => Outcome::Pending,
                     },
                     _ => panic!("unrecognized generated command: {command:?}"),
@@ -297,6 +350,7 @@ struct Scenario<'a> {
     expected_traces: usize,
     parallel_groups: &'a [&'a [u8]],
     prefix_visits: usize,
+    scoped_traces: Option<&'a std::collections::BTreeSet<String>>,
 }
 
 async fn qualify(programs: Programs, scenario: Scenario<'_>) {
@@ -310,6 +364,7 @@ async fn qualify(programs: Programs, scenario: Scenario<'_>) {
         expected_traces,
         parallel_groups,
         prefix_visits,
+        scoped_traces,
     } = scenario;
     let mut observations = Vec::new();
     let mut prefixes = std::collections::BTreeMap::new();
@@ -383,8 +438,15 @@ async fn qualify(programs: Programs, scenario: Scenario<'_>) {
             })
             .collect::<Vec<_>>();
         let concurrent_decisions = decisions.clone();
-        let actual = replay(&programs, resolver_count, &decisions, &commands).await;
-        assert_eq!(actual, Outcome::Accepted, "shape={name} full trace={line}");
+        if let Some(completed) = scoped_traces {
+            assert!(
+                completed.contains(line),
+                "shape={name} missing scoped trace={line}"
+            );
+        } else {
+            let actual = replay(&programs, resolver_count, &decisions, &commands).await;
+            assert_eq!(actual, Outcome::Accepted, "shape={name} full trace={line}");
+        }
         if prefix_visits != 0 {
             let mut key = Vec::new();
             for (index, command) in commands.iter().enumerate() {
@@ -412,6 +474,13 @@ async fn qualify(programs: Programs, scenario: Scenario<'_>) {
         expected_traces,
         "missing or additional generated traces"
     );
+    if let Some(completed) = scoped_traces {
+        assert_eq!(
+            seen,
+            completed.iter().map(String::as_str).collect(),
+            "scoped runs and generated message words differ"
+        );
+    }
     let mut checked_prefixes = std::collections::BTreeSet::new();
     while let Some((key, prefix)) = prefixes.pop_first() {
         assert!(

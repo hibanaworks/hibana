@@ -91,9 +91,9 @@ def shapeStates (source : Source) (plans : List (SourceOccurrenceCut source))
     (shapeAdvance plan points (command / 2) (command % 2 == 1)).map (plan, ·))
     (plans.map (·, []))
 
-def shapePermitsAfter (source : Source) (plans : List (SourceOccurrenceCut source))
-    (choice : Nat) (word : List Nat) (label : Nat) (receive : Bool) : Bool :=
-  (shapeStates source plans word).any fun (plan, points) =>
+def shapePermits (states : List (SourceOccurrenceCut source × List SourcePoint))
+    (choice : Nat) (label : Nat) (receive : Bool) : Bool :=
+  states.any fun (plan, points) =>
     shapeFreshChoices plan points choice && !(shapeAdvance plan points label receive).isEmpty
 
 def shapeRepetitions : Source → Nat
@@ -142,10 +142,11 @@ def shapeShortPrefixes (source : Source) (plans : List (SourceOccurrenceCut sour
     for _ in List.range 4 do
       let mut next := []
       for word in level do
+        let states := shapeStates source plans word
         for (_, message) in source.messageEntries 0 do
           for receive in [false, true] do
             if (List.range (2 ^ resolvers)).any fun choice =>
-                shapePermitsAfter source plans choice word message.label receive then
+                shapePermits states choice message.label receive then
               next := (word ++ [2 * message.label + if receive then 1 else 0]) :: next
       level := next.eraseDups
       found := found ++ level
@@ -169,6 +170,38 @@ def shapeRead [Lean.FromJson α] (path : System.FilePath) : IO α := do
   match Lean.Json.parse raw >>= Lean.fromJson? with
   | .ok value => pure value
   | .error error => throw (IO.userError s!"invalid shape JSON in {path}: {error}")
+
+def shapeGroupStep (attempt : ShapeAttempt)
+    (groups : List (List Nat × List ShapeAttempt)) : List (List Nat × List ShapeAttempt) :=
+  match groups with
+  | [] => [(attempt.prefix, [attempt])]
+  | (word, attempts) :: rest =>
+      if attempt.prefix == word then (word, attempt :: attempts) :: rest
+      else (attempt.prefix, [attempt]) :: groups
+
+def shapeAttemptGroups (attempts : List ShapeAttempt) : List (List Nat × List ShapeAttempt) :=
+  attempts.foldr shapeGroupStep []
+
+theorem shapeGroupStep_keeps_every_attempt (attempt : ShapeAttempt)
+    (groups : List (List Nat × List ShapeAttempt)) :
+    (shapeGroupStep attempt groups).flatMap Prod.snd = attempt :: groups.flatMap Prod.snd := by
+  cases groups with
+  | nil => rfl
+  | cons group rest =>
+      rcases group with ⟨word, attempts⟩
+      simp only [shapeGroupStep]
+      split <;> simp
+
+theorem shapeAttemptGroups_keeps_order_and_multiplicity (attempts : List ShapeAttempt) :
+    (shapeAttemptGroups attempts).flatMap Prod.snd = attempts := by
+  induction attempts with
+  | nil => rfl
+  | cons attempt rest ih =>
+      change (shapeGroupStep attempt (shapeAttemptGroups rest)).flatMap Prod.snd = attempt :: rest
+      rw [shapeGroupStep_keeps_every_attempt, ih]
+
+#print axioms shapeGroupStep_keeps_every_attempt
+#print axioms shapeAttemptGroups_keeps_order_and_multiplicity
 
 def main (args : List String) : IO UInt32 := do
   let [inputPath, outputPath] := args
@@ -201,14 +234,17 @@ def main (args : List String) : IO UInt32 := do
     unless input.name == output.name &&
         actualKeys.mergeSort shapeKeyLess == (shapeProbeKeys source prefixes input.resolvers).mergeSort shapeKeyLess do
       throw (IO.userError s!"shape {input.name}: incomplete probe inventory")
-    for attempt in output.attempts do
-      let permitted := shapePermitsAfter source plans attempt.choice attempt.prefix attempt.label attempt.receive
-      checked := checked + 1
-      if !attempt.prefix.isEmpty then continuations := continuations + 1
-      if permitted != attempt.accepted then
-        if runtimeOnly + modelOnly < 10 then
-          IO.println s!"shape {input.name} choice={attempt.choice} prefix={attempt.prefix} label={attempt.label} receive={attempt.receive}: model={permitted} runtime={attempt.accepted}"
-        if attempt.accepted then runtimeOnly := runtimeOnly + 1 else modelOnly := modelOnly + 1
+    for (word, attempts) in shapeAttemptGroups output.attempts.toList do
+      let states := shapeStates source plans word
+      for attempt in attempts do
+        unless attempt.prefix == word do throw (IO.userError "inconsistent prefix group")
+        let permitted := shapePermits states attempt.choice attempt.label attempt.receive
+        checked := checked + 1
+        if !attempt.prefix.isEmpty then continuations := continuations + 1
+        if permitted != attempt.accepted then
+          if runtimeOnly + modelOnly < 10 then
+            IO.println s!"shape {input.name} choice={attempt.choice} prefix={attempt.prefix} label={attempt.label} receive={attempt.receive}: model={permitted} runtime={attempt.accepted}"
+          if attempt.accepted then runtimeOnly := runtimeOnly + 1 else modelOnly := modelOnly + 1
   IO.println s!"Generated shapes/source: shapes={inputs.size} attempts={checked} initial={checked-continuations} continuation={continuations} runtime-only={runtimeOnly} model-only={modelOnly}"
   unless runtimeOnly == 0 && modelOnly == 0 do
     throw (IO.userError "generated Endpoint/source conformance failed")
