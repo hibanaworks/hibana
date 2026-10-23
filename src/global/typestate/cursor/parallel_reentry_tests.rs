@@ -32,9 +32,9 @@ fn check_parallel_continuation_order(candidate: u8) {
     );
 }
 
-fn check_parallel_continuation_lifetime() {
+fn with_parallel_continuation_cursor<const ROLE: u8>(check: impl FnOnce(&mut EventCursor)) {
     let global = parallel_continuation_global();
-    let projected = crate::runtime::program::project::<1>(&global);
+    let projected = crate::runtime::program::project::<ROLE>(&global);
     let descriptor = RoleDescriptorRef::from_resident(projected.role_image_ref());
     let mut state = MaybeUninit::<EventCursorState>::uninit();
     let mut cursor = MaybeUninit::<EventCursor>::uninit();
@@ -64,29 +64,54 @@ fn check_parallel_continuation_lifetime() {
     }
     // SAFETY: the production initializer wrote both cursor objects above.
     let cursor = unsafe { cursor.assume_init_mut() };
-    assert!(
-        cursor
+    check(cursor);
+}
+
+fn check_parallel_continuation_lifetime() {
+    with_parallel_continuation_cursor::<1>(|cursor| {
+        assert!(
+            cursor
+                .completed_parallel_reentry(0, 2, &mut |_, _| None)
+                .is_none()
+        );
+        cursor.mark_local_event_done(0);
+        assert!(
+            cursor
+                .completed_parallel_reentry(0, 2, &mut |_, _| None)
+                .is_none()
+        );
+        cursor.mark_local_event_done(1);
+        let (scope, epoch) = cursor
             .completed_parallel_reentry(0, 2, &mut |_, _| None)
-            .is_none()
-    );
-    cursor.mark_local_event_done(0);
-    assert!(
-        cursor
-            .completed_parallel_reentry(0, 2, &mut |_, _| None)
-            .is_none()
-    );
-    cursor.mark_local_event_done(1);
-    let (scope, epoch) = cursor
-        .completed_parallel_reentry(0, 2, &mut |_, _| None)
-        .unwrap();
-    assert!(cursor.borrowed_roll_reentry_is_current(scope, epoch, &mut |_| None));
-    cursor.clear_reentry_scope_events(scope);
-    assert!(!cursor.borrowed_roll_reentry_is_current(scope, epoch, &mut |_| None));
-    assert!(
-        cursor
-            .completed_parallel_reentry(0, 2, &mut |_, _| None)
-            .is_none()
-    );
+            .unwrap();
+        assert!(cursor.borrowed_roll_reentry_is_current(scope, epoch, &mut |_| None));
+        cursor.clear_reentry_scope_events(scope);
+        assert!(!cursor.borrowed_roll_reentry_is_current(scope, epoch, &mut |_| None));
+        assert!(
+            cursor
+                .completed_parallel_reentry(0, 2, &mut |_, _| None)
+                .is_none()
+        );
+    });
+}
+
+fn check_retained_continuation<const ROLE: u8>(
+    candidate: usize,
+    source_end: usize,
+    retained: bool,
+) {
+    with_parallel_continuation_cursor::<ROLE>(|cursor| {
+        if retained {
+            cursor.mark_local_event_done(0);
+            cursor.mark_local_event_done(1);
+            let (scope, _) = cursor.machine().roll_scope_row_by_slot(0).unwrap();
+            cursor.clear_reentry_scope_events(scope);
+        }
+        assert_eq!(
+            cursor.retained_roll_continuation_after(candidate, 0..source_end),
+            retained && ROLE == 1 && candidate == 2 && source_end == 2,
+        );
+    });
 }
 
 fn check_completed_choice_alternative(candidate: u8, complete: bool) {
@@ -196,7 +221,13 @@ fn a_completed_choice_can_instead_offer_its_other_arm() {
 #[test]
 fn completed_parallel_reentry_omits_only_its_causal_continuation() {
     check_parallel_continuation_lifetime();
-    for candidate in 0..4 {
+    for candidate in 0u8..4 {
+        for source_end in [0, 2, 4] {
+            for retained in [false, true] {
+                check_retained_continuation::<0>(usize::from(candidate), source_end, retained);
+                check_retained_continuation::<1>(usize::from(candidate), source_end, retained);
+            }
+        }
         check_parallel_continuation_order(candidate);
     }
 }
@@ -206,6 +237,41 @@ fn completed_parallel_reentry_omits_only_its_causal_continuation() {
 #[kani::unwind(16)]
 fn completed_parallel_reentry_requires_a_live_completed_origin() {
     check_parallel_continuation_lifetime();
+}
+
+#[cfg(kani)]
+fn check_retained_receive_case(candidate: usize) {
+    let source_end: u8 = kani::any();
+    kani::assume(matches!(source_end, 0 | 2 | 4));
+    check_retained_continuation::<1>(candidate, usize::from(source_end), kani::any());
+}
+
+#[cfg(kani)]
+#[kani::proof]
+#[kani::unwind(16)]
+fn retained_roll_receives_keep_their_enclosing_scope() {
+    check_retained_receive_case(2);
+}
+
+#[cfg(kani)]
+#[kani::proof]
+#[kani::unwind(16)]
+fn retained_roll_first_body_receive_remains_required() {
+    check_retained_receive_case(0);
+}
+
+#[cfg(kani)]
+#[kani::proof]
+#[kani::unwind(16)]
+fn retained_roll_second_body_receive_remains_required() {
+    check_retained_receive_case(1);
+}
+
+#[cfg(kani)]
+#[kani::proof]
+#[kani::unwind(16)]
+fn retained_roll_parallel_sibling_remains_required() {
+    check_retained_receive_case(3);
 }
 
 #[cfg(kani)]
@@ -756,7 +822,10 @@ fn check_cross_lane_parent_and_reset() {
         let mut event: crate::global::typestate::EventCommitMeta =
             cursor.try_send_meta_at(2).unwrap().into();
         event.body_reentry = parent;
-        assert!(cursor.event_enabled(2, event, &mut |_, _| None).is_err());
+        assert_eq!(
+            cursor.event_enabled(2, event, &mut |_, _| None).err(),
+            Some(super::EventAdmissionError::PredecessorPending),
+        );
         cursor.clear_reentry_scope_events(child);
         assert!(cursor.node_event_done_for_lane(0, cursor.event_lane_at(0).unwrap()));
         assert!(!cursor.node_event_done_for_lane(1, cursor.event_lane_at(1).unwrap()));

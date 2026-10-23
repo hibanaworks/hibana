@@ -46,7 +46,17 @@ impl EventCursor {
         let conflict = self.machine().event_conflict_for_index(index);
         let mut selected = |scope| arms(scope, EventArmView::Preview);
         for prior in row.start()..index.min(row.end()) {
-            if self.event_lane_at(prior) == Some(event.lane)
+            let (before, _) = self
+                .machine()
+                .event_program()
+                .operation_at(prior)
+                .unwrap_or_else(|| crate::invariant());
+            // A fresh visit clears preceding actions on every lane. Waiting
+            // cannot release this view to perform its own causal prefix.
+            if (self.event_lane_at(prior) == Some(event.lane)
+                || self
+                    .program_ref()
+                    .source_precedes(before.dense_ordinal(), event.eff_index.dense_ordinal()))
                 && self.event_actor_is_local(prior, &mut selected) != Some(false)
                 && self.event_conflict_row_allows_with_preview(
                     self.machine().event_conflict_for_index(prior),

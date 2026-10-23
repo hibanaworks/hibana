@@ -10,6 +10,267 @@ type Work = g::Msg<232, ()>;
 type Ack = g::Msg<233, ()>;
 type Tick = g::Msg<234, ()>;
 
+fn returned_resource_parallel_global() -> impl hibana::runtime::program::Projectable {
+    use hibana::Endpoint;
+    type Loan<'r> = g::Msg<0, Endpoint<'r, 3>>;
+    type VisitLoan<'r> = g::Msg<1, Endpoint<'r, 3>>;
+    type LeftRead = g::Msg<2, u32>;
+    type LeftNotice = g::Msg<3, u32>;
+    type LeftValue = g::Msg<4, u32>;
+    type RightRead = g::Msg<5, u32>;
+    type RightNotice = g::Msg<6, u32>;
+    type RightValue = g::Msg<7, u32>;
+    type VisitReturn<'r> = g::Msg<8, Endpoint<'r, 3>>;
+    type FinalReturn<'r> = g::Msg<9, Endpoint<'r, 3>>;
+    g::seq(
+        g::send::<0, 1, Loan<'_>>(),
+        g::seq(
+            g::seq(
+                g::send::<1, 0, VisitLoan<'_>>(),
+                g::seq(
+                    g::par(
+                        g::seq(
+                            g::send::<3, 2, LeftRead>(),
+                            g::seq(g::send::<0, 2, LeftNotice>(), g::send::<2, 3, LeftValue>()),
+                        ),
+                        g::seq(
+                            g::send::<3, 2, RightRead>(),
+                            g::seq(
+                                g::send::<0, 2, RightNotice>(),
+                                g::send::<2, 3, RightValue>(),
+                            ),
+                        ),
+                    ),
+                    g::send::<0, 1, VisitReturn<'_>>(),
+                ),
+            )
+            .roll(),
+            g::send::<1, 0, FinalReturn<'_>>(),
+        ),
+    )
+}
+
+#[test]
+fn a_returned_resource_and_its_holder_borrow_both_parallel_arms_on_each_visit() {
+    use hibana::Endpoint;
+    type Loan<'r> = g::Msg<0, Endpoint<'r, 3>>;
+    type VisitLoan<'r> = g::Msg<1, Endpoint<'r, 3>>;
+    type LeftRead = g::Msg<2, u32>;
+    type LeftNotice = g::Msg<3, u32>;
+    type LeftValue = g::Msg<4, u32>;
+    type RightRead = g::Msg<5, u32>;
+    type RightNotice = g::Msg<6, u32>;
+    type RightValue = g::Msg<7, u32>;
+    type VisitReturn<'r> = g::Msg<8, Endpoint<'r, 3>>;
+    type FinalReturn<'r> = g::Msg<9, Endpoint<'r, 3>>;
+    let global = returned_resource_parallel_global();
+    assert_eq!(g::diagnose(&global), None);
+    let p0 = project::<0>(&global);
+    let p1 = project::<1>(&global);
+    let p2 = project::<2>(&global);
+    let p3 = project::<3>(&global);
+    let network = common::TestTransport::new();
+    let [mut slab0, mut slab1, mut slab2] = [[0; 32 * 1024]; 3];
+    let mut storage0 = SessionKitStorage::uninit();
+    let mut storage1 = SessionKitStorage::uninit();
+    let mut storage2 = SessionKitStorage::uninit();
+    let rv0 = storage0
+        .init()
+        .rendezvous(&mut slab0, network.clone())
+        .unwrap();
+    let rv1 = storage1
+        .init()
+        .rendezvous(&mut slab1, network.clone())
+        .unwrap();
+    let rv2 = storage2
+        .init()
+        .rendezvous(&mut slab2, network.clone())
+        .unwrap();
+    let sid = SessionId::new(9393);
+    let mut owner = rv0.enter(sid, &p0).unwrap();
+    let mut worker = rv1.enter(sid, &p1).unwrap();
+    let mut service = rv2.enter(sid, &p2).unwrap();
+    let db = rv0.enter(sid, &p3).unwrap();
+    tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .start_paused(true)
+        .build()
+        .unwrap()
+        .block_on(async {
+            tokio::time::timeout(core::time::Duration::from_secs(1), async {
+                tokio::try_join!(
+                    async {
+                        assert!(owner.par::<2>().is_err(), "the initial loan is required");
+                        owner.send::<Loan<'_>>(db).await?;
+                        for visit in 0..2 {
+                            let mut db = owner.recv::<VisitLoan<'_>>().await?;
+                            {
+                                let [mut left_notice, mut right_notice] =
+                                    owner.par().unwrap_or_else(|error| {
+                                        panic!("holder par visit={visit}: {error:?}")
+                                    });
+                                let [mut left_db, mut right_db] =
+                                    db.par().unwrap_or_else(|error| {
+                                        panic!("resource par visit={visit}: {error:?}")
+                                    });
+                                let (left, right) = tokio::try_join!(
+                                    async {
+                                        left_db.send::<LeftRead>(&visit).await?;
+                                        left_notice.send::<LeftNotice>(&10).await?;
+                                        left_db.recv::<LeftValue>().await
+                                    },
+                                    async {
+                                        right_db.send::<RightRead>(&visit).await?;
+                                        right_notice.send::<RightNotice>(&20).await?;
+                                        right_db.recv::<RightValue>().await
+                                    },
+                                )?;
+                                assert_eq!((left, right), (visit + 10, visit + 20));
+                            }
+                            owner.send::<VisitReturn<'_>>(db).await?;
+                        }
+                        drop(owner.recv::<FinalReturn<'_>>().await?);
+                        Ok::<_, hibana::EndpointError>(())
+                    },
+                    async {
+                        let mut db = worker.recv::<Loan<'_>>().await?;
+                        for _ in 0..2 {
+                            worker.send::<VisitLoan<'_>>(db).await?;
+                            db = worker.recv::<VisitReturn<'_>>().await?;
+                        }
+                        worker.send::<FinalReturn<'_>>(db).await
+                    },
+                    async {
+                        for visit in 0..2 {
+                            let [mut left, mut right] = service.par().unwrap_or_else(|error| {
+                                panic!("service par visit={visit}: {error:?}")
+                            });
+                            tokio::try_join!(
+                                async {
+                                    let read = left.recv::<LeftRead>().await?;
+                                    let notice = left.recv::<LeftNotice>().await?;
+                                    left.send::<LeftValue>(&(read + notice)).await
+                                },
+                                async {
+                                    let read = right.recv::<RightRead>().await?;
+                                    let notice = right.recv::<RightNotice>().await?;
+                                    right.send::<RightValue>(&(read + notice)).await
+                                },
+                            )?;
+                        }
+                        Ok::<_, hibana::EndpointError>(())
+                    },
+                )
+            })
+            .await
+            .expect("parallel work in a returned resource stopped")
+            .unwrap();
+        });
+    assert!(network.queue_is_empty());
+}
+
+#[test]
+fn a_retained_completion_cannot_send_before_the_next_visits_own_loan() {
+    use core::{future::Future, task::Poll};
+    use hibana::Endpoint;
+    type Loan<'r> = g::Msg<0, Endpoint<'r, 3>>;
+    type VisitLoan<'r> = g::Msg<1, Endpoint<'r, 3>>;
+    type LeftRead = g::Msg<2, u32>;
+    type LeftNotice = g::Msg<3, u32>;
+    type LeftValue = g::Msg<4, u32>;
+    type RightRead = g::Msg<5, u32>;
+    type RightNotice = g::Msg<6, u32>;
+    type RightValue = g::Msg<7, u32>;
+    type VisitReturn<'r> = g::Msg<8, Endpoint<'r, 3>>;
+    let global = returned_resource_parallel_global();
+    let p0 = project::<0>(&global);
+    let p1 = project::<1>(&global);
+    let p2 = project::<2>(&global);
+    let p3 = project::<3>(&global);
+    let network = common::TestTransport::new();
+    let [mut slab0, mut slab1, mut slab2] = [[0; 32 * 1024]; 3];
+    let mut storage0 = SessionKitStorage::uninit();
+    let mut storage1 = SessionKitStorage::uninit();
+    let mut storage2 = SessionKitStorage::uninit();
+    let rv0 = storage0
+        .init()
+        .rendezvous(&mut slab0, network.clone())
+        .unwrap();
+    let rv1 = storage1
+        .init()
+        .rendezvous(&mut slab1, network.clone())
+        .unwrap();
+    let rv2 = storage2
+        .init()
+        .rendezvous(&mut slab2, network.clone())
+        .unwrap();
+    let sid = SessionId::new(9394);
+    let mut owner = rv0.enter(sid, &p0).unwrap();
+    let mut worker = rv1.enter(sid, &p1).unwrap();
+    let mut service = rv2.enter(sid, &p2).unwrap();
+    let db = rv0.enter(sid, &p3).unwrap();
+    tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .start_paused(true)
+        .build()
+        .unwrap()
+        .block_on(async {
+            tokio::time::timeout(core::time::Duration::from_secs(1), async {
+                owner.send::<Loan<'_>>(db).await.unwrap();
+                let mut db = worker.recv::<Loan<'_>>().await.unwrap();
+                for visit in 0..2 {
+                    worker.send::<VisitLoan<'_>>(db).await.unwrap();
+                    db = owner.recv::<VisitLoan<'_>>().await.unwrap();
+                    {
+                        let [mut left_notice, mut right_notice] = owner.par().unwrap();
+                        let [mut left_db, mut right_db] = db.par().unwrap();
+                        let [mut left_service, mut right_service] = service.par().unwrap();
+                        tokio::try_join!(
+                            async {
+                                left_db.send::<LeftRead>(&visit).await?;
+                                tokio::task::yield_now().await;
+                                let value = left_service.recv::<LeftRead>().await?;
+                                left_notice.send::<LeftNotice>(&10).await?;
+                                let notice = left_service.recv::<LeftNotice>().await?;
+                                left_service.send::<LeftValue>(&(value + notice)).await?;
+                                assert_eq!(left_db.recv::<LeftValue>().await?, visit + 10);
+                                Ok::<_, hibana::EndpointError>(())
+                            },
+                            async {
+                                right_db.send::<RightRead>(&visit).await?;
+                                tokio::task::yield_now().await;
+                                let value = right_service.recv::<RightRead>().await?;
+                                right_notice.send::<RightNotice>(&20).await?;
+                                let notice = right_service.recv::<RightNotice>().await?;
+                                right_service.send::<RightValue>(&(value + notice)).await?;
+                                assert_eq!(right_db.recv::<RightValue>().await?, visit + 20);
+                                Ok::<_, hibana::EndpointError>(())
+                            },
+                        )
+                        .unwrap();
+                    }
+                    owner.send::<VisitReturn<'_>>(db).await.unwrap();
+                    db = worker.recv::<VisitReturn<'_>>().await.unwrap();
+                }
+                assert!(network.queue_is_empty());
+                let future = owner.send::<LeftNotice>(&99);
+                tokio::pin!(future);
+                let result =
+                    core::future::poll_fn(|cx| Poll::Ready(future.as_mut().poll(cx))).await;
+                assert!(
+                    matches!(result, Poll::Ready(Err(_))),
+                    "next visit skipped its loan: {result:?}"
+                );
+                assert!(
+                    network.queue_is_empty(),
+                    "an out-of-order notice reached the service"
+                );
+            })
+            .await
+            .expect("preparing the retained completion stalled");
+        });
+}
+
 #[test]
 fn a_parallel_repeat_can_continue_before_an_enclosing_choice_restarts() {
     use hibana::runtime::resolver::{DecisionArm, ResolverRef};

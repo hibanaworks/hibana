@@ -213,6 +213,49 @@ impl EventCursor {
         false
     }
 
+    /// An earlier completed visit can keep a later receive enabled while an
+    /// inner parallel region runs in the current visit. The region must be
+    /// wholly inside that retained roll; independent siblings remain required.
+    pub(crate) fn retained_roll_continuation_after(
+        &self,
+        index: usize,
+        source: core::ops::Range<usize>,
+    ) -> bool {
+        if source.start >= source.end
+            || !self.is_recv_at(index)
+            || !self.has_retained_roll_completion()
+        {
+            return false;
+        }
+        let Some((event, _)) = self.machine().event_program().operation_at(index) else {
+            return false;
+        };
+        let program = self.program_ref();
+        for marker in 0..program.source_scope_marker_count() {
+            let Some((scope, start, end)) = program.source_roll_at(marker) else {
+                continue;
+            };
+            if start > source.start
+                || source.end > end
+                || !program.source_precedes(end - 1, event.dense_ordinal())
+            {
+                continue;
+            }
+            let mut slot = 0;
+            while let Some((candidate, _)) = self.machine().roll_scope_row_by_slot(slot) {
+                if candidate.same(scope) {
+                    let bit = self.local_steps_len() + slot;
+                    if self.completed_event_words()[bit / 32] & (1 << (bit % 32)) != 0 {
+                        return true;
+                    }
+                    break;
+                }
+                slot += 1;
+            }
+        }
+        false
+    }
+
     pub(crate) fn has_retained_roll_completion(&self) -> bool {
         let count = self.machine().event_program().footprint().roll_scope_count;
         if count == 0 {

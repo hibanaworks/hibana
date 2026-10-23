@@ -357,6 +357,29 @@ theorem the_other_arm_is_not_part_of_the_current_inner_visit :
     acceptedRepeatedArm ([.resolve 0 0 0 .left] ++ repeatedArmVisit ++
       [.roll 0, .send 4]) = false := by decide
 
+/-- Borrow coverage can omit a retained incoming suffix only when the whole
+parallel region lies within the completed roll and that roll causes the input.
+This models the scope test, not an entire Rust execution. -/
+def retainedInput (retained incoming causal : Bool)
+    (rollStart rollEnd parallelStart parallelEnd : Nat) : Bool :=
+  retained && incoming && causal &&
+    decide (rollStart ≤ parallelStart ∧ parallelStart < parallelEnd ∧ parallelEnd ≤ rollEnd)
+
+theorem a_retained_input_requires_its_causal_enclosing_scope
+    (retained incoming causal : Bool) (rollStart rollEnd parallelStart parallelEnd : Nat)
+    (accepted : retainedInput retained incoming causal rollStart rollEnd parallelStart parallelEnd = true) :
+    retained = true ∧ incoming = true ∧ causal = true ∧
+      (rollStart ≤ parallelStart ∧ parallelStart < parallelEnd ∧ parallelEnd ≤ rollEnd) := by
+  simpa only [retainedInput, Bool.and_eq_true, decide_eq_true_eq, and_assoc] using accepted
+
+theorem an_older_input_can_remain_outside_the_current_parallel_borrow :
+    retainedInput true true true 1 9 2 8 = true := by decide
+
+theorem an_independent_sibling_is_still_required (retained incoming : Bool)
+    (rollStart rollEnd parallelStart parallelEnd : Nat) :
+    retainedInput retained incoming false rollStart rollEnd parallelStart parallelEnd = false := by
+  simp [retainedInput]
+
 #print axioms a_scheduled_entry_is_eligible
 #print axioms an_in_progress_choice_cannot_change_arm
 #print axioms right_then_left_remains_enabled
@@ -408,4 +431,7 @@ theorem the_other_arm_is_not_part_of_the_current_inner_visit :
 #print axioms a_completed_choice_arm_can_repeat_without_reselecting_its_outer_route
 #print axioms that_completed_arm_can_instead_start_the_other_outer_choice
 #print axioms the_other_arm_is_not_part_of_the_current_inner_visit
+#print axioms a_retained_input_requires_its_causal_enclosing_scope
+#print axioms an_older_input_can_remain_outside_the_current_parallel_borrow
+#print axioms an_independent_sibling_is_still_required
 end ParallelResolverProgress

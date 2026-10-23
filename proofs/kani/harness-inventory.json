@@ -321,6 +321,10 @@
       "global::typestate::cursor::parallel_reentry_tests::parallel_offer_outside_step_has_no_choice",
       "global::typestate::cursor::parallel_reentry_tests::parallel_offer_second_head_keeps_its_choice",
       "global::typestate::cursor::parallel_reentry_tests::parallel_offer_third_head_keeps_its_choice",
+      "global::typestate::cursor::parallel_reentry_tests::retained_roll_first_body_receive_remains_required",
+      "global::typestate::cursor::parallel_reentry_tests::retained_roll_parallel_sibling_remains_required",
+      "global::typestate::cursor::parallel_reentry_tests::retained_roll_receives_keep_their_enclosing_scope",
+      "global::typestate::cursor::parallel_reentry_tests::retained_roll_second_body_receive_remains_required",
       "global::typestate::cursor::parallel_reentry_tests::same_lane_tail_preserves_the_childs_enclosing_prefix",
       "global::typestate::cursor::parallel_reentry_tests::selected_reentry_scope_preserves_cross_lane_predecessors"
     ],
@@ -423,7 +427,7 @@
 
   ],
   "totals": {
-    "standard-harnesses": 296,
+    "standard-harnesses": 300,
     "contract-harnesses": 0,
     "functions-under-contract": 0
   }

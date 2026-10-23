@@ -78,9 +78,20 @@
   (and prefixComplete differentArms
     (<= rollStart otherSource) (< otherSource rollEnd)
     (<= rollStart continuationStart) (< continuationStart rollEnd)))
+(declare-const retainedCompletion Bool)
+(declare-const incomingSuffix Bool)
+(declare-const rollCausesSuffix Bool)
+(declare-const parallelStart Int)
+(declare-const parallelEnd Int)
+(define-fun retainedSuffix () Bool
+  (and retainedCompletion incomingSuffix rollCausesSuffix
+    (<= rollStart parallelStart) (< parallelStart parallelEnd) (<= parallelEnd rollEnd)))
 (define-fun borrowAllowed () Bool
   (and insideReady (or (not outsideReady) completedPrefix
-    (and reentryComplete sequential afterReentry) otherArmAlternative)))
+    (and reentryComplete sequential afterReentry) otherArmAlternative retainedSuffix)))
+; The existing cases have no retained incoming suffix.
+(push)
+(assert (not retainedSuffix))
 ; Prefixes and parallel siblings do not occupy different choice arms.
 (push)
 (assert (not differentArms))
@@ -208,5 +219,64 @@
 (push)
 (assert (and borrowAllowed outsideReady prefixComplete differentArms
   (< continuationStart rollStart) (not sequential) (not reentryComplete)))
+(check-sat)
+(pop)
+(pop)
+
+; A prior visit can retain an incoming suffix while the current visit's
+; inner parallel group runs. Source causality excludes independent siblings.
+(push)
+(assert (and insideReady outsideReady (not prefixComplete)
+  (not reentryComplete) (not differentArms)))
+(push)
+(assert (and retainedCompletion incomingSuffix rollCausesSuffix
+  (= rollStart 1) (= rollEnd 9) (= parallelStart 2) (= parallelEnd 8)))
+(check-sat)
+(assert (not borrowAllowed))
+(check-sat)
+(pop)
+(push)
+(assert (and borrowAllowed (not rollCausesSuffix)))
+(check-sat)
+(pop)
+(push)
+(assert (and borrowAllowed (not incomingSuffix)))
+(check-sat)
+(pop)
+(push)
+(assert (and borrowAllowed (not retainedCompletion)))
+(check-sat)
+(pop)
+(push)
+(assert (and borrowAllowed (< parallelStart rollStart)))
+(check-sat)
+(pop)
+(push)
+(assert (and borrowAllowed (> parallelEnd rollEnd)))
+(check-sat)
+(pop)
+(push)
+(assert (and borrowAllowed (<= parallelEnd parallelStart)))
+(check-sat)
+(pop)
+(pop)
+
+; A fresh visit clears causal predecessors on other lanes too. A future
+; cannot wait for a prerequisite on the view it already borrows.
+(declare-const samePrefixLane Bool)
+(declare-const causalPrefix Bool)
+(declare-const prefixUsesView Bool)
+(declare-const prefixCompatible Bool)
+(declare-const prefixInReset Bool)
+(define-fun freshSelfWait () Bool
+  (and prefixInReset prefixUsesView prefixCompatible (or samePrefixLane causalPrefix)))
+(push)
+(assert (and prefixInReset prefixUsesView prefixCompatible causalPrefix (not samePrefixLane)))
+(check-sat)
+(assert (not freshSelfWait))
+(check-sat)
+(pop)
+(push)
+(assert (and freshSelfWait (not samePrefixLane) (not causalPrefix)))
 (check-sat)
 (pop)

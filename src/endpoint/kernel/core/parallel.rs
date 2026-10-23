@@ -167,6 +167,10 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
                 &mut |scope| self.selected_arm_for_scope(scope),
             ) && !reentry
                 .is_some_and(|scope| self.context.program.roll_precedes(scope, event))
+                && !self
+                    .progress
+                    .cursor
+                    .retained_roll_continuation_after(index, source.clone())
             {
                 return false;
             }
