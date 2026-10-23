@@ -74,16 +74,33 @@ def shapeFreshChoices (plan : SourceOccurrenceCut source) (points : List SourceP
       selection.scope != scope || selection.arm ==
         if choice / 2 ^ id % 2 == 0 then .left else .right
 
-def shapeAdvance (plan : SourceOccurrenceCut source) (points : List SourcePoint)
+def shapeReadyWithDomain (plan : SourceOccurrenceCut source) (domain points : List SourcePoint)
+    (point : SourcePoint) : Bool :=
+  domain.contains point && !points.contains point &&
+    domain.all fun prior =>
+      !sourcePointDepends plan.expanded plan.path.bindings prior point || points.contains prior
+
+theorem shapeReadyWithDomain_matches_source_readiness
+    (plan : SourceOccurrenceCut source) (points : List SourcePoint) (point : SourcePoint) :
+    shapeReadyWithDomain plan (sourceVisitPoints plan.path.bindings) points point =
+      (occurrenceCut plan points).ready point := rfl
+
+#print axioms shapeReadyWithDomain_matches_source_readiness
+
+def shapeAdvanceWithDomain (plan : SourceOccurrenceCut source) (domain points : List SourcePoint)
     (label : Nat) (receive : Bool) : List (List SourcePoint) :=
   plan.path.bindings.filterMap fun (event, binding) => do
     if binding.message.label != label then none else do
       let point := if receive then .committed ⟨event, .receive⟩ else .accepted event
-      if !(occurrenceCut plan points).ready point then none else do
+      if !shapeReadyWithDomain plan domain points point then none else do
         let points := points ++ [point]
         if receive then some points else do
           let publication := SourcePoint.committed ⟨event, .send⟩
-          if (occurrenceCut plan points).ready publication then some (points ++ [publication]) else none
+          if shapeReadyWithDomain plan domain points publication then some (points ++ [publication]) else none
+
+def shapeAdvance (plan : SourceOccurrenceCut source) (points : List SourcePoint)
+    (label : Nat) (receive : Bool) : List (List SourcePoint) :=
+  shapeAdvanceWithDomain plan (sourceVisitPoints plan.path.bindings) points label receive
 
 def shapeStates (source : Source) (plans : List (SourceOccurrenceCut source))
     (word : List Nat) : List (SourceOccurrenceCut source × List SourcePoint) :=
@@ -308,9 +325,9 @@ def shapeReadLine [Lean.FromJson α] (file : IO.FS.Handle) : IO α := do
   | .ok value => pure value
   | .error error => throw (IO.userError s!"invalid completed script JSON: {error}")
 
-def shapeCompletedAdvance (plan : SourceOccurrenceCut source) (points : List SourcePoint)
+def shapeCompletedAdvance (plan : SourceOccurrenceCut source) (domain points : List SourcePoint)
     (actor role label : Nat) (receive : Bool) : List (List SourcePoint) :=
-  (shapeAdvance plan points label receive).filter fun next =>
+  (shapeAdvanceWithDomain plan domain points label receive).filter fun next =>
     match next.getLast? with
     | some (.committed action) =>
       plan.path.bindings.any fun (event, binding) => event == action.event &&
@@ -345,11 +362,14 @@ def shapeCheckCompleted (source : Source) (name : Nat) (outputPath : String) : I
       | throw (IO.userError s!"shape {name} script {index}: script has no accepted source path; choices={choices}; source={(plans.toList.take 4).map Prod.fst}")
     unless matching.all (fun plan => plan.path.bindings.length == messages) do
       throw (IO.userError s!"shape {name}: script and source path have different messages")
+    -- Each domain belongs to this source path, including its unfolded visits.
+    -- Keep it only for this script's two schedules, rather than all scripts.
+    let matchingDomains := matching.map fun plan => (plan, sourceVisitPoints plan.path.bindings)
     for concurrent in [false, true] do
       let observed : ShapeCompletedScript ← shapeReadLine observations
       unless observed.script == index && observed.concurrent == concurrent do
         throw (IO.userError s!"shape {name}: missing or reordered completed execution")
-      let mut states := matching.map (fun plan => (plan, ([] : List SourcePoint)))
+      let mut states := matchingDomains.map (fun cached => (cached, ([] : List SourcePoint)))
       for call in observed.completed do
         unless call.size == 4 do throw (IO.userError "invalid completed call fields")
         let decoded : Except String (Nat × Nat × Nat × Bool) := do
@@ -358,12 +378,12 @@ def shapeCheckCompleted (source : Source) (name : Nat) (outputPath : String) : I
           | .ok value => pure value
           | .error error => throw (IO.userError s!"invalid completed call: {error}")
         unless actor < 256 && role < 256 && label < 256 do throw (IO.userError "invalid completed call domain")
-        states := states.flatMap fun (plan, points) =>
-          (shapeCompletedAdvance plan points actor role label receive).map (plan, ·)
+        states := states.flatMap fun ((plan, domain), points) =>
+          (shapeCompletedAdvance plan domain points actor role label receive).map ((plan, domain), ·)
         unless !states.isEmpty do
           throw (IO.userError s!"shape {name} script {index}: invalid completed trace")
         calls := calls + 1
-      unless states.any (fun (plan, points) => (sourceVisitPoints plan.path.bindings).all points.contains) do
+      unless states.any (fun ((_, domain), points) => domain.all points.contains) do
         throw (IO.userError s!"shape {name} script {index}: incomplete completed trace")
   unless (← scripts.getLine).isEmpty && (← observations.getLine).isEmpty do
     throw (IO.userError s!"shape {name}: extra completed script record")
@@ -419,11 +439,11 @@ def main (args : List String) : IO UInt32 := do
           if runtimeOnly + modelOnly < 10 then
             IO.println s!"shape {input.name} choice={attempt.choice} prefix={attempt.prefix} label={attempt.label} receive={attempt.receive}: model={permitted} runtime={attempt.accepted}"
           if attempt.accepted then runtimeOnly := runtimeOnly + 1 else modelOnly := modelOnly + 1
+    unless runtimeOnly == 0 && modelOnly == 0 do
+      throw (IO.userError s!"generated Endpoint/source conformance failed: runtime-only={runtimeOnly} model-only={modelOnly}")
     let (runs, calls) ← shapeCheckCompleted source input.name outputPath
     completedRuns := completedRuns + runs
     completedCalls := completedCalls + calls
   IO.println s!"Completed shape scripts/source: shapes={inputs.size} runs={completedRuns} calls={completedCalls} all accepted"
   IO.println s!"Generated shapes/source: shapes={inputs.size} attempts={checked} initial={checked-continuations} continuation={continuations} runtime-only={runtimeOnly} model-only={modelOnly}"
-  unless runtimeOnly == 0 && modelOnly == 0 do
-    throw (IO.userError "generated Endpoint/source conformance failed")
   pure 0
