@@ -21,6 +21,7 @@ fn a_shared_route_preview_requires_the_entire_borrow_to_be_inside_one_arm() {
             None => panic!("route range fixture storage"),
         };
     const IMAGE: CompiledProgramRef = BYTES.compiled_ref(&SUMMARY, PLAN.columns());
+    assert!(!IMAGE.has_actor_bindings());
     let markers = SOURCE.eff_list().scope_markers();
     for (scope, left, split, right) in [
         (markers.at(0).scope_id, 0, 3, 4),
@@ -137,6 +138,7 @@ fn owned_count_coverage_reads_the_checked_header_and_rejects_drift() {
 #[test]
 fn owned_image_uses_the_existing_eight_byte_columns_and_exact_tail() {
     assert_eq!(core::mem::size_of_val(&COLUMNS), 8);
+    assert!(PROGRAM.has_actor_bindings());
     assert_eq!(PROGRAM.actor_binding_at(0), Some([0, 1]));
     assert_eq!(PROGRAM.actor_binding_at(1), Some([0, 2]));
     assert_eq!(PROGRAM.actor_binding_at(2), Some([256, 3]));

@@ -223,13 +223,22 @@ impl EventCursor {
         idx: usize,
         selected_arm: &mut dyn FnMut(ScopeId) -> Option<u8>,
     ) -> Option<bool> {
-        let Some((eff, direction)) = self.machine().event_program().operation_at(idx) else {
+        let count = self.local_steps_len();
+        if idx > count {
+            crate::invariant();
+        }
+        if idx == count {
             return Some(false);
-        };
+        }
         let program = self.program_ref();
-        let Some(bindings) = program.actor_binding_at(eff.dense_ordinal()) else {
+        // Without transferred roles, projection already assigns every row to
+        // this actor. Its operation identity need not be decoded again.
+        if !program.has_actor_bindings() {
             return Some(true);
-        };
+        }
+        let (eff, direction) =
+            crate::invariant_some(self.machine().event_program().operation_at(idx));
+        let bindings = crate::invariant_some(program.actor_binding_at(eff.dense_ordinal()));
         program
             .selected_actor(
                 bindings[usize::from(direction == RoleLocalDirection::Recv)],
