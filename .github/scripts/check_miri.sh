@@ -123,6 +123,8 @@ run_miri_test \
   hibana_disable_repo_tests_cfg
   run_miri_test public-nested-parallel-choice -p hibana --test parallel_route_nesting \
     nested_choice_remains_available_after_its_outer_parallel_sibling_finishes -- --exact
+  run_miri_test public-parallel-choice-before-resolver -p hibana --test parallel_route_nesting \
+    parallel_choice_is_observable_before_a_sequential_resolver -- --exact
 )
 
 MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \

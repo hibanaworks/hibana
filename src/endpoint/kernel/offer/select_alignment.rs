@@ -2,7 +2,6 @@ use super::{
     FrontierScratchWorkspace, FrontierVisitSet, OfferEntryKey, OperationKernel, RecvError,
     RecvResult, Transport,
 };
-use crate::global::const_dsl::ScopeKind;
 
 mod candidates;
 mod model;
@@ -22,7 +21,7 @@ where
     ) -> RecvResult<crate::global::const_dsl::ScopeId> {
         loop {
             let index = self.progress.cursor.index();
-            let scope = self.current_offer_scope_id();
+            let scope = self.offer_scope_id_at(index);
             let wrong_arm = self
                 .preview_live_selected_arm_for_scope(scope)
                 .is_some_and(|arm| {
@@ -34,12 +33,28 @@ where
             // A completed parallel sibling can move the lookup position to a
             // blocked join. Select from the source-ready operations, rather
             // than treating that lookup position as the current frontier.
-            if !self.permits_event(index)
-                || wrong_arm
-                || (!matches!(scope.kind(), Some(ScopeKind::Route))
-                    && self.enabled_view_event(index).is_none())
-            {
-                let next = self.enabled_view_events().next();
+            if !self.permits_event(index) || wrong_arm || self.enabled_view_event(index).is_none() {
+                let next = self.enabled_view_events().find_map(|(entry_idx, _)| {
+                    let cursor = &self.progress.cursor;
+                    let candidate = cursor
+                        .route_scope_for_offer_node(self.offer_scope_id_at(entry_idx), entry_idx)?;
+                    if candidate == scope {
+                        return None;
+                    }
+                    let entry = cursor.route_scope_offer_entry(candidate)?;
+                    let entry_idx = if entry.is_absent() {
+                        entry_idx
+                    } else {
+                        entry.as_usize()
+                    };
+                    (entry_idx != index
+                        && cursor.route_offer_entry_allows_current(
+                            candidate,
+                            entry_idx,
+                            self.preview_live_selected_arm_for_scope(candidate),
+                        ))
+                    .then_some((entry_idx, candidate))
+                });
                 if let Some((entry_idx, _)) = next {
                     self.commit_offer_alignment_realign(entry_idx, visited)?;
                     continue;
@@ -53,7 +68,7 @@ where
                 self.commit_offer_alignment_realign(entry_idx, visited)?;
                 continue;
             }
-            let current_scope = self.current_offer_scope_id();
+            let current_scope = self.offer_scope_id_at(self.progress.cursor.index());
             if current_scope != node_scope
                 && !self
                     .progress

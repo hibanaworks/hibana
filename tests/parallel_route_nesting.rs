@@ -150,6 +150,141 @@ fn nested_choice_remains_available_after_its_outer_parallel_sibling_finishes() {
         });
 }
 
+#[test]
+fn parallel_choice_is_observable_before_a_sequential_resolver() {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .start_paused(true)
+        .build()
+        .unwrap()
+        .block_on(async {
+            use hibana::{
+                Endpoint,
+                runtime::{
+                    resolver::{DecisionArm, ResolverRef},
+                    transport::EndpointBinding,
+                },
+            };
+
+            let choice = g::route(
+                g::seq(
+                    g::send::<0, 1, Msg<0, ()>>(),
+                    g::seq(g::send::<0, 2, Msg<1, ()>>(), g::send::<1, 2, Msg<2, ()>>()),
+                ),
+                g::seq(
+                    g::send::<0, 1, Msg<3, ()>>(),
+                    g::seq(g::send::<0, 2, Msg<4, ()>>(), g::send::<1, 2, Msg<5, ()>>()),
+                ),
+            );
+            let loan = g::seq(
+                g::send::<0, 1, Msg<6, Endpoint<'_, 3>>>(),
+                g::seq(
+                    g::send::<3, 2, Msg<7, ()>>(),
+                    g::seq(
+                        g::send::<2, 3, Msg<8, ()>>(),
+                        g::send::<1, 0, Msg<9, Endpoint<'_, 3>>>(),
+                    ),
+                ),
+            );
+            let next = g::route(
+                g::seq(
+                    g::send::<0, 1, Msg<10, Endpoint<'_, 3>>>(),
+                    g::seq(
+                        g::send::<3, 2, Msg<11, ()>>(),
+                        g::seq(
+                            g::send::<2, 3, Msg<12, ()>>(),
+                            g::send::<1, 0, Msg<13, Endpoint<'_, 3>>>(),
+                        ),
+                    ),
+                ),
+                g::seq(
+                    g::send::<0, 1, Msg<14, Endpoint<'_, 3>>>(),
+                    g::seq(
+                        g::send::<3, 2, Msg<15, ()>>(),
+                        g::seq(
+                            g::send::<2, 3, Msg<16, ()>>(),
+                            g::send::<1, 0, Msg<17, Endpoint<'_, 3>>>(),
+                        ),
+                    ),
+                ),
+            )
+            .resolve::<0>();
+            let global = g::seq(g::par(choice, loan), next);
+            let (p0, p1, p2, p3) = (
+                project::<0>(&global),
+                project::<1>(&global),
+                project::<2>(&global),
+                project::<3>(&global),
+            );
+            let sid = SessionId::new(88);
+            let calls = core::cell::Cell::new(0);
+            // SAFETY: this test owns one resource and its sole initial binding.
+            let transport =
+                in_memory::InMemoryTransport::new([((sid, 3), unsafe { EndpointBinding::new() })]);
+            let (mut slab0, mut slab1, mut slab2) =
+                (vec![0; 64 * 1024], vec![0; 64 * 1024], vec![0; 64 * 1024]);
+            let (mut s0, mut s1, mut s2) = (
+                SessionKitStorage::uninit(),
+                SessionKitStorage::uninit(),
+                SessionKitStorage::uninit(),
+            );
+            let r0 = s0.init().rendezvous(&mut slab0, transport.clone()).unwrap();
+            let r1 = s1.init().rendezvous(&mut slab1, transport.clone()).unwrap();
+            let r2 = s2.init().rendezvous(&mut slab2, transport).unwrap();
+            r0.set_resolver(
+                &p0,
+                ResolverRef::<0>::decision_state(&calls, |calls| {
+                    calls.set(calls.get() + 1);
+                    Ok(DecisionArm::Left)
+                }),
+            )
+            .unwrap();
+            let mut owner = r0.enter(sid, &p0).unwrap();
+            let mut worker = r1.enter(sid, &p1).unwrap();
+            let mut service = r2.enter(sid, &p2).unwrap();
+            let db = r0.enter(sid, &p3).unwrap();
+
+            owner.send::<Msg<6, Endpoint<'_, 3>>>(db).await.unwrap();
+            let mut db = worker.recv::<Msg<6, Endpoint<'_, 3>>>().await.unwrap();
+            db.send::<Msg<7, ()>>(&()).await.unwrap();
+            service.recv::<Msg<7, ()>>().await.unwrap();
+            service.send::<Msg<8, ()>>(&()).await.unwrap();
+            db.recv::<Msg<8, ()>>().await.unwrap();
+            worker.send::<Msg<9, Endpoint<'_, 3>>>(db).await.unwrap();
+            let db = owner.recv::<Msg<9, Endpoint<'_, 3>>>().await.unwrap();
+            owner.send::<Msg<0, ()>>(&()).await.unwrap();
+            assert_eq!(calls.get(), 0, "the join has not completed");
+            let branch =
+                tokio::time::timeout(core::time::Duration::from_millis(100), worker.offer())
+                    .await
+                    .expect("the queued parallel choice must be observable")
+                    .unwrap();
+            assert_eq!(branch.label(), 0);
+            branch.recv::<Msg<0, ()>>().await.unwrap();
+            owner.send::<Msg<1, ()>>(&()).await.unwrap();
+            service.recv::<Msg<1, ()>>().await.unwrap();
+            worker.send::<Msg<2, ()>>(&()).await.unwrap();
+            service.recv::<Msg<2, ()>>().await.unwrap();
+            assert_eq!(calls.get(), 0);
+
+            owner.send::<Msg<10, Endpoint<'_, 3>>>(db).await.unwrap();
+            assert_eq!(calls.get(), 1);
+            let mut db = worker
+                .offer()
+                .await
+                .unwrap()
+                .recv::<Msg<10, Endpoint<'_, 3>>>()
+                .await
+                .unwrap();
+            db.send::<Msg<11, ()>>(&()).await.unwrap();
+            service.recv::<Msg<11, ()>>().await.unwrap();
+            service.send::<Msg<12, ()>>(&()).await.unwrap();
+            db.recv::<Msg<12, ()>>().await.unwrap();
+            worker.send::<Msg<13, Endpoint<'_, 3>>>(db).await.unwrap();
+            let _db = owner.recv::<Msg<13, Endpoint<'_, 3>>>().await.unwrap();
+        });
+}
+
 type TestKitStorage = SessionKitStorage<'static, TestTransport>;
 
 const LOCAL_ROLE: u8 = 1;

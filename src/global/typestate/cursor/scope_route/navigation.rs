@@ -381,16 +381,17 @@ impl EventCursor {
         self.machine().route_scope_conflict_by_slot(slot)
     }
 
-    pub(crate) fn current_offer_scope_id(
+    pub(crate) fn offer_scope_id_at(
         &self,
+        index: usize,
         selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
         preview_selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
     ) -> ScopeId {
-        let node_scope = self.node_scope_id();
+        let node_scope = self.node_scope_id_at(index);
         if node_scope.is_none() {
             return node_scope;
         }
-        let mut conflict = self.machine().event_conflict_for_index(self.idx_usize());
+        let mut conflict = self.machine().event_conflict_for_index(index);
         // Conflict rows run from the event outwards. An unresolved ancestor
         // must decide before any of its descendants, including on a fresh roll.
         let mut pending_scope = ScopeId::none();

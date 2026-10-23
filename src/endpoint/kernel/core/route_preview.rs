@@ -153,11 +153,12 @@ where
     }
 
     #[inline]
-    pub(crate) fn current_offer_scope_id(&self) -> ScopeId {
+    pub(crate) fn offer_scope_id_at(&self, index: usize) -> ScopeId {
         let mut selected_arm_for_scope = |scope| self.selected_live_arm_for_scope(scope);
         let mut preview_selected_arm_for_scope =
             |scope| self.preview_live_selected_arm_for_scope(scope);
-        self.progress.cursor.current_offer_scope_id(
+        self.progress.cursor.offer_scope_id_at(
+            index,
             &mut selected_arm_for_scope,
             &mut preview_selected_arm_for_scope,
         )
