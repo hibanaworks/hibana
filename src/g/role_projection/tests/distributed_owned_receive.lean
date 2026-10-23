@@ -15,7 +15,7 @@ private theorem distributedFreshOwnedSenderAndWire
   have receiverColumns := decoded_owned_source_facts_bind_wire_columns receiverAt
   have matching : distributedEntry6.sample.effIndex? =
       some distributedPreparedReceivedSourceFacts.effIndex :=
-    distributedFreshPreparedSourceIdentity.trans receiverColumns.1
+    distributedFreshFrameSourceIdentity.trans receiverColumns.1
   exact a_matched_owned_receive_recovers_its_accepted_sender
     (sender := distributedEntry6.sample) (receiverImage := distributedImage1)
     (session := 9062) (choreo := distributedChoreo)

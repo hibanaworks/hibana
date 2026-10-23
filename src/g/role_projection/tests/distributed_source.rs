@@ -76,8 +76,8 @@ pub(super) fn check_observations(operations: &[OperationObservation]) {
     assert_eq!(operations.len(), accepted.len() * 2);
 }
 
-/// Serialize the already completed execution. No endpoint operation reads
-/// these records, and no source identity is inferred from a frame label.
+/// Serialize observed source rows and transport headers after execution.
+/// Endpoint operations do not read these records.
 #[cfg(not(miri))]
 pub(super) fn execution_source<Steps>(
     images: [&'static super::RoleImageRef; 3],
@@ -421,37 +421,20 @@ theorem distributedFirstAcceptedSendHasItsUnpublishedPrefix :
   rw [equal] at count
   exact ⟨pending, equal, count, stamped⟩
 
-private theorem distributedFreshPreparationExists :
-    (prepareObservedActorBody? distributedImage1 distributedChoreo distributedBefore8 0 0 0 0).isSome = true := by decide
-
-private def distributedFreshPreparation :=
-  (prepareObservedActorBody? distributedImage1 distributedChoreo distributedBefore8 0 0 0 0).get distributedFreshPreparationExists
-
-private theorem distributedFreshPreparedSourceIdentity :
+private theorem distributedFreshFrameSourceIdentity :
     distributedEntry6.sample.effIndex? = distributedImage1.eventEffIndex? 0 := by
-  have sender := (a_measured_distributed_class_has_its_source_word_and_exact_prefix
-    (actor := 0) (group := distributedFrameClass0_0) distributedBeforeFreshReceiptExecution (by decide)).1
-  have receiver := (a_prepared_wire_operation_extends_its_actors_measured_source_word
-    (actor := 1) (group := distributedFrameClass1_0) (previousPath := 0) (pathIndex := 0) (event := 0)
-    (base := distributedFreshPreparation.2) (data := distributedWordData1)
-    (path := distributedWordData1.normalized.paths[0]) (row := distributedWordData1.rows[0])
-    distributedBeforeFreshReceiptExecution (by decide)
-    ((Option.some_get (x := distributedImage1.decodeActorOrder? distributedChoreo) (by decide)).symm)
-    (getElem?_pos _ _ (by decide)) (getElem?_pos _ _ (by decide))
-    (by decide) (by decide)
-    (.fresh
-      (rolls := (distributedChoreo.canonicalActorRollRows? distributedImage1.role).get (by decide))
-      (roll := distributedFreshPreparation.1) (by decide) (by decide)
-      (Option.some_get distributedFreshPreparationExists).symm)
-    (by decide)).1
-  exact source_frame_words_match_at_each_common_class_position
-    (sentSource := distributedImage0.eventEffIndex?) (receivedSource := distributedImage1.eventEffIndex?)
-    (index := 2) (sent := distributedEntry6.sample.event) (received := 0)
-    (by decide) sender receiver (by decide) (by decide)
+  let wire := distributedEntry6.sample.wire
+  have sender := decoded_frame_key_retains_its_source_position
+    (image := distributedEntry6.sample.image) (row := distributedEntry6.sample.event)
+    (key := ⟨.send, wire.sender, wire.receiver, wire.lane, wire.frameLabel⟩) (by decide)
+  have receiver := decoded_frame_key_retains_its_source_position
+    (image := distributedImage1) (row := 0)
+    (key := ⟨.receive, wire.receiver, wire.sender, wire.lane, wire.frameLabel⟩) (by decide)
+  exact sender.trans receiver.symm
 
 theorem distributedFreshMixedSourceIdentityBeforeItsNewReceivePair :
     distributedEntry6.sample.effIndex? = distributedImage1.eventEffIndex? distributedCommit8.step.event :=
-  distributedFreshPreparedSourceIdentity
+  distributedFreshFrameSourceIdentity
 "#);
     source.push_str(include_str!("distributed_owned_receive.lean"));
     source.push_str("\nprivate def distributedCandidateData := (distributedImage0.decodeActorOrder? distributedChoreo).get (by decide)\n\n\
