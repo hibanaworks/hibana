@@ -20,4 +20,5 @@ bash .github/scripts/lib/supplemental_proofs_tool.sh smt-sequence "$output" \
   sat unsat sat unsat unsat \
   sat unsat sat unsat unsat unsat unsat unsat sat unsat sat unsat unsat \
   sat unsat unsat unsat unsat \
-  sat unsat unsat unsat unsat unsat unsat unsat sat unsat unsat
+  sat unsat unsat unsat unsat unsat unsat unsat sat unsat unsat \
+  sat unsat unsat unsat unsat sat

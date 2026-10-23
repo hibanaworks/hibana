@@ -25,19 +25,20 @@ impl EventCursor {
         end: usize,
         selected: &mut dyn FnMut(ScopeId, EventArmView) -> Option<u8>,
     ) -> Option<(ScopeId, u64)> {
-        if self
-            .machine()
-            .event_program()
-            .footprint()
-            .borrow_epoch_count
-            == 0
+        if start >= end
+            || self
+                .machine()
+                .event_program()
+                .footprint()
+                .borrow_epoch_count
+                == 0
         {
             return None;
         }
+        let program = self.program_ref();
         let mut selected_scope = None;
-        for marker in 0..self.program_ref().source_scope_marker_count() {
-            let Some((scope, body_start, body_end)) = self.program_ref().source_roll_at(marker)
-            else {
+        for marker in 0..program.source_scope_marker_count() {
+            let Some((scope, body_start, body_end)) = program.source_roll_at(marker) else {
                 continue;
             };
             if body_start > start || end > body_end {
@@ -64,7 +65,10 @@ impl EventCursor {
                 }
                 let (event, _) =
                     crate::invariant_some(self.machine().event_program().operation_at(index));
-                start <= event.dense_ordinal() && event.dense_ordinal() < end
+                let source = event.dense_ordinal();
+                // The borrow starts the new visit. Its causal continuation
+                // remains outside the borrow and runs after the parallel join.
+                (start <= source && source < end) || program.source_precedes(end - 1, source)
             });
             if covered {
                 selected_scope = Some(

@@ -879,3 +879,130 @@ fn cross_lane_parent_admission_requires_its_prefix() {
 fn cross_lane_child_reset_preserves_its_parent_prefix() {
     check_cross_lane_child_reset();
 }
+
+fn with_parallel_prefix_cursor(independent: bool, check: impl FnOnce(&mut EventCursor)) {
+    let prefix = g::seq(
+        g::par(
+            g::send::<0, 1, g::Msg<250, ()>>(),
+            g::send::<0, 2, g::Msg<251, ()>>(),
+        ),
+        g::send::<0, 1, g::Msg<252, ()>>(),
+    );
+    let projected = if independent {
+        crate::runtime::program::project::<0>(
+            &g::par(prefix, g::send::<0, 3, g::Msg<253, ()>>()).roll(),
+        )
+    } else {
+        crate::runtime::program::project::<0>(&prefix.roll())
+    };
+    let descriptor = RoleDescriptorRef::from_resident(projected.role_image_ref());
+    let mut state = MaybeUninit::<EventCursorState>::uninit();
+    let mut cursor = MaybeUninit::<EventCursor>::uninit();
+    let mut heads = [0u16; 3];
+    let mut labels = [0u16; 3];
+    let mut completed = [0u32; 3];
+    assert_eq!(
+        descriptor.logical_lane_count(),
+        if independent { 3 } else { 2 }
+    );
+    assert_eq!(descriptor.local_len(), if independent { 4 } else { 3 });
+    assert_eq!(
+        projected
+            .role_image_ref()
+            .footprint()
+            .completion_bit_count()
+            .div_ceil(32),
+        completed.len(),
+    );
+    // SAFETY: the checked fixtures need at most three lane slots and exactly
+    // these completion and epoch words. All arrays outlive the cursor.
+    unsafe {
+        EventCursor::init_from_compiled(
+            cursor.as_mut_ptr(),
+            state.as_mut_ptr(),
+            heads.as_mut_ptr(),
+            labels.as_mut_ptr(),
+            completed.as_mut_ptr(),
+            descriptor,
+        );
+    }
+    // SAFETY: the production initializer wrote the cursor and its state.
+    check(unsafe { cursor.assume_init_mut() });
+}
+
+fn check_parallel_prefix_origin(tail_complete: bool) {
+    with_parallel_prefix_cursor(false, |cursor| {
+        cursor.mark_local_event_done(0);
+        cursor.mark_local_event_done(1);
+        if tail_complete {
+            cursor.mark_local_event_done(2);
+        }
+        assert_eq!(
+            cursor
+                .completed_parallel_reentry(0, 2, &mut |_, _| None)
+                .is_some(),
+            tail_complete,
+        );
+    });
+}
+
+fn check_parallel_prefix_tail_admission() {
+    with_parallel_prefix_cursor(false, |cursor| {
+        for index in 0..3 {
+            cursor.mark_local_event_done(index);
+        }
+        let (scope, _) = cursor
+            .completed_parallel_reentry(0, 2, &mut |_, _| None)
+            .unwrap();
+        let mut event: crate::global::typestate::EventCommitMeta =
+            cursor.try_send_meta_at(2).unwrap().into();
+        event.body_reentry = scope;
+        assert_eq!(
+            cursor.event_enabled(2, event, &mut |_, _| None).err(),
+            Some(super::EventAdmissionError::PredecessorPending),
+        );
+    });
+}
+
+fn check_parallel_prefix_independent_sibling() {
+    with_parallel_prefix_cursor(true, |cursor| {
+        for index in 0..4 {
+            cursor.mark_local_event_done(index);
+        }
+        assert!(
+            cursor
+                .completed_parallel_reentry(0, 2, &mut |_, _| None)
+                .is_none()
+        );
+    });
+}
+
+#[cfg(all(test, hibana_repo_tests))]
+#[test]
+fn parallel_prefix_reentry_keeps_tails_and_independent_work_distinct() {
+    check_parallel_prefix_origin(false);
+    check_parallel_prefix_origin(true);
+    check_parallel_prefix_tail_admission();
+    check_parallel_prefix_independent_sibling();
+}
+
+#[cfg(kani)]
+#[kani::proof]
+#[kani::unwind(16)]
+fn a_parallel_prefix_reentry_requires_its_tail_to_complete() {
+    check_parallel_prefix_origin(kani::any());
+}
+
+#[cfg(kani)]
+#[kani::proof]
+#[kani::unwind(16)]
+fn a_parallel_prefix_reentry_keeps_its_tail_after_the_new_join() {
+    check_parallel_prefix_tail_admission();
+}
+
+#[cfg(kani)]
+#[kani::proof]
+#[kani::unwind(16)]
+fn a_parallel_prefix_reentry_cannot_reset_an_independent_sibling() {
+    check_parallel_prefix_independent_sibling();
+}

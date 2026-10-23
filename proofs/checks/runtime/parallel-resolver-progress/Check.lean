@@ -380,6 +380,53 @@ theorem an_independent_sibling_is_still_required (retained incoming : Bool)
     retainedInput retained incoming false rollStart rollEnd parallelStart parallelEnd = false := by
   simp [retainedInput]
 
+/-- A parallel prefix can start a fresh completed roll. Every local row outside
+the prefix must follow its join; an earlier prefix or an independent sibling
+cannot be discarded with the old visit. -/
+def parallelPrefixCovers (before : Nat → Nat → Bool) (start stop : Nat)
+    (rows : List Nat) : Bool :=
+  decide (start < stop) && rows.all fun row =>
+    decide (start ≤ row ∧ row < stop) || before (stop - 1) row
+
+theorem every_row_outside_a_repeated_parallel_prefix_follows_its_join
+    (before : Nat → Nat → Bool) (start stop row : Nat) (rows : List Nat)
+    (covered : parallelPrefixCovers before start stop rows = true)
+    (present : row ∈ rows) (outside : ¬ (start ≤ row ∧ row < stop)) :
+    before (stop - 1) row = true := by
+  have allRows := (Bool.and_eq_true_iff.mp covered).2
+  have allowed := (List.all_eq_true.mp allRows) row present
+  simpa [outside] using allowed
+
+theorem an_independent_or_preceding_row_prevents_a_partial_roll_restart
+    (before : Nat → Nat → Bool) (start stop row : Nat) (rows : List Nat)
+    (present : row ∈ rows) (outside : ¬ (start ≤ row ∧ row < stop))
+    (unordered : before (stop - 1) row = false) :
+    parallelPrefixCovers before start stop rows = false := by
+  cases accepted : parallelPrefixCovers before start stop rows
+  · rfl
+  · have after := every_row_outside_a_repeated_parallel_prefix_follows_its_join
+      before start stop row rows accepted present outside
+    simp [unordered] at after
+
+def repeatedParallelPrefix : Choreo := .roll (.seq
+  (.par (.send 0 1 250 0) (.send 0 2 251 0)) (.send 0 1 252 0))
+
+def acceptedParallelPrefix (trace : List GlobalOperation) : Bool :=
+  (run (GlobalConfig.initial 1 3 repeatedParallelPrefix) trace).isSome
+
+def completedPrefixAndTail : List GlobalOperation :=
+  [.send 0, .recv 0, .send 1, .recv 1, .send 2, .recv 2]
+
+theorem a_parallel_prefix_restarts_after_its_sequential_tail :
+    acceptedParallelPrefix (completedPrefixAndTail ++
+      [.roll 0, .send 1, .recv 1, .send 0, .recv 0, .send 2, .recv 2]) = true := by decide
+
+theorem a_parallel_prefix_cannot_restart_before_its_sequential_tail :
+    acceptedParallelPrefix [.send 0, .recv 0, .send 1, .recv 1, .roll 0] = false := by decide
+
+theorem a_fresh_parallel_prefix_cannot_reuse_its_old_join :
+    acceptedParallelPrefix (completedPrefixAndTail ++ [.roll 0, .send 2]) = false := by decide
+
 #print axioms a_scheduled_entry_is_eligible
 #print axioms an_in_progress_choice_cannot_change_arm
 #print axioms right_then_left_remains_enabled
@@ -434,4 +481,9 @@ theorem an_independent_sibling_is_still_required (retained incoming : Bool)
 #print axioms a_retained_input_requires_its_causal_enclosing_scope
 #print axioms an_older_input_can_remain_outside_the_current_parallel_borrow
 #print axioms an_independent_sibling_is_still_required
+#print axioms every_row_outside_a_repeated_parallel_prefix_follows_its_join
+#print axioms an_independent_or_preceding_row_prevents_a_partial_roll_restart
+#print axioms a_parallel_prefix_restarts_after_its_sequential_tail
+#print axioms a_parallel_prefix_cannot_restart_before_its_sequential_tail
+#print axioms a_fresh_parallel_prefix_cannot_reuse_its_old_join
 end ParallelResolverProgress

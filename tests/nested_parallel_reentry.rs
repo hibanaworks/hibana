@@ -10,6 +10,146 @@ type Work = g::Msg<232, ()>;
 type Ack = g::Msg<233, ()>;
 type Tick = g::Msg<234, ()>;
 
+#[test]
+fn a_delegated_parallel_prefix_repeats_with_its_sequential_tail() {
+    use hibana::Endpoint;
+    type Loan<'r> = g::Msg<0, Endpoint<'r, 3>>;
+    type LeftRead = g::Msg<1, ()>;
+    type LeftNotice = g::Msg<2, ()>;
+    type LeftValue = g::Msg<3, ()>;
+    type RightRead = g::Msg<4, ()>;
+    type RightValue = g::Msg<5, ()>;
+    type TailRead = g::Msg<6, ()>;
+    type TailNotice = g::Msg<7, ()>;
+    type TailValue = g::Msg<8, ()>;
+    type Return<'r> = g::Msg<9, Endpoint<'r, 3>>;
+    let global = g::seq(
+        g::send::<1, 0, Loan<'_>>(),
+        g::seq(
+            g::seq(
+                g::par(
+                    g::seq(
+                        g::send::<3, 2, LeftRead>(),
+                        g::seq(g::send::<0, 2, LeftNotice>(), g::send::<2, 3, LeftValue>()),
+                    ),
+                    g::seq(g::send::<3, 2, RightRead>(), g::send::<2, 3, RightValue>()),
+                ),
+                g::seq(
+                    g::send::<3, 2, TailRead>(),
+                    g::seq(g::send::<0, 2, TailNotice>(), g::send::<2, 3, TailValue>()),
+                ),
+            )
+            .roll(),
+            g::send::<0, 1, Return<'_>>(),
+        ),
+    );
+    assert_eq!(g::diagnose(&global), None);
+    let p0 = project::<0>(&global);
+    let p1 = project::<1>(&global);
+    let p2 = project::<2>(&global);
+    let p3 = project::<3>(&global);
+    let network = common::TestTransport::new();
+    let [mut slab0, mut slab1, mut slab2] = [[0; 32 * 1024]; 3];
+    let mut storage0 = SessionKitStorage::uninit();
+    let mut storage1 = SessionKitStorage::uninit();
+    let mut storage2 = SessionKitStorage::uninit();
+    let rv0 = storage0
+        .init()
+        .rendezvous(&mut slab0, network.clone())
+        .unwrap();
+    let rv1 = storage1
+        .init()
+        .rendezvous(&mut slab1, network.clone())
+        .unwrap();
+    let rv2 = storage2
+        .init()
+        .rendezvous(&mut slab2, network.clone())
+        .unwrap();
+    let sid = SessionId::new(9389);
+    let mut holder = rv0.enter(sid, &p0).unwrap();
+    let mut owner = rv1.enter(sid, &p1).unwrap();
+    let mut service = rv2.enter(sid, &p2).unwrap();
+    let db = rv1.enter(sid, &p3).unwrap();
+    tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .start_paused(true)
+        .build()
+        .unwrap()
+        .block_on(async {
+            tokio::time::timeout(core::time::Duration::from_secs(1), async {
+                tokio::try_join!(
+                    async {
+                        let mut db = holder.recv::<Loan<'_>>().await?;
+                        for visit in 0..2 {
+                            {
+                                let [mut notice] = holder.par().unwrap_or_else(|error| {
+                                    panic!("holder par visit {visit}: {error:?}")
+                                });
+                                let [mut left, mut right] = db.par().unwrap_or_else(|error| {
+                                    panic!("resource par visit {visit}: {error:?}")
+                                });
+                                tokio::try_join!(
+                                    async {
+                                        left.send::<LeftRead>(&()).await?;
+                                        notice.send::<LeftNotice>(&()).await?;
+                                        left.recv::<LeftValue>().await?;
+                                        Ok::<_, hibana::EndpointError>(())
+                                    },
+                                    async {
+                                        right.send::<RightRead>(&()).await?;
+                                        right.recv::<RightValue>().await?;
+                                        Ok::<_, hibana::EndpointError>(())
+                                    },
+                                )?;
+                            }
+                            db.send::<TailRead>(&()).await?;
+                            holder.send::<TailNotice>(&()).await?;
+                            db.recv::<TailValue>().await?;
+                        }
+                        holder.send::<Return<'_>>(db).await?;
+                        Ok::<_, hibana::EndpointError>(())
+                    },
+                    async {
+                        owner.send::<Loan<'_>>(db).await?;
+                        let db = owner.recv::<Return<'_>>().await?;
+                        drop(db);
+                        Ok::<_, hibana::EndpointError>(())
+                    },
+                    async {
+                        for visit in 0..2 {
+                            {
+                                let [mut left, mut right] = service.par().unwrap_or_else(|error| {
+                                    panic!("service par visit {visit}: {error:?}")
+                                });
+                                tokio::try_join!(
+                                    async {
+                                        left.recv::<LeftRead>().await?;
+                                        left.recv::<LeftNotice>().await?;
+                                        left.send::<LeftValue>(&()).await?;
+                                        Ok::<_, hibana::EndpointError>(())
+                                    },
+                                    async {
+                                        right.recv::<RightRead>().await?;
+                                        right.send::<RightValue>(&()).await?;
+                                        Ok::<_, hibana::EndpointError>(())
+                                    },
+                                )?;
+                            }
+                            service.recv::<TailRead>().await?;
+                            service.recv::<TailNotice>().await?;
+                            service.send::<TailValue>(&()).await?;
+                        }
+                        Ok::<_, hibana::EndpointError>(())
+                    },
+                )
+            })
+            .await
+            .expect("delegated parallel prefix stalled")
+            .unwrap();
+        });
+    assert!(network.queue_is_empty());
+}
+
 fn returned_resource_parallel_global() -> impl hibana::runtime::program::Projectable {
     use hibana::Endpoint;
     type Loan<'r> = g::Msg<0, Endpoint<'r, 3>>;

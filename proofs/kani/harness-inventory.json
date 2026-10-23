@@ -302,6 +302,9 @@
       "global::typestate::cursor::parallel_reentry_tests::a_later_locator_cannot_replay_a_completed_step",
       "global::typestate::cursor::parallel_reentry_tests::a_later_locator_does_not_authorize_another_committed_branch",
       "global::typestate::cursor::parallel_reentry_tests::a_later_locator_keeps_an_independent_receive_enabled",
+      "global::typestate::cursor::parallel_reentry_tests::a_parallel_prefix_reentry_cannot_reset_an_independent_sibling",
+      "global::typestate::cursor::parallel_reentry_tests::a_parallel_prefix_reentry_keeps_its_tail_after_the_new_join",
+      "global::typestate::cursor::parallel_reentry_tests::a_parallel_prefix_reentry_requires_its_tail_to_complete",
       "global::typestate::cursor::parallel_reentry_tests::an_unfinished_choice_cannot_hide_its_other_arm",
       "global::typestate::cursor::parallel_reentry_tests::an_unfinished_choice_keeps_its_first_parallel_head_required",
       "global::typestate::cursor::parallel_reentry_tests::an_unfinished_choice_keeps_its_second_parallel_head_required",
@@ -428,7 +431,7 @@
 
   ],
   "totals": {
-    "standard-harnesses": 301,
+    "standard-harnesses": 304,
     "contract-harnesses": 0,
     "functions-under-contract": 0
   }
