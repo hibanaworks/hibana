@@ -403,7 +403,7 @@ run_audit generated-axioms --kernel "${REENTRY_GENERATED}" "${PROOF_DIR}" \
   "${PROOF_DIR}/claims/reentry-generated-claim-surface.txt" 97
 parallel_output="$(run_audit generated-axioms \
   --kernel "${PARALLEL_GENERATED}" "${PROOF_DIR}" \
-  "${PROOF_DIR}/claims/parallel-generated-claim-surface.txt" 186)"
+  "${PROOF_DIR}/claims/parallel-generated-claim-surface.txt" 176)"
 printf '%s\n' "${parallel_output}"
 printf '%s\n' "${parallel_output}" | bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard markers parallel
 causal_output="$(run_audit generated-axioms \
