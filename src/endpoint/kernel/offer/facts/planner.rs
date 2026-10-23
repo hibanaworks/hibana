@@ -160,7 +160,7 @@ where
         &self,
         input: &OfferIngressPlannerInput,
     ) -> OfferMaterializationReadiness {
-        let Some(arm) = self.selected_arm_for_scope(input.selection.scope_id) else {
+        let Some(arm) = self.selected_live_arm_for_scope(input.selection.scope_id) else {
             return OfferMaterializationReadiness::Ready;
         };
         if self.arm_requires_materialization_ready_evidence(input.selection.scope_id, arm)

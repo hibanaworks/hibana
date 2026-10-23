@@ -16,6 +16,95 @@ use runtime_support::with_runtime_workspace;
 use tls_ref_support::with_resident_tls_ref;
 
 #[test]
+fn a_nested_resolver_can_select_another_arm_on_the_next_visit() {
+    use hibana::runtime::resolver::{DecisionArm, ResolverRef};
+
+    let global = g::route(
+        g::seq(g::send::<1, 0, Msg<0, ()>>(), g::send::<0, 1, Msg<1, ()>>()),
+        g::route(
+            g::seq(g::send::<1, 0, Msg<2, ()>>(), g::send::<0, 1, Msg<3, ()>>()),
+            g::seq(g::send::<1, 0, Msg<4, ()>>(), g::send::<0, 1, Msg<5, ()>>()),
+        )
+        .resolve::<1>(),
+    )
+    .resolve::<0>()
+    .roll();
+    let (p0, p1) = (project::<0>(&global), project::<1>(&global));
+    let network = in_memory::InMemoryTransport::new([]);
+    let input = core::cell::Cell::new(DecisionArm::Left);
+    let [mut slab0, mut slab1] = [vec![0; 32 * 1024], vec![0; 32 * 1024]];
+    let (mut s0, mut s1) = (SessionKitStorage::uninit(), SessionKitStorage::uninit());
+    let rv0 = s0.init().rendezvous(&mut slab0, network.clone()).unwrap();
+    let rv1 = s1.init().rendezvous(&mut slab1, network).unwrap();
+    rv1.set_resolver(
+        &p1,
+        ResolverRef::<0>::decision_state(&(), |_| Ok(DecisionArm::Right)),
+    )
+    .unwrap();
+    rv1.set_resolver(
+        &p1,
+        ResolverRef::<1>::decision_state(&input, |input| Ok(input.get())),
+    )
+    .unwrap();
+    let sid = SessionId::new(94);
+    let mut observer = rv0.enter(sid, &p0).unwrap();
+    let mut controller = rv1.enter(sid, &p1).unwrap();
+
+    tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .start_paused(true)
+        .build()
+        .unwrap()
+        .block_on(async {
+            tokio::time::timeout(core::time::Duration::from_secs(1), async {
+                tokio::join!(
+                    async {
+                        for choice in [DecisionArm::Left, DecisionArm::Right] {
+                            input.set(choice);
+                            let branch = controller.offer().await.unwrap();
+                            drop(branch);
+                            let branch = controller.offer().await.unwrap();
+                            match choice {
+                                DecisionArm::Left => {
+                                    assert_eq!(branch.label(), 2);
+                                    branch.send::<Msg<2, ()>>(&()).await.unwrap();
+                                    controller.recv::<Msg<3, ()>>().await.unwrap();
+                                }
+                                DecisionArm::Right => {
+                                    assert_eq!(branch.label(), 4);
+                                    branch.send::<Msg<4, ()>>(&()).await.unwrap();
+                                    controller.recv::<Msg<5, ()>>().await.unwrap();
+                                }
+                            }
+                        }
+                    },
+                    async {
+                        for label in [2, 4] {
+                            let branch = observer.offer().await.unwrap();
+                            assert_eq!(branch.label(), label);
+                            drop(branch);
+                            let branch = observer.offer().await.unwrap();
+                            match label {
+                                2 => {
+                                    branch.recv::<Msg<2, ()>>().await.unwrap();
+                                    observer.send::<Msg<3, ()>>(&()).await.unwrap();
+                                }
+                                4 => {
+                                    branch.recv::<Msg<4, ()>>().await.unwrap();
+                                    observer.send::<Msg<5, ()>>(&()).await.unwrap();
+                                }
+                                _ => unreachable!(),
+                            }
+                        }
+                    },
+                );
+            })
+            .await
+            .expect("the next resolver choice must not wait for its own reply");
+        });
+}
+
+#[test]
 fn a_nested_loan_keeps_its_owner_while_an_independent_parent_part_restarts() {
     use hibana::{Endpoint, runtime::transport::EndpointBinding};
     type Start = Msg<0, ()>;

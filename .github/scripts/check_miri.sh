@@ -142,6 +142,8 @@ run_miri_test \
     a_parent_preview_can_use_a_parallel_head_before_a_child_choice -- --exact
   run_miri_test public-parent-preview-before-child-resolver -p hibana --test parallel_route_nesting \
     a_parent_preview_does_not_call_a_parallel_child_resolver -- --exact
+  run_miri_test public-nested-resolver-next-visit -p hibana --test parallel_route_nesting \
+    a_nested_resolver_can_select_another_arm_on_the_next_visit -- --exact
 )
 
 MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \
