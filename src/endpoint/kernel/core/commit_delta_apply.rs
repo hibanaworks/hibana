@@ -24,7 +24,13 @@ where
             delta.event().is_some() || delta.selected_routes().len() != 0;
         let body_reentry_scope = self.prepared_body_reentry_scope(delta.event());
         if let Some(scope) = body_reentry_scope {
-            self.clear_reentry_scope_state(scope);
+            let event = crate::invariant_some(delta.event());
+            let entry = crate::invariant_some(
+                self.progress
+                    .cursor
+                    .node_index_for_relocatable_step(event.progress_step()),
+            );
+            self.clear_reentry_scope_state(scope, entry);
         }
         let route_lane = delta.selected_route_lane();
         let mut idx = 0usize;
@@ -79,8 +85,7 @@ where
             .roll_body_reentry_scope_for_step(event.progress_step(), &mut selected_arm_for_scope)
     }
 
-    fn clear_reentry_scope_state(&mut self, scope: ScopeId) {
-        self.progress.cursor.clear_reentry_scope_events(scope);
+    fn clear_reentry_scope_state(&mut self, scope: ScopeId, entry: usize) {
         let lane_limit = self.progress.cursor.logical_lane_count();
         let mut lane_idx = 0usize;
         while lane_idx < lane_limit {
@@ -93,6 +98,7 @@ where
                             lane_idx,
                             |candidate| {
                                 cursor.route_scope_contained_in_roll_scope(candidate, scope)
+                                    && !cursor.roll_reentry_preserves_route(scope, candidate, entry)
                             },
                             |candidate| cursor.route_scope_slot(candidate),
                             |candidate| cursor.route_scope_reentry(candidate),
@@ -102,6 +108,9 @@ where
             }
             lane_idx += 1;
         }
+        self.progress
+            .cursor
+            .clear_reentry_scope_events(scope, Some(entry));
         self.sync_lane_offer_state();
     }
 
@@ -224,7 +233,7 @@ where
                 completed_arm,
                 row.selected_arm(),
             );
-            self.progress.cursor.clear_reentry_scope_events(scope);
+            self.progress.cursor.clear_reentry_scope_events(scope, None);
         }
         self.progress.decision_state.apply_prepared_route_selection(
             lane_idx,

@@ -292,9 +292,10 @@ message to that role in the global protocol.
 
 At runtime, the received frame identifies a permitted branch. `offer()` returns
 a `RouteBranch`, which lets the participant inspect the selected branch without
-advancing the protocol. `label()` returns that branch's first logical message
-label. The branch's first successful send or receive advances the protocol.
-Reading or dropping the preview does not.
+advancing the protocol. `label()` identifies an operation that can start the
+selected branch. A branch with parallel work can have several such operations.
+A successful send or receive through the preview runs that operation and
+advances the protocol. Reading or dropping the preview does not.
 
 Adding `.resolve::<ID>()` to a choice connects it to a **resolver**, a local
 application function that selects a branch. This changes how the choice is
@@ -394,7 +395,7 @@ change sender.
 | `Endpoint::send::<M>(&payload)` | Advances after the transport accepts the permitted message |
 | `Endpoint::recv::<M>()` | Validates the permitted message and returns its decoded payload |
 | `Endpoint::offer()` | Returns a branch preview without advancing |
-| `RouteBranch::label()` | Returns the first logical message label of the selected branch |
+| `RouteBranch::label()` | Returns the logical message label of the previewed operation |
 | `RouteBranch::send` / `recv` | Consumes the preview and executes the branch's first visible step |
 
 An operation **commits** when it advances the local protocol. Dropping a branch

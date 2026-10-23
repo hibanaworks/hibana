@@ -6,7 +6,7 @@ use super::super::super::{
     preview_selected_arm_for_scope_from_parts, state_index_to_usize,
 };
 use crate::eff::EventOrigin;
-use crate::global::typestate::{InboundFrameKey, LocalAction};
+use crate::global::typestate::{EventArmView, InboundFrameKey, LocalAction};
 impl<'r, T> OperationKernel<'_, 'r, T>
 where
     T: Transport + 'r,
@@ -181,6 +181,13 @@ where
         let arm = Arm::from_raw(arm);
         let arm_raw = arm.as_u8();
         let scope_id = selection.scope_id;
+        if is_route_controller
+            && self
+                .controller_arm_send_preview(scope_id, arm_raw)
+                .is_some()
+        {
+            return false;
+        }
         let at_route_entry = selection.entry_position.is_route_entry();
         let controller_arm_entry = self
             .progress
@@ -282,6 +289,37 @@ where
         self.progress.cursor.try_recv_meta_at(entry_idx)
     }
 
+    pub(in crate::endpoint::kernel) fn controller_arm_send_preview(
+        &self,
+        scope: ScopeId,
+        arm: u8,
+    ) -> Option<CachedRecvMeta> {
+        if !self.is_route_controller(scope) {
+            return None;
+        }
+        let cursor = &self.progress.cursor;
+        cursor.passive_child_scope(scope, arm)?;
+        let rows = cursor.route_scope_rows(scope)?;
+        (rows.start()..rows.end()).find_map(|index| {
+            if cursor.logical_role_at(index) != Some(self.public_header.role())
+                || !self.permits_event(index)
+            {
+                return None;
+            }
+            let meta = cursor.try_send_meta_at(index)?;
+            if meta.route_scope != scope || cursor.route_arm_for_index(scope, index) != Some(arm) {
+                return None;
+            }
+            self.event_enabled(index, meta.into(), &mut |candidate, view| match view {
+                EventArmView::Committed => self.selected_arm_for_scope(candidate),
+                EventArmView::Preview if candidate == scope => Some(arm),
+                EventArmView::Preview => self.preview_live_selected_arm_for_scope(candidate),
+            })
+            .ok()?;
+            Some(Self::cached_recv_meta_from_send(index, meta))
+        })
+    }
+
     #[inline(never)]
     pub(in crate::endpoint::kernel) fn preview_selected_arm_meta(
         &self,
@@ -305,6 +343,9 @@ where
                 .try_recv_meta_at(target_idx)
                 .ok_or(RecvError::PhaseInvariant)?;
             return Ok(Self::cached_recv_meta_from_recv(target_idx, meta));
+        }
+        if let Some(meta) = self.controller_arm_send_preview(scope_id, selected_arm) {
+            return Ok(meta);
         }
         let controller_arm_entry = if self.is_route_controller(scope_id) {
             self.progress

@@ -242,7 +242,7 @@ impl ProductionCursorTrace {
             .enabled_commit_at(operation.event_id)
             .expect("proof operation must name an enabled production event");
         let reentry_scope = self.body_reentry_scope_for_step(progress_step);
-        self.clear_body_reentry_scope(reentry_scope);
+        self.clear_body_reentry_scope(reentry_scope, operation.event_id);
         self.record_event_conflict_selection(operation.event_id);
         self.cursor_mut().set_index(cursor_after);
         let _ = self
@@ -288,7 +288,7 @@ impl ProductionCursorTrace {
                 "resolver reentry requires the previous production arm to be complete"
             );
             self.selected.remove(selected_idx);
-            self.cursor_mut().clear_reentry_scope_events(scope);
+            self.cursor_mut().clear_reentry_scope_events(scope, None);
         }
         self.record_or_replace_selected_arm(scope, arm.index());
         assert!(

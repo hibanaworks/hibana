@@ -1,6 +1,131 @@
 use super::super::super::{EventArmView, EventCursor, ScopeId};
 
+#[cfg(kani)]
+mod kani;
+
+#[inline]
+fn read_word_pair(words: &[u32; 2]) -> u64 {
+    u64::from(words[0]) | (u64::from(words[1]) << 32)
+}
+
+#[inline]
+fn write_word_pair(words: &mut [u32; 2], value: u64) {
+    words[0] = value as u32;
+    words[1] = (value >> 32) as u32;
+}
+
 impl EventCursor {
+    fn roll_credit_word_start(&self) -> usize {
+        self.roll_epoch_word_start()
+            + 2 * self
+                .machine()
+                .event_program()
+                .footprint()
+                .borrow_epoch_count
+    }
+
+    fn roll_credit_words(&self, scope: ScopeId) -> usize {
+        let mut slot = 0;
+        while let Some((candidate, _)) = self.machine().roll_scope_row_by_slot(slot) {
+            if candidate.same(scope) {
+                return self.roll_credit_word_start() + 2 * slot;
+            }
+            slot += 1;
+        }
+        crate::invariant()
+    }
+
+    pub(super) fn completed_roll_credits(&self, scope: ScopeId) -> u64 {
+        let index = self.roll_credit_words(scope);
+        let words = self.completed_event_words();
+        read_word_pair(crate::invariant_some(words[index..].first_chunk()))
+    }
+
+    fn set_completed_roll_credits(&mut self, scope: ScopeId, value: u64) {
+        let index = self.roll_credit_words(scope);
+        #[cfg(any(kani, all(test, hibana_repo_tests)))]
+        self.record_completion_mutation();
+        let words =
+            crate::invariant_some(self.completed_event_words_mut()[index..].first_chunk_mut());
+        write_word_pair(words, value);
+    }
+
+    /// The outermost repeated child with an unconsumed completed visit can
+    /// contribute to this parent while its current visit keeps progressing.
+    pub(crate) fn credited_roll_child(&self, parent: ScopeId, index: usize) -> Option<ScopeId> {
+        if !matches!(
+            parent.kind(),
+            Some(crate::global::const_dsl::ScopeKind::Roll)
+        ) || self
+            .machine()
+            .event_program()
+            .footprint()
+            .borrow_epoch_count
+            == 0
+        {
+            return None;
+        }
+        let mut found = None;
+        let mut slot = 0;
+        while let Some((scope, row)) = self.machine().roll_scope_row_by_slot(slot) {
+            if !scope.same(parent)
+                && self.roll_scope_nested_within(scope, parent)
+                && row.start() <= index
+                && index < row.end()
+                && self.completed_roll_credits(scope) != 0
+            {
+                found = Some(found.map_or(scope, |prior| self.outer_roll_scope(prior, scope)));
+            }
+            slot += 1;
+        }
+        found
+    }
+
+    pub(crate) fn roll_reentry_preserved_child(
+        &self,
+        parent: ScopeId,
+        index: usize,
+        entry: Option<usize>,
+    ) -> Option<ScopeId> {
+        let entry = entry?;
+        let child = self.credited_roll_child(parent, index)?;
+        if self.roll_scope_contains_index(child, entry) {
+            return None;
+        }
+        let program = self.program_ref();
+        let source = crate::invariant_some(self.machine().event_program().operation_at(entry))
+            .0
+            .dense_ordinal();
+        let (start, end) =
+            crate::invariant_some((0..program.source_scope_marker_count()).find_map(|marker| {
+                let (scope, start, end) = program.source_roll_at(marker)?;
+                scope.same(child).then_some((start, end))
+            }));
+        (0..program.source_scope_marker_count())
+            .any(|marker| {
+                program
+                    .source_parallel_at(marker)
+                    .is_some_and(|(a, split, b)| {
+                        (a <= start && end <= split && split <= source && source < b)
+                            || (a <= source && source < split && split <= start && end <= b)
+                    })
+            })
+            .then_some(child)
+    }
+
+    pub(crate) fn roll_reentry_preserves_route(
+        &self,
+        parent: ScopeId,
+        route: ScopeId,
+        entry: usize,
+    ) -> bool {
+        let Some(row) = self.route_scope_rows(route) else {
+            return false;
+        };
+        self.roll_reentry_preserved_child(parent, row.start(), Some(entry))
+            .is_some_and(|child| self.route_scope_contained_in_roll_scope(route, child))
+    }
+
     fn roll_epoch_word_start(&self) -> usize {
         (self.local_steps_len() + self.machine().event_program().footprint().roll_scope_count)
             .div_ceil(32)
@@ -12,7 +137,7 @@ impl EventCursor {
             if candidate.same(scope) {
                 let index = self.roll_epoch_word_start() + 2 * slot;
                 let words = self.completed_event_words();
-                return u64::from(words[index]) | (u64::from(words[index + 1]) << 32);
+                return read_word_pair(crate::invariant_some(words[index..].first_chunk()));
             }
             slot += 1;
         }
@@ -48,7 +173,7 @@ impl EventCursor {
                 continue;
             };
             let mut committed = |scope| selected(scope, EventArmView::Committed);
-            if !self.roll_scope_events_complete(row, &mut committed) {
+            if !self.roll_scope_events_complete(scope, &mut committed) {
                 continue;
             }
             let mut entry = |scope| selected(scope, EventArmView::Preview);
@@ -89,7 +214,7 @@ impl EventCursor {
             && self
                 .machine()
                 .roll_scope_row(scope)
-                .is_some_and(|row| self.roll_scope_events_complete(row, selected))
+                .is_some_and(|_| self.roll_scope_events_complete(scope, selected))
     }
 
     pub(crate) fn roll_reentry_epochs_available(&self, scope: ScopeId) -> bool {
@@ -101,6 +226,9 @@ impl EventCursor {
             == 0
         {
             return true;
+        }
+        if self.completed_roll_credits(scope) == u64::MAX {
+            return false;
         }
         let Some((start, end)) = self.reentry_scope_event_bounds(scope) else {
             return false;
@@ -138,15 +266,34 @@ impl EventCursor {
         scopes
     }
 
-    /// A restart replaces the current visit, but cannot revoke prerequisites
-    /// already established for the enclosing continuation. These bits belong
-    /// to that enclosing visit: restarting an ancestor clears its descendants.
-    pub(super) fn retain_reentry_completion(&mut self, restarting: ScopeId) {
+    /// A parent restart consumes one completed visit of each independent child
+    /// whose current progress is retained. Its sequential descendants restart
+    /// with the new parent visit.
+    pub(super) fn retain_reentry_completion(&mut self, restarting: ScopeId, entry: Option<usize>) {
         let Some((start, end)) = self.reentry_scope_event_bounds(restarting) else {
             crate::invariant();
         };
-        let mut slot = 0;
-        while let Some((scope, range)) = self.machine().roll_scope_row_by_slot(slot) {
+        let credits = self
+            .machine()
+            .event_program()
+            .footprint()
+            .borrow_epoch_count
+            != 0;
+        let count = self.machine().event_program().footprint().roll_scope_count;
+        for slot in (0..count).rev() {
+            let (scope, range) = crate::invariant_some(self.machine().roll_scope_row_by_slot(slot));
+            let preserved = if credits && !scope.same(restarting) {
+                self.roll_reentry_preserved_child(restarting, range.start(), entry)
+                    .filter(|ancestor| self.roll_scope_nested_within(scope, *ancestor))
+            } else {
+                None
+            };
+            if let Some(ancestor) = preserved {
+                if ancestor.same(scope) {
+                    self.set_completed_roll_credits(scope, self.completed_roll_credits(scope) - 1);
+                }
+                continue;
+            }
             let contained = start <= range.start()
                 && range.end() <= end
                 && (scope.same(restarting)
@@ -166,12 +313,17 @@ impl EventCursor {
                 #[cfg(any(kani, all(test, hibana_repo_tests)))]
                 self.record_completion_mutation();
                 let words = crate::invariant_some(
-                    self.completed_event_words_mut().get_mut(index..index + 2),
+                    self.completed_event_words_mut()[index..].first_chunk_mut(),
                 );
-                words[0] = epoch as u32;
-                words[1] = (epoch >> 32) as u32;
+                write_word_pair(words, epoch);
             }
             if scope.same(restarting) {
+                if credits {
+                    self.set_completed_roll_credits(
+                        scope,
+                        crate::invariant_some(self.completed_roll_credits(scope).checked_add(1)),
+                    );
+                }
                 self.write_completion_bit(self.local_steps_len() + slot, true);
             } else if start <= range.start()
                 && range.end() <= end
@@ -179,9 +331,11 @@ impl EventCursor {
                     || range.end() != end
                     || restarting.local_ordinal() < scope.local_ordinal())
             {
+                if credits {
+                    self.set_completed_roll_credits(scope, 0);
+                }
                 self.write_completion_bit(self.local_steps_len() + slot, false);
             }
-            slot += 1;
         }
     }
 

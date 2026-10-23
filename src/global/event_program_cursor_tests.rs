@@ -1807,7 +1807,7 @@ impl ProductionCursorTrace {
             {
                 let reentry_scope =
                     reentry_scope.or_else(|| self.body_reentry_scope_for_step(progress_step));
-                self.clear_body_reentry_scope(reentry_scope);
+                self.clear_body_reentry_scope(reentry_scope, idx);
                 self.record_event_conflict_selection(idx);
                 self.cursor_mut().set_index(cursor_after);
                 let _ = self
@@ -1839,20 +1839,24 @@ impl ProductionCursorTrace {
         self.body_reentry_scope_for_step(step)
     }
 
-    fn clear_body_reentry_scope(&mut self, reentry_scope: Option<ScopeId>) {
+    fn clear_body_reentry_scope(&mut self, reentry_scope: Option<ScopeId>, entry: usize) {
         if let Some(scope) = reentry_scope {
-            self.cursor_mut().clear_reentry_scope_events(scope);
-            self.clear_selected_routes_inside_roll(scope);
+            self.clear_selected_routes_inside_roll(scope, entry);
+            self.cursor_mut()
+                .clear_reentry_scope_events(scope, Some(entry));
         }
     }
 
-    fn clear_selected_routes_inside_roll(&mut self, scope: ScopeId) {
+    fn clear_selected_routes_inside_roll(&mut self, scope: ScopeId, entry: usize) {
         let mut idx = 0usize;
         while idx < self.selected.len() {
             let route_scope = self.selected[idx].0;
             if self
                 .cursor()
                 .route_scope_contained_in_roll_scope(route_scope, scope)
+                && !self
+                    .cursor()
+                    .roll_reentry_preserves_route(scope, route_scope, entry)
             {
                 self.selected.remove(idx);
             } else {
@@ -1933,7 +1937,7 @@ impl ProductionCursorTrace {
                 "route scope arm replacement requires completed reentrant arm"
             );
             self.selected[idx].1 = arm;
-            self.cursor_mut().clear_reentry_scope_events(scope);
+            self.cursor_mut().clear_reentry_scope_events(scope, None);
             let mut candidate_idx = 0usize;
             while candidate_idx < self.selected.len() {
                 let candidate = self.selected[candidate_idx].0;

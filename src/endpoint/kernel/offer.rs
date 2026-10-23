@@ -434,8 +434,15 @@ where
                             .progress
                             .cursor
                             .passive_child_scope(stage.selection().scope_id, resolved.selected_arm)
+                        && self
+                            .controller_arm_send_preview(
+                                stage.selection().scope_id,
+                                resolved.selected_arm,
+                            )
+                            .is_none()
                     {
-                        // The child owns the next visible event. Carry the affine preview
+                        // With no independent send head, the child owns the next
+                        // visible event. Carry the affine preview
                         // through every immediate decision; only event commit publishes
                         // the selected ancestry recorded by the resident descriptor.
                         let entry = self

@@ -581,15 +581,15 @@ pub(crate) const fn local_cursor_position_count(local_step_count: usize) -> usiz
 }
 
 impl RuntimeRoleFootprint {
-    /// Current completions and retained visits precede one reset epoch per
-    /// roll. Epoch words are aligned within the same cursor allocation.
+    /// Current completions and retained visits precede each roll's borrow
+    /// generation and completed-visit credits, in the same cursor allocation.
     #[inline(always)]
     pub(crate) const fn completion_bit_count(self) -> usize {
         let completions = self.local_step_count + self.roll_scope_count;
         if self.borrow_epoch_count == 0 {
             completions
         } else {
-            completions.next_multiple_of(32) + 64 * self.borrow_epoch_count
+            completions.next_multiple_of(32) + 128 * self.borrow_epoch_count
         }
     }
 

@@ -2,6 +2,157 @@ use super::{EventCursor, EventCursorState};
 use crate::{g, global::compiled::images::RoleDescriptorRef};
 use core::mem::MaybeUninit;
 
+#[cfg(all(test, hibana_repo_tests))]
+#[test]
+fn an_independent_child_visit_keeps_the_completed_parent_entry_available() {
+    for extra_complete_visit in [false, true] {
+        check_independent_child_before_parent_entry(extra_complete_visit);
+        check_independent_child_after_parent_entry(extra_complete_visit);
+    }
+}
+
+#[cfg(all(test, hibana_repo_tests))]
+fn check_independent_child_before_parent_entry(extra_complete_visit: bool) {
+    with_independent_child_cut(extra_complete_visit, |cursor, _| {
+        let parent_entry = cursor.try_recv_meta_at(0).unwrap();
+        assert!(
+            cursor
+                .event_enabled(0, parent_entry.into(), &mut |_, _| None)
+                .is_ok()
+        );
+        let old_parent_tail = cursor.try_send_meta_at(1).unwrap();
+        assert!(
+            cursor
+                .event_enabled(1, old_parent_tail.into(), &mut |_, _| None)
+                .is_err()
+        );
+        let current_child_head = cursor.try_recv_meta_at(2).unwrap();
+        assert!(
+            cursor
+                .event_enabled(2, current_child_head.into(), &mut |_, _| None)
+                .is_err()
+        );
+        let current_child_tail = cursor.try_send_meta_at(3).unwrap();
+        assert!(
+            cursor
+                .event_enabled(3, current_child_tail.into(), &mut |_, _| None)
+                .is_ok()
+        );
+    });
+}
+
+#[cfg(all(test, hibana_repo_tests))]
+fn check_independent_child_after_parent_entry(extra_complete_visit: bool) {
+    with_independent_child_cut(extra_complete_visit, |cursor, parent| {
+        cursor.clear_reentry_scope_events(parent, Some(0));
+        assert!(cursor.local_event_done(2));
+        assert!(!cursor.local_event_done(3));
+        for index in 0..2 {
+            let step = cursor
+                .relocatable_resident_lane_step_at_index(index, 0)
+                .unwrap();
+            cursor.advance_lane_to_relocatable_step(step);
+        }
+        let parent_entry = cursor.try_recv_meta_at(0).unwrap();
+        assert_eq!(
+            cursor
+                .event_enabled(0, parent_entry.into(), &mut |_, _| None)
+                .is_ok(),
+            extra_complete_visit,
+        );
+        let current_child_head = cursor.try_recv_meta_at(2).unwrap();
+        assert!(
+            cursor
+                .event_enabled(2, current_child_head.into(), &mut |_, _| None)
+                .is_err()
+        );
+    });
+}
+
+#[cfg(all(test, hibana_repo_tests))]
+fn with_independent_child_cut(
+    extra_complete_visit: bool,
+    check: impl FnOnce(&mut EventCursor, crate::global::const_dsl::ScopeId),
+) {
+    let global = g::par(
+        g::seq(
+            g::send::<0, 1, g::Msg<0, ()>>(),
+            g::send::<1, 0, g::Msg<1, ()>>(),
+        ),
+        g::seq(
+            g::send::<0, 1, g::Msg<2, ()>>(),
+            g::send::<1, 0, g::Msg<3, ()>>(),
+        )
+        .roll(),
+    )
+    .roll();
+    let projected = crate::runtime::program::project::<1>(&global);
+    let descriptor = RoleDescriptorRef::from_resident(projected.role_image_ref());
+    let mut state = MaybeUninit::<EventCursorState>::uninit();
+    let mut cursor = MaybeUninit::<EventCursor>::uninit();
+    let mut heads = [0u16; 2];
+    let mut labels = [0u16; 2];
+    let mut completed = [0u32; 9];
+    assert_eq!(descriptor.logical_lane_count(), heads.len());
+    assert_eq!(
+        projected
+            .role_image_ref()
+            .footprint()
+            .completion_bit_count()
+            .div_ceil(32),
+        completed.len()
+    );
+    // SAFETY: each checked descriptor section has disjoint stationary storage,
+    // and the cursor is used only while all these arrays remain live.
+    unsafe {
+        EventCursor::init_from_compiled(
+            cursor.as_mut_ptr(),
+            state.as_mut_ptr(),
+            heads.as_mut_ptr(),
+            labels.as_mut_ptr(),
+            completed.as_mut_ptr(),
+            descriptor,
+        );
+    }
+    // SAFETY: the production initializer wrote both cursor objects above.
+    let cursor = unsafe { cursor.assume_init_mut() };
+    let child = (0..2)
+        .filter_map(|slot| cursor.machine().roll_scope_row_by_slot(slot))
+        .find(|(_, row)| row.start() == 2 && row.end() == 4)
+        .unwrap()
+        .0;
+    let parent = (0..2)
+        .filter_map(|slot| cursor.machine().roll_scope_row_by_slot(slot))
+        .find(|(scope, _)| *scope != child)
+        .unwrap()
+        .0;
+    for index in 0..4 {
+        cursor.mark_local_event_done(index);
+    }
+    let parent_entry = cursor.try_recv_meta_at(0).unwrap();
+    assert!(
+        cursor
+            .event_enabled(0, parent_entry.into(), &mut |_, _| None)
+            .is_ok()
+    );
+
+    if extra_complete_visit {
+        cursor.clear_reentry_scope_events(child, None);
+        for index in 2..4 {
+            let step = cursor
+                .relocatable_resident_lane_step_at_index(index, 1)
+                .unwrap();
+            cursor.advance_lane_to_relocatable_step(step);
+        }
+    }
+    cursor.clear_reentry_scope_events(child, None);
+    let child_step = cursor
+        .relocatable_resident_lane_step_at_index(2, 1)
+        .unwrap();
+    cursor.advance_lane_to_relocatable_step(child_step);
+    check(cursor, parent);
+}
+
 fn parallel_continuation_global() -> impl crate::runtime::program::Projectable {
     g::par(
         g::seq(
@@ -40,7 +191,7 @@ fn with_parallel_continuation_cursor<const ROLE: u8>(check: impl FnOnce(&mut Eve
     let mut cursor = MaybeUninit::<EventCursor>::uninit();
     let mut heads = [0u16; 3];
     let mut labels = [0u16; 3];
-    let mut completed = [0u32; 3];
+    let mut completed = [0u32; 5];
     assert_eq!(descriptor.logical_lane_count(), heads.len());
     assert_eq!(
         projected
@@ -85,7 +236,7 @@ fn check_parallel_continuation_lifetime() {
             .completed_parallel_reentry(0, 2, &mut |_, _| None)
             .unwrap();
         assert!(cursor.borrowed_roll_reentry_is_current(scope, epoch, &mut |_| None));
-        cursor.clear_reentry_scope_events(scope);
+        cursor.clear_reentry_scope_events(scope, None);
         assert!(!cursor.borrowed_roll_reentry_is_current(scope, epoch, &mut |_| None));
         assert!(
             cursor
@@ -105,7 +256,7 @@ fn check_retained_continuation<const ROLE: u8>(
             cursor.mark_local_event_done(0);
             cursor.mark_local_event_done(1);
             let (scope, _) = cursor.machine().roll_scope_row_by_slot(0).unwrap();
-            cursor.clear_reentry_scope_events(scope);
+            cursor.clear_reentry_scope_events(scope, None);
         }
         assert_eq!(
             cursor.retained_roll_continuation_after(candidate, 0..source_end),
@@ -131,7 +282,7 @@ fn check_completed_choice_alternative(candidate: u8, complete: bool) {
     let mut cursor = MaybeUninit::<EventCursor>::uninit();
     let mut heads = [0u16; 2];
     let mut labels = [0u16; 2];
-    let mut completed = [0u32; 5];
+    let mut completed = [0u32; 9];
     assert_eq!(descriptor.logical_lane_count(), heads.len());
     assert_eq!(
         projected
@@ -557,15 +708,14 @@ fn check_fresh_parallel_entry(candidate: u8) {
     let mut cursor = MaybeUninit::<EventCursor>::uninit();
     let mut heads = [0u16; 2];
     let mut labels = [0u16; 2];
-    // Four events and two retained scopes use one word; the two source rolls
-    // each need two epoch words because this role can borrow their parent par.
-    let mut completed = [0u32; 5];
+    // One completion word and four generation/visit-credit words per roll.
+    let mut completed = [0u32; 9];
     assert_eq!(
         projected
             .role_image_ref()
             .footprint()
             .completion_bit_count(),
-        160
+        288
     );
     // SAFETY: the asserted descriptor footprint fits the disjoint stationary
     // arrays, and no cursor or reference escapes their lifetime.
@@ -609,7 +759,7 @@ fn check_fresh_parallel_entry(candidate: u8) {
     // Admission and borrow construction have not reset the committed visit.
     assert_eq!(cursor.completion_mutations(), 4);
     assert_eq!(cursor.roll_reentry_epoch(parent), 0);
-    cursor.clear_reentry_scope_events(parent);
+    cursor.clear_reentry_scope_events(parent, None);
     assert_eq!(cursor.roll_reentry_epoch(parent), 1);
     assert_eq!(cursor.roll_reentry_epoch(child), 1);
     assert!(!cursor.borrowed_roll_reentry_is_current(parent, 0, &mut |_| None));
@@ -710,7 +860,7 @@ fn check_child_after_same_lane_tail() {
     assert!(cursor.event_enabled(1, event, &mut |_, _| None).is_ok());
     event.body_reentry = parent;
     assert!(cursor.event_enabled(1, event, &mut |_, _| None).is_err());
-    cursor.clear_reentry_scope_events(child);
+    cursor.clear_reentry_scope_events(child, None);
     assert!(cursor.node_event_done_for_lane(0, 0));
     assert!(!cursor.node_event_done_for_lane(1, 0));
     assert!(!cursor.node_event_done_for_lane(2, 0));
@@ -761,7 +911,7 @@ fn with_cross_lane_prefix(
     let mut cursor = MaybeUninit::<EventCursor>::uninit();
     let mut heads = [0u16; 2];
     let mut labels = [0u16; 2];
-    let mut completed = [0u32; 5];
+    let mut completed = [0u32; 9];
     assert_eq!(descriptor.logical_lane_count(), heads.len());
     assert_eq!(
         projected
@@ -836,7 +986,7 @@ fn check_cross_lane_parent_admission() {
 
 fn check_cross_lane_child_reset() {
     with_cross_lane_prefix(|cursor, (child, _), lane| {
-        cursor.clear_reentry_scope_events(child);
+        cursor.clear_reentry_scope_events(child, None);
         assert!(cursor.node_event_done_for_lane(0, cursor.event_lane_at(0).unwrap()));
         assert!(!cursor.node_event_done_for_lane(1, cursor.event_lane_at(1).unwrap()));
         assert!(!cursor.node_event_done_for_lane(2, lane));
@@ -900,7 +1050,7 @@ fn with_parallel_prefix_cursor(independent: bool, check: impl FnOnce(&mut EventC
     let mut cursor = MaybeUninit::<EventCursor>::uninit();
     let mut heads = [0u16; 3];
     let mut labels = [0u16; 3];
-    let mut completed = [0u32; 3];
+    let mut completed = [0u32; 5];
     assert_eq!(
         descriptor.logical_lane_count(),
         if independent { 3 } else { 2 }

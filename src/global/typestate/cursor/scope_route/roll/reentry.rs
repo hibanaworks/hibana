@@ -63,14 +63,16 @@ impl EventCursor {
     }
 
     #[inline(never)]
-    pub(crate) fn clear_reentry_scope_events(&mut self, scope: ScopeId) {
-        self.retain_reentry_completion(scope);
+    pub(crate) fn clear_reentry_scope_events(&mut self, scope: ScopeId, entry: Option<usize>) {
         let Some((mut idx, end)) = self.reentry_scope_event_bounds(scope) else {
             crate::invariant();
         };
         let mut rewind_row = None;
         while idx < end && self.contains_node_index(idx) {
             if self.roll_scope_contains_index(scope, idx)
+                && self
+                    .roll_reentry_preserved_child(scope, idx, entry)
+                    .is_none()
                 && let Some(lane) = self.event_lane_at(idx)
             {
                 self.clear_node_event_done_for_lane(idx, lane);
@@ -94,6 +96,7 @@ impl EventCursor {
             }
             idx += 1;
         }
+        self.retain_reentry_completion(scope, entry);
     }
 
     #[inline(always)]

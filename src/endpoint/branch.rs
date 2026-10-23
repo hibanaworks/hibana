@@ -14,7 +14,10 @@ impl<'e, 'r, const ROLE: u8> RouteBranch<'e, 'r, ROLE> {
         Self { target }
     }
 
-    /// Return the selected arm's first logical label.
+    /// Return the logical message label of the previewed operation.
+    ///
+    /// A branch can start with several parallel operations. The label
+    /// identifies one operation that can enter the selected branch.
     ///
     /// Reading the label does not advance the protocol or invoke a resolver.
     #[inline]

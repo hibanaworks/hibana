@@ -132,7 +132,19 @@ run_miri_test \
   MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" \
     run_miri_test public-parallel-repeat-before-parallel-continuation -p hibana --test parallel_route_nesting \
     parallel_borrows_repeat_before_the_next_parallel_group -- --exact
+  MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" \
+    run_miri_test public-retained-parallel-nested-repeat -p hibana --test parallel_route_nesting \
+    retained_parallel_borrows_allow_a_nested_repeat -- --exact
+  run_miri_test public-parent-preview-before-child-choice -p hibana --test parallel_route_nesting \
+    a_parent_preview_can_use_a_parallel_head_before_a_child_choice -- --exact
+  run_miri_test public-parent-preview-before-child-resolver -p hibana --test parallel_route_nesting \
+    a_parent_preview_does_not_call_a_parallel_child_resolver -- --exact
 )
+
+MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \
+  independent-child-credit-cut -p hibana --lib \
+  global::typestate::cursor::parallel_reentry_tests::an_independent_child_visit_keeps_the_completed_parent_entry_available \
+  -- --exact
 
 MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \
   endpoint-owner-move \

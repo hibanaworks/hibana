@@ -34,7 +34,7 @@ fn compare_completion_domains(rows: &'static RoleImageRef) {
                 }
             };
             let mut slot = 0;
-            while let Some((_, row)) = cursor.machine().roll_scope_row_by_slot(slot) {
+            while let Some((scope, row)) = cursor.machine().roll_scope_row_by_slot(slot) {
                 // The selected local domain is independent of completion.
                 // Its set inclusion in the completion word specifies completion
                 // without depending on either iterator's traversal order.
@@ -60,7 +60,7 @@ fn compare_completion_domains(rows: &'static RoleImageRef) {
                     }
                     let before = cursor.completed_event_words().to_vec();
                     assert_eq!(
-                        cursor.roll_scope_events_complete(row, &mut selected),
+                        cursor.roll_scope_events_complete(scope, &mut selected),
                         members != 0 && completed & members == members,
                         "actor={} slot={slot} assignment={assignment} completed={completed:x}",
                         rows.role(),

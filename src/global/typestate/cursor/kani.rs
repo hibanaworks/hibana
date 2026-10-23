@@ -145,7 +145,7 @@ fn retained_roll_completion_is_scoped_and_cannot_authorize_an_outgoing_step() {
     };
     cursor.mark_local_event_done(0);
     cursor.mark_local_event_done(1);
-    cursor.clear_reentry_scope_events(inner);
+    cursor.clear_reentry_scope_events(inner, None);
     assert!(cursor.retained_roll_allows_predecessor(0, 2));
     assert!(!cursor.retained_roll_allows_predecessor(0, 1));
     assert!(!cursor.retained_roll_allows_predecessor(1, 0));
@@ -159,7 +159,7 @@ fn retained_roll_completion_is_scoped_and_cannot_authorize_an_outgoing_step() {
     cursor.mark_local_event_done(0);
     cursor.mark_local_event_done(1);
     cursor.mark_local_event_done(2);
-    cursor.clear_reentry_scope_events(outer);
+    cursor.clear_reentry_scope_events(outer, None);
     assert!(!cursor.retained_roll_allows_predecessor(0, target));
     assert_eq!(cursor.retained_continuation_start(target), None);
     assert_eq!(cursor.completion_mutations(), 13);

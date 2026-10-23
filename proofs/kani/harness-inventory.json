@@ -332,6 +332,9 @@
       "global::typestate::cursor::parallel_reentry_tests::same_lane_tail_preserves_the_childs_enclosing_prefix",
       "global::typestate::cursor::parallel_reentry_tests::selected_reentry_scope_preserves_cross_lane_predecessors"
     ],
+    "../../src/global/typestate/cursor/scope_route/roll/completion/kani.rs": [
+      "global::typestate::cursor::scope_route::roll::completion::kani::packed_roll_words_preserve_every_bit_and_the_adjacent_counter"
+    ],
     "../../src/global/typestate/facts/kani.rs": [
       "global::typestate::facts::kani::checked_state_index_acceptance_is_the_exact_present_identity_domain",
       "global::typestate::facts::kani::deterministic_inbound_key_matching_is_exact_on_every_available_axis",
@@ -425,13 +428,10 @@
       "transport::wire::kani::fixed_array_schema_identity_rejects_the_first_colliding_width"
     ]
   },
-  "contract-harnesses": {
-  },
-  "contracts": [
-
-  ],
+  "contract-harnesses": {},
+  "contracts": [],
   "totals": {
-    "standard-harnesses": 304,
+    "standard-harnesses": 305,
     "contract-harnesses": 0,
     "functions-under-contract": 0
   }

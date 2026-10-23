@@ -53,7 +53,7 @@ impl EventCursor {
                     })
             };
             if (prefix || enclosing || other_arm())
-                && self.roll_scope_events_complete(row, selected)
+                && self.roll_scope_events_complete(scope, selected)
             {
                 return true;
             }
@@ -137,9 +137,10 @@ impl EventCursor {
     #[inline(never)]
     fn roll_scope_events_complete(
         &self,
-        row: crate::global::event_program::LocalEventRowSet,
+        scope: ScopeId,
         selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
     ) -> bool {
+        let row = crate::invariant_some(self.machine().roll_scope_row(scope));
         let mut participates = |idx| {
             self.event_lane_at(idx).is_some()
                 && self.event_actor_is_local(idx, &mut *selected_arm_for_scope) != Some(false)
@@ -154,7 +155,7 @@ impl EventCursor {
         // can block this scope; do not decode its completed prefix repeatedly.
         if self
             .pending_event_steps(row.start()..row.end())
-            .any(&mut participates)
+            .any(|index| participates(index) && self.credited_roll_child(scope, index).is_none())
         {
             return false;
         }
@@ -203,6 +204,22 @@ impl EventCursor {
     }
 
     #[inline(never)]
+    fn credited_roll_path_complete(
+        &self,
+        mut scope: ScopeId,
+        index: usize,
+        selected: &mut dyn FnMut(ScopeId) -> Option<u8>,
+    ) -> bool {
+        while let Some(child) = self.credited_roll_child(scope, index) {
+            if !self.roll_scope_events_complete(child, selected) {
+                return false;
+            }
+            scope = child;
+        }
+        true
+    }
+
+    #[inline(never)]
     pub(super) fn complete_roll_body_scope_for_index(
         &self,
         idx: usize,
@@ -214,7 +231,8 @@ impl EventCursor {
         while let Some((scope, row)) = self.machine().roll_scope_row_by_slot(slot) {
             if row.start() <= idx
                 && idx < row.end()
-                && self.roll_scope_events_complete(row, &mut *selected_arm_for_scope)
+                && self.credited_roll_path_complete(scope, idx, &mut *selected_arm_for_scope)
+                && self.roll_scope_events_complete(scope, &mut *selected_arm_for_scope)
             {
                 best = Some(match best {
                     Some(current) => self.deeper_roll_scope(current, scope),
@@ -236,7 +254,7 @@ impl EventCursor {
                     && idx < row.end()
                     && !scope.same(best)
                     && self.roll_scope_nested_within(best, scope)
-                    && self.roll_scope_events_complete(row, &mut *selected_arm_for_scope)
+                    && self.roll_scope_events_complete(scope, &mut *selected_arm_for_scope)
                     && self.roll_scope_has_later_sequential_done_event(
                         scope,
                         best,

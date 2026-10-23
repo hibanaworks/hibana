@@ -16,6 +16,290 @@ use runtime_support::with_runtime_workspace;
 use tls_ref_support::with_resident_tls_ref;
 
 #[test]
+fn retained_parallel_borrows_allow_a_nested_repeat() {
+    use hibana::{Endpoint, runtime::transport::EndpointBinding};
+    type Loan<'r> = Msg<0, Endpoint<'r, 3>>;
+    type Read = Msg<1, ()>;
+    type Value = Msg<2, ()>;
+    type Return<'r> = Msg<3, Endpoint<'r, 3>>;
+    type Start = Msg<4, ()>;
+    type Work = Msg<5, ()>;
+    type Done = Msg<6, ()>;
+    type Ack = Msg<7, ()>;
+
+    let global = g::par(
+        g::seq(
+            g::send::<0, 1, Loan<'_>>(),
+            g::seq(
+                g::send::<3, 2, Read>(),
+                g::seq(g::send::<2, 3, Value>(), g::send::<1, 0, Return<'_>>()),
+            ),
+        ),
+        g::seq(
+            g::send::<0, 1, Start>(),
+            g::seq(
+                g::send::<1, 2, Work>(),
+                g::seq(g::send::<2, 1, Done>(), g::send::<1, 0, Ack>()),
+            ),
+        )
+        .roll(),
+    )
+    .roll();
+    let (p0, p1, p2, p3) = (
+        project::<0>(&global),
+        project::<1>(&global),
+        project::<2>(&global),
+        project::<3>(&global),
+    );
+    let sid = SessionId::new(92);
+    // SAFETY: the test owns one resource and its only initial binding.
+    let network =
+        in_memory::InMemoryTransport::new([((sid, 3), unsafe { EndpointBinding::new() })]);
+    let [mut slab0, mut slab1, mut slab2] =
+        [vec![0; 64 * 1024], vec![0; 64 * 1024], vec![0; 64 * 1024]];
+    let (mut s0, mut s1, mut s2) = (
+        SessionKitStorage::uninit(),
+        SessionKitStorage::uninit(),
+        SessionKitStorage::uninit(),
+    );
+    let rv0 = s0.init().rendezvous(&mut slab0, network.clone()).unwrap();
+    let rv1 = s1.init().rendezvous(&mut slab1, network.clone()).unwrap();
+    let rv2 = s2.init().rendezvous(&mut slab2, network).unwrap();
+    let mut owner = rv0.enter(sid, &p0).unwrap();
+    let mut worker = rv1.enter(sid, &p1).unwrap();
+    let mut service = rv2.enter(sid, &p2).unwrap();
+    let initial_db = rv0.enter(sid, &p3).unwrap();
+
+    tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .start_paused(true)
+        .build()
+        .unwrap()
+        .block_on(async {
+            tokio::time::timeout(core::time::Duration::from_secs(1), async {
+                tokio::join!(
+                    async {
+                        let mut db = initial_db;
+                        let [mut loan, mut work] = owner.par().unwrap();
+                        for visit in 0..2 {
+                            let (returned, ()) =
+                                tokio::join!(
+                                    async {
+                                        loan.send::<Loan<'_>>(db).await.unwrap_or_else(|error| {
+                                            panic!("owner loan in outer visit {visit}: {error:?}")
+                                        });
+                                        loan.recv::<Return<'_>>().await.expect("owner return")
+                                    },
+                                    async {
+                                        for inner in 0..2 {
+                                            work.send::<Start>(&()).await.unwrap_or_else(|error| {
+                                    panic!("owner start in visit {visit}/{inner}: {error:?}")
+                                });
+                                            work.recv::<Ack>().await.expect("owner ack");
+                                        }
+                                    },
+                                );
+                            db = returned;
+                        }
+                        drop(db);
+                    },
+                    async {
+                        let [mut loan, mut work] = worker.par().unwrap();
+                        for visit in 0..2 {
+                            tokio::join!(
+                                async {
+                                    let mut db =
+                                        loan.recv::<Loan<'_>>().await.unwrap_or_else(|error| {
+                                            panic!("worker loan in outer visit {visit}: {error:?}")
+                                        });
+                                    db.send::<Read>(&()).await.expect("worker read");
+                                    db.recv::<Value>().await.expect("worker value");
+                                    loan.send::<Return<'_>>(db).await.unwrap_or_else(|error| {
+                                        panic!("worker return in outer visit {visit}: {error:?}")
+                                    });
+                                },
+                                async {
+                                    for _ in 0..2 {
+                                        work.recv::<Start>().await.expect("worker start");
+                                        work.send::<Work>(&()).await.expect("worker work");
+                                        work.recv::<Done>().await.expect("worker done");
+                                        work.send::<Ack>(&()).await.expect("worker ack");
+                                    }
+                                },
+                            );
+                        }
+                    },
+                    async {
+                        let [mut db, mut work] = service.par().unwrap();
+                        for _ in 0..2 {
+                            tokio::join!(
+                                async {
+                                    db.recv::<Read>().await.expect("service read");
+                                    db.send::<Value>(&()).await.expect("service value");
+                                },
+                                async {
+                                    for _ in 0..2 {
+                                        work.recv::<Work>().await.expect("service work");
+                                        work.send::<Done>(&()).await.expect("service done");
+                                    }
+                                },
+                            );
+                        }
+                    },
+                );
+            })
+            .await
+            .expect("nested parallel repetition stalled");
+        });
+}
+
+#[test]
+fn a_parent_preview_can_use_a_parallel_head_before_a_child_choice() {
+    use hibana::runtime::resolver::{DecisionArm, ResolverRef};
+
+    let global = g::route(
+        g::send::<0, 1, Msg<0, ()>>(),
+        g::par(
+            g::route(g::send::<0, 1, Msg<4, ()>>(), g::send::<0, 1, Msg<8, ()>>()),
+            g::send::<0, 1, Msg<12, ()>>(),
+        ),
+    )
+    .resolve::<0>();
+    let (p0, p1) = (project::<0>(&global), project::<1>(&global));
+    let network = in_memory::InMemoryTransport::new([]);
+    let (mut slab0, mut slab1) = (vec![0; 8192], vec![0; 8192]);
+    let (mut s0, mut s1) = (SessionKitStorage::uninit(), SessionKitStorage::uninit());
+    let rv0 = s0.init().rendezvous(&mut slab0, network.clone()).unwrap();
+    let rv1 = s1.init().rendezvous(&mut slab1, network).unwrap();
+    rv0.set_resolver(
+        &p0,
+        ResolverRef::<0>::decision_state(&(), |_| Ok(DecisionArm::Right)),
+    )
+    .unwrap();
+    let sid = SessionId::new(93);
+    let (mut controller, mut receiver) =
+        (rv0.enter(sid, &p0).unwrap(), rv1.enter(sid, &p1).unwrap());
+
+    tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .start_paused(true)
+        .build()
+        .unwrap()
+        .block_on(async {
+            tokio::time::timeout(core::time::Duration::from_secs(1), async {
+                tokio::join!(
+                    async {
+                        let branch = controller.offer().await.unwrap();
+                        assert_eq!(branch.label(), 12);
+                        drop(branch);
+                        let [mut choice, mut ordinary] = controller.par().unwrap();
+                        tokio::join!(
+                            async { choice.send::<Msg<8, ()>>(&()).await.unwrap() },
+                            async { ordinary.send::<Msg<12, ()>>(&()).await.unwrap() },
+                        );
+                    },
+                    async {
+                        let branch = receiver.offer().await.unwrap();
+                        assert!([8, 12].contains(&branch.label()));
+                        drop(branch);
+                        let [mut choice, mut ordinary] = receiver.par().unwrap();
+                        tokio::join!(
+                            async {
+                                let branch = choice.offer().await.unwrap();
+                                assert_eq!(branch.label(), 8);
+                                branch.recv::<Msg<8, ()>>().await.unwrap();
+                            },
+                            async { ordinary.recv::<Msg<12, ()>>().await.unwrap() },
+                        );
+                    },
+                );
+            })
+            .await
+            .expect("a parent preview waited for its child's choice");
+        });
+}
+
+#[test]
+fn a_parent_preview_does_not_call_a_parallel_child_resolver() {
+    use core::cell::Cell;
+    use hibana::runtime::resolver::{DecisionArm, ResolverRef};
+
+    let child_decision = Cell::new(None);
+    let global = g::route(
+        g::send::<0, 1, Msg<0, ()>>(),
+        g::par(
+            g::route(g::send::<0, 1, Msg<4, ()>>(), g::send::<0, 1, Msg<8, ()>>()).resolve::<1>(),
+            g::send::<0, 1, Msg<12, ()>>(),
+        ),
+    )
+    .resolve::<0>();
+    let (p0, p1) = (project::<0>(&global), project::<1>(&global));
+    let network = in_memory::InMemoryTransport::new([]);
+    let (mut slab0, mut slab1) = (vec![0; 8192], vec![0; 8192]);
+    let (mut s0, mut s1) = (SessionKitStorage::uninit(), SessionKitStorage::uninit());
+    let rv0 = s0.init().rendezvous(&mut slab0, network.clone()).unwrap();
+    let rv1 = s1.init().rendezvous(&mut slab1, network).unwrap();
+    rv0.set_resolver(
+        &p0,
+        ResolverRef::<0>::decision_state(&(), |_| Ok(DecisionArm::Right)),
+    )
+    .unwrap();
+    rv0.set_resolver(
+        &p0,
+        ResolverRef::<1>::decision_state(&child_decision, |decision| {
+            Ok(decision.get().expect("child decision is not available yet"))
+        }),
+    )
+    .unwrap();
+    let sid = SessionId::new(94);
+    let (mut controller, mut receiver) =
+        (rv0.enter(sid, &p0).unwrap(), rv1.enter(sid, &p1).unwrap());
+
+    tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .start_paused(true)
+        .build()
+        .unwrap()
+        .block_on(async {
+            tokio::time::timeout(core::time::Duration::from_secs(1), async {
+                tokio::join!(
+                    async {
+                        let branch = controller.offer().await.unwrap();
+                        assert_eq!(branch.label(), 12);
+                        drop(branch);
+                        let [mut choice, mut ordinary] = controller.par().unwrap();
+                        tokio::join!(
+                            async {
+                                child_decision.set(Some(DecisionArm::Right));
+                                let branch = choice.offer().await.unwrap();
+                                assert_eq!(branch.label(), 8);
+                                branch.send::<Msg<8, ()>>(&()).await.unwrap();
+                            },
+                            async { ordinary.send::<Msg<12, ()>>(&()).await.unwrap() },
+                        );
+                    },
+                    async {
+                        let branch = receiver.offer().await.unwrap();
+                        assert!([8, 12].contains(&branch.label()));
+                        drop(branch);
+                        let [mut choice, mut ordinary] = receiver.par().unwrap();
+                        tokio::join!(
+                            async {
+                                let branch = choice.offer().await.unwrap();
+                                assert_eq!(branch.label(), 8);
+                                branch.recv::<Msg<8, ()>>().await.unwrap();
+                            },
+                            async { ordinary.recv::<Msg<12, ()>>().await.unwrap() },
+                        );
+                    },
+                );
+            })
+            .await
+            .expect("a parent preview waited for its child's resolver");
+        });
+}
+
+#[test]
 fn parallel_borrows_repeat_before_the_next_parallel_group() {
     use hibana::{Endpoint, runtime::transport::EndpointBinding};
     type Loan<'r> = Msg<4, Endpoint<'r, 3>>;
