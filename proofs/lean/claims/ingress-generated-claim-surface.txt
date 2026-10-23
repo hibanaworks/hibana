@@ -20,22 +20,22 @@ ingressWorkerFrameSelectsWorker : Option.map (fun x => x.eventId)
     (ingressImage.resolveActorInbound? 1 ingressWorkerKey ingressAdmitted) =
   some 1
 resourceUnrelatedViewRejected : ingressImage.resolveActorInbound? 255 ingressResourceKey ingressAdmitted = none
-resourceWrongFrameLabelRejected : ingressImage.resolveActorInbound? 10 { source := 0, lane := 0, frameLabel := 128 }
+resourceWrongFrameLabelRejected : ingressImage.resolveActorInbound? 10 { source := 0, lane := 0, frameLabel := 130 }
     ingressAdmitted =
   none
-resourceWrongLaneRejected : ingressImage.resolveActorInbound? 10 { source := 0, lane := 128, frameLabel := 0 }
+resourceWrongLaneRejected : ingressImage.resolveActorInbound? 10 { source := 0, lane := 128, frameLabel := 2 }
     ingressAdmitted =
   none
-resourceWrongSourceRejected : ingressImage.resolveActorInbound? 10 { source := 128, lane := 0, frameLabel := 0 }
+resourceWrongSourceRejected : ingressImage.resolveActorInbound? 10 { source := 128, lane := 0, frameLabel := 2 }
     ingressAdmitted =
   none
 workerUnrelatedViewRejected : ingressImage.resolveActorInbound? 255 ingressWorkerKey ingressAdmitted = none
-workerWrongFrameLabelRejected : ingressImage.resolveActorInbound? 1 { source := 0, lane := 0, frameLabel := 128 }
+workerWrongFrameLabelRejected : ingressImage.resolveActorInbound? 1 { source := 0, lane := 0, frameLabel := 129 }
     ingressAdmitted =
   none
-workerWrongLaneRejected : ingressImage.resolveActorInbound? 1 { source := 0, lane := 128, frameLabel := 0 }
+workerWrongLaneRejected : ingressImage.resolveActorInbound? 1 { source := 0, lane := 128, frameLabel := 1 }
     ingressAdmitted =
   none
-workerWrongSourceRejected : ingressImage.resolveActorInbound? 1 { source := 128, lane := 0, frameLabel := 0 }
+workerWrongSourceRejected : ingressImage.resolveActorInbound? 1 { source := 128, lane := 0, frameLabel := 1 }
     ingressAdmitted =
   none

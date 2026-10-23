@@ -14,7 +14,7 @@ coLocatedRowsCannotBecomeSelfSend : (have __src := coLocatedRowsImage;
         routeArmLaneStepCount := __src.routeArmLaneStepCount, routeCommitRowCount := __src.routeCommitRowCount,
         rollScopeCount := __src.rollScopeCount, rollEntryViewCount := __src.rollEntryViewCount,
         ownedReceiptCount := __src.ownedReceiptCount, programColumnBytes := __src.programColumnBytes,
-        programBytes := __src.programBytes, roleBytes := coLocatedRowsImage.roleBytes.set 19 0 }).actorRowsCheck
+        programBytes := __src.programBytes, roleBytes := coLocatedRowsImage.roleBytes.set 17 0 }).actorRowsCheck
     coLocatedRowsChoreo =
   false
 coLocatedRowsInvalidDirectionRejected : (have __src := coLocatedRowsImage;
@@ -30,7 +30,7 @@ coLocatedRowsInvalidDirectionRejected : (have __src := coLocatedRowsImage;
         routeArmLaneStepCount := __src.routeArmLaneStepCount, routeCommitRowCount := __src.routeCommitRowCount,
         rollScopeCount := __src.rollScopeCount, rollEntryViewCount := __src.rollEntryViewCount,
         ownedReceiptCount := __src.ownedReceiptCount, programColumnBytes := __src.programColumnBytes,
-        programBytes := __src.programBytes, roleBytes := coLocatedRowsImage.roleBytes.set 9 6 }).actorRowsCheck
+        programBytes := __src.programBytes, roleBytes := coLocatedRowsImage.roleBytes.set 8 6 }).actorRowsCheck
     coLocatedRowsChoreo =
   false
 coLocatedRowsMissingOperationsRejected : (have __src := coLocatedRowsImage;
@@ -88,7 +88,7 @@ nestedActorOrderInvalidDirectionRejected : (have __src := nestedActorOrderImage;
         routeArmLaneStepCount := __src.routeArmLaneStepCount, routeCommitRowCount := __src.routeCommitRowCount,
         rollScopeCount := __src.rollScopeCount, rollEntryViewCount := __src.rollEntryViewCount,
         ownedReceiptCount := __src.ownedReceiptCount, programColumnBytes := __src.programColumnBytes,
-        programBytes := __src.programBytes, roleBytes := nestedActorOrderImage.roleBytes.set 9 6 }).actorRowsCheck
+        programBytes := __src.programBytes, roleBytes := nestedActorOrderImage.roleBytes.set 8 6 }).actorRowsCheck
     nestedActorOrderChoreo =
   false
 nestedActorOrderMissingOperationsRejected : (have __src := nestedActorOrderImage;
@@ -123,7 +123,7 @@ nestedActorRoutesInvalidDirectionRejected : (have __src := nestedActorRoutesImag
         routeArmLaneStepCount := __src.routeArmLaneStepCount, routeCommitRowCount := __src.routeCommitRowCount,
         rollScopeCount := __src.rollScopeCount, rollEntryViewCount := __src.rollEntryViewCount,
         ownedReceiptCount := __src.ownedReceiptCount, programColumnBytes := __src.programColumnBytes,
-        programBytes := __src.programBytes, roleBytes := nestedActorRoutesImage.roleBytes.set 9 6 }).actorRowsCheck
+        programBytes := __src.programBytes, roleBytes := nestedActorRoutesImage.roleBytes.set 8 6 }).actorRowsCheck
     nestedActorRoutesChoreo =
   false
 nestedActorRoutesMissingOperationsRejected : (have __src := nestedActorRoutesImage;
@@ -174,7 +174,7 @@ ordinaryReceiverRowsInvalidDirectionRejected : (have __src := ordinaryReceiverRo
         routeArmLaneStepCount := __src.routeArmLaneStepCount, routeCommitRowCount := __src.routeCommitRowCount,
         rollScopeCount := __src.rollScopeCount, rollEntryViewCount := __src.rollEntryViewCount,
         ownedReceiptCount := __src.ownedReceiptCount, programColumnBytes := __src.programColumnBytes,
-        programBytes := __src.programBytes, roleBytes := ordinaryReceiverRowsImage.roleBytes.set 9 6 }).actorRowsCheck
+        programBytes := __src.programBytes, roleBytes := ordinaryReceiverRowsImage.roleBytes.set 8 6 }).actorRowsCheck
     ordinaryReceiverRowsChoreo =
   false
 ordinaryReceiverRowsMissingOperationsRejected : (have __src := ordinaryReceiverRowsImage;
@@ -296,7 +296,7 @@ ownedConditionalFirstRowsInvalidDirectionRejected : (have __src := ownedConditio
         rollScopeCount := __src.rollScopeCount, rollEntryViewCount := __src.rollEntryViewCount,
         ownedReceiptCount := __src.ownedReceiptCount, programColumnBytes := __src.programColumnBytes,
         programBytes := __src.programBytes,
-        roleBytes := ownedConditionalFirstRowsImage.roleBytes.set 9 6 }).actorRowsCheck
+        roleBytes := ownedConditionalFirstRowsImage.roleBytes.set 8 6 }).actorRowsCheck
     ownedConditionalFirstRowsChoreo =
   false
 ownedConditionalFirstRowsMissingOperationsRejected : (have __src := ownedConditionalFirstRowsImage;
@@ -338,7 +338,7 @@ ownedConditionalSecondRowsInvalidDirectionRejected : (have __src := ownedConditi
         rollScopeCount := __src.rollScopeCount, rollEntryViewCount := __src.rollEntryViewCount,
         ownedReceiptCount := __src.ownedReceiptCount, programColumnBytes := __src.programColumnBytes,
         programBytes := __src.programBytes,
-        roleBytes := ownedConditionalSecondRowsImage.roleBytes.set 9 6 }).actorRowsCheck
+        roleBytes := ownedConditionalSecondRowsImage.roleBytes.set 8 6 }).actorRowsCheck
     ownedConditionalSecondRowsChoreo =
   false
 ownedConditionalSecondRowsMissingOperationsRejected : (have __src := ownedConditionalSecondRowsImage;
@@ -488,7 +488,7 @@ ownedNativeParallelPeerRowsInvalidDirectionRejected : (have __src := ownedNative
         rollScopeCount := __src.rollScopeCount, rollEntryViewCount := __src.rollEntryViewCount,
         ownedReceiptCount := __src.ownedReceiptCount, programColumnBytes := __src.programColumnBytes,
         programBytes := __src.programBytes,
-        roleBytes := ownedNativeParallelPeerRowsImage.roleBytes.set 9 6 }).actorRowsCheck
+        roleBytes := ownedNativeParallelPeerRowsImage.roleBytes.set 8 6 }).actorRowsCheck
     ownedNativeParallelPeerRowsChoreo =
   false
 ownedNativeParallelPeerRowsMissingOperationsRejected : (have __src := ownedNativeParallelPeerRowsImage;
@@ -530,7 +530,7 @@ ownedNativeParallelRowsInvalidDirectionRejected : (have __src := ownedNativePara
         rollScopeCount := __src.rollScopeCount, rollEntryViewCount := __src.rollEntryViewCount,
         ownedReceiptCount := __src.ownedReceiptCount, programColumnBytes := __src.programColumnBytes,
         programBytes := __src.programBytes,
-        roleBytes := ownedNativeParallelRowsImage.roleBytes.set 9 6 }).actorRowsCheck
+        roleBytes := ownedNativeParallelRowsImage.roleBytes.set 8 6 }).actorRowsCheck
     ownedNativeParallelRowsChoreo =
   false
 ownedNativeParallelRowsMissingOperationsRejected : (have __src := ownedNativeParallelRowsImage;
@@ -570,7 +570,7 @@ ownedNativeServiceRowsInvalidDirectionRejected : (have __src := ownedNativeServi
         routeArmLaneStepCount := __src.routeArmLaneStepCount, routeCommitRowCount := __src.routeCommitRowCount,
         rollScopeCount := __src.rollScopeCount, rollEntryViewCount := __src.rollEntryViewCount,
         ownedReceiptCount := __src.ownedReceiptCount, programColumnBytes := __src.programColumnBytes,
-        programBytes := __src.programBytes, roleBytes := ownedNativeServiceRowsImage.roleBytes.set 9 6 }).actorRowsCheck
+        programBytes := __src.programBytes, roleBytes := ownedNativeServiceRowsImage.roleBytes.set 8 6 }).actorRowsCheck
     ownedNativeServiceRowsChoreo =
   false
 ownedNativeServiceRowsMissingOperationsRejected : (have __src := ownedNativeServiceRowsImage;
@@ -607,7 +607,7 @@ ownedNativeWorkerRowsInvalidDirectionRejected : (have __src := ownedNativeWorker
         routeArmLaneStepCount := __src.routeArmLaneStepCount, routeCommitRowCount := __src.routeCommitRowCount,
         rollScopeCount := __src.rollScopeCount, rollEntryViewCount := __src.rollEntryViewCount,
         ownedReceiptCount := __src.ownedReceiptCount, programColumnBytes := __src.programColumnBytes,
-        programBytes := __src.programBytes, roleBytes := ownedNativeWorkerRowsImage.roleBytes.set 9 6 }).actorRowsCheck
+        programBytes := __src.programBytes, roleBytes := ownedNativeWorkerRowsImage.roleBytes.set 8 6 }).actorRowsCheck
     ownedNativeWorkerRowsChoreo =
   false
 ownedNativeWorkerRowsMissingOperationsRejected : (have __src := ownedNativeWorkerRowsImage;
@@ -704,7 +704,7 @@ ownedParallelWorkerRowsInvalidDirectionRejected : (have __src := ownedParallelWo
         rollScopeCount := __src.rollScopeCount, rollEntryViewCount := __src.rollEntryViewCount,
         ownedReceiptCount := __src.ownedReceiptCount, programColumnBytes := __src.programColumnBytes,
         programBytes := __src.programBytes,
-        roleBytes := ownedParallelWorkerRowsImage.roleBytes.set 9 6 }).actorRowsCheck
+        roleBytes := ownedParallelWorkerRowsImage.roleBytes.set 8 6 }).actorRowsCheck
     ownedParallelWorkerRowsChoreo =
   false
 ownedParallelWorkerRowsMissingOperationsRejected : (have __src := ownedParallelWorkerRowsImage;
@@ -739,7 +739,7 @@ ownedServiceRowsInvalidDirectionRejected : (have __src := ownedServiceRowsImage;
         routeArmLaneStepCount := __src.routeArmLaneStepCount, routeCommitRowCount := __src.routeCommitRowCount,
         rollScopeCount := __src.rollScopeCount, rollEntryViewCount := __src.rollEntryViewCount,
         ownedReceiptCount := __src.ownedReceiptCount, programColumnBytes := __src.programColumnBytes,
-        programBytes := __src.programBytes, roleBytes := ownedServiceRowsImage.roleBytes.set 9 6 }).actorRowsCheck
+        programBytes := __src.programBytes, roleBytes := ownedServiceRowsImage.roleBytes.set 8 6 }).actorRowsCheck
     ownedServiceRowsChoreo =
   false
 ownedServiceRowsMissingOperationsRejected : (have __src := ownedServiceRowsImage;
@@ -774,7 +774,7 @@ ownedWorkerRowsInvalidDirectionRejected : (have __src := ownedWorkerRowsImage;
         routeArmLaneStepCount := __src.routeArmLaneStepCount, routeCommitRowCount := __src.routeCommitRowCount,
         rollScopeCount := __src.rollScopeCount, rollEntryViewCount := __src.rollEntryViewCount,
         ownedReceiptCount := __src.ownedReceiptCount, programColumnBytes := __src.programColumnBytes,
-        programBytes := __src.programBytes, roleBytes := ownedWorkerRowsImage.roleBytes.set 9 6 }).actorRowsCheck
+        programBytes := __src.programBytes, roleBytes := ownedWorkerRowsImage.roleBytes.set 8 6 }).actorRowsCheck
     ownedWorkerRowsChoreo =
   false
 ownedWorkerRowsMissingOperationsRejected : (have __src := ownedWorkerRowsImage;

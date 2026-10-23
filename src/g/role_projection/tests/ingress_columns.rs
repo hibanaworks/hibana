@@ -47,10 +47,11 @@ pub(super) fn export() {
     let (worker, worker_view, left) = receives[0];
     let (resource, resource_view, right) = receives[1];
     assert_eq!((worker_view, resource_view), (1, 10));
-    assert_eq!(
-        (left.peer, left.lane, left.frame_label),
-        (right.peer, right.lane, right.frame_label),
-    );
+    assert_eq!((left.peer, left.lane), (right.peer, right.lane));
+    assert_ne!(left.frame_label, right.frame_label);
+    for meta in [&left, &right] {
+        assert_eq!(meta.frame_label, meta.eff_index.dense_ordinal() as u16);
+    }
     assert!(ready[worker] && ready[resource]);
     assert!(completed.iter().filter(|&&done| done).count() == 1);
     let bools = |values: &[bool]| {

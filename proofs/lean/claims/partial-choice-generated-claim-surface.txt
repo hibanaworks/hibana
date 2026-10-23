@@ -94,7 +94,7 @@ ownedPartialFirstRowsInvalidDirectionRejected : (have __src := ownedPartialFirst
         routeArmLaneStepCount := __src.routeArmLaneStepCount, routeCommitRowCount := __src.routeCommitRowCount,
         rollScopeCount := __src.rollScopeCount, rollEntryViewCount := __src.rollEntryViewCount,
         ownedReceiptCount := __src.ownedReceiptCount, programColumnBytes := __src.programColumnBytes,
-        programBytes := __src.programBytes, roleBytes := ownedPartialFirstRowsImage.roleBytes.set 9 6 }).actorRowsCheck
+        programBytes := __src.programBytes, roleBytes := ownedPartialFirstRowsImage.roleBytes.set 8 6 }).actorRowsCheck
     ownedPartialFirstRowsChoreo =
   false
 ownedPartialFirstRowsMissingOperationsRejected : (have __src := ownedPartialFirstRowsImage;
@@ -134,7 +134,7 @@ ownedPartialSecondRowsInvalidDirectionRejected : (have __src := ownedPartialSeco
         routeArmLaneStepCount := __src.routeArmLaneStepCount, routeCommitRowCount := __src.routeCommitRowCount,
         rollScopeCount := __src.rollScopeCount, rollEntryViewCount := __src.rollEntryViewCount,
         ownedReceiptCount := __src.ownedReceiptCount, programColumnBytes := __src.programColumnBytes,
-        programBytes := __src.programBytes, roleBytes := ownedPartialSecondRowsImage.roleBytes.set 9 6 }).actorRowsCheck
+        programBytes := __src.programBytes, roleBytes := ownedPartialSecondRowsImage.roleBytes.set 8 6 }).actorRowsCheck
     ownedPartialSecondRowsChoreo =
   false
 ownedPartialSecondRowsMissingOperationsRejected : (have __src := ownedPartialSecondRowsImage;
@@ -171,7 +171,7 @@ ownedPartialThirdRowsInvalidDirectionRejected : (have __src := ownedPartialThird
         routeArmLaneStepCount := __src.routeArmLaneStepCount, routeCommitRowCount := __src.routeCommitRowCount,
         rollScopeCount := __src.rollScopeCount, rollEntryViewCount := __src.rollEntryViewCount,
         ownedReceiptCount := __src.ownedReceiptCount, programColumnBytes := __src.programColumnBytes,
-        programBytes := __src.programBytes, roleBytes := ownedPartialThirdRowsImage.roleBytes.set 9 6 }).actorRowsCheck
+        programBytes := __src.programBytes, roleBytes := ownedPartialThirdRowsImage.roleBytes.set 8 6 }).actorRowsCheck
     ownedPartialThirdRowsChoreo =
   false
 ownedPartialThirdRowsMissingOperationsRejected : (have __src := ownedPartialThirdRowsImage;

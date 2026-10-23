@@ -2,6 +2,7 @@
 //! Check grammar, source ownership, actor operations, dependency order and routes.
 //! Complete progress, reentry and public qualification remain separate obligations.
 use super::*;
+use crate::global::role_program::ROLE_IMAGE_EVENT_STRIDE;
 use crate::test_support::{lean_choreo::LeanChoreo, lean_descriptor::descriptor_source};
 use std::{format, fs, path::PathBuf, string::String, vec::Vec};
 
@@ -141,6 +142,7 @@ fn actor_certificate<const ROLE: u8, Steps: g::ProgramShape + LeanChoreo, const 
     assert!(descriptor.local_len() > 0);
     let choreo = Steps::lean_source();
     let image = descriptor_source(descriptor);
+    let flags_offset = ROLE_IMAGE_EVENT_STRIDE - 1;
     format!(
         "def {name}Choreo : Hibana.Choreo := {choreo}\n\n\
          def {name}Image : Hibana.RustDescriptorImage := {image}\n\n\
@@ -151,7 +153,7 @@ fn actor_certificate<const ROLE: u8, Steps: g::ProgramShape + LeanChoreo, const 
          theorem {name}ActorRoutesMatchSource :\n  \
          {name}Image.actorRouteCheck {name}Choreo = true := by\n  decide\n\n\
          theorem {name}InvalidDirectionRejected :\n  \
-         ({{ {name}Image with roleBytes := {name}Image.roleBytes.set 9 6 }} : \
+         ({{ {name}Image with roleBytes := {name}Image.roleBytes.set {flags_offset} 6 }} : \
          Hibana.RustDescriptorImage).actorRowsCheck {name}Choreo = false := by\n  decide\n\n\
          theorem {name}MissingOperationsRejected :\n  \
          ({{ {name}Image with eventCount := 0 }} : \
@@ -300,8 +302,14 @@ fn export_program_columns_for_lean() {
     let nested =
         RoleDescriptorRef::from_resident(&RoleProjection::<1, order::Steps, 16>::IMAGE_REF);
     assert_eq!(nested.local_len(), 5);
-    let join_dependency = [nested.proof_byte_at(32), nested.proof_byte_at(33)];
-    let fork_dependency = [nested.proof_byte_at(42), nested.proof_byte_at(43)];
+    let join_dependency = [
+        nested.proof_byte_at(3 * ROLE_IMAGE_EVENT_STRIDE + 2),
+        nested.proof_byte_at(3 * ROLE_IMAGE_EVENT_STRIDE + 3),
+    ];
+    let fork_dependency = [
+        nested.proof_byte_at(4 * ROLE_IMAGE_EVENT_STRIDE + 2),
+        nested.proof_byte_at(4 * ROLE_IMAGE_EVENT_STRIDE + 3),
+    ];
     assert_ne!(join_dependency, [255, 255]);
     assert_ne!(fork_dependency, join_dependency);
     for (name, row, dependency) in [
@@ -318,14 +326,15 @@ fn export_program_columns_for_lean() {
              {name}Image.laneColumnsCoherent = true := by\n  decide\n\n\
              theorem {name}OrderRejected :\n  \
              {name}Image.actorOrderCheck nestedActorOrderChoreo = false := by\n  decide\n\n",
-            row * 10 + 2,
+            row * ROLE_IMAGE_EVENT_STRIDE + 2,
             dependency[0],
-            row * 10 + 3,
+            row * ROLE_IMAGE_EVENT_STRIDE + 3,
             dependency[1],
         ));
     }
     let loan_schema = 0x1_0000_0000u64 + 10;
     let read_schema = <u32 as crate::transport::wire::WirePayload>::SCHEMA_ID;
+    let co_located_flags = 2 * ROLE_IMAGE_EVENT_STRIDE - 1;
     source.push_str(&format!(
         "theorem coLocatedRowsRetainBothLogicalFacets :\n  \
          coLocatedRowsImage.decodeActions? = some \
@@ -335,7 +344,7 @@ fn export_program_columns_for_lean() {
          [coLocatedRowsImage.eventView? 0, coLocatedRowsImage.eventView? 1, \
          coLocatedRowsImage.eventView? 2] = [some 1, some 10, some 1] := by\n  decide\n\n\
          theorem coLocatedRowsCannotBecomeSelfSend :\n  \
-         ({{ coLocatedRowsImage with roleBytes := coLocatedRowsImage.roleBytes.set 19 0 }} : \
+         ({{ coLocatedRowsImage with roleBytes := coLocatedRowsImage.roleBytes.set {co_located_flags} 0 }} : \
          Hibana.RustDescriptorImage).actorRowsCheck coLocatedRowsChoreo = false := by\n  decide\n\n",
     ));
     let output = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
