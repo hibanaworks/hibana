@@ -222,10 +222,16 @@ impl EventCursor {
     /// changes neither completion bits nor route authority.
     pub(crate) fn refresh_resident_row_at_index(&mut self) -> Option<CursorRefresh> {
         let index = self.index();
+        let current_row = self.resident_row_index_usize();
+        if self
+            .resident_row_bounds(current_row)
+            .is_some_and(|(start, end)| start <= index && index < end)
+        {
+            return None;
+        }
         let lane = self.machine().event_program().local_step_lane(index)?;
         let row = crate::invariant_some(self.resident_lane_step_locator(lane as usize, index).ok());
-        (row != self.resident_row_index_usize())
-            .then(|| self.select_resident_row_for_lane(row, lane))
+        Some(self.select_resident_row_for_lane(row, lane))
     }
 
     /// Advance a lane past a resident step that may require resident-row relocation.

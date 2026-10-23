@@ -1,4 +1,6 @@
 mod common;
+#[path = "../examples/support/in_memory.rs"]
+mod in_memory;
 #[path = "support/runtime.rs"]
 mod runtime_support;
 #[path = "support/tls_ref.rs"]
@@ -12,6 +14,141 @@ use hibana::runtime::program::{RoleProgram, project};
 use hibana::runtime::{SessionKitStorage, ids::SessionId};
 use runtime_support::with_runtime_workspace;
 use tls_ref_support::with_resident_tls_ref;
+
+#[test]
+fn nested_choice_remains_available_after_its_outer_parallel_sibling_finishes() {
+    tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap()
+        .block_on(async {
+            use hibana::{
+                Endpoint,
+                runtime::{
+                    resolver::{DecisionArm, ResolverRef},
+                    transport::EndpointBinding,
+                },
+            };
+
+            type Loan<'r> = Msg<0, Endpoint<'r, 3>>;
+            type Return<'r> = Msg<3, Endpoint<'r, 3>>;
+            let loan = g::seq(
+                g::send::<0, 1, Loan<'_>>(),
+                g::seq(
+                    g::send::<3, 2, Msg<1, ()>>(),
+                    g::seq(g::send::<2, 3, Msg<2, ()>>(), g::send::<1, 0, Return<'_>>()),
+                ),
+            );
+            let choice = g::route(
+                g::seq(
+                    g::send::<0, 1, Msg<4, ()>>(),
+                    g::seq(g::send::<0, 2, Msg<5, ()>>(), g::send::<1, 2, Msg<6, ()>>()),
+                ),
+                g::seq(
+                    g::send::<0, 1, Msg<7, ()>>(),
+                    g::seq(
+                        g::send::<1, 2, Msg<8, ()>>(),
+                        g::seq(
+                            g::send::<2, 1, Msg<9, ()>>(),
+                            g::send::<1, 0, Msg<10, ()>>(),
+                        ),
+                    ),
+                ),
+            );
+            let sibling = g::seq(
+                g::send::<0, 1, Msg<11, ()>>(),
+                g::seq(
+                    g::send::<1, 2, Msg<12, ()>>(),
+                    g::seq(
+                        g::send::<2, 1, Msg<13, ()>>(),
+                        g::send::<1, 0, Msg<14, ()>>(),
+                    ),
+                ),
+            );
+            let global = g::route(
+                g::par(g::par(loan, choice), sibling),
+                g::seq(
+                    g::send::<0, 1, Msg<15, Endpoint<'_, 3>>>(),
+                    g::seq(
+                        g::send::<3, 2, Msg<16, ()>>(),
+                        g::seq(
+                            g::send::<2, 3, Msg<17, ()>>(),
+                            g::send::<1, 0, Msg<18, Endpoint<'_, 3>>>(),
+                        ),
+                    ),
+                ),
+            )
+            .resolve::<0>();
+            let (p0, p1, p2, p3) = (
+                project::<0>(&global),
+                project::<1>(&global),
+                project::<2>(&global),
+                project::<3>(&global),
+            );
+            let sid = SessionId::new(87);
+            // SAFETY: this test owns one resource and its sole initial binding.
+            let transport =
+                in_memory::InMemoryTransport::new([((sid, 3), unsafe { EndpointBinding::new() })]);
+            let (mut slab0, mut slab1, mut slab2) =
+                (vec![0; 64 * 1024], vec![0; 64 * 1024], vec![0; 64 * 1024]);
+            let (mut s0, mut s1, mut s2) = (
+                SessionKitStorage::uninit(),
+                SessionKitStorage::uninit(),
+                SessionKitStorage::uninit(),
+            );
+            let r0 = s0.init().rendezvous(&mut slab0, transport.clone()).unwrap();
+            let r1 = s1.init().rendezvous(&mut slab1, transport.clone()).unwrap();
+            let r2 = s2.init().rendezvous(&mut slab2, transport).unwrap();
+            r0.set_resolver(
+                &p0,
+                ResolverRef::<0>::decision_state(&(), |_| Ok(DecisionArm::Left)),
+            )
+            .unwrap();
+            let mut owner = r0.enter(sid, &p0).unwrap();
+            let mut worker = r1.enter(sid, &p1).unwrap();
+            let mut service = r2.enter(sid, &p2).unwrap();
+            let db = r0.enter(sid, &p3).unwrap();
+
+            owner.send::<Msg<11, ()>>(&()).await.unwrap();
+            worker
+                .offer()
+                .await
+                .unwrap()
+                .recv::<Msg<11, ()>>()
+                .await
+                .unwrap();
+            worker.send::<Msg<12, ()>>(&()).await.unwrap();
+            service.recv::<Msg<12, ()>>().await.unwrap();
+            service.send::<Msg<13, ()>>(&()).await.unwrap();
+            worker.recv::<Msg<13, ()>>().await.unwrap();
+            worker.send::<Msg<14, ()>>(&()).await.unwrap();
+            owner.recv::<Msg<14, ()>>().await.unwrap();
+
+            owner.send::<Msg<4, ()>>(&()).await.unwrap();
+            let branch = worker.offer().await.unwrap();
+            assert_eq!(branch.label(), 4);
+            drop(branch);
+            worker
+                .offer()
+                .await
+                .unwrap()
+                .recv::<Msg<4, ()>>()
+                .await
+                .unwrap();
+            owner.send::<Msg<5, ()>>(&()).await.unwrap();
+            service.recv::<Msg<5, ()>>().await.unwrap();
+            worker.send::<Msg<6, ()>>(&()).await.unwrap();
+            service.recv::<Msg<6, ()>>().await.unwrap();
+
+            owner.send::<Loan<'_>>(db).await.unwrap();
+            let mut db = worker.recv::<Loan<'_>>().await.unwrap();
+            db.send::<Msg<1, ()>>(&()).await.unwrap();
+            service.recv::<Msg<1, ()>>().await.unwrap();
+            service.send::<Msg<2, ()>>(&()).await.unwrap();
+            db.recv::<Msg<2, ()>>().await.unwrap();
+            worker.send::<Return<'_>>(db).await.unwrap();
+            let _db = owner.recv::<Return<'_>>().await.unwrap();
+        });
+}
 
 type TestKitStorage = SessionKitStorage<'static, TestTransport>;
 

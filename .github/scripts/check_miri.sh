@@ -119,6 +119,12 @@ run_miri_test \
     run_miri_test public-route-lane-alignment -p hibana --test route_lane_alignment
 )
 
+(
+  hibana_disable_repo_tests_cfg
+  run_miri_test public-nested-parallel-choice -p hibana --test parallel_route_nesting \
+    nested_choice_remains_available_after_its_outer_parallel_sibling_finishes -- --exact
+)
+
 MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \
   endpoint-owner-move \
   -p hibana \

@@ -51,6 +51,11 @@ where
         if applies_route_completion {
             self.apply_prepared_route_completion_cursor(delta.selected_routes());
         }
+        // A parallel sibling may resume in an earlier compiled row. Refresh
+        // lookup caches at the final position without changing event progress.
+        if let Some(refresh) = self.progress.cursor.refresh_resident_row_at_index() {
+            self.refresh_after_cursor_move(refresh);
+        }
         let committed = CommittedCommitDelta::from_applied(
             delta.event(),
             delta.take_selected_routes(),
