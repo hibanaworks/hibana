@@ -16,6 +16,127 @@ use runtime_support::with_runtime_workspace;
 use tls_ref_support::with_resident_tls_ref;
 
 #[test]
+fn an_outer_choice_can_leave_a_repeated_arm_after_its_receives_converge() {
+    use hibana::runtime::resolver::{DecisionArm, ResolverRef};
+
+    let global = g::route(
+        g::seq(
+            g::send::<0, 1, Msg<0, ()>>(),
+            g::seq(g::send::<0, 2, Msg<1, ()>>(), g::send::<1, 2, Msg<2, ()>>()),
+        ),
+        g::seq(
+            g::send::<0, 1, Msg<3, ()>>(),
+            g::seq(g::send::<0, 2, Msg<4, ()>>(), g::send::<1, 2, Msg<5, ()>>()),
+        )
+        .roll(),
+    )
+    .resolve::<0>()
+    .roll();
+    let (p0, p1, p2) = (
+        project::<0>(&global),
+        project::<1>(&global),
+        project::<2>(&global),
+    );
+    for choices in [[false, false], [false, true], [true, false], [true, true]] {
+        let network = in_memory::InMemoryTransport::new([]);
+        let choice = core::cell::Cell::new(DecisionArm::Left);
+        let [mut slab0, mut slab1, mut slab2] = [(); 3].map(|_| vec![0; 32 * 1024]);
+        let (mut s0, mut s1, mut s2) = (
+            SessionKitStorage::uninit(),
+            SessionKitStorage::uninit(),
+            SessionKitStorage::uninit(),
+        );
+        let rv0 = s0.init().rendezvous(&mut slab0, network.clone()).unwrap();
+        let rv1 = s1.init().rendezvous(&mut slab1, network.clone()).unwrap();
+        let rv2 = s2.init().rendezvous(&mut slab2, network).unwrap();
+        rv0.set_resolver(
+            &p0,
+            ResolverRef::<0>::decision_state(&choice, |choice| Ok(choice.get())),
+        )
+        .unwrap();
+        let sid = SessionId::new(95);
+        let mut controller = rv0.enter(sid, &p0).unwrap();
+        let mut relay = rv1.enter(sid, &p1).unwrap();
+        let mut receiver = rv2.enter(sid, &p2).unwrap();
+        tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .start_paused(true)
+            .build()
+            .unwrap()
+            .block_on(async {
+                tokio::time::timeout(core::time::Duration::from_secs(1), async {
+                    tokio::join!(
+                        async {
+                            tokio::time::sleep(core::time::Duration::from_millis(1)).await;
+                            for right in choices {
+                                choice.set(if right {
+                                    DecisionArm::Right
+                                } else {
+                                    DecisionArm::Left
+                                });
+                                for _ in 0..2 {
+                                    let branch = controller.offer().await.unwrap_or_else(|error| {
+                                        panic!("controller choices={choices:?} right={right}: {error:?}")
+                                    });
+                                    assert_eq!(branch.label(), if right { 3 } else { 0 });
+                                    drop(branch);
+                                }
+                                if right {
+                                    for _ in 0..2 {
+                                        controller.send::<Msg<3, ()>>(&()).await.unwrap();
+                                        controller.send::<Msg<4, ()>>(&()).await.unwrap();
+                                    }
+                                } else {
+                                    controller.send::<Msg<0, ()>>(&()).await.unwrap();
+                                    controller.send::<Msg<1, ()>>(&()).await.unwrap();
+                                }
+                            }
+                        },
+                        async {
+                            for right in choices {
+                                for _ in 0..2 {
+                                    let branch = relay.offer().await.expect("relay preview");
+                                    assert_eq!(branch.label(), if right { 3 } else { 0 });
+                                    drop(branch);
+                                }
+                                if right {
+                                    for _ in 0..2 {
+                                        relay.recv::<Msg<3, ()>>().await.unwrap();
+                                        relay.send::<Msg<5, ()>>(&()).await.unwrap();
+                                    }
+                                } else {
+                                    relay.recv::<Msg<0, ()>>().await.unwrap();
+                                    relay.send::<Msg<2, ()>>(&()).await.unwrap();
+                                }
+                            }
+                        },
+                        async {
+                            for right in choices {
+                                for _ in 0..2 {
+                                    let branch = receiver.offer().await.expect("receiver preview");
+                                    assert_eq!(branch.label(), if right { 4 } else { 1 });
+                                    drop(branch);
+                                }
+                                if right {
+                                    for _ in 0..2 {
+                                        receiver.recv::<Msg<4, ()>>().await.unwrap();
+                                        receiver.recv::<Msg<5, ()>>().await.unwrap();
+                                    }
+                                } else {
+                                    receiver.recv::<Msg<1, ()>>().await.unwrap();
+                                    receiver.recv::<Msg<2, ()>>().await.unwrap();
+                                }
+                            }
+                        },
+                    );
+                })
+                .await
+                .expect("the selected local protocols must finish");
+            });
+    }
+}
+
+#[test]
 fn a_nested_resolver_can_select_another_arm_on_the_next_visit() {
     use hibana::runtime::resolver::{DecisionArm, ResolverRef};
 

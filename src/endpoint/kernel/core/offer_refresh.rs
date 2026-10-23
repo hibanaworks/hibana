@@ -133,7 +133,13 @@ where
                     .cursor
                     .route_scope_for_offer_node(scope_id, idx)
                 {
-                    (idx, scope_id)
+                    // Completed choices share one fresh entry across all lanes.
+                    let entry = self
+                        .selected_arm_for_scope(scope_id)
+                        .filter(|_| self.selected_live_arm_for_scope(scope_id).is_none())
+                        .and_then(|_| self.progress.cursor.route_scope_offer_entry(scope_id))
+                        .filter(|entry| !entry.is_absent());
+                    (entry.map_or(idx, state_index_to_usize), scope_id)
                 } else {
                     let (scope_id, entry) = reentry_offer
                         .or_else(|| self.retained_continuation_offer_for_lane(lane_idx))?;
