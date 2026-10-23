@@ -18,7 +18,7 @@ on:
         default: '3'
         options: ['3', '4', '5']
       shape-window:
-        description: Window (0 for budgets 3/4, 0 through 15 for budget 5)
+        description: Window (0 for budget 3, 0 through 31 for budget 4, 0 through 15 for budget 5)
         type: string
         required: true
         default: '0'

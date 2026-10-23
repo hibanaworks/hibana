@@ -74,9 +74,10 @@ budget counts generated constructors across both choice arms and the containing
 context, rather than binary-tree depth. The fixed outer loan and ordinary
 exchange leaves contain four messages; a delegated-body exchange has two.
 Their internal constructors are not counted.
-The `protocol-shapes` workflow accepts budgets three, four and five. Budgets
-three and four use window zero. Budget five requires all sixteen windows,
-zero through fifteen. A Rust check assigns each shard to exactly one job and
+The `protocol-shapes` workflow accepts budgets three, four and five. Budget
+three uses window zero. Budget four requires all 32 windows, zero through 31,
+covering 32,768 shards. Budget five uses sixteen windows, zero through fifteen.
+A Rust check assigns each shard to exactly one job and
 window and rejects invalid scopes. One successful window does not establish
 complete coverage. The workflow saves each job's assigned shard list with its
 source hashes, inputs and observations for thirty days.

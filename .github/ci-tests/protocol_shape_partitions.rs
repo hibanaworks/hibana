@@ -12,7 +12,8 @@ struct Plan {
 impl Plan {
     fn new(budget: usize, window: usize) -> Result<Self, &'static str> {
         let (windows, shards) = match budget {
-            3 | 4 => (1, 1024),
+            3 => (1, 1024),
+            4 => (32, 32768),
             5 => (16, 65536),
             _ => return Err("operator budget must be 3, 4 or 5"),
         };
@@ -80,7 +81,7 @@ mod tests {
 
     #[test]
     fn every_shard_belongs_to_one_job_and_one_window() {
-        for (budget, windows, shards) in [(3, 1, 1024), (4, 1, 1024), (5, 16, 65536)] {
+        for (budget, windows, shards) in [(3, 1, 1024), (4, 32, 32768), (5, 16, 65536)] {
             let mut seen = vec![false; shards];
             for window in 0..windows {
                 let plan = Plan::new(budget, window).unwrap();
@@ -105,10 +106,9 @@ mod tests {
         for budget in [0, 1, 2, 6, usize::MAX] {
             assert!(Plan::new(budget, 0).is_err());
         }
-        for budget in [3, 4] {
-            assert!(Plan::new(budget, 1).is_err());
+        for (budget, windows) in [(3, 1), (4, 32), (5, 16)] {
+            assert!(Plan::new(budget, windows).is_err());
         }
-        assert!(Plan::new(5, 16).is_err());
         assert!(Plan::new(5, 0).unwrap().assigned(JOBS).is_err());
     }
 }
