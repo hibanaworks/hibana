@@ -251,7 +251,7 @@ impl Emitter<'_> {
             )
         };
         format!(
-            "tokio::task::yield_now().await;{}record_pending({call},observed,ObservedCall::Message({actor},{label},{receive})).await?;",
+            "tokio::task::yield_now().await;let observed_role=observation_role(&{endpoint});{}record_pending({call},observed,ObservedCall::Message({actor},observed_role,{label},{receive})).await?;",
             if receive && *owned { "db=" } else { "" }
         )
     }
@@ -656,6 +656,7 @@ pub(super) fn runs(
     writeln!(scope_observations,"{{{{\"name\":{case},\"scripts\":{}}}}}").unwrap();
     let mut checked_scripts=0usize;
     for (script_index,line) in scripts.enumerate() {{ let decoded_script=Script::from_json(&line.expect("unreadable script plan")).expect("invalid script plan");let script=&decoded_script;let probes=scope_plans.next(script_index);for concurrent in [false,true] {{
+    write!(scope_observations,"{{{{\"script\":{{script_index}},\"concurrent\":{{concurrent}}").unwrap();
     let mut scoped_rejections=Vec::new();
     for probe in core::iter::once(None).chain(probes.iter().copied().map(Some)) {{
       let _=concurrent;
@@ -735,21 +736,16 @@ pub(super) fn runs(
     code += r#"let result=tokio::time::timeout(core::time::Duration::from_secs(1),async{tokio::try_join!(run0,run1,run2)}).await.expect("generated localside stalled");
     if let Some(probe)=probe{assert!(result.is_err(),"scope probe did not stop its run");let actual=observed.scope_rejections.borrow();assert_eq!(*actual,[probe],"planned borrowed-scope probe was not reached");scoped_rejections.push(actual[0].json());continue;}
     result.unwrap();
+    write!(scope_observations,",\"completed\":[").unwrap();
+    for (index,(actor,role,label,receive)) in observed.completed.borrow().iter().enumerate(){if index!=0{write!(scope_observations,",").unwrap();}write!(scope_observations,"[{actor},{role},{label},{receive}]").unwrap();}
+    write!(scope_observations,"]").unwrap();
     assert!(observed.calls.borrow().is_empty());
-    let mut actual=observed.completed.borrow().clone();actual.sort();
-    let mut expected=Vec::new();let mut holder=programs.owner;
-    for (label,_) in script.trace(){let message=messages_for_scoped_runs.iter().find(|m|m.label==label).unwrap();
-      expected.push((if message.from==3{holder}else{message.from},label,false));
-      expected.push((if message.to==3{holder}else{message.to},label,true));
-      if message.owned{assert_eq!(holder,message.from);holder=message.to;}
-    }
-    expected.sort();assert_eq!(actual,expected,"scoped execution omitted or repeated an operation");
     "#;
     if matches!(source, Protocol::Par(..)) {
         code += "if concurrent{assert!(observed.overlapped.get(),\"independent borrows never overlapped while pending\");}";
     }
     code += &format!(
-        r#"}}writeln!(scope_observations,"{{{{\"script\":{{script_index}},\"concurrent\":{{concurrent}},\"probes\":[{{}}]}}}}",scoped_rejections.join(",")).unwrap();}}completed_scoped_traces.insert(script.line());checked_scripts+=1;}}assert_eq!(checked_scripts,{},"missing script plan");scope_plans.finish();scope_observations.flush().unwrap();"#,
+        r#"}}writeln!(scope_observations,",\"probes\":[{{}}]}}}}",scoped_rejections.join(",")).unwrap();}}completed_scoped_traces.insert(script.line());checked_scripts+=1;}}assert_eq!(checked_scripts,{},"missing script plan");scope_plans.finish();scope_observations.flush().unwrap();"#,
         executions.len()
     );
     (code, scripts)

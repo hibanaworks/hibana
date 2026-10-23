@@ -1232,24 +1232,6 @@ long_running_const_eval = "forbid"
                 usize::from(*resolvers)
             ]
         )?;
-        source.push_str("let messages_for_scoped_runs:&[Message]=&[");
-        for message in &messages {
-            let Protocol::Message {
-                from,
-                to,
-                label,
-                owned,
-            } = message
-            else {
-                unreachable!()
-            };
-            writeln!(
-                source,
-                "Message{{from:{from},to:{to},label:{label},owned:{owned},decisions:&{:?}}},",
-                decisions[label]
-            )?;
-        }
-        source.push_str("];\n");
         let (local, scripts) =
             localside::runs(global, *owner, localside::present(global, 2, None), *case);
         source.push_str(&local);

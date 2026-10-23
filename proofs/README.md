@@ -116,10 +116,16 @@ probe before advancing to the next record.
 Distinct visit boundaries remain separate inputs when their message words
 are equal. The complete set of executed words is checked against the trace
 inventory. A flat word alone does not specify which repeated group has ended.
-The observer counts successful sends and receives and compares their complete
-multiset with the source execution. It also observes pending branch previews,
-so a waiting `offer` counts towards concurrent work. Observation never chooses
-the next operation or endpoint owner.
+The observer records successful sends and receives in completion order, with
+the participant, endpoint role, message label and direction. It reads the role
+from the actual endpoint type. Lean replays each record against the source
+occurrence model with two visits at every repetition site, including nested
+repetition. Every source operation must complete exactly once. Script counts
+and ranks come from the source tree and check for missing or duplicate plans.
+Controls change the participant or role, reorder a receive before its send,
+and omit or duplicate a call; each must fail the comparison.
+The observer also records pending branch previews, so a waiting `offer` counts
+towards concurrent work. Observation never chooses the next operation or owner.
 
 Generated localsides use optimization level 1 and Hibana uses level 2, with
 debug assertions and overflow checks enabled. Tests check both settings and
@@ -171,9 +177,10 @@ resource guard. The output records the compiler, source revision, source and
 input hashes, and separate compilation, execution and comparison times. Source
 hashes are checked again after execution. The generated families use distinct
 message labels and one resource role. Initial admission and the finite-prefix
-probes are compared with Lean. Other traces check successful execution, with
-both parallel-child orders and concurrent root groups; they do not enumerate
-every interleaving of nested parallel operations or I/O polls.
+probes are compared with Lean. Complete execution records are also compared
+with Lean, using both parallel-child orders and concurrent Tokio futures.
+These records do not enumerate every interleaving of nested parallel operations
+or split transport acceptance from send completion.
 The binary family allows multiple compound parallel pairs in one tree. Its
 operator budget applies to the whole tree, not separately to each child.
 Multiple resources and reused labels remain outside this grammar. A generated catalog is a test domain,

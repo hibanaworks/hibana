@@ -2,7 +2,7 @@
 #[derive(Default)]
 struct PendingCalls {
     calls: std::cell::RefCell<std::collections::BTreeSet<ObservedCall>>,
-    completed: std::cell::RefCell<Vec<(u8, u8, bool)>>,
+    completed: std::cell::RefCell<Vec<(u8, u8, u8, bool)>>,
     overlapped: std::cell::Cell<bool>,
     scope_rejections: std::cell::RefCell<Vec<ScopeProbe>>,
 }
@@ -186,8 +186,22 @@ fn scope_plan_loading_keeps_each_source_visit_and_both_schedules() {
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum ObservedCall {
-    Message(u8, u8, bool),
+    Message(u8, u8, u8, bool),
     Preview(u8, u8),
+}
+
+// Read the logical role from the actual Endpoint type, including par borrows.
+trait ObservedEndpointRole {
+    const ROLE: u8;
+}
+impl<const ROLE: u8> ObservedEndpointRole for Endpoint<'_, ROLE> {
+    const ROLE: u8 = ROLE;
+}
+impl<const ROLE: u8> ObservedEndpointRole for hibana::ParallelEndpoint<'_, '_, ROLE> {
+    const ROLE: u8 = ROLE;
+}
+fn observation_role<E: ObservedEndpointRole>(_: &E) -> u8 {
+    E::ROLE
 }
 impl ObservedCall {
     fn actor(self) -> u8 {
@@ -215,13 +229,13 @@ async fn a_pending_preview_counts_as_work_but_not_as_a_completed_message() {
                 Ok(())
             },
             &observed,
-            ObservedCall::Message(0, 2, false)
+            ObservedCall::Message(0, 0, 2, false)
         ),
     )
     .unwrap();
     assert!(observed.overlapped.get());
     assert!(observed.calls.borrow().is_empty());
-    assert_eq!(*observed.completed.borrow(), vec![(0, 2, false)]);
+    assert_eq!(*observed.completed.borrow(), vec![(0, 0, 2, false)]);
 }
 
 async fn record_pending<F, T>(
@@ -248,12 +262,12 @@ where
         core::task::Poll::Ready(output) => {
             observed.calls.borrow_mut().remove(&caller);
             if output.is_ok()
-                && let ObservedCall::Message(actor, label, receive) = caller
+                && let ObservedCall::Message(actor, role, label, receive) = caller
             {
                 observed
                     .completed
                     .borrow_mut()
-                    .push((actor, label, receive));
+                    .push((actor, role, label, receive));
             }
             core::task::Poll::Ready(output)
         }

@@ -102,7 +102,21 @@ fn check_case(
             .ok_or("borrowed-scope count overflow")?;
         for concurrent in [false, true] {
             let observed = read(&mut actual)?;
-            fields(&observed, 3)?;
+            fields(&observed, 4)?;
+            let Some(Json::Array(calls)) = observed.get("completed") else {
+                return Err("missing completed call trace".into());
+            };
+            for call in calls {
+                let Json::Array(parts) = call else {
+                    return Err("invalid completed call".into());
+                };
+                if parts.len() != 4 || !matches!(parts[3], Json::Bool(_)) {
+                    return Err("invalid completed call fields".into());
+                }
+                u8::try_from(number(parts.first())?)?;
+                u8::try_from(number(parts.get(1))?)?;
+                u8::try_from(number(parts.get(2))?)?;
+            }
             if observed.get("script") != plan.get("script")
                 || observed.get("concurrent") != Some(&Json::Bool(concurrent))
                 || observed.get("probes") != plan.get("probes")
@@ -148,8 +162,10 @@ fn controls(plan: &Json) -> Result<()> {
     let records = source_json(plan.get("probes").ok_or("missing control probes")?)?;
     let header = "{\"name\":7,\"scripts\":1}\n";
     let expected = format!("{header}{{\"script\":0,\"probes\":{records}}}\n");
-    let sequential = format!("{{\"script\":0,\"concurrent\":false,\"probes\":{records}}}\n");
-    let concurrent = format!("{{\"script\":0,\"concurrent\":true,\"probes\":{records}}}\n");
+    let sequential =
+        format!("{{\"script\":0,\"concurrent\":false,\"completed\":[],\"probes\":{records}}}\n");
+    let concurrent =
+        format!("{{\"script\":0,\"concurrent\":true,\"completed\":[],\"probes\":{records}}}\n");
     let actual = format!("{header}{sequential}{concurrent}");
     let case = json::parse(&format!(
         r#"{{"name":7,"scripts":1,"probes":{}}}"#,
@@ -158,9 +174,11 @@ fn controls(plan: &Json) -> Result<()> {
     check_case(Cursor::new(&expected), Cursor::new(&actual), &case)?;
     for changed in [
         actual.replacen("\"accepted\":false", "\"accepted\":true", 1),
-        format!("{header}{{\"script\":0,\"concurrent\":false,\"probes\":{missing}}}\n{concurrent}"),
         format!(
-            "{header}{{\"script\":0,\"concurrent\":false,\"probes\":{duplicate}}}\n{concurrent}"
+            "{header}{{\"script\":0,\"concurrent\":false,\"completed\":[],\"probes\":{missing}}}\n{concurrent}"
+        ),
+        format!(
+            "{header}{{\"script\":0,\"concurrent\":false,\"completed\":[],\"probes\":{duplicate}}}\n{concurrent}"
         ),
         format!("{header}{concurrent}"),
         format!("{header}{sequential}{sequential}{concurrent}"),
@@ -256,7 +274,7 @@ mod tests {
         let plan = json::parse(r#"{"script":2,"probes":[{"group":[1,2],"part":1,"occurrence":3,"actor":1,"role":3,"label":2,"receive":false,"accepted":false}]}"#).unwrap();
         controls(&plan).unwrap();
         let expected = "{\"name\":7,\"scripts\":1}\n{\"script\":0,\"probes\":[]}\n";
-        let actual = "{\"name\":7,\"scripts\":1}\n{\"script\":0,\"concurrent\":false,\"probes\":[]}\n{\"script\":0,\"concurrent\":true,\"probes\":[]}\n";
+        let actual = "{\"name\":7,\"scripts\":1}\n{\"script\":0,\"concurrent\":false,\"completed\":[],\"probes\":[]}\n{\"script\":0,\"concurrent\":true,\"completed\":[],\"probes\":[]}\n";
         let case = json::parse(r#"{"name":7,"scripts":1,"probes":0}"#).unwrap();
         assert_eq!(
             check_case(Cursor::new(expected), Cursor::new(actual), &case)

@@ -203,6 +203,172 @@ theorem shapeAttemptGroups_keeps_order_and_multiplicity (attempts : List ShapeAt
 #print axioms shapeGroupStep_keeps_every_attempt
 #print axioms shapeAttemptGroups_keeps_order_and_multiplicity
 
+-- The typed scripts execute exactly two visits at every roll site. This is
+-- a finite witness in the existing source semantics, not a runtime counter.
+def shapeTwoCopies : Source → Source
+  | .send message => .send message
+  | .seq left right => .seq (shapeTwoCopies left) (shapeTwoCopies right)
+  | .par left right => .par (shapeTwoCopies left) (shapeTwoCopies right)
+  | .route resolver left right => .route resolver (shapeTwoCopies left) (shapeTwoCopies right)
+  | .roll body => .seq (shapeTwoCopies body) (shapeTwoCopies body)
+
+def shapeTwoCopyUnfolding : (source : Source) → SourceUnfolding source (shapeTwoCopies source)
+  | .send message => .send message
+  | .seq left right => .seq (shapeTwoCopyUnfolding left) (shapeTwoCopyUnfolding right)
+  | .par left right => .par (shapeTwoCopyUnfolding left) (shapeTwoCopyUnfolding right)
+  | .route resolver left right => .route resolver (shapeTwoCopyUnfolding left) (shapeTwoCopyUnfolding right)
+  | .roll body => .rollMore (.rollOnce (shapeTwoCopyUnfolding body)) (shapeTwoCopyUnfolding body)
+
+def shapeScriptCount : Source → Nat
+  | .send _ => 1
+  | .seq left right => shapeScriptCount left * shapeScriptCount right
+  | .par left right => 2 * shapeScriptCount left * shapeScriptCount right
+  | .route _ left right => shapeScriptCount left + shapeScriptCount right
+  | .roll body => shapeScriptCount body * shapeScriptCount body
+
+def shapeChoiceKey (scope : Scope) (right : Bool) : String :=
+  s!"{scope.start}:{scope.split}:{scope.stop}:{right}"
+
+-- Normalization assigns every route, including routes in an unchosen arm.
+-- A script chooses only the routes it enters. Keep all matching full plans.
+def shapeActiveChoices (source : Source) (path : List Selection) (start : Nat) :
+    Except String (List String) := do
+  match source with
+  | .send _ => pure []
+  | .seq left right | .par left right =>
+    pure ((← shapeActiveChoices left path start) ++
+      (← shapeActiveChoices right path (start + left.eventCount)))
+  | .route _ left right =>
+    let split := start + left.eventCount
+    let scope : Scope := ⟨start, split, split + right.eventCount⟩
+    let some arm := chosen? path scope | throw "source path omitted a choice"
+    let child ← match arm with
+      | .left => shapeActiveChoices left path start
+      | .right => shapeActiveChoices right path split
+    pure (shapeChoiceKey scope (arm == .right) :: child)
+  | .roll body => shapeActiveChoices body path start
+
+-- Validate the immutable script against the source. Its rank checks that
+-- every combination of choices, visit boundaries and parallel orders occurs.
+def shapeScriptKey (source : Source) (script : Lean.Json) (start next : Nat) :
+    Except String (List String × Nat × Nat) := do
+  let .arr fields := script | throw "script node is not an array"
+  unless !fields.isEmpty do throw "empty script node"
+  let kind : Nat ← Lean.fromJson? fields[0]!
+  match source with
+  | .send message =>
+    unless kind == 0 && fields.size == 3 do throw "invalid message script"
+    let label : Nat ← Lean.fromJson? fields[1]!
+    let occurrence : Nat ← Lean.fromJson? fields[2]!
+    unless label == message.label && occurrence == next do throw "wrong script message or occurrence"
+    pure ([], 0, next + 1)
+  | .seq left right | .par left right =>
+    let parallel := match source with | .par _ _ => true | _ => false
+    unless kind == (if parallel then 2 else 1) && fields.size == (if parallel then 4 else 3) do
+      throw "invalid sequential or parallel script"
+    let reverse : Bool ← if parallel then Lean.fromJson? fields[3]! else pure false
+    let (first, firstRank, next) ← shapeScriptKey left fields[1]! start next
+    let (second, secondRank, next) ← shapeScriptKey right fields[2]!
+      (start + (shapeTwoCopies left).eventCount) next
+    let rank := firstRank * shapeScriptCount right + secondRank
+    pure (first ++ second, if parallel then 2 * rank + (if reverse then 1 else 0) else rank, next)
+  | .route _ left right =>
+    unless kind == 3 && fields.size == 3 do throw "invalid choice script"
+    let chooseRight : Bool ← Lean.fromJson? fields[2]!
+    let split := start + (shapeTwoCopies left).eventCount
+    let scope : Scope := ⟨start, split, split + (shapeTwoCopies right).eventCount⟩
+    let (choices, rank, next) ← if chooseRight then
+      shapeScriptKey right fields[1]! split next
+    else shapeScriptKey left fields[1]! start next
+    pure (shapeChoiceKey scope chooseRight :: choices,
+      if chooseRight then shapeScriptCount left + rank else rank, next)
+  | .roll body =>
+    unless kind == 4 && fields.size == 3 do throw "invalid repeated script"
+    let (first, firstRank, next) ← shapeScriptKey body fields[1]! start next
+    let (second, secondRank, next) ← shapeScriptKey body fields[2]!
+      (start + (shapeTwoCopies body).eventCount) next
+    pure (first ++ second, firstRank * shapeScriptCount body + secondRank, next)
+
+structure ShapeScriptHeader where
+  name : Nat
+  scripts : Nat
+  deriving Lean.FromJson
+
+structure ShapeCompletedScript where
+  script : Nat
+  concurrent : Bool
+  completed : Array (Array Lean.Json)
+  probes : Array Lean.Json
+  deriving Lean.FromJson
+
+def shapeReadLine [Lean.FromJson α] (file : IO.FS.Handle) : IO α := do
+  let line ← file.getLine
+  unless !line.isEmpty do throw (IO.userError "missing completed script record")
+  match Lean.Json.parse line >>= Lean.fromJson? with
+  | .ok value => pure value
+  | .error error => throw (IO.userError s!"invalid completed script JSON: {error}")
+
+def shapeCompletedAdvance (plan : SourceOccurrenceCut source) (points : List SourcePoint)
+    (actor role label : Nat) (receive : Bool) : List (List SourcePoint) :=
+  (shapeAdvance plan points label receive).filter fun next =>
+    match next.getLast? with
+    | some (.committed action) =>
+      plan.path.bindings.any fun (event, binding) => event == action.event &&
+        actor == (if receive then binding.receiverActor else binding.senderActor) &&
+        role == if receive then binding.message.receiver.role else binding.message.sender.role
+    | _ => false
+
+def shapeCheckCompleted (source : Source) (name : Nat) (outputPath : String) : IO (Nat × Nat) := do
+  let count := shapeScriptCount source
+  let root := System.FilePath.mk outputPath / ".."
+  let scripts ← IO.FS.Handle.mk (root / "scripts" / s!"{name}.jsonl") .read
+  let observations ← IO.FS.Handle.mk (root / "scope-observations" / s!"{name}.jsonl") .read
+  let header : ShapeScriptHeader ← shapeReadLine observations
+  unless header.name == name && header.scripts == count do
+    throw (IO.userError s!"shape {name}: wrong completed script inventory")
+  let mut plans : Std.HashMap (List String) (List (SourceOccurrenceCut source)) := {}
+  for plan in checkedPlans source (shapeTwoCopies source) (shapeTwoCopyUnfolding source) do
+    let key ← match shapeActiveChoices plan.expanded plan.path.selections 0 with
+      | .ok choices => pure (choices.mergeSort (· ≤ ·))
+      | .error error => throw (IO.userError error)
+    plans := plans.insert key (plan :: ((plans.get? key).getD []))
+  unless !plans.isEmpty do throw (IO.userError "no accepted completed source plan")
+  let mut calls := 0
+  for index in [:count] do
+    let script : Lean.Json ← shapeReadLine scripts
+    let (choices, rank, messages) ← match shapeScriptKey source script 0 0 with
+      | .ok value => pure value
+      | .error error => throw (IO.userError s!"shape {name} script {index}: {error}")
+    unless rank == index do
+      throw (IO.userError s!"shape {name}: missing or duplicate completed script")
+    let some matching := plans.get? (choices.mergeSort (· ≤ ·))
+      | throw (IO.userError s!"shape {name} script {index}: script has no accepted source path; choices={choices}; source={(plans.toList.take 4).map Prod.fst}")
+    unless matching.all (fun plan => plan.path.bindings.length == messages) do
+      throw (IO.userError s!"shape {name}: script and source path have different messages")
+    for concurrent in [false, true] do
+      let observed : ShapeCompletedScript ← shapeReadLine observations
+      unless observed.script == index && observed.concurrent == concurrent do
+        throw (IO.userError s!"shape {name}: missing or reordered completed execution")
+      let mut states := matching.map (fun plan => (plan, ([] : List SourcePoint)))
+      for call in observed.completed do
+        unless call.size == 4 do throw (IO.userError "invalid completed call fields")
+        let decoded : Except String (Nat × Nat × Nat × Bool) := do
+          pure (← Lean.fromJson? call[0]!, ← Lean.fromJson? call[1]!, ← Lean.fromJson? call[2]!, ← Lean.fromJson? call[3]!)
+        let (actor, role, label, receive) ← match decoded with
+          | .ok value => pure value
+          | .error error => throw (IO.userError s!"invalid completed call: {error}")
+        unless actor < 256 && role < 256 && label < 256 do throw (IO.userError "invalid completed call domain")
+        states := states.flatMap fun (plan, points) =>
+          (shapeCompletedAdvance plan points actor role label receive).map (plan, ·)
+        unless !states.isEmpty do
+          throw (IO.userError s!"shape {name} script {index}: invalid completed trace")
+        calls := calls + 1
+      unless states.any (fun (plan, points) => (sourceVisitPoints plan.path.bindings).all points.contains) do
+        throw (IO.userError s!"shape {name} script {index}: incomplete completed trace")
+  unless (← scripts.getLine).isEmpty && (← observations.getLine).isEmpty do
+    throw (IO.userError s!"shape {name}: extra completed script record")
+  pure (2 * count, calls)
+
 def main (args : List String) : IO UInt32 := do
   let [inputPath, outputPath] := args
     | throw (IO.userError "usage: protocol-shapes INPUT.json OBSERVATION_DIRECTORY")
@@ -212,10 +378,18 @@ def main (args : List String) : IO UInt32 := do
   let actualNames := (← System.FilePath.readDir outputPath).toList.map (·.fileName)
   unless expectedNames.mergeSort (· ≤ ·) == actualNames.mergeSort (· ≤ ·) do
     throw (IO.userError "missing, duplicate or unknown shape observation")
+  let expectedScripts := inputs.toList.map (fun input => s!"{input.name}.jsonl")
+  for directory in ["scripts", "scope-observations"] do
+    let observed := (← System.FilePath.readDir
+      (System.FilePath.mk outputPath / ".." / directory)).toList.map (·.fileName)
+    unless expectedScripts.mergeSort (· ≤ ·) == observed.mergeSort (· ≤ ·) do
+      throw (IO.userError "missing, duplicate or unknown completed script file")
   let mut checked := 0
   let mut continuations := 0
   let mut runtimeOnly := 0
   let mut modelOnly := 0
+  let mut completedRuns := 0
+  let mut completedCalls := 0
   for input in inputs do
     let source ← match parseShape input with
       | .ok source => pure source
@@ -245,6 +419,10 @@ def main (args : List String) : IO UInt32 := do
           if runtimeOnly + modelOnly < 10 then
             IO.println s!"shape {input.name} choice={attempt.choice} prefix={attempt.prefix} label={attempt.label} receive={attempt.receive}: model={permitted} runtime={attempt.accepted}"
           if attempt.accepted then runtimeOnly := runtimeOnly + 1 else modelOnly := modelOnly + 1
+    let (runs, calls) ← shapeCheckCompleted source input.name outputPath
+    completedRuns := completedRuns + runs
+    completedCalls := completedCalls + calls
+  IO.println s!"Completed shape scripts/source: shapes={inputs.size} runs={completedRuns} calls={completedCalls} all accepted"
   IO.println s!"Generated shapes/source: shapes={inputs.size} attempts={checked} initial={checked-continuations} continuation={continuations} runtime-only={runtimeOnly} model-only={modelOnly}"
   unless runtimeOnly == 0 && modelOnly == 0 do
     throw (IO.userError "generated Endpoint/source conformance failed")

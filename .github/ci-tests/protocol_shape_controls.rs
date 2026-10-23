@@ -6,6 +6,7 @@ mod scope_audit;
 use json::Json;
 use std::{
     env, fs,
+    io::{BufRead, BufReader, BufWriter, Write},
     path::{Path, PathBuf},
     process::Command,
 };
@@ -88,7 +89,118 @@ fn single_case(
         observations.join(observation.file_name().ok_or("missing observation file")?),
         text,
     )?;
+    let source_root = observation
+        .parent()
+        .and_then(Path::parent)
+        .ok_or("missing shape root")?;
+    for directory in ["scripts", "scope-observations"] {
+        fs::create_dir_all(target.join(directory))?;
+        let filename = format!("{name}.jsonl");
+        fs::copy(
+            source_root.join(directory).join(&filename),
+            target.join(directory).join(filename),
+        )?;
+    }
     Ok((input, observations))
+}
+
+fn completed_controls(
+    checker: &Path,
+    inventory: &Json,
+    observation: &Path,
+    output: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    for mutation in [
+        "receive-before-send",
+        "missing-call",
+        "duplicate-call",
+        "wrong-actor",
+        "wrong-role",
+    ] {
+        let target = output
+            .join("controls")
+            .join(format!("completed-{mutation}"));
+        let (input, observations) = single_case(
+            inventory,
+            &target,
+            observation,
+            &fs::read_to_string(observation)?,
+        )?;
+        let filename = format!(
+            "{}.jsonl",
+            observation
+                .file_stem()
+                .unwrap()
+                .to_str()
+                .ok_or("invalid case name")?
+        );
+        let path = target.join("scope-observations").join(filename);
+        let temporary = path.with_extension("new");
+        let mut reader = BufReader::new(fs::File::open(&path)?);
+        let mut writer = BufWriter::new(fs::File::create(&temporary)?);
+        let mut line = String::new();
+        if reader.read_line(&mut line)? == 0 {
+            return Err("missing completed header".into());
+        }
+        writer.write_all(line.as_bytes())?;
+        line.clear();
+        if reader.read_line(&mut line)? == 0 {
+            return Err("missing completed execution".into());
+        }
+        let mut record = json::parse(&line)?;
+        let Json::Object(fields) = &mut record else {
+            return Err("invalid completed execution".into());
+        };
+        let Some(Json::Array(calls)) = fields.get_mut("completed") else {
+            return Err("missing completed calls".into());
+        };
+        match mutation {
+            "receive-before-send" => {
+                let index = calls.iter().position(|call| matches!(call, Json::Array(parts) if parts.get(3) == Some(&Json::Bool(true)))).ok_or("no receive mutation point")?;
+                let call = calls.remove(index);
+                calls.insert(0, call);
+            }
+            "missing-call" => {
+                calls.pop().ok_or("no missing-call mutation point")?;
+            }
+            "duplicate-call" => {
+                let first = calls.first().ok_or("no duplicate-call mutation point")?;
+                calls.push(json::parse(&source_json(first)?)?);
+            }
+            "wrong-actor" => {
+                let Some(Json::Array(first)) = calls.first_mut() else {
+                    return Err("no actor mutation point".into());
+                };
+                *first.first_mut().ok_or("empty completed call")? = Json::Number("255".into());
+            }
+            "wrong-role" => {
+                let Some(Json::Array(first)) = calls.first_mut() else {
+                    return Err("no role mutation point".into());
+                };
+                *first.get_mut(1).ok_or("missing completed role")? = Json::Number("255".into());
+            }
+            _ => unreachable!(),
+        }
+        writeln!(writer, "{}", source_json(&record)?)?;
+        std::io::copy(&mut reader, &mut writer)?;
+        writer.flush()?;
+        drop(writer);
+        fs::rename(temporary, path)?;
+        rejected(
+            checker,
+            &input,
+            &observations,
+            if mutation == "missing-call" {
+                "incomplete completed trace"
+            } else {
+                "invalid completed trace"
+            },
+        )?;
+    }
+    println!(
+        "Completed trace checker controls: receive-before-send, missing-call, duplicate-call, wrong-actor, wrong-role: pass"
+    );
+    Ok(())
 }
 fn rejected(
     checker: &Path,
@@ -123,6 +235,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .collect::<Result<Vec<_>, _>>()?;
     paths.sort();
     let first = paths.first().ok_or("no observed cases")?;
+    completed_controls(&checker, &inventory, first, &output)?;
     for (name, needle, replacement, expected) in [
         (
             "false-rejection",
