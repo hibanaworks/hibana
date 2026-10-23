@@ -33,12 +33,19 @@ where
             // A completed parallel sibling can move the lookup position to a
             // blocked join. Select from the source-ready operations, rather
             // than treating that lookup position as the current frontier.
-            if !self.permits_event(index) || wrong_arm || self.enabled_view_event(index).is_none() {
+            let completed_choice = self.selected_arm_for_scope(scope).is_some()
+                && self.selected_live_arm_for_scope(scope).is_none()
+                && self.preview_live_selected_arm_for_scope(scope).is_none();
+            if !self.permits_event(index)
+                || wrong_arm
+                || completed_choice
+                || self.enabled_view_event(index).is_none()
+            {
                 let next = self.enabled_view_events().find_map(|(entry_idx, _)| {
                     let cursor = &self.progress.cursor;
                     let candidate = cursor
                         .route_scope_for_offer_node(self.offer_scope_id_at(entry_idx), entry_idx)?;
-                    if candidate == scope {
+                    if candidate == scope && !completed_choice {
                         return None;
                     }
                     let entry = cursor.route_scope_offer_entry(candidate)?;

@@ -216,6 +216,11 @@ where
                 continue;
             };
             let idx = entry.as_usize();
+            // This resolver selects only its own choice. Select any unresolved
+            // ancestor before considering the descendant as runnable work.
+            if self.offer_scope_id_at(idx) != scope {
+                continue;
+            }
             if self.progress.cursor.logical_role_at(idx) != Some(self.public_header.role()) {
                 continue;
             }

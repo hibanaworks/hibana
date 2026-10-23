@@ -16,6 +16,223 @@ use runtime_support::with_runtime_workspace;
 use tls_ref_support::with_resident_tls_ref;
 
 #[test]
+fn resolved_parent_waits_for_its_message_selected_child_without_blocking_a_sibling() {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .start_paused(true)
+        .build()
+        .unwrap()
+        .block_on(async {
+            use hibana::runtime::resolver::{DecisionArm, ResolverRef};
+
+            let global = g::par(
+                g::route(
+                    g::send::<0, 1, Msg<0, ()>>(),
+                    g::route(g::send::<0, 1, Msg<1, ()>>(), g::send::<0, 1, Msg<2, ()>>()),
+                )
+                .resolve::<0>(),
+                g::send::<0, 1, Msg<3, ()>>(),
+            );
+            let (p0, p1) = (project::<0>(&global), project::<1>(&global));
+            let transport = in_memory::InMemoryTransport::new([]);
+            let (mut slab0, mut slab1) = (vec![0; 32 * 1024], vec![0; 32 * 1024]);
+            let (mut s0, mut s1) = (SessionKitStorage::uninit(), SessionKitStorage::uninit());
+            let rv0 = s0.init().rendezvous(&mut slab0, transport.clone()).unwrap();
+            let rv1 = s1.init().rendezvous(&mut slab1, transport).unwrap();
+            rv0.set_resolver(
+                &p0,
+                ResolverRef::<0>::decision_state(&(), |_| Ok(DecisionArm::Right)),
+            )
+            .unwrap();
+            let sid = SessionId::new(90);
+            let (mut e0, mut e1) = (rv0.enter(sid, &p0).unwrap(), rv1.enter(sid, &p1).unwrap());
+            let [mut choice0, mut sibling0] = e0.par().unwrap();
+            let [mut choice1, mut sibling1] = e1.par().unwrap();
+
+            let (preview, ()) = tokio::join!(
+                tokio::time::timeout(core::time::Duration::from_millis(1), choice0.offer()),
+                async {
+                    sibling0.send::<Msg<3, ()>>(&()).await.unwrap();
+                    sibling1.recv::<Msg<3, ()>>().await.unwrap();
+                }
+            );
+            assert!(
+                preview.is_err(),
+                "the child choice needs its selecting send"
+            );
+            drop(preview);
+
+            tokio::time::timeout(core::time::Duration::from_secs(1), async {
+                tokio::try_join!(choice0.send::<Msg<1, ()>>(&()), async {
+                    let branch = choice1.offer().await?;
+                    assert_eq!(branch.label(), 1);
+                    branch.recv::<Msg<1, ()>>().await
+                })
+            })
+            .await
+            .expect("the selected child did not complete")
+            .unwrap();
+        });
+}
+
+#[test]
+fn resolved_choice_reopens_after_parallel_inner_repetition() {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .start_paused(true)
+        .build()
+        .unwrap()
+        .block_on(async {
+            use hibana::runtime::resolver::{DecisionArm, ResolverRef};
+
+            let repeated = g::seq(
+                g::send::<1, 0, Msg<0, ()>>(),
+                g::seq(
+                    g::send::<0, 2, Msg<1, ()>>(),
+                    g::seq(g::send::<2, 0, Msg<2, ()>>(), g::send::<0, 1, Msg<3, ()>>()),
+                ),
+            )
+            .roll();
+            let once = g::seq(
+                g::send::<1, 0, Msg<4, ()>>(),
+                g::seq(
+                    g::send::<0, 2, Msg<5, ()>>(),
+                    g::seq(g::send::<2, 0, Msg<6, ()>>(), g::send::<0, 1, Msg<7, ()>>()),
+                ),
+            );
+            let global = g::route(
+                g::par(repeated, once),
+                g::seq(
+                    g::send::<1, 0, Msg<8, ()>>(),
+                    g::seq(
+                        g::send::<1, 2, Msg<9, ()>>(),
+                        g::send::<0, 2, Msg<10, ()>>(),
+                    ),
+                ),
+            )
+            .resolve::<0>()
+            .roll();
+            let (p0, p1, p2) = (
+                project::<0>(&global),
+                project::<1>(&global),
+                project::<2>(&global),
+            );
+            let calls = core::cell::Cell::new(0);
+            let transport = in_memory::InMemoryTransport::new([]);
+            let [mut slab0, mut slab1, mut slab2] =
+                [vec![0; 64 * 1024], vec![0; 64 * 1024], vec![0; 64 * 1024]];
+            let (mut s0, mut s1, mut s2) = (
+                SessionKitStorage::uninit(),
+                SessionKitStorage::uninit(),
+                SessionKitStorage::uninit(),
+            );
+            let rv0 = s0.init().rendezvous(&mut slab0, transport.clone()).unwrap();
+            let rv1 = s1.init().rendezvous(&mut slab1, transport.clone()).unwrap();
+            let rv2 = s2.init().rendezvous(&mut slab2, transport.clone()).unwrap();
+            rv1.set_resolver(
+                &p1,
+                ResolverRef::<0>::decision_state(&calls, |calls| {
+                    calls.set(calls.get() + 1);
+                    Ok(DecisionArm::Left)
+                }),
+            )
+            .unwrap();
+            let sid = SessionId::new(89);
+            let (mut e0, mut e1, mut e2) = (
+                rv0.enter(sid, &p0).unwrap(),
+                rv1.enter(sid, &p1).unwrap(),
+                rv2.enter(sid, &p2).unwrap(),
+            );
+            let run0 = async {
+                for _ in 0..2 {
+                    let branch = e0.offer().await?;
+                    assert!([0, 4].contains(&branch.label()));
+                    drop(branch);
+                    let [mut repeated, mut once] = e0.par()?;
+                    tokio::try_join!(
+                        async {
+                            for _ in 0..2 {
+                                repeated.recv::<Msg<0, ()>>().await?;
+                                repeated.send::<Msg<1, ()>>(&()).await?;
+                                repeated.recv::<Msg<2, ()>>().await?;
+                                repeated.send::<Msg<3, ()>>(&()).await?;
+                            }
+                            Ok::<_, hibana::EndpointError>(())
+                        },
+                        async {
+                            once.recv::<Msg<4, ()>>().await?;
+                            once.send::<Msg<5, ()>>(&()).await?;
+                            once.recv::<Msg<6, ()>>().await?;
+                            once.send::<Msg<7, ()>>(&()).await?;
+                            Ok::<_, hibana::EndpointError>(())
+                        }
+                    )?;
+                }
+                Ok::<_, hibana::EndpointError>(())
+            };
+            let run1 = async {
+                for visit in 0..2 {
+                    let branch = e1.offer().await?;
+                    let label = branch.label();
+                    assert!([0, 4].contains(&label));
+                    drop(branch);
+                    let branch = e1.offer().await?;
+                    assert_eq!(branch.label(), label);
+                    drop(branch);
+                    assert_eq!(calls.get(), visit + 1);
+                    let [mut repeated, mut once] = e1.par()?;
+                    tokio::try_join!(
+                        async {
+                            for _ in 0..2 {
+                                tokio::task::yield_now().await;
+                                repeated.send::<Msg<0, ()>>(&()).await?;
+                                repeated.recv::<Msg<3, ()>>().await?;
+                            }
+                            Ok::<_, hibana::EndpointError>(())
+                        },
+                        async {
+                            once.send::<Msg<4, ()>>(&()).await?;
+                            once.recv::<Msg<7, ()>>().await?;
+                            Ok::<_, hibana::EndpointError>(())
+                        }
+                    )?;
+                }
+                Ok::<_, hibana::EndpointError>(())
+            };
+            let run2 = async {
+                for _ in 0..2 {
+                    let branch = e2.offer().await?;
+                    assert!([1, 5].contains(&branch.label()));
+                    drop(branch);
+                    let [mut repeated, mut once] = e2.par()?;
+                    tokio::try_join!(
+                        async {
+                            for _ in 0..2 {
+                                repeated.recv::<Msg<1, ()>>().await?;
+                                repeated.send::<Msg<2, ()>>(&()).await?;
+                            }
+                            Ok::<_, hibana::EndpointError>(())
+                        },
+                        async {
+                            once.recv::<Msg<5, ()>>().await?;
+                            once.send::<Msg<6, ()>>(&()).await?;
+                            Ok::<_, hibana::EndpointError>(())
+                        }
+                    )?;
+                }
+                Ok::<_, hibana::EndpointError>(())
+            };
+            tokio::time::timeout(core::time::Duration::from_secs(1), async {
+                tokio::try_join!(run0, run1, run2)
+            })
+            .await
+            .expect("a repeated resolved choice stalled")
+            .unwrap();
+            assert_eq!(calls.get(), 2);
+        });
+}
+
+#[test]
 fn nested_choice_remains_available_after_its_outer_parallel_sibling_finishes() {
     tokio::runtime::Builder::new_current_thread()
         .build()

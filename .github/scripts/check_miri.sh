@@ -125,6 +125,10 @@ run_miri_test \
     nested_choice_remains_available_after_its_outer_parallel_sibling_finishes -- --exact
   run_miri_test public-parallel-choice-before-resolver -p hibana --test parallel_route_nesting \
     parallel_choice_is_observable_before_a_sequential_resolver -- --exact
+  run_miri_test public-repeated-choice-with-parallel-body -p hibana --test parallel_route_nesting \
+    resolved_choice_reopens_after_parallel_inner_repetition -- --exact
+  run_miri_test public-resolved-parent-with-message-selected-child -p hibana --test parallel_route_nesting \
+    resolved_parent_waits_for_its_message_selected_child_without_blocking_a_sibling -- --exact
 )
 
 MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \

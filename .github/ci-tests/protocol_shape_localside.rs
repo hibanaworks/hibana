@@ -9,6 +9,17 @@ pub(super) fn contains(source: &Protocol, label: u8) -> bool {
         .any(|m| matches!(m, Protocol::Message { label: candidate, .. } if *candidate == label))
 }
 
+pub(super) fn message_selected_head(source: &Protocol, label: u8) -> bool {
+    match source {
+        Protocol::Message { .. } => false,
+        Protocol::Route(..) => true,
+        Protocol::Seq(first, _) | Protocol::Roll(first) => message_selected_head(first, label),
+        Protocol::Par(left, right) | Protocol::Resolved(left, right, _) => {
+            message_selected_head(if contains(left, label) { left } else { right }, label)
+        }
+    }
+}
+
 pub(super) fn mobile(source: &Protocol) -> bool {
     let mut messages = Vec::new();
     source.messages(&mut messages);
@@ -345,22 +356,36 @@ impl Emitter<'_> {
                 }
                 let mut entry = Vec::new();
                 heads(source, &mut entry);
-                let controller = match entry[0] {
-                    Protocol::Message { from, .. } => {
-                        if *from == 3 {
-                            before
-                        } else {
-                            *from
-                        }
-                    }
+                let controller_role = match entry[0] {
+                    Protocol::Message { from, .. } => *from,
                     _ => unreachable!(),
+                };
+                let controller = if controller_role == 3 {
+                    before
+                } else {
+                    controller_role
+                };
+                let preview_for = |view: u8, entry: u8, allowed: &str| {
+                    let endpoint = &names[usize::from(view)];
+                    format!(
+                        "let branch=record_pending({endpoint}.offer(),observed,ObservedCall::Preview({actor},{entry})).await?;let label=branch.label();drop(branch);let branch=record_pending({endpoint}.offer(),observed,ObservedCall::Preview({actor},{entry})).await?;assert_eq!(branch.label(),label);drop(branch);assert!(({allowed}).contains(&label));"
+                    )
                 };
                 let arm = |body: &Protocol| {
                     if actor == controller {
                         let mut entries = Vec::new();
                         heads(body, &mut entries);
                         let mut arms = String::new();
-                        for message in entries {
+                        let allowed = entries
+                            .iter()
+                            .map(|message| match message {
+                                Protocol::Message { label, .. } => label.to_string(),
+                                _ => unreachable!(),
+                            })
+                            .collect::<Vec<_>>()
+                            .join(",");
+                        let mut previewed = std::collections::BTreeSet::new();
+                        for message in &entries {
                             let Protocol::Message { label, from, .. } = message else {
                                 unreachable!()
                             };
@@ -369,10 +394,37 @@ impl Emitter<'_> {
                                 .iter()
                                 .map(|(id, right)| format!("decisions[{id}].set(Some({right}));"))
                                 .collect::<String>();
-                            let send = self.operation(message, actor, before, names, false);
-                            let mut current = before;
-                            let rest = self.emit(body, actor, &mut current, names, Some(*label));
-                            arms += &format!("{label}=>{{{decisions}{send}{rest}}},");
+                            if matches!(source, Protocol::Route(..))
+                                || message_selected_head(body, *label)
+                            {
+                                let send = self.operation(message, actor, before, names, false);
+                                let mut current = before;
+                                let rest =
+                                    self.emit(body, actor, &mut current, names, Some(*label));
+                                arms += &format!("{label}=>{{{decisions}{send}{rest}}},");
+                            } else if previewed.insert(self.paths[label].clone()) {
+                                let alternatives = entries
+                                    .iter()
+                                    .filter_map(|message| match message {
+                                        Protocol::Message { label: other, .. }
+                                            if !message_selected_head(body, *other)
+                                                && self.paths[other] == self.paths[label] =>
+                                        {
+                                            Some(other.to_string())
+                                        }
+                                        _ => None,
+                                    })
+                                    .collect::<Vec<_>>()
+                                    .join("|");
+                                let preview = preview_for(
+                                    controller_role,
+                                    *label,
+                                    &format!("&[{allowed}][..]"),
+                                );
+                                let mut current = before;
+                                let rest = self.emit(body, actor, &mut current, names, None);
+                                arms += &format!("{alternatives}=>{{{decisions}{preview}{rest}}},");
+                            }
                         }
                         format!(
                             "match script.trace()[0].0{{{arms}_=>panic!(\"unknown branch entry\")}}"
@@ -391,17 +443,19 @@ impl Emitter<'_> {
                     assert!(first.iter().all(|(other, _)| *other == view));
                     let labels = |body| {
                         first_local(body, actor, before)
-                            .into_iter()
+                            .iter()
                             .map(|(_, label)| label.to_string())
                             .collect::<Vec<_>>()
                             .join(",")
                     };
-                    let endpoint = &names[usize::from(view)];
-                    let entry = first[0].1;
-                    format!(
-                        "let branch=record_pending({endpoint}.offer(),observed,ObservedCall::Preview({actor},{entry})).await?;let label=branch.label();drop(branch);let branch=record_pending({endpoint}.offer(),observed,ObservedCall::Preview({actor},{entry})).await?;assert_eq!(branch.label(),label);drop(branch);assert!((if right{{&[{}][..]}}else{{&[{}][..]}}).contains(&label));",
-                        labels(b),
-                        labels(a)
+                    preview_for(
+                        view,
+                        first[0].1,
+                        &format!(
+                            "if right{{&[{}][..]}}else{{&[{}][..]}}",
+                            labels(b),
+                            labels(a)
+                        ),
                     )
                 };
                 format!("{{{select}{preview}if right{{{right}}}else{{{left}}}}}")

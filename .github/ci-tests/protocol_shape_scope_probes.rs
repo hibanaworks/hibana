@@ -148,6 +148,11 @@ impl Planner<'_> {
                     .filter(|label| localside::contains(chosen, *label))
                     .or_else(|| {
                         let label = body.trace().messages[0].0;
+                        if matches!(source, Protocol::Resolved(..))
+                            && !localside::message_selected_head(chosen, label)
+                        {
+                            return None;
+                        }
                         let mut messages = Vec::new();
                         chosen.messages(&mut messages);
                         let from = messages
@@ -339,6 +344,37 @@ mod tests {
             let first = execution.trace().messages[0].0;
             let probes = plans(&source, &execution, 0);
             assert!(!probes.iter().any(|p| p.actor == 0 && p.part == first));
+            assert!(probes.iter().any(|p| p.actor == 1 && p.part == first));
+        }
+    }
+
+    #[test]
+    fn a_resolved_branch_retains_its_first_operation_inside_the_borrow() {
+        let arm = |a, b| Protocol::Par(Box::new(message(0, 1, a)), Box::new(message(0, 1, b)));
+        let source = Protocol::Resolved(Box::new(arm(1, 2)), Box::new(arm(3, 4)), 0);
+        for execution in source.executions() {
+            let first = execution.trace().messages[0].0;
+            let probes = plans(&source, &execution, 0);
+            assert!(probes.iter().any(|p| p.actor == 0 && p.part == first));
+            assert!(probes.iter().any(|p| p.actor == 1 && p.part == first));
+        }
+    }
+
+    #[test]
+    fn only_a_message_selected_head_is_sent_before_borrowing_a_resolved_branch() {
+        let arm = |a, b| Protocol::Par(Box::new(message(0, 1, a)), Box::new(message(0, 1, b)));
+        let source = Protocol::Resolved(
+            Box::new(arm(1, 2)),
+            Box::new(Protocol::Route(Box::new(arm(3, 4)), Box::new(arm(5, 6)))),
+            0,
+        );
+        for execution in source.executions() {
+            let first = execution.trace().messages[0].0;
+            let probes = plans(&source, &execution, 0);
+            assert_eq!(
+                probes.iter().any(|p| p.actor == 0 && p.part == first),
+                first < 3
+            );
             assert!(probes.iter().any(|p| p.actor == 1 && p.part == first));
         }
     }

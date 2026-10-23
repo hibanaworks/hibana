@@ -425,7 +425,9 @@ where
             frontier_visited,
             scratch,
         ))? {
-            FrontierDeferOutcome::Continue | FrontierDeferOutcome::Yielded => {
+            // No branch or cursor changed. Retain the current child and wait.
+            FrontierDeferOutcome::Continue => Poll::Pending,
+            FrontierDeferOutcome::Yielded => {
                 state.pending.arm_yield_restart();
                 self.poll_resolve_pending_as(
                     state,

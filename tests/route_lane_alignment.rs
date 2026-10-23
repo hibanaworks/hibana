@@ -23,6 +23,130 @@ type ValueB = g::Msg<9, u32>;
 type ReturnB = g::Msg<10, Endpoint<'static, 3>>;
 
 #[test]
+fn a_parent_resolver_precedes_the_resolver_in_its_unselected_arm() {
+    let global = g::route(
+        g::seq(
+            g::route(
+                g::route(
+                    g::seq(
+                        g::send::<0, 1, g::Msg<0, ()>>(),
+                        g::seq(
+                            g::send::<1, 2, g::Msg<1, ()>>(),
+                            g::seq(
+                                g::send::<2, 1, g::Msg<2, ()>>(),
+                                g::send::<1, 0, g::Msg<3, ()>>(),
+                            ),
+                        ),
+                    ),
+                    g::seq(
+                        g::send::<0, 1, g::Msg<4, ()>>(),
+                        g::seq(
+                            g::send::<0, 2, g::Msg<5, ()>>(),
+                            g::send::<1, 2, g::Msg<6, ()>>(),
+                        ),
+                    ),
+                )
+                .resolve::<1>(),
+                g::seq(
+                    g::send::<0, 1, g::Msg<7, ()>>(),
+                    g::seq(
+                        g::send::<0, 2, g::Msg<8, ()>>(),
+                        g::send::<1, 2, g::Msg<9, ()>>(),
+                    ),
+                ),
+            ),
+            g::seq(
+                g::send::<0, 1, g::Msg<10, ()>>(),
+                g::seq(
+                    g::send::<1, 2, g::Msg<11, ()>>(),
+                    g::seq(
+                        g::send::<2, 1, g::Msg<12, ()>>(),
+                        g::send::<1, 0, g::Msg<13, ()>>(),
+                    ),
+                ),
+            ),
+        ),
+        g::seq(
+            g::send::<0, 1, g::Msg<14, ()>>(),
+            g::seq(
+                g::send::<0, 2, g::Msg<15, ()>>(),
+                g::send::<1, 2, g::Msg<16, ()>>(),
+            ),
+        ),
+    )
+    .resolve::<0>();
+    let (p0, p1, p2) = (
+        project::<0>(&global),
+        project::<1>(&global),
+        project::<2>(&global),
+    );
+    let (parent_calls, child_calls) = (Cell::new(0), Cell::new(0));
+    let network = common::TestTransport::new();
+    let [mut slab0, mut slab1, mut slab2] = [[0; 32768]; 3];
+    let (mut s0, mut s1, mut s2) = (
+        SessionKitStorage::uninit(),
+        SessionKitStorage::uninit(),
+        SessionKitStorage::uninit(),
+    );
+    let rv0 = s0.init().rendezvous(&mut slab0, network.clone()).unwrap();
+    let rv1 = s1.init().rendezvous(&mut slab1, network.clone()).unwrap();
+    let rv2 = s2.init().rendezvous(&mut slab2, network).unwrap();
+    rv0.set_resolver(
+        &p0,
+        ResolverRef::<0>::decision_state(&parent_calls, |calls| {
+            calls.set(calls.get() + 1);
+            Ok(DecisionArm::Right)
+        }),
+    )
+    .unwrap();
+    rv0.set_resolver(
+        &p0,
+        ResolverRef::<1>::decision_state(&child_calls, |calls| {
+            calls.set(calls.get() + 1);
+            panic!("the unselected branch must not call its resolver")
+        }),
+    )
+    .unwrap();
+    let sid = SessionId::new(9292);
+    let (mut e0, mut e1, mut e2) = (
+        rv0.enter(sid, &p0).unwrap(),
+        rv1.enter(sid, &p1).unwrap(),
+        rv2.enter(sid, &p2).unwrap(),
+    );
+    tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .start_paused(true)
+        .build()
+        .unwrap()
+        .block_on(async {
+            tokio::time::timeout(core::time::Duration::from_secs(1), async {
+                tokio::try_join!(
+                    async {
+                        let branch = e0.offer().await?;
+                        assert_eq!(branch.label(), 14);
+                        drop(branch);
+                        e0.offer().await?.send::<g::Msg<14, ()>>(&()).await?;
+                        e0.send::<g::Msg<15, ()>>(&()).await
+                    },
+                    async {
+                        e1.offer().await?.recv::<g::Msg<14, ()>>().await?;
+                        e1.send::<g::Msg<16, ()>>(&()).await
+                    },
+                    async {
+                        e2.offer().await?.recv::<g::Msg<15, ()>>().await?;
+                        e2.recv::<g::Msg<16, ()>>().await
+                    },
+                )
+            })
+            .await
+            .expect("an unselected descendant blocked the parent choice")
+            .unwrap();
+        });
+    assert_eq!(parent_calls.get(), 1);
+    assert_eq!(child_calls.get(), 0);
+}
+
+#[test]
 fn an_unselected_route_entry_cannot_consume_a_queued_continuation() {
     type M0 = g::Msg<0, ()>;
     type M1 = g::Msg<1, ()>;
