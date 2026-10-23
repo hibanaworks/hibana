@@ -1256,17 +1256,18 @@ long_running_const_eval = "forbid"
         let script_path = script_directory.join(format!("{case}.jsonl"));
         write_if_changed(&script_path, &scripts)?;
         script_paths.insert(script_path);
-        let (scope_records, scope_count) = scope_probes::inventory(global, *owner);
-        let scope_input = format!(r#"{{"name":{case},"probes":[{scope_records}]}}"#);
-        let scope_path = scope_directory.join(format!("{case}.json"));
-        write_if_changed(&scope_path, &scope_input)?;
-        scope_paths.insert(scope_path);
-        scope_inputs.push(scope_input);
-        borrowed_scope_probes += scope_count;
-        writeln!(
-            source,
-            r#"let scope_directory=std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("scope-observations");std::fs::create_dir_all(&scope_directory).unwrap();std::fs::write(scope_directory.join("{case}.json"),format!("{{{{\"name\":{case},\"probes\":[{{}}]}}}}",scoped_rejections.join(","))).unwrap();"#
+        let scope_path = scope_directory.join(format!("{case}.jsonl"));
+        let (script_count, scope_count) = scope_probes::write_inventory(
+            global,
+            *owner,
+            *case,
+            std::io::BufWriter::new(fs::File::create(&scope_path)?),
         )?;
+        scope_paths.insert(scope_path);
+        scope_inputs.push(format!(
+            r#"{{"name":{case},"scripts":{script_count},"probes":{scope_count}}}"#
+        ));
+        borrowed_scope_probes += scope_count;
         scoped_executions += global.executions().len();
         if delegated_cases.contains(case) {
             delegated_concurrent_runs += global.executions().len();

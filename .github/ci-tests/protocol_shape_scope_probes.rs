@@ -13,9 +13,9 @@ pub(super) struct Probe {
 }
 
 impl Probe {
-    fn json(&self, script: usize, concurrent: bool) -> String {
+    fn json(&self) -> String {
         format!(
-            r#"{{"script":{script},"concurrent":{concurrent},"group":[{},{}],"part":{},"occurrence":{},"actor":{},"role":{},"label":{},"receive":{},"accepted":false}}"#,
+            r#"{{"group":[{},{}],"part":{},"occurrence":{},"actor":{},"role":{},"label":{},"receive":{},"accepted":false}}"#,
             self.group.0,
             self.group.1,
             self.part,
@@ -28,15 +28,30 @@ impl Probe {
     }
 }
 
-pub(super) fn inventory(source: &Protocol, owner: u8) -> (String, usize) {
-    let mut records = Vec::new();
-    for (script, execution) in source.executions().iter().enumerate() {
+pub(super) fn write_inventory(
+    source: &Protocol,
+    owner: u8,
+    case: usize,
+    mut output: impl std::io::Write,
+) -> std::io::Result<(usize, usize)> {
+    let executions = source.executions();
+    writeln!(
+        output,
+        r#"{{"name":{case},"scripts":{}}}"#,
+        executions.len()
+    )?;
+    let mut count = 0;
+    for (script, execution) in executions.iter().enumerate() {
         let probes = plans(source, execution, owner);
-        for concurrent in [false, true] {
-            records.extend(probes.iter().map(|probe| probe.json(script, concurrent)));
-        }
+        count += 2 * probes.len();
+        writeln!(
+            output,
+            r#"{{"script":{script},"probes":[{}]}}"#,
+            probes.iter().map(Probe::json).collect::<Vec<_>>().join(",")
+        )?;
     }
-    (records.join(","), records.len())
+    output.flush()?;
+    Ok((executions.len(), count))
 }
 
 pub(super) fn first_label(source: &Protocol) -> u8 {

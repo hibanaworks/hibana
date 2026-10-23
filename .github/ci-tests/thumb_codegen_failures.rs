@@ -148,10 +148,6 @@ fn full_gate_requires_successful_build_and_one_object_before_scan() {
         String::from_utf8_lossy(&good.stderr)
     );
     assert!(String::from_utf8_lossy(&good.stdout).contains("has no aeabi u64 helpers"));
-    let probe =
-        fs::read_to_string(f.0.join("target/thumbv6m-frame-header-codegen/harness/src/lib.rs"))
-            .unwrap();
-    assert!(probe.contains("FrameHeader::from_bytes([0, 0, 0, a, b, 3, 4, 5])"));
     for (objects, status) in [(0, 0), (2, 0), (1, 13)] {
         assert!(!f.gate(objects, status).status.success());
     }

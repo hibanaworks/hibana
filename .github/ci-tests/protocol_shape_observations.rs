@@ -20,9 +20,9 @@ struct ScopeProbe {
     receive: bool,
 }
 impl ScopeProbe {
-    fn json(self, script: usize, concurrent: bool) -> String {
+    fn json(self) -> String {
         format!(
-            r#"{{"script":{script},"concurrent":{concurrent},"group":[{},{}],"part":{},"occurrence":{},"actor":{},"role":{},"label":{},"receive":{},"accepted":false}}"#,
+            r#"{{"group":[{},{}],"part":{},"occurrence":{},"actor":{},"role":{},"label":{},"receive":{},"accepted":false}}"#,
             self.group.0,
             self.group.1,
             self.part,
@@ -37,92 +37,151 @@ impl ScopeProbe {
 
 // Schedule data stays outside Rust's const/type evaluation. Its complete
 // source-derived inventory is checked separately against observed calls.
-fn load_scope_plans(text: &str, name: usize, scripts: usize) -> Vec<Vec<ScopeProbe>> {
-    use planned_json::Json;
-    fn number(value: &Json) -> usize {
+struct ScopePlans<R: std::io::BufRead> {
+    lines: std::io::Lines<R>,
+    next: usize,
+    scripts: usize,
+}
+impl<R: std::io::BufRead> ScopePlans<R> {
+    fn number(value: &planned_json::Json) -> usize {
         match value {
-            Json::Number(value) => value.parse().expect("invalid scope-plan number"),
+            planned_json::Json::Number(value) => value.parse().expect("invalid scope-plan number"),
             _ => panic!("expected scope-plan number"),
         }
     }
-    fn field(record: &Json, key: &str) -> usize {
-        number(record.get(key).expect("missing scope-plan field"))
+    fn field(record: &planned_json::Json, key: &str) -> usize {
+        Self::number(record.get(key).expect("missing scope-plan field"))
     }
-    fn boolean(record: &Json, key: &str) -> bool {
+    fn boolean(record: &planned_json::Json, key: &str) -> bool {
         match record.get(key) {
-            Some(Json::Bool(value)) => *value,
+            Some(planned_json::Json::Bool(value)) => *value,
             _ => panic!("expected scope-plan boolean"),
         }
     }
-    let input = planned_json::parse(text).expect("invalid scope-plan JSON");
-    assert_eq!(field(&input, "name"), name, "wrong scope-plan case");
-    let Json::Object(fields) = &input else {
-        panic!("expected scope-plan object")
-    };
-    assert_eq!(fields.len(), 2, "unknown scope-plan field");
-    let Some(Json::Array(records)) = input.get("probes") else {
-        panic!("missing scope-plan probes")
-    };
-    let mut plans = (0..scripts).map(|_| Vec::new()).collect::<Vec<_>>();
-    for record in records {
-        let Json::Object(fields) = record else {
-            panic!("expected scope probe object")
+    fn read(lines: &mut std::io::Lines<R>) -> planned_json::Json {
+        planned_json::parse(
+            &lines
+                .next()
+                .expect("missing scope-plan record")
+                .expect("unreadable scope-plan record"),
+        )
+        .expect("invalid scope-plan JSON")
+    }
+    fn new(reader: R, name: usize, scripts: usize) -> Self {
+        let mut lines = reader.lines();
+        let header = Self::read(&mut lines);
+        let planned_json::Json::Object(fields) = &header else {
+            panic!("expected scope-plan header")
         };
-        assert_eq!(fields.len(), 10, "unknown scope probe field");
-        assert!(
-            !boolean(record, "accepted"),
-            "a scope plan must request rejection"
+        assert_eq!(fields.len(), 2, "unknown scope-plan header field");
+        assert_eq!(Self::field(&header, "name"), name, "wrong scope-plan case");
+        assert_eq!(
+            Self::field(&header, "scripts"),
+            scripts,
+            "wrong scope-plan count"
         );
-        let Some(Json::Array(group)) = record.get("group") else {
-            panic!("missing scope group")
-        };
-        assert_eq!(group.len(), 2);
-        let probe = ScopeProbe {
-            group: (
-                number(&group[0]).try_into().unwrap(),
-                number(&group[1]).try_into().unwrap(),
-            ),
-            part: field(record, "part").try_into().unwrap(),
-            occurrence: field(record, "occurrence"),
-            actor: field(record, "actor").try_into().unwrap(),
-            role: field(record, "role").try_into().unwrap(),
-            label: field(record, "label").try_into().unwrap(),
-            receive: boolean(record, "receive"),
-        };
-        let script = field(record, "script");
-        let plan = plans
-            .get_mut(script)
-            .expect("scope-plan script outside inventory");
-        if !boolean(record, "concurrent") {
-            plan.push(probe);
+        Self {
+            lines,
+            next: 0,
+            scripts,
         }
     }
-    plans
+    fn next(&mut self, script: usize) -> Vec<ScopeProbe> {
+        use planned_json::Json;
+        assert_eq!(self.next, script, "out-of-order scope-plan script");
+        assert!(script < self.scripts, "unexpected extra script plan");
+        let input = Self::read(&mut self.lines);
+        let Json::Object(fields) = &input else {
+            panic!("expected scope-plan object")
+        };
+        assert_eq!(fields.len(), 2, "unknown scope-plan field");
+        assert_eq!(
+            Self::field(&input, "script"),
+            script,
+            "wrong scope-plan script"
+        );
+        let Some(Json::Array(records)) = input.get("probes") else {
+            panic!("missing scope-plan probes")
+        };
+        let probes = records
+            .iter()
+            .map(|record| {
+                let Json::Object(fields) = record else {
+                    panic!("expected scope probe object")
+                };
+                assert_eq!(fields.len(), 8, "unknown scope probe field");
+                assert!(
+                    !Self::boolean(record, "accepted"),
+                    "a scope plan must request rejection"
+                );
+                let Some(Json::Array(group)) = record.get("group") else {
+                    panic!("missing scope group")
+                };
+                assert_eq!(group.len(), 2);
+                ScopeProbe {
+                    group: (
+                        Self::number(&group[0]).try_into().unwrap(),
+                        Self::number(&group[1]).try_into().unwrap(),
+                    ),
+                    part: Self::field(record, "part").try_into().unwrap(),
+                    occurrence: Self::field(record, "occurrence"),
+                    actor: Self::field(record, "actor").try_into().unwrap(),
+                    role: Self::field(record, "role").try_into().unwrap(),
+                    label: Self::field(record, "label").try_into().unwrap(),
+                    receive: Self::boolean(record, "receive"),
+                }
+            })
+            .collect();
+        self.next += 1;
+        probes
+    }
+    fn finish(mut self) {
+        assert_eq!(self.next, self.scripts, "missing scope-plan script");
+        assert!(
+            self.lines.next().is_none(),
+            "unexpected extra scope-plan record"
+        );
+    }
 }
 
 #[test]
 fn scope_plan_loading_keeps_each_source_visit_and_both_schedules() {
-    let text = r#"{"name":7,"probes":[
-      {"script":0,"concurrent":false,"group":[1,2],"part":1,"occurrence":2,"actor":0,"role":0,"label":2,"receive":false,"accepted":false},
-      {"script":0,"concurrent":true,"group":[1,2],"part":1,"occurrence":2,"actor":0,"role":0,"label":2,"receive":false,"accepted":false},
-      {"script":1,"concurrent":false,"group":[1,2],"part":1,"occurrence":4,"actor":1,"role":3,"label":2,"receive":true,"accepted":false},
-      {"script":1,"concurrent":true,"group":[1,2],"part":1,"occurrence":4,"actor":1,"role":3,"label":2,"receive":true,"accepted":false}]}"#;
-    let plans = load_scope_plans(text, 7, 2);
+    let text = concat!(
+        "{\"name\":7,\"scripts\":2}\n",
+        "{\"script\":0,\"probes\":[{\"group\":[1,2],\"part\":1,\"occurrence\":2,\"actor\":0,\"role\":0,\"label\":2,\"receive\":false,\"accepted\":false}]}\n",
+        "{\"script\":1,\"probes\":[{\"group\":[1,2],\"part\":1,\"occurrence\":4,\"actor\":1,\"role\":3,\"label\":2,\"receive\":true,\"accepted\":false}]}\n",
+    );
+    let load = |text: &str, name, scripts| {
+        let mut input = ScopePlans::new(text.as_bytes(), name, scripts);
+        let plans = (0..scripts)
+            .map(|script| input.next(script))
+            .collect::<Vec<_>>();
+        input.finish();
+        plans
+    };
+    let plans = load(text, 7, 2);
     assert_eq!(plans.iter().map(Vec::len).collect::<Vec<_>>(), [1, 1]);
     assert_eq!(plans[0][0].occurrence, 2);
     assert_eq!(plans[1][0].occurrence, 4);
     assert_eq!(plans[1][0].role, 3);
-    assert!(std::panic::catch_unwind(|| load_scope_plans(text, 8, 2)).is_err());
-    assert!(std::panic::catch_unwind(|| load_scope_plans(text, 7, 1)).is_err());
+    assert!(std::panic::catch_unwind(|| load(text, 8, 2)).is_err());
+    assert!(std::panic::catch_unwind(|| load(text, 7, 1)).is_err());
     assert!(
-        std::panic::catch_unwind(|| load_scope_plans(
+        std::panic::catch_unwind(|| load(
             &text.replace("\"accepted\":false", "\"accepted\":true"),
             7,
             2
         ))
         .is_err()
     );
-    assert!(std::panic::catch_unwind(|| load_scope_plans(&text[..text.len() - 1], 7, 2)).is_err());
+    for changed in [
+        text[..text.len() - 2].to_owned(),
+        text.replace("\"script\":1", "\"script\":0"),
+        format!("{text}{{}}\n"),
+        text.lines().take(2).collect::<Vec<_>>().join("\n"),
+    ] {
+        assert!(std::panic::catch_unwind(|| load(&changed, 7, 2)).is_err());
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]

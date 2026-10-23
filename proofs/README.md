@@ -109,6 +109,9 @@ borrows until each visit completes. These executions run in both child orders
 and with concurrent Tokio futures, including different choices in later visits.
 Tests read source-derived execution schedules one record at a time from JSON
 Lines and check that every planned record was consumed.
+Borrowed-scope plans and observations also use JSON Lines. Each record covers
+one source execution; the checker requires both schedules and every planned
+probe before advancing to the next record.
 Distinct visit boundaries remain separate inputs when their message words
 are equal. The complete set of executed words is checked against the trace
 inventory. A flat word alone does not specify which repeated group has ended.

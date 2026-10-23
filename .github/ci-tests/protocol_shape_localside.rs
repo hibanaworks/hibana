@@ -565,10 +565,15 @@ pub(super) fn runs(
         r#"
     let mut completed_scoped_traces=std::collections::BTreeSet::new();
     let scripts=std::io::BufRead::lines(std::io::BufReader::new(std::fs::File::open(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("scripts/{case}.jsonl")).expect("missing script plans")));
-    let scope_plans=load_scope_plans(include_str!("../scope-plans/{case}.json"),{case},{});
-    let mut scoped_rejections=Vec::new();
+    use std::io::Write as _;
+    let scope_root=std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut scope_plans=ScopePlans::new(std::io::BufReader::new(std::fs::File::open(scope_root.join("scope-plans/{case}.jsonl")).expect("missing scope plans")),{case},{});
+    std::fs::create_dir_all(scope_root.join("scope-observations")).unwrap();
+    let mut scope_observations=std::io::BufWriter::new(std::fs::File::create(scope_root.join("scope-observations/{case}.jsonl")).unwrap());
+    writeln!(scope_observations,"{{{{\"name\":{case},\"scripts\":{}}}}}").unwrap();
     let mut checked_scripts=0usize;
-    for (script_index,line) in scripts.enumerate() {{ let decoded_script=Script::from_json(&line.expect("unreadable script plan")).expect("invalid script plan");let script=&decoded_script;let probes=scope_plans.get(script_index).expect("unexpected extra script plan");for concurrent in [false,true] {{
+    for (script_index,line) in scripts.enumerate() {{ let decoded_script=Script::from_json(&line.expect("unreadable script plan")).expect("invalid script plan");let script=&decoded_script;let probes=scope_plans.next(script_index);for concurrent in [false,true] {{
+    let mut scoped_rejections=Vec::new();
     for probe in core::iter::once(None).chain(probes.iter().copied().map(Some)) {{
       let _=concurrent;
       let decisions:Vec<std::cell::Cell<Option<bool>>>=(0..{}).map(|_|std::cell::Cell::new(None)).collect();let _=&decisions;
@@ -581,6 +586,7 @@ pub(super) fn runs(
       let rv1=s1.init().rendezvous(&mut slab1,network.clone()).unwrap();
       let rv2=s2.init().rendezvous(&mut slab2,network.clone()).unwrap();
     "#,
+        executions.len(),
         executions.len(),
         resolvers.len()
     );
@@ -644,7 +650,7 @@ pub(super) fn runs(
         );
     }
     code += r#"let result=tokio::time::timeout(core::time::Duration::from_secs(1),async{tokio::try_join!(run0,run1,run2)}).await.expect("generated localside stalled");
-    if let Some(probe)=probe{assert!(result.is_err(),"scope probe did not stop its run");assert_eq!(*observed.scope_rejections.borrow(),[probe],"planned borrowed-scope probe was not reached");scoped_rejections.push(probe.json(script_index,concurrent));continue;}
+    if let Some(probe)=probe{assert!(result.is_err(),"scope probe did not stop its run");let actual=observed.scope_rejections.borrow();assert_eq!(*actual,[probe],"planned borrowed-scope probe was not reached");scoped_rejections.push(actual[0].json());continue;}
     result.unwrap();
     assert!(observed.calls.borrow().is_empty());
     let mut actual=observed.completed.borrow().clone();actual.sort();
@@ -660,7 +666,7 @@ pub(super) fn runs(
         code += "if concurrent{assert!(observed.overlapped.get(),\"independent borrows never overlapped while pending\");}";
     }
     code += &format!(
-        "}}}}completed_scoped_traces.insert(script.line());checked_scripts+=1;}}assert_eq!(checked_scripts,{},\"missing script plan\");",
+        r#"}}writeln!(scope_observations,"{{{{\"script\":{{script_index}},\"concurrent\":{{concurrent}},\"probes\":[{{}}]}}}}",scoped_rejections.join(",")).unwrap();}}completed_scoped_traces.insert(script.line());checked_scripts+=1;}}assert_eq!(checked_scripts,{},"missing script plan");scope_plans.finish();scope_observations.flush().unwrap();"#,
         executions.len()
     );
     (code, scripts)
