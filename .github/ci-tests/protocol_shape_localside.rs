@@ -290,7 +290,7 @@ impl Emitter<'_> {
                     }
                 };
                 format!(
-                    "{{let (_left,_right)=match script{{Script::Seq(a,b)=>(*a,*b),_=>panic!(\"expected sequential script\")}};{}{}}}",
+                    "{{let (_left,_right)=match script{{Script::Seq(a,b)=>(a.as_ref(),b.as_ref()),_=>panic!(\"expected sequential script\")}};{}{}}}",
                     bind("_left", &a),
                     bind("_right", &b)
                 )
@@ -310,20 +310,20 @@ impl Emitter<'_> {
                         format!("{{let script=_first;{first}}}")
                     };
                     format!(
-                        "{{let [_first,_second]=match script{{Script::Roll(visits)=>*visits,_=>panic!(\"expected repeated script\")}};{first}{{let script=_second;{second}}}}}"
+                        "{{let [_first,_second]=match script{{Script::Roll(visits)=>[visits[0].as_ref(),visits[1].as_ref()],_=>panic!(\"expected repeated script\")}};{first}{{let script=_second;{second}}}}}"
                     )
                 } else if first.is_empty() {
                     String::new()
                 } else {
                     format!(
-                        "for &script in match script{{Script::Roll(visits)=>visits,_=>panic!(\"expected repeated script\")}}{{{first}}}"
+                        "for visit in match script{{Script::Roll(visits)=>visits,_=>panic!(\"expected repeated script\")}}{{let script=visit.as_ref();{first}}}"
                     )
                 }
             }
             Protocol::Route(a, b) | Protocol::Resolved(a, b, _) => {
                 let before = *holder;
                 *holder = final_holder(source, before);
-                let select = "let (script,right)=match script{Script::Branch(body,right)=>(*body,*right),_=>panic!(\"expected branch script\")};";
+                let select = "let (script,right)=match script{Script::Branch(body,right)=>(body.as_ref(),*right),_=>panic!(\"expected branch script\")};";
                 if let Some(label) = primed {
                     let right = contains(b, label);
                     let mut current = before;
@@ -481,7 +481,7 @@ impl Emitter<'_> {
                         };
                         (
                             format!(
-                                "{{let (_left,_right,reverse)=match script{{Script::Par(a,b,reverse)=>(*a,*b,*reverse),_=>panic!(\"expected parallel script\")}};let left={};let right={};let (_a,_b)=if concurrent{{tokio::try_join!(left,right)?}}else if reverse{{let b=right.await?;let a=left.await?;(a,b)}}else{{let a=left.await?;let b=right.await?;(a,b)}};{result}}}",
+                                "{{let (_left,_right,reverse)=match script{{Script::Par(a,b,reverse)=>(a.as_ref(),b.as_ref(),*reverse),_=>panic!(\"expected parallel script\")}};let left={};let right={};let (_a,_b)=if concurrent{{tokio::try_join!(left,right)?}}else if reverse{{let b=right.await?;let a=left.await?;(a,b)}}else{{let a=left.await?;let b=right.await?;(a,b)}};{result}}}",
                                 bind("_left", &left),
                                 bind("_right", &right)
                             ),
@@ -539,8 +539,19 @@ impl Emitter<'_> {
     }
 }
 
-pub(super) fn runs(source: &Protocol, owner: u8, third_actor: bool, case: usize) -> String {
+pub(super) fn runs(
+    source: &Protocol,
+    owner: u8,
+    third_actor: bool,
+    case: usize,
+) -> (String, String) {
     let executions = source.executions();
+    let mut scripts = executions
+        .iter()
+        .map(Execution::json)
+        .collect::<Vec<_>>()
+        .join("\n");
+    scripts.push('\n');
     let mut paths = std::collections::BTreeMap::new();
     source.resolver_choices(&mut Vec::new(), &mut paths);
     let e = Emitter { source, paths };
@@ -553,10 +564,11 @@ pub(super) fn runs(source: &Protocol, owner: u8, third_actor: bool, case: usize)
     let mut code = format!(
         r#"
     let mut completed_scoped_traces=std::collections::BTreeSet::new();
-    let scripts:&[Script]=&[{}];
-    let scope_plans=load_scope_plans(include_str!("../scope-plans/{case}.json"),{case},scripts.len());
+    let scripts=std::io::BufRead::lines(std::io::BufReader::new(std::fs::File::open(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("scripts/{case}.jsonl")).expect("missing script plans")));
+    let scope_plans=load_scope_plans(include_str!("../scope-plans/{case}.json"),{case},{});
     let mut scoped_rejections=Vec::new();
-    for (script_index,script) in scripts.iter().enumerate() {{ let probes=&scope_plans[script_index];for concurrent in [false,true] {{
+    let mut checked_scripts=0usize;
+    for (script_index,line) in scripts.enumerate() {{ let decoded_script=Script::from_json(&line.expect("unreadable script plan")).expect("invalid script plan");let script=&decoded_script;let probes=scope_plans.get(script_index).expect("unexpected extra script plan");for concurrent in [false,true] {{
     for probe in core::iter::once(None).chain(probes.iter().copied().map(Some)) {{
       let _=concurrent;
       let decisions:Vec<std::cell::Cell<Option<bool>>>=(0..{}).map(|_|std::cell::Cell::new(None)).collect();let _=&decisions;
@@ -569,11 +581,7 @@ pub(super) fn runs(source: &Protocol, owner: u8, third_actor: bool, case: usize)
       let rv1=s1.init().rendezvous(&mut slab1,network.clone()).unwrap();
       let rv2=s2.init().rendezvous(&mut slab2,network.clone()).unwrap();
     "#,
-        executions
-            .iter()
-            .map(Execution::rust)
-            .collect::<Vec<_>>()
-            .join(","),
+        executions.len(),
         resolvers.len()
     );
     for id in resolvers {
@@ -651,6 +659,9 @@ pub(super) fn runs(source: &Protocol, owner: u8, third_actor: bool, case: usize)
     if matches!(source, Protocol::Par(..)) {
         code += "if concurrent{assert!(observed.overlapped.get(),\"independent borrows never overlapped while pending\");}";
     }
-    code += "}}completed_scoped_traces.insert(script.line());}";
-    code
+    code += &format!(
+        "}}}}completed_scoped_traces.insert(script.line());checked_scripts+=1;}}assert_eq!(checked_scripts,{},\"missing script plan\");",
+        executions.len()
+    );
+    (code, scripts)
 }

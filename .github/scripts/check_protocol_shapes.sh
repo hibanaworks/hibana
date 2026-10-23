@@ -42,7 +42,7 @@ cargo +"${TOOLCHAIN:-stable}" run --locked --manifest-path "${ROOT_DIR}/.github/
   cd "${OUTPUT}"
   shopt -s nullglob
   shasum -a 256 Cargo.toml catalog.json inputs.json scope-inputs.json src/*.rs src/bin/diagnose.rs \
-    diagnostics.tsv unclassified-rejections.txt traces/*.txt scope-plans/*.json \
+    diagnostics.tsv unclassified-rejections.txt traces/*.txt scope-plans/*.json scripts/*.jsonl \
     rejected/Cargo.toml rejected/inventory.tsv rejected/src/bin/*.rs > inputs.sha256
 )
 cargo +"${TOOLCHAIN:-stable}" test --locked --manifest-path "${ROOT_DIR}/.github/ci-tests/Cargo.toml" \

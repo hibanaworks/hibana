@@ -136,6 +136,7 @@ jobs:
             target/protocol-shapes/depth-*/**/inputs.json
             target/protocol-shapes/depth-*/**/scope-inputs.json
             target/protocol-shapes/depth-*/**/scope-plans/*.json
+            target/protocol-shapes/depth-*/**/scripts/*.jsonl
             target/protocol-shapes/depth-*/**/observations/*.json
             target/protocol-shapes/depth-*/**/scope-observations/*.json
             target/protocol-shapes/depth-*/**/rejected/inventory.tsv

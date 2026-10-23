@@ -56,36 +56,28 @@ impl Execution {
             }
         }
     }
-    fn rust(&self) -> String {
-        self.numbered_rust(&mut 0)
+    fn json(&self) -> String {
+        self.numbered_json(&mut 0)
     }
-    fn numbered_rust(&self, next: &mut usize) -> String {
+    fn numbered_json(&self, next: &mut usize) -> String {
         match self {
             Self::Message(label) => {
                 let occurrence = *next;
                 *next += 1;
-                format!("Script::Message({label},{occurrence})")
+                format!("[0,{label},{occurrence}]")
             }
-            Self::Seq(a, b) => format!(
-                "Script::Seq(&{},&{})",
-                a.numbered_rust(next),
-                b.numbered_rust(next)
-            ),
+            Self::Seq(a, b) => format!("[1,{},{}]", a.numbered_json(next), b.numbered_json(next)),
             Self::Par(a, b, reverse) => {
                 format!(
-                    "Script::Par(&{},&{},{reverse})",
-                    a.numbered_rust(next),
-                    b.numbered_rust(next)
+                    "[2,{},{},{reverse}]",
+                    a.numbered_json(next),
+                    b.numbered_json(next)
                 )
             }
             Self::Branch(body, right) => {
-                format!("Script::Branch(&{},{right})", body.numbered_rust(next))
+                format!("[3,{},{right}]", body.numbered_json(next))
             }
-            Self::Roll(a, b) => format!(
-                "Script::Roll([&{},&{}])",
-                a.numbered_rust(next),
-                b.numbered_rust(next)
-            ),
+            Self::Roll(a, b) => format!("[4,{},{}]", a.numbered_json(next), b.numbered_json(next)),
         }
     }
     fn message_count(&self) -> usize {
@@ -1162,6 +1154,9 @@ long_running_const_eval = "forbid"
     let scope_directory = output.join("scope-plans");
     fs::create_dir_all(&scope_directory)?;
     let mut scope_paths = BTreeSet::new();
+    let script_directory = output.join("scripts");
+    fs::create_dir_all(&script_directory)?;
+    let mut script_paths = BTreeSet::new();
     let mut borrowed_scope_probes = 0usize;
     let mut rejected = 0;
     for (case, word, service, owner, global, resolvers) in &cases {
@@ -1255,12 +1250,12 @@ long_running_const_eval = "forbid"
             )?;
         }
         source.push_str("];\n");
-        source.push_str(&localside::runs(
-            global,
-            *owner,
-            localside::present(global, 2, None),
-            *case,
-        ));
+        let (local, scripts) =
+            localside::runs(global, *owner, localside::present(global, 2, None), *case);
+        source.push_str(&local);
+        let script_path = script_directory.join(format!("{case}.jsonl"));
+        write_if_changed(&script_path, &scripts)?;
+        script_paths.insert(script_path);
         let (scope_records, scope_count) = scope_probes::inventory(global, *owner);
         let scope_input = format!(r#"{{"name":{case},"probes":[{scope_records}]}}"#);
         let scope_path = scope_directory.join(format!("{case}.json"));
@@ -1350,6 +1345,12 @@ long_running_const_eval = "forbid"
     for entry in fs::read_dir(scope_directory)? {
         let path = entry?.path();
         if !scope_paths.contains(&path) {
+            fs::remove_file(path)?;
+        }
+    }
+    for entry in fs::read_dir(script_directory)? {
+        let path = entry?.path();
+        if !script_paths.contains(&path) {
             fs::remove_file(path)?;
         }
     }

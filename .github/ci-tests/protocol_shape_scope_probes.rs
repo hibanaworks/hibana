@@ -254,7 +254,6 @@ mod tests {
             [0, 2, 4, 6].into_iter().collect()
         );
         assert!(probes.iter().all(|p| p.part != p.label));
-        assert!(execution.rust().contains("Script::Message(1,6)"));
     }
 
     #[test]

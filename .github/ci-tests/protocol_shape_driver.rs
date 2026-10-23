@@ -89,14 +89,53 @@ enum Outcome {
 
 // Immutable schedule input, generated from the source before any endpoint runs.
 // A nested repeat's visit boundaries cannot be recovered from message labels.
+#[derive(Debug, PartialEq)]
 enum Script {
     Message(u8, usize),
-    Seq(&'static Self, &'static Self),
-    Par(&'static Self, &'static Self, bool),
-    Branch(&'static Self, bool),
-    Roll([&'static Self; 2]),
+    Seq(Box<Self>, Box<Self>),
+    Par(Box<Self>, Box<Self>, bool),
+    Branch(Box<Self>, bool),
+    Roll([Box<Self>; 2]),
 }
 impl Script {
+    fn from_json(text: &str) -> Result<Self, String> {
+        use planned_json::Json;
+        fn number(value: &Json) -> Result<usize, String> {
+            match value {
+                Json::Number(value) => value.parse().map_err(|_| "invalid script number".into()),
+                _ => Err("expected script number".into()),
+            }
+        }
+        fn decode(value: &Json) -> Result<Script, String> {
+            let Json::Array(fields) = value else {
+                return Err("expected script node array".into());
+            };
+            match fields.as_slice() {
+                [Json::Number(kind), label, occurrence] if kind == "0" => Ok(Script::Message(
+                    number(label)?
+                        .try_into()
+                        .map_err(|_| "script label exceeds u8")?,
+                    number(occurrence)?,
+                )),
+                [Json::Number(kind), a, b] if kind == "1" => {
+                    Ok(Script::Seq(Box::new(decode(a)?), Box::new(decode(b)?)))
+                }
+                [Json::Number(kind), a, b, Json::Bool(reverse)] if kind == "2" => Ok(Script::Par(
+                    Box::new(decode(a)?),
+                    Box::new(decode(b)?),
+                    *reverse,
+                )),
+                [Json::Number(kind), body, Json::Bool(right)] if kind == "3" => {
+                    Ok(Script::Branch(Box::new(decode(body)?), *right))
+                }
+                [Json::Number(kind), a, b] if kind == "4" => {
+                    Ok(Script::Roll([Box::new(decode(a)?), Box::new(decode(b)?)]))
+                }
+                _ => Err("unknown script kind or invalid node fields".into()),
+            }
+        }
+        decode(&planned_json::parse(text)?)
+    }
     fn trace(&self) -> Vec<(u8, bool)> {
         match self {
             Self::Message(label, _) => vec![(*label, false)],
@@ -136,19 +175,59 @@ impl Script {
 
 #[test]
 fn scoped_scripts_keep_order_choices_and_visit_boundaries() {
-    static A: Script = Script::Message(1, 0);
-    static B: Script = Script::Message(2, 1);
-    static CHOICE: Script = Script::Branch(&A, false);
-    static REPEAT: Script = Script::Roll([&A, &B]);
-    let forward = Script::Seq(&CHOICE, &REPEAT);
-    let reverse = Script::Par(&CHOICE, &REPEAT, true);
+    let forward = Script::from_json("[1,[3,[0,1,0],false],[4,[0,1,1],[0,2,2]]]").unwrap();
+    let reverse = Script::from_json("[2,[3,[0,1,0],false],[4,[0,1,1],[0,2,2]],true]").unwrap();
     assert_eq!(forward.line(), "1?,1,2");
     assert_eq!(reverse.line(), "1,2,1?");
-    assert_eq!(Script::Par(&CHOICE, &REPEAT, false).line(), forward.line());
-    assert!(matches!(CHOICE, Script::Branch(_, false)));
-    assert_eq!(Script::Branch(&A, true).line(), CHOICE.line());
+    assert_eq!(
+        Script::from_json("[2,[3,[0,1,0],false],[4,[0,1,1],[0,2,2]],false]")
+            .unwrap()
+            .line(),
+        forward.line()
+    );
+    assert!(
+        matches!(&forward, Script::Seq(choice, _) if matches!(choice.as_ref(), Script::Branch(_, false)))
+    );
+    assert_eq!(
+        Script::Branch(Box::new(Script::Message(1, 0)), true).line(),
+        "1?"
+    );
     assert_eq!(reverse.first_occurrence(), 0);
-    assert_eq!(B.first_occurrence(), 1);
+    assert_eq!(Script::Message(2, 1).first_occurrence(), 1);
+    assert_eq!(
+        Script::from_json("[4,[3,[0,1,6],true],[3,[0,1,7],false]]").unwrap(),
+        Script::Roll([
+            Box::new(Script::Branch(Box::new(Script::Message(1, 6)), true)),
+            Box::new(Script::Branch(Box::new(Script::Message(1, 7)), false)),
+        ])
+    );
+}
+
+#[test]
+fn scoped_script_decoder_rejects_malformed_plans() {
+    for text in [
+        "",
+        "null",
+        "{}",
+        "[]",
+        "[9]",
+        "[0,1]",
+        "[0,1,0,2]",
+        "[0,256,0]",
+        "[0,-1,0]",
+        "[0,1,-1]",
+        "[0,1,18446744073709551616]",
+        "[1,[0,1,0],null]",
+        "[2,[0,1,0],[0,2,1],0]",
+        "[3,[0,1,0],1]",
+        "[4,[0,1,0]]",
+        "[0,1,0] trailing",
+    ] {
+        assert!(
+            Script::from_json(text).is_err(),
+            "accepted malformed plan {text}"
+        );
+    }
 }
 
 macro_rules! receive {
