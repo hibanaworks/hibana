@@ -16,6 +16,104 @@ use runtime_support::with_runtime_workspace;
 use tls_ref_support::with_resident_tls_ref;
 
 #[test]
+fn a_nested_loan_keeps_its_owner_while_an_independent_parent_part_restarts() {
+    use hibana::{Endpoint, runtime::transport::EndpointBinding};
+    type Start = Msg<0, ()>;
+    type Ack = Msg<1, ()>;
+    type Loan<'r> = Msg<2, Endpoint<'r, 3>>;
+    type Read = Msg<3, ()>;
+    type Value = Msg<4, ()>;
+    type Return<'r> = Msg<5, Endpoint<'r, 3>>;
+
+    let global = g::par(
+        g::seq(g::send::<0, 1, Start>(), g::send::<1, 0, Ack>()),
+        g::seq(
+            g::send::<0, 1, Loan<'_>>(),
+            g::seq(
+                g::send::<3, 0, Read>(),
+                g::seq(g::send::<0, 3, Value>(), g::send::<1, 0, Return<'_>>()),
+            ),
+        )
+        .roll(),
+    )
+    .roll();
+    let (p0, p1, p3) = (
+        project::<0>(&global),
+        project::<1>(&global),
+        project::<3>(&global),
+    );
+    let sid = SessionId::new(93);
+    // SAFETY: the test owns one resource and its only initial binding.
+    let network =
+        in_memory::InMemoryTransport::new([((sid, 3), unsafe { EndpointBinding::new() })]);
+    let [mut slab0, mut slab1] = [vec![0; 64 * 1024], vec![0; 64 * 1024]];
+    let (mut s0, mut s1) = (SessionKitStorage::uninit(), SessionKitStorage::uninit());
+    let rv0 = s0.init().rendezvous(&mut slab0, network.clone()).unwrap();
+    let rv1 = s1.init().rendezvous(&mut slab1, network).unwrap();
+    let mut owner = rv0.enter(sid, &p0).unwrap();
+    let mut worker = rv1.enter(sid, &p1).unwrap();
+    let initial_db = rv0.enter(sid, &p3).unwrap();
+
+    tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .start_paused(true)
+        .build()
+        .unwrap()
+        .block_on(async {
+            tokio::time::timeout(core::time::Duration::from_secs(1), async {
+                tokio::join!(
+                    async {
+                        let mut db = initial_db;
+                        let [mut ordinary, mut loan] = owner.par().unwrap();
+                        for _ in 0..2 {
+                            let (returned, ()) = tokio::join!(
+                                biased;
+                                async {
+                                    for _ in 0..2 {
+                                        loan.send::<Loan<'_>>(db).await.unwrap();
+                                        loan.recv::<Read>().await.unwrap();
+                                        loan.send::<Value>(&()).await.unwrap();
+                                        db = loan.recv::<Return<'_>>().await.unwrap();
+                                    }
+                                    db
+                                },
+                                async {
+                                    tokio::task::yield_now().await;
+                                    ordinary.send::<Start>(&()).await.unwrap();
+                                    ordinary.recv::<Ack>().await.unwrap();
+                                },
+                            );
+                            db = returned;
+                        }
+                    },
+                    async {
+                        let [mut ordinary, mut loan] = worker.par().unwrap();
+                        for _ in 0..2 {
+                            tokio::join!(
+                                biased;
+                                async {
+                                    for _ in 0..2 {
+                                        let mut db = loan.recv::<Loan<'_>>().await.unwrap();
+                                        db.send::<Read>(&()).await.unwrap();
+                                        db.recv::<Value>().await.unwrap();
+                                        loan.send::<Return<'_>>(db).await.unwrap();
+                                    }
+                                },
+                                async {
+                                    ordinary.recv::<Start>().await.unwrap();
+                                    ordinary.send::<Ack>(&()).await.unwrap();
+                                },
+                            );
+                        }
+                    },
+                );
+            })
+            .await
+            .expect("independent parent and nested loan must both progress");
+        });
+}
+
+#[test]
 fn retained_parallel_borrows_allow_a_nested_repeat() {
     use hibana::{Endpoint, runtime::transport::EndpointBinding};
     type Loan<'r> = Msg<0, Endpoint<'r, 3>>;

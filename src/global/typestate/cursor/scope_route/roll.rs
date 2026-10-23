@@ -155,7 +155,16 @@ impl EventCursor {
         // can block this scope; do not decode its completed prefix repeatedly.
         if self
             .pending_event_steps(row.start()..row.end())
-            .any(|index| participates(index) && self.credited_roll_child(scope, index).is_none())
+            .any(|index| {
+                participates(index)
+                    && (self
+                        .machine()
+                        .event_program()
+                        .footprint()
+                        .borrow_epoch_count
+                        == 0
+                        || self.credited_roll_child(scope, index).is_none())
+            })
         {
             return false;
         }
@@ -231,7 +240,13 @@ impl EventCursor {
         while let Some((scope, row)) = self.machine().roll_scope_row_by_slot(slot) {
             if row.start() <= idx
                 && idx < row.end()
-                && self.credited_roll_path_complete(scope, idx, &mut *selected_arm_for_scope)
+                && (self
+                    .machine()
+                    .event_program()
+                    .footprint()
+                    .borrow_epoch_count
+                    == 0
+                    || self.credited_roll_path_complete(scope, idx, &mut *selected_arm_for_scope))
                 && self.roll_scope_events_complete(scope, &mut *selected_arm_for_scope)
             {
                 best = Some(match best {

@@ -124,8 +124,22 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
             .cursor
             .roll_entry_views(scope)
             .ok_or(EventAdmissionError::Invariant)?;
+        let entry = event.and_then(|event| {
+            self.progress
+                .cursor
+                .node_index_for_relocatable_step(event.progress_step())
+        });
         let mut verdict = Ok(Some(scope));
         for (role, owner, receipts) in rows {
+            // A retained independent child keeps its current visit and owner.
+            // Only the operations actually restarted need their entry owners.
+            if entry.is_some_and(|entry| {
+                self.progress
+                    .cursor
+                    .roll_reentry_preserves_view(scope, role, entry)
+            }) {
+                continue;
+            }
             let view = actor.views.get(role);
             if let Some(view) = view {
                 // SAFETY: the actor operation lease excludes another kernel;

@@ -126,6 +126,36 @@ impl EventCursor {
             .is_some_and(|child| self.route_scope_contained_in_roll_scope(route, child))
     }
 
+    pub(crate) fn roll_reentry_preserves_view(
+        &self,
+        parent: ScopeId,
+        role: u8,
+        entry: usize,
+    ) -> bool {
+        let Some(row) = self.machine().roll_scope_row(parent) else {
+            return false;
+        };
+        let mut used = false;
+        for index in row.start()..row.end() {
+            let (event, _) =
+                crate::invariant_some(self.machine().event_program().operation_at(index));
+            let atom = self.program_ref().event_atom_at(event.dense_ordinal());
+            if atom.from == role
+                || atom.to == role
+                || atom.payload == crate::eff::EventPayload::Endpoint(role)
+            {
+                if self
+                    .roll_reentry_preserved_child(parent, index, Some(entry))
+                    .is_none()
+                {
+                    return false;
+                }
+                used = true;
+            }
+        }
+        used
+    }
+
     fn roll_epoch_word_start(&self) -> usize {
         (self.local_steps_len() + self.machine().event_program().footprint().roll_scope_count)
             .div_ceil(32)

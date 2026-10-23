@@ -135,6 +135,9 @@ run_miri_test \
   MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" \
     run_miri_test public-retained-parallel-nested-repeat -p hibana --test parallel_route_nesting \
     retained_parallel_borrows_allow_a_nested_repeat -- --exact
+  MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" \
+    run_miri_test public-nested-loan-during-independent-parent-reentry -p hibana --test parallel_route_nesting \
+    a_nested_loan_keeps_its_owner_while_an_independent_parent_part_restarts -- --exact
   run_miri_test public-parent-preview-before-child-choice -p hibana --test parallel_route_nesting \
     a_parent_preview_can_use_a_parallel_head_before_a_child_choice -- --exact
   run_miri_test public-parent-preview-before-child-resolver -p hibana --test parallel_route_nesting \
