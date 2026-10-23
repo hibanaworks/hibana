@@ -311,6 +311,7 @@
       "global::typestate::cursor::parallel_reentry_tests::completed_parallel_reentry_retains_its_first_arm",
       "global::typestate::cursor::parallel_reentry_tests::completed_parallel_reentry_retains_its_second_arm",
       "global::typestate::cursor::parallel_reentry_tests::cross_lane_child_admission_requires_only_its_own_fresh_steps",
+      "global::typestate::cursor::parallel_reentry_tests::cross_lane_child_reset_preserves_its_parent_prefix",
       "global::typestate::cursor::parallel_reentry_tests::cross_lane_parent_admission_requires_its_prefix",
       "global::typestate::cursor::parallel_reentry_tests::parallel_entry_accepts_the_independent_parent_arm",
       "global::typestate::cursor::parallel_reentry_tests::parallel_entry_accepts_the_new_parents_required_prefix",
@@ -427,7 +428,7 @@
 
   ],
   "totals": {
-    "standard-harnesses": 300,
+    "standard-harnesses": 301,
     "contract-harnesses": 0,
     "functions-under-contract": 0
   }

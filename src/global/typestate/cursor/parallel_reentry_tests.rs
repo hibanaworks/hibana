@@ -822,8 +822,8 @@ fn check_cross_lane_child_admission() {
     });
 }
 
-fn check_cross_lane_parent_and_reset() {
-    with_cross_lane_prefix(|cursor, (child, parent), lane| {
+fn check_cross_lane_parent_admission() {
+    with_cross_lane_prefix(|cursor, (_, parent), _| {
         let mut event: crate::global::typestate::EventCommitMeta =
             cursor.try_send_meta_at(2).unwrap().into();
         event.body_reentry = parent;
@@ -831,6 +831,11 @@ fn check_cross_lane_parent_and_reset() {
             cursor.event_enabled(2, event, &mut |_, _| None).err(),
             Some(super::EventAdmissionError::PredecessorPending),
         );
+    });
+}
+
+fn check_cross_lane_child_reset() {
+    with_cross_lane_prefix(|cursor, (child, _), lane| {
         cursor.clear_reentry_scope_events(child);
         assert!(cursor.node_event_done_for_lane(0, cursor.event_lane_at(0).unwrap()));
         assert!(!cursor.node_event_done_for_lane(1, cursor.event_lane_at(1).unwrap()));
@@ -843,7 +848,8 @@ fn check_cross_lane_parent_and_reset() {
 fn a_child_reentry_keeps_its_cross_lane_prefix() {
     check_cross_lane_selected_head();
     check_cross_lane_child_admission();
-    check_cross_lane_parent_and_reset();
+    check_cross_lane_parent_admission();
+    check_cross_lane_child_reset();
 }
 
 #[cfg(kani)]
@@ -864,5 +870,12 @@ fn cross_lane_child_admission_requires_only_its_own_fresh_steps() {
 #[kani::proof]
 #[kani::unwind(16)]
 fn cross_lane_parent_admission_requires_its_prefix() {
-    check_cross_lane_parent_and_reset();
+    check_cross_lane_parent_admission();
+}
+
+#[cfg(kani)]
+#[kani::proof]
+#[kani::unwind(16)]
+fn cross_lane_child_reset_preserves_its_parent_prefix() {
+    check_cross_lane_child_reset();
 }
