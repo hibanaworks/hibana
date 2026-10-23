@@ -74,44 +74,89 @@ def shapeFreshChoices (plan : SourceOccurrenceCut source) (points : List SourceP
       selection.scope != scope || selection.arm ==
         if choice / 2 ^ id % 2 == 0 then .left else .right
 
-def shapeReadyWithDomain (plan : SourceOccurrenceCut source) (domain points : List SourcePoint)
-    (point : SourcePoint) : Bool :=
-  domain.contains point && !points.contains point &&
-    domain.all fun prior =>
-      !sourcePointDepends plan.expanded plan.path.bindings prior point || points.contains prior
+theorem shapeLookupMappedRows (keys : List SourcePoint)
+    (value : SourcePoint → List SourcePoint) (point : SourcePoint) :
+    (keys.map fun key => (key, value key)).lookup point =
+      if keys.contains point then some (value point) else none := by
+  induction keys with
+  | nil => rfl
+  | cons key rest ih =>
+    cases equal : point == key with
+    | false =>
+      have different : point ≠ key := by
+        intro same
+        subst key
+        simp at equal
+      simp [List.lookup_cons, equal, ih, different]
+    | true =>
+      have same : point = key := eq_of_beq equal
+      subst key
+      simp
 
-theorem shapeReadyWithDomain_matches_source_readiness
+def shapeDependencyRows (plan : SourceOccurrenceCut source) :
+    List (SourcePoint × List SourcePoint) :=
+  let domain := sourceVisitPoints plan.path.bindings
+  domain.map fun point =>
+    (point, domain.filter fun prior =>
+      sourcePointDepends plan.expanded plan.path.bindings prior point)
+
+def shapeRowsReady (rows : List (SourcePoint × List SourcePoint))
+    (points : List SourcePoint) (point : SourcePoint) : Bool :=
+  match rows.lookup point with
+  | none => false
+  | some required => !points.contains point && required.all points.contains
+
+theorem shapeRowsReady_matches_source_readiness
     (plan : SourceOccurrenceCut source) (points : List SourcePoint) (point : SourcePoint) :
-    shapeReadyWithDomain plan (sourceVisitPoints plan.path.bindings) points point =
-      (occurrenceCut plan points).ready point := rfl
+    shapeRowsReady (shapeDependencyRows plan) points point =
+      (occurrenceCut plan points).ready point := by
+  by_cases present : point ∈ sourceVisitPoints plan.path.bindings <;>
+    simp [shapeRowsReady, shapeDependencyRows, shapeLookupMappedRows, present,
+      SourceOccurrenceCut.ready, occurrenceCut]
 
-#print axioms shapeReadyWithDomain_matches_source_readiness
+structure ShapePlan (source : Source) where
+  plan : SourceOccurrenceCut source
+  dependencies : List (SourcePoint × List SourcePoint)
+  dependencies_eq : dependencies = shapeDependencyRows plan
 
-def shapeAdvanceWithDomain (plan : SourceOccurrenceCut source) (domain points : List SourcePoint)
+def ShapePlan.of (plan : SourceOccurrenceCut source) : ShapePlan source :=
+  ⟨plan, shapeDependencyRows plan, rfl⟩
+
+def ShapePlan.ready (prepared : ShapePlan source) (points : List SourcePoint)
+    (point : SourcePoint) : Bool :=
+  shapeRowsReady prepared.dependencies points point
+
+theorem ShapePlan.ready_matches_source (prepared : ShapePlan source)
+    (points : List SourcePoint) (point : SourcePoint) :
+    prepared.ready points point = (occurrenceCut prepared.plan points).ready point := by
+  unfold ShapePlan.ready
+  rw [prepared.dependencies_eq, shapeRowsReady_matches_source_readiness]
+
+#print axioms shapeLookupMappedRows
+#print axioms shapeRowsReady_matches_source_readiness
+#print axioms ShapePlan.ready_matches_source
+
+def shapeAdvance (prepared : ShapePlan source) (points : List SourcePoint)
     (label : Nat) (receive : Bool) : List (List SourcePoint) :=
-  plan.path.bindings.filterMap fun (event, binding) => do
+  prepared.plan.path.bindings.filterMap fun (event, binding) => do
     if binding.message.label != label then none else do
       let point := if receive then .committed ⟨event, .receive⟩ else .accepted event
-      if !shapeReadyWithDomain plan domain points point then none else do
+      if !prepared.ready points point then none else do
         let points := points ++ [point]
         if receive then some points else do
           let publication := SourcePoint.committed ⟨event, .send⟩
-          if shapeReadyWithDomain plan domain points publication then some (points ++ [publication]) else none
+          if prepared.ready points publication then some (points ++ [publication]) else none
 
-def shapeAdvance (plan : SourceOccurrenceCut source) (points : List SourcePoint)
-    (label : Nat) (receive : Bool) : List (List SourcePoint) :=
-  shapeAdvanceWithDomain plan (sourceVisitPoints plan.path.bindings) points label receive
-
-def shapeStates (source : Source) (plans : List (SourceOccurrenceCut source))
-    (word : List Nat) : List (SourceOccurrenceCut source × List SourcePoint) :=
+def shapeStates (source : Source) (plans : List (ShapePlan source))
+    (word : List Nat) : List (ShapePlan source × List SourcePoint) :=
   word.foldl (fun states command => states.flatMap fun (plan, points) =>
     (shapeAdvance plan points (command / 2) (command % 2 == 1)).map (plan, ·))
     (plans.map (·, []))
 
-def shapePermits (states : List (SourceOccurrenceCut source × List SourcePoint))
+def shapePermits (states : List (ShapePlan source × List SourcePoint))
     (choice : Nat) (label : Nat) (receive : Bool) : Bool :=
   states.any fun (plan, points) =>
-    shapeFreshChoices plan points choice && !(shapeAdvance plan points label receive).isEmpty
+    shapeFreshChoices plan.plan points choice && !(shapeAdvance plan points label receive).isEmpty
 
 def shapeRepetitions : Source → Nat
   | .send _ => 0
@@ -151,7 +196,7 @@ def shapePrefixes (source : Source) : List (List Nat) :=
 
 -- Exhaust every order of the first four public operations for finite sources.
 -- The complete-trace prefixes above also reach deeper positions in each tree.
-def shapeShortPrefixes (source : Source) (plans : List (SourceOccurrenceCut source))
+def shapeShortPrefixes (source : Source) (plans : List (ShapePlan source))
     (resolvers : Nat) : List (List Nat) :=
   if shapeRepetitions source != 0 then [] else Id.run do
     let mut level := [[]]
@@ -325,12 +370,12 @@ def shapeReadLine [Lean.FromJson α] (file : IO.FS.Handle) : IO α := do
   | .ok value => pure value
   | .error error => throw (IO.userError s!"invalid completed script JSON: {error}")
 
-def shapeCompletedAdvance (plan : SourceOccurrenceCut source) (domain points : List SourcePoint)
+def shapeCompletedAdvance (prepared : ShapePlan source) (points : List SourcePoint)
     (actor role label : Nat) (receive : Bool) : List (List SourcePoint) :=
-  (shapeAdvanceWithDomain plan domain points label receive).filter fun next =>
+  (shapeAdvance prepared points label receive).filter fun next =>
     match next.getLast? with
     | some (.committed action) =>
-      plan.path.bindings.any fun (event, binding) => event == action.event &&
+      prepared.plan.path.bindings.any fun (event, binding) => event == action.event &&
         actor == (if receive then binding.receiverActor else binding.senderActor) &&
         role == if receive then binding.message.receiver.role else binding.message.sender.role
     | _ => false
@@ -350,6 +395,7 @@ def shapeCheckCompleted (source : Source) (name : Nat) (outputPath : String) : I
       | .error error => throw (IO.userError error)
     plans := plans.insert key (plan :: ((plans.get? key).getD []))
   unless !plans.isEmpty do throw (IO.userError "no accepted completed source plan")
+  let mut prepared : Option (List String × List (ShapePlan source)) := none
   let mut calls := 0
   for index in [:count] do
     let script : Lean.Json ← shapeReadLine scripts
@@ -358,18 +404,21 @@ def shapeCheckCompleted (source : Source) (name : Nat) (outputPath : String) : I
       | .error error => throw (IO.userError s!"shape {name} script {index}: {error}")
     unless rank == index do
       throw (IO.userError s!"shape {name}: missing or duplicate completed script")
-    let some matching := plans.get? (choices.mergeSort (· ≤ ·))
+    let key := choices.mergeSort (· ≤ ·)
+    let some matching := plans.get? key
       | throw (IO.userError s!"shape {name} script {index}: script has no accepted source path; choices={choices}; source={(plans.toList.take 4).map Prod.fst}")
     unless matching.all (fun plan => plan.path.bindings.length == messages) do
       throw (IO.userError s!"shape {name}: script and source path have different messages")
-    -- Each domain belongs to this source path, including its unfolded visits.
-    -- Keep it only for this script's two schedules, rather than all scripts.
-    let matchingDomains := matching.map fun plan => (plan, sourceVisitPoints plan.path.bindings)
+    -- Retain derived rows for one source-path group and its two schedules.
+    let ready := match prepared with
+      | some (previous, ready) => if previous == key then ready else matching.map ShapePlan.of
+      | none => matching.map ShapePlan.of
+    prepared := some (key, ready)
     for concurrent in [false, true] do
       let observed : ShapeCompletedScript ← shapeReadLine observations
       unless observed.script == index && observed.concurrent == concurrent do
         throw (IO.userError s!"shape {name}: missing or reordered completed execution")
-      let mut states := matchingDomains.map (fun cached => (cached, ([] : List SourcePoint)))
+      let mut states := ready.map (fun plan => (plan, ([] : List SourcePoint)))
       for call in observed.completed do
         unless call.size == 4 do throw (IO.userError "invalid completed call fields")
         let decoded : Except String (Nat × Nat × Nat × Bool) := do
@@ -378,12 +427,12 @@ def shapeCheckCompleted (source : Source) (name : Nat) (outputPath : String) : I
           | .ok value => pure value
           | .error error => throw (IO.userError s!"invalid completed call: {error}")
         unless actor < 256 && role < 256 && label < 256 do throw (IO.userError "invalid completed call domain")
-        states := states.flatMap fun ((plan, domain), points) =>
-          (shapeCompletedAdvance plan domain points actor role label receive).map ((plan, domain), ·)
+        states := states.flatMap fun (plan, points) =>
+          (shapeCompletedAdvance plan points actor role label receive).map (plan, ·)
         unless !states.isEmpty do
           throw (IO.userError s!"shape {name} script {index}: invalid completed trace")
         calls := calls + 1
-      unless states.any (fun ((_, domain), points) => domain.all points.contains) do
+      unless states.any (fun (plan, points) => (sourceVisitPoints plan.plan.path.bindings).all points.contains) do
         throw (IO.userError s!"shape {name} script {index}: incomplete completed trace")
   unless (← scripts.getLine).isEmpty && (← observations.getLine).isEmpty do
     throw (IO.userError s!"shape {name}: extra completed script record")
@@ -418,7 +467,7 @@ def main (args : List String) : IO UInt32 := do
       | throw (IO.userError s!"shape {input.name}: source ownership rejected")
     unless ((shapeResolvers source 0).map Prod.snd).mergeSort (· ≤ ·) == List.range input.resolvers do
       throw (IO.userError s!"shape {input.name}: missing or duplicate resolver assignments")
-    let plans := shapePlans source
+    let plans := (shapePlans source).map ShapePlan.of
     unless !plans.isEmpty do throw (IO.userError s!"shape {input.name}: no accepted source plan")
     let prefixes := (shapePrefixes source ++ shapeShortPrefixes source plans input.resolvers).eraseDups
     unless prefixes.all (fun word => !(shapeStates source plans word).isEmpty) do
