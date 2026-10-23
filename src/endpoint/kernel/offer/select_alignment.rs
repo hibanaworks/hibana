@@ -48,6 +48,14 @@ where
                     if candidate == scope && !completed_choice {
                         return None;
                     }
+                    // Resolve the descendant while its ancestor's choice is live.
+                    if self.selected_live_arm_for_scope(candidate).is_some()
+                        && cursor
+                            .route_scope_conflict_arm_for_scope(scope, candidate)
+                            .is_some()
+                    {
+                        return None;
+                    }
                     let entry = cursor.route_scope_offer_entry(candidate)?;
                     let entry_idx = if entry.is_absent() {
                         entry_idx

@@ -16,6 +16,171 @@ use runtime_support::with_runtime_workspace;
 use tls_ref_support::with_resident_tls_ref;
 
 #[test]
+fn parallel_borrows_repeat_before_the_next_parallel_group() {
+    use hibana::{Endpoint, runtime::transport::EndpointBinding};
+    type Loan<'r> = Msg<4, Endpoint<'r, 3>>;
+    type Return<'r> = Msg<7, Endpoint<'r, 3>>;
+    type TailLoan<'r> = Msg<8, Endpoint<'r, 3>>;
+    type TailReturn<'r> = Msg<11, Endpoint<'r, 3>>;
+
+    let global = g::seq(
+        g::par(
+            g::seq(
+                g::send::<0, 1, Msg<0, ()>>(),
+                g::seq(
+                    g::send::<1, 0, Msg<1, ()>>(),
+                    g::seq(g::send::<0, 1, Msg<2, ()>>(), g::send::<1, 0, Msg<3, ()>>()),
+                ),
+            ),
+            g::seq(
+                g::send::<0, 1, Loan<'_>>(),
+                g::seq(
+                    g::send::<3, 0, Msg<5, ()>>(),
+                    g::seq(g::send::<0, 3, Msg<6, ()>>(), g::send::<1, 0, Return<'_>>()),
+                ),
+            ),
+        )
+        .roll(),
+        g::par(
+            g::seq(
+                g::send::<0, 1, TailLoan<'_>>(),
+                g::seq(
+                    g::send::<3, 0, Msg<9, ()>>(),
+                    g::seq(
+                        g::send::<0, 3, Msg<10, ()>>(),
+                        g::send::<1, 0, TailReturn<'_>>(),
+                    ),
+                ),
+            ),
+            g::seq(
+                g::send::<0, 1, Msg<12, ()>>(),
+                g::seq(
+                    g::send::<0, 2, Msg<13, ()>>(),
+                    g::send::<1, 2, Msg<14, ()>>(),
+                ),
+            ),
+        ),
+    );
+    let (p0, p1, p2, p3) = (
+        project::<0>(&global),
+        project::<1>(&global),
+        project::<2>(&global),
+        project::<3>(&global),
+    );
+    let sid = SessionId::new(91);
+    // SAFETY: this test owns one resource and its only initial binding.
+    let network =
+        in_memory::InMemoryTransport::new([((sid, 3), unsafe { EndpointBinding::new() })]);
+    let [mut slab0, mut slab1, mut slab2] =
+        [vec![0; 64 * 1024], vec![0; 64 * 1024], vec![0; 64 * 1024]];
+    let (mut s0, mut s1, mut s2) = (
+        SessionKitStorage::uninit(),
+        SessionKitStorage::uninit(),
+        SessionKitStorage::uninit(),
+    );
+    let rv0 = s0.init().rendezvous(&mut slab0, network.clone()).unwrap();
+    let rv1 = s1.init().rendezvous(&mut slab1, network.clone()).unwrap();
+    let rv2 = s2.init().rendezvous(&mut slab2, network).unwrap();
+    let mut owner = rv0.enter(sid, &p0).unwrap();
+    let mut worker = rv1.enter(sid, &p1).unwrap();
+    let mut collector = rv2.enter(sid, &p2).unwrap();
+    let initial_db = rv0.enter(sid, &p3).unwrap();
+
+    tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .start_paused(true)
+        .build()
+        .unwrap()
+        .block_on(async {
+            tokio::time::timeout(core::time::Duration::from_secs(1), async {
+                tokio::try_join!(
+                    async {
+                        let mut db = initial_db;
+                        {
+                            let [mut exchange, mut loan] = owner.par()?;
+                            for _ in 0..2 {
+                                let ((), returned) = tokio::try_join!(
+                                    async {
+                                        exchange.send::<Msg<0, ()>>(&()).await?;
+                                        exchange.recv::<Msg<1, ()>>().await?;
+                                        exchange.send::<Msg<2, ()>>(&()).await?;
+                                        exchange.recv::<Msg<3, ()>>().await
+                                    },
+                                    async {
+                                        loan.send::<Loan<'_>>(db).await?;
+                                        loan.recv::<Msg<5, ()>>().await?;
+                                        loan.send::<Msg<6, ()>>(&()).await?;
+                                        loan.recv::<Return<'_>>().await
+                                    }
+                                )?;
+                                db = returned;
+                            }
+                        }
+                        let [mut loan, mut notice] = owner.par()?;
+                        let (db, ()) = tokio::try_join!(
+                            async {
+                                loan.send::<TailLoan<'_>>(db).await?;
+                                loan.recv::<Msg<9, ()>>().await?;
+                                loan.send::<Msg<10, ()>>(&()).await?;
+                                loan.recv::<TailReturn<'_>>().await
+                            },
+                            async {
+                                notice.send::<Msg<12, ()>>(&()).await?;
+                                notice.send::<Msg<13, ()>>(&()).await
+                            }
+                        )?;
+                        drop(db);
+                        Ok::<_, hibana::EndpointError>(())
+                    },
+                    async {
+                        {
+                            let [mut exchange, mut loan] = worker.par()?;
+                            for _ in 0..2 {
+                                tokio::try_join!(
+                                    async {
+                                        exchange.recv::<Msg<0, ()>>().await?;
+                                        exchange.send::<Msg<1, ()>>(&()).await?;
+                                        exchange.recv::<Msg<2, ()>>().await?;
+                                        exchange.send::<Msg<3, ()>>(&()).await
+                                    },
+                                    async {
+                                        let mut db = loan.recv::<Loan<'_>>().await?;
+                                        db.send::<Msg<5, ()>>(&()).await?;
+                                        db.recv::<Msg<6, ()>>().await?;
+                                        loan.send::<Return<'_>>(db).await
+                                    }
+                                )?;
+                            }
+                        }
+                        let [mut loan, mut notice] = worker.par()?;
+                        tokio::try_join!(
+                            async {
+                                let mut db = loan.recv::<TailLoan<'_>>().await?;
+                                db.send::<Msg<9, ()>>(&()).await?;
+                                db.recv::<Msg<10, ()>>().await?;
+                                loan.send::<TailReturn<'_>>(db).await
+                            },
+                            async {
+                                notice.recv::<Msg<12, ()>>().await?;
+                                notice.send::<Msg<14, ()>>(&()).await
+                            }
+                        )?;
+                        Ok::<_, hibana::EndpointError>(())
+                    },
+                    async {
+                        let [mut notice] = collector.par()?;
+                        notice.recv::<Msg<13, ()>>().await?;
+                        notice.recv::<Msg<14, ()>>().await
+                    },
+                )
+            })
+            .await
+            .expect("retained parallel borrows did not complete both visits and the tail")
+            .unwrap();
+        });
+}
+
+#[test]
 fn resolved_parent_waits_for_its_message_selected_child_without_blocking_a_sibling() {
     tokio::runtime::Builder::new_current_thread()
         .enable_time()

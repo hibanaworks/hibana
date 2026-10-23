@@ -246,7 +246,8 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
                     )
                 });
             let candidate = ((start, split, end), origin);
-            if self.parallel_region_covers_frontier(start..end, None) {
+            // Classify completed repetitions before comparing enabled groups.
+            if origin.is_none() && self.parallel_region_covers_frontier(start..end, None) {
                 Some(candidate)
             } else {
                 if repeated.is_none()

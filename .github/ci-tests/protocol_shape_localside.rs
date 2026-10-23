@@ -308,6 +308,28 @@ impl Emitter<'_> {
             }
             Protocol::Roll(body) => {
                 let before = *holder;
+                if matches!(body.as_ref(), Protocol::Par(..)) {
+                    let (declarations, checks, repeat, returns) =
+                        self.parallel_code(body, actor, holder, names, None);
+                    assert_eq!(*holder, before);
+                    if repeat.is_empty() {
+                        return repeat;
+                    }
+                    let assign = if returns { "db=" } else { "" };
+                    let visits = if primed.is_some() {
+                        let (_, first_checks, first, first_returns) =
+                            self.parallel_code(body, actor, holder, names, primed);
+                        assert_eq!(returns, first_returns);
+                        format!(
+                            "{{let [_first,_second]=match script{{Script::Roll(visits)=>[visits[0].as_ref(),visits[1].as_ref()],_=>panic!(\"expected repeated script\")}};{{let script=_first;{first_checks}{assign}{first};}}{{let script=_second;{checks}{assign}{repeat};}}}}"
+                        )
+                    } else {
+                        format!(
+                            "for visit in match script{{Script::Roll(visits)=>visits,_=>panic!(\"expected repeated script\")}}{{let script=visit.as_ref();{checks}{assign}{repeat};}}"
+                        )
+                    };
+                    return format!("{{{declarations}{visits}}}");
+                }
                 let first = self.emit(body, actor, holder, names, primed);
                 assert_eq!(*holder, before);
                 if primed.is_some() {
@@ -461,135 +483,142 @@ impl Emitter<'_> {
                 format!("{{{select}{preview}if right{{{right}}}else{{{left}}}}}")
             }
             Protocol::Par(..) => {
-                let before = *holder;
-                *holder = final_holder(source, before);
-                let mut parts = Vec::new();
-                parallel_parts(source, &mut parts);
-                let mut part_names = vec![names.clone(); parts.len()];
-                let mut declarations = String::new();
-                let mut scope_checks = String::new();
-                for role in 0..4 {
-                    if (if role == 3 { usize::from(before) } else { role }) != usize::from(actor)
-                        || (role == 3 && mobile(source))
-                    {
-                        continue;
-                    }
-                    let indices = (0..parts.len())
-                        // Borrow width belongs to the projected source group,
-                        // including an entry already sent to choose its route.
-                        .filter(|i| present(parts[*i], role as u8, None))
-                        .collect::<Vec<_>>();
-                    if indices.is_empty() {
-                        continue;
-                    }
-                    let bindings = indices
-                        .iter()
-                        .map(|i| {
-                            let used = present(parts[*i], role as u8, primed);
-                            let name = format!("{}p{role}_{i}", if used { "" } else { "_" });
-                            part_names[*i][role] = name.clone();
-                            if used {
-                                scope_checks +=
-                                    &self.scope_probe(source, parts[*i], role as u8, actor, &name);
-                            }
-                            format!("{}{name}", if used { "mut " } else { "" })
-                        })
-                        .collect::<Vec<_>>()
-                        .join(",");
-                    declarations += &format!("let [{bindings}]={}.par()?;", names[role]);
-                }
-                declarations += &scope_checks;
-                fn schedule(
-                    e: &Emitter<'_>,
-                    source: &Protocol,
-                    actor: u8,
-                    holder: u8,
-                    names: &[[String; 4]],
-                    part: &mut usize,
-                    primed: Option<u8>,
-                ) -> (String, bool) {
-                    if let Protocol::Par(a, b) = source {
-                        let (left, returns_left) =
-                            schedule(e, a, actor, holder, names, part, primed);
-                        let (right, returns_right) =
-                            schedule(e, b, actor, holder, names, part, primed);
-                        assert!(!returns_left || !returns_right);
-                        if left.is_empty() && right.is_empty() {
-                            return (String::new(), false);
-                        }
-                        let bind = |plan: &str, body: &str| {
-                            if body.is_empty() {
-                                "async{Ok::<_,hibana::EndpointError>(())}".into()
-                            } else {
-                                format!(
-                                    "async{{let script={plan};let result={body};Ok::<_,hibana::EndpointError>(result)}}"
-                                )
-                            }
-                        };
-                        let result = if returns_left {
-                            "_a"
-                        } else if returns_right {
-                            "_b"
-                        } else {
-                            "()"
-                        };
-                        (
-                            format!(
-                                "{{let (_left,_right,reverse)=match script{{Script::Par(a,b,reverse)=>(a.as_ref(),b.as_ref(),*reverse),_=>panic!(\"expected parallel script\")}};let left={};let right={};let (_a,_b)=if concurrent{{tokio::try_join!(left,right)?}}else if reverse{{let b=right.await?;let a=left.await?;(a,b)}}else{{let a=left.await?;let b=right.await?;(a,b)}};{result}}}",
-                                bind("_left", &left),
-                                bind("_right", &right)
-                            ),
-                            returns_left || returns_right,
-                        )
-                    } else {
-                        let names = &names[*part];
-                        *part += 1;
-                        let mut current = holder;
-                        let body = e.emit(source, actor, &mut current, names, primed);
-                        assert_eq!(current, holder);
-                        if body.is_empty() {
-                            return (body, false);
-                        }
-                        let owned = mobile(source);
-                        let returns = owned && actor == holder;
-                        let already_moved=primed.is_some_and(|label| {
-                            let mut messages=Vec::new();source.messages(&mut messages);
-                            messages.iter().any(|m|matches!(m,Protocol::Message {label:candidate,owned:true,from,..} if *candidate==label && *from==actor))
-                        });
-                        let activity = db_activity(source, actor, holder);
-                        let uninitialized = if activity.0 > 1 || activity.1 {
-                            "let mut db;"
-                        } else {
-                            "let db;"
-                        };
-                        let init =
-                            if owned && actor < 2 && (returns || receives_here(source, actor)) {
-                                if returns && !already_moved {
-                                    "let mut db=db;"
-                                } else {
-                                    uninitialized
-                                }
-                            } else {
-                                ""
-                            };
-                        (
-                            format!("{{{init}{body}{}}}", if returns { "db" } else { "()" }),
-                            returns,
-                        )
-                    }
-                }
-                let (body, returns) =
-                    schedule(self, source, actor, before, &part_names, &mut 0, primed);
+                let (declarations, checks, body, returns) =
+                    self.parallel_code(source, actor, holder, names, primed);
                 if body.is_empty() {
                     body
                 } else {
                     format!(
-                        "{{{declarations}{}{body};}}",
+                        "{{{declarations}{checks}{}{body};}}",
                         if returns { "db=" } else { "" }
                     )
                 }
             }
         }
+    }
+    fn parallel_code(
+        &self,
+        source: &Protocol,
+        actor: u8,
+        holder: &mut u8,
+        names: &[String; 4],
+        primed: Option<u8>,
+    ) -> (String, String, String, bool) {
+        let before = *holder;
+        *holder = final_holder(source, before);
+        let mut parts = Vec::new();
+        parallel_parts(source, &mut parts);
+        let mut part_names = vec![names.clone(); parts.len()];
+        let mut declarations = String::new();
+        let mut scope_checks = String::new();
+        for role in 0..4 {
+            if (if role == 3 { usize::from(before) } else { role }) != usize::from(actor)
+                || (role == 3 && mobile(source))
+            {
+                continue;
+            }
+            let indices = (0..parts.len())
+                // Borrow width belongs to the projected source group,
+                // including an entry already sent to choose its route.
+                .filter(|i| present(parts[*i], role as u8, None))
+                .collect::<Vec<_>>();
+            if indices.is_empty() {
+                continue;
+            }
+            let bindings = indices
+                .iter()
+                .map(|i| {
+                    let used = present(parts[*i], role as u8, primed);
+                    let name = format!("{}p{role}_{i}", if used { "" } else { "_" });
+                    part_names[*i][role] = name.clone();
+                    if used {
+                        scope_checks +=
+                            &self.scope_probe(source, parts[*i], role as u8, actor, &name);
+                    }
+                    format!("{}{name}", if used { "mut " } else { "" })
+                })
+                .collect::<Vec<_>>()
+                .join(",");
+            declarations += &format!("let [{bindings}]={}.par()?;", names[role]);
+        }
+        fn schedule(
+            e: &Emitter<'_>,
+            source: &Protocol,
+            actor: u8,
+            holder: u8,
+            names: &[[String; 4]],
+            part: &mut usize,
+            primed: Option<u8>,
+        ) -> (String, bool) {
+            if let Protocol::Par(a, b) = source {
+                let (left, returns_left) = schedule(e, a, actor, holder, names, part, primed);
+                let (right, returns_right) = schedule(e, b, actor, holder, names, part, primed);
+                assert!(!returns_left || !returns_right);
+                if left.is_empty() && right.is_empty() {
+                    return (String::new(), false);
+                }
+                let bind = |plan: &str, body: &str| {
+                    if body.is_empty() {
+                        "async{Ok::<_,hibana::EndpointError>(())}".into()
+                    } else {
+                        format!(
+                            "async{{let script={plan};let result={body};Ok::<_,hibana::EndpointError>(result)}}"
+                        )
+                    }
+                };
+                let result = if returns_left {
+                    "_a"
+                } else if returns_right {
+                    "_b"
+                } else {
+                    "()"
+                };
+                (
+                    format!(
+                        "{{let (_left,_right,reverse)=match script{{Script::Par(a,b,reverse)=>(a.as_ref(),b.as_ref(),*reverse),_=>panic!(\"expected parallel script\")}};let left={};let right={};let (_a,_b)=if concurrent{{tokio::try_join!(left,right)?}}else if reverse{{let b=right.await?;let a=left.await?;(a,b)}}else{{let a=left.await?;let b=right.await?;(a,b)}};{result}}}",
+                        bind("_left", &left),
+                        bind("_right", &right)
+                    ),
+                    returns_left || returns_right,
+                )
+            } else {
+                let names = &names[*part];
+                *part += 1;
+                let mut current = holder;
+                let body = e.emit(source, actor, &mut current, names, primed);
+                assert_eq!(current, holder);
+                if body.is_empty() {
+                    return (body, false);
+                }
+                let owned = mobile(source);
+                let returns = owned && actor == holder;
+                let already_moved=primed.is_some_and(|label| {
+                    let mut messages=Vec::new();source.messages(&mut messages);
+                    messages.iter().any(|m|matches!(m,Protocol::Message {label:candidate,owned:true,from,..} if *candidate==label && *from==actor))
+                });
+                let activity = db_activity(source, actor, holder);
+                let uninitialized = if activity.0 > 1 || activity.1 {
+                    "let mut db;"
+                } else {
+                    "let db;"
+                };
+                let init = if owned && actor < 2 && (returns || receives_here(source, actor)) {
+                    if returns && !already_moved {
+                        "let mut db=db;"
+                    } else {
+                        uninitialized
+                    }
+                } else {
+                    ""
+                };
+                (
+                    format!("{{{init}{body}{}}}", if returns { "db" } else { "()" }),
+                    returns,
+                )
+            }
+        }
+        let (body, returns) = schedule(self, source, actor, before, &part_names, &mut 0, primed);
+        (declarations, scope_checks, body, returns)
     }
 }
 

@@ -59,7 +59,9 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     /// first successful send or receive starts it. Nested borrows keep that
     /// same entry until an operation advances the protocol.
     /// Keep a fragment borrowed to continue a repeat inside the current group.
-    /// End the completed group and call `par()` again to repeat that group.
+    /// When another `par` follows a repeated group, keep all its borrows across
+    /// the repetitions. After they end, `par()` prefers an enabled later group
+    /// to restarting the completed group.
     /// With nested repeats, identical message sequences can have different
     /// boundaries; the borrow determines which group its operations belong to.
     ///

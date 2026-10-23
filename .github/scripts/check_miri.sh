@@ -129,6 +129,9 @@ run_miri_test \
     resolved_choice_reopens_after_parallel_inner_repetition -- --exact
   run_miri_test public-resolved-parent-with-message-selected-child -p hibana --test parallel_route_nesting \
     resolved_parent_waits_for_its_message_selected_child_without_blocking_a_sibling -- --exact
+  MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" \
+    run_miri_test public-parallel-repeat-before-parallel-continuation -p hibana --test parallel_route_nesting \
+    parallel_borrows_repeat_before_the_next_parallel_group -- --exact
 )
 
 MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \
