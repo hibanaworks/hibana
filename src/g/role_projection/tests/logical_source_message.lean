@@ -19,7 +19,7 @@ classification of its bytes. Sender publication is not required. -/
 theorem logicalProspectiveRequestMessageMatchesBeforeReceive
     {cut : DistributedSourceCut} {entries : List SourceAcceptance}
     {records : List (Nat × ActorCommitRecord)}
-    {previousPath pathIndex event localSource : Nat} {base : ActorProgressObservation}
+    {previousPath pathIndex event localSource wirePosition : Nat} {base : ActorProgressObservation}
     {data : DecodedActorOrder} {path : NormalizedPath} {row : DecodedActorRow}
     {next : TransportState} {frame : TransportFrame} {receiverBinding : Binding}
     (history : DistributedSourceExecution distributedImages distributedChoreo 9064
@@ -32,7 +32,7 @@ theorem logicalProspectiveRequestMessageMatchesBeforeReceive
     (origin : ActorSourceCandidateBase
       { snapshot := (cut.actors 3).1, pathIndex, admitted := [] }
       distributedImage3 distributedChoreo previousPath path row base)
-    (selector : distributedImage3.frameKey? event = some ⟨.receive, 3, 10, 0, 0⟩)
+    (selector : distributedImage3.frameKey? event = some ⟨.receive, 3, 10, 0, wirePosition⟩)
     (received : (cut.carriers logicalRequestPort).pollReceive = .delivered frame next)
     (localIdentity : sourceOperationIdentity? distributedImage3 distributedChoreo pathIndex event =
       some (localSource, receiverBinding, .receive)) :

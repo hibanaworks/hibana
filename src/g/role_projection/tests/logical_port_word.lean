@@ -142,7 +142,7 @@ assumed. A sender may have accepted without publishing its operation. -/
 theorem logicalProspectiveRequestSourceMatchesBeforeReceive
     {cut : DistributedSourceCut} {entries : List SourceAcceptance}
     {records : List (Nat × ActorCommitRecord)}
-    {previousPath pathIndex event : Nat} {base : ActorProgressObservation}
+    {previousPath pathIndex event wirePosition : Nat} {base : ActorProgressObservation}
     {data : DecodedActorOrder} {path : NormalizedPath} {row : DecodedActorRow}
     {next : TransportState} {frame : TransportFrame}
     (history : DistributedSourceExecution distributedImages distributedChoreo 9064
@@ -155,7 +155,7 @@ theorem logicalProspectiveRequestSourceMatchesBeforeReceive
     (origin : ActorSourceCandidateBase
       { snapshot := (cut.actors 3).1, pathIndex, admitted := [] }
       distributedImage3 distributedChoreo previousPath path row base)
-    (selector : distributedImage3.frameKey? event = some ⟨.receive, 3, 10, 0, 0⟩)
+    (selector : distributedImage3.frameKey? event = some ⟨.receive, 3, 10, 0, wirePosition⟩)
     (received : (cut.carriers logicalRequestPort).pollReceive = .delivered frame next) :
     ∃ sample source fifo key,
       SendAdmissionTrace distributedChoreo 9064 (cut.carriers logicalRequestPort) fifo
@@ -173,10 +173,13 @@ theorem logicalProspectiveRequestSourceMatchesBeforeReceive
     split at laneAt
     · assumption
     · contradiction
-  have complete : logicalRequestGroup.rows = distributedImage3.frameClassRows ⟨.receive, 3, 10, 0, 0⟩ := by decide
+  have complete : logicalRequestGroup.rows =
+      (List.range distributedImage3.eventCount).filter (fun index =>
+        (distributedImage3.frameKey? index).any (fun key =>
+          decide (key.side = .receive ∧ key.view = 3 ∧ key.peer = 10 ∧ key.lane = 0))) := by decide
   have member : event ∈ logicalRequestGroup.rows := by
     rw [complete]
-    exact List.mem_filter.mpr ⟨List.mem_range.mpr bounded, by simp only [selector, decide_true]⟩
+    exact List.mem_filter.mpr ⟨List.mem_range.mpr bounded, by simp [selector]⟩
   exact a_prospective_source_word_head_matches_its_prepared_receiver
     (actor := 3) (group := logicalRequestGroup) (sourceRows := [0, 3])
     (fun eff => eff == 0 || eff == 3) (fun _ => true)
@@ -209,7 +212,8 @@ theorem logicalSecondHolderMatchesReceiverBeforePublication
       (distributedCut28.actors 3).1 := .current (by decide)
   obtain ⟨sample, source, fifo, key, trace, keyAt, recordAt, checked, sourceAt, identity, keySource, receiverSource⟩ :=
     logicalProspectiveRequestSourceMatchesBeforeReceive
-      (previousPath := 0) (pathIndex := 0) (event := 2) (data := distributedWordData3)
+      (previousPath := 0) (pathIndex := 0) (event := 2)
+      (wirePosition := distributedFrameKey3_2.color) (data := distributedWordData3)
       logicalBeforeSecondHolderReceipt (by decide)
       (Option.some_get _).symm (Option.some_get _).symm (Option.some_get _).symm
       (by decide) (by decide) current (by decide) received

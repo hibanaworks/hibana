@@ -325,10 +325,12 @@ theorem logicalRequestsHaveBothPhysicalSenders :
     ((sourceChannelRecords distributedEntries36 distributedChannel0).map
       (fun entry => entry.1.effIndex?)) = [some 0, some 3, some 0, some 3] := by decide
 
-theorem logicalClassIsLargerThanEitherPhysicalSenderClass :
+theorem logicalChannelKeepsBothHoldersStaticSourcePositions :
     (distributedImage0.frameClassRows distributedFrameKey0_0).map distributedImage0.eventEffIndex? = [some 0] ∧
     (distributedImage1.frameClassRows distributedFrameKey1_1).map distributedImage1.eventEffIndex? = [some 3] ∧
-    (distributedImage3.frameClassRows distributedFrameKey3_0).map distributedImage3.eventEffIndex? = [some 0, some 3] := by decide
+    (distributedImage3.frameClassRows distributedFrameKey3_0).map distributedImage3.eventEffIndex? = [some 0] ∧
+    (distributedImage3.frameClassRows distributedFrameKey3_2).map distributedImage3.eventEffIndex? = [some 3] ∧
+    (sourceChannelEntries distributedEntries36 distributedChannel0).map SourceAcceptance.event = [0, 3, 0, 3] := by decide
 "#);
                 writeln!(source, "\nprivate theorem logicalBeforeSecondHolderReceipt : DistributedSourceExecution distributedImages distributedChoreo 9064\n  (distributedCut0, distributedEntries0) (distributedCut28, distributedEntries28) (distributedRecords.take 18) := by\n  exact {}\n",
                     (1..=28).fold(".refl".into(), |proof, boundary| std::format!("(.tail {proof} distributedStep{boundary})"))).unwrap();

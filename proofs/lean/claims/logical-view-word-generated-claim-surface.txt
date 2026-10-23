@@ -153,12 +153,13 @@ distributedFifoHistories : ∀ (channel : TransportChannel),
       (cut, entries) records →
     sourceFrameWord (List.range distributedImage3.eventCount)
       (committedFrameClassWord (List.range distributedImage3.eventCount) 3 records)
-logicalClassIsLargerThanEitherPhysicalSenderClass : List.map distributedImage0.eventEffIndex?
+logicalChannelKeepsBothHoldersStaticSourcePositions : List.map distributedImage0.eventEffIndex?
       (distributedImage0.frameClassRows distributedFrameKey0_0) =
     [some 0] ∧
   List.map distributedImage1.eventEffIndex? (distributedImage1.frameClassRows distributedFrameKey1_1) = [some 3] ∧
-    List.map distributedImage3.eventEffIndex? (distributedImage3.frameClassRows distributedFrameKey3_0) =
-      [some 0, some 3]
+    List.map distributedImage3.eventEffIndex? (distributedImage3.frameClassRows distributedFrameKey3_0) = [some 0] ∧
+      List.map distributedImage3.eventEffIndex? (distributedImage3.frameClassRows distributedFrameKey3_2) = [some 3] ∧
+        List.map SourceAcceptance.event (sourceChannelEntries distributedEntries36 distributedChannel0) = [0, 3, 0, 3]
 logicalDeliveredRequestWordKeepsBothHolders : ∃ receipts,
   receivedSourceWord distributedImages distributedChoreo distributedRecords = List.map SourceAcceptance.event receipts ∧
     List.map SourceAcceptance.event (sourceChannelEntries receipts distributedChannel0) = [0, 3, 0, 3]
@@ -176,7 +177,7 @@ logicalDeliveredRequestWordKeepsBothHolders : ∃ receipts,
                 List.count 1 workerWord =
                   List.count 1 (List.map (fun entry => entry.sample.event) (actorAcceptedSends entries 1))
 @logicalProspectiveRequestMessageMatchesBeforeReceive : ∀ {cut : DistributedSourceCut} {entries : List SourceAcceptance}
-  {records : List (Nat × ActorCommitRecord)} {previousPath pathIndex event localSource : Nat}
+  {records : List (Nat × ActorCommitRecord)} {previousPath pathIndex event localSource wirePosition : Nat}
   {base : ActorProgressObservation} {data : DecodedActorOrder} {path : NormalizedPath} {row : DecodedActorRow}
   {next : TransportState} {frame : TransportFrame} {receiverBinding : Binding},
   DistributedSourceExecution distributedImages distributedChoreo 9064 (distributedCut0, distributedEntries0)
@@ -190,7 +191,7 @@ logicalDeliveredRequestWordKeepsBothHolders : ∃ receipts,
                 ActorSourceCandidateBase { snapshot := (cut.actors 3).fst, pathIndex := pathIndex, admitted := [] }
                     distributedImage3 distributedChoreo previousPath path row base →
                   distributedImage3.frameKey? event =
-                      some { side := Side.receive, view := 3, peer := 10, lane := 0, color := 0 } →
+                      some { side := Side.receive, view := 3, peer := 10, lane := 0, color := wirePosition } →
                     (cut.carriers logicalRequestPort).pollReceive = TransportPoll.delivered frame next →
                       sourceOperationIdentity? distributedImage3 distributedChoreo pathIndex event =
                           some (localSource, receiverBinding, Side.receive) →
@@ -209,9 +210,9 @@ logicalDeliveredRequestWordKeepsBothHolders : ∃ receipts,
                                           some (localSource, senderBinding, Side.send) ∧
                                         senderBinding.message = receiverBinding.message
 @logicalProspectiveRequestSourceMatchesBeforeReceive : ∀ {cut : DistributedSourceCut} {entries : List SourceAcceptance}
-  {records : List (Nat × ActorCommitRecord)} {previousPath pathIndex event : Nat} {base : ActorProgressObservation}
-  {data : DecodedActorOrder} {path : NormalizedPath} {row : DecodedActorRow} {next : TransportState}
-  {frame : TransportFrame},
+  {records : List (Nat × ActorCommitRecord)} {previousPath pathIndex event wirePosition : Nat}
+  {base : ActorProgressObservation} {data : DecodedActorOrder} {path : NormalizedPath} {row : DecodedActorRow}
+  {next : TransportState} {frame : TransportFrame},
   DistributedSourceExecution distributedImages distributedChoreo 9064 (distributedCut0, distributedEntries0)
       (cut, entries) records →
     (∀ (entry : SourceAcceptance), entry ∈ entries → entry.channel.generation = 0) →
@@ -223,7 +224,7 @@ logicalDeliveredRequestWordKeepsBothHolders : ∃ receipts,
                 ActorSourceCandidateBase { snapshot := (cut.actors 3).fst, pathIndex := pathIndex, admitted := [] }
                     distributedImage3 distributedChoreo previousPath path row base →
                   distributedImage3.frameKey? event =
-                      some { side := Side.receive, view := 3, peer := 10, lane := 0, color := 0 } →
+                      some { side := Side.receive, view := 3, peer := 10, lane := 0, color := wirePosition } →
                     (cut.carriers logicalRequestPort).pollReceive = TransportPoll.delivered frame next →
                       ∃ sample source fifo key,
                         SendAdmissionTrace distributedChoreo 9064 (cut.carriers logicalRequestPort) fifo
