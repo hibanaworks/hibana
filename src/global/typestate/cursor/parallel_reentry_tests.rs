@@ -241,9 +241,14 @@ fn completed_parallel_reentry_requires_a_live_completed_origin() {
 
 #[cfg(kani)]
 fn check_retained_receive_case(candidate: usize) {
-    let source_end: u8 = kani::any();
-    kani::assume(matches!(source_end, 0 | 2 | 4));
-    check_retained_continuation::<1>(candidate, usize::from(source_end), kani::any());
+    let source_end = if kani::any() {
+        0
+    } else if kani::any() {
+        2
+    } else {
+        4
+    };
+    check_retained_continuation::<1>(candidate, source_end, kani::any());
 }
 
 #[cfg(kani)]
