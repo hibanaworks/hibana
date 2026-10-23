@@ -147,6 +147,9 @@ run_miri_test \
 )
 
 MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \
+  validated-metadata -p hibana --lib validated_metadata_
+
+MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \
   independent-child-credit-cut -p hibana --lib \
   global::typestate::cursor::parallel_reentry_tests::an_independent_child_visit_keeps_the_completed_parent_entry_available \
   -- --exact

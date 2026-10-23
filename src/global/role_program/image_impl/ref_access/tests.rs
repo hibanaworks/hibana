@@ -67,7 +67,9 @@ fn assert_lane_validation_dominates_raw_arm_reads(rows: &RoleImageRef) {
                 continue;
             }
             accepted += 1;
-            let bytes = Box::leak(Box::new(bytes));
+            // SAFETY: the raw image is read only in this iteration. Its
+            // stationary backing array remains live and no reference escapes.
+            let bytes = unsafe { &*core::ptr::from_ref(&bytes) };
             let raw = RoleLaneImage::new(
                 &rows.columns,
                 BlobPtr::from_array(bytes, columns.blob_len()),
@@ -243,7 +245,9 @@ fn validated_metadata_constructor_accepts_unique_unsorted_route_ids() {
             }
         }
     }
-    let bytes = Box::leak(Box::new(bytes));
+    // SAFETY: this test retains the stationary array through every query and
+    // discards the rebuilt image before returning.
+    let bytes = unsafe { &*core::ptr::from_ref(&bytes) };
     let rebuilt = RoleImageRef::new(rows.program, rows.role, rows.facts, columns, bytes);
     assert!(!rebuilt.has_sorted_route_index());
     assert!(!rebuilt.has_passive_parent_index());
@@ -256,9 +260,7 @@ fn validated_metadata_constructor_accepts_unique_unsorted_route_ids() {
             rows.local_step_node(idx).unwrap().action()
         );
     }
-    crate::global::typestate::EventCursor::compare_validated_metadata_image(Box::leak(Box::new(
-        rebuilt,
-    )));
+    crate::global::typestate::EventCursor::compare_validated_metadata_image(&rebuilt);
 }
 
 #[test]
@@ -267,7 +269,9 @@ fn validated_metadata_derives_wire_identity_and_preserves_session_origin() {
     let projected: RoleProgram<1> = project(&g::send::<0, 1, Msg<1, ()>>());
     let original = projected.role_image_ref();
     let role_bytes = copy(original);
-    let role_bytes = Box::leak(Box::new(role_bytes));
+    // SAFETY: both images below borrow this stationary array only for queries
+    // within this test. Neither image nor its references escape.
+    let role_bytes = unsafe { &*core::ptr::from_ref(&role_bytes) };
     let user = RoleImageRef::new(
         original.program,
         original.role,
@@ -285,25 +289,29 @@ fn validated_metadata_derives_wire_identity_and_preserves_session_origin() {
         }
     ));
     let mut program_bytes = [0u8; 256];
-    let program = original.program;
-    assert!(program.columns.blob_len() <= program_bytes.len());
+    let original_program = original.program;
+    assert!(original_program.columns.blob_len() <= program_bytes.len());
     for (idx, byte) in program_bytes
         .iter_mut()
         .enumerate()
-        .take(program.columns.blob_len())
+        .take(original_program.columns.blob_len())
     {
-        *byte = program.blob.byte_at(idx);
+        *byte = original_program.blob.byte_at(idx);
     }
     // The canonical first atom starts at zero, origin is packed byte seven.
     program_bytes[7] = EventOrigin::Session.packed_bits();
-    let program_bytes = Box::leak(Box::new(program_bytes));
-    let program = Box::leak(Box::new(CompiledProgramRef::compact(
-        program.facts,
-        program.columns,
+    // SAFETY: the program and its backing array remain stationary until all
+    // session-image queries finish. No reference leaves this test.
+    let program_bytes = unsafe { &*core::ptr::from_ref(&program_bytes) };
+    let session_program = CompiledProgramRef::compact(
+        original_program.facts,
+        original_program.columns,
         program_bytes,
-    )));
+    );
+    // SAFETY: the borrowed program outlives the session image and every query.
+    let session_program = unsafe { &*core::ptr::from_ref(&session_program) };
     let session = RoleImageRef::new(
-        program,
+        session_program,
         original.role,
         original.facts,
         original.columns,
@@ -317,10 +325,6 @@ fn validated_metadata_derives_wire_identity_and_preserves_session_origin() {
             ..
         }
     ));
-    crate::global::typestate::EventCursor::compare_validated_metadata_image(Box::leak(Box::new(
-        user,
-    )));
-    crate::global::typestate::EventCursor::compare_validated_metadata_image(Box::leak(Box::new(
-        session,
-    )));
+    crate::global::typestate::EventCursor::compare_validated_metadata_image(&user);
+    crate::global::typestate::EventCursor::compare_validated_metadata_image(&session);
 }

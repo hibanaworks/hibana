@@ -322,7 +322,10 @@ fn compare(cursor: &EventCursor) {
 }
 
 impl EventCursor {
-    pub(crate) fn compare_validated_metadata_image(rows: &'static RoleImageRef) {
+    pub(crate) fn compare_validated_metadata_image(rows: &RoleImageRef) {
+        // SAFETY: the fixed callback only compares values and updates its
+        // temporary cursor. No cursor, image or backing reference escapes.
+        let rows = unsafe { &*core::ptr::from_ref(rows) };
         with_rows(rows, |cursor| {
             compare(cursor);
             // Progress changes do not affect immutable metadata authority.
