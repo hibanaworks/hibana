@@ -121,6 +121,26 @@ enum Protocol {
     Roll(Box<Self>),
 }
 impl Protocol {
+    fn syntax_depth(&self) -> usize {
+        match self {
+            Self::Message { .. } => 0,
+            Self::Roll(body) => 1 + body.syntax_depth(),
+            Self::Seq(a, b) | Self::Par(a, b) | Self::Route(a, b) | Self::Resolved(a, b, _) => {
+                1 + a.syntax_depth().max(b.syntax_depth())
+            }
+        }
+    }
+
+    fn operator_count(&self) -> usize {
+        match self {
+            Self::Message { .. } => 0,
+            Self::Roll(body) => 1 + body.operator_count(),
+            Self::Seq(a, b) | Self::Par(a, b) | Self::Route(a, b) | Self::Resolved(a, b, _) => {
+                1 + a.operator_count() + b.operator_count()
+            }
+        }
+    }
+
     fn rust(&self) -> String {
         match self {
             Self::Message {
@@ -842,14 +862,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = env::args().skip(1).collect::<Vec<_>>();
     if args.len() != 3 && args.len() != 5 && args.len() != 6 {
         return Err(
-            "usage: protocol-shapes REPOSITORY OUTPUT DEPTH [SHARD SHARDS [DIAGNOSTICS]]".into(),
+            "usage: protocol-shapes REPOSITORY OUTPUT OPERATOR_BUDGET [SHARD SHARDS [DIAGNOSTICS]]"
+                .into(),
         );
     }
     let root = PathBuf::from(&args[0]).canonicalize()?;
     let output = PathBuf::from(&args[1]);
-    let depth: usize = args[2].parse()?;
-    if depth > 5 {
-        return Err("depth exceeds message-label domain".into());
+    let budget: usize = args[2].parse()?;
+    if budget > 5 {
+        return Err("operator budget must be at most five in this catalog".into());
     }
     let (shard, shards) = if args.len() >= 5 {
         (args[3].parse::<usize>()?, args[4].parse::<usize>()?)
@@ -869,7 +890,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         output.join("Cargo.toml"),
         format!(
             r#"[package]
-name = "hibana-generated-protocol-shapes-{depth}-{shard}"
+name = "hibana-generated-protocol-shapes-operators-{budget}-{shard}-of-{shards}"
 version = "0.0.0"
 edition = "2024"
 publish = false
@@ -892,12 +913,12 @@ long_running_const_eval = "forbid"
             root
         ),
     )?;
-    let all = catalog(depth);
-    let counts = binary_counts(depth);
+    let all = catalog(budget);
+    let counts = binary_counts(budget);
     let binary_total = counts.total(true, Population::Exchange);
     let resource_total = all.len() + binary_total;
     let ordinary_total = counts.total(false, Population::Exchange);
-    let delegated_counts = delegated::Counts::new(depth);
+    let delegated_counts = delegated::Counts::new(budget);
     let delegated_total = delegated_counts.total(Population::Exchange);
     let exchange_cases = 4 * resource_total + 2 * (ordinary_total + delegated_total);
     let resource_converging_end = exchange_cases + 4 * counts.total(true, Population::Converging);
@@ -1013,7 +1034,7 @@ long_running_const_eval = "forbid"
     fs::write(
         negative_root.join("Cargo.toml"),
         format!(
-            "[package]\nname=\"hibana-rejected-shapes-{depth}-{shard}\"\nversion=\"0.0.0\"\nedition=\"2024\"\npublish=false\n[workspace]\n[dependencies]\nhibana={{path={root:?}}}\n[lints.rust]\nlong_running_const_eval=\"forbid\"\n"
+            "[package]\nname=\"hibana-rejected-shapes-operators-{budget}-{shard}-of-{shards}\"\nversion=\"0.0.0\"\nedition=\"2024\"\npublish=false\n[workspace]\n[dependencies]\nhibana={{path={root:?}}}\n[lints.rust]\nlong_running_const_eval=\"forbid\"\n"
         ),
     )?;
     let mut negative_inventory = String::new();
@@ -1159,7 +1180,17 @@ long_running_const_eval = "forbid"
     let mut script_paths = BTreeSet::new();
     let mut borrowed_scope_probes = 0usize;
     let mut rejected = 0;
+    let mut case_depths = String::from("case\tsyntax_depth\toperator_count\n");
+    let mut catalog_max_depth = 0;
+    let mut emitted_max_depth = 0;
     for (case, word, service, owner, global, resolvers) in &cases {
+        let syntax_depth = global.syntax_depth();
+        catalog_max_depth = catalog_max_depth.max(syntax_depth);
+        writeln!(
+            case_depths,
+            "{case}\t{syntax_depth}\t{}",
+            global.operator_count()
+        )?;
         let mut nodes = Vec::new();
         global.json_nodes(&mut nodes);
         let input = format!(
@@ -1177,6 +1208,7 @@ long_running_const_eval = "forbid"
             rejected += 1;
             continue;
         }
+        emitted_max_depth = emitted_max_depth.max(syntax_depth);
         let mut messages = Vec::new();
         global.messages(&mut messages);
         let traces = global.traces().into_iter().collect::<BTreeSet<_>>();
@@ -1353,8 +1385,9 @@ long_running_const_eval = "forbid"
         output.join("unclassified-rejections.txt"),
         format!("{rejected}\n"),
     )?;
+    fs::write(output.join("case-depths.tsv"), case_depths)?;
     println!(
-        "generated shapes={} initial_probes={probes} continuation_shapes={continuation_shapes} trace_prefix_probes={trace_prefix_probes} finite_short_prefix_depth=4 complete_traces={trace_count} trace_operations={operations} concurrent_traces={concurrent_traces} delegated_concurrent_runs={delegated_concurrent_runs} scoped_executions={scoped_executions} depth={depth} shard={shard}/{shards} catalog_shapes={} unclassified_rejections={rejected} total_shapes={}",
+        "generated shapes={} initial_probes={probes} continuation_shapes={continuation_shapes} trace_prefix_probes={trace_prefix_probes} finite_short_prefix_depth=4 complete_traces={trace_count} trace_operations={operations} concurrent_traces={concurrent_traces} delegated_concurrent_runs={delegated_concurrent_runs} scoped_executions={scoped_executions} operator_budget={budget} catalog_max_syntax_depth={catalog_max_depth} emitted_max_syntax_depth={emitted_max_depth} shard={shard}/{shards} catalog_shapes={} unclassified_rejections={rejected} total_shapes={}",
         inputs.len(),
         cases.len(),
         total_cases
@@ -1366,6 +1399,37 @@ long_running_const_eval = "forbid"
 #[cfg(test)]
 mod population_tests {
     use super::*;
+
+    #[test]
+    fn operator_count_and_syntax_depth_are_different_bounds() {
+        let mut label = 0;
+        let a = message(&mut label, 0, 1, false);
+        let b = message(&mut label, 1, 0, false);
+        let c = message(&mut label, 0, 2, false);
+        let d = message(&mut label, 2, 0, false);
+        let balanced = Protocol::Par(
+            Box::new(Protocol::Seq(Box::new(a.clone()), Box::new(b.clone()))),
+            Box::new(Protocol::Resolved(
+                Box::new(c.clone()),
+                Box::new(d.clone()),
+                0,
+            )),
+        );
+        let sequential = Protocol::Seq(
+            Box::new(a),
+            Box::new(Protocol::Seq(
+                Box::new(b),
+                Box::new(Protocol::Seq(Box::new(c), Box::new(d))),
+            )),
+        );
+        assert_eq!(balanced.operator_count(), 3);
+        assert_eq!(sequential.operator_count(), 3);
+        assert_eq!(balanced.syntax_depth(), 2);
+        assert_eq!(sequential.syntax_depth(), 3);
+        let repeated = Protocol::Roll(Box::new(balanced));
+        assert_eq!(repeated.syntax_depth(), 3);
+        assert_eq!(repeated.operator_count(), 4);
+    }
 
     #[test]
     fn a_collector_must_participate_in_both_choice_arms() {

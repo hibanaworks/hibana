@@ -74,6 +74,13 @@ budget counts generated constructors across both choice arms and the containing
 context, rather than binary-tree depth. The fixed outer loan and ordinary
 exchange leaves contain four messages; a delegated-body exchange has two.
 Their internal constructors are not counted.
+The budget does not establish exhaustive coverage at a given syntax depth.
+`case-depths.tsv` records each expanded protocol's depth and operator count,
+including the constructors inside these leaves. A message has depth zero;
+each `seq`, `par`, `route` or `roll` adds one to its deepest child. A resolved
+route has the same depth as a message-based route. The inventory reports the
+largest depth in the catalog and in the emitted runtime inputs separately.
+Results are stored under `target/protocol-shapes/operator-budget-BUDGET/`.
 The `protocol-shapes` workflow accepts budgets three, four and five. Budget
 three uses window zero. Budget four requires all 32 windows, zero through 31,
 covering 32,768 shards. Budget five uses sixteen windows, zero through fifteen.
