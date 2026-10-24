@@ -1,10 +1,20 @@
 #!/usr/bin/env bash
 set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
-BUDGET="${1:-2}"
-SHARD="${2:-0}"
-SHARDS="${3:-1}"
-OUTPUT="${ROOT_DIR}/target/protocol-shapes/operator-budget-${BUDGET}/shard-${SHARD}-of-${SHARDS}"
+if [[ "${1:-}" == --syntax-depth ]]; then
+  if [[ $# != 4 ]]; then
+    echo "usage: $0 --syntax-depth DEPTH FIRST COUNT" >&2
+    exit 2
+  fi
+  GENERATOR_ARGS=(--syntax-depth "$2" "$3" "$4")
+  OUTPUT="${ROOT_DIR}/target/protocol-shapes/syntax-depth-$2/range-$3-count-$4"
+else
+  BUDGET="${1:-2}"
+  SHARD="${2:-0}"
+  SHARDS="${3:-1}"
+  GENERATOR_ARGS=("${BUDGET}" "${SHARD}" "${SHARDS}")
+  OUTPUT="${ROOT_DIR}/target/protocol-shapes/operator-budget-${BUDGET}/shard-${SHARD}-of-${SHARDS}"
+fi
 mkdir -p "${OUTPUT}"
 rustc +"${TOOLCHAIN:-stable}" --version > "${OUTPUT}/compiler.txt"
 git -C "${ROOT_DIR}" rev-parse HEAD > "${OUTPUT}/revision.txt"
@@ -22,7 +32,7 @@ source_hashes > "${OUTPUT}/source.sha256"
 cargo +"${TOOLCHAIN:-stable}" test --locked --manifest-path "${ROOT_DIR}/.github/ci-tests/Cargo.toml" \
   --bin protocol-shapes
 cargo +"${TOOLCHAIN:-stable}" run --locked --manifest-path "${ROOT_DIR}/.github/ci-tests/Cargo.toml" \
-  --bin protocol-shapes -- "${ROOT_DIR}" "${OUTPUT}" "${BUDGET}" "${SHARD}" "${SHARDS}" \
+  --bin protocol-shapes -- "${ROOT_DIR}" "${OUTPUT}" "${GENERATOR_ARGS[@]}" \
   | tee "${OUTPUT}/catalog-inventory.txt"
 (
   cd "${OUTPUT}"
@@ -32,7 +42,7 @@ cargo +"${TOOLCHAIN:-stable}" run --locked --manifest-path "${ROOT_DIR}/.github/
   cargo +"${TOOLCHAIN:-stable}" run --manifest-path "${OUTPUT}/Cargo.toml" --bin diagnose \
     > "${OUTPUT}/diagnostics.tsv"
 cargo +"${TOOLCHAIN:-stable}" run --locked --manifest-path "${ROOT_DIR}/.github/ci-tests/Cargo.toml" \
-  --bin protocol-shapes -- "${ROOT_DIR}" "${OUTPUT}" "${BUDGET}" "${SHARD}" "${SHARDS}" \
+  --bin protocol-shapes -- "${ROOT_DIR}" "${OUTPUT}" "${GENERATOR_ARGS[@]}" \
     "${OUTPUT}/diagnostics.tsv" | tee "${OUTPUT}/inventory.txt"
 (
   cd "${OUTPUT}"
@@ -41,7 +51,7 @@ cargo +"${TOOLCHAIN:-stable}" run --locked --manifest-path "${ROOT_DIR}/.github/
 (
   cd "${OUTPUT}"
   shopt -s nullglob
-  shasum -a 256 Cargo.toml catalog.json case-depths.tsv inputs.json scope-inputs.json src/*.rs src/bin/diagnose.rs \
+  shasum -a 256 Cargo.toml catalog.json catalog-scope.txt case-identities.tsv case-depths.tsv inputs.json scope-inputs.json src/*.rs src/bin/diagnose.rs \
     diagnostics.tsv unclassified-rejections.txt traces/*.txt scope-plans/*.jsonl scripts/*.jsonl \
     rejected/Cargo.toml rejected/inventory.tsv rejected/src/bin/*.rs > inputs.sha256
 )

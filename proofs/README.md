@@ -41,7 +41,33 @@ completion, close and abort. Mutation checks establish that the comparisons
 can detect incorrect ownership, unwanted serialization and lost dependencies.
 This is executable correspondence testing, not a complete Rust refinement proof.
 
-The generated-shape check builds protocol trees around an Endpoint loan and
+The syntax-depth catalog generates trees from individual messages, `seq`,
+`par`, `route`, resolved `route` and `roll`. Both children of every binary
+constructor independently range over the grammar. A message has depth zero;
+each constructor adds one to its deepest child. A resolved route counts as one
+constructor. Leaves use roles 0 through 3 and either unit or `Endpoint<3>` as
+payload. Labels and resolver IDs are assigned in source order. Self messages
+and invalid Endpoint carriers are included. These payload and label choices
+are the catalog's test domain, not coverage of every possible Rust payload or
+of several independently delegated resources.
+
+```sh
+bash .github/scripts/check_protocol_shapes.sh --syntax-depth DEPTH FIRST COUNT
+```
+
+`FIRST` is an arbitrary-precision rank in the exact-depth population. The
+generator counts subtrees and reads only the requested range. Each accepted
+candidate has a separate Rust test target, uses public projection, and runs
+generated localsides with actual parallel borrows. Known invalid candidates
+are built separately and must fail for their source-derived reason. Unknown
+projection rejections fail the check rather than count as expected failures.
+The output records the population, range and per-case identities. Completing
+one range does not establish coverage of the whole depth. Finite execution
+tests use two visits per repetition and both child orders per parallel node,
+as well as Tokio's concurrent polling.
+
+The operator-budget catalog provides a separate regression population. It
+builds protocol trees around an Endpoint loan and
 return. It combines sequential prefixes, parallel work, choices with and without
 a resolver, and repetition. Choice arms have independently generated subtrees.
 A second family places compound resource and ordinary-message protocols in

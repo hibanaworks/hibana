@@ -242,6 +242,9 @@ impl Emitter<'_> {
             return String::new();
         }
         let endpoint = &names[usize::from(role)];
+        if from == to && receive {
+            return String::new();
+        }
         let call = if receive {
             format!("{endpoint}.recv::<M{label}<'_>>()")
         } else {
@@ -438,13 +441,59 @@ impl Emitter<'_> {
                                     })
                                     .collect::<Vec<_>>()
                                     .join("|");
-                                let preview = preview_for(
+                                let mut preview = preview_for(
                                     controller_role,
                                     *label,
                                     &format!("&[{allowed}][..]"),
                                 );
                                 let mut current = before;
-                                let rest = self.emit(body, actor, &mut current, names, None);
+                                let mut rest = self.emit(body, actor, &mut current, names, None);
+                                if entries
+                                    .iter()
+                                    .any(|m| matches!(m,Protocol::Message{from,to,..} if from==to))
+                                {
+                                    // A preview of a local step is consumed by
+                                    // RouteBranch::recv, not Endpoint::send.
+                                    let endpoint = &names[usize::from(controller_role)];
+                                    preview = format!(
+                                        "let branch=record_pending({endpoint}.offer(),observed,ObservedCall::Preview({actor},{})).await?;let label=branch.label();drop(branch);let branch=record_pending({endpoint}.offer(),observed,ObservedCall::Preview({actor},{})).await?;assert_eq!(branch.label(),label);",
+                                        label, label
+                                    );
+                                    let mut local_arms = String::new();
+                                    for entry in &entries {
+                                        let Protocol::Message {
+                                            from,
+                                            to,
+                                            label: entry_label,
+                                            ..
+                                        } = entry
+                                        else {
+                                            unreachable!()
+                                        };
+                                        let mut current = before;
+                                        if from == to {
+                                            let remaining = self.emit(
+                                                body,
+                                                actor,
+                                                &mut current,
+                                                names,
+                                                Some(*entry_label),
+                                            );
+                                            local_arms += &format!(
+                                                "{entry_label}=>{{record_pending(branch.recv::<M{entry_label}<'_>>(),observed,ObservedCall::Message({actor},{from},{entry_label},true)).await?;{remaining}}},"
+                                            );
+                                        } else {
+                                            let remaining =
+                                                self.emit(body, actor, &mut current, names, None);
+                                            local_arms += &format!(
+                                                "{entry_label}=>{{drop(branch);{remaining}}},"
+                                            );
+                                        }
+                                    }
+                                    rest = format!(
+                                        "match label{{{local_arms}_=>panic!(\"unknown local branch preview\")}}"
+                                    );
+                                }
                                 arms += &format!("{alternatives}=>{{{decisions}{preview}{rest}}},");
                             }
                         }
@@ -602,7 +651,7 @@ impl Emitter<'_> {
                 } else {
                     "let db;"
                 };
-                let init = if owned && actor < 2 && (returns || receives_here(source, actor)) {
+                let init = if owned && actor < 3 && (returns || receives_here(source, actor)) {
                     if returns && !already_moved {
                         "let mut db=db;"
                     } else {
@@ -622,12 +671,7 @@ impl Emitter<'_> {
     }
 }
 
-pub(super) fn runs(
-    source: &Protocol,
-    owner: u8,
-    third_actor: bool,
-    case: usize,
-) -> (String, String) {
+pub(super) fn runs(source: &Protocol, owner: u8, case: usize) -> (String, String) {
     let executions = source.executions();
     let mut scripts = executions
         .iter()
@@ -663,44 +707,67 @@ pub(super) fn runs(
       let decisions:Vec<std::cell::Cell<Option<bool>>>=(0..{}).map(|_|std::cell::Cell::new(None)).collect();let _=&decisions;
       let sid=SessionId::new(2);
       // SAFETY: this execution owns its resource and its only initial issuer.
-      let network=InMemoryTransport::new(programs.p3.as_ref().map(|_|((sid,3),unsafe{{EndpointBinding::new()}})));
-      let [mut slab0,mut slab1,mut slab2]=[vec![0;128*1024],vec![0;128*1024],vec![0;128*1024]];
-      let mut s0=SessionKitStorage::uninit();let mut s1=SessionKitStorage::uninit();let mut s2=SessionKitStorage::uninit();
+      let network=InMemoryTransport::new(programs.resource.then(||((sid,3),unsafe{{EndpointBinding::new()}})));
+      let [mut slab0,mut slab1,mut slab2,mut slab3]=[vec![0;128*1024],vec![0;128*1024],vec![0;128*1024],vec![0;128*1024]];
+      let mut s0=SessionKitStorage::uninit();let mut s1=SessionKitStorage::uninit();let mut s2=SessionKitStorage::uninit();let mut s3=SessionKitStorage::uninit();
       let rv0=s0.init().rendezvous(&mut slab0,network.clone()).unwrap();
       let rv1=s1.init().rendezvous(&mut slab1,network.clone()).unwrap();
       let rv2=s2.init().rendezvous(&mut slab2,network.clone()).unwrap();
+      let rv3=s3.init().rendezvous(&mut slab3,network.clone()).unwrap();
     "#,
         executions.len(),
         executions.len(),
         resolvers.len()
     );
     for id in resolvers {
-        code += &format!(
-            "match programs.resolver_roles[{id}]{{0=>rv0.set_resolver(&programs.p0,ResolverRef::<{id}>::decision_state(&decisions,|d|Ok(if d[{id}].get().expect(\"unplanned choice\"){{DecisionArm::Right}}else{{DecisionArm::Left}}))).unwrap(),1=>rv1.set_resolver(&programs.p1,ResolverRef::<{id}>::decision_state(&decisions,|d|Ok(if d[{id}].get().expect(\"unplanned choice\"){{DecisionArm::Right}}else{{DecisionArm::Left}}))).unwrap(),3=>{{"
-        );
-        for actor in 0..2 {
+        code += &format!("match programs.resolver_roles[{id}]{{");
+        for actor in 0..3 {
             code += &format!(
-                "rv{actor}.set_resolver(programs.p3.as_ref().unwrap(),ResolverRef::<{id}>::decision_state(&decisions,|d|Ok(if d[{id}].get().expect(\"unplanned choice\"){{DecisionArm::Right}}else{{DecisionArm::Left}}))).unwrap();"
+                "{actor}=>rv{actor}.set_resolver(programs.p{actor}.as_ref().unwrap(),ResolverRef::<{id}>::decision_state(&decisions,|d|Ok(if d[{id}].get().expect(\"unplanned choice\"){{DecisionArm::Right}}else{{DecisionArm::Left}}))).unwrap(),"
+            );
+        }
+        code += "3=>{";
+        for actor in 0..4 {
+            code += &format!(
+                "if {}{{rv{actor}.set_resolver(programs.p3.as_ref().unwrap(),ResolverRef::<{id}>::decision_state(&decisions,|d|Ok(if d[{id}].get().expect(\"unplanned choice\"){{DecisionArm::Right}}else{{DecisionArm::Left}}))).unwrap();}}",
+                if actor == 3 {
+                    "!programs.resource"
+                } else {
+                    "programs.resource"
+                }
             );
         }
         code += "},_=>panic!(\"unknown choosing role\")};";
     }
-    code += "let mut e0=rv0.enter(sid,&programs.p0).unwrap();let mut e1=rv1.enter(sid,&programs.p1).unwrap();";
-    if third_actor {
-        code += "let mut e2=rv2.enter(sid,&programs.p2).unwrap();";
-    } else {
-        code += "let _=&rv2;";
+    for actor in 0..3 {
+        if present(source, actor, None) {
+            code += &format!(
+                "let mut e{actor}=rv{actor}.enter(sid,programs.p{actor}.as_ref().unwrap()).unwrap();"
+            );
+        } else {
+            code += &format!("let _=&rv{actor};");
+        }
     }
     if mobile(source) {
         code +=
             &format!("let initial_db=rv{owner}.enter(sid,programs.p3.as_ref().unwrap()).unwrap();");
     }
+    if !mobile(source) && present(source, 3, None) {
+        code += "let mut e3=rv3.enter(sid,programs.p3.as_ref().unwrap()).unwrap();";
+    } else {
+        code += "let _=&rv3;";
+    }
     code += "let observed=&PendingCalls::default();";
-    for actor in 0..3 {
-        let db = if !mobile(source) || actor == 2 {
+    for actor in 0..4 {
+        let db = if !mobile(source) || actor == 3 {
             ""
         } else if actor == owner {
-            "let mut db=initial_db;"
+            let activity = db_activity(source, actor, owner);
+            if activity.0 > 0 || activity.1 {
+                "let mut db=initial_db;"
+            } else {
+                "let db=initial_db;"
+            }
         } else if receives_here(source, actor) {
             let activity = db_activity(source, actor, owner);
             if activity.0 > 1 || activity.1 {
@@ -716,7 +783,16 @@ pub(super) fn runs(
             source,
             actor,
             &mut holder,
-            &["e0".into(), "e1".into(), "e2".into(), "db".into()],
+            &[
+                "e0".into(),
+                "e1".into(),
+                "e2".into(),
+                if mobile(source) {
+                    "db".into()
+                } else {
+                    "e3".into()
+                },
+            ],
             None,
         );
         let delay = if actor == owner {
@@ -726,14 +802,14 @@ pub(super) fn runs(
         };
         code += &format!(
             "let run{actor}=async{{{db}{delay}{body}{}Ok::<_,hibana::EndpointError>(())}};",
-            if mobile(source) && actor == owner {
+            if mobile(source) && actor == holder {
                 "drop(db);"
             } else {
                 ""
             }
         );
     }
-    code += r#"let result=tokio::time::timeout(core::time::Duration::from_secs(1),async{tokio::try_join!(run0,run1,run2)}).await.expect("generated localside stalled");
+    code += r#"let result=tokio::time::timeout(core::time::Duration::from_secs(1),async{tokio::try_join!(run0,run1,run2,run3)}).await.expect("generated localside stalled");
     if let Some(probe)=probe{assert!(result.is_err(),"scope probe did not stop its run");let actual=observed.scope_rejections.borrow();assert_eq!(*actual,[probe],"planned borrowed-scope probe was not reached");scoped_rejections.push(actual[0].json());continue;}
     result.unwrap();
     write!(scope_observations,",\"completed\":[").unwrap();

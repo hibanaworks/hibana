@@ -10,7 +10,7 @@ on:
         type: choice
         required: true
         default: all
-        options: [all, final-form, protocol-shapes]
+        options: [all, final-form, protocol-shapes, protocol-syntax]
       shape-budget:
         description: Generated constructor budget for protocol-shapes
         type: choice
@@ -22,10 +22,26 @@ on:
         type: string
         required: true
         default: '0'
+      syntax-depth:
+        description: Exact syntax depth for protocol-syntax
+        type: choice
+        required: true
+        default: '0'
+        options: ['0', '1', '2', '3', '4', '5']
+      syntax-first:
+        description: First exact-depth rank (decimal)
+        type: string
+        required: true
+        default: '0'
+      syntax-count:
+        description: Number of consecutive candidates (at most 8192 per dispatch)
+        type: string
+        required: true
+        default: '32'
 
 jobs:
   runtime-instructions:
-    if: github.event_name != 'workflow_dispatch' || inputs.check != 'protocol-shapes'
+    if: github.event_name != 'workflow_dispatch' || (inputs.check != 'protocol-shapes' && inputs.check != 'protocol-syntax')
     runs-on: ubuntu-24.04
     env:
       TOOLCHAIN: stable
@@ -47,13 +63,17 @@ jobs:
           path: target/runtime-instructions/results/
 
   protocol-shape-matrix:
-    if: github.event_name == 'workflow_dispatch' && inputs.check == 'protocol-shapes'
+    if: github.event_name == 'workflow_dispatch' && (inputs.check == 'protocol-shapes' || inputs.check == 'protocol-syntax')
     runs-on: ubuntu-24.04-arm
     outputs:
       matrix: ${{ steps.scope.outputs.matrix }}
     env:
       SHAPE_BUDGET: ${{ inputs.shape-budget }}
       SHAPE_WINDOW: ${{ inputs.shape-window }}
+      SHAPE_CHECK: ${{ inputs.check }}
+      SYNTAX_DEPTH: ${{ inputs.syntax-depth }}
+      SYNTAX_FIRST: ${{ inputs.syntax-first }}
+      SYNTAX_COUNT: ${{ inputs.syntax-count }}
     steps:
       - uses: actions/checkout@v7
       - name: Install Rust
@@ -63,12 +83,18 @@ jobs:
         run: |
           set -euo pipefail
           cargo +stable test --locked --manifest-path .github/ci-tests/Cargo.toml --bin protocol-shape-partitions
-          matrix=$(cargo +stable run --locked --manifest-path .github/ci-tests/Cargo.toml \
-            --bin protocol-shape-partitions -- matrix "$SHAPE_BUDGET" "$SHAPE_WINDOW")
+          if [[ "$SHAPE_CHECK" == protocol-syntax ]]; then
+            cargo +stable test --locked --manifest-path .github/ci-tests/Cargo.toml --bin protocol-shapes
+            matrix=$(cargo +stable run --locked --manifest-path .github/ci-tests/Cargo.toml \
+              --bin protocol-shapes -- syntax-matrix "$SYNTAX_DEPTH" "$SYNTAX_FIRST" "$SYNTAX_COUNT")
+          else
+            matrix=$(cargo +stable run --locked --manifest-path .github/ci-tests/Cargo.toml \
+              --bin protocol-shape-partitions -- matrix "$SHAPE_BUDGET" "$SHAPE_WINDOW")
+          fi
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
 
   protocol-shapes:
-    if: github.event_name == 'workflow_dispatch' && inputs.check == 'protocol-shapes'
+    if: github.event_name == 'workflow_dispatch' && (inputs.check == 'protocol-shapes' || inputs.check == 'protocol-syntax')
     needs: protocol-shape-matrix
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 240
@@ -82,6 +108,10 @@ jobs:
       CARGO_INCREMENTAL: 0
       SHAPE_BUDGET: ${{ inputs.shape-budget }}
       SHAPE_WINDOW: ${{ inputs.shape-window }}
+      SHAPE_CHECK: ${{ inputs.check }}
+      SYNTAX_DEPTH: ${{ inputs.syntax-depth }}
+      SYNTAX_FIRST: ${{ matrix.first }}
+      SYNTAX_COUNT: ${{ matrix.count }}
     steps:
       - uses: actions/checkout@v7
       - name: Install Rust and Lean
@@ -99,54 +129,63 @@ jobs:
       - name: Check every assigned generated protocol
         run: |
           set -euo pipefail
-          cargo +stable run --locked --manifest-path .github/ci-tests/Cargo.toml \
-            --bin protocol-shape-partitions -- shards "$SHAPE_BUDGET" "$SHAPE_WINDOW" \
-            '${{ matrix.partition }}' > assigned-shards.tsv
-          while IFS=$'\t' read -r shard shards; do
+          if [[ "$SHAPE_CHECK" == protocol-syntax ]]; then
+            printf '%s\t%s\t%s\n' "$SYNTAX_DEPTH" "$SYNTAX_FIRST" "$SYNTAX_COUNT" > assigned-syntax.tsv
             bash .github/scripts/lib/resource_guard.sh \
-              bash .github/scripts/check_protocol_shapes.sh "$SHAPE_BUDGET" "$shard" "$shards"
-          done < assigned-shards.tsv
+              bash .github/scripts/check_protocol_shapes.sh --syntax-depth "$SYNTAX_DEPTH" "$SYNTAX_FIRST" "$SYNTAX_COUNT"
+          else
+            cargo +stable run --locked --manifest-path .github/ci-tests/Cargo.toml \
+              --bin protocol-shape-partitions -- shards "$SHAPE_BUDGET" "$SHAPE_WINDOW" \
+              '${{ matrix.partition }}' > assigned-shards.tsv
+            while IFS=$'\t' read -r shard shards; do
+              bash .github/scripts/lib/resource_guard.sh \
+                bash .github/scripts/check_protocol_shapes.sh "$SHAPE_BUDGET" "$shard" "$shards"
+            done < assigned-shards.tsv
+          fi
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: protocol-shapes-${{ inputs.shape-budget }}-${{ inputs.shape-window }}-${{ matrix.partition }}
+          name: ${{ inputs.check }}-${{ inputs.shape-budget }}-${{ inputs.shape-window }}-${{ matrix.partition }}
           retention-days: 30
           path: |
             assigned-shards.tsv
-            target/protocol-shapes/operator-budget-*/**/inventory.txt
-            target/protocol-shapes/operator-budget-*/**/catalog-inventory.txt
-            target/protocol-shapes/operator-budget-*/**/catalog.json
-            target/protocol-shapes/operator-budget-*/**/case-depths.tsv
-            target/protocol-shapes/operator-budget-*/**/diagnostics.tsv
-            target/protocol-shapes/operator-budget-*/**/unclassified-rejections.txt
-            target/protocol-shapes/operator-budget-*/**/diagnose.time
-            target/protocol-shapes/operator-budget-*/**/diagnosis-source.sha256
-            target/protocol-shapes/operator-budget-*/**/compiler.txt
-            target/protocol-shapes/operator-budget-*/**/revision.txt
-            target/protocol-shapes/operator-budget-*/**/source.patch
-            target/protocol-shapes/operator-budget-*/**/source.sha256
-            target/protocol-shapes/operator-budget-*/**/source-after.sha256
-            target/protocol-shapes/operator-budget-*/**/inputs.sha256
-            target/protocol-shapes/operator-budget-*/**/inputs-check.log
-            target/protocol-shapes/operator-budget-*/**/Cargo.lock
-            target/protocol-shapes/operator-budget-*/**/dependencies.sha256
-            target/protocol-shapes/operator-budget-*/**/dependencies-check.log
-            target/protocol-shapes/operator-budget-*/**/compile.time
-            target/protocol-shapes/operator-budget-*/**/execute.time
-            target/protocol-shapes/operator-budget-*/**/oracle.time
-            target/protocol-shapes/operator-budget-*/**/oracle.log
-            target/protocol-shapes/operator-budget-*/**/inputs.json
-            target/protocol-shapes/operator-budget-*/**/scope-inputs.json
-            target/protocol-shapes/operator-budget-*/**/scope-plans/*.jsonl
-            target/protocol-shapes/operator-budget-*/**/scripts/*.jsonl
-            target/protocol-shapes/operator-budget-*/**/observations/*.json
-            target/protocol-shapes/operator-budget-*/**/scope-observations/*.jsonl
-            target/protocol-shapes/operator-budget-*/**/rejected/inventory.tsv
-            target/protocol-shapes/operator-budget-*/**/rejected/Cargo.toml
-            target/protocol-shapes/operator-budget-*/**/rejected/Cargo.lock
-            target/protocol-shapes/operator-budget-*/**/rejected/src/bin/*.rs
-            target/protocol-shapes/operator-budget-*/**/rejected/*.jsonl
-            target/protocol-shapes/operator-budget-*/**/rejected/*.stderr
+            assigned-syntax.tsv
+            target/protocol-shapes/*/**/inventory.txt
+            target/protocol-shapes/*/**/catalog-inventory.txt
+            target/protocol-shapes/*/**/catalog.json
+            target/protocol-shapes/*/**/catalog-scope.txt
+            target/protocol-shapes/*/**/case-identities.tsv
+            target/protocol-shapes/*/**/case-depths.tsv
+            target/protocol-shapes/*/**/diagnostics.tsv
+            target/protocol-shapes/*/**/unclassified-rejections.txt
+            target/protocol-shapes/*/**/diagnose.time
+            target/protocol-shapes/*/**/diagnosis-source.sha256
+            target/protocol-shapes/*/**/compiler.txt
+            target/protocol-shapes/*/**/revision.txt
+            target/protocol-shapes/*/**/source.patch
+            target/protocol-shapes/*/**/source.sha256
+            target/protocol-shapes/*/**/source-after.sha256
+            target/protocol-shapes/*/**/inputs.sha256
+            target/protocol-shapes/*/**/inputs-check.log
+            target/protocol-shapes/*/**/Cargo.lock
+            target/protocol-shapes/*/**/dependencies.sha256
+            target/protocol-shapes/*/**/dependencies-check.log
+            target/protocol-shapes/*/**/compile.time
+            target/protocol-shapes/*/**/execute.time
+            target/protocol-shapes/*/**/oracle.time
+            target/protocol-shapes/*/**/oracle.log
+            target/protocol-shapes/*/**/inputs.json
+            target/protocol-shapes/*/**/scope-inputs.json
+            target/protocol-shapes/*/**/scope-plans/*.jsonl
+            target/protocol-shapes/*/**/scripts/*.jsonl
+            target/protocol-shapes/*/**/observations/*.json
+            target/protocol-shapes/*/**/scope-observations/*.jsonl
+            target/protocol-shapes/*/**/rejected/inventory.tsv
+            target/protocol-shapes/*/**/rejected/Cargo.toml
+            target/protocol-shapes/*/**/rejected/Cargo.lock
+            target/protocol-shapes/*/**/rejected/src/bin/*.rs
+            target/protocol-shapes/*/**/rejected/*.jsonl
+            target/protocol-shapes/*/**/rejected/*.stderr
 
   kani:
     if: github.event_name != 'workflow_dispatch' || inputs.check == 'all'
@@ -172,7 +211,7 @@ jobs:
           --lib --jobs 1 --output-format terse
 
   final-form:
-    if: github.event_name != 'workflow_dispatch' || inputs.check != 'protocol-shapes'
+    if: github.event_name != 'workflow_dispatch' || (inputs.check != 'protocol-shapes' && inputs.check != 'protocol-syntax')
     runs-on: ubuntu-24.04-arm
     env:
       TOOLCHAIN: stable

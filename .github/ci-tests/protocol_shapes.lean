@@ -140,12 +140,15 @@ def shapeAdvance (prepared : ShapePlan source) (points : List SourcePoint)
     (label : Nat) (receive : Bool) : List (List SourcePoint) :=
   prepared.plan.path.bindings.filterMap fun (event, binding) => do
     if binding.message.label != label then none else do
-      let point := if receive then .committed ⟨event, .receive⟩ else .accepted event
-      if !prepared.ready points point then none else do
-        let points := points ++ [point]
-        if receive then some points else do
-          let publication := SourcePoint.committed ⟨event, .send⟩
-          if prepared.ready points publication then some (points ++ [publication]) else none
+      let isLocal := binding.message.sender == binding.message.receiver
+      if isLocal && receive then none else do
+        let point := if isLocal then .committed ⟨event, .local⟩
+          else if receive then .committed ⟨event, .receive⟩ else .accepted event
+        if !prepared.ready points point then none else do
+          let points := points ++ [point]
+          if isLocal || receive then some points else do
+            let publication := SourcePoint.committed ⟨event, .send⟩
+            if prepared.ready points publication then some (points ++ [publication]) else none
 
 def shapeStates (source : Source) (plans : List (ShapePlan source))
     (word : List Nat) : List (ShapePlan source × List SourcePoint) :=
@@ -165,7 +168,8 @@ def shapeRepetitions : Source → Nat
   | .roll body => 1 + shapeRepetitions body
 
 def shapeFiniteWords : Source → List (List Nat)
-  | .send message => [[2 * message.label, 2 * message.label + 1]]
+  | .send message => [if message.sender == message.receiver then [2 * message.label]
+      else [2 * message.label, 2 * message.label + 1]]
   | .seq left right => (shapeFiniteWords left).flatMap fun first =>
       (shapeFiniteWords right).map (first ++ ·)
   | .par left right => (shapeFiniteWords left).flatMap fun first =>
@@ -372,7 +376,11 @@ def shapeReadLine [Lean.FromJson α] (file : IO.FS.Handle) : IO α := do
 
 def shapeCompletedAdvance (prepared : ShapePlan source) (points : List SourcePoint)
     (actor role label : Nat) (receive : Bool) : List (List SourcePoint) :=
-  (shapeAdvance prepared points label receive).filter fun next =>
+  -- A RouteBranch consumes a previewed self-role step with recv; both public
+  -- local-operation forms denote the same local source point.
+  let localStep := prepared.plan.path.bindings.any fun (_, binding) =>
+    binding.message.label == label && binding.message.sender == binding.message.receiver
+  (shapeAdvance prepared points label (receive && !localStep)).filter fun next =>
     match next.getLast? with
     | some (.committed action) =>
       prepared.plan.path.bindings.any fun (event, binding) => event == action.event &&

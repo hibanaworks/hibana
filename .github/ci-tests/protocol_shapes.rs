@@ -24,6 +24,8 @@ mod localside;
 mod population;
 #[path = "protocol_shape_scope_probes.rs"]
 mod scope_probes;
+#[path = "protocol_shape_syntax.rs"]
+mod syntax;
 use population::{Count, Population};
 
 #[derive(Clone, Eq, PartialEq, Ord, PartialOrd)]
@@ -106,7 +108,7 @@ impl Trace {
         format!("{labels}\n")
     }
 }
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum Protocol {
     Message {
         from: u8,
@@ -268,6 +270,35 @@ impl Protocol {
                 b.resolver_choices(path, out);
             }
             Self::Roll(body) => body.resolver_choices(path, out),
+        }
+    }
+
+    fn resolver_roles(&self, roles: &mut Vec<u8>) {
+        match self {
+            Self::Message { .. } => {}
+            Self::Resolved(a, b, id) => {
+                let mut head = a.as_ref();
+                while let Self::Seq(first, _)
+                | Self::Par(first, _)
+                | Self::Route(first, _)
+                | Self::Resolved(first, _, _)
+                | Self::Roll(first) = head
+                {
+                    head = first;
+                }
+                let Self::Message { from, .. } = head else {
+                    unreachable!()
+                };
+                assert_eq!(usize::from(*id), roles.len());
+                roles.push(*from);
+                a.resolver_roles(roles);
+                b.resolver_roles(roles);
+            }
+            Self::Seq(a, b) | Self::Par(a, b) | Self::Route(a, b) => {
+                a.resolver_roles(roles);
+                b.resolver_roles(roles);
+            }
+            Self::Roll(body) => body.resolver_roles(roles),
         }
     }
     // Complete finite traces are derived from syntax, not accepted runtime calls.
@@ -858,61 +889,90 @@ fn catalog(budget: usize) -> Vec<CaseShape> {
     }
     cases
 }
+type Case = (usize, String, u8, u8, Protocol, u16);
+struct CaseSet {
+    namespace: String,
+    description: String,
+    total: String,
+    cases: Vec<Case>,
+    delegated: BTreeSet<usize>,
+    expected_rejections: BTreeMap<usize, &'static str>,
+    negative_sources: BTreeMap<String, (Protocol, &'static str)>,
+    max_label: u8,
+    max_resolvers: u16,
+    syntax: bool,
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = env::args().skip(1).collect::<Vec<_>>();
-    if args.len() != 3 && args.len() != 5 && args.len() != 6 {
-        return Err(
-            "usage: protocol-shapes REPOSITORY OUTPUT OPERATOR_BUDGET [SHARD SHARDS [DIAGNOSTICS]]"
-                .into(),
+    if args.first().is_some_and(|s| s == "syntax-matrix") {
+        if args.len() != 4 {
+            return Err("usage: protocol-shapes syntax-matrix DEPTH FIRST COUNT".into());
+        }
+        println!(
+            "{}",
+            syntax_matrix(args[1].parse()?, args[2].parse()?, args[3].parse()?)?
         );
+        return Ok(());
     }
-    let root = PathBuf::from(&args[0]).canonicalize()?;
-    let output = PathBuf::from(&args[1]);
-    let budget: usize = args[2].parse()?;
-    if budget > 5 {
-        return Err("operator budget must be at most five in this catalog".into());
-    }
-    let (shard, shards) = if args.len() >= 5 {
-        (args[3].parse::<usize>()?, args[4].parse::<usize>()?)
+    let (catalog, diagnostics) = if args.get(2).is_some_and(|s| s == "--syntax-depth") {
+        if args.len() != 6 && args.len() != 7 {
+            return Err("usage: protocol-shapes REPOSITORY OUTPUT --syntax-depth DEPTH FIRST COUNT [DIAGNOSTICS]".into());
+        }
+        (
+            syntax_cases(args[3].parse()?, args[4].parse()?, args[5].parse()?)?,
+            args.get(6),
+        )
     } else {
-        (0, 1)
+        if args.len() != 3 && args.len() != 5 && args.len() != 6 {
+            return Err("usage: protocol-shapes REPOSITORY OUTPUT OPERATOR_BUDGET [SHARD SHARDS [DIAGNOSTICS]]".into());
+        }
+        let budget = args[2].parse()?;
+        let (shard, shards) = if args.len() >= 5 {
+            (args[3].parse()?, args[4].parse()?)
+        } else {
+            (0, 1)
+        };
+        if budget > 5 || shards == 0 || shard >= shards {
+            return Err("invalid operator-budget catalog or shard".into());
+        }
+        (template_cases(budget, shard, shards), args.get(5))
     };
-    if shards == 0 || shard >= shards {
-        return Err("invalid shard".into());
+    emit_cases(
+        PathBuf::from(&args[0]).canonicalize()?,
+        PathBuf::from(&args[1]),
+        catalog,
+        diagnostics,
+    )
+}
+
+fn syntax_matrix(
+    depth: usize,
+    first: num_bigint::BigUint,
+    count: usize,
+) -> Result<String, Box<dyn std::error::Error>> {
+    if depth > 5 || count == 0 || count.div_ceil(32) > 256 {
+        return Err("invalid syntax range: split ranges larger than 256 CI jobs".into());
     }
-    fs::create_dir_all(output.join("src"))?;
-    let trace_directory = output.join("traces");
-    if trace_directory.exists() {
-        fs::remove_dir_all(&trace_directory)?;
+    let grammar = syntax::Grammar::new(depth);
+    if &first + count > *grammar.count(depth) {
+        return Err("syntax range exceeds exact-height population".into());
     }
-    fs::create_dir_all(&trace_directory)?;
-    fs::write(
-        output.join("Cargo.toml"),
-        format!(
-            r#"[package]
-name = "hibana-generated-protocol-shapes-operators-{budget}-{shard}-of-{shards}"
-version = "0.0.0"
-edition = "2024"
-publish = false
-autolib = false
-[workspace]
-[dependencies]
-hibana = {{ path = {:?} }}
-tokio = {{ version = "=1.48.0", features = ["macros", "rt", "time", "test-util"] }}
-[profile.dev]
-opt-level = 1
-debug = 0
-debug-assertions = true
-overflow-checks = true
-incremental = false
-[profile.dev.package.hibana]
-opt-level = 2
-[lints.rust]
-long_running_const_eval = "forbid"
-"#,
-            root
-        ),
-    )?;
+    let entries = (0..count)
+        .step_by(32)
+        .enumerate()
+        .map(|(partition, offset)| {
+            format!(
+                r#"{{"partition":{partition},"first":"{}","count":{}}}"#,
+                &first + offset,
+                (count - offset).min(32)
+            )
+        })
+        .collect::<Vec<_>>();
+    Ok(format!(r#"{{"include":[{}]}}"#, entries.join(",")))
+}
+
+fn template_cases(budget: usize, shard: usize, shards: usize) -> CaseSet {
     let all = catalog(budget);
     let counts = binary_counts(budget);
     let binary_total = counts.total(true, Population::Exchange);
@@ -1023,9 +1083,169 @@ long_running_const_eval = "forbid"
             resolvers,
         ));
     }
+    CaseSet {
+        namespace: format!("operators-{budget}-{shard}-of-{shards}"),
+        description: format!("operator_budget={budget} shard={shard}/{shards}"),
+        total: total_cases.to_string(),
+        cases,
+        delegated: delegated_cases,
+        expected_rejections,
+        negative_sources,
+        max_label,
+        max_resolvers,
+        syntax: false,
+    }
+}
+
+fn syntax_cases(
+    depth: usize,
+    first: num_bigint::BigUint,
+    count: usize,
+) -> Result<CaseSet, Box<dyn std::error::Error>> {
+    if depth > 5 || count == 0 {
+        return Err("syntax depth must be at most five and count must be positive".into());
+    }
+    let grammar = syntax::Grammar::new(depth);
+    if &first + count > *grammar.count(depth) {
+        return Err("syntax range exceeds its exact-height population".into());
+    }
+    let mut catalog = CaseSet {
+        namespace: format!("height-{depth}-{first}-count-{count}"),
+        description: format!("syntax_depth={depth} first={first} count={count}"),
+        total: grammar.count(depth).to_string(),
+        cases: Vec::new(),
+        delegated: BTreeSet::new(),
+        expected_rejections: BTreeMap::new(),
+        negative_sources: BTreeMap::new(),
+        max_label: 0,
+        max_resolvers: 0,
+        syntax: true,
+    };
+    for case in 0..count {
+        let rank = &first + case;
+        let (global, labels, resolvers) = grammar.protocol(depth, rank.clone());
+        let mut messages = Vec::new();
+        global.messages(&mut messages);
+        let owner = messages
+            .iter()
+            .find_map(|message| match message {
+                Protocol::Message {
+                    from, owned: true, ..
+                } => Some(*from),
+                _ => None,
+            })
+            .unwrap_or(3);
+        if localside::mobile(&global) {
+            catalog.delegated.insert(case);
+        }
+        // These source rules do not depend on projection's verdict. Unknown
+        // rejections stay unresolved instead of becoming expected failures.
+        if let Some(Protocol::Message { from, to, owned: true, .. }) = messages.iter().find(|m| matches!(m, Protocol::Message { from, to, owned: true, .. } if from == to)).or_else(|| messages.iter().find(|m| matches!(m, Protocol::Message {from, to, owned: true,..} if *from==3 || *to==3))).copied() {
+            let (problem, reason) = if from == to {
+                ("NonUnitSelfMessage", "self-role actions require the unit payload")
+            } else {
+                ("EndpointIsItsOwnCarrier", "an owned endpoint cannot carry its own delegation; role=3; help: transfer the Endpoint through distinct control roles")
+            };
+            catalog.expected_rejections.insert(case, problem);
+            catalog.negative_sources.insert(format!("syntax_{case}"), (global.clone(), reason));
+        }
+        if !catalog.expected_rejections.contains_key(&case)
+            && matches!(&global,Protocol::Roll(body) if matches!(body.as_ref(),Protocol::Message{owned:true,..}))
+        {
+            catalog.expected_rejections.insert(case, "RollChangesOwner");
+            catalog.negative_sources.insert(format!("syntax_{case}"),(global.clone(),"rolled endpoint delegation must restore its incoming ownership; role=3; help: return each transferred Endpoint to its incoming holder inside the roll"));
+        }
+        catalog.max_label = catalog.max_label.max(labels);
+        catalog.max_resolvers = catalog.max_resolvers.max(resolvers);
+        catalog.cases.push((
+            case,
+            format!("height={depth}/rank={rank}"),
+            2,
+            owner,
+            global,
+            resolvers,
+        ));
+    }
+    Ok(catalog)
+}
+
+fn emit_cases(
+    root: PathBuf,
+    output: PathBuf,
+    catalog: CaseSet,
+    diagnostics: Option<&String>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let CaseSet {
+        namespace,
+        description,
+        total: total_cases,
+        cases,
+        delegated: delegated_cases,
+        expected_rejections,
+        negative_sources,
+        max_label,
+        max_resolvers,
+        syntax,
+    } = catalog;
     if cases.is_empty() {
         return Err("empty shard".into());
     }
+    fs::create_dir_all(output.join("src"))?;
+    fs::write(
+        output.join("catalog-scope.txt"),
+        format!("{description}\nexact_population={total_cases}\nnamespace={namespace}\n"),
+    )?;
+    let mut identities = String::from("case\tidentity\tsyntax_depth\toperator_count\n");
+    for (case, identity, _, _, global, _) in &cases {
+        writeln!(
+            identities,
+            "{case}\t{identity}\t{}\t{}",
+            global.syntax_depth(),
+            global.operator_count()
+        )?;
+    }
+    fs::write(output.join("case-identities.tsv"), identities)?;
+    let mut candidate_inputs = Vec::new();
+    for (case, _, _, _, global, resolvers) in &cases {
+        let mut nodes = Vec::new();
+        global.json_nodes(&mut nodes);
+        candidate_inputs.push(format!(
+            r#"{{"name":{case},"nodes":[{}],"resolvers":{resolvers}}}"#,
+            nodes.join(",")
+        ));
+    }
+    fs::write(
+        output.join("catalog.json"),
+        format!("[{}]\n", candidate_inputs.join(",")),
+    )?;
+    let trace_directory = output.join("traces");
+    fs::create_dir_all(&trace_directory)?;
+    fs::write(
+        output.join("Cargo.toml"),
+        format!(
+            r#"[package]
+name = "hibana-generated-protocol-shapes-{namespace}"
+version = "0.0.0"
+edition = "2024"
+publish = false
+autolib = false
+[workspace]
+[dependencies]
+hibana = {{ path = {root:?} }}
+tokio = {{ version = "=1.48.0", features = ["macros", "rt", "time", "test-util"] }}
+[profile.dev]
+opt-level = 1
+debug = 0
+debug-assertions = true
+overflow-checks = true
+incremental = false
+[profile.dev.package.hibana]
+opt-level = 2
+[lints.rust]
+long_running_const_eval = "forbid"
+"#
+        ),
+    )?;
     let negative_root = output.join("rejected");
     if negative_root.exists() {
         fs::remove_dir_all(&negative_root)?;
@@ -1034,7 +1254,7 @@ long_running_const_eval = "forbid"
     fs::write(
         negative_root.join("Cargo.toml"),
         format!(
-            "[package]\nname=\"hibana-rejected-shapes-operators-{budget}-{shard}-of-{shards}\"\nversion=\"0.0.0\"\nedition=\"2024\"\npublish=false\n[workspace]\n[dependencies]\nhibana={{path={root:?}}}\n[lints.rust]\nlong_running_const_eval=\"forbid\"\n"
+            "[package]\nname=\"hibana-rejected-shapes-{namespace}\"\nversion=\"0.0.0\"\nedition=\"2024\"\npublish=false\n[workspace]\n[dependencies]\nhibana={{path={root:?}}}\n[lints.rust]\nlong_running_const_eval=\"forbid\"\n"
         ),
     )?;
     let mut negative_inventory = String::new();
@@ -1054,11 +1274,15 @@ long_running_const_eval = "forbid"
                 if *owned { "Endpoint<'r,3>" } else { "()" }
             )?;
         }
-        writeln!(
-            source,
-            "let global={};let _=project::<0>(&global);}}",
-            global.rust()
-        )?;
+        if *reason == "self-role actions require the unit payload" {
+            writeln!(source, "let _global={};}}", global.rust())?;
+        } else {
+            writeln!(
+                source,
+                "let global={};let _=project::<0>(&global);}}",
+                global.rust()
+            )?;
+        }
         fs::write(
             negative_root.join("src/bin").join(format!("{name}.rs")),
             source,
@@ -1085,6 +1309,15 @@ long_running_const_eval = "forbid"
     diagnostic_source.push_str("}\n");
     for (case, _, _, _, global, _) in &cases {
         writeln!(diagnostic_source, "fn shape_{case}(){{")?;
+        // g::send rejects this payload during codegen, before diagnose can
+        // run. The separate rejected/ build must establish this source rule.
+        if expected_rejections.get(case) == Some(&"NonUnitSelfMessage") {
+            writeln!(
+                diagnostic_source,
+                "println!(\"{case}\\tsource-rejected:NonUnitSelfMessage\");}}"
+            )?;
+            continue;
+        }
         let mut messages = Vec::new();
         global.messages(&mut messages);
         for m in messages {
@@ -1105,12 +1338,22 @@ long_running_const_eval = "forbid"
     }
     fs::create_dir_all(output.join("src/bin"))?;
     write_if_changed(&output.join("src/bin/diagnose.rs"), &diagnostic_source)?;
-    let classifications = if let Some(path) = args.get(5) {
+    if syntax && diagnostics.is_none() {
+        println!(
+            "syntax catalog candidates={} {description} total_shapes={total_cases}; awaiting diagnostics before localside emission",
+            cases.len()
+        );
+        return Ok(());
+    }
+    let classifications = if let Some(path) = diagnostics {
         let mut found = BTreeMap::new();
         for line in fs::read_to_string(path)?.lines() {
             let (case, verdict) = line.split_once('\t').ok_or("invalid diagnostic record")?;
             let case = case.parse::<usize>()?;
+            let constructor_rejected = verdict == "source-rejected:NonUnitSelfMessage"
+                && expected_rejections.get(&case) == Some(&"NonUnitSelfMessage");
             if verdict != "accepted"
+                && !constructor_rejected
                 && !verdict
                     .strip_prefix("rejected:")
                     .is_some_and(|reason| !reason.is_empty())
@@ -1118,6 +1361,7 @@ long_running_const_eval = "forbid"
                 return Err(format!("invalid diagnostic verdict for shape {case}").into());
             }
             if let Some(expected) = expected_rejections.get(&case)
+                && !constructor_rejected
                 && !verdict.starts_with(&format!(
                     "rejected:ProjectionDiagnostic {{ problem: {expected},"
                 ))
@@ -1178,6 +1422,7 @@ long_running_const_eval = "forbid"
     let script_directory = output.join("scripts");
     fs::create_dir_all(&script_directory)?;
     let mut script_paths = BTreeSet::new();
+    let mut trace_paths = BTreeSet::new();
     let mut borrowed_scope_probes = 0usize;
     let mut rejected = 0;
     let mut case_depths = String::from("case\tsyntax_depth\toperator_count\n");
@@ -1222,6 +1467,9 @@ long_running_const_eval = "forbid"
                 let mut prefix = Vec::new();
                 for &(label, _) in &trace.messages {
                     for receive in [false, true] {
+                        if messages.iter().any(|message| matches!(message, Protocol::Message { from, to, label: candidate, .. } if *candidate == label && from == to)) && receive {
+                            continue;
+                        }
                         prefix.push(2 * u16::from(label) + u16::from(receive));
                         prefixes.insert(prefix.clone());
                     }
@@ -1244,28 +1492,41 @@ long_running_const_eval = "forbid"
         }
         writeln!(
             source,
-            "let global={};\nlet programs=Programs{{p0:project::<0>(&global),p1:project::<1>(&global),p2:project::<2>(&global),p3:{},third_actor:{},owner:{owner},resolver_roles:&{:?}}};",
+            "let global={};\nlet programs=Programs{{p0:{},p1:{},p2:{},p3:{},resource:{},owner:{owner},resolver_roles:&{:?}}};",
             global.rust(),
-            if messages
-                .iter()
-                .any(|m| matches!(m, Protocol::Message { owned: true, .. }))
-            {
+            if localside::present(global, 0, None) {
+                "Some(project::<0>(&global))"
+            } else {
+                "None"
+            },
+            if localside::present(global, 1, None) {
+                "Some(project::<1>(&global))"
+            } else {
+                "None"
+            },
+            if localside::present(global, 2, None) {
+                "Some(project::<2>(&global))"
+            } else {
+                "None"
+            },
+            if messages.iter().any(|m| matches!(
+                m,
+                Protocol::Message { owned: true, .. }
+                    | Protocol::Message { from: 3, .. }
+                    | Protocol::Message { to: 3, .. }
+            )) {
                 "Some(project::<3>(&global))"
             } else {
                 "None"
             },
-            localside::present(global, 2, None),
-            vec![
-                if delegated_cases.contains(case) {
-                    3
-                } else {
-                    *owner
-                };
-                usize::from(*resolvers)
-            ]
+            localside::mobile(global),
+            {
+                let mut roles = Vec::new();
+                global.resolver_roles(&mut roles);
+                roles
+            }
         )?;
-        let (local, scripts) =
-            localside::runs(global, *owner, localside::present(global, 2, None), *case);
+        let (local, scripts) = localside::runs(global, *owner, *case);
         source.push_str(&local);
         let script_path = script_directory.join(format!("{case}.jsonl"));
         write_if_changed(&script_path, &scripts)?;
@@ -1313,12 +1574,11 @@ long_running_const_eval = "forbid"
         let mut trace_data = String::new();
         for trace in &traces {
             trace_data.push_str(&trace.line());
-            operations += 2 * trace.messages.len();
+            operations += trace.messages.iter().map(|(label,_)| if messages.iter().any(|m|matches!(m,Protocol::Message{from,to,label:candidate,..} if candidate==label && from==to)) {1} else {2}).sum::<usize>();
         }
-        fs::write(
-            output.join("traces").join(format!("{case}.txt")),
-            trace_data,
-        )?;
+        let trace_path = trace_directory.join(format!("{case}.txt"));
+        write_if_changed(&trace_path, &trace_data)?;
+        trace_paths.insert(trace_path);
         writeln!(
             source,
             "],traces:include_str!(\"../traces/{case}.txt\"),expected_traces:{},prefix_visits:{},scoped_traces:&completed_scoped_traces}}).await;\n}}",
@@ -1336,7 +1596,7 @@ long_running_const_eval = "forbid"
     // memory guard. Every case remains in the same Cargo test invocation.
     let mut manifest = fs::read_to_string(output.join("Cargo.toml"))?;
     let mut paths = BTreeSet::new();
-    for (unit, cases) in localsides.chunks(32).enumerate() {
+    for (unit, cases) in localsides.chunks(if syntax { 1 } else { 32 }).enumerate() {
         let name = format!("shapes_{unit}");
         let path = if unit == 0 {
             "src/lib.rs".to_owned()
@@ -1369,6 +1629,12 @@ long_running_const_eval = "forbid"
             fs::remove_file(path)?;
         }
     }
+    for entry in fs::read_dir(trace_directory)? {
+        let path = entry?.path();
+        if !trace_paths.contains(&path) {
+            fs::remove_file(path)?;
+        }
+    }
     fs::write(
         output.join("inputs.json"),
         format!("[{}]\n", inputs.join(",")),
@@ -1387,7 +1653,7 @@ long_running_const_eval = "forbid"
     )?;
     fs::write(output.join("case-depths.tsv"), case_depths)?;
     println!(
-        "generated shapes={} initial_probes={probes} continuation_shapes={continuation_shapes} trace_prefix_probes={trace_prefix_probes} finite_short_prefix_depth=4 complete_traces={trace_count} trace_operations={operations} concurrent_traces={concurrent_traces} delegated_concurrent_runs={delegated_concurrent_runs} scoped_executions={scoped_executions} operator_budget={budget} catalog_max_syntax_depth={catalog_max_depth} emitted_max_syntax_depth={emitted_max_depth} shard={shard}/{shards} catalog_shapes={} unclassified_rejections={rejected} total_shapes={}",
+        "generated shapes={} initial_probes={probes} continuation_shapes={continuation_shapes} trace_prefix_probes={trace_prefix_probes} finite_short_prefix_depth=4 complete_traces={trace_count} trace_operations={operations} concurrent_traces={concurrent_traces} delegated_concurrent_runs={delegated_concurrent_runs} scoped_executions={scoped_executions} {description} catalog_max_syntax_depth={catalog_max_depth} emitted_max_syntax_depth={emitted_max_depth} catalog_shapes={} unclassified_rejections={rejected} total_shapes={}",
         inputs.len(),
         cases.len(),
         total_cases
@@ -1399,6 +1665,23 @@ long_running_const_eval = "forbid"
 #[cfg(test)]
 mod population_tests {
     use super::*;
+
+    #[test]
+    fn syntax_ci_ranges_have_no_gaps_overlap_or_machine_rank_limit() {
+        assert_eq!(
+            syntax_matrix(1, 4095u32.into(), 33).unwrap(),
+            r#"{"include":[{"partition":0,"first":"4095","count":32},{"partition":1,"first":"4127","count":1}]}"#
+        );
+        let first = num_bigint::BigUint::from(1u8) << 130usize;
+        assert!(
+            syntax_matrix(5, first.clone(), 32)
+                .unwrap()
+                .contains(&format!(r#""first":"{first}""#))
+        );
+        assert!(syntax_matrix(1, 4127u32.into(), 2).is_err());
+        assert!(syntax_matrix(5, 0u8.into(), 8193).is_err());
+        assert!(syntax_matrix(0, 0u8.into(), 0).is_err());
+    }
 
     #[test]
     fn operator_count_and_syntax_depth_are_different_bounds() {

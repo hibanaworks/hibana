@@ -23,6 +23,51 @@ fn continuation(text: &str, accepted: bool) -> Option<core::ops::Range<usize>> {
     }
     None
 }
+
+// Bound successful API calls from the source, independently of observations.
+// A self-role message has one local operation; other messages have two ends.
+fn max_completed_calls(case: &Json) -> Result<usize, String> {
+    let Some(Json::Array(nodes)) = case.get("nodes") else {
+        return Err("missing source nodes".into());
+    };
+    let number = |node: &Json, field: &str| match node.get(field) {
+        Some(Json::Number(value)) => value
+            .parse::<usize>()
+            .map_err(|_| "invalid source index".to_owned()),
+        _ => Err("missing source number".to_owned()),
+    };
+    let mut counts: Vec<usize> = Vec::new();
+    for node in nodes {
+        let kind = number(node, "kind")?;
+        let count = if kind == 0 {
+            if number(node, "sender")? == number(node, "receiver")? {
+                1
+            } else {
+                2
+            }
+        } else {
+            let left = *counts
+                .get(number(node, "left")?)
+                .ok_or("source left child is not earlier")?;
+            if kind == 5 {
+                left.checked_mul(2).ok_or("source call count overflow")?
+            } else {
+                let right = *counts
+                    .get(number(node, "right")?)
+                    .ok_or("source right child is not earlier")?;
+                match kind {
+                    1 | 2 => left
+                        .checked_add(right)
+                        .ok_or("source call count overflow")?,
+                    3 | 4 => left.max(right),
+                    _ => return Err("unknown source constructor".into()),
+                }
+            }
+        };
+        counts.push(count);
+    }
+    counts.last().copied().ok_or("empty source".into())
+}
 // ShapeInput contains numeric fields, booleans, arrays and objects only.
 fn source_json(value: &Json) -> Result<String, Box<dyn std::error::Error>> {
     Ok(match value {
@@ -107,9 +152,67 @@ fn single_case(
 fn completed_controls(
     checker: &Path,
     inventory: &Json,
-    observation: &Path,
+    candidates: &[PathBuf],
     output: &Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let Json::Array(cases) = inventory else {
+        return Err("invalid control inventory".into());
+    };
+    let mut receive_target = None;
+    for observation in candidates {
+        let name = observation
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .ok_or("invalid observation name")?;
+        let case = cases
+            .iter()
+            .find(|case| case.get("name") == Some(&Json::Number(name.into())))
+            .ok_or("missing mutation source")?;
+        let Some(Json::Array(nodes)) = case.get("nodes") else {
+            return Err("missing mutation source nodes".into());
+        };
+        let labels = nodes
+            .iter()
+            .filter(|node| {
+                node.get("kind") == Some(&Json::Number("0".into()))
+                    && node.get("sender") != node.get("receiver")
+            })
+            .filter_map(|node| match node.get("label") {
+                Some(Json::Number(label)) => Some(label.clone()),
+                _ => None,
+            })
+            .collect::<std::collections::BTreeSet<_>>();
+        let path = output
+            .join("scope-observations")
+            .join(observation.file_name().ok_or("missing observation name")?)
+            .with_extension("jsonl");
+        for (index, line) in BufReader::new(fs::File::open(path)?)
+            .lines()
+            .skip(1)
+            .enumerate()
+        {
+            let record = json::parse(&line?)?;
+            let Some(Json::Array(calls)) = record.get("completed") else {
+                return Err("missing mutation record calls".into());
+            };
+            if let Some(call_index)=calls.iter().position(|call|matches!(call,Json::Array(parts) if parts.get(3)==Some(&Json::Bool(true)) && matches!(parts.get(2),Some(Json::Number(label)) if labels.contains(label)))) {
+                receive_target = Some((observation, index, call_index));
+                break;
+            }
+        }
+        if receive_target.is_some() {
+            break;
+        }
+    }
+    if receive_target.is_none() {
+        if cases.iter().any(|case|matches!(case.get("nodes"),Some(Json::Array(nodes)) if nodes.iter().any(|node|node.get("kind")==Some(&Json::Number("0".into())) && node.get("sender")!=node.get("receiver")))) {
+            return Err("a source receive has no completed mutation point".into());
+        }
+        println!(
+            "Completed trace checker: receive-before-send is inapplicable to self-role operations only"
+        );
+    }
+    let mut checked = Vec::new();
     for mutation in [
         "receive-before-send",
         "missing-call",
@@ -117,6 +220,18 @@ fn completed_controls(
         "wrong-actor",
         "wrong-role",
     ] {
+        let (observation, record_index, call_index) = if mutation == "receive-before-send" {
+            let Some(target) = receive_target else {
+                continue;
+            };
+            target
+        } else {
+            (
+                candidates.first().ok_or("no completed mutation source")?,
+                0,
+                0,
+            )
+        };
         let target = output
             .join("controls")
             .join(format!("completed-{mutation}"));
@@ -143,6 +258,13 @@ fn completed_controls(
             return Err("missing completed header".into());
         }
         writer.write_all(line.as_bytes())?;
+        for _ in 0..record_index {
+            line.clear();
+            if reader.read_line(&mut line)? == 0 {
+                return Err("missing mutation target record".into());
+            }
+            writer.write_all(line.as_bytes())?;
+        }
         line.clear();
         if reader.read_line(&mut line)? == 0 {
             return Err("missing completed execution".into());
@@ -156,8 +278,7 @@ fn completed_controls(
         };
         match mutation {
             "receive-before-send" => {
-                let index = calls.iter().position(|call| matches!(call, Json::Array(parts) if parts.get(3) == Some(&Json::Bool(true)))).ok_or("no receive mutation point")?;
-                let call = calls.remove(index);
+                let call = calls.remove(call_index);
                 calls.insert(0, call);
             }
             "missing-call" => {
@@ -196,9 +317,11 @@ fn completed_controls(
                 "invalid completed trace"
             },
         )?;
+        checked.push(mutation);
     }
     println!(
-        "Completed trace checker controls: receive-before-send, missing-call, duplicate-call, wrong-actor, wrong-role: pass"
+        "Completed trace checker controls: {}: pass",
+        checked.join(", ")
     );
     Ok(())
 }
@@ -235,7 +358,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .collect::<Result<Vec<_>, _>>()?;
     paths.sort();
     let first = paths.first().ok_or("no observed cases")?;
-    completed_controls(&checker, &inventory, first, &output)?;
+    completed_controls(&checker, &inventory, &paths, &output)?;
     for (name, needle, replacement, expected) in [
         (
             "false-rejection",
@@ -293,6 +416,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         _ => return Err("invalid source inventory for continuation controls".into()),
     };
     if continuation_source {
+        let Json::Array(cases) = &inventory else {
+            return Err("invalid source inventory".into());
+        };
+        let has_positive_continuation = cases
+            .iter()
+            .map(max_completed_calls)
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .any(|count| count > 1);
+        let mut checked = Vec::new();
         for (name, accepted, expected) in [
             (
                 "continuation-false-admission",
@@ -323,7 +456,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     break;
                 }
             }
-            let (path, mut text, range) = selected.ok_or("missing continuation mutation point")?;
+            let Some((path, mut text, range)) = selected else {
+                if accepted && !has_positive_continuation {
+                    println!(
+                        "Continuation false-rejection control is inapplicable: every source path has one local operation"
+                    );
+                    continue;
+                }
+                return Err("missing continuation mutation point".into());
+            };
             let record = text[range.clone()].to_owned();
             match name {
                 "continuation-missing-probe" => {
@@ -351,9 +492,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let target = output.join("controls").join(name);
             let (input, observations) = single_case(&inventory, &target, path, &text)?;
             rejected(&checker, &input, &observations, expected)?;
+            checked.push(name);
         }
         println!(
-            "Generated continuation checker controls: false-admission, false-rejection, missing-probe, duplicate-probe: pass"
+            "Generated continuation checker controls: {}: pass",
+            checked.join(", ")
         );
     } else {
         println!(
@@ -364,4 +507,40 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "Generated shape checker controls: false-admission, false-rejection, missing-case, malformed: pass"
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod source_bounds {
+    use super::*;
+
+    #[test]
+    fn local_choices_sequences_and_repetitions_have_different_call_bounds() {
+        let choice = r#"{"nodes":[{"kind":0,"sender":0,"receiver":0},{"kind":0,"sender":0,"receiver":0},{"kind":4,"left":0,"right":1}]}"#;
+        assert_eq!(
+            max_completed_calls(&json::parse(choice).unwrap()).unwrap(),
+            1
+        );
+        let sequence = choice.replace("\"kind\":4", "\"kind\":1");
+        assert_eq!(
+            max_completed_calls(&json::parse(&sequence).unwrap()).unwrap(),
+            2
+        );
+        let repeated = r#"{"nodes":[{"kind":0,"sender":0,"receiver":0},{"kind":5,"left":0}]}"#;
+        assert_eq!(
+            max_completed_calls(&json::parse(repeated).unwrap()).unwrap(),
+            2
+        );
+        let ordinary = r#"{"nodes":[{"kind":0,"sender":0,"receiver":1}]}"#;
+        assert_eq!(
+            max_completed_calls(&json::parse(ordinary).unwrap()).unwrap(),
+            2
+        );
+        for invalid in [
+            r#"{"nodes":[]}"#,
+            r#"{"nodes":[{"kind":0}]}"#,
+            r#"{"nodes":[{"kind":1,"left":0,"right":0}]}"#,
+        ] {
+            assert!(max_completed_calls(&json::parse(invalid).unwrap()).is_err());
+        }
+    }
 }

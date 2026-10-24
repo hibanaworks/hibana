@@ -6,6 +6,9 @@ rust-version = "1.95"
 publish = false
 autotests = false
 
+[dependencies]
+num-bigint = "=0.5.1"
+
 [[test]]
 name = "tool_failures"
 path = "tool_failures.rs"
