@@ -471,6 +471,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let malformed = output.join("controls/malformed");
     let (input, observations) = single_case(&inventory, &malformed, first, "{")?;
     rejected(&checker, &input, &observations, "invalid shape JSON")?;
+    let mut invalid_choice = json::parse(&fs::read_to_string(first)?)?;
+    let Json::Object(fields) = &mut invalid_choice else {
+        return Err("invalid observation object".into());
+    };
+    let Some(Json::Array(attempts)) = fields.get_mut("attempts") else {
+        return Err("missing probe attempts".into());
+    };
+    let Some(Json::Object(attempt)) = attempts.first_mut() else {
+        return Err("missing resolver input control point".into());
+    };
+    attempt.insert(
+        "choice".into(),
+        Json::Array(vec![Json::Number("65536".into())]),
+    );
+    let (input, observations) = single_case(
+        &inventory,
+        &output.join("controls/unknown-resolver-input"),
+        first,
+        &source_json(&invalid_choice)?,
+    )?;
+    rejected(
+        &checker,
+        &input,
+        &observations,
+        "incomplete probe inventory",
+    )?;
     let continuation_source = match &inventory {
         Json::Array(cases) => cases.iter().any(|case| match case.get("nodes") {
             Some(Json::Array(nodes)) => {
@@ -576,7 +602,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
     println!(
-        "Generated shape checker controls: false-admission, false-rejection, missing-case, malformed: pass"
+        "Generated shape checker controls: false-admission, false-rejection, missing-case, malformed, unknown-resolver-input: pass"
     );
     Ok(())
 }

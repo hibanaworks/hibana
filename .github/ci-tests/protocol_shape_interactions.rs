@@ -21,7 +21,7 @@ fn seq(a: Protocol, b: Protocol) -> Protocol {
 
 pub(super) struct Interaction {
     pub source: Protocol,
-    pub labels: u8,
+    pub labels: u16,
     pub resolvers: u16,
     pub identity: String,
     pub unpermitted_reentry: Option<Protocol>,

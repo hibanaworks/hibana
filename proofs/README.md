@@ -89,6 +89,12 @@ uses public projection, real Endpoints and the independent Lean checker.
 An unexpected rejection fails the check. Raw syntax testing retains invalid
 cases and their separate compile-fail builds.
 
+Resolver probes use the decisions on every source path, plus each input with
+one resolver changed. Sequential and parallel children combine their inputs;
+a choice keeps only its selected arm's inputs. Records list the resolver IDs
+that select the right arm, without a fixed-width bitmask. Lean reconstructs
+this input set from the source and rejects missing or unexpected records.
+
 The interaction catalog constructs nested contexts around a resource exchange:
 
 ```sh

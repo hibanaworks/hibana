@@ -23,17 +23,17 @@ fn generated_profile_keeps_debug_and_overflow_checks() {
     );
 }
 
-enum Decisions {
-    Constant(u32),
+enum Decisions<'a> {
+    Constant(&'a [u16]),
     AfterPrefix {
-        choice: u32,
+        choice: &'a [u16],
         values: Vec<std::cell::Cell<bool>>,
     },
 }
-impl Decisions {
+impl Decisions<'_> {
     fn choose(&self, id: usize) -> DecisionArm {
         let right = match self {
-            Self::Constant(choice) => choice & (1 << id) != 0,
+            Self::Constant(choice) => choice.iter().any(|right| usize::from(*right) == id),
             Self::AfterPrefix { values, .. } => values[id].get(),
         };
         if right {
@@ -45,7 +45,7 @@ impl Decisions {
     fn prepare(&self, scopes: &[u16], message: Message, probe: bool) {
         if let Self::AfterPrefix { choice, values } = self {
             for id in scopes {
-                values[usize::from(*id)].set(choice & (1 << id) != 0);
+                values[usize::from(*id)].set(choice.contains(id));
             }
             if !probe {
                 for (id, right) in message.decisions {
@@ -54,6 +54,43 @@ impl Decisions {
             }
         }
     }
+}
+
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn resolver_inputs_support_the_full_u16_identifier_range() {
+    type Left = g::Msg<250, ()>;
+    type Right = g::Msg<251, ()>;
+    let global = g::route(g::send::<0, 1, Left>(), g::send::<0, 1, Right>()).resolve::<65535>();
+    let p0 = project::<0>(&global);
+    let p1 = project::<1>(&global);
+    let decisions = Decisions::Constant(&[65535]);
+    let network = InMemoryTransport::new(None);
+    let mut slab0 = vec![0; 128 * 1024];
+    let mut slab1 = vec![0; 128 * 1024];
+    let mut storage0 = SessionKitStorage::uninit();
+    let mut storage1 = SessionKitStorage::uninit();
+    let rv0 = storage0
+        .init()
+        .rendezvous(&mut slab0, network.clone())
+        .unwrap();
+    let rv1 = storage1.init().rendezvous(&mut slab1, network).unwrap();
+    rv0.set_resolver(
+        &p0,
+        ResolverRef::<65535>::decision_state(&decisions, |input| Ok(input.choose(65535))),
+    )
+    .unwrap();
+    let mut a = rv0.enter(SessionId::new(1), &p0).unwrap();
+    let mut b = rv1.enter(SessionId::new(1), &p1).unwrap();
+    tokio::time::timeout(core::time::Duration::from_secs(1), async {
+        tokio::try_join!(async { a.send::<Right>(&()).await }, async {
+            let branch = b.offer().await?;
+            assert_eq!(branch.label(), 251);
+            branch.recv::<Right>().await
+        })
+    })
+    .await
+    .expect("resolver input stalled")
+    .unwrap();
 }
 
 struct Programs {
@@ -251,7 +288,7 @@ macro_rules! receive {
 async fn replay(
     programs: &Programs,
     resolver_count: u16,
-    decisions: &Decisions,
+    decisions: &Decisions<'_>,
     commands: &[Command],
 ) -> Outcome {
     let sid = SessionId::new(1);
@@ -497,7 +534,7 @@ struct Scenario<'a> {
     id: usize,
     name: &'a str,
     messages: &'a [Message],
-    choices: &'a [u32],
+    choices: &'a [&'a [u16]],
     traces: &'a str,
     expected_traces: usize,
     prefix_visits: usize,
@@ -534,7 +571,7 @@ async fn qualify(programs: Programs, scenario: Scenario<'_>) {
                 )
                 .await;
                 observations.push(format!(
-                    r#"{{"choice":{choice},"prefix":[],"label":{},"receive":{receive},"accepted":{}}}"#,
+                    r#"{{"choice":{choice:?},"prefix":[],"label":{},"receive":{receive},"accepted":{}}}"#,
                     message.label,
                     actual == Outcome::Accepted
                 ));
@@ -634,7 +671,7 @@ async fn qualify(programs: Programs, scenario: Scenario<'_>) {
                     )
                     .await;
                     observations.push(format!(
-                        r#"{{"choice":{choice},"prefix":{key:?},"label":{},"receive":{receive},"accepted":{}}}"#,
+                        r#"{{"choice":{choice:?},"prefix":{key:?},"label":{},"receive":{receive},"accepted":{}}}"#,
                         message.label, actual == Outcome::Accepted
                     ));
                     if prefix_visits == 1 && key.len() < 4 && actual == Outcome::Accepted {

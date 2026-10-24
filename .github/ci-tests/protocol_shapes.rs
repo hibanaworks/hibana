@@ -22,6 +22,8 @@ mod causality;
 mod choice;
 #[path = "protocol_shape_context.rs"]
 mod context;
+#[path = "protocol_shape_decisions.rs"]
+mod decisions;
 #[path = "protocol_shape_delegated.rs"]
 mod delegated;
 #[path = "protocol_shape_interactions.rs"]
@@ -914,7 +916,7 @@ struct CaseSet {
     delegated: BTreeSet<usize>,
     expected_rejections: BTreeMap<usize, &'static str>,
     negative_sources: BTreeMap<String, (Protocol, &'static str)>,
-    max_label: u8,
+    max_label: u16,
     max_resolvers: u16,
     syntax: bool,
 }
@@ -1176,7 +1178,7 @@ fn template_cases(budget: usize, shard: usize, shards: usize) -> CaseSet {
                 (global.clone(), "Route unprojectable for this role: invalid, ambiguous endpoint operation, or ambiguous first-visible endpoint operation; role=2; help: notify the affected role of the branch, or make its local paths mergeable; keep terminal acknowledgments within the selected arm"),
             );
         }
-        max_label = max_label.max(count);
+        max_label = max_label.max(u16::from(count));
         max_resolvers = max_resolvers.max(resolvers);
         cases.push((
             case,
@@ -1709,7 +1711,7 @@ long_running_const_eval = "forbid"
         let traces = global.traces().into_iter().collect::<BTreeSet<_>>();
         let mut decisions = BTreeMap::new();
         global.resolver_choices(&mut Vec::new(), &mut decisions);
-        let patterns = (0..(1u32 << resolvers)).collect::<Vec<_>>();
+        let patterns = decisions::patterns(global, *resolvers);
         if global.prefix_visits() != 0 {
             continuation_shapes += 1;
             let mut prefixes = BTreeSet::new();
@@ -1819,7 +1821,7 @@ long_running_const_eval = "forbid"
         }
         source.push_str("],choices:&[\n");
         for choice in &patterns {
-            writeln!(source, "{choice},")?;
+            writeln!(source, "&{choice:?},")?;
         }
         let mut trace_data = String::new();
         for trace in &traces {

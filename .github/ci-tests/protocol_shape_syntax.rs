@@ -135,7 +135,7 @@ impl Grammar {
         }
     }
 
-    pub(super) fn protocol(&self, depth: usize, rank: BigUint) -> (Protocol, u8, u16) {
+    pub(super) fn protocol(&self, depth: usize, rank: BigUint) -> (Protocol, u16, u16) {
         let mut source = self.exact(depth, rank.clone());
         assert_eq!(self.rank(&source), rank, "syntax rank/unrank mismatch");
         let (labels, resolvers) = number(&mut source);
@@ -143,12 +143,12 @@ impl Grammar {
     }
 }
 
-pub(super) fn number(source: &mut Protocol) -> (u8, u16) {
-    fn visit(source: &mut Protocol, label: &mut u8, resolver: &mut u16) {
+pub(super) fn number(source: &mut Protocol) -> (u16, u16) {
+    fn visit(source: &mut Protocol, label: &mut u16, resolver: &mut u16) {
         match source {
             Protocol::Message { label: value, .. } => {
-                *value = *label;
-                *label = label.checked_add(1).expect("syntax label domain");
+                *value = u8::try_from(*label).expect("syntax label domain");
+                *label = label.checked_add(1).expect("syntax message count");
             }
             Protocol::Resolved(left, right, id) => {
                 *id = *resolver;
@@ -242,9 +242,9 @@ mod tests {
 
     #[test]
     fn tall_populations_do_not_overflow_machine_integers() {
-        let grammar = Grammar::new(5);
-        assert!(grammar.count(5).bits() > 128);
-        for depth in 0..=5 {
+        let grammar = Grammar::new(8);
+        assert!(grammar.count(8).bits() > 128);
+        for depth in 0..=8 {
             for rank in [BigUint::from(0u8), grammar.count(depth) - 1u8] {
                 let (source, labels, resolvers) = grammar.protocol(depth, rank);
                 assert_eq!(source.syntax_depth(), depth);
@@ -252,6 +252,31 @@ mod tests {
                 assert!(usize::from(resolvers) < (1usize << depth));
             }
         }
+    }
+
+    #[test]
+    fn height_eight_uses_all_256_labels_without_overflowing_the_count() {
+        fn balanced(depth: usize) -> Protocol {
+            if depth == 0 {
+                message(&mut 0, 0, 1, false)
+            } else {
+                Protocol::Seq(Box::new(balanced(depth - 1)), Box::new(balanced(depth - 1)))
+            }
+        }
+        let grammar = Grammar::new(8);
+        let source = balanced(8);
+        let (source, count, _) = grammar.protocol(8, grammar.rank(&source));
+        let mut messages = Vec::new();
+        source.messages(&mut messages);
+        let labels = messages
+            .into_iter()
+            .map(|message| match message {
+                Protocol::Message { label, .. } => *label,
+                _ => unreachable!(),
+            })
+            .collect::<BTreeSet<_>>();
+        assert_eq!(count, 256);
+        assert_eq!(labels, (0..=u8::MAX).collect());
     }
 
     #[test]

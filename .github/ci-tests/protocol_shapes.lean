@@ -18,7 +18,7 @@ structure ShapeInput where
   deriving Lean.FromJson
 
 structure ShapeAttempt where
-  choice : Nat
+  choice : List Nat
   «prefix» : List Nat
   label : Nat
   receive : Bool
@@ -62,8 +62,29 @@ def shapeResolvers : Source → Nat → List (Scope × Nat)
       own ++ shapeResolvers left start ++ shapeResolvers right (start + left.eventCount)
   | .roll body, start => shapeResolvers body start
 
+-- A choice executes one arm. Sequence and parallel composition retain the
+-- combinations of their children's decisions. Unselected arms add no inputs.
+def shapePathChoices : Source → List (List Nat)
+  | .send _ => [[]]
+  | .seq left right | .par left right =>
+      (shapePathChoices left).flatMap fun a =>
+        (shapePathChoices right).map fun b => (a ++ b).mergeSort (· ≤ ·)
+  | .route none left right => shapePathChoices left ++ shapePathChoices right
+  | .route (some id) left right =>
+      shapePathChoices left ++ (shapePathChoices right).map (id :: ·)
+  | .roll body => shapePathChoices body
+
+-- Include each source path, then vary each resolver once. This tests a wrong
+-- callback or an unrelated choice affecting admission without a 2^N table.
+def shapeChoicePatterns (source : Source) : List (List Nat) :=
+  let paths := ((shapePathChoices source).map (·.mergeSort (· ≤ ·))).eraseDups
+  let ids := (shapeResolvers source 0).map Prod.snd
+  (paths ++ paths.flatMap fun path => ids.map fun id =>
+      if path.contains id then path.filter (· != id)
+      else (id :: path).mergeSort (· ≤ ·)).eraseDups.mergeSort fun a b => decide (a ≤ b)
+
 def shapeFreshChoices (plan : SourceOccurrenceCut source) (points : List SourcePoint)
-    (choice : Nat) : Bool :=
+    (choice : List Nat) : Bool :=
   (shapeResolvers plan.expanded 0).all fun (scope, id) =>
     points.any (fun point =>
       let event := match point with
@@ -72,7 +93,7 @@ def shapeFreshChoices (plan : SourceOccurrenceCut source) (points : List SourceP
       scope.start ≤ event && event < scope.stop) ||
     plan.path.selections.all fun selection =>
       selection.scope != scope || selection.arm ==
-        if choice / 2 ^ id % 2 == 0 then .left else .right
+        if choice.contains id then .right else .left
 
 theorem shapeLookupMappedRows (keys : List SourcePoint)
     (value : SourcePoint → List SourcePoint) (point : SourcePoint) :
@@ -157,7 +178,7 @@ def shapeStates (source : Source) (plans : List (ShapePlan source))
     (plans.map (·, []))
 
 def shapePermits (states : List (ShapePlan source × List SourcePoint))
-    (choice : Nat) (label : Nat) (receive : Bool) : Bool :=
+    (choice : List Nat) (label : Nat) (receive : Bool) : Bool :=
   states.any fun (plan, points) =>
     shapeFreshChoices plan.plan points choice && !(shapeAdvance plan points label receive).isEmpty
 
@@ -201,7 +222,7 @@ def shapePrefixes (source : Source) : List (List Nat) :=
 -- Exhaust every order of the first four public operations for finite sources.
 -- The complete-trace prefixes above also reach deeper positions in each tree.
 def shapeShortPrefixes (source : Source) (plans : List (ShapePlan source))
-    (resolvers : Nat) : List (List Nat) :=
+    (choices : List (List Nat)) : List (List Nat) :=
   if shapeRepetitions source != 0 then [] else Id.run do
     let mut level := [[]]
     let mut found := []
@@ -211,7 +232,7 @@ def shapeShortPrefixes (source : Source) (plans : List (ShapePlan source))
         let states := shapeStates source plans word
         for (_, message) in source.messageEntries 0 do
           for receive in [false, true] do
-            if (List.range (2 ^ resolvers)).any fun choice =>
+            if choices.any fun choice =>
                 shapePermits states choice message.label receive then
               next := (word ++ [2 * message.label + if receive then 1 else 0]) :: next
       level := next.eraseDups
@@ -220,14 +241,14 @@ def shapeShortPrefixes (source : Source) (plans : List (ShapePlan source))
 
 -- Reject omitted/duplicate probes independently of the observed outcome.
 def shapeProbeKeys (source : Source)
-    (prefixes : List (List Nat)) (resolvers : Nat) : List (Nat × List Nat × Nat × Bool) :=
-  (List.range (2 ^ resolvers)).flatMap fun choice =>
+    (prefixes : List (List Nat)) (choices : List (List Nat)) : List (List Nat × List Nat × Nat × Bool) :=
+  choices.flatMap fun choice =>
     prefixes.flatMap fun word =>
       (source.messageEntries 0).flatMap fun (_, message) =>
         [(choice, word, message.label, false), (choice, word, message.label, true)]
 
-def shapeKeyLess (a b : Nat × List Nat × Nat × Bool) : Bool :=
-  a.1 < b.1 || (a.1 == b.1 && (decide (a.2.1 < b.2.1) ||
+def shapeKeyLess (a b : List Nat × List Nat × Nat × Bool) : Bool :=
+  decide (a.1 < b.1) || (a.1 == b.1 && (decide (a.2.1 < b.2.1) ||
     (a.2.1 == b.2.1 && (a.2.2.1 < b.2.2.1 ||
       (a.2.2.1 == b.2.2.1 && !a.2.2.2 && b.2.2.2)))))
 
@@ -527,13 +548,14 @@ def main (args : List String) : IO UInt32 := do
       throw (IO.userError s!"shape {input.name}: missing or duplicate resolver assignments")
     let plans := (shapePlans source).map ShapePlan.of
     unless !plans.isEmpty do throw (IO.userError s!"shape {input.name}: no accepted source plan")
-    let prefixes := (shapePrefixes source ++ shapeShortPrefixes source plans input.resolvers).eraseDups
+    let choices := shapeChoicePatterns source
+    let prefixes := (shapePrefixes source ++ shapeShortPrefixes source plans choices).eraseDups
     unless prefixes.all (fun word => !(shapeStates source plans word).isEmpty) do
       throw (IO.userError s!"shape {input.name}: source prefix has no accepted occurrence execution")
     let output : ShapeOutput ← shapeRead (System.FilePath.mk outputPath / s!"{input.name}.json")
     let actualKeys := output.attempts.toList.map fun a => (a.choice, a.prefix, a.label, a.receive)
     unless input.name == output.name &&
-        actualKeys.mergeSort shapeKeyLess == (shapeProbeKeys source prefixes input.resolvers).mergeSort shapeKeyLess do
+        actualKeys.mergeSort shapeKeyLess == (shapeProbeKeys source prefixes choices).mergeSort shapeKeyLess do
       throw (IO.userError s!"shape {input.name}: incomplete probe inventory")
     for (word, attempts) in shapeAttemptGroups output.attempts.toList do
       let states := shapeStates source plans word
