@@ -1,6 +1,6 @@
 use super::{
-    FrontierScratchWorkspace, FrontierVisitSet, OfferEntryKey, OperationKernel, RecvError,
-    RecvResult, Transport,
+    ControlFlow, FrontierScratchWorkspace, FrontierVisitSet, OfferEntryKey, OperationKernel,
+    RecvError, RecvResult, Transport,
 };
 
 mod candidates;
@@ -18,7 +18,7 @@ where
         &mut self,
         visited: &mut FrontierVisitSet,
         scratch: &mut FrontierScratchWorkspace<'_>,
-    ) -> RecvResult<crate::global::const_dsl::ScopeId> {
+    ) -> RecvResult<Option<crate::global::const_dsl::ScopeId>> {
         loop {
             let index = self.progress.cursor.index();
             let scope = self.offer_scope_id_at(index);
@@ -71,7 +71,12 @@ where
                     .then_some((entry_idx, candidate))
                 });
                 if let Some((entry_idx, _)) = next {
-                    self.commit_offer_alignment_realign(entry_idx, visited)?;
+                    if self
+                        .commit_offer_alignment_realign(entry_idx, visited)?
+                        .is_break()
+                    {
+                        return Ok(None);
+                    }
                     continue;
                 }
             }
@@ -80,7 +85,12 @@ where
                 && let Some(entry_idx) = self.progress.cursor.first_pending_step_index()
                 && entry_idx != self.progress.cursor.index()
             {
-                self.commit_offer_alignment_realign(entry_idx, visited)?;
+                if self
+                    .commit_offer_alignment_realign(entry_idx, visited)?
+                    .is_break()
+                {
+                    return Ok(None);
+                }
                 continue;
             }
             let current_scope = self.offer_scope_id_at(self.progress.cursor.index());
@@ -97,7 +107,12 @@ where
                 && let Some(entry_idx) = self.route_scope_offer_entry_index(current_scope)
                 && entry_idx != self.progress.cursor.index()
             {
-                self.commit_offer_alignment_realign(entry_idx, visited)?;
+                if self
+                    .commit_offer_alignment_realign(entry_idx, visited)?
+                    .is_break()
+                {
+                    return Ok(None);
+                }
                 continue;
             }
             let node_scope = current_scope;
@@ -123,17 +138,17 @@ where
             if current_scope_selected
                 && current_scope_meta.is_some_and(|meta| meta.is_route_entry())
             {
-                return Ok(node_scope);
+                return Ok(Some(node_scope));
             }
             let active_entries =
                 self.active_frontier_entries(current_parallel, &mut scratch.global_active_entries);
             let current_key = OfferEntryKey::from_index(node_scope, current_idx);
             if current_key.is_some_and(|key| active_entries.contains_only(key)) {
                 let Some(meta) = current_scope_meta else {
-                    return Ok(node_scope);
+                    return Ok(Some(node_scope));
                 };
                 if meta.is_route_entry() && meta.has_offer_lanes() {
-                    return Ok(node_scope);
+                    return Ok(Some(node_scope));
                 }
             }
             let (observed_entries, exact_current_observation) = self
@@ -154,7 +169,7 @@ where
                 ),
             );
             let Some(current_scope_meta) = current_scope_meta else {
-                return Ok(node_scope);
+                return Ok(Some(node_scope));
             };
             let current_entry = if current_scope_meta.is_route_entry() {
                 if current_scope_meta.has_offer_lanes() {
@@ -195,23 +210,33 @@ where
             let selection = candidates.select(current_frontier_state);
             let current_entry = candidates.current_entry();
             match selection {
-                Some(OfferAlignmentDecision::KeepCurrent) => return Ok(node_scope),
+                Some(OfferAlignmentDecision::KeepCurrent) => return Ok(Some(node_scope)),
                 Some(OfferAlignmentDecision::Realign(entry_idx)) => {
-                    self.commit_offer_alignment_realign(entry_idx, visited)?;
+                    if self
+                        .commit_offer_alignment_realign(entry_idx, visited)?
+                        .is_break()
+                    {
+                        return Ok(None);
+                    }
                     continue;
                 }
                 None => {}
             }
             if self.current_route_arm_authorized()? {
-                return Ok(node_scope);
+                return Ok(Some(node_scope));
             }
             if candidates.current_can_remain_after_alignment(current_frontier_state) {
-                return Ok(node_scope);
+                return Ok(Some(node_scope));
             }
             if !current_entry.is_route_entry()
                 && let Some(entry_idx) = reentry_ready_entry_idx
             {
-                self.commit_offer_alignment_realign(entry_idx, visited)?;
+                if self
+                    .commit_offer_alignment_realign(entry_idx, visited)?
+                    .is_break()
+                {
+                    return Ok(None);
+                }
                 continue;
             }
             return Err(RecvError::PhaseInvariant);
@@ -222,15 +247,21 @@ where
         &mut self,
         entry_idx: usize,
         visited: &mut FrontierVisitSet,
-    ) -> RecvResult<()> {
+    ) -> RecvResult<ControlFlow<()>> {
         let current_idx = self.progress.cursor.index();
-        if entry_idx == current_idx || visited.contains(current_idx) {
+        if entry_idx == current_idx {
             return Err(RecvError::PhaseInvariant);
+        }
+        if visited.contains(current_idx) {
+            // Alignment changes only the lookup position. A cycle exhausts
+            // this search; an incoming frame or actor progress can enable a
+            // choice on a later poll.
+            return Ok(ControlFlow::Break(()));
         }
         visited.record(current_idx);
         self.commit_cursor_realign_index(entry_idx)
             .map_err(|_| RecvError::PhaseInvariant)?;
         self.sync_lane_offer_state();
-        Ok(())
+        Ok(ControlFlow::Continue(()))
     }
 }

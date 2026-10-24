@@ -43,9 +43,9 @@ where
         carried_observation: Option<lane_port::FrameObservation>,
         frontier_visited: &mut FrontierVisitSet,
         scratch: &mut FrontierScratchWorkspace<'_>,
-    ) -> RecvResult<ObservedIngressSelection> {
+    ) -> RecvResult<Option<ObservedIngressSelection>> {
         if let Some(selection) = self.select_observed_ingress(carried_key, carried_observation)? {
-            return Ok(selection);
+            return Ok(Some(selection));
         }
         if let Some(observed) = carried_observation {
             let lane = carried_lane.ok_or(RecvError::PhaseInvariant)?;
@@ -57,15 +57,21 @@ where
             return Err(RecvError::PhaseInvariant);
         }
         if let Some(selection) = self.select_carried_ingress_scope(carried_lane)? {
-            return Ok(ObservedIngressSelection::Branch(selection));
+            return Ok(Some(ObservedIngressSelection::Branch(selection)));
         }
-        let node_scope = self.align_cursor_to_selected_scope(frontier_visited, scratch)?;
+        let Some(node_scope) = self.align_cursor_to_selected_scope(frontier_visited, scratch)?
+        else {
+            return Ok(None);
+        };
         let current_idx = self.progress.cursor.index();
         let Some(scope_id) = self
             .progress
             .cursor
             .route_scope_for_offer_node(node_scope, current_idx)
         else {
+            if current_idx < self.progress.cursor.local_steps_len() {
+                return Ok(None);
+            }
             return Err(RecvError::PhaseInvariant);
         };
         if !self.progress.cursor.route_offer_entry_allows_current(
@@ -98,7 +104,7 @@ where
             return Err(RecvError::PhaseInvariant);
         };
         self.offer_scope_selection_for_scope_lane(scope_id, current_idx, offer_lane)
-            .map(ObservedIngressSelection::Branch)
+            .map(|selection| Some(ObservedIngressSelection::Branch(selection)))
     }
 
     #[inline]

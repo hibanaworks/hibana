@@ -253,8 +253,16 @@ where
             )
         };
         let selection = match selection_result {
-            Ok(ObservedIngressSelection::Branch(selection)) => selection,
-            Ok(ObservedIngressSelection::OrdinaryReceive(lane)) => {
+            Ok(None) => {
+                // Lookup visits belong to one search. No frame was selected,
+                // so the next external wake must be able to search afresh.
+                state.execution = OfferExecution::Selecting {
+                    frontier_visited: self.progress.frontier_state.empty_frontier_visit_set(),
+                };
+                return Poll::Pending;
+            }
+            Ok(Some(ObservedIngressSelection::Branch(selection))) => selection,
+            Ok(Some(ObservedIngressSelection::OrdinaryReceive(lane))) => {
                 let mut ingress = state.take_carried_ingress();
                 let payload = crate::invariant_some(ingress.take_transport());
                 if let Err(error) = self.requeue_offer_transport_payload(payload) {
@@ -264,10 +272,11 @@ where
                 // This exact receive belongs to recv, not to the cached route.
                 // Cursor progress will refresh the cache when recv consumes it.
                 self.clear_lane_offer_cache(usize::from(lane));
-                cx.waker().wake_by_ref();
-                return Poll::Pending;
+                let (word, bit) = lane_word_index(usize::from(lane));
+                deferred_lanes[word] |= bit;
+                return Poll::Ready(Ok(None));
             }
-            Ok(ObservedIngressSelection::PendingReceive(lane)) => {
+            Ok(Some(ObservedIngressSelection::PendingReceive(lane))) => {
                 let mut ingress = state.take_carried_ingress();
                 let payload = crate::invariant_some(ingress.take_transport());
                 if let Err(error) = self.requeue_offer_transport_payload(payload) {

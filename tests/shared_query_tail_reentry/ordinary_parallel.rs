@@ -4,6 +4,26 @@ use core::{
     pin::pin,
     task::Poll,
 };
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+    task::{Context, Wake, Waker},
+};
+
+#[derive(Default)]
+struct WakeCount(AtomicUsize);
+
+impl Wake for WakeCount {
+    fn wake(self: Arc<Self>) {
+        self.wake_by_ref();
+    }
+
+    fn wake_by_ref(self: &Arc<Self>) {
+        self.0.fetch_add(1, Ordering::Relaxed);
+    }
+}
 
 type Data = Msg<1, u32>;
 type Stop = Msg<2, ()>;
@@ -32,6 +52,8 @@ fn parallel_input_program<const ROLE: u8>() -> RoleProgram<ROLE> {
 fn normal_parallel_input_is_not_route_evidence_on_roll_reentry() {
     // No OS I/O is used: keep Tokio's I/O driver disabled for strict Miri.
     tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .start_paused(true)
         .build()
         .unwrap()
         .block_on(async {
@@ -58,6 +80,15 @@ fn normal_parallel_input_is_not_route_evidence_on_roll_reentry() {
                         .await;
                     }
                     a.send::<Data>(&round).await.unwrap();
+                    let wakes = Arc::new(WakeCount::default());
+                    let waker = Waker::from(wakes.clone());
+                    let mut observed_cx = Context::from_waker(&waker);
+                    assert!(offer.as_mut().poll(&mut observed_cx).is_pending());
+                    assert_eq!(
+                        wakes.0.load(Ordering::Relaxed),
+                        0,
+                        "ordinary input alone cannot make a route preview runnable"
+                    );
                     for _ in 0..4 {
                         poll_fn(|cx| {
                             match offer.as_mut().poll(cx) {
@@ -71,9 +102,21 @@ fn normal_parallel_input_is_not_route_evidence_on_roll_reentry() {
                         })
                         .await;
                     }
+                    assert!(
+                        tokio::time::timeout(std::time::Duration::from_millis(1), offer.as_mut())
+                            .await
+                            .is_err(),
+                        "ordinary input is not a route preview"
+                    );
+                    tokio::try_join!(
+                        async { offer.as_mut().await?.recv::<Permit>().await },
+                        async {
+                            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+                            c.send::<Permit>(&()).await
+                        },
+                    )
+                    .unwrap();
                 }
-                c.send::<Permit>(&()).await.unwrap();
-                b.offer().await.unwrap().recv::<Permit>().await.unwrap();
                 b.send::<Ack>(&()).await.unwrap();
                 c.recv::<Ack>().await.unwrap();
                 assert_eq!(b.recv::<Data>().await.unwrap(), round);
@@ -88,6 +131,8 @@ fn normal_parallel_input_is_not_route_evidence_on_roll_reentry() {
 #[test]
 fn completed_other_lane_preserves_fresh_ordinary_input() {
     tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .start_paused(true)
         .build()
         .unwrap()
         .block_on(async {
@@ -162,15 +207,81 @@ fn completed_other_lane_preserves_fresh_ordinary_input() {
                 {
                     let mut offer = pin!(b.offer());
                     poll_fn(|cx| {
-                        assert!(
-                            matches!(offer.as_mut().poll(cx), Poll::Pending),
-                            "an old suffix must leave the next ordinary input available to recv"
-                        );
+                        match offer.as_mut().poll(cx) {
+                            Poll::Pending => {}
+                            Poll::Ready(Err(error)) => {
+                                panic!("round {round}: ordinary input returned {error:?}")
+                            }
+                            Poll::Ready(Ok(branch)) => {
+                                panic!("round {round}: ordinary input previewed {}", branch.label())
+                            }
+                        }
                         Poll::Ready(())
                     })
                     .await;
+                    assert!(
+                        tokio::time::timeout(std::time::Duration::from_millis(1), offer.as_mut())
+                            .await
+                            .is_err()
+                    );
+                    tokio::try_join!(
+                        async { offer.as_mut().await?.recv::<OtherIndependent>().await },
+                        async {
+                            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+                            d.send::<OtherIndependent>(&()).await
+                        },
+                    )
+                    .unwrap();
                 }
+                b.send::<IndependentAck>(&()).await.unwrap();
+                d.recv::<IndependentAck>().await.unwrap();
             }
             assert_eq!(b.recv::<Data>().await.unwrap(), 4);
+        });
+}
+
+#[test]
+fn ordinary_input_does_not_suspend_an_independent_local_resolver() {
+    use hibana::runtime::resolver::{DecisionArm, ResolverRef};
+
+    tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .start_paused(true)
+        .build()
+        .unwrap()
+        .block_on(async {
+            let global = g::par(
+                g::send::<0, 1, Data>(),
+                g::route(g::send::<1, 2, Permit>(), g::send::<1, 2, Stop>()).resolve::<21>(),
+            )
+            .roll();
+            let p0 = project::<0>(&global);
+            let p1 = project::<1>(&global);
+            let p2 = project::<2>(&global);
+            let mut bytes = [0; 64 * 1024];
+            let mut storage = SessionKitStorage::uninit();
+            let rv = storage
+                .init()
+                .rendezvous(&mut bytes, common::TestTransport::new())
+                .unwrap();
+            rv.set_resolver(
+                &p1,
+                ResolverRef::<21>::decision_state(&(), |_| Ok(DecisionArm::Left)),
+            )
+            .unwrap();
+            let mut a = rv.enter(SessionId::new(39), &p0).unwrap();
+            let mut b = rv.enter(SessionId::new(39), &p1).unwrap();
+            let mut c = rv.enter(SessionId::new(39), &p2).unwrap();
+            for round in 0..4u32 {
+                a.send::<Data>(&round).await.unwrap();
+                tokio::time::timeout(std::time::Duration::from_millis(1), async {
+                    b.offer().await?.send::<Permit>(&()).await
+                })
+                .await
+                .expect("an independent resolver needs no new transport input")
+                .unwrap();
+                c.recv::<Permit>().await.unwrap();
+                assert_eq!(b.recv::<Data>().await.unwrap(), round);
+            }
         });
 }
