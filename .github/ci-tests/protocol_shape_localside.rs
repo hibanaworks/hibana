@@ -507,7 +507,7 @@ impl Emitter<'_> {
         let preview_for = |view: u8, entry: u8, allowed: &str| {
             let endpoint = self.endpoint(view, names);
             format!(
-                "let branch=record_pending({endpoint}.offer(),observed,ObservedCall::Preview({actor},{entry})).await?;let label=branch.label();drop(branch);let branch=record_pending({endpoint}.offer(),observed,ObservedCall::Preview({actor},{entry})).await?;assert_eq!(branch.label(),label);drop(branch);assert!(({allowed}).contains(&label));"
+                "let branch=record_pending({endpoint}.offer(),observed,ObservedCall::Preview({actor},{entry})).await?;let label=branch.label();drop(branch);let branch=record_pending({endpoint}.offer(),observed,ObservedCall::Preview({actor},{entry})).await?;assert_eq!(branch.label(),label);drop(branch);assert!(({allowed}).contains(&label),\"unexpected branch: actor={actor} entry={entry} expected={allowed} label={{label}} script={{script_index}} reverse={{reverse_poll}} prefix={{:?}}\",observed.completed.borrow());"
             )
         };
         let arm = |body: &Protocol| {

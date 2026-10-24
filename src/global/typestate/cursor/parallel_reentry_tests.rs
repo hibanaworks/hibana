@@ -4,6 +4,62 @@ use core::mem::MaybeUninit;
 
 #[cfg(all(test, hibana_repo_tests))]
 #[test]
+fn route_entry_keeps_cross_lane_prefixes_and_independent_heads_distinct() {
+    use crate::global::typestate::cursor::validated_metadata_tests::with_rows;
+    let sequential = g::route(
+        g::seq(
+            g::send::<0, 1, g::Msg<1, ()>>(),
+            g::par(
+                g::send::<1, 0, g::Msg<2, ()>>(),
+                g::send::<0, 1, g::Msg<3, ()>>(),
+            ),
+        ),
+        g::send::<0, 1, g::Msg<4, ()>>(),
+    );
+    let independent = g::route(
+        g::par(
+            g::send::<0, 1, g::Msg<1, ()>>(),
+            g::send::<0, 1, g::Msg<3, ()>>(),
+        ),
+        g::par(
+            g::send::<0, 1, g::Msg<2, ()>>(),
+            g::send::<0, 1, g::Msg<4, ()>>(),
+        ),
+    );
+    for (program, parallel_head) in [
+        (crate::runtime::program::project::<1>(&sequential), false),
+        (crate::runtime::program::project::<1>(&independent), true),
+    ] {
+        with_rows(program.role_image_ref(), |cursor| {
+            let entries: std::vec::Vec<_> = (0..cursor.local_steps_len())
+                .filter_map(|idx| cursor.try_recv_meta_at(idx).map(|meta| (idx, meta)))
+                .collect();
+            let &(prefix, prefix_meta) = entries.iter().find(|(_, meta)| meta.label == 1).unwrap();
+            let &(next, next_meta) = entries.iter().find(|(_, meta)| meta.label == 3).unwrap();
+            assert_ne!(prefix_meta.lane, next_meta.lane);
+            let scope = cursor
+                .route_scope_for_offer_node(cursor.node_scope_id_at(prefix), prefix)
+                .unwrap();
+            assert_eq!(
+                cursor.route_arm_view_lane_entry(scope, 0, 1, prefix_meta.lane),
+                Some(prefix)
+            );
+            assert_eq!(
+                cursor.route_arm_view_lane_entry(scope, 0, 1, next_meta.lane),
+                parallel_head.then_some(next)
+            );
+            // Completion cannot turn a continuation into a branch entry.
+            cursor.mark_local_event_done(prefix);
+            assert_eq!(
+                cursor.route_arm_view_lane_entry(scope, 0, 1, next_meta.lane),
+                parallel_head.then_some(next)
+            );
+        });
+    }
+}
+
+#[cfg(all(test, hibana_repo_tests))]
+#[test]
 fn an_independent_child_visit_keeps_the_completed_parent_entry_available() {
     check_initial_independent_parent_entry();
     check_independent_child_before_parent_entry::<false>();

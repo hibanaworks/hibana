@@ -65,6 +65,12 @@ run_miri_test \
   -p hibana \
   --test miri_runtime_owner
 
+run_miri_test \
+  route-entry-cross-lane-prefix \
+  -p hibana --lib \
+  global::typestate::cursor::parallel_reentry_tests::route_entry_keeps_cross_lane_prefixes_and_independent_heads_distinct \
+  -- --exact
+
 # Exercise the normal public projection path without repository-only hooks.
 (
   hibana_disable_repo_tests_cfg

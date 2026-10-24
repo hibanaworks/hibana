@@ -10,6 +10,115 @@ type Work = g::Msg<232, ()>;
 type Ack = g::Msg<233, ()>;
 type Tick = g::Msg<234, ()>;
 
+#[test]
+fn a_repeated_parallel_receive_does_not_preview_as_a_new_outer_choice() {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .start_paused(true)
+        .build()
+        .unwrap()
+        .block_on(async {
+            let body = g::route(
+                g::seq(
+                    g::send::<2, 0, g::Msg<230, ()>>(),
+                    g::seq(
+                        g::send::<2, 1, Prefix>(),
+                        g::par(g::send::<1, 2, Work>(), g::send::<0, 1, Tick>().roll()),
+                    ),
+                ),
+                g::seq(g::send::<2, 0, g::Msg<229, ()>>(), g::send::<2, 1, Ack>()),
+            )
+            .roll();
+            let global = g::route(
+                g::seq(
+                    g::send::<2, 0, g::Msg<238, ()>>(),
+                    g::seq(g::send::<2, 1, g::Msg<239, ()>>(), body),
+                ),
+                g::seq(
+                    g::send::<2, 0, g::Msg<240, ()>>(),
+                    g::send::<2, 1, g::Msg<241, ()>>(),
+                ),
+            );
+            let p0 = project::<0>(&global);
+            let p1 = project::<1>(&global);
+            let p2 = project::<2>(&global);
+            let network = common::TestTransport::new();
+            let [mut slab0, mut slab1, mut slab2] = [[0; 32 * 1024]; 3];
+            let mut storage0 = SessionKitStorage::uninit();
+            let mut storage1 = SessionKitStorage::uninit();
+            let mut storage2 = SessionKitStorage::uninit();
+            let rv0 = storage0
+                .init()
+                .rendezvous(&mut slab0, network.clone())
+                .unwrap();
+            let rv1 = storage1
+                .init()
+                .rendezvous(&mut slab1, network.clone())
+                .unwrap();
+            let rv2 = storage2.init().rendezvous(&mut slab2, network).unwrap();
+            let sid = SessionId::new(9293);
+            let mut a = rv0.enter(sid, &p0).unwrap();
+            let mut b = rv1.enter(sid, &p1).unwrap();
+            let mut c = rv2.enter(sid, &p2).unwrap();
+            c.send::<g::Msg<238, ()>>(&()).await.unwrap();
+            a.offer()
+                .await
+                .unwrap()
+                .recv::<g::Msg<238, ()>>()
+                .await
+                .unwrap();
+            c.send::<g::Msg<239, ()>>(&()).await.unwrap();
+            b.offer()
+                .await
+                .unwrap()
+                .recv::<g::Msg<239, ()>>()
+                .await
+                .unwrap();
+            c.send::<g::Msg<230, ()>>(&()).await.unwrap();
+            a.offer()
+                .await
+                .unwrap()
+                .recv::<g::Msg<230, ()>>()
+                .await
+                .unwrap();
+            c.send::<Prefix>(&()).await.unwrap();
+            b.offer().await.unwrap().recv::<Prefix>().await.unwrap();
+            {
+                let [mut ticks_a] = a.par().unwrap();
+                let [mut work_b, mut ticks_b] = b.par().unwrap();
+                let [mut work_c] = c.par().unwrap();
+                tokio::try_join!(
+                    work_c.recv::<Work>(),
+                    work_b.send::<Work>(&()),
+                    ticks_a.send::<Tick>(&()),
+                    ticks_b.recv::<Tick>()
+                )
+                .unwrap();
+            }
+            c.send::<g::Msg<230, ()>>(&()).await.unwrap();
+            a.offer()
+                .await
+                .unwrap()
+                .recv::<g::Msg<230, ()>>()
+                .await
+                .unwrap();
+            c.send::<Prefix>(&()).await.unwrap();
+            let [mut ticks_a] = a.par().unwrap();
+            ticks_a.send::<Tick>(&()).await.unwrap();
+            let branch = b.offer().await.unwrap();
+            assert_eq!(branch.label(), 231);
+            branch.recv::<Prefix>().await.unwrap();
+            let [mut work_b, mut ticks_b] = b.par().unwrap();
+            let [mut work_c] = c.par().unwrap();
+            tokio::try_join!(
+                work_c.recv::<Work>(),
+                work_b.send::<Work>(&()),
+                ticks_b.recv::<Tick>()
+            )
+            .unwrap();
+        });
+}
+
 fn global() -> impl hibana::runtime::program::Projectable {
     g::seq(
         g::send::<0, 1, Prefix>(),

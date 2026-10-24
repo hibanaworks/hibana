@@ -430,8 +430,8 @@ impl EventCursor {
             .map(state_index_to_usize)
     }
 
-    /// First operation of one logical view on a lane, within an arm.
-    /// Co-resident views share progress, but not their operation identities.
+    /// First operation on this lane that can enter the view's arm. A first
+    /// lane operation preceded by this view on another lane is a continuation.
     pub(crate) fn route_arm_view_lane_entry(
         &self,
         scope: ScopeId,
@@ -444,9 +444,27 @@ impl EventCursor {
             .machine()
             .event_program()
             .route_arm_event_row_by_slot(slot, arm)?;
-        (rows.start()..rows.end()).find(|&idx| {
+        let entry = (rows.start()..rows.end()).find(|&idx| {
             self.logical_role_at(idx) == Some(role) && self.event_lane_at(idx) == Some(lane)
-        })
+        })?;
+        let program = self.program_ref();
+        let source = self
+            .machine()
+            .event_program()
+            .operation_at(entry)?
+            .0
+            .dense_ordinal();
+        (!(rows.start()..rows.end()).any(|idx| {
+            self.logical_role_at(idx) == Some(role)
+                && self
+                    .machine()
+                    .event_program()
+                    .operation_at(idx)
+                    .is_some_and(|(event, _)| {
+                        program.source_precedes(event.dense_ordinal(), source)
+                    })
+        }))
+        .then_some(entry)
     }
 
     /// Get arm count for a route scope.
