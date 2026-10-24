@@ -21,7 +21,10 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
             Err(EventAdmissionError::Invariant) => {
                 return Poll::Ready(Err(SendError::PhaseInvariant));
             }
-            Err(EventAdmissionError::PredecessorPending) => {
+            Err(
+                EventAdmissionError::PredecessorPending
+                | EventAdmissionError::PayloadPredecessorPending,
+            ) => {
                 return Poll::Ready(Err(SendError::OutOfOrder));
             }
         }
@@ -74,7 +77,10 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
             Err(EventAdmissionError::Invariant) => {
                 return Poll::Ready(Err(SendError::PhaseInvariant));
             }
-            Err(EventAdmissionError::PredecessorPending) => {
+            Err(
+                EventAdmissionError::PredecessorPending
+                | EventAdmissionError::PayloadPredecessorPending,
+            ) => {
                 return Poll::Ready(Err(SendError::OutOfOrder));
             }
         };

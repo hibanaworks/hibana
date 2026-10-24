@@ -50,7 +50,9 @@ where
             match self.event_enabled(idx, meta.into(), &mut selected) {
                 Ok(_) => {}
                 Err(
-                    EventAdmissionError::PredecessorPending | EventAdmissionError::OtherViewPending,
+                    EventAdmissionError::PredecessorPending
+                    | EventAdmissionError::PayloadPredecessorPending
+                    | EventAdmissionError::OtherViewPending,
                 ) => {
                     // Ordered future messages can reuse a wire key. Retention
                     // chooses no event; only enabled matches must be unique.

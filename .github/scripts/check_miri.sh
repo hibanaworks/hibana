@@ -884,6 +884,12 @@ run_miri_test \
   -- --exact
 
 run_miri_test \
+  parallel-borrow-before-owned-payload-prefix \
+  -p hibana --lib \
+  endpoint::parallel::tests::delegation_phase::a_parallel_borrow_keeps_its_endpoint_payload_available_for_the_prefix \
+  -- --exact
+
+run_miri_test \
   endpoint-delegation-projection \
   --manifest-path proofs/checks/projection/endpoint-delegation/compiler/Cargo.toml \
   --locked --lib

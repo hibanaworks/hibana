@@ -225,3 +225,83 @@ fn returning_a_resource_can_immediately_borrow_the_next_parallel_phase() {
         });
     assert!(network.queue_is_empty());
 }
+
+#[test]
+fn a_parallel_borrow_keeps_its_endpoint_payload_available_for_the_prefix() {
+    type Tick = g::Msg<0, ()>;
+    type Read = g::Msg<1, ()>;
+    type Loan<'r> = g::Msg<2, Endpoint<'r, 3>>;
+    let global = g::par(
+        g::send::<0, 0, Tick>().roll(),
+        g::seq(g::send::<0, 3, Read>(), g::send::<1, 0, Loan<'_>>()),
+    );
+    let owner_program = project::<0>(&global);
+    let worker_program = project::<1>(&global);
+    let resource_program = project::<3>(&global);
+    for send_early in [false, true] {
+        for reverse in [false, true] {
+            let network = TestTransport::new();
+            let mut owner_slab = [0; 32 * 1024];
+            let mut worker_slab = [0; 32 * 1024];
+            let mut owner_storage = SessionKitStorage::uninit();
+            let mut worker_storage = SessionKitStorage::uninit();
+            let owner_runtime = owner_storage
+                .init()
+                .rendezvous(&mut owner_slab, network.clone())
+                .unwrap();
+            let worker_runtime = worker_storage
+                .init()
+                .rendezvous(&mut worker_slab, network.clone())
+                .unwrap();
+            let session = SessionId::new(1703);
+            let mut owner = owner_runtime.enter(session, &owner_program).unwrap();
+            let mut worker = worker_runtime.enter(session, &worker_program).unwrap();
+            let mut resource = worker_runtime.enter(session, &resource_program).unwrap();
+            tokio::runtime::Builder::new_current_thread()
+                .enable_time()
+                .start_paused(true)
+                .build()
+                .unwrap()
+                .block_on(async {
+                    let result = tokio::time::timeout(core::time::Duration::from_secs(1), async {
+                        let owner = async {
+                            let [mut ticks, mut exchange] = owner.par()?;
+                            let ticks = async {
+                                ticks.send::<Tick>(&()).await?;
+                                tokio::task::yield_now().await;
+                                ticks.send::<Tick>(&()).await
+                            };
+                            let exchange = async {
+                                exchange.send::<Read>(&()).await?;
+                                exchange.recv::<Loan<'_>>().await
+                            };
+                            let (_, resource) = tokio::try_join!(ticks, exchange)?;
+                            drop(resource);
+                            Ok::<_, crate::EndpointError>(())
+                        };
+                        let worker = async {
+                            tokio::time::sleep(core::time::Duration::from_millis(1)).await;
+                            let [mut transfer] = worker.par()?;
+                            if !send_early {
+                                resource.recv::<Read>().await?;
+                            }
+                            transfer.send::<Loan<'_>>(resource).await
+                        };
+                        if reverse {
+                            tokio::try_join!(worker, owner).map(|_| ())
+                        } else {
+                            tokio::try_join!(owner, worker).map(|_| ())
+                        }
+                    })
+                    .await
+                    .expect("the independent local roll cannot stop the transfer prefix");
+                    if send_early {
+                        result.expect_err("the send future would hold its own prefix");
+                    } else {
+                        result.unwrap();
+                        assert!(network.queue_is_empty());
+                    }
+                });
+        }
+    }
+}

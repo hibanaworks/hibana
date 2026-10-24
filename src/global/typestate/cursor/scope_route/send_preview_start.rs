@@ -59,10 +59,17 @@ impl EventCursor {
                 Err(EventAdmissionError::OtherViewPending) => {
                     blocked = Some(SendPreviewError::OtherViewPending);
                 }
-                Err(EventAdmissionError::PredecessorPending) if blocked.is_none() => {
+                Err(
+                    EventAdmissionError::PredecessorPending
+                    | EventAdmissionError::PayloadPredecessorPending,
+                ) if blocked.is_none() => {
                     blocked = Some(SendPreviewError::OutOfOrder);
                 }
-                Err(EventAdmissionError::Invariant | EventAdmissionError::PredecessorPending) => {}
+                Err(
+                    EventAdmissionError::Invariant
+                    | EventAdmissionError::PredecessorPending
+                    | EventAdmissionError::PayloadPredecessorPending,
+                ) => {}
             }
         }
         if let Some(error) = blocked {

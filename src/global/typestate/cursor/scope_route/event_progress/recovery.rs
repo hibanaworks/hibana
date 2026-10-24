@@ -6,11 +6,6 @@ use crate::global::{
 };
 
 impl EventCursor {
-    fn uses_blocked_view(&self, index: usize, blocked: (u8, Option<u8>)) -> bool {
-        self.uses_view_at(index, blocked.0)
-            || blocked.1.is_some_and(|role| self.uses_view_at(index, role))
-    }
-
     pub(super) fn reentry_view_wait(
         &self,
         index: usize,
@@ -45,6 +40,7 @@ impl EventCursor {
         };
         let conflict = self.machine().event_conflict_for_index(index);
         let mut selected = |scope| arms(scope, EventArmView::Preview);
+        let mut wait = EventAdmissionError::OtherViewPending;
         for prior in row.start()..index.min(row.end()) {
             let (before, _) = self
                 .machine()
@@ -63,12 +59,16 @@ impl EventCursor {
                     conflict,
                     &mut selected,
                 )
-                && self.uses_blocked_view(prior, (role, sent))
             {
-                return EventAdmissionError::PredecessorPending;
+                if self.uses_view_at(prior, role) {
+                    return EventAdmissionError::PredecessorPending;
+                }
+                if sent.is_some_and(|sent| self.uses_view_at(prior, sent)) {
+                    wait = EventAdmissionError::PayloadPredecessorPending;
+                }
             }
         }
-        EventAdmissionError::OtherViewPending
+        wait
     }
 
     fn pending_resource_receipt(
@@ -143,16 +143,30 @@ impl EventCursor {
             };
             let conflict = self.machine().event_conflict_for_index(index);
             let role = crate::invariant_some(self.logical_role_at(index));
-            if (role == blocked.0
-                || blocked.1 == Some(role)
-                || self.pending_source_predecessor_uses(index, blocked, conflict, selected))
-                && !self.receipt_has_prior_return(receipts, meta, selected)
-            {
-                return EventAdmissionError::PredecessorPending;
+            if !self.receipt_has_prior_return(receipts, meta, selected) {
+                let wait = if role == blocked.0 {
+                    EventAdmissionError::PredecessorPending
+                } else {
+                    let wait = self.source_predecessor_wait(index, blocked, conflict, selected);
+                    if wait == EventAdmissionError::OtherViewPending && blocked.1 == Some(role) {
+                        EventAdmissionError::PayloadPredecessorPending
+                    } else {
+                        wait
+                    }
+                };
+                if wait == EventAdmissionError::PredecessorPending {
+                    return wait;
+                }
+                if wait == EventAdmissionError::PayloadPredecessorPending {
+                    verdict = wait;
+                    continue;
+                }
             }
             // An unknown branch can still require this borrowed view. Do not
             // let an earlier independent alternative hide that self-wait.
-            verdict = EventAdmissionError::OtherViewPending;
+            if verdict == EventAdmissionError::Invariant {
+                verdict = EventAdmissionError::OtherViewPending;
+            }
         }
         verdict
     }

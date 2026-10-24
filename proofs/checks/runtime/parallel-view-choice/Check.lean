@@ -75,4 +75,50 @@ theorem old_completion_rule_blocks_release_before_transfer :
 #print axioms a_transferred_endpoint_requires_its_operations
 #print axioms old_completion_rule_blocks_release_before_transfer
 
+
+-- Waiting on a separately owned payload blocks its move, but taking a
+-- parallel borrow does not move that payload. Own-view prefixes still block.
+inductive PrefixWait where
+  | other
+  | payload
+  | own
+  deriving DecidableEq
+
+def prefixWait (own payload : Bool) : PrefixWait :=
+  if own then .own else if payload then .payload else .other
+
+def borrowCanWait : PrefixWait → Bool
+  | .other | .payload => true
+  | .own => false
+
+def sendCanWait : PrefixWait → Bool
+  | .other => true
+  | .payload | .own => false
+
+theorem send_wait_rule_is_unchanged (own payload : Bool) :
+    sendCanWait (prefixWait own payload) = !(own || payload) := by
+  cases own <;> cases payload <;> rfl
+
+theorem borrowing_waits_only_for_other_views (own payload : Bool) :
+    borrowCanWait (prefixWait own payload) = !own := by
+  cases own <;> cases payload <;> rfl
+
+theorem payload_wait_does_not_permit_a_send :
+    borrowCanWait (prefixWait false true) = true ∧
+    sendCanWait (prefixWait false true) = false := by decide
+
+theorem an_own_prefix_blocks_both_calls (payload : Bool) :
+    borrowCanWait (prefixWait true payload) = false ∧
+    sendCanWait (prefixWait true payload) = false := by
+  cases payload <;> decide
+
+theorem every_send_wait_is_also_a_borrow_wait (wait : PrefixWait)
+    (allowed : sendCanWait wait = true) : borrowCanWait wait = true := by
+  cases wait <;> simp_all [sendCanWait, borrowCanWait]
+
+#print axioms send_wait_rule_is_unchanged
+#print axioms borrowing_waits_only_for_other_views
+#print axioms payload_wait_does_not_permit_a_send
+#print axioms an_own_prefix_blocks_both_calls
+#print axioms every_send_wait_is_also_a_borrow_wait
 end ParallelViewChoice

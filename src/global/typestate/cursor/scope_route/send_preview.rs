@@ -611,7 +611,10 @@ impl EventCursor {
             .map_err(|error| match error {
                 super::EventAdmissionError::OtherViewPending => SendPreviewError::OtherViewPending,
                 super::EventAdmissionError::Invariant => SendPreviewError::Invariant,
-                super::EventAdmissionError::PredecessorPending => SendPreviewError::OutOfOrder,
+                super::EventAdmissionError::PredecessorPending
+                | super::EventAdmissionError::PayloadPredecessorPending => {
+                    SendPreviewError::OutOfOrder
+                }
             })?;
             return Ok(Some((current_meta, StateIndex::from_usize(*idx))));
         }

@@ -18,6 +18,9 @@ pub(crate) enum EventArmView {
 pub(crate) enum EventAdmissionError {
     Invariant,
     PredecessorPending,
+    /// A preceding action needs the endpoint payload. A send future would
+    /// hold that value, while a parallel borrow leaves it available.
+    PayloadPredecessorPending,
     /// The view's own preceding actions are complete. Another co-resident view
     /// must commit first; waiting grants no transport or progress authority.
     OtherViewPending,
@@ -39,13 +42,14 @@ impl EventCursor {
     /// Compact guards can cover an ancestor through another join. Classifying
     /// a blocked future must still see that ancestor if it needs a view held by
     /// the future itself. Independent parallel siblings are never ancestors.
-    fn pending_source_predecessor_uses(
+    fn source_predecessor_wait(
         &self,
         index: usize,
         blocked: (u8, Option<u8>),
         conflict: PackedEventConflict,
         selected: &mut dyn FnMut(ScopeId) -> Option<u8>,
-    ) -> bool {
+    ) -> EventAdmissionError {
+        let mut wait = EventAdmissionError::OtherViewPending;
         let (after, after_direction) = self
             .machine()
             .event_program()
@@ -84,10 +88,13 @@ impl EventCursor {
                     selected,
                 )
             {
-                return true;
+                if self.uses_view_at(prior, blocked.0) {
+                    return EventAdmissionError::PredecessorPending;
+                }
+                wait = EventAdmissionError::PayloadPredecessorPending;
             }
         }
-        false
+        wait
     }
 
     #[inline]
@@ -227,38 +234,78 @@ impl EventCursor {
         // predecessor must commit before that head can become available.
         if dependency_state.is_some_and(|state| !state.allows_event()) {
             let role = crate::invariant_some(self.logical_role_at(idx));
-            let own_pending = self.pending_source_predecessor_uses(
+            return Err(self.source_predecessor_wait(
                 idx,
                 (role, moved_role),
                 preview_conflict,
                 &mut |scope| arm_for_scope(scope, EventArmView::Preview),
-            );
-            return Err(if own_pending {
-                EventAdmissionError::PredecessorPending
-            } else {
-                EventAdmissionError::OtherViewPending
-            });
+            ));
         }
         let mut preview = |scope| arm_for_scope(scope, EventArmView::Preview);
         if !self.event_lane_head_allows(progress_step, preview_conflict, &mut preview) {
             let role = crate::invariant_some(self.logical_role_at(idx));
-            return Err(
-                if self.pending_source_predecessor_uses(
-                    idx,
-                    (role, moved_role),
-                    preview_conflict,
-                    &mut preview,
-                ) {
-                    EventAdmissionError::PredecessorPending
-                } else {
-                    EventAdmissionError::OtherViewPending
-                },
-            );
+            return Err(self.source_predecessor_wait(
+                idx,
+                (role, moved_role),
+                preview_conflict,
+                &mut preview,
+            ));
         }
         Ok(EnabledEventCommit::new(
             StateIndex::from_usize(idx),
             progress_step,
             cursor_after,
         ))
+    }
+}
+
+#[cfg(all(test, hibana_repo_tests))]
+mod tests {
+    use super::*;
+    use crate::{Endpoint, g, runtime::program::project};
+
+    #[test]
+    fn payload_prefixes_are_distinct_from_the_borrowed_views_own_prefixes() {
+        type Loan<'r> = g::Msg<2, Endpoint<'r, 3>>;
+        let global = g::par(
+            g::send::<0, 0, g::Msg<0, ()>>().roll(),
+            g::seq(
+                g::send::<0, 3, g::Msg<1, ()>>(),
+                g::send::<1, 0, Loan<'_>>(),
+            ),
+        );
+        let program = project::<1>(&global);
+        super::super::super::validated_metadata_tests::with_rows(
+            program.role_image_ref(),
+            |cursor| {
+                let receive = (0..cursor.local_steps_len())
+                    .find(|&i| cursor.try_recv_meta_at(i).is_some_and(|m| m.label == 1))
+                    .unwrap();
+                let transfer = (0..cursor.local_steps_len())
+                    .find(|&i| cursor.try_send_meta_at(i).is_some_and(|m| m.label == 2))
+                    .unwrap();
+                for received in [false, true] {
+                    if received {
+                        cursor.mark_local_event_done(receive);
+                    }
+                    for hint in 0..=u8::MAX {
+                        cursor.set_index(usize::from(hint) % cursor.machine().node_len());
+                        let event = cursor.try_send_meta_at(transfer).unwrap().into();
+                        let admission = cursor.event_enabled(transfer, event, &mut |_, _| None);
+                        if received {
+                            assert!(admission.is_ok(), "hint={hint}");
+                        } else {
+                            assert!(
+                                matches!(
+                                    admission,
+                                    Err(EventAdmissionError::PayloadPredecessorPending)
+                                ),
+                                "hint={hint}"
+                            );
+                        }
+                    }
+                }
+            },
+        );
     }
 }

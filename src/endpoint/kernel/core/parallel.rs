@@ -164,7 +164,11 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
             // or receive still waits for that prefix through event_enabled.
             if !matches!(
                 admission,
-                Ok(()) | Err(crate::global::typestate::EventAdmissionError::OtherViewPending)
+                Ok(())
+                    | Err(
+                        crate::global::typestate::EventAdmissionError::OtherViewPending
+                            | crate::global::typestate::EventAdmissionError::PayloadPredecessorPending
+                    )
             ) {
                 continue;
             }

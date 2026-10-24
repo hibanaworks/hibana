@@ -35,9 +35,10 @@ where
             Err(crate::global::typestate::EventAdmissionError::Invariant) => {
                 Poll::Ready(Err(SendError::PhaseInvariant))
             }
-            Err(crate::global::typestate::EventAdmissionError::PredecessorPending) => {
-                Poll::Ready(Err(SendError::OutOfOrder))
-            }
+            Err(
+                crate::global::typestate::EventAdmissionError::PredecessorPending
+                | crate::global::typestate::EventAdmissionError::PayloadPredecessorPending,
+            ) => Poll::Ready(Err(SendError::OutOfOrder)),
         }
     }
 
