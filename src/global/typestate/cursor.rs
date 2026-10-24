@@ -27,6 +27,7 @@ mod navigation;
 #[cfg(any(kani, all(test, hibana_repo_tests)))]
 mod parallel_reentry_tests;
 mod pending_events;
+mod receive_handoff;
 mod scope_route;
 #[cfg(all(test, hibana_repo_tests))]
 mod validated_metadata_tests;

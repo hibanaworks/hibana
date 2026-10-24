@@ -878,6 +878,12 @@ run_miri_test \
   endpoint::kernel::core::send_preview::tests::
 
 run_miri_test \
+  incoming-choice-before-view-handoff \
+  -p hibana --lib \
+  endpoint::kernel::offer::handoff_tests::incoming_choice_can_arrive_at_either_of_the_actors_views \
+  -- --exact
+
+run_miri_test \
   endpoint-delegation-projection \
   --manifest-path proofs/checks/projection/endpoint-delegation/compiler/Cargo.toml \
   --locked --lib

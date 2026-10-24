@@ -108,7 +108,13 @@ where
             .finish_optional()
             .map_err(|_| RecvError::PhaseInvariant)?
         else {
-            if admission_pending {
+            if admission_pending
+                || self.progress.cursor.receive_follows_pending_transfer(
+                    self.public_header.role(),
+                    key,
+                    &mut |scope| self.selected_arm_for_scope(scope),
+                )
+            {
                 return Ok(Some(ObservedIngressSelection::PendingReceive(key.lane)));
             }
             return Ok(None);

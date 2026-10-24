@@ -6,6 +6,8 @@ mod commit_types;
 mod facts;
 mod first_recv_dispatch;
 mod frontier_types;
+#[cfg(all(test, hibana_repo_tests))]
+mod handoff_tests;
 mod ingress;
 mod ingress_types;
 mod materialization;
