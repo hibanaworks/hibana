@@ -1,5 +1,7 @@
 //! Private Kani process orchestration; the shell entrypoint only launches this.
 use std::{
+    env,
+    ffi::OsString,
     fs::{self, File},
     io::{Read, Write},
     path::{Path, PathBuf},
@@ -46,6 +48,145 @@ fn cargo(root: &Path, target: &Path) -> Command {
         .env("RUSTFLAGS", "-D warnings")
         .env("CARGO_BUILD_JOBS", "1");
     command
+}
+
+struct Prover {
+    driver: PathBuf,
+    cbmc: PathBuf,
+    path: OsString,
+}
+
+impl Prover {
+    fn prepare(root: &Path, scratch: &Path, version: &str) -> Audit<Self> {
+        // Kani's installer uses KANI_HOME/kani-VERSION, or HOME/.kani/kani-VERSION.
+        let base = match env::var_os("KANI_HOME") {
+            Some(path) => PathBuf::from(path),
+            None => PathBuf::from(env::var_os("HOME").ok_or("missing HOME")?).join(".kani"),
+        };
+        let bin = base
+            .join(format!("kani-{version}/bin"))
+            .canonicalize()
+            .map_err(|e| format!("Kani installation: {e}"))?;
+        let driver = bin
+            .join("kani-driver")
+            .canonicalize()
+            .map_err(|e| format!("Kani driver: {e}"))?;
+        let cbmc = bin
+            .join("cbmc")
+            .canonicalize()
+            .map_err(|e| format!("Kani CBMC: {e}"))?;
+        let actual = Command::new(&driver)
+            .args(["kani", "--version"])
+            .output()
+            .map_err(|e| format!("Kani driver version: {e}"))?;
+        if !actual.status.success() || actual.stdout != format!("cargo-kani {version}\n").as_bytes()
+        {
+            return Err("bundled Kani driver version differs from the pinned version".into());
+        }
+        let build = Command::new("cargo")
+            .args([
+                "+stable",
+                "build",
+                "--locked",
+                "-p",
+                "hibana-ci-tests",
+                "--bin",
+                "kani-cbmc",
+            ])
+            .current_dir(root)
+            .arg("--target-dir")
+            .arg(root.join("target"))
+            .env("CARGO_BUILD_JOBS", "1")
+            .env("RUSTFLAGS", "-D warnings")
+            .env_remove("CARGO_ENCODED_RUSTFLAGS")
+            .status()
+            .map_err(|e| format!("build CBMC diagnostic stream: {e}"))?;
+        if !build.success() {
+            return Err(format!("CBMC diagnostic stream build failed: {build}"));
+        }
+        let normalizer = root
+            .join("target/debug/kani-cbmc")
+            .canonicalize()
+            .map_err(|e| format!("CBMC diagnostic stream: {e}"))?;
+        let shim = scratch.join("cbmc-bin");
+        fs::create_dir(&shim).map_err(|e| format!("CBMC diagnostic directory: {e}"))?;
+        std::os::unix::fs::symlink(normalizer, shim.join("cbmc"))
+            .map_err(|e| format!("CBMC diagnostic command: {e}"))?;
+        let inherited = env::var_os("PATH").ok_or("missing PATH")?;
+        let path = env::join_paths([shim, bin].into_iter().chain(env::split_paths(&inherited)))
+            .map_err(|e| format!("CBMC command PATH: {e}"))?;
+        Ok(Self { driver, cbmc, path })
+    }
+
+    fn command(&self, manifest: &Path, target: &Path) -> Command {
+        let mut command = Command::new(&self.driver);
+        command
+            .arg("kani")
+            .arg("--manifest-path")
+            .arg(manifest)
+            .arg("--target-dir")
+            .arg(target)
+            .env("RUSTFLAGS", "-D warnings")
+            .env("CARGO_BUILD_JOBS", "1")
+            .env("PATH", &self.path)
+            .env("HIBANA_REAL_CBMC", &self.cbmc);
+        command
+    }
+
+    fn check_controls(&self, root: &Path, scratch: &Path) -> Audit<()> {
+        let manifest = root.join(".github/ci-tests/fixtures/kani-diagnostics/Cargo.toml");
+        let target = scratch.join("diagnostic-controls-target");
+        for (harness, reason) in [
+            (
+                "real_assertion_failure",
+                "Failed Checks: \"HIBANA_REAL_ASSERTION_CONTROL\"",
+            ),
+            (
+                "real_memory_failure",
+                "Failed Checks: dereference failure: pointer outside object bounds",
+            ),
+            (
+                "real_unwind_failure",
+                "Failed Checks: unwinding assertion loop",
+            ),
+        ] {
+            let output = self
+                .command(&manifest, &target)
+                .args([
+                    "-Z",
+                    "unstable-options",
+                    "--run-sanity-checks",
+                    "--jobs",
+                    "1",
+                    "--output-format",
+                    "terse",
+                    "--exact",
+                    "--harness",
+                    harness,
+                ])
+                .output()
+                .map_err(|e| format!("Kani diagnostic control {harness}: {e}"))?;
+            let stdout = String::from_utf8(output.stdout).map_err(|e| e.to_string())?;
+            let stderr = String::from_utf8(output.stderr).map_err(|e| e.to_string())?;
+            let expected = "Complete - 0 successfully verified harnesses, 1 failures, 1 total.";
+            if output.status.success()
+                || !stdout.contains("VERIFICATION:- FAILED")
+                || stdout
+                    .lines()
+                    .filter(|line| line.starts_with("Complete - "))
+                    .collect::<Vec<_>>()
+                    != [expected]
+                || !stdout.contains(reason)
+                || !stderr.contains("CBMC JSON: properties=")
+            {
+                return Err(format!(
+                    "Kani diagnostic control {harness} did not preserve its intended failure:\n{stdout}\n{stderr}"
+                ));
+            }
+            println!("Kani diagnostic control {harness}: intended failure preserved");
+        }
+        Ok(())
+    }
 }
 
 pub fn summary(text: &str, expected: u64) -> Audit<()> {
@@ -120,8 +261,10 @@ pub fn run(root: &Path) -> Audit<()> {
     }
     walk(&root.join("src"))?;
     let scratch = Scratch::create()?;
+    let prover = Prover::prepare(&root, &scratch.0, expected)?;
     let target = scratch.0.join("target");
-    let status = cargo(&root, &target)
+    let status = prover
+        .command(&root.join("proofs/kani/Cargo.toml"), &target)
         .args(["list", "--format", "json"])
         .current_dir(&scratch.0)
         .status()
@@ -134,6 +277,7 @@ pub fn run(root: &Path) -> Audit<()> {
     })?;
     let total = kani_json::inventory_total(&inventory, expected)?;
     let mut groups = recursion::prepare(&root, &target, &inventory, total)?;
+    prover.check_controls(&root, &scratch.0)?;
     groups.sort_by_key(|group| group.recursion.is_none());
     for (index, group) in groups.into_iter().enumerate() {
         println!(
@@ -150,7 +294,7 @@ pub fn run(root: &Path) -> Audit<()> {
         let log = Arc::new(Mutex::new(
             File::create(&log_path).map_err(|e| e.to_string())?,
         ));
-        let mut command = cargo(&root, &target);
+        let mut command = prover.command(&root.join("proofs/kani/Cargo.toml"), &target);
         command.args([
             "-Z",
             "unstable-options",
@@ -173,8 +317,17 @@ pub fn run(root: &Path) -> Audit<()> {
             }
         } else if group.label == "parallel-reentry" {
             // Exhaust the same paths without retaining a merged equation for
-            // all descriptor lookups. Keep every assertion and unwind check.
-            command.args(["--cbmc-args", "--paths", "lifo"]);
+            // all descriptor lookups. Refine array/arithmetic constraints
+            // instead of eagerly expanding them into one large SAT formula.
+            // Keep every assertion, input and unwind check.
+            command.args([
+                "--cbmc-args",
+                "--paths",
+                "lifo",
+                "--refine",
+                "--verbosity",
+                "6",
+            ]);
         }
         let mut child = command
             .stdout(Stdio::piped())

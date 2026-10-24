@@ -25,6 +25,10 @@ impl Fixture {
         fs::create_dir_all(path.join(".github")).unwrap();
         fs::create_dir_all(path.join("bin")).unwrap();
         fs::create_dir_all(path.join("proofs/kani")).unwrap();
+        fs::create_dir_all(path.join("kani-home/kani-0.67.0/bin")).unwrap();
+        fs::create_dir_all(path.join("target/debug")).unwrap();
+        fs::write(path.join("target/debug/kani-cbmc"), "fixture normalizer").unwrap();
+        fs::write(path.join("kani-home/kani-0.67.0/bin/cbmc"), "fixture CBMC").unwrap();
         fs::write(path.join(".github/kani-version"), "0.67.0\n").unwrap();
         fs::write(path.join("proofs/kani/harness-inventory.json"), INVENTORY).unwrap();
         fs::write(
@@ -50,9 +54,28 @@ if [[ "$*" == 'kani --version' ]]; then
   printf 'cargo-kani 0.67.0\n'
   exit {version_status}
 fi
+if [[ "$*" == '+stable build --locked'* ]]; then
+  exit 0
+fi
 if [[ "$*" == *'list --format json' ]]; then
   /bin/cat '{root}/inventory.json' > kani-list.json
   exit {list_status}
+fi
+if [[ "$*" == *'--harness real_'* ]]; then
+  if [[ -f '{root}/control-pass' ]]; then
+    printf 'Complete - 1 successfully verified harnesses, 0 failures, 1 total.\n'
+    exit 0
+  fi
+  if [[ "$*" == *'--harness real_assertion_failure'* ]]; then
+    printf 'Failed Checks: "HIBANA_REAL_ASSERTION_CONTROL"\n'
+  elif [[ "$*" == *'--harness real_memory_failure'* ]]; then
+    printf 'Failed Checks: dereference failure: pointer outside object bounds\n'
+  else
+    printf 'Failed Checks: unwinding assertion loop 0\n'
+  fi
+  printf 'VERIFICATION:- FAILED\nComplete - 0 successfully verified harnesses, 1 failures, 1 total.\n'
+  printf 'CBMC JSON: properties=2 diagnostic-traces-omitted=1\n' >&2
+  exit 1
 fi
 printf 'verification-started\n' > '{root}/proof-ran'
 /bin/cat '{root}/summary.txt'
@@ -61,15 +84,22 @@ exit {proof_status}
 "#,
             root = self.0.display()
         );
-        fs::write(self.0.join("bin/cargo"), script).unwrap();
+        fs::write(self.0.join("bin/cargo"), &script).unwrap();
+        fs::write(self.0.join("kani-home/kani-0.67.0/bin/kani-driver"), script).unwrap();
         use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(self.0.join("bin/cargo"), fs::Permissions::from_mode(0o755)).unwrap();
+        fs::set_permissions(
+            self.0.join("kani-home/kani-0.67.0/bin/kani-driver"),
+            fs::Permissions::from_mode(0o755),
+        )
+        .unwrap();
     }
     fn run(&self) -> std::process::Output {
         Command::new(env!("CARGO_BIN_EXE_check-kani-source"))
             .arg("--gate")
             .arg(&self.0)
             .env("PATH", self.0.join("bin"))
+            .env("KANI_HOME", self.0.join("kani-home"))
             .output()
             .unwrap()
     }
@@ -174,4 +204,17 @@ fn success_process_with_incomplete_or_duplicate_summary_fails() {
         f.cargo(0, INVENTORY, 0, &bad, 0);
         assert!(!f.run().status.success(), "accepted {bad}");
     }
+}
+
+#[test]
+fn a_diagnostic_control_that_turns_green_blocks_verification() {
+    let f = Fixture::new();
+    f.cargo(0, INVENTORY, 0, SUMMARY, 0);
+    fs::write(f.0.join("control-pass"), "").unwrap();
+    let result = f.run();
+    assert!(!result.status.success());
+    assert!(!f.0.join("proof-ran").exists());
+    assert!(
+        String::from_utf8_lossy(&result.stderr).contains("did not preserve its intended failure")
+    );
 }

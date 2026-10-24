@@ -8,6 +8,12 @@ autotests = false
 
 [dependencies]
 num-bigint = "=0.5.1"
+serde = "=1.0.228"
+serde_json = { version = "=1.0.145", features = ["arbitrary_precision"] }
+
+[[bin]]
+name = "kani-cbmc"
+path = "kani_cbmc.rs"
 
 [[test]]
 name = "tool_failures"

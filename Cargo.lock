@@ -137,6 +137,8 @@ name = "hibana-ci-tests"
 version = "0.0.0"
 dependencies = [
  "num-bigint",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

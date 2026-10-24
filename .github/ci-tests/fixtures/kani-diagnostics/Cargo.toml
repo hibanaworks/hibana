@@ -1,0 +1,14 @@
+[package]
+name = "hibana-kani-diagnostic-controls"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[lib]
+path = "lib.rs"
+
+[workspace]
+
+[lints.rust]
+long_running_const_eval = "forbid"
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }
