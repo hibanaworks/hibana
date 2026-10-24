@@ -501,7 +501,7 @@ struct Scenario<'a> {
     traces: &'a str,
     expected_traces: usize,
     prefix_visits: usize,
-    scoped_traces: &'a std::collections::BTreeSet<String>,
+    completed_plan_words: &'a std::collections::BTreeSet<String>,
 }
 
 async fn qualify(programs: Programs, scenario: Scenario<'_>) {
@@ -514,7 +514,7 @@ async fn qualify(programs: Programs, scenario: Scenario<'_>) {
         traces,
         expected_traces,
         prefix_visits,
-        scoped_traces,
+        completed_plan_words,
     } = scenario;
     let mut observations = Vec::new();
     let mut prefixes = std::collections::BTreeMap::new();
@@ -583,8 +583,8 @@ async fn qualify(programs: Programs, scenario: Scenario<'_>) {
             })
             .collect::<Vec<_>>();
         assert!(
-            scoped_traces.contains(line),
-            "shape={name} missing scoped trace={line}"
+            completed_plan_words.contains(line),
+            "shape={name} missing completed source plan={line}"
         );
         if prefix_visits != 0 {
             let mut key = Vec::new();
@@ -603,8 +603,8 @@ async fn qualify(programs: Programs, scenario: Scenario<'_>) {
     );
     assert_eq!(
         seen,
-        scoped_traces.iter().map(String::as_str).collect(),
-        "scoped runs and generated message words differ"
+        completed_plan_words.iter().map(String::as_str).collect(),
+        "completed source plans and catalog words differ"
     );
     let mut checked_prefixes = std::collections::BTreeSet::new();
     while let Some((key, prefix)) = prefixes.pop_first() {

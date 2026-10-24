@@ -66,8 +66,8 @@ arm and each transfer. A repetition must return the endpoint to its incoming
 owner. A parallel transfer must not overlap a use of the same resource.
 The output records the population, range and per-case identities. Completing
 one range does not establish coverage of the whole depth. Finite execution
-tests use two visits per repetition and both child orders per parallel node,
-as well as Tokio's concurrent polling.
+tests use two visits per repetition. Every parallel node polls both children
+with Tokio, varying which child is polled first.
 
 The operator-budget catalog provides a separate regression population. It
 builds protocol trees around an Endpoint loan and
@@ -143,8 +143,8 @@ Every case generates direct local Rust code. Every
 nested parallel composition uses public `par()` borrows and Tokio futures.
 Each source execution retains its branch choices, parallel-child order and
 two visits of every `roll`. The generated localsides keep the corresponding
-borrows until each visit completes. These executions run in both child orders
-and with concurrent Tokio futures, including different choices in later visits.
+borrows until each visit completes. Both poll orders use concurrent Tokio
+futures, including different choices in later visits.
 When a choice transfers an endpoint in only one arm, the continuation uses the
 endpoint value actually received. No separate owner flag selects its operations.
 Tests read source-derived execution schedules one record at a time from JSON
@@ -153,8 +153,10 @@ Borrowed-scope plans and observations also use JSON Lines. Each record covers
 one source execution; the checker requires both schedules and every planned
 probe before advancing to the next record.
 Distinct visit boundaries remain separate inputs when their message words
-are equal. The complete set of executed words is checked against the trace
-inventory. A flat word alone does not specify which repeated group has ended.
+are equal. Completed source plans are checked against the catalog. Their poll
+preferences do not fix the order of completed calls. That actual order is
+recorded and checked separately. A flat word alone does not specify which
+repeated group has ended.
 The observer records successful sends and receives in completion order, with
 the participant, endpoint role, message label and direction. It reads the role
 from the actual endpoint type. Lean replays each record against the source

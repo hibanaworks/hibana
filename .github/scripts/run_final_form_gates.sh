@@ -65,6 +65,7 @@ trap - EXIT
 bash proofs/checks/runtime/controller-offer/check.sh
 bash proofs/checks/runtime/live-descendant-preview/check.sh
 bash proofs/checks/runtime/nested-resolver-reentry/check.sh
+bash proofs/checks/runtime/parallel-view-choice/check.sh
 bash proofs/checks/runtime/ordinary-offer-ingress/check.sh
 bash proofs/checks/runtime/offer-prefix-dependency/check.sh
 bash proofs/checks/projection/endpoint-delegation/check.sh

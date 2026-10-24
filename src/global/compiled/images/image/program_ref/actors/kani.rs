@@ -3,6 +3,42 @@ use super::fixtures::{COLUMNS, OWNERSHIP, PROGRAM, encoded_bytes};
 use crate::global::const_dsl::{ScopeId, ScopeKind};
 
 #[kani::proof]
+#[kani::unwind(16)]
+fn source_route_visibility_matches_the_complete_borrow_range() {
+    use crate::{
+        g,
+        global::compiled::{
+            images::{ProgramImageBytes, ProgramImagePlan},
+            lowering::CompiledProgramImage,
+        },
+    };
+    type Step = g::Send<0, 1, g::Msg<1, ()>>;
+    type Steps = g::Route<g::Seq<g::Route<Step, Step>, Step>, Step>;
+    const SOURCE: g::ProgramSourceData<16> = g::ProgramSourceData::lower::<Steps>();
+    const PLAN: ProgramImagePlan = ProgramImagePlan::from_source(&SOURCE);
+    const SUMMARY: CompiledProgramImage = CompiledProgramImage::scan_const(SOURCE.eff_list());
+    static BYTES: ProgramImageBytes<256> =
+        match ProgramImageBytes::from_source_if_fits(&SOURCE, PLAN.columns()) {
+            Some(bytes) => bytes,
+            None => panic!("route visibility fixture storage"),
+        };
+    const IMAGE: CompiledProgramRef = BYTES.compiled_ref(&SUMMARY, PLAN.columns());
+    let start: usize = kani::any();
+    let end: usize = kani::any();
+    let bounded = start < end && end <= 4;
+    assert_eq!(
+        IMAGE.source_route_visible_from_range(ScopeId::route(0), start, end),
+        bounded && (end <= 3 || 3 <= start || (start == 0 && end == 4))
+    );
+    assert_eq!(
+        IMAGE.source_route_visible_from_range(ScopeId::route(1), start, end),
+        bounded && (end <= 1 || (1 <= start && end <= 2) || (start == 0 && 2 <= end))
+    );
+    assert!(!IMAGE.source_route_visible_from_range(ScopeId::none(), start, end));
+    assert!(!IMAGE.source_route_visible_from_range(ScopeId::parallel(0), start, end));
+}
+
+#[kani::proof]
 #[kani::unwind(4)]
 fn selected_actor_preserves_identity_and_requires_the_actual_choice() {
     let actor: u8 = kani::any();

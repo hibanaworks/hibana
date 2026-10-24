@@ -244,7 +244,7 @@ mod tests {
                 let (source, labels, resolvers) = grammar.protocol(depth, rank);
                 assert_eq!(source.syntax_depth(), depth);
                 assert!(usize::from(labels) <= 1usize << depth);
-                assert!(usize::from(resolvers) <= (1usize << depth) - 1);
+                assert!(usize::from(resolvers) < (1usize << depth));
             }
         }
     }
@@ -341,6 +341,64 @@ mod tests {
                 .collect::<BTreeSet<_>>();
             assert_eq!(owners, BTreeSet::from([0, 1]));
             println!("conditional-parallel inside={inside_parallel} depth={depth} rank={rank}");
+        }
+    }
+
+    #[test]
+    fn one_actor_can_observe_a_choice_through_different_endpoint_views() {
+        for resolved in [false, true] {
+            for parallel in [false, true] {
+                let mut next = 0;
+                let loan = message(&mut next, 0, 1, true);
+                let a = Box::new(if parallel {
+                    Protocol::Par(
+                        Box::new(message(&mut next, 0, 3, false)),
+                        Box::new(message(&mut next, 0, 1, false)),
+                    )
+                } else {
+                    message(&mut next, 0, 3, false)
+                });
+                let b = Box::new(if parallel {
+                    Protocol::Par(
+                        Box::new(message(&mut next, 0, 3, false)),
+                        Box::new(message(&mut next, 0, 1, false)),
+                    )
+                } else {
+                    message(&mut next, 0, 1, false)
+                });
+                let choice = if resolved {
+                    Protocol::Resolved(a, b, 0)
+                } else {
+                    Protocol::Route(a, b)
+                };
+                let source = Protocol::Seq(
+                    Box::new(loan),
+                    Box::new(Protocol::Seq(
+                        Box::new(choice),
+                        Box::new(message(&mut next, 1, 0, true)),
+                    )),
+                );
+                let outer = Protocol::Par(
+                    Box::new(source.clone()),
+                    Box::new(Protocol::Seq(
+                        Box::new(message(&mut next, 2, 0, false)),
+                        Box::new(message(&mut next, 0, 2, false)),
+                    )),
+                );
+                for (context, source) in [
+                    ("base", source.clone()),
+                    ("roll", Protocol::Roll(Box::new(source))),
+                    ("outer-par", outer),
+                ] {
+                    let depth = source.syntax_depth();
+                    let grammar = Grammar::new(depth);
+                    let rank = grammar.rank(&source);
+                    assert_eq!(grammar.protocol(depth, rank.clone()).0, source);
+                    println!(
+                        "multi-view-choice resolved={resolved} parallel={parallel} context={context} depth={depth} rank={rank}"
+                    );
+                }
+            }
         }
     }
 }

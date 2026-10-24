@@ -369,6 +369,15 @@ mod tests {
     }
 
     #[test]
+    fn a_sent_head_still_has_an_unconsumed_receive_on_its_other_view() {
+        let head = message(0, 3, 1);
+        assert!(!localside::present(&head, 0, Some(1)));
+        assert!(localside::present(&head, 3, Some(1)));
+        let local = message(0, 0, 1);
+        assert!(!localside::present(&local, 0, Some(1)));
+    }
+
+    #[test]
     fn a_resolved_branch_retains_its_first_operation_inside_the_borrow() {
         let arm = |a, b| Protocol::Par(Box::new(message(0, 1, a)), Box::new(message(0, 1, b)));
         let source = Protocol::Resolved(Box::new(arm(1, 2)), Box::new(arm(3, 4)), 0);

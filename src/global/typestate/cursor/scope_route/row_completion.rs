@@ -6,6 +6,7 @@ impl EventCursor {
         &self,
         role: u8,
         source: core::ops::Range<usize>,
+        owns_endpoint: bool,
         selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
     ) -> bool {
         use crate::{eff::EventPayload, global::typestate::LocalAction};
@@ -23,7 +24,10 @@ impl EventCursor {
             }
             let atom = self.program_ref().event_atom_at(eff.dense_ordinal());
             let owns_step = (if receiving { atom.to } else { atom.from }) == role;
-            let supplies_payload = !receiving && atom.payload == EventPayload::Endpoint(role);
+            // A borrow must end before its parent endpoint can be moved.
+            // The owned endpoint still checks the pending transfer on Drop.
+            let supplies_payload =
+                owns_endpoint && !receiving && atom.payload == EventPayload::Endpoint(role);
             if (owns_step || supplies_payload)
                 && self.event_actor_is_local(idx, selected_arm_for_scope) != Some(false)
                 && let Some(row) = self.machine().event_program().event_row_at(idx)

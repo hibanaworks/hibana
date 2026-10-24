@@ -1589,7 +1589,7 @@ long_running_const_eval = "forbid"
         trace_paths.insert(trace_path);
         writeln!(
             source,
-            "],traces:include_str!(\"../traces/{case}.txt\"),expected_traces:{},prefix_visits:{},scoped_traces:&completed_scoped_traces}}).await;\n}}",
+            "],traces:include_str!(\"../traces/{case}.txt\"),expected_traces:{},prefix_visits:{},completed_plan_words:&completed_plan_words}}).await;\n}}",
             traces.len(),
             global.prefix_visits(),
         )?;

@@ -68,7 +68,9 @@ pub(super) fn present(source: &Protocol, role: u8, primed: Option<u8>) -> bool {
     match source {
         Protocol::Message {
             from, to, label, ..
-        } => primed != Some(*label) && [*from, *to].contains(&role),
+        } => {
+            [*from, *to].contains(&role) && (primed != Some(*label) || (*to == role && from != to))
+        }
         Protocol::Seq(a, b) | Protocol::Par(a, b) => {
             present(a, role, primed) || present(b, role, primed)
         }
@@ -87,6 +89,28 @@ pub(super) fn parallel_parts<'a>(source: &'a Protocol, parts: &mut Vec<&'a Proto
         parallel_parts(b, parts);
     } else {
         parts.push(source);
+    }
+}
+
+fn parallel_ancestors<'a>(source: &'a Protocol, target: &Protocol) -> Option<Vec<&'a Protocol>> {
+    if core::ptr::eq(source, target) {
+        return Some(Vec::new());
+    }
+    match source {
+        Protocol::Message { .. } => None,
+        Protocol::Par(..) => {
+            let mut parts = Vec::new();
+            parallel_parts(source, &mut parts);
+            parts.into_iter().find_map(|part| {
+                let mut path = parallel_ancestors(part, target)?;
+                path.insert(0, source);
+                Some(path)
+            })
+        }
+        Protocol::Seq(a, b) | Protocol::Route(a, b) | Protocol::Resolved(a, b, _) => {
+            parallel_ancestors(a, target).or_else(|| parallel_ancestors(b, target))
+        }
+        Protocol::Roll(body) => parallel_ancestors(body, target),
     }
 }
 
@@ -517,30 +541,69 @@ impl Emitter<'_> {
         };
         let left = arm(a);
         let right = arm(b);
-        let preview = if actor == controller {
-            String::new()
+        if actor == controller {
+            return format!("{{{select}if right{{{right}}}else{{{left}}}}}");
+        }
+        let left_entries = first_local(a, actor, before);
+        let right_entries = first_local(b, actor, before);
+        let mut views = std::collections::BTreeMap::new();
+        for (view, label) in left_entries.iter().chain(&right_entries) {
+            views.entry(*view).or_insert(*label);
+        }
+        assert!(!views.is_empty());
+        let preview = if views.len() == 1 {
+            let (&view, &entry) = views.first_key_value().unwrap();
+            let allowed = left_entries
+                .iter()
+                .chain(&right_entries)
+                .map(|(_, label)| label.to_string())
+                .collect::<Vec<_>>()
+                .join(",");
+            preview_for(view, entry, &format!("&[{allowed}][..]"))
         } else {
-            let for_arm = |body| {
-                let entries = first_local(body, actor, before);
-                if entries.is_empty() {
-                    return String::new();
-                }
-                let labels = entries
+            let mut offers = String::new();
+            let mut retake = String::new();
+            for (view, entry) in views {
+                let endpoint = self.endpoint(view, names);
+                offers += &format!(
+                    "candidate=async{{let branch=record_pending({endpoint}.offer(),observed,ObservedCall::Preview({actor},{entry})).await?;let label=branch.label();drop(branch);Ok::<_,hibana::EndpointError>(label)}}=>candidate?,"
+                );
+                let labels = left_entries
                     .iter()
-                    .map(|(_, label)| label.to_string())
+                    .chain(&right_entries)
+                    .filter(|(role, _)| *role == view)
+                    .map(|(_, label)| *label)
+                    .collect::<std::collections::BTreeSet<_>>()
+                    .into_iter()
+                    .map(|label| label.to_string())
                     .collect::<Vec<_>>()
-                    .join(",");
-                preview_for(entries[0].0, entries[0].1, &format!("&[{labels}][..]"))
-            };
-            let a = for_arm(a);
-            let b = for_arm(b);
-            if a == b {
-                a
-            } else {
-                format!("if right{{{b}}}else{{{a}}}")
+                    .join("|");
+                retake += &format!(
+                    "{labels}=>{{let branch=record_pending({endpoint}.offer(),observed,ObservedCall::Preview({actor},{entry})).await?;assert_eq!(branch.label(),label);drop(branch);}},"
+                );
             }
+            format!(
+                "let label=tokio::select!{{{offers}}};match label{{{retake}_=>panic!(\"unknown incoming view\")}}"
+            )
         };
-        format!("{{{select}{preview}if right{{{right}}}else{{{left}}}}}")
+        let mut branches = String::new();
+        for (entries, selected, body) in [(left_entries, false, left), (right_entries, true, right)]
+        {
+            let labels = entries
+                .into_iter()
+                .map(|(_, label)| label)
+                .collect::<std::collections::BTreeSet<_>>()
+                .into_iter()
+                .map(|label| label.to_string())
+                .collect::<Vec<_>>()
+                .join("|");
+            if !labels.is_empty() {
+                branches += &format!("{labels}=>{{assert_eq!(right,{selected});{body}}},");
+            }
+        }
+        format!(
+            "{{{select}{preview}match label{{{branches}_=>panic!(\"unknown received branch\")}}}}"
+        )
     }
 
     fn parallel_code(
@@ -552,8 +615,41 @@ impl Emitter<'_> {
     ) -> (String, String, String, bool) {
         let mut parts = Vec::new();
         parallel_parts(source, &mut parts);
-        let mut part_names = vec![names.clone(); parts.len()];
+        let mut names = names.clone();
         let mut declarations = String::new();
+        // A received owned endpoint starts at the whole view. Enter enclosing
+        // mobile parallel groups before borrowing this nested group. The
+        // generated code keeps these borrows alive until the nested work ends.
+        if names[3] == "db"
+            && mobile(self.source)
+            && !mobile(source)
+            && actor < 3
+            && present(source, 3, None)
+        {
+            for (depth, parent) in parallel_ancestors(self.source, source)
+                .expect("parallel source must belong to the global")
+                .into_iter()
+                .enumerate()
+            {
+                let mut parent_parts = Vec::new();
+                parallel_parts(parent, &mut parent_parts);
+                assert_eq!(
+                    parent_parts
+                        .iter()
+                        .filter(|part| present(part, 3, None))
+                        .count(),
+                    1,
+                    "a mobile group cannot use its resource in another child"
+                );
+                let name = format!("resource_parent_{depth}");
+                declarations += &format!(
+                    "let [mut {name}]=if let Some(resource)={}.as_mut(){{let [part]=resource.par()?;[Some(part)]}}else{{[None]}};",
+                    names[3]
+                );
+                names[3] = name;
+            }
+        }
+        let mut part_names = vec![names.clone(); parts.len()];
         let mut scope_checks = String::new();
         for role in 0..4 {
             let optional = role == 3 && mobile(self.source);
@@ -641,7 +737,7 @@ impl Emitter<'_> {
                 };
                 (
                     format!(
-                        "{{let (_left,_right,reverse)=match script{{Script::Par(a,b,reverse)=>(a.as_ref(),b.as_ref(),*reverse),_=>panic!(\"expected parallel script\")}};let left={};let right={};let (_a,_b)=if concurrent{{tokio::try_join!(left,right)?}}else if reverse{{let b=right.await?;let a=left.await?;(a,b)}}else{{let a=left.await?;let b=right.await?;(a,b)}};{result}}}",
+                        "{{let (_left,_right,reverse)=match script{{Script::Par(a,b,reverse)=>(a.as_ref(),b.as_ref(),*reverse),_=>panic!(\"expected parallel script\")}};let left={};let right={};let (_a,_b)=if reverse ^ reverse_poll{{let (b,a)=tokio::try_join!(right,left)?;(a,b)}}else{{tokio::try_join!(left,right)?}};{result}}}",
                         bind("_left", &left),
                         bind("_right", &right)
                     ),
@@ -697,7 +793,7 @@ pub(super) fn runs(source: &Protocol, owner: u8, case: usize) -> (String, String
         .collect::<std::collections::BTreeSet<_>>();
     let mut code = format!(
         r#"
-    let mut completed_scoped_traces=std::collections::BTreeSet::new();
+    let mut completed_plan_words=std::collections::BTreeSet::new();
     let scripts=std::io::BufRead::lines(std::io::BufReader::new(std::fs::File::open(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("scripts/{case}.jsonl")).expect("missing script plans")));
     use std::io::Write as _;
     let scope_root=std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -706,11 +802,11 @@ pub(super) fn runs(source: &Protocol, owner: u8, case: usize) -> (String, String
     let mut scope_observations=std::io::BufWriter::new(std::fs::File::create(scope_root.join("scope-observations/{case}.jsonl")).unwrap());
     writeln!(scope_observations,"{{{{\"name\":{case},\"scripts\":{}}}}}").unwrap();
     let mut checked_scripts=0usize;
-    for (script_index,line) in scripts.enumerate() {{ let decoded_script=Script::from_json(&line.expect("unreadable script plan")).expect("invalid script plan");let script=&decoded_script;let probes=scope_plans.next(script_index);for concurrent in [false,true] {{
-    write!(scope_observations,"{{{{\"script\":{{script_index}},\"concurrent\":{{concurrent}}").unwrap();
+    for (script_index,line) in scripts.enumerate() {{ let decoded_script=Script::from_json(&line.expect("unreadable script plan")).expect("invalid script plan");let script=&decoded_script;let probes=scope_plans.next(script_index);for reverse_poll in [false,true] {{
+    write!(scope_observations,"{{{{\"script\":{{script_index}},\"reversePoll\":{{reverse_poll}}").unwrap();
     let mut scoped_rejections=Vec::new();
     for probe in core::iter::once(None).chain(probes.iter().copied().map(Some)) {{
-      let _=concurrent;
+      let _=reverse_poll;
       let decisions:Vec<std::cell::Cell<Option<bool>>>=(0..{}).map(|_|std::cell::Cell::new(None)).collect();let _=&decisions;
       let sid=SessionId::new(2);
       // SAFETY: this execution owns its resource and its only initial issuer.
@@ -825,7 +921,7 @@ pub(super) fn runs(source: &Protocol, owner: u8, case: usize) -> (String, String
     assert!(observed.calls.borrow().is_empty());
     "#;
     code += &format!(
-        r#"}}writeln!(scope_observations,",\"probes\":[{{}}]}}}}",scoped_rejections.join(",")).unwrap();}}completed_scoped_traces.insert(script.line());checked_scripts+=1;}}assert_eq!(checked_scripts,{},"missing script plan");scope_plans.finish();scope_observations.flush().unwrap();"#,
+        r#"}}writeln!(scope_observations,",\"probes\":[{{}}]}}}}",scoped_rejections.join(",")).unwrap();}}completed_plan_words.insert(script.line());checked_scripts+=1;}}assert_eq!(checked_scripts,{},"missing script plan");scope_plans.finish();scope_observations.flush().unwrap();"#,
         executions.len()
     );
     (code, scripts)

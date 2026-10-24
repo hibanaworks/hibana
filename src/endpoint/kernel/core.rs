@@ -375,6 +375,7 @@ where
         self.progress.cursor.is_view_complete(
             self.public_header.role(),
             self.region.bounds(),
+            self.region.is_whole(),
             &mut |scope| self.selected_arm_for_scope(scope),
         )
     }

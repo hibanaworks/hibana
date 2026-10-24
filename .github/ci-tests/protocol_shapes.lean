@@ -362,7 +362,7 @@ structure ShapeScriptHeader where
 
 structure ShapeCompletedScript where
   script : Nat
-  concurrent : Bool
+  reversePoll : Bool
   completed : Array (Array Lean.Json)
   probes : Array Lean.Json
   deriving Lean.FromJson
@@ -422,9 +422,9 @@ def shapeCheckCompleted (source : Source) (name : Nat) (outputPath : String) : I
       | some (previous, ready) => if previous == key then ready else matching.map ShapePlan.of
       | none => matching.map ShapePlan.of
     prepared := some (key, ready)
-    for concurrent in [false, true] do
+    for reversePoll in [false, true] do
       let observed : ShapeCompletedScript ← shapeReadLine observations
-      unless observed.script == index && observed.concurrent == concurrent do
+      unless observed.script == index && observed.reversePoll == reversePoll do
         throw (IO.userError s!"shape {name}: missing or reordered completed execution")
       let mut states := ready.map (fun plan => (plan, ([] : List SourcePoint)))
       for call in observed.completed do

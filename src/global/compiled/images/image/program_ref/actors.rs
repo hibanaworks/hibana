@@ -105,27 +105,6 @@ impl CompiledProgramRef {
         crate::invariant()
     }
 
-    pub(crate) const fn source_route_arm_for_range(
-        &self,
-        scope: ScopeId,
-        start: usize,
-        end: usize,
-    ) -> Option<u8> {
-        if start >= end {
-            return None;
-        }
-        let Some((first, split, boundary)) = self.source_route_bounds(scope) else {
-            return None;
-        };
-        if first <= start && end <= split {
-            Some(0)
-        } else if split <= start && end <= boundary {
-            Some(1)
-        } else {
-            None
-        }
-    }
-
     pub(crate) const fn source_route_separates(
         &self,
         scope: ScopeId,
@@ -137,6 +116,23 @@ impl CompiledProgramRef {
         };
         (first <= left && left < split && split <= right && right < end)
             || (first <= right && right < split && split <= left && left < end)
+    }
+
+    pub(crate) const fn source_route_visible_from_range(
+        &self,
+        scope: ScopeId,
+        start: usize,
+        end: usize,
+    ) -> bool {
+        if start >= end || end > self.columns.atom_count() {
+            return false;
+        }
+        let Some((first, split, boundary)) = self.source_route_bounds(scope) else {
+            return false;
+        };
+        (first <= start && end <= split)
+            || (split <= start && end <= boundary)
+            || (start <= first && boundary <= end)
     }
 
     const fn source_route_bounds(&self, scope: ScopeId) -> Option<(usize, usize, usize)> {

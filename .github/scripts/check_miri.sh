@@ -146,6 +146,10 @@ run_miri_test \
     a_nested_resolver_can_select_another_arm_on_the_next_visit -- --exact
   run_miri_test public-converging-repeated-choice -p hibana --test parallel_route_nesting \
     an_outer_choice_can_leave_a_repeated_arm_after_its_receives_converge -- --exact
+  run_miri_test public-shared-view-choice -p hibana --test nested_parallel_reentry \
+    a_resolved_choice_preview_is_shared_by_the_holders_parallel_views -- --exact
+  run_miri_test public-borrowed-shared-view-choice -p hibana --test nested_parallel_reentry \
+    a_borrow_containing_a_choice_uses_its_other_views_preview -- --exact
 )
 
 MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \

@@ -100,7 +100,7 @@ fn check_case(
         checked = checked
             .checked_add(2 * records.len())
             .ok_or("borrowed-scope count overflow")?;
-        for concurrent in [false, true] {
+        for reverse_poll in [false, true] {
             let observed = read(&mut actual)?;
             fields(&observed, 4)?;
             let Some(Json::Array(calls)) = observed.get("completed") else {
@@ -118,7 +118,7 @@ fn check_case(
                 u8::try_from(number(parts.get(2))?)?;
             }
             if observed.get("script") != plan.get("script")
-                || observed.get("concurrent") != Some(&Json::Bool(concurrent))
+                || observed.get("reversePoll") != Some(&Json::Bool(reverse_poll))
                 || observed.get("probes") != plan.get("probes")
             {
                 return Err("missing, duplicate, changed or accepted borrowed-scope probe".into());
@@ -162,11 +162,11 @@ fn controls(plan: &Json) -> Result<()> {
     let records = source_json(plan.get("probes").ok_or("missing control probes")?)?;
     let header = "{\"name\":7,\"scripts\":1}\n";
     let expected = format!("{header}{{\"script\":0,\"probes\":{records}}}\n");
-    let sequential =
-        format!("{{\"script\":0,\"concurrent\":false,\"completed\":[],\"probes\":{records}}}\n");
-    let concurrent =
-        format!("{{\"script\":0,\"concurrent\":true,\"completed\":[],\"probes\":{records}}}\n");
-    let actual = format!("{header}{sequential}{concurrent}");
+    let forward =
+        format!("{{\"script\":0,\"reversePoll\":false,\"completed\":[],\"probes\":{records}}}\n");
+    let reversed =
+        format!("{{\"script\":0,\"reversePoll\":true,\"completed\":[],\"probes\":{records}}}\n");
+    let actual = format!("{header}{forward}{reversed}");
     let case = json::parse(&format!(
         r#"{{"name":7,"scripts":1,"probes":{}}}"#,
         2 * probes(plan)?.len()
@@ -175,14 +175,14 @@ fn controls(plan: &Json) -> Result<()> {
     for changed in [
         actual.replacen("\"accepted\":false", "\"accepted\":true", 1),
         format!(
-            "{header}{{\"script\":0,\"concurrent\":false,\"completed\":[],\"probes\":{missing}}}\n{concurrent}"
+            "{header}{{\"script\":0,\"reversePoll\":false,\"completed\":[],\"probes\":{missing}}}\n{reversed}"
         ),
         format!(
-            "{header}{{\"script\":0,\"concurrent\":false,\"completed\":[],\"probes\":{duplicate}}}\n{concurrent}"
+            "{header}{{\"script\":0,\"reversePoll\":false,\"completed\":[],\"probes\":{duplicate}}}\n{reversed}"
         ),
-        format!("{header}{concurrent}"),
-        format!("{header}{sequential}{sequential}{concurrent}"),
-        format!("{header}{concurrent}{sequential}"),
+        format!("{header}{reversed}"),
+        format!("{header}{forward}{forward}{reversed}"),
+        format!("{header}{reversed}{forward}"),
         actual.replacen("\"name\":7", "\"name\":8", 1),
         format!("{actual}{{}}\n"),
         format!("{header}{{"),
@@ -274,7 +274,7 @@ mod tests {
         let plan = json::parse(r#"{"script":2,"probes":[{"group":[1,2],"part":1,"occurrence":3,"actor":1,"role":3,"label":2,"receive":false,"accepted":false}]}"#).unwrap();
         controls(&plan).unwrap();
         let expected = "{\"name\":7,\"scripts\":1}\n{\"script\":0,\"probes\":[]}\n";
-        let actual = "{\"name\":7,\"scripts\":1}\n{\"script\":0,\"concurrent\":false,\"completed\":[],\"probes\":[]}\n{\"script\":0,\"concurrent\":true,\"completed\":[],\"probes\":[]}\n";
+        let actual = "{\"name\":7,\"scripts\":1}\n{\"script\":0,\"reversePoll\":false,\"completed\":[],\"probes\":[]}\n{\"script\":0,\"reversePoll\":true,\"completed\":[],\"probes\":[]}\n";
         let case = json::parse(r#"{"name":7,"scripts":1,"probes":0}"#).unwrap();
         assert_eq!(
             check_case(Cursor::new(expected), Cursor::new(actual), &case)

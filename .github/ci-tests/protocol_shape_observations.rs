@@ -301,6 +301,16 @@ async fn actual_parallel_receives_can_both_wait_and_then_complete() {
     assert_eq!(observed.completed.borrow().len(), 2);
 }
 
+struct PendingObservation<'a> {
+    observed: &'a PendingCalls,
+    caller: ObservedCall,
+}
+impl Drop for PendingObservation<'_> {
+    fn drop(&mut self) {
+        self.observed.calls.borrow_mut().remove(&self.caller);
+    }
+}
+
 async fn record_pending<F, T>(
     future: F,
     observed: &PendingCalls,
@@ -309,6 +319,7 @@ async fn record_pending<F, T>(
 where
     F: core::future::Future<Output = Result<T, hibana::EndpointError>>,
 {
+    let _observation = PendingObservation { observed, caller };
     tokio::pin!(future);
     core::future::poll_fn(|cx| match future.as_mut().poll(cx) {
         core::task::Poll::Pending => {
@@ -323,7 +334,6 @@ where
             core::task::Poll::Pending
         }
         core::task::Poll::Ready(output) => {
-            observed.calls.borrow_mut().remove(&caller);
             if output.is_ok()
                 && let ObservedCall::Message(actor, role, label, receive) = caller
             {

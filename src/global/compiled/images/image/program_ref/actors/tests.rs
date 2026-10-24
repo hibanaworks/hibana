@@ -8,7 +8,7 @@ use crate::global::{
 };
 
 #[test]
-fn a_shared_route_preview_requires_the_entire_borrow_to_be_inside_one_arm() {
+fn a_shared_route_preview_is_visible_inside_an_arm_or_around_the_whole_choice() {
     use crate::{g, global::compiled::lowering::CompiledProgramImage};
     type Step = g::Send<0, 1, g::Msg<1, ()>>;
     type Steps = g::Route<g::Seq<g::Route<Step, Step>, Step>, Step>;
@@ -29,31 +29,21 @@ fn a_shared_route_preview_requires_the_entire_borrow_to_be_inside_one_arm() {
     ] {
         for start in 0..=5 {
             for end in 0..=5 {
-                let expected = if start >= end {
-                    None
-                } else if left <= start && end <= split {
-                    Some(0)
-                } else if split <= start && end <= right {
-                    Some(1)
-                } else {
-                    None
-                };
+                let visible = start < end
+                    && end <= 4
+                    && ((left <= start && end <= split)
+                        || (split <= start && end <= right)
+                        || (start <= left && right <= end));
                 assert_eq!(
-                    IMAGE.source_route_arm_for_range(scope, start, end),
-                    expected
+                    IMAGE.source_route_visible_from_range(scope, start, end),
+                    visible
                 );
             }
         }
-        assert_eq!(IMAGE.source_route_arm_for_range(scope, 0, usize::MAX), None);
+        assert!(!IMAGE.source_route_visible_from_range(scope, 0, usize::MAX));
     }
-    assert_eq!(
-        IMAGE.source_route_arm_for_range(ScopeId::none(), 0, 1),
-        None
-    );
-    assert_eq!(
-        IMAGE.source_route_arm_for_range(ScopeId::parallel(0), 0, 1),
-        None
-    );
+    assert!(!IMAGE.source_route_visible_from_range(ScopeId::none(), 0, 1));
+    assert!(!IMAGE.source_route_visible_from_range(ScopeId::parallel(0), 0, 1));
 }
 
 #[test]

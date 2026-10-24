@@ -113,40 +113,51 @@ where
             .public_route_branch
             .as_ref()
             .and_then(|branch| from_branch(&branch.branch_meta));
-        if self.region.is_whole() {
+        if self.region.is_whole() && self.views.as_slice().len() == 1 {
             return selected;
         }
         let bounds = self.region.bounds();
-        if self
-            .context
-            .program
-            .source_route_arm_for_range(scope, bounds.start, bounds.end)
-            .is_none()
+        if !self.region.is_whole()
+            && !self.context.program.source_route_visible_from_range(
+                scope,
+                bounds.start,
+                bounds.end,
+            )
         {
             return selected;
         }
-        for operation in self.operations.iter().flatten() {
-            if core::ptr::eq(operation.state.get(), self.operation) {
-                continue;
-            }
-            // SAFETY: the common actor borrow excludes mutation of the other
-            // slots. The current mutable operation was excluded above.
-            let operation = unsafe { &*operation.state.get() };
-            if matches!(
-                operation.public_active_op,
-                super::PublicActiveOp::Idle | super::PublicActiveOp::Poisoned
-            ) {
-                continue;
-            }
-            if let Some(arm) = operation
-                .public_route_branch
-                .as_ref()
-                .and_then(|branch| from_branch(&branch.branch_meta))
+        // A received choice is known to the actor across its held views.
+        // Reading parked previews leaves every communication step uncommitted.
+        for view in self.views.as_slice() {
+            let current_view = core::ptr::eq(&view.public_header, self.public_header);
+            if (current_view && self.region.is_whole())
+                || (!current_view && view.public_header.generation() == 0)
             {
-                if selected.is_some_and(|selected| selected != arm) {
-                    crate::invariant();
+                continue;
+            }
+            for operation in view.operations() {
+                if core::ptr::eq(operation.state.get(), self.operation) {
+                    continue;
                 }
-                selected = Some(arm);
+                // SAFETY: all views belong to this actor. Its progress borrow
+                // excludes other kernels; the mutable current slot is excluded.
+                let operation = unsafe { &*operation.state.get() };
+                if matches!(
+                    operation.public_active_op,
+                    super::PublicActiveOp::Idle | super::PublicActiveOp::Poisoned
+                ) {
+                    continue;
+                }
+                if let Some(arm) = operation
+                    .public_route_branch
+                    .as_ref()
+                    .and_then(|branch| from_branch(&branch.branch_meta))
+                {
+                    if selected.is_some_and(|selected| selected != arm) {
+                        crate::invariant();
+                    }
+                    selected = Some(arm);
+                }
             }
         }
         selected

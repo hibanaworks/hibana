@@ -11,6 +11,271 @@ type Ack = g::Msg<233, ()>;
 type Tick = g::Msg<234, ()>;
 
 #[test]
+fn a_resolved_choice_preview_is_shared_by_the_holders_parallel_views() {
+    use hibana::{
+        Endpoint, EndpointError,
+        runtime::resolver::{DecisionArm, ResolverRef},
+    };
+    type Loan<'r> = g::Msg<0, Endpoint<'r, 3>>;
+    type LeftData = g::Msg<1, ()>;
+    type LeftNotice = g::Msg<2, ()>;
+    type RightData = g::Msg<3, ()>;
+    type RightNotice = g::Msg<4, ()>;
+    type Returned<'r> = g::Msg<5, Endpoint<'r, 3>>;
+
+    let global = g::seq(
+        g::send::<0, 1, Loan<'_>>(),
+        g::seq(
+            g::route(
+                g::par(g::send::<0, 3, LeftData>(), g::send::<0, 1, LeftNotice>()),
+                g::par(g::send::<0, 3, RightData>(), g::send::<0, 1, RightNotice>()),
+            )
+            .resolve::<0>(),
+            g::send::<1, 0, Returned<'_>>(),
+        ),
+    );
+    assert_eq!(g::diagnose(&global), None);
+    let p0 = project::<0>(&global);
+    let p1 = project::<1>(&global);
+    let p3 = project::<3>(&global);
+
+    for arm in [DecisionArm::Left, DecisionArm::Right] {
+        let network = common::TestTransport::new();
+        let [mut slab0, mut slab1] = [[0; 32 * 1024]; 2];
+        let mut s0 = SessionKitStorage::uninit();
+        let mut s1 = SessionKitStorage::uninit();
+        let rv0 = s0.init().rendezvous(&mut slab0, network.clone()).unwrap();
+        let rv1 = s1.init().rendezvous(&mut slab1, network.clone()).unwrap();
+        rv0.set_resolver(&p0, ResolverRef::<0>::decision_state(&arm, |arm| Ok(*arm)))
+            .unwrap();
+        let sid = SessionId::new(9400);
+        let mut owner = rv0.enter(sid, &p0).unwrap();
+        let db = rv0.enter(sid, &p3).unwrap();
+        let mut worker = rv1.enter(sid, &p1).unwrap();
+
+        let owner_run = async {
+            owner.send::<Loan<'_>>(db).await?;
+            let label = owner.offer().await?.label();
+            {
+                let [mut data, mut notice] = owner.par()?;
+                match label {
+                    1 | 2 => {
+                        tokio::try_join!(
+                            data.send::<LeftData>(&()),
+                            notice.send::<LeftNotice>(&())
+                        )?;
+                    }
+                    3 | 4 => {
+                        tokio::try_join!(
+                            data.send::<RightData>(&()),
+                            notice.send::<RightNotice>(&())
+                        )?;
+                    }
+                    _ => panic!("unexpected controller label"),
+                }
+            }
+            let _returned = owner.recv::<Returned<'_>>().await?;
+            Ok::<_, EndpointError>(())
+        };
+        let worker_run = async {
+            let mut db = worker.recv::<Loan<'_>>().await?;
+            let label = tokio::select! {
+                result = async {
+                    let branch = worker.offer().await?;
+                    let label = branch.label();
+                    drop(branch);
+                    Ok::<_, EndpointError>(label)
+                } => result?,
+                result = async {
+                    let branch = db.offer().await?;
+                    let label = branch.label();
+                    drop(branch);
+                    Ok::<_, EndpointError>(label)
+                } => result?,
+            };
+            {
+                let [mut notice] = worker.par()?;
+                let [mut data] = db.par()?;
+                match label {
+                    1 | 2 => {
+                        tokio::try_join!(data.recv::<LeftData>(), notice.recv::<LeftNotice>())?;
+                    }
+                    3 | 4 => {
+                        tokio::try_join!(data.recv::<RightData>(), notice.recv::<RightNotice>())?;
+                    }
+                    _ => panic!("unexpected received label"),
+                }
+            }
+            worker.send::<Returned<'_>>(db).await?;
+            Ok::<_, EndpointError>(())
+        };
+        tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .start_paused(true)
+            .build()
+            .unwrap()
+            .block_on(async {
+                tokio::time::timeout(core::time::Duration::from_secs(1), async {
+                    tokio::try_join!(owner_run, worker_run)
+                })
+                .await
+                .expect("parallel views stalled")
+                .unwrap();
+            });
+        assert!(network.queue_is_empty());
+    }
+}
+
+#[test]
+fn a_borrow_containing_a_choice_uses_its_other_views_preview() {
+    use hibana::{
+        Endpoint, EndpointError,
+        runtime::resolver::{DecisionArm, ResolverRef},
+    };
+    type Loan<'r> = g::Msg<0, Endpoint<'r, 3>>;
+    type LeftData = g::Msg<1, ()>;
+    type LeftNotice = g::Msg<2, ()>;
+    type RightData = g::Msg<3, ()>;
+    type RightNotice = g::Msg<4, ()>;
+    type Returned<'r> = g::Msg<5, Endpoint<'r, 3>>;
+    type Tick = g::Msg<6, ()>;
+    type Ack = g::Msg<7, ()>;
+
+    let global = g::par(
+        g::seq(
+            g::send::<0, 1, Loan<'_>>(),
+            g::seq(
+                g::route(
+                    g::par(g::send::<0, 3, LeftData>(), g::send::<0, 1, LeftNotice>()),
+                    g::par(g::send::<0, 3, RightData>(), g::send::<0, 1, RightNotice>()),
+                )
+                .resolve::<0>(),
+                g::send::<1, 0, Returned<'_>>(),
+            ),
+        ),
+        g::seq(g::send::<2, 0, Tick>(), g::send::<0, 2, Ack>()),
+    );
+    assert_eq!(g::diagnose(&global), None);
+    let p0 = project::<0>(&global);
+    let p1 = project::<1>(&global);
+    let p2 = project::<2>(&global);
+    let p3 = project::<3>(&global);
+    for arm in [DecisionArm::Left, DecisionArm::Right] {
+        let network = common::TestTransport::new();
+        let [mut slab0, mut slab1, mut slab2] = [[0; 32 * 1024]; 3];
+        let mut s0 = SessionKitStorage::uninit();
+        let mut s1 = SessionKitStorage::uninit();
+        let mut s2 = SessionKitStorage::uninit();
+        let rv0 = s0.init().rendezvous(&mut slab0, network.clone()).unwrap();
+        let rv1 = s1.init().rendezvous(&mut slab1, network.clone()).unwrap();
+        let rv2 = s2.init().rendezvous(&mut slab2, network.clone()).unwrap();
+        rv0.set_resolver(&p0, ResolverRef::<0>::decision_state(&arm, |arm| Ok(*arm)))
+            .unwrap();
+        let sid = SessionId::new(9401);
+        let mut owner = rv0.enter(sid, &p0).unwrap();
+        let db = rv0.enter(sid, &p3).unwrap();
+        let mut worker = rv1.enter(sid, &p1).unwrap();
+        let mut peer = rv2.enter(sid, &p2).unwrap();
+
+        let owner_run = async {
+            let [mut work, mut ticks] = owner.par().expect("owner's outer parallel parts");
+            tokio::try_join!(
+                async {
+                    work.send::<Loan<'_>>(db).await?;
+                    let label = work.offer().await?.label();
+                    {
+                        let [mut data, mut notice] =
+                            work.par().expect("controller's selected parallel parts");
+                        match label {
+                            1 | 2 => {
+                                tokio::try_join!(
+                                    data.send::<LeftData>(&()),
+                                    notice.send::<LeftNotice>(&())
+                                )?;
+                            }
+                            3 | 4 => {
+                                tokio::try_join!(
+                                    data.send::<RightData>(&()),
+                                    notice.send::<RightNotice>(&())
+                                )?;
+                            }
+                            _ => panic!("unexpected controller label"),
+                        }
+                    }
+                    let _returned = work.recv::<Returned<'_>>().await?;
+                    Ok::<_, EndpointError>(())
+                },
+                async {
+                    ticks.recv::<Tick>().await?;
+                    ticks.send::<Ack>(&()).await?;
+                    Ok::<_, EndpointError>(())
+                }
+            )?;
+            Ok::<_, EndpointError>(())
+        };
+        let worker_run = async {
+            let [mut work] = worker.par().expect("worker's outer parallel part");
+            let mut db = work.recv::<Loan<'_>>().await?;
+            {
+                let [mut db_work] = db.par().expect("resource's outer parallel part");
+                let label = tokio::select! {
+                    result = async {
+                        let branch = work.offer().await?;
+                        let label = branch.label();
+                        drop(branch);
+                        Ok::<_, EndpointError>(label)
+                    } => result?,
+                    result = async {
+                        let branch = db_work.offer().await?;
+                        let label = branch.label();
+                        drop(branch);
+                        Ok::<_, EndpointError>(label)
+                    } => result?,
+                };
+                {
+                    let [mut notice] = work.par().expect("worker's selected parallel part");
+                    let [mut data] = db_work.par().expect("resource's selected parallel part");
+                    match label {
+                        1 | 2 => {
+                            tokio::try_join!(data.recv::<LeftData>(), notice.recv::<LeftNotice>())?;
+                        }
+                        3 | 4 => {
+                            tokio::try_join!(
+                                data.recv::<RightData>(),
+                                notice.recv::<RightNotice>()
+                            )?;
+                        }
+                        _ => panic!("unexpected received label"),
+                    }
+                }
+            }
+            work.send::<Returned<'_>>(db).await?;
+            Ok::<_, EndpointError>(())
+        };
+        let peer_run = async {
+            let [mut ticks] = peer.par().expect("peer's independent parallel part");
+            ticks.send::<Tick>(&()).await?;
+            ticks.recv::<Ack>().await?;
+            Ok::<_, EndpointError>(())
+        };
+        let results = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .start_paused(true)
+            .build()
+            .unwrap()
+            .block_on(async {
+                tokio::time::timeout(core::time::Duration::from_secs(1), async {
+                    tokio::join!(owner_run, worker_run, peer_run)
+                })
+                .await
+                .expect("borrowed parallel views stalled")
+            });
+        assert!(matches!(&results, (Ok(()), Ok(()), Ok(()))), "{results:?}");
+        assert!(network.queue_is_empty());
+    }
+}
+
+#[test]
 fn a_delegated_parallel_prefix_repeats_with_its_sequential_tail() {
     use hibana::Endpoint;
     type Loan<'r> = g::Msg<0, Endpoint<'r, 3>>;
