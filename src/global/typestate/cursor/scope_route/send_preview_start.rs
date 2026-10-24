@@ -2,6 +2,10 @@ use super::super::{EventCursor, ScopeId, SendPreviewError};
 use super::EventAdmissionError;
 use crate::global::typestate::{EventArmView, EventCommitMeta, MessageSelector};
 
+#[cfg(all(test, hibana_repo_tests))]
+#[path = "send_preview_start_tests.rs"]
+mod tests;
+
 impl EventCursor {
     #[inline]
     fn send_preview_outbound_event_at(&self, idx: usize) -> Option<EventCommitMeta> {
@@ -38,7 +42,7 @@ impl EventCursor {
         {
             return Err(SendPreviewError::OutOfOrder);
         }
-        let mut other_view_pending = false;
+        let mut blocked = None;
         for idx in self.outbound_candidates(selector, source.unwrap_or(0..usize::MAX), indexed) {
             let event = crate::invariant_some(self.send_preview_outbound_event_at(idx));
             let preview_conflict = self.machine().event_conflict_for_index(idx);
@@ -52,12 +56,17 @@ impl EventCursor {
             };
             match self.event_enabled(idx, event, &mut arms) {
                 Ok(_) => return Ok(Some(idx)),
-                Err(EventAdmissionError::OtherViewPending) => other_view_pending = true,
+                Err(EventAdmissionError::OtherViewPending) => {
+                    blocked = Some(SendPreviewError::OtherViewPending);
+                }
+                Err(EventAdmissionError::PredecessorPending) if blocked.is_none() => {
+                    blocked = Some(SendPreviewError::OutOfOrder);
+                }
                 Err(EventAdmissionError::Invariant | EventAdmissionError::PredecessorPending) => {}
             }
         }
-        if other_view_pending {
-            Err(SendPreviewError::OtherViewPending)
+        if let Some(error) = blocked {
+            Err(error)
         } else {
             Ok(None)
         }

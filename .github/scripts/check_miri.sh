@@ -873,6 +873,11 @@ run_miri_test \
   -- --exact
 
 run_miri_test \
+  send-prefix-before-resolver \
+  -p hibana --lib \
+  endpoint::kernel::core::send_preview::tests::
+
+run_miri_test \
   endpoint-delegation-projection \
   --manifest-path proofs/checks/projection/endpoint-delegation/compiler/Cargo.toml \
   --locked --lib

@@ -1036,7 +1036,7 @@ async fn assert_controller_send_blocked<const MSG: u8>(
     };
     let rendered = format!("{err:?}");
     assert!(
-        rendered.contains("LabelMismatch") || rendered.contains("PhaseInvariant"),
+        rendered.contains("LabelMismatch") || rendered.contains("OutOfOrder"),
         "controller send label {MSG} must remain blocked by roll/par progress: {rendered}"
     );
 }
@@ -1048,7 +1048,7 @@ async fn assert_worker_send_blocked<const MSG: u8>(worker: &mut hibana::Endpoint
     };
     let rendered = format!("{err:?}");
     assert!(
-        rendered.contains("LabelMismatch") || rendered.contains("PhaseInvariant"),
+        rendered.contains("LabelMismatch") || rendered.contains("OutOfOrder"),
         "worker send label {MSG} must remain blocked by roll progress: {rendered}"
     );
 }

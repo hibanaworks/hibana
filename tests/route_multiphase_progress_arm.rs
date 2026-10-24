@@ -50,7 +50,7 @@ where
         .expect_err("post-route send must wait for the selected route path");
     let rendered = format!("{err:?}");
     assert!(
-        rendered.contains("LabelMismatch") || rendered.contains("PhaseInvariant"),
+        rendered.contains("LabelMismatch") || rendered.contains("OutOfOrder"),
         "post-route send must be rejected by selected path progress: {rendered}"
     );
 }

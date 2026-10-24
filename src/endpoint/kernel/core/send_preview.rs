@@ -5,6 +5,10 @@ use super::{
     SendPreviewError, SendResult, StateIndex, Transport, state_index_to_usize,
 };
 
+#[cfg(all(test, hibana_repo_tests))]
+#[path = "send_preview_tests.rs"]
+mod tests;
+
 impl<'r, T> OperationKernel<'_, 'r, T>
 where
     T: Transport + 'r,

@@ -51,7 +51,7 @@ fn alternating_route_parallel_program<const ROLE: u8>() -> RoleProgram<ROLE> {
 }
 
 fn expected_session_fault(rendered: &str) -> &'static str {
-    if rendered.contains("LabelMismatch") {
+    if rendered.contains("LabelMismatch") || rendered.contains("OutOfOrder") {
         "ProtocolViolation"
     } else if rendered.contains("PhaseInvariant") {
         "ProgressInvariantViolated"
