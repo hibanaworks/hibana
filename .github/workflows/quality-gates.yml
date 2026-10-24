@@ -170,6 +170,11 @@ jobs:
           "${ELAN_TMP}/elan-init" -y --default-toolchain none
           rm -rf "${ELAN_TMP}"
           echo "${HOME}/.elan/bin" >> "${GITHUB_PATH}"
+      - name: Reuse compiled Lean models and the shape checker
+        uses: actions/cache@v6
+        with:
+          path: proofs/lean/.lake/build
+          key: protocol-shapes-lean-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('proofs/lean/lean-toolchain', 'proofs/lean/lakefile.toml', 'proofs/lean/lake-manifest.json', 'proofs/lean/**/*.lean', '.github/ci-tests/*.lean', '.github/scripts/check_protocol_shapes.sh', '.github/scripts/lib/lean_audit*', '.github/ci-tests/lean_*') }}
       - name: Check every assigned generated protocol
         run: |
           set -euo pipefail
