@@ -40,11 +40,6 @@ impl EventCursor {
         self.machine().route_scope_rows(scope_id)
     }
 
-    #[inline(always)]
-    pub(crate) fn route_scope_rows_at(&self, idx: usize) -> Option<RouteScopeRows> {
-        self.route_scope_rows(self.node_scope_id_at(idx))
-    }
-
     pub(crate) fn enclosing_route_scope_rows_at(&self, idx: usize) -> Option<RouteScopeRows> {
         if matches!(self.action_at(idx), LocalAction::Terminate) {
             return None;

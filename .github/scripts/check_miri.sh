@@ -861,6 +861,18 @@ run_miri_test \
   global::compiled::images::image::program_ref::tests::program_image_
 
 run_miri_test \
+  local-preview-in-selected-parallel-arm \
+  -p hibana --lib \
+  endpoint::parallel::tests::choice::a_local_preview_keeps_its_event_scope_inside_a_selected_parallel_arm \
+  -- --exact
+
+run_miri_test \
+  resource-preview-from-current-owner \
+  -p hibana --lib \
+  endpoint::parallel::tests::choice::a_resource_view_can_preview_a_message_from_its_current_owner \
+  -- --exact
+
+run_miri_test \
   endpoint-delegation-projection \
   --manifest-path proofs/checks/projection/endpoint-delegation/compiler/Cargo.toml \
   --locked --lib

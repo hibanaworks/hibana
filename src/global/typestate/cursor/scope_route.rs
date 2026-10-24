@@ -620,13 +620,17 @@ impl EventCursor {
         mut selected_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>,
         mut preview_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>,
     ) -> Result<CurrentRouteArmAuthorization, CursorInvariantError> {
-        let Some(region) = self.route_scope_rows_at(self.index()) else {
+        let Some(scope) =
+            self.route_scope_for_offer_node(self.node_scope_id_at(self.index()), self.index())
+        else {
             return Ok(CurrentRouteArmAuthorization::NotAuthorized);
         };
-        let scope = region.scope();
+        let region = self
+            .route_scope_rows(scope)
+            .ok_or(CursorInvariantError::INVARIANT)?;
         let is_controller = self.contains_route_controller(scope)
             && self.machine().route_controller_role(scope) == role;
-        let Some(current_arm) = self.node_route_arm_at(self.index()) else {
+        let Some(current_arm) = self.route_arm_for_index(scope, self.index()) else {
             return Ok(CurrentRouteArmAuthorization::NotAuthorized);
         };
         if self.index() == region.start() && is_controller {

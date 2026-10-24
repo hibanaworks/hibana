@@ -159,7 +159,9 @@ where
         }
 
         if route_token.is_resolver() {
-            if !branch_route_fresh {
+            // Another independent fragment may already have committed this
+            // preview's choice. It must have selected the same arm.
+            if !branch_route_fresh && self.selected_arm_for_scope(scope_id) != Some(selected_arm) {
                 crate::invariant();
             }
             if self

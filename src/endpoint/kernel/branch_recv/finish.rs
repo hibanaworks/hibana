@@ -51,17 +51,14 @@ where
                 }
                 (meta.into(), branch.offered_frame.is_none().then_some(meta))
             }
-            BranchKind::LocalAction => (
-                crate::global::typestate::EventCommitMeta::new(
-                    branch.branch_meta.eff_index,
-                    branch.branch_meta.label,
-                    branch.branch_meta.origin,
-                    branch.branch_meta.scope_id,
-                    Some(branch.branch_meta.selected_arm),
-                    branch.branch_meta.lane_wire,
-                ),
-                None,
-            ),
+            BranchKind::LocalAction => {
+                let meta = self
+                    .progress
+                    .cursor
+                    .try_local_meta_at(index)
+                    .ok_or_else(branch_recv_phase_invariant)?;
+                (meta.into(), None)
+            }
             BranchKind::TerminalArm => return Poll::Ready(Ok(None)),
             BranchKind::ArmSend => return Poll::Ready(Err(branch_recv_phase_invariant())),
         };
@@ -310,20 +307,17 @@ where
     ) -> RecvResult<RecvCommitPlan<'r>> {
         let route_rows = SelectedRouteCommitRows::from_seed(route_seed_rows)?;
         let kind = publish_branch.kind;
-        let event_commit = crate::global::typestate::EventCommitMeta::new(
-            publish_branch.eff_index,
-            publish_branch.label,
-            publish_branch.origin,
-            publish_branch.scope_id,
-            Some(publish_branch.selected_arm),
-            publish_branch.lane_wire,
-        );
         let cursor_index = publish_branch.cursor_index;
-        let lane_wire = event_commit.lane;
-        let branch_scope = event_commit.scope;
+        let lane_wire = publish_branch.lane_wire;
         let delta = match kind {
             BranchKind::LocalAction => {
                 let idx = state_index_to_usize(cursor_index);
+                let local = self
+                    .progress
+                    .cursor
+                    .try_local_meta_at(idx)
+                    .ok_or_else(branch_recv_phase_invariant)?;
+                let event_commit: crate::global::typestate::EventCommitMeta = local.into();
                 let enabled = self
                     .recv_event_enabled(idx, event_commit)
                     .map_err(|_| RecvError::PhaseInvariant)?;
@@ -331,7 +325,7 @@ where
                     event_commit.eff_index,
                     event_commit.label,
                     event_commit.origin,
-                    CommitRow::new(branch_scope, event_commit.route_arm, lane_wire),
+                    CommitRow::new(event_commit.scope, event_commit.route_arm, lane_wire),
                     route_rows.finish_for_lane(lane_wire)?,
                     enabled.cursor_after(),
                     enabled.progress_step(),

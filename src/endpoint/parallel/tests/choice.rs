@@ -2,6 +2,75 @@ use super::*;
 use core::{future::Future, task::Poll};
 
 #[test]
+fn a_local_preview_keeps_its_event_scope_inside_a_selected_parallel_arm() {
+    use crate::runtime::resolver::{DecisionArm, ResolverRef};
+
+    type Left = g::Msg<192, ()>;
+    type Local = g::Msg<193, ()>;
+    type Notice = g::Msg<194, u32>;
+    let global = g::route(
+        g::send::<0, 1, Left>(),
+        g::par(g::send::<0, 0, Local>(), g::send::<0, 1, Notice>()),
+    )
+    .resolve::<191>();
+    let sender_program = project::<0>(&global);
+    let receiver_program = project::<1>(&global);
+    let network = TestTransport::new();
+    let mut sender_slab = [0; 32 * 1024];
+    let mut receiver_slab = [0; 32 * 1024];
+    let mut sender_storage = SessionKitStorage::uninit();
+    let mut receiver_storage = SessionKitStorage::uninit();
+    let sender_runtime = sender_storage
+        .init()
+        .rendezvous(&mut sender_slab, network.clone())
+        .unwrap();
+    let receiver_runtime = receiver_storage
+        .init()
+        .rendezvous(&mut receiver_slab, network.clone())
+        .unwrap();
+    sender_runtime
+        .set_resolver(
+            &sender_program,
+            ResolverRef::<191>::decision_state(&(), |_| Ok(DecisionArm::Right)),
+        )
+        .unwrap();
+    let session = SessionId::new(1698);
+    let mut sender = sender_runtime.enter(session, &sender_program).unwrap();
+    let mut receiver = receiver_runtime.enter(session, &receiver_program).unwrap();
+    tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .start_paused(true)
+        .build()
+        .unwrap()
+        .block_on(async {
+            tokio::time::timeout(core::time::Duration::from_secs(1), async {
+                tokio::join!(
+                    async {
+                        let branch = sender.offer().await.unwrap();
+                        assert_eq!(branch.label(), 193);
+                        drop(branch);
+                        let [mut local, mut outgoing] = sender.par().unwrap();
+                        let (sent, local) =
+                            tokio::join!(outgoing.send::<Notice>(&73), local.recv::<Local>());
+                        local.unwrap();
+                        sent.unwrap();
+                    },
+                    async {
+                        let branch = receiver.offer().await.unwrap();
+                        assert_eq!(branch.label(), 194);
+                        drop(branch);
+                        let [mut incoming] = receiver.par().unwrap();
+                        assert_eq!(incoming.recv::<Notice>().await.unwrap(), 73);
+                    },
+                );
+            })
+            .await
+            .expect("the selected parallel arm stalled");
+        });
+    assert!(network.queue_is_empty());
+}
+
+#[test]
 fn a_pending_route_send_does_not_block_an_independent_receive() {
     type Left = g::Msg<181, u32>;
     type Right = g::Msg<182, u32>;
@@ -321,6 +390,66 @@ fn repeated_parallel_previews_use_the_current_resolver_choice() {
             })
             .await
             .expect("parallel borrows must use this visit's preview, not the previous choice");
+        });
+    assert!(network.queue_is_empty());
+}
+
+#[test]
+fn a_resource_view_can_preview_a_message_from_its_current_owner() {
+    use crate::runtime::resolver::{DecisionArm, ResolverRef};
+
+    type Loan<'r> = g::Msg<201, crate::Endpoint<'r, 3>>;
+    type Notice = g::Msg<202, ()>;
+    type Ping = g::Msg<203, ()>;
+    let global = g::route(
+        g::send::<0, 1, Loan<'_>>(),
+        g::par(g::send::<0, 3, Notice>(), g::send::<0, 1, Ping>()),
+    )
+    .resolve::<201>();
+    let owner_program = project::<0>(&global);
+    let worker_program = project::<1>(&global);
+    let resource_program = project::<3>(&global);
+    let network = TestTransport::new();
+    let mut owner_slab = [0; 32 * 1024];
+    let mut worker_slab = [0; 32 * 1024];
+    let mut owner_storage = SessionKitStorage::uninit();
+    let mut worker_storage = SessionKitStorage::uninit();
+    let owner_runtime = owner_storage
+        .init()
+        .rendezvous(&mut owner_slab, network.clone())
+        .unwrap();
+    let worker_runtime = worker_storage
+        .init()
+        .rendezvous(&mut worker_slab, network.clone())
+        .unwrap();
+    owner_runtime
+        .set_resolver(
+            &owner_program,
+            ResolverRef::<201>::decision_state(&(), |_| Ok(DecisionArm::Right)),
+        )
+        .unwrap();
+    let session = SessionId::new(1699);
+    let mut owner = owner_runtime.enter(session, &owner_program).unwrap();
+    let mut worker = worker_runtime.enter(session, &worker_program).unwrap();
+    let mut resource = owner_runtime.enter(session, &resource_program).unwrap();
+    tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .start_paused(true)
+        .build()
+        .unwrap()
+        .block_on(async {
+            tokio::time::timeout(core::time::Duration::from_secs(1), async {
+                owner.send::<Notice>(&()).await.unwrap();
+                let branch = resource.offer().await.unwrap();
+                assert_eq!(branch.label(), 202);
+                branch.recv::<Notice>().await.unwrap();
+                owner.send::<Ping>(&()).await.unwrap();
+                let branch = worker.offer().await.unwrap();
+                assert_eq!(branch.label(), 203);
+                branch.recv::<Ping>().await.unwrap();
+            })
+            .await
+            .expect("the resource view's selected receive stalled");
         });
     assert!(network.queue_is_empty());
 }

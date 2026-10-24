@@ -140,6 +140,20 @@ pub(crate) struct LocalMeta {
     pub(crate) lane: u8,
 }
 
+impl From<LocalMeta> for EventCommitMeta {
+    #[inline(always)]
+    fn from(meta: LocalMeta) -> Self {
+        Self::new(
+            meta.eff_index,
+            meta.label,
+            meta.origin,
+            meta.scope,
+            meta.route_arm,
+            meta.lane,
+        )
+    }
+}
+
 pub(crate) const fn state_index_to_usize(index: StateIndex) -> usize {
     index.as_usize()
 }
