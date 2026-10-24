@@ -21,7 +21,9 @@ elif [[ "${1:-}" == --syntax-depth ]]; then
     exit 2
   fi
   GENERATOR_ARGS=(--syntax-depth "$2" "$3" "$4")
-  OUTPUT="${ROOT_DIR}/target/protocol-shapes/syntax-depth-$2/range-$3-count-$4"
+  SYNTAX_OUTPUT="$(cargo +"${TOOLCHAIN:-stable}" run --quiet --locked --manifest-path "${ROOT_DIR}/.github/ci-tests/Cargo.toml" \
+    --bin protocol-shapes -- syntax-output "$2" "$3" "$4")"
+  OUTPUT="${ROOT_DIR}/target/protocol-shapes/${SYNTAX_OUTPUT}"
 else
   BUDGET="${1:-2}"
   SHARD="${2:-0}"
@@ -53,7 +55,7 @@ cargo +"${TOOLCHAIN:-stable}" run --locked --manifest-path "${ROOT_DIR}/.github/
   shasum -a 256 src/bin/diagnose.rs > diagnosis-source.sha256
 )
 /usr/bin/time -p -o "${OUTPUT}/diagnose.time" \
-  cargo +"${TOOLCHAIN:-stable}" run --manifest-path "${OUTPUT}/Cargo.toml" --bin diagnose \
+  cargo +"${TOOLCHAIN:-stable}" run --manifest-path "${OUTPUT}/Cargo.toml" --target-dir "${OUTPUT}/target" --bin diagnose \
     > "${OUTPUT}/diagnostics.tsv"
 cargo +"${TOOLCHAIN:-stable}" run --locked --manifest-path "${ROOT_DIR}/.github/ci-tests/Cargo.toml" \
   --bin protocol-shapes -- "${ROOT_DIR}" "${OUTPUT}" "${GENERATOR_ARGS[@]}" \
@@ -86,11 +88,11 @@ if [[ "$(cat "${OUTPUT}/inputs.json")" == '[]' ]]; then
 fi
 rm -rf "${OUTPUT}/observations" "${OUTPUT}/scope-observations"
 /usr/bin/time -p -o "${OUTPUT}/compile.time" \
-  cargo +"${TOOLCHAIN:-stable}" test --manifest-path "${OUTPUT}/Cargo.toml" --no-run
+  cargo +"${TOOLCHAIN:-stable}" test --manifest-path "${OUTPUT}/Cargo.toml" --target-dir "${OUTPUT}/target" --no-run
 (cd "${OUTPUT}" && shasum -a 256 Cargo.lock > dependencies.sha256)
 /usr/bin/time -p -o "${OUTPUT}/execute.time" \
   timeout --kill-after=10s "${HIBANA_PROTOCOL_SHAPE_TIMEOUT_SECONDS:-3600}s" \
-    cargo +"${TOOLCHAIN:-stable}" test --locked --manifest-path "${OUTPUT}/Cargo.toml" -- --test-threads=1
+    cargo +"${TOOLCHAIN:-stable}" test --locked --manifest-path "${OUTPUT}/Cargo.toml" --target-dir "${OUTPUT}/target" -- --test-threads=1
 GENERATED="${ROOT_DIR}/target/lean-proof/ProtocolShapesGenerated.lean"
 mkdir -p "$(dirname "${GENERATED}")"
 cat "${ROOT_DIR}/.github/ci-tests/endpoint_conformance.lean" \

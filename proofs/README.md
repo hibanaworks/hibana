@@ -95,6 +95,42 @@ a choice keeps only its selected arm's inputs. Records list the resolver IDs
 that select the right arm, without a fixed-width bitmask. Lean reconstructs
 this input set from the source and rejects missing or unexpected records.
 
+Seeded syntax sampling supports depths zero through eight. Build the tools,
+then run the search binary directly; each probe invokes Cargo itself:
+
+```sh
+bash .github/scripts/lib/resource_guard.sh \
+  cargo +stable build --locked --manifest-path .github/ci-tests/Cargo.toml \
+  --bin protocol-shapes --bin protocol-shape-controls
+bash .github/scripts/lib/resource_guard.sh \
+  target/debug/protocol-shapes syntax-fuzz "$PWD" 8 42 4 target/fuzz-example
+```
+
+Run this under the resource guard. The result separates executed protocols
+from expected compile failures. `samples.tsv` retains each full rank and seed.
+Large ranks use several directory components, and each generated package has
+its own target directory. A failed check stops sampling and retains its logs.
+For a recognized semantic mismatch, the tool tries removing subtrees and
+repeats the complete probe. It accepts a reduction only if the same mismatch
+remains, then verifies the final case again. `best.tsv` identifies the result;
+the trial files retain every attempted source, command and output.
+The result is minimal under subtree removal, rather than a claim about every
+equivalent protocol. Unknown tool failures retain the source for inspection.
+
+The scheduled CI job samples depths four through eight using the UTC date as
+its seed. It also checks two fixed mixed protocols and a shrinker control.
+That control runs real Endpoints, then deliberately removes a sequential
+dependency from the comparison model while keeping the probe inventory.
+It must reduce the resulting mismatch to two ordered messages.
+
+An existing failure can also be reduced explicitly:
+
+```sh
+bash .github/scripts/lib/resource_guard.sh \
+  target/debug/protocol-shapes syntax-shrink "$PWD" DEPTH RANK target/reduced \
+  -- target/debug/protocol-shapes syntax-probe
+```
+
 The interaction catalog constructs nested contexts around a resource exchange:
 
 ```sh

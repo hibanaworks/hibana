@@ -3,6 +3,8 @@ name: quality-gates
 on:
   push:
   pull_request:
+  schedule:
+    - cron: '0 18 * * *'
   workflow_dispatch:
     inputs:
       check:
@@ -10,7 +12,7 @@ on:
         type: choice
         required: true
         default: all
-        options: [all, final-form, protocol-shapes, protocol-syntax, protocol-interactions, protocol-representatives]
+        options: [all, final-form, protocol-shapes, protocol-syntax, protocol-interactions, protocol-representatives, protocol-fuzz]
       shape-budget:
         description: Generated constructor budget for protocol-shapes
         type: choice
@@ -27,7 +29,7 @@ on:
         type: choice
         required: true
         default: '0'
-        options: ['0', '1', '2', '3', '4', '5']
+        options: ['0', '1', '2', '3', '4', '5', '6', '7', '8']
       syntax-first:
         description: First raw syntax rank or source representative ordinal
         type: string
@@ -54,10 +56,20 @@ on:
         type: string
         required: true
         default: '32'
+      fuzz-seed:
+        description: Syntax sampling seed (empty uses the UTC date)
+        type: string
+        required: false
+        default: ''
+      fuzz-count:
+        description: Number of sampled syntax ranks per depth
+        type: string
+        required: true
+        default: '4'
 
 jobs:
   runtime-instructions:
-    if: github.event_name != 'workflow_dispatch' || (inputs.check != 'protocol-shapes' && inputs.check != 'protocol-syntax' && inputs.check != 'protocol-interactions' && inputs.check != 'protocol-representatives')
+    if: github.event_name != 'schedule' && (github.event_name != 'workflow_dispatch' || (inputs.check != 'protocol-shapes' && inputs.check != 'protocol-syntax' && inputs.check != 'protocol-interactions' && inputs.check != 'protocol-representatives' && inputs.check != 'protocol-fuzz'))
     runs-on: ubuntu-24.04
     env:
       TOOLCHAIN: stable
@@ -227,8 +239,73 @@ jobs:
             target/protocol-shapes/*/**/rejected/*.jsonl
             target/protocol-shapes/*/**/rejected/*.stderr
 
+  protocol-fuzz:
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.check == 'protocol-fuzz')
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        depth: ${{ fromJSON(github.event_name == 'schedule' && '[4,5,6,7,8]' || format('[{0}]', inputs.syntax-depth)) }}
+    env:
+      TOOLCHAIN: stable
+      CARGO_BUILD_JOBS: 1
+      CARGO_INCREMENTAL: 0
+      FUZZ_DEPTH: ${{ matrix.depth }}
+      FUZZ_SEED: ${{ inputs.fuzz-seed }}
+      FUZZ_COUNT: ${{ inputs.fuzz-count || '4' }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Rust and Lean
+        run: |
+          rustup toolchain install stable --profile minimal
+          ELAN_TMP="$(mktemp -d)"
+          curl --proto '=https' --tlsv1.2 -sSfL \
+            https://github.com/leanprover/elan/releases/download/v4.2.3/elan-aarch64-unknown-linux-gnu.tar.gz \
+            -o "${ELAN_TMP}/elan.tar.gz"
+          echo "cb69af0803b04157bc30201c29c12fca882bb3ad8b43476b8d2d3064810bc3ac  ${ELAN_TMP}/elan.tar.gz" | sha256sum --check -
+          tar -xzf "${ELAN_TMP}/elan.tar.gz" -C "${ELAN_TMP}"
+          "${ELAN_TMP}/elan-init" -y --default-toolchain none
+          rm -rf "${ELAN_TMP}"
+          echo "${HOME}/.elan/bin" >> "${GITHUB_PATH}"
+      - name: Sample syntax and retain failure reductions
+        run: |
+          bash .github/scripts/lib/resource_guard.sh bash -euo pipefail -c '
+            cargo +stable test --locked --manifest-path .github/ci-tests/Cargo.toml --bin protocol-shapes --bin protocol-shape-controls
+            cargo +stable build --locked --manifest-path .github/ci-tests/Cargo.toml --bin protocol-shapes --bin protocol-shape-controls
+            task_seed="${FUZZ_SEED:-$(date -u +%Y%m%d)}"
+            target/debug/protocol-shapes syntax-fuzz "$PWD" "$FUZZ_DEPTH" "$task_seed" "$FUZZ_COUNT" "target/protocol-fuzz-${FUZZ_DEPTH}-${task_seed}"
+            if [[ "$GITHUB_EVENT_NAME" != schedule || "$FUZZ_DEPTH" == 4 ]]; then
+              target/debug/protocol-shapes syntax-shrink "$PWD" 3 19011422329217 target/protocol-fuzz-shrink-control \
+                -- "$PWD/target/debug/protocol-shape-controls" --shrink-probe
+              target/debug/protocol-shape-controls --check-shrink target/protocol-fuzz-shrink-control
+              bash .github/scripts/check_protocol_shapes.sh --interactions 4 12439 1
+              bash .github/scripts/check_protocol_shapes.sh --interactions 5 111955 1
+            fi
+          '
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: protocol-fuzz-${{ matrix.depth }}
+          path: |
+            target/protocol-fuzz-*/**
+            target/protocol-shapes/*/**/catalog.json
+            target/protocol-shapes/*/**/case-identities.tsv
+            target/protocol-shapes/*/**/source.sha256
+            target/protocol-shapes/*/**/source.patch
+            target/protocol-shapes/*/**/compiler.txt
+            target/protocol-shapes/*/**/revision.txt
+            target/protocol-shapes/*/**/inventory.txt
+            target/protocol-shapes/*/**/oracle.log
+            target/protocol-shapes/*/**/observations/*.json
+            target/protocol-shapes/*/**/scope-observations/*.jsonl
+            target/protocol-shapes/*/**/scripts/*.jsonl
+            target/protocol-shapes/*/**/rejected/*.jsonl
+            target/protocol-shapes/*/**/rejected/*.stderr
+
   kani:
-    if: github.event_name != 'workflow_dispatch' || inputs.check == 'all'
+    if: github.event_name != 'schedule' && (github.event_name != 'workflow_dispatch' || inputs.check == 'all')
     runs-on: ubuntu-24.04
     env:
       TOOLCHAIN: stable
@@ -251,7 +328,7 @@ jobs:
           --lib --jobs 1 --output-format terse
 
   final-form:
-    if: github.event_name != 'workflow_dispatch' || (inputs.check != 'protocol-shapes' && inputs.check != 'protocol-syntax' && inputs.check != 'protocol-interactions' && inputs.check != 'protocol-representatives')
+    if: github.event_name != 'schedule' && (github.event_name != 'workflow_dispatch' || (inputs.check != 'protocol-shapes' && inputs.check != 'protocol-syntax' && inputs.check != 'protocol-interactions' && inputs.check != 'protocol-representatives' && inputs.check != 'protocol-fuzz'))
     runs-on: ubuntu-24.04-arm
     env:
       TOOLCHAIN: stable

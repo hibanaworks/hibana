@@ -518,8 +518,10 @@ def shapeCheckCompleted (source : Source) (name : Nat) (outputPath : String) : I
   pure (2 * count, calls)
 
 def main (args : List String) : IO UInt32 := do
-  let [inputPath, outputPath] := args
-    | throw (IO.userError "usage: protocol-shapes INPUT.json OBSERVATION_DIRECTORY")
+  let (inputPath, outputPath, weakenRoot) ← match args with
+    | [input, output] => pure (input, output, false)
+    | [input, output, "--mutant-root-seq-as-par"] => pure (input, output, true)
+    | _ => throw (IO.userError "usage: protocol-shapes INPUT.json OBSERVATION_DIRECTORY [--mutant-root-seq-as-par]")
   let inputs : Array ShapeInput ← shapeRead inputPath
   unless !inputs.isEmpty do throw (IO.userError "empty shape inventory")
   let expectedNames := inputs.toList.map (fun input => s!"{input.name}.json")
@@ -559,9 +561,16 @@ def main (args : List String) : IO UInt32 := do
       throw (IO.userError s!"shape {input.name}: incomplete probe inventory")
     for (word, attempts) in shapeAttemptGroups output.attempts.toList do
       let states := shapeStates source plans word
+      -- Mutation control: preserve the exact original probe inventory, then
+      -- compare with a source that omits only its outer sequential dependency.
+      let permits : ShapeAttempt → Bool := if weakenRoot then
+        let altered := match source with | .seq a b => .par a b | _ => source
+        let alternate := shapeStates altered ((shapePlans altered).map ShapePlan.of) word
+        fun attempt => shapePermits alternate attempt.choice attempt.label attempt.receive
+      else fun attempt => shapePermits states attempt.choice attempt.label attempt.receive
       for attempt in attempts do
         unless attempt.prefix == word do throw (IO.userError "inconsistent prefix group")
-        let permitted := shapePermits states attempt.choice attempt.label attempt.receive
+        let permitted := permits attempt
         checked := checked + 1
         if !attempt.prefix.isEmpty then continuations := continuations + 1
         if permitted != attempt.accepted then

@@ -40,10 +40,14 @@ mod probe_data;
 mod representatives;
 #[path = "protocol_shape_scope_probes.rs"]
 mod scope_probes;
+#[path = "protocol_shape_search.rs"]
+mod search;
 #[path = "protocol_shape_symmetry.rs"]
 mod symmetry;
 #[path = "protocol_shape_syntax.rs"]
 mod syntax;
+#[path = "protocol_shape_paths.rs"]
+mod syntax_paths;
 use population::{Count, Population};
 
 #[derive(Clone, Eq, PartialEq, Ord, PartialOrd)]
@@ -923,6 +927,65 @@ struct CaseSet {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = env::args().skip(1).collect::<Vec<_>>();
+    if args.first().is_some_and(|s| s == "syntax-output") {
+        if args.len() != 4 {
+            return Err("usage: protocol-shapes syntax-output DEPTH FIRST COUNT".into());
+        }
+        let depth = args[1].parse::<usize>()?;
+        let first = args[2].parse::<num_bigint::BigUint>()?;
+        let count = args[3].parse::<usize>()?;
+        syntax_matrix(depth, first.clone(), count)?;
+        println!("{}", syntax_paths::relative(depth, &first, count).display());
+        return Ok(());
+    }
+    if args.first().is_some_and(|s| s == "syntax-sample") {
+        if args.len() != 5 {
+            return Err("usage: protocol-shapes syntax-sample DEPTH SEED COUNT OUTPUT_TSV".into());
+        }
+        return search::sample(
+            args[1].parse()?,
+            args[2].parse()?,
+            args[3].parse()?,
+            std::path::Path::new(&args[4]),
+        );
+    }
+    if args.first().is_some_and(|s| s == "syntax-shrink") {
+        if args.len() < 7 || args[5] != "--" {
+            return Err("usage: protocol-shapes syntax-shrink REPOSITORY DEPTH RANK OUTPUT -- PROBE [ARG...]".into());
+        }
+        return search::shrink(
+            std::path::Path::new(&args[1]),
+            args[2].parse()?,
+            args[3].parse()?,
+            std::path::Path::new(&args[4]),
+            &args[6..],
+        );
+    }
+    if args.first().is_some_and(|s| s == "syntax-probe") {
+        if args.len() != 5 {
+            return Err("usage: protocol-shapes syntax-probe REPOSITORY DEPTH RANK OUTPUT".into());
+        }
+        std::process::exit(search::probe(
+            std::path::Path::new(&args[1]),
+            args[2].parse()?,
+            args[3].parse()?,
+            std::path::Path::new(&args[4]),
+        )?);
+    }
+    if args.first().is_some_and(|s| s == "syntax-fuzz") {
+        if args.len() != 6 {
+            return Err(
+                "usage: protocol-shapes syntax-fuzz REPOSITORY DEPTH SEED COUNT OUTPUT".into(),
+            );
+        }
+        return search::fuzz(
+            std::path::Path::new(&args[1]),
+            args[2].parse()?,
+            args[3].parse()?,
+            args[4].parse()?,
+            std::path::Path::new(&args[5]),
+        );
+    }
     if args.first().is_some_and(|s| s == "representative-counts") {
         if args.len() != 2 && args.len() != 3 {
             return Err("usage: protocol-shapes representative-counts DEPTH [RANKS_TSV]".into());
@@ -1046,8 +1109,8 @@ fn syntax_matrix(
     first: num_bigint::BigUint,
     count: usize,
 ) -> Result<String, Box<dyn std::error::Error>> {
-    if depth > 5 {
-        return Err("syntax depth must be at most five".into());
+    if depth > 8 {
+        return Err("syntax depth must be at most eight".into());
     }
     let grammar = syntax::Grammar::new(depth);
     range_matrix(first, count, grammar.count(depth).clone())
@@ -1208,15 +1271,15 @@ fn syntax_cases(
     first: num_bigint::BigUint,
     count: usize,
 ) -> Result<CaseSet, Box<dyn std::error::Error>> {
-    if depth > 5 || count == 0 {
-        return Err("syntax depth must be at most five and count must be positive".into());
+    if depth > 8 || count == 0 {
+        return Err("syntax depth must be at most eight and count must be positive".into());
     }
     let grammar = syntax::Grammar::new(depth);
     if &first + count > *grammar.count(depth) {
         return Err("syntax range exceeds its exact-height population".into());
     }
     let mut catalog = CaseSet {
-        namespace: format!("height-{depth}-{first}-count-{count}"),
+        namespace: format!("height-{depth}-count-{count}"),
         description: format!("syntax_depth={depth} first={first} count={count}"),
         total: grammar.count(depth).to_string(),
         cases: Vec::new(),

@@ -71,6 +71,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .arg(format!("+{}", args[1]))
             .args(["build", "--manifest-path"])
             .arg(root.join("Cargo.toml"))
+            .arg("--target-dir")
+            .arg(root.join("target"))
             .args(["--bin", &bin, "--message-format=json"])
             .output()?;
         fs::write(root.join(format!("{case}.jsonl")), &output.stdout)?;
