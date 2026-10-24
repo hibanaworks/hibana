@@ -61,6 +61,9 @@ candidate has a separate Rust test target, uses public projection, and runs
 generated localsides with actual parallel borrows. Known invalid candidates
 are built separately and must fail for their source-derived reason. Unknown
 projection rejections fail the check rather than count as expected failures.
+The source ownership check considers every possible initial owner, every choice
+arm and each transfer. A repetition must return the endpoint to its incoming
+owner. A parallel transfer must not overlap a use of the same resource.
 The output records the population, range and per-case identities. Completing
 one range does not establish coverage of the whole depth. Finite execution
 tests use two visits per repetition and both child orders per parallel node,

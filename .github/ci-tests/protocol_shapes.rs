@@ -20,6 +20,8 @@ fn write_if_changed(path: &std::path::Path, text: &str) -> std::io::Result<()> {
 mod delegated;
 #[path = "protocol_shape_localside.rs"]
 mod localside;
+#[path = "protocol_shape_ownership.rs"]
+mod ownership;
 #[path = "protocol_shape_population.rs"]
 mod population;
 #[path = "protocol_shape_scope_probes.rs"]
@@ -1140,20 +1142,11 @@ fn syntax_cases(
         }
         // These source rules do not depend on projection's verdict. Unknown
         // rejections stay unresolved instead of becoming expected failures.
-        if let Some(Protocol::Message { from, to, owned: true, .. }) = messages.iter().find(|m| matches!(m, Protocol::Message { from, to, owned: true, .. } if from == to)).or_else(|| messages.iter().find(|m| matches!(m, Protocol::Message {from, to, owned: true,..} if *from==3 || *to==3))).copied() {
-            let (problem, reason) = if from == to {
-                ("NonUnitSelfMessage", "self-role actions require the unit payload")
-            } else {
-                ("EndpointIsItsOwnCarrier", "an owned endpoint cannot carry its own delegation; role=3; help: transfer the Endpoint through distinct control roles")
-            };
+        if let Some((&problem, &reason)) = ownership::violations(&global).first_key_value() {
             catalog.expected_rejections.insert(case, problem);
-            catalog.negative_sources.insert(format!("syntax_{case}"), (global.clone(), reason));
-        }
-        if !catalog.expected_rejections.contains_key(&case)
-            && matches!(&global,Protocol::Roll(body) if matches!(body.as_ref(),Protocol::Message{owned:true,..}))
-        {
-            catalog.expected_rejections.insert(case, "RollChangesOwner");
-            catalog.negative_sources.insert(format!("syntax_{case}"),(global.clone(),"rolled endpoint delegation must restore its incoming ownership; role=3; help: return each transferred Endpoint to its incoming holder inside the roll"));
+            catalog
+                .negative_sources
+                .insert(format!("syntax_{case}"), (global.clone(), reason));
         }
         catalog.max_label = catalog.max_label.max(labels);
         catalog.max_resolvers = catalog.max_resolvers.max(resolvers);
@@ -1182,7 +1175,7 @@ fn emit_cases(
         cases,
         delegated: delegated_cases,
         expected_rejections,
-        negative_sources,
+        mut negative_sources,
         max_label,
         max_resolvers,
         syntax,
@@ -1246,50 +1239,6 @@ long_running_const_eval = "forbid"
 "#
         ),
     )?;
-    let negative_root = output.join("rejected");
-    if negative_root.exists() {
-        fs::remove_dir_all(&negative_root)?;
-    }
-    fs::create_dir_all(negative_root.join("src/bin"))?;
-    fs::write(
-        negative_root.join("Cargo.toml"),
-        format!(
-            "[package]\nname=\"hibana-rejected-shapes-{namespace}\"\nversion=\"0.0.0\"\nedition=\"2024\"\npublish=false\n[workspace]\n[dependencies]\nhibana={{path={root:?}}}\n[lints.rust]\nlong_running_const_eval=\"forbid\"\n"
-        ),
-    )?;
-    let mut negative_inventory = String::new();
-    for (name, (global, reason)) in &negative_sources {
-        let mut source = String::from(
-            "#![forbid(long_running_const_eval)]\nuse hibana::{Endpoint,g,runtime::program::project};\nfn main(){\n",
-        );
-        let mut messages = Vec::new();
-        global.messages(&mut messages);
-        for message in messages {
-            let Protocol::Message { label, owned, .. } = message else {
-                unreachable!()
-            };
-            writeln!(
-                source,
-                "type M{label}<'r>=g::Msg<{label},{}>;",
-                if *owned { "Endpoint<'r,3>" } else { "()" }
-            )?;
-        }
-        if *reason == "self-role actions require the unit payload" {
-            writeln!(source, "let _global={};}}", global.rust())?;
-        } else {
-            writeln!(
-                source,
-                "let global={};let _=project::<0>(&global);}}",
-                global.rust()
-            )?;
-        }
-        fs::write(
-            negative_root.join("src/bin").join(format!("{name}.rs")),
-            source,
-        )?;
-        writeln!(negative_inventory, "{name}\t{reason}")?;
-    }
-    fs::write(negative_root.join("inventory.tsv"), negative_inventory)?;
     let mut diagnostic_source =
         String::from("#![forbid(long_running_const_eval)]\nuse hibana::g;\n");
     if cases.iter().any(|(_, _, _, _, global, _)| {
@@ -1362,14 +1311,29 @@ long_running_const_eval = "forbid"
             }
             if let Some(expected) = expected_rejections.get(&case)
                 && !constructor_rejected
-                && !verdict.starts_with(&format!(
-                    "rejected:ProjectionDiagnostic {{ problem: {expected},"
-                ))
             {
-                return Err(format!(
-                    "known illegal shape {case} did not report {expected}: {verdict}"
-                )
-                .into());
+                if syntax {
+                    let global = &cases
+                        .get(case)
+                        .filter(|c| c.0 == case)
+                        .ok_or("unknown syntax diagnostic")?
+                        .4;
+                    let proven = ownership::violations(global);
+                    // Several source violations can coexist. Select only a
+                    // proven violation, then require this exact compile error.
+                    let reason = proven.iter().find_map(|(problem, reason)| {
+                        verdict.starts_with(&format!("rejected:ProjectionDiagnostic {{ problem: {problem},"))
+                            .then_some(*reason)
+                    }).ok_or_else(|| format!("known illegal shape {case} did not report a source-proven violation {proven:?}: {verdict}"))?;
+                    negative_sources.insert(format!("syntax_{case}"), (global.clone(), reason));
+                } else if !verdict.starts_with(&format!(
+                    "rejected:ProjectionDiagnostic {{ problem: {expected},"
+                )) {
+                    return Err(format!(
+                        "known illegal shape {case} did not report {expected}: {verdict}"
+                    )
+                    .into());
+                }
             }
             if found.insert(case, verdict == "accepted").is_some() {
                 return Err(format!("duplicate diagnostic for shape {case}").into());
@@ -1382,6 +1346,50 @@ long_running_const_eval = "forbid"
     } else {
         None
     };
+    let negative_root = output.join("rejected");
+    if negative_root.exists() {
+        fs::remove_dir_all(&negative_root)?;
+    }
+    fs::create_dir_all(negative_root.join("src/bin"))?;
+    fs::write(
+        negative_root.join("Cargo.toml"),
+        format!(
+            "[package]\nname=\"hibana-rejected-shapes-{namespace}\"\nversion=\"0.0.0\"\nedition=\"2024\"\npublish=false\n[workspace]\n[dependencies]\nhibana={{path={root:?}}}\n[lints.rust]\nlong_running_const_eval=\"forbid\"\n"
+        ),
+    )?;
+    let mut negative_inventory = String::new();
+    for (name, (global, reason)) in &negative_sources {
+        let mut source = String::from(
+            "#![forbid(long_running_const_eval)]\nuse hibana::{Endpoint,g,runtime::program::project};\nfn main(){\n",
+        );
+        let mut messages = Vec::new();
+        global.messages(&mut messages);
+        for message in messages {
+            let Protocol::Message { label, owned, .. } = message else {
+                unreachable!()
+            };
+            writeln!(
+                source,
+                "type M{label}<'r>=g::Msg<{label},{}>;",
+                if *owned { "Endpoint<'r,3>" } else { "()" }
+            )?;
+        }
+        if *reason == "self-role actions require the unit payload" {
+            writeln!(source, "let _global={};}}", global.rust())?;
+        } else {
+            writeln!(
+                source,
+                "let global={};let _=project::<0>(&global);}}",
+                global.rust()
+            )?;
+        }
+        fs::write(
+            negative_root.join("src/bin").join(format!("{name}.rs")),
+            source,
+        )?;
+        writeln!(negative_inventory, "{name}\t{reason}")?;
+    }
+    fs::write(negative_root.join("inventory.tsv"), negative_inventory)?;
     let mut source = format!(
         "#![cfg(test)]\n#![forbid(long_running_const_eval)]\n#[path={:?}]\nmod in_memory;\n#[path={:?}]\nmod planned_json;\n",
         root.join("examples/support/in_memory.rs"),
