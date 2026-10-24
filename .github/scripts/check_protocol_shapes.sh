@@ -1,7 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
-if [[ "${1:-}" == --interactions ]]; then
+if [[ "${1:-}" == --representatives ]]; then
+  if [[ $# != 4 ]]; then
+    echo "usage: $0 --representatives DEPTH FIRST COUNT" >&2
+    exit 2
+  fi
+  GENERATOR_ARGS=(--representatives "$2" "$3" "$4")
+  OUTPUT="${ROOT_DIR}/target/protocol-shapes/source-representatives-$2/range-$3-count-$4"
+elif [[ "${1:-}" == --interactions ]]; then
   if [[ $# != 4 ]]; then
     echo "usage: $0 --interactions LENGTH FIRST COUNT" >&2
     exit 2

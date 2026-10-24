@@ -10,7 +10,7 @@ on:
         type: choice
         required: true
         default: all
-        options: [all, final-form, protocol-shapes, protocol-syntax, protocol-interactions]
+        options: [all, final-form, protocol-shapes, protocol-syntax, protocol-interactions, protocol-representatives]
       shape-budget:
         description: Generated constructor budget for protocol-shapes
         type: choice
@@ -23,13 +23,13 @@ on:
         required: true
         default: '0'
       syntax-depth:
-        description: Exact syntax depth for protocol-syntax
+        description: Exact syntax depth (representatives supports only 0, 1, 2)
         type: choice
         required: true
         default: '0'
         options: ['0', '1', '2', '3', '4', '5']
       syntax-first:
-        description: First exact-depth rank (decimal)
+        description: First raw syntax rank or source representative ordinal
         type: string
         required: true
         default: '0'
@@ -57,7 +57,7 @@ on:
 
 jobs:
   runtime-instructions:
-    if: github.event_name != 'workflow_dispatch' || (inputs.check != 'protocol-shapes' && inputs.check != 'protocol-syntax' && inputs.check != 'protocol-interactions')
+    if: github.event_name != 'workflow_dispatch' || (inputs.check != 'protocol-shapes' && inputs.check != 'protocol-syntax' && inputs.check != 'protocol-interactions' && inputs.check != 'protocol-representatives')
     runs-on: ubuntu-24.04
     env:
       TOOLCHAIN: stable
@@ -79,7 +79,7 @@ jobs:
           path: target/runtime-instructions/results/
 
   protocol-shape-matrix:
-    if: github.event_name == 'workflow_dispatch' && (inputs.check == 'protocol-shapes' || inputs.check == 'protocol-syntax' || inputs.check == 'protocol-interactions')
+    if: github.event_name == 'workflow_dispatch' && (inputs.check == 'protocol-shapes' || inputs.check == 'protocol-syntax' || inputs.check == 'protocol-interactions' || inputs.check == 'protocol-representatives')
     runs-on: ubuntu-24.04-arm
     outputs:
       matrix: ${{ steps.scope.outputs.matrix }}
@@ -106,6 +106,10 @@ jobs:
             cargo +stable test --locked --manifest-path .github/ci-tests/Cargo.toml --bin protocol-shapes
             matrix=$(cargo +stable run --locked --manifest-path .github/ci-tests/Cargo.toml \
               --bin protocol-shapes -- interaction-matrix "$INTERACTION_LENGTH" "$INTERACTION_FIRST" "$INTERACTION_COUNT")
+          elif [[ "$SHAPE_CHECK" == protocol-representatives ]]; then
+            cargo +stable test --locked --manifest-path .github/ci-tests/Cargo.toml --bin protocol-shapes
+            matrix=$(cargo +stable run --locked --manifest-path .github/ci-tests/Cargo.toml \
+              --bin protocol-shapes -- representative-matrix "$SYNTAX_DEPTH" "$SYNTAX_FIRST" "$SYNTAX_COUNT")
           elif [[ "$SHAPE_CHECK" == protocol-syntax ]]; then
             cargo +stable test --locked --manifest-path .github/ci-tests/Cargo.toml --bin protocol-shapes
             matrix=$(cargo +stable run --locked --manifest-path .github/ci-tests/Cargo.toml \
@@ -117,7 +121,7 @@ jobs:
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
 
   protocol-shapes:
-    if: github.event_name == 'workflow_dispatch' && (inputs.check == 'protocol-shapes' || inputs.check == 'protocol-syntax' || inputs.check == 'protocol-interactions')
+    if: github.event_name == 'workflow_dispatch' && (inputs.check == 'protocol-shapes' || inputs.check == 'protocol-syntax' || inputs.check == 'protocol-interactions' || inputs.check == 'protocol-representatives')
     needs: protocol-shape-matrix
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 240
@@ -159,6 +163,10 @@ jobs:
             printf '%s\t%s\t%s\n' "$INTERACTION_LENGTH" "$INTERACTION_FIRST" "$INTERACTION_COUNT" > assigned-interactions.tsv
             bash .github/scripts/lib/resource_guard.sh \
               bash .github/scripts/check_protocol_shapes.sh --interactions "$INTERACTION_LENGTH" "$INTERACTION_FIRST" "$INTERACTION_COUNT"
+          elif [[ "$SHAPE_CHECK" == protocol-representatives ]]; then
+            printf '%s\t%s\t%s\n' "$SYNTAX_DEPTH" "$SYNTAX_FIRST" "$SYNTAX_COUNT" > assigned-representatives.tsv
+            bash .github/scripts/lib/resource_guard.sh \
+              bash .github/scripts/check_protocol_shapes.sh --representatives "$SYNTAX_DEPTH" "$SYNTAX_FIRST" "$SYNTAX_COUNT"
           elif [[ "$SHAPE_CHECK" == protocol-syntax ]]; then
             printf '%s\t%s\t%s\n' "$SYNTAX_DEPTH" "$SYNTAX_FIRST" "$SYNTAX_COUNT" > assigned-syntax.tsv
             bash .github/scripts/lib/resource_guard.sh \
@@ -181,6 +189,7 @@ jobs:
             assigned-shards.tsv
             assigned-syntax.tsv
             assigned-interactions.tsv
+            assigned-representatives.tsv
             target/protocol-shapes/*/**/inventory.txt
             target/protocol-shapes/*/**/catalog-inventory.txt
             target/protocol-shapes/*/**/catalog.json
@@ -242,7 +251,7 @@ jobs:
           --lib --jobs 1 --output-format terse
 
   final-form:
-    if: github.event_name != 'workflow_dispatch' || (inputs.check != 'protocol-shapes' && inputs.check != 'protocol-syntax' && inputs.check != 'protocol-interactions')
+    if: github.event_name != 'workflow_dispatch' || (inputs.check != 'protocol-shapes' && inputs.check != 'protocol-syntax' && inputs.check != 'protocol-interactions' && inputs.check != 'protocol-representatives')
     runs-on: ubuntu-24.04-arm
     env:
       TOOLCHAIN: stable

@@ -20,6 +20,8 @@ fn write_if_changed(path: &std::path::Path, text: &str) -> std::io::Result<()> {
 mod causality;
 #[path = "protocol_shape_choice.rs"]
 mod choice;
+#[path = "protocol_shape_context.rs"]
+mod context;
 #[path = "protocol_shape_delegated.rs"]
 mod delegated;
 #[path = "protocol_shape_interactions.rs"]
@@ -32,6 +34,8 @@ mod ownership;
 mod population;
 #[path = "protocol_shape_probe_data.rs"]
 mod probe_data;
+#[path = "protocol_shape_representatives.rs"]
+mod representatives;
 #[path = "protocol_shape_scope_probes.rs"]
 mod scope_probes;
 #[path = "protocol_shape_symmetry.rs"]
@@ -917,6 +921,23 @@ struct CaseSet {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = env::args().skip(1).collect::<Vec<_>>();
+    if args.first().is_some_and(|s| s == "representative-counts") {
+        if args.len() != 2 && args.len() != 3 {
+            return Err("usage: protocol-shapes representative-counts DEPTH [RANKS_TSV]".into());
+        }
+        let depth = args[1].parse::<usize>()?;
+        let ranks = representatives::catalog(depth)?;
+        println!("depth={depth} canonical_source_candidates={}", ranks.len());
+        if let Some(path) = args.get(2) {
+            use std::io::Write as _;
+            let mut output = std::io::BufWriter::new(fs::File::create(path)?);
+            for (ordinal, rank) in ranks.iter().enumerate() {
+                writeln!(output, "{ordinal}\t{rank}")?;
+            }
+            output.flush()?;
+        }
+        return Ok(());
+    }
     if args.first().is_some_and(|s| s == "syntax-counts") {
         if args.len() != 2 {
             return Err("usage: protocol-shapes syntax-counts DEPTH".into());
@@ -929,6 +950,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "depth={depth} raw={} role_orbits={}",
             syntax::Grammar::new(depth).count(depth),
             symmetry::count(depth)
+        );
+        return Ok(());
+    }
+    if args.first().is_some_and(|s| s == "representative-matrix") {
+        if args.len() != 4 {
+            return Err("usage: protocol-shapes representative-matrix DEPTH FIRST COUNT".into());
+        }
+        let ranks = representatives::catalog(args[1].parse()?)?;
+        println!(
+            "{}",
+            range_matrix(args[2].parse()?, args[3].parse()?, ranks.len().into())?
         );
         return Ok(());
     }
@@ -960,7 +992,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
         return Ok(());
     }
-    let (catalog, diagnostics) = if args.get(2).is_some_and(|s| s == "--interactions") {
+    let (catalog, diagnostics) = if args.get(2).is_some_and(|s| s == "--representatives") {
+        if args.len() != 6 && args.len() != 7 {
+            return Err("usage: protocol-shapes REPOSITORY OUTPUT --representatives DEPTH FIRST COUNT [DIAGNOSTICS]".into());
+        }
+        (
+            representative_cases(args[3].parse()?, args[4].parse()?, args[5].parse()?)?,
+            args.get(6),
+        )
+    } else if args.get(2).is_some_and(|s| s == "--interactions") {
         if args.len() != 6 && args.len() != 7 {
             return Err("usage: protocol-shapes REPOSITORY OUTPUT --interactions LENGTH FIRST COUNT [DIAGNOSTICS]".into());
         }
@@ -1231,6 +1271,63 @@ fn syntax_violations(source: &Protocol) -> Vec<(&'static str, &'static str)> {
     } else {
         ownership.into_iter().collect()
     }
+}
+
+fn representative_cases(
+    depth: usize,
+    first: usize,
+    count: usize,
+) -> Result<CaseSet, Box<dyn std::error::Error>> {
+    let ranks = representatives::catalog(depth)?;
+    if count == 0 || first.checked_add(count).is_none_or(|end| end > ranks.len()) {
+        return Err("source representative range exceeds its population".into());
+    }
+    let grammar = syntax::Grammar::new(depth);
+    let mut catalog = CaseSet {
+        namespace: format!("representatives-{depth}-{first}-count-{count}"),
+        description: format!("representative_depth={depth} first={first} count={count}"),
+        total: ranks.len().to_string(),
+        cases: Vec::new(),
+        delegated: BTreeSet::new(),
+        expected_rejections: BTreeMap::new(),
+        negative_sources: BTreeMap::new(),
+        max_label: 0,
+        max_resolvers: 0,
+        syntax: true,
+    };
+    for (case, &rank) in ranks[first..first + count].iter().enumerate() {
+        let (source, labels, resolvers) = grammar.protocol(depth, rank.into());
+        assert!(context::valid(&source));
+        assert_eq!(source, symmetry::canonical(&source));
+        let mut messages = Vec::new();
+        source.messages(&mut messages);
+        let owner = messages
+            .iter()
+            .find_map(|message| match message {
+                Protocol::Message {
+                    from, owned: true, ..
+                } => Some(*from),
+                _ => None,
+            })
+            .unwrap_or(3);
+        if localside::mobile(&source) {
+            catalog.delegated.insert(case);
+        }
+        catalog.max_label = catalog.max_label.max(labels);
+        catalog.max_resolvers = catalog.max_resolvers.max(resolvers);
+        catalog.cases.push((
+            case,
+            format!(
+                "source-depth={depth}/ordinal={}/raw-rank={rank}",
+                first + case
+            ),
+            2,
+            owner,
+            source,
+            resolvers,
+        ));
+    }
+    Ok(catalog)
 }
 
 fn matches_source_violation(verdict: &str, problem: &str, reason: &str) -> bool {
@@ -1818,6 +1915,30 @@ long_running_const_eval = "forbid"
 #[cfg(test)]
 mod population_tests {
     use super::*;
+
+    #[test]
+    fn source_representative_ranges_preserve_raw_grammar_identities() {
+        let ranks = representatives::catalog(1).unwrap();
+        assert_eq!(ranks.len(), 94);
+        let catalog = representative_cases(1, 0, ranks.len()).unwrap();
+        for ((case, identity, _, _, source, _), rank) in catalog.cases.iter().zip(ranks) {
+            assert_eq!(
+                *case,
+                identity
+                    .split('/')
+                    .nth(1)
+                    .unwrap()
+                    .strip_prefix("ordinal=")
+                    .unwrap()
+                    .parse::<usize>()
+                    .unwrap()
+            );
+            assert_eq!(syntax::Grammar::new(1).rank(source), rank.into());
+        }
+        assert!(representative_cases(1, 93, 2).is_err());
+        assert!(representative_cases(1, 0, 0).is_err());
+        assert!(representative_cases(3, 0, 1).is_err());
+    }
 
     #[test]
     fn choice_diagnostics_select_only_source_proven_rules_and_participants() {

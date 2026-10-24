@@ -69,6 +69,26 @@ one range does not establish coverage of the whole depth. Finite execution
 tests use two visits per repetition. Every parallel node polls both children
 with Tokio, varying which child is polled first.
 
+The source-representative catalog supports depths zero through two:
+
+```sh
+bash .github/scripts/check_protocol_shapes.sh --representatives DEPTH FIRST COUNT
+```
+
+`FIRST` is an ordinal in the role-normalized catalog. Each case also records its
+raw syntax rank. Construction checks ownership, choice notifications and
+resource-dependent repetition before invoking Hibana. A child is tested with
+role 3 as an ordinary participant and with each possible resource holder.
+For example, after a transfer to role 1, a choice between receives at roles 1
+and 3 can be observed by the same participant. Pruning that child by its
+standalone verdict would lose a legal protocol.
+Choice knowledge is kept separate across parallel children until their join.
+The parent is checked again after composition. This source predicate defines
+the catalog; it is not a proof of the Rust compiler. Every selected case still
+uses public projection, real Endpoints and the independent Lean checker.
+An unexpected rejection fails the check. Raw syntax testing retains invalid
+cases and their separate compile-fail builds.
+
 The interaction catalog constructs nested contexts around a resource exchange:
 
 ```sh
