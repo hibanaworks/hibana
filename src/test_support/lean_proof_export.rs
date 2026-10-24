@@ -287,8 +287,11 @@ impl ProductionCursorTrace {
                 ),
                 "resolver reentry requires the previous production arm to be complete"
             );
+            let reset = self.cursor().prepare_roll_reset(scope, None, &mut |scope| {
+                selected_arm(&self.selected, scope)
+            });
             self.selected.remove(selected_idx);
-            self.cursor_mut().clear_reentry_scope_events(scope, None);
+            self.cursor_mut().clear_reentry_scope_events(reset);
         }
         self.record_or_replace_selected_arm(scope, arm.index());
         assert!(

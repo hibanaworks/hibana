@@ -77,7 +77,11 @@ where
     ) -> Option<ScopeId> {
         let event = event?;
         let mut selected_arm_for_scope = |scope| self.selected_arm_for_scope(scope);
-        if let Some(scope) = self.borrowed_reentry_scope() {
+        let index = self
+            .progress
+            .cursor
+            .node_index_for_relocatable_step(event.progress_step())?;
+        if let Some(scope) = self.borrowed_reentry_scope(index) {
             return Some(scope);
         }
         self.progress
@@ -86,6 +90,12 @@ where
     }
 
     fn clear_reentry_scope_state(&mut self, scope: ScopeId, entry: usize) {
+        let reset = self
+            .progress
+            .cursor
+            .prepare_roll_reset(scope, Some(entry), &mut |scope| {
+                self.selected_arm_for_scope(scope)
+            });
         let lane_limit = self.progress.cursor.logical_lane_count();
         let mut lane_idx = 0usize;
         while lane_idx < lane_limit {
@@ -108,9 +118,7 @@ where
             }
             lane_idx += 1;
         }
-        self.progress
-            .cursor
-            .clear_reentry_scope_events(scope, Some(entry));
+        self.progress.cursor.clear_reentry_scope_events(reset);
         self.sync_lane_offer_state();
     }
 
@@ -228,12 +236,16 @@ where
                 }
                 clear_lane += 1;
             }
+            let reset = self
+                .progress
+                .cursor
+                .prepare_roll_reset(scope, None, &mut |scope| self.selected_arm_for_scope(scope));
             self.progress.decision_state.replace_selected_arm_slot(
                 scope_slot,
                 completed_arm,
                 row.selected_arm(),
             );
-            self.progress.cursor.clear_reentry_scope_events(scope, None);
+            self.progress.cursor.clear_reentry_scope_events(reset);
         }
         self.progress.decision_state.apply_prepared_route_selection(
             lane_idx,

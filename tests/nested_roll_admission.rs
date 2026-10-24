@@ -282,3 +282,198 @@ fn flat_calls_never_admit_an_operation_outside_the_source_language() {
             assert_eq!(runtime_only, 0);
         });
 }
+
+#[test]
+fn inner_iterations_before_the_parent_join_cannot_pay_for_later_parent_visits() {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .start_paused(true)
+        .build()
+        .unwrap()
+        .block_on(async {
+            let global = global();
+            let p0 = project::<0>(&global);
+            let p1 = project::<1>(&global);
+            let p2 = project::<2>(&global);
+            for completed in 1..=4 {
+                let network = common::TestTransport::new();
+                let [mut slab0, mut slab1, mut slab2] = [[0; 32 * 1024]; 3];
+                let mut storage0 = SessionKitStorage::uninit();
+                let mut storage1 = SessionKitStorage::uninit();
+                let mut storage2 = SessionKitStorage::uninit();
+                let rv0 = storage0
+                    .init()
+                    .rendezvous(&mut slab0, network.clone())
+                    .unwrap();
+                let rv1 = storage1
+                    .init()
+                    .rendezvous(&mut slab1, network.clone())
+                    .unwrap();
+                let rv2 = storage2.init().rendezvous(&mut slab2, network).unwrap();
+                let mut a = rv0.enter(SessionId::new(9283), &p0).unwrap();
+                let mut b = rv1.enter(SessionId::new(9283), &p1).unwrap();
+                let mut c = rv2.enter(SessionId::new(9283), &p2).unwrap();
+                a.send::<Prefix>(&()).await.unwrap();
+                b.recv::<Prefix>().await.unwrap();
+                for _ in 0..completed {
+                    a.send::<Work>(&()).await.unwrap();
+                    b.recv::<Work>().await.unwrap();
+                    b.send::<Ack>(&()).await.unwrap();
+                    a.recv::<Ack>().await.unwrap();
+                }
+                a.send::<Tick>(&()).await.unwrap();
+                c.recv::<Tick>().await.unwrap();
+                a.send::<Tick>(&()).await.unwrap();
+                c.recv::<Tick>().await.unwrap();
+                assert!(a.send::<Tick>(&()).await.is_err(), "completed={completed}");
+            }
+        });
+}
+
+#[test]
+fn a_pending_child_keeps_its_parallel_sibling_live_after_a_completed_parent() {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .start_paused(true)
+        .build()
+        .unwrap()
+        .block_on(async {
+            use core::{future::Future, task::Poll};
+            let global = global();
+            let p0 = project::<0>(&global);
+            let p1 = project::<1>(&global);
+            let p2 = project::<2>(&global);
+            let network = common::TestTransport::new();
+            let [mut slab0, mut slab1, mut slab2] = [[0; 32 * 1024]; 3];
+            let mut storage0 = SessionKitStorage::uninit();
+            let mut storage1 = SessionKitStorage::uninit();
+            let mut storage2 = SessionKitStorage::uninit();
+            let rv0 = storage0
+                .init()
+                .rendezvous(&mut slab0, network.clone())
+                .unwrap();
+            let rv1 = storage1
+                .init()
+                .rendezvous(&mut slab1, network.clone())
+                .unwrap();
+            let rv2 = storage2.init().rendezvous(&mut slab2, network).unwrap();
+            let mut a = rv0.enter(SessionId::new(9284), &p0).unwrap();
+            let mut b = rv1.enter(SessionId::new(9284), &p1).unwrap();
+            let mut c = rv2.enter(SessionId::new(9284), &p2).unwrap();
+            a.send::<Prefix>(&()).await.unwrap();
+            b.recv::<Prefix>().await.unwrap();
+            a.send::<Work>(&()).await.unwrap();
+            b.recv::<Work>().await.unwrap();
+            b.send::<Ack>(&()).await.unwrap();
+            a.recv::<Ack>().await.unwrap();
+            a.send::<Tick>(&()).await.unwrap();
+            c.recv::<Tick>().await.unwrap();
+            let [mut work, mut tick] = a.par().unwrap();
+            let [mut server] = b.par().unwrap();
+            let [mut ticker] = c.par().unwrap();
+            work.send::<Work>(&()).await.unwrap();
+            server.recv::<Work>().await.unwrap();
+            let ack = work.recv::<Ack>();
+            tokio::pin!(ack);
+            assert!(
+                core::future::poll_fn(|cx| Poll::Ready(ack.as_mut().poll(cx).is_pending())).await
+            );
+            tick.send::<Tick>(&()).await.unwrap();
+            ticker.recv::<Tick>().await.unwrap();
+            server.send::<Ack>(&()).await.unwrap();
+            ack.await.unwrap();
+        });
+}
+
+#[test]
+fn a_late_outer_prefix_cannot_discard_a_started_child_visit() {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .start_paused(true)
+        .build()
+        .unwrap()
+        .block_on(async {
+            let global = global();
+            let p0 = project::<0>(&global);
+            let p1 = project::<1>(&global);
+            let network = common::TestTransport::new();
+            let [mut slab0, mut slab1] = [[0; 32 * 1024]; 2];
+            let mut storage0 = SessionKitStorage::uninit();
+            let mut storage1 = SessionKitStorage::uninit();
+            let rv0 = storage0
+                .init()
+                .rendezvous(&mut slab0, network.clone())
+                .unwrap();
+            let rv1 = storage1.init().rendezvous(&mut slab1, network).unwrap();
+            let mut a = rv0.enter(SessionId::new(9285), &p0).unwrap();
+            let mut b = rv1.enter(SessionId::new(9285), &p1).unwrap();
+            a.send::<Prefix>(&()).await.unwrap();
+            b.recv::<Prefix>().await.unwrap();
+            a.send::<Work>(&()).await.unwrap();
+            b.recv::<Work>().await.unwrap();
+            b.send::<Ack>(&()).await.unwrap();
+            a.recv::<Ack>().await.unwrap();
+            a.send::<Tick>(&()).await.unwrap();
+            a.send::<Work>(&()).await.unwrap();
+            b.recv::<Work>().await.unwrap();
+            assert!(a.send::<Prefix>(&()).await.is_err());
+        });
+}
+
+#[test]
+fn completed_child_repetitions_cannot_skip_a_pending_exchange_at_the_next_parent_join() {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .start_paused(true)
+        .build()
+        .unwrap()
+        .block_on(async {
+            type Left = g::Msg<226, ()>;
+            type LeftReply = g::Msg<227, ()>;
+            type Right = g::Msg<228, ()>;
+            type RightReply = g::Msg<229, ()>;
+            let global = g::par(
+                g::seq(g::send::<0, 1, Left>(), g::send::<1, 0, LeftReply>()),
+                g::seq(g::send::<0, 1, Right>(), g::send::<1, 0, RightReply>()).roll(),
+            )
+            .roll();
+            let p0 = project::<0>(&global);
+            let p1 = project::<1>(&global);
+            for extra in 0..3 {
+                let network = common::TestTransport::new();
+                let [mut slab0, mut slab1] = [[0; 32 * 1024]; 2];
+                let mut storage0 = SessionKitStorage::uninit();
+                let mut storage1 = SessionKitStorage::uninit();
+                let rv0 = storage0
+                    .init()
+                    .rendezvous(&mut slab0, network.clone())
+                    .unwrap();
+                let rv1 = storage1.init().rendezvous(&mut slab1, network).unwrap();
+                let mut a = rv0.enter(SessionId::new(9286), &p0).unwrap();
+                let mut b = rv1.enter(SessionId::new(9286), &p1).unwrap();
+                a.send::<Left>(&()).await.unwrap();
+                b.recv::<Left>().await.unwrap();
+                b.send::<LeftReply>(&()).await.unwrap();
+                a.recv::<LeftReply>().await.unwrap();
+                a.send::<Right>(&()).await.unwrap();
+                b.recv::<Right>().await.unwrap();
+                b.send::<RightReply>(&()).await.unwrap();
+                a.recv::<RightReply>().await.unwrap();
+                let [mut left, mut right] = a.par().unwrap();
+                let [mut peer_left, mut peer_right] = b.par().unwrap();
+                for _ in 0..extra {
+                    right.send::<Right>(&()).await.unwrap();
+                    peer_right.recv::<Right>().await.unwrap();
+                    peer_right.send::<RightReply>(&()).await.unwrap();
+                    right.recv::<RightReply>().await.unwrap();
+                }
+                right.send::<Right>(&()).await.unwrap();
+                peer_right.recv::<Right>().await.unwrap();
+                left.send::<Left>(&()).await.unwrap();
+                peer_left.recv::<Left>().await.unwrap();
+                peer_left.send::<LeftReply>(&()).await.unwrap();
+                left.recv::<LeftReply>().await.unwrap();
+                assert!(left.send::<Left>(&()).await.is_err(), "extra={extra}");
+            }
+        });
+}

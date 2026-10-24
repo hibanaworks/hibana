@@ -53,7 +53,7 @@ impl EventCursor {
                     })
             };
             if (prefix || enclosing || other_arm())
-                && self.roll_scope_events_complete(scope, selected)
+                && self.roll_scope_complete_for_entry(scope, index, selected)
             {
                 return true;
             }
@@ -140,6 +140,28 @@ impl EventCursor {
         scope: ScopeId,
         selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
     ) -> bool {
+        self.roll_scope_events_complete_at(scope, None, selected_arm_for_scope)
+    }
+
+    /// Past child completion can support a new visit only when that child's
+    /// current work is independent of the entering operation and is retained.
+    pub(crate) fn roll_scope_complete_for_entry(
+        &self,
+        scope: ScopeId,
+        index: usize,
+        selected: &mut dyn FnMut(ScopeId) -> Option<u8>,
+    ) -> bool {
+        self.credited_roll_path_complete(scope, index, selected)
+            && self.roll_scope_events_complete_at(scope, Some(index), selected)
+    }
+
+    #[inline(never)]
+    fn roll_scope_events_complete_at(
+        &self,
+        scope: ScopeId,
+        entry: Option<usize>,
+        selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
+    ) -> bool {
         let row = crate::invariant_some(self.machine().roll_scope_row(scope));
         let mut participates = |idx| {
             self.event_lane_at(idx).is_some()
@@ -157,13 +179,9 @@ impl EventCursor {
             .pending_event_steps(row.start()..row.end())
             .any(|index| {
                 participates(index)
-                    && (self
-                        .machine()
-                        .event_program()
-                        .footprint()
-                        .borrow_epoch_count
-                        == 0
-                        || self.credited_roll_child(scope, index).is_none())
+                    && self
+                        .roll_reentry_preserved_child(scope, index, entry)
+                        .is_none()
             })
         {
             return false;
@@ -240,14 +258,7 @@ impl EventCursor {
         while let Some((scope, row)) = self.machine().roll_scope_row_by_slot(slot) {
             if row.start() <= idx
                 && idx < row.end()
-                && (self
-                    .machine()
-                    .event_program()
-                    .footprint()
-                    .borrow_epoch_count
-                    == 0
-                    || self.credited_roll_path_complete(scope, idx, &mut *selected_arm_for_scope))
-                && self.roll_scope_events_complete(scope, &mut *selected_arm_for_scope)
+                && self.roll_scope_complete_for_entry(scope, idx, &mut *selected_arm_for_scope)
             {
                 best = Some(match best {
                     Some(current) => self.deeper_roll_scope(current, scope),
@@ -269,7 +280,7 @@ impl EventCursor {
                     && idx < row.end()
                     && !scope.same(best)
                     && self.roll_scope_nested_within(best, scope)
-                    && self.roll_scope_events_complete(scope, &mut *selected_arm_for_scope)
+                    && self.roll_scope_complete_for_entry(scope, idx, &mut *selected_arm_for_scope)
                     && self.roll_scope_has_later_sequential_done_event(
                         scope,
                         best,

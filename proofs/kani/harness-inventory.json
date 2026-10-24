@@ -326,6 +326,19 @@
       "global::typestate::cursor::parallel_reentry_tests::parallel_offer_outside_step_has_no_choice",
       "global::typestate::cursor::parallel_reentry_tests::parallel_offer_second_head_keeps_its_choice",
       "global::typestate::cursor::parallel_reentry_tests::parallel_offer_third_head_keeps_its_choice",
+      "global::typestate::cursor::parallel_reentry_tests::retained_child_kani::consumed_child_head",
+      "global::typestate::cursor::parallel_reentry_tests::retained_child_kani::consumed_parent_entry",
+      "global::typestate::cursor::parallel_reentry_tests::retained_child_kani::extra_consumed_child_head",
+      "global::typestate::cursor::parallel_reentry_tests::retained_child_kani::extra_consumed_parent_entry",
+      "global::typestate::cursor::parallel_reentry_tests::retained_child_kani::extra_retained_child_head",
+      "global::typestate::cursor::parallel_reentry_tests::retained_child_kani::extra_retained_child_tail",
+      "global::typestate::cursor::parallel_reentry_tests::retained_child_kani::extra_retained_parent_entry",
+      "global::typestate::cursor::parallel_reentry_tests::retained_child_kani::extra_retained_parent_tail",
+      "global::typestate::cursor::parallel_reentry_tests::retained_child_kani::initial_parent_entry",
+      "global::typestate::cursor::parallel_reentry_tests::retained_child_kani::retained_child_head",
+      "global::typestate::cursor::parallel_reentry_tests::retained_child_kani::retained_child_tail",
+      "global::typestate::cursor::parallel_reentry_tests::retained_child_kani::retained_parent_entry",
+      "global::typestate::cursor::parallel_reentry_tests::retained_child_kani::retained_parent_tail",
       "global::typestate::cursor::parallel_reentry_tests::retained_roll_first_body_receive_remains_required",
       "global::typestate::cursor::parallel_reentry_tests::retained_roll_parallel_sibling_remains_required",
       "global::typestate::cursor::parallel_reentry_tests::retained_roll_receives_keep_their_enclosing_scope",
@@ -432,7 +445,7 @@
   "contract-harnesses": {},
   "contracts": [],
   "totals": {
-    "standard-harnesses": 306,
+    "standard-harnesses": 319,
     "contract-harnesses": 0,
     "functions-under-contract": 0
   }

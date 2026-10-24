@@ -219,7 +219,7 @@ where
         let cursor_index = publish_branch.cursor_index;
         let mut frame = Some(frame);
         let body_reentry = self
-            .borrowed_reentry_scope()
+            .borrowed_reentry_scope(state_index_to_usize(cursor_index))
             .unwrap_or_else(crate::global::const_dsl::ScopeId::none);
         let result = (|| {
             let crate::endpoint::kernel::core::ActorProgress {

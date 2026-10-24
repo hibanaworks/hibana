@@ -92,6 +92,10 @@ impl EventCursor {
         if self.roll_scope_contains_index(child, entry) {
             return None;
         }
+        self.roll_has_parallel_entry(child, entry).then_some(child)
+    }
+
+    fn roll_has_parallel_entry(&self, child: ScopeId, entry: usize) -> bool {
         let program = self.program_ref();
         let source = crate::invariant_some(self.machine().event_program().operation_at(entry))
             .0
@@ -101,16 +105,60 @@ impl EventCursor {
                 let (scope, start, end) = program.source_roll_at(marker)?;
                 scope.same(child).then_some((start, end))
             }));
-        (0..program.source_scope_marker_count())
-            .any(|marker| {
-                program
-                    .source_parallel_at(marker)
-                    .is_some_and(|(a, split, b)| {
-                        (a <= start && end <= split && split <= source && source < b)
-                            || (a <= source && source < split && split <= start && end <= b)
-                    })
-            })
-            .then_some(child)
+        (0..program.source_scope_marker_count()).any(|marker| {
+            program
+                .source_parallel_at(marker)
+                .is_some_and(|(a, split, b)| {
+                    (a <= start && end <= split && split <= source && source < b)
+                        || (a <= source && source < split && split <= start && end <= b)
+                })
+        })
+    }
+
+    /// A child visit preceding a sibling's completion belongs to that same
+    /// parent visit. Only a restart after a completed parallel parent can
+    /// preserve the prior child completion for the next parent boundary.
+    pub(super) fn roll_reset_retains_credit(
+        &self,
+        child: ScopeId,
+        selected: &mut dyn FnMut(ScopeId) -> Option<u8>,
+    ) -> bool {
+        if self
+            .machine()
+            .event_program()
+            .footprint()
+            .borrow_epoch_count
+            == 0
+            || self.machine().roll_scope_row(child).is_none()
+        {
+            return false;
+        }
+        if self.completed_roll_credits(child) != 0 {
+            return true;
+        }
+        let mut slot = 0;
+        while let Some((parent, row)) = self.machine().roll_scope_row_by_slot(slot) {
+            if !parent.same(child)
+                && self.roll_scope_nested_within(child, parent)
+                && self.roll_scope_events_complete(parent, selected)
+                && (row.start()..row.end()).any(|index| {
+                    !self.roll_scope_contains_index(child, index)
+                        && self.event_lane_at(index).is_some()
+                        && self.event_actor_is_local(index, selected) != Some(false)
+                        && self.event_conflict_row_allows(
+                            self.machine().event_conflict_for_index(index),
+                            ScopeId::none(),
+                            None,
+                            selected,
+                        )
+                        && self.roll_has_parallel_entry(child, index)
+                })
+            {
+                return true;
+            }
+            slot += 1;
+        }
+        false
     }
 
     pub(crate) fn roll_reentry_preserves_route(
@@ -203,7 +251,9 @@ impl EventCursor {
                 continue;
             };
             let mut committed = |scope| selected(scope, EventArmView::Committed);
-            if !self.roll_scope_events_complete(scope, &mut committed) {
+            if !(row.start()..row.end())
+                .any(|index| self.roll_scope_complete_for_entry(scope, index, &mut committed))
+            {
                 continue;
             }
             let mut entry = |scope| selected(scope, EventArmView::Preview);
@@ -241,10 +291,10 @@ impl EventCursor {
         selected: &mut dyn FnMut(ScopeId) -> Option<u8>,
     ) -> bool {
         self.roll_reentry_epoch(scope) == epoch
-            && self
-                .machine()
-                .roll_scope_row(scope)
-                .is_some_and(|_| self.roll_scope_events_complete(scope, selected))
+            && self.machine().roll_scope_row(scope).is_some_and(|row| {
+                (row.start()..row.end())
+                    .any(|index| self.roll_scope_complete_for_entry(scope, index, selected))
+            })
     }
 
     pub(crate) fn roll_reentry_epochs_available(&self, scope: ScopeId) -> bool {
@@ -256,9 +306,6 @@ impl EventCursor {
             == 0
         {
             return true;
-        }
-        if self.completed_roll_credits(scope) == u64::MAX {
-            return false;
         }
         let Some((start, end)) = self.reentry_scope_event_bounds(scope) else {
             return false;
@@ -299,7 +346,12 @@ impl EventCursor {
     /// A parent restart consumes one completed visit of each independent child
     /// whose current progress is retained. Its sequential descendants restart
     /// with the new parent visit.
-    pub(super) fn retain_reentry_completion(&mut self, restarting: ScopeId, entry: Option<usize>) {
+    pub(super) fn retain_reentry_completion(
+        &mut self,
+        restarting: ScopeId,
+        entry: Option<usize>,
+        retain_credit: bool,
+    ) {
         let Some((start, end)) = self.reentry_scope_event_bounds(restarting) else {
             crate::invariant();
         };
@@ -320,7 +372,7 @@ impl EventCursor {
             };
             if let Some(ancestor) = preserved {
                 if ancestor.same(scope) {
-                    self.set_completed_roll_credits(scope, self.completed_roll_credits(scope) - 1);
+                    self.set_completed_roll_credits(scope, 0);
                 }
                 continue;
             }
@@ -349,10 +401,7 @@ impl EventCursor {
             }
             if scope.same(restarting) {
                 if credits {
-                    self.set_completed_roll_credits(
-                        scope,
-                        crate::invariant_some(self.completed_roll_credits(scope).checked_add(1)),
-                    );
+                    self.set_completed_roll_credits(scope, u64::from(retain_credit));
                 }
                 self.write_completion_bit(self.local_steps_len() + slot, true);
             } else if start <= range.start()

@@ -7,14 +7,23 @@ use crate::{
 impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
     pub(in crate::endpoint::kernel) fn borrowed_reentry_scope(
         &self,
+        index: usize,
     ) -> Option<crate::global::const_dsl::ScopeId> {
         let (scope, epoch) = self.region.reentry()?;
-        self.progress
-            .cursor
-            .borrowed_roll_reentry_is_current(scope, epoch, &mut |scope| {
-                self.selected_arm_for_scope(scope)
-            })
-            .then_some(scope)
+        let current =
+            self.progress
+                .cursor
+                .borrowed_roll_reentry_is_current(scope, epoch, &mut |scope| {
+                    self.selected_arm_for_scope(scope)
+                });
+        (current
+            && self
+                .progress
+                .cursor
+                .roll_scope_complete_for_entry(scope, index, &mut |scope| {
+                    self.selected_arm_for_scope(scope)
+                }))
+        .then_some(scope)
     }
 
     pub(crate) fn event_enabled(
@@ -27,7 +36,7 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
         crate::global::typestate::EventAdmissionError,
     > {
         event.body_reentry = self
-            .borrowed_reentry_scope()
+            .borrowed_reentry_scope(index)
             .unwrap_or_else(crate::global::const_dsl::ScopeId::none);
         self.progress.cursor.event_enabled(index, event, arms)
     }

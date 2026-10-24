@@ -393,8 +393,13 @@ any runtime admission outside the source language. It does not require a call at
 one concrete cut to admit alternatives from a different grouping of the same
 message prefix. Lean examples demonstrate why those cuts differ.
 The check regenerates its complete query inventories and tests missing,
-duplicated, incorrect and malformed inputs. It covers complete exchanges and
-ticks, rather than partially polled operations. Run
+duplicated, incorrect and malformed inputs. The enumeration covers complete
+exchanges and ticks. Separate public tests keep an acknowledgment receive
+pending while the independent tick completes, and reject a new outer prefix
+that would discard the pending exchange. A second source family,
+`(LeftExchange | RightExchange+)+`, checks that earlier completed child
+iterations cannot substitute for the unfinished exchange at a later parent
+join. Run
 `bash .github/scripts/check_nested_roll_admission.sh` under the resource guard.
 The command fails if either the runtime or the source comparison fails.
 

@@ -1,5 +1,12 @@
 use super::super::super::{EventCursor, RelocatableResidentLaneStep, ScopeId};
 
+/// Facts read before the reset clears events or their committed choices.
+pub(crate) struct PreparedRollReset {
+    scope: ScopeId,
+    entry: Option<usize>,
+    retain_credit: bool,
+}
+
 impl EventCursor {
     pub(crate) fn roll_entry_views(
         &self,
@@ -63,7 +70,25 @@ impl EventCursor {
     }
 
     #[inline(never)]
-    pub(crate) fn clear_reentry_scope_events(&mut self, scope: ScopeId, entry: Option<usize>) {
+    pub(crate) fn prepare_roll_reset(
+        &self,
+        scope: ScopeId,
+        entry: Option<usize>,
+        selected: &mut dyn FnMut(ScopeId) -> Option<u8>,
+    ) -> PreparedRollReset {
+        PreparedRollReset {
+            scope,
+            entry,
+            retain_credit: self.roll_reset_retains_credit(scope, selected),
+        }
+    }
+
+    pub(crate) fn clear_reentry_scope_events(&mut self, reset: PreparedRollReset) {
+        let PreparedRollReset {
+            scope,
+            entry,
+            retain_credit,
+        } = reset;
         let Some((mut idx, end)) = self.reentry_scope_event_bounds(scope) else {
             crate::invariant();
         };
@@ -103,7 +128,7 @@ impl EventCursor {
             }
             idx += 1;
         }
-        self.retain_reentry_completion(scope, entry);
+        self.retain_reentry_completion(scope, entry, retain_credit);
     }
 
     #[inline(always)]

@@ -1841,9 +1841,13 @@ impl ProductionCursorTrace {
 
     fn clear_body_reentry_scope(&mut self, reentry_scope: Option<ScopeId>, entry: usize) {
         if let Some(scope) = reentry_scope {
+            let reset = self
+                .cursor()
+                .prepare_roll_reset(scope, Some(entry), &mut |scope| {
+                    selected_arm(&self.selected, scope)
+                });
             self.clear_selected_routes_inside_roll(scope, entry);
-            self.cursor_mut()
-                .clear_reentry_scope_events(scope, Some(entry));
+            self.cursor_mut().clear_reentry_scope_events(reset);
         }
     }
 
@@ -1936,8 +1940,11 @@ impl ProductionCursorTrace {
                 ),
                 "route scope arm replacement requires completed reentrant arm"
             );
+            let reset = self.cursor().prepare_roll_reset(scope, None, &mut |scope| {
+                selected_arm(&self.selected, scope)
+            });
             self.selected[idx].1 = arm;
-            self.cursor_mut().clear_reentry_scope_events(scope, None);
+            self.cursor_mut().clear_reentry_scope_events(reset);
             let mut candidate_idx = 0usize;
             while candidate_idx < self.selected.len() {
                 let candidate = self.selected[candidate_idx].0;

@@ -99,6 +99,18 @@ run_miri_test \
 
 (
   hibana_disable_repo_tests_cfg
+  for regression in \
+    inner_iterations_before_the_parent_join_cannot_pay_for_later_parent_visits \
+    a_pending_child_keeps_its_parallel_sibling_live_after_a_completed_parent \
+    a_late_outer_prefix_cannot_discard_a_started_child_visit \
+    completed_child_repetitions_cannot_skip_a_pending_exchange_at_the_next_parent_join; do
+    run_miri_test "public-nested-roll-${regression}" -p hibana \
+      --test nested_roll_admission "${regression}" -- --exact
+  done
+)
+
+(
+  hibana_disable_repo_tests_cfg
   MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" \
     run_miri_test public-repeat-entry -p hibana --test nested_parallel_reentry \
       -- --skip nested_parallel_

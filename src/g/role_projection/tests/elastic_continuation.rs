@@ -318,7 +318,8 @@ fn retained_completion_never_supplies_a_fresh_body_predecessor() {
                 .unwrap();
             cursor.advance_lane_to_relocatable_step(commit.progress_step());
         }
-        cursor.clear_reentry_scope_events(roll, None);
+        let reset = cursor.prepare_roll_reset(roll, None, &mut |_| None);
+        cursor.clear_reentry_scope_events(reset);
         assert!(
             cursor
                 .event_enabled(2, event(image, 2), &mut |_, _| None)
@@ -358,7 +359,8 @@ fn restarting_an_outer_visit_discards_its_old_inner_completion() {
                 .unwrap();
             cursor.advance_lane_to_relocatable_step(commit.progress_step());
         }
-        cursor.clear_reentry_scope_events(inner, None);
+        let reset = cursor.prepare_roll_reset(inner, None, &mut |_| None);
+        cursor.clear_reentry_scope_events(reset);
         assert!(
             cursor
                 .event_enabled(2, event(image, 2), &mut |_, _| None)
@@ -370,7 +372,8 @@ fn restarting_an_outer_visit_discards_its_old_inner_completion() {
                 .unwrap();
             cursor.advance_lane_to_relocatable_step(commit.progress_step());
         }
-        cursor.clear_reentry_scope_events(outer, None);
+        let reset = cursor.prepare_roll_reset(outer, None, &mut |_| None);
+        cursor.clear_reentry_scope_events(reset);
         assert!(
             cursor
                 .event_enabled(2, event(image, 2), &mut |_, _| None)
@@ -399,7 +402,11 @@ fn retained_roll_completion_has_storage_past_a_full_event_word() {
             .event_enabled(0, event(image, 0), &mut |_, _| None)
             .unwrap();
         cursor.advance_lane_to_relocatable_step(commit.progress_step());
-        cursor.clear_reentry_scope_events(image.roll_scope_row(0).unwrap().scope(), None);
+        let reset =
+            cursor.prepare_roll_reset(image.roll_scope_row(0).unwrap().scope(), None, &mut |_| {
+                None
+            });
+        cursor.clear_reentry_scope_events(reset);
         assert!(cursor.has_retained_roll_completion());
         for index in 0..32 {
             let lane = image.local_step_lane(index).unwrap();

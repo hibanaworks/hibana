@@ -152,7 +152,8 @@ pub(super) fn export() {
             .roll_body_reentry_scope_for_step(head, &mut |_| None)
             .unwrap();
         assert_eq!(scope, image.roll_scope_row(0).unwrap().scope());
-        cursor.clear_reentry_scope_events(scope, None);
+        let reset = cursor.prepare_roll_reset(scope, None, &mut |_| None);
+        cursor.clear_reentry_scope_events(reset);
         for step in 0..image.local_step_count() {
             let lane = cursor.event_lane_at(step).unwrap();
             let progress = cursor
@@ -220,7 +221,8 @@ pub(super) fn export() {
                 .roll_body_reentry_scope_for_step(head, &mut |_| None)
                 .unwrap();
             assert_eq!(scope, parallel.roll_scope_row(slot).unwrap().scope());
-            cursor.clear_reentry_scope_events(scope, None);
+            let reset = cursor.prepare_roll_reset(scope, None, &mut |_| None);
+            cursor.clear_reentry_scope_events(reset);
         }
         for step in 0..parallel.local_step_count() {
             let lane = cursor.event_lane_at(step).unwrap();

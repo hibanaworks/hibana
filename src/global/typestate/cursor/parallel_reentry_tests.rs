@@ -5,15 +5,16 @@ use core::mem::MaybeUninit;
 #[cfg(all(test, hibana_repo_tests))]
 #[test]
 fn an_independent_child_visit_keeps_the_completed_parent_entry_available() {
-    for extra_complete_visit in [false, true] {
-        check_independent_child_before_parent_entry(extra_complete_visit);
-        check_independent_child_after_parent_entry(extra_complete_visit);
-    }
+    check_initial_independent_parent_entry();
+    check_independent_child_before_parent_entry::<false>();
+    check_independent_child_before_parent_entry::<true>();
+    check_independent_child_after_parent_entry::<false>();
+    check_independent_child_after_parent_entry::<true>();
 }
 
 #[cfg(all(test, hibana_repo_tests))]
-fn check_independent_child_before_parent_entry(extra_complete_visit: bool) {
-    with_independent_child_cut(extra_complete_visit, |cursor, _| {
+fn check_independent_child_before_parent_entry<const EXTRA: bool>() {
+    with_independent_child_cut::<EXTRA>(|cursor, _| {
         let parent_entry = cursor.try_recv_meta_at(0).unwrap();
         assert!(
             cursor
@@ -42,9 +43,10 @@ fn check_independent_child_before_parent_entry(extra_complete_visit: bool) {
 }
 
 #[cfg(all(test, hibana_repo_tests))]
-fn check_independent_child_after_parent_entry(extra_complete_visit: bool) {
-    with_independent_child_cut(extra_complete_visit, |cursor, parent| {
-        cursor.clear_reentry_scope_events(parent, Some(0));
+fn check_independent_child_after_parent_entry<const EXTRA: bool>() {
+    with_independent_child_cut::<EXTRA>(|cursor, parent| {
+        let reset = cursor.prepare_roll_reset(parent, Some(0), &mut |_| None);
+        cursor.clear_reentry_scope_events(reset);
         assert!(cursor.local_event_done(2));
         assert!(!cursor.local_event_done(3));
         for index in 0..2 {
@@ -54,11 +56,13 @@ fn check_independent_child_after_parent_entry(extra_complete_visit: bool) {
             cursor.advance_lane_to_relocatable_step(step);
         }
         let parent_entry = cursor.try_recv_meta_at(0).unwrap();
-        assert_eq!(
+        // The extra child visit precedes this parent entry. Once that entry
+        // consumes the retained completion, an unfinished child cannot pay
+        // for yet another parent visit.
+        assert!(
             cursor
                 .event_enabled(0, parent_entry.into(), &mut |_, _| None)
-                .is_ok(),
-            extra_complete_visit,
+                .is_err(),
         );
         let current_child_head = cursor.try_recv_meta_at(2).unwrap();
         assert!(
@@ -69,10 +73,13 @@ fn check_independent_child_after_parent_entry(extra_complete_visit: bool) {
     });
 }
 
-#[cfg(all(test, hibana_repo_tests))]
-fn with_independent_child_cut(
-    extra_complete_visit: bool,
-    check: impl FnOnce(&mut EventCursor, crate::global::const_dsl::ScopeId),
+#[cfg(any(kani, all(test, hibana_repo_tests)))]
+fn with_independent_child_cursor(
+    check: impl FnOnce(
+        &mut EventCursor,
+        crate::global::const_dsl::ScopeId,
+        crate::global::const_dsl::ScopeId,
+    ),
 ) {
     let global = g::par(
         g::seq(
@@ -129,28 +136,113 @@ fn with_independent_child_cut(
     for index in 0..4 {
         cursor.mark_local_event_done(index);
     }
-    let parent_entry = cursor.try_recv_meta_at(0).unwrap();
-    assert!(
-        cursor
-            .event_enabled(0, parent_entry.into(), &mut |_, _| None)
-            .is_ok()
-    );
+    check(cursor, parent, child);
+}
 
-    if extra_complete_visit {
-        cursor.clear_reentry_scope_events(child, None);
-        for index in 2..4 {
-            let step = cursor
-                .relocatable_resident_lane_step_at_index(index, 1)
-                .unwrap();
-            cursor.advance_lane_to_relocatable_step(step);
+#[cfg(any(kani, all(test, hibana_repo_tests)))]
+fn check_initial_independent_parent_entry() {
+    with_independent_child_cursor(|cursor, _, _| {
+        let parent_entry = cursor.try_recv_meta_at(0).unwrap();
+        assert!(
+            cursor
+                .event_enabled(0, parent_entry.into(), &mut |_, _| None)
+                .is_ok()
+        );
+    });
+}
+
+#[cfg(any(kani, all(test, hibana_repo_tests)))]
+fn with_independent_child_cut<const EXTRA: bool>(
+    check: impl FnOnce(&mut EventCursor, crate::global::const_dsl::ScopeId),
+) {
+    with_independent_child_cursor(|cursor, parent, child| {
+        if EXTRA {
+            let reset = cursor.prepare_roll_reset(child, None, &mut |_| None);
+            cursor.clear_reentry_scope_events(reset);
+            for index in 2..4 {
+                let step = cursor
+                    .relocatable_resident_lane_step_at_index(index, 1)
+                    .unwrap();
+                cursor.advance_lane_to_relocatable_step(step);
+            }
         }
+        let reset = cursor.prepare_roll_reset(child, None, &mut |_| None);
+        cursor.clear_reentry_scope_events(reset);
+        let child_step = cursor
+            .relocatable_resident_lane_step_at_index(2, 1)
+            .unwrap();
+        cursor.advance_lane_to_relocatable_step(child_step);
+        check(cursor, parent);
+    });
+}
+
+#[cfg(kani)]
+mod retained_child_kani {
+    use super::*;
+
+    #[kani::proof]
+    #[kani::unwind(24)]
+    fn initial_parent_entry() {
+        check_initial_independent_parent_entry();
     }
-    cursor.clear_reentry_scope_events(child, None);
-    let child_step = cursor
-        .relocatable_resident_lane_step_at_index(2, 1)
-        .unwrap();
-    cursor.advance_lane_to_relocatable_step(child_step);
-    check(cursor, parent);
+
+    fn before_parent<const EXTRA: bool, const INDEX: usize>() {
+        with_independent_child_cut::<EXTRA>(|cursor, _| {
+            let event: crate::global::typestate::EventCommitMeta = match INDEX {
+                0 | 2 => cursor.try_recv_meta_at(INDEX).unwrap().into(),
+                _ => cursor.try_send_meta_at(INDEX).unwrap().into(),
+            };
+            assert_eq!(
+                cursor.event_enabled(INDEX, event, &mut |_, _| None).is_ok(),
+                INDEX == 0 || INDEX == 3
+            );
+        });
+    }
+
+    fn after_parent<const EXTRA: bool, const INDEX: usize>() {
+        with_independent_child_cut::<EXTRA>(|cursor, parent| {
+            let reset = cursor.prepare_roll_reset(parent, Some(0), &mut |_| None);
+            cursor.clear_reentry_scope_events(reset);
+            assert!(cursor.local_event_done(2));
+            assert!(!cursor.local_event_done(3));
+            for index in 0..2 {
+                let step = cursor
+                    .relocatable_resident_lane_step_at_index(index, 0)
+                    .unwrap();
+                cursor.advance_lane_to_relocatable_step(step);
+            }
+            let event = cursor.try_recv_meta_at(INDEX).unwrap();
+            assert!(
+                cursor
+                    .event_enabled(INDEX, event.into(), &mut |_, _| None)
+                    .is_err()
+            );
+        });
+    }
+
+    // Compile the entire finite history/query product separately. This keeps
+    // every input and assertion without merging their descriptor equations.
+    macro_rules! proof_case {
+        ($name:ident, $check:ident, $extra:literal, $index:literal) => {
+            #[kani::proof]
+            #[kani::unwind(24)]
+            fn $name() {
+                $check::<$extra, $index>();
+            }
+        };
+    }
+    proof_case!(retained_parent_entry, before_parent, false, 0);
+    proof_case!(retained_parent_tail, before_parent, false, 1);
+    proof_case!(retained_child_head, before_parent, false, 2);
+    proof_case!(retained_child_tail, before_parent, false, 3);
+    proof_case!(consumed_parent_entry, after_parent, false, 0);
+    proof_case!(consumed_child_head, after_parent, false, 2);
+    proof_case!(extra_retained_parent_entry, before_parent, true, 0);
+    proof_case!(extra_retained_parent_tail, before_parent, true, 1);
+    proof_case!(extra_retained_child_head, before_parent, true, 2);
+    proof_case!(extra_retained_child_tail, before_parent, true, 3);
+    proof_case!(extra_consumed_parent_entry, after_parent, true, 0);
+    proof_case!(extra_consumed_child_head, after_parent, true, 2);
 }
 
 fn parallel_continuation_global() -> impl crate::runtime::program::Projectable {
@@ -236,7 +328,8 @@ fn check_parallel_continuation_lifetime() {
             .completed_parallel_reentry(0, 2, &mut |_, _| None)
             .unwrap();
         assert!(cursor.borrowed_roll_reentry_is_current(scope, epoch, &mut |_| None));
-        cursor.clear_reentry_scope_events(scope, None);
+        let reset = cursor.prepare_roll_reset(scope, None, &mut |_| None);
+        cursor.clear_reentry_scope_events(reset);
         assert!(!cursor.borrowed_roll_reentry_is_current(scope, epoch, &mut |_| None));
         assert!(
             cursor
@@ -256,7 +349,8 @@ fn check_retained_continuation<const ROLE: u8>(
             cursor.mark_local_event_done(0);
             cursor.mark_local_event_done(1);
             let (scope, _) = cursor.machine().roll_scope_row_by_slot(0).unwrap();
-            cursor.clear_reentry_scope_events(scope, None);
+            let reset = cursor.prepare_roll_reset(scope, None, &mut |_| None);
+            cursor.clear_reentry_scope_events(reset);
         }
         assert_eq!(
             cursor.retained_roll_continuation_after(candidate, 0..source_end),
@@ -759,7 +853,8 @@ fn check_fresh_parallel_entry(candidate: u8) {
     // Admission and borrow construction have not reset the committed visit.
     assert_eq!(cursor.completion_mutations(), 4);
     assert_eq!(cursor.roll_reentry_epoch(parent), 0);
-    cursor.clear_reentry_scope_events(parent, None);
+    let reset = cursor.prepare_roll_reset(parent, None, &mut |_| None);
+    cursor.clear_reentry_scope_events(reset);
     assert_eq!(cursor.roll_reentry_epoch(parent), 1);
     assert_eq!(cursor.roll_reentry_epoch(child), 1);
     assert!(!cursor.borrowed_roll_reentry_is_current(parent, 0, &mut |_| None));
@@ -860,7 +955,8 @@ fn check_child_after_same_lane_tail() {
     assert!(cursor.event_enabled(1, event, &mut |_, _| None).is_ok());
     event.body_reentry = parent;
     assert!(cursor.event_enabled(1, event, &mut |_, _| None).is_err());
-    cursor.clear_reentry_scope_events(child, None);
+    let reset = cursor.prepare_roll_reset(child, None, &mut |_| None);
+    cursor.clear_reentry_scope_events(reset);
     assert!(cursor.node_event_done_for_lane(0, 0));
     assert!(!cursor.node_event_done_for_lane(1, 0));
     assert!(!cursor.node_event_done_for_lane(2, 0));
@@ -986,7 +1082,8 @@ fn check_cross_lane_parent_admission() {
 
 fn check_cross_lane_child_reset() {
     with_cross_lane_prefix(|cursor, (child, _), lane| {
-        cursor.clear_reentry_scope_events(child, None);
+        let reset = cursor.prepare_roll_reset(child, None, &mut |_| None);
+        cursor.clear_reentry_scope_events(reset);
         assert!(cursor.node_event_done_for_lane(0, cursor.event_lane_at(0).unwrap()));
         assert!(!cursor.node_event_done_for_lane(1, cursor.event_lane_at(1).unwrap()));
         assert!(!cursor.node_event_done_for_lane(2, lane));

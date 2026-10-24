@@ -40,7 +40,7 @@ abbrev State := SourceOccurrenceCut family × List SourcePoint
 def label (letter : Nat) : Nat :=
   if letter == 0 then 231 else if letter == 1 then 232 else 234
 
-def completeMessage (plan : SourceOccurrenceCut family) (points : List SourcePoint)
+def completeMessage (plan : SourceOccurrenceCut source) (points : List SourcePoint)
     (event : Nat) : Option (List SourcePoint) :=
   [.accepted event, .committed ⟨event, .send⟩, .committed ⟨event, .receive⟩].foldlM
     (fun points point =>
@@ -233,6 +233,36 @@ def decodeScoped (bytes : ByteArray) : Except String (List ScopedQuery) := do
 
 end NestedRollAdmission
 
+namespace ParallelChildAdmission
+open NestedRollAdmission
+
+def left := Source.seq (message 0 1 226) (message 1 0 227)
+def right := Source.seq (message 0 1 228) (message 1 0 229)
+def body := Source.par left (.roll right)
+def family := Source.roll body
+abbrev State := SourceOccurrenceCut family × List SourcePoint
+
+def advance (states : List State) (label : Nat) : List State :=
+  states.flatMap fun (plan, points) => plan.path.bindings.filterMap fun (event, binding) => do
+    if binding.message.label != label then none else
+      pure (plan, ← completeMessage plan points event)
+
+-- Enumerate every grouping of these messages, rather than taking the raw
+-- cursor's retained counter as a source-level ownership or ordering fact.
+def check (extra : Nat) : Bool := Id.run do
+  let budget := 2 * (extra + 7)
+  let children := rolls right [one right] budget budget
+  let parts : List (Expansion body) := children.map fun child =>
+    ⟨.par left.oneCopy child.1, .par (.oneCopy left) child.2⟩
+  let plans := (rolls body parts budget budget).flatMap fun plan =>
+    checkedPlans family plan.1 plan.2
+  let first := [226, 227, 228, 229] ++ (List.replicate extra [228, 229]).flatten
+  let pending := (first ++ [228, 226, 227]).foldl advance (plans.map (·, []))
+  return !pending.isEmpty && (advance pending 226).isEmpty &&
+    !(advance (advance pending 229) 226).isEmpty
+
+end ParallelChildAdmission
+
 def main (args : List String) : IO UInt32 := do
   let [output, scopedOutput, resumedOutput] := args
     | throw (IO.userError "usage: nested-roll-admission OUTPUT.bin SCOPED.bin RESUMED.bin")
@@ -274,5 +304,9 @@ def main (args : List String) : IO UInt32 := do
   IO.FS.writeBinFile output encoded
   IO.FS.writeBinFile scopedOutput scopedEncoded
   IO.println s!"Nested-roll source cases: plans={plans} queries={expected.length} scoped={witnesses.length} roundtrip=pass controls=pass"
+  for extra in List.range 3 do
+    unless ParallelChildAdmission.check extra do
+      throw (IO.userError s!"parallel child grouping mismatch extra={extra}")
+  IO.println "Parallel-child source grouping controls: cases=3 pass"
   ResumedRollAdmission.write resumedOutput
   pure 0
