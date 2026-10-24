@@ -18,6 +18,8 @@ fn write_if_changed(path: &std::path::Path, text: &str) -> std::io::Result<()> {
 
 #[path = "protocol_shape_causality.rs"]
 mod causality;
+#[path = "protocol_shape_choice.rs"]
+mod choice;
 #[path = "protocol_shape_delegated.rs"]
 mod delegated;
 #[path = "protocol_shape_interactions.rs"]
@@ -1202,7 +1204,7 @@ fn syntax_cases(
         }
         // These source rules do not depend on projection's verdict. Unknown
         // rejections stay unresolved instead of becoming expected failures.
-        if let Some((&problem, &reason)) = ownership::violations(&global).first_key_value() {
+        if let Some(&(problem, reason)) = syntax_violations(&global).first() {
             catalog.expected_rejections.insert(case, problem);
             catalog
                 .negative_sources
@@ -1220,6 +1222,29 @@ fn syntax_cases(
         ));
     }
     Ok(catalog)
+}
+
+fn syntax_violations(source: &Protocol) -> Vec<(&'static str, &'static str)> {
+    let ownership = ownership::violations(source);
+    if ownership.is_empty() {
+        choice::violations(source)
+    } else {
+        ownership.into_iter().collect()
+    }
+}
+
+fn matches_source_violation(verdict: &str, problem: &str, reason: &str) -> bool {
+    let role = reason
+        .split("; ")
+        .find_map(|field| field.strip_prefix("role="));
+    let role_matches = match role {
+        Some(role) => verdict.contains(&format!("role: Some({role}),")),
+        None => verdict.contains("role: None,"),
+    };
+    role_matches
+        && verdict.starts_with(&format!(
+            "rejected:ProjectionDiagnostic {{ problem: {problem},"
+        ))
 }
 
 fn interaction_cases(
@@ -1438,12 +1463,11 @@ long_running_const_eval = "forbid"
                         .filter(|c| c.0 == case)
                         .ok_or("unknown syntax diagnostic")?
                         .4;
-                    let proven = ownership::violations(global);
+                    let proven = syntax_violations(global);
                     // Several source violations can coexist. Select only a
                     // proven violation, then require this exact compile error.
                     let reason = proven.iter().find_map(|(problem, reason)| {
-                        verdict.starts_with(&format!("rejected:ProjectionDiagnostic {{ problem: {problem},"))
-                            .then_some(*reason)
+                        matches_source_violation(verdict, problem, reason).then_some(*reason)
                     }).ok_or_else(|| format!("known illegal shape {case} did not report a source-proven violation {proven:?}: {verdict}"))?;
                     negative_sources.insert(format!("syntax_{case}"), (global.clone(), reason));
                 } else if !verdict.starts_with(&format!(
@@ -1794,6 +1818,48 @@ long_running_const_eval = "forbid"
 #[cfg(test)]
 mod population_tests {
     use super::*;
+
+    #[test]
+    fn choice_diagnostics_select_only_source_proven_rules_and_participants() {
+        let source = Protocol::Route(
+            Box::new(Protocol::Message {
+                from: 2,
+                to: 0,
+                label: 0,
+                owned: false,
+            }),
+            Box::new(Protocol::Message {
+                from: 0,
+                to: 1,
+                label: 1,
+                owned: true,
+            }),
+        );
+        let proven = syntax_violations(&source);
+        for role in 0..4 {
+            let verdict = format!(
+                "rejected:ProjectionDiagnostic {{ problem: MissingBranchKnowledge, role: Some({role}), scope: Some(0) }}"
+            );
+            assert_eq!(
+                proven
+                    .iter()
+                    .any(|(problem, reason)| matches_source_violation(&verdict, problem, reason)),
+                role < 2
+            );
+        }
+        for verdict in [
+            "accepted",
+            "rejected:ProjectionDiagnostic { problem: OwnershipCapacity, role: None, scope: None }",
+            "rejected:ProjectionDiagnostic { problem: RouteControllerMismatch, role: Some(3), scope: None }",
+        ] {
+            assert!(
+                !proven
+                    .iter()
+                    .any(|(problem, reason)| matches_source_violation(verdict, problem, reason))
+            );
+        }
+        assert!(proven.iter().any(|(problem, reason)| matches_source_violation("rejected:ProjectionDiagnostic { problem: RouteControllerMismatch, role: None, scope: Some(0) }", problem, reason)));
+    }
 
     #[test]
     fn syntax_ci_ranges_have_no_gaps_overlap_or_machine_rank_limit() {

@@ -150,6 +150,13 @@ records every result. An unclassified rejection fails the overall check.
 It is not counted as a successful negative test or removed from the catalog.
 Invalid resource-dependent reentry and choices where the collector participates
 in only one arm are derived from the source and checked by a separate build. Each
+root choice between two single messages also checks the choosing role and which
+participants learn its choice. Ownership is solved first, including a resource
+view's initial holder. Several violations or affected participants can coexist;
+the reported rule and participant must match one of these source witnesses.
+This rule does not classify compound choice arms, where earlier messages may
+provide the missing knowledge.
+Each
 delegated-body candidate also produces a parallel transfer/use conflict. Every
 such case is built independently and must fail with the expected `E0080`
 diagnostic rule, affected role and help. Source locations may add detail to that
