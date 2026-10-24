@@ -7,16 +7,12 @@ pub(super) fn write_inventory(
     case: usize,
     mut output: impl std::io::Write,
 ) -> std::io::Result<(usize, usize)> {
-    let executions = source.executions();
-    writeln!(
-        output,
-        r#"{{"name":{case},"scripts":{}}}"#,
-        executions.len()
-    )?;
+    let script_count = source.execution_count();
+    writeln!(output, r#"{{"name":{case},"scripts":{}}}"#, script_count)?;
     let mut count = 0;
     let causal = causality::pairs(source);
-    for (script, execution) in executions.iter().enumerate() {
-        let probes = plans_with(source, execution, owner, &causal);
+    for (script, execution) in source.executions().enumerate() {
+        let probes = plans_with(source, &execution, owner, &causal);
         count += 2 * probes.len();
         writeln!(
             output,
@@ -30,7 +26,7 @@ pub(super) fn write_inventory(
         )?;
     }
     output.flush()?;
-    Ok((executions.len(), count))
+    Ok((script_count, count))
 }
 
 pub(super) fn first_label(source: &Protocol) -> u8 {
@@ -287,7 +283,7 @@ mod tests {
                 Box::new(message(3, 2, 2)),
             )))),
         );
-        let probes = plans(&source, &source.executions()[0], 0);
+        let probes = plans(&source, &source.executions().next().unwrap(), 0);
         assert_eq!(
             probes,
             [
@@ -315,7 +311,7 @@ mod tests {
             Box::new(message(0, 1, 1)),
             Box::new(message(1, 0, 2)),
         )))));
-        let execution = source.executions().remove(0);
+        let execution = source.executions().next().unwrap();
         let probes = plans(&source, &execution, 0);
         assert_eq!(probes.len(), 16);
         assert_eq!(
@@ -347,7 +343,7 @@ mod tests {
             )),
             Box::new(message(0, 1, 4)),
         );
-        let execution = source.executions().remove(0);
+        let execution = source.executions().next().unwrap();
         let probes = plans(&source, &execution, 0);
         assert!(probes.iter().any(|p| matches!(
             p,
@@ -402,7 +398,7 @@ mod tests {
                 Box::new(message(2, 3, 3)),
             )),
         );
-        let execution = source.executions().remove(0);
+        let execution = source.executions().next().unwrap();
         let probes = plans(&source, &execution, 0);
         assert!(probes.iter().any(|p| matches!(
             p,

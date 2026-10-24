@@ -868,14 +868,8 @@ impl Emitter<'_> {
     }
 }
 
-pub(super) fn runs(source: &Protocol, owner: u8, case: usize) -> (String, String) {
-    let executions = source.executions();
-    let mut scripts = executions
-        .iter()
-        .map(Execution::json)
-        .collect::<Vec<_>>()
-        .join("\n");
-    scripts.push('\n');
+pub(super) fn runs(source: &Protocol, owner: u8, case: usize) -> String {
+    let script_count = source.execution_count();
     let mut paths = std::collections::BTreeMap::new();
     source.resolver_choices(&mut Vec::new(), &mut paths);
     let mut choices = Vec::new();
@@ -921,8 +915,8 @@ pub(super) fn runs(source: &Protocol, owner: u8, case: usize) -> (String, String
       let rv2=s2.init().rendezvous(&mut slab2,network.clone()).unwrap();
       let rv3=s3.init().rendezvous(&mut slab3,network.clone()).unwrap();
     "#,
-        executions.len(),
-        executions.len(),
+        script_count,
+        script_count,
         resolvers.len()
     );
     for id in resolvers {
@@ -1025,9 +1019,9 @@ pub(super) fn runs(source: &Protocol, owner: u8, case: usize) -> (String, String
     "#;
     code += &format!(
         r#"}}writeln!(scope_observations,",\"probes\":[{{}}]}}}}",scoped_rejections.join(",")).unwrap();}}completed_plan_words.insert(script.line());checked_scripts+=1;}}assert_eq!(checked_scripts,{},"missing script plan");scope_plans.finish();scope_observations.flush().unwrap();"#,
-        executions.len()
+        script_count
     );
-    (code, scripts)
+    code
 }
 
 #[cfg(test)]
@@ -1067,10 +1061,9 @@ mod tests {
                 .collect::<Vec<_>>(),
             [2, 5]
         );
-        let executions = source.executions();
-        let ends = executions
-            .iter()
-            .map(|execution| holder_after(&source, execution, 0))
+        let ends = source
+            .executions()
+            .map(|execution| holder_after(&source, &execution, 0))
             .collect::<std::collections::BTreeSet<_>>();
         assert_eq!(ends, [0, 2].into());
     }

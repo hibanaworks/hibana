@@ -336,12 +336,11 @@ mod tests {
                 let mut messages = Vec::new();
                 source.messages(&mut messages);
                 if messages.iter().any(|m| matches!(m, Protocol::Message { from,to,owned:true,.. } if from==to || *from==3 || *to==3)) { continue; }
-                let traces = source.executions();
                 let mut expected = [0; 3];
                 if !parallel_conflict(&source) {
                     for initial in 0..3u8 {
                         let mut ends = 0;
-                        let all = traces.iter().all(|execution| {
+                        let all = source.executions().all(|execution| {
                             let mut owner = initial;
                             for (label,_) in execution.trace().messages {
                                 match messages.iter().find(|m| matches!(m, Protocol::Message { label: value,.. } if *value == label)).unwrap() {

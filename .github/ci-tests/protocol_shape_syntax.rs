@@ -366,8 +366,7 @@ mod tests {
             assert_eq!(grammar.protocol(depth, rank.clone()).0, source);
             let owners = source
                 .executions()
-                .iter()
-                .map(|execution| super::super::localside::holder_after(&source, execution, 0))
+                .map(|execution| super::super::localside::holder_after(&source, &execution, 0))
                 .collect::<BTreeSet<_>>();
             assert_eq!(owners, BTreeSet::from([0, 1]));
             println!("conditional-parallel inside={inside_parallel} depth={depth} rank={rank}");

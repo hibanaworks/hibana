@@ -28,6 +28,9 @@ mod coverage;
 mod decisions;
 #[path = "protocol_shape_delegated.rs"]
 mod delegated;
+#[cfg(test)]
+#[path = "protocol_shape_executions_tests.rs"]
+mod execution_tests;
 #[path = "protocol_shape_interactions.rs"]
 mod interactions;
 #[path = "protocol_shape_localside.rs"]
@@ -327,61 +330,79 @@ impl Protocol {
     }
     // Complete finite traces are derived from syntax, not accepted runtime calls.
     // Two visits per roll exercise re-entry; parallel children run in both orders.
-    fn traces(&self) -> Vec<Trace> {
-        self.executions().iter().map(Execution::trace).collect()
+    fn traces(&self) -> impl Iterator<Item = Trace> + '_ {
+        self.executions().map(|execution| execution.trace())
     }
 
     // Retain each visit and parallel boundary even when two executions have
     // the same message word. The public borrow API observes these boundaries.
-    fn executions(&self) -> Vec<Execution> {
+    fn execution_count(&self) -> usize {
         match self {
-            Self::Message { label, .. } => vec![Execution::Message(*label)],
-            Self::Seq(a, b) | Self::Par(a, b) => {
-                let left = a.executions();
-                let right = b.executions();
-                let mut out = Vec::new();
-                for a in &left {
-                    for b in &right {
-                        if matches!(self, Self::Par(..)) {
-                            out.push(Execution::Par(
-                                Box::new(a.clone()),
-                                Box::new(b.clone()),
-                                false,
-                            ));
-                            out.push(Execution::Par(
-                                Box::new(a.clone()),
-                                Box::new(b.clone()),
-                                true,
-                            ));
-                        } else {
-                            out.push(Execution::Seq(Box::new(a.clone()), Box::new(b.clone())));
-                        }
-                    }
-                }
-                out
+            Self::Message { .. } => Some(1),
+            Self::Seq(a, b) => a.execution_count().checked_mul(b.execution_count()),
+            Self::Par(a, b) => a
+                .execution_count()
+                .checked_mul(b.execution_count())
+                .and_then(|count| count.checked_mul(2)),
+            Self::Route(a, b) | Self::Resolved(a, b, _) => {
+                a.execution_count().checked_add(b.execution_count())
             }
-            Self::Route(a, b) | Self::Resolved(a, b, _) => [(a, false), (b, true)]
-                .into_iter()
-                .flat_map(|(arm, right)| {
-                    arm.executions()
-                        .into_iter()
-                        .map(move |body| Execution::Branch(Box::new(body), right))
-                })
-                .collect(),
             Self::Roll(body) => {
-                let visits = body.executions();
-                let mut out = Vec::new();
-                for first in &visits {
-                    for second in &visits {
-                        out.push(Execution::Roll(
-                            Box::new(first.clone()),
-                            Box::new(second.clone()),
-                        ));
-                    }
-                }
-                out
+                let count = body.execution_count();
+                count.checked_mul(count)
             }
         }
+        .expect("execution count exceeds the host usize domain")
+    }
+
+    fn execution_at(&self, rank: usize) -> Execution {
+        match self {
+            Self::Message { label, .. } => {
+                assert_eq!(rank, 0);
+                Execution::Message(*label)
+            }
+            Self::Seq(a, b) | Self::Par(a, b) => {
+                let pair = if matches!(self, Self::Par(..)) {
+                    rank / 2
+                } else {
+                    rank
+                };
+                let width = b.execution_count();
+                let left = Box::new(a.execution_at(pair / width));
+                let right = Box::new(b.execution_at(pair % width));
+                if matches!(self, Self::Par(..)) {
+                    Execution::Par(left, right, !rank.is_multiple_of(2))
+                } else {
+                    Execution::Seq(left, right)
+                }
+            }
+            Self::Route(a, b) | Self::Resolved(a, b, _) => {
+                let width = a.execution_count();
+                if rank < width {
+                    Execution::Branch(Box::new(a.execution_at(rank)), false)
+                } else {
+                    Execution::Branch(Box::new(b.execution_at(rank - width)), true)
+                }
+            }
+            Self::Roll(body) => {
+                let width = body.execution_count();
+                Execution::Roll(
+                    Box::new(body.execution_at(rank / width)),
+                    Box::new(body.execution_at(rank % width)),
+                )
+            }
+        }
+    }
+
+    fn executions(&self) -> impl ExactSizeIterator<Item = Execution> + '_ {
+        (0..self.execution_count()).map(|rank| self.execution_at(rank))
+    }
+
+    fn write_scripts(&self, mut output: impl std::io::Write) -> std::io::Result<()> {
+        for execution in self.executions() {
+            writeln!(output, "{}", execution.json())?;
+        }
+        output.flush()
     }
 }
 
@@ -1838,7 +1859,7 @@ long_running_const_eval = "forbid"
         source_coverage.add(*case, global);
         let mut messages = Vec::new();
         global.messages(&mut messages);
-        let traces = global.traces().into_iter().collect::<BTreeSet<_>>();
+        let traces = global.traces().collect::<BTreeSet<_>>();
         let mut decisions = BTreeMap::new();
         global.resolver_choices(&mut Vec::new(), &mut decisions);
         let patterns = decisions::patterns(global, *resolvers);
@@ -1908,10 +1929,10 @@ long_running_const_eval = "forbid"
                 roles
             }
         )?;
-        let (local, scripts) = localside::runs(global, *owner, *case);
+        let local = localside::runs(global, *owner, *case);
         source.push_str(&local);
         let script_path = script_directory.join(format!("{case}.jsonl"));
-        write_if_changed(&script_path, &scripts)?;
+        global.write_scripts(std::io::BufWriter::new(fs::File::create(&script_path)?))?;
         script_paths.insert(script_path);
         let scope_path = scope_directory.join(format!("{case}.jsonl"));
         let (script_count, scope_count) = scope_probes::write_inventory(
@@ -1925,9 +1946,9 @@ long_running_const_eval = "forbid"
             r#"{{"name":{case},"scripts":{script_count},"probes":{scope_count}}}"#
         ));
         local_rejection_probes += scope_count;
-        scoped_executions += global.executions().len();
+        scoped_executions += script_count;
         if delegated_cases.contains(case) {
-            delegated_concurrent_runs += global.executions().len();
+            delegated_concurrent_runs += script_count;
         }
         writeln!(
             source,
