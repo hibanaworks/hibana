@@ -151,7 +151,13 @@ impl EventCursor {
         index: usize,
         selected: &mut dyn FnMut(ScopeId) -> Option<u8>,
     ) -> bool {
-        self.credited_roll_path_complete(scope, index, selected)
+        (self
+            .machine()
+            .event_program()
+            .footprint()
+            .borrow_epoch_count
+            == 0
+            || self.credited_roll_path_complete(scope, index, selected))
             && self.roll_scope_events_complete_at(scope, Some(index), selected)
     }
 
@@ -179,9 +185,15 @@ impl EventCursor {
             .pending_event_steps(row.start()..row.end())
             .any(|index| {
                 participates(index)
-                    && self
-                        .roll_reentry_preserved_child(scope, index, entry)
-                        .is_none()
+                    && (self
+                        .machine()
+                        .event_program()
+                        .footprint()
+                        .borrow_epoch_count
+                        == 0
+                        || self
+                            .roll_reentry_preserved_child(scope, index, entry)
+                            .is_none())
             })
         {
             return false;

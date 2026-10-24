@@ -399,7 +399,8 @@ pending while the independent tick completes, and reject a new outer prefix
 that would discard the pending exchange. A second source family,
 `(LeftExchange | RightExchange+)+`, checks that earlier completed child
 iterations cannot substitute for the unfinished exchange at a later parent
-join. Run
+join. The retained completion is a single consumable credit. Repeated child
+visits do not accumulate credits for later parent visits. Run
 `bash .github/scripts/check_nested_roll_admission.sh` under the resource guard.
 The command fails if either the runtime or the source comparison fails.
 
