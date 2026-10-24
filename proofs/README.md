@@ -89,6 +89,11 @@ uses public projection, real Endpoints and the independent Lean checker.
 An unexpected rejection fails the check. Raw syntax testing retains invalid
 cases and their separate compile-fail builds.
 
+Source representatives are compiled in groups of up to 32 test functions;
+nested-context candidates use groups of up to eight. Each global is projected
+and each localside is executed separately. Raw syntax candidates use one Rust
+target per case. Invalid sources always have separate compile-fail builds.
+
 Resolver probes use the decisions on every source path, plus each input with
 one resolver changed. Sequential and parallel children combine their inputs;
 a choice keeps only its selected arm's inputs. Records list the resolver IDs

@@ -914,6 +914,28 @@ fn catalog(budget: usize) -> Vec<CaseShape> {
     cases
 }
 type Case = (usize, String, u8, u8, Protocol, u16);
+#[derive(Clone, Copy)]
+enum CatalogOrigin {
+    Templates,
+    Syntax,
+    Representatives,
+    Contexts,
+}
+
+impl CatalogOrigin {
+    fn requires_diagnostics(self) -> bool {
+        matches!(self, Self::Syntax | Self::Representatives | Self::Contexts)
+    }
+
+    fn compilation_width(self) -> usize {
+        match self {
+            Self::Syntax => 1,
+            Self::Contexts => 8,
+            Self::Templates | Self::Representatives => 32,
+        }
+    }
+}
+
 struct CaseSet {
     namespace: String,
     description: String,
@@ -924,7 +946,7 @@ struct CaseSet {
     negative_sources: BTreeMap<String, (Protocol, &'static str)>,
     max_label: u16,
     max_resolvers: u16,
-    syntax: bool,
+    origin: CatalogOrigin,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -1290,7 +1312,7 @@ fn template_cases(budget: usize, shard: usize, shards: usize) -> CaseSet {
         negative_sources,
         max_label,
         max_resolvers,
-        syntax: false,
+        origin: CatalogOrigin::Templates,
     }
 }
 
@@ -1316,7 +1338,7 @@ fn syntax_cases(
         negative_sources: BTreeMap::new(),
         max_label: 0,
         max_resolvers: 0,
-        syntax: true,
+        origin: CatalogOrigin::Syntax,
     };
     for case in 0..count {
         let rank = &first + case;
@@ -1386,7 +1408,7 @@ fn representative_cases(
         negative_sources: BTreeMap::new(),
         max_label: 0,
         max_resolvers: 0,
-        syntax: true,
+        origin: CatalogOrigin::Representatives,
     };
     for (case, &rank) in ranks[first..first + count].iter().enumerate() {
         let (source, labels, resolvers) = grammar.protocol(depth, rank.into());
@@ -1472,7 +1494,7 @@ fn interaction_cases(
         negative_sources: BTreeMap::new(),
         max_label: 0,
         max_resolvers: 0,
-        syntax: true,
+        origin: CatalogOrigin::Contexts,
     };
     let mut representatives = BTreeSet::new();
     for rank in first..first + count {
@@ -1528,7 +1550,7 @@ fn emit_cases(
         mut negative_sources,
         max_label,
         max_resolvers,
-        syntax,
+        origin,
     } = catalog;
     if cases.is_empty() {
         return Err("empty shard".into());
@@ -1637,7 +1659,7 @@ long_running_const_eval = "forbid"
     }
     fs::create_dir_all(output.join("src/bin"))?;
     write_if_changed(&output.join("src/bin/diagnose.rs"), &diagnostic_source)?;
-    if syntax && diagnostics.is_none() {
+    if origin.requires_diagnostics() && diagnostics.is_none() {
         println!(
             "syntax catalog candidates={} {description} total_shapes={total_cases}; awaiting diagnostics before localside emission",
             cases.len()
@@ -1662,7 +1684,7 @@ long_running_const_eval = "forbid"
             if let Some(expected) = expected_rejections.get(&case)
                 && !constructor_rejected
             {
-                if syntax {
+                if origin.requires_diagnostics() {
                     let global = &cases
                         .get(case)
                         .filter(|c| c.0 == case)
@@ -1956,7 +1978,7 @@ long_running_const_eval = "forbid"
     // memory guard. Every case remains in the same Cargo test invocation.
     let mut manifest = fs::read_to_string(output.join("Cargo.toml"))?;
     let mut paths = BTreeSet::new();
-    for (unit, cases) in localsides.chunks(if syntax { 1 } else { 32 }).enumerate() {
+    for (unit, cases) in localsides.chunks(origin.compilation_width()).enumerate() {
         let name = format!("shapes_{unit}");
         let path = if unit == 0 {
             "src/lib.rs".to_owned()

@@ -416,7 +416,8 @@ session id (4 bytes, big endian) | lane | source role | target role | message po
 ```
 
 このバイト列はトランスポートが所有します。
-フレームラベルは、共有するglobal protocol内のメッセージの位置です。\n再利用できる`Msg`の論理ラベルとは別で、異なる位置には異なるフレームラベルを使います。
+フレームラベルは、共有するglobal protocol内のメッセージの位置です。
+再利用できる`Msg`の論理ラベルとは別で、異なる位置には異なるフレームラベルを使います。
 ランタイムはヘッダーと要求されたメッセージをlocal protocolと照合します。
 
 `ReceivedFrame::deterministic`にはヘッダーがありません。
