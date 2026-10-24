@@ -367,6 +367,53 @@ structure ShapeCompletedScript where
   probes : Array Lean.Json
   deriving Lean.FromJson
 
+-- Source witnesses for injected early sends. Crossing a choice on the receive
+-- side, or crossing a roll boundary on either side, would make this inference
+-- invalid: the receive could be absent or belong to another visit.
+def shapeRequiredMessages : Source → List Message
+  | .send message => [message]
+  | .seq a b | .par a b => shapeRequiredMessages a ++ shapeRequiredMessages b
+  | .route _ _ _ | .roll _ => []
+
+def shapeMessagesWithoutRoll : Source → List Message
+  | .send message => [message]
+  | .seq a b | .par a b | .route _ a b =>
+    shapeMessagesWithoutRoll a ++ shapeMessagesWithoutRoll b
+  | .roll _ => []
+
+def shapeAllMessages : Source → List Message
+  | .send message => [message]
+  | .seq a b | .par a b | .route _ a b => shapeAllMessages a ++ shapeAllMessages b
+  | .roll body => shapeAllMessages body
+
+def shapeCausalPairs : Source → List (Message × Message)
+  | .send _ => []
+  | .seq a b =>
+    ((shapeRequiredMessages a).flatMap fun before =>
+      (shapeMessagesWithoutRoll b).map (before, ·)) ++ shapeCausalPairs a ++ shapeCausalPairs b
+  | .par a b | .route _ a b => shapeCausalPairs a ++ shapeCausalPairs b
+  | .roll body => shapeCausalPairs body
+
+def shapeCausalWitness (source : Source) (before target role : Nat) : Bool :=
+  (shapeAllMessages source).countP (·.label == before) == 1 &&
+  (shapeAllMessages source).countP (·.label == target) == 1 &&
+  (shapeCausalPairs source).any fun (a, b) =>
+    a.label == before && b.label == target && a.sender != a.receiver &&
+    a.receiver == b.sender && a.receiver.role == role &&
+    (match a.payload, b.payload with | .wire _, .wire _ => true | _, _ => false)
+
+def shapeCheckLocalWitnesses (source : Source) (probes : Array Lean.Json) : Except String Unit := do
+  for probe in probes do
+    let kind : String ← probe.getObjValAs? String "kind"
+    if kind == "causal" then
+      let before : Nat ← probe.getObjValAs? Nat "before"
+      let target : Nat ← probe.getObjValAs? Nat "label"
+      let role : Nat ← probe.getObjValAs? Nat "role"
+      let accepted : Bool ← probe.getObjValAs? Bool "accepted"
+      unless !accepted && shapeCausalWitness source before target role do
+        throw "invalid causal rejection witness"
+    else unless kind == "borrow" do throw "unknown local rejection witness"
+
 def shapeReadLine [Lean.FromJson α] (file : IO.FS.Handle) : IO α := do
   let line ← file.getLine
   unless !line.isEmpty do throw (IO.userError "missing completed script record")
@@ -426,6 +473,9 @@ def shapeCheckCompleted (source : Source) (name : Nat) (outputPath : String) : I
       let observed : ShapeCompletedScript ← shapeReadLine observations
       unless observed.script == index && observed.reversePoll == reversePoll do
         throw (IO.userError s!"shape {name}: missing or reordered completed execution")
+      match shapeCheckLocalWitnesses source observed.probes with
+      | .ok () => pure ()
+      | .error error => throw (IO.userError s!"shape {name} script {index}: {error}")
       let mut states := ready.map (fun plan => (plan, ([] : List SourcePoint)))
       for call in observed.completed do
         unless call.size == 4 do throw (IO.userError "invalid completed call fields")

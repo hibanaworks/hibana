@@ -181,6 +181,7 @@ fn heads<'a>(source: &'a Protocol, out: &mut Vec<&'a Protocol>) {
 struct Emitter<'a> {
     source: &'a Protocol,
     paths: std::collections::BTreeMap<u8, Vec<(u16, bool)>>,
+    causal: Vec<(u8, u8, u8)>,
 }
 
 impl Emitter<'_> {
@@ -224,7 +225,7 @@ impl Emitter<'_> {
             return String::new();
         }
         format!(
-            "if let Some(probe)=probe.filter(|p|p.group==({}, {}) && p.part=={} && p.occurrence==script.first_occurrence() && p.actor=={actor} && p.role=={role}){{let result=core::future::poll_fn(|cx|core::task::Poll::Ready(match (probe.label,probe.receive){{{arms}_=>panic!(\"unknown borrowed-scope probe\")}})).await;match result{{core::task::Poll::Ready(Err(error))=>{{observed.scope_rejections.borrow_mut().push(probe);return Err(error)}},other=>panic!(\"operation outside borrowed scope was not rejected: {{probe:?}} {{other:?}}\")}}}}",
+            "if let Some(probe @ LocalProbe::Borrow{{group:({}, {}),part:{},occurrence,actor:{actor},role:{role},label,receive}})=probe && occurrence==script.first_occurrence(){{let result=core::future::poll_fn(|cx|core::task::Poll::Ready(match (label,receive){{{arms}_=>panic!(\"unknown borrowed-scope probe\")}})).await;match result{{core::task::Poll::Ready(Err(error))=>{{observed.scope_rejections.borrow_mut().push(probe);return Err(error)}},other=>panic!(\"operation outside borrowed scope was not rejected: {{probe:?}} {{other:?}}\")}}}}",
             group.0,
             group.1,
             super::scope_probes::first_label(part)
@@ -285,7 +286,19 @@ impl Emitter<'_> {
         } else {
             format!("observation_role(&{endpoint})")
         };
-        let code = format!("tokio::task::yield_now().await;let observed_role={observe};{call}");
+        let mut causal = String::new();
+        if receive {
+            let arms = self.causal.iter().filter(|(before, _, receiver)| before == label && *receiver == role).map(|(_, target, _)| {
+                format!("{target}=>{{let future={endpoint}.send::<M{target}<'_>>(&());tokio::pin!(future);future.as_mut().poll(cx)}},")
+            }).collect::<String>();
+            if !arms.is_empty() {
+                causal = format!(
+                    "if let Some(probe @ LocalProbe::BeforeReceive{{before:{label},occurrence,actor:{actor},role:{role},label}})=probe && occurrence==script.first_occurrence(){{let result=core::future::poll_fn(|cx|core::task::Poll::Ready(match label{{{arms}_=>panic!(\"unknown causal probe\")}})).await;match result{{core::task::Poll::Ready(Err(error))=>{{observed.scope_rejections.borrow_mut().push(probe);return Err(error)}},other=>panic!(\"send before required receive was not rejected: script={{script_index}} reverse={{reverse_poll}} {{probe:?}} {{other:?}} prefix={{:?}}\",observed.completed.borrow())}}}}"
+                );
+            }
+        }
+        let code =
+            format!("tokio::task::yield_now().await;let observed_role={observe};{causal}{call}");
         if resource {
             format!("if let Some(resource)={}.as_mut(){{{code}}}", names[3])
         } else {
@@ -784,7 +797,11 @@ pub(super) fn runs(source: &Protocol, owner: u8, case: usize) -> (String, String
     scripts.push('\n');
     let mut paths = std::collections::BTreeMap::new();
     source.resolver_choices(&mut Vec::new(), &mut paths);
-    let e = Emitter { source, paths };
+    let e = Emitter {
+        source,
+        paths,
+        causal: super::causality::pairs(source),
+    };
     let resolvers = e
         .paths
         .values()
@@ -913,7 +930,7 @@ pub(super) fn runs(source: &Protocol, owner: u8, case: usize) -> (String, String
         );
     }
     code += r#"let result=tokio::time::timeout(core::time::Duration::from_secs(1),async{tokio::try_join!(run0,run1,run2,run3)}).await.expect("generated localside stalled");
-    if let Some(probe)=probe{assert!(result.is_err(),"scope probe did not stop its run");let actual=observed.scope_rejections.borrow();assert_eq!(*actual,[probe],"planned borrowed-scope probe was not reached");scoped_rejections.push(actual[0].json());continue;}
+    if let Some(probe)=probe{assert!(result.is_err(),"local probe did not stop its run");let actual=observed.scope_rejections.borrow();assert_eq!(*actual,[probe],"planned local probe was not reached");scoped_rejections.push(actual[0].json());continue;}
     result.unwrap();
     write!(scope_observations,",\"completed\":[").unwrap();
     for (index,(actor,role,label,receive)) in observed.completed.borrow().iter().enumerate(){if index!=0{write!(scope_observations,",").unwrap();}write!(scope_observations,"[{actor},{role},{label},{receive}]").unwrap();}

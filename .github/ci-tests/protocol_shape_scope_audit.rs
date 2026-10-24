@@ -1,4 +1,4 @@
-//! Check every source-planned borrowed-scope probe in both execution schedules.
+//! Check every planned local rejection trial in both execution schedules.
 use super::{Json, json, source_json};
 use std::{
     collections::BTreeSet,
@@ -50,22 +50,31 @@ fn probes(plan: &Json) -> Result<&[Json]> {
     };
     let mut unique = BTreeSet::new();
     for record in records {
-        fields(record, 8)?;
-        for key in ["part", "actor", "role", "label"] {
+        for key in ["actor", "role", "label"] {
             u8::try_from(number(record.get(key))?)?;
         }
         number(record.get("occurrence"))?;
-        let Some(Json::Array(group)) = record.get("group") else {
-            return Err("missing borrowed-scope group".into());
-        };
-        if group.len() != 2 {
-            return Err("invalid borrowed-scope group".into());
+        match record.get("kind") {
+            Some(Json::String(kind)) if kind == "borrow" => {
+                fields(record, 9)?;
+                u8::try_from(number(record.get("part"))?)?;
+                let Some(Json::Array(group)) = record.get("group") else {
+                    return Err("missing borrowed-scope group".into());
+                };
+                if group.len() != 2 || !matches!(record.get("receive"), Some(Json::Bool(_))) {
+                    return Err("invalid borrowed-scope group or direction".into());
+                }
+                for value in group {
+                    u8::try_from(number(Some(value))?)?;
+                }
+            }
+            Some(Json::String(kind)) if kind == "causal" => {
+                fields(record, 7)?;
+                u8::try_from(number(record.get("before"))?)?;
+            }
+            _ => return Err("unknown local probe kind".into()),
         }
-        for value in group {
-            u8::try_from(number(Some(value))?)?;
-        }
-        if !matches!(record.get("receive"), Some(Json::Bool(_)))
-            || record.get("accepted") != Some(&Json::Bool(false))
+        if record.get("accepted") != Some(&Json::Bool(false))
             || !unique.insert(source_json(record)?)
         {
             return Err("invalid, duplicate or accepted borrowed-scope probe".into());
@@ -252,7 +261,7 @@ pub(super) fn audit(output: &Path, sources: &Json) -> Result<()> {
         }
     }
     println!(
-        "Borrowed-scope probes: cases={} attempts={checked} all rejected",
+        "Local rejection probes (borrow scope and receive-before-send): cases={} attempts={checked} all rejected",
         cases.len()
     );
     if let Some(plan) = control {
@@ -269,9 +278,26 @@ pub(super) fn audit(output: &Path, sources: &Json) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn causal_probe_inventory_requires_its_exact_schema() {
+        let text = r#"{"script":0,"probes":[{"kind":"causal","before":1,"occurrence":4,"actor":1,"role":3,"label":2,"accepted":false}]}"#;
+        let plan = json::parse(text).unwrap();
+        assert_eq!(probes(&plan).unwrap().len(), 1);
+        controls(&plan).unwrap();
+        for changed in [
+            text.replace("\"causal\"", "\"unknown\""),
+            text.replace("\"before\":1,", ""),
+            text.replace("\"before\":1", "\"before\":256"),
+            text.replace("\"before\":1", "\"before\":1,\"receive\":false"),
+            text.replace("\"accepted\":false", "\"accepted\":true"),
+        ] {
+            assert!(probes(&json::parse(&changed).unwrap()).is_err());
+        }
+    }
     #[test]
     fn changed_or_missing_scope_observations_are_rejected() {
-        let plan = json::parse(r#"{"script":2,"probes":[{"group":[1,2],"part":1,"occurrence":3,"actor":1,"role":3,"label":2,"receive":false,"accepted":false}]}"#).unwrap();
+        let plan = json::parse(r#"{"script":2,"probes":[{"kind":"borrow","group":[1,2],"part":1,"occurrence":3,"actor":1,"role":3,"label":2,"receive":false,"accepted":false}]}"#).unwrap();
         controls(&plan).unwrap();
         let expected = "{\"name\":7,\"scripts\":1}\n{\"script\":0,\"probes\":[]}\n";
         let actual = "{\"name\":7,\"scripts\":1}\n{\"script\":0,\"reversePoll\":false,\"completed\":[],\"probes\":[]}\n{\"script\":0,\"reversePoll\":true,\"completed\":[],\"probes\":[]}\n";

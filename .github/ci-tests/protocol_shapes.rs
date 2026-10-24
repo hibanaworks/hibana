@@ -16,6 +16,8 @@ fn write_if_changed(path: &std::path::Path, text: &str) -> std::io::Result<()> {
     }
 }
 
+#[path = "protocol_shape_causality.rs"]
+mod causality;
 #[path = "protocol_shape_delegated.rs"]
 mod delegated;
 #[path = "protocol_shape_interactions.rs"]
@@ -26,6 +28,8 @@ mod localside;
 mod ownership;
 #[path = "protocol_shape_population.rs"]
 mod population;
+#[path = "protocol_shape_probe_data.rs"]
+mod probe_data;
 #[path = "protocol_shape_scope_probes.rs"]
 mod scope_probes;
 #[path = "protocol_shape_symmetry.rs"]
@@ -1495,9 +1499,10 @@ long_running_const_eval = "forbid"
     }
     fs::write(negative_root.join("inventory.tsv"), negative_inventory)?;
     let mut source = format!(
-        "#![cfg(test)]\n#![forbid(long_running_const_eval)]\n#[path={:?}]\nmod in_memory;\n#[path={:?}]\nmod planned_json;\n",
+        "#![cfg(test)]\n#![forbid(long_running_const_eval)]\n#[path={:?}]\nmod in_memory;\n#[path={:?}]\nmod planned_json;\n#[path={:?}]\nmod probe_data;\n",
         root.join("examples/support/in_memory.rs"),
-        root.join(".github/ci-tests/kani_json.rs")
+        root.join(".github/ci-tests/kani_json.rs"),
+        root.join(".github/ci-tests/protocol_shape_probe_data.rs")
     );
     let registers = (0..max_resolvers.max(1))
         .map(|id| format!("register!({id});\n"))
@@ -1535,7 +1540,7 @@ long_running_const_eval = "forbid"
     fs::create_dir_all(&script_directory)?;
     let mut script_paths = BTreeSet::new();
     let mut trace_paths = BTreeSet::new();
-    let mut borrowed_scope_probes = 0usize;
+    let mut local_rejection_probes = 0usize;
     let mut rejected = 0;
     let mut case_depths = String::from("case\tsyntax_depth\toperator_count\n");
     let mut catalog_max_depth = 0;
@@ -1654,7 +1659,7 @@ long_running_const_eval = "forbid"
         scope_inputs.push(format!(
             r#"{{"name":{case},"scripts":{script_count},"probes":{scope_count}}}"#
         ));
-        borrowed_scope_probes += scope_count;
+        local_rejection_probes += scope_count;
         scoped_executions += global.executions().len();
         if delegated_cases.contains(case) {
             delegated_concurrent_runs += global.executions().len();
@@ -1770,7 +1775,7 @@ long_running_const_eval = "forbid"
         cases.len(),
         total_cases
     );
-    println!("planned borrowed-scope rejection probes={borrowed_scope_probes}");
+    println!("planned local rejection probes={local_rejection_probes}");
     Ok(())
 }
 

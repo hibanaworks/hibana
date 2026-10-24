@@ -68,11 +68,12 @@ fn max_completed_calls(case: &Json) -> Result<usize, String> {
     }
     counts.last().copied().ok_or("empty source".into())
 }
-// ShapeInput contains numeric fields, booleans, arrays and objects only.
+// Probe kinds are the only string-valued fields in these test records.
 fn source_json(value: &Json) -> Result<String, Box<dyn std::error::Error>> {
     Ok(match value {
         Json::Number(number) => number.clone(),
         Json::Bool(value) => value.to_string(),
+        Json::String(kind) if kind == "borrow" || kind == "causal" => format!("\"{kind}\""),
         Json::Array(values) => format!(
             "[{}]",
             values
@@ -342,6 +343,76 @@ fn rejected(
     }
     Ok(())
 }
+
+fn causal_control(
+    checker: &Path,
+    inventory: &Json,
+    candidates: &[PathBuf],
+    output: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    for observation in candidates {
+        let filename = observation.file_name().ok_or("missing observation name")?;
+        let source = output
+            .join("scope-observations")
+            .join(filename)
+            .with_extension("jsonl");
+        let mut reader = BufReader::new(fs::File::open(&source)?);
+        let mut header = String::new();
+        reader.read_line(&mut header)?;
+        let mut prefix = header;
+        loop {
+            let mut line = String::new();
+            if reader.read_line(&mut line)? == 0 {
+                break;
+            }
+            let mut record = json::parse(&line)?;
+            let Json::Object(fields) = &mut record else {
+                return Err("invalid local probe record".into());
+            };
+            let Some(Json::Array(probes)) = fields.get_mut("probes") else {
+                return Err("missing local probes".into());
+            };
+            if let Some(Json::Object(probe)) = probes
+                .iter_mut()
+                .find(|probe| probe.get("kind") == Some(&Json::String("causal".into())))
+            {
+                // A send cannot be its own preceding receive. Keep the schema,
+                // rejection outcome and every observed call unchanged.
+                let label = source_json(probe.get("label").ok_or("missing causal target")?)?;
+                probe.insert("before".into(), json::parse(&label)?);
+                let target = output.join("controls/causal-self-dependency");
+                let (input, observations) = single_case(
+                    inventory,
+                    &target,
+                    observation,
+                    &fs::read_to_string(observation)?,
+                )?;
+                let path = target
+                    .join("scope-observations")
+                    .join(filename)
+                    .with_extension("jsonl");
+                let mut writer = BufWriter::new(fs::File::create(path)?);
+                writer.write_all(prefix.as_bytes())?;
+                writeln!(writer, "{}", source_json(&record)?)?;
+                std::io::copy(&mut reader, &mut writer)?;
+                writer.flush()?;
+                drop(writer);
+                rejected(
+                    checker,
+                    &input,
+                    &observations,
+                    "invalid causal rejection witness",
+                )?;
+                println!("Causal source checker control: self-dependency: pass");
+                return Ok(());
+            }
+            prefix.push_str(&line);
+        }
+    }
+    println!("Causal source checker control: no required receive-before-send in this shard");
+    Ok(())
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = env::args().skip(1).collect::<Vec<_>>();
     if args.len() != 2 {
@@ -359,6 +430,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     paths.sort();
     let first = paths.first().ok_or("no observed cases")?;
     completed_controls(&checker, &inventory, &paths, &output)?;
+    causal_control(&checker, &inventory, &paths, &output)?;
     for (name, needle, replacement, expected) in [
         (
             "false-rejection",

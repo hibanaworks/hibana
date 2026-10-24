@@ -231,6 +231,15 @@ verify those failures. Probe plans are read from generated JSON at runtime;
 the generated Rust contains the protocol operations and visit structure.
 These checks cover scope exclusion at borrow entry,
 not every operation within a fragment or every asynchronous cut.
+Further trials try a send immediately before a necessary receive on the same
+logical endpoint, retaining the real execution prefix and parallel borrows.
+Each trial starts a fresh session. A source-level sequential dependency must
+require that receive on every relevant choice path, within the same roll
+scopes; message labels must identify unique source sites. These restrictions
+exclude independent siblings, optional receives and retained messages from
+earlier visits. Lean checks each dependency against the original source tree.
+A control replaces it with a self-dependency and must be rejected even when
+every recorded runtime outcome remains unchanged.
 Other later negative probes require
 continuation-aware occurrence unfoldings; a one-copy bound cannot determine
 whether another visit is permitted.

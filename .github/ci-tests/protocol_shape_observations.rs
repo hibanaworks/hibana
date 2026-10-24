@@ -4,36 +4,10 @@ struct PendingCalls {
     calls: std::cell::RefCell<std::collections::BTreeSet<ObservedCall>>,
     completed: std::cell::RefCell<Vec<(u8, u8, u8, bool)>>,
     overlapped: std::cell::Cell<bool>,
-    scope_rejections: std::cell::RefCell<Vec<ScopeProbe>>,
+    scope_rejections: std::cell::RefCell<Vec<LocalProbe>>,
 }
 
-// Immutable test coordinates. An occurrence identifies a source visit, even
-// when earlier visits used the same labels and made the same branch choices.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct ScopeProbe {
-    group: (u8, u8),
-    part: u8,
-    occurrence: usize,
-    actor: u8,
-    role: u8,
-    label: u8,
-    receive: bool,
-}
-impl ScopeProbe {
-    fn json(self) -> String {
-        format!(
-            r#"{{"group":[{},{}],"part":{},"occurrence":{},"actor":{},"role":{},"label":{},"receive":{},"accepted":false}}"#,
-            self.group.0,
-            self.group.1,
-            self.part,
-            self.occurrence,
-            self.actor,
-            self.role,
-            self.label,
-            self.receive
-        )
-    }
-}
+use probe_data::LocalProbe;
 
 // Schedule data stays outside Rust's const/type evaluation. Its complete
 // source-derived inventory is checked separately against observed calls.
@@ -86,7 +60,7 @@ impl<R: std::io::BufRead> ScopePlans<R> {
             scripts,
         }
     }
-    fn next(&mut self, script: usize) -> Vec<ScopeProbe> {
+    fn next(&mut self, script: usize) -> Vec<LocalProbe> {
         use planned_json::Json;
         assert_eq!(self.next, script, "out-of-order scope-plan script");
         assert!(script < self.scripts, "unexpected extra script plan");
@@ -109,26 +83,45 @@ impl<R: std::io::BufRead> ScopePlans<R> {
                 let Json::Object(fields) = record else {
                     panic!("expected scope probe object")
                 };
-                assert_eq!(fields.len(), 8, "unknown scope probe field");
                 assert!(
                     !Self::boolean(record, "accepted"),
                     "a scope plan must request rejection"
                 );
-                let Some(Json::Array(group)) = record.get("group") else {
-                    panic!("missing scope group")
-                };
-                assert_eq!(group.len(), 2);
-                ScopeProbe {
-                    group: (
-                        Self::number(&group[0]).try_into().unwrap(),
-                        Self::number(&group[1]).try_into().unwrap(),
-                    ),
-                    part: Self::field(record, "part").try_into().unwrap(),
-                    occurrence: Self::field(record, "occurrence"),
-                    actor: Self::field(record, "actor").try_into().unwrap(),
-                    role: Self::field(record, "role").try_into().unwrap(),
-                    label: Self::field(record, "label").try_into().unwrap(),
-                    receive: Self::boolean(record, "receive"),
+                let occurrence = Self::field(record, "occurrence");
+                let actor = Self::field(record, "actor").try_into().unwrap();
+                let role = Self::field(record, "role").try_into().unwrap();
+                let label = Self::field(record, "label").try_into().unwrap();
+                match record.get("kind") {
+                    Some(Json::String(kind)) if kind == "borrow" => {
+                        assert_eq!(fields.len(), 9, "unknown borrow probe field");
+                        let Some(Json::Array(group)) = record.get("group") else {
+                            panic!("missing scope group")
+                        };
+                        assert_eq!(group.len(), 2);
+                        LocalProbe::Borrow {
+                            group: (
+                                Self::number(&group[0]).try_into().unwrap(),
+                                Self::number(&group[1]).try_into().unwrap(),
+                            ),
+                            part: Self::field(record, "part").try_into().unwrap(),
+                            occurrence,
+                            actor,
+                            role,
+                            label,
+                            receive: Self::boolean(record, "receive"),
+                        }
+                    }
+                    Some(Json::String(kind)) if kind == "causal" => {
+                        assert_eq!(fields.len(), 7, "unknown causal probe field");
+                        LocalProbe::BeforeReceive {
+                            before: Self::field(record, "before").try_into().unwrap(),
+                            occurrence,
+                            actor,
+                            role,
+                            label,
+                        }
+                    }
+                    _ => panic!("unknown local probe kind"),
                 }
             })
             .collect();
@@ -148,8 +141,8 @@ impl<R: std::io::BufRead> ScopePlans<R> {
 fn scope_plan_loading_keeps_each_source_visit_and_both_schedules() {
     let text = concat!(
         "{\"name\":7,\"scripts\":2}\n",
-        "{\"script\":0,\"probes\":[{\"group\":[1,2],\"part\":1,\"occurrence\":2,\"actor\":0,\"role\":0,\"label\":2,\"receive\":false,\"accepted\":false}]}\n",
-        "{\"script\":1,\"probes\":[{\"group\":[1,2],\"part\":1,\"occurrence\":4,\"actor\":1,\"role\":3,\"label\":2,\"receive\":true,\"accepted\":false}]}\n",
+        "{\"script\":0,\"probes\":[{\"kind\":\"borrow\",\"group\":[1,2],\"part\":1,\"occurrence\":2,\"actor\":0,\"role\":0,\"label\":2,\"receive\":false,\"accepted\":false}]}\n",
+        "{\"script\":1,\"probes\":[{\"kind\":\"causal\",\"before\":1,\"occurrence\":4,\"actor\":1,\"role\":3,\"label\":2,\"accepted\":false}]}\n",
     );
     let load = |text: &str, name, scripts| {
         let mut input = ScopePlans::new(text.as_bytes(), name, scripts);
@@ -161,9 +154,18 @@ fn scope_plan_loading_keeps_each_source_visit_and_both_schedules() {
     };
     let plans = load(text, 7, 2);
     assert_eq!(plans.iter().map(Vec::len).collect::<Vec<_>>(), [1, 1]);
-    assert_eq!(plans[0][0].occurrence, 2);
-    assert_eq!(plans[1][0].occurrence, 4);
-    assert_eq!(plans[1][0].role, 3);
+    assert!(matches!(
+        plans[0][0],
+        LocalProbe::Borrow { occurrence: 2, .. }
+    ));
+    assert!(matches!(
+        plans[1][0],
+        LocalProbe::BeforeReceive {
+            occurrence: 4,
+            role: 3,
+            ..
+        }
+    ));
     assert!(std::panic::catch_unwind(|| load(text, 8, 2)).is_err());
     assert!(std::panic::catch_unwind(|| load(text, 7, 1)).is_err());
     assert!(

@@ -1,32 +1,5 @@
-//! Derive borrowed-scope rejection probes from source syntax and visit plans.
-use super::{Execution, Protocol, localside};
-
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub(super) struct Probe {
-    group: (u8, u8),
-    part: u8,
-    occurrence: usize,
-    actor: u8,
-    role: u8,
-    label: u8,
-    receive: bool,
-}
-
-impl Probe {
-    fn json(&self) -> String {
-        format!(
-            r#"{{"group":[{},{}],"part":{},"occurrence":{},"actor":{},"role":{},"label":{},"receive":{},"accepted":false}}"#,
-            self.group.0,
-            self.group.1,
-            self.part,
-            self.occurrence,
-            self.actor,
-            self.role,
-            self.label,
-            self.receive
-        )
-    }
-}
+//! Derive local rejection trials from source syntax and visit plans.
+use super::{Execution, Protocol, causality, localside, probe_data::LocalProbe};
 
 pub(super) fn write_inventory(
     source: &Protocol,
@@ -41,13 +14,19 @@ pub(super) fn write_inventory(
         executions.len()
     )?;
     let mut count = 0;
+    let causal = causality::pairs(source);
     for (script, execution) in executions.iter().enumerate() {
-        let probes = plans(source, execution, owner);
+        let probes = plans_with(source, execution, owner, &causal);
         count += 2 * probes.len();
         writeln!(
             output,
             r#"{{"script":{script},"probes":[{}]}}"#,
-            probes.iter().map(Probe::json).collect::<Vec<_>>().join(",")
+            probes
+                .iter()
+                .copied()
+                .map(LocalProbe::json)
+                .collect::<Vec<_>>()
+                .join(",")
         )?;
     }
     output.flush()?;
@@ -103,7 +82,8 @@ pub(super) fn outside_messages<'a>(
 struct Planner<'a> {
     global: &'a Protocol,
     actor: u8,
-    probes: Vec<Probe>,
+    probes: Vec<LocalProbe>,
+    causal: &'a [(u8, u8, u8)],
 }
 
 impl Planner<'_> {
@@ -117,7 +97,23 @@ impl Planner<'_> {
     ) {
         match (source, script) {
             (Protocol::Message { label, .. }, Execution::Message(actual)) => {
-                assert_eq!(label, actual)
+                assert_eq!(label, actual);
+                for &(before, target, role) in self.causal {
+                    let receiver = if role == 3 && localside::mobile(self.global) {
+                        holder
+                    } else {
+                        role
+                    };
+                    if before == *label && receiver == self.actor {
+                        self.probes.push(LocalProbe::BeforeReceive {
+                            before,
+                            occurrence,
+                            actor: self.actor,
+                            role,
+                            label: target,
+                        });
+                    }
+                }
             }
             (Protocol::Seq(a, b), Execution::Seq(left, right)) => {
                 self.walk(a, left, holder, primed, occurrence);
@@ -196,7 +192,7 @@ impl Planner<'_> {
                             let Protocol::Message { label, .. } = message else {
                                 unreachable!()
                             };
-                            self.probes.push(Probe {
+                            self.probes.push(LocalProbe::Borrow {
                                 group: (first_label(a), first_label(b)),
                                 part: first_label(part),
                                 occurrence,
@@ -233,13 +229,24 @@ impl Planner<'_> {
     }
 }
 
-pub(super) fn plans(source: &Protocol, script: &Execution, owner: u8) -> Vec<Probe> {
+#[cfg(test)]
+fn plans(source: &Protocol, script: &Execution, owner: u8) -> Vec<LocalProbe> {
+    plans_with(source, script, owner, &causality::pairs(source))
+}
+
+fn plans_with(
+    source: &Protocol,
+    script: &Execution,
+    owner: u8,
+    causal: &[(u8, u8, u8)],
+) -> Vec<LocalProbe> {
     let mut probes = Vec::new();
     for actor in 0..4 {
         let mut planner = Planner {
             global: source,
             actor,
             probes: Vec::new(),
+            causal,
         };
         planner.walk(source, script, owner, None, 0);
         probes.extend(planner.probes);
@@ -267,6 +274,42 @@ mod tests {
     }
 
     #[test]
+    fn a_delegated_receive_is_probed_in_each_actual_visit() {
+        let source = Protocol::Seq(
+            Box::new(Protocol::Message {
+                from: 0,
+                to: 1,
+                label: 0,
+                owned: true,
+            }),
+            Box::new(Protocol::Roll(Box::new(Protocol::Seq(
+                Box::new(message(2, 3, 1)),
+                Box::new(message(3, 2, 2)),
+            )))),
+        );
+        let probes = plans(&source, &source.executions()[0], 0);
+        assert_eq!(
+            probes,
+            [
+                LocalProbe::BeforeReceive {
+                    before: 1,
+                    occurrence: 1,
+                    actor: 1,
+                    role: 3,
+                    label: 2
+                },
+                LocalProbe::BeforeReceive {
+                    before: 1,
+                    occurrence: 3,
+                    actor: 1,
+                    role: 3,
+                    label: 2
+                },
+            ]
+        );
+    }
+
+    #[test]
     fn nested_visits_have_distinct_probe_coordinates() {
         let source = Protocol::Roll(Box::new(Protocol::Roll(Box::new(Protocol::Par(
             Box::new(message(0, 1, 1)),
@@ -278,11 +321,18 @@ mod tests {
         assert_eq!(
             probes
                 .iter()
-                .map(|p| p.occurrence)
+                .map(|p| match p {
+                    LocalProbe::Borrow { occurrence, .. }
+                    | LocalProbe::BeforeReceive { occurrence, .. } => *occurrence,
+                })
                 .collect::<std::collections::BTreeSet<_>>(),
             [0, 2, 4, 6].into_iter().collect()
         );
-        assert!(probes.iter().all(|p| p.part != p.label));
+        assert!(
+            probes
+                .iter()
+                .all(|p| matches!(p,LocalProbe::Borrow{part,label,..} if part != label))
+        );
     }
 
     #[test]
@@ -299,26 +349,43 @@ mod tests {
         );
         let execution = source.executions().remove(0);
         let probes = plans(&source, &execution, 0);
-        assert!(
-            probes
-                .iter()
-                .any(|p| p.group == (1, 4) && p.part == 1 && p.label == 4)
-        );
-        assert!(
-            !probes
-                .iter()
-                .any(|p| p.group == (1, 4) && p.part == 1 && p.label == 2)
-        );
-        assert!(
-            probes
-                .iter()
-                .any(|p| p.group == (2, 3) && p.part == 2 && p.label == 1 && p.occurrence == 1)
-        );
-        assert!(
-            probes
-                .iter()
-                .any(|p| p.group == (2, 3) && p.part == 2 && p.label == 3)
-        );
+        assert!(probes.iter().any(|p| matches!(
+            p,
+            LocalProbe::Borrow {
+                group: (1, 4),
+                part: 1,
+                label: 4,
+                ..
+            }
+        )));
+        assert!(!probes.iter().any(|p| matches!(
+            p,
+            LocalProbe::Borrow {
+                group: (1, 4),
+                part: 1,
+                label: 2,
+                ..
+            }
+        )));
+        assert!(probes.iter().any(|p| matches!(
+            p,
+            LocalProbe::Borrow {
+                group: (2, 3),
+                part: 2,
+                label: 1,
+                occurrence: 1,
+                ..
+            }
+        )));
+        assert!(probes.iter().any(|p| matches!(
+            p,
+            LocalProbe::Borrow {
+                group: (2, 3),
+                part: 2,
+                label: 3,
+                ..
+            }
+        )));
     }
 
     #[test]
@@ -337,12 +404,23 @@ mod tests {
         );
         let execution = source.executions().remove(0);
         let probes = plans(&source, &execution, 0);
-        assert!(
-            probes
-                .iter()
-                .any(|p| p.role == 3 && p.actor == 1 && p.label == 3)
-        );
-        assert!(!probes.iter().any(|p| p.role == 3 && p.actor == 0));
+        assert!(probes.iter().any(|p| matches!(
+            p,
+            LocalProbe::Borrow {
+                role: 3,
+                actor: 1,
+                label: 3,
+                ..
+            }
+        )));
+        assert!(!probes.iter().any(|p| matches!(
+            p,
+            LocalProbe::Borrow {
+                role: 3,
+                actor: 0,
+                ..
+            }
+        )));
     }
 
     #[test]
@@ -350,9 +428,16 @@ mod tests {
         let source = Protocol::Par(Box::new(message(3, 0, 0)), Box::new(message(1, 3, 1)));
         for execution in source.executions() {
             let probes = plans(&source, &execution, 0);
-            let fourth = probes.iter().filter(|p| p.role == 3).collect::<Vec<_>>();
+            let fourth = probes
+                .iter()
+                .filter(|p| matches!(p, LocalProbe::Borrow { role: 3, .. }))
+                .collect::<Vec<_>>();
             assert_eq!(fourth.len(), 2);
-            assert!(fourth.iter().all(|p| p.actor == 3));
+            assert!(
+                fourth
+                    .iter()
+                    .all(|p| matches!(p, LocalProbe::Borrow { actor: 3, .. }))
+            );
         }
     }
 
@@ -363,8 +448,16 @@ mod tests {
         for execution in source.executions() {
             let first = execution.trace().messages[0].0;
             let probes = plans(&source, &execution, 0);
-            assert!(!probes.iter().any(|p| p.actor == 0 && p.part == first));
-            assert!(probes.iter().any(|p| p.actor == 1 && p.part == first));
+            assert!(
+                !probes
+                    .iter()
+                    .any(|p| matches!(p,LocalProbe::Borrow{actor:0,part,..} if *part==first))
+            );
+            assert!(
+                probes
+                    .iter()
+                    .any(|p| matches!(p,LocalProbe::Borrow{actor:1,part,..} if *part==first))
+            );
         }
     }
 
@@ -384,8 +477,16 @@ mod tests {
         for execution in source.executions() {
             let first = execution.trace().messages[0].0;
             let probes = plans(&source, &execution, 0);
-            assert!(probes.iter().any(|p| p.actor == 0 && p.part == first));
-            assert!(probes.iter().any(|p| p.actor == 1 && p.part == first));
+            assert!(
+                probes.iter().any(
+                    |p| matches!(p, LocalProbe::Borrow { actor: 0, part, .. } if *part == first)
+                )
+            );
+            assert!(
+                probes.iter().any(
+                    |p| matches!(p, LocalProbe::Borrow { actor: 1, part, .. } if *part == first)
+                )
+            );
         }
     }
 
@@ -401,10 +502,16 @@ mod tests {
             let first = execution.trace().messages[0].0;
             let probes = plans(&source, &execution, 0);
             assert_eq!(
-                probes.iter().any(|p| p.actor == 0 && p.part == first),
+                probes.iter().any(
+                    |p| matches!(p, LocalProbe::Borrow { actor: 0, part, .. } if *part == first)
+                ),
                 first < 3
             );
-            assert!(probes.iter().any(|p| p.actor == 1 && p.part == first));
+            assert!(
+                probes.iter().any(
+                    |p| matches!(p, LocalProbe::Borrow { actor: 1, part, .. } if *part == first)
+                )
+            );
         }
     }
 }
