@@ -84,7 +84,10 @@ exchange and a parallel send with repetition, respectively. The population
 is `2 * 9^LENGTH`, through length five.
 Length counts contexts, while `case-identities.tsv` records actual syntax
 depth. Choices notify the other owner when its branch needs that participant.
-Projection rejection remains a failed test. Each accepted case uses the same
+If the service could start another visit after the resource has been returned,
+the resource holder sends permission inside each visit. The original form
+without that permission is retained as an independent compile-fail case.
+Unexpected projection rejection remains a failed test. Each accepted case uses the same
 public Endpoint driver and independent source checker as the syntax catalog.
 
 `protocol-shapes syntax-counts DEPTH` also reports the number of syntax trees

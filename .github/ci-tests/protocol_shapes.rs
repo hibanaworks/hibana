@@ -1249,7 +1249,19 @@ fn interaction_cases(
     };
     let mut representatives = BTreeSet::new();
     for rank in first..first + count {
-        let (source, labels, resolvers, word) = interactions::protocol(length, rank);
+        let interactions::Interaction {
+            source,
+            labels,
+            resolvers,
+            identity,
+            unpermitted_reentry,
+        } = interactions::protocol(length, rank);
+        if let Some(unpermitted) = unpermitted_reentry {
+            catalog.negative_sources.insert(format!("reentry_{rank}"), (
+                symmetry::canonical(&unpermitted),
+                "rolled reentry requires permission from the resource's entry owner; help: let the resource's entry owner authorize each visit inside the roll",
+            ));
+        }
         let source = symmetry::canonical(&source);
         if !representatives.insert(source.clone()) {
             return Err(format!("duplicate interaction source at rank {rank}").into());
@@ -1260,7 +1272,7 @@ fn interaction_cases(
         catalog.max_resolvers = catalog.max_resolvers.max(resolvers);
         catalog.cases.push((
             case,
-            format!("interaction={length}/rank={rank}/{word}"),
+            format!("interaction={length}/rank={rank}/{identity}"),
             2,
             0,
             source,
