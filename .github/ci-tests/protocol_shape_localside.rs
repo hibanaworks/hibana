@@ -28,36 +28,39 @@ pub(super) fn mobile(source: &Protocol) -> bool {
         .any(|m| matches!(m, Protocol::Message { owned: true, .. }))
 }
 
-pub(super) fn final_holder(source: &Protocol, holder: u8) -> u8 {
-    match source {
-        Protocol::Message {
-            from,
-            to,
-            owned: true,
-            ..
-        } => {
+pub(super) fn holder_after(source: &Protocol, execution: &Execution, holder: u8) -> u8 {
+    match (source, execution) {
+        (
+            Protocol::Message {
+                from,
+                to,
+                owned: true,
+                ..
+            },
+            Execution::Message(_),
+        ) => {
             assert_eq!(holder, *from);
             *to
         }
-        Protocol::Message { .. } => holder,
-        Protocol::Seq(a, b) => final_holder(b, final_holder(a, holder)),
-        Protocol::Par(a, b) => {
+        (Protocol::Message { .. }, Execution::Message(_)) => holder,
+        (Protocol::Seq(a, b), Execution::Seq(left, right)) => {
+            holder_after(b, right, holder_after(a, left, holder))
+        }
+        (Protocol::Par(a, b), Execution::Par(left, right, _)) => {
             assert!(!mobile(a) || !mobile(b));
             if mobile(a) {
-                final_holder(a, holder)
+                holder_after(a, left, holder)
             } else {
-                final_holder(b, holder)
+                holder_after(b, right, holder)
             }
         }
-        Protocol::Route(a, b) | Protocol::Resolved(a, b, _) => {
-            let after = final_holder(a, holder);
-            assert_eq!(after, final_holder(b, holder));
-            after
+        (Protocol::Route(a, b) | Protocol::Resolved(a, b, _), Execution::Branch(body, right)) => {
+            holder_after(if *right { b } else { a }, body, holder)
         }
-        Protocol::Roll(body) => {
-            assert_eq!(holder, final_holder(body, holder));
-            holder
+        (Protocol::Roll(body), Execution::Roll(first, second)) => {
+            holder_after(body, second, holder_after(body, first, holder))
         }
+        _ => panic!("source and ownership execution disagree"),
     }
 }
 
@@ -78,57 +81,34 @@ pub(super) fn present(source: &Protocol, role: u8, primed: Option<u8>) -> bool {
     }
 }
 
-// A moving parallel child declares its received value inside its own future.
-// Only receives outside such children need a binding in the enclosing scope.
-fn receives_here(source: &Protocol, actor: u8) -> bool {
-    match source {
-        Protocol::Message { to, owned, .. } => *owned && *to == actor,
-        Protocol::Par(..) if mobile(source) => false,
-        Protocol::Seq(a, b)
-        | Protocol::Par(a, b)
-        | Protocol::Route(a, b)
-        | Protocol::Resolved(a, b, _) => receives_here(a, actor) || receives_here(b, actor),
-        Protocol::Roll(body) => receives_here(body, actor),
-    }
-}
-
-fn db_activity(source: &Protocol, actor: u8, holder: u8) -> (usize, bool) {
-    match source {
-        Protocol::Message {
-            from, to, owned, ..
-        } => (
-            usize::from(*owned && *to == actor),
-            !owned && holder == actor && [*from, *to].contains(&3),
-        ),
-        Protocol::Seq(a, b) => {
-            let a_activity = db_activity(a, actor, holder);
-            let b_activity = db_activity(b, actor, final_holder(a, holder));
-            (a_activity.0 + b_activity.0, a_activity.1 || b_activity.1)
-        }
-        Protocol::Par(..) if mobile(source) => (usize::from(actor == holder), false),
-        Protocol::Par(a, b) => {
-            let a = db_activity(a, actor, holder);
-            let b = db_activity(b, actor, holder);
-            (a.0 + b.0, a.1 || b.1)
-        }
-        Protocol::Route(a, b) | Protocol::Resolved(a, b, _) => {
-            let a = db_activity(a, actor, holder);
-            let b = db_activity(b, actor, holder);
-            (a.0.max(b.0), a.1 || b.1)
-        }
-        Protocol::Roll(body) => {
-            let (assignments, borrow) = db_activity(body, actor, holder);
-            (2 * assignments, borrow)
-        }
-    }
-}
-
 pub(super) fn parallel_parts<'a>(source: &'a Protocol, parts: &mut Vec<&'a Protocol>) {
     if let Protocol::Par(a, b) = source {
         parallel_parts(a, parts);
         parallel_parts(b, parts);
     } else {
         parts.push(source);
+    }
+}
+
+fn borrows_resource_mutably(source: &Protocol, actor: u8) -> bool {
+    match source {
+        Protocol::Message {
+            from, to, owned, ..
+        } => {
+            if *owned {
+                [*from, *to].contains(&actor)
+            } else {
+                [*from, *to].contains(&3)
+            }
+        }
+        Protocol::Par(..) if mobile(source) => true,
+        Protocol::Seq(a, b)
+        | Protocol::Par(a, b)
+        | Protocol::Route(a, b)
+        | Protocol::Resolved(a, b, _) => {
+            borrows_resource_mutably(a, actor) || borrows_resource_mutably(b, actor)
+        }
+        Protocol::Roll(body) => borrows_resource_mutably(body, actor),
     }
 }
 
@@ -149,7 +129,7 @@ fn first_local(source: &Protocol, actor: u8, holder: u8) -> Vec<(u8, u8)> {
         Protocol::Seq(a, b) => {
             let first = first_local(a, actor, holder);
             if first.is_empty() {
-                first_local(b, actor, final_holder(a, holder))
+                first_local(b, actor, holder)
             } else {
                 first
             }
@@ -180,6 +160,13 @@ struct Emitter<'a> {
 }
 
 impl Emitter<'_> {
+    fn endpoint(&self, role: u8, names: &[String; 4]) -> String {
+        if role == 3 && mobile(self.source) {
+            format!("{}.as_mut().expect(\"missing Endpoint value\")", names[3])
+        } else {
+            names[usize::from(role)].clone()
+        }
+    }
     fn scope_probe(
         &self,
         source: &Protocol,
@@ -224,7 +211,6 @@ impl Emitter<'_> {
         &self,
         message: &Protocol,
         actor: u8,
-        holder: u8,
         names: &[String; 4],
         receive: bool,
     ) -> String {
@@ -238,10 +224,15 @@ impl Emitter<'_> {
             unreachable!()
         };
         let role = if receive { *to } else { *from };
-        if (if role == 3 { holder } else { role }) != actor {
+        let resource = role == 3 && mobile(self.source);
+        if (resource && actor == 3) || (!resource && role != actor) {
             return String::new();
         }
-        let endpoint = &names[usize::from(role)];
+        let endpoint = if resource {
+            "resource".to_owned()
+        } else {
+            self.endpoint(role, names)
+        };
         if from == to && receive {
             return String::new();
         }
@@ -250,40 +241,49 @@ impl Emitter<'_> {
         } else {
             format!(
                 "{endpoint}.send::<M{label}<'_>>({})",
-                if *owned { "db" } else { "&()" }
+                if *owned {
+                    "db.take().expect(\"missing Endpoint to send\")"
+                } else {
+                    "&()"
+                }
             )
         };
-        format!(
-            "tokio::task::yield_now().await;let observed_role=observation_role(&{endpoint});{}record_pending({call},observed,ObservedCall::Message({actor},observed_role,{label},{receive})).await?;",
-            if receive && *owned { "db=" } else { "" }
-        )
+        let observed = format!(
+            "record_pending({call},observed,ObservedCall::Message({actor},observed_role,{label},{receive})).await?"
+        );
+        let call = if receive && *owned {
+            format!("assert!(db.is_none(),\"duplicate Endpoint value\");db=Some({observed});")
+        } else {
+            format!("{observed};")
+        };
+        let observe = if resource {
+            format!("observation_role({endpoint})")
+        } else {
+            format!("observation_role(&{endpoint})")
+        };
+        let code = format!("tokio::task::yield_now().await;let observed_role={observe};{call}");
+        if resource {
+            format!("if let Some(resource)={}.as_mut(){{{code}}}", names[3])
+        } else {
+            code
+        }
     }
 
     fn emit(
         &self,
         source: &Protocol,
         actor: u8,
-        holder: &mut u8,
         names: &[String; 4],
         primed: Option<u8>,
     ) -> String {
         let primed = primed.filter(|label| contains(source, *label));
         match source {
-            Protocol::Message {
-                from,
-                to,
-                label,
-                owned,
-            } => {
+            Protocol::Message { label, .. } => {
                 let mut code = String::new();
                 if primed != Some(*label) {
-                    code += &self.operation(source, actor, *holder, names, false);
+                    code += &self.operation(source, actor, names, false);
                 }
-                code += &self.operation(source, actor, *holder, names, true);
-                if *owned {
-                    assert_eq!(*holder, *from);
-                    *holder = *to;
-                }
+                code += &self.operation(source, actor, names, true);
                 if code.is_empty() {
                     code
                 } else {
@@ -291,8 +291,8 @@ impl Emitter<'_> {
                 }
             }
             Protocol::Seq(a, b) => {
-                let a = self.emit(a, actor, holder, names, primed);
-                let b = self.emit(b, actor, holder, names, primed);
+                let a = self.emit(a, actor, names, primed);
+                let b = self.emit(b, actor, names, primed);
                 if a.is_empty() && b.is_empty() {
                     return String::new();
                 }
@@ -310,18 +310,16 @@ impl Emitter<'_> {
                 )
             }
             Protocol::Roll(body) => {
-                let before = *holder;
                 if matches!(body.as_ref(), Protocol::Par(..)) {
                     let (declarations, checks, repeat, returns) =
-                        self.parallel_code(body, actor, holder, names, None);
-                    assert_eq!(*holder, before);
+                        self.parallel_code(body, actor, names, None);
                     if repeat.is_empty() {
                         return repeat;
                     }
                     let assign = if returns { "db=" } else { "" };
                     let visits = if primed.is_some() {
                         let (_, first_checks, first, first_returns) =
-                            self.parallel_code(body, actor, holder, names, primed);
+                            self.parallel_code(body, actor, names, primed);
                         assert_eq!(returns, first_returns);
                         format!(
                             "{{let [_first,_second]=match script{{Script::Roll(visits)=>[visits[0].as_ref(),visits[1].as_ref()],_=>panic!(\"expected repeated script\")}};{{let script=_first;{first_checks}{assign}{first};}}{{let script=_second;{checks}{assign}{repeat};}}}}"
@@ -333,10 +331,9 @@ impl Emitter<'_> {
                     };
                     return format!("{{{declarations}{visits}}}");
                 }
-                let first = self.emit(body, actor, holder, names, primed);
-                assert_eq!(*holder, before);
+                let first = self.emit(body, actor, names, primed);
                 if primed.is_some() {
-                    let second = self.emit(body, actor, holder, names, None);
+                    let second = self.emit(body, actor, names, None);
                     if first.is_empty() && second.is_empty() {
                         return String::new();
                     }
@@ -356,184 +353,25 @@ impl Emitter<'_> {
                     )
                 }
             }
-            Protocol::Route(a, b) | Protocol::Resolved(a, b, _) => {
-                let before = *holder;
-                *holder = final_holder(source, before);
-                let select = "let (script,right)=match script{Script::Branch(body,right)=>(body.as_ref(),*right),_=>panic!(\"expected branch script\")};";
-                if let Some(label) = primed {
-                    let right = contains(b, label);
-                    let mut current = before;
-                    let body = self.emit(
-                        if right { b } else { a },
-                        actor,
-                        &mut current,
-                        names,
-                        primed,
-                    );
-                    if body.is_empty() {
-                        return body;
+            Protocol::Route(..) | Protocol::Resolved(..) => {
+                if mobile(self.source) {
+                    if actor == 3 {
+                        return String::new();
                     }
-                    return format!("{{{select}assert_eq!(right,{right});{body}}}");
-                }
-                let first = first_local(source, actor, before);
-                if first.is_empty() {
-                    return String::new();
-                }
-                let mut entry = Vec::new();
-                heads(source, &mut entry);
-                let controller_role = match entry[0] {
-                    Protocol::Message { from, .. } => *from,
-                    _ => unreachable!(),
-                };
-                let controller = if controller_role == 3 {
-                    before
-                } else {
-                    controller_role
-                };
-                let preview_for = |view: u8, entry: u8, allowed: &str| {
-                    let endpoint = &names[usize::from(view)];
-                    format!(
-                        "let branch=record_pending({endpoint}.offer(),observed,ObservedCall::Preview({actor},{entry})).await?;let label=branch.label();drop(branch);let branch=record_pending({endpoint}.offer(),observed,ObservedCall::Preview({actor},{entry})).await?;assert_eq!(branch.label(),label);drop(branch);assert!(({allowed}).contains(&label));"
-                    )
-                };
-                let arm = |body: &Protocol| {
-                    if actor == controller {
-                        let mut entries = Vec::new();
-                        heads(body, &mut entries);
-                        let mut arms = String::new();
-                        let allowed = entries
-                            .iter()
-                            .map(|message| match message {
-                                Protocol::Message { label, .. } => label.to_string(),
-                                _ => unreachable!(),
-                            })
-                            .collect::<Vec<_>>()
-                            .join(",");
-                        let mut previewed = std::collections::BTreeSet::new();
-                        for message in &entries {
-                            let Protocol::Message { label, from, .. } = message else {
-                                unreachable!()
-                            };
-                            assert_eq!(if *from == 3 { before } else { *from }, controller);
-                            let decisions = self.paths[label]
-                                .iter()
-                                .map(|(id, right)| format!("decisions[{id}].set(Some({right}));"))
-                                .collect::<String>();
-                            if matches!(source, Protocol::Route(..))
-                                || message_selected_head(body, *label)
-                            {
-                                let send = self.operation(message, actor, before, names, false);
-                                let mut current = before;
-                                let rest =
-                                    self.emit(body, actor, &mut current, names, Some(*label));
-                                arms += &format!("{label}=>{{{decisions}{send}{rest}}},");
-                            } else if previewed.insert(self.paths[label].clone()) {
-                                let alternatives = entries
-                                    .iter()
-                                    .filter_map(|message| match message {
-                                        Protocol::Message { label: other, .. }
-                                            if !message_selected_head(body, *other)
-                                                && self.paths[other] == self.paths[label] =>
-                                        {
-                                            Some(other.to_string())
-                                        }
-                                        _ => None,
-                                    })
-                                    .collect::<Vec<_>>()
-                                    .join("|");
-                                let mut preview = preview_for(
-                                    controller_role,
-                                    *label,
-                                    &format!("&[{allowed}][..]"),
-                                );
-                                let mut current = before;
-                                let mut rest = self.emit(body, actor, &mut current, names, None);
-                                if entries
-                                    .iter()
-                                    .any(|m| matches!(m,Protocol::Message{from,to,..} if from==to))
-                                {
-                                    // A preview of a local step is consumed by
-                                    // RouteBranch::recv, not Endpoint::send.
-                                    let endpoint = &names[usize::from(controller_role)];
-                                    preview = format!(
-                                        "let branch=record_pending({endpoint}.offer(),observed,ObservedCall::Preview({actor},{})).await?;let label=branch.label();drop(branch);let branch=record_pending({endpoint}.offer(),observed,ObservedCall::Preview({actor},{})).await?;assert_eq!(branch.label(),label);",
-                                        label, label
-                                    );
-                                    let mut local_arms = String::new();
-                                    for entry in &entries {
-                                        let Protocol::Message {
-                                            from,
-                                            to,
-                                            label: entry_label,
-                                            ..
-                                        } = entry
-                                        else {
-                                            unreachable!()
-                                        };
-                                        let mut current = before;
-                                        if from == to {
-                                            let remaining = self.emit(
-                                                body,
-                                                actor,
-                                                &mut current,
-                                                names,
-                                                Some(*entry_label),
-                                            );
-                                            local_arms += &format!(
-                                                "{entry_label}=>{{record_pending(branch.recv::<M{entry_label}<'_>>(),observed,ObservedCall::Message({actor},{from},{entry_label},true)).await?;{remaining}}},"
-                                            );
-                                        } else {
-                                            let remaining =
-                                                self.emit(body, actor, &mut current, names, None);
-                                            local_arms += &format!(
-                                                "{entry_label}=>{{drop(branch);{remaining}}},"
-                                            );
-                                        }
-                                    }
-                                    rest = format!(
-                                        "match label{{{local_arms}_=>panic!(\"unknown local branch preview\")}}"
-                                    );
-                                }
-                                arms += &format!("{alternatives}=>{{{decisions}{preview}{rest}}},");
-                            }
-                        }
-                        format!(
-                            "match script.trace()[0].0{{{arms}_=>panic!(\"unknown branch entry\")}}"
-                        )
+                    let available = self.emit_route(source, actor, actor, names, primed);
+                    let absent = self.emit_route(source, actor, u8::MAX, names, primed);
+                    if available == absent {
+                        available
                     } else {
-                        let mut current = before;
-                        self.emit(body, actor, &mut current, names, None)
+                        format!("if {}.is_some(){{{available}}}else{{{absent}}}", names[3])
                     }
-                };
-                let left = arm(a);
-                let right = arm(b);
-                let preview = if actor == controller {
-                    String::new()
                 } else {
-                    let view = first[0].0;
-                    assert!(first.iter().all(|(other, _)| *other == view));
-                    let labels = |body| {
-                        first_local(body, actor, before)
-                            .iter()
-                            .map(|(_, label)| label.to_string())
-                            .collect::<Vec<_>>()
-                            .join(",")
-                    };
-                    preview_for(
-                        view,
-                        first[0].1,
-                        &format!(
-                            "if right{{&[{}][..]}}else{{&[{}][..]}}",
-                            labels(b),
-                            labels(a)
-                        ),
-                    )
-                };
-                format!("{{{select}{preview}if right{{{right}}}else{{{left}}}}}")
+                    self.emit_route(source, actor, 3, names, primed)
+                }
             }
             Protocol::Par(..) => {
                 let (declarations, checks, body, returns) =
-                    self.parallel_code(source, actor, holder, names, primed);
+                    self.parallel_code(source, actor, names, primed);
                 if body.is_empty() {
                     body
                 } else {
@@ -545,70 +383,249 @@ impl Emitter<'_> {
             }
         }
     }
+    fn emit_route(
+        &self,
+        source: &Protocol,
+        actor: u8,
+        before: u8,
+        names: &[String; 4],
+        primed: Option<u8>,
+    ) -> String {
+        let (a, b) = match source {
+            Protocol::Route(a, b) | Protocol::Resolved(a, b, _) => (a, b),
+            _ => unreachable!(),
+        };
+        let select = "let (script,right)=match script{Script::Branch(body,right)=>(body.as_ref(),*right),_=>panic!(\"expected branch script\")};";
+        if let Some(label) = primed {
+            let right = contains(b, label);
+            let body = self.emit(if right { b } else { a }, actor, names, primed);
+            if body.is_empty() {
+                return body;
+            }
+            return format!("{{{select}assert_eq!(right,{right});{body}}}");
+        }
+        let first = first_local(source, actor, before);
+        if first.is_empty() {
+            return String::new();
+        }
+        let mut entry = Vec::new();
+        heads(source, &mut entry);
+        let controller_role = match entry[0] {
+            Protocol::Message { from, .. } => *from,
+            _ => unreachable!(),
+        };
+        let controller = if controller_role == 3 {
+            before
+        } else {
+            controller_role
+        };
+        let preview_for = |view: u8, entry: u8, allowed: &str| {
+            let endpoint = self.endpoint(view, names);
+            format!(
+                "let branch=record_pending({endpoint}.offer(),observed,ObservedCall::Preview({actor},{entry})).await?;let label=branch.label();drop(branch);let branch=record_pending({endpoint}.offer(),observed,ObservedCall::Preview({actor},{entry})).await?;assert_eq!(branch.label(),label);drop(branch);assert!(({allowed}).contains(&label));"
+            )
+        };
+        let arm = |body: &Protocol| {
+            if actor == controller {
+                let mut entries = Vec::new();
+                heads(body, &mut entries);
+                let mut arms = String::new();
+                let allowed = entries
+                    .iter()
+                    .map(|message| match message {
+                        Protocol::Message { label, .. } => label.to_string(),
+                        _ => unreachable!(),
+                    })
+                    .collect::<Vec<_>>()
+                    .join(",");
+                let mut previewed = std::collections::BTreeSet::new();
+                for message in &entries {
+                    let Protocol::Message { label, .. } = message else {
+                        unreachable!()
+                    };
+                    let decisions = self.paths[label]
+                        .iter()
+                        .map(|(id, right)| format!("decisions[{id}].set(Some({right}));"))
+                        .collect::<String>();
+                    if matches!(source, Protocol::Route(..)) || message_selected_head(body, *label)
+                    {
+                        let send = self.operation(message, actor, names, false);
+                        let rest = self.emit(body, actor, names, Some(*label));
+                        arms += &format!("{label}=>{{{decisions}{send}{rest}}},");
+                    } else if previewed.insert(self.paths[label].clone()) {
+                        let alternatives = entries
+                            .iter()
+                            .filter_map(|message| match message {
+                                Protocol::Message { label: other, .. }
+                                    if !message_selected_head(body, *other)
+                                        && self.paths[other] == self.paths[label] =>
+                                {
+                                    Some(other.to_string())
+                                }
+                                _ => None,
+                            })
+                            .collect::<Vec<_>>()
+                            .join("|");
+                        let mut preview =
+                            preview_for(controller_role, *label, &format!("&[{allowed}][..]"));
+                        let mut rest = self.emit(body, actor, names, None);
+                        if entries
+                            .iter()
+                            .any(|m| matches!(m,Protocol::Message{from,to,..} if from==to))
+                        {
+                            // A preview of a local step is consumed by
+                            // RouteBranch::recv, not Endpoint::send.
+                            let endpoint = self.endpoint(controller_role, names);
+                            preview = format!(
+                                "let branch=record_pending({endpoint}.offer(),observed,ObservedCall::Preview({actor},{})).await?;let label=branch.label();drop(branch);let branch=record_pending({endpoint}.offer(),observed,ObservedCall::Preview({actor},{})).await?;assert_eq!(branch.label(),label);",
+                                label, label
+                            );
+                            let mut local_arms = String::new();
+                            for entry in &entries {
+                                let Protocol::Message {
+                                    from,
+                                    to,
+                                    label: entry_label,
+                                    ..
+                                } = entry
+                                else {
+                                    unreachable!()
+                                };
+                                if from == to {
+                                    let remaining =
+                                        self.emit(body, actor, names, Some(*entry_label));
+                                    local_arms += &format!(
+                                        "{entry_label}=>{{record_pending(branch.recv::<M{entry_label}<'_>>(),observed,ObservedCall::Message({actor},{from},{entry_label},true)).await?;{remaining}}},"
+                                    );
+                                } else {
+                                    let remaining = self.emit(body, actor, names, None);
+                                    local_arms +=
+                                        &format!("{entry_label}=>{{drop(branch);{remaining}}},");
+                                }
+                            }
+                            rest = format!(
+                                "match label{{{local_arms}_=>panic!(\"unknown local branch preview\")}}"
+                            );
+                        }
+                        arms += &format!("{alternatives}=>{{{decisions}{preview}{rest}}},");
+                    }
+                }
+                format!("match script.trace()[0].0{{{arms}_=>panic!(\"unknown branch entry\")}}")
+            } else {
+                self.emit(body, actor, names, None)
+            }
+        };
+        let left = arm(a);
+        let right = arm(b);
+        let preview = if actor == controller {
+            String::new()
+        } else {
+            let for_arm = |body| {
+                let entries = first_local(body, actor, before);
+                if entries.is_empty() {
+                    return String::new();
+                }
+                let labels = entries
+                    .iter()
+                    .map(|(_, label)| label.to_string())
+                    .collect::<Vec<_>>()
+                    .join(",");
+                preview_for(entries[0].0, entries[0].1, &format!("&[{labels}][..]"))
+            };
+            let a = for_arm(a);
+            let b = for_arm(b);
+            if a == b {
+                a
+            } else {
+                format!("if right{{{b}}}else{{{a}}}")
+            }
+        };
+        format!("{{{select}{preview}if right{{{right}}}else{{{left}}}}}")
+    }
+
     fn parallel_code(
         &self,
         source: &Protocol,
         actor: u8,
-        holder: &mut u8,
         names: &[String; 4],
         primed: Option<u8>,
     ) -> (String, String, String, bool) {
-        let before = *holder;
-        *holder = final_holder(source, before);
         let mut parts = Vec::new();
         parallel_parts(source, &mut parts);
         let mut part_names = vec![names.clone(); parts.len()];
         let mut declarations = String::new();
         let mut scope_checks = String::new();
         for role in 0..4 {
-            if (if role == 3 { usize::from(before) } else { role }) != usize::from(actor)
-                || (role == 3 && mobile(source))
-            {
+            let optional = role == 3 && mobile(self.source);
+            if if optional {
+                actor == 3 || mobile(source)
+            } else {
+                role != usize::from(actor)
+            } {
                 continue;
             }
             let indices = (0..parts.len())
-                // Borrow width belongs to the projected source group,
-                // including an entry already sent to choose its route.
                 .filter(|i| present(parts[*i], role as u8, None))
                 .collect::<Vec<_>>();
             if indices.is_empty() {
                 continue;
             }
+            let mut inner = Vec::new();
             let bindings = indices
                 .iter()
                 .map(|i| {
                     let used = present(parts[*i], role as u8, primed);
                     let name = format!("{}p{role}_{i}", if used { "" } else { "_" });
                     part_names[*i][role] = name.clone();
+                    inner.push(name.clone());
                     if used {
-                        scope_checks +=
-                            &self.scope_probe(source, parts[*i], role as u8, actor, &name);
+                        let endpoint = self.endpoint(role as u8, &part_names[*i]);
+                        let check =
+                            self.scope_probe(source, parts[*i], role as u8, actor, &endpoint);
+                        scope_checks += &if optional {
+                            format!("if {name}.is_some(){{{check}}}")
+                        } else {
+                            check
+                        };
                     }
                     format!("{}{name}", if used { "mut " } else { "" })
                 })
                 .collect::<Vec<_>>()
                 .join(",");
-            declarations += &format!("let [{bindings}]={}.par()?;", names[role]);
+            if optional {
+                let values = inner
+                    .iter()
+                    .map(|name| format!("Some({name})"))
+                    .collect::<Vec<_>>()
+                    .join(",");
+                let empty = vec!["None"; indices.len()].join(",");
+                declarations += &format!(
+                    "let [{bindings}]=if let Some(resource)={}.as_mut(){{let [{}]=resource.par()?;[{values}]}}else{{[{empty}]}};",
+                    names[role],
+                    inner.join(",")
+                );
+            } else {
+                declarations += &format!("let [{bindings}]={}.par()?;", names[role]);
+            }
         }
         fn schedule(
             e: &Emitter<'_>,
             source: &Protocol,
             actor: u8,
-            holder: u8,
             names: &[[String; 4]],
             part: &mut usize,
             primed: Option<u8>,
         ) -> (String, bool) {
             if let Protocol::Par(a, b) = source {
-                let (left, returns_left) = schedule(e, a, actor, holder, names, part, primed);
-                let (right, returns_right) = schedule(e, b, actor, holder, names, part, primed);
+                let (left, returns_left) = schedule(e, a, actor, names, part, primed);
+                let (right, returns_right) = schedule(e, b, actor, names, part, primed);
                 assert!(!returns_left || !returns_right);
                 if left.is_empty() && right.is_empty() {
                     return (String::new(), false);
                 }
                 let bind = |plan: &str, body: &str| {
                     if body.is_empty() {
-                        "async{Ok::<_,hibana::EndpointError>(())}".into()
+                        "async{Ok::<_,hibana::EndpointError>(())}".to_owned()
                     } else {
                         format!(
                             "async{{let script={plan};let result={body};Ok::<_,hibana::EndpointError>(result)}}"
@@ -633,32 +650,22 @@ impl Emitter<'_> {
             } else {
                 let names = &names[*part];
                 *part += 1;
-                let mut current = holder;
-                let body = e.emit(source, actor, &mut current, names, primed);
-                assert_eq!(current, holder);
-                if body.is_empty() {
+                let body = e.emit(source, actor, names, primed);
+                let returns = mobile(source) && actor < 3;
+                if body.is_empty() && !returns {
                     return (body, false);
                 }
-                let owned = mobile(source);
-                let returns = owned && actor == holder;
-                let already_moved=primed.is_some_and(|label| {
-                    let mut messages=Vec::new();source.messages(&mut messages);
-                    messages.iter().any(|m|matches!(m,Protocol::Message {label:candidate,owned:true,from,..} if *candidate==label && *from==actor))
-                });
-                let activity = db_activity(source, actor, holder);
-                let uninitialized = if activity.0 > 1 || activity.1 {
-                    "let mut db;"
+                let init = if returns {
+                    format!(
+                        "let {}db=db;",
+                        if borrows_resource_mutably(source, actor) {
+                            "mut "
+                        } else {
+                            ""
+                        }
+                    )
                 } else {
-                    "let db;"
-                };
-                let init = if owned && actor < 3 && (returns || receives_here(source, actor)) {
-                    if returns && !already_moved {
-                        "let mut db=db;"
-                    } else {
-                        uninitialized
-                    }
-                } else {
-                    ""
+                    String::new()
                 };
                 (
                     format!("{{{init}{body}{}}}", if returns { "db" } else { "()" }),
@@ -666,7 +673,7 @@ impl Emitter<'_> {
                 )
             }
         }
-        let (body, returns) = schedule(self, source, actor, before, &part_names, &mut 0, primed);
+        let (body, returns) = schedule(self, source, actor, &part_names, &mut 0, primed);
         (declarations, scope_checks, body, returns)
     }
 }
@@ -759,42 +766,42 @@ pub(super) fn runs(source: &Protocol, owner: u8, case: usize) -> (String, String
     }
     code += "let observed=&PendingCalls::default();";
     for actor in 0..4 {
-        let db = if !mobile(source) || actor == 3 {
-            ""
-        } else if actor == owner {
-            let activity = db_activity(source, actor, owner);
-            if activity.0 > 0 || activity.1 {
-                "let mut db=initial_db;"
-            } else {
-                "let db=initial_db;"
-            }
-        } else if receives_here(source, actor) {
-            let activity = db_activity(source, actor, owner);
-            if activity.0 > 1 || activity.1 {
-                "let mut db;"
-            } else {
-                "let db;"
-            }
-        } else {
-            ""
-        };
-        let mut holder = owner;
-        let body = e.emit(
-            source,
-            actor,
-            &mut holder,
-            &[
-                "e0".into(),
-                "e1".into(),
-                "e2".into(),
-                if mobile(source) {
-                    "db".into()
+        let db = if mobile(source) && actor < 3 {
+            format!(
+                "let {}db:Option<Endpoint<'_,3>>={};",
+                if borrows_resource_mutably(source, actor) {
+                    "mut "
                 } else {
-                    "e3".into()
+                    ""
                 },
-            ],
-            None,
-        );
+                if actor == owner {
+                    "Some(initial_db)"
+                } else {
+                    "None"
+                }
+            )
+        } else {
+            String::new()
+        };
+        let body = if mobile(source) && actor == 3 {
+            String::new()
+        } else {
+            e.emit(
+                source,
+                actor,
+                &[
+                    "e0".into(),
+                    "e1".into(),
+                    "e2".into(),
+                    if mobile(source) {
+                        "db".into()
+                    } else {
+                        "e3".into()
+                    },
+                ],
+                None,
+            )
+        };
         let delay = if actor == owner {
             "tokio::time::sleep(core::time::Duration::from_millis(1)).await;"
         } else {
@@ -802,7 +809,7 @@ pub(super) fn runs(source: &Protocol, owner: u8, case: usize) -> (String, String
         };
         code += &format!(
             "let run{actor}=async{{{db}{delay}{body}{}Ok::<_,hibana::EndpointError>(())}};",
-            if mobile(source) && actor == holder {
+            if mobile(source) && actor < 3 {
                 "drop(db);"
             } else {
                 ""
@@ -817,9 +824,6 @@ pub(super) fn runs(source: &Protocol, owner: u8, case: usize) -> (String, String
     write!(scope_observations,"]").unwrap();
     assert!(observed.calls.borrow().is_empty());
     "#;
-    if matches!(source, Protocol::Par(..)) {
-        code += "if concurrent{assert!(observed.overlapped.get(),\"independent borrows never overlapped while pending\");}";
-    }
     code += &format!(
         r#"}}writeln!(scope_observations,",\"probes\":[{{}}]}}}}",scoped_rejections.join(",")).unwrap();}}completed_scoped_traces.insert(script.line());checked_scripts+=1;}}assert_eq!(checked_scripts,{},"missing script plan");scope_plans.finish();scope_observations.flush().unwrap();"#,
         executions.len()

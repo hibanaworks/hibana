@@ -238,6 +238,69 @@ async fn a_pending_preview_counts_as_work_but_not_as_a_completed_message() {
     assert_eq!(*observed.completed.borrow(), vec![(0, 0, 2, false)]);
 }
 
+#[tokio::test(flavor = "current_thread")]
+async fn actual_parallel_receives_can_both_wait_and_then_complete() {
+    type Left = g::Msg<0, u32>;
+    type Right = g::Msg<1, u32>;
+    let global = g::par(g::send::<0, 1, Left>(), g::send::<2, 1, Right>());
+    let p0 = project::<0>(&global);
+    let p1 = project::<1>(&global);
+    let p2 = project::<2>(&global);
+    let network = InMemoryTransport::new(None);
+    let [mut slab0, mut slab1, mut slab2] = [
+        vec![0; 128 * 1024],
+        vec![0; 128 * 1024],
+        vec![0; 128 * 1024],
+    ];
+    let mut s0 = SessionKitStorage::uninit();
+    let mut s1 = SessionKitStorage::uninit();
+    let mut s2 = SessionKitStorage::uninit();
+    let rv0 = s0.init().rendezvous(&mut slab0, network.clone()).unwrap();
+    let rv1 = s1.init().rendezvous(&mut slab1, network.clone()).unwrap();
+    let rv2 = s2.init().rendezvous(&mut slab2, network).unwrap();
+    let sid = SessionId::new(8);
+    let mut sender0 = rv0.enter(sid, &p0).unwrap();
+    let mut receiver = rv1.enter(sid, &p1).unwrap();
+    let mut sender2 = rv2.enter(sid, &p2).unwrap();
+    let observed = &PendingCalls::default();
+    let receiving = async {
+        let [mut left, mut right] = receiver.par()?;
+        tokio::try_join!(
+            record_pending(
+                left.recv::<Left>(),
+                observed,
+                ObservedCall::Message(1, 1, 0, true)
+            ),
+            record_pending(
+                right.recv::<Right>(),
+                observed,
+                ObservedCall::Message(1, 1, 1, true)
+            ),
+        )
+    };
+    let sending0 = async {
+        tokio::time::sleep(core::time::Duration::from_millis(1)).await;
+        sender0.send::<Left>(&7).await
+    };
+    let sending2 = async {
+        tokio::time::sleep(core::time::Duration::from_millis(1)).await;
+        sender2.send::<Right>(&9).await
+    };
+    let ((left, right), (), ()) = tokio::time::timeout(core::time::Duration::from_secs(1), async {
+        tokio::try_join!(receiving, sending0, sending2)
+    })
+    .await
+    .expect("parallel receives stalled")
+    .unwrap();
+    assert_eq!((left, right), (7, 9));
+    assert!(
+        observed.overlapped.get(),
+        "the two real receives never overlapped while pending"
+    );
+    assert!(observed.calls.borrow().is_empty());
+    assert_eq!(observed.completed.borrow().len(), 2);
+}
+
 async fn record_pending<F, T>(
     future: F,
     observed: &PendingCalls,

@@ -301,4 +301,46 @@ mod tests {
         assert_eq!(grammar.protocol(depth, rank.clone()).0, source);
         println!("mixed-delegation depth={depth} rank={rank}");
     }
+
+    #[test]
+    fn conditional_owners_continue_through_parallel_operations() {
+        for inside_parallel in [false, true] {
+            let mut next = 0;
+            let choice = Protocol::Route(
+                Box::new(message(&mut next, 0, 1, true)),
+                Box::new(message(&mut next, 0, 1, false)),
+            );
+            let source = if inside_parallel {
+                Protocol::Seq(
+                    Box::new(Protocol::Par(
+                        Box::new(choice),
+                        Box::new(message(&mut next, 2, 0, false)),
+                    )),
+                    Box::new(message(&mut next, 3, 2, false)),
+                )
+            } else {
+                Protocol::Seq(
+                    Box::new(choice),
+                    Box::new(Protocol::Seq(
+                        Box::new(Protocol::Par(
+                            Box::new(message(&mut next, 3, 2, false)),
+                            Box::new(message(&mut next, 0, 2, false)),
+                        )),
+                        Box::new(message(&mut next, 2, 3, false)),
+                    )),
+                )
+            };
+            let depth = source.syntax_depth();
+            let grammar = Grammar::new(depth);
+            let rank = grammar.rank(&source);
+            assert_eq!(grammar.protocol(depth, rank.clone()).0, source);
+            let owners = source
+                .executions()
+                .iter()
+                .map(|execution| super::super::localside::holder_after(&source, execution, 0))
+                .collect::<BTreeSet<_>>();
+            assert_eq!(owners, BTreeSet::from([0, 1]));
+            println!("conditional-parallel inside={inside_parallel} depth={depth} rank={rank}");
+        }
+    }
 }

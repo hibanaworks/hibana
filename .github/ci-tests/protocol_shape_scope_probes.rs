@@ -124,7 +124,7 @@ impl Planner<'_> {
                 self.walk(
                     b,
                     right,
-                    localside::final_holder(a, holder),
+                    localside::holder_after(a, left, holder),
                     primed,
                     occurrence + left.message_count(),
                 );
@@ -134,7 +134,7 @@ impl Planner<'_> {
                 self.walk(
                     body,
                     second,
-                    holder,
+                    localside::holder_after(body, first, holder),
                     None,
                     occurrence + first.message_count(),
                 );
@@ -166,7 +166,12 @@ impl Planner<'_> {
                                 _ => None,
                             })
                             .unwrap();
-                        ((if from == 3 { holder } else { from }) == self.actor).then_some(label)
+                        ((if from == 3 && localside::mobile(self.global) {
+                            holder
+                        } else {
+                            from
+                        }) == self.actor)
+                            .then_some(label)
                     });
                 self.walk(chosen, body, holder, primed, occurrence);
             }
@@ -174,7 +179,11 @@ impl Planner<'_> {
                 let mut parts = Vec::new();
                 localside::parallel_parts(source, &mut parts);
                 for role in 0..4 {
-                    if (if role == 3 { holder } else { role }) != self.actor
+                    if (if role == 3 && localside::mobile(self.global) {
+                        holder
+                    } else {
+                        role
+                    }) != self.actor
                         || (role == 3 && localside::mobile(source))
                     {
                         continue;
@@ -226,7 +235,7 @@ impl Planner<'_> {
 
 pub(super) fn plans(source: &Protocol, script: &Execution, owner: u8) -> Vec<Probe> {
     let mut probes = Vec::new();
-    for actor in 0..3 {
+    for actor in 0..4 {
         let mut planner = Planner {
             global: source,
             actor,
@@ -334,6 +343,17 @@ mod tests {
                 .any(|p| p.role == 3 && p.actor == 1 && p.label == 3)
         );
         assert!(!probes.iter().any(|p| p.role == 3 && p.actor == 0));
+    }
+
+    #[test]
+    fn an_undelegated_fourth_role_probes_its_own_borrows() {
+        let source = Protocol::Par(Box::new(message(3, 0, 0)), Box::new(message(1, 3, 1)));
+        for execution in source.executions() {
+            let probes = plans(&source, &execution, 0);
+            let fourth = probes.iter().filter(|p| p.role == 3).collect::<Vec<_>>();
+            assert_eq!(fourth.len(), 2);
+            assert!(fourth.iter().all(|p| p.actor == 3));
+        }
     }
 
     #[test]

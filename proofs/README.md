@@ -131,16 +131,19 @@ Each `roll` runs twice, including nested repetition. Choices and parallel-child
 order vary independently between visits. Receivers use `offer`, drop and retake
 the preview before continuing. Prefix probes also consume previews through
 `RouteBranch::recv`.
-Root parallel groups also run through `Endpoint::par` with concurrently polled
-Tokio futures. Each such run checks that independent borrows of one participant
-were pending together. Endpoints move between separate runtimes through the
-public API.
+Parallel groups run through `Endpoint::par` with concurrently polled Tokio
+futures. A separate test delays two senders and checks that two real receives
+on the same endpoint can remain pending together and then complete. Operations
+that finish immediately need not produce a pending I/O observation. Endpoints
+move between separate runtimes through the public API.
 Every case generates direct local Rust code. Every
 nested parallel composition uses public `par()` borrows and Tokio futures.
 Each source execution retains its branch choices, parallel-child order and
 two visits of every `roll`. The generated localsides keep the corresponding
 borrows until each visit completes. These executions run in both child orders
 and with concurrent Tokio futures, including different choices in later visits.
+When a choice transfers an endpoint in only one arm, the continuation uses the
+endpoint value actually received. No separate owner flag selects its operations.
 Tests read source-derived execution schedules one record at a time from JSON
 Lines and check that every planned record was consumed.
 Borrowed-scope plans and observations also use JSON Lines. Each record covers
