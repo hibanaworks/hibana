@@ -894,4 +894,10 @@ run_miri_test \
   --manifest-path proofs/checks/projection/endpoint-delegation/compiler/Cargo.toml \
   --locked --lib
 
+run_miri_test \
+  conditional-handoff-receive-prefix \
+  -p hibana --lib \
+  g::role_projection::tests::source_order::a_conditional_handoff_keeps_the_receivers_prefix_when_the_local_send_is_absent \
+  -- --exact
+
 TOOLCHAIN="${MIRI_TOOLCHAIN}" bash "${ROOT_DIR}/.github/scripts/lib/test_result_tool.sh" miri-total "${MIRI_TOOLCHAIN}" "${miri_totals}"

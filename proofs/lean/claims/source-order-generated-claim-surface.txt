@@ -1,3 +1,7 @@
+conditionalHandoffImagePreservesSourceOrder : conditionalHandoffImage.actorOrderCheck conditionalHandoffChoreo = true
+conditionalHandoffMissingPrefixRejected : conditionalHandoffMissingPrefix.actorRowsCheck conditionalHandoffChoreo =
+    true ∧
+  conditionalHandoffMissingPrefix.actorOrderCheck conditionalHandoffChoreo = false
 parallelReplyImagePreservesSourceOrder : parallelReplyImage.actorOrderCheck parallelReplyChoreo = true
 rootSequenceImagePreservesSourceOrder : rootSequenceImage.actorOrderCheck rootSequenceChoreo = true
 rootSequenceMissingDependencyRejected : rootSequenceMissing.actorRowsCheck rootSequenceChoreo = true ∧

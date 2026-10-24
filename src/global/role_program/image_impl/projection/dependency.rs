@@ -71,6 +71,7 @@ pub(in crate::global::role_program::image_impl) struct DependencyCursor<'a, cons
     marker_index: usize,
     next_local_step: usize,
     previous_eff: Option<(usize, usize)>,
+    event_dependency: PackedLocalDependency,
     branch_barrier: CandidateKey,
     branch_floor: usize,
     context: u16,
@@ -99,6 +100,7 @@ impl<'a, const E: usize> DependencyCursor<'a, E> {
             marker_index: 0,
             next_local_step: 0,
             previous_eff: None,
+            event_dependency: PackedLocalDependency::none(),
             branch_barrier: CandidateKey::NONE,
             branch_floor: 0,
             context: u16::MAX,
@@ -333,6 +335,12 @@ impl<'a, const E: usize> DependencyCursor<'a, E> {
         };
         self.previous_eff = Some((current_eff, side));
         self.next_local_step += 1;
+        // Both halves of one message have the same incoming source prefix.
+        // Its local send can be absent on the selected ownership path, so a
+        // receive cannot rely on that row to carry the prefix transitively.
+        if side != 0 {
+            return self.event_dependency;
+        }
         if !self.needs_dependencies {
             return PackedLocalDependency::none();
         }
@@ -359,6 +367,8 @@ impl<'a, const E: usize> DependencyCursor<'a, E> {
         if !candidate.is_none() && candidate.local_end as usize > local_step {
             crate::invariant();
         }
-        self.dependency_for_candidate(candidate)
+        let dependency = self.dependency_for_candidate(candidate);
+        self.event_dependency = dependency;
+        dependency
     }
 }

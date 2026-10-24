@@ -310,7 +310,8 @@ fn source_order_rejects_a_missing_join_and_spurious_parallel_order() {
             descriptor_source(RoleDescriptorRef::from_resident(extra_order)),
             ParallelReplies::lean_source(),
             descriptor_source(RoleDescriptorRef::from_resident(replies.role_image_ref())),
-        ) + &root_sequence_certificate();
+        ) + &root_sequence_certificate()
+            + &conditional_handoff_certificate();
         let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/lean-proof");
         std::fs::create_dir_all(&directory).unwrap();
         std::fs::write(directory.join("SourceOrderGenerated.lean"), source).unwrap();
@@ -377,5 +378,185 @@ fn root_sequence_certificate() -> std::string::String {
         Steps::lean_source(),
         descriptor_source(descriptor),
         descriptor_source(RoleDescriptorRef::from_resident(missing)),
+    )
+}
+
+type ConditionalHandoff = g::Seq<
+    g::Route<g::Send<0, 1, g::Msg<0, ()>>, g::Send<0, 1, g::Msg<1, Endpoint<'static, 3>>>>,
+    g::Seq<g::Send<1, 0, g::Msg<2, ()>>, g::Send<3, 0, g::Msg<3, ()>>>,
+>;
+
+#[test]
+fn a_conditional_handoff_keeps_the_receivers_prefix_when_the_local_send_is_absent() {
+    use crate::{
+        runtime::{SessionKitStorage, ids::SessionId, program::project},
+        test_support::transport::TestTransport,
+    };
+    type Choice = g::Msg<0, ()>;
+    type Loan<'r> = g::Msg<1, Endpoint<'r, 3>>;
+    type Ack = g::Msg<2, ()>;
+    type Data = g::Msg<3, ()>;
+    let global = g::Program::<ConditionalHandoff>::new();
+    let owner_program = project::<0>(&global);
+    let worker_program = project::<1>(&global);
+    let resource_program = project::<3>(&global);
+    for right in [false, true] {
+        for early_data in [false, true] {
+            let network = TestTransport::new();
+            let mut owner_slab = [0; 32 * 1024];
+            let mut worker_slab = [0; 32 * 1024];
+            let mut owner_storage = SessionKitStorage::uninit();
+            let mut worker_storage = SessionKitStorage::uninit();
+            let owner_runtime = owner_storage
+                .init()
+                .rendezvous(&mut owner_slab, network.clone())
+                .unwrap();
+            let worker_runtime = worker_storage
+                .init()
+                .rendezvous(&mut worker_slab, network.clone())
+                .unwrap();
+            let session = SessionId::new(1704);
+            let mut owner = owner_runtime.enter(session, &owner_program).unwrap();
+            let mut worker = worker_runtime.enter(session, &worker_program).unwrap();
+            let mut resource = owner_runtime.enter(session, &resource_program).unwrap();
+            tokio::runtime::Builder::new_current_thread()
+                .enable_time()
+                .start_paused(true)
+                .build()
+                .unwrap()
+                .block_on(async {
+                    let result = tokio::time::timeout(core::time::Duration::from_secs(1), async {
+                        tokio::try_join!(
+                            async {
+                                if right {
+                                    owner.send::<Loan<'_>>(resource).await?;
+                                    if early_data {
+                                        return owner.recv::<Data>().await;
+                                    }
+                                    owner.recv::<Ack>().await?;
+                                    owner.recv::<Data>().await
+                                } else {
+                                    owner.send::<Choice>(&()).await?;
+                                    if early_data {
+                                        return owner.recv::<Data>().await;
+                                    }
+                                    owner.recv::<Ack>().await?;
+                                    resource.send::<Data>(&()).await?;
+                                    owner.recv::<Data>().await
+                                }
+                            },
+                            async {
+                                tokio::time::sleep(core::time::Duration::from_millis(1)).await;
+                                let branch = worker.offer().await?;
+                                match branch.label() {
+                                    0 => {
+                                        branch.recv::<Choice>().await?;
+                                        worker.send::<Ack>(&()).await
+                                    }
+                                    1 => {
+                                        let mut resource = branch.recv::<Loan<'_>>().await?;
+                                        worker.send::<Ack>(&()).await?;
+                                        resource.send::<Data>(&()).await
+                                    }
+                                    _ => panic!("unexpected handoff choice"),
+                                }
+                            }
+                        )
+                    })
+                    .await
+                    .expect("a receive cannot hide its own unfinished prefix");
+                    if early_data {
+                        result.expect_err("Data cannot be received before Ack");
+                    } else {
+                        result.unwrap();
+                        assert!(network.queue_is_empty());
+                    }
+                });
+        }
+    }
+}
+
+#[cfg(not(miri))]
+fn conditional_handoff_certificate() -> std::string::String {
+    use crate::test_support::{lean_choreo::LeanChoreo, lean_descriptor::descriptor_source};
+    const BASE: &RoleImageRef = &RoleProjection::<0, ConditionalHandoff, 8>::IMAGE_REF;
+    const N: usize = BASE.columns().blob_len();
+    const BYTES: [[u8; N]; 2] = {
+        let descriptor = RoleDescriptorRef::from_resident(BASE);
+        let mut original = [0; N];
+        let mut index = 0;
+        while index < N {
+            original[index] = descriptor.proof_byte_at(index);
+            index += 1;
+        }
+        let mut receive = None;
+        let mut ack = None;
+        index = 0;
+        while index < BASE.local_step_count() {
+            match BASE.local_step_node(index).unwrap().action() {
+                LocalAction::Recv { label: 2, .. } => ack = Some(index),
+                LocalAction::Recv { label: 3, .. } => receive = Some(index),
+                LocalAction::Send { .. }
+                | LocalAction::Recv { .. }
+                | LocalAction::Local { .. }
+                | LocalAction::Terminate => (),
+            }
+            index += 1;
+        }
+        let row_start = BASE.columns().events.offset as usize;
+        let ack_ref = row_start + ack.expect("missing Ack receive") * ROLE_IMAGE_EVENT_STRIDE + 2;
+        let receive_ref =
+            row_start + receive.expect("missing Data receive") * ROLE_IMAGE_EVENT_STRIDE + 2;
+        let mut missing = original;
+        missing[receive_ref] = original[ack_ref];
+        missing[receive_ref + 1] = original[ack_ref + 1];
+        [original, missing]
+    };
+    const MISSING: RoleImageRef = RoleImageRef::new(
+        BASE.program(),
+        BASE.role(),
+        BASE.facts(),
+        BASE.columns(),
+        &BYTES[1],
+    );
+    let global = g::Program::<ConditionalHandoff>::new();
+    let program = crate::runtime::program::project::<0>(&global);
+    let image = program.role_image_ref();
+    let descriptor = RoleDescriptorRef::from_resident(image);
+    assert_eq!(image.columns().blob_len(), N);
+    for (index, byte) in BYTES[0].iter().enumerate() {
+        assert_eq!(descriptor.proof_byte_at(index), *byte);
+    }
+    let receive = (0..image.local_step_count())
+        .find(|&row| {
+            matches!(
+                image.local_step_node(row).unwrap().action(),
+                LocalAction::Recv { label: 3, .. }
+            )
+        })
+        .unwrap();
+    let dependency = image.dependency_for_index(receive).unwrap();
+    assert_eq!((dependency.start(), dependency.end()), (0, 3));
+    let missing_dependency = MISSING.dependency_for_index(receive).unwrap();
+    assert_eq!(
+        (missing_dependency.start(), missing_dependency.end()),
+        (0, 2)
+    );
+    assert!(!crate::g::role_projection::source_order::check::<
+        ConditionalHandoff,
+        8,
+    >(&MISSING));
+    std::format!(
+        "\ndef conditionalHandoffChoreo : Hibana.Choreo := {}\n\n\
+         def conditionalHandoffImage : Hibana.RustDescriptorImage := {}\n\n\
+         def conditionalHandoffMissingPrefix : Hibana.RustDescriptorImage := {}\n\n\
+         theorem conditionalHandoffImagePreservesSourceOrder :\n  \
+         conditionalHandoffImage.actorOrderCheck conditionalHandoffChoreo = true := by decide\n\n\
+         theorem conditionalHandoffMissingPrefixRejected :\n  \
+         conditionalHandoffMissingPrefix.actorRowsCheck conditionalHandoffChoreo = true ∧\n  \
+         conditionalHandoffMissingPrefix.actorOrderCheck conditionalHandoffChoreo = false := by decide\n\n",
+        ConditionalHandoff::lean_source(),
+        descriptor_source(descriptor),
+        descriptor_source(RoleDescriptorRef::from_resident(&MISSING)),
     )
 }
