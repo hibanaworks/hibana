@@ -12,7 +12,7 @@ on:
         type: choice
         required: true
         default: all
-        options: [all, final-form, protocol-shapes, protocol-syntax, protocol-interactions, protocol-representatives, protocol-fuzz]
+        options: [all, final-form, protocol-shapes, protocol-syntax, protocol-interactions, protocol-spines, protocol-representatives, protocol-fuzz]
       shape-budget:
         description: Generated constructor budget for protocol-shapes
         type: choice
@@ -41,7 +41,7 @@ on:
         required: true
         default: '32'
       interaction-length:
-        description: Nested context count for protocol-interactions
+        description: Nested context or constructor-edge count for interactions/spines
         type: choice
         required: true
         default: '2'
@@ -69,7 +69,7 @@ on:
 
 jobs:
   runtime-instructions:
-    if: github.event_name != 'schedule' && (github.event_name != 'workflow_dispatch' || (inputs.check != 'protocol-shapes' && inputs.check != 'protocol-syntax' && inputs.check != 'protocol-interactions' && inputs.check != 'protocol-representatives' && inputs.check != 'protocol-fuzz'))
+    if: github.event_name != 'schedule' && (github.event_name != 'workflow_dispatch' || (inputs.check != 'protocol-shapes' && inputs.check != 'protocol-syntax' && inputs.check != 'protocol-interactions' && inputs.check != 'protocol-spines' && inputs.check != 'protocol-representatives' && inputs.check != 'protocol-fuzz'))
     runs-on: ubuntu-24.04
     env:
       TOOLCHAIN: stable
@@ -91,7 +91,7 @@ jobs:
           path: target/runtime-instructions/results/
 
   protocol-shape-matrix:
-    if: github.event_name == 'workflow_dispatch' && (inputs.check == 'protocol-shapes' || inputs.check == 'protocol-syntax' || inputs.check == 'protocol-interactions' || inputs.check == 'protocol-representatives')
+    if: github.event_name == 'workflow_dispatch' && (inputs.check == 'protocol-shapes' || inputs.check == 'protocol-syntax' || inputs.check == 'protocol-interactions' || inputs.check == 'protocol-spines' || inputs.check == 'protocol-representatives')
     runs-on: ubuntu-24.04-arm
     outputs:
       matrix: ${{ steps.scope.outputs.matrix }}
@@ -114,10 +114,12 @@ jobs:
         run: |
           set -euo pipefail
           cargo +stable test --locked --manifest-path .github/ci-tests/Cargo.toml --bin protocol-shape-partitions
-          if [[ "$SHAPE_CHECK" == protocol-interactions ]]; then
+          if [[ "$SHAPE_CHECK" == protocol-interactions || "$SHAPE_CHECK" == protocol-spines ]]; then
+            shape_command=interaction-matrix
+            if [[ "$SHAPE_CHECK" == protocol-spines ]]; then shape_command=spine-matrix; fi
             cargo +stable test --locked --manifest-path .github/ci-tests/Cargo.toml --bin protocol-shapes
             matrix=$(cargo +stable run --locked --manifest-path .github/ci-tests/Cargo.toml \
-              --bin protocol-shapes -- interaction-matrix "$INTERACTION_LENGTH" "$INTERACTION_FIRST" "$INTERACTION_COUNT")
+              --bin protocol-shapes -- "$shape_command" "$INTERACTION_LENGTH" "$INTERACTION_FIRST" "$INTERACTION_COUNT")
           elif [[ "$SHAPE_CHECK" == protocol-representatives ]]; then
             cargo +stable test --locked --manifest-path .github/ci-tests/Cargo.toml --bin protocol-shapes
             matrix=$(cargo +stable run --locked --manifest-path .github/ci-tests/Cargo.toml \
@@ -133,7 +135,7 @@ jobs:
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
 
   protocol-shapes:
-    if: github.event_name == 'workflow_dispatch' && (inputs.check == 'protocol-shapes' || inputs.check == 'protocol-syntax' || inputs.check == 'protocol-interactions' || inputs.check == 'protocol-representatives')
+    if: github.event_name == 'workflow_dispatch' && (inputs.check == 'protocol-shapes' || inputs.check == 'protocol-syntax' || inputs.check == 'protocol-interactions' || inputs.check == 'protocol-spines' || inputs.check == 'protocol-representatives')
     needs: protocol-shape-matrix
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 240
@@ -171,10 +173,12 @@ jobs:
       - name: Check every assigned generated protocol
         run: |
           set -euo pipefail
-          if [[ "$SHAPE_CHECK" == protocol-interactions ]]; then
+          if [[ "$SHAPE_CHECK" == protocol-interactions || "$SHAPE_CHECK" == protocol-spines ]]; then
+            shape_flag=--interactions
+            if [[ "$SHAPE_CHECK" == protocol-spines ]]; then shape_flag=--spines; fi
             printf '%s\t%s\t%s\n' "$INTERACTION_LENGTH" "$INTERACTION_FIRST" "$INTERACTION_COUNT" > assigned-interactions.tsv
             bash .github/scripts/lib/resource_guard.sh \
-              bash .github/scripts/check_protocol_shapes.sh --interactions "$INTERACTION_LENGTH" "$INTERACTION_FIRST" "$INTERACTION_COUNT"
+              bash .github/scripts/check_protocol_shapes.sh "$shape_flag" "$INTERACTION_LENGTH" "$INTERACTION_FIRST" "$INTERACTION_COUNT"
           elif [[ "$SHAPE_CHECK" == protocol-representatives ]]; then
             printf '%s\t%s\t%s\n' "$SYNTAX_DEPTH" "$SYNTAX_FIRST" "$SYNTAX_COUNT" > assigned-representatives.tsv
             bash .github/scripts/lib/resource_guard.sh \
@@ -208,6 +212,7 @@ jobs:
             target/protocol-shapes/*/**/catalog-scope.txt
             target/protocol-shapes/*/**/case-identities.tsv
             target/protocol-shapes/*/**/case-depths.tsv
+            target/protocol-shapes/*/**/*coverage*.tsv
             target/protocol-shapes/*/**/diagnostics.tsv
             target/protocol-shapes/*/**/unclassified-rejections.txt
             target/protocol-shapes/*/**/diagnose.time
@@ -282,6 +287,9 @@ jobs:
               target/debug/protocol-shape-controls --check-shrink target/protocol-fuzz-shrink-control
               bash .github/scripts/check_protocol_shapes.sh --interactions 4 12439 1
               bash .github/scripts/check_protocol_shapes.sh --interactions 5 111955 1
+              bash .github/scripts/check_protocol_shapes.sh --spines 5 2019 1
+              bash .github/scripts/check_protocol_shapes.sh --spines 5 15667 1
+              bash .github/scripts/check_protocol_shapes.sh --spines 5 22409 1
             fi
           '
       - uses: actions/upload-artifact@v7
@@ -292,6 +300,7 @@ jobs:
             target/protocol-fuzz-*/**
             target/protocol-shapes/*/**/catalog.json
             target/protocol-shapes/*/**/case-identities.tsv
+            target/protocol-shapes/*/**/*coverage*.tsv
             target/protocol-shapes/*/**/source.sha256
             target/protocol-shapes/*/**/source.patch
             target/protocol-shapes/*/**/compiler.txt
@@ -328,7 +337,7 @@ jobs:
           --lib --jobs 1 --output-format terse
 
   final-form:
-    if: github.event_name != 'schedule' && (github.event_name != 'workflow_dispatch' || (inputs.check != 'protocol-shapes' && inputs.check != 'protocol-syntax' && inputs.check != 'protocol-interactions' && inputs.check != 'protocol-representatives' && inputs.check != 'protocol-fuzz'))
+    if: github.event_name != 'schedule' && (github.event_name != 'workflow_dispatch' || (inputs.check != 'protocol-shapes' && inputs.check != 'protocol-syntax' && inputs.check != 'protocol-interactions' && inputs.check != 'protocol-spines' && inputs.check != 'protocol-representatives' && inputs.check != 'protocol-fuzz'))
     runs-on: ubuntu-24.04-arm
     env:
       TOOLCHAIN: stable

@@ -8,13 +8,13 @@ if [[ "${1:-}" == --representatives ]]; then
   fi
   GENERATOR_ARGS=(--representatives "$2" "$3" "$4")
   OUTPUT="${ROOT_DIR}/target/protocol-shapes/source-representatives-$2/range-$3-count-$4"
-elif [[ "${1:-}" == --interactions ]]; then
+elif [[ "${1:-}" == --interactions || "${1:-}" == --spines ]]; then
   if [[ $# != 4 ]]; then
     echo "usage: $0 --interactions LENGTH FIRST COUNT" >&2
     exit 2
   fi
-  GENERATOR_ARGS=(--interactions "$2" "$3" "$4")
-  OUTPUT="${ROOT_DIR}/target/protocol-shapes/interactions-$2/range-$3-count-$4"
+  GENERATOR_ARGS=("$1" "$2" "$3" "$4")
+  OUTPUT="${ROOT_DIR}/target/protocol-shapes/${1#--}-$2/range-$3-count-$4"
 elif [[ "${1:-}" == --syntax-depth ]]; then
   if [[ $# != 4 ]]; then
     echo "usage: $0 --syntax-depth DEPTH FIRST COUNT" >&2
@@ -32,6 +32,7 @@ else
   OUTPUT="${ROOT_DIR}/target/protocol-shapes/operator-budget-${BUDGET}/shard-${SHARD}-of-${SHARDS}"
 fi
 mkdir -p "${OUTPUT}"
+rm -f "${OUTPUT}/executed-coverage.tsv" "${OUTPUT}/executed-coverage-counts.tsv"
 rustc +"${TOOLCHAIN:-stable}" --version > "${OUTPUT}/compiler.txt"
 git -C "${ROOT_DIR}" rev-parse HEAD > "${OUTPUT}/revision.txt"
 git -C "${ROOT_DIR}" diff HEAD --binary > "${OUTPUT}/source.patch"
@@ -67,7 +68,7 @@ cargo +"${TOOLCHAIN:-stable}" run --locked --manifest-path "${ROOT_DIR}/.github/
 (
   cd "${OUTPUT}"
   shopt -s nullglob
-  shasum -a 256 Cargo.toml catalog.json catalog-scope.txt case-identities.tsv case-depths.tsv inputs.json scope-inputs.json src/*.rs src/bin/diagnose.rs \
+  shasum -a 256 Cargo.toml catalog.json catalog-scope.txt case-identities.tsv case-depths.tsv source-coverage*.tsv inputs.json scope-inputs.json src/*.rs src/bin/diagnose.rs \
     diagnostics.tsv unclassified-rejections.txt traces/*.txt scope-plans/*.jsonl scripts/*.jsonl \
     rejected/Cargo.toml rejected/inventory.tsv rejected/src/bin/*.rs > inputs.sha256
 )
@@ -121,3 +122,5 @@ if [[ "$(cat "${OUTPUT}/unclassified-rejections.txt")" != 0 ]]; then
   echo "Unclassified projection rejections remain; see ${OUTPUT}/diagnostics.tsv" >&2
   exit 1
 fi
+cp "${OUTPUT}/source-coverage.tsv" "${OUTPUT}/executed-coverage.tsv"
+cp "${OUTPUT}/source-coverage-counts.tsv" "${OUTPUT}/executed-coverage-counts.tsv"

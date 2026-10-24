@@ -22,6 +22,8 @@ mod causality;
 mod choice;
 #[path = "protocol_shape_context.rs"]
 mod context;
+#[path = "protocol_shape_coverage.rs"]
+mod coverage;
 #[path = "protocol_shape_decisions.rs"]
 mod decisions;
 #[path = "protocol_shape_delegated.rs"]
@@ -986,6 +988,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             std::path::Path::new(&args[5]),
         );
     }
+    if args.first().is_some_and(|s| s == "coverage-uncovered") {
+        if args.len() < 3 {
+            return Err("usage: protocol-shapes coverage-uncovered LENGTH OUTPUT_TSV [SUCCESSFUL_RUN_DIRECTORY...]".into());
+        }
+        return coverage::uncovered(
+            args[1].parse()?,
+            std::path::Path::new(&args[2]),
+            &args[3..].iter().map(PathBuf::from).collect::<Vec<_>>(),
+        );
+    }
     if args.first().is_some_and(|s| s == "representative-counts") {
         if args.len() != 2 && args.len() != 3 {
             return Err("usage: protocol-shapes representative-counts DEPTH [RANKS_TSV]".into());
@@ -1039,7 +1051,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
         return Ok(());
     }
-    if args.first().is_some_and(|s| s == "interaction-matrix") {
+    if args
+        .first()
+        .is_some_and(|s| s == "interaction-matrix" || s == "spine-matrix")
+    {
         if args.len() != 4 {
             return Err("usage: protocol-shapes interaction-matrix LENGTH FIRST COUNT".into());
         }
@@ -1052,7 +1067,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             range_matrix(
                 args[2].parse()?,
                 args[3].parse()?,
-                interactions::count(length).into()
+                if args[0] == "spine-matrix" {
+                    interactions::spine_count(length)
+                } else {
+                    interactions::count(length)
+                }
+                .into()
             )?
         );
         return Ok(());
@@ -1065,12 +1085,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             representative_cases(args[3].parse()?, args[4].parse()?, args[5].parse()?)?,
             args.get(6),
         )
-    } else if args.get(2).is_some_and(|s| s == "--interactions") {
+    } else if args
+        .get(2)
+        .is_some_and(|s| s == "--interactions" || s == "--spines")
+    {
         if args.len() != 6 && args.len() != 7 {
             return Err("usage: protocol-shapes REPOSITORY OUTPUT --interactions LENGTH FIRST COUNT [DIAGNOSTICS]".into());
         }
         (
-            interaction_cases(args[3].parse()?, args[4].parse()?, args[5].parse()?)?,
+            interaction_cases(
+                args[3].parse()?,
+                args[4].parse()?,
+                args[5].parse()?,
+                args[2] == "--spines",
+            )?,
             args.get(6),
         )
     } else if args.get(2).is_some_and(|s| s == "--syntax-depth") {
@@ -1413,19 +1441,31 @@ fn interaction_cases(
     length: usize,
     first: usize,
     count: usize,
+    spine: bool,
 ) -> Result<CaseSet, Box<dyn std::error::Error>> {
-    if length > 5
-        || count == 0
-        || first
-            .checked_add(count)
-            .is_none_or(|end| end > interactions::count(length))
-    {
+    if length > 5 {
+        return Err("interaction length must be at most five".into());
+    }
+    let (family, population, construct) = if spine {
+        (
+            "spines",
+            interactions::spine_count(length),
+            interactions::spine as fn(usize, usize) -> interactions::Interaction,
+        )
+    } else {
+        (
+            "interactions",
+            interactions::count(length),
+            interactions::protocol as fn(usize, usize) -> interactions::Interaction,
+        )
+    };
+    if count == 0 || first.checked_add(count).is_none_or(|end| end > population) {
         return Err("interaction range exceeds the length-zero-through-five population".into());
     }
     let mut catalog = CaseSet {
-        namespace: format!("interactions-{length}-{first}-count-{count}"),
-        description: format!("interaction_length={length} first={first} count={count}"),
-        total: interactions::count(length).to_string(),
+        namespace: format!("{family}-{length}-{first}-count-{count}"),
+        description: format!("{family}_length={length} first={first} count={count}"),
+        total: population.to_string(),
         cases: Vec::new(),
         delegated: BTreeSet::new(),
         expected_rejections: BTreeMap::new(),
@@ -1442,7 +1482,7 @@ fn interaction_cases(
             resolvers,
             identity,
             unpermitted_reentry,
-        } = interactions::protocol(length, rank);
+        } = construct(length, rank);
         if let Some(unpermitted) = unpermitted_reentry {
             catalog.negative_sources.insert(format!("reentry_{rank}"), (
                 symmetry::canonical(&unpermitted),
@@ -1459,7 +1499,10 @@ fn interaction_cases(
         catalog.max_resolvers = catalog.max_resolvers.max(resolvers);
         catalog.cases.push((
             case,
-            format!("interaction={length}/rank={rank}/{identity}"),
+            format!(
+                "{}={length}/rank={rank}/{identity}",
+                if spine { "spine" } else { "interaction" }
+            ),
             2,
             0,
             source,
@@ -1740,6 +1783,7 @@ long_running_const_eval = "forbid"
     let mut trace_paths = BTreeSet::new();
     let mut local_rejection_probes = 0usize;
     let mut rejected = 0;
+    let mut source_coverage = coverage::Coverage::default();
     let mut case_depths = String::from("case\tsyntax_depth\toperator_count\n");
     let mut catalog_max_depth = 0;
     let mut emitted_max_depth = 0;
@@ -1769,6 +1813,7 @@ long_running_const_eval = "forbid"
             continue;
         }
         emitted_max_depth = emitted_max_depth.max(syntax_depth);
+        source_coverage.add(*case, global);
         let mut messages = Vec::new();
         global.messages(&mut messages);
         let traces = global.traces().into_iter().collect::<BTreeSet<_>>();
@@ -1967,6 +2012,14 @@ long_running_const_eval = "forbid"
         format!("{rejected}\n"),
     )?;
     fs::write(output.join("case-depths.tsv"), case_depths)?;
+    fs::write(
+        output.join("source-coverage.tsv"),
+        source_coverage.witnesses(),
+    )?;
+    fs::write(
+        output.join("source-coverage-counts.tsv"),
+        source_coverage.counts(),
+    )?;
     println!(
         "generated shapes={} initial_probes={probes} continuation_shapes={continuation_shapes} trace_prefix_probes={trace_prefix_probes} finite_short_prefix_depth=4 complete_traces={trace_count} trace_operations={operations} concurrent_traces={concurrent_traces} delegated_concurrent_runs={delegated_concurrent_runs} scoped_executions={scoped_executions} {description} catalog_max_syntax_depth={catalog_max_depth} emitted_max_syntax_depth={emitted_max_depth} catalog_shapes={} unclassified_rejections={rejected} total_shapes={}",
         inputs.len(),

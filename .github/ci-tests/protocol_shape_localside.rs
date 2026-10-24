@@ -182,6 +182,43 @@ struct Emitter<'a> {
     source: &'a Protocol,
     paths: std::collections::BTreeMap<u8, Vec<(u16, bool)>>,
     causal: Vec<(u8, u8, u8)>,
+    route_owners: Vec<(&'a Protocol, u8)>,
+}
+
+// Immutable source analysis for code generation. A route needs two ownership
+// variants only when different preceding source paths really leave the
+// resource with different actors. This is not emitted as application state.
+fn route_owners<'a>(source: &'a Protocol, incoming: u8, out: &mut Vec<(&'a Protocol, u8)>) -> u8 {
+    match source {
+        Protocol::Message {
+            from,
+            to,
+            owned: true,
+            ..
+        } => {
+            assert_eq!(incoming, 1 << from);
+            1 << to
+        }
+        Protocol::Message { .. } => incoming,
+        Protocol::Seq(a, b) => {
+            let middle = route_owners(a, incoming, out);
+            route_owners(b, middle, out)
+        }
+        Protocol::Par(a, b) => {
+            let left = route_owners(a, incoming, out);
+            let right = route_owners(b, incoming, out);
+            assert!(!mobile(a) || !mobile(b));
+            if mobile(a) { left } else { right }
+        }
+        Protocol::Route(a, b) | Protocol::Resolved(a, b, _) => {
+            out.push((source, incoming));
+            route_owners(a, incoming, out) | route_owners(b, incoming, out)
+        }
+        Protocol::Roll(body) => {
+            assert_eq!(route_owners(body, incoming, out), incoming);
+            incoming
+        }
+    }
 }
 
 impl Emitter<'_> {
@@ -394,6 +431,17 @@ impl Emitter<'_> {
                 if mobile(self.source) {
                     if actor == 3 {
                         return String::new();
+                    }
+                    let incoming = self
+                        .route_owners
+                        .iter()
+                        .find_map(|(node, owners)| core::ptr::eq(*node, source).then_some(*owners))
+                        .expect("missing source ownership at choice");
+                    if incoming == 1 << actor {
+                        return self.emit_route(source, actor, actor, names, primed);
+                    }
+                    if incoming & (1 << actor) == 0 {
+                        return self.emit_route(source, actor, u8::MAX, names, primed);
                     }
                     let available = self.emit_route(source, actor, actor, names, primed);
                     let absent = self.emit_route(source, actor, u8::MAX, names, primed);
@@ -797,10 +845,15 @@ pub(super) fn runs(source: &Protocol, owner: u8, case: usize) -> (String, String
     scripts.push('\n');
     let mut paths = std::collections::BTreeMap::new();
     source.resolver_choices(&mut Vec::new(), &mut paths);
+    let mut choices = Vec::new();
+    if mobile(source) {
+        route_owners(source, 1 << owner, &mut choices);
+    }
     let e = Emitter {
         source,
         paths,
         causal: super::causality::pairs(source),
+        route_owners: choices,
     };
     let resolvers = e
         .paths
@@ -942,4 +995,59 @@ pub(super) fn runs(source: &Protocol, owner: u8, case: usize) -> (String, String
         executions.len()
     );
     (code, scripts)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn message(from: u8, to: u8, owned: bool) -> Protocol {
+        Protocol::Message {
+            from,
+            to,
+            label: 0,
+            owned,
+        }
+    }
+
+    #[test]
+    fn source_ownership_at_a_choice_preserves_genuine_path_dependence() {
+        let source = Protocol::Seq(
+            Box::new(message(0, 1, true)),
+            Box::new(Protocol::Seq(
+                Box::new(Protocol::Route(
+                    Box::new(message(1, 0, true)),
+                    Box::new(message(1, 2, true)),
+                )),
+                Box::new(Protocol::Route(
+                    Box::new(message(3, 2, false)),
+                    Box::new(message(3, 2, false)),
+                )),
+            )),
+        );
+        let mut choices = Vec::new();
+        assert_eq!(route_owners(&source, 1, &mut choices), 5);
+        assert_eq!(
+            choices
+                .iter()
+                .map(|(_, owners)| *owners)
+                .collect::<Vec<_>>(),
+            [2, 5]
+        );
+        let executions = source.executions();
+        let ends = executions
+            .iter()
+            .map(|execution| holder_after(&source, execution, 0))
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(ends, [0, 2].into());
+    }
+
+    #[test]
+    fn five_nested_choices_have_one_source_owner_at_each_entry() {
+        let generated = super::super::interactions::spine(5, 22409);
+        let mut choices = Vec::new();
+        assert_eq!(route_owners(&generated.source, 1, &mut choices), 1);
+        assert_eq!(choices.len(), 5);
+        assert!(choices.iter().all(|(_, owners)| *owners == 2));
+    }
 }

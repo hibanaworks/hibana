@@ -63,6 +63,124 @@ fn permit_reentry(source: &mut Protocol) -> usize {
     }
 }
 
+fn finish(body: Protocol, identity: String) -> Interaction {
+    let mut global = seq(message(0, 1, true), seq(body, message(1, 0, true)));
+    let mut unpermitted = global.clone();
+    let permits = permit_reentry(&mut global);
+    let unpermitted_reentry = (permits != 0).then(|| {
+        super::syntax::number(&mut unpermitted);
+        unpermitted
+    });
+    let (labels, resolvers) = super::syntax::number(&mut global);
+    assert!(
+        ownership::violations(&global).is_empty(),
+        "constructed ownership violation"
+    );
+    Interaction {
+        source: global,
+        labels,
+        resolvers,
+        identity: format!("{identity}/reentry-permits={permits}"),
+        unpermitted_reentry,
+    }
+}
+
+pub(super) fn spine_count(length: usize) -> usize {
+    2 * 7usize.pow(u32::try_from(length).expect("spine length"))
+}
+
+// Each digit chooses one constructor edge on a nested path. The other choice
+// arm ends after notifying the same actors. This keeps inactive nested choices
+// out of the source instead of cloning the whole path into both arms.
+pub(super) fn spine(length: usize, rank: usize) -> Interaction {
+    assert!(length <= 5 && rank < spine_count(length));
+    let nested_loan = !rank.is_multiple_of(2);
+    let mut word_rank = rank / 2;
+    let mut edges = vec![0; length];
+    for edge in edges.iter_mut().rev() {
+        *edge = word_rank % 7;
+        word_rank /= 7;
+    }
+    let exchange = || seq(message(3, 2, false), message(2, 3, false));
+    let mut body = exchange();
+    if nested_loan {
+        body = seq(message(1, 0, true), seq(body, message(0, 1, true)));
+    }
+    for &edge in edges.iter().rev() {
+        body = match edge {
+            0 | 1 => {
+                let independent = Protocol::Par(
+                    Box::new(message(0, 1, false)),
+                    Box::new(Protocol::Roll(Box::new(message(1, 0, false)))),
+                );
+                let (a, b) = if edge == 0 {
+                    (body, independent)
+                } else {
+                    (independent, body)
+                };
+                Protocol::Par(Box::new(a), Box::new(b))
+            }
+            2..=5 => {
+                let mut messages = Vec::new();
+                body.messages(&mut messages);
+                let inform_owner = messages.iter().any(|m| {
+                    matches!(
+                        m,
+                        Protocol::Message { from: 0, .. } | Protocol::Message { to: 0, .. }
+                    )
+                });
+                let arm = |rest| {
+                    seq(
+                        message(3, 2, false),
+                        if inform_owner {
+                            seq(message(3, 0, false), rest)
+                        } else {
+                            rest
+                        },
+                    )
+                };
+                let short = if inform_owner {
+                    seq(
+                        message(3, 2, false),
+                        seq(message(0, 1, false), message(1, 0, false)),
+                    )
+                } else {
+                    message(3, 2, false)
+                };
+                let (left, right) = if edge.is_multiple_of(2) {
+                    (arm(body), arm(short))
+                } else {
+                    (arm(short), arm(body))
+                };
+                let choice = if edge < 4 {
+                    Protocol::Route(Box::new(left), Box::new(right))
+                } else {
+                    Protocol::Resolved(Box::new(left), Box::new(right), 0)
+                };
+                // The choosing view must receive this message before selecting.
+                seq(message(2, 3, false), choice)
+            }
+            6 => Protocol::Roll(Box::new(body)),
+            _ => unreachable!(),
+        };
+    }
+    let names = [
+        "par.left",
+        "par.right",
+        "route.left",
+        "route.right",
+        "resolved.left",
+        "resolved.right",
+        "roll.body",
+    ];
+    let word = edges
+        .iter()
+        .map(|&edge| names[edge])
+        .collect::<Vec<_>>()
+        .join("/");
+    finish(body, format!("spine={word}/nested-loan={nested_loan}"))
+}
+
 pub(super) fn protocol(length: usize, rank: usize) -> Interaction {
     assert!(length <= 5 && rank < count(length));
     let nested_loan = !rank.is_multiple_of(2);
@@ -125,18 +243,6 @@ pub(super) fn protocol(length: usize, rank: usize) -> Interaction {
             _ => unreachable!(),
         };
     }
-    let mut global = seq(message(0, 1, true), seq(body, message(1, 0, true)));
-    let mut unpermitted = global.clone();
-    let permits = permit_reentry(&mut global);
-    let unpermitted_reentry = (permits != 0).then(|| {
-        super::syntax::number(&mut unpermitted);
-        unpermitted
-    });
-    let (labels, resolvers) = super::syntax::number(&mut global);
-    assert!(
-        ownership::violations(&global).is_empty(),
-        "constructed ownership violation"
-    );
     let names = [
         "seq-recv-before",
         "seq-send-before",
@@ -153,19 +259,47 @@ pub(super) fn protocol(length: usize, rank: usize) -> Interaction {
         .map(|context| names[*context])
         .collect::<Vec<_>>()
         .join("/");
-    Interaction {
-        source: global,
-        labels,
-        resolvers,
-        identity: format!("contexts={word}/nested-loan={nested_loan}/reentry-permits={permits}"),
-        unpermitted_reentry,
-    }
+    finish(body, format!("contexts={word}/nested-loan={nested_loan}"))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::collections::BTreeSet;
+
+    #[test]
+    fn spines_contain_every_side_word_through_length_five_in_the_actual_tree() {
+        let mut coverage = super::super::coverage::Coverage::default();
+        for rank in (0..spine_count(5)).step_by(2) {
+            let generated = spine(5, rank);
+            assert!(generated.labels < 100);
+            coverage.add(rank, &generated.source);
+        }
+        let counts = coverage.counts();
+        for length in 1..=5u32 {
+            let words = 7usize.pow(length);
+            assert!(counts.contains(&format!("nested-sides\t{length}\t{words}\t{words}\n")));
+            assert!(counts.contains(&format!("delegated-sides\t{length}\t{words}\t{words}\n")));
+        }
+        // This is a source-construction test, not a public Endpoint execution.
+    }
+
+    #[test]
+    fn asymmetric_choices_keep_distinct_sources_and_receive_before_selection() {
+        for length in 1..=2 {
+            let mut seen = BTreeSet::new();
+            for rank in 0..spine_count(length) {
+                let generated = spine(length, rank);
+                assert!(seen.insert(super::super::symmetry::canonical(&generated.source)));
+            }
+        }
+        for edges in [[0, 2, 6, 4, 1], [3, 1, 5, 6, 0]] {
+            let rank = 2 * edges.into_iter().fold(0, |rank, edge| 7 * rank + edge) + 1;
+            let generated = spine(5, rank);
+            println!("mixed-spine length=5 rank={rank} {}", generated.identity);
+            assert_eq!(generated.resolvers, 1);
+        }
+    }
 
     #[test]
     fn constructed_contexts_preserve_ownership_and_distinct_syntax() {

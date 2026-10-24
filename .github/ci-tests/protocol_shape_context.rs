@@ -30,7 +30,7 @@ pub(super) fn has_transfer(source: &Protocol) -> bool {
     }
 }
 
-fn uses_resource(source: &Protocol) -> bool {
+pub(super) fn uses_resource(source: &Protocol) -> bool {
     match source {
         Protocol::Message {
             from, to, owned, ..

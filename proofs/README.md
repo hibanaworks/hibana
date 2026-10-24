@@ -152,6 +152,45 @@ without that permission is retained as an independent compile-fail case.
 Unexpected projection rejection remains a failed test. Each accepted case uses the same
 public Endpoint driver and independent source checker as the syntax catalog.
 
+To exercise constructor order without cloning every choice subtree, use:
+
+```sh
+bash .github/scripts/check_protocol_shapes.sh --spines LENGTH FIRST COUNT
+```
+
+The nested path uses `par.left`, `par.right`, `route.left`, `route.right`,
+`resolved.left`, `resolved.right`, and `roll.body`. Each word has a resource
+exchange and an additional Endpoint round-trip variant, for `2 * 7^LENGTH`
+sources through length five. A choice has the nested protocol in the named
+arm and a shorter protocol in the other arm. Both arms notify their participants.
+The choosing view receives a message before the choice. Parallel siblings
+contain independent compound work. The original catalog with two deep choice
+arms remains a separate test population.
+
+`source-coverage.tsv` records constructor words and their locations in the
+generated source. `syntax` keeps all nine constructor edges, including `seq`.
+`nested-sides` omits intervening `seq` nodes and keeps seven edges.
+`nested-operators` also omits left/right distinctions and has four operators.
+`delegated-sides` and `delegated-operators` restrict these words to paths
+leading to a resource operation or transfer in a source containing delegation.
+Words have length one through five. The corresponding counts are counts of
+distinct words, not protocols, ownership patterns, or operation schedules.
+
+Only after Endpoint execution, source comparison, mutation controls, and input
+hash checks succeed does the script publish `executed-coverage.tsv` and
+`executed-coverage-counts.tsv`. To list nested side words still missing from
+successful runs:
+
+```sh
+target/debug/protocol-shapes coverage-uncovered 5 target/missing.tsv \
+  target/protocol-shapes/spines-5/range-FIRST-count-COUNT
+```
+
+The output gives each missing delegated-side word and a source rank for `--spines`. Omit run
+directories to make an initial plan. An unexecuted source inventory cannot
+remove a target. Covering these words does not establish all syntax trees or
+all interleavings at that depth.
+
 `protocol-shapes syntax-counts DEPTH` also reports the number of syntax trees
 modulo role renaming. It fixes the resource role when delegation occurs and
 preserves labels, constructor positions and resolver identities. These counts
