@@ -18,9 +18,9 @@ on:
         type: choice
         required: true
         default: '3'
-        options: ['3', '4', '5']
+        options: ['2', '3', '4', '5']
       shape-window:
-        description: Window (0 for budget 3, 0 through 31 for budget 4, 0 through 15 for budget 5)
+        description: Window (0 for budget 2 or 3, 0 through 31 for budget 4, 0 through 15 for budget 5)
         type: string
         required: true
         default: '0'
@@ -91,14 +91,14 @@ jobs:
           path: target/runtime-instructions/results/
 
   protocol-shape-matrix:
-    if: github.event_name == 'workflow_dispatch' && (inputs.check == 'protocol-shapes' || inputs.check == 'protocol-syntax' || inputs.check == 'protocol-interactions' || inputs.check == 'protocol-spines' || inputs.check == 'protocol-representatives')
+    if: github.event_name != 'schedule' && (github.event_name != 'workflow_dispatch' || inputs.check != 'protocol-fuzz')
     runs-on: ubuntu-24.04-arm
     outputs:
       matrix: ${{ steps.scope.outputs.matrix }}
     env:
-      SHAPE_BUDGET: ${{ inputs.shape-budget }}
-      SHAPE_WINDOW: ${{ inputs.shape-window }}
-      SHAPE_CHECK: ${{ inputs.check }}
+      SHAPE_BUDGET: ${{ inputs.check == 'protocol-shapes' && inputs.shape-budget || '2' }}
+      SHAPE_WINDOW: ${{ inputs.check == 'protocol-shapes' && inputs.shape-window || '0' }}
+      SHAPE_CHECK: ${{ inputs.check || 'all' }}
       SYNTAX_DEPTH: ${{ inputs.syntax-depth }}
       SYNTAX_FIRST: ${{ inputs.syntax-first }}
       SYNTAX_COUNT: ${{ inputs.syntax-count }}
@@ -135,7 +135,7 @@ jobs:
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
 
   protocol-shapes:
-    if: github.event_name == 'workflow_dispatch' && (inputs.check == 'protocol-shapes' || inputs.check == 'protocol-syntax' || inputs.check == 'protocol-interactions' || inputs.check == 'protocol-spines' || inputs.check == 'protocol-representatives')
+    if: github.event_name != 'schedule' && (github.event_name != 'workflow_dispatch' || inputs.check != 'protocol-fuzz')
     needs: protocol-shape-matrix
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 240
@@ -147,9 +147,9 @@ jobs:
       TOOLCHAIN: stable
       CARGO_BUILD_JOBS: 1
       CARGO_INCREMENTAL: 0
-      SHAPE_BUDGET: ${{ inputs.shape-budget }}
-      SHAPE_WINDOW: ${{ inputs.shape-window }}
-      SHAPE_CHECK: ${{ inputs.check }}
+      SHAPE_BUDGET: ${{ inputs.check == 'protocol-shapes' && inputs.shape-budget || '2' }}
+      SHAPE_WINDOW: ${{ inputs.check == 'protocol-shapes' && inputs.shape-window || '0' }}
+      SHAPE_CHECK: ${{ inputs.check || 'all' }}
       SYNTAX_DEPTH: ${{ inputs.syntax-depth }}
       SYNTAX_FIRST: ${{ matrix.first }}
       SYNTAX_COUNT: ${{ matrix.count }}
@@ -341,6 +341,7 @@ jobs:
 
   final-form:
     if: github.event_name != 'schedule' && (github.event_name != 'workflow_dispatch' || (inputs.check != 'protocol-shapes' && inputs.check != 'protocol-syntax' && inputs.check != 'protocol-interactions' && inputs.check != 'protocol-spines' && inputs.check != 'protocol-representatives' && inputs.check != 'protocol-fuzz'))
+    needs: protocol-shapes
     runs-on: ubuntu-24.04-arm
     env:
       TOOLCHAIN: stable
@@ -369,10 +370,6 @@ jobs:
           "${ELAN_TMP}/elan-init" -y --default-toolchain none
           rm -rf "${ELAN_TMP}"
           echo "${HOME}/.elan/bin" >> "${GITHUB_PATH}"
-      - name: Check generated protocol shapes through public endpoints
-        run: >-
-          bash .github/scripts/lib/resource_guard.sh
-          bash .github/scripts/check_protocol_shapes.sh
       - name: Check nested roll send admission
         run: >-
           bash .github/scripts/lib/resource_guard.sh

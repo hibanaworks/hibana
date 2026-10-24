@@ -2035,6 +2035,42 @@ mod population_tests {
     use super::*;
 
     #[test]
+    fn smoke_partitions_preserve_every_source_and_negative_control() {
+        let whole = template_cases(2, 0, 1);
+        let mut cases = BTreeMap::new();
+        let mut delegated = BTreeSet::new();
+        let mut rejected = BTreeMap::new();
+        let mut negative = BTreeMap::new();
+        for shard in 0..32 {
+            let part = template_cases(2, shard, 32);
+            assert_eq!(part.total, whole.total);
+            for case in part.cases {
+                let mut messages = Vec::new();
+                case.4.messages(&mut messages);
+                assert!(messages.iter().all(|message| match message {
+                    Protocol::Message { label, .. } => u16::from(*label) < part.max_label,
+                    _ => unreachable!(),
+                }));
+                assert!(case.5 <= part.max_resolvers);
+                assert!(cases.insert(case.0, case).is_none());
+            }
+            for case in part.delegated {
+                assert!(delegated.insert(case));
+            }
+            for (case, reason) in part.expected_rejections {
+                assert!(rejected.insert(case, reason).is_none());
+            }
+            for (name, source) in part.negative_sources {
+                assert!(negative.insert(name, source).is_none());
+            }
+        }
+        assert!(cases.into_values().eq(whole.cases));
+        assert_eq!(delegated, whole.delegated);
+        assert_eq!(rejected, whole.expected_rejections);
+        assert_eq!(negative, whole.negative_sources);
+    }
+
+    #[test]
     fn source_representative_ranges_preserve_raw_grammar_identities() {
         let ranks = representatives::catalog(1).unwrap();
         assert_eq!(ranks.len(), 94);

@@ -1,21 +1,21 @@
 //! Assign every generated protocol shard to exactly one CI job and window.
 use std::{env, process};
 
-const JOBS: usize = 128;
-
 struct Plan {
     window: usize,
     windows: usize,
     shards: usize,
+    jobs: usize,
 }
 
 impl Plan {
     fn new(budget: usize, window: usize) -> Result<Self, &'static str> {
-        let (windows, shards) = match budget {
-            3 => (1, 1024),
-            4 => (32, 32768),
-            5 => (16, 65536),
-            _ => return Err("operator budget must be 3, 4 or 5"),
+        let (windows, shards, jobs) = match budget {
+            2 => (1, 32, 32),
+            3 => (1, 1024, 128),
+            4 => (32, 32768, 128),
+            5 => (16, 65536, 128),
+            _ => return Err("operator budget must be 2, 3, 4 or 5"),
         };
         if window >= windows {
             return Err("window is outside this operator budget");
@@ -24,16 +24,17 @@ impl Plan {
             window,
             windows,
             shards,
+            jobs,
         })
     }
 
     fn assigned(&self, job: usize) -> Result<Vec<usize>, &'static str> {
-        if job >= JOBS {
+        if job >= self.jobs {
             return Err("job is outside the CI matrix");
         }
-        let count = self.shards / (JOBS * self.windows);
+        let count = self.shards / (self.jobs * self.windows);
         Ok((0..count)
-            .map(|part| job + JOBS * (part + count * self.window))
+            .map(|part| job + self.jobs * (part + count * self.window))
             .collect())
     }
 }
@@ -51,7 +52,7 @@ fn run() -> Result<(), String> {
     let plan = Plan::new(budget, window)?;
     match args[0].as_str() {
         "matrix" if args.len() == 3 => {
-            let jobs = (0..JOBS)
+            let jobs = (0..plan.jobs)
                 .map(|job| job.to_string())
                 .collect::<Vec<_>>()
                 .join(",");
@@ -81,11 +82,12 @@ mod tests {
 
     #[test]
     fn every_shard_belongs_to_one_job_and_one_window() {
-        for (budget, windows, shards) in [(3, 1, 1024), (4, 32, 32768), (5, 16, 65536)] {
+        for (budget, windows, shards) in [(2, 1, 32), (3, 1, 1024), (4, 32, 32768), (5, 16, 65536)]
+        {
             let mut seen = vec![false; shards];
             for window in 0..windows {
                 let plan = Plan::new(budget, window).unwrap();
-                for job in 0..JOBS {
+                for job in 0..plan.jobs {
                     let assigned = plan.assigned(job).unwrap();
                     assert!(!assigned.is_empty());
                     for shard in assigned {
@@ -96,6 +98,7 @@ mod tests {
                         );
                     }
                 }
+                assert!(plan.assigned(plan.jobs).is_err());
             }
             assert!(seen.into_iter().all(|assigned| assigned));
         }
@@ -103,12 +106,11 @@ mod tests {
 
     #[test]
     fn invalid_scope_cannot_create_an_empty_successful_job() {
-        for budget in [0, 1, 2, 6, usize::MAX] {
+        for budget in [0, 1, 6, usize::MAX] {
             assert!(Plan::new(budget, 0).is_err());
         }
-        for (budget, windows) in [(3, 1), (4, 32), (5, 16)] {
+        for (budget, windows) in [(2, 1), (3, 1), (4, 32), (5, 16)] {
             assert!(Plan::new(budget, windows).is_err());
         }
-        assert!(Plan::new(5, 0).unwrap().assigned(JOBS).is_err());
     }
 }
