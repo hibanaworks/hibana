@@ -69,6 +69,29 @@ one range does not establish coverage of the whole depth. Finite execution
 tests use two visits per repetition. Every parallel node polls both children
 with Tokio, varying which child is polled first.
 
+The interaction catalog constructs nested contexts around a resource exchange:
+
+```sh
+bash .github/scripts/check_protocol_shapes.sh --interactions LENGTH FIRST COUNT
+```
+
+Its nine contexts put a send or receive before or after the nested protocol,
+place it on either side of a parallel composition, make a message-selected or
+resolved choice, or repeat it. Both parallel children are compound protocols.
+Each context word has two variants: a resource exchange and an additional
+Endpoint round trip. Their independent parallel children use a sequential
+exchange and a parallel send with repetition, respectively. The population
+is `2 * 9^LENGTH`, through length five.
+Length counts contexts, while `case-identities.tsv` records actual syntax
+depth. Choices notify the other owner when its branch needs that participant.
+Projection rejection remains a failed test. Each accepted case uses the same
+public Endpoint driver and independent source checker as the syntax catalog.
+
+`protocol-shapes syntax-counts DEPTH` also reports the number of syntax trees
+modulo role renaming. It fixes the resource role when delegation occurs and
+preserves labels, constructor positions and resolver identities. These counts
+include invalid syntax; they are not counts of accepted protocols.
+
 The operator-budget catalog provides a separate regression population. It
 builds protocol trees around an Endpoint loan and
 return. It combines sequential prefixes, parallel work, choices with and without

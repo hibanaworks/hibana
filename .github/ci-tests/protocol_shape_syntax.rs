@@ -16,7 +16,7 @@ impl Grammar {
         Self::with_leaves(depth, LEAVES)
     }
 
-    fn with_leaves(depth: usize, leaves: usize) -> Self {
+    pub(super) fn with_leaves(depth: usize, leaves: usize) -> Self {
         let mut exact = vec![BigUint::from(leaves)];
         let mut through = exact.clone();
         for height in 1..=depth {
@@ -136,33 +136,38 @@ impl Grammar {
     }
 
     pub(super) fn protocol(&self, depth: usize, rank: BigUint) -> (Protocol, u8, u16) {
-        fn number(source: &mut Protocol, label: &mut u8, resolver: &mut u16) {
-            match source {
-                Protocol::Message { label: value, .. } => {
-                    *value = *label;
-                    *label = label.checked_add(1).expect("syntax label domain");
-                }
-                Protocol::Resolved(left, right, id) => {
-                    *id = *resolver;
-                    *resolver = resolver.checked_add(1).expect("syntax resolver domain");
-                    number(left, label, resolver);
-                    number(right, label, resolver);
-                }
-                Protocol::Seq(left, right)
-                | Protocol::Par(left, right)
-                | Protocol::Route(left, right) => {
-                    number(left, label, resolver);
-                    number(right, label, resolver);
-                }
-                Protocol::Roll(body) => number(body, label, resolver),
-            }
-        }
         let mut source = self.exact(depth, rank.clone());
         assert_eq!(self.rank(&source), rank, "syntax rank/unrank mismatch");
-        let (mut label, mut resolver) = (0, 0);
-        number(&mut source, &mut label, &mut resolver);
-        (source, label, resolver)
+        let (labels, resolvers) = number(&mut source);
+        (source, labels, resolvers)
     }
+}
+
+pub(super) fn number(source: &mut Protocol) -> (u8, u16) {
+    fn visit(source: &mut Protocol, label: &mut u8, resolver: &mut u16) {
+        match source {
+            Protocol::Message { label: value, .. } => {
+                *value = *label;
+                *label = label.checked_add(1).expect("syntax label domain");
+            }
+            Protocol::Resolved(left, right, id) => {
+                *id = *resolver;
+                *resolver = resolver.checked_add(1).expect("syntax resolver domain");
+                visit(left, label, resolver);
+                visit(right, label, resolver);
+            }
+            Protocol::Seq(left, right)
+            | Protocol::Par(left, right)
+            | Protocol::Route(left, right) => {
+                visit(left, label, resolver);
+                visit(right, label, resolver);
+            }
+            Protocol::Roll(body) => visit(body, label, resolver),
+        }
+    }
+    let (mut label, mut resolver) = (0, 0);
+    visit(source, &mut label, &mut resolver);
+    (label, resolver)
 }
 
 #[cfg(test)]

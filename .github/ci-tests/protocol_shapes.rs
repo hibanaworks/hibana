@@ -18,6 +18,8 @@ fn write_if_changed(path: &std::path::Path, text: &str) -> std::io::Result<()> {
 
 #[path = "protocol_shape_delegated.rs"]
 mod delegated;
+#[path = "protocol_shape_interactions.rs"]
+mod interactions;
 #[path = "protocol_shape_localside.rs"]
 mod localside;
 #[path = "protocol_shape_ownership.rs"]
@@ -26,6 +28,8 @@ mod ownership;
 mod population;
 #[path = "protocol_shape_scope_probes.rs"]
 mod scope_probes;
+#[path = "protocol_shape_symmetry.rs"]
+mod symmetry;
 #[path = "protocol_shape_syntax.rs"]
 mod syntax;
 use population::{Count, Population};
@@ -907,6 +911,21 @@ struct CaseSet {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = env::args().skip(1).collect::<Vec<_>>();
+    if args.first().is_some_and(|s| s == "syntax-counts") {
+        if args.len() != 2 {
+            return Err("usage: protocol-shapes syntax-counts DEPTH".into());
+        }
+        let depth = args[1].parse::<usize>()?;
+        if depth > 8 {
+            return Err("syntax count depth must be at most eight".into());
+        }
+        println!(
+            "depth={depth} raw={} role_orbits={}",
+            syntax::Grammar::new(depth).count(depth),
+            symmetry::count(depth)
+        );
+        return Ok(());
+    }
     if args.first().is_some_and(|s| s == "syntax-matrix") {
         if args.len() != 4 {
             return Err("usage: protocol-shapes syntax-matrix DEPTH FIRST COUNT".into());
@@ -917,7 +936,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
         return Ok(());
     }
-    let (catalog, diagnostics) = if args.get(2).is_some_and(|s| s == "--syntax-depth") {
+    if args.first().is_some_and(|s| s == "interaction-matrix") {
+        if args.len() != 4 {
+            return Err("usage: protocol-shapes interaction-matrix LENGTH FIRST COUNT".into());
+        }
+        let length = args[1].parse::<usize>()?;
+        if length > 5 {
+            return Err("interaction length must be at most five".into());
+        }
+        println!(
+            "{}",
+            range_matrix(
+                args[2].parse()?,
+                args[3].parse()?,
+                interactions::count(length).into()
+            )?
+        );
+        return Ok(());
+    }
+    let (catalog, diagnostics) = if args.get(2).is_some_and(|s| s == "--interactions") {
+        if args.len() != 6 && args.len() != 7 {
+            return Err("usage: protocol-shapes REPOSITORY OUTPUT --interactions LENGTH FIRST COUNT [DIAGNOSTICS]".into());
+        }
+        (
+            interaction_cases(args[3].parse()?, args[4].parse()?, args[5].parse()?)?,
+            args.get(6),
+        )
+    } else if args.get(2).is_some_and(|s| s == "--syntax-depth") {
         if args.len() != 6 && args.len() != 7 {
             return Err("usage: protocol-shapes REPOSITORY OUTPUT --syntax-depth DEPTH FIRST COUNT [DIAGNOSTICS]".into());
         }
@@ -953,12 +998,23 @@ fn syntax_matrix(
     first: num_bigint::BigUint,
     count: usize,
 ) -> Result<String, Box<dyn std::error::Error>> {
-    if depth > 5 || count == 0 || count.div_ceil(32) > 256 {
-        return Err("invalid syntax range: split ranges larger than 256 CI jobs".into());
+    if depth > 5 {
+        return Err("syntax depth must be at most five".into());
     }
     let grammar = syntax::Grammar::new(depth);
-    if &first + count > *grammar.count(depth) {
-        return Err("syntax range exceeds exact-height population".into());
+    range_matrix(first, count, grammar.count(depth).clone())
+}
+
+fn range_matrix(
+    first: num_bigint::BigUint,
+    count: usize,
+    total: num_bigint::BigUint,
+) -> Result<String, Box<dyn std::error::Error>> {
+    if count == 0 || count.div_ceil(32) > 256 {
+        return Err("invalid candidate range: split ranges larger than 256 CI jobs".into());
+    }
+    if &first + count > total {
+        return Err("candidate range exceeds its population".into());
     }
     let entries = (0..count)
         .step_by(32)
@@ -1156,6 +1212,54 @@ fn syntax_cases(
             2,
             owner,
             global,
+            resolvers,
+        ));
+    }
+    Ok(catalog)
+}
+
+fn interaction_cases(
+    length: usize,
+    first: usize,
+    count: usize,
+) -> Result<CaseSet, Box<dyn std::error::Error>> {
+    if length > 5
+        || count == 0
+        || first
+            .checked_add(count)
+            .is_none_or(|end| end > interactions::count(length))
+    {
+        return Err("interaction range exceeds the length-zero-through-five population".into());
+    }
+    let mut catalog = CaseSet {
+        namespace: format!("interactions-{length}-{first}-count-{count}"),
+        description: format!("interaction_length={length} first={first} count={count}"),
+        total: interactions::count(length).to_string(),
+        cases: Vec::new(),
+        delegated: BTreeSet::new(),
+        expected_rejections: BTreeMap::new(),
+        negative_sources: BTreeMap::new(),
+        max_label: 0,
+        max_resolvers: 0,
+        syntax: true,
+    };
+    let mut representatives = BTreeSet::new();
+    for rank in first..first + count {
+        let (source, labels, resolvers, word) = interactions::protocol(length, rank);
+        let source = symmetry::canonical(&source);
+        if !representatives.insert(source.clone()) {
+            return Err(format!("duplicate interaction source at rank {rank}").into());
+        }
+        let case = catalog.cases.len();
+        catalog.delegated.insert(case);
+        catalog.max_label = catalog.max_label.max(labels);
+        catalog.max_resolvers = catalog.max_resolvers.max(resolvers);
+        catalog.cases.push((
+            case,
+            format!("interaction={length}/rank={rank}/{word}"),
+            2,
+            0,
+            source,
             resolvers,
         ));
     }
@@ -1689,6 +1793,11 @@ mod population_tests {
         assert!(syntax_matrix(1, 4127u32.into(), 2).is_err());
         assert!(syntax_matrix(5, 0u8.into(), 8193).is_err());
         assert!(syntax_matrix(0, 0u8.into(), 0).is_err());
+        assert_eq!(
+            range_matrix(130usize.into(), 32, interactions::count(2).into()).unwrap(),
+            r#"{"include":[{"partition":0,"first":"130","count":32}]}"#
+        );
+        assert!(range_matrix(131usize.into(), 32, interactions::count(2).into()).is_err());
     }
 
     #[test]
