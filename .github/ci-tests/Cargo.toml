@@ -8,7 +8,7 @@ autotests = false
 
 [dependencies]
 num-bigint = "=0.5.1"
-serde = "=1.0.228"
+serde = { version = "=1.0.228", features = ["derive"] }
 serde_json = { version = "=1.0.145", features = ["arbitrary_precision"] }
 
 [[bin]]

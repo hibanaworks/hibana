@@ -56,6 +56,14 @@ identity and require FIFO delivery, nonduplication and run isolation.
 | [rolled-route-ownership](runtime/rolled-route-ownership) | [`scope_route`](../../src/global/typestate/cursor/scope_route): retained choices, visit admission, reset bounds and continuation order |
 
 Run a directory's `check.sh` from the repository root through the resource guard.
+The rolled-route check also compares all 128 combinations of completion bits,
+retained child completions and entry positions for a three-message parallel
+fixture. Its Rust cursor results are compared with `completeAt` in
+`ResetAlignment.lean`. The same Lean function generates the SMT truth tables;
+overly strict and overly permissive rules must produce counterexamples.
+This finite comparison supplements the general model lemmas and public
+Endpoint tests; it does not establish correspondence for every protocol.
+
 Checks without a shell entry point are invoked directly by the
 [workflow](../../.github/workflows/quality-gates.yml) or by the projection runner
 above. The common Lean models and generated Rust observations are checked by

@@ -32,7 +32,8 @@ else
   OUTPUT="${ROOT_DIR}/target/protocol-shapes/operator-budget-${BUDGET}/shard-${SHARD}-of-${SHARDS}"
 fi
 mkdir -p "${OUTPUT}"
-rm -f "${OUTPUT}/executed-coverage.tsv" "${OUTPUT}/executed-coverage-counts.tsv"
+rm -f "${OUTPUT}/executed-coverage.tsv" "${OUTPUT}/executed-coverage-counts.tsv" \
+  "${OUTPUT}/roll-schedule-coverage.tsv"
 rustc +"${TOOLCHAIN:-stable}" --version > "${OUTPUT}/compiler.txt"
 git -C "${ROOT_DIR}" rev-parse HEAD > "${OUTPUT}/revision.txt"
 git -C "${ROOT_DIR}" diff HEAD --binary > "${OUTPUT}/source.patch"

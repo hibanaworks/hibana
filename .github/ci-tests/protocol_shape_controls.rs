@@ -1,6 +1,8 @@
 //! Corrupt result data to test the compiled shape checker, not Rust source text.
 #[path = "kani_json.rs"]
 mod json;
+#[path = "protocol_shape_roll_coverage.rs"]
+mod roll_coverage;
 #[path = "protocol_shape_scope_audit.rs"]
 mod scope_audit;
 #[path = "protocol_shape_paths.rs"]
@@ -674,6 +676,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let inputs = output.join("inputs.json");
     let inventory = json::parse(&fs::read_to_string(&inputs)?)?;
     scope_audit::audit(&output, &inventory)?;
+    roll_coverage::audit(&output)?;
     let original = output.join("observations");
     let mut paths = fs::read_dir(&original)?
         .map(|entry| entry.map(|e| e.path()))

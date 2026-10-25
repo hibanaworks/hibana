@@ -69,6 +69,15 @@ one range does not establish coverage of the whole depth. Finite execution
 tests use two visits per repetition. Every parallel node polls both children
 with Tokio, varying which child is polled first.
 
+`roll-schedule-coverage.tsv` records completed schedules in which a nested
+repetition starts its next parent visit before a parallel sibling does. Each
+row identifies the source nodes, participant, script, enclosing visits and
+four positions in the actual public-call trace. The checker reconstructs
+visits from the source and script, then matches every completed call to its
+participant and occurrence. A source containing nested repetitions alone does
+not count as a schedule witness. A shard without such a witness records only
+the header; it does not claim this scheduling case was exercised.
+
 The source-representative catalog supports depths zero through two:
 
 ```sh
