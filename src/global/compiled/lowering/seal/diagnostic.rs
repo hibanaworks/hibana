@@ -29,8 +29,9 @@ pub(crate) const fn projection_diagnostic<const E: usize>(
     ) {
         return diagnostic;
     }
-    if passive_child::validate_passive_child_projection_guarantees(eff_list.scope_markers())
-        .is_some()
+    if !matches!(error, ProgramSourceError::RouteControllerMismatch)
+        && passive_child::validate_passive_child_projection_guarantees(eff_list.scope_markers())
+            .is_some()
     {
         return diagnostic;
     }
@@ -41,14 +42,21 @@ pub(crate) const fn projection_diagnostic<const E: usize>(
         let marker = markers.at(marker_idx);
         if matches!(marker.scope_id.kind(), Some(ScopeKind::Route))
             && marker.event.is_primary_enter()
-            && validate_route_scope(
-                summary.compiled_program_role_count(),
-                &participants,
-                eff_list,
-                markers,
-                marker_idx,
-            )
-            .is_some()
+            && if matches!(error, ProgramSourceError::RouteControllerMismatch) {
+                matches!(
+                    route_controller_and_selectors(eff_list, marker_idx),
+                    Err(ProgramSourceError::RouteControllerMismatch)
+                )
+            } else {
+                validate_route_scope(
+                    summary.compiled_program_role_count(),
+                    &participants,
+                    eff_list,
+                    markers,
+                    marker_idx,
+                )
+                .is_some()
+            }
         {
             let [(a, b), (c, d)] = route_arm_ranges_from_first_enter(markers, marker_idx);
             diagnostic.scope = Some(marker.scope_id.local_ordinal());

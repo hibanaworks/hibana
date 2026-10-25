@@ -134,6 +134,80 @@ fn different_route_controllers_are_not_reported_as_missing_observer_knowledge() 
 }
 
 #[test]
+fn delegated_route_controller_mismatch_identifies_the_source_events() {
+    type Loan<'r> = Msg<10, hibana::Endpoint<'r, 3>>;
+    let program = g::seq(
+        g::send::<0, 1, Loan<'_>>(),
+        g::route(
+            g::send::<1, 2, Msg<11, ()>>(),
+            g::send::<2, 1, Msg<12, ()>>(),
+        ),
+    );
+    let d = g::diagnose(&program).unwrap();
+    assert_eq!(d.problem, ProjectionProblem::RouteControllerMismatch);
+    assert_eq!(d.controller, None);
+    assert_eq!(d.role, None);
+    assert!(d.scope.is_some());
+    let arms = d.arms.unwrap();
+    assert_eq!(
+        (arms[0].start, arms[0].end, arms[1].start, arms[1].end),
+        (1, 2, 2, 3)
+    );
+    let first = d.first.unwrap();
+    let second = d.second.unwrap();
+    assert_eq!(
+        (first.index, first.from, first.to, first.label),
+        (1, 1, 2, 11)
+    );
+    assert_eq!(
+        (second.index, second.from, second.to, second.label),
+        (2, 2, 1, 12)
+    );
+}
+
+#[test]
+fn a_delegated_controller_error_skips_an_earlier_actor_mergeable_choice() {
+    type Loan<'r> = Msg<10, hibana::Endpoint<'r, 3>>;
+    let prefix = g::seq(
+        g::send::<0, 1, Loan<'_>>(),
+        g::route(
+            g::send::<0, 1, Msg<11, ()>>(),
+            g::send::<0, 3, Msg<12, ()>>(),
+        ),
+    );
+    assert_eq!(g::diagnose(&prefix), None);
+    let program = g::seq(
+        prefix,
+        g::route(
+            g::send::<1, 2, Msg<13, ()>>(),
+            g::send::<2, 1, Msg<14, ()>>(),
+        )
+        .resolve::<7>()
+        .roll(),
+    );
+    let d = g::diagnose(&program).unwrap();
+    assert_eq!(d.problem, ProjectionProblem::RouteControllerMismatch);
+    assert_eq!(d.controller, None);
+    assert_eq!(d.role, None);
+    assert!(d.scope.is_some());
+    let arms = d.arms.unwrap();
+    assert_eq!(
+        (arms[0].start, arms[0].end, arms[1].start, arms[1].end),
+        (3, 4, 4, 5)
+    );
+    let first = d.first.unwrap();
+    let second = d.second.unwrap();
+    assert_eq!(
+        (first.index, first.from, first.to, first.label),
+        (3, 1, 2, 13)
+    );
+    assert_eq!(
+        (second.index, second.from, second.to, second.label),
+        (4, 2, 1, 14)
+    );
+}
+
+#[test]
 fn mutually_exclusive_senders_with_controller_handoff_are_accepted() {
     let program = g::route(
         g::seq(

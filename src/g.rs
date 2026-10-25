@@ -200,6 +200,13 @@ where
         Self::IMAGE.validate_projection_program();
         match Self::ERROR {
             None => None,
+            Some(ProgramSourceError::RouteControllerMismatch) => {
+                Some(crate::global::compiled::lowering::projection_diagnostic(
+                    &Self::IMAGE,
+                    Self::SOURCE_EFF_LIST,
+                    ProgramSourceError::RouteControllerMismatch,
+                ))
+            }
             Some(error) => Some(if Steps::SOURCE_NODE.has_delegation() {
                 let mut diagnostic = ProjectionDiagnostic::from_error(error);
                 if matches!(error, ProgramSourceError::ReceiveLaneCausalityConflict)
