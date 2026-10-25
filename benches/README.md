@@ -1,4 +1,17 @@
-# Runtime cost
+# Measurements
+
+## Source projection
+
+For source-lowering profiles, compile with `RUSTFLAGS='--cfg hibana_profile'`
+and call `hibana::g::profiling::source(&global)`. It runs the normal receive-lane
+allocator natively, using projection's cached source and actor image. It reports
+full/resumed inspections, alignment attempts and recolorings. Time the call in
+the host program or inspect its stacks with a native profiler. These counters
+are absent from normal builds. This measures lane assignment, not all compile
+time or the later local-program checks. Normal builds still perform const
+projection with `long_running_const_eval` forbidden.
+
+## Runtime cost
 
 Run `cargo +stable bench --locked --bench runtime_cost` from the repository root.
 The benchmark uses the current kernel, Tokio's current-thread executor, and the

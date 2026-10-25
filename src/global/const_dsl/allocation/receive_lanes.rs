@@ -1,21 +1,31 @@
 //! Assign lanes that preserve receive order and parallel ownership.
 use super::lane_matching::{LaneCompatibility, LaneEndpointIndex, maximum_lane_matching};
 use super::{BYTE_DOMAIN, BYTE_DOMAIN_MASK_BYTES};
-use crate::global::const_dsl::receive_pair_is_causal;
+use crate::global::const_dsl::{
+    receive_lane_causality::owned_receive_lane_conflict_from, receive_pair_is_causal,
+};
 use crate::{
     g::SourceActorImage,
     global::const_dsl::{
-        EffList, ScopeKind, owned_receive_lane_conflict, parallel_arm_ranges_from_enter,
-        receive_lane_conflict, route_arm_ranges_from_first_enter, validate_receive_lane_causality,
+        EffList, ScopeKind, parallel_arm_ranges_from_enter, receive_lane_conflict,
+        route_arm_ranges_from_first_enter, validate_receive_lane_causality,
     },
 };
 
 const fn inspect<const E: usize>(
     events: &EffList<E>,
     actors: Option<&SourceActorImage<E>>,
+    resume: Option<(usize, Option<u16>)>,
+    #[cfg(hibana_profile)] counters: &mut crate::g::profiling::Counters,
 ) -> Result<(), Option<(usize, usize, Option<u16>)>> {
+    #[cfg(hibana_profile)]
+    if resume.is_some() && actors.is_some() {
+        counters.resumed_inspections += 1;
+    } else {
+        counters.full_inspections += 1;
+    }
     match actors {
-        Some(image) => match owned_receive_lane_conflict(events, image) {
+        Some(image) => match owned_receive_lane_conflict_from(events, image, resume) {
             Some(pair) => Err(Some(pair)),
             None => Ok(()),
         },
@@ -35,7 +45,12 @@ const fn align_range<const E: usize>(
     arm: (usize, usize),
     span: u16,
     colors: u16,
+    #[cfg(hibana_profile)] counters: &mut crate::g::profiling::Counters,
 ) -> bool {
+    #[cfg(hibana_profile)]
+    {
+        counters.alignment_attempts += 1;
+    }
     let row_bytes = (colors as usize).div_ceil(8);
     let mut edges = [0u8; BYTE_DOMAIN * BYTE_DOMAIN_MASK_BYTES];
     let members =
@@ -166,8 +181,15 @@ const fn align_range<const E: usize>(
 pub(crate) const fn assign_receive_lanes<const E: usize>(
     events: &mut EffList<E>,
     actors: Option<&SourceActorImage<E>>,
+    #[cfg(hibana_profile)] counters: &mut crate::g::profiling::Counters,
 ) -> bool {
-    let mut checked = inspect(events, actors);
+    let mut checked = inspect(
+        events,
+        actors,
+        None,
+        #[cfg(hibana_profile)]
+        counters,
+    );
     if checked.is_ok() {
         return true;
     }
@@ -187,8 +209,8 @@ pub(crate) const fn assign_receive_lanes<const E: usize>(
         None => crate::invariant(),
     };
     while remaining != 0 {
-        let (first, second, _) = match checked {
-            Ok(()) => return true,
+        let (first, second, scope) = match checked {
+            Ok(()) => crate::invariant(),
             Err(Some(pair)) => pair,
             Err(None) => return false,
         };
@@ -215,7 +237,15 @@ pub(crate) const fn assign_receive_lanes<const E: usize>(
                         arm_index -= 1;
                         let (start, end) = arms[arm_index];
                         if (start <= first && first < end) != (start <= second && second < end) {
-                            changed = align_range(events, actors, (start, end), span, colors);
+                            changed = align_range(
+                                events,
+                                actors,
+                                (start, end),
+                                span,
+                                colors,
+                                #[cfg(hibana_profile)]
+                                counters,
+                            );
                         }
                     }
                 }
@@ -223,16 +253,48 @@ pub(crate) const fn assign_receive_lanes<const E: usize>(
             if !changed {
                 // Refine the conflicting occurrence when no whole choice arm
                 // can move. The same constraints apply inside and outside routes.
-                changed = align_range(events, actors, (second, second + 1), span, colors);
+                changed = align_range(
+                    events,
+                    actors,
+                    (second, second + 1),
+                    span,
+                    colors,
+                    #[cfg(hibana_profile)]
+                    counters,
+                );
             }
             palette += 1;
         }
         if !changed {
             return false;
         }
-        checked = inspect(events, actors);
+        #[cfg(hibana_profile)]
+        {
+            counters.recolorings += 1;
+        }
+        // Matching preserves the checked prefix: it is injective within the
+        // arm and excludes incompatible pairs across its boundary. Resume at
+        // the failed obligation, then validate the final coloring in full.
+        checked = inspect(
+            events,
+            actors,
+            Some((first, scope)),
+            #[cfg(hibana_profile)]
+            counters,
+        );
         if checked.is_ok() {
-            return true;
+            // The logical-role checker above already scanned the whole source.
+            if actors.is_none() {
+                return true;
+            }
+            return inspect(
+                events,
+                actors,
+                None,
+                #[cfg(hibana_profile)]
+                counters,
+            )
+            .is_ok();
         }
         index = 0;
         while index < events.len() {

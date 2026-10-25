@@ -1,6 +1,31 @@
 ; Logical receive identity and physical causal evidence are different facts.
 (set-logic QF_LIA)
 (push)
+(declare-const range_start Int)
+(declare-const range_stop Int)
+(declare-const occurrence Int)
+(declare-const cutoff Int)
+(assert (<= cutoff range_start))
+(assert (and (<= range_start occurrence) (< occurrence range_stop)))
+(assert (< occurrence cutoff))
+; A subtree starting at the cutoff contains no queried occurrence.
+; EXPECT: unsat
+(check-sat)
+(pop)
+
+(push)
+(declare-const range_start Int)
+(declare-const range_stop Int)
+(declare-const occurrence Int)
+(declare-const cutoff Int)
+(assert (and (<= 0 range_start) (< range_start cutoff) (<= cutoff range_stop)))
+(assert (and (<= range_start occurrence) (< occurrence range_stop) (< occurrence cutoff)))
+; Using the end instead of the start would skip an enabled prefix.
+; EXPECT: sat
+(check-sat)
+(pop)
+
+(push)
 (declare-const start Int)
 (declare-const following Int)
 (declare-const stop Int)

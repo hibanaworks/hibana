@@ -230,7 +230,14 @@ impl<const CAPACITY: usize> ProgramSourceData<CAPACITY> {
                 super::ProjectionDiagnostic::from_ownership_error(*error),
             ),
         };
-        let receive_causal = assign_receive_lanes(&mut eff, actors);
+        #[cfg(hibana_profile)]
+        let mut counters = super::profiling::Counters::new();
+        let receive_causal = assign_receive_lanes(
+            &mut eff,
+            actors,
+            #[cfg(hibana_profile)]
+            &mut counters,
+        );
         Self {
             eff,
             actors,
@@ -256,6 +263,35 @@ impl<const CAPACITY: usize> ProgramSourceData<CAPACITY> {
             Some(actors) => actors.has_branch_knowledge(source),
             None => false,
         }
+    }
+}
+
+#[cfg(hibana_profile)]
+pub(super) fn profile<Steps: ProgramShape, const CAPACITY: usize>()
+-> super::profiling::SourceProfile {
+    let mut eff = SourceEvents::<Steps, CAPACITY>::EVENTS;
+    let actors = match &SourceActors::<Steps, CAPACITY>::IMAGE {
+        Ok(Some(image)) => Some(image),
+        Ok(None) => None,
+        Err(error) => super::diagnostic_message::panic_diagnostic(
+            super::ProjectionDiagnostic::from_ownership_error(*error),
+        ),
+    };
+    let mut counters = super::profiling::Counters::new();
+    let receive_causal = assign_receive_lanes(&mut eff, actors, &mut counters);
+    let lanes = (0..eff.len())
+        .map(|i| eff.atom_at(i).lane as usize + 1)
+        .max()
+        .unwrap_or(0);
+    super::profiling::SourceProfile {
+        source_rows: Steps::SOURCE_ROW_COUNT,
+        events: eff.len(),
+        lanes,
+        receive_causal,
+        full_inspections: counters.full_inspections,
+        resumed_inspections: counters.resumed_inspections,
+        alignment_attempts: counters.alignment_attempts,
+        recolorings: counters.recolorings,
     }
 }
 

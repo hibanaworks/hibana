@@ -390,3 +390,7 @@ where
         crate::global::role_program::role_program_from_image(image),
     )
 }
+
+#[doc(hidden)]
+#[cfg(hibana_profile)]
+pub mod profiling;

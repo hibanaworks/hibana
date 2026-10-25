@@ -456,6 +456,14 @@ pub(crate) const fn owned_receive_lane_conflict<const E: usize, const D: usize>(
     events: &EffList<E>,
     actors: &SourceActorImage<E, D>,
 ) -> Option<(usize, usize, Option<u16>)> {
+    owned_receive_lane_conflict_from(events, actors, None)
+}
+
+pub(crate) const fn owned_receive_lane_conflict_from<const E: usize, const D: usize>(
+    events: &EffList<E>,
+    actors: &SourceActorImage<E, D>,
+    mut resume: Option<(usize, Option<u16>)>,
+) -> Option<(usize, usize, Option<u16>)> {
     let context = SourceContext::new(&[]);
     let paths = Paths {
         shared: &context,
@@ -488,8 +496,26 @@ pub(crate) const fn owned_receive_lane_conflict<const E: usize, const D: usize>(
                 Some(marker.scope_id.local_ordinal()),
             )
         };
+        let mut earlier = match resume {
+            Some((earlier, resume_scope)) => {
+                let same_scope = match (scope, resume_scope) {
+                    (Some(a), Some(b)) => a == b,
+                    (None, None) => true,
+                    _ => false,
+                };
+                if !same_scope {
+                    region += 1;
+                    continue;
+                }
+                if earlier < start || earlier >= stop {
+                    crate::invariant();
+                }
+                resume = None;
+                earlier
+            }
+            None => start,
+        };
         let directions = ReceiveDirectionIndex::new(events, start, stop);
-        let mut earlier = start;
         while earlier < stop {
             let atom = events.atom_at(earlier);
             let range = FlowRange {
@@ -536,6 +562,9 @@ pub(crate) const fn owned_receive_lane_conflict<const E: usize, const D: usize>(
             earlier += 1;
         }
         region += 1;
+    }
+    if resume.is_some() {
+        crate::invariant();
     }
     None
 }

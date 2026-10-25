@@ -144,6 +144,37 @@ theorem roll_causal_flow_composes_fresh_visits (body : Choreo) (earlier later ro
       (body.causalFlowAt body.globalEvents.length earlier later roleCount).eval
         ((body.causalFlowAt 0 earlier later roleCount).eval facts) := rfl
 
+/-- No event in a subtree starting at the query cutoff can change its facts. -/
+theorem causal_flow_after_cut_preserves_facts (choreo : Choreo)
+    (base earlier cutoff roleCount : Nat) (facts : CausalRoles)
+    (past : cutoff ≤ base) :
+    (choreo.causalFlowAt base earlier cutoff roleCount).eval facts = facts := by
+  induction choreo generalizing base with
+  | send sender receiver label schema =>
+      simp [Choreo.causalFlowAt, Nat.not_lt.mpr past, CausalFlowExpr.eval]
+  | seq left right leftIH rightIH =>
+      simp only [Choreo.causalFlowAt, CausalFlowExpr.eval]
+      rw [leftIH base past, rightIH (base + left.globalEvents.length) (by omega)]
+  | route authority left right leftIH rightIH =>
+      have l := leftIH base past
+      have r := rightIH (base + left.globalEvents.length) (by omega)
+      simp only [Choreo.causalFlowAt]
+      split
+      · exact l
+      · split
+        · exact r
+        · simp only [CausalFlowExpr.eval, l, r, Bool.and_self]
+  | par left right leftIH rightIH =>
+      have l := leftIH base past
+      have r := rightIH (base + left.globalEvents.length) (by omega)
+      simp only [Choreo.causalFlowAt]
+      split
+      · exact l
+      · split
+        · exact r
+        · simp only [CausalFlowExpr.eval, l, r, Bool.or_self]
+  | roll body ih => exact ih base past
+
 /-- A repeated region relevant to a receive pair starts before both events. -/
 theorem a_roll_containing_both_receives_precedes_their_earlier_offset
     (start stop earlier later : Nat)

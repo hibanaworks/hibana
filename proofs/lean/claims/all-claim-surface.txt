@@ -1008,6 +1008,8 @@ Hibana.EndpointDelegation.withOwner_same : ∀ (owners : Hibana.EndpointDelegati
     And (@Eq.{1} Bool (sent.check choreo session) true)
       (And (@Eq.{1} Bool (received.check image choreo session) true)
         (@Eq.{1} Hibana.OwnedWireObservation sent.wire received.wire))
+Hibana.a_covered_flow_preserves_its_input : ∀ (flow : Hibana.CausalFlowExpr) (facts : Hibana.CausalRoles),
+  @Eq.{1} Bool (Hibana.CausalFlowExpr.coveredBy facts flow) true → @Eq.{1} Hibana.CausalRoles (flow.eval facts) facts
 @Hibana.a_current_choice_has_its_latest_actual_source_origin : ∀ {image : Hibana.RustDescriptorImage}
   {choreo : Hibana.Choreo} {session scope : Nat} {arm : Hibana.RouteArm}
   {first final : Prod.{0, 0} Hibana.ActorProgressObservation Nat} {cleared : List.{0} Nat} {commits : Nat},
@@ -5266,6 +5268,10 @@ Hibana.a_pending_payload_requires_its_own_send : ∀ (resource : Nat) (sent : Op
                         (@Prod.mk.{0, 0} Hibana.EndpointDelegation.Binding Hibana.EndpointDelegation.Side binding
                           Hibana.EndpointDelegation.Side.send))))
                   (@Eq.{1} Nat entry.sample.image.role binding.senderActor)))))
+Hibana.a_roll_containing_both_receives_precedes_their_earlier_offset : ∀ (start stop earlier later : Nat),
+  And (@LE.le.{0} Nat instLENat start earlier) (@LT.lt.{0} Nat instLTNat earlier stop) →
+    And (@LE.le.{0} Nat instLENat start later) (@LT.lt.{0} Nat instLTNat later stop) →
+      @LE.le.{0} Nat instLENat start (@min.{0} Nat instMinNat earlier later)
 @Hibana.a_selected_visit_execution_has_its_same_physical_execution : ∀ {images : Nat → Hibana.RustDescriptorImage}
   {choreo : Hibana.Choreo} {session : Nat} {first last : Hibana.DistributedSourceCut}
   {word : List.{0} Hibana.DistributedCallBoundary} {entries : List.{0} Hibana.SourceAcceptance}
@@ -8425,6 +8431,10 @@ Hibana.carrier_profile_hierarchy_is_strict : And
 @Hibana.carrier_profile_supports_every_weaker_profile : ∀ {lower upper : Hibana.CarrierProfile}
   {carrier : Hibana.CarrierSemantics} {abstraction : carrier.State → Hibana.TransportBoundaryState} {Fairness : Prop},
   lower.atMost upper → upper.Holds carrier abstraction Fairness → lower.Holds carrier abstraction Fairness
+Hibana.causal_flow_after_cut_preserves_facts : ∀ (choreo : Hibana.Choreo) (base earlier cutoff roleCount : Nat)
+  (facts : Hibana.CausalRoles),
+  @LE.le.{0} Nat instLENat cutoff base →
+    @Eq.{1} Hibana.CausalRoles ((Hibana.Choreo.causalFlowAt base earlier cutoff roleCount choreo).eval facts) facts
 @Hibana.causal_flow_is_must_analysis : ∀ {flow : Hibana.CausalFlowExpr} {before after : Hibana.CausalRoles},
   Hibana.CausalFlowRun flow before after → (flow.eval before).Subset after
 Hibana.causal_flow_monotone : ∀ (flow : Hibana.CausalFlowExpr) {left right : Hibana.CausalRoles},
@@ -11551,6 +11561,13 @@ Hibana.lane_ingress_head_preserved_by_other_lane_progress : ∀ (events : List.{
                               (Hibana.SourcePoint.committed
                                 { event := previousEvent, side := Hibana.EndpointDelegation.Side.receive })
                               { event := event, side := side }.entryPoint
+Hibana.later_scope_starts_cannot_contain_the_receive_pair : ∀ (start following stop earlier later : Nat),
+  @LE.le.{0} Nat instLENat start following →
+    Or (@LT.lt.{0} Nat instLTNat earlier start) (@LT.lt.{0} Nat instLTNat later start) →
+      Not
+        (And (@LE.le.{0} Nat instLENat following earlier)
+          (And (@LT.lt.{0} Nat instLTNat earlier stop)
+            (And (@LE.le.{0} Nat instLENat following later) (@LT.lt.{0} Nat instLTNat later stop))))
 @Hibana.lease_allocation_abort_certificate_sound : ∀ {certificate : Hibana.LeaseAllocationAbortCertificate},
   @Eq.{1} Bool certificate.check true → certificate.PreservesAuthorityAndCapacity
 @Hibana.lease_allocation_failure_certificate_sound : ∀ {certificate : Hibana.LeaseAllocationFailureCertificate},
@@ -13107,6 +13124,14 @@ Hibana.receipt_resolution_is_exact : ∀ (before after : Hibana.TransportState) 
       (Hibana.TransportBoundaryState.idle
         (Hibana.TransportBoundaryState.resolve.match_1.{1} (fun resolution => Hibana.TransportState) resolution
           (fun _ => before) (fun _ => after) fun _ => after)))
+Hibana.receive_direction_summary_preserves_latest_sender_change : ∀ (events : List.{0} (Prod.{0, 0} Nat Nat))
+  (sender : Nat),
+  @Eq.{1} (Option.{0} Nat) (Hibana.lookupReceiveDirection (Hibana.summarizeReceiveDirection events) sender)
+    (@Option.map.{0, 0} (Prod.{0, 0} Nat Nat) Nat (@Prod.snd.{0, 0} Nat Nat)
+      (@List.find?.{0} (Prod.{0, 0} Nat Nat)
+        (fun event =>
+          @bne.{0} Nat (@instBEqOfDecidableEq.{0} Nat instDecidableEqNat) (@Prod.fst.{0, 0} Nat Nat event) sender)
+        events))
 @Hibana.receive_lane_causality_checker_sound : ∀ {choreo : Hibana.Choreo} {roleCount : Nat},
   @Eq.{1} Bool (choreo.checkReceiveLaneCausality roleCount) true → choreo.ReceiveLaneCausalSafety roleCount
 @Hibana.receive_lane_sender_change_requires_exclusion_or_causal_handoff : ∀
@@ -14215,6 +14240,14 @@ Hibana.scope_topology_difference_has_distinct_registration_keys : ∀ (left righ
 Hibana.sealed_local_membership_rejects_late_attach : ∀ (membership : Hibana.LocalMembership) (role : Nat),
   @Eq.{1} (Option.{0} Hibana.LocalMembership) (Hibana.attachLocalRole? (Hibana.sealLocalMembership membership) role)
     (@none.{0} Hibana.LocalMembership)
+Hibana.seedless_flow_preserves_empty_facts : ∀ (flow : Hibana.CausalFlowExpr),
+  @Eq.{1} Bool flow.seedless true → @Eq.{1} Hibana.CausalRoles (flow.eval fun x => false) fun x => false
+Hibana.seedless_parallel_left_can_be_skipped : ∀ (left right : Hibana.CausalFlowExpr),
+  @Eq.{1} Bool left.seedless true →
+    @Eq.{1} Hibana.CausalRoles ((left.parallel right).eval fun x => false) (right.eval fun x => false)
+Hibana.seedless_sequence_prefix_can_be_skipped : ∀ (front body : Hibana.CausalFlowExpr),
+  @Eq.{1} Bool front.seedless true →
+    @Eq.{1} Hibana.CausalRoles ((front.seq body).eval fun x => false) (body.eval fun x => false)
 Hibana.select_innermost_route_arm_equal_range_uses_source_preorder : ∀ (outer inner arm start stop : Nat),
   @LT.lt.{0} Nat instLTNat
       (@HMod.hMod.{0, 0, 0} Nat Nat Nat (@instHMod.{0} Nat Nat.instMod) outer

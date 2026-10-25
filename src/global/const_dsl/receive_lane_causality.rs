@@ -4,6 +4,7 @@ use super::{EffList, ScopeEvent, ScopeKind, scope::ScopeEntry};
 mod actors;
 mod directions;
 pub(crate) use actors::owned_receive_lane_conflict;
+pub(crate) use actors::owned_receive_lane_conflict_from;
 pub(crate) use actors::receive_pair_is_causal;
 use actors::{ActorMap, NeedChoice};
 use directions::ReceiveDirectionIndex;
@@ -136,6 +137,35 @@ impl<const E: usize> CausalFlow<'_, E> {
         self.occurrence(range.start) <= occurrence && occurrence < self.occurrence(range.end)
     }
 
+    const fn has_receive_target(&self, range: FlowRange) -> bool {
+        match self.goal {
+            FlowGoal::ReceiveEvent(_, target) => {
+                if !self.contains(range, target) {
+                    return false;
+                }
+                let event = self.body_start + target - self.iteration_start;
+                self.goal
+                    .sender_change(target, self.eff_list.atom_at(event))
+            }
+            FlowGoal::ReceiveLane(_, stop) => {
+                let mut event = range.start;
+                while event < range.end && self.occurrence(event) < stop {
+                    if self
+                        .goal
+                        .sender_change(self.occurrence(event), self.eff_list.atom_at(event))
+                    {
+                        return true;
+                    }
+                    event += 1;
+                }
+                false
+            }
+            #[cfg(any(kani, all(test, hibana_repo_tests)))]
+            FlowGoal::Target(_) => false,
+            FlowGoal::Closure => false,
+        }
+    }
+
     const fn scope_at(&self, range: &mut FlowRange) -> Option<(usize, ScopeKind, usize, usize)> {
         let markers = self.eff_list.scope_markers();
         if range.marker_floor > markers.len() {
@@ -193,7 +223,7 @@ impl<const E: usize> CausalFlow<'_, E> {
     ) -> Result<Option<CausalRoles>, NeedChoice> {
         let stop = self.goal.stop();
         let selected_target = self.goal.selected_target();
-        if self.occurrence(range.end) <= self.earlier {
+        if self.occurrence(range.end) <= self.earlier || self.occurrence(range.start) >= stop {
             return Ok(Some(facts));
         }
         // Every event in a covered range preserves these facts: its sender
@@ -229,22 +259,11 @@ impl<const E: usize> CausalFlow<'_, E> {
         // An independent arm cannot relay a fact that it never received.
         // If it contains neither the seed nor a target, its whole subtree
         // contributes the empty set, regardless of its choices and scopes.
-        if facts.is_empty() && !self.contains(range, self.earlier) {
-            let mut event = range.start;
-            let mut has_target = false;
-            while event < range.end && self.occurrence(event) < stop {
-                if self
-                    .goal
-                    .sender_change(self.occurrence(event), self.eff_list.atom_at(event))
-                {
-                    has_target = true;
-                    break;
-                }
-                event += 1;
-            }
-            if !has_target {
-                return Ok(Some(facts));
-            }
+        if facts.is_empty()
+            && !self.contains(range, self.earlier)
+            && !self.has_receive_target(range)
+        {
+            return Ok(Some(facts));
         }
         while range.start < range.end && self.occurrence(range.start) < stop {
             // Relays cannot create evidence from an empty input. Before the
