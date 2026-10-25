@@ -301,6 +301,13 @@ jobs:
               bash .github/scripts/check_protocol_shapes.sh --spines 3 658 1
             fi
           '
+      - name: Require delayed parent reentry in both poll orders
+        if: matrix.depth == 4
+        run: |
+          awk -F '\t' '
+            NR > 1 { witnessed[$3] = 1 }
+            END { exit !(witnessed["false"] && witnessed["true"]) }
+          ' target/protocol-shapes/spines-3/range-658-count-1/roll-schedule-coverage.tsv
       - uses: actions/upload-artifact@v7
         if: always()
         with:

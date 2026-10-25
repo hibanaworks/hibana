@@ -77,6 +77,9 @@ visits from the source and script, then matches every completed call to its
 participant and occurrence. A source containing nested repetitions alone does
 not count as a schedule witness. A shard without such a witness records only
 the header; it does not claim this scheduling case was exercised.
+The fixed length-three case at rank 658 must produce such a witness in both
+poll orders. Its scheduled and manual depth-four checks fail if either order
+is absent from the report.
 
 Large cases run rejection probes in processes handling up to 8,192 source
 scripts each. Every process also executes every successful source script and
