@@ -141,7 +141,10 @@ The result is minimal under subtree removal, rather than a claim about every
 equivalent protocol. Unknown tool failures retain the source for inspection.
 
 The scheduled CI job samples depths four through eight using the UTC date as
-its seed. It also checks two fixed mixed protocols and a shrinker control.
+its seed. The depth-four job also runs the fixed mixed protocols and shrinker
+control; their inputs are shared across depths. Manual runs follow the same
+rule. Artifacts retain each input, rejection, completed trace and the source
+and input hash checks.
 That control runs real Endpoints, then deliberately removes a sequential
 dependency from the comparison model while keeping the probe inventory.
 It must reduce the resulting mismatch to two ordered messages.

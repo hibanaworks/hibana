@@ -286,7 +286,8 @@ jobs:
             cargo +stable build --locked --manifest-path .github/ci-tests/Cargo.toml --bin protocol-shapes --bin protocol-shape-controls
             task_seed="${FUZZ_SEED:-$(date -u +%Y%m%d)}"
             target/debug/protocol-shapes syntax-fuzz "$PWD" "$FUZZ_DEPTH" "$task_seed" "$FUZZ_COUNT" "target/protocol-fuzz-${FUZZ_DEPTH}-${task_seed}"
-            if [[ "$GITHUB_EVENT_NAME" != schedule || "$FUZZ_DEPTH" == 4 ]]; then
+            # These fixed inputs are shared by all sampled depths.
+            if [[ "$FUZZ_DEPTH" == 4 ]]; then
               target/debug/protocol-shapes syntax-shrink "$PWD" 3 19011422329217 target/protocol-fuzz-shrink-control \
                 -- "$PWD/target/debug/protocol-shape-controls" --shrink-probe
               target/debug/protocol-shape-controls --check-shrink target/protocol-fuzz-shrink-control
@@ -307,17 +308,37 @@ jobs:
           path: |
             target/protocol-fuzz-*/**
             target/protocol-shapes/*/**/catalog.json
+            target/protocol-shapes/*/**/catalog-scope.txt
             target/protocol-shapes/*/**/case-identities.tsv
             target/protocol-shapes/*/**/*coverage*.tsv
             target/protocol-shapes/*/**/source.sha256
+            target/protocol-shapes/*/**/source-after.sha256
             target/protocol-shapes/*/**/source.patch
             target/protocol-shapes/*/**/compiler.txt
             target/protocol-shapes/*/**/revision.txt
             target/protocol-shapes/*/**/inventory.txt
+            target/protocol-shapes/*/**/inputs.json
+            target/protocol-shapes/*/**/scope-inputs.json
+            target/protocol-shapes/*/**/scope-plans/*.jsonl
+            target/protocol-shapes/*/**/inputs.sha256
+            target/protocol-shapes/*/**/inputs-check.log
+            target/protocol-shapes/*/**/Cargo.lock
+            target/protocol-shapes/*/**/dependencies.sha256
+            target/protocol-shapes/*/**/dependencies-check.log
+            target/protocol-shapes/*/**/diagnostics.tsv
+            target/protocol-shapes/*/**/unclassified-rejections.txt
+            target/protocol-shapes/*/**/diagnose.time
+            target/protocol-shapes/*/**/compile.time
+            target/protocol-shapes/*/**/execute.time
+            target/protocol-shapes/*/**/oracle.time
             target/protocol-shapes/*/**/oracle.log
             target/protocol-shapes/*/**/observations/*.json
             target/protocol-shapes/*/**/scope-observations/*.jsonl
             target/protocol-shapes/*/**/scripts/*.jsonl
+            target/protocol-shapes/*/**/rejected/inventory.tsv
+            target/protocol-shapes/*/**/rejected/Cargo.toml
+            target/protocol-shapes/*/**/rejected/Cargo.lock
+            target/protocol-shapes/*/**/rejected/src/bin/*.rs
             target/protocol-shapes/*/**/rejected/*.jsonl
             target/protocol-shapes/*/**/rejected/*.stderr
 
