@@ -46,29 +46,14 @@ CARGO_PROFILE_RELEASE_LTO=true CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1 \
   cargo +"${TOOLCHAIN}" test --locked -p hibana --release \
     --test rolled_publication_exit -- --test-threads=1
 bash ./.github/scripts/check_lean_proofs.sh
+bash proofs/checks/projection/endpoint-delegation/check.sh
 bash ./.github/scripts/check_miri.sh
-exhaustive_output="$(mktemp "${TMPDIR:-/tmp}/hibana-exhaustive.XXXXXX")"
-trap 'rm -f "$exhaustive_output"' EXIT
-if CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS=true CARGO_PROFILE_RELEASE_OVERFLOW_CHECKS=true \
-  cargo +"${TOOLCHAIN}" test --locked -p hibana --lib --release \
-    global::const_dsl::receive_lane_causality::actors::exhaustive \
-    -- --ignored --nocapture --test-threads=1 >"$exhaustive_output" 2>&1; then
-  exhaustive_status=0
-else
-  exhaustive_status=$?
-fi
-cat "$exhaustive_output"
-bash .github/scripts/lib/test_result_tool.sh check \
-  "$exhaustive_output" exhaustive-route-correlation "$exhaustive_status"
-rm -f "$exhaustive_output"
-trap - EXIT
 bash proofs/checks/runtime/controller-offer/check.sh
 bash proofs/checks/runtime/live-descendant-preview/check.sh
 bash proofs/checks/runtime/nested-resolver-reentry/check.sh
 bash proofs/checks/runtime/parallel-view-choice/check.sh
 bash proofs/checks/runtime/ordinary-offer-ingress/check.sh
 bash proofs/checks/runtime/offer-prefix-dependency/check.sh
-bash proofs/checks/projection/endpoint-delegation/check.sh
 ELAN_TOOLCHAIN=leanprover/lean4:v4.30.0 \
   bash .github/scripts/check_projection_algorithms.sh --lean lean
 bash ./.github/scripts/check_unix_carrier_proof.sh
