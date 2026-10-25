@@ -12,7 +12,7 @@ on:
         type: choice
         required: true
         default: all
-        options: [all, final-form, protocol-shapes, protocol-syntax, protocol-interactions, protocol-spines, protocol-representatives, protocol-fuzz]
+        options: [all, final-form, protocol-shapes, protocol-syntax, protocol-interactions, protocol-spines, protocol-representatives, protocol-fuzz, miri-parallel-reentry]
       shape-budget:
         description: Generated constructor budget for protocol-shapes
         type: choice
@@ -69,7 +69,7 @@ on:
 
 jobs:
   runtime-instructions:
-    if: github.event_name != 'schedule' && (github.event_name != 'workflow_dispatch' || (inputs.check != 'protocol-shapes' && inputs.check != 'protocol-syntax' && inputs.check != 'protocol-interactions' && inputs.check != 'protocol-spines' && inputs.check != 'protocol-representatives' && inputs.check != 'protocol-fuzz'))
+    if: github.event_name != 'schedule' && (github.event_name != 'workflow_dispatch' || (inputs.check != 'protocol-shapes' && inputs.check != 'protocol-syntax' && inputs.check != 'protocol-interactions' && inputs.check != 'protocol-spines' && inputs.check != 'protocol-representatives' && inputs.check != 'protocol-fuzz' && inputs.check != 'miri-parallel-reentry'))
     runs-on: ubuntu-24.04
     env:
       TOOLCHAIN: stable
@@ -91,7 +91,7 @@ jobs:
           path: target/runtime-instructions/results/
 
   protocol-shape-matrix:
-    if: github.event_name != 'schedule' && (github.event_name != 'workflow_dispatch' || inputs.check != 'protocol-fuzz')
+    if: github.event_name != 'schedule' && (github.event_name != 'workflow_dispatch' || (inputs.check != 'protocol-fuzz' && inputs.check != 'miri-parallel-reentry'))
     runs-on: ubuntu-24.04-arm
     outputs:
       matrix: ${{ steps.scope.outputs.matrix }}
@@ -135,7 +135,7 @@ jobs:
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
 
   protocol-shapes:
-    if: github.event_name != 'schedule' && (github.event_name != 'workflow_dispatch' || inputs.check != 'protocol-fuzz')
+    if: github.event_name != 'schedule' && (github.event_name != 'workflow_dispatch' || (inputs.check != 'protocol-fuzz' && inputs.check != 'miri-parallel-reentry'))
     needs: protocol-shape-matrix
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 240
@@ -229,6 +229,9 @@ jobs:
             target/protocol-shapes/*/**/source-after.sha256
             target/protocol-shapes/*/**/inputs.sha256
             target/protocol-shapes/*/**/inputs-check.log
+            target/protocol-shapes/*/**/Cargo.toml
+            target/protocol-shapes/*/**/src/**/*.rs
+            target/protocol-shapes/*/**/traces/*.txt
             target/protocol-shapes/*/**/Cargo.lock
             target/protocol-shapes/*/**/dependencies.sha256
             target/protocol-shapes/*/**/dependencies-check.log
@@ -317,6 +320,7 @@ jobs:
             target/protocol-shapes/*/**/catalog.json
             target/protocol-shapes/*/**/catalog-scope.txt
             target/protocol-shapes/*/**/case-identities.tsv
+            target/protocol-shapes/*/**/case-depths.tsv
             target/protocol-shapes/*/**/*coverage*.tsv
             target/protocol-shapes/*/**/source.sha256
             target/protocol-shapes/*/**/source-after.sha256
@@ -329,6 +333,9 @@ jobs:
             target/protocol-shapes/*/**/scope-plans/*.jsonl
             target/protocol-shapes/*/**/inputs.sha256
             target/protocol-shapes/*/**/inputs-check.log
+            target/protocol-shapes/*/**/Cargo.toml
+            target/protocol-shapes/*/**/src/**/*.rs
+            target/protocol-shapes/*/**/traces/*.txt
             target/protocol-shapes/*/**/Cargo.lock
             target/protocol-shapes/*/**/dependencies.sha256
             target/protocol-shapes/*/**/dependencies-check.log
@@ -348,6 +355,57 @@ jobs:
             target/protocol-shapes/*/**/rejected/src/bin/*.rs
             target/protocol-shapes/*/**/rejected/*.jsonl
             target/protocol-shapes/*/**/rejected/*.stderr
+
+  miri-parallel-reentry:
+    if: github.event_name == 'workflow_dispatch' && inputs.check == 'miri-parallel-reentry'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        case: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+    env:
+      CARGO_BUILD_JOBS: 1
+      CARGO_INCREMENTAL: 0
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+      CARGO_PROFILE_TEST_DEBUG: line-tables-only
+      CASE: ${{ matrix.case }}
+      MIRIFLAGS: -Zmiri-strict-provenance -Zmiri-env-set=HIBANA_PARALLEL_CREDIT_CASE=${{ matrix.case }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Rust and Miri
+        run: |
+          rustup toolchain install stable --profile minimal
+          MIRI_TOOLCHAIN="$(< .github/miri-toolchain)"
+          rustup toolchain install "${MIRI_TOOLCHAIN}" --profile minimal --component miri --component rust-src
+          echo "MIRI_TOOLCHAIN=${MIRI_TOOLCHAIN}" >> "${GITHUB_ENV}"
+      - name: Check one complete parallel reentry schedule
+        run: |
+          bash .github/scripts/lib/resource_guard.sh bash -euo pipefail -c '
+            out="target/miri-parallel-reentry/${CASE}"
+            mkdir -p "$out"
+            git rev-parse HEAD > "$out/revision.txt"
+            git diff --exit-code HEAD > "$out/source.patch"
+            git ls-files -z | xargs -0 shasum -a 256 -- > "$out/source-before.sha256"
+            cargo +"${MIRI_TOOLCHAIN}" miri --version > "$out/miri-version.txt"
+            cargo +"${MIRI_TOOLCHAIN}" miri test --locked --target aarch64-unknown-linux-gnu --test nested_parallel_reentry --no-run > "$out/build.log" 2>&1
+            /usr/bin/time -p -o "$out/time.txt" timeout --kill-after=10s 480s \
+              cargo +"${MIRI_TOOLCHAIN}" miri test --locked --target aarch64-unknown-linux-gnu --test nested_parallel_reentry \
+              nested_parallel_delegation_preserves_a_child_when_its_parent_restarts_late \
+              -- --exact --nocapture > "$out/run.log" 2>&1
+            reverse=false
+            if (( CASE % 2 )); then reverse=true; fi
+            grep -F "parallel-credit complete: right_visit=$((CASE / 2)) reverse=${reverse}" "$out/run.log"
+            test "$(grep -c "^parallel-credit complete:" "$out/run.log")" = 1
+            git ls-files -z | xargs -0 shasum -a 256 -- > "$out/source-after.sha256"
+            cmp "$out/source-before.sha256" "$out/source-after.sha256"
+          '
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: miri-parallel-reentry-${{ matrix.case }}
+          path: target/miri-parallel-reentry/
 
   kani:
     if: github.event_name != 'schedule' && (github.event_name != 'workflow_dispatch' || inputs.check == 'all')
@@ -373,7 +431,7 @@ jobs:
           --lib --jobs 1 --output-format terse
 
   final-form:
-    if: github.event_name != 'schedule' && (github.event_name != 'workflow_dispatch' || (inputs.check != 'protocol-shapes' && inputs.check != 'protocol-syntax' && inputs.check != 'protocol-interactions' && inputs.check != 'protocol-spines' && inputs.check != 'protocol-representatives' && inputs.check != 'protocol-fuzz'))
+    if: github.event_name != 'schedule' && (github.event_name != 'workflow_dispatch' || (inputs.check != 'protocol-shapes' && inputs.check != 'protocol-syntax' && inputs.check != 'protocol-interactions' && inputs.check != 'protocol-spines' && inputs.check != 'protocol-representatives' && inputs.check != 'protocol-fuzz' && inputs.check != 'miri-parallel-reentry'))
     needs: protocol-shapes
     runs-on: ubuntu-24.04-arm
     env:
