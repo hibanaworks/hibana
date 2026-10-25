@@ -44,6 +44,12 @@ pub(crate) type SourceActorImage<
 
 struct SourceActors<Steps, const CAPACITY: usize>(core::marker::PhantomData<Steps>);
 
+struct SourceEvents<Steps, const CAPACITY: usize>(core::marker::PhantomData<Steps>);
+
+impl<Steps: ProgramShape, const CAPACITY: usize> SourceEvents<Steps, CAPACITY> {
+    const EVENTS: EffList<CAPACITY> = ProgramSourceData::<CAPACITY>::emit::<Steps>();
+}
+
 impl<Steps: ProgramShape, const CAPACITY: usize> SourceActors<Steps, CAPACITY> {
     const IMAGE: Result<Option<SourceActorImage<CAPACITY>>, ownership::Error> =
         if !Steps::SOURCE_NODE.has_delegation() {
@@ -185,7 +191,7 @@ impl<const CAPACITY: usize> ProgramSourceData<CAPACITY> {
         }
     }
 
-    pub(crate) const fn lower<Steps>() -> Self
+    const fn emit<Steps>() -> EffList<CAPACITY>
     where
         Steps: ProgramShape,
     {
@@ -212,9 +218,21 @@ impl<const CAPACITY: usize> ProgramSourceData<CAPACITY> {
         {
             panic!("type tree and lowered source disagree");
         }
-        let receive_causal = assign_receive_lanes(&mut lowering.eff, actors);
+        lowering.eff
+    }
+
+    pub(crate) const fn lower<Steps: ProgramShape>() -> Self {
+        let mut eff = SourceEvents::<Steps, CAPACITY>::EVENTS;
+        let actors = match &SourceActors::<Steps, CAPACITY>::IMAGE {
+            Ok(Some(image)) => Some(image),
+            Ok(None) => None,
+            Err(error) => super::diagnostic_message::panic_diagnostic(
+                super::ProjectionDiagnostic::from_ownership_error(*error),
+            ),
+        };
+        let receive_causal = assign_receive_lanes(&mut eff, actors);
         Self {
-            eff: lowering.eff,
+            eff,
             actors,
             receive_causal,
         }

@@ -3,7 +3,7 @@
 use super::*;
 use crate::g::source::{ProgramSourceData, SourceLowering};
 use crate::global::const_dsl::{
-    ReentryMark, validate_owned_receive_lane_causality, validate_receive_lane_causality,
+    ReentryMark, owned_receive_lane_conflict, validate_receive_lane_causality,
 };
 
 mod schedules;
@@ -25,10 +25,6 @@ fn check_shared_lane_conflict<Steps: ProgramShape>(
         crate::global::const_dsl::owned_receive_lane_conflict(&lowering.eff, actors),
         Some(expected),
     );
-    assert!(!validate_owned_receive_lane_causality(
-        &lowering.eff,
-        actors
-    ));
     assert!(source.receive_causal());
     assert_eq!(g::diagnose(&program), None);
     let _ = crate::runtime::program::project::<2>(&program);
@@ -92,16 +88,14 @@ fn check<Steps: ProgramShape>(_: g::Program<Steps>, wire: bool, owned: bool) {
     // Test the stated shared-lane hazards before route coloring. The allocator
     // may make a safe program by assigning those receives different lanes.
     let uncolored = ProgramSourceData {
-        receive_causal: validate_owned_receive_lane_causality(
-            &lowering.eff,
-            source.actors().unwrap(),
-        ),
+        receive_causal: owned_receive_lane_conflict(&lowering.eff, source.actors().unwrap())
+            .is_none(),
         eff: lowering.eff,
         actors: source.actors(),
     };
     check_source::<Steps>(&uncolored, wire, owned);
     let wire = validate_receive_lane_causality(source.eff_list());
-    let owned = validate_owned_receive_lane_causality(source.eff_list(), source.actors().unwrap());
+    let owned = owned_receive_lane_conflict(source.eff_list(), source.actors().unwrap()).is_none();
     assert_eq!(source.receive_causal(), owned);
     check_source::<Steps>(&source, wire, owned);
 }
@@ -109,7 +103,7 @@ fn check<Steps: ProgramShape>(_: g::Program<Steps>, wire: bool, owned: bool) {
 fn check_source<Steps: ProgramShape>(source: &ProgramSourceData<128>, wire: bool, owned: bool) {
     assert_eq!(validate_receive_lane_causality(source.eff_list()), wire);
     assert_eq!(
-        validate_owned_receive_lane_causality(source.eff_list(), source.actors().unwrap()),
+        owned_receive_lane_conflict(source.eff_list(), source.actors().unwrap()).is_none(),
         owned
     );
     assert_eq!(schedules::check(&Steps::SOURCE_NODE, source), owned);

@@ -13,6 +13,24 @@ export ELAN_TOOLCHAIN=leanprover/lean4:v4.30.0
 # The standalone model has its own tests. Core-only repository fixtures must
 # not be enabled in this independently compiled package.
 source "$ROOT/.github/scripts/repo_rustflags.sh"
+(
+  hibana_enable_repo_tests_cfg
+  export CARGO_BUILD_JOBS=1 CARGO_INCREMENTAL=0
+  export CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16
+  export CARGO_PROFILE_RELEASE_OVERFLOW_CHECKS=true
+  export CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS=true
+  cargo +"$TOOLCHAIN" test --locked --release --lib \
+    global::const_dsl::receive_lane_causality::actors::exhaustive \
+    -- --include-ignored --nocapture --test-threads=1
+) > "$EVIDENCE/exhaustive-causality.log" 2>&1
+for result in \
+  'exhaustive parallel queries checked=16777216' \
+  'exhaustive route queries checked=33554432' \
+  'exhaustive pruned/full queries checked=134217728' \
+  'pruned/full causal queries checked=7873200' \
+  'test result: ok. 8 passed; 0 failed; 0 ignored;'; do
+  [[ $(rg --fixed-strings --count -- "$result" "$EVIDENCE/exhaustive-causality.log") -eq 1 ]]
+done
 hibana_disable_repo_tests_cfg
 source "$ROOT/.github/scripts/lib/proof_audit.sh"
 FAILED=0

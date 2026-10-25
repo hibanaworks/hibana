@@ -1,5 +1,19 @@
 ; Logical receive identity and physical causal evidence are different facts.
 (set-logic QF_LIA)
+(push)
+(declare-const start Int)
+(declare-const following Int)
+(declare-const stop Int)
+(declare-const earlier Int)
+(declare-const later_receive Int)
+(assert (<= start following))
+(assert (or (< earlier start) (< later_receive start)))
+(assert (and (<= following earlier) (< earlier stop)
+             (<= following later_receive) (< later_receive stop)))
+; Ordered marker suffixes after either receive contain no enclosing roll.
+; EXPECT: unsat
+(check-sat)
+(pop)
 (declare-const receiver Int)
 (declare-const first Int)
 (declare-const second Int)

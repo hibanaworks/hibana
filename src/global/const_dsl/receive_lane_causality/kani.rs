@@ -19,6 +19,107 @@ fn event(from: u8, to: u8, lane: u8) -> EffAtom {
     }
 }
 
+#[kani::proof]
+#[kani::unwind(5)]
+fn a_relay_between_known_participants_preserves_all_causal_facts() {
+    let mut facts = CausalRoles(kani::any());
+    let before = facts;
+    let atom = event(kani::any(), kani::any(), 0);
+    if facts.contains(atom.from) && facts.contains(atom.to) {
+        facts.handoff(atom);
+        for word in 0..facts.0.len() {
+            assert_eq!(facts.0[word], before.0[word]);
+        }
+        kani::cover!(atom.from != atom.to);
+        kani::cover!(atom.from == atom.to);
+    }
+}
+
+#[kani::proof]
+#[kani::unwind(5)]
+fn direction_index_is_the_last_matching_receive_in_every_subrange() {
+    let mut events = EffList::<4>::new();
+    for _ in 0..4 {
+        events.push_event_mut(event(kani::any(), kani::any(), kani::any()));
+    }
+    let earlier = event(kani::any(), kani::any(), kani::any());
+    let first = usize::from(kani::any::<u8>() % 5);
+    let second = usize::from(kani::any::<u8>() % 5);
+    let range = super::FlowRange {
+        start: first.min(second),
+        end: first.max(second),
+        marker_floor: 0,
+    };
+    let mut expected = None;
+    for index in 0..4 {
+        let atom = events.atom_at(index);
+        if range.start <= index
+            && index < range.end
+            && atom.from != atom.to
+            && earlier.to == atom.to
+            && earlier.lane == atom.lane
+            && earlier.from != atom.from
+        {
+            expected = Some(index + 1);
+        }
+    }
+    let directions = super::ReceiveDirectionIndex::new(&events, range.start, range.end);
+    assert_eq!(directions.last_change(earlier, range.start), expected);
+    kani::cover!(expected.is_none());
+    kani::cover!(expected == Some(1));
+    kani::cover!(expected == Some(4));
+    kani::cover!(range.start == range.end);
+}
+
+#[kani::proof]
+#[kani::unwind(5)]
+fn boundary_seek_matches_the_first_qualifying_marker_for_all_compact_offsets() {
+    use super::super::{
+        ReentryMark, ScopeEvent, ScopeId,
+        source_arena::{ScopeMarker, ScopeMarkerView, SourceRow},
+    };
+    let mut offsets = [0u16; 4];
+    for offset in &mut offsets {
+        *offset = kani::any();
+    }
+    for _ in 0..4 {
+        for index in 1..4 {
+            if offsets[index - 1] > offsets[index] {
+                offsets.swap(index - 1, index);
+            }
+        }
+    }
+    let mut rows = [SourceRow::Empty; 4];
+    for index in 0..4 {
+        let offset = offsets[index] as usize;
+        rows[index] = SourceRow::Scope(ScopeMarker::new(
+            offset,
+            offset,
+            ScopeId::roll_scope(0),
+            ScopeEvent::Exit,
+            ReentryMark::SinglePass,
+        ));
+    }
+    let markers = ScopeMarkerView {
+        rows: &rows,
+        start: 0,
+        len: 4,
+    };
+    let floor = usize::from(kani::any::<u8>() % 5);
+    let query = usize::from(kani::any::<u16>());
+    let mut expected = 4;
+    for index in 0..4 {
+        if expected == 4 && floor <= index && usize::from(offsets[index]) >= query {
+            expected = index;
+        }
+    }
+    assert_eq!(markers.offset_lower_bound(query, floor), expected);
+    kani::cover!(floor == 4);
+    kani::cover!(floor < 4 && expected == floor);
+    kani::cover!(floor < expected && expected < 4);
+    kani::cover!(offsets[0] == offsets[1] && expected == 0);
+}
+
 fn distinct_role_permutation() -> (u8, u8, u8) {
     match kani::any::<u8>() % 6 {
         0 => (0, 1, 2),

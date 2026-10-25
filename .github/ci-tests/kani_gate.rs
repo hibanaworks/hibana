@@ -285,7 +285,7 @@ pub fn run(root: &Path) -> Audit<()> {
             group.label,
             group.harnesses.len(),
             if group.recursion.is_some() {
-                "1"
+                "per-function"
             } else {
                 "default"
             }
@@ -310,11 +310,6 @@ pub fn run(root: &Path) -> Audit<()> {
         }
         if let Some(bounds) = &group.recursion {
             command.args(["--cbmc-args", "--unwindset", bounds]);
-            if group.label == "owned-route" {
-                // Check every bounded path separately without retaining one
-                // large merged equation for the conditional actor image.
-                command.args(["--paths", "lifo"]);
-            }
         } else if group.label == "parallel-reentry" {
             // Exhaust the same paths without retaining a merged equation for
             // all descriptor lookups. Refine array/arithmetic constraints

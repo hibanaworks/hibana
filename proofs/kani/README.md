@@ -27,6 +27,9 @@ inputs use total generators whose images retain the valid domain. Fixed
 rejection witnesses are distinguished from universally quantified rejection
 properties. Finite matching and route-correlation domains also have exhaustive
 checks that call the actual production query with assertions enabled.
+The [projection checks](../checks/projection/endpoint-delegation) run those
+finite domains with checked native execution; they are distinct from Kani's
+symbolic verification.
 
 Run from the repository root:
 

@@ -214,18 +214,13 @@
       "global::const_dsl::receive_lane_causality::actors::kani::owned_linear_seed_word1",
       "global::const_dsl::receive_lane_causality::actors::kani::owned_linear_seed_word2",
       "global::const_dsl::receive_lane_causality::actors::kani::owned_linear_seed_word3",
-      "global::const_dsl::receive_lane_causality::actors::kani::owned_parallel_seed_word0",
-      "global::const_dsl::receive_lane_causality::actors::kani::owned_parallel_seed_word1",
-      "global::const_dsl::receive_lane_causality::actors::kani::owned_parallel_seed_word2",
-      "global::const_dsl::receive_lane_causality::actors::kani::owned_parallel_seed_word3",
-      "global::const_dsl::receive_lane_causality::actors::kani::repeated_inner_choices_are_independent_while_outer_choices_stay_shared",
-      "global::const_dsl::receive_lane_causality::actors::kani::source_scan_parallel_direct",
-      "global::const_dsl::receive_lane_causality::actors::kani::source_scan_parallel_swapped",
-      "global::const_dsl::receive_lane_causality::actors::kani::source_scan_route_direct",
-      "global::const_dsl::receive_lane_causality::actors::kani::source_scan_route_swapped"
+      "global::const_dsl::receive_lane_causality::actors::kani::repeated_inner_choices_are_independent_while_outer_choices_stay_shared"
     ],
     "../../src/global/const_dsl/receive_lane_causality/kani.rs": [
+      "global::const_dsl::receive_lane_causality::kani::a_relay_between_known_participants_preserves_all_causal_facts",
+      "global::const_dsl::receive_lane_causality::kani::boundary_seek_matches_the_first_qualifying_marker_for_all_compact_offsets",
       "global::const_dsl::receive_lane_causality::kani::causal_role_facts_and_joins_are_role_exact",
+      "global::const_dsl::receive_lane_causality::kani::direction_index_is_the_last_matching_receive_in_every_subrange",
       "global::const_dsl::receive_lane_causality::kani::roll_reentry_causal_closure_accepts_closed_cycle",
       "global::const_dsl::receive_lane_causality::kani::roll_reentry_causal_closure_rejects_open_cycle",
       "global::const_dsl::receive_lane_causality::kani::sender_change_without_causal_handoff_is_rejected",
@@ -445,7 +440,7 @@
   "contract-harnesses": {},
   "contracts": [],
   "totals": {
-    "standard-harnesses": 319,
+    "standard-harnesses": 314,
     "contract-harnesses": 0,
     "functions-under-contract": 0
   }

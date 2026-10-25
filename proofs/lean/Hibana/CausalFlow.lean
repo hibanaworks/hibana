@@ -144,4 +144,124 @@ theorem roll_causal_flow_composes_fresh_visits (body : Choreo) (earlier later ro
       (body.causalFlowAt body.globalEvents.length earlier later roleCount).eval
         ((body.causalFlowAt 0 earlier later roleCount).eval facts) := rfl
 
+/-- A repeated region relevant to a receive pair starts before both events. -/
+theorem a_roll_containing_both_receives_precedes_their_earlier_offset
+    (start stop earlier later : Nat)
+    (first : start ≤ earlier ∧ earlier < stop)
+    (second : start ≤ later ∧ later < stop) : start ≤ min earlier later := by
+  omega
+
+/-- Once ordered scope starts pass either event, the remaining scopes cannot
+contain the pair, regardless of the order of their two visits. -/
+theorem later_scope_starts_cannot_contain_the_receive_pair
+    (start following stop earlier later : Nat)
+    (ordered : start ≤ following)
+    (past : earlier < start ∨ later < start) :
+    ¬ (following ≤ earlier ∧ earlier < stop ∧ following ≤ later ∧ later < stop) := by
+  omega
+
+/-- Receives in one direction, ordered from latest to earliest. -/
+def summarizeReceiveDirection : List (Nat × Nat) → Option ((Nat × Nat) × Option Nat)
+  | [] => none
+  | latest :: rest => some (latest,
+      (rest.find? (fun event => event.1 != latest.1)).map Prod.snd)
+
+def lookupReceiveDirection
+    (summary : Option ((Nat × Nat) × Option Nat)) (sender : Nat) : Option Nat :=
+  match summary with
+  | none => none
+  | some (latest, other) => if latest.1 = sender then other else some latest.2
+
+theorem receive_direction_summary_preserves_latest_sender_change
+    (events : List (Nat × Nat)) (sender : Nat) :
+    lookupReceiveDirection (summarizeReceiveDirection events) sender =
+      (events.find? (fun event => event.1 != sender)).map Prod.snd := by
+  cases events with
+  | nil => rfl
+  | cons latest rest =>
+      rcases latest with ⟨source, position⟩
+      by_cases same : source = sender
+      · subst sender
+        simp [summarizeReceiveDirection, lookupReceiveDirection, List.find?]
+      · have different : (source != sender) = true := by
+          rw [bne_eq, beq_false_of_ne same]
+          rfl
+        simp [summarizeReceiveDirection, lookupReceiveDirection, List.find?, same, different]
+
+def CausalFlowExpr.seedless : CausalFlowExpr → Bool
+  | .empty | .relay _ _ => true
+  | .seed _ => false
+  | .seq left right | .choice left right | .parallel left right =>
+      left.seedless && right.seedless
+
+theorem seedless_flow_preserves_empty_facts (flow : CausalFlowExpr)
+    (noSeed : flow.seedless = true) :
+    flow.eval (fun _ => false) = (fun _ => false) := by
+  induction flow with
+  | empty => rfl
+  | seed role => simp [CausalFlowExpr.seedless] at noSeed
+  | relay sender receiver => simp [CausalFlowExpr.eval]
+  | seq left right leftIH rightIH =>
+      simp only [CausalFlowExpr.seedless, Bool.and_eq_true] at noSeed
+      simp only [CausalFlowExpr.eval, leftIH noSeed.1, rightIH noSeed.2]
+  | choice left right leftIH rightIH =>
+      simp only [CausalFlowExpr.seedless, Bool.and_eq_true] at noSeed
+      funext role
+      simp [CausalFlowExpr.eval, leftIH noSeed.1, rightIH noSeed.2]
+  | parallel left right leftIH rightIH =>
+      simp only [CausalFlowExpr.seedless, Bool.and_eq_true] at noSeed
+      funext role
+      simp [CausalFlowExpr.eval, leftIH noSeed.1, rightIH noSeed.2]
+
+theorem seedless_sequence_prefix_can_be_skipped (front body : CausalFlowExpr)
+    (noSeed : front.seedless = true) :
+    (.seq front body : CausalFlowExpr).eval (fun _ => false) =
+      body.eval (fun _ => false) := by
+  simp only [CausalFlowExpr.eval, seedless_flow_preserves_empty_facts front noSeed]
+
+theorem seedless_parallel_left_can_be_skipped (left right : CausalFlowExpr)
+    (noSeed : left.seedless = true) :
+    (.parallel left right : CausalFlowExpr).eval (fun _ => false) =
+      right.eval (fun _ => false) := by
+  funext role
+  simp [CausalFlowExpr.eval, seedless_flow_preserves_empty_facts left noSeed]
+
+/-- All participants of the expression already have the causal fact. -/
+def CausalFlowExpr.coveredBy (facts : CausalRoles) : CausalFlowExpr → Bool
+  | .empty => true
+  | .seed role => facts role
+  | .relay sender receiver => facts sender && facts receiver
+  | .seq left right | .choice left right | .parallel left right =>
+      left.coveredBy facts && right.coveredBy facts
+
+theorem a_covered_flow_preserves_its_input (flow : CausalFlowExpr) (facts : CausalRoles)
+    (covered : flow.coveredBy facts = true) : flow.eval facts = facts := by
+  induction flow with
+  | empty => rfl
+  | seed role =>
+      have known : facts role = true := covered
+      funext query
+      by_cases same : query = role
+      · subst query
+        simp [CausalFlowExpr.eval, CausalRoles.insert, known]
+      · simp [CausalFlowExpr.eval, CausalRoles.insert, same]
+  | relay sender receiver =>
+      simp only [CausalFlowExpr.coveredBy, Bool.and_eq_true] at covered
+      funext query
+      by_cases same : query = receiver
+      · subst query
+        simp [CausalFlowExpr.eval, CausalRoles.insert, covered.1, covered.2]
+      · simp [CausalFlowExpr.eval, CausalRoles.insert, covered.1, same]
+  | seq left right leftIH rightIH =>
+      simp only [CausalFlowExpr.coveredBy, Bool.and_eq_true] at covered
+      simp only [CausalFlowExpr.eval, leftIH covered.1, rightIH covered.2]
+  | choice left right leftIH rightIH =>
+      simp only [CausalFlowExpr.coveredBy, Bool.and_eq_true] at covered
+      funext role
+      simp [CausalFlowExpr.eval, leftIH covered.1, rightIH covered.2]
+  | parallel left right leftIH rightIH =>
+      simp only [CausalFlowExpr.coveredBy, Bool.and_eq_true] at covered
+      funext role
+      simp [CausalFlowExpr.eval, leftIH covered.1, rightIH covered.2]
+
 end Hibana

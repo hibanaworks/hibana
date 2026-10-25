@@ -1,7 +1,7 @@
-//! Bounded receive proofs have one binary scope and one actor decision.
-//! Loop bounds and recursion bounds are separate: the former exhaust four
-//! rows, the latter check one nested call. CBMC unwinding assertions remain
-//! enabled, so an insufficient bound fails rather than truncating a proof.
+//! Receive proofs use fixed source scopes and arbitrary actor identifiers.
+//! Loop bounds exhaust all rows; per-function bounds reflect the source nesting
+//! and actor decisions. CBMC exhaustion assertions remain enabled, so an
+//! insufficient bound fails rather than truncating a proof.
 use super::cargo;
 use crate::{
     Audit,
@@ -23,20 +23,12 @@ pub(super) struct Group {
 
 fn family() -> BTreeSet<String> {
     let mut names = BTreeSet::new();
-    for kind in ["linear", "parallel"] {
-        for word in 0..4 {
-            names.insert(format!("{PREFIX}owned_{kind}_seed_word{word}"));
-        }
+    for word in 0..4 {
+        names.insert(format!("{PREFIX}owned_linear_seed_word{word}"));
     }
-    for name in [
-        "source_scan_route_direct",
-        "source_scan_route_swapped",
-        "source_scan_parallel_direct",
-        "source_scan_parallel_swapped",
-        "repeated_inner_choices_are_independent_while_outer_choices_stay_shared",
-    ] {
-        names.insert(format!("{PREFIX}{name}"));
-    }
+    names.insert(format!(
+        "{PREFIX}repeated_inner_choices_are_independent_while_outer_choices_stay_shared"
+    ));
     names
 }
 
@@ -72,17 +64,11 @@ fn partition(names: BTreeSet<String>) -> Audit<Vec<Group>> {
         .collect();
     if !owned.is_empty() && owned != family() {
         return Err(
-            "receive proof family must retain every seed partition and both source shapes".into(),
+            "receive proof family must retain every seed partition and the repeated-choice proof"
+                .into(),
         );
     }
-    let mut groups = [
-        "ordinary",
-        "owned-linear",
-        "owned-parallel",
-        "owned-route",
-        "parallel-reentry",
-    ]
-    .map(|label| Group {
+    let mut groups = ["ordinary", "owned-linear", "parallel-reentry"].map(|label| Group {
         label,
         harnesses: Vec::new(),
         recursion: None,
@@ -90,9 +76,7 @@ fn partition(names: BTreeSet<String>) -> Audit<Vec<Group>> {
     for name in names {
         let part = match name.strip_prefix(PREFIX) {
             Some(name) if name.starts_with("owned_linear_seed_word") => 1,
-            Some(name) if name.starts_with("owned_parallel_seed_word") => 2,
-            Some(name) if name.starts_with("source_scan_") => 3,
-            _ if name.starts_with("global::typestate::cursor::parallel_reentry_tests::") => 4,
+            _ if name.starts_with("global::typestate::cursor::parallel_reentry_tests::") => 2,
             _ => 0,
         };
         groups[part].harnesses.push(name);
@@ -139,20 +123,14 @@ fn metadata_files(root: &Path, files: &mut Vec<PathBuf>) -> Audit<()> {
     Ok(())
 }
 
-fn function_names(events: usize, decisions: usize) -> Vec<String> {
+fn function_names() -> Vec<String> {
     let root = "global::const_dsl::receive_lane_causality";
-    let mut names = vec![
-        format!("{root}::CausalFlow::<'_, {events}>::advance_as::<{decisions}>"),
-        format!("{root}::actors::Obligation::<'_, {events}, {decisions}>::check"),
-        format!("{root}::actors::ActorMap::<'_, {events}, {decisions}>::reference_known"),
-    ];
-    if decisions == 1 {
-        names.push(format!(
-            "{root}::actors::ActorMap::<'_, {events}, {decisions}>::receiver"
-        ));
-        names.push("g::source::ownership::queries::Context::<'_>::get".into());
-    }
-    names
+    vec![
+        format!("{root}::CausalFlow::<'_, 3>::advance_as::<0>"),
+        format!("{root}::actors::Obligation::<'_, 3, 0>::check_from"),
+        format!("{root}::actors::ActorMap::<'_, 3, 0>::reference_known"),
+        "global::const_dsl::source_arena::ScopeMarkerView::<'_>::offset_lower_bound".into(),
+    ]
 }
 
 fn collect_functions(map: Json, wanted: &[String]) -> Audit<BTreeMap<String, String>> {
@@ -185,12 +163,12 @@ fn read_json(path: &Path) -> Audit<Json> {
     kani_json::parse(&fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?)
 }
 
-fn bounds(target: &Path) -> Audit<[String; 3]> {
+fn bounds(target: &Path) -> Audit<String> {
     let target = target.canonicalize().map_err(|e| e.to_string())?;
     let mut files = Vec::new();
     metadata_files(&target, &mut files)?;
     let wanted_family = family();
-    let mut result: Option<[String; 3]> = None;
+    let mut result: Option<String> = None;
     for file in files {
         let metadata = read_json(&file)?;
         let Some(Json::Array(harnesses)) = metadata.get("proof_harnesses") else {
@@ -227,46 +205,34 @@ fn bounds(target: &Path) -> Audit<[String; 3]> {
                 }
             }
         }
-        let mut compiled = Vec::new();
-        for (suffix, events, decisions) in [
-            ("owned_linear_seed_word0", 3, 0),
-            ("owned_parallel_seed_word0", 8, 0),
-            ("source_scan_route_direct", 8, 1),
-        ] {
-            let name = format!("{PREFIX}{suffix}");
-            let harness = harnesses
-                .iter()
-                .find(|h| h.get("pretty_name") == Some(&Json::String(name.clone())))
-                .ok_or("missing representative compiled harness")?;
-            let Some(Json::String(goto)) = harness.get("goto_file") else {
-                return Err("missing compiled GOTO path".into());
-            };
-            let stem = goto
-                .strip_suffix(".symtab.out")
-                .ok_or("invalid compiled GOTO path")?;
-            let map = PathBuf::from(format!("{stem}.pretty_name_map.json"))
-                .canonicalize()
-                .map_err(|e| e.to_string())?;
-            if !map.starts_with(&target) {
-                return Err("compiled name map outside proof target".into());
-            }
-            let names = function_names(events, decisions);
-            let functions = collect_functions(read_json(&map)?, &names)?;
-            let mut limits = names[..3]
-                .iter()
-                .map(|name| format!("{}:1", functions[name]))
-                .collect::<Vec<_>>();
-            if decisions == 1 {
-                // One actor decision needs at most one receiver-DAG step.
-                // Contexts have an empty base and at most one linked choice.
-                // The loop guards and their exhaustion are still checked.
-                limits.push(format!("{}.0:2", functions[&names[3]]));
-                limits.push(format!("{}.0:2", functions[&names[4]]));
-                limits.push(format!("{}.1:2", functions[&names[4]]));
-            }
-            compiled.push(limits.join(","));
+        let name = format!("{PREFIX}owned_linear_seed_word0");
+        let harness = harnesses
+            .iter()
+            .find(|h| h.get("pretty_name") == Some(&Json::String(name.clone())))
+            .ok_or("missing representative compiled harness")?;
+        let Some(Json::String(goto)) = harness.get("goto_file") else {
+            return Err("missing compiled GOTO path".into());
+        };
+        let stem = goto
+            .strip_suffix(".symtab.out")
+            .ok_or("invalid compiled GOTO path")?;
+        let map = PathBuf::from(format!("{stem}.pretty_name_map.json"))
+            .canonicalize()
+            .map_err(|e| e.to_string())?;
+        if !map.starts_with(&target) {
+            return Err("compiled name map outside proof target".into());
         }
-        let compiled: [String; 3] = compiled.try_into().map_err(|_| "recursive proof groups")?;
+        let names = function_names();
+        let functions = collect_functions(read_json(&map)?, &names)?;
+        // The linear source has neither nested scopes nor actor decisions.
+        // A zero recursion bound asserts that those recursive calls are absent.
+        // The empty marker search still checks its loop's exhaustion.
+        let mut limits = names[..3]
+            .iter()
+            .map(|name| format!("{}:0", functions[name]))
+            .collect::<Vec<_>>();
+        limits.push(format!("{}.0:1", functions[&names[3]]));
+        let compiled = limits.join(",");
         if result
             .as_ref()
             .is_some_and(|previous| previous != &compiled)
@@ -303,14 +269,11 @@ pub(super) fn prepare(
         if !status.success() {
             return Err(format!("receive proof code generation failed: {status}"));
         }
-        let [linear, parallel, route] = bounds(target)?;
+        let linear = bounds(target)?;
         for group in &mut groups {
-            group.recursion = match group.label {
-                "owned-linear" => Some(linear.clone()),
-                "owned-parallel" => Some(parallel.clone()),
-                "owned-route" => Some(route.clone()),
-                _ => None,
-            };
+            if group.label == "owned-linear" {
+                group.recursion = Some(linear.clone());
+            }
         }
     }
     Ok(groups)
@@ -369,7 +332,7 @@ mod tests {
         let groups = partition(names.clone()).unwrap();
         assert_eq!(
             groups.iter().map(|g| g.harnesses.len()).collect::<Vec<_>>(),
-            [2, 4, 4, 4, 1, 1]
+            [2, 4, 1, 1]
         );
         assert_eq!(
             groups
@@ -394,7 +357,7 @@ mod tests {
     }
     #[test]
     fn compiled_function_maps_reject_missing_ambiguous_and_invalid_identifiers() {
-        let wanted = function_names(8, 1);
+        let wanted = function_names();
         let valid = || {
             wanted
                 .iter()

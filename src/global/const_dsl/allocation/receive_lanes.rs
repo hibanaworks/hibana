@@ -6,15 +6,26 @@ use crate::{
     g::SourceActorImage,
     global::const_dsl::{
         EffList, ScopeKind, owned_receive_lane_conflict, parallel_arm_ranges_from_enter,
-        receive_lane_conflict, route_arm_ranges_from_first_enter,
-        validate_owned_receive_lane_causality, validate_receive_lane_causality,
+        receive_lane_conflict, route_arm_ranges_from_first_enter, validate_receive_lane_causality,
     },
 };
 
-const fn causal<const E: usize>(events: &EffList<E>, actors: Option<&SourceActorImage<E>>) -> bool {
+const fn inspect<const E: usize>(
+    events: &EffList<E>,
+    actors: Option<&SourceActorImage<E>>,
+) -> Result<(), Option<(usize, usize, Option<u16>)>> {
     match actors {
-        Some(image) => validate_owned_receive_lane_causality(events, image),
-        None => validate_receive_lane_causality(events),
+        Some(image) => match owned_receive_lane_conflict(events, image) {
+            Some(pair) => Err(Some(pair)),
+            None => Ok(()),
+        },
+        None => {
+            if validate_receive_lane_causality(events) {
+                Ok(())
+            } else {
+                Err(receive_lane_conflict(events))
+            }
+        }
     }
 }
 
@@ -39,31 +50,6 @@ const fn align_range<const E: usize>(
             }
         }
         lane += 1;
-    }
-    // An injective map preserves constraints inside the range. Each edge
-    // checks the fixed outside receives against both orders of loop visits.
-    let mut inside = arm.0;
-    while inside < arm.1 {
-        let a = events.atom_at(inside);
-        if a.from != a.to {
-            let mut outside = 0;
-            while outside < events.len() {
-                if outside < arm.0 || arm.1 <= outside {
-                    let b = events.atom_at(outside);
-                    if b.from != b.to
-                        && a.to == b.to
-                        && a.from != b.from
-                        && (!receive_pair_is_causal(events, actors, inside, outside)
-                            || !receive_pair_is_causal(events, actors, outside, inside))
-                    {
-                        edges[a.lane as usize * row_bytes + b.lane as usize / 8] &=
-                            !(1 << (b.lane % 8));
-                    }
-                }
-                outside += 1;
-            }
-        }
-        inside += 1;
     }
     // Only enclosing parallel scopes can have one side outside this arm.
     let markers = events.scope_markers();
@@ -110,6 +96,34 @@ const fn align_range<const E: usize>(
         }
         marker_index += 1;
     }
+    // An injective map preserves constraints inside the range. Check only
+    // edges still possible after parallel ownership; clearing an edge is final.
+    let mut inside = arm.0;
+    while inside < arm.1 {
+        let a = events.atom_at(inside);
+        if a.from != a.to {
+            let mut outside = 0;
+            while outside < events.len() {
+                if outside < arm.0 || arm.1 <= outside {
+                    let b = events.atom_at(outside);
+                    if b.from != b.to
+                        && a.to == b.to
+                        && a.from != b.from
+                        && edges[a.lane as usize * row_bytes + b.lane as usize / 8]
+                            & (1 << (b.lane % 8))
+                            != 0
+                        && (!receive_pair_is_causal(events, actors, inside, outside)
+                            || !receive_pair_is_causal(events, actors, outside, inside))
+                    {
+                        edges[a.lane as usize * row_bytes + b.lane as usize / 8] &=
+                            !(1 << (b.lane % 8));
+                    }
+                }
+                outside += 1;
+            }
+        }
+        inside += 1;
+    }
     let matching = maximum_lane_matching::<0>(
         LaneCompatibility::Constraints {
             rows: edges.split_at(span as usize * row_bytes).0,
@@ -153,8 +167,8 @@ pub(crate) const fn assign_receive_lanes<const E: usize>(
     events: &mut EffList<E>,
     actors: Option<&SourceActorImage<E>>,
 ) -> bool {
-    let mut accepted = causal(events, actors);
-    if accepted {
+    let mut checked = inspect(events, actors);
+    if checked.is_ok() {
         return true;
     }
     let mut span = 0;
@@ -172,13 +186,11 @@ pub(crate) const fn assign_receive_lanes<const E: usize>(
         Some(value) => value,
         None => crate::invariant(),
     };
-    while !accepted && remaining != 0 {
-        let conflict = match actors {
-            Some(image) => owned_receive_lane_conflict(events, image),
-            None => receive_lane_conflict(events),
-        };
-        let Some((first, second, _)) = conflict else {
-            return false;
+    while remaining != 0 {
+        let (first, second, _) = match checked {
+            Ok(()) => return true,
+            Err(Some(pair)) => pair,
+            Err(None) => return false,
         };
         let mut changed = false;
         let mut palette = 0;
@@ -218,7 +230,10 @@ pub(crate) const fn assign_receive_lanes<const E: usize>(
         if !changed {
             return false;
         }
-        accepted = causal(events, actors);
+        checked = inspect(events, actors);
+        if checked.is_ok() {
+            return true;
+        }
         index = 0;
         while index < events.len() {
             let needed = events.atom_at(index).lane as u16 + 1;
@@ -229,5 +244,5 @@ pub(crate) const fn assign_receive_lanes<const E: usize>(
         }
         remaining -= 1;
     }
-    accepted
+    checked.is_ok()
 }

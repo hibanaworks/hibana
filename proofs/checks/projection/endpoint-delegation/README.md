@@ -15,6 +15,14 @@ Its output is checked by `Knowledge.lean`, `Causality.lean` and the generated
 Lean claims. `kani/` checks production ownership-equation operations. `check.sh`
 runs every `.smt2` file in this directory against its declared `EXPECT` results.
 
+The same entry point exhausts every `u8` actor triple for fixed parallel, route
+and repeated-prefix sources: 184,549,376 production queries in total. Independent
+scalar expectations check the results. Another 7,873,200 queries compare pruned
+and full scans across small structured sources. These run with overflow checks
+and debug assertions enabled. They enumerate the full stated domains; they do
+not enumerate all possible source trees. Kani separately checks linear causal
+handoffs, actor bitsets, receive indexing and scope searches.
+
 The source validator is one part of Endpoint delegation. Initial attachment
 uses the transport's unique `EndpointBinding` and requires the source-assigned
 initial actor to be attached in the same runtime and session. Value transfer,

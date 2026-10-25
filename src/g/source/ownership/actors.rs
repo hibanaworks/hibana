@@ -93,26 +93,35 @@ impl<const E: usize, const D: usize> ActorImage<E, D> {
     /// Verifier-only DAG fixtures exercise the receive checker independently
     /// of ownership elaboration. All references are bounded and backward.
     #[cfg(any(kani, all(test, hibana_repo_tests, not(miri))))]
-    pub(crate) fn causal_fixture(bindings: &[[u16; 2]], decisions: &[(Scope, [u16; 2])]) -> Self {
+    pub(crate) const fn causal_fixture(
+        bindings: &[[u16; 2]],
+        decisions: &[(Scope, [u16; 2])],
+    ) -> Self {
         assert!(bindings.len() <= E && decisions.len() <= D);
         let mut image = Self::new();
-        for (index, &(scope, children)) in decisions.iter().enumerate() {
-            assert!(usize::from(children[0]) < 256 + index);
-            assert!(usize::from(children[1]) < 256 + index);
+        let mut index = 0;
+        while index < decisions.len() {
+            let (scope, children) = decisions[index];
+            assert!((children[0] as usize) < 256 + index);
+            assert!((children[1] as usize) < 256 + index);
             image.choices[index] = ActorChoice {
                 scope,
                 left: ActorRef(children[0]),
                 right: ActorRef(children[1]),
             };
+            index += 1;
         }
         image.choice_len = decisions.len();
-        for (index, &pair) in bindings.iter().enumerate() {
-            assert!(usize::from(pair[0]) < 256 + decisions.len());
-            assert!(usize::from(pair[1]) < 256 + decisions.len());
+        index = 0;
+        while index < bindings.len() {
+            let pair = bindings[index];
+            assert!((pair[0] as usize) < 256 + decisions.len());
+            assert!((pair[1] as usize) < 256 + decisions.len());
             image.events[index] = ActorPair {
                 sender: ActorRef(pair[0]),
                 receiver: ActorRef(pair[1]),
             };
+            index += 1;
         }
         image.event_len = bindings.len();
         image

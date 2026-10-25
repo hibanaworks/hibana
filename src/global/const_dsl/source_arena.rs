@@ -56,7 +56,12 @@ impl ScopeMarkerView<'_> {
         if floor > self.len {
             crate::invariant();
         }
-        let mut low = floor;
+        // Sequential queries usually retain the next marker as their floor.
+        // Its checked offset already answers the query until that boundary.
+        if floor == self.len || self.at(floor).offset() >= offset {
+            return floor;
+        }
+        let mut low = floor + 1;
         let mut high = self.len;
         while low < high {
             let middle = low + (high - low) / 2;

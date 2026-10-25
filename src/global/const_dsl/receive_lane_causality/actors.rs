@@ -2,8 +2,8 @@
 //! the physical actor holding each endpoint at that source event. Both come
 //! from the same checked source; possible-holder sets are never authority.
 use super::{
-    CausalFlow, CausalRoles, EffList, FlowGoal, FlowRange, RollBodyRange, ScopeKind,
-    roll_body_range_from_enter, sender_change_end,
+    CausalFlow, CausalRoles, EffList, FlowGoal, FlowRange, ReceiveDirectionIndex, RollBodyRange,
+    ScopeKind, roll_body_range_from_enter,
 };
 use crate::{
     eff::EffAtom,
@@ -201,10 +201,56 @@ struct Obligation<'a, const E: usize, const D: usize> {
 }
 
 impl<const E: usize, const D: usize> Obligation<'_, E, D> {
+    const fn first_relevant_offset(&self) -> usize {
+        let body = match self.repeated {
+            Some(body) => body,
+            None => RollBodyRange::new(0, self.events.len()),
+        };
+        let cutoff = if self.repeated.is_some() {
+            body.end
+        } else {
+            self.end
+        };
+        let markers = self.events.scope_markers();
+        let mut start = self.earlier;
+        let mut index = 0;
+        while index < markers.len() {
+            let marker = markers.at(index);
+            let offset = marker.offset();
+            if offset > self.earlier {
+                break;
+            }
+            if offset >= body.start && marker.event.is_primary_enter() {
+                let fork = match marker.scope_id.kind() {
+                    Some(ScopeKind::Route) => match marker.event.route_end() {
+                        Some(end) => Some((marker.segment_end(), end)),
+                        None => crate::invariant(),
+                    },
+                    Some(ScopeKind::Parallel) => match marker.event.parallel_split() {
+                        Some(split) => Some((split, marker.segment_end())),
+                        None => crate::invariant(),
+                    },
+                    Some(ScopeKind::Roll) | None => None,
+                };
+                if let Some((split, end)) = fork
+                    && self.earlier < split
+                    && split < cutoff
+                    && end <= body.end
+                    && offset < start
+                {
+                    start = offset;
+                }
+            }
+            index += 1;
+        }
+        start
+    }
+
     const fn run(
         &self,
         actors: ActorMap<'_, E, D>,
         target: Option<usize>,
+        start: usize,
     ) -> Result<bool, NeedChoice> {
         let earlier = self.events.atom_at(self.earlier);
         let body = match self.repeated {
@@ -229,11 +275,12 @@ impl<const E: usize, const D: usize> Obligation<'_, E, D> {
             body_start: body.start,
             iteration_start: 0,
         };
-        let facts = match flow.advance_as(range, CausalRoles::empty(), actors) {
-            Ok(Some(value)) => value,
-            Ok(None) => return Ok(false),
-            Err(choice) => return Err(choice),
-        };
+        let facts =
+            match flow.advance_as(FlowRange { start, ..range }, CausalRoles::empty(), actors) {
+                Ok(Some(value)) => value,
+                Ok(None) => return Ok(false),
+                Err(choice) => return Err(choice),
+            };
         if self.repeated.is_none() {
             return Ok(true);
         }
@@ -252,6 +299,10 @@ impl<const E: usize, const D: usize> Obligation<'_, E, D> {
     }
 
     const fn check(&self, paths: Paths<'_>, target: Option<usize>) -> bool {
+        self.check_from(paths, target, self.first_relevant_offset())
+    }
+
+    const fn check_from(&self, paths: Paths<'_>, target: Option<usize>, start: usize) -> bool {
         let actors = match self.actors {
             Some(image) => ActorMap::Owned {
                 image,
@@ -260,7 +311,7 @@ impl<const E: usize, const D: usize> Obligation<'_, E, D> {
             },
             None => ActorMap::Logical,
         };
-        let choice = match self.run(actors, target) {
+        let choice = match self.run(actors, target, start) {
             Ok(result) => return result,
             Err(choice) => choice,
         };
@@ -314,12 +365,12 @@ impl<const E: usize, const D: usize> Obligation<'_, E, D> {
             && self.earlier < choice.scope.stop as usize
         {
             if self.earlier < choice.scope.split as usize {
-                self.check(left, target)
+                self.check_from(left, target, start)
             } else {
-                self.check(right, target)
+                self.check_from(right, target, start)
             }
         } else {
-            self.check(left, target) && self.check(right, target)
+            self.check_from(left, target, start) && self.check_from(right, target, start)
         }
     }
 }
@@ -366,120 +417,41 @@ pub(crate) const fn receive_pair_is_causal<const E: usize, const D: usize>(
     let mut index = 0;
     while index < markers.len() {
         let marker = markers.at(index);
-        if marker.event.is_primary_enter()
-            && matches!(marker.scope_id.kind(), Some(ScopeKind::Roll))
-        {
-            let Some((start, end)) = roll_body_range_from_enter(markers, index) else {
-                return false;
-            };
-            if start <= earlier
-                && earlier < end
-                && start <= later
-                && later < end
-                && !(Obligation {
-                    events,
-                    actors,
-                    earlier,
-                    end: later + 1,
-                    repeated: Some(RollBodyRange::new(start, end)),
-                })
-                .check(paths, Some(later))
-            {
-                return false;
-            }
+        // Markers are ordered by source offset. A later start cannot contain
+        // both receives, including when their order crosses a roll boundary.
+        if marker.offset() > earlier || marker.offset() > later {
+            break;
         }
-        index += 1;
-    }
-    true
-}
-
-pub(crate) const fn validate_owned_receive_lane_causality<const E: usize, const D: usize>(
-    events: &EffList<E>,
-    actors: &SourceActorImage<E, D>,
-) -> bool {
-    let context = SourceContext::new(&[]);
-    let paths = Paths {
-        shared: &context,
-        current: &context,
-        next: &context,
-    };
-    let range = FlowRange {
-        start: 0,
-        end: events.len(),
-        marker_floor: 0,
-    };
-    let mut earlier = 0;
-    while earlier < events.len() {
-        let atom = events.atom_at(earlier);
-        if atom.from != atom.to
-            && let Some(end) = sender_change_end(
-                events,
-                FlowRange {
-                    start: earlier + 1,
-                    ..range
-                },
-                atom,
-            )
+        if !marker.event.is_primary_enter()
+            || !matches!(marker.scope_id.kind(), Some(ScopeKind::Roll))
+        {
+            index += 1;
+            continue;
+        }
+        let start = marker.offset();
+        let end = marker.segment_end();
+        if end <= start {
+            return false;
+        }
+        if earlier < end
+            && later < end
             && !(Obligation {
                 events,
-                actors: Some(actors),
+                actors,
                 earlier,
-                end,
-                repeated: None,
+                end: later + 1,
+                repeated: Some(RollBodyRange::new(start, end)),
             })
-            .check(paths, None)
+            .check(paths, Some(later))
         {
             return false;
         }
-        earlier += 1;
-    }
-    let markers = events.scope_markers();
-    let mut index = 0;
-    while index < markers.len() {
-        let marker = markers.at(index);
-        if marker.event.is_primary_enter()
-            && matches!(marker.scope_id.kind(), Some(ScopeKind::Roll))
-        {
-            let Some((start, end)) = roll_body_range_from_enter(markers, index) else {
-                return false;
-            };
-            let body = RollBodyRange::new(start, end);
-            if !body.is_valid_for(events) {
-                return false;
-            }
-            let mut earlier = start;
-            while earlier < end {
-                let atom = events.atom_at(earlier);
-                if atom.from != atom.to
-                    && let Some(end) = sender_change_end(
-                        events,
-                        FlowRange {
-                            start,
-                            end,
-                            marker_floor: 0,
-                        },
-                        atom,
-                    )
-                    && !(Obligation {
-                        events,
-                        actors: Some(actors),
-                        earlier,
-                        end,
-                        repeated: Some(body),
-                    })
-                    .check(paths, None)
-                {
-                    return false;
-                }
-                earlier += 1;
-            }
-        }
         index += 1;
     }
     true
 }
 
-/// Locate the rejected receive pair without changing projection admission.
+/// Check source receive order and return its first rejected receive pair.
 pub(crate) const fn owned_receive_lane_conflict<const E: usize, const D: usize>(
     events: &EffList<E>,
     actors: &SourceActorImage<E, D>,
@@ -504,8 +476,11 @@ pub(crate) const fn owned_receive_lane_conflict<const E: usize, const D: usize>(
                 continue;
             }
             let Some((start, stop)) = roll_body_range_from_enter(markers, region - 1) else {
-                return None;
+                crate::invariant();
             };
+            if !RollBodyRange::new(start, stop).is_valid_for(events) {
+                crate::invariant();
+            }
             (
                 start,
                 stop,
@@ -513,6 +488,7 @@ pub(crate) const fn owned_receive_lane_conflict<const E: usize, const D: usize>(
                 Some(marker.scope_id.local_ordinal()),
             )
         };
+        let directions = ReceiveDirectionIndex::new(events, start, stop);
         let mut earlier = start;
         while earlier < stop {
             let atom = events.atom_at(earlier);
@@ -526,7 +502,7 @@ pub(crate) const fn owned_receive_lane_conflict<const E: usize, const D: usize>(
                 marker_floor: 0,
             };
             if atom.from != atom.to
-                && let Some(end) = sender_change_end(events, range, atom)
+                && let Some(end) = directions.last_change(atom, range.start)
                 && !(Obligation {
                     events,
                     actors: Some(actors),
@@ -553,6 +529,9 @@ pub(crate) const fn owned_receive_lane_conflict<const E: usize, const D: usize>(
                     }
                     later += 1;
                 }
+                // A failed bulk query must identify an actual rejected receive.
+                // Never turn missing diagnostic data into successful admission.
+                crate::invariant();
             }
             earlier += 1;
         }
