@@ -1,10 +1,10 @@
 error[E0080]: evaluation panicked: rolled endpoint delegation must restore its incoming ownership; role=10; help: return each transferred Endpoint to its incoming holder inside the roll
- --> src/g.rs
+ --> src/g/source.rs
   |
-  |     const SOURCE: ProgramSourceData<CAPACITY> = ProgramSourceData::lower::<Steps>();
-  |                                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `hibana::g::ProgramProjection::<hibana::g::Roll<hibana::g::Send<0, 1, hibana::g::Msg<1, hibana::Endpoint<'_, 10>>>>, 8>::SOURCE` failed inside this call
+  |     const EVENTS: EffList<CAPACITY> = ProgramSourceData::<CAPACITY>::emit::<Steps>();
+  |                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `hibana::g::source::SourceEvents::<hibana::g::Roll<hibana::g::Send<0, 1, hibana::g::Msg<1, hibana::Endpoint<'_, 10>>>>, 8>::EVENTS` failed inside this call
   |
-note: inside `g::source::ProgramSourceData::<8>::lower::<Roll<hibana::g::Send<0, 1, Msg<1, Endpoint<'_, 10>>>>>`
+note: inside `g::source::ProgramSourceData::<8>::emit::<Roll<hibana::g::Send<0, 1, Msg<1, Endpoint<'_, 10>>>>>`
  --> src/g/source.rs
   |
   |               Err(error) => super::diagnostic_message::panic_diagnostic(
@@ -22,6 +22,12 @@ note: inside `g::diagnostic_message::panic_diagnostic`
   |
   |         Ok(message) => panic!("{}", message),
   |                        --------------------- in this macro invocation
+
+note: erroneous constant encountered
+ --> src/g/source.rs
+  |
+  |         let mut eff = SourceEvents::<Steps, CAPACITY>::EVENTS;
+  |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 note: erroneous constant encountered
  --> src/g.rs

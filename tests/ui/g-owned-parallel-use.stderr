@@ -1,10 +1,10 @@
 error[E0080]: evaluation panicked: parallel endpoint delegation conflicts with another use; role=10; help: keep the transfer and dependent resource operations in sequence
- --> src/g.rs
+ --> src/g/source.rs
   |
-  |     const SOURCE: ProgramSourceData<CAPACITY> = ProgramSourceData::lower::<Steps>();
-  |                                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `hibana::g::ProgramProjection::<hibana::g::Par<hibana::g::Send<0, 1, hibana::g::Msg<1, hibana::Endpoint<'_, 10>>>, hibana::g::Send<10, 3, hibana::g::Msg<2, u32>>>, 8>::SOURCE` failed inside this call
+  |     const EVENTS: EffList<CAPACITY> = ProgramSourceData::<CAPACITY>::emit::<Steps>();
+  |                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `hibana::g::source::SourceEvents::<hibana::g::Par<hibana::g::Send<0, 1, hibana::g::Msg<1, hibana::Endpoint<'_, 10>>>, hibana::g::Send<10, 3, hibana::g::Msg<2, u32>>>, 8>::EVENTS` failed inside this call
   |
-note: inside `g::source::ProgramSourceData::<8>::lower::<Par<hibana::g::Send<0, 1, Msg<1, Endpoint<'_, 10>>>, hibana::g::Send<10, 3, Msg<2, u32>>>>`
+note: inside `g::source::ProgramSourceData::<8>::emit::<Par<hibana::g::Send<0, 1, Msg<1, Endpoint<'_, 10>>>, hibana::g::Send<10, 3, Msg<2, u32>>>>`
  --> src/g/source.rs
   |
   |               Err(error) => super::diagnostic_message::panic_diagnostic(
@@ -22,6 +22,12 @@ note: inside `g::diagnostic_message::panic_diagnostic`
   |
   |         Ok(message) => panic!("{}", message),
   |                        --------------------- in this macro invocation
+
+note: erroneous constant encountered
+ --> src/g/source.rs
+  |
+  |         let mut eff = SourceEvents::<Steps, CAPACITY>::EVENTS;
+  |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 note: erroneous constant encountered
  --> src/g.rs

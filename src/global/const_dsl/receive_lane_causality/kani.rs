@@ -163,6 +163,7 @@ fn causal_role_facts_and_joins_are_role_exact() {
 }
 
 #[kani::proof]
+#[kani::unwind(5)]
 fn three_event_linear_scan_matches_pairwise_checker() {
     let events = EffList::<4>::new()
         .push(event(kani::any(), kani::any(), kani::any()))
