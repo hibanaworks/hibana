@@ -47,6 +47,21 @@ fn path_count(source: &Protocol) -> usize {
     .expect("source path count exceeds the host usize domain")
 }
 
+pub(super) fn parallel_pair_bound(source: &Protocol) -> usize {
+    fn width(source: &Protocol) -> usize {
+        match source {
+            Protocol::Message { .. } => 0,
+            Protocol::Seq(a, b) => width(a) + width(b),
+            Protocol::Par(a, b) => 1 + width(a) + width(b),
+            Protocol::Route(a, b) | Protocol::Resolved(a, b, _) => width(a).max(width(b)),
+            Protocol::Roll(body) => 2 * width(body),
+        }
+    }
+    path_count(source)
+        .checked_mul(parallel_rows(width(source)).len())
+        .expect("source script work exceeds the host usize domain")
+}
+
 fn path_at(source: &Protocol, rank: usize) -> Execution {
     match source {
         Protocol::Message { label, .. } => {
@@ -194,6 +209,22 @@ impl<'s> Plans<'s> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn source_work_bound_covers_every_script_in_small_and_heavy_contexts() {
+        for length in 0..=2 {
+            for rank in 0..super::super::interactions::spine_count(length) {
+                let source = super::super::interactions::spine(length, rank).source;
+                assert!(
+                    parallel_pair_bound(&source)
+                        >= Plans::new(&source, Coverage::ParallelPairs).len()
+                );
+            }
+        }
+        let source = super::super::interactions::spine(5, 33610).source;
+        assert_eq!(parallel_pair_bound(&source), 65_536);
+        assert_eq!(Plans::new(&source, Coverage::ParallelPairs).len(), 65_536);
+    }
 
     #[test]
     fn binary_columns_cover_every_parallel_pair_and_both_single_orders() {

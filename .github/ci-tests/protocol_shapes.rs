@@ -1097,15 +1097,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         println!(
             "{}",
-            range_matrix(
+            context_matrix(
+                length,
                 args[2].parse()?,
                 args[3].parse()?,
-                if args[0] == "spine-matrix" {
-                    interactions::spine_count(length)
-                } else {
-                    interactions::count(length)
-                }
-                .into()
+                args[0] == "spine-matrix"
             )?
         );
         return Ok(());
@@ -1200,6 +1196,56 @@ fn range_matrix(
         })
         .collect::<Vec<_>>();
     Ok(format!(r#"{{"include":[{}]}}"#, entries.join(",")))
+}
+
+fn context_matrix(
+    length: usize,
+    first: usize,
+    count: usize,
+    spine: bool,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let (population, construct) = if spine {
+        (
+            interactions::spine_count(length),
+            interactions::spine as fn(usize, usize) -> interactions::Interaction,
+        )
+    } else {
+        (
+            interactions::count(length),
+            interactions::protocol as fn(usize, usize) -> interactions::Interaction,
+        )
+    };
+    let end = first.checked_add(count).ok_or("context range overflow")?;
+    if count == 0 || end > population {
+        return Err("context range exceeds its population".into());
+    }
+    let mut entries = Vec::new();
+    let mut start = first;
+    let mut work = 0usize;
+    for rank in first..end {
+        let bound = plans::parallel_pair_bound(&construct(length, rank).source);
+        if rank != start && (rank - start == 32 || work.saturating_add(bound) > 8192) {
+            entries.push((start, rank - start));
+            start = rank;
+            work = 0;
+        }
+        work = work.checked_add(bound).ok_or("context workload overflow")?;
+    }
+    entries.push((start, end - start));
+    if entries.len() > 256 {
+        return Err("context workload exceeds 256 CI jobs; split this candidate interval".into());
+    }
+    Ok(format!(
+        r#"{{"include":[{}]}}"#,
+        entries
+            .iter()
+            .enumerate()
+            .map(|(partition, (first, count))| format!(
+                r#"{{"partition":{partition},"first":"{first}","count":{count}}}"#
+            ))
+            .collect::<Vec<_>>()
+            .join(",")
+    ))
 }
 
 fn template_cases(budget: usize, shard: usize, shards: usize) -> CaseSet {
@@ -2208,6 +2254,34 @@ mod population_tests {
             r#"{"include":[{"partition":0,"first":"130","count":32}]}"#
         );
         assert!(range_matrix(131usize.into(), 32, interactions::count(2).into()).is_err());
+    }
+
+    #[test]
+    fn context_work_assignment_preserves_the_range_and_isolates_heavy_cases() {
+        for (length, first, count) in [(0, 0, 2), (4, 0, 4802), (5, 33582, 32)] {
+            let matrix: serde_json::Value =
+                serde_json::from_str(&context_matrix(length, first, count, true).unwrap()).unwrap();
+            let mut next = first;
+            let entries = matrix["include"].as_array().unwrap();
+            for (partition, entry) in entries.iter().enumerate() {
+                assert_eq!(entry["partition"], partition);
+                let start = entry["first"].as_str().unwrap().parse::<usize>().unwrap();
+                let size = entry["count"].as_u64().unwrap() as usize;
+                assert_eq!(start, next);
+                assert!((1..=32).contains(&size));
+                let work = (start..start + size)
+                    .map(|rank| {
+                        plans::parallel_pair_bound(&interactions::spine(length, rank).source)
+                    })
+                    .sum::<usize>();
+                assert!(size == 1 || work <= 8192);
+                next += size;
+            }
+            assert_eq!(next, first + count);
+        }
+        assert!(context_matrix(2, 0, 0, true).is_err());
+        assert!(context_matrix(2, 97, 2, true).is_err());
+        assert!(context_matrix(5, usize::MAX, 1, true).is_err());
     }
 
     #[test]
