@@ -140,12 +140,29 @@ impl Source {
             &mut Vec::new(),
             &mut planned,
         )?;
+        let local_messages = self
+            .nodes
+            .iter()
+            .filter(|node| node.kind == 0 && node.sender == node.receiver && !node.owned)
+            .map(|node| (node.sender, node.label))
+            .collect::<BTreeSet<_>>();
         let mut completed = Vec::new();
-        for call in observed {
+        for (position, call) in observed.iter().enumerate() {
+            let mut key = *call;
+            // send and a preview's recv consume the same self-role operation.
+            // There is still only one planned occurrence to remove.
+            if local_messages.contains(&(key.1, key.2)) {
+                key.3 = false;
+            }
             let row = planned
-                .get_mut(call)
+                .get_mut(&key)
                 .and_then(VecDeque::pop_front)
-                .ok_or("completed call has no source occurrence")?;
+                .ok_or_else(|| {
+                    format!(
+                        "case {} call {position}: no source occurrence for {call:?}",
+                        self.name
+                    )
+                })?;
             completed.push(Completed {
                 actor: call.0,
                 leaf: row.leaf,
@@ -370,6 +387,55 @@ pub(super) fn audit(output: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn a_local_preview_receive_consumes_exactly_one_source_occurrence() {
+        let mut source = Source {
+            name: 0,
+            nodes: vec![Node {
+                kind: 0,
+                left: 0,
+                right: 0,
+                sender: 0,
+                receiver: 0,
+                label: 1,
+                owned: false,
+            }],
+        };
+        let script = serde_json::json!([0, 1, 0]);
+        assert_eq!(
+            source
+                .completed(&script, &[(0, 0, 1, false)])
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            source.completed(&script, &[(0, 0, 1, true)]).unwrap().len(),
+            1
+        );
+        for invalid in [
+            vec![(0, 0, 1, false), (0, 0, 1, true)],
+            vec![(1, 0, 1, true)],
+            vec![(0, 1, 1, true)],
+            vec![],
+        ] {
+            assert!(source.completed(&script, &invalid).is_err());
+        }
+        source.nodes[0].receiver = 1;
+        assert_eq!(
+            source
+                .completed(&script, &[(0, 0, 1, false), (1, 1, 1, true)])
+                .unwrap()
+                .len(),
+            2
+        );
+        assert!(
+            source
+                .completed(&script, &[(0, 0, 1, true), (1, 1, 1, true)])
+                .is_err()
+        );
+    }
+
     #[test]
     fn syntax_alone_and_a_late_child_do_not_count_as_an_early_child() {
         let source: Source = serde_json::from_str(r#"{"name":0,"nodes":[{"kind":0,"sender":0,"receiver":1,"label":1},{"kind":5,"left":0},{"kind":0,"sender":0,"receiver":1,"label":2},{"kind":2,"left":1,"right":2},{"kind":5,"left":3}]}"#).unwrap();
