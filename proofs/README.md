@@ -78,6 +78,15 @@ participant and occurrence. A source containing nested repetitions alone does
 not count as a schedule witness. A shard without such a witness records only
 the header; it does not claim this scheduling case was exercised.
 
+Large cases run rejection probes in processes handling up to 8,192 source
+scripts each. Every process also executes every successful source script and
+checks the complete set of source paths. Only the rejection probes and their
+output are partitioned. The runner combines both poll orders for every script,
+rejects missing or repeated records, then runs the same source checker and
+mutation checks on the complete result. Each test process retains the one-hour
+time limit; the CI job and memory limits are unchanged. Execution time includes
+the repeated successful baselines.
+
 The source-representative catalog supports depths zero through two:
 
 ```sh

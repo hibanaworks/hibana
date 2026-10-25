@@ -109,3 +109,7 @@ path = "protocol_shape_controls.rs"
 [[bin]]
 name = "protocol-shape-rejections"
 path = "protocol_shape_rejections.rs"
+
+[[bin]]
+name = "protocol-shape-runs"
+path = "protocol_shape_runs.rs"

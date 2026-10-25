@@ -93,8 +93,8 @@ rm -rf "${OUTPUT}/observations" "${OUTPUT}/scope-observations"
   cargo +"${TOOLCHAIN:-stable}" test --manifest-path "${OUTPUT}/Cargo.toml" --target-dir "${OUTPUT}/target" --no-run
 (cd "${OUTPUT}" && shasum -a 256 Cargo.lock > dependencies.sha256)
 /usr/bin/time -p -o "${OUTPUT}/execute.time" \
-  timeout --kill-after=10s "${HIBANA_PROTOCOL_SHAPE_TIMEOUT_SECONDS:-3600}s" \
-    cargo +"${TOOLCHAIN:-stable}" test --locked --manifest-path "${OUTPUT}/Cargo.toml" --target-dir "${OUTPUT}/target" -- --test-threads=1
+  cargo +"${TOOLCHAIN:-stable}" run --locked --manifest-path "${ROOT_DIR}/.github/ci-tests/Cargo.toml" \
+    --bin protocol-shape-runs -- "${OUTPUT}" "${TOOLCHAIN:-stable}"
 GENERATED="${ROOT_DIR}/target/lean-proof/ProtocolShapesGenerated.lean"
 mkdir -p "$(dirname "${GENERATED}")"
 cat "${ROOT_DIR}/.github/ci-tests/endpoint_conformance.lean" \

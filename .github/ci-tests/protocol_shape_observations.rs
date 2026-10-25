@@ -9,6 +9,80 @@ struct PendingCalls {
 
 use probe_data::LocalProbe;
 
+fn parse_script_range(
+    total: usize,
+    first: Option<std::ffi::OsString>,
+    count: Option<std::ffi::OsString>,
+) -> Result<core::ops::Range<usize>, &'static str> {
+    if total == 0 {
+        return Err("empty source script inventory");
+    }
+    let (first, count) = match (first, count) {
+        (None, None) => return Ok(0..total),
+        (Some(first), Some(count)) => (first, count),
+        _ => return Err("both script coordinates are required"),
+    };
+    let first = first
+        .to_str()
+        .ok_or("non-Unicode first script")?
+        .parse::<usize>()
+        .map_err(|_| "invalid first script")?;
+    let count = count
+        .to_str()
+        .ok_or("non-Unicode script count")?
+        .parse::<usize>()
+        .map_err(|_| "invalid script count")?;
+    let end = first.checked_add(count).ok_or("script interval overflow")?;
+    if count == 0 || first >= total || end > total {
+        return Err("script interval is outside its source inventory");
+    }
+    Ok(first..end)
+}
+
+fn selected_script_range(total: usize) -> core::ops::Range<usize> {
+    parse_script_range(
+        total,
+        std::env::var_os("HIBANA_PROTOCOL_SHAPE_SCRIPT_FIRST"),
+        std::env::var_os("HIBANA_PROTOCOL_SHAPE_SCRIPT_COUNT"),
+    )
+    .expect("invalid source script partition")
+}
+
+#[test]
+fn script_coordinates_accept_exact_slices_and_reject_out_of_domain_inputs() {
+    let range = |first: Option<&str>, count: Option<&str>| {
+        parse_script_range(65_536, first.map(Into::into), count.map(Into::into))
+    };
+    assert_eq!(range(None, None), Ok(0..65_536));
+    assert_eq!(range(Some("0"), Some("8192")), Ok(0..8192));
+    assert_eq!(range(Some("57344"), Some("8192")), Ok(57344..65_536));
+    for (first, count) in [
+        (Some("0"), None),
+        (None, Some("1")),
+        (Some("0"), Some("0")),
+        (Some("65536"), Some("1")),
+        (Some("65535"), Some("2")),
+        (Some("-1"), Some("1")),
+        (Some("x"), Some("1")),
+    ] {
+        assert!(range(first, count).is_err());
+    }
+    assert!(range(Some(&usize::MAX.to_string()), Some("1")).is_err());
+    assert!(parse_script_range(0, None, None).is_err());
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStringExt;
+        assert!(
+            parse_script_range(
+                1,
+                Some(std::ffi::OsString::from_vec(vec![255])),
+                Some("1".into()),
+            )
+            .is_err()
+        );
+    }
+}
+
 // Schedule data stays outside Rust's const/type evaluation. Its complete
 // source-derived inventory is checked separately against observed calls.
 struct ScopePlans<R: std::io::BufRead> {

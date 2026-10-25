@@ -892,6 +892,7 @@ pub(super) fn runs(plans: &super::plans::Plans<'_>, owner: u8, case: usize) -> S
     let mut code = format!(
         r#"
     let mut completed_plan_words=std::collections::BTreeSet::new();
+    let script_range=selected_script_range({script_count});
     let scripts=std::io::BufRead::lines(std::io::BufReader::new(std::fs::File::open(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("scripts/{case}.jsonl")).expect("missing script plans")));
     use std::io::Write as _;
     let scope_root=std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -900,8 +901,8 @@ pub(super) fn runs(plans: &super::plans::Plans<'_>, owner: u8, case: usize) -> S
     let mut scope_observations=std::io::BufWriter::new(std::fs::File::create(scope_root.join("scope-observations/{case}.jsonl")).unwrap());
     writeln!(scope_observations,"{{{{\"name\":{case},\"scripts\":{}}}}}").unwrap();
     let mut checked_scripts=0usize;
-    for (script_index,line) in scripts.enumerate() {{ let decoded_script=Script::from_json(&line.expect("unreadable script plan")).expect("invalid script plan");let script=&decoded_script;let probes=scope_plans.next(script_index);for reverse_poll in [false,true] {{
-    write!(scope_observations,"{{{{\"script\":{{script_index}},\"reversePoll\":{{reverse_poll}}").unwrap();
+    for (script_index,line) in scripts.enumerate() {{ let decoded_script=Script::from_json(&line.expect("unreadable script plan")).expect("invalid script plan");let script=&decoded_script;let planned_probes=scope_plans.next(script_index);let record_script=script_range.contains(&script_index);let probes=if record_script{{planned_probes.as_slice()}}else{{&[]}};for reverse_poll in [false,true] {{
+    if record_script{{write!(scope_observations,"{{{{\"script\":{{script_index}},\"reversePoll\":{{reverse_poll}}").unwrap();}}
     let mut scoped_rejections=Vec::new();
     for probe in core::iter::once(None).chain(probes.iter().copied().map(Some)) {{
       let _=reverse_poll;
@@ -1013,13 +1014,13 @@ pub(super) fn runs(plans: &super::plans::Plans<'_>, owner: u8, case: usize) -> S
     code += r#"let result=tokio::time::timeout(core::time::Duration::from_secs(1),async{tokio::try_join!(run0,run1,run2,run3)}).await.expect("generated localside stalled");
     if let Some(probe)=probe{assert!(result.is_err(),"local probe did not stop its run");let actual=observed.scope_rejections.borrow();assert_eq!(*actual,[probe],"planned local probe was not reached");scoped_rejections.push(actual[0].json());continue;}
     result.unwrap();
-    write!(scope_observations,",\"completed\":[").unwrap();
+    if record_script{write!(scope_observations,",\"completed\":[").unwrap();
     for (index,(actor,role,label,receive)) in observed.completed.borrow().iter().enumerate(){if index!=0{write!(scope_observations,",").unwrap();}write!(scope_observations,"[{actor},{role},{label},{receive}]").unwrap();}
-    write!(scope_observations,"]").unwrap();
+    write!(scope_observations,"]").unwrap();}
     assert!(observed.calls.borrow().is_empty());
     "#;
     code += &format!(
-        r#"}}writeln!(scope_observations,",\"probes\":[{{}}]}}}}",scoped_rejections.join(",")).unwrap();}}completed_plan_words.insert(script.line());checked_scripts+=1;}}assert_eq!(checked_scripts,{},"missing script plan");scope_plans.finish();scope_observations.flush().unwrap();"#,
+        r#"}}if record_script{{writeln!(scope_observations,",\"probes\":[{{}}]}}}}",scoped_rejections.join(",")).unwrap();}}}}completed_plan_words.insert(script.line());checked_scripts+=1;}}assert_eq!(checked_scripts,{},"missing script plan");scope_plans.finish();scope_observations.flush().unwrap();"#,
         script_count
     );
     code
