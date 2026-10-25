@@ -69,13 +69,17 @@ impl EventCursor {
             return None;
         }
         let parent_row = crate::invariant_some(self.machine().roll_scope_row(parent));
+        let credit_start = self.roll_credit_word_start();
+        let credits = self.completed_event_words();
         let mut found = None;
         let mut slot = 0;
         while let Some((scope, row)) = self.machine().roll_scope_row_by_slot(slot) {
             if !scope.same(parent)
                 && row.start() <= index
                 && index < row.end()
-                && self.completed_roll_credits(scope) != 0
+                && read_word_pair(crate::invariant_some(
+                    credits[credit_start + 2 * slot..].first_chunk(),
+                )) != 0
                 && Self::roll_rows_nested_within((scope, row), (parent, parent_row))
             {
                 found = Some(found.map_or(scope, |prior| self.outer_roll_scope(prior, scope)));
@@ -134,17 +138,19 @@ impl EventCursor {
             .footprint()
             .borrow_epoch_count
             == 0
-            || self.machine().roll_scope_row(child).is_none()
         {
             return false;
         }
+        let Some(child_row) = self.machine().roll_scope_row(child) else {
+            return false;
+        };
         if self.completed_roll_credits(child) != 0 {
             return true;
         }
         let mut slot = 0;
         while let Some((parent, row)) = self.machine().roll_scope_row_by_slot(slot) {
             if !parent.same(child)
-                && self.roll_scope_nested_within(child, parent)
+                && Self::roll_rows_nested_within((child, child_row), (parent, row))
                 && self.roll_scope_events_complete_at(parent, entry, selected)
                 && (row.start()..row.end()).any(|index| {
                     !self.roll_scope_contains_index(child, index)

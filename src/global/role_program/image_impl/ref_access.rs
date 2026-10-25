@@ -217,7 +217,7 @@ impl RoleImageRef {
 
     #[inline(always)]
     pub(crate) const fn local_step_count(&self) -> usize {
-        self.footprint().local_step_count
+        self.facts.words[RuntimeRoleFacts::LOCAL_STEP_COUNT] as usize
     }
 
     #[inline(always)]
