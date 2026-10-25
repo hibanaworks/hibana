@@ -207,7 +207,7 @@ impl ProgramImageColumns {
     #[inline(always)]
     pub(crate) const fn route_resolvers(self) -> ProgramColumnRange {
         ProgramColumnRange::new(
-            self.atoms().end_offset(PROGRAM_IMAGE_ATOM_STRIDE),
+            self.atom_count() * PROGRAM_IMAGE_ATOM_STRIDE,
             self.route_resolver_len as usize,
             PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE,
         )
@@ -223,9 +223,7 @@ impl ProgramImageColumns {
 
     pub(super) const fn scope_markers_for(self, count: usize) -> ProgramColumnRange {
         ProgramColumnRange::new(
-            self.route_participants()
-                .end_offset(PROGRAM_IMAGE_ROUTE_PARTICIPANT_STRIDE)
-                + if self.has_ownership() { 4 } else { 0 },
+            self.scope_marker_offset() + if self.has_ownership() { 4 } else { 0 },
             count,
             PROGRAM_IMAGE_SCOPE_MARKER_STRIDE,
         )
@@ -234,8 +232,8 @@ impl ProgramImageColumns {
     #[inline(always)]
     pub(crate) const fn route_participants(self) -> ProgramColumnRange {
         ProgramColumnRange::new(
-            self.route_resolvers()
-                .end_offset(PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE),
+            self.atom_count() * PROGRAM_IMAGE_ATOM_STRIDE
+                + self.route_resolver_len as usize * PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE,
             self.route_participant_len as usize,
             PROGRAM_IMAGE_ROUTE_PARTICIPANT_STRIDE,
         )
@@ -245,16 +243,17 @@ impl ProgramImageColumns {
         self.atom_len & Self::OWNED != 0
     }
 
+    const fn scope_marker_offset(self) -> usize {
+        self.atom_count() * PROGRAM_IMAGE_ATOM_STRIDE
+            + self.route_resolver_len as usize * PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE
+            + self.route_participant_len as usize * PROGRAM_IMAGE_ROUTE_PARTICIPANT_STRIDE
+    }
+
     pub(super) const fn ownership_header(self) -> ProgramColumnRange {
         if !self.has_ownership() {
             crate::invariant();
         }
-        ProgramColumnRange::new(
-            self.route_participants()
-                .end_offset(PROGRAM_IMAGE_ROUTE_PARTICIPANT_STRIDE),
-            2,
-            2,
-        )
+        ProgramColumnRange::new(self.scope_marker_offset(), 2, 2)
     }
 
     pub(super) const fn ownership_columns(

@@ -16,7 +16,9 @@ impl RoleImageRef {
         }
         let mut marker = 0;
         while marker < self.program.source_scope_marker_count() {
-            if let Some((start, _, end)) = self.program.source_parallel_at(marker) {
+            if let Some((start, _, end)) = self.program.source_parallel_at(marker)
+                && self.mask_row_start(start) < self.mask_row_start(end)
+            {
                 let mut repeated = false;
                 let mut roll_marker = 0;
                 while roll_marker < self.program.source_scope_marker_count() {
@@ -36,7 +38,7 @@ impl RoleImageRef {
                     }
                     roll_marker += 1;
                 }
-                if repeated && self.mask_row_start(start) < self.mask_row_start(end) {
+                if repeated {
                     return true;
                 }
             }
@@ -136,9 +138,11 @@ impl RoleImageRef {
                         views[view as usize / 8] |= 1 << (view % 8);
                         event += 1;
                     }
-                    let mut view = 0usize;
-                    while view < 256 {
-                        if views[view / 8] & (1 << (view % 8)) != 0 {
+                    let mut view_byte = 0;
+                    while view_byte < views.len() {
+                        let mut remaining = views[view_byte];
+                        while remaining != 0 {
+                            let view = view_byte * 8 + remaining.trailing_zeros() as usize;
                             let mut bits = [0u8; 32];
                             let mut len = 0;
                             let mut event = first;
@@ -168,8 +172,9 @@ impl RoleImageRef {
                                 byte += 1;
                             }
                             offset += HEADER_BYTES + len;
+                            remaining &= remaining - 1;
                         }
-                        view += 1;
+                        view_byte += 1;
                     }
                     arm += 1;
                 }
