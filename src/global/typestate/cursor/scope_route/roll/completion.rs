@@ -68,14 +68,15 @@ impl EventCursor {
         {
             return None;
         }
+        let parent_row = crate::invariant_some(self.machine().roll_scope_row(parent));
         let mut found = None;
         let mut slot = 0;
         while let Some((scope, row)) = self.machine().roll_scope_row_by_slot(slot) {
             if !scope.same(parent)
-                && self.roll_scope_nested_within(scope, parent)
                 && row.start() <= index
                 && index < row.end()
                 && self.completed_roll_credits(scope) != 0
+                && Self::roll_rows_nested_within((scope, row), (parent, parent_row))
             {
                 found = Some(found.map_or(scope, |prior| self.outer_roll_scope(prior, scope)));
             }
