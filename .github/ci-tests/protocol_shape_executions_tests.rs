@@ -1,4 +1,7 @@
-use super::{Protocol, message};
+use super::{
+    Protocol, message,
+    plans::{Coverage, Plans},
+};
 use serde_json::{Value, json};
 
 #[test]
@@ -45,7 +48,9 @@ fn nested_visits_choices_and_poll_orders_keep_their_script_coordinates() {
         }
     }
     let mut scripts = Vec::new();
-    source.write_scripts(&mut scripts).unwrap();
+    Plans::new(&source, Coverage::Exhaustive)
+        .write_scripts(&mut scripts)
+        .unwrap();
     let actual = String::from_utf8(scripts)
         .unwrap()
         .lines()
@@ -97,7 +102,10 @@ fn script_output_errors_are_reported() {
     }
     let source = message(&mut 0, 0, 1, false);
     assert_eq!(
-        source.write_scripts(FailedOutput).unwrap_err().kind(),
+        Plans::new(&source, Coverage::Exhaustive)
+            .write_scripts(FailedOutput)
+            .unwrap_err()
+            .kind(),
         std::io::ErrorKind::StorageFull
     );
 }

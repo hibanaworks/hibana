@@ -346,6 +346,175 @@ fn rejected(
     Ok(())
 }
 
+fn parallel_coverage_control(
+    checker: &Path,
+    inventory: &Json,
+    candidates: &[PathBuf],
+    output: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    fn settings(script: &Json) -> Result<(bool, bool, String), Box<dyn std::error::Error>> {
+        let Json::Array(fields) = script else {
+            return Err("invalid control script".into());
+        };
+        let Some(Json::Number(kind)) = fields.first() else {
+            return Err("missing script kind".into());
+        };
+        match kind.as_str() {
+            "0" => Ok((true, false, source_json(script)?)),
+            "1" | "2" | "4" => {
+                let (a, a_par, a_path) = settings(fields.get(1).ok_or("missing left script")?)?;
+                let (b, b_par, b_path) = settings(fields.get(2).ok_or("missing right script")?)?;
+                let path = format!("[{kind},{a_path},{b_path}]");
+                if kind == "2" {
+                    let Some(Json::Bool(reverse)) = fields.get(3) else {
+                        return Err("missing parallel order".into());
+                    };
+                    Ok((a && b && !reverse, true, path))
+                } else {
+                    Ok((a && b, a_par || b_par, path))
+                }
+            }
+            "3" => {
+                let (forward, parallel, path) =
+                    settings(fields.get(1).ok_or("missing choice script")?)?;
+                let right = source_json(fields.get(2).ok_or("missing choice arm")?)?;
+                Ok((forward, parallel, format!("[3,{path},{right}]")))
+            }
+            _ => Err("unknown control script kind".into()),
+        }
+    }
+    let Json::Array(cases) = inventory else {
+        return Err("invalid parallel source inventory".into());
+    };
+    let mut checked_orders = false;
+    let mut checked_paths = false;
+    for observation in candidates {
+        let name = observation
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .ok_or("invalid case name")?;
+        let case = cases
+            .iter()
+            .find(|case| case.get("name") == Some(&Json::Number(name.into())))
+            .ok_or("missing source case")?;
+        if case.get("parallelCoverage") != Some(&Json::Bool(true)) {
+            continue;
+        }
+        let filename = format!("{name}.jsonl");
+        let scripts = BufReader::new(fs::File::open(output.join("scripts").join(&filename))?)
+            .lines()
+            .collect::<std::io::Result<Vec<_>>>()?;
+        let settings = scripts
+            .iter()
+            .map(|line| settings(&json::parse(line)?))
+            .collect::<Result<Vec<_>, _>>()?;
+        let first_path = settings
+            .first()
+            .ok_or("empty control script inventory")?
+            .2
+            .clone();
+        let selections = [
+            (
+                !checked_orders && settings.iter().any(|(_, parallel, _)| *parallel),
+                "missing-parallel-orders",
+                "missing parallel pair coverage",
+                settings
+                    .iter()
+                    .map(|(forward, _, _)| *forward)
+                    .collect::<Vec<_>>(),
+            ),
+            (
+                !checked_paths && settings.iter().any(|(_, _, path)| *path != first_path),
+                "missing-choice-path",
+                "missing source choice path",
+                settings
+                    .iter()
+                    .map(|(_, _, path)| *path != first_path)
+                    .collect::<Vec<_>>(),
+            ),
+        ];
+        for (applicable, mutation, expected, keep) in selections {
+            if !applicable {
+                continue;
+            }
+            let count = keep.iter().filter(|value| **value).count();
+            if count == 0 || count == scripts.len() {
+                return Err("parallel control has no omitted schedule".into());
+            }
+            let target = output.join("controls").join(mutation);
+            let (input, observations) = single_case(
+                inventory,
+                &target,
+                observation,
+                &fs::read_to_string(observation)?,
+            )?;
+            let mut script_output =
+                BufWriter::new(fs::File::create(target.join("scripts").join(&filename))?);
+            let mut completed_output = BufWriter::new(fs::File::create(
+                target.join("scope-observations").join(&filename),
+            )?);
+            let mut completed_input = BufReader::new(fs::File::open(
+                output.join("scope-observations").join(&filename),
+            )?)
+            .lines();
+            completed_input.next().ok_or("missing control header")??;
+            writeln!(completed_output, "{{\"name\":{name},\"scripts\":{count}}}")?;
+            let mut next = 0;
+            for (index, (line, keep)) in scripts.iter().zip(keep).enumerate() {
+                if keep {
+                    writeln!(script_output, "{line}")?;
+                }
+                for reverse in [false, true] {
+                    let mut record = json::parse(
+                        &completed_input
+                            .next()
+                            .ok_or("missing control execution")??,
+                    )?;
+                    let Json::Object(fields) = &mut record else {
+                        return Err("invalid control execution".into());
+                    };
+                    if fields.get("script") != Some(&Json::Number(index.to_string()))
+                        || fields.get("reversePoll") != Some(&Json::Bool(reverse))
+                    {
+                        return Err("wrong control execution order".into());
+                    }
+                    if keep {
+                        fields.insert("script".into(), Json::Number(next.to_string()));
+                        writeln!(completed_output, "{}", source_json(&record)?)?;
+                    }
+                }
+                if keep {
+                    next += 1;
+                }
+            }
+            if completed_input.next().is_some() || next != count {
+                return Err("invalid control inventory".into());
+            }
+            script_output.flush()?;
+            completed_output.flush()?;
+            rejected(checker, &input, &observations, expected)?;
+            println!("Source schedule coverage control: {mutation} with updated counts: pass");
+            match mutation {
+                "missing-parallel-orders" => checked_orders = true,
+                "missing-choice-path" => checked_paths = true,
+                _ => unreachable!(),
+            }
+        }
+        if checked_orders && checked_paths {
+            break;
+        }
+    }
+    if !checked_orders {
+        println!("Parallel schedule coverage control: no pairwise parallel case in this shard");
+    }
+    if !checked_paths {
+        println!(
+            "Choice path coverage control: no pairwise case with several choice paths in this shard"
+        );
+    }
+    Ok(())
+}
+
 fn causal_control(
     checker: &Path,
     inventory: &Json,
@@ -512,6 +681,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     paths.sort();
     let first = paths.first().ok_or("no observed cases")?;
     completed_controls(&checker, &inventory, &paths, &output)?;
+    parallel_coverage_control(&checker, &inventory, &paths, &output)?;
     causal_control(&checker, &inventory, &paths, &output)?;
     for (name, needle, replacement, expected) in [
         (

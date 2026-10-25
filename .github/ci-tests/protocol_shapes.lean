@@ -15,6 +15,7 @@ structure ShapeInput where
   name : Nat
   nodes : Array ShapeNode
   resolvers : Nat
+  parallelCoverage : Bool := false
   deriving Lean.FromJson
 
 structure ShapeAttempt where
@@ -381,6 +382,53 @@ structure ShapeScriptHeader where
   scripts : Nat
   deriving Lean.FromJson
 
+-- The script parser has already validated each constructor and occurrence.
+-- Keep one poll-order value for every active par, in source preorder.
+def shapeScriptParallelOrders (source : Source) (script : Lean.Json) :
+    Except String (List Bool) := do
+  let .arr fields := script | throw "invalid parallel script"
+  match source with
+  | .send _ => pure []
+  | .seq a b => pure ((← shapeScriptParallelOrders a fields[1]!) ++
+      (← shapeScriptParallelOrders b fields[2]!))
+  | .roll body => pure ((← shapeScriptParallelOrders body fields[1]!) ++
+      (← shapeScriptParallelOrders body fields[2]!))
+  | .par a b =>
+    let reverse : Bool ← Lean.fromJson? fields[3]!
+    pure (reverse :: ((← shapeScriptParallelOrders a fields[1]!) ++
+      (← shapeScriptParallelOrders b fields[2]!)))
+  | .route _ a b =>
+    let right : Bool ← Lean.fromJson? fields[2]!
+    if right then shapeScriptParallelOrders b fields[1]!
+    else shapeScriptParallelOrders a fields[1]!
+
+-- Derive the required sites from a normalized source path, independently of
+-- the script's list of poll orders. The expanded source has no roll nodes.
+def shapeActiveParallelCount (source : Source) (path : List Selection) (start : Nat) :
+    Except String Nat := do
+  match source with
+  | .send _ => pure 0
+  | .seq left right | .par left right =>
+    let own := match source with | .par _ _ => 1 | _ => 0
+    pure (own + (← shapeActiveParallelCount left path start) +
+      (← shapeActiveParallelCount right path (start + left.eventCount)))
+  | .route _ left right =>
+    let split := start + left.eventCount
+    let some arm := chosen? path ⟨start, split, split + right.eventCount⟩
+      | throw "source path omitted a parallel-site guard"
+    match arm with
+    | .left => shapeActiveParallelCount left path start
+    | .right => shapeActiveParallelCount right path split
+  | .roll _ => throw "parallel-site source was not unfolded"
+
+def shapeParallelPairsCovered (width : Nat) (rows : List (List Bool)) : Bool :=
+  !rows.isEmpty && rows.all (fun row => row.length == width) &&
+  (List.range width).all fun a =>
+    [false, true].all (fun x => rows.any fun row => row[a]? == some x) &&
+    (List.range width).all fun b => b ≤ a ||
+      [false, true].all fun x => [false, true].all fun y =>
+        rows.any fun row => row[a]? == some x && row[b]? == some y
+
 structure ShapeCompletedScript where
   script : Nat
   reversePoll : Bool
@@ -456,13 +504,16 @@ def shapeCompletedAdvance (prepared : ShapePlan source) (points : List SourcePoi
         role == if receive then binding.message.receiver.role else binding.message.sender.role
     | _ => false
 
-def shapeCheckCompleted (source : Source) (name : Nat) (outputPath : String) : IO (Nat × Nat) := do
-  let count := shapeScriptCount source
+def shapeCheckCompleted (source : Source) (name : Nat) (parallelCoverage : Bool)
+    (outputPath : String) : IO (Nat × Nat) := do
+  let exhaustiveCount := shapeScriptCount source
   let root := System.FilePath.mk outputPath / ".."
   let scripts ← IO.FS.Handle.mk (root / "scripts" / s!"{name}.jsonl") .read
   let observations ← IO.FS.Handle.mk (root / "scope-observations" / s!"{name}.jsonl") .read
   let header : ShapeScriptHeader ← shapeReadLine observations
-  unless header.name == name && header.scripts == count do
+  let count := header.scripts
+  unless header.name == name && count > 0 && count ≤ exhaustiveCount &&
+      (parallelCoverage || count == exhaustiveCount) do
     throw (IO.userError s!"shape {name}: wrong completed script inventory")
   let mut plans : Std.HashMap (List String) (List (SourceOccurrenceCut source)) := {}
   for plan in checkedPlans source (shapeTwoCopies source) (shapeTwoCopyUnfolding source) do
@@ -472,19 +523,28 @@ def shapeCheckCompleted (source : Source) (name : Nat) (outputPath : String) : I
     plans := plans.insert key (plan :: ((plans.get? key).getD []))
   unless !plans.isEmpty do throw (IO.userError "no accepted completed source plan")
   let mut prepared : Option (List String × List (ShapePlan source)) := none
+  let mut parallelRows : Std.HashMap (List String) (List (List Bool)) := {}
+  let mut previousRank : Option Nat := none
   let mut calls := 0
   for index in [:count] do
     let script : Lean.Json ← shapeReadLine scripts
     let (choices, rank, messages) ← match shapeScriptKey source script 0 0 with
       | .ok value => pure value
       | .error error => throw (IO.userError s!"shape {name} script {index}: {error}")
-    unless rank == index do
+    unless (parallelCoverage || rank == index) &&
+        previousRank.all (fun previous => previous < rank) do
       throw (IO.userError s!"shape {name}: missing or duplicate completed script")
+    previousRank := some rank
     let key := choices.mergeSort (· ≤ ·)
     let some matching := plans.get? key
       | throw (IO.userError s!"shape {name} script {index}: script has no accepted source path; choices={choices}; source={(plans.toList.take 4).map Prod.fst}")
     unless matching.all (fun plan => plan.path.bindings.length == messages) do
       throw (IO.userError s!"shape {name}: script and source path have different messages")
+    if parallelCoverage then
+      let orders ← match shapeScriptParallelOrders source script with
+        | .ok values => pure values
+        | .error error => throw (IO.userError error)
+      parallelRows := parallelRows.insert key (orders :: (parallelRows.get? key).getD [])
     -- Retain derived rows for one source-path group and its two schedules.
     let ready := match prepared with
       | some (previous, ready) => if previous == key then ready else matching.map ShapePlan.of
@@ -515,6 +575,16 @@ def shapeCheckCompleted (source : Source) (name : Nat) (outputPath : String) : I
         throw (IO.userError s!"shape {name} script {index}: incomplete completed trace")
   unless (← scripts.getLine).isEmpty && (← observations.getLine).isEmpty do
     throw (IO.userError s!"shape {name}: extra completed script record")
+  if parallelCoverage then
+    for (key, matching) in plans.toList do
+      let some rows := parallelRows.get? key
+        | throw (IO.userError s!"shape {name}: missing source choice path")
+      for plan in matching do
+        let width ← match shapeActiveParallelCount plan.expanded plan.path.selections 0 with
+          | .ok value => pure value
+          | .error error => throw (IO.userError error)
+        unless shapeParallelPairsCovered width rows do
+          throw (IO.userError s!"shape {name}: missing parallel pair coverage")
   pure (2 * count, calls)
 
 def main (args : List String) : IO UInt32 := do
@@ -579,7 +649,7 @@ def main (args : List String) : IO UInt32 := do
           if attempt.accepted then runtimeOnly := runtimeOnly + 1 else modelOnly := modelOnly + 1
     unless runtimeOnly == 0 && modelOnly == 0 do
       throw (IO.userError s!"generated Endpoint/source conformance failed: runtime-only={runtimeOnly} model-only={modelOnly}")
-    let (runs, calls) ← shapeCheckCompleted source input.name outputPath
+    let (runs, calls) ← shapeCheckCompleted source input.name input.parallelCoverage outputPath
     completedRuns := completedRuns + runs
     completedCalls := completedCalls + calls
   IO.println s!"Completed shape scripts/source: shapes={inputs.size} runs={completedRuns} calls={completedCalls} all accepted"

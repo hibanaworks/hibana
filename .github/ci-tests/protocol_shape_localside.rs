@@ -868,8 +868,9 @@ impl Emitter<'_> {
     }
 }
 
-pub(super) fn runs(source: &Protocol, owner: u8, case: usize) -> String {
-    let script_count = source.execution_count();
+pub(super) fn runs(plans: &super::plans::Plans<'_>, owner: u8, case: usize) -> String {
+    let source = plans.source();
+    let script_count = plans.len();
     let mut paths = std::collections::BTreeMap::new();
     source.resolver_choices(&mut Vec::new(), &mut paths);
     let mut choices = Vec::new();

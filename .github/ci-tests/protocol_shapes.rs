@@ -37,6 +37,8 @@ mod interactions;
 mod localside;
 #[path = "protocol_shape_ownership.rs"]
 mod ownership;
+#[path = "protocol_shape_plans.rs"]
+mod plans;
 #[path = "protocol_shape_population.rs"]
 mod population;
 #[path = "protocol_shape_probe_data.rs"]
@@ -328,12 +330,6 @@ impl Protocol {
             Self::Roll(body) => body.resolver_roles(roles),
         }
     }
-    // Complete finite traces are derived from syntax, not accepted runtime calls.
-    // Two visits per roll exercise re-entry; parallel children run in both orders.
-    fn traces(&self) -> impl Iterator<Item = Trace> + '_ {
-        self.executions().map(|execution| execution.trace())
-    }
-
     // Retain each visit and parallel boundary even when two executions have
     // the same message word. The public borrow API observes these boundaries.
     fn execution_count(&self) -> usize {
@@ -394,15 +390,9 @@ impl Protocol {
         }
     }
 
+    #[cfg(test)]
     fn executions(&self) -> impl ExactSizeIterator<Item = Execution> + '_ {
         (0..self.execution_count()).map(|rank| self.execution_at(rank))
-    }
-
-    fn write_scripts(&self, mut output: impl std::io::Write) -> std::io::Result<()> {
-        for execution in self.executions() {
-            writeln!(output, "{}", execution.json())?;
-        }
-        output.flush()
     }
 }
 
@@ -1573,6 +1563,7 @@ fn emit_cases(
         max_resolvers,
         origin,
     } = catalog;
+    let parallel_pairs = matches!(origin, CatalogOrigin::Contexts);
     if cases.is_empty() {
         return Err("empty shard".into());
     }
@@ -1596,7 +1587,7 @@ fn emit_cases(
         let mut nodes = Vec::new();
         global.json_nodes(&mut nodes);
         candidate_inputs.push(format!(
-            r#"{{"name":{case},"nodes":[{}],"resolvers":{resolvers}}}"#,
+            r#"{{"name":{case},"nodes":[{}],"resolvers":{resolvers},"parallelCoverage":{parallel_pairs}}}"#,
             nodes.join(",")
         ));
     }
@@ -1841,7 +1832,7 @@ long_running_const_eval = "forbid"
         let mut nodes = Vec::new();
         global.json_nodes(&mut nodes);
         let input = format!(
-            r#"{{"name":{case},"nodes":[{}],"resolvers":{resolvers}}}"#,
+            r#"{{"name":{case},"nodes":[{}],"resolvers":{resolvers},"parallelCoverage":{parallel_pairs}}}"#,
             nodes.join(",")
         );
         catalog_inputs.push(input.clone());
@@ -1859,7 +1850,18 @@ long_running_const_eval = "forbid"
         source_coverage.add(*case, global);
         let mut messages = Vec::new();
         global.messages(&mut messages);
-        let traces = global.traces().collect::<BTreeSet<_>>();
+        let plans = plans::Plans::new(
+            global,
+            if parallel_pairs {
+                plans::Coverage::ParallelPairs
+            } else {
+                plans::Coverage::Exhaustive
+            },
+        );
+        let traces = plans
+            .executions()
+            .map(|execution| execution.trace())
+            .collect::<BTreeSet<_>>();
         let mut decisions = BTreeMap::new();
         global.resolver_choices(&mut Vec::new(), &mut decisions);
         let patterns = decisions::patterns(global, *resolvers);
@@ -1929,14 +1931,14 @@ long_running_const_eval = "forbid"
                 roles
             }
         )?;
-        let local = localside::runs(global, *owner, *case);
+        let local = localside::runs(&plans, *owner, *case);
         source.push_str(&local);
         let script_path = script_directory.join(format!("{case}.jsonl"));
-        global.write_scripts(std::io::BufWriter::new(fs::File::create(&script_path)?))?;
+        plans.write_scripts(std::io::BufWriter::new(fs::File::create(&script_path)?))?;
         script_paths.insert(script_path);
         let scope_path = scope_directory.join(format!("{case}.jsonl"));
         let (script_count, scope_count) = scope_probes::write_inventory(
-            global,
+            &plans,
             *owner,
             *case,
             std::io::BufWriter::new(fs::File::create(&scope_path)?),
@@ -2069,7 +2071,14 @@ long_running_const_eval = "forbid"
         cases.len(),
         total_cases
     );
-    println!("planned local rejection probes={local_rejection_probes}");
+    println!(
+        "planned local rejection probes={local_rejection_probes} parallel_schedule_coverage={}",
+        if parallel_pairs {
+            "pairs-per-source-path"
+        } else {
+            "exhaustive"
+        }
+    );
     Ok(())
 }
 

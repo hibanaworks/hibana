@@ -2,16 +2,17 @@
 use super::{Execution, Protocol, causality, localside, probe_data::LocalProbe};
 
 pub(super) fn write_inventory(
-    source: &Protocol,
+    plans: &super::plans::Plans<'_>,
     owner: u8,
     case: usize,
     mut output: impl std::io::Write,
 ) -> std::io::Result<(usize, usize)> {
-    let script_count = source.execution_count();
+    let source = plans.source();
+    let script_count = plans.len();
     writeln!(output, r#"{{"name":{case},"scripts":{}}}"#, script_count)?;
     let mut count = 0;
     let causal = causality::pairs(source);
-    for (script, execution) in source.executions().enumerate() {
+    for (script, execution) in plans.executions().enumerate() {
         let probes = plans_with(source, &execution, owner, &causal);
         count += 2 * probes.len();
         writeln!(

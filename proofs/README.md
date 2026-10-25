@@ -172,6 +172,18 @@ The choosing view receives a message before the choice. Parallel siblings
 contain independent compound work. The original catalog with two deep choice
 arms remains a separate test population.
 
+The interaction and spine catalogs keep every choice path in the two-visit
+expansion. Within each path, poll preferences cover both orders at every
+active `par` and all four order combinations for every pair of active `par`
+sites, including sites in different visits. Constant rows and binary column
+numbers give at most `2 + 2 * ceil(log2 P)` schedules for `P` active sites.
+A path without `par` needs one schedule. Combinations involving three or more
+poll preferences are not exhaustive in these catalogs. Syntax, representative
+and constructor-budget catalogs retain exhaustive finite schedules.
+The input records this scope as `parallelCoverage`. Lean derives the active
+sites from each normalized source path and rejects missing paths or order
+combinations, even when the supplied record counts agree.
+
 `source-coverage.tsv` records constructor words and their locations in the
 generated source. `syntax` keeps all nine constructor edges, including `seq`.
 `nested-sides` omits intervening `seq` nodes and keeps seven edges.
