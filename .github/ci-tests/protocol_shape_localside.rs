@@ -897,8 +897,9 @@ pub(super) fn runs(plans: &super::plans::Plans<'_>, owner: u8, case: usize) -> S
     use std::io::Write as _;
     let scope_root=std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let mut scope_plans=ScopePlans::new(std::io::BufReader::new(std::fs::File::open(scope_root.join("scope-plans/{case}.jsonl")).expect("missing scope plans")),{case},{});
-    std::fs::create_dir_all(scope_root.join("scope-observations")).unwrap();
-    let mut scope_observations=std::io::BufWriter::new(std::fs::File::create(scope_root.join("scope-observations/{case}.jsonl")).unwrap());
+    let recorded=observation_root();
+    std::fs::create_dir_all(recorded.join("scope-observations")).unwrap();
+    let mut scope_observations=std::io::BufWriter::new(std::fs::File::create(recorded.join("scope-observations/{case}.jsonl")).unwrap());
     writeln!(scope_observations,"{{{{\"name\":{case},\"scripts\":{}}}}}").unwrap();
     let mut checked_scripts=0usize;
     for (script_index,line) in scripts.enumerate() {{ let decoded_script=Script::from_json(&line.expect("unreadable script plan")).expect("invalid script plan");let script=&decoded_script;let planned_probes=scope_plans.next(script_index);let record_script=script_range.contains(&script_index);let probes=if record_script{{planned_probes.as_slice()}}else{{&[]}};for reverse_poll in [false,true] {{

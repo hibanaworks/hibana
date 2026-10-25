@@ -9,6 +9,17 @@ struct PendingCalls {
 
 use probe_data::LocalProbe;
 
+fn observation_root() -> std::path::PathBuf {
+    match std::env::var_os("HIBANA_PROTOCOL_SHAPE_OBSERVATION_DIR") {
+        Some(root) => {
+            let root = std::path::PathBuf::from(root);
+            assert!(root.is_absolute(), "observation directory must be absolute");
+            root
+        }
+        None => std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")),
+    }
+}
+
 fn parse_script_range(
     total: usize,
     first: Option<std::ffi::OsString>,

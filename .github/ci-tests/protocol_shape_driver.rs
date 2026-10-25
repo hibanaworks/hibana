@@ -685,7 +685,7 @@ async fn qualify(programs: Programs, scenario: Scenario<'_>) {
             }
         }
     }
-    let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("observations");
+    let directory = observation_root().join("observations");
     std::fs::create_dir_all(&directory).unwrap();
     std::fs::write(
         directory.join(format!("{case}.json")),

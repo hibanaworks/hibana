@@ -12,6 +12,7 @@ type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 const DEFAULT_BATCH: usize = 8192;
 const FIRST: &str = "HIBANA_PROTOCOL_SHAPE_SCRIPT_FIRST";
 const COUNT: &str = "HIBANA_PROTOCOL_SHAPE_SCRIPT_COUNT";
+const OUTPUT: &str = "HIBANA_PROTOCOL_SHAPE_OBSERVATION_DIR";
 
 struct Case {
     name: usize,
@@ -35,7 +36,11 @@ fn ranges(total: usize, size: usize) -> Result<Vec<core::ops::Range<usize>>> {
         .collect())
 }
 
-fn invoke(binary: &Path, name: &str, range: Option<core::ops::Range<usize>>) -> Result<()> {
+fn invoke(
+    binary: &Path,
+    name: &str,
+    part: Option<(&core::ops::Range<usize>, &Path)>,
+) -> Result<()> {
     let configured = env::var_os("HIBANA_PROTOCOL_SHAPE_TIMEOUT_SECONDS");
     let seconds = match configured.as_ref() {
         None => "3600",
@@ -51,19 +56,27 @@ fn invoke(binary: &Path, name: &str, range: Option<core::ops::Range<usize>>) -> 
         .arg(binary)
         .args(["--exact", name, "--nocapture", "--test-threads=1"])
         .env_remove(FIRST)
-        .env_remove(COUNT);
-    if let Some(range) = range {
+        .env_remove(COUNT)
+        .env_remove(OUTPUT);
+    if let Some((range, output)) = part {
         println!(
             "{name}: rejection probes for scripts {}..{}; full positive baselines",
             range.start, range.end
         );
         command
             .env(FIRST, range.start.to_string())
-            .env(COUNT, range.len().to_string());
+            .env(COUNT, range.len().to_string())
+            .env(OUTPUT, output);
     }
     let status = command.status()?;
     if !status.success() {
         return Err(format!("generated test {name} failed: {status}").into());
+    }
+    if let Some((range, _)) = part {
+        println!(
+            "{name}: completed rejection probes for scripts {}..{}",
+            range.start, range.end
+        );
     }
     Ok(())
 }
@@ -143,7 +156,9 @@ fn merge_record(line: &str, script: usize, reverse: bool, output: &mut impl Writ
 
 fn run_case(binary: &Path, output: &Path, case: &Case, size: usize) -> Result<()> {
     let name = format!("shape_{}", case.name);
-    let parts = output.join("scope-parts").join(case.name.to_string());
+    let parts = fs::canonicalize(output)?
+        .join("scope-parts")
+        .join(case.name.to_string());
     fs::create_dir_all(&parts)?;
     let observation = output
         .join("scope-observations")
@@ -153,53 +168,104 @@ fn run_case(binary: &Path, output: &Path, case: &Case, size: usize) -> Result<()
         .join(format!("{}.json", case.name));
     let first_initial = parts.join("initial.json");
     let assembled = parts.join("assembled.jsonl");
+    for file in [&observation, &initial] {
+        fs::create_dir_all(file.parent().ok_or("observation has no parent directory")?)?;
+        if file.exists() {
+            fs::remove_file(file)?;
+        }
+    }
     let mut writer = BufWriter::new(fs::File::create(&assembled)?);
     let header = serde_json::json!({"name":case.name,"scripts":case.scripts});
     writeln!(writer, "{header}")?;
     let mut completed = 0;
-    for range in ranges(case.scripts, size)? {
-        for file in [&observation, &initial] {
-            if file.exists() {
-                fs::remove_file(file)?;
+    let parts = ranges(case.scripts, size)?
+        .into_iter()
+        .map(|range| {
+            let directory = parts.join(format!("{}-{}", range.start, range.len()));
+            (range, directory)
+        })
+        .collect::<Vec<_>>();
+    let workers = std::thread::available_parallelism()?.get().min(parts.len());
+    println!(
+        "{name}: {} script partitions, up to {workers} concurrent processes",
+        parts.len()
+    );
+    for batch in parts.chunks(workers) {
+        for (_, directory) in batch {
+            for file in [
+                directory
+                    .join("observations")
+                    .join(format!("{}.json", case.name)),
+                directory
+                    .join("scope-observations")
+                    .join(format!("{}.jsonl", case.name)),
+            ] {
+                if file.exists() {
+                    fs::remove_file(file)?;
+                }
             }
         }
-        invoke(binary, &name, Some(range.clone()))?;
-        if range.start == 0 {
-            fs::copy(&initial, &first_initial)?;
-        } else if !same_bytes(&initial, &first_initial)? {
-            return Err("initial or continuation observations changed between partitions".into());
-        }
-        let part = parts.join(format!("{}-{}.jsonl", range.start, range.len()));
-        fs::rename(&observation, &part)?;
-        let mut lines = BufReader::new(fs::File::open(&part)?).lines();
-        let observed_header: Value =
-            serde_json::from_str(&lines.next().ok_or("missing partition header")??)?;
-        if observed_header != header || range.start != completed {
-            return Err("wrong partition header or script interval".into());
-        }
-        for script in range.clone() {
-            for reverse in [false, true] {
-                merge_record(
-                    &lines.next().ok_or("missing partition observation")??,
-                    script,
-                    reverse,
-                    &mut writer,
-                )?;
+        std::thread::scope(|scope| -> Result<()> {
+            let mut children = Vec::new();
+            let name = name.as_str();
+            for (range, directory) in batch {
+                children.push(scope.spawn(move || {
+                    invoke(binary, name, Some((range, directory)))
+                        .map_err(|error| error.to_string())
+                }));
             }
+            for child in children {
+                child
+                    .join()
+                    .map_err(|_| "generated test worker panicked")??;
+            }
+            Ok(())
+        })?;
+        for (range, directory) in batch {
+            let initial_part = directory
+                .join("observations")
+                .join(format!("{}.json", case.name));
+            if range.start == 0 {
+                fs::copy(&initial_part, &first_initial)?;
+            } else if !same_bytes(&initial_part, &first_initial)? {
+                return Err(
+                    "initial or continuation observations changed between partitions".into(),
+                );
+            }
+            let part = directory
+                .join("scope-observations")
+                .join(format!("{}.jsonl", case.name));
+            let mut lines = BufReader::new(fs::File::open(&part)?).lines();
+            let observed_header: Value =
+                serde_json::from_str(&lines.next().ok_or("missing partition header")??)?;
+            if observed_header != header || range.start != completed {
+                return Err("wrong partition header or script interval".into());
+            }
+            for script in range.clone() {
+                for reverse in [false, true] {
+                    merge_record(
+                        &lines.next().ok_or("missing partition observation")??,
+                        script,
+                        reverse,
+                        &mut writer,
+                    )?;
+                }
+            }
+            if lines.next().is_some() {
+                return Err("extra partition observation".into());
+            }
+            drop(lines);
+            writer.flush()?;
+            fs::remove_file(part)?;
+            completed = range.end;
         }
-        if lines.next().is_some() {
-            return Err("extra partition observation".into());
-        }
-        drop(lines);
-        writer.flush()?;
-        fs::remove_file(part)?;
-        completed = range.end;
     }
     if completed != case.scripts {
         return Err("incomplete generated script execution".into());
     }
     writer.flush()?;
     drop(writer);
+    fs::copy(first_initial, initial)?;
     fs::rename(assembled, observation)?;
     println!(
         "{name}: all {} source scripts and all rejection probes completed",

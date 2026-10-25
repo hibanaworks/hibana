@@ -245,6 +245,8 @@ jobs:
             target/protocol-shapes/*/**/scripts/*.jsonl
             target/protocol-shapes/*/**/observations/*.json
             target/protocol-shapes/*/**/scope-observations/*.jsonl
+            target/protocol-shapes/*/**/scope-parts/**/*.json
+            target/protocol-shapes/*/**/scope-parts/**/*.jsonl
             target/protocol-shapes/*/**/rejected/inventory.tsv
             target/protocol-shapes/*/**/rejected/Cargo.toml
             target/protocol-shapes/*/**/rejected/Cargo.lock
@@ -348,6 +350,8 @@ jobs:
             target/protocol-shapes/*/**/oracle.log
             target/protocol-shapes/*/**/observations/*.json
             target/protocol-shapes/*/**/scope-observations/*.jsonl
+            target/protocol-shapes/*/**/scope-parts/**/*.json
+            target/protocol-shapes/*/**/scope-parts/**/*.jsonl
             target/protocol-shapes/*/**/scripts/*.jsonl
             target/protocol-shapes/*/**/rejected/inventory.tsv
             target/protocol-shapes/*/**/rejected/Cargo.toml
