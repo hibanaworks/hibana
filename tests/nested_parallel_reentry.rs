@@ -2231,8 +2231,23 @@ fn nested_parallel_delegation_preserves_a_child_when_its_parent_restarts_late() 
     let p1 = project::<1>(&global);
     let p2 = project::<2>(&global);
     let p3 = project::<3>(&global);
+    let cases = match std::env::var("HIBANA_PARALLEL_CREDIT_CASE") {
+        Ok(value) => {
+            let case: usize = value
+                .parse()
+                .expect("parallel credit case must be an integer");
+            assert!(case < 16, "parallel credit case must be in 0..16");
+            case..case + 1
+        }
+        Err(std::env::VarError::NotPresent) => 0..16,
+        Err(std::env::VarError::NotUnicode(_)) => panic!("parallel credit case must be Unicode"),
+    };
     for right_visit in 0..8 {
         for reverse in [false, true] {
+            let case = right_visit * 2 + usize::from(reverse);
+            if !cases.contains(&case) {
+                continue;
+            }
             #[cfg(miri)]
             std::eprintln!("parallel-credit start: right_visit={right_visit} reverse={reverse}");
             let network = common::TestTransport::new();
