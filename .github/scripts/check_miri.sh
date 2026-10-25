@@ -125,7 +125,10 @@ run_miri_test \
       nested_parallel_ -- --skip nested_parallel_delegation --skip nested_parallel_resolver
   MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" \
     run_miri_test public-nested-parallel-delegation -p hibana --test nested_parallel_reentry \
-      nested_parallel_delegation
+      nested_parallel_delegation -- --skip nested_parallel_delegation_preserves_a_child_when_its_parent_restarts_late
+  MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_PARALLEL_CREDIT_TIMEOUT_SECONDS:-3600}" \
+    run_miri_test public-parallel-child-credit -p hibana --test nested_parallel_reentry \
+      nested_parallel_delegation_preserves_a_child_when_its_parent_restarts_late -- --exact --nocapture
   MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" \
     run_miri_test public-nested-parallel-resolver -p hibana --test nested_parallel_reentry \
       nested_parallel_resolver

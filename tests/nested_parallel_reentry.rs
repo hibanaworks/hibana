@@ -2149,3 +2149,247 @@ fn a_received_endpoint_keeps_two_parallel_visits_distinct() {
         });
     assert!(network.queue_is_empty());
 }
+
+#[test]
+fn nested_parallel_delegation_preserves_a_child_when_its_parent_restarts_late() {
+    use core::cell::Cell;
+    use hibana::{
+        Endpoint, EndpointError,
+        runtime::resolver::{DecisionArm, ResolverRef},
+    };
+    type Loan<'r> = g::Msg<0, Endpoint<'r, 3>>;
+    type Notice = g::Msg<1, ()>;
+    type Pulse = g::Msg<2, ()>;
+    type Read = g::Msg<3, ()>;
+    type Value = g::Msg<4, ()>;
+    type Left = g::Msg<5, ()>;
+    type LeftNotice = g::Msg<6, ()>;
+    type LeftDone = g::Msg<7, ()>;
+    type Continue = g::Msg<8, ()>;
+    type Continued = g::Msg<9, ()>;
+    type Right = g::Msg<10, ()>;
+    type RightNotice = g::Msg<11, ()>;
+    type Return<'r> = g::Msg<12, Endpoint<'r, 3>>;
+    type OwnerRead = g::Msg<13, ()>;
+    type OwnerValue = g::Msg<14, ()>;
+    type Relend<'r> = g::Msg<15, Endpoint<'r, 3>>;
+    type Finished<'r> = g::Msg<16, Endpoint<'r, 3>>;
+
+    #[cfg(miri)]
+    std::eprintln!("parallel-credit setup");
+    let global = g::seq(
+        g::send::<0, 1, Loan<'_>>(),
+        g::seq(
+            g::par(
+                g::par(g::send::<0, 1, Notice>(), g::send::<1, 0, Pulse>().roll()),
+                g::seq(
+                    g::send::<3, 2, Read>(),
+                    g::seq(
+                        g::send::<2, 3, Value>(),
+                        g::route(
+                            g::seq(
+                                g::send::<3, 2, Left>(),
+                                g::seq(
+                                    g::send::<3, 0, LeftNotice>(),
+                                    g::seq(
+                                        g::send::<3, 2, LeftDone>(),
+                                        g::seq(
+                                            g::send::<0, 1, Continue>(),
+                                            g::send::<1, 0, Continued>(),
+                                        ),
+                                    ),
+                                ),
+                            ),
+                            g::seq(
+                                g::send::<3, 2, Right>(),
+                                g::seq(
+                                    g::send::<3, 0, RightNotice>(),
+                                    g::seq(
+                                        g::send::<1, 0, Return<'_>>(),
+                                        g::seq(
+                                            g::seq(
+                                                g::send::<3, 2, OwnerRead>(),
+                                                g::send::<2, 3, OwnerValue>(),
+                                            ),
+                                            g::send::<0, 1, Relend<'_>>(),
+                                        ),
+                                    ),
+                                ),
+                            ),
+                        )
+                        .resolve::<0>(),
+                    ),
+                )
+                .roll(),
+            )
+            .roll()
+            .roll(),
+            g::send::<1, 0, Finished<'_>>(),
+        ),
+    );
+    let p0 = project::<0>(&global);
+    let p1 = project::<1>(&global);
+    let p2 = project::<2>(&global);
+    let p3 = project::<3>(&global);
+    for right_visit in 0..8 {
+        for reverse in [false, true] {
+            #[cfg(miri)]
+            std::eprintln!("parallel-credit start: right_visit={right_visit} reverse={reverse}");
+            let network = common::TestTransport::new();
+            let arm = Cell::new(DecisionArm::Left);
+            let [mut slab0, mut slab1, mut slab2] = [[0; 32 * 1024]; 3];
+            let mut s0 = SessionKitStorage::uninit();
+            let mut s1 = SessionKitStorage::uninit();
+            let mut s2 = SessionKitStorage::uninit();
+            let rv0 = s0.init().rendezvous(&mut slab0, network.clone()).unwrap();
+            let rv1 = s1.init().rendezvous(&mut slab1, network.clone()).unwrap();
+            let rv2 = s2.init().rendezvous(&mut slab2, network.clone()).unwrap();
+            rv1.set_resolver(
+                &p1,
+                ResolverRef::<0>::decision_state(&arm, |arm| Ok(arm.get())),
+            )
+            .unwrap();
+            let sid = SessionId::new(9409);
+            let mut owner = rv0.enter(sid, &p0).unwrap();
+            let db = rv0.enter(sid, &p3).unwrap();
+            let mut worker = rv1.enter(sid, &p1).unwrap();
+            let mut service = rv2.enter(sid, &p2).unwrap();
+            let owner_run = async {
+                owner.send::<Loan<'_>>(db).await?;
+                for _ in 0..2 {
+                    let [mut notice, mut pulses, mut coordination] = owner.par()?;
+                    for _ in 0..2 {
+                        tokio::try_join!(
+                            async {
+                                tokio::task::yield_now().await;
+                                tokio::task::yield_now().await;
+                                notice.send::<Notice>(&()).await
+                            },
+                            async {
+                                for _ in 0..2 {
+                                    pulses.recv::<Pulse>().await?;
+                                }
+                                Ok::<_, EndpointError>(())
+                            },
+                            async {
+                                for _ in 0..2 {
+                                    let branch = coordination.offer().await?;
+                                    match branch.label() {
+                                        6 => {
+                                            branch.recv::<LeftNotice>().await?;
+                                            coordination.send::<Continue>(&()).await?;
+                                            coordination.recv::<Continued>().await?;
+                                        }
+                                        11 => {
+                                            branch.recv::<RightNotice>().await?;
+                                            let mut db = coordination.recv::<Return<'_>>().await?;
+                                            db.send::<OwnerRead>(&()).await?;
+                                            db.recv::<OwnerValue>().await?;
+                                            coordination.send::<Relend<'_>>(db).await?;
+                                        }
+                                        label => panic!("unexpected owner branch {label}"),
+                                    }
+                                }
+                                Ok::<_, EndpointError>(())
+                            },
+                        )?;
+                    }
+                }
+                let _db = owner.recv::<Finished<'_>>().await?;
+                Ok::<_, EndpointError>(())
+            };
+            let worker_run = async {
+                let mut db = worker.recv::<Loan<'_>>().await?;
+                for outer in 0..2 {
+                    let [mut notice, mut pulses, mut coordination] = worker.par()?;
+                    for inner in 0..2 {
+                        let (_, _, returned) = tokio::try_join!(
+                            notice.recv::<Notice>(),
+                            async {
+                                for _ in 0..2 {
+                                    tokio::task::yield_now().await;
+                                    pulses.send::<Pulse>(&()).await?;
+                                }
+                                Ok::<_, EndpointError>(())
+                            },
+                            async {
+                                let mut db = db;
+                                for visit in 0..2 {
+                                    db.send::<Read>(&()).await?;
+                                    db.recv::<Value>().await?;
+                                    arm.set(if outer * 4 + inner * 2 + visit == right_visit {
+                                        DecisionArm::Right
+                                    } else {
+                                        DecisionArm::Left
+                                    });
+                                    let branch = db.offer().await?;
+                                    match branch.label() {
+                                        5 => {
+                                            branch.send::<Left>(&()).await?;
+                                            db.send::<LeftNotice>(&()).await?;
+                                            db.send::<LeftDone>(&()).await?;
+                                            coordination.recv::<Continue>().await?;
+                                            coordination.send::<Continued>(&()).await?;
+                                        }
+                                        10 => {
+                                            branch.send::<Right>(&()).await?;
+                                            db.send::<RightNotice>(&()).await?;
+                                            coordination.send::<Return<'_>>(db).await?;
+                                            db = coordination.recv::<Relend<'_>>().await?;
+                                        }
+                                        label => panic!("unexpected worker branch {label}"),
+                                    }
+                                }
+                                Ok::<_, EndpointError>(db)
+                            },
+                        )?;
+                        db = returned;
+                    }
+                }
+                worker.send::<Finished<'_>>(db).await?;
+                Ok::<_, EndpointError>(())
+            };
+            let service_run = async {
+                for _ in 0..8 {
+                    service.recv::<Read>().await?;
+                    service.send::<Value>(&()).await?;
+                    let branch = service.offer().await?;
+                    match branch.label() {
+                        5 => {
+                            branch.recv::<Left>().await?;
+                            service.recv::<LeftDone>().await?;
+                        }
+                        10 => {
+                            branch.recv::<Right>().await?;
+                            service.recv::<OwnerRead>().await?;
+                            service.send::<OwnerValue>(&()).await?;
+                        }
+                        label => panic!("unexpected service branch {label}"),
+                    }
+                }
+                Ok::<_, EndpointError>(())
+            };
+            tokio::runtime::Builder::new_current_thread()
+                .enable_time()
+                .start_paused(true)
+                .build()
+                .unwrap()
+                .block_on(async {
+                    tokio::time::timeout(core::time::Duration::from_secs(1), async {
+                        if reverse {
+                            tokio::try_join!(service_run, worker_run, owner_run)?;
+                        } else {
+                            tokio::try_join!(owner_run, worker_run, service_run)?;
+                        }
+                        Ok::<_, EndpointError>(())
+                    })
+                    .await
+                    .expect("independent repeated fragments stalled")
+                    .unwrap();
+                });
+            assert!(network.queue_is_empty());
+            #[cfg(miri)]
+            std::eprintln!("parallel-credit complete: right_visit={right_visit} reverse={reverse}");
+        }
+    }
+}

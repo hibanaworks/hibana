@@ -3,6 +3,9 @@ use super::super::super::{EventArmView, EventCursor, ScopeId};
 #[cfg(kani)]
 mod kani;
 
+#[cfg(all(test, hibana_repo_tests))]
+mod tests;
+
 #[inline]
 fn read_word_pair(words: &[u32; 2]) -> u64 {
     u64::from(words[0]) | (u64::from(words[1]) << 32)
@@ -115,12 +118,13 @@ impl EventCursor {
         })
     }
 
-    /// A child visit preceding a sibling's completion belongs to that same
-    /// parent visit. Only a restart after a completed parallel parent can
-    /// preserve the prior child completion for the next parent boundary.
+    /// A child restart retains a completed parent visit, including completion
+    /// supplied by a parallel sibling that has already entered its next visit.
+    /// The entering child's own current visit must still be complete.
     pub(super) fn roll_reset_retains_credit(
         &self,
         child: ScopeId,
+        entry: Option<usize>,
         selected: &mut dyn FnMut(ScopeId) -> Option<u8>,
     ) -> bool {
         if self
@@ -140,7 +144,7 @@ impl EventCursor {
         while let Some((parent, row)) = self.machine().roll_scope_row_by_slot(slot) {
             if !parent.same(child)
                 && self.roll_scope_nested_within(child, parent)
-                && self.roll_scope_events_complete(parent, selected)
+                && self.roll_scope_events_complete_at(parent, entry, selected)
                 && (row.start()..row.end()).any(|index| {
                     !self.roll_scope_contains_index(child, index)
                         && self.event_lane_at(index).is_some()

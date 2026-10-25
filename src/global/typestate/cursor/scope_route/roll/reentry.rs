@@ -79,7 +79,7 @@ impl EventCursor {
         PreparedRollReset {
             scope,
             entry,
-            retain_credit: self.roll_reset_retains_credit(scope, selected),
+            retain_credit: self.roll_reset_retains_credit(scope, entry, selected),
         }
     }
 

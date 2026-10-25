@@ -78,3 +78,57 @@ theorem new_arm_can_differ_from_completed_arm :
 #print axioms preview_cannot_change_iteration_history
 #print axioms reset_materializes_the_first_row_once
 end ResetAlignment
+
+namespace ParallelVisitCompletion
+
+/- A completion in a parallel child can pay for the containing visit while
+   that child's next visit is pending. It cannot pay for its own new work. -/
+def rowComplete (done credited independent : Bool) : Bool :=
+  done || (credited && independent)
+
+def completeAt (rows : List Nat) (done credited : Nat → Bool)
+    (independent : Nat → Nat → Bool) (entry : Nat) : Bool :=
+  rows.all fun row => rowComplete (done row) (credited row) (independent row entry)
+
+theorem independent_completed_visits_satisfy_the_parent
+    (rows : List Nat) (done credited : Nat → Bool)
+    (independent : Nat → Nat → Bool) (entry : Nat)
+    (covered : ∀ row ∈ rows, done row = true ∨
+      (credited row = true ∧ independent row entry = true)) :
+    completeAt rows done credited independent entry = true := by
+  apply List.all_eq_true.mpr
+  intro row member
+  rcases covered row member with finished | ⟨retained, separate⟩
+  · simp [rowComplete, finished]
+  · simp [rowComplete, retained, separate]
+
+theorem an_entering_child_requires_its_current_completion
+    (rows : List Nat) (done credited : Nat → Bool)
+    (independent : Nat → Nat → Bool) (entry : Nat)
+    (member : entry ∈ rows) (sameChild : independent entry entry = false)
+    (complete : completeAt rows done credited independent entry = true) :
+    done entry = true := by
+  have current := List.all_eq_true.mp complete entry member
+  simpa [rowComplete, sameChild] using current
+
+theorem an_unfinished_uncredited_sibling_blocks_parent_reentry
+    (rows : List Nat) (done credited : Nat → Bool)
+    (independent : Nat → Nat → Bool) (entry blocked : Nat)
+    (member : blocked ∈ rows) (pending : done blocked = false)
+    (uncredited : credited blocked = false) :
+    completeAt rows done credited independent entry = false := by
+  cases complete : completeAt rows done credited independent entry
+  · rfl
+  · have current := List.all_eq_true.mp complete blocked member
+    simp [rowComplete, pending, uncredited] at current
+
+theorem raw_completion_loses_a_valid_parallel_boundary :
+    ([0, 1].all (fun row => row == 0)) = false ∧
+    completeAt [0, 1] (fun row => row == 0) (fun row => row == 1)
+      (fun row entry => row != entry) 0 = true := by decide
+
+#print axioms independent_completed_visits_satisfy_the_parent
+#print axioms an_entering_child_requires_its_current_completion
+#print axioms an_unfinished_uncredited_sibling_blocks_parent_reentry
+#print axioms raw_completion_loses_a_valid_parallel_boundary
+end ParallelVisitCompletion

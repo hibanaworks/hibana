@@ -28,5 +28,5 @@ bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" smt-sequence "$EVID
 z3 "$PROOFS/NestedVisit.smt2" > "$EVIDENCE/nested-visit-z3.log"
 bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" smt-sequence "$EVIDENCE/nested-visit-z3.log" sat unsat sat unsat sat unsat sat unsat
 z3 "$PROOFS/SharedSuffix.smt2" > "$EVIDENCE/shared-suffix-z3.log"
-bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" smt-sequence "$EVIDENCE/shared-suffix-z3.log" sat unsat sat unsat sat unsat sat unsat sat sat sat sat unsat sat unsat
-printf 'Rolled-route proofs passed: Lean 4.30.0, 10 files; Z3 23 UNSAT obligations, 33 SAT premises/witnesses. Logs: %s\n' "$EVIDENCE"
+bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" smt-sequence "$EVIDENCE/shared-suffix-z3.log" sat unsat sat unsat sat unsat sat unsat sat sat sat sat unsat sat unsat sat unsat sat unsat sat unsat sat
+printf 'Rolled-route proofs passed: Lean 4.30.0, 10 files; Z3 26 UNSAT obligations, 37 SAT premises/witnesses. Logs: %s\n' "$EVIDENCE"
