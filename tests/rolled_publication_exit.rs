@@ -86,6 +86,71 @@ fn rolled_publication_exit_keeps_only_live_descendant_selection() {
     }
 }
 
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn offer_reaches_a_new_sender_after_parallel_rolls_finish() {
+    type LeftData = g::Msg<1, ()>;
+    type LeftStop = g::Msg<2, ()>;
+    type LeftDone = g::Msg<3, ()>;
+    type RightData = g::Msg<4, ()>;
+    type RightStop = g::Msg<5, ()>;
+    type RightDone = g::Msg<6, ()>;
+    type Next = g::Msg<7, ()>;
+    type Other = g::Msg<8, ()>;
+    let global = g::seq(
+        g::par(
+            g::seq(
+                g::route(g::send::<0, 1, LeftData>(), g::send::<0, 1, LeftStop>()).roll(),
+                g::send::<1, 0, LeftDone>(),
+            ),
+            g::seq(
+                g::route(g::send::<2, 1, RightData>(), g::send::<2, 1, RightStop>()).roll(),
+                g::send::<1, 2, RightDone>(),
+            ),
+        ),
+        g::route(g::send::<3, 1, Next>(), g::send::<3, 1, Other>()),
+    );
+    let queues = common::TestTransport::new();
+    let mut slab = vec![0; 64 * 1024];
+    let mut storage = SessionKitStorage::uninit();
+    let rendezvous = storage
+        .init()
+        .rendezvous(&mut slab, queues.clone())
+        .unwrap();
+    let session = SessionId::new(172);
+    let left_program = project::<0>(&global);
+    let receiver_program = project::<1>(&global);
+    let right_program = project::<2>(&global);
+    let next_program = project::<3>(&global);
+    let mut left = rendezvous.enter(session, &left_program).unwrap();
+    let mut receiver = rendezvous.enter(session, &receiver_program).unwrap();
+    let mut right = rendezvous.enter(session, &right_program).unwrap();
+    let mut next = rendezvous.enter(session, &next_program).unwrap();
+    let left = async {
+        left.send::<LeftStop>(&()).await?;
+        left.recv::<LeftDone>().await
+    };
+    let right = async {
+        right.send::<RightStop>(&()).await?;
+        right.recv::<RightDone>().await
+    };
+    let next = async { next.send::<Next>(&()).await };
+    let receiver = async {
+        // Finish the later source branch first while both senders run.
+        receiver.recv::<RightStop>().await?;
+        receiver.send::<RightDone>(&()).await?;
+        receiver.recv::<LeftStop>().await?;
+        receiver.send::<LeftDone>(&()).await?;
+        receiver.offer().await?.recv::<Next>().await
+    };
+    tokio::time::timeout(core::time::Duration::from_secs(1), async {
+        tokio::try_join!(left, right, next, receiver)
+    })
+    .await
+    .expect("a completed parallel loop must not hide the next receive")
+    .unwrap();
+    assert!(queues.queue_is_empty());
+}
+
 type Publication<P> = g::Seq<
     g::Send<{ p::TX_WIRE }, { p::UDP }, <P as p::Publication>::Datagram>,
     g::Seq<

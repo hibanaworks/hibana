@@ -63,6 +63,7 @@ where
                         entry.as_usize()
                     };
                     (entry_idx != index
+                        && !visited.contains(entry_idx)
                         && cursor.route_offer_entry_allows_current(
                             candidate,
                             entry_idx,

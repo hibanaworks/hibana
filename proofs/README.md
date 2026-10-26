@@ -462,6 +462,9 @@ public endpoint tests and independently compiled Kani cases cover these boundari
 Offer checks cover choices inside nested parallel branches and receives left
 enabled after independent work completes. Scope lookup retains the enclosing
 choice. Moving the lookup position preserves completion and branch selection.
+Source-ready and frontier searches exclude positions already tried in the same
+poll. Public tests finish parallel repetitions in reverse source order before
+receiving from a new sender.
 Public endpoint tests, source-model examples and Kani checks cover these
 receives, rejected alternatives and attempts to execute a completed step again.
 
