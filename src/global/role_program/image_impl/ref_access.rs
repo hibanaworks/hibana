@@ -95,6 +95,11 @@ const PASSIVE_PARENT_INDEX: u8 = 2;
 const PARALLEL_REENTRY_INDEX: u8 = 4;
 
 impl RoleImageRef {
+    #[cfg(hibana_profile)]
+    pub(crate) fn profile_resident_validation(&self) {
+        self.validate_resident_events();
+    }
+
     pub(crate) const fn new<const N: usize>(
         program: &'static crate::global::compiled::images::CompiledProgramRef,
         role: u8,

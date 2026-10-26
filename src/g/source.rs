@@ -268,6 +268,40 @@ impl<const CAPACITY: usize> ProgramSourceData<CAPACITY> {
 }
 
 #[cfg(hibana_profile)]
+pub(super) fn profile_construction<Steps: ProgramShape, const CAPACITY: usize>(
+    pass: super::profiling::SourcePass,
+) -> bool {
+    match pass {
+        super::profiling::SourcePass::Emission => {
+            let source = ProgramSourceData::<CAPACITY>::emit::<Steps>();
+            let correct = source.len() == Steps::EVENT_COUNT;
+            core::hint::black_box(source);
+            correct
+        }
+        super::profiling::SourcePass::Actors => {
+            if !Steps::SOURCE_NODE.has_delegation() {
+                return true;
+            }
+            let mut scratch = ownership::Scratch::<256, CAPACITY>::new();
+            let mut image = SourceActorImage::<CAPACITY>::new();
+            let correct = ownership::compile_actor_image_into(
+                core::hint::black_box(&Steps::SOURCE_NODE),
+                &mut scratch,
+                &mut image,
+            )
+            .is_ok();
+            core::hint::black_box(image);
+            correct
+        }
+        super::profiling::SourcePass::Scopes => {
+            let source = core::hint::black_box(&SourceEvents::<Steps, CAPACITY>::EVENTS);
+            core::hint::black_box(crate::global::role_program::ScopeFacts::new(source));
+            true
+        }
+    }
+}
+
+#[cfg(hibana_profile)]
 pub(super) fn profile<Steps: ProgramShape, const CAPACITY: usize>()
 -> super::profiling::SourceProfile {
     let mut eff = SourceEvents::<Steps, CAPACITY>::EVENTS;
@@ -286,7 +320,10 @@ pub(super) fn profile<Steps: ProgramShape, const CAPACITY: usize>()
         .unwrap_or(0);
     super::profiling::SourceProfile {
         source_rows: Steps::SOURCE_ROW_COUNT,
+        dependency_workspace_bytes:
+            crate::global::role_program::RoleImagePlan::dependency_workspace_bytes::<CAPACITY>(),
         events: eff.len(),
+        actor_decisions: actors.map_or(0, SourceActorImage::decision_count),
         lanes,
         receive_causal,
         full_inspections: counters.full_inspections,

@@ -46,6 +46,9 @@ pub(crate) struct CompiledProgramRef {
     pub(crate) facts: ProgramImageFacts,
     pub(crate) columns: ProgramImageColumns,
     pub(crate) blob: BlobPtr,
+    // Independent facts of the checked, contiguous ownership tail.
+    actor_binding_start: u16,
+    actor_decisions: u16,
     routes_sorted: bool,
 }
 
@@ -94,8 +97,14 @@ impl CompiledProgramRef {
             facts,
             columns,
             blob,
+            actor_binding_start: 0,
+            actor_decisions: 0,
             routes_sorted: false,
         };
+        if let Some(ownership) = image.decode_ownership_columns() {
+            image.actor_binding_start = ownership.bindings.offset;
+            image.actor_decisions = ownership.decisions.len;
+        }
         image.validate_atom_rows();
         // Immutable descriptor validation belongs at construction, not on
         // every endpoint lookup. The private certificate is not protocol state.

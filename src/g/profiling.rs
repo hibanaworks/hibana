@@ -11,8 +11,12 @@ use crate::runtime::program::Projectable;
 pub struct SourceProfile {
     /// Number of source events and structural markers.
     pub source_rows: usize,
+    /// Bytes of compiler workspace used by the local dependency scan.
+    pub dependency_workspace_bytes: usize,
     /// Number of messages in the global protocol.
     pub events: usize,
+    /// Number of conditional owner expressions in the compiled protocol.
+    pub actor_decisions: usize,
     /// Number of lanes used by the assigned source.
     pub lanes: usize,
     /// Whether the assigned lanes preserve receive order.
@@ -77,44 +81,122 @@ pub fn source<P: Projectable>(program: &P) -> SourceProfile {
     lower()
 }
 
+/// Rerun source emission with the compiled actor bindings.
+pub fn source_emission(program: &impl Projectable) -> bool {
+    construction_pass(program, SourcePass::Emission)
+}
+
+/// Rebuild the source's actor bindings from the typed protocol.
+pub fn actor_image(program: &impl Projectable) -> bool {
+    construction_pass(program, SourcePass::Actors)
+}
+
+/// Rebuild the shared scope information used by local projection.
+pub fn scope_facts(program: &impl Projectable) -> bool {
+    construction_pass(program, SourcePass::Scopes)
+}
+
+pub(super) enum SourcePass {
+    Emission,
+    Actors,
+    Scopes,
+}
+
+fn construction_pass<P: Projectable>(_program: &P, pass: SourcePass) -> bool {
+    let run: fn(SourcePass) -> bool = const {
+        let rows = P::Steps::SOURCE_ROW_COUNT;
+        if rows <= 8 {
+            super::source::profile_construction::<P::Steps, 8>
+        } else if rows <= 32 {
+            super::source::profile_construction::<P::Steps, 32>
+        } else if rows <= 128 {
+            super::source::profile_construction::<P::Steps, 128>
+        } else if rows <= 512 {
+            super::source::profile_construction::<P::Steps, 512>
+        } else if rows <= 2048 {
+            super::source::profile_construction::<P::Steps, 2048>
+        } else if rows <= 8192 {
+            super::source::profile_construction::<P::Steps, 8192>
+        } else if rows <= 32768 {
+            super::source::profile_construction::<P::Steps, 32768>
+        } else if rows <= 65535 {
+            super::source::profile_construction::<P::Steps, 65535>
+        } else {
+            panic!("choreography source exceeds compact descriptor domain")
+        }
+    };
+    run(pass)
+}
+
 /// Rerun source-order validation for one projected participant.
 ///
 /// This runs the same validator as projection, natively over the compiled image.
 /// Source emission, image construction and the other projection checks remain
 /// compile-time work. Time the call externally and sample it in a separate run.
 pub fn operation_order<const ROLE: u8>(program: &impl Projectable) -> bool {
-    operation_order_for::<ROLE, _>(program)
+    local_pass::<ROLE, _>(program, LocalPass::OperationOrder)
 }
 
-fn operation_order_for<const ROLE: u8, P: Projectable>(_program: &P) -> bool {
-    let validate: fn() -> bool = const {
+/// Rerun local image planning and compare its size with the compiled image.
+///
+/// Source emission, actor rows and role counts are cached at compile time.
+pub fn role_plan<const ROLE: u8>(program: &impl Projectable) -> bool {
+    local_pass::<ROLE, _>(program, LocalPass::RolePlan)
+}
+
+/// Rewrite the local image using the same buffer size as normal projection.
+///
+/// Planning, source emission and actor rows are cached at compile time.
+pub fn image_emission<const ROLE: u8>(program: &impl Projectable) -> bool {
+    local_pass::<ROLE, _>(program, LocalPass::ImageEmission)
+}
+
+/// Rerun the compiled image's event and ownership validation.
+///
+/// This uses the same immutable image accepted by normal projection.
+pub fn resident_validation<const ROLE: u8>(program: &impl Projectable) -> bool {
+    local_pass::<ROLE, _>(program, LocalPass::ResidentValidation)
+}
+
+pub(super) enum LocalPass {
+    OperationOrder,
+    RolePlan,
+    ImageEmission,
+    ResidentValidation,
+}
+
+fn local_pass<const ROLE: u8, P: Projectable>(_program: &P, pass: LocalPass) -> bool {
+    let validate: fn(LocalPass) -> bool = const {
         let rows = P::Steps::SOURCE_ROW_COUNT;
         if rows <= 8 {
-            super::role_projection::profile_operation_order::<ROLE, P::Steps, 8>
+            super::role_projection::profile_local_pass::<ROLE, P::Steps, 8>
         } else if rows <= 32 {
-            super::role_projection::profile_operation_order::<ROLE, P::Steps, 32>
+            super::role_projection::profile_local_pass::<ROLE, P::Steps, 32>
         } else if rows <= 128 {
-            super::role_projection::profile_operation_order::<ROLE, P::Steps, 128>
+            super::role_projection::profile_local_pass::<ROLE, P::Steps, 128>
         } else if rows <= 512 {
-            super::role_projection::profile_operation_order::<ROLE, P::Steps, 512>
+            super::role_projection::profile_local_pass::<ROLE, P::Steps, 512>
         } else if rows <= 2048 {
-            super::role_projection::profile_operation_order::<ROLE, P::Steps, 2048>
+            super::role_projection::profile_local_pass::<ROLE, P::Steps, 2048>
         } else if rows <= 8192 {
-            super::role_projection::profile_operation_order::<ROLE, P::Steps, 8192>
+            super::role_projection::profile_local_pass::<ROLE, P::Steps, 8192>
         } else if rows <= 32768 {
-            super::role_projection::profile_operation_order::<ROLE, P::Steps, 32768>
+            super::role_projection::profile_local_pass::<ROLE, P::Steps, 32768>
         } else if rows <= 65535 {
-            super::role_projection::profile_operation_order::<ROLE, P::Steps, 65535>
+            super::role_projection::profile_local_pass::<ROLE, P::Steps, 65535>
         } else {
             panic!("choreography source exceeds compact descriptor domain")
         }
     };
-    validate()
+    validate(pass)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{operation_order, source};
+    use super::{
+        actor_image, image_emission, operation_order, resident_validation, role_plan, scope_facts,
+        source, source_emission,
+    };
     use crate::{Endpoint, g};
 
     #[test]
@@ -124,10 +206,25 @@ mod tests {
             g::send::<0, 1, Loan>(),
             g::seq(g::send::<2, 3, g::Msg<2, ()>>(), g::send::<1, 0, Loan>()),
         );
+        assert!(source_emission(&global));
+        assert!(actor_image(&global));
+        assert!(scope_facts(&global));
         assert!(operation_order::<0>(&global));
         assert!(operation_order::<1>(&global));
         assert!(operation_order::<2>(&global));
         assert!(operation_order::<3>(&global));
+        assert!(role_plan::<0>(&global));
+        assert!(role_plan::<1>(&global));
+        assert!(role_plan::<2>(&global));
+        assert!(role_plan::<3>(&global));
+        assert!(image_emission::<0>(&global));
+        assert!(image_emission::<1>(&global));
+        assert!(image_emission::<2>(&global));
+        assert!(image_emission::<3>(&global));
+        assert!(resident_validation::<0>(&global));
+        assert!(resident_validation::<1>(&global));
+        assert!(resident_validation::<2>(&global));
+        assert!(resident_validation::<3>(&global));
     }
 
     #[test]

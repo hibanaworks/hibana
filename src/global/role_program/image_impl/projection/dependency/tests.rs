@@ -11,6 +11,92 @@ type OtherArm = Seq<Send<0, 1, Msg<237, u8>>, Send<1, 0, Msg<238, u8>>>;
 type ParallelArm = Roll<Par<Send<0, 1, Msg<235, u8>>, Send<0, 1, Msg<236, u8>>>>;
 type ReentrantRoute = Roll<Route<OtherArm, ParallelArm>>;
 
+#[test]
+fn source_marker_slots_keep_sparse_scope_kinds_distinct() {
+    use crate::eff::{EffAtom, EventOrigin, EventPayload};
+    use crate::global::const_dsl::{ReentryMark, ScopeId};
+    let last = ScopeId::LOCAL_CAPACITY - 1;
+    let mut checked = 0;
+    for (route_id, parallel_id) in [(0, 1), (last, last)] {
+        let mut source = EffList::<12>::new_partitioned(5, 7, 0);
+        for (label, lane) in [0, 1, 2, 1, 0].into_iter().enumerate() {
+            source.push_event_mut(EffAtom {
+                from: 0,
+                to: 1,
+                label: label as u8,
+                lane,
+                payload: EventPayload::Wire(1),
+                origin: EventOrigin::User,
+            });
+        }
+        let route = ScopeId::route(route_id);
+        source.push_route_scope_mut(route, 1, 3, 4, ReentryMark::SinglePass);
+        source.push_parallel_scope_mut(ScopeId::parallel(parallel_id), 1, 2, 3);
+        let scopes = ScopeFacts::new(&source);
+        for role in [0, 1] {
+            let mut cursor = DependencyCursor::new(&source, &scopes, LocalRows::Role(role));
+            let dependencies: [_; 5] =
+                core::array::from_fn(|event| cursor.next(event, source.atom_at(event).lane, event));
+            // Source: prefix; choice { par(left, right), other }; continuation.
+            // Compare allowed operations at every legal cut. Guard encodings
+            // may differ while imposing the same order on the selected branch.
+            for selected in 0..2 {
+                let active = [true, selected == 0, selected == 0, selected == 1, true];
+                for mask in 0u8..32 {
+                    let done = |event: usize| mask & (1u8 << event) != 0;
+                    let body_done = if selected == 0 {
+                        done(1) && done(2)
+                    } else {
+                        done(3)
+                    };
+                    let started =
+                        (selected == 0 && (done(1) || done(2))) || (selected == 1 && done(3));
+                    if (started && !done(0)) || (done(4) && !body_done) {
+                        continue;
+                    }
+                    for event in 0..5 {
+                        if !active[event] || done(event) {
+                            continue;
+                        }
+                        let expected = match event {
+                            0 => true,
+                            1..=3 => done(0),
+                            4 => body_done,
+                            _ => unreachable!(),
+                        };
+                        let actual =
+                            dependencies[event]
+                                .to_dependency(5)
+                                .is_none_or(|dependency| {
+                                    assert!(
+                                        dependency.start() <= dependency.end()
+                                            && dependency.end() <= 5
+                                    );
+                                    let applies = match dependency.conflict() {
+                                        LocalConflict::Unconditional => true,
+                                        LocalConflict::SharedRoute => false,
+                                        LocalConflict::RouteArm { scope, arm } => {
+                                            assert_eq!(scope, route);
+                                            arm == selected
+                                        }
+                                    };
+                                    !applies
+                                        || (dependency.start()..dependency.end())
+                                            .all(|prior| !active[prior] || done(prior))
+                                });
+                        assert_eq!(
+                            actual, expected,
+                            "route={route_id}, par={parallel_id}, role={role}, choice={selected}, mask={mask}, event={event}"
+                        );
+                        checked += 1;
+                    }
+                }
+            }
+        }
+    }
+    assert_eq!(checked, 192);
+}
+
 const fn reference_lane_present<const E: usize>(
     eff_list: &EffList<E>,
     role: u8,

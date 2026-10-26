@@ -231,9 +231,9 @@ impl EventCursor {
             return Some(false);
         }
         let program = self.program_ref();
-        // Without transferred roles, projection already assigns every row to
-        // this actor. Its operation identity need not be decoded again.
-        if !program.has_actor_bindings() {
+        // Construction checks every projected row's actor. Only conditional
+        // ownership needs a choice lookup; unconditional loans remain static.
+        if program.actor_decision_count() == 0 {
             return Some(true);
         }
         let (eff, direction) =

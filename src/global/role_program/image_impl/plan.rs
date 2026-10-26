@@ -27,6 +27,11 @@ struct RouteImagePlanRouteFacts {
 }
 
 impl RoleImagePlan {
+    #[cfg(hibana_profile)]
+    pub(crate) const fn dependency_workspace_bytes<const E: usize>() -> usize {
+        core::mem::size_of::<projection::DependencyCursor<'static, E>>()
+    }
+
     #[inline(always)]
     pub(crate) const fn blob_len(&self) -> usize {
         self.columns.blob_len()

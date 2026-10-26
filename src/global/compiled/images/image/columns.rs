@@ -103,7 +103,7 @@ impl ProgramImageColumns {
 
     // Atom counts fit below 8192. This tag selects the owned image grammar;
     // its final word is the total length and its four-byte tail header stores
-    // scope/decision counts. Ordinary columns and resident refs stay unchanged.
+    // scope/decision counts. Ordinary column encodings stay unchanged.
     const OWNED: u16 = 1 << 15;
     pub(crate) const fn try_new(
         atom_len: usize,

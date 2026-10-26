@@ -146,21 +146,23 @@ impl EventCursor {
         let retained = self.has_retained_roll_completion();
         let mut pending = self.pending_event_steps(row_set.start()..row_set.end());
         while let Some(idx) = pending.next() {
-            if (!retained || !self.retained_roll_allows_predecessor(idx, target))
-                && self.event_actor_is_local(idx, selected_arm_for_scope) != Some(false)
-                && let Some(row) = self.machine().event_program().event_row_at(idx)
-            {
-                match self.event_conflict_row_admission(
-                    row.conflict(),
-                    ScopeId::none(),
-                    None,
-                    selected_arm_for_scope,
-                ) {
-                    ConflictAdmission::Allowed | ConflictAdmission::Invalid => return false,
-                    ConflictAdmission::Excluded { scope, arm } => {
-                        let end = self.excluded_arm_end(idx, scope, arm).min(row_set.end());
-                        pending = self.pending_event_steps(end..row_set.end());
+            if retained && self.retained_roll_allows_predecessor(idx, target) {
+                continue;
+            }
+            match self.event_conflict_row_admission(
+                self.event_conflict_for_index(idx),
+                ScopeId::none(),
+                None,
+                selected_arm_for_scope,
+            ) {
+                ConflictAdmission::Allowed | ConflictAdmission::Invalid => {
+                    if self.event_actor_is_local(idx, selected_arm_for_scope) != Some(false) {
+                        return false;
                     }
+                }
+                ConflictAdmission::Excluded { scope, arm } => {
+                    let end = self.excluded_arm_end(idx, scope, arm).min(row_set.end());
+                    pending = self.pending_event_steps(end..row_set.end());
                 }
             }
         }
@@ -179,20 +181,20 @@ impl EventCursor {
         }
         let mut pending = self.pending_event_steps(row_set.start()..row_set.end());
         while let Some(idx) = pending.next() {
-            if self.event_actor_is_local(idx, selected_arm_for_scope) != Some(false)
-                && let Some(row) = self.machine().event_program().event_row_at(idx)
-            {
-                match self.event_conflict_row_admission(
-                    row.conflict(),
-                    ScopeId::none(),
-                    None,
-                    selected_arm_for_scope,
-                ) {
-                    ConflictAdmission::Allowed | ConflictAdmission::Invalid => return false,
-                    ConflictAdmission::Excluded { scope, arm } => {
-                        let end = self.excluded_arm_end(idx, scope, arm).min(row_set.end());
-                        pending = self.pending_event_steps(end..row_set.end());
+            match self.event_conflict_row_admission(
+                self.event_conflict_for_index(idx),
+                ScopeId::none(),
+                None,
+                selected_arm_for_scope,
+            ) {
+                ConflictAdmission::Allowed | ConflictAdmission::Invalid => {
+                    if self.event_actor_is_local(idx, selected_arm_for_scope) != Some(false) {
+                        return false;
                     }
+                }
+                ConflictAdmission::Excluded { scope, arm } => {
+                    let end = self.excluded_arm_end(idx, scope, arm).min(row_set.end());
+                    pending = self.pending_event_steps(end..row_set.end());
                 }
             }
         }

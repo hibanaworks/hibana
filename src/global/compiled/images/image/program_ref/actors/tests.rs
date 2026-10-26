@@ -241,3 +241,22 @@ fn owned_image_rejects_decision_counts_outside_its_storage() {
     };
     let _ = CompiledProgramRef::compact(PROGRAM.facts, COLUMNS, &BYTES);
 }
+
+#[test]
+#[should_panic]
+fn tagged_ownership_image_rejects_invalid_columns_with_wire_payloads() {
+    use crate::global::compiled::images::image::columns::PROGRAM_IMAGE_ATOM_STRIDE;
+    static BYTES: [u8; 128] = {
+        let mut bytes = encoded_bytes();
+        let mut event = 0;
+        while event < COLUMNS.atom_count() {
+            bytes[event * PROGRAM_IMAGE_ATOM_STRIDE + 7] &= 1;
+            event += 1;
+        }
+        let header = COLUMNS.ownership_header().offset as usize;
+        bytes[header + 2] = 255;
+        bytes[header + 3] = 255;
+        bytes
+    };
+    let _ = CompiledProgramRef::compact(PROGRAM.facts, COLUMNS, &BYTES);
+}

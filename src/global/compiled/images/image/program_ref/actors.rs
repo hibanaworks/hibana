@@ -8,7 +8,7 @@ use crate::{
         compiled::images::image::columns::{
             OwnershipColumns, PROGRAM_IMAGE_ACTOR_BINDING_STRIDE,
             PROGRAM_IMAGE_ACTOR_DECISION_STRIDE, PROGRAM_IMAGE_INITIAL_ACTOR_STRIDE,
-            PROGRAM_IMAGE_SCOPE_MARKER_STRIDE,
+            PROGRAM_IMAGE_SCOPE_MARKER_STRIDE, ProgramColumnRange,
         },
         const_dsl::{ScopeId, ScopeKind},
     },
@@ -35,14 +35,37 @@ impl CompiledProgramRef {
         self.columns.has_ownership()
     }
 
+    #[inline(always)]
     pub(crate) const fn actor_decision_count(&self) -> usize {
-        match self.ownership_columns() {
-            Some(columns) => columns.decisions.len as usize,
-            None => 0,
-        }
+        self.actor_decisions as usize
     }
 
+    #[inline(always)]
     const fn ownership_columns(&self) -> Option<OwnershipColumns> {
+        if !self.columns.has_ownership() {
+            return None;
+        }
+        // Construction checked these contiguous ranges against the byte image.
+        let decisions = self.actor_binding_start as usize
+            + self.columns.atom_count() * PROGRAM_IMAGE_ACTOR_BINDING_STRIDE;
+        let initial = decisions + self.actor_decision_count() * PROGRAM_IMAGE_ACTOR_DECISION_STRIDE;
+        Some(OwnershipColumns {
+            bindings: ProgramColumnRange {
+                offset: self.actor_binding_start,
+                len: self.columns.atom_count() as u16,
+            },
+            decisions: ProgramColumnRange {
+                offset: decisions as u16,
+                len: self.actor_decisions,
+            },
+            initial: ProgramColumnRange {
+                offset: initial as u16,
+                len: ((self.blob.len() - initial) / PROGRAM_IMAGE_INITIAL_ACTOR_STRIDE) as u16,
+            },
+        })
+    }
+
+    pub(super) const fn decode_ownership_columns(&self) -> Option<OwnershipColumns> {
         if !self.columns.has_ownership() {
             return None;
         }

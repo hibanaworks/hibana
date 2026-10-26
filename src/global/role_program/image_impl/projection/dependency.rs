@@ -75,7 +75,9 @@ pub(in crate::global::role_program::image_impl) struct DependencyCursor<'a, cons
     branch_barrier: CandidateKey,
     branch_floor: usize,
     context: u16,
-    inputs: [[Option<CompositionInput>; ScopeId::LOCAL_CAPACITY as usize]; 2],
+    // Primary marker positions are unique across scope kinds and fit the
+    // source arena. Sparse scope identifiers need no additional workspace.
+    inputs: [Option<CompositionInput>; E],
     lane_candidates: [CandidateKey; LANE_DOMAIN_SIZE],
     needs_dependencies: bool,
 }
@@ -104,7 +106,7 @@ impl<'a, const E: usize> DependencyCursor<'a, E> {
             branch_barrier: CandidateKey::NONE,
             branch_floor: 0,
             context: u16::MAX,
-            inputs: [[None; ScopeId::LOCAL_CAPACITY as usize]; 2],
+            inputs: [None; E],
             lane_candidates: [CandidateKey::NONE; LANE_DOMAIN_SIZE],
             needs_dependencies: cross_lane
                 || scope_markers_contain_kind(markers, ScopeKind::Parallel),
@@ -141,8 +143,7 @@ impl<'a, const E: usize> DependencyCursor<'a, E> {
                 return;
             }
         }
-        let kind = Self::composition_kind(enter.scope_id);
-        let input = self.inputs[kind][enter.scope_id.local_ordinal() as usize]
+        let input = self.inputs[enter_index]
             .take()
             .expect("composition exit without input");
         self.branch_floor = input.outer_floor as usize;
@@ -161,19 +162,8 @@ impl<'a, const E: usize> DependencyCursor<'a, E> {
         self.branch_barrier = candidate;
     }
 
-    const fn composition_kind(scope: ScopeId) -> usize {
-        match scope.kind() {
-            Some(ScopeKind::Parallel) => 0,
-            Some(ScopeKind::Route) => 1,
-            _ => crate::invariant(),
-        }
-    }
-
     const fn enter_composition(&mut self, index: usize, local_step: usize) {
-        let marker = self.eff_list.scope_markers().at(index);
-        let kind = Self::composition_kind(marker.scope_id);
-        let slot = marker.scope_id.local_ordinal() as usize;
-        if self.inputs[kind][slot].is_some()
+        if self.inputs[index].is_some()
             || self.branch_floor > local_step
             || self.branch_floor > u16::MAX as usize
         {
@@ -186,7 +176,7 @@ impl<'a, const E: usize> DependencyCursor<'a, E> {
                 local_step,
             ));
         }
-        self.inputs[kind][slot] = Some(CompositionInput {
+        self.inputs[index] = Some(CompositionInput {
             barrier: self.branch_barrier,
             outer_floor: self.branch_floor as u16,
             context: self.context,
@@ -199,12 +189,11 @@ impl<'a, const E: usize> DependencyCursor<'a, E> {
     }
 
     const fn start_sibling(&mut self, scope: ScopeId, local_step: usize) {
-        self.branch_barrier = self.inputs[Self::composition_kind(scope)]
-            [scope.local_ordinal() as usize]
+        let enter = self.scopes.first_enter(scope);
+        self.branch_barrier = self.inputs[enter]
             .expect("composition sibling without input")
             .barrier;
         self.branch_floor = local_step;
-        let enter = self.scopes.first_enter(scope);
         if enter >= u16::MAX as usize {
             crate::invariant();
         }
