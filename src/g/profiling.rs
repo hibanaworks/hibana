@@ -77,10 +77,58 @@ pub fn source<P: Projectable>(program: &P) -> SourceProfile {
     lower()
 }
 
+/// Rerun source-order validation for one projected participant.
+///
+/// This runs the same validator as projection, natively over the compiled image.
+/// Source emission, image construction and the other projection checks remain
+/// compile-time work. Time the call externally and sample it in a separate run.
+pub fn operation_order<const ROLE: u8>(program: &impl Projectable) -> bool {
+    operation_order_for::<ROLE, _>(program)
+}
+
+fn operation_order_for<const ROLE: u8, P: Projectable>(_program: &P) -> bool {
+    let validate: fn() -> bool = const {
+        let rows = P::Steps::SOURCE_ROW_COUNT;
+        if rows <= 8 {
+            super::role_projection::profile_operation_order::<ROLE, P::Steps, 8>
+        } else if rows <= 32 {
+            super::role_projection::profile_operation_order::<ROLE, P::Steps, 32>
+        } else if rows <= 128 {
+            super::role_projection::profile_operation_order::<ROLE, P::Steps, 128>
+        } else if rows <= 512 {
+            super::role_projection::profile_operation_order::<ROLE, P::Steps, 512>
+        } else if rows <= 2048 {
+            super::role_projection::profile_operation_order::<ROLE, P::Steps, 2048>
+        } else if rows <= 8192 {
+            super::role_projection::profile_operation_order::<ROLE, P::Steps, 8192>
+        } else if rows <= 32768 {
+            super::role_projection::profile_operation_order::<ROLE, P::Steps, 32768>
+        } else if rows <= 65535 {
+            super::role_projection::profile_operation_order::<ROLE, P::Steps, 65535>
+        } else {
+            panic!("choreography source exceeds compact descriptor domain")
+        }
+    };
+    validate()
+}
+
 #[cfg(test)]
 mod tests {
-    use super::source;
+    use super::{operation_order, source};
     use crate::{Endpoint, g};
+
+    #[test]
+    fn operation_order_uses_the_projected_actor_for_delegated_roles() {
+        type Loan = g::Msg<1, Endpoint<'static, 2>>;
+        let global = g::seq(
+            g::send::<0, 1, Loan>(),
+            g::seq(g::send::<2, 3, g::Msg<2, ()>>(), g::send::<1, 0, Loan>()),
+        );
+        assert!(operation_order::<0>(&global));
+        assert!(operation_order::<1>(&global));
+        assert!(operation_order::<2>(&global));
+        assert!(operation_order::<3>(&global));
+    }
 
     #[test]
     fn ordinary_source_needs_one_inspection() {

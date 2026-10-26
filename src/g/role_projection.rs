@@ -223,3 +223,15 @@ where
     let () = ProgramProjection::<Steps, CAPACITY>::VALIDATION;
     &RoleProjection::<ROLE, Steps, CAPACITY>::IMAGE_REF
 }
+
+#[cfg(hibana_profile)]
+pub(super) fn profile_operation_order<const ROLE: u8, Steps, const CAPACITY: usize>() -> bool
+where
+    Steps: ProgramShape,
+{
+    source_order::check::<Steps, CAPACITY>(core::hint::black_box(role_projection_image_for::<
+        ROLE,
+        Steps,
+        CAPACITY,
+    >()))
+}
