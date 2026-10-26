@@ -205,8 +205,8 @@ fn pointwise_failure<const E: usize, const D: usize>(
         None => query.earlier + 1,
     };
     let before = query.events.atom_at(query.earlier);
-    for later in start..query.end {
-        if (FlowGoal::ReceiveLane(before, query.end))
+    (start..query.end).find(|&later| {
+        (FlowGoal::ReceiveLane(before, query.end))
             .sender_change(later, query.events.atom_at(later))
             && !(Obligation {
                 end: later + 1,
@@ -216,11 +216,7 @@ fn pointwise_failure<const E: usize, const D: usize>(
                 repeated: query.repeated,
             })
             .check(paths, Some(later))
-        {
-            return Some(later);
-        }
-    }
-    None
+    })
 }
 
 #[test]
