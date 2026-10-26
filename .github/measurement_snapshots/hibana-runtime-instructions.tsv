@@ -3,6 +3,7 @@
 # Existing stricter limits are retained.
 # Compiler/target changes require profile review, never an automatic budget increase.
 # Profiles: ccfbaf9005defca47a70365ec76126289fcf8dbb, CI run 40180608232.
+# Roll/8 and roll/32: ac36cd57bbe8016af72205f938b1d7b164516552, CI run 40356252493.
 # The parameter is tail events for seq/par and body round trips for roll.
 case	parameter	endpoint_ops	max_instructions
 seq	8	512	15115292
@@ -10,5 +11,5 @@ seq	256	512	15899904
 par	8	512	11122579
 par	256	512	11643633
 roll	1	2048	46686660
-roll	8	2048	83323080
-roll	32	2048	215163657
+roll	8	2048	83308601
+roll	32	2048	215099534
