@@ -16,6 +16,7 @@ pub use queries::{Arm, Scope, Selection};
 use queries::{At, Atom, Evaluation, Query};
 #[path = "ownership/actors.rs"]
 mod actors;
+pub(crate) use actors::ActorPair;
 pub use actors::{ActorImage, compile_actor_image_into};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

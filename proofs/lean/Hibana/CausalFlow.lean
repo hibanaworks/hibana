@@ -257,11 +257,11 @@ theorem seedless_parallel_left_can_be_skipped (left right : CausalFlowExpr)
   funext role
   simp [CausalFlowExpr.eval, seedless_flow_preserves_empty_facts left noSeed]
 
-/-- All participants of the expression already have the causal fact. -/
+/-- Every possible receiver already has the causal fact. -/
 def CausalFlowExpr.coveredBy (facts : CausalRoles) : CausalFlowExpr → Bool
   | .empty => true
   | .seed role => facts role
-  | .relay sender receiver => facts sender && facts receiver
+  | .relay _ receiver => facts receiver
   | .seq left right | .choice left right | .parallel left right =>
       left.coveredBy facts && right.coveredBy facts
 
@@ -277,12 +277,14 @@ theorem a_covered_flow_preserves_its_input (flow : CausalFlowExpr) (facts : Caus
         simp [CausalFlowExpr.eval, CausalRoles.insert, known]
       · simp [CausalFlowExpr.eval, CausalRoles.insert, same]
   | relay sender receiver =>
-      simp only [CausalFlowExpr.coveredBy, Bool.and_eq_true] at covered
       funext query
-      by_cases same : query = receiver
-      · subst query
-        simp [CausalFlowExpr.eval, CausalRoles.insert, covered.1, covered.2]
-      · simp [CausalFlowExpr.eval, CausalRoles.insert, covered.1, same]
+      have known : facts receiver = true := covered
+      by_cases senderKnown : facts sender = true
+      · by_cases same : query = receiver
+        · subst query
+          simp [CausalFlowExpr.eval, CausalRoles.insert, senderKnown, known]
+        · simp [CausalFlowExpr.eval, CausalRoles.insert, senderKnown, same]
+      · simp [CausalFlowExpr.eval, senderKnown]
   | seq left right leftIH rightIH =>
       simp only [CausalFlowExpr.coveredBy, Bool.and_eq_true] at covered
       simp only [CausalFlowExpr.eval, leftIH covered.1, rightIH covered.2]
@@ -311,5 +313,56 @@ theorem first_causal_failure_is_earliest (left right : Option Nat) (event : Nat)
     (∀ earlier, left = some earlier ∨ right = some earlier → event ≤ earlier) := by
   cases left <;> cases right <;> simp_all [firstCausalFailure, Nat.min_def]
   split at * <;> simp_all <;> omega
+
+/-- Relays, choices and parallel forks never remove an incoming fact. -/
+theorem causal_flow_preserves_known_facts (flow : CausalFlowExpr) (facts : CausalRoles) :
+    facts.Subset (flow.eval facts) := by
+  induction flow with
+  | empty => exact fun _ h => h
+  | seed role =>
+      intro query known
+      simp [CausalFlowExpr.eval, CausalRoles.insert, known]
+  | relay sender receiver =>
+      intro query known
+      by_cases h : facts sender = true <;>
+        simp [CausalFlowExpr.eval, CausalRoles.insert, h, known]
+  | seq left right leftIH rightIH =>
+      intro role known
+      exact causal_flow_monotone right leftIH role (rightIH role known)
+  | choice left right leftIH rightIH =>
+      intro role known
+      simp [CausalFlowExpr.eval, leftIH role known, rightIH role known]
+  | parallel left right leftIH rightIH =>
+      intro role known
+      simp [CausalFlowExpr.eval, leftIH role known]
+
+/-- A target sender already known at the start stays known after every prefix. -/
+theorem known_target_sender_needs_no_suffix_search
+    (flow : CausalFlowExpr) (facts : CausalRoles) (sender : Nat)
+    (known : facts sender = true) : flow.eval facts sender = true :=
+  causal_flow_preserves_known_facts flow facts sender known
+
+/-- Split seed queries while retaining every target of each query. -/
+theorem receive_seed_partition_preserves_validation
+    {α : Type} (seeds : List α) (cut : Nat) (valid : α → Bool) :
+    seeds.all valid = ((seeds.take cut).all valid && (seeds.drop cut).all valid) := by
+  rw [← List.all_append, List.take_append_drop]
+
+/-- Source and occurrence cutoffs give the same order within one visit. -/
+theorem source_cutoff_preserves_occurrence_order
+    (source body iteration cutoff : Nat) (sourceIn : body ≤ source)
+    (cutoffIn : iteration ≤ cutoff) :
+    iteration + (source - body) < cutoff ↔ source < body + (cutoff - iteration) := by
+  constructor
+  · intro h
+    have mid : source - body < cutoff - iteration := by
+      apply Nat.lt_of_add_lt_add_left (n := iteration)
+      simpa only [Nat.add_sub_of_le cutoffIn] using h
+    simpa only [Nat.add_sub_of_le sourceIn] using Nat.add_lt_add_left mid body
+  · intro h
+    have mid : source - body < cutoff - iteration := by
+      apply Nat.lt_of_add_lt_add_left (n := body)
+      simpa only [Nat.add_sub_of_le sourceIn] using h
+    simpa only [Nat.add_sub_of_le cutoffIn] using Nat.add_lt_add_left mid iteration
 
 end Hibana

@@ -6,6 +6,7 @@ use crate::{
 };
 
 pub(super) mod ownership;
+pub(crate) use ownership::ActorPair;
 pub(crate) use ownership::{
     Arm as SourceArm, Context as SourceContext, Scope as SourceScope, Selection as SourceSelection,
 };

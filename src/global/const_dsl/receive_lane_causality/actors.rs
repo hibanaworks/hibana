@@ -3,7 +3,7 @@
 //! from the same checked source; possible-holder sets are never authority.
 use super::{
     CausalFlow, CausalRoles, EffList, FlowGoal, FlowRange, ReceiveDirectionIndex, RollBodyRange,
-    ScopeKind, roll_body_range_from_enter,
+    ScopeKind, ScopeOffsets, roll_body_range_from_enter,
 };
 use crate::{
     eff::EffAtom,
@@ -49,18 +49,18 @@ pub(super) struct NeedChoice {
     visit: Visit,
 }
 
-#[derive(Clone, Copy)]
 pub(super) enum ActorMap<'a, const E: usize, const D: usize> {
     Logical,
     Owned {
         image: &'a SourceActorImage<E, D>,
+        events: &'a [crate::g::ActorPair],
         paths: Paths<'a>,
         repeated: Option<RollBodyRange>,
     },
 }
 
 impl<const E: usize, const D: usize> ActorMap<'_, E, D> {
-    const fn visit(self, scope: SourceScope, iteration: usize) -> Visit {
+    const fn visit(&self, scope: SourceScope, iteration: usize) -> Visit {
         if let Self::Owned {
             repeated: Some(body),
             ..
@@ -78,7 +78,7 @@ impl<const E: usize, const D: usize> ActorMap<'_, E, D> {
         }
     }
 
-    const fn selection(self, scope: SourceScope, iteration: usize) -> Option<SourceArm> {
+    const fn selection(&self, scope: SourceScope, iteration: usize) -> Option<SourceArm> {
         match self {
             Self::Logical => None,
             Self::Owned { paths, .. } => paths.get(self.visit(scope, iteration)).get(scope),
@@ -86,7 +86,7 @@ impl<const E: usize, const D: usize> ActorMap<'_, E, D> {
     }
 
     pub(super) const fn selected_route(
-        self,
+        &self,
         start: usize,
         split: usize,
         stop: usize,
@@ -102,17 +102,7 @@ impl<const E: usize, const D: usize> ActorMap<'_, E, D> {
         )
     }
 
-    const fn reference(self, event: usize, side: usize) -> u16 {
-        let Self::Owned { image, .. } = self else {
-            crate::invariant()
-        };
-        match image.event_references(event) {
-            Some(references) => references[side],
-            None => crate::invariant(),
-        }
-    }
-
-    const fn decision(self, reference: u16) -> (SourceScope, [u16; 2]) {
+    const fn decision(&self, reference: u16) -> (SourceScope, [u16; 2]) {
         let Self::Owned { image, .. } = self else {
             crate::invariant()
         };
@@ -123,15 +113,15 @@ impl<const E: usize, const D: usize> ActorMap<'_, E, D> {
     }
 
     pub(super) const fn receiver(
-        self,
+        &self,
         event: usize,
         atom: EffAtom,
         iteration: usize,
     ) -> Result<u8, NeedChoice> {
-        if let Self::Logical = self {
+        let Self::Owned { events, .. } = self else {
             return Ok(atom.to);
-        }
-        let mut reference = self.reference(event, 1);
+        };
+        let mut reference = events[event].receiver.0;
         while reference >= 256 {
             let (scope, children) = self.decision(reference);
             reference = match self.selection(scope, iteration) {
@@ -152,10 +142,10 @@ impl<const E: usize, const D: usize> ActorMap<'_, E, D> {
     /// require a path-specific restart: a route intersection may have hidden
     /// the correlation between that route's relay and the holder it selected.
     const fn reference_known(
-        self,
+        &self,
         reference: u16,
         iteration: usize,
-        facts: CausalRoles,
+        facts: &CausalRoles,
     ) -> Result<bool, NeedChoice> {
         if reference < 256 {
             return Ok(facts.contains(reference as u8));
@@ -179,21 +169,29 @@ impl<const E: usize, const D: usize> ActorMap<'_, E, D> {
     }
 
     pub(super) const fn sender_known(
-        self,
+        &self,
         event: usize,
         atom: EffAtom,
         iteration: usize,
-        facts: CausalRoles,
+        facts: &CausalRoles,
     ) -> Result<bool, NeedChoice> {
         match self {
             Self::Logical => Ok(facts.contains(atom.from)),
-            Self::Owned { .. } => self.reference_known(self.reference(event, 0), iteration, facts),
+            Self::Owned { events, .. } => {
+                let sender = events[event].sender.0;
+                if sender < 256 {
+                    Ok(facts.contains(sender as u8))
+                } else {
+                    self.reference_known(sender, iteration, facts)
+                }
+            }
         }
     }
 }
 
 struct Obligation<'a, const E: usize, const D: usize> {
     events: &'a EffList<E>,
+    scope_offsets: &'a ScopeOffsets<E>,
     actors: Option<&'a SourceActorImage<E, D>>,
     earlier: usize,
     end: usize,
@@ -210,7 +208,7 @@ impl<const E: usize, const D: usize> Obligation<'_, E, D> {
 
     const fn run(
         &self,
-        actors: ActorMap<'_, E, D>,
+        actors: &ActorMap<'_, E, D>,
         target: Option<usize>,
         start: usize,
     ) -> Result<Option<usize>, NeedChoice> {
@@ -223,6 +221,7 @@ impl<const E: usize, const D: usize> Obligation<'_, E, D> {
         };
         let flow = CausalFlow {
             eff_list: self.events,
+            scope_offsets: self.scope_offsets,
             earlier: self.earlier - body.start,
             goal: match self.repeated {
                 Some(_) => FlowGoal::Closure,
@@ -279,12 +278,13 @@ impl<const E: usize, const D: usize> Obligation<'_, E, D> {
         let actors = match self.actors {
             Some(image) => ActorMap::Owned {
                 image,
+                events: image.event_actors(),
                 paths,
                 repeated: self.repeated,
             },
             None => ActorMap::Logical,
         };
-        let choice = match self.run(actors, target, start) {
+        let choice = match self.run(&actors, target, start) {
             Ok(result) => return result,
             Err(choice) => choice,
         };
@@ -359,6 +359,7 @@ impl<const E: usize, const D: usize> Obligation<'_, E, D> {
 /// numbers do not enter this query: allocation uses it before choosing them.
 pub(crate) const fn receive_pair_is_causal<const E: usize, const D: usize>(
     events: &EffList<E>,
+    scope_offsets: &ScopeOffsets<E>,
     actors: Option<&SourceActorImage<E, D>>,
     earlier: usize,
     later: usize,
@@ -384,6 +385,7 @@ pub(crate) const fn receive_pair_is_causal<const E: usize, const D: usize>(
     if earlier < later
         && !(Obligation {
             events,
+            scope_offsets,
             actors,
             earlier,
             end: later + 1,
@@ -417,6 +419,7 @@ pub(crate) const fn receive_pair_is_causal<const E: usize, const D: usize>(
             && later < end
             && !(Obligation {
                 events,
+                scope_offsets,
                 actors,
                 earlier,
                 end: later + 1,
@@ -436,14 +439,28 @@ pub(crate) const fn owned_receive_lane_conflict<const E: usize, const D: usize>(
     events: &EffList<E>,
     actors: &SourceActorImage<E, D>,
 ) -> Option<(usize, usize, Option<u16>)> {
-    owned_receive_lane_conflict_from(events, actors, None)
+    let scope_offsets = ScopeOffsets::new(events);
+    owned_receive_lane_conflict_in(events, &scope_offsets, actors, ReceiveScan::From(None))
 }
 
-pub(crate) const fn owned_receive_lane_conflict_from<const E: usize, const D: usize>(
+/// Source order is the whole-source region, followed by each roll body.
+/// A before/from pair partitions the seed queries, not their target receives.
+#[derive(Clone, Copy)]
+pub(crate) enum ReceiveScan {
+    From(Option<(usize, Option<u16>)>),
+    Before((usize, Option<u16>)),
+}
+
+pub(crate) const fn owned_receive_lane_conflict_in<const E: usize, const D: usize>(
     events: &EffList<E>,
+    scope_offsets: &ScopeOffsets<E>,
     actors: &SourceActorImage<E, D>,
-    mut resume: Option<(usize, Option<u16>)>,
+    scan: ReceiveScan,
 ) -> Option<(usize, usize, Option<u16>)> {
+    let mut resume = match scan {
+        ReceiveScan::From(resume) => resume,
+        ReceiveScan::Before(_) => None,
+    };
     let context = SourceContext::new(&[]);
     let paths = Paths {
         shared: &context,
@@ -476,6 +493,16 @@ pub(crate) const fn owned_receive_lane_conflict_from<const E: usize, const D: us
                 Some(marker.scope_id.local_ordinal()),
             )
         };
+        let stop_before = match (scan, scope) {
+            (ReceiveScan::Before((event, None)), None) => Some(event),
+            (ReceiveScan::Before((event, Some(cut))), Some(scope)) if cut == scope => Some(event),
+            _ => None,
+        };
+        if let Some(event) = stop_before
+            && (event < start || event >= stop)
+        {
+            crate::invariant();
+        }
         let mut earlier = match resume {
             Some((earlier, resume_scope)) => {
                 let same_scope = match (scope, resume_scope) {
@@ -497,6 +524,11 @@ pub(crate) const fn owned_receive_lane_conflict_from<const E: usize, const D: us
         };
         let directions = ReceiveDirectionIndex::new(events, start, stop);
         while earlier < stop {
+            if let Some(event) = stop_before
+                && earlier == event
+            {
+                return None;
+            }
             let atom = events.atom_at(earlier);
             let range = FlowRange {
                 start: if repeated.is_some() {
@@ -511,6 +543,7 @@ pub(crate) const fn owned_receive_lane_conflict_from<const E: usize, const D: us
                 && let Some(end) = directions.last_change(atom, range.start)
                 && let Some(later) = (Obligation {
                     events,
+                    scope_offsets,
                     actors: Some(actors),
                     earlier,
                     end,
@@ -531,7 +564,7 @@ pub(crate) const fn owned_receive_lane_conflict_from<const E: usize, const D: us
         }
         region += 1;
     }
-    if resume.is_some() {
+    if resume.is_some() || matches!(scan, ReceiveScan::Before(_)) {
         crate::invariant();
     }
     None

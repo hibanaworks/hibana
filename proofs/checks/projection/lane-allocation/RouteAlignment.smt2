@@ -40,4 +40,19 @@
 ; EXPECT: unsat
 (check-sat)
 (pop)
+(push)
+(declare-fun compatible ((_ BitVec 8) (_ BitVec 8)) Bool)
+(declare-fun allowed ((_ BitVec 8) (_ BitVec 8)) Bool)
+(declare-const rejected-row (_ BitVec 8))
+(declare-const rejected-color (_ BitVec 8))
+(declare-const candidate-row (_ BitVec 8))
+(assert (not (compatible rejected-row rejected-color)))
+(assert (compatible candidate-row (remap candidate-row)))
+(assert (allowed candidate-row (remap candidate-row)))
+(assert (not (and (allowed candidate-row (remap candidate-row))
+  (not (and (= candidate-row rejected-row) (= (remap candidate-row) rejected-color))))))
+; Removing an incompatible edge preserves every valid selected edge.
+; EXPECT: unsat
+(check-sat)
+(pop)
 (exit)

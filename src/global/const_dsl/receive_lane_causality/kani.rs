@@ -114,6 +114,20 @@ fn boundary_seek_matches_the_first_qualifying_marker_for_all_compact_offsets() {
         }
     }
     assert_eq!(markers.offset_lower_bound(query, floor), expected);
+    let mut indexed = EffList::<8>::new_partitioned(4, 4, 0);
+    for _ in 0..4 {
+        indexed.push_event_mut(event(0, 0, 0));
+    }
+    for index in 0..4 {
+        indexed.rows[4 + index] = rows[index];
+    }
+    indexed.scope_marker_len = 4;
+    let scope_offsets = super::ScopeOffsets::new(&indexed);
+    let source_event = usize::from(kani::any::<u8>() % 4);
+    assert_eq!(
+        floor.max(scope_offsets.first[source_event] as usize),
+        markers.offset_lower_bound(source_event, floor)
+    );
     kani::cover!(floor == 4);
     kani::cover!(floor < 4 && expected == floor);
     kani::cover!(floor < expected && expected < 4);

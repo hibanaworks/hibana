@@ -2,7 +2,8 @@
 use super::lane_matching::{LaneCompatibility, LaneEndpointIndex, maximum_lane_matching};
 use super::{BYTE_DOMAIN, BYTE_DOMAIN_MASK_BYTES};
 use crate::global::const_dsl::{
-    receive_lane_causality::owned_receive_lane_conflict_from, receive_pair_is_causal,
+    receive_lane_causality::{ReceiveScan, ScopeOffsets, owned_receive_lane_conflict_in},
+    receive_pair_is_causal,
 };
 use crate::{
     g::SourceActorImage,
@@ -14,18 +15,19 @@ use crate::{
 
 const fn inspect<const E: usize>(
     events: &EffList<E>,
+    scope_offsets: &ScopeOffsets<E>,
     actors: Option<&SourceActorImage<E>>,
-    resume: Option<(usize, Option<u16>)>,
+    scan: ReceiveScan,
     #[cfg(hibana_profile)] counters: &mut crate::g::profiling::Counters,
 ) -> Result<(), Option<(usize, usize, Option<u16>)>> {
     #[cfg(hibana_profile)]
-    if resume.is_some() && actors.is_some() {
+    if matches!(scan, ReceiveScan::From(Some(_))) && actors.is_some() {
         counters.resumed_inspections += 1;
     } else {
         counters.full_inspections += 1;
     }
     match actors {
-        Some(image) => match owned_receive_lane_conflict_from(events, image, resume) {
+        Some(image) => match owned_receive_lane_conflict_in(events, scope_offsets, image, scan) {
             Some(pair) => Err(Some(pair)),
             None => Ok(()),
         },
@@ -41,12 +43,14 @@ const fn inspect<const E: usize>(
 
 const fn align_range<const E: usize>(
     events: &mut EffList<E>,
+    scope_offsets: &ScopeOffsets<E>,
     actors: Option<&SourceActorImage<E>>,
     arm: (usize, usize),
-    span: u16,
-    colors: u16,
+    conflict: (usize, usize),
+    palette: (u16, u16),
     #[cfg(hibana_profile)] counters: &mut crate::g::profiling::Counters,
 ) -> bool {
+    let (span, colors) = palette;
     #[cfg(hibana_profile)]
     {
         counters.alignment_attempts += 1;
@@ -111,56 +115,88 @@ const fn align_range<const E: usize>(
         }
         marker_index += 1;
     }
-    // An injective map preserves constraints inside the range. Check only
-    // edges still possible after parallel ownership; clearing an edge is final.
-    let mut inside = arm.0;
-    while inside < arm.1 {
-        let a = events.atom_at(inside);
-        if a.from != a.to {
-            let mut outside = 0;
-            while outside < events.len() {
-                if outside < arm.0 || arm.1 <= outside {
-                    let b = events.atom_at(outside);
-                    if b.from != b.to
-                        && a.to == b.to
-                        && a.from != b.from
-                        && edges[a.lane as usize * row_bytes + b.lane as usize / 8]
-                            & (1 << (b.lane % 8))
-                            != 0
-                        && (!receive_pair_is_causal(events, actors, inside, outside)
-                            || !receive_pair_is_causal(events, actors, outside, inside))
-                    {
-                        edges[a.lane as usize * row_bytes + b.lane as usize / 8] &=
-                            !(1 << (b.lane % 8));
-                    }
-                }
-                outside += 1;
-            }
-        }
-        inside += 1;
+    let first_inside = arm.0 <= conflict.0 && conflict.0 < arm.1;
+    let second_inside = arm.0 <= conflict.1 && conflict.1 < arm.1;
+    if first_inside == second_inside {
+        crate::invariant();
     }
-    let matching = maximum_lane_matching::<0>(
-        LaneCompatibility::Constraints {
-            rows: edges.split_at(span as usize * row_bytes).0,
-            row_bytes,
-        },
-        colors,
-        span,
-    );
-    let mut changed = false;
-    lane = 0;
-    while lane < span {
-        if members.contains_lane(lane as u8) {
-            let Some(color) = matching.left_for_right(lane) else {
+    let (inside, outside) = if first_inside {
+        (conflict.0, conflict.1)
+    } else {
+        (conflict.1, conflict.0)
+    };
+    let a = events.atom_at(inside);
+    let b = events.atom_at(outside);
+    edges[a.lane as usize * row_bytes + b.lane as usize / 8] &= !(1 << (b.lane % 8));
+    // An injective map preserves constraints inside the range. Validate only
+    // the cross-boundary pairs joined by a candidate map. A rejected pair
+    // removes its edge permanently; the finite edge domain bounds refinement.
+    let matching = loop {
+        let matching = maximum_lane_matching::<0>(
+            LaneCompatibility::Constraints {
+                rows: edges.split_at(span as usize * row_bytes).0,
+                row_bytes,
+            },
+            colors,
+            span,
+        );
+        lane = 0;
+        while lane < span {
+            if members.contains_lane(lane as u8) && matching.left_for_right(lane).is_none() {
                 return false;
-            };
-            changed |= color != lane;
+            }
+            lane += 1;
         }
-        lane += 1;
-    }
-    if !changed {
-        return false;
-    }
+        let mut rejected = false;
+        let mut inside = arm.0;
+        while inside < arm.1 && !rejected {
+            let a = events.atom_at(inside);
+            let color = match matching.left_for_right(a.lane as u16) {
+                Some(color) => color as u8,
+                None => crate::invariant(),
+            };
+            if a.from != a.to {
+                let mut outside = 0;
+                while outside < events.len() {
+                    if outside < arm.0 || arm.1 <= outside {
+                        let b = events.atom_at(outside);
+                        if b.from != b.to
+                            && a.to == b.to
+                            && a.from != b.from
+                            && color == b.lane
+                            && (!receive_pair_is_causal(
+                                events,
+                                scope_offsets,
+                                actors,
+                                inside,
+                                outside,
+                            ) || !receive_pair_is_causal(
+                                events,
+                                scope_offsets,
+                                actors,
+                                outside,
+                                inside,
+                            ))
+                        {
+                            let edge = &mut edges[a.lane as usize * row_bytes + color as usize / 8];
+                            let bit = 1 << (color % 8);
+                            if *edge & bit == 0 {
+                                crate::invariant();
+                            }
+                            *edge &= !bit;
+                            rejected = true;
+                            break;
+                        }
+                    }
+                    outside += 1;
+                }
+            }
+            inside += 1;
+        }
+        if !rejected {
+            break matching;
+        }
+    };
     let mut index = arm.0;
     while index < arm.1 {
         let mut atom = events.atom_at(index);
@@ -183,10 +219,12 @@ pub(crate) const fn assign_receive_lanes<const E: usize>(
     actors: Option<&SourceActorImage<E>>,
     #[cfg(hibana_profile)] counters: &mut crate::g::profiling::Counters,
 ) -> bool {
+    let scope_offsets = ScopeOffsets::new(events);
     let mut checked = inspect(
         events,
+        &scope_offsets,
         actors,
-        None,
+        ReceiveScan::From(None),
         #[cfg(hibana_profile)]
         counters,
     );
@@ -239,10 +277,11 @@ pub(crate) const fn assign_receive_lanes<const E: usize>(
                         if (start <= first && first < end) != (start <= second && second < end) {
                             changed = align_range(
                                 events,
+                                &scope_offsets,
                                 actors,
                                 (start, end),
-                                span,
-                                colors,
+                                (first, second),
+                                (span, colors),
                                 #[cfg(hibana_profile)]
                                 counters,
                             );
@@ -255,10 +294,11 @@ pub(crate) const fn assign_receive_lanes<const E: usize>(
                 // can move. The same constraints apply inside and outside routes.
                 changed = align_range(
                     events,
+                    &scope_offsets,
                     actors,
                     (second, second + 1),
-                    span,
-                    colors,
+                    (first, second),
+                    (span, colors),
                     #[cfg(hibana_profile)]
                     counters,
                 );
@@ -274,11 +314,14 @@ pub(crate) const fn assign_receive_lanes<const E: usize>(
         }
         // Matching preserves the checked prefix: it is injective within the
         // arm and excludes incompatible pairs across its boundary. Resume at
-        // the failed obligation, then validate the final coloring in full.
+        // the failed seed. If that suffix passes, recheck every earlier seed
+        // in the final coloring. Each seed still checks its complete target
+        // range, so the two scans cover the same obligations as a full scan.
         checked = inspect(
             events,
+            &scope_offsets,
             actors,
-            Some((first, scope)),
+            ReceiveScan::From(Some((first, scope))),
             #[cfg(hibana_profile)]
             counters,
         );
@@ -289,8 +332,9 @@ pub(crate) const fn assign_receive_lanes<const E: usize>(
             }
             return inspect(
                 events,
+                &scope_offsets,
                 actors,
-                None,
+                ReceiveScan::Before((first, scope)),
                 #[cfg(hibana_profile)]
                 counters,
             )

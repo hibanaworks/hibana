@@ -24,7 +24,7 @@ mod kani;
 /// Actor values occupy the complete u8 domain. Larger references name a
 /// previously emitted decision, leaving u16::MAX reserved for absence.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct ActorRef(u16);
+pub(crate) struct ActorRef(pub(crate) u16);
 
 impl ActorRef {
     const NODE_BASE: usize = u8::MAX as usize + 1;
@@ -66,9 +66,9 @@ impl ActorChoice {
 }
 
 #[derive(Clone, Copy)]
-struct ActorPair {
-    sender: ActorRef,
-    receiver: ActorRef,
+pub(crate) struct ActorPair {
+    pub(crate) sender: ActorRef,
+    pub(crate) receiver: ActorRef,
 }
 
 impl ActorPair {
@@ -170,6 +170,10 @@ impl<const E: usize, const D: usize> ActorImage<E, D> {
         }
         let pair = self.events[event];
         Some([pair.sender.0, pair.receiver.0])
+    }
+
+    pub(crate) const fn event_actors(&self) -> &[ActorPair] {
+        self.events.split_at(self.event_len).0
     }
 
     /// Construction-time actor membership for lane coloring. Follow the same

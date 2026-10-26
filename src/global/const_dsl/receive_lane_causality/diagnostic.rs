@@ -5,6 +5,7 @@ use super::*;
 pub(crate) const fn receive_lane_conflict<const E: usize>(
     eff_list: &EffList<E>,
 ) -> Option<(usize, usize, Option<u16>)> {
+    let scope_offsets = ScopeOffsets::new(eff_list);
     let range = FlowRange {
         start: 0,
         end: eff_list.len(),
@@ -20,6 +21,7 @@ pub(crate) const fn receive_lane_conflict<const E: usize>(
                 if goal.sender_change(later_idx, eff_list.atom_at(later_idx)) {
                     let flow = CausalFlow {
                         eff_list,
+                        scope_offsets: &scope_offsets,
                         earlier: earlier_idx,
                         goal,
                         body_start: 0,
@@ -53,6 +55,7 @@ pub(crate) const fn receive_lane_conflict<const E: usize>(
                 if earlier.from != earlier.to {
                     let flow = CausalFlow {
                         eff_list,
+                        scope_offsets: &scope_offsets,
                         earlier: earlier_idx - start,
                         goal: FlowGoal::Closure,
                         body_start: start,

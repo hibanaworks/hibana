@@ -159,3 +159,27 @@
 ; EXPECT: sat
 (check-sat)
 (pop)
+
+; A known receiver cannot gain another fact, regardless of sender knowledge.
+(push)
+(declare-const sender-known Bool)
+(declare-const receiver-known Bool)
+(assert receiver-known)
+(assert (distinct (or receiver-known sender-known) receiver-known))
+; EXPECT: unsat
+(check-sat)
+(pop)
+
+; Hoisting the cutoff into source coordinates preserves occurrence order.
+(push)
+(declare-const source-position Int)
+(declare-const body-start Int)
+(declare-const iteration-start Int)
+(declare-const cutoff Int)
+(assert (and (<= 0 body-start) (<= body-start source-position)
+             (<= 0 iteration-start) (<= iteration-start cutoff)))
+(assert (distinct (< (+ iteration-start (- source-position body-start)) cutoff)
+                  (< source-position (+ body-start (- cutoff iteration-start)))))
+; EXPECT: unsat
+(check-sat)
+(pop)

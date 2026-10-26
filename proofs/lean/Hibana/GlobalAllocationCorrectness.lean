@@ -246,4 +246,21 @@ theorem route_lane_alignment_preserves_valid_coloring
     (route_lane_alignment_introduces_no_conflict injective cross incompatible collision)
 
 
+/-- Removing a witnessed incompatible edge cannot remove a valid matching. -/
+theorem incompatible_lane_edge_preserves_valid_matchings
+    (allowed : Nat → Nat → Bool) (compatible : Nat → Nat → Prop)
+    (mapping : Nat → Nat) (row color : Nat)
+    (invalid : ¬ compatible row color)
+    (valid : ∀ r, compatible r (mapping r))
+    (selected : ∀ r, allowed r (mapping r) = true) :
+    ∀ r, (allowed r (mapping r) && !(decide (r = row) && decide (mapping r = color))) = true := by
+  intro r
+  by_cases same : r = row
+  · subst r
+    have distinct : mapping row ≠ color := by
+      intro equal
+      exact invalid (equal ▸ valid row)
+    simp [selected row, distinct]
+  · simp [selected r, same]
+
 end Hibana

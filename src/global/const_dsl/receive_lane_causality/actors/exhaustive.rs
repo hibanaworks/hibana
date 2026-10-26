@@ -1,6 +1,6 @@
 use super::{
-    EffAtom, EffList, FlowGoal, Obligation, Paths, RollBodyRange, SourceActorImage, SourceContext,
-    SourceScope,
+    EffAtom, EffList, FlowGoal, Obligation, Paths, RollBodyRange, ScopeOffsets, SourceActorImage,
+    SourceContext, SourceScope,
     fixtures::{PARALLEL, ROUTE, prefix_source, receive_conflict},
     owned_receive_lane_conflict,
 };
@@ -102,6 +102,93 @@ fn a_failure_witness_is_the_first_receive_across_both_actor_paths() {
 }
 
 #[test]
+fn split_seed_scans_and_cached_scope_offsets_match_full_queries() {
+    use super::{ReceiveScan, owned_receive_lane_conflict_in};
+    let mut checked = 0;
+    let mut accepted = 0;
+    let mut rejected = 0;
+    for encoding in 0usize..3usize.pow(6) {
+        for repeated in [false, true] {
+            let mut events = EffList::<8>::new_partitioned(3, 2, 0)
+                .push(event(0, 1))
+                .push(event(1, 2))
+                .push(event(2, 1));
+            if repeated {
+                events.push_roll_scope_mut(ScopeId::roll_scope(0), 0, 3);
+            }
+            let mut word = encoding;
+            let mut references = [[0u16; 2]; 3];
+            for row in &mut references {
+                for actor in row {
+                    *actor = (word % 3) as u16;
+                    word /= 3;
+                }
+            }
+            let actors = SourceActorImage::<8, 0>::causal_fixture(&references, &[]);
+            let offsets = ScopeOffsets::new(&events);
+            let markers = events.scope_markers();
+            for event in 0..events.len() {
+                for floor in 0..=markers.len() {
+                    assert_eq!(
+                        floor.max(offsets.first[event] as usize),
+                        markers.offset_lower_bound(event, floor),
+                    );
+                }
+            }
+            let full = owned_receive_lane_conflict(&events, &actors);
+            accepted += usize::from(full.is_none());
+            rejected += usize::from(full.is_some());
+            for scope in [None, Some(0)] {
+                if scope.is_some() && !repeated {
+                    continue;
+                }
+                for event in 0..events.len() {
+                    let cut = (event, scope);
+                    let before = owned_receive_lane_conflict_in(
+                        &events,
+                        &offsets,
+                        &actors,
+                        ReceiveScan::Before(cut),
+                    );
+                    let after = owned_receive_lane_conflict_in(
+                        &events,
+                        &offsets,
+                        &actors,
+                        ReceiveScan::From(Some(cut)),
+                    );
+                    assert_eq!(before.or(after), full, "encoding={encoding} cut={cut:?}");
+                    checked += 1;
+                }
+            }
+        }
+    }
+    assert!(accepted != 0 && rejected != 0);
+    assert_eq!(checked, 6_561);
+}
+
+#[test]
+fn cached_offsets_keep_all_nested_markers_at_a_shared_boundary() {
+    let mut events = EffList::<16>::new_partitioned(4, 9, 0)
+        .push(event(0, 1))
+        .push(event(0, 1))
+        .push(event(1, 2))
+        .push(event(2, 0));
+    events.push_route_scope_mut(ScopeId::route(0), 0, 1, 2, ReentryMark::SinglePass);
+    events.push_parallel_scope_mut(ScopeId::parallel(0), 0, 2, 3);
+    events.push_roll_scope_mut(ScopeId::roll_scope(0), 0, 4);
+    let offsets = ScopeOffsets::new(&events);
+    let markers = events.scope_markers();
+    for event in 0..events.len() {
+        for floor in 0..=markers.len() {
+            assert_eq!(
+                floor.max(offsets.first[event] as usize),
+                markers.offset_lower_bound(event, floor)
+            );
+        }
+    }
+}
+
+#[test]
 #[ignore = "16,777,216 production queries; run explicitly with checked release settings"]
 fn parallel_query_covers_every_u8_actor_triple() {
     let mut checked = 0u64;
@@ -160,6 +247,7 @@ fn prefix_queries_cover_every_u8_actor_triple_and_visit() {
                     for earlier in [1, 2] {
                         let query = Obligation {
                             events,
+                            scope_offsets: &ScopeOffsets::new(events),
                             actors: Some(&actors),
                             earlier,
                             end: 4,
@@ -206,11 +294,11 @@ fn pointwise_failure<const E: usize, const D: usize>(
     };
     let before = query.events.atom_at(query.earlier);
     (start..query.end).find(|&later| {
-        (FlowGoal::ReceiveLane(before, query.end))
-            .sender_change(later, query.events.atom_at(later))
+        (FlowGoal::ReceiveLane(before, query.end)).sender_change(later, query.events.atom_at(later))
             && !(Obligation {
                 end: later + 1,
                 events: query.events,
+                scope_offsets: query.scope_offsets,
                 actors: query.actors,
                 earlier: query.earlier,
                 repeated: query.repeated,
@@ -302,6 +390,7 @@ fn bulk_failure_witnesses_match_pointwise_queries_for_small_structured_sources()
                     for end in earlier + 1..=4 {
                         let obligation = Obligation {
                             events: &events,
+                            scope_offsets: &ScopeOffsets::new(&events),
                             actors: Some(&image),
                             earlier,
                             end,
@@ -322,6 +411,7 @@ fn bulk_failure_witnesses_match_pointwise_queries_for_small_structured_sources()
                         for end in start + 1..=stop {
                             let obligation = Obligation {
                                 events: &events,
+                                scope_offsets: &ScopeOffsets::new(&events),
                                 actors: Some(&image),
                                 earlier,
                                 end,
@@ -361,6 +451,7 @@ fn dropping_an_enclosing_parallel_fork_changes_the_causal_answer() {
     };
     let obligation = Obligation {
         events: &events,
+        scope_offsets: &ScopeOffsets::new(&events),
         actors: Some(&image),
         earlier: 1,
         end: 4,

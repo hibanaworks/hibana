@@ -8439,6 +8439,8 @@ Hibana.causal_flow_after_cut_preserves_facts : ∀ (choreo : Hibana.Choreo) (bas
   Hibana.CausalFlowRun flow before after → (flow.eval before).Subset after
 Hibana.causal_flow_monotone : ∀ (flow : Hibana.CausalFlowExpr) {left right : Hibana.CausalRoles},
   left.Subset right → (flow.eval left).Subset (flow.eval right)
+Hibana.causal_flow_preserves_known_facts : ∀ (flow : Hibana.CausalFlowExpr) (facts : Hibana.CausalRoles),
+  facts.Subset (flow.eval facts)
 @Hibana.causal_flow_preserves_schedule_evidence : ∀ {origin : Nat} {flow : Hibana.CausalFlowExpr}
   {before after : Hibana.CausalRoleTimes},
   Hibana.TimedCausalFlowRun origin flow before after →
@@ -11218,6 +11220,17 @@ Hibana.global_rolls_length : ∀ (choreo : Hibana.Choreo),
       (@some.{0} β (fact query)) (@none.{0} β))
 @Hibana.inbound_occurrence_coloring_checker_sound : ∀ {choreo : Hibana.Choreo},
   @Eq.{1} Bool choreo.checkInboundOccurrenceColoring true → choreo.InboundOccurrenceColoring
+Hibana.incompatible_lane_edge_preserves_valid_matchings : ∀ (allowed : Nat → Nat → Bool) (compatible : Nat → Nat → Prop)
+  (mapping : Nat → Nat) (row color : Nat),
+  Not (compatible row color) →
+    (∀ (r : Nat), compatible r (mapping r)) →
+      (∀ (r : Nat), @Eq.{1} Bool (allowed r (mapping r)) true) →
+        ∀ (r : Nat),
+          @Eq.{1} Bool
+            ((allowed r (mapping r)).and
+              ((@decide (@Eq.{1} Nat r row) (instDecidableEqNat r row)).and
+                  (@decide (@Eq.{1} Nat (mapping r) color) (instDecidableEqNat (mapping r) color))).not)
+            true
 Hibana.independent_parallel_sibling_has_no_join_dependency : ∀ (regions : List.{0} Hibana.ParallelRegion✝)
   (region : Hibana.ParallelRegion✝) (joinStart joinStop current : Nat),
   @Membership.mem.{0, 0} Hibana.ParallelRegion✝ (List.{0} Hibana.ParallelRegion✝)
@@ -11422,6 +11435,8 @@ Hibana.insert_erased_cursor_observation_preserves_entry_order : ∀ (incoming : 
     ∀ {reference actor : Nat},
       @Eq.{1} (Option.{0} Nat) (columns.selectedActor? known reference) (@some.{0} Nat actor) →
         @Eq.{1} (Option.{0} Nat) (columns.selectedActor? extended reference) (@some.{0} Nat actor)
+Hibana.known_target_sender_needs_no_suffix_search : ∀ (flow : Hibana.CausalFlowExpr) (facts : Hibana.CausalRoles)
+  (sender : Nat), @Eq.{1} Bool (facts sender) true → @Eq.{1} Bool (flow.eval facts sender) true
 @Hibana.lane_bound_route_rows_finish_exactly : ∀ {Row : Type} (bound : Hibana.LaneBoundRouteRows Row),
   @Eq.{1} (Option.{0} (List.{0} Row))
     (@Hibana.finishRouteRowsForLane? Row (@some.{0} (Hibana.LaneBoundRouteRows Row) bound)
@@ -13160,6 +13175,9 @@ Hibana.receive_direction_summary_preserves_latest_sender_change : ∀ (events : 
   {earlier later : Hibana.StaticGlobalOccurrence},
   @Eq.{1} Bool (Hibana.receivePrecedesLaterSend flow roleCount earlier later) true →
     Hibana.MustCausalHandoff flow later.event.sender
+@Hibana.receive_seed_partition_preserves_validation : ∀ {α : Type} (seeds : List.{0} α) (cut : Nat) (valid : α → Bool),
+  @Eq.{1} Bool (@List.all.{0} α seeds valid)
+    ((@List.all.{0} α (@List.take.{0} α cut seeds) valid).and (@List.all.{0} α (@List.drop.{0} α cut seeds) valid))
 @Hibana.recv_step_consumes_unique_message : ∀ {config next : Hibana.GlobalConfig} {globalId : Nat},
   @Eq.{1} (Option.{0} Hibana.GlobalConfig) (config.recvStep? globalId) (@some.{0} Hibana.GlobalConfig next) →
     @Exists.{1} Hibana.GlobalEvent fun event =>
@@ -15195,6 +15213,17 @@ Hibana.source_candidate_without_retained_completion_is_current : ∀ (image : Hi
                     (@List.instMembership.{0} Hibana.DecodedActorRow) (data.activeRows path) row →
                   @Eq.{1} (Option.{0} Bool) (Hibana.sourceRetirementRowComplete? snapshot role path row)
                     (@some.{0} Bool true))
+Hibana.source_cutoff_preserves_occurrence_order : ∀ (source body iteration cutoff : Nat),
+  @LE.le.{0} Nat instLENat body source →
+    @LE.le.{0} Nat instLENat iteration cutoff →
+      Iff
+        (@LT.lt.{0} Nat instLTNat
+          (@HAdd.hAdd.{0, 0, 0} Nat Nat Nat (@instHAdd.{0} Nat instAddNat) iteration
+            (@HSub.hSub.{0, 0, 0} Nat Nat Nat (@instHSub.{0} Nat instSubNat) source body))
+          cutoff)
+        (@LT.lt.{0} Nat instLTNat source
+          (@HAdd.hAdd.{0, 0, 0} Nat Nat Nat (@instHAdd.{0} Nat instAddNat) body
+            (@HSub.hSub.{0, 0, 0} Nat Nat Nat (@instHSub.{0} Nat instSubNat) cutoff iteration)))
 @Hibana.source_frame_words_match_at_each_common_class_position : ∀
   {sentRows receivedRows sentWord receivedWord : List.{0} Nat} {sentSource receivedSource : Nat → Option.{0} Nat}
   {index sent received : Nat},

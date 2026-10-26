@@ -1,6 +1,6 @@
 //! Shared fixed source geometry and the actual production query entrypoint.
 //! Both the symbolic proofs and finite execution use these same inputs.
-use super::{EffAtom, EffList, Obligation, Paths, SourceActorImage, SourceContext};
+use super::{EffAtom, EffList, Obligation, Paths, ScopeOffsets, SourceActorImage, SourceContext};
 use crate::eff::EventOrigin;
 #[cfg(not(kani))]
 use crate::global::const_dsl::{ReentryMark, ScopeId};
@@ -63,6 +63,7 @@ pub(super) fn receive_conflict<const E: usize, const D: usize>(
     let empty = SourceContext::new(&[]);
     Obligation {
         events,
+        scope_offsets: &ScopeOffsets::new(events),
         actors: Some(actors),
         earlier: 0,
         end: events.len(),

@@ -29,7 +29,7 @@ mod terms;
 use core::marker::PhantomData;
 
 pub use crate::global::Message;
-pub(crate) use source::{EndpointKey, SourcePayload};
+pub(crate) use source::{ActorPair, EndpointKey, SourcePayload};
 pub(crate) use source::{
     ProgramShape, ProgramSourceData, ProgramSourceNode, SourceActorImage, checked_source_count,
 };

@@ -1,5 +1,6 @@
 use super::{
-    CausalRoles, RollBodyRange, receive_precedes_after_roll_reentry, receive_precedes_later_send,
+    CausalRoles, RollBodyRange, ScopeOffsets, receive_precedes_after_roll_reentry,
+    receive_precedes_later_send,
 };
 
 #[test]
@@ -55,6 +56,7 @@ fn bounded_obligations_match_full_scans_across_routes_parallel_and_reentry() {
                 }
                 let flow = CausalFlow {
                     eff_list: &events,
+                    scope_offsets: &ScopeOffsets::new(&events),
                     earlier,
                     goal: FlowGoal::ReceiveLane(atom, usize::MAX),
                     body_start: 0,

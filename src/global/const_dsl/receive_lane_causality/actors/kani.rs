@@ -98,6 +98,7 @@ fn repeated_inner_choices_are_independent_while_outer_choices_stay_shared() {
     let image = SourceActorImage::<0, 0>::new();
     let map = ActorMap::Owned {
         image: &image,
+        events: image.event_actors(),
         paths: Paths {
             shared: &shared,
             current: &current,
