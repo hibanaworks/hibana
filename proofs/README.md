@@ -69,6 +69,18 @@ one range does not establish coverage of the whole depth. Finite execution
 tests use two visits per repetition. Every parallel node polls both children
 with Tokio, varying which child is polled first.
 
+The constructor-budget checks also include 32 protocols with two parallel
+repeated choices followed by a choice on another direction. They vary resolver
+use at all three choices, the continuation's direction and Endpoint delegation.
+Delegated roles initiate their own repetitions. Sixteen compile-fail variants
+instead let an outside sender restart a repetition after the resource returns.
+Each child runs through a parallel Endpoint borrow before the continuation uses
+the parent endpoint. The same cases can be run separately:
+
+```sh
+bash .github/scripts/check_protocol_shapes.sh --frontiers 0 32
+```
+
 `roll-schedule-coverage.tsv` records completed schedules in which a nested
 repetition starts its next parent visit before a parallel sibling does. Each
 row identifies the source nodes, participant, script, enclosing visits and

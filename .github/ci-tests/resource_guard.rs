@@ -13,8 +13,9 @@ use std::{
     time::Duration,
 };
 
-const STOP_BYTES: u64 = 3_000_000_000;
-const INTERVAL: Duration = Duration::from_millis(100);
+// Leave room below 3 GB for growth between process-tree observations.
+const STOP_BYTES: u64 = 2_750_000_000;
+const INTERVAL: Duration = Duration::from_millis(25);
 type Result<T> = std::result::Result<T, String>;
 
 unsafe extern "C" {

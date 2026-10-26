@@ -541,12 +541,13 @@ const fn receive_precedes_later_send<const E: usize>(
 const fn validate_linear_later_senders<const E: usize>(
     eff_list: &EffList<E>,
     earlier_eff_idx: usize,
+    end: usize,
 ) -> bool {
     let earlier = eff_list.atom_at(earlier_eff_idx);
     let mut facts = CausalRoles::empty();
     facts.insert(earlier.to);
     let mut eff_idx = earlier_eff_idx + 1;
-    while eff_idx < eff_list.len() {
+    while eff_idx < end {
         let candidate = eff_list.atom_at(eff_idx);
         if candidate.from != candidate.to
             && earlier.to == candidate.to
@@ -563,10 +564,14 @@ const fn validate_linear_later_senders<const E: usize>(
 }
 
 const fn validate_linear_receive_lane_causality<const E: usize>(eff_list: &EffList<E>) -> bool {
+    let directions = ReceiveDirectionIndex::new(eff_list, 0, eff_list.len());
     let mut earlier_eff_idx = 0usize;
     while earlier_eff_idx < eff_list.len() {
         let earlier = eff_list.atom_at(earlier_eff_idx);
-        if earlier.from != earlier.to && !validate_linear_later_senders(eff_list, earlier_eff_idx) {
+        if earlier.from != earlier.to
+            && let Some(end) = directions.last_change(earlier, earlier_eff_idx + 1)
+            && !validate_linear_later_senders(eff_list, earlier_eff_idx, end)
+        {
             return false;
         }
         earlier_eff_idx += 1;

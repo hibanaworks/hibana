@@ -42,6 +42,11 @@ impl EventCursor {
         let mut selected = |scope| arms(scope, EventArmView::Preview);
         let mut wait = EventAdmissionError::OtherViewPending;
         for prior in row.start()..index.min(row.end()) {
+            if !(self.uses_view_at(prior, role)
+                || sent.is_some_and(|sent| self.uses_view_at(prior, sent)))
+            {
+                continue;
+            }
             let (before, _) = self
                 .machine()
                 .event_program()

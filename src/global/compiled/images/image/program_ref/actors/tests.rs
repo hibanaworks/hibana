@@ -7,6 +7,8 @@ use crate::global::{
     const_dsl::{ScopeId, ScopeKind},
 };
 
+mod source_order;
+
 #[test]
 fn a_shared_route_preview_is_visible_inside_an_arm_or_around_the_whole_choice() {
     use crate::{g, global::compiled::lowering::CompiledProgramImage};
@@ -75,6 +77,19 @@ fn source_order_matches_the_typed_tree_at_nested_and_adjacent_boundaries() {
         None => panic!("nested source order index"),
     };
     let tree = &<Steps as g::ProgramShape>::SOURCE_NODE;
+    let markers = SOURCE.eff_list().scope_markers();
+    for offset in 0..=tree.event_count() {
+        let expected: std::vec::Vec<_> = (0..markers.len())
+            .filter(|&index| markers.at(index).offset() == offset)
+            .collect();
+        assert_eq!(
+            IMAGE
+                .source_markers_at(offset)
+                .collect::<std::vec::Vec<_>>(),
+            expected
+        );
+    }
+    assert!(IMAGE.source_markers_at(usize::MAX).is_empty());
     for before in 0..tree.event_count() {
         for after in 0..tree.event_count() {
             assert_eq!(

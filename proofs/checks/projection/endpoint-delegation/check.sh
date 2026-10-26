@@ -63,7 +63,7 @@ bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" lean "$EVIDENCE/lea
 LEAN_PATH="$EVIDENCE:$MODEL_PATH" lean -o "$EVIDENCE/Knowledge.olean" "$PROOFS/Knowledge.lean" > "$EVIDENCE/lean-knowledge.log" 2>&1
 bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" lean "$EVIDENCE/lean-knowledge.log" 3
 LEAN_PATH="$EVIDENCE:$MODEL_PATH" lean -o "$EVIDENCE/Causality.olean" "$PROOFS/Causality.lean" > "$EVIDENCE/lean-causality.log" 2>&1
-bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" lean "$EVIDENCE/lean-causality.log" 4
+bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" lean "$EVIDENCE/lean-causality.log" 7
 lean -o "$EVIDENCE/Issuance.olean" "$PROOFS/Issuance.lean" > "$EVIDENCE/lean-issuance.log" 2>&1
 bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" lean "$EVIDENCE/lean-issuance.log" 4
 lean -j1 "$PROOFS/ReceiptWait.lean" > "$EVIDENCE/lean-receipt-wait.log" 2>&1
@@ -77,4 +77,4 @@ for model in "$PROOFS"/*.smt2; do
   model_count=$((model_count + 1))
 done
 printf 'Endpoint delegation: all %s SMT models passed EXPECT checks; per-model logs: %s/z3-*.log\n' "$model_count" "$EVIDENCE"
-printf 'Endpoint ownership projection: Rust tests passed; 17 projection/knowledge, 4 issuance, 4 causal-path and 3 receipt-wait general Lean theorems; 193 generated. Evidence: %s\n' "$EVIDENCE"
+printf 'Endpoint ownership projection: Rust tests passed; 17 projection/knowledge, 4 issuance, 7 causality/source-order and 3 receipt-wait general Lean theorems; 193 generated. Evidence: %s\n' "$EVIDENCE"

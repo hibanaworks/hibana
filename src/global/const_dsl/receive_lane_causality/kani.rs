@@ -176,14 +176,7 @@ fn causal_role_facts_and_joins_are_role_exact() {
     );
 }
 
-#[kani::proof]
-#[kani::unwind(5)]
-fn three_event_linear_scan_matches_pairwise_checker() {
-    let events = EffList::<4>::new()
-        .push(event(kani::any(), kani::any(), kani::any()))
-        .push(event(kani::any(), kani::any(), kani::any()))
-        .push(event(kani::any(), kani::any(), kani::any()));
-
+fn three_event_pairwise_safe(events: &EffList<4>) -> bool {
     let mut pairwise_safe = true;
     for earlier in 0..3 {
         for later in earlier + 1..3 {
@@ -195,17 +188,38 @@ fn three_event_linear_scan_matches_pairwise_checker() {
                 && first.lane == next.lane
                 && first.from != next.from
             {
-                pairwise_safe &= receive_precedes_later_send(&events, earlier, later);
+                pairwise_safe &= receive_precedes_later_send(events, earlier, later);
             }
         }
     }
+    pairwise_safe
+}
+
+// Separate universal obligations keep the solver's equations independent.
+// Both retain all u8 senders, receivers and lanes, with the same unwind bound.
+#[kani::proof]
+#[kani::unwind(5)]
+fn three_event_linear_scan_matches_pairwise_checker() {
+    let events = EffList::<4>::new()
+        .push(event(kani::any(), kani::any(), kani::any()))
+        .push(event(kani::any(), kani::any(), kani::any()))
+        .push(event(kani::any(), kani::any(), kani::any()));
     assert_eq!(
         validate_linear_receive_lane_causality(&events),
-        pairwise_safe
+        three_event_pairwise_safe(&events)
     );
+}
+
+#[kani::proof]
+#[kani::unwind(5)]
+fn three_event_structured_scan_matches_pairwise_checker() {
+    let events = EffList::<4>::new()
+        .push(event(kani::any(), kani::any(), kani::any()))
+        .push(event(kani::any(), kani::any(), kani::any()))
+        .push(event(kani::any(), kani::any(), kani::any()));
     assert_eq!(
         validate_structured_receive_lane_causality(&events),
-        pairwise_safe
+        three_event_pairwise_safe(&events)
     );
 }
 

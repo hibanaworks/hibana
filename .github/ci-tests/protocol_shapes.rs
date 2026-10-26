@@ -31,6 +31,8 @@ mod delegated;
 #[cfg(test)]
 #[path = "protocol_shape_executions_tests.rs"]
 mod execution_tests;
+#[path = "protocol_shape_frontiers.rs"]
+mod frontiers;
 #[path = "protocol_shape_interactions.rs"]
 mod interactions;
 #[path = "protocol_shape_localside.rs"]
@@ -1106,7 +1108,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
         return Ok(());
     }
-    let (catalog, diagnostics) = if args.get(2).is_some_and(|s| s == "--representatives") {
+    let (catalog, diagnostics) = if args.get(2).is_some_and(|s| s == "--frontiers") {
+        if args.len() != 5 && args.len() != 6 {
+            return Err(
+                "usage: protocol-shapes REPOSITORY OUTPUT --frontiers FIRST COUNT [DIAGNOSTICS]"
+                    .into(),
+            );
+        }
+        (
+            frontier_cases(args[3].parse()?, args[4].parse()?)?,
+            args.get(5),
+        )
+    } else if args.get(2).is_some_and(|s| s == "--representatives") {
         if args.len() != 6 && args.len() != 7 {
             return Err("usage: protocol-shapes REPOSITORY OUTPUT --representatives DEPTH FIRST COUNT [DIAGNOSTICS]".into());
         }
@@ -1260,7 +1273,10 @@ fn template_cases(budget: usize, shard: usize, shards: usize) -> CaseSet {
     let resource_converging_end = exchange_cases + 4 * counts.total(true, Population::Converging);
     let ordinary_converging_end =
         resource_converging_end + 2 * counts.total(false, Population::Converging);
-    let total_cases = ordinary_converging_end + 2 * delegated_counts.total(Population::Converging);
+    let operator_cases =
+        ordinary_converging_end + 2 * delegated_counts.total(Population::Converging);
+    let frontier_cases = if budget >= 2 { frontiers::COUNT } else { 0 };
+    let total_cases = operator_cases + frontier_cases;
     let mut cases = Vec::new();
     let mut delegated_cases = BTreeSet::new();
     let mut expected_rejections = BTreeMap::new();
@@ -1270,6 +1286,24 @@ fn template_cases(budget: usize, shard: usize, shards: usize) -> CaseSet {
     // Unrank only the cases assigned to this shard. The exchange-only prefix
     // retains its IDs; mixed-leaf populations add no duplicate trees to it.
     for case in (shard..total_cases).step_by(shards) {
+        if case >= operator_cases {
+            let rank = case - operator_cases;
+            let (mut source, identity) = frontiers::protocol(rank);
+            if let Some(unpermitted) = frontiers::unpermitted_reentry(rank) {
+                negative_sources.insert(format!("frontier_reentry_{rank}"), (
+                    unpermitted,
+                    "rolled reentry requires permission from the resource's entry owner; help: let the resource's entry owner authorize each visit inside the roll",
+                ));
+            }
+            let (labels, resolvers) = syntax::number(&mut source);
+            if context::has_transfer(&source) {
+                delegated_cases.insert(case);
+            }
+            max_label = max_label.max(labels);
+            max_resolvers = max_resolvers.max(resolvers);
+            cases.push((case, identity, 2, 0, source, resolvers));
+            continue;
+        }
         let resource_variant =
             |variant: usize| (if variant.is_multiple_of(2) { 2 } else { 0 }, variant >= 2);
         let (word, service, swap) = if case < 4 * resource_total {
@@ -1361,7 +1395,9 @@ fn template_cases(budget: usize, shard: usize, shards: usize) -> CaseSet {
     }
     CaseSet {
         namespace: format!("operators-{budget}-{shard}-of-{shards}"),
-        description: format!("operator_budget={budget} shard={shard}/{shards}"),
+        description: format!(
+            "operator_budget={budget} parallel_roll_continuations={frontier_cases} shard={shard}/{shards}"
+        ),
         total: total_cases.to_string(),
         cases,
         delegated: delegated_cases,
@@ -1371,6 +1407,48 @@ fn template_cases(budget: usize, shard: usize, shards: usize) -> CaseSet {
         max_resolvers,
         origin: CatalogOrigin::Templates,
     }
+}
+
+fn frontier_cases(first: usize, count: usize) -> Result<CaseSet, Box<dyn std::error::Error>> {
+    if count == 0
+        || first
+            .checked_add(count)
+            .is_none_or(|end| end > frontiers::COUNT)
+    {
+        return Err("frontier range exceeds the parallel-roll continuation population".into());
+    }
+    let mut catalog = CaseSet {
+        namespace: format!("frontiers-{first}-count-{count}"),
+        description: format!("parallel_roll_continuations first={first} count={count}"),
+        total: frontiers::COUNT.to_string(),
+        cases: Vec::new(),
+        delegated: BTreeSet::new(),
+        expected_rejections: BTreeMap::new(),
+        negative_sources: BTreeMap::new(),
+        max_label: 0,
+        max_resolvers: 0,
+        origin: CatalogOrigin::Contexts,
+    };
+    for rank in first..first + count {
+        let (mut source, identity) = frontiers::protocol(rank);
+        if let Some(unpermitted) = frontiers::unpermitted_reentry(rank) {
+            catalog.negative_sources.insert(format!("frontier_reentry_{rank}"), (
+                unpermitted,
+                "rolled reentry requires permission from the resource's entry owner; help: let the resource's entry owner authorize each visit inside the roll",
+            ));
+        }
+        let (labels, resolvers) = syntax::number(&mut source);
+        let case = catalog.cases.len();
+        if context::has_transfer(&source) {
+            catalog.delegated.insert(case);
+        }
+        catalog.max_label = catalog.max_label.max(labels);
+        catalog.max_resolvers = catalog.max_resolvers.max(resolvers);
+        catalog
+            .cases
+            .push((case, identity, 2, 0, source, resolvers));
+    }
+    Ok(catalog)
 }
 
 fn syntax_cases(

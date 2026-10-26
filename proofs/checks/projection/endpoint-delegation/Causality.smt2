@@ -183,3 +183,104 @@
 ; EXPECT: unsat
 (check-sat)
 (pop)
+
+; The source-order lookup can ignore all markers outside (before, after].
+(declare-const scope-start Int)
+(declare-const scope-split Int)
+(declare-const scope-stop Int)
+(declare-const before-event Int)
+(declare-const after-event Int)
+(define-fun split-between () Bool
+  (and (< before-event scope-split) (<= scope-split after-event)))
+(define-fun start-between () Bool
+  (and (< before-event scope-start) (<= scope-start after-event)))
+(define-fun stop-between () Bool
+  (and (< before-event scope-stop) (<= scope-stop after-event)))
+(define-fun scope-separates () Bool
+  (and (<= scope-start before-event) split-between (< after-event scope-stop)))
+(push)
+(assert (and (<= 0 scope-start) (< scope-start scope-split)
+             (< scope-split scope-stop) (<= 0 before-event) (< before-event after-event)))
+(assert (distinct scope-separates (and split-between (not start-between) (not stop-between))))
+; EXPECT: unsat
+(check-sat)
+(pop)
+
+; Omitting either enclosing boundary can falsely remove a sequential edge.
+(push)
+(assert (and (<= 0 scope-start) (< scope-start scope-split)
+             (< scope-split scope-stop) (<= 0 before-event) (< before-event after-event)))
+(assert (and split-between (not stop-between) (not scope-separates)))
+; EXPECT: sat
+(check-sat)
+(pop)
+(push)
+(assert (and (<= 0 scope-start) (< scope-start scope-split)
+             (< scope-split scope-stop) (<= 0 before-event) (< before-event after-event)))
+(assert (and split-between (not start-between) (not scope-separates)))
+; EXPECT: sat
+(check-sat)
+(pop)
+
+; Entered or closed scopes rule out separating splits at later preorder positions.
+(push)
+(declare-const later-start Int)
+(declare-const later-split Int)
+(declare-const later-stop Int)
+(assert (and (<= 0 scope-start) (< scope-start scope-stop)
+             (<= scope-start later-start) (< later-start later-split)
+             (< later-split later-stop) (<= 0 before-event) (< before-event after-event)))
+(assert (=> (< later-start scope-stop) (<= later-stop scope-stop)))
+(assert (or (< before-event scope-start)
+            (and (< before-event scope-stop) (<= scope-stop after-event))))
+(assert (and (<= later-start before-event) (< before-event later-split)
+             (<= later-split after-event) (< after-event later-stop)))
+; EXPECT: unsat
+(check-sat)
+(pop)
+
+; Crossing intervals would invalidate preorder elision; nesting is essential.
+(push)
+(declare-const crossing-start Int)
+(declare-const crossing-split Int)
+(declare-const crossing-stop Int)
+(assert (and (<= 0 scope-start) (<= scope-start crossing-start)
+             (<= crossing-start before-event) (< before-event scope-stop)
+             (<= scope-stop after-event) (< before-event crossing-split)
+             (<= crossing-split after-event) (< after-event crossing-stop)))
+; EXPECT: sat
+(check-sat)
+(pop)
+
+; The last different sender bounds all obligations; keep every target before it.
+(push)
+(declare-const first-query Int)
+(declare-const stop-query Int)
+(declare-const cutoff-query Int)
+(declare-const target-query Int)
+(declare-const changed-sender Bool)
+(declare-const causal-witness Bool)
+(assert (and (<= 0 first-query) (<= first-query cutoff-query)
+             (<= cutoff-query stop-query) (<= 0 target-query)))
+(define-fun full-target () Bool
+  (and (<= first-query target-query) (< target-query stop-query) changed-sender))
+(define-fun prefix-target () Bool
+  (and (<= first-query target-query) (< target-query cutoff-query) changed-sender))
+(assert (=> full-target (< target-query cutoff-query)))
+(assert (distinct (=> full-target causal-witness) (=> prefix-target causal-witness)))
+; EXPECT: unsat
+(check-sat)
+(pop)
+
+; Removing the last sender change itself would discard a real obligation.
+(push)
+(declare-const last-change Int)
+(declare-const source-end Int)
+(declare-const last-witness Bool)
+(assert (and (<= 0 last-change) (< last-change source-end)))
+(assert (not last-witness))
+(assert (not (=> (< last-change source-end) last-witness)))
+(assert (=> (< last-change last-change) last-witness))
+; EXPECT: sat
+(check-sat)
+(pop)

@@ -103,9 +103,11 @@ fn owned_image_construction_rejects_a_self_referencing_decision() {
 }
 
 #[kani::proof]
-// Four source events, nine markers and the two-byte marker fields. The full
-// usize index domain stays symbolic; out-of-range indices must return false.
-#[kani::unwind(16)]
+// Four source events and nine markers bound each scan by nine iterations.
+// Unwinding assertions check exhaustion. The full
+// usize index domain is partitioned into all six ordered in-range pairs and
+// their complement. Every remaining index pair must return false.
+#[kani::unwind(10)]
 fn source_order_keeps_parallel_and_route_arms_independent_through_roll() {
     use crate::global::compiled::{
         images::{ProgramImageBytes, ProgramImagePlan, SourceOrderIndex},
@@ -133,14 +135,26 @@ fn source_order_keeps_parallel_and_route_arms_independent_through_roll() {
         Some(index) => index,
         None => panic!("source order index"),
     };
-    let before: usize = kani::any();
-    let after: usize = kani::any();
-    assert_eq!(
-        IMAGE.source_precedes(before, after),
-        before < 2 && (after == 2 || after == 3)
-    );
-    assert_eq!(
-        INDEX.before(before, after),
-        IMAGE.source_precedes(before, after)
-    );
+    fn check_pair<const BEFORE: usize, const AFTER: usize>() {
+        let actual = IMAGE.source_precedes(BEFORE, AFTER);
+        assert_eq!(actual, BEFORE < 2 && (AFTER == 2 || AFTER == 3));
+        assert_eq!(INDEX.before(BEFORE, AFTER), actual);
+    }
+    let first: usize = kani::any();
+    let second: usize = kani::any();
+    match (first, second) {
+        (0, 1) => check_pair::<0, 1>(),
+        (0, 2) => check_pair::<0, 2>(),
+        (0, 3) => check_pair::<0, 3>(),
+        (1, 2) => check_pair::<1, 2>(),
+        (1, 3) => check_pair::<1, 3>(),
+        (2, 3) => check_pair::<2, 3>(),
+        _ => {
+            assert!(!(first < second && second < 4));
+            assert!(!IMAGE.source_precedes(first, second));
+            assert!(!INDEX.before(first, second));
+            kani::cover!(first == usize::MAX);
+            kani::cover!(second == usize::MAX);
+        }
+    }
 }

@@ -98,18 +98,22 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
     pub(in crate::endpoint::kernel) fn enabled_view_events(
         &self,
     ) -> impl Iterator<Item = (usize, usize)> + '_ {
-        (0..self.progress.cursor.local_steps_len())
-            .filter_map(|index| self.enabled_view_event(index).map(|source| (index, source)))
+        let mut previews = self.preview_queries();
+        (0..self.progress.cursor.local_steps_len()).filter_map(move |index| {
+            let (source, admission) = self.view_event_admission(index, &mut previews)?;
+            admission.is_ok().then_some((index, source))
+        })
     }
 
     pub(in crate::endpoint::kernel) fn enabled_view_event(&self, index: usize) -> Option<usize> {
-        let (source, admission) = self.view_event_admission(index)?;
+        let (source, admission) = self.view_event_admission(index, &mut self.preview_queries())?;
         admission.is_ok().then_some(source)
     }
 
     fn view_event_admission(
         &self,
         index: usize,
+        previews: &mut dyn FnMut(crate::global::const_dsl::ScopeId) -> Option<u8>,
     ) -> Option<(
         usize,
         Result<(), crate::global::typestate::EventAdmissionError>,
@@ -140,9 +144,9 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
             // A fresh preview can select another arm, but cannot
             // change which arm completed the preceding roll visit.
             EventArmView::Committed => self.selected_arm_for_scope(scope),
-            EventArmView::Preview => self
-                .preview_live_selected_arm_for_scope(scope)
-                .or_else(|| self.selected_arm_for_recv_event(conflict, scope, view)),
+            EventArmView::Preview => {
+                previews(scope).or_else(|| self.selected_arm_for_recv_event(conflict, scope, view))
+            }
         });
         Some((event.eff_index.dense_ordinal(), admission.map(|_| ())))
     }
@@ -151,12 +155,13 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
         &self,
         source: core::ops::Range<usize>,
         reentry: Option<crate::global::const_dsl::ScopeId>,
+        previews: &mut dyn FnMut(crate::global::const_dsl::ScopeId) -> Option<u8>,
     ) -> bool {
         let mut inside = false;
         // Repeating a completed group and taking its sequential continuation
         // are alternatives. Independent siblings still belong to the frontier.
         for index in 0..self.progress.cursor.local_steps_len() {
-            let Some((event, admission)) = self.view_event_admission(index) else {
+            let Some((event, admission)) = self.view_event_admission(index, previews) else {
                 continue;
             };
             // A borrow performs no operation. This view can borrow its next
@@ -196,7 +201,7 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
     fn associative_parallel_at(&self, region: OperationRegion) -> Option<(usize, usize, usize)> {
         let bounds = region.bounds();
         let program = self.context.program;
-        for marker in 0..program.source_scope_marker_count() {
+        for marker in program.source_markers_at(bounds.start) {
             if let Some((_, start, end)) = program.source_roll_at(marker)
                 && start == bounds.start
                 && end == bounds.end
@@ -204,7 +209,7 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
                 return None;
             }
         }
-        for marker in 0..program.source_scope_marker_count() {
+        for marker in program.source_markers_at(bounds.start) {
             let Some((start, split, end)) = program.source_parallel_at(marker) else {
                 continue;
             };
@@ -229,51 +234,61 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
         {
             return Err(SendError::PhaseInvariant);
         }
-        let mut repeated = None;
-        let current = (0..self.context.program.source_scope_marker_count()).find_map(|marker| {
-            let (start, split, end) = self.context.program.source_parallel_at(marker)?;
-            let parent = self.region.bounds();
-            if start < parent.start || end > parent.end {
-                return None;
-            }
-            let origin = self
-                .region
-                .reentry()
-                .filter(|&(scope, epoch)| {
-                    self.progress.cursor.borrowed_roll_reentry_is_current(
-                        scope,
-                        epoch,
-                        &mut |scope| self.selected_arm_for_scope(scope),
-                    )
-                })
-                .or_else(|| {
-                    self.progress.cursor.completed_parallel_reentry(
-                        start,
-                        end,
-                        &mut |scope, view| match view {
-                            EventArmView::Committed => self.selected_arm_for_scope(scope),
-                            EventArmView::Preview => self
-                                .preview_live_selected_arm_for_scope(scope)
-                                .or_else(|| self.selected_arm_for_scope(scope)),
-                        },
-                    )
+        let ((start, split, end), origin) = {
+            let mut previews = self.preview_queries();
+            let mut repeated = None;
+            let current =
+                (0..self.context.program.source_scope_marker_count()).find_map(|marker| {
+                    let (start, split, end) = self.context.program.source_parallel_at(marker)?;
+                    let parent = self.region.bounds();
+                    if start < parent.start
+                        || end > parent.end
+                        || self.arm_lane(start..end).is_none()
+                    {
+                        return None;
+                    }
+                    let origin = self
+                        .region
+                        .reentry()
+                        .filter(|&(scope, epoch)| {
+                            self.progress.cursor.borrowed_roll_reentry_is_current(
+                                scope,
+                                epoch,
+                                &mut |scope| self.selected_arm_for_scope(scope),
+                            )
+                        })
+                        .or_else(|| {
+                            self.progress.cursor.completed_parallel_reentry(
+                                start,
+                                end,
+                                &mut |scope, view| match view {
+                                    EventArmView::Committed => self.selected_arm_for_scope(scope),
+                                    EventArmView::Preview => previews(scope)
+                                        .or_else(|| self.selected_arm_for_scope(scope)),
+                                },
+                            )
+                        });
+                    let candidate = ((start, split, end), origin);
+                    // Classify completed repetitions before comparing enabled groups.
+                    if origin.is_some() && repeated.is_some() {
+                        return None;
+                    }
+                    if !self.parallel_region_covers_frontier(
+                        start..end,
+                        origin.map(|(scope, _)| scope),
+                        &mut previews,
+                    ) {
+                        return None;
+                    }
+                    if origin.is_none() {
+                        Some(candidate)
+                    } else {
+                        repeated = Some(candidate);
+                        None
+                    }
                 });
-            let candidate = ((start, split, end), origin);
-            // Classify completed repetitions before comparing enabled groups.
-            if origin.is_none() && self.parallel_region_covers_frontier(start..end, None) {
-                Some(candidate)
-            } else {
-                if repeated.is_none()
-                    && self
-                        .parallel_region_covers_frontier(start..end, origin.map(|(scope, _)| scope))
-                {
-                    repeated = Some(candidate);
-                }
-                None
-            }
-        });
-        let ((start, split, end), origin) =
-            current.or(repeated).ok_or(SendError::PhaseInvariant)?;
+            current.or(repeated).ok_or(SendError::PhaseInvariant)?
+        };
 
         // Preserve the current forward group before choosing an alternative
         // restart. Scope selection precedes width checks and borrow issuance.

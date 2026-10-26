@@ -1,7 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
-if [[ "${1:-}" == --representatives ]]; then
+if [[ "${1:-}" == --frontiers ]]; then
+  if [[ $# != 3 ]]; then
+    echo "usage: $0 --frontiers FIRST COUNT" >&2
+    exit 2
+  fi
+  GENERATOR_ARGS=(--frontiers "$2" "$3")
+  OUTPUT="${ROOT_DIR}/target/protocol-shapes/frontiers/range-$2-count-$3"
+elif [[ "${1:-}" == --representatives ]]; then
   if [[ $# != 4 ]]; then
     echo "usage: $0 --representatives DEPTH FIRST COUNT" >&2
     exit 2

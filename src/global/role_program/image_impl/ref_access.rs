@@ -338,7 +338,7 @@ impl RoleImageRef {
             let start = self.columns.route_scopes.offset as usize;
             // Check the whole two-byte column once. The sealed sorted index
             // already certifies every raw ID; probes do not decode it again.
-            if start + 2 * count > self.columns.blob_len() {
+            if start + 2 * count > self.blob.len() {
                 invalid_resident_descriptor();
             }
             let mut low = 0usize;

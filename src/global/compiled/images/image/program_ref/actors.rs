@@ -181,6 +181,34 @@ impl CompiledProgramRef {
         false
     }
 
+    const fn source_marker_lower_bound(&self, offset: usize) -> usize {
+        let markers = self
+            .columns
+            .scope_markers_for(self.source_scope_marker_count());
+        let mut lower = 0;
+        let mut upper = markers.len as usize;
+        while lower < upper {
+            let middle = lower + (upper - lower) / 2;
+            let at = markers.offset as usize + middle * PROGRAM_IMAGE_SCOPE_MARKER_STRIDE;
+            if (self.read_u16_at(at) as usize) < offset {
+                lower = middle + 1;
+            } else {
+                upper = middle;
+            }
+        }
+        lower
+    }
+
+    pub(crate) const fn source_markers_at(&self, offset: usize) -> core::ops::Range<usize> {
+        let first = self.source_marker_lower_bound(offset);
+        let end = if offset == usize::MAX {
+            first
+        } else {
+            self.source_marker_lower_bound(offset + 1)
+        };
+        first..end
+    }
+
     /// Strict single-visit source order. Enumeration orders sequential terms,
     /// except for operations separated by parallel or alternative arms.
     /// Read the existing immutable markers; do not create a dependency ledger.
@@ -191,44 +219,71 @@ impl CompiledProgramRef {
         let markers = self
             .columns
             .scope_markers_for(self.source_scope_marker_count());
-        let mut marker = 0;
-        while marker < markers.len as usize {
+        // Only a split strictly after `before` and no later than `after`
+        // can separate the events. Source markers are emitted in offset order.
+        let first = self.source_marker_lower_bound(before + 1);
+        let mut last = first;
+        while last < markers.len as usize {
+            let at = markers.offset as usize + last * PROGRAM_IMAGE_SCOPE_MARKER_STRIDE;
+            if self.read_u16_at(at) as usize > after {
+                break;
+            }
+            last += 1;
+        }
+        let mut marker = first;
+        let mut scope_limit = ScopeId::LOCAL_CAPACITY;
+        while marker < last {
             let offset = markers.offset as usize + marker * PROGRAM_IMAGE_SCOPE_MARKER_STRIDE;
             let split = self.read_u16_at(offset) as usize;
-            if before < split && split <= after {
-                let raw_scope = self.read_u16_at(offset + 2);
-                let Some(scope) = ScopeId::decode_raw(raw_scope) else {
-                    crate::invariant();
-                };
-                let tag = self.byte_at(offset + 4) & 3;
-                // Par has a Split marker. Route closes its left arm and
-                // enters its right arm at the same offset instead.
-                if matches!(
-                    (scope.kind(), tag),
-                    (Some(ScopeKind::Parallel), 1) | (Some(ScopeKind::Route), 2)
-                ) {
-                    let mut start = None;
-                    let mut stop = None;
-                    let mut bound = 0;
-                    while bound < markers.len as usize {
-                        let at =
-                            markers.offset as usize + bound * PROGRAM_IMAGE_SCOPE_MARKER_STRIDE;
-                        if self.read_u16_at(at + 2) == raw_scope {
-                            match self.byte_at(at + 4) & 3 {
-                                0 if start.is_none() => start = Some(self.read_u16_at(at) as usize),
-                                2 => stop = Some(self.read_u16_at(at) as usize),
-                                _ => (),
+            let raw_scope = self.read_u16_at(offset + 2);
+            let Some(scope) = ScopeId::decode_raw(raw_scope) else {
+                crate::invariant();
+            };
+            let ordinal = scope.local_ordinal();
+            if ordinal >= scope_limit {
+                marker += 1;
+                continue;
+            }
+            let tag = self.byte_at(offset + 4) & 3;
+            // Ordinals follow source preorder. A scope entered inside this
+            // window, and every later scope, cannot enclose `before`.
+            // A route's second enter follows its left exit, checked below.
+            if tag == 0 {
+                scope_limit = ordinal;
+                marker += 1;
+                continue;
+            }
+            // Par has a Split marker. Route closes its left arm and
+            // enters its right arm at the same offset instead.
+            if matches!(
+                (scope.kind(), tag),
+                (Some(ScopeKind::Parallel), 1) | (Some(ScopeKind::Route), 2)
+            ) {
+                // No enter for this scope occurred in the window. Its split
+                // separates the events unless its final exit is here too.
+                let mut separates = matches!(scope.kind(), Some(ScopeKind::Parallel));
+                let mut bound = marker + 1;
+                while bound < last {
+                    let at = markers.offset as usize + bound * PROGRAM_IMAGE_SCOPE_MARKER_STRIDE;
+                    if self.read_u16_at(at + 2) == raw_scope {
+                        match self.byte_at(at + 4) & 3 {
+                            0 => separates = self.read_u16_at(at) as usize == split,
+                            2 => {
+                                separates = false;
+                                break;
                             }
+                            _ => (),
                         }
-                        bound += 1;
                     }
-                    let (Some(start), Some(stop)) = (start, stop) else {
-                        crate::invariant();
-                    };
-                    if start <= before && after < stop {
-                        return false;
-                    }
+                    bound += 1;
                 }
+                if separates {
+                    return false;
+                }
+                // This enclosing scope ends by `after`. Any later ordinal
+                // that could enclose `before` is nested inside it and ends
+                // here too; its split cannot separate this pair either.
+                scope_limit = ordinal;
             }
             marker += 1;
         }

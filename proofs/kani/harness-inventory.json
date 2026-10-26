@@ -225,7 +225,8 @@
       "global::const_dsl::receive_lane_causality::kani::roll_reentry_causal_closure_rejects_open_cycle",
       "global::const_dsl::receive_lane_causality::kani::sender_change_without_causal_handoff_is_rejected",
       "global::const_dsl::receive_lane_causality::kani::three_event_causal_handoff_accepts_every_valid_role_assignment",
-      "global::const_dsl::receive_lane_causality::kani::three_event_linear_scan_matches_pairwise_checker"
+      "global::const_dsl::receive_lane_causality::kani::three_event_linear_scan_matches_pairwise_checker",
+      "global::const_dsl::receive_lane_causality::kani::three_event_structured_scan_matches_pairwise_checker"
     ],
     "../../src/global/const_dsl/scope/kani.rs": [
       "global::const_dsl::scope::kani::scope_id_decoding_accepts_exact_compact_domain"
@@ -440,7 +441,7 @@
   "contract-harnesses": {},
   "contracts": [],
   "totals": {
-    "standard-harnesses": 314,
+    "standard-harnesses": 315,
     "contract-harnesses": 0,
     "functions-under-contract": 0
   }

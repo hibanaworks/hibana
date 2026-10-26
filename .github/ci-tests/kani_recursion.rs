@@ -14,6 +14,7 @@ use std::{
 };
 
 const PREFIX: &str = "global::const_dsl::receive_lane_causality::actors::kani::";
+const SOURCE_ORDER: &str = "global::compiled::images::image::program_ref::actors::kani::source_order_keeps_parallel_and_route_arms_independent_through_roll";
 
 pub(super) struct Group {
     pub label: &'static str,
@@ -68,7 +69,13 @@ fn partition(names: BTreeSet<String>) -> Audit<Vec<Group>> {
                 .into(),
         );
     }
-    let mut groups = ["ordinary", "owned-linear", "parallel-reentry"].map(|label| Group {
+    let mut groups = [
+        "ordinary",
+        "owned-linear",
+        "parallel-reentry",
+        "source-order",
+    ]
+    .map(|label| Group {
         label,
         harnesses: Vec::new(),
         recursion: None,
@@ -77,6 +84,7 @@ fn partition(names: BTreeSet<String>) -> Audit<Vec<Group>> {
         let part = match name.strip_prefix(PREFIX) {
             Some(name) if name.starts_with("owned_linear_seed_word") => 1,
             _ if name.starts_with("global::typestate::cursor::parallel_reentry_tests::") => 2,
+            _ if name == SOURCE_ORDER => 3,
             _ => 0,
         };
         groups[part].harnesses.push(name);
@@ -336,10 +344,16 @@ mod tests {
         names.insert("ordinary_proof".into());
         names.insert("global::typestate::cursor::parallel_reentry_tests::proof_a".into());
         names.insert("global::typestate::cursor::parallel_reentry_tests::proof_b".into());
+        names.insert(SOURCE_ORDER.into());
         let groups = partition(names.clone()).unwrap();
         assert_eq!(
             groups.iter().map(|g| g.harnesses.len()).collect::<Vec<_>>(),
-            [2, 4, 1, 1]
+            [2, 4, 1, 1, 1]
+        );
+        assert!(
+            groups.iter().any(|group| {
+                group.label == "source-order" && group.harnesses == [SOURCE_ORDER]
+            })
         );
         assert_eq!(
             groups

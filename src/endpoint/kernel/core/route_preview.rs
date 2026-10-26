@@ -21,6 +21,41 @@ impl<'r, T> OperationKernel<'_, 'r, T>
 where
     T: Transport + 'r,
 {
+    /// Answers stay valid while this shared kernel borrow excludes progress
+    /// updates. The scratch is discarded before any operation can commit.
+    pub(in crate::endpoint::kernel) fn preview_queries(
+        &self,
+    ) -> impl FnMut(ScopeId) -> Option<u8> + '_ {
+        let mut answers = [0u8; (ScopeId::LOCAL_CAPACITY as usize).div_ceil(4)];
+        move |scope| {
+            if !matches!(
+                scope.kind(),
+                Some(crate::global::const_dsl::ScopeKind::Route)
+            ) {
+                return self.preview_live_selected_arm_for_scope(scope);
+            }
+            let index = scope.local_ordinal() as usize;
+            let shift = (index % 4) * 2;
+            match (answers[index / 4] >> shift) & 3 {
+                0 => {
+                    let answer = self.preview_live_selected_arm_for_scope(scope);
+                    let encoded = match answer {
+                        None => 1,
+                        Some(0) => 2,
+                        Some(1) => 3,
+                        Some(_) => crate::invariant(),
+                    };
+                    answers[index / 4] |= encoded << shift;
+                    answer
+                }
+                1 => None,
+                2 => Some(0),
+                3 => Some(1),
+                _ => crate::invariant(),
+            }
+        }
+    }
+
     pub(crate) fn is_reentry_route(&self, scope: ScopeId) -> bool {
         self.progress.cursor.route_scope_reentry(scope)
     }
@@ -85,8 +120,24 @@ where
         &self,
         scope_id: ScopeId,
     ) -> Option<u8> {
-        let selected = self.selected_live_arm_for_scope(scope_id);
-        let ready = self.poll_arm_from_ready_mask(scope_id).map(Arm::as_u8);
+        let slot = self.scope_slot_for_route(scope_id);
+        let selected = slot
+            .and_then(|slot| {
+                self.progress
+                    .decision_state
+                    .selected_arm_for_scope_slot(slot)
+            })
+            .filter(|&arm| !self.reentrant_selected_arm_complete(scope_id, arm));
+        let ready = slot
+            .and_then(|slot| {
+                Arm::from_single_ready_mask(
+                    self.progress
+                        .decision_state
+                        .scope_evidence
+                        .poll_ready_arm_mask(slot),
+                )
+            })
+            .map(Arm::as_u8);
         match (selected, ready) {
             (Some(selected), Some(ready)) if selected != ready => crate::invariant(),
             (Some(selected), _) => Some(selected),

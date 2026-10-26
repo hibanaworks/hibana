@@ -79,6 +79,13 @@ fn bounded_obligations_match_full_scans_across_routes_parallel_and_reentry() {
                 ordinary,
                 "encoding={encoding} shape={shape}"
             );
+            if shape == 0 {
+                assert_eq!(
+                    super::validate_linear_receive_lane_causality(&events),
+                    ordinary,
+                    "linear encoding={encoding}"
+                );
+            }
             assert_eq!(
                 validate_roll_body_receive_lane_causality(&events, RollBodyRange::new(0, 4)),
                 reentry,
