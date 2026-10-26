@@ -129,7 +129,7 @@ fn function_names() -> Vec<String> {
         format!("{root}::CausalFlow::<'_, 3>::advance_as::<0>"),
         format!("{root}::actors::Obligation::<'_, 3, 0>::conflict_from"),
         format!("{root}::actors::ActorMap::<'_, 3, 0>::reference_known"),
-        "global::const_dsl::source_arena::ScopeMarkerView::<'_>::offset_lower_bound".into(),
+        format!("{root}::ScopeOffsets::<3>::new"),
     ]
 }
 
@@ -154,7 +154,15 @@ fn collect_functions(map: Json, wanted: &[String]) -> Audit<BTreeMap<String, Str
         }
     }
     if functions.len() != wanted.len() {
-        return Err("missing compiled recursive function".into());
+        let missing = wanted
+            .iter()
+            .filter(|name| !functions.contains_key(*name))
+            .map(String::as_str)
+            .collect::<Vec<_>>()
+            .join(", ");
+        return Err(format!(
+            "missing compiled receive-proof functions: {missing}"
+        ));
     }
     Ok(functions)
 }
@@ -226,12 +234,11 @@ fn bounds(target: &Path) -> Audit<String> {
         let functions = collect_functions(read_json(&map)?, &names)?;
         // The linear source has neither nested scopes nor actor decisions.
         // A zero recursion bound asserts that those recursive calls are absent.
-        // The empty marker search still checks its loop's exhaustion.
-        let mut limits = names[..3]
+        // The source-offset index retains the harness's five-step loop bound.
+        let limits = names[..3]
             .iter()
             .map(|name| format!("{}:0", functions[name]))
             .collect::<Vec<_>>();
-        limits.push(format!("{}.0:1", functions[&names[3]]));
         let compiled = limits.join(",");
         if result
             .as_ref()
