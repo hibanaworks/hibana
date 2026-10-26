@@ -13,6 +13,7 @@ pub(super) use passive_parent::passive_parent_rows_are_coherent;
 
 mod route_index;
 pub(super) use route_index::route_scopes_are_sorted;
+pub(super) use route_index::{route_index_is_coherent, route_slot};
 
 mod scope_ranges;
 pub(super) use scope_ranges::{roll_scope_columns_are_coherent, route_commit_capacity_is_exact};

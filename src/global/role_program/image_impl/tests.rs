@@ -116,6 +116,7 @@ fn lane_column_fixture() -> ([u8; 64], RoleImageColumns, RuntimeRoleFootprint) {
         roll_scopes: empty,
         roll_entry_view_count: 0,
         owned_receipt_count: 0,
+        route_index_len: 0,
     };
     let footprint = RuntimeRoleFootprint {
         max_route_commit_count: 0,
@@ -454,7 +455,7 @@ static ROUTE_COMMIT_TRUNCATED_PARENT_BYTES: [u8; BLOB_LEN] = route_commit_chain_
 static ROUTE_COMMIT_LEADING_PARENT_BYTES: [u8; BLOB_LEN] = route_commit_chain_bytes(3, [0, 0, 2]);
 static PASSIVE_CHILD_WITHOUT_PARENT_BYTES: [u8; BLOB_LEN] = passive_child_without_parent_bytes();
 
-fn empty_columns() -> RoleImageColumns {
+const fn empty_columns() -> RoleImageColumns {
     let empty = ColumnRange::new(DATA_END, 0, 1);
     RoleImageColumns {
         events: empty,
@@ -474,6 +475,7 @@ fn empty_columns() -> RoleImageColumns {
         roll_scopes: empty,
         roll_entry_view_count: 0,
         owned_receipt_count: 0,
+        route_index_len: 0,
     }
 }
 

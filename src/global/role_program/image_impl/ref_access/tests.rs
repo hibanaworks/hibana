@@ -97,7 +97,6 @@ fn mandatory_lane_validation_proves_raw_arm_bounds() {
         g::send::<0, 1, Msg<3, ()>>(),
     ));
     let rows = program.role_image_ref();
-    assert!(rows.has_sorted_route_index());
     assert!(rows.has_passive_parent_index());
     assert_lane_validation_dominates_raw_arm_reads(rows);
 }
@@ -113,6 +112,9 @@ fn validated_metadata_constructor_rejects_every_skipped_metadata_class() {
     ));
     let rows = program.role_image_ref();
     let event = rows.columns.events.offset as usize;
+    reject(rows, |b, c, _| b[c.route_index().start] ^= 1);
+    reject(rows, |b, c, _| b[c.route_index().start + 1] ^= 1);
+    reject(rows, |_, c, _| c.route_index_len = 0);
     reject(rows, |b, _, _| b[event + 8] = 0x80); // event flags
     reject(rows, |b, _, _| b[event + 8] ^= 0b110); // receive changed into send
     reject(rows, |b, _, _| b[event + 8] &= 1); // wire receive changed into local action
@@ -220,7 +222,7 @@ fn validated_metadata_rejects_omitted_route_ancestors_and_event_contexts() {
 }
 
 #[test]
-fn validated_metadata_constructor_accepts_unique_unsorted_route_ids() {
+fn validated_metadata_constructor_rejects_noncanonical_route_index() {
     let program: RoleProgram<1> = project(&g::route(
         g::route(g::send::<0, 1, Msg<1, ()>>(), g::send::<0, 1, Msg<2, ()>>()),
         g::send::<0, 1, Msg<3, ()>>(),
@@ -276,19 +278,10 @@ fn validated_metadata_constructor_accepts_unique_unsorted_route_ids() {
     // SAFETY: this test retains the stationary array through every query and
     // discards the rebuilt image before returning.
     let bytes = unsafe { &*core::ptr::from_ref(&bytes) };
-    let rebuilt = RoleImageRef::new(rows.program, rows.role, rows.facts, columns, bytes);
-    assert!(!rebuilt.has_sorted_route_index());
-    assert!(!rebuilt.has_passive_parent_index());
-    assert_lane_validation_dominates_raw_arm_reads(&rebuilt);
-    assert_eq!(rebuilt.route_scope_slot(ScopeId::route(7)), Some(0));
-    assert_eq!(rebuilt.route_scope_slot(ScopeId::route(3)), Some(1));
-    for idx in 0..rows.local_step_count() {
-        assert_eq!(
-            rebuilt.local_step_node(idx).unwrap().action(),
-            rows.local_step_node(idx).unwrap().action()
-        );
-    }
-    crate::global::typestate::EventCursor::compare_validated_metadata_image(&rebuilt);
+    assert!(
+        catch_unwind(|| { RoleImageRef::new(rows.program, rows.role, rows.facts, columns, bytes) })
+            .is_err()
+    );
 }
 
 #[test]

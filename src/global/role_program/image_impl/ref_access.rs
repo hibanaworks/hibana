@@ -6,7 +6,8 @@ use super::super::{
 use super::lane_image::invalid_resident_descriptor;
 use super::metadata::{
     derive_active_lane_metadata, lane_columns_are_coherent, passive_parent_rows_are_coherent,
-    roll_scope_columns_are_coherent, route_commit_capacity_is_exact, route_scopes_are_sorted,
+    roll_scope_columns_are_coherent, route_commit_capacity_is_exact, route_index_is_coherent,
+    route_scopes_are_sorted, route_slot,
 };
 use crate::global::{
     compiled::images::CompiledProgramRef,
@@ -29,6 +30,7 @@ pub(crate) struct RoleImageRef {
     columns: RoleImageColumns,
     blob: BlobPtr,
     first_active_lane: u16,
+    route_index_start: u16,
     lookup_indexes: u8,
 }
 
@@ -90,7 +92,6 @@ impl RuntimeRoleFacts {
     }
 }
 
-const SORTED_ROUTE_INDEX: u8 = 1;
 const PASSIVE_PARENT_INDEX: u8 = 2;
 const PARALLEL_REENTRY_INDEX: u8 = 4;
 
@@ -117,13 +118,14 @@ impl RoleImageRef {
             None => invalid_resident_descriptor(),
         };
         let mut lookup_indexes = 0;
-        if route_scopes_are_sorted(bytes, columns.route_scopes) {
-            lookup_indexes |= SORTED_ROUTE_INDEX;
-            if columns.route_scopes.len as usize == footprint.route_scope_count
-                && passive_parent_rows_are_coherent(bytes, columns)
-            {
-                lookup_indexes |= PASSIVE_PARENT_INDEX;
-            }
+        if !route_index_is_coherent(bytes, columns) {
+            invalid_resident_descriptor();
+        }
+        if columns.route_scopes.len as usize == footprint.route_scope_count
+            && route_scopes_are_sorted(bytes, columns.route_scopes)
+            && passive_parent_rows_are_coherent(bytes, columns)
+        {
+            lookup_indexes |= PASSIVE_PARENT_INDEX;
         }
         let mut image = Self {
             program,
@@ -132,6 +134,7 @@ impl RoleImageRef {
             columns,
             blob,
             first_active_lane: metadata.first_active_lane,
+            route_index_start: compact_count(columns.route_index().start),
             lookup_indexes,
         };
         if metadata.active_lane_count != footprint.active_lane_count
@@ -190,11 +193,6 @@ impl RoleImageRef {
 
     pub(crate) const fn active_lane_row(&self) -> PackedLaneRange {
         self.facts.active_lane_row()
-    }
-
-    #[inline(always)]
-    pub(crate) const fn has_sorted_route_index(&self) -> bool {
-        self.lookup_indexes & SORTED_ROUTE_INDEX != 0
     }
 
     #[inline(always)]
@@ -332,40 +330,12 @@ impl RoleImageRef {
         &self,
         scope: crate::global::const_dsl::ScopeId,
     ) -> Option<usize> {
-        if self.columns.route_scopes.len as usize != self.footprint().route_scope_count {
-            invalid_resident_descriptor();
-        }
-        if self.has_sorted_route_index() {
-            // The constructor certified valid, strictly increasing raw IDs.
-            // Compare full IDs so another kind cannot alias a route ordinal.
-            let query = scope.raw();
-            let count = self.columns.route_scopes.len as usize;
-            let start = self.columns.route_scopes.offset as usize;
-            // Check the whole two-byte column once. The sealed sorted index
-            // already certifies every raw ID; probes do not decode it again.
-            if start + 2 * count > self.blob.len() {
-                invalid_resident_descriptor();
-            }
-            let mut low = 0usize;
-            let mut high = count;
-            while low < high {
-                let middle = low + (high - low) / 2;
-                let offset = start + 2 * middle;
-                // middle < count, so both bytes satisfy the checked bound.
-                let candidate = self.blob.byte_at(offset) as u16
-                    | ((self.blob.byte_at(offset + 1) as u16) << 8);
-                if candidate < query {
-                    low = middle + 1;
-                } else if query < candidate {
-                    high = middle;
-                } else {
-                    return Some(middle);
-                }
-            }
-            None
-        } else {
-            self.lanes().route_scope_slot(scope)
-        }
+        route_slot(
+            self.blob,
+            self.route_index_start as usize
+                ..self.route_index_start as usize + self.columns.route_index_len as usize * 2,
+            scope,
+        )
     }
 
     #[inline(always)]

@@ -245,14 +245,7 @@ impl CompiledProgramRef {
         // Only a split strictly after `before` and no later than `after`
         // can separate the events. Source markers are emitted in offset order.
         let first = self.source_marker_lower_bound(before + 1);
-        let mut last = first;
-        while last < markers.len as usize {
-            let at = markers.offset as usize + last * PROGRAM_IMAGE_SCOPE_MARKER_STRIDE;
-            if self.read_u16_at(at) as usize > after {
-                break;
-            }
-            last += 1;
-        }
+        let last = self.source_marker_lower_bound(after + 1);
         let mut marker = first;
         let mut scope_limit = ScopeId::LOCAL_CAPACITY;
         while marker < last {

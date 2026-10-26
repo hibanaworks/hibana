@@ -18,9 +18,11 @@ pub(super) struct RoleImageColumnCounts {
     pub(super) route_arm_lane_steps: usize,
     pub(super) route_commit_rows: usize,
     pub(super) roll_scopes: usize,
+    pub(super) route_index_len: usize,
 }
 
 struct RouteImagePlanRouteFacts {
+    route_index_len: usize,
     lane_bits: usize,
     route_arm_lane_steps: usize,
     route_commit_rows: usize,
@@ -106,6 +108,7 @@ impl RoleImageColumnCounts {
             roll_scopes,
             roll_entry_view_count: 0,
             owned_receipt_count: 0,
+            route_index_len: self.route_index_len as u16,
         }
     }
 }
@@ -173,6 +176,7 @@ impl RoleImageColumnCounts {
                 ),
             route_arm_lane_steps: route_facts.route_arm_lane_steps,
             route_commit_rows: route_facts.route_commit_rows,
+            route_index_len: route_facts.route_index_len,
             roll_scopes,
         }
     }
@@ -198,12 +202,14 @@ impl RoleImageColumnCounts {
                 lane_bits: 0,
                 route_arm_lane_steps: 0,
                 route_commit_rows: 0,
+                route_index_len: 0,
             };
         }
         let mut facts = RouteImagePlanRouteFacts {
             lane_bits: 0,
             route_arm_lane_steps: 0,
             route_commit_rows: 0,
+            route_index_len: 0,
         };
         let mut marker_idx = 0usize;
         while marker_idx < markers.len() {
@@ -212,6 +218,10 @@ impl RoleImageColumnCounts {
                 && matches!(marker.scope_id.kind(), Some(ScopeKind::Route))
             {
                 let scope = marker.scope_id;
+                let extent = scope.local_ordinal() as usize + 1;
+                if extent > facts.route_index_len {
+                    facts.route_index_len = extent;
+                }
                 let Some(ranges) = projection::route_arm_ranges(markers, scope) else {
                     panic!("route scope missing binary arm ranges");
                 };

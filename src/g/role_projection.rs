@@ -2,6 +2,7 @@ use core::marker::PhantomData;
 
 use super::{ProgramProjection, ProgramShape};
 use crate::global::compiled::images::COMPACT_DESCRIPTOR_BYTE_CAPACITY;
+use crate::global::role_program::ROLE_IMAGE_STORAGE_BYTE_CAPACITY;
 
 #[cfg(kani)]
 mod kani;
@@ -196,6 +197,8 @@ where
         Self::image_ref::<32768>()
     } else if Self::BLOB_LEN <= COMPACT_DESCRIPTOR_BYTE_CAPACITY {
         Self::image_ref::<{ COMPACT_DESCRIPTOR_BYTE_CAPACITY }>()
+    } else if Self::BLOB_LEN <= ROLE_IMAGE_STORAGE_BYTE_CAPACITY {
+        Self::image_ref::<{ ROLE_IMAGE_STORAGE_BYTE_CAPACITY }>()
     } else {
         panic!("role image exceeds compact offset domain")
     };
@@ -298,6 +301,11 @@ where
                     32769..=COMPACT_DESCRIPTOR_BYTE_CAPACITY => {
                         RoleProjection::<ROLE, Steps, CAPACITY>::profile_emit_bytes::<
                             { COMPACT_DESCRIPTOR_BYTE_CAPACITY },
+                        >
+                    }
+                    65536..=ROLE_IMAGE_STORAGE_BYTE_CAPACITY => {
+                        RoleProjection::<ROLE, Steps, CAPACITY>::profile_emit_bytes::<
+                            { ROLE_IMAGE_STORAGE_BYTE_CAPACITY },
                         >
                     }
                     _ => panic!("role image exceeds compact offset domain"),

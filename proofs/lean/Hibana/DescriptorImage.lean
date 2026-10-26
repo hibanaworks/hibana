@@ -1437,8 +1437,18 @@ def RustDescriptorImage.roleOwnedReceiptOffset (image : RustDescriptorImage) : N
 def RustDescriptorImage.roleOperationIndexOffset (image : RustDescriptorImage) : Nat :=
   image.roleOwnedReceiptOffset + image.ownedReceiptCount * productionRoleU16Stride
 
-def RustDescriptorImage.roleBlobLen (image : RustDescriptorImage) : Nat :=
+def RustDescriptorImage.roleRouteIndexOffset (image : RustDescriptorImage) : Nat :=
   image.roleOperationIndexOffset + image.eventCount * productionRoleU16Stride
+
+def RustDescriptorImage.roleRouteIndexLen (image : RustDescriptorImage) : Nat :=
+  (List.range image.routeScopeCount).foldl (fun extent slot =>
+    match readU16LE? image.roleBytes
+        (image.roleRouteScopeOffset + slot * productionRoleRouteScopeStride) with
+    | some raw => max extent (raw + 1)
+    | none => extent) 0
+
+def RustDescriptorImage.roleBlobLen (image : RustDescriptorImage) : Nat :=
+  image.roleRouteIndexOffset + image.roleRouteIndexLen * productionRoleU16Stride
 
 def RustDescriptorImage.decodeAtomRow?
     (image : RustDescriptorImage) (row : Nat) : Option DecodedProgramAtom := do

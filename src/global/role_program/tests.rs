@@ -588,7 +588,7 @@ fn resident_lane_views_stay_compact() {
     assert!(
         core::mem::size_of::<BlobPtr>() == 2 * word
             && core::mem::size_of::<CompiledProgramRef>() <= 4 * word
-            && core::mem::size_of::<RoleImageRef>() <= 13 * word
+            && core::mem::size_of::<RoleImageRef>() <= 14 * word
             && core::mem::size_of::<RoleLaneImage<'static>>() <= 3 * word,
         "resident refs retain one checked byte bound without copying their image"
     );

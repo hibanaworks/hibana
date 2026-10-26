@@ -359,8 +359,9 @@ impl<const N: usize> RoleImageBytes<N> {
         }
 
         out.write_operation_index(eff_list, columns);
+        out.write_route_index(columns);
         let offset = columns.blob_len();
-        if offset > u16::MAX as usize {
+        if offset > crate::global::role_program::ROLE_IMAGE_STORAGE_BYTE_CAPACITY {
             panic!("role image");
         }
         if offset > out.bytes.len() {

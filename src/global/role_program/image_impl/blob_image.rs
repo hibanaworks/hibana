@@ -16,6 +16,7 @@ mod lanes;
 mod layout;
 mod operation_index;
 mod receipts;
+mod route_index;
 use layout::validate_role_image_layout;
 
 impl RoleImagePlan {
@@ -497,8 +498,9 @@ impl<const N: usize> RoleImageBytes<N> {
         }
 
         out.write_operation_index(eff_list, columns);
+        out.write_route_index(columns);
         let offset = columns.blob_len();
-        if offset > u16::MAX as usize {
+        if offset > super::super::ROLE_IMAGE_STORAGE_BYTE_CAPACITY {
             panic!("role image");
         }
         if offset > out.bytes.len() {

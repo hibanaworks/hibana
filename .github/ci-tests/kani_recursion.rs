@@ -33,6 +33,13 @@ fn family() -> BTreeSet<String> {
     names
 }
 
+fn source_order_family() -> BTreeSet<String> {
+    ["", "_0_1", "_0_2", "_0_3", "_1_2", "_1_3", "_2_3"]
+        .map(|suffix| format!("{SOURCE_ORDER}{suffix}"))
+        .into_iter()
+        .collect()
+}
+
 fn inventory_names(inventory: &Json, total: u64) -> Audit<BTreeSet<String>> {
     let Some(Json::Object(files)) = inventory.get("standard-harnesses") else {
         return Err("Kani inventory is missing compiled harness names".into());
@@ -69,6 +76,14 @@ fn partition(names: BTreeSet<String>) -> Audit<Vec<Group>> {
                 .into(),
         );
     }
+    let source_order: BTreeSet<_> = names
+        .iter()
+        .filter(|name| name.starts_with(SOURCE_ORDER))
+        .cloned()
+        .collect();
+    if !source_order.is_empty() && source_order != source_order_family() {
+        return Err("source-order proofs must retain all six queries and their complement".into());
+    }
     let mut groups = [
         "ordinary",
         "owned-linear",
@@ -84,7 +99,7 @@ fn partition(names: BTreeSet<String>) -> Audit<Vec<Group>> {
         let part = match name.strip_prefix(PREFIX) {
             Some(name) if name.starts_with("owned_linear_seed_word") => 1,
             _ if name.starts_with("global::typestate::cursor::parallel_reentry_tests::") => 2,
-            _ if name == SOURCE_ORDER => 3,
+            _ if source_order.contains(&name) => 3,
             _ => 0,
         };
         groups[part].harnesses.push(name);
@@ -92,14 +107,15 @@ fn partition(names: BTreeSet<String>) -> Audit<Vec<Group>> {
     Ok(groups
         .into_iter()
         .flat_map(|group| {
-            if group.label == "parallel-reentry" {
+            if matches!(group.label, "parallel-reentry" | "source-order") {
                 // Keep code generation and its reachable callback set local to
                 // each proof, as well as solving its paths separately.
+                let label = group.label;
                 group
                     .harnesses
                     .into_iter()
-                    .map(|name| Group {
-                        label: "parallel-reentry",
+                    .map(move |name| Group {
+                        label,
                         harnesses: vec![name],
                         recursion: None,
                     })
@@ -344,17 +360,14 @@ mod tests {
         names.insert("ordinary_proof".into());
         names.insert("global::typestate::cursor::parallel_reentry_tests::proof_a".into());
         names.insert("global::typestate::cursor::parallel_reentry_tests::proof_b".into());
-        names.insert(SOURCE_ORDER.into());
+        names.extend(source_order_family());
         let groups = partition(names.clone()).unwrap();
-        assert_eq!(
-            groups.iter().map(|g| g.harnesses.len()).collect::<Vec<_>>(),
-            [2, 4, 1, 1, 1]
-        );
-        assert!(
-            groups.iter().any(|group| {
-                group.label == "source-order" && group.harnesses == [SOURCE_ORDER]
-            })
-        );
+        let source_groups: Vec<_> = groups
+            .iter()
+            .filter(|g| g.label == "source-order")
+            .collect();
+        assert_eq!(source_groups.len(), source_order_family().len());
+        assert!(source_groups.iter().all(|g| g.harnesses.len() == 1));
         assert_eq!(
             groups
                 .into_iter()
@@ -362,10 +375,12 @@ mod tests {
                 .collect::<BTreeSet<_>>(),
             names
         );
-        for missing in family() {
-            let mut incomplete = family();
-            incomplete.remove(&missing);
-            assert!(partition(incomplete).is_err());
+        for whole in [family(), source_order_family()] {
+            for missing in &whole {
+                let mut incomplete = whole.clone();
+                incomplete.remove(missing);
+                assert!(partition(incomplete).is_err());
+            }
         }
     }
     #[test]

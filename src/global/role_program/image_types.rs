@@ -1,5 +1,5 @@
-use super::LANE_DOMAIN_SIZE;
 use super::lane_set::lane_word_count;
+use super::{LANE_DOMAIN_SIZE, ScopeId};
 pub(crate) const PACKED_LANE_RANGE_EMPTY: u32 = u32::MAX;
 pub(crate) const ROLE_IMAGE_EVENT_STRIDE: usize = 9;
 pub(crate) const ROLE_IMAGE_LANE_STRIDE: usize = 1;
@@ -12,6 +12,8 @@ pub(crate) const ROLE_IMAGE_LANE_RANGE_STRIDE: usize = 4;
 pub(crate) const ROLE_IMAGE_ROUTE_ARM_LANE_STEP_STRIDE: usize = 5;
 pub(crate) const ROLE_IMAGE_ROLL_SCOPE_STRIDE: usize = 6;
 pub(crate) const ROLE_IMAGE_ROLL_ENTRY_STRIDE: usize = 7;
+pub(crate) const ROLE_IMAGE_STORAGE_BYTE_CAPACITY: usize =
+    u16::MAX as usize + ScopeId::LOCAL_CAPACITY as usize * ROLE_IMAGE_U16_STRIDE;
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct PackedLaneRange(u32);
@@ -433,12 +435,19 @@ pub(crate) struct RoleImageColumns {
     pub(crate) roll_scopes: ColumnRange,
     pub(crate) roll_entry_view_count: u16,
     pub(crate) owned_receipt_count: u16,
+    pub(crate) route_index_len: u16,
 }
 
 impl RoleImageColumns {
     #[inline(always)]
     pub(crate) const fn blob_len(&self) -> usize {
-        self.operation_index().end_offset(ROLE_IMAGE_U16_STRIDE)
+        self.route_index().end
+    }
+
+    pub(crate) const fn route_index(&self) -> core::ops::Range<usize> {
+        let start = self.operation_index().end_offset(ROLE_IMAGE_U16_STRIDE);
+        // Auxiliary lookup bytes do not consume the compact protocol's span.
+        start..start + self.route_index_len as usize * ROLE_IMAGE_U16_STRIDE
     }
 
     pub(crate) const fn operation_index(&self) -> ColumnRange {
@@ -505,7 +514,7 @@ impl RoleImageColumns {
             (self.route_commit_ranges, ROLE_IMAGE_LANE_RANGE_STRIDE),
             (self.route_commit_rows, ROLE_IMAGE_CONFLICT_STRIDE),
         ];
-        let bound = self.blob_len();
+        let bound = self.operation_index().end_offset(ROLE_IMAGE_U16_STRIDE);
         let mut index = 0;
         while index < columns.len() {
             let (column, stride) = columns[index];

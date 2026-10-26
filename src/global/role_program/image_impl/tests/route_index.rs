@@ -2,6 +2,119 @@ use super::super::metadata::route_scopes_are_sorted;
 use super::*;
 
 #[test]
+fn sparse_route_index_matches_linear_membership_across_every_scope_id() {
+    use super::super::metadata::{route_index_is_coherent, route_slot};
+    const INPUTS: [&[usize]; 7] = [
+        &[],
+        &[0],
+        &[31],
+        &[32],
+        &[0, 31, 32, 63, 64, 8191],
+        &[7, 65, 999],
+        &[999, 7, 65],
+    ];
+    const STORAGE: usize = ScopeId::LOCAL_CAPACITY as usize * 4;
+    const fn fixture(routes: &[usize]) -> (RoleImageColumns, [u8; STORAGE]) {
+        let mut columns = empty_columns();
+        columns.route_scopes = ColumnRange::new(0, routes.len(), 2);
+        columns.roll_scopes = ColumnRange::new(routes.len() * 2, 0, 6);
+        let mut bytes = [255u8; STORAGE];
+        let mut slot = 0;
+        let start = columns.operation_index().end_offset(2);
+        while slot < routes.len() {
+            let raw = routes[slot];
+            if raw + 1 > columns.route_index_len as usize {
+                columns.route_index_len = (raw + 1) as u16;
+            }
+            bytes[slot * 2] = raw as u8;
+            bytes[slot * 2 + 1] = (raw >> 8) as u8;
+            bytes[start + raw * 2] = slot as u8;
+            bytes[start + raw * 2 + 1] = (slot >> 8) as u8;
+            slot += 1;
+        }
+        (columns, bytes)
+    }
+    static CASES: [(RoleImageColumns, [u8; STORAGE]); 7] = [
+        fixture(INPUTS[0]),
+        fixture(INPUTS[1]),
+        fixture(INPUTS[2]),
+        fixture(INPUTS[3]),
+        fixture(INPUTS[4]),
+        fixture(INPUTS[5]),
+        fixture(INPUTS[6]),
+    ];
+    for (routes, (columns, bytes)) in INPUTS.into_iter().zip(CASES.iter()) {
+        let columns = *columns;
+        let index = columns.route_index();
+        assert!(route_index_is_coherent(bytes, columns));
+        for offset in index.clone() {
+            let mut corrupt = *bytes;
+            corrupt[offset] ^= 1;
+            assert!(
+                !route_index_is_coherent(&corrupt, columns),
+                "index byte {offset}"
+            );
+        }
+        let blob = BlobPtr::from_array(bytes, columns.blob_len());
+        for raw in 0..=u16::MAX {
+            if let Some(scope) = ScopeId::decode_raw(raw) {
+                let expected = routes
+                    .iter()
+                    .position(|&candidate| candidate == raw as usize);
+                assert_eq!(
+                    route_slot(blob, index.clone(), scope),
+                    expected,
+                    "scope {raw}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn route_index_preserves_the_complete_compact_protocol_byte_span() {
+    use super::super::metadata::{route_index_is_coherent, route_slot};
+    const CAPACITY: usize = super::super::super::ROLE_IMAGE_STORAGE_BYTE_CAPACITY;
+    let mut columns = empty_columns();
+    columns.route_scopes = ColumnRange::new(0, 1, 2);
+    columns.roll_scopes = ColumnRange::new(u16::MAX as usize, 0, 6);
+    columns.route_index_len = ScopeId::LOCAL_CAPACITY;
+    columns.validate_blob_bound();
+    assert_eq!(columns.operation_index().end_offset(2), u16::MAX as usize);
+    assert_eq!(columns.blob_len(), CAPACITY);
+    let mut overlapping = columns;
+    overlapping.dependencies = ColumnRange {
+        offset: u16::MAX - 1,
+        len: 1,
+    };
+    assert!(overlapping.dependencies.end_offset(8) < columns.blob_len());
+    assert!(std::panic::catch_unwind(|| overlapping.validate_blob_bound()).is_err());
+    static BYTES: [u8; CAPACITY] = {
+        let mut bytes = [255; CAPACITY];
+        let raw = ScopeId::MAX_LOCAL_ORDINAL;
+        bytes[0] = raw as u8;
+        bytes[1] = (raw >> 8) as u8;
+        bytes[CAPACITY - 2] = 0;
+        bytes[CAPACITY - 1] = 0;
+        bytes
+    };
+    assert!(route_index_is_coherent(&BYTES, columns));
+    let blob = BlobPtr::from_array(&BYTES, CAPACITY);
+    assert_eq!(
+        route_slot(blob, columns.route_index(), ScopeId::route(8191)),
+        Some(0)
+    );
+    assert_eq!(
+        route_slot(blob, columns.route_index(), ScopeId::route(0)),
+        None
+    );
+    assert_eq!(
+        route_slot(blob, columns.route_index(), ScopeId::roll_scope(0)),
+        None
+    );
+}
+
+#[test]
 fn sorted_route_certificate_checks_complete_raw_rows_and_bounds() {
     let dense = [0u8, 0, 1, 0, 2, 0];
     assert!(route_scopes_are_sorted(&dense, ColumnRange::new(0, 3, 2)));
@@ -47,7 +160,6 @@ fn projected_route_index_matches_scan_for_every_decodable_scope_id() {
     );
     let program: RoleProgram<0> = project(&global);
     let rows = program.role_image_ref();
-    assert!(rows.has_sorted_route_index());
     assert_eq!(rows.columns().route_scopes.len, 3);
     for raw in 0..=u16::MAX {
         if let Some(scope) = ScopeId::decode_raw(raw) {
@@ -67,7 +179,6 @@ fn constructor_rejects_malformed_route_tables_before_publication() {
     );
     let program: RoleProgram<0> = project(&global);
     let original = program.role_image_ref();
-    assert!(original.has_sorted_route_index());
     assert!(original.columns().blob_len() <= 256);
     let mut bytes = [0u8; 256];
     for (offset, byte) in bytes

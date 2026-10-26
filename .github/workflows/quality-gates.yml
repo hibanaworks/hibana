@@ -499,7 +499,8 @@ jobs:
         run: bash proofs/checks/runtime/parallel-offer-ingress/check.sh
       - name: Check immutable resolver lookup and dispatch subtree
         run: |
-          ELAN_TOOLCHAIN=leanprover/lean4:v4.30.0 lean proofs/checks/image/route-index/SortedRouteIndex.lean
+          ELAN_TOOLCHAIN=leanprover/lean4:v4.30.0 bash proofs/checks/image/route-index/check.sh
+          ELAN_TOOLCHAIN=leanprover/lean4:v4.30.0 lean proofs/checks/image/resolver-index/SortedRouteIndex.lean
           bash .github/scripts/check_smt2.sh proofs/checks/image/resolver-index/Lookup.smt2
           ELAN_TOOLCHAIN=leanprover/lean4:v4.30.0 lean proofs/checks/image/dispatch-subtree/Dispatch.lean
           bash proofs/checks/image/dispatch-subtree/check.sh

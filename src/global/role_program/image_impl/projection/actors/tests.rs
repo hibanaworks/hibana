@@ -178,6 +178,7 @@ fn resident_actor_image_checks_both_sides_before_publication() {
         logical_lane_count: 1,
     });
     const COLUMNS: super::super::super::super::RoleImageColumns = RoleImageColumnCounts {
+        route_index_len: 0,
         dependency_rows: 0,
         conflict_rows: 0,
         resident_boundaries: 0,

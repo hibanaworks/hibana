@@ -148,6 +148,12 @@
       "global::compiled::images::image::program_ref::actors::kani::owned_image_construction_rejects_a_self_referencing_decision",
       "global::compiled::images::image::program_ref::actors::kani::selected_actor_preserves_identity_and_requires_the_actual_choice",
       "global::compiled::images::image::program_ref::actors::kani::source_order_keeps_parallel_and_route_arms_independent_through_roll",
+      "global::compiled::images::image::program_ref::actors::kani::source_order_keeps_parallel_and_route_arms_independent_through_roll_0_1",
+      "global::compiled::images::image::program_ref::actors::kani::source_order_keeps_parallel_and_route_arms_independent_through_roll_0_2",
+      "global::compiled::images::image::program_ref::actors::kani::source_order_keeps_parallel_and_route_arms_independent_through_roll_0_3",
+      "global::compiled::images::image::program_ref::actors::kani::source_order_keeps_parallel_and_route_arms_independent_through_roll_1_2",
+      "global::compiled::images::image::program_ref::actors::kani::source_order_keeps_parallel_and_route_arms_independent_through_roll_1_3",
+      "global::compiled::images::image::program_ref::actors::kani::source_order_keeps_parallel_and_route_arms_independent_through_roll_2_3",
       "global::compiled::images::image::program_ref::actors::kani::source_route_visibility_matches_the_complete_borrow_range"
     ],
     "../../src/global/compiled/images/image/program_ref/kani.rs": [
@@ -441,7 +447,7 @@
   "contract-harnesses": {},
   "contracts": [],
   "totals": {
-    "standard-harnesses": 315,
+    "standard-harnesses": 321,
     "contract-harnesses": 0,
     "functions-under-contract": 0
   }

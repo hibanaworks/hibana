@@ -1641,6 +1641,24 @@ theorem lane_columns_coherent_binds_exact_route_arm_lane_relations
   simp only [Bool.and_eq_true] at accepted
   exact accepted.1.2
 
+def RustDescriptorImage.routeIndexCoherent (image : RustDescriptorImage) : Bool :=
+  match image.decodeRouteScopeRows? with
+  | none => false
+  | some routes =>
+      routes.all (· < 8192) &&
+      (List.range routes.length).all (fun slot =>
+        match routes[slot]? with
+        | none => false
+        | some raw =>
+            readU16LE? image.roleBytes
+              (image.roleRouteIndexOffset + raw * productionRoleU16Stride) == some slot) &&
+      (List.range image.roleRouteIndexLen).all (fun raw =>
+        match readU16LE? image.roleBytes
+            (image.roleRouteIndexOffset + raw * productionRoleU16Stride) with
+        | some 65535 => true
+        | some slot => routes[slot]? == some raw
+        | none => false)
+
 private def RustDescriptorImage.roleRuntimeColumnsCheck
     (image : RustDescriptorImage) : Bool :=
   match image.decodeRoleEventRows?,
@@ -1674,7 +1692,7 @@ private def RustDescriptorImage.roleRuntimeColumnsCheck
       image.passiveChildColumnsCoherent &&
       image.routeCommitColumnsCoherent &&
       image.routeCommitCapacityExact &&
-      image.rollColumnsCoherent && image.operationIndexCoherent
+      image.rollColumnsCoherent && (image.operationIndexCoherent && image.routeIndexCoherent)
   | _, _, _, _, _, _, _, _, _, _, _ => false
 
 theorem role_runtime_columns_check_binds_route_arm_columns

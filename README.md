@@ -594,6 +594,7 @@ and restart policy.
 | Event identifiers | 65,535, with `u16::MAX` reserved for absence |
 | Compiled global protocol | 65,535 bytes |
 | Compiled local protocol | 65,535 bytes per role |
+| Local route lookup index | Up to 16,384 additional bytes per role |
 | Message-only global protocol | Up to 7,281 events, at nine bytes per event |
 | Branch and repetition regions | Limited by protocol bytes, at least ten bytes per region |
 | Decision function identifiers | 65,536, the full `u16` range |
