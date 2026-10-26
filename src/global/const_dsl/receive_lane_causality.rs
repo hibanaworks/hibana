@@ -210,7 +210,8 @@ impl<const E: usize> CausalFlow<'_, E> {
 
     const fn advance(&self, range: FlowRange, facts: CausalRoles) -> Option<CausalRoles> {
         match self.advance_as(range, facts, ActorMap::<E, 0>::Logical) {
-            Ok(result) => result,
+            Ok(Ok(facts)) => Some(facts),
+            Ok(Err(_)) => None,
             Err(_) => crate::invariant(),
         }
     }
@@ -220,11 +221,11 @@ impl<const E: usize> CausalFlow<'_, E> {
         mut range: FlowRange,
         mut facts: CausalRoles,
         actors: ActorMap<'_, E, D>,
-    ) -> Result<Option<CausalRoles>, NeedChoice> {
+    ) -> Result<Result<CausalRoles, usize>, NeedChoice> {
         let stop = self.goal.stop();
         let selected_target = self.goal.selected_target();
         if self.occurrence(range.end) <= self.earlier || self.occurrence(range.start) >= stop {
-            return Ok(Some(facts));
+            return Ok(Ok(facts));
         }
         // Every event in a covered range preserves these facts: its sender
         // already knows the seed, and its receiver adds no new fact. Sequence,
@@ -253,7 +254,7 @@ impl<const E: usize> CausalFlow<'_, E> {
                 event += 1;
             }
             if covered {
-                return Ok(Some(facts));
+                return Ok(Ok(facts));
             }
         }
         // An independent arm cannot relay a fact that it never received.
@@ -263,7 +264,7 @@ impl<const E: usize> CausalFlow<'_, E> {
             && !self.contains(range, self.earlier)
             && !self.has_receive_target(range)
         {
-            return Ok(Some(facts));
+            return Ok(Ok(facts));
         }
         while range.start < range.end && self.occurrence(range.start) < stop {
             // Relays cannot create evidence from an empty input. Before the
@@ -329,16 +330,16 @@ impl<const E: usize> CausalFlow<'_, E> {
                             // Fork with a shared input; join only after each arm
                             // completes. One recursive frame per source scope.
                             let left = match self.advance_as(left, facts, actors) {
-                                Ok(Some(value)) => value,
-                                Ok(None) => return Ok(None),
+                                Ok(Ok(value)) => value,
+                                Ok(Err(event)) => return Ok(Err(event)),
                                 Err(choice) => return Err(choice),
                             };
                             let right = match self.advance_as(right, facts, actors) {
-                                Ok(Some(value)) => value,
-                                Ok(None) => return Ok(None),
+                                Ok(Ok(value)) => value,
+                                Ok(Err(event)) => return Ok(Err(event)),
                                 Err(choice) => return Err(choice),
                             };
-                            Ok(Some(match kind {
+                            Ok(Ok(match kind {
                                 ScopeKind::Route => left.intersect(right),
                                 ScopeKind::Parallel => left.union(right),
                                 ScopeKind::Roll => crate::invariant(),
@@ -347,14 +348,14 @@ impl<const E: usize> CausalFlow<'_, E> {
                     }
                 };
                 let joined = match advanced {
-                    Ok(Some(value)) => value,
-                    Ok(None) => return Ok(None),
+                    Ok(Ok(value)) => value,
+                    Ok(Err(event)) => return Ok(Err(event)),
                     Err(choice) => return Err(choice),
                 };
                 facts = joined;
                 // If the target was inside the scope, its prefix is complete.
                 if self.occurrence(right_end) > stop {
-                    return Ok(Some(facts));
+                    return Ok(Ok(facts));
                 }
                 range.start = right_end;
             } else {
@@ -394,7 +395,7 @@ impl<const E: usize> CausalFlow<'_, E> {
                             && self.goal.sender_change(occurrence, atom)
                             && !known_sender
                         {
-                            return Ok(None);
+                            return Ok(Err(occurrence));
                         }
                         if known_sender {
                             let receiver =
@@ -409,7 +410,7 @@ impl<const E: usize> CausalFlow<'_, E> {
                 }
             }
         }
-        Ok(Some(facts))
+        Ok(Ok(facts))
     }
 }
 

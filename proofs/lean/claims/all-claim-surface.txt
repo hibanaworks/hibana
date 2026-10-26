@@ -10976,6 +10976,17 @@ Hibana.filter_map_recolored_lanes : ∀ (role : Nat) (occurrences : List.{0} Hib
         And (Hibana.CancellationReachable config retired)
           (And (@Eq.{1} Hibana.GlobalSessionStatus retired.status (Hibana.GlobalSessionStatus.retired cause))
             (@Eq.{1} Hibana.ParticipantResourceOwners retired.resources Hibana.ParticipantResourceOwners.empty))
+Hibana.first_causal_failure_is_earliest : ∀ (left right : Option.{0} Nat) (event : Nat),
+  @Eq.{1} (Option.{0} Nat) (Hibana.firstCausalFailure left right) (@some.{0} Nat event) →
+    And
+      (Or (@Eq.{1} (Option.{0} Nat) left (@some.{0} Nat event)) (@Eq.{1} (Option.{0} Nat) right (@some.{0} Nat event)))
+      (∀ (earlier : Nat),
+        Or (@Eq.{1} (Option.{0} Nat) left (@some.{0} Nat earlier))
+            (@Eq.{1} (Option.{0} Nat) right (@some.{0} Nat earlier)) →
+          @LE.le.{0} Nat instLENat event earlier)
+Hibana.first_causal_failure_preserves_acceptance : ∀ (left right : Option.{0} Nat),
+  Iff (@Eq.{1} (Option.{0} Nat) (Hibana.firstCausalFailure left right) (@none.{0} Nat))
+    (And (@Eq.{1} (Option.{0} Nat) left (@none.{0} Nat)) (@Eq.{1} (Option.{0} Nat) right (@none.{0} Nat)))
 @Hibana.first_owning_lane_is_exact_owner : ∀ {target : Hibana.ActiveOfferKey} {lanes : List.{0} Hibana.ActiveOfferLane}
   {owner : Hibana.ActiveOfferLane},
   @Eq.{1} (Option.{0} Hibana.ActiveOfferLane) (Hibana.firstOwningLane target lanes)

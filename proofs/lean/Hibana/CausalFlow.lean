@@ -295,4 +295,21 @@ theorem a_covered_flow_preserves_its_input (flow : CausalFlowExpr) (facts : Caus
       funext role
       simp [CausalFlowExpr.eval, leftIH covered.1, rightIH covered.2]
 
+/-- Keep the earliest source position rejected by either possible owner path. -/
+def firstCausalFailure : Option Nat → Option Nat → Option Nat
+  | none, right => right
+  | left, none => left
+  | some left, some right => some (min left right)
+
+theorem first_causal_failure_preserves_acceptance (left right : Option Nat) :
+    firstCausalFailure left right = none ↔ left = none ∧ right = none := by
+  cases left <;> cases right <;> simp [firstCausalFailure]
+
+theorem first_causal_failure_is_earliest (left right : Option Nat) (event : Nat)
+    (selected : firstCausalFailure left right = some event) :
+    (left = some event ∨ right = some event) ∧
+    (∀ earlier, left = some earlier ∨ right = some earlier → event ≤ earlier) := by
+  cases left <;> cases right <;> simp_all [firstCausalFailure, Nat.min_def]
+  split at * <;> simp_all <;> omega
+
 end Hibana

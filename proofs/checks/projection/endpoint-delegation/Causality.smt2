@@ -1,5 +1,39 @@
 ; Logical receive identity and physical causal evidence are different facts.
 (set-logic QF_LIA)
+
+; Merging path failures preserves acceptance and the first rejected position.
+(push)
+(declare-const left_failed Bool)
+(declare-const right_failed Bool)
+(declare-const left_event Int)
+(declare-const right_event Int)
+(assert (and (<= 0 left_event) (<= 0 right_event)))
+(define-fun failed () Bool (or left_failed right_failed))
+(define-fun first_event () Int
+  (ite left_failed
+    (ite right_failed (ite (< left_event right_event) left_event right_event) left_event)
+    right_event))
+(assert (or
+  (distinct (not failed) (and (not left_failed) (not right_failed)))
+  (and failed
+    (or (not (or (and left_failed (= first_event left_event))
+                 (and right_failed (= first_event right_event))))
+        (and left_failed (> first_event left_event))
+        (and right_failed (> first_event right_event))))))
+; EXPECT: unsat
+(check-sat)
+(pop)
+
+; Taking only the left path loses an earlier rejection on the right.
+(push)
+(declare-const left_event Int)
+(declare-const right_event Int)
+(assert (and (<= 0 right_event) (< right_event left_event)))
+(assert (> left_event right_event))
+; EXPECT: sat
+(check-sat)
+(pop)
+
 (push)
 (declare-const range_start Int)
 (declare-const range_stop Int)

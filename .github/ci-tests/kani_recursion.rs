@@ -127,7 +127,7 @@ fn function_names() -> Vec<String> {
     let root = "global::const_dsl::receive_lane_causality";
     vec![
         format!("{root}::CausalFlow::<'_, 3>::advance_as::<0>"),
-        format!("{root}::actors::Obligation::<'_, 3, 0>::check_from"),
+        format!("{root}::actors::Obligation::<'_, 3, 0>::conflict_from"),
         format!("{root}::actors::ActorMap::<'_, 3, 0>::reference_known"),
         "global::const_dsl::source_arena::ScopeMarkerView::<'_>::offset_lower_bound".into(),
     ]

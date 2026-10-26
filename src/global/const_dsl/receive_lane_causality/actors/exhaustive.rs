@@ -1,5 +1,5 @@
 use super::{
-    EffAtom, EffList, Obligation, Paths, RollBodyRange, SourceActorImage, SourceContext,
+    EffAtom, EffList, FlowGoal, Obligation, Paths, RollBodyRange, SourceActorImage, SourceContext,
     SourceScope,
     fixtures::{PARALLEL, ROUTE, prefix_source, receive_conflict},
     owned_receive_lane_conflict,
@@ -76,6 +76,32 @@ fn source_scans_preserve_route_correlation_and_parallel_independence() {
 }
 
 #[test]
+fn a_failure_witness_is_the_first_receive_across_both_actor_paths() {
+    let mut events = EffList::<9>::new_partitioned(5, 4, 0)
+        .push(event(8, 9))
+        .push(event(9, 10))
+        .push(event(9, 11))
+        .push(event(12, 9))
+        .push(event(13, 9));
+    events.push_route_scope_mut(ScopeId::route(0), 1, 2, 3, ReentryMark::SinglePass);
+    let scope = SourceScope {
+        start: 1,
+        split: 2,
+        stop: 3,
+    };
+    for children in [[1, 3], [3, 2]] {
+        let actors = SourceActorImage::<9, 1>::causal_fixture(
+            &[[5, 0], [0, 1], [0, 2], [256, 0], [4, 0]],
+            &[(scope, children)],
+        );
+        assert_eq!(
+            owned_receive_lane_conflict(&events, &actors),
+            Some((0, 3, None))
+        );
+    }
+}
+
+#[test]
 #[ignore = "16,777,216 production queries; run explicitly with checked release settings"]
 fn parallel_query_covers_every_u8_actor_triple() {
     let mut checked = 0u64;
@@ -139,8 +165,8 @@ fn prefix_queries_cover_every_u8_actor_triple_and_visit() {
                             end: 4,
                             repeated,
                         };
-                        let pruned = query.check(paths, Some(3));
-                        let full = query.check_from(paths, Some(3), 0);
+                        let accepted = query.check(paths, Some(3));
+                        let witness = query.conflict(paths, Some(3));
                         let expected = match (earlier, repeated) {
                             (1, None) => later == receiver,
                             (2, None) => later == other,
@@ -149,15 +175,15 @@ fn prefix_queries_cover_every_u8_actor_triple_and_visit() {
                             _ => unreachable!(),
                         };
                         assert_eq!(
-                            pruned,
+                            accepted,
                             expected,
-                            "pruned receiver={receiver} other={other} later={later} earlier={earlier} repeated={}",
+                            "point receiver={receiver} other={other} later={later} earlier={earlier} repeated={}",
                             repeated.is_some()
                         );
                         assert_eq!(
-                            full,
-                            expected,
-                            "full receiver={receiver} other={other} later={later} earlier={earlier} repeated={}",
+                            witness,
+                            if expected { None } else { Some(3) },
+                            "witness receiver={receiver} other={other} later={later} earlier={earlier} repeated={}",
                             repeated.is_some()
                         );
                         checked += 2;
@@ -167,11 +193,38 @@ fn prefix_queries_cover_every_u8_actor_triple_and_visit() {
         }
     }
     assert_eq!(checked, 8 * 256u64.pow(3));
-    std::eprintln!("exhaustive pruned/full queries checked={checked}");
+    std::eprintln!("exhaustive point/witness queries checked={checked}");
+}
+
+fn pointwise_failure<const E: usize, const D: usize>(
+    query: &Obligation<'_, E, D>,
+    paths: Paths<'_>,
+) -> Option<usize> {
+    let start = match query.repeated {
+        Some(body) => body.start,
+        None => query.earlier + 1,
+    };
+    let before = query.events.atom_at(query.earlier);
+    for later in start..query.end {
+        if (FlowGoal::ReceiveLane(before, query.end))
+            .sender_change(later, query.events.atom_at(later))
+            && !(Obligation {
+                end: later + 1,
+                events: query.events,
+                actors: query.actors,
+                earlier: query.earlier,
+                repeated: query.repeated,
+            })
+            .check(paths, Some(later))
+        {
+            return Some(later);
+        }
+    }
+    None
 }
 
 #[test]
-fn pruned_prefixes_match_full_scans_for_small_structured_sources() {
+fn bulk_failure_witnesses_match_pointwise_queries_for_small_structured_sources() {
     let empty = SourceContext::new(&[]);
     let paths = Paths {
         shared: &empty,
@@ -258,14 +311,14 @@ fn pruned_prefixes_match_full_scans_for_small_structured_sources() {
                             end,
                             repeated: None,
                         };
-                        for target in [None, Some(end - 1)] {
-                            assert_eq!(
-                                obligation.check(paths, target),
-                                obligation.check_from(paths, target, 0),
-                                "encoding={encoding} shape={shape} earlier={earlier} end={end}"
-                            );
-                            checked += 1;
-                        }
+                        let expected = pointwise_failure(&obligation, paths);
+                        assert_eq!(
+                            obligation.conflict(paths, None),
+                            expected,
+                            "encoding={encoding} shape={shape} earlier={earlier} end={end}"
+                        );
+                        assert_eq!(obligation.check(paths, None), expected.is_none());
+                        checked += 2;
                     }
                 }
                 if let Some((start, stop)) = repeated {
@@ -278,21 +331,21 @@ fn pruned_prefixes_match_full_scans_for_small_structured_sources() {
                                 end,
                                 repeated: Some(RollBodyRange::new(start, stop)),
                             };
-                            for target in [None, Some(end - 1)] {
-                                assert_eq!(
-                                    obligation.check(paths, target),
-                                    obligation.check_from(paths, target, start),
-                                    "rolled encoding={encoding} shape={shape} earlier={earlier} end={end}"
-                                );
-                                checked += 1;
-                            }
+                            let expected = pointwise_failure(&obligation, paths);
+                            assert_eq!(
+                                obligation.conflict(paths, None),
+                                expected,
+                                "rolled encoding={encoding} shape={shape} earlier={earlier} end={end}"
+                            );
+                            assert_eq!(obligation.check(paths, None), expected.is_none());
+                            checked += 2;
                         }
                     }
                 }
             }
         }
     }
-    std::eprintln!("pruned/full causal queries checked={checked}");
+    std::eprintln!("bulk/pointwise causal comparisons checked={checked}");
 }
 
 #[test]

@@ -201,49 +201,11 @@ struct Obligation<'a, const E: usize, const D: usize> {
 }
 
 impl<const E: usize, const D: usize> Obligation<'_, E, D> {
-    const fn first_relevant_offset(&self) -> usize {
-        let body = match self.repeated {
+    const fn range(&self) -> RollBodyRange {
+        match self.repeated {
             Some(body) => body,
             None => RollBodyRange::new(0, self.events.len()),
-        };
-        let cutoff = if self.repeated.is_some() {
-            body.end
-        } else {
-            self.end
-        };
-        let markers = self.events.scope_markers();
-        let mut start = self.earlier;
-        let mut index = 0;
-        while index < markers.len() {
-            let marker = markers.at(index);
-            let offset = marker.offset();
-            if offset > self.earlier {
-                break;
-            }
-            if offset >= body.start && marker.event.is_primary_enter() {
-                let fork = match marker.scope_id.kind() {
-                    Some(ScopeKind::Route) => match marker.event.route_end() {
-                        Some(end) => Some((marker.segment_end(), end)),
-                        None => crate::invariant(),
-                    },
-                    Some(ScopeKind::Parallel) => match marker.event.parallel_split() {
-                        Some(split) => Some((split, marker.segment_end())),
-                        None => crate::invariant(),
-                    },
-                    Some(ScopeKind::Roll) | None => None,
-                };
-                if let Some((split, end)) = fork
-                    && self.earlier < split
-                    && split < cutoff
-                    && end <= body.end
-                    && offset < start
-                {
-                    start = offset;
-                }
-            }
-            index += 1;
         }
-        start
     }
 
     const fn run(
@@ -251,12 +213,9 @@ impl<const E: usize, const D: usize> Obligation<'_, E, D> {
         actors: ActorMap<'_, E, D>,
         target: Option<usize>,
         start: usize,
-    ) -> Result<bool, NeedChoice> {
+    ) -> Result<Option<usize>, NeedChoice> {
         let earlier = self.events.atom_at(self.earlier);
-        let body = match self.repeated {
-            Some(body) => body,
-            None => RollBodyRange::new(0, self.events.len()),
-        };
+        let body = self.range();
         let range = FlowRange {
             start: body.start,
             end: body.end,
@@ -277,12 +236,12 @@ impl<const E: usize, const D: usize> Obligation<'_, E, D> {
         };
         let facts =
             match flow.advance_as(FlowRange { start, ..range }, CausalRoles::empty(), actors) {
-                Ok(Some(value)) => value,
-                Ok(None) => return Ok(false),
+                Ok(Ok(value)) => value,
+                Ok(Err(event)) => return Ok(Some(event)),
                 Err(choice) => return Err(choice),
             };
         if self.repeated.is_none() {
-            return Ok(true);
+            return Ok(None);
         }
         let next = CausalFlow {
             goal: match target {
@@ -293,16 +252,30 @@ impl<const E: usize, const D: usize> Obligation<'_, E, D> {
             ..flow
         };
         match next.advance_as(range, facts, actors) {
-            Ok(result) => Ok(result.is_some()),
+            Ok(Ok(_)) => Ok(None),
+            Ok(Err(event)) => Ok(Some(body.start + event - body.len())),
             Err(choice) => Err(choice),
         }
     }
 
     const fn check(&self, paths: Paths<'_>, target: Option<usize>) -> bool {
-        self.check_from(paths, target, self.first_relevant_offset())
+        self.check_from(paths, target, self.range().start)
     }
 
     const fn check_from(&self, paths: Paths<'_>, target: Option<usize>, start: usize) -> bool {
+        self.conflict_from(paths, target, start).is_none()
+    }
+
+    const fn conflict(&self, paths: Paths<'_>, target: Option<usize>) -> Option<usize> {
+        self.conflict_from(paths, target, self.range().start)
+    }
+
+    const fn conflict_from(
+        &self,
+        paths: Paths<'_>,
+        target: Option<usize>,
+        start: usize,
+    ) -> Option<usize> {
         let actors = match self.actors {
             Some(image) => ActorMap::Owned {
                 image,
@@ -365,12 +338,19 @@ impl<const E: usize, const D: usize> Obligation<'_, E, D> {
             && self.earlier < choice.scope.stop as usize
         {
             if self.earlier < choice.scope.split as usize {
-                self.check_from(left, target, start)
+                self.conflict_from(left, target, start)
             } else {
-                self.check_from(right, target, start)
+                self.conflict_from(right, target, start)
             }
         } else {
-            self.check_from(left, target, start) && self.check_from(right, target, start)
+            match (
+                self.conflict_from(left, target, start),
+                self.conflict_from(right, target, start),
+            ) {
+                (Some(left), Some(right)) => Some(if left < right { left } else { right }),
+                (Some(event), None) | (None, Some(event)) => Some(event),
+                (None, None) => None,
+            }
         }
     }
 }
@@ -529,35 +509,23 @@ pub(crate) const fn owned_receive_lane_conflict_from<const E: usize, const D: us
             };
             if atom.from != atom.to
                 && let Some(end) = directions.last_change(atom, range.start)
-                && !(Obligation {
+                && let Some(later) = (Obligation {
                     events,
                     actors: Some(actors),
                     earlier,
                     end,
                     repeated,
                 })
-                .check(paths, None)
+                .conflict(paths, None)
             {
-                let mut later = range.start;
-                while later < end {
-                    if (FlowGoal::ReceiveLane(atom, later + 1))
+                if later < range.start
+                    || later >= end
+                    || !(FlowGoal::ReceiveLane(atom, later + 1))
                         .sender_change(later, events.atom_at(later))
-                        && !(Obligation {
-                            events,
-                            actors: Some(actors),
-                            earlier,
-                            end: later + 1,
-                            repeated,
-                        })
-                        .check(paths, None)
-                    {
-                        return Some((earlier, later, scope));
-                    }
-                    later += 1;
+                {
+                    crate::invariant();
                 }
-                // A failed bulk query must identify an actual rejected receive.
-                // Never turn missing diagnostic data into successful admission.
-                crate::invariant();
+                return Some((earlier, later, scope));
             }
             earlier += 1;
         }

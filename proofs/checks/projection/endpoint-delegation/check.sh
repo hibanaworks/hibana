@@ -26,9 +26,9 @@ source "$ROOT/.github/scripts/repo_rustflags.sh"
 for result in \
   'exhaustive parallel queries checked=16777216' \
   'exhaustive route queries checked=33554432' \
-  'exhaustive pruned/full queries checked=134217728' \
-  'pruned/full causal queries checked=7873200' \
-  'test result: ok. 8 passed; 0 failed; 0 ignored;'; do
+  'exhaustive point/witness queries checked=134217728' \
+  'bulk/pointwise causal comparisons checked=7873200' \
+  'test result: ok. 9 passed; 0 failed; 0 ignored;'; do
   [[ $(rg --fixed-strings --count -- "$result" "$EVIDENCE/exhaustive-causality.log") -eq 1 ]]
 done
 hibana_disable_repo_tests_cfg
