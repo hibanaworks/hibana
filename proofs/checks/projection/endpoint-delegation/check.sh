@@ -13,7 +13,7 @@ export ELAN_TOOLCHAIN=leanprover/lean4:v4.30.0
 # The standalone model has its own tests. Core-only repository fixtures must
 # not be enabled in this independently compiled package.
 source "$ROOT/.github/scripts/repo_rustflags.sh"
-(
+if ! (
   hibana_enable_repo_tests_cfg
   export CARGO_BUILD_JOBS=1 CARGO_INCREMENTAL=0
   export CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16
@@ -22,14 +22,23 @@ source "$ROOT/.github/scripts/repo_rustflags.sh"
   cargo +"$TOOLCHAIN" test --locked --release --lib \
     global::const_dsl::receive_lane_causality::actors::exhaustive \
     -- --include-ignored --nocapture --test-threads=1
-) > "$EVIDENCE/exhaustive-causality.log" 2>&1
+) > "$EVIDENCE/exhaustive-causality.log" 2>&1; then
+  cat "$EVIDENCE/exhaustive-causality.log" >&2
+  exit 1
+fi
+bash "$ROOT/.github/scripts/lib/test_result_tool.sh" check \
+  "$EVIDENCE/exhaustive-causality.log" 'endpoint delegation causality' 0
 for result in \
   'exhaustive parallel queries checked=16777216' \
   'exhaustive route queries checked=33554432' \
   'exhaustive point/witness queries checked=134217728' \
   'bulk/pointwise causal comparisons checked=7873200' \
-  'test result: ok. 9 passed; 0 failed; 0 ignored;'; do
-  [[ $(rg --fixed-strings --count -- "$result" "$EVIDENCE/exhaustive-causality.log") -eq 1 ]]
+  '; 0 ignored;'; do
+  if ! [[ $(rg --fixed-strings --count -- "$result" "$EVIDENCE/exhaustive-causality.log") -eq 1 ]]; then
+    printf 'Missing unique causal-query result: %s\n' "$result" >&2
+    cat "$EVIDENCE/exhaustive-causality.log" >&2
+    exit 1
+  fi
 done
 hibana_disable_repo_tests_cfg
 source "$ROOT/.github/scripts/lib/proof_audit.sh"

@@ -7,8 +7,8 @@
 //! ordering still belong to the projected local control/dependency facts.
 
 use super::{
-    Arm, At, Atom, Context, Error, ErrorKind, Evaluation, Owner, Query, Scope, Scratch, Selection,
-    Source, error, validate,
+    ActorPair, Arm, At, Atom, Context, Error, ErrorKind, Evaluation, Owner, Query, Scope, Scratch,
+    Selection, Source, error, validate,
 };
 
 #[path = "actors/knowledge.rs"]
@@ -63,12 +63,6 @@ impl ActorChoice {
         left: ActorRef::actor(0),
         right: ActorRef::actor(0),
     };
-}
-
-#[derive(Clone, Copy)]
-pub(crate) struct ActorPair {
-    pub(crate) sender: ActorRef,
-    pub(crate) receiver: ActorRef,
 }
 
 impl ActorPair {
@@ -165,10 +159,11 @@ impl<const E: usize, const D: usize> ActorImage<E, D> {
     }
 
     pub const fn event_references(&self, event: usize) -> Option<[u16; 2]> {
-        if event >= self.event_len {
+        let events = self.event_actors();
+        if event >= events.len() {
             return None;
         }
-        let pair = self.events[event];
+        let pair = events[event];
         Some([pair.sender.0, pair.receiver.0])
     }
 
