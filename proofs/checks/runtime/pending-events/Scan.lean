@@ -104,6 +104,38 @@ theorem compact_completion_extent_fits_usize (events rolls epochs : Nat)
   unfold completionBits
   split <;> omega
 
+theorem skipping_an_excluded_prefix_preserves_pending_blockers
+    (done live : Nat → Bool) (start next finish : Nat) (forward : start ≤ next)
+    (excluded : ∀ i, start ≤ i → i < next → live i = false) :
+    (∃ i, start ≤ i ∧ i < finish ∧ done i = false ∧ live i = true) ↔
+    (∃ i, next ≤ i ∧ i < finish ∧ done i = false ∧ live i = true) := by
+  constructor
+  · rintro ⟨i, low, high, pending, active⟩
+    by_cases after : next ≤ i
+    · exact ⟨i, after, high, pending, active⟩
+    · have dead := excluded i low (Nat.lt_of_not_ge after)
+      simp [dead] at active
+  · rintro ⟨i, low, high, pending, active⟩
+    exact ⟨i, Nat.le_trans forward low, high, pending, active⟩
+
+theorem excluded_arm_jump_is_strictly_forward (index armEnd queryEnd : Nat)
+    (inside : index < armEnd) (queried : index < queryEnd) :
+    index < min armEnd queryEnd := by omega
+
+theorem a_conflicting_ancestor_excludes_its_event
+    (selected : Nat → Option Bool) (context : List (Nat × Bool))
+    (scope : Nat) (expected actual : Bool)
+    (member : (scope, expected) ∈ context) (chosen : selected scope = some actual)
+    (different : actual ≠ expected) :
+    ¬ (∀ binding ∈ context,
+      selected binding.1 = none ∨ selected binding.1 = some binding.2) := by
+  intro live
+  have agrees := live (scope, expected) member
+  rcases agrees with absent | same
+  · rw [chosen] at absent
+    cases absent
+  · exact different (Option.some.inj (chosen.symm.trans same))
+
 #print axioms mask_exact
 #print axioms clear_selected
 #print axioms lowest_present
@@ -114,5 +146,8 @@ theorem compact_completion_extent_fits_usize (events rolls epochs : Nat)
 #print axioms compact_word_arithmetic
 #print axioms local_event_words_fit_storage
 #print axioms compact_completion_extent_fits_usize
+#print axioms skipping_an_excluded_prefix_preserves_pending_blockers
+#print axioms excluded_arm_jump_is_strictly_forward
+#print axioms a_conflicting_ancestor_excludes_its_event
 
 end Hibana.PendingEvents

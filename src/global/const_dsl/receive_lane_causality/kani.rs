@@ -224,6 +224,7 @@ fn three_event_structured_scan_matches_pairwise_checker() {
 }
 
 #[kani::proof]
+#[kani::unwind(5)]
 fn three_event_causal_handoff_accepts_every_valid_role_assignment() {
     let (earlier_source, receiver, later_source) = distinct_roles();
     let lane = kani::any();
@@ -237,6 +238,7 @@ fn three_event_causal_handoff_accepts_every_valid_role_assignment() {
 }
 
 #[kani::proof]
+#[kani::unwind(5)]
 fn sender_change_without_causal_handoff_is_rejected() {
     let (earlier_source, receiver, later_source) = distinct_roles();
     let lane = kani::any();

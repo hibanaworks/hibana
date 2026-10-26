@@ -194,6 +194,32 @@ fn validated_metadata_constructor_rejects_every_skipped_metadata_class() {
 }
 
 #[test]
+fn validated_metadata_rejects_omitted_route_ancestors_and_event_contexts() {
+    let program: RoleProgram<1> = project(&g::route(
+        g::route(g::send::<0, 1, Msg<1, ()>>(), g::send::<0, 1, Msg<2, ()>>()),
+        g::send::<0, 1, Msg<3, ()>>(),
+    ));
+    let rows = program.role_image_ref();
+    assert_eq!(rows.columns.route_scopes.len, 2);
+    reject(rows, |b, c, _| {
+        // The inner route still lies inside the outer first arm, but its
+        // parent link has been removed.
+        put(b, c.route_scope_conflicts.offset as usize + 2, u16::MAX);
+    });
+    reject(rows, |b, c, _| {
+        // The outer arm contains this event, but the event must also carry
+        // the inner selection rather than silently losing that requirement.
+        let first = c.events.offset as usize;
+        let conflict = u16_at(b, first + 4) as usize;
+        put(
+            b,
+            c.conflicts.offset as usize + conflict * 2,
+            PackedEventConflict::route_arm(ScopeId::route(0), 0).raw(),
+        );
+    });
+}
+
+#[test]
 fn validated_metadata_constructor_accepts_unique_unsorted_route_ids() {
     let program: RoleProgram<1> = project(&g::route(
         g::route(g::send::<0, 1, Msg<1, ()>>(), g::send::<0, 1, Msg<2, ()>>()),
@@ -217,7 +243,9 @@ fn validated_metadata_constructor_accepts_unique_unsorted_route_ids() {
         put(&mut bytes, at, rename(scope).raw());
     }
     for idx in 0..columns.events.len as usize {
-        let at = columns.events.offset as usize + idx * 10 + 6;
+        let at = columns.events.offset as usize
+            + idx * crate::global::role_program::ROLE_IMAGE_EVENT_STRIDE
+            + 6;
         let scope = ScopeId::decode_raw(u16_at(&bytes, at)).unwrap();
         put(&mut bytes, at, rename(scope).raw());
     }

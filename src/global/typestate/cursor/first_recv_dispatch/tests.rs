@@ -129,61 +129,53 @@ fn malformed_later_edge_and_duplicate_target_preserve_earlier_match() {
 }
 
 #[test]
-fn wrong_owner_arm_disables_index_and_keeps_original_failure() {
+fn a_parent_arm_that_does_not_contain_the_child_is_rejected() {
     let original = fixture();
-    let query = original.route_scope_by_slot(1).unwrap();
-    let rows = rebuild(original, |bytes| {
-        let offset = original.columns().route_scope_conflicts.offset as usize + 2;
-        let raw = u16::from_le_bytes([bytes[offset], bytes[offset + 1]]);
-        write_u16(bytes, offset, raw ^ 1);
-    });
-    assert!(!rows.has_passive_parent_index());
-    let machine = machine(rows);
-    assert!(catch_unwind(|| machine.passive_child_parent_route(query)).is_err());
-    assert_same_lookup(&machine, query);
+    assert!(
+        catch_unwind(|| rebuild(original, |bytes| {
+            let offset = original.columns().route_scope_conflicts.offset as usize + 2;
+            let raw = u16::from_le_bytes([bytes[offset], bytes[offset + 1]]);
+            write_u16(bytes, offset, raw ^ 1);
+        }))
+        .is_err()
+    );
 }
 
 #[test]
-fn passive_cycle_disables_index_and_preserves_ordered_legacy_outcomes() {
+fn a_parent_cycle_with_an_outside_child_is_rejected() {
     let original = fixture();
-    let root = original.route_scope_by_slot(0).unwrap();
     let child = original.route_scope_by_slot(1).unwrap();
-    let rows = rebuild(original, |bytes| {
-        write_u16(
-            bytes,
-            original.columns().route_arms.offset as usize + 2 * 8 + 4,
-            0,
-        );
-        write_u16(
-            bytes,
-            original.columns().route_scope_conflicts.offset as usize,
-            child.raw() << 1,
-        );
-    });
-    assert!(!rows.has_passive_parent_index());
-    let machine = machine(rows);
-    assert_eq!(machine.passive_child_parent_route(child), Some((root, 0)));
-    assert_same_lookup(&machine, child);
-    assert_same_lookup(&machine, root);
+    assert!(
+        catch_unwind(|| rebuild(original, |bytes| {
+            write_u16(
+                bytes,
+                original.columns().route_arms.offset as usize + 2 * 8 + 4,
+                0,
+            );
+            write_u16(
+                bytes,
+                original.columns().route_scope_conflicts.offset as usize,
+                child.raw() << 1,
+            );
+        }))
+        .is_err()
+    );
 }
 
 #[test]
-fn unused_cyclic_owners_do_not_create_passive_edges() {
+fn unused_parent_rows_must_still_contain_their_children() {
     let original = fixture();
     let last = original.columns().route_scopes.len as usize - 1;
     let root = original.route_scope_by_slot(0).unwrap();
     let orphan = original.route_scope_by_slot(last).unwrap();
-    let rows = rebuild(original, |bytes| {
-        let start = original.columns().route_scope_conflicts.offset as usize;
-        write_u16(bytes, start, orphan.raw() << 1);
-        write_u16(bytes, start + last * 2, root.raw() << 1);
-    });
-    assert!(rows.has_passive_parent_index());
-    let machine = machine(rows);
-    for query in [root, orphan] {
-        assert_eq!(machine.passive_child_parent_route(query), None);
-        assert_same_lookup(&machine, query);
-    }
+    assert!(
+        catch_unwind(|| rebuild(original, |bytes| {
+            let start = original.columns().route_scope_conflicts.offset as usize;
+            write_u16(bytes, start, orphan.raw() << 1);
+            write_u16(bytes, start + last * 2, root.raw() << 1);
+        }))
+        .is_err()
+    );
 }
 
 #[test]
@@ -192,10 +184,12 @@ fn indexed_dispatch_visits_exactly_the_original_candidates() {
     let variants = [
         original,
         rebuild(original, |bytes| {
-            // Invalid inverse ownership must select the old scanner.
-            let offset = original.columns().route_scope_conflicts.offset as usize + 2;
-            let raw = u16::from_le_bytes([bytes[offset], bytes[offset + 1]]);
-            write_u16(bytes, offset, raw ^ 1);
+            // Keep the scope ancestry valid while corrupting a later inverse edge.
+            write_u16(
+                bytes,
+                original.columns().route_arms.offset as usize + 8 + 4,
+                0,
+            );
         }),
     ];
     for rows in variants {

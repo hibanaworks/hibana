@@ -1,7 +1,24 @@
 use super::super::{EventCursor, LocalDependency, ScopeId};
+use super::ConflictAdmission;
+
+#[cfg(all(test, hibana_repo_tests))]
+mod tests;
 use crate::global::event_program::LocalEventRowSet;
 
 impl EventCursor {
+    fn excluded_arm_end(&self, index: usize, scope: ScopeId, arm: u8) -> usize {
+        let slot = crate::invariant_some(self.route_scope_slot_inner(scope));
+        let row = crate::invariant_some(
+            self.machine()
+                .event_program()
+                .route_arm_event_row_by_slot(slot, arm),
+        );
+        if index < row.start() || index >= row.end() {
+            crate::invariant();
+        }
+        row.end()
+    }
+
     pub(crate) fn is_view_complete(
         &self,
         role: u8,
@@ -127,18 +144,24 @@ impl EventCursor {
             .event_program()
             .dependency_row_set(dependency);
         let retained = self.has_retained_roll_completion();
-        for idx in self.pending_event_steps(row_set.start()..row_set.end()) {
+        let mut pending = self.pending_event_steps(row_set.start()..row_set.end());
+        while let Some(idx) = pending.next() {
             if (!retained || !self.retained_roll_allows_predecessor(idx, target))
                 && self.event_actor_is_local(idx, selected_arm_for_scope) != Some(false)
                 && let Some(row) = self.machine().event_program().event_row_at(idx)
-                && self.event_conflict_row_allows(
+            {
+                match self.event_conflict_row_admission(
                     row.conflict(),
                     ScopeId::none(),
                     None,
                     selected_arm_for_scope,
-                )
-            {
-                return false;
+                ) {
+                    ConflictAdmission::Allowed | ConflictAdmission::Invalid => return false,
+                    ConflictAdmission::Excluded { scope, arm } => {
+                        let end = self.excluded_arm_end(idx, scope, arm).min(row_set.end());
+                        pending = self.pending_event_steps(end..row_set.end());
+                    }
+                }
             }
         }
         true
@@ -154,17 +177,23 @@ impl EventCursor {
         if row_set.start() > local_len || row_set.end() > local_len {
             crate::invariant();
         }
-        for idx in self.pending_event_steps(row_set.start()..row_set.end()) {
+        let mut pending = self.pending_event_steps(row_set.start()..row_set.end());
+        while let Some(idx) = pending.next() {
             if self.event_actor_is_local(idx, selected_arm_for_scope) != Some(false)
                 && let Some(row) = self.machine().event_program().event_row_at(idx)
-                && self.event_conflict_row_allows(
+            {
+                match self.event_conflict_row_admission(
                     row.conflict(),
                     ScopeId::none(),
                     None,
                     selected_arm_for_scope,
-                )
-            {
-                return false;
+                ) {
+                    ConflictAdmission::Allowed | ConflictAdmission::Invalid => return false,
+                    ConflictAdmission::Excluded { scope, arm } => {
+                        let end = self.excluded_arm_end(idx, scope, arm).min(row_set.end());
+                        pending = self.pending_event_steps(end..row_set.end());
+                    }
+                }
             }
         }
         true

@@ -280,22 +280,41 @@ impl EventCursor {
         self.machine().event_conflict_for_index(idx)
     }
 
-    #[inline(never)]
+    #[inline]
     pub(crate) fn event_conflict_row_allows(
+        &self,
+        conflict: PackedEventConflict,
+        preview_scope: ScopeId,
+        preview_arm: Option<u8>,
+        selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
+    ) -> bool {
+        matches!(
+            self.event_conflict_row_admission(
+                conflict,
+                preview_scope,
+                preview_arm,
+                selected_arm_for_scope
+            ),
+            super::ConflictAdmission::Allowed
+        )
+    }
+
+    #[inline(never)]
+    pub(in crate::global::typestate::cursor) fn event_conflict_row_admission(
         &self,
         mut conflict: PackedEventConflict,
         preview_scope: ScopeId,
         preview_arm: Option<u8>,
         selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
-    ) -> bool {
+    ) -> super::ConflictAdmission {
         let mut depth = 0usize;
         let depth_bound = self.route_chain_bound();
         while depth < depth_bound {
             let Some(row) = conflict.to_conflict() else {
-                return true;
+                return super::ConflictAdmission::Allowed;
             };
             let LocalConflict::RouteArm { scope, arm } = row else {
-                return true;
+                return super::ConflictAdmission::Allowed;
             };
             let selected = match selected_arm_for_scope(scope) {
                 Some(arm) => Some(arm),
@@ -305,12 +324,12 @@ impl EventCursor {
             if let Some(selected) = selected
                 && selected != arm
             {
-                return false;
+                return super::ConflictAdmission::Excluded { scope, arm };
             }
             conflict = self.route_scope_conflict_row(scope);
             depth += 1;
         }
-        false
+        super::ConflictAdmission::Invalid
     }
 
     #[inline(never)]

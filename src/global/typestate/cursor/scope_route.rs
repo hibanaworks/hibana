@@ -15,6 +15,12 @@ use super::{
 };
 use crate::global::role_program::PackedLaneRange;
 
+pub(in crate::global::typestate::cursor) enum ConflictAdmission {
+    Allowed,
+    Excluded { scope: ScopeId, arm: u8 },
+    Invalid,
+}
+
 pub(crate) enum CurrentRouteArmAuthorization {
     NotAuthorized,
     Authorized,

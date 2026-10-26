@@ -1,6 +1,14 @@
 use super::super::projection::ActorEventProjection;
-use super::{RoleImageRef, invalid_resident_descriptor};
-use crate::global::typestate::LocalConflict;
+use super::{PackedLaneRange, RoleImageRef, invalid_resident_descriptor};
+use crate::global::{
+    const_dsl::ReentryMark,
+    typestate::{LocalConflict, PackedEventConflict},
+};
+
+const fn same_conflict(left: PackedEventConflict, right: PackedEventConflict) -> bool {
+    left.with_route_reentry(ReentryMark::SinglePass).raw()
+        == right.with_route_reentry(ReentryMark::SinglePass).raw()
+}
 
 impl RoleImageRef {
     /// Establish all immutable checks that receive metadata performs before
@@ -41,8 +49,11 @@ impl RoleImageRef {
         // The mandatory lane_columns_are_coherent pass in new already validates
         // every arm encoding, event bound, zero/step relation and cumulative
         // lane-step prefix, including unsorted images. Reuse those proved row
-        // bounds instead of re-scanning all preceding packed rows. Scope
-        // authority and exact event membership checks remain below.
+        // bounds instead of re-scanning all preceding packed rows.
+        // Route rows occur in source preorder. Walk their nested intervals once
+        // to verify every parent and event context, including omitted ancestors.
+        let mut current = None;
+        let mut next_scope = 0;
         let mut idx = 0;
         while idx < count {
             // Includes send/local rows, which try_recv_meta decodes before
@@ -52,61 +63,102 @@ impl RoleImageRef {
             // event_row_at, reached by receive route authority, checks this
             // dependency even when the operation will not match a carried key.
             let _ = self.dependency_for_index(idx);
-            let conflict = self.event_conflict_for_index(idx);
-            match conflict.to_conflict() {
-                Some(LocalConflict::RouteArm { scope, arm }) => {
-                    let Some(slot) = self.route_scope_slot(scope) else {
-                        invalid_resident_descriptor();
-                    };
-                    let first = lanes.certified_route_arm_event_row_by_slot(slot, 0);
-                    let second = lanes.certified_route_arm_event_row_by_slot(slot, 1);
-                    // Preserve the legacy arm0-first membership rule, including
-                    // any accepted overlapping representation.
-                    let actual = if first.start() <= idx && idx < first.end() {
-                        0
-                    } else if second.start() <= idx && idx < second.end() {
-                        1
-                    } else {
-                        invalid_resident_descriptor();
-                    };
-                    if actual != arm {
-                        invalid_resident_descriptor();
-                    }
-                    // Membership in an arm also proves membership in the
-                    // nonempty union envelope used by enclosing_route_scope.
+            while let Some(slot) = current {
+                let Some(extent) = self.route_extent(slot) else {
+                    invalid_resident_descriptor();
+                };
+                if idx < extent.end() {
+                    break;
                 }
-                Some(LocalConflict::Unconditional | LocalConflict::SharedRoute) | None => {
-                    let mut slot = 0;
-                    while slot < scopes {
-                        let first = lanes.certified_route_arm_event_row_by_slot(slot, 0);
-                        let second = lanes.certified_route_arm_event_row_by_slot(slot, 1);
-                        let (start, end) = if first.is_zero_len() {
-                            (second.start(), second.end())
-                        } else if second.is_zero_len() {
-                            (first.start(), first.end())
-                        } else {
-                            (
-                                if first.start() < second.start() {
-                                    first.start()
-                                } else {
-                                    second.start()
-                                },
-                                if first.end() > second.end() {
-                                    first.end()
-                                } else {
-                                    second.end()
-                                },
-                            )
-                        };
-                        if start <= idx && idx < end {
-                            invalid_resident_descriptor();
+                current = match lanes.route_scope_conflict_by_slot(slot).to_conflict() {
+                    Some(LocalConflict::RouteArm { scope, .. }) => {
+                        match self.route_scope_slot(scope) {
+                            Some(parent) => Some(parent),
+                            None => invalid_resident_descriptor(),
                         }
-                        slot += 1;
                     }
+                    _ => None,
+                };
+            }
+            while next_scope < scopes {
+                let Some(extent) = self.route_extent(next_scope) else {
+                    next_scope += 1;
+                    continue;
+                };
+                if extent.start() > idx {
+                    break;
                 }
+                if extent.start() < idx {
+                    invalid_resident_descriptor();
+                }
+                let expected = self.interval_conflict(current, extent.start(), extent.end());
+                let actual = lanes.route_scope_conflict_by_slot(next_scope);
+                if !same_conflict(actual, expected) {
+                    invalid_resident_descriptor();
+                }
+                current = Some(next_scope);
+                next_scope += 1;
+            }
+            let expected = self.interval_conflict(current, idx, idx + 1);
+            if !same_conflict(self.event_conflict_for_index(idx), expected) {
+                invalid_resident_descriptor();
             }
             idx += 1;
         }
+        while next_scope < scopes {
+            if self.route_extent(next_scope).is_some() {
+                invalid_resident_descriptor();
+            }
+            next_scope += 1;
+        }
+    }
+
+    const fn route_extent(&self, slot: usize) -> Option<PackedLaneRange> {
+        let lanes = self.lanes();
+        let first = lanes.certified_route_arm_event_row_by_slot(slot, 0);
+        let second = lanes.certified_route_arm_event_row_by_slot(slot, 1);
+        if first.is_zero_len() {
+            return if second.is_zero_len() {
+                None
+            } else {
+                Some(second)
+            };
+        }
+        if second.is_zero_len() {
+            return Some(first);
+        }
+        if first.end() != second.start() {
+            invalid_resident_descriptor();
+        }
+        Some(PackedLaneRange::new(
+            first.start(),
+            second.end() - first.start(),
+        ))
+    }
+
+    const fn interval_conflict(
+        &self,
+        parent: Option<usize>,
+        start: usize,
+        end: usize,
+    ) -> PackedEventConflict {
+        let Some(slot) = parent else {
+            return PackedEventConflict::none();
+        };
+        let lanes = self.lanes();
+        let scope = match lanes.route_scope_by_slot(slot) {
+            Some(scope) => scope,
+            None => invalid_resident_descriptor(),
+        };
+        let mut arm = 0;
+        while arm < 2 {
+            let row = lanes.certified_route_arm_event_row_by_slot(slot, arm);
+            if !row.is_zero_len() && row.start() <= start && end <= row.end() {
+                return PackedEventConflict::route_arm(scope, arm);
+            }
+            arm += 1;
+        }
+        invalid_resident_descriptor()
     }
 
     const fn validate_owned_receipts(&self) {
