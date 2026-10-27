@@ -405,7 +405,7 @@ impl RoleImageRef {
                 LocalAction::Send { lane, .. }
                 | LocalAction::Recv { lane, .. }
                 | LocalAction::Local { lane, .. } => lane,
-                #[cfg(any(kani, all(test, hibana_repo_tests)))]
+                #[cfg(all(test, hibana_repo_tests))]
                 LocalAction::Terminate => invalid_resident_descriptor(),
             };
             if actual_lane != expected_lane {

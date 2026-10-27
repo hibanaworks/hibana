@@ -321,7 +321,7 @@ pub(crate) enum LocalAction {
         lane: u8,
     },
     /// Terminal node (no further actions).
-    #[cfg(any(kani, all(test, hibana_repo_tests)))]
+    #[cfg(all(test, hibana_repo_tests))]
     Terminate,
 }
 
@@ -350,7 +350,7 @@ enum PackedLocalAction {
         origin: EventOrigin,
         lane: u8,
     },
-    #[cfg(any(kani, all(test, hibana_repo_tests)))]
+    #[cfg(all(test, hibana_repo_tests))]
     Terminate,
 }
 
@@ -517,7 +517,7 @@ impl LocalNode {
     }
 
     /// Construct a terminal node that loops to itself.
-    #[cfg(any(kani, all(test, hibana_repo_tests)))]
+    #[cfg(all(test, hibana_repo_tests))]
     pub(crate) const fn terminal(index: StateIndex) -> Self {
         Self {
             action: PackedLocalAction::Terminate,
@@ -574,7 +574,7 @@ impl LocalNode {
                 origin,
                 lane,
             },
-            #[cfg(any(kani, all(test, hibana_repo_tests)))]
+            #[cfg(all(test, hibana_repo_tests))]
             PackedLocalAction::Terminate => LocalAction::Terminate,
         }
     }
