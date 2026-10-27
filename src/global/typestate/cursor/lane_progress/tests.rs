@@ -1,3 +1,4 @@
+use super::super::CURRENT_STEP_UNLABELED_CODE;
 use super::*;
 use crate::{
     g::{self, Msg},
@@ -29,56 +30,63 @@ fn compare_lane_heads<const ROLE: u8>(program: &RoleProgram<ROLE>) {
         );
     }
     let cursor = unsafe { cursor.assume_init_mut() };
-    let mut row = 0;
-    while cursor.resident_row_bounds(row).is_some() {
-        cursor.select_resident_row_for_lane(row, 0);
-        for lane in 0..cursor.logical_lane_count() {
+    // Enumerate descriptor events independently of the compiled successor
+    // column. Every lane covers the whole image, including sparse later rows.
+    for lane in 0..cursor.logical_lane_count() {
+        let expected: std::vec::Vec<_> = (0..rows.local_step_count())
+            .filter(|&step| rows.local_step_lane(step) == Some(lane as u8))
+            .collect();
+        assert_eq!(cursor.step_index_at_lane(lane), expected.first().copied());
+        for (ordinal, &step) in expected.iter().enumerate() {
+            assert_eq!(cursor.step_index_at_lane(lane), Some(step));
+            let previous = cursor.lane_cursors().to_vec();
+            let previous_labels = cursor.current_step_label_codes().to_vec();
+            let target = cursor
+                .relocatable_resident_lane_step_at_index(step, lane)
+                .expect("matching lane identity");
+            assert_eq!(
+                cursor.advance_lane_to_relocatable_step(target),
+                CursorRefresh::Lane(lane as u8)
+            );
+            assert!(cursor.relocatable_step_done(target));
             assert_eq!(
                 cursor.step_index_at_lane(lane),
-                rows.reference_resident_lane_step_at(row, lane, 0)
-                    .map(usize::from)
+                expected.get(ordinal + 1).copied()
             );
-        }
-        for lane in 0..cursor.logical_lane_count() {
-            let mut ordinal = 0;
-            while let Some(step) = rows.reference_resident_lane_step_at(row, lane, ordinal) {
-                assert_eq!(cursor.step_index_at_lane(lane), Some(usize::from(step)));
-                let previous = cursor.lane_cursors().to_vec();
-                let target = cursor
-                    .relocatable_resident_lane_step_at_index(usize::from(step), lane)
-                    .expect("matching lane identity");
-                cursor.advance_lane_to_relocatable_step(target);
-                assert!(cursor.relocatable_step_done(target));
-                ordinal += 1;
-                assert_eq!(
-                    cursor.step_index_at_lane(lane),
-                    rows.reference_resident_lane_step_at(row, lane, ordinal)
-                        .map(usize::from)
-                );
-                for (other, before) in previous.iter().enumerate() {
-                    if other != lane {
-                        assert_eq!(cursor.lane_cursors()[other], *before);
-                    }
+            assert_eq!(
+                cursor.current_step_label_codes()[lane],
+                expected
+                    .get(ordinal + 1)
+                    .map_or(CURRENT_STEP_UNLABELED_CODE, |&next| {
+                        u16::from(cursor.event_row_at(next).unwrap().atom().label)
+                    })
+            );
+            for (other, before) in previous.iter().enumerate() {
+                if other != lane {
+                    assert_eq!(cursor.lane_cursors()[other], *before);
+                    assert_eq!(
+                        cursor.current_step_label_codes()[other],
+                        previous_labels[other]
+                    );
                 }
-                let advanced = cursor.lane_cursors()[lane];
-                cursor.advance_lane_to_relocatable_step(target);
-                assert_eq!(
-                    cursor.lane_cursors()[lane],
-                    advanced,
-                    "replay cannot rewind"
-                );
-                for foreign in 0..cursor.logical_lane_count() {
-                    if foreign != lane {
-                        assert!(
-                            cursor
-                                .relocatable_resident_lane_step_at_index(usize::from(step), foreign)
-                                .is_err()
-                        );
-                    }
+            }
+            let advanced = cursor.lane_cursors()[lane];
+            cursor.advance_lane_to_relocatable_step(target);
+            assert_eq!(
+                cursor.lane_cursors()[lane],
+                advanced,
+                "replay cannot rewind"
+            );
+            for foreign in 0..cursor.logical_lane_count() {
+                if foreign != lane {
+                    assert!(
+                        cursor
+                            .relocatable_resident_lane_step_at_index(step, foreign)
+                            .is_err()
+                    );
                 }
             }
         }
-        row += 1;
     }
     assert!(
         cursor
@@ -92,14 +100,34 @@ fn compare_lane_heads<const ROLE: u8>(program: &RoleProgram<ROLE>) {
         let target = cursor
             .relocatable_resident_lane_step_at_index(step, lane)
             .unwrap();
-        cursor.set_lane_cursor_to_relocatable_step(target);
+        let previous = cursor.lane_cursors().to_vec();
+        let previous_labels = cursor.current_step_label_codes().to_vec();
+        let mutations = cursor.completion_mutations();
+        assert_eq!(
+            cursor.set_lane_cursor_to_relocatable_step(target),
+            CursorRefresh::Lane(lane as u8)
+        );
+        assert_eq!(cursor.completion_mutations(), mutations);
         assert_eq!(cursor.step_index_at_lane(lane), Some(step));
         assert_eq!(cursor.node_index_for_relocatable_step(target), Some(step));
+        assert_eq!(
+            cursor.current_step_label_codes()[lane],
+            u16::from(cursor.event_row_at(step).unwrap().atom().label)
+        );
+        for (other, before) in previous.iter().enumerate() {
+            if other != lane {
+                assert_eq!(cursor.lane_cursors()[other], *before);
+                assert_eq!(
+                    cursor.current_step_label_codes()[other],
+                    previous_labels[other]
+                );
+            }
+        }
     }
 }
 
 #[test]
-fn direct_lane_heads_match_ordinal_oracle_across_sparse_rows_and_relocation() {
+fn whole_image_lane_heads_match_descriptor_order_across_sparse_rows_and_relocation() {
     let choreography = g::seq(
         g::send::<0, 1, Msg<1, u8>>(),
         g::seq(
@@ -119,7 +147,7 @@ fn direct_lane_heads_match_ordinal_oracle_across_sparse_rows_and_relocation() {
 }
 
 #[test]
-fn direct_lane_heads_match_ordinal_oracle_for_routes_and_roll() {
+fn whole_image_lane_heads_match_descriptor_order_for_routes_and_roll() {
     let choreography = g::seq(
         g::route(g::send::<0, 1, Msg<7, u8>>(), g::send::<0, 1, Msg<8, u8>>()),
         g::par(
@@ -134,6 +162,135 @@ fn direct_lane_heads_match_ordinal_oracle_for_routes_and_roll() {
     compare_lane_heads(&role0);
     compare_lane_heads(&role1);
     compare_lane_heads(&role2);
+}
+
+#[test]
+fn lookup_context_changes_preserve_every_lane_head_label_and_completion() {
+    let global = g::seq(
+        g::send::<0, 1, Msg<11, ()>>(),
+        g::seq(
+            g::par(
+                g::send::<0, 1, Msg<12, ()>>(),
+                g::send::<0, 2, Msg<13, ()>>(),
+            ),
+            g::send::<0, 1, Msg<14, ()>>(),
+        ),
+    );
+    let program = project::<0>(&global);
+    super::super::validated_metadata_tests::with_rows(program.role_image_ref(), |cursor| {
+        let heads = cursor.lane_cursors().to_vec();
+        let labels = cursor.current_step_label_codes().to_vec();
+        let completions = cursor.completed_event_words().to_vec();
+        let mutations = cursor.completion_mutations();
+        for index in (0..=cursor.local_steps_len()).rev() {
+            cursor.set_index(index);
+            assert_eq!(cursor.index(), index);
+            assert_eq!(cursor.lane_cursors(), heads);
+            assert_eq!(cursor.current_step_label_codes(), labels);
+            assert_eq!(cursor.completed_event_words(), completions);
+            assert_eq!(cursor.completion_mutations(), mutations);
+        }
+    });
+}
+
+#[test]
+fn roll_reset_rewinds_lanes_whose_first_event_is_in_a_later_parallel_group() {
+    let global = g::seq(
+        g::seq(
+            g::par(
+                g::send::<0, 1, Msg<31, ()>>(),
+                g::send::<0, 2, Msg<32, ()>>(),
+            ),
+            g::par(
+                g::par(
+                    g::send::<0, 1, Msg<33, ()>>(),
+                    g::send::<0, 2, Msg<34, ()>>(),
+                ),
+                g::send::<0, 3, Msg<35, ()>>(),
+            ),
+        )
+        .roll(),
+        g::send::<0, 1, Msg<36, ()>>(),
+    );
+    let program = project::<0>(&global);
+    super::super::validated_metadata_tests::with_rows(program.role_image_ref(), |cursor| {
+        assert_eq!(cursor.local_steps_len(), 6);
+        let (scope, body) = cursor.machine().roll_scope_row_by_slot(0).unwrap();
+        assert_eq!((body.start(), body.end()), (0, 5));
+        assert!((0..cursor.logical_lane_count()).any(|lane| {
+            (0..2).all(|step| cursor.event_lane_at(step) != Some(lane as u8))
+                && (2..5).any(|step| cursor.event_lane_at(step) == Some(lane as u8))
+        }));
+        for step in 0..cursor.local_steps_len() {
+            let lane = usize::from(cursor.event_lane_at(step).unwrap());
+            let target = cursor
+                .relocatable_resident_lane_step_at_index(step, lane)
+                .unwrap();
+            cursor.advance_lane_to_relocatable_step(target);
+        }
+        assert!(
+            (0..cursor.logical_lane_count()).all(|lane| cursor.step_index_at_lane(lane).is_none())
+        );
+        let reset = cursor.prepare_roll_reset(scope, None, &mut |_| None);
+        cursor.clear_reentry_scope_events(reset);
+        for step in 0..5 {
+            assert!(!cursor.local_event_done(step));
+        }
+        assert!(
+            cursor.local_event_done(5),
+            "the sequential tail stays completed"
+        );
+        for lane in 0..cursor.logical_lane_count() {
+            let first = (0..5).find(|&step| cursor.event_lane_at(step) == Some(lane as u8));
+            assert_eq!(cursor.step_index_at_lane(lane), first);
+            assert_eq!(
+                cursor.current_step_label_codes()[lane],
+                first.map_or(CURRENT_STEP_UNLABELED_CODE, |step| {
+                    u16::from(cursor.event_row_at(step).unwrap().atom().label)
+                })
+            );
+        }
+    });
+}
+
+#[test]
+fn accepted_old_continuation_preserves_the_fresh_body_head_and_label() {
+    let global = g::seq(
+        g::send::<0, 1, Msg<41, ()>>().roll(),
+        g::send::<0, 1, Msg<42, ()>>(),
+    );
+    let program = project::<1>(&global);
+    super::super::validated_metadata_tests::with_rows(program.role_image_ref(), |cursor| {
+        assert_eq!(cursor.local_steps_len(), 2);
+        let lane = usize::from(cursor.event_lane_at(0).unwrap());
+        assert_eq!(cursor.event_lane_at(1), Some(lane as u8));
+        let body = cursor
+            .relocatable_resident_lane_step_at_index(0, lane)
+            .unwrap();
+        cursor.advance_lane_to_relocatable_step(body);
+        let scope = cursor.machine().roll_scope_row_by_slot(0).unwrap().0;
+        let reset = cursor.prepare_roll_reset(scope, None, &mut |_| None);
+        cursor.clear_reentry_scope_events(reset);
+        assert_eq!(cursor.step_index_at_lane(lane), Some(0));
+        let head_label = cursor.current_step_label_codes()[lane];
+        let continuation = cursor.try_recv_meta_at(1).unwrap();
+        assert!(
+            cursor
+                .event_enabled(1, continuation.into(), &mut |_, _| None)
+                .is_ok()
+        );
+        let target = cursor
+            .relocatable_resident_lane_step_at_index(1, lane)
+            .unwrap();
+        assert_eq!(
+            cursor.advance_lane_to_relocatable_step(target),
+            CursorRefresh::Lane(lane as u8)
+        );
+        assert_eq!(cursor.step_index_at_lane(lane), Some(0));
+        assert_eq!(cursor.current_step_label_codes()[lane], head_label);
+        assert!(!cursor.local_event_done(0));
+        assert!(cursor.local_event_done(1));
+    });
 }
 
 #[test]

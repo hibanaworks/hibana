@@ -75,10 +75,20 @@ where
         if applies_route_completion {
             self.apply_prepared_route_completion_cursor(delta.selected_routes());
         }
-        // A parallel sibling may resume in an earlier compiled row. Refresh
-        // lookup caches at the final position without changing event progress.
-        if let Some(change) = self.progress.cursor.refresh_resident_row_at_index() {
-            refresh = Some(refresh.map_or(change, |prior| prior.merge(change)));
+        if delta.event().is_some() && refresh != Some(CursorRefresh::AllLanes) {
+            let mut route = 0;
+            while route < delta.selected_routes().len() {
+                let row = crate::invariant_some(
+                    delta.selected_routes().get(&self.progress.cursor, route),
+                );
+                // Completing a repeated choice can expose a fresh entry on
+                // every participating lane, even when only this head moved.
+                if self.reentrant_selected_arm_complete(row.scope(), row.selected_arm()) {
+                    refresh = Some(CursorRefresh::AllLanes);
+                    break;
+                }
+                route += 1;
+            }
         }
         // No operation observes offer caches while this kernel borrow applies
         // the delta. Build them once from the final cursor and route choices.
@@ -203,6 +213,7 @@ where
     ) -> CursorRefresh {
         let lane_idx = lane as usize;
         let scope = row.scope();
+        let selection_changed = self.selected_arm_for_scope(scope) != Some(row.selected_arm());
         let Some(scope_slot) = self.progress.cursor.route_scope_slot(scope) else {
             crate::invariant();
         };
@@ -258,7 +269,7 @@ where
             row,
             CommitDeltaApplyPermit::new(),
         );
-        if completed_iteration_arm.is_some() {
+        if selection_changed || completed_iteration_arm.is_some() {
             CursorRefresh::AllLanes
         } else {
             CursorRefresh::Lane(lane)

@@ -288,7 +288,6 @@ where
         visited.record(current_idx);
         self.commit_cursor_realign_index(entry_idx)
             .map_err(|_| RecvError::PhaseInvariant)?;
-        self.sync_lane_offer_state();
         Ok(ControlFlow::Continue(()))
     }
 }

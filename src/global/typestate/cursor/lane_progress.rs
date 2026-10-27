@@ -44,13 +44,12 @@ impl EventCursor {
         if lane_idx >= self.logical_lane_count() {
             return None;
         }
-        let (start, end) = self.resident_row_bounds(self.resident_row_index_usize())?;
+        let end = self.local_steps_len();
         let step_idx = self.lane_cursors()[lane_idx] as usize;
         if step_idx == end {
             return None;
         }
-        if step_idx < start
-            || step_idx > end
+        if step_idx > end
             || self.machine().event_program().local_step_lane(step_idx) != Some(lane_idx as u8)
         {
             crate::invariant();
@@ -93,38 +92,6 @@ impl EventCursor {
     // =========================================================================
     // =========================================================================
 
-    fn resident_row_bounds(&self, row_idx: usize) -> Option<(usize, usize)> {
-        let start = usize::from(self.machine().resident_row_min_start(row_idx)?);
-        let end = match self.machine().resident_row_min_start(row_idx + 1) {
-            Some(next) => usize::from(next),
-            None => self.local_steps_len(),
-        };
-        if start >= end || end > self.local_steps_len() {
-            crate::invariant();
-        }
-        Some((start, end))
-    }
-
-    pub(super) fn resident_lane_step_locator(
-        &self,
-        lane_idx: usize,
-        step_idx: usize,
-    ) -> Result<usize, CursorInvariantError> {
-        if lane_idx >= self.logical_lane_count()
-            || !self.event_lane_step_matches(step_idx, lane_idx)
-        {
-            return Err(CursorInvariantError::INVARIANT);
-        }
-        let mut row_idx = 0usize;
-        while let Some((start, end)) = self.resident_row_bounds(row_idx) {
-            if start <= step_idx && step_idx < end {
-                return Ok(row_idx);
-            }
-            row_idx += 1;
-        }
-        Err(CursorInvariantError::INVARIANT)
-    }
-
     fn event_lane_step_matches(&self, step_idx: usize, lane_idx: usize) -> bool {
         if lane_idx > u8::MAX as usize || step_idx >= self.local_steps_len() {
             return false;
@@ -161,18 +128,12 @@ impl EventCursor {
         }))
     }
 
-    // Each lane stores its descriptor event index. The row end is its terminal
-    // value; no ordinal/count/sparse-layout reconstruction runs on every poll.
-    pub(super) fn seed_resident_lane_heads(&mut self) {
-        let Some((start, end)) = self.resident_row_bounds(self.resident_row_index_usize()) else {
-            if self.local_steps_len() != 0 {
-                crate::invariant();
-            }
-            self.lane_cursors_mut().fill(0);
-            return;
-        };
+    // Seed each lane once across the whole image. Subsequent movement follows
+    // the compiled same-lane successor and never reconstructs another lane.
+    pub(super) fn seed_lane_heads(&mut self) {
+        let end = self.local_steps_len();
         self.lane_cursors_mut().fill(Self::encode_index(end));
-        for step in start..end {
+        for step in 0..end {
             let Some(lane) = self.machine().event_program().local_step_lane(step) else {
                 crate::invariant();
             };
@@ -183,49 +144,18 @@ impl EventCursor {
         }
     }
 
-    #[inline(always)]
-    fn select_resident_row_for_lane(&mut self, row_idx: usize, lane: u8) -> CursorRefresh {
-        if self.resident_row_index_usize() != row_idx {
-            let Ok(row) = u16::try_from(row_idx) else {
-                crate::invariant();
-            };
-            self.state_mut().resident_row_index = row;
-            self.seed_resident_lane_heads();
-            self.rebuild_current_step_label_codes();
-            CursorRefresh::AllLanes
-        } else {
-            CursorRefresh::Lane(lane)
-        }
-    }
-
-    /// Refresh a row locator after sequential progress entered another compiled
-    /// region. This seeds descriptor caches only; it consumes no event and
-    /// changes neither completion bits nor route authority.
-    pub(crate) fn refresh_resident_row_at_index(&mut self) -> Option<CursorRefresh> {
-        let index = self.index();
-        let current_row = self.resident_row_index_usize();
-        if self
-            .resident_row_bounds(current_row)
-            .is_some_and(|(start, end)| start <= index && index < end)
-        {
-            return None;
-        }
-        let lane = self.machine().event_program().local_step_lane(index)?;
-        let row = crate::invariant_some(self.resident_lane_step_locator(lane as usize, index).ok());
-        Some(self.select_resident_row_for_lane(row, lane))
-    }
-
-    /// Advance a lane past a resident step that may require resident-row relocation.
+    /// Complete an admitted event and advance only its lane's lookup position.
     pub(crate) fn advance_lane_to_relocatable_step(
         &mut self,
         target: RelocatableResidentLaneStep,
     ) -> CursorRefresh {
         let target = target.0;
         let lane_idx = target.lane as usize;
-        let Ok(row_idx) = self.resident_lane_step_locator(lane_idx, target.step_idx as usize)
-        else {
+        if lane_idx >= self.logical_lane_count()
+            || !self.event_lane_step_matches(usize::from(target.step_idx), lane_idx)
+        {
             crate::invariant();
-        };
+        }
         self.mark_local_event_done(target.step_idx as usize);
         // An enclosing continuation can arrive after this lane has begun its
         // next body visit. Consuming it must not park the lane past that fresh
@@ -238,21 +168,15 @@ impl EventCursor {
             self.set_index(head);
             return CursorRefresh::Lane(target.lane);
         }
-        let refresh = self.select_resident_row_for_lane(row_idx, target.lane);
-        let Some((_, end)) = self.resident_row_bounds(row_idx) else {
-            crate::invariant();
-        };
-        let mut next = usize::from(target.step_idx) + 1;
-        while next < end
-            && self.machine().event_program().local_step_lane(next) != Some(target.lane)
-        {
-            next += 1;
-        }
+        let next = self
+            .machine()
+            .event_program()
+            .next_lane_step(usize::from(target.step_idx));
         if next > self.lane_cursors()[lane_idx] as usize {
             self.lane_cursors_mut()[lane_idx] = Self::encode_index(next);
             self.refresh_current_step_label_code(lane_idx);
         }
-        refresh
+        CursorRefresh::Lane(target.lane)
     }
 
     #[inline(always)]
@@ -281,21 +205,21 @@ impl EventCursor {
         Some(state_index_to_usize(state_idx))
     }
 
-    /// Position a lane at a resident step that may require resident-row relocation.
+    /// Position one lane without changing any other lane or event completion.
     pub(crate) fn set_lane_cursor_to_relocatable_step(
         &mut self,
         target: RelocatableResidentLaneStep,
     ) -> CursorRefresh {
         let target = target.0;
         let lane_idx = target.lane as usize;
-        let Ok(row_idx) = self.resident_lane_step_locator(lane_idx, target.step_idx as usize)
-        else {
+        if lane_idx >= self.logical_lane_count()
+            || !self.event_lane_step_matches(usize::from(target.step_idx), lane_idx)
+        {
             crate::invariant();
-        };
-        let refresh = self.select_resident_row_for_lane(row_idx, target.lane);
+        }
         self.lane_cursors_mut()[lane_idx] = target.step_idx;
         self.refresh_current_step_label_code(lane_idx);
-        refresh
+        CursorRefresh::Lane(target.lane)
     }
 }
 

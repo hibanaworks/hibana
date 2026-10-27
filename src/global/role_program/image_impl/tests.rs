@@ -24,7 +24,7 @@ mod passive_parent;
 mod route_index;
 
 const DATA_END: usize = 40;
-const BLOB_LEN: usize = DATA_END + ROLE_IMAGE_U16_STRIDE;
+const BLOB_LEN: usize = DATA_END + ROLE_IMAGE_U16_STRIDE + 2 * 8 + 6;
 
 #[test]
 fn active_lane_metadata_is_derived_from_one_canonical_bitmap() {
@@ -534,15 +534,16 @@ fn terminal_blob_bound_rejects_every_nonterminal_column_before_publication() {
         assert_invariant(|| columns.validate_blob_bound());
     }
     let mut columns = empty_columns();
+    let column_end = DATA_END + ROLE_IMAGE_U16_STRIDE;
     columns.events = ColumnRange::new(
-        BLOB_LEN - ROLE_IMAGE_EVENT_STRIDE,
+        column_end - ROLE_IMAGE_EVENT_STRIDE,
         1,
         ROLE_IMAGE_EVENT_STRIDE,
     );
     columns.validate_blob_bound();
     assert_eq!(
         columns.blob_len(),
-        BLOB_LEN,
+        column_end + ROLE_IMAGE_U16_STRIDE,
         "inclusive column end is valid"
     );
 }

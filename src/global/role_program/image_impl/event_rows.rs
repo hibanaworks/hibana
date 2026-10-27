@@ -31,16 +31,33 @@ impl RoleLocalDirection {
             _ => None,
         }
     }
+
+    /// The sealed role image has already checked the complete flag byte.
+    /// Keep raw descriptor rejection in `decode`, outside runtime field reads.
+    #[inline(always)]
+    pub(super) const fn from_validated_flags(flags: u8) -> Self {
+        if flags & Self::Recv.packed_bits() != 0 {
+            Self::Recv
+        } else if flags & Self::Send.packed_bits() != 0 {
+            Self::Send
+        } else {
+            Self::Local
+        }
+    }
+
+    pub(super) const fn operation_index_key(self, from: u8, to: u8, label: u8) -> u32 {
+        match self {
+            Self::Recv => ((to as u32) << 8) | label as u32,
+            Self::Local | Self::Send => (1 << 16) | ((from as u32) << 8) | label as u32,
+        }
+    }
 }
 
 /// Receive keys precede outbound keys. The original step ordinal breaks ties,
 /// preserving source order for every requested direction, role and label.
 pub(super) const fn operation_index_key(flags: u8, from: u8, to: u8, label: u8) -> u32 {
     match RoleLocalDirection::decode(flags) {
-        Some(RoleLocalDirection::Recv) => ((to as u32) << 8) | label as u32,
-        Some(RoleLocalDirection::Local | RoleLocalDirection::Send) => {
-            (1 << 16) | ((from as u32) << 8) | label as u32
-        }
+        Some(direction) => direction.operation_index_key(from, to, label),
         None => crate::invariant(),
     }
 }
@@ -172,7 +189,7 @@ mod tests {
 }
 
 impl PackedLocalEventRow {
-    const FLAG_CHOICE_DETERMINANT: u8 = 1 << 0;
+    pub(super) const FLAG_CHOICE_DETERMINANT: u8 = 1 << 0;
 
     #[inline(always)]
     pub(crate) const fn from_packed_parts(

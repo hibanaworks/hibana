@@ -263,6 +263,34 @@ impl PackedLocalDependency {
             None => crate::invariant(),
         }
     }
+
+    /// Read an immutable fact whose complete encoding and event bound were
+    /// checked before its containing role image was published.
+    #[inline(always)]
+    pub(in crate::global) const fn validated_dependency(self) -> Option<LocalDependency> {
+        if self.start == Self::ABSENT_FIELD {
+            return None;
+        }
+        let scope = match ScopeId::decode_raw(self.dep_scope) {
+            Some(scope) => scope,
+            None => crate::invariant(),
+        };
+        let tag = self.conflict_route & Self::CONFLICT_MASK;
+        let conflict = match tag {
+            Self::CONFLICT_UNCONDITIONAL => LocalConflict::Unconditional,
+            Self::CONFLICT_SHARED_ROUTE => LocalConflict::SharedRoute,
+            _ => LocalConflict::RouteArm {
+                scope: ScopeId::route(self.conflict_route >> Self::ROUTE_SHIFT),
+                arm: (tag - Self::CONFLICT_ROUTE_ARM_0) as u8,
+            },
+        };
+        Some(LocalDependency::with_conflict_range(
+            scope,
+            conflict,
+            self.start as usize,
+            self.end as usize,
+        ))
+    }
 }
 
 #[cfg(test)]

@@ -1659,6 +1659,171 @@ def RustDescriptorImage.routeIndexCoherent (image : RustDescriptorImage) : Bool 
         | some slot => routes[slot]? == some raw
         | none => false)
 
+/-- Recover binary source intervals directly from decoded markers. Alternative
+route arms and independent parallel arms both remove strict source order;
+repetition scopes do not separate positions within one unfolding. -/
+private def offerSourceBinaryRegions?
+    (markers : List DecodedScopeMarker) (atomCount : Nat) :
+    Option (List ParallelRegion) := do
+  let rows : List (List ParallelRegion) ← (List.range markers.length).mapM fun index => do
+    let marker ← markers[index]?
+    if !(firstCanonicalEnterForScope markers index marker) then
+      pure []
+    else if marker.scope / productionScopeCapacity = 0 then
+      let (left, right) ← routeArmRanges? markers marker.scope
+      if left.1 < left.2 ∧ left.2 = right.1 ∧ right.1 < right.2 ∧
+          right.2 ≤ atomCount then
+        pure [{ start := left.1, split := right.1, stop := right.2 }]
+      else none
+    else if marker.scope / productionScopeCapacity = 2 then
+      let enters := markers.filterMap fun candidate =>
+        if candidate.scope = marker.scope && candidate.tag % 4 = 0 then
+          some candidate.offset else none
+      let splits := markers.filterMap fun candidate =>
+        if candidate.scope = marker.scope && candidate.tag % 4 = 1 then
+          some candidate.offset else none
+      let exits := markers.filterMap fun candidate =>
+        if candidate.scope = marker.scope && candidate.tag % 4 = 2 then
+          some candidate.offset else none
+      match enters, splits, exits with
+      | [start], [split], [stop] =>
+          if start < split ∧ split < stop ∧ stop ≤ atomCount then
+            pure [{ start, split, stop }]
+          else none
+      | _, _, _ => none
+    else pure []
+  pure rows.flatten
+
+private def offerSourcePrecedes
+    (regions : List ParallelRegion) (before after : Nat) : Bool :=
+  decide (before < after) && !(regions.any fun region =>
+    decide (region.start ≤ before ∧ before < region.split ∧
+      region.split ≤ after ∧ after < region.stop))
+
+/-- Co-resident send and receive facets of one global effect retain separate
+local rows, but equal effect identities are never strict source predecessors. -/
+theorem offer_source_predecessor_is_strict_at_equal_effects
+    (regions : List ParallelRegion) (effect : Nat) :
+    offerSourcePrecedes regions effect effect = false := by
+  simp [offerSourcePrecedes]
+
+private structure OfferTopologyEvent where
+  effect : Nat
+  view : Nat
+  lane : Nat
+  receive : Bool
+
+private def RustDescriptorImage.decodeOfferTopologyEvents?
+    (image : RustDescriptorImage) : Option (List OfferTopologyEvent) :=
+  (List.range image.eventCount).mapM fun step => do
+    let event ← image.decodeRoleEventRow? step
+    let atom ← image.eventAtom? step
+    let view ← image.eventView? step
+    let lane ← image.eventLane? step
+    if lane = atom.lane ∧ lane < image.logicalLaneCount then
+      pure {
+        effect := event.effIndex
+        view
+        lane
+        receive := event.flags / 2 == 2
+      }
+    else none
+
+private def firstOfferArmOperation
+    (events : List OfferTopologyEvent) (arm : DecodedRouteArmRow)
+    (receive : Bool) : Nat :=
+  let positions := (List.range arm.eventLength).map (arm.eventStart + ·)
+  ((positions.find? fun step =>
+    match events[step]? with
+    | some event => event.receive == receive
+    | none => false).getD packedU16Absent)
+
+/-- Brute-force all earlier local rows. This deliberately does not follow the
+Rust compiler's predecessor links or assume their structured-source chain law. -/
+private def greatestOfferViewPredecessor
+    (events : List OfferTopologyEvent) (regions : List ParallelRegion)
+    (step : Nat) (event : OfferTopologyEvent) : Nat :=
+  let predecessors := (List.range step).filter fun prior =>
+    match events[prior]? with
+    | some previous => previous.view == event.view &&
+        offerSourcePrecedes regions previous.effect event.effect
+    | none => false
+  predecessors.getLast?.getD packedU16Absent
+
+private def offerViewLaneStepKey (event : OfferTopologyEvent) (step : Nat) : Nat :=
+  event.view * 16777216 + event.lane * 65536 + step
+
+private def RustDescriptorImage.roleOfferTopologyCheck?
+    (image : RustDescriptorImage) : Option Bool := do
+  let markers ← image.decodeScopeMarkers?
+  let regions ← offerSourceBinaryRegions? markers image.atomCount
+  let events ← image.decodeOfferTopologyEvents?
+  let arms ← image.decodeRouteArmRows?
+  let firstOperations ← (List.range (image.routeScopeCount * 2)).mapM fun arm => do
+    let offset := image.roleRouteEntryStepOffset + arm * 4
+    let receive ← readU16LE? image.roleBytes offset
+    let outbound ← readU16LE? image.roleBytes (offset + productionRoleU16Stride)
+    pure (receive, outbound)
+  let index ← (List.range image.eventCount).mapM fun slot =>
+    readU16LE? image.roleBytes
+      (image.roleViewLaneIndexOffset + slot * productionRoleU16Stride)
+  let keys ← index.mapM fun step => do
+    let event ← events[step]?
+    pure (offerViewLaneStepKey event step)
+  let predecessors ← (List.range image.eventCount).mapM fun step =>
+    readU16LE? image.roleBytes
+      (image.roleViewPredecessorOffset + step * productionRoleU16Stride)
+  pure (
+    (List.range arms.length).all (fun slot =>
+      match arms[slot]?, firstOperations[slot]? with
+      | some arm, some (receive, outbound) =>
+          receive == firstOfferArmOperation events arm true &&
+          outbound == firstOfferArmOperation events arm false
+      | _, _ => false) &&
+    decide index.Nodup &&
+    (List.range image.eventCount).all index.contains &&
+    decide (keys.Pairwise (· < ·)) &&
+    (List.range image.eventCount).all fun step =>
+      match events[step]?, predecessors[step]? with
+      | some event, some predecessor =>
+          predecessor == greatestOfferViewPredecessor events regions step event
+      | _, _ => false)
+
+/-- Immutable offer topology is checked independently of Rust's emitted links:
+every first receive/outbound row is exact; the view/lane index is a strictly
+sorted complete permutation; every predecessor is the greatest same-view row
+under marker-derived strict source order. Images without retained routes omit
+these route-specific tables; their lane-successor table is checked separately.
+None of these facts grants live event authority. -/
+def RustDescriptorImage.roleOfferTopologyCoherent (image : RustDescriptorImage) : Bool :=
+  if image.routeScopeCount = 0 then true
+  else image.roleOfferTopologyCheck?.getD false
+
+/-- Scan all row ordinals in increasing order instead of reproducing Rust's
+reverse pass or following its emitted links. The first matching later row is
+the exact same-lane successor; absence is encoded by the terminal event count. -/
+private def immediateSameLaneSuccessor
+    (lanes : List Nat) (step lane : Nat) : Nat :=
+  ((List.range lanes.length).find? fun candidate =>
+    step < candidate && lanes[candidate]? == some lane).getD lanes.length
+
+/-- Every local row owns one immutable lane-successor entry, including images
+without routes. This is descriptor order only: branch/actor/visit admission
+still determines which later row is currently live. -/
+def RustDescriptorImage.roleLaneSuccessorCoherent (image : RustDescriptorImage) : Bool :=
+  let actual := (List.range image.eventCount).mapM fun step =>
+    readU16LE? image.roleBytes
+      (image.roleLaneSuccessorOffset + step * productionRoleU16Stride)
+  match (List.range image.eventCount).mapM image.eventLane?, actual with
+  | some lanes, some successors =>
+      lanes.all (· < image.logicalLaneCount) &&
+      (List.range image.eventCount).all fun step =>
+        match lanes[step]?, successors[step]? with
+        | some lane, some successor =>
+            successor == immediateSameLaneSuccessor lanes step lane
+        | _, _ => false
+  | _, _ => false
+
 private def RustDescriptorImage.roleRuntimeColumnsCheck
     (image : RustDescriptorImage) : Bool :=
   match image.decodeRoleEventRows?,
@@ -1692,7 +1857,8 @@ private def RustDescriptorImage.roleRuntimeColumnsCheck
       image.passiveChildColumnsCoherent &&
       image.routeCommitColumnsCoherent &&
       image.routeCommitCapacityExact &&
-      image.rollColumnsCoherent && (image.operationIndexCoherent && image.routeIndexCoherent)
+      image.rollColumnsCoherent && (image.operationIndexCoherent && image.routeIndexCoherent) &&
+      image.roleOfferTopologyCoherent && image.roleLaneSuccessorCoherent
   | _, _, _, _, _, _, _, _, _, _, _ => false
 
 theorem role_runtime_columns_check_binds_route_arm_columns
@@ -1755,6 +1921,20 @@ theorem role_runtime_columns_check_binds_roll_columns
     {image : RustDescriptorImage}
     (accepted : image.roleRuntimeColumnsCheck = true) :
     image.rollColumnsCoherent = true := by
+  unfold RustDescriptorImage.roleRuntimeColumnsCheck at accepted
+  split at accepted <;> simp_all
+
+theorem role_runtime_columns_check_binds_offer_topology
+    {image : RustDescriptorImage}
+    (accepted : image.roleRuntimeColumnsCheck = true) :
+    image.roleOfferTopologyCoherent = true := by
+  unfold RustDescriptorImage.roleRuntimeColumnsCheck at accepted
+  split at accepted <;> simp_all
+
+theorem role_runtime_columns_check_binds_lane_successors
+    {image : RustDescriptorImage}
+    (accepted : image.roleRuntimeColumnsCheck = true) :
+    image.roleLaneSuccessorCoherent = true := by
   unfold RustDescriptorImage.roleRuntimeColumnsCheck at accepted
   split at accepted <;> simp_all
 
@@ -1856,6 +2036,22 @@ theorem checked_descriptor_binds_route_arm_columns
   unfold RustDescriptorImage.check at accepted
   simp only [Bool.and_eq_true] at accepted
   exact role_runtime_columns_check_binds_route_arm_columns accepted.1.2
+
+theorem checked_descriptor_binds_offer_topology
+    {image : RustDescriptorImage}
+    (accepted : image.check = true) :
+    image.roleOfferTopologyCoherent = true := by
+  unfold RustDescriptorImage.check at accepted
+  simp only [Bool.and_eq_true] at accepted
+  exact role_runtime_columns_check_binds_offer_topology accepted.1.2
+
+theorem checked_descriptor_binds_lane_successors
+    {image : RustDescriptorImage}
+    (accepted : image.check = true) :
+    image.roleLaneSuccessorCoherent = true := by
+  unfold RustDescriptorImage.check at accepted
+  simp only [Bool.and_eq_true] at accepted
+  exact role_runtime_columns_check_binds_lane_successors accepted.1.2
 
 theorem checked_descriptor_binds_event_lane_column
     {image : RustDescriptorImage}

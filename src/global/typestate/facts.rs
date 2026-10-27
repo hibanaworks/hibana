@@ -67,6 +67,13 @@ impl PackedEventConflict {
         }
     }
 
+    /// The opaque role image checks every conflict before publishing itself.
+    /// Only field reads from that unchanged image may use this constructor.
+    #[inline(always)]
+    pub(crate) const fn from_validated_raw(raw: u16) -> Self {
+        Self(raw)
+    }
+
     #[inline(always)]
     pub(crate) const fn raw(self) -> u16 {
         self.0

@@ -1,0 +1,33 @@
+; Arithmetic core of compressed-entry equivalence. The general Lean theorem
+; names the greatest-predecessor precondition explicitly. This file does not
+; assume or establish that Rust produced a correct predecessor link.
+(set-logic QF_LIA)
+(declare-const start Int)
+(declare-const stop Int)
+(declare-const step Int)
+(declare-const greatest Int)
+(declare-const witness Int)
+(assert (and (<= 0 start) (<= start step) (< step stop)))
+; A predecessor in the arm cannot exceed the greatest predecessor while the
+; compressed test reports that greatest predecessor before the arm.
+(push)
+(assert (and (<= start witness) (< witness step) (<= witness greatest)
+             (< greatest start)))
+; EXPECT: unsat
+(check-sat)
+(pop)
+; A greatest predecessor at/after the arm's start is itself a witness inside
+; its upper boundary, because it strictly precedes the selected entry.
+(push)
+(assert (and (<= start greatest) (< greatest step) (not (< greatest stop))))
+; EXPECT: unsat
+(check-sat)
+(pop)
+; Mutation witness: using only the immediately previous same-view descriptor
+; row can reject a legal entry when that row is an independent sibling.
+(push)
+(assert (and (<= 0 greatest) (< greatest start) (<= start witness)
+             (< witness step) (not (<= witness greatest))))
+; EXPECT: sat
+(check-sat)
+(pop)

@@ -57,9 +57,6 @@ where
             self.operation.public_offer_state = OfferState::new();
             return Poll::Ready(self.publish_public_route_branch(label));
         }
-        if let Some(refresh) = self.progress.cursor.refresh_resident_row_at_index() {
-            self.refresh_after_cursor_move(refresh);
-        }
         let mut offer_state =
             core::mem::replace(&mut self.operation.public_offer_state, OfferState::new());
         let poll = {

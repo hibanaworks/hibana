@@ -98,7 +98,7 @@ impl EventCursor {
             .footprint()
             .borrow_epoch_count
             != 0;
-        let mut rewind_row = None;
+        let mut rewound_lanes = [0u32; crate::global::role_program::LANE_SET_VIEW_WORDS];
         while idx < end && self.contains_node_index(idx) {
             if self.roll_scope_contains_index(scope, idx)
                 && (!preserves_children
@@ -112,18 +112,12 @@ impl EventCursor {
                 else {
                     crate::invariant();
                 };
-                let Ok(row) = self
-                    .resident_lane_step_locator(usize::from(lane), usize::from(step.0.step_idx))
-                else {
-                    crate::invariant();
-                };
-                // Materialize the first row once. Selecting a later row while
-                // resetting another lane would overwrite the fresh prefix.
-                if rewind_row.is_none() {
-                    rewind_row = Some(row);
+                let (word, bit) = crate::global::role_program::lane_word_index(usize::from(lane));
+                // The source-ordered reset visits this lane's first cleared
+                // event first, independently of every other lane's location.
+                if rewound_lanes[word] & bit == 0 {
                     self.set_lane_cursor_to_relocatable_step(step);
-                } else if rewind_row == Some(row) && self.event_is_before_lane_cursor(idx, lane) {
-                    self.set_lane_cursor_to_relocatable_step(step);
+                    rewound_lanes[word] |= bit;
                 }
             }
             idx += 1;

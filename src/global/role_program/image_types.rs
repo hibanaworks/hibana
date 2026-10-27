@@ -12,8 +12,9 @@ pub(crate) const ROLE_IMAGE_LANE_RANGE_STRIDE: usize = 4;
 pub(crate) const ROLE_IMAGE_ROUTE_ARM_LANE_STEP_STRIDE: usize = 5;
 pub(crate) const ROLE_IMAGE_ROLL_SCOPE_STRIDE: usize = 6;
 pub(crate) const ROLE_IMAGE_ROLL_ENTRY_STRIDE: usize = 7;
-pub(crate) const ROLE_IMAGE_STORAGE_BYTE_CAPACITY: usize =
-    u16::MAX as usize + ScopeId::LOCAL_CAPACITY as usize * ROLE_IMAGE_U16_STRIDE;
+pub(crate) const ROLE_IMAGE_STORAGE_BYTE_CAPACITY: usize = u16::MAX as usize
+    + ScopeId::LOCAL_CAPACITY as usize * (ROLE_IMAGE_U16_STRIDE + 8)
+    + (u16::MAX as usize / ROLE_IMAGE_EVENT_STRIDE) * 6;
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct PackedLaneRange(u32);
@@ -433,7 +434,40 @@ pub(crate) struct RoleImageColumns {
 impl RoleImageColumns {
     #[inline(always)]
     pub(crate) const fn blob_len(&self) -> usize {
-        self.route_index().end
+        self.lane_successors().end
+    }
+
+    pub(crate) const fn lane_successors(&self) -> core::ops::Range<usize> {
+        let start = self.view_lane_index().end;
+        start..start + self.events.len as usize * 2
+    }
+
+    /// Lookup data follows the compact protocol; it contains no progress state.
+    pub(crate) const fn route_entry_steps(&self) -> core::ops::Range<usize> {
+        let start = self.route_index().end;
+        start..start + self.route_scopes.len as usize * 8
+    }
+
+    pub(crate) const fn view_predecessors(&self) -> core::ops::Range<usize> {
+        let start = self.route_entry_steps().end;
+        start
+            ..start
+                + if self.route_scopes.len == 0 {
+                    0
+                } else {
+                    self.events.len as usize * 2
+                }
+    }
+
+    pub(crate) const fn view_lane_index(&self) -> core::ops::Range<usize> {
+        let start = self.view_predecessors().end;
+        start
+            ..start
+                + if self.route_scopes.len == 0 {
+                    0
+                } else {
+                    self.events.len as usize * 2
+                }
     }
 
     pub(crate) const fn route_index(&self) -> core::ops::Range<usize> {

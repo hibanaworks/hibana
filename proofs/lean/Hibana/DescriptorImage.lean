@@ -1447,8 +1447,22 @@ def RustDescriptorImage.roleRouteIndexLen (image : RustDescriptorImage) : Nat :=
     | some raw => max extent (raw + 1)
     | none => extent) 0
 
-def RustDescriptorImage.roleBlobLen (image : RustDescriptorImage) : Nat :=
+def RustDescriptorImage.roleRouteEntryStepOffset (image : RustDescriptorImage) : Nat :=
   image.roleRouteIndexOffset + image.roleRouteIndexLen * productionRoleU16Stride
+
+def RustDescriptorImage.roleViewPredecessorOffset (image : RustDescriptorImage) : Nat :=
+  image.roleRouteEntryStepOffset + image.routeScopeCount * 8
+
+def RustDescriptorImage.roleViewLaneIndexOffset (image : RustDescriptorImage) : Nat :=
+  image.roleViewPredecessorOffset +
+    (if image.routeScopeCount = 0 then 0 else image.eventCount * productionRoleU16Stride)
+
+def RustDescriptorImage.roleLaneSuccessorOffset (image : RustDescriptorImage) : Nat :=
+  image.roleViewLaneIndexOffset +
+    (if image.routeScopeCount = 0 then 0 else image.eventCount * productionRoleU16Stride)
+
+def RustDescriptorImage.roleBlobLen (image : RustDescriptorImage) : Nat :=
+  image.roleLaneSuccessorOffset + image.eventCount * productionRoleU16Stride
 
 def RustDescriptorImage.decodeAtomRow?
     (image : RustDescriptorImage) (row : Nat) : Option DecodedProgramAtom := do

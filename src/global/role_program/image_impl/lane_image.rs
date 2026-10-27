@@ -1,9 +1,11 @@
+#[cfg(any(kani, all(test, hibana_repo_tests)))]
+use super::super::ROLE_IMAGE_LANE_STRIDE;
 use super::{
     super::{
         BlobPtr, ColumnRange, LaneSetView, PackedLaneRange, PackedLocalEventRow,
         PackedRollScopeRow, PackedRouteArmRow, ROLE_IMAGE_CONFLICT_STRIDE,
         ROLE_IMAGE_DEPENDENCY_STRIDE, ROLE_IMAGE_EVENT_STRIDE, ROLE_IMAGE_LANE_RANGE_STRIDE,
-        ROLE_IMAGE_LANE_STRIDE, ROLE_IMAGE_ROLL_ENTRY_STRIDE, ROLE_IMAGE_ROLL_SCOPE_STRIDE,
+        ROLE_IMAGE_ROLL_ENTRY_STRIDE, ROLE_IMAGE_ROLL_SCOPE_STRIDE,
         ROLE_IMAGE_ROUTE_ARM_LANE_STEP_STRIDE, ROLE_IMAGE_ROUTE_ARM_STRIDE,
         ROLE_IMAGE_ROUTE_SCOPE_STRIDE, ROLE_IMAGE_U16_STRIDE, RoleLaneImage, RouteArmLaneStepRow,
     },
@@ -17,10 +19,11 @@ use crate::global::typestate::{LocalDependency, PackedEventConflict, PackedLocal
 mod decode;
 #[cfg(all(test, hibana_repo_tests))]
 mod tests;
+#[cfg(any(kani, all(test, hibana_repo_tests)))]
+pub(super) use decode::decode_resident_local_step_lane;
 pub(super) use decode::{
-    decode_resident_local_step_lane, decode_resident_roll_scope,
-    decode_resident_route_arm_lane_step, decode_resident_route_scope, passive_child_parent_matches,
-    route_commit_decisions_match,
+    decode_resident_roll_scope, decode_resident_route_arm_lane_step, decode_resident_route_scope,
+    passive_child_parent_matches, route_commit_decisions_match,
 };
 
 #[cold]
@@ -52,6 +55,7 @@ impl<'a> RoleLaneImage<'a> {
         self.blob.byte_at(offset)
     }
 
+    #[cfg(any(kani, all(test, hibana_repo_tests)))]
     #[inline(always)]
     const fn read_u8(&self, column: ColumnRange, row: usize, stride: usize) -> Option<u8> {
         match self.column_offset(column, row, stride) {
@@ -107,6 +111,7 @@ impl<'a> RoleLaneImage<'a> {
         }
     }
 
+    #[cfg(any(kani, all(test, hibana_repo_tests)))]
     #[inline(always)]
     pub(crate) const fn local_step_lane(
         &self,
@@ -148,6 +153,7 @@ impl<'a> RoleLaneImage<'a> {
         }
     }
 
+    #[cfg(all(test, hibana_repo_tests))]
     #[inline(always)]
     pub(super) const fn resident_row_count(&self) -> usize {
         if self.columns.resident_boundaries.len == 0 {
@@ -157,6 +163,7 @@ impl<'a> RoleLaneImage<'a> {
         }
     }
 
+    #[cfg(all(test, hibana_repo_tests))]
     #[inline(always)]
     pub(super) const fn resident_row_min_start(&self, idx: usize) -> Option<u16> {
         if idx >= self.resident_row_count() {
@@ -544,6 +551,7 @@ impl<'a> RoleLaneImage<'a> {
         self.packed_route_arm_row(row_idx).event_row()
     }
 
+    #[cfg(all(test, hibana_repo_tests))]
     #[inline(always)]
     const fn boundary_at(&self, idx: usize) -> u16 {
         match self.read_u16(self.columns.resident_boundaries, idx, ROLE_IMAGE_U16_STRIDE) {
@@ -552,6 +560,7 @@ impl<'a> RoleLaneImage<'a> {
         }
     }
 
+    #[cfg(all(test, hibana_repo_tests))]
     #[inline(always)]
     pub(super) const fn resident_row_range(&self, idx: usize) -> PackedLaneRange {
         if idx >= self.resident_row_count() {

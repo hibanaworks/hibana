@@ -600,6 +600,8 @@ and restart policy.
 | Compiled global protocol | 65,535 bytes |
 | Compiled local protocol | 65,535 bytes per role |
 | Local route lookup index | Up to 16,384 additional bytes per role |
+| Local offer lookup data | 4 bytes per local event and 8 per local route, when routes are present |
+| Local lane successors | 2 bytes per local event |
 | Global scope lookup index | Up to 102,852 additional bytes per protocol |
 | Global route lookup index | Up to 16,384 additional bytes per protocol |
 | Message-only global protocol | Up to 7,281 events, at nine bytes per event |

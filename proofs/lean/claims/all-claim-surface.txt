@@ -8572,6 +8572,10 @@ Hibana.causal_flow_preserves_known_facts : ∀ (flow : Hibana.CausalFlowExpr) (f
   @Eq.{1} Bool image.check true → @Eq.{1} Bool image.routeCommitCapacityExact true
 @Hibana.checked_descriptor_binds_lane_columns : ∀ {image : Hibana.RustDescriptorImage},
   @Eq.{1} Bool image.check true → @Eq.{1} Bool image.laneColumnsCoherent true
+@Hibana.checked_descriptor_binds_lane_successors : ∀ {image : Hibana.RustDescriptorImage},
+  @Eq.{1} Bool image.check true → @Eq.{1} Bool image.roleLaneSuccessorCoherent true
+@Hibana.checked_descriptor_binds_offer_topology : ∀ {image : Hibana.RustDescriptorImage},
+  @Eq.{1} Bool image.check true → @Eq.{1} Bool image.roleOfferTopologyCoherent true
 @Hibana.checked_descriptor_binds_passive_child_columns : ∀ {image : Hibana.RustDescriptorImage},
   @Eq.{1} Bool image.check true → @Eq.{1} Bool image.passiveChildColumnsCoherent true
 @Hibana.checked_descriptor_binds_program_columns : ∀ {image : Hibana.RustDescriptorImage},
@@ -12101,6 +12105,8 @@ Hibana.observer_outbound_heads_are_not_mergeable : ∀
 Hibana.offer_keys_with_same_entry_and_distinct_scope_are_distinct : ∀ (entry leftScope rightScope : Nat),
   @Ne.{1} Nat leftScope rightScope →
     @Ne.{1} Hibana.ActiveOfferKey { entry := entry, scope := leftScope } { entry := entry, scope := rightScope }
+Hibana.offer_source_predecessor_is_strict_at_equal_effects : ∀ (regions : List.{0} Hibana.ParallelRegion✝)
+  (effect : Nat), @Eq.{1} Bool (Hibana.offerSourcePrecedes✝ regions effect effect) false
 Hibana.offered_receipt_blocks_second_poll : ∀ (before after : Hibana.TransportState) (frame : Hibana.TransportFrame),
   @Eq.{1} (Hibana.CarrierPoll Hibana.TransportBoundaryState)
     (Hibana.TransportBoundaryState.offered before frame after).pollReceive
@@ -13737,6 +13743,12 @@ Hibana.role_event_bytes_dominate_local_step_field : @LT.lt.{0} Nat instLTNat Hib
 @Hibana.role_runtime_columns_check_binds_lane_columns : ∀ {image : Hibana.RustDescriptorImage},
   @Eq.{1} Bool (Hibana.RustDescriptorImage.roleRuntimeColumnsCheck✝ image) true →
     @Eq.{1} Bool image.laneColumnsCoherent true
+@Hibana.role_runtime_columns_check_binds_lane_successors : ∀ {image : Hibana.RustDescriptorImage},
+  @Eq.{1} Bool (Hibana.RustDescriptorImage.roleRuntimeColumnsCheck✝ image) true →
+    @Eq.{1} Bool image.roleLaneSuccessorCoherent true
+@Hibana.role_runtime_columns_check_binds_offer_topology : ∀ {image : Hibana.RustDescriptorImage},
+  @Eq.{1} Bool (Hibana.RustDescriptorImage.roleRuntimeColumnsCheck✝ image) true →
+    @Eq.{1} Bool image.roleOfferTopologyCoherent true
 @Hibana.role_runtime_columns_check_binds_passive_child_columns : ∀ {image : Hibana.RustDescriptorImage},
   @Eq.{1} Bool (Hibana.RustDescriptorImage.roleRuntimeColumnsCheck✝ image) true →
     @Eq.{1} Bool image.passiveChildColumnsCoherent true

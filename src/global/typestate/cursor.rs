@@ -198,11 +198,6 @@ impl EventCursorMachine {
     }
 
     #[inline(always)]
-    fn resident_row_min_start(&self, idx: usize) -> Option<u16> {
-        self.event_program().resident_row_min_start(idx)
-    }
-
-    #[inline(always)]
     fn local_steps_len(&self) -> usize {
         self.event_program().local_len()
     }
@@ -330,23 +325,9 @@ impl EventCursorMachine {
     #[inline(always)]
     fn route_recv_state(&self, scope_id: ScopeId, arm: u8) -> Option<StateIndex> {
         let slot = self.route_scope_dense_ordinal(scope_id)?;
-        let row = self
-            .event_program()
-            .route_arm_event_row_by_slot(slot, arm)?;
-        let mut idx = row.start();
-        while idx < row.end() {
-            if self
-                .event_program()
-                .operation_at(idx)
-                .is_some_and(|(_, direction)| {
-                    direction == crate::global::role_program::RoleLocalDirection::Recv
-                })
-            {
-                return Some(StateIndex::from_usize(idx));
-            }
-            idx += 1;
-        }
-        None
+        self.event_program()
+            .route_arm_first_operation(slot, arm, true)
+            .map(StateIndex::from_usize)
     }
 
     #[inline(always)]
@@ -381,18 +362,11 @@ impl EventCursorMachine {
     #[inline(always)]
     fn controller_arm_entry_by_arm(&self, scope_id: ScopeId, arm: u8) -> Option<(StateIndex, u8)> {
         let slot = self.route_scope_dense_ordinal(scope_id)?;
-        let row = self
+        let idx = self
             .event_program()
-            .route_arm_event_row_by_slot(slot, arm)?;
-        let mut idx = row.start();
-        while idx < row.end() {
-            let event = crate::invariant_some(self.event_program().event_row_at(idx));
-            if event.direction() != crate::global::role_program::RoleLocalDirection::Recv {
-                return Some((StateIndex::from_usize(idx), event.atom().label));
-            }
-            idx += 1;
-        }
-        None
+            .route_arm_first_operation(slot, arm, false)?;
+        let event = crate::invariant_some(self.event_program().event_row_at(idx));
+        Some((StateIndex::from_usize(idx), event.atom().label))
     }
 
     #[inline(always)]
@@ -408,11 +382,9 @@ impl EventCursorMachine {
 
 #[derive(Debug)]
 pub(crate) struct EventCursorState {
-    /// Primary typestate index used for scope queries.
+    /// Lookup context used for scope queries; it does not position lane heads.
     idx: u16,
-    /// Cached resident-row locator for compact lane rows.
-    resident_row_index: u16,
-    /// Per-lane descriptor event index; the cached row's end means no head.
+    /// Per-lane descriptor event index; the whole image's end means no head.
     /// Completion is tracked by `completed_event_words`, not by this locator.
     lane_cursors: *mut u16,
     /// Encoded current logical label for each lane's pending step.
@@ -463,7 +435,6 @@ impl EventCursorState {
         words are initialized for the computed word count before publication. */
         unsafe {
             core::ptr::addr_of_mut!((*dst).idx).write(0);
-            core::ptr::addr_of_mut!((*dst).resident_row_index).write(0);
             core::ptr::addr_of_mut!((*dst).lane_cursors).write(lane_cursors);
             core::ptr::addr_of_mut!((*dst).current_step_label_codes)
                 .write(current_step_label_codes);
@@ -489,9 +460,9 @@ impl EventCursorState {
 
 /// Cursor storage for role-local event progress.
 ///
-/// The resident row index is a compact locator for compiled lane rows. It is
-/// not a correctness barrier: joins and route-arm liveness are decided by
-/// dependency/conflict facts before a commit delta is accepted.
+/// Each lane has an independent locator into the whole compiled image. Joins
+/// and route-arm liveness are decided by dependency/conflict facts before a
+/// commit delta is accepted, independently of these lookup positions.
 #[derive(Debug)]
 pub(crate) struct EventCursor {
     machine: EventCursorMachine,
@@ -515,11 +486,6 @@ impl EventCursor {
     #[inline(always)]
     fn idx_usize(&self) -> usize {
         self.state().idx as usize
-    }
-
-    #[inline(always)]
-    fn resident_row_index_usize(&self) -> usize {
-        self.state().resident_row_index as usize
     }
 
     #[inline(always)]
@@ -793,7 +759,7 @@ impl EventCursor {
                         .completion_bit_count(),
                 ),
             );
-            (&mut *dst).seed_resident_lane_heads();
+            (&mut *dst).seed_lane_heads();
             (&mut *dst).rebuild_current_step_label_codes();
         }
     }

@@ -26,6 +26,7 @@ pub(in crate::global::role_program::image_impl) const fn decode_resident_roll_sc
     Some(ScopeId::roll_scope(raw_ordinal))
 }
 
+#[cfg(any(kani, all(test, hibana_repo_tests)))]
 pub(in crate::global::role_program::image_impl) const fn decode_resident_local_step_lane(
     raw: u8,
     logical_lane_count: usize,

@@ -258,6 +258,21 @@ fn compare<const E: usize, const B: usize>(tree: &Tree) {
             );
         }
     }
+    // This is the skip rule used by the compiled same-view predecessor chain.
+    // Derive its premise and conclusion from the grammar, independently of
+    // image links, row order indexes and the topology emitter/validator.
+    for after in 0..events {
+        for skipped in 0..after {
+            for before in 0..skipped {
+                if tree.before(before, after) && !tree.before(skipped, after) {
+                    assert!(
+                        tree.before(before, skipped),
+                        "predecessor skip: {tree:?} {before}/{skipped}/{after}"
+                    );
+                }
+            }
+        }
+    }
 }
 
 fn grammar(depth: usize) -> Vec<Tree> {

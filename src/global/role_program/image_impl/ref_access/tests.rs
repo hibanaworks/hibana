@@ -11,6 +11,7 @@ use std::{boxed::Box, panic::catch_unwind};
 
 mod operation_index;
 mod route_commit;
+mod route_topology;
 
 #[test]
 fn ordinary_roll_rows_must_match_the_complete_source_projection() {

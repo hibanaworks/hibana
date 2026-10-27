@@ -12,9 +12,7 @@ use crate::global::typestate::LocalNode;
 use crate::global::{
     compiled::images::CompiledProgramRef,
     const_dsl::{ReentryMark, ScopeId, ScopeKind},
-    role_program::{
-        LaneSetView, PackedLaneRange, PackedLocalEventRow, RoleImageRef, RoleLocalDirection,
-    },
+    role_program::{LaneSetView, PackedLaneRange, RoleImageRef, RoleLocalDirection},
     typestate::{
         EventCommitMeta, LocalDependency, PackedEventConflict, PassiveArmChildFact, RouteScopeRows,
         StateIndex,
@@ -49,6 +47,27 @@ impl LocalEventProgram {
 }
 
 impl LocalEventProgram {
+    /// Rows are constructor-checked in source order. A framed message names
+    /// its source effect directly; only its co-resident facets can match.
+    pub(crate) fn source_effect_candidates(&self, effect: usize) -> core::ops::Range<usize> {
+        let mut low = 0;
+        let mut high = self.local_len();
+        while low < high {
+            let middle = low + (high - low) / 2;
+            if self.rows().local_step_effect(middle).dense_ordinal() < effect {
+                low = middle + 1;
+            } else {
+                high = middle;
+            }
+        }
+        let start = low;
+        while low < self.local_len() && self.rows().local_step_effect(low).dense_ordinal() == effect
+        {
+            low += 1;
+        }
+        start..low
+    }
+
     /// Read operation identity without decoding its dependency, conflict, or
     /// message metadata. The image constructor validates their consistency.
     #[inline(always)]
@@ -57,18 +76,15 @@ impl LocalEventProgram {
         idx: usize,
     ) -> Option<(crate::eff::EffIndex, RoleLocalDirection)> {
         let count = self.local_len();
-        let row = if idx < count {
-            self.rows().lanes().local_step_event(idx)
-        } else {
+        if idx < count {
+            Some((
+                self.rows().local_step_effect(idx),
+                self.rows().local_step_direction(idx),
+            ))
+        } else if idx == count {
             None
-        };
-        match row {
-            Some(row) => Some((
-                crate::eff::EffIndex::from_dense_ordinal(row.eff_index as usize),
-                row.direction(),
-            )),
-            None if idx == count => None,
-            None => crate::invariant(),
+        } else {
+            crate::invariant()
         }
     }
 
@@ -102,11 +118,6 @@ impl LocalEventProgram {
     #[inline(always)]
     pub(crate) const fn footprint(&self) -> crate::global::role_program::RuntimeRoleFootprint {
         self.rows().footprint()
-    }
-
-    #[inline(always)]
-    pub(crate) fn resident_row_min_start(&self, idx: usize) -> Option<u16> {
-        self.rows().resident_row_min_start(idx)
     }
 
     #[inline(always)]
@@ -190,15 +201,9 @@ impl LocalEventProgram {
             let Some(row) = self.route_arm_event_row_by_slot(slot, arm) else {
                 continue;
             };
-            if row.start() < row.end() {
-                let Some((eff, direction)) = self.operation_at(row.start()) else {
-                    crate::invariant();
-                };
-                if matches!(
-                    direction,
-                    RoleLocalDirection::Send | RoleLocalDirection::Local
-                ) && self.program_ref().event_atom_at(eff.dense_ordinal()).from == controller
-                {
+            if self.rows().route_arm_first_operation(slot, arm, false) == Some(row.start()) {
+                let eff = self.rows().local_step_effect(row.start());
+                if self.program_ref().event_atom_at(eff.dense_ordinal()).from == controller {
                     return true;
                 }
             }
@@ -212,20 +217,33 @@ impl LocalEventProgram {
             .is_some_and(|slot| self.rows().route_scope_reentry_by_slot(slot))
     }
 
-    #[inline(never)]
+    #[inline(always)]
     pub(crate) fn has_reentry_scopes(&self) -> bool {
-        if self.rows().roll_scope_row(0).is_some() {
-            return true;
-        }
-        let mut slot = 0usize;
-        let limit = self.footprint().route_scope_count;
-        while slot < limit {
-            if self.rows().route_scope_reentry_by_slot(slot) {
-                return true;
-            }
-            slot += 1;
-        }
-        false
+        self.rows().has_reentry_scopes()
+    }
+
+    pub(crate) fn route_arm_first_operation(
+        &self,
+        slot: usize,
+        arm: u8,
+        receive: bool,
+    ) -> Option<usize> {
+        self.rows().route_arm_first_operation(slot, arm, receive)
+    }
+
+    #[inline(always)]
+    pub(crate) fn next_lane_step(&self, step: usize) -> usize {
+        self.rows().next_lane_step(step)
+    }
+
+    pub(crate) fn route_arm_view_lane_entry(
+        &self,
+        slot: usize,
+        arm: u8,
+        view: u8,
+        lane: u8,
+    ) -> Option<usize> {
+        self.rows().route_arm_view_lane_entry(slot, arm, view, lane)
     }
 
     #[inline(always)]
@@ -413,15 +431,9 @@ impl LocalEventProgram {
         if idx >= self.local_len() {
             return None;
         }
-        let event = crate::invariant_some(self.rows().lanes().local_step_event(idx));
-        let atom = self.program_ref().event_atom_at(event.eff_index as usize);
-        let conflict = self.rows().event_conflict_for_index(idx);
         Some(LocalEventRow {
             image: self.rows(),
-            event,
-            atom,
-            next: StateIndex::from_usize(idx + 1),
-            conflict,
+            index: idx as u16,
         })
     }
 }
@@ -464,65 +476,64 @@ impl LocalEventRowSet {
     }
 }
 
+/// A canonical row in a sealed image, with no copied descriptor or progress.
+/// Only `LocalEventProgram::event_row_at` constructs a row after checking its
+/// ordinal. Each query reads the immutable fields it actually needs.
 #[derive(Clone, Copy)]
 pub(crate) struct LocalEventRow {
     image: &'static RoleImageRef,
-    event: PackedLocalEventRow,
-    atom: crate::eff::EffAtom,
-    next: StateIndex,
-    conflict: PackedEventConflict,
+    index: u16,
 }
 
 impl LocalEventRow {
     #[inline(always)]
     pub(crate) fn logical_role(self) -> u8 {
-        if self.direction() == RoleLocalDirection::Recv {
-            self.atom.to
-        } else {
-            self.atom.from
-        }
+        self.image.local_step_logical_role(self.index as usize)
     }
 
     #[inline(always)]
     pub(crate) fn commit_meta(self) -> EventCommitMeta {
+        let atom = self.atom();
         EventCommitMeta::new(
             self.effect(),
-            self.atom.label,
-            self.atom.origin,
+            atom.label,
+            atom.origin,
             self.scope(),
             self.route_arm(),
-            self.atom.lane,
+            atom.lane,
         )
     }
 
     #[inline(always)]
     pub(crate) const fn next(self) -> StateIndex {
-        self.next
+        StateIndex::from_usize(self.index as usize + 1)
     }
 
     #[inline(always)]
     pub(crate) const fn direction(self) -> RoleLocalDirection {
-        self.event.direction()
+        self.image.local_step_direction(self.index as usize)
     }
 
     #[inline(always)]
     pub(crate) const fn effect(self) -> crate::eff::EffIndex {
-        crate::eff::EffIndex::from_dense_ordinal(self.event.eff_index as usize)
+        self.image.local_step_effect(self.index as usize)
     }
 
     #[inline(always)]
     pub(crate) const fn atom(self) -> crate::eff::EffAtom {
-        self.atom
+        self.image
+            .program()
+            .event_atom_at(self.effect().dense_ordinal())
     }
 
     #[inline(always)]
     pub(crate) const fn scope(self) -> ScopeId {
-        self.event.scope()
+        self.image.local_step_scope(self.index as usize)
     }
 
     #[inline(always)]
     pub(crate) const fn route_arm(self) -> Option<u8> {
-        match self.conflict.to_conflict() {
+        match self.conflict().to_conflict() {
             Some(crate::global::typestate::LocalConflict::RouteArm { arm, .. }) => Some(arm),
             _ => None,
         }
@@ -530,7 +541,7 @@ impl LocalEventRow {
 
     #[inline(always)]
     pub(crate) const fn route_scope(self) -> ScopeId {
-        match self.conflict.to_conflict() {
+        match self.conflict().to_conflict() {
             Some(crate::global::typestate::LocalConflict::RouteArm { scope, .. }) => scope,
             _ => ScopeId::none(),
         }
@@ -538,25 +549,26 @@ impl LocalEventRow {
 
     #[inline(always)]
     pub(crate) const fn choice(self) -> crate::global::typestate::RouteChoiceMark {
-        self.event.choice_mark()
+        self.image.local_step_choice(self.index as usize)
     }
 
     #[inline(always)]
     pub(crate) const fn dependency(self) -> Option<LocalDependency> {
-        self.image.lanes().dependency_row(self.event.dependency_row)
+        self.image.dependency_for_index(self.index as usize)
     }
 
     #[inline(always)]
     pub(crate) const fn conflict(self) -> PackedEventConflict {
-        self.conflict
+        self.image.event_conflict_for_index(self.index as usize)
     }
 
     pub(crate) fn matches_commit(self, event: EventCommitMeta) -> bool {
+        let atom = self.atom();
         self.scope() == event.scope
             && self.route_arm() == event.route_arm
             && self.effect() == event.eff_index
-            && self.atom.label == event.label
-            && self.atom.origin == event.origin
-            && self.atom.lane == event.lane
+            && atom.label == event.label
+            && atom.origin == event.origin
+            && atom.lane == event.lane
     }
 }

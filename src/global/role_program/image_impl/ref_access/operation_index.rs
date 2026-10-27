@@ -2,12 +2,11 @@ use super::{RoleImageRef, invalid_resident_descriptor};
 
 impl RoleImageRef {
     const fn operation_key_for_step(&self, step: usize) -> u32 {
-        let row = match self.lanes().local_step_event(step) {
-            Some(row) => row,
-            None => invalid_resident_descriptor(),
-        };
-        let atom = self.program().event_atom_at(row.eff_index as usize);
-        super::super::event_rows::operation_index_key(row.flags, atom.from, atom.to, atom.label)
+        let atom = self
+            .program()
+            .event_atom_at(self.local_step_effect(step).dense_ordinal());
+        self.local_step_direction(step)
+            .operation_index_key(atom.from, atom.to, atom.label)
     }
 
     const fn operation_step_at(&self, slot: usize) -> usize {

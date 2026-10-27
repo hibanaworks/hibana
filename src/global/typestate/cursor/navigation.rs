@@ -74,6 +74,12 @@ impl EventCursor {
             },
         )
     }
+
+    pub(crate) fn framed_receive_candidates(&self, frame_label: u16) -> core::ops::Range<usize> {
+        self.machine()
+            .event_program()
+            .source_effect_candidates(usize::from(frame_label))
+    }
     /// Current typestate index.
     #[inline(always)]
     pub(crate) fn index(&self) -> usize {

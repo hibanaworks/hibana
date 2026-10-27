@@ -27,7 +27,11 @@ where
         let current_idx = self.progress.cursor.index();
         let mut matched = UniqueMatch::NONE;
         let mut admission_pending = false;
-        for idx in 0..self.progress.cursor.local_steps_len() {
+        for idx in self
+            .progress
+            .cursor
+            .framed_receive_candidates(key.frame_label)
+        {
             let Some(meta) = self.progress.cursor.try_recv_meta_at(idx) else {
                 continue;
             };
@@ -145,7 +149,6 @@ where
         if target_idx != current_idx {
             self.commit_cursor_realign_index(target_idx)
                 .map_err(|_| RecvError::PhaseInvariant)?;
-            self.sync_lane_offer_state();
         }
         let mut selection = self.offer_scope_selection_for_scope_lane_with_selected_arm(
             scope_id,
@@ -225,7 +228,7 @@ where
         if lane_idx >= self.progress.cursor.logical_lane_count() {
             return Err(RecvError::PhaseInvariant);
         }
-        let mut info = self.progress.decision_state.lane_offer_state(lane_idx);
+        let info = self.progress.decision_state.lane_offer_state(lane_idx);
         if info.scope.is_none() {
             return Ok(None);
         }
@@ -234,14 +237,6 @@ where
         {
             self.commit_cursor_realign_index(state_index_to_usize(info.entry))
                 .map_err(|_| RecvError::PhaseInvariant)?;
-            self.sync_lane_offer_state();
-            info = self.progress.decision_state.lane_offer_state(lane_idx);
-            if info.scope.is_none()
-                || info.entry.is_absent()
-                || state_index_to_usize(info.entry) != self.progress.cursor.index()
-            {
-                return Err(RecvError::PhaseInvariant);
-            }
         }
         let scope_id = info.scope;
         let current_idx = self.progress.cursor.index();

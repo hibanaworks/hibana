@@ -210,6 +210,10 @@ fn resident_actor_image_checks_both_sides_before_publication() {
         bytes[index] = 0;
         bytes[index + 2] = 2;
         bytes[index + 4] = 1;
+        let successors = COLUMNS.lane_successors().start;
+        bytes[successors] = 1;
+        bytes[successors + 2] = 2;
+        bytes[successors + 4] = 3;
         bytes
     }
     static LOCAL: [u8; 64] = local_bytes();

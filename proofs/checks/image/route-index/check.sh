@@ -6,5 +6,18 @@ LEAN_BIN="${LEAN_BIN:-lean}"
 "$LEAN_BIN" --version | bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" version
 "$LEAN_BIN" "$HERE/RouteIndex.lean"
 "$LEAN_BIN" "$HERE/RouteAncestry.lean"
+topology_evidence="$(mktemp -d /tmp/hibana-route-topology.XXXXXX)"
+trap 'rm -r -- "$topology_evidence"' EXIT
+topology_log="$topology_evidence/lean.log"
+if ! "$LEAN_BIN" "$HERE/RouteTopology.lean" > "$topology_log" 2>&1; then
+  cat "$topology_log" >&2
+  exit 1
+fi
+cat "$topology_log"
+bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" lean "$topology_log" 3
+rustc +stable --edition=2024 -O "$HERE/source_shape_check.rs" \
+  -o "$topology_evidence/source-shape-check"
+"$topology_evidence/source-shape-check"
 bash "$ROOT/.github/scripts/check_smt2.sh" "$HERE/RouteIndex.smt2"
 bash "$ROOT/.github/scripts/check_smt2.sh" "$HERE/RouteAncestry.smt2"
+bash "$ROOT/.github/scripts/check_smt2.sh" "$HERE/RouteTopology.smt2"

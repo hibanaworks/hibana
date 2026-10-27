@@ -17,6 +17,8 @@ use crate::global::{
 mod entry_resources;
 mod operation_index;
 mod parallel_masks;
+mod route_topology;
+mod steps;
 #[cfg(all(test, hibana_repo_tests))]
 mod tests;
 mod validation;
@@ -94,6 +96,7 @@ impl RuntimeRoleFacts {
 
 const PASSIVE_PARENT_INDEX: u8 = 2;
 const PARALLEL_REENTRY_INDEX: u8 = 4;
+const REENTRY_INDEX: u8 = 8;
 
 impl RoleImageRef {
     #[cfg(hibana_profile)]
@@ -165,6 +168,19 @@ impl RoleImageRef {
         if image.parallel_reentry_is_borrowable() {
             image.lookup_indexes |= PARALLEL_REENTRY_INDEX;
         }
+        image.validate_route_topology();
+        if image.columns.roll_scopes.len != 0 {
+            image.lookup_indexes |= REENTRY_INDEX;
+        } else {
+            let mut slot = 0;
+            while slot < image.columns.route_scopes.len as usize {
+                if image.lanes().route_scope_reentry_by_slot(slot) {
+                    image.lookup_indexes |= REENTRY_INDEX;
+                    break;
+                }
+                slot += 1;
+            }
+        }
         image
     }
 
@@ -203,6 +219,11 @@ impl RoleImageRef {
     }
 
     #[inline(always)]
+    pub(crate) const fn has_reentry_scopes(&self) -> bool {
+        self.lookup_indexes & REENTRY_INDEX != 0
+    }
+
+    #[inline(always)]
     pub(crate) const fn lanes(&self) -> RoleLaneImage<'_> {
         RoleLaneImage::new(&self.columns, self.blob)
     }
@@ -232,6 +253,7 @@ impl RoleImageRef {
             .lane_bit_view(self.active_lane_row(), footprint.lane_word_count())
     }
 
+    #[cfg(all(test, hibana_repo_tests))]
     #[inline(always)]
     pub(crate) const fn resident_row_min_start(&self, idx: usize) -> Option<u16> {
         self.lanes().resident_row_min_start(idx)
@@ -271,16 +293,6 @@ impl RoleImageRef {
         } else {
             Some(len as u16)
         }
-    }
-
-    #[inline(always)]
-    pub(crate) const fn dependency_for_index(&self, current_idx: usize) -> Option<LocalDependency> {
-        self.lanes().dependency_for_index(current_idx)
-    }
-
-    #[inline(always)]
-    pub(crate) const fn event_conflict_for_index(&self, current_idx: usize) -> PackedEventConflict {
-        self.lanes().event_conflict_for_index(current_idx)
     }
 
     #[inline(always)]
@@ -372,20 +384,6 @@ impl RoleImageRef {
                 .certified_route_arm_event_row_by_slot(slot, arm)
         } else {
             self.lanes().route_arm_event_row_by_slot(slot, arm)
-        }
-    }
-
-    #[inline(always)]
-    pub(crate) const fn local_step_lane(&self, step_idx: usize) -> Option<u8> {
-        if step_idx >= self.local_step_count() {
-            return None;
-        }
-        match self
-            .lanes()
-            .local_step_lane(step_idx, self.footprint().logical_lane_count)
-        {
-            Some(lane) => Some(lane),
-            None => invalid_resident_descriptor(),
         }
     }
 

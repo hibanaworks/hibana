@@ -547,6 +547,8 @@ carrierは、保持者の変更をまたいで、受理済みの古いframeも�
 | コンパイル済みglobal protocol | 65,535バイト |
 | コンパイル済みlocal protocol | ロールごとに65,535バイト |
 | Localのroute検索索引 | ロールごとに最大16,384バイトを追加 |
+| Localのoffer検索データ | routeを含む場合、localのイベントごとに4バイト、routeごとに8バイトを追加 |
+| Localのlane内の次の操作 | localのイベントごとに2バイトを追加 |
 | Globalのscope検索索引 | プロトコルごとに最大102,852バイトを追加 |
 | Globalのroute検索索引 | プロトコルごとに最大16,384バイトを追加 |
 | メッセージだけのglobal protocol | 1イベントにつき9バイトで、最大7,281イベント |

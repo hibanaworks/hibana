@@ -421,22 +421,6 @@ impl EventCursor {
         true
     }
 
-    #[inline]
-    fn event_step_is_before(&self, idx: usize, lane: u8, current_step: Option<usize>) -> bool {
-        let Ok(target) = self.relocatable_resident_lane_step_at_index(idx, lane as usize) else {
-            crate::invariant();
-        };
-        let Some(current_step) = current_step else {
-            return true;
-        };
-        (target.0.step_idx as usize) < current_step
-    }
-
-    #[inline]
-    pub(super) fn event_is_before_lane_cursor(&self, idx: usize, lane: u8) -> bool {
-        self.event_step_is_before(idx, lane, self.step_index_at_lane(lane as usize))
-    }
-
     #[inline(never)]
     pub(crate) fn roll_reentry_event_allows_index(
         &self,

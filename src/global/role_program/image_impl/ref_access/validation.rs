@@ -106,7 +106,7 @@ impl RoleImageRef {
             let _ = self.local_step_node(idx);
             // event_row_at, reached by receive route authority, checks this
             // dependency even when the operation will not match a carried key.
-            let _ = self.dependency_for_index(idx);
+            let _ = lanes.dependency_for_index(idx);
             while let Some(slot) = current {
                 let Some(extent) = self.route_extent(slot) else {
                     invalid_resident_descriptor();

@@ -81,7 +81,11 @@ fn route_index_preserves_the_complete_compact_protocol_byte_span() {
     columns.route_index_len = ScopeId::LOCAL_CAPACITY;
     columns.validate_blob_bound();
     assert_eq!(columns.operation_index().end_offset(2), u16::MAX as usize);
-    assert_eq!(columns.blob_len(), CAPACITY);
+    assert_eq!(
+        columns.route_index().end,
+        u16::MAX as usize + ScopeId::LOCAL_CAPACITY as usize * 2
+    );
+    assert!(columns.blob_len() <= CAPACITY);
     let mut overlapping = columns;
     overlapping.dependencies = ColumnRange {
         offset: u16::MAX - 1,
@@ -94,8 +98,9 @@ fn route_index_preserves_the_complete_compact_protocol_byte_span() {
         let raw = ScopeId::MAX_LOCAL_ORDINAL;
         bytes[0] = raw as u8;
         bytes[1] = (raw >> 8) as u8;
-        bytes[CAPACITY - 2] = 0;
-        bytes[CAPACITY - 1] = 0;
+        let at = u16::MAX as usize + ScopeId::LOCAL_CAPACITY as usize * 2 - 2;
+        bytes[at] = 0;
+        bytes[at + 1] = 0;
         bytes
     };
     assert!(route_index_is_coherent(&BYTES, columns));
