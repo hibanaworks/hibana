@@ -118,6 +118,22 @@ theorem skipping_an_excluded_prefix_preserves_pending_blockers
   · rintro ⟨i, low, high, pending, active⟩
     exact ⟨i, Nat.le_trans forward low, high, pending, active⟩
 
+-- The same jump preserves the nonempty local domain required by roll
+-- completion. An excluded arm cannot supply its participation witness.
+theorem skipping_an_excluded_prefix_preserves_participation
+    (live : Nat → Bool) (start next finish : Nat) (forward : start ≤ next)
+    (excluded : ∀ i, start ≤ i → i < next → live i = false) :
+    (∃ i, start ≤ i ∧ i < finish ∧ live i = true) ↔
+    (∃ i, next ≤ i ∧ i < finish ∧ live i = true) := by
+  constructor
+  · rintro ⟨i, low, high, active⟩
+    by_cases after : next ≤ i
+    · exact ⟨i, after, high, active⟩
+    · have dead := excluded i low (Nat.lt_of_not_ge after)
+      simp [dead] at active
+  · rintro ⟨i, low, high, active⟩
+    exact ⟨i, Nat.le_trans forward low, high, active⟩
+
 theorem excluded_arm_jump_is_strictly_forward (index armEnd queryEnd : Nat)
     (inside : index < armEnd) (queried : index < queryEnd) :
     index < min armEnd queryEnd := by omega
@@ -147,6 +163,7 @@ theorem a_conflicting_ancestor_excludes_its_event
 #print axioms local_event_words_fit_storage
 #print axioms compact_completion_extent_fits_usize
 #print axioms skipping_an_excluded_prefix_preserves_pending_blockers
+#print axioms skipping_an_excluded_prefix_preserves_participation
 #print axioms excluded_arm_jump_is_strictly_forward
 #print axioms a_conflicting_ancestor_excludes_its_event
 

@@ -6,7 +6,7 @@ mod tests;
 use crate::global::event_program::LocalEventRowSet;
 
 impl EventCursor {
-    fn excluded_arm_end(&self, index: usize, scope: ScopeId, arm: u8) -> usize {
+    pub(super) fn excluded_arm_end(&self, index: usize, scope: ScopeId, arm: u8) -> usize {
         let slot = crate::invariant_some(self.route_scope_slot_inner(scope));
         let row = crate::invariant_some(
             self.machine()

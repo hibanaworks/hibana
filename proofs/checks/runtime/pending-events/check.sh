@@ -10,4 +10,4 @@ lean proofs/checks/runtime/pending-events/Scan.lean 2>&1 | tee "$scan_evidence/l
 bash .github/scripts/lib/supplemental_proofs_tool.sh lean-clean "$scan_evidence/lean.log"
 z3 proofs/checks/runtime/pending-events/Scan.smt2 | tee "$scan_evidence/z3.log"
 bash .github/scripts/lib/supplemental_proofs_tool.sh smt-sequence "$scan_evidence/z3.log" sat unsat sat unsat sat sat unsat sat unsat sat unsat unsat unsat
-printf 'Pending-event scan: Lean 13 theorems; Z3 7 UNSAT obligations, 6 SAT premises and controls. Evidence: %s\n' "$scan_evidence"
+printf 'Pending-event scan: Lean 14 theorems; Z3 7 UNSAT obligations, 6 SAT premises and controls. Evidence: %s\n' "$scan_evidence"

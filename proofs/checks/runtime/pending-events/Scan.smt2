@@ -36,7 +36,11 @@
 (assert (= (bvand live skipped) #x00000000))
 ; A rejected arm contains no live step, including unknown completion bits.
 (check-sat)
-(assert (not (= (bvand pending live) (bvand remaining live))))
+; Both the pending blocker set and the nonempty participation domain survive.
+(assert (not (and
+  (= (bvand pending live) (bvand remaining live))
+  (= (bvand live mask)
+     (bvand live (bvand (bvshl full cut) (clippedPrefix high)))))))
 (check-sat)
 (pop)
 (push)

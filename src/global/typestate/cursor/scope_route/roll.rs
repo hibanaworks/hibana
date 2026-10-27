@@ -169,37 +169,63 @@ impl EventCursor {
         selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
     ) -> bool {
         let row = crate::invariant_some(self.machine().roll_scope_row(scope));
-        let mut participates = |idx| {
-            self.event_lane_at(idx).is_some()
-                && self.event_actor_is_local(idx, &mut *selected_arm_for_scope) != Some(false)
-                && self.event_conflict_row_allows(
-                    self.machine().event_conflict_for_index(idx),
-                    ScopeId::none(),
-                    None,
-                    &mut *selected_arm_for_scope,
-                )
-        };
         // Completion is the existing bitmap's authority. Only its clear bits
-        // can block this scope; do not decode its completed prefix repeatedly.
-        if self
-            .pending_event_steps(row.start()..row.end())
-            .any(|index| {
-                participates(index)
-                    && (self
-                        .machine()
-                        .event_program()
-                        .footprint()
-                        .borrow_epoch_count
-                        == 0
-                        || self
-                            .roll_reentry_preserved_child(scope, index, entry)
-                            .is_none())
-            })
-        {
-            return false;
+        // can block this scope. An excluded arm has no participating events,
+        // so skip its whole row rather than decoding each clear bit in it.
+        let mut pending = self.pending_event_steps(row.start()..row.end());
+        while let Some(index) = pending.next() {
+            match self.event_conflict_row_admission(
+                self.machine().event_conflict_for_index(index),
+                ScopeId::none(),
+                None,
+                selected_arm_for_scope,
+            ) {
+                super::ConflictAdmission::Excluded { scope, arm } => {
+                    let end = self.excluded_arm_end(index, scope, arm).min(row.end());
+                    pending = self.pending_event_steps(end..row.end());
+                }
+                super::ConflictAdmission::Allowed
+                    if self.event_lane_at(index).is_some()
+                        && self.event_actor_is_local(index, selected_arm_for_scope)
+                            != Some(false)
+                        && (self
+                            .machine()
+                            .event_program()
+                            .footprint()
+                            .borrow_epoch_count
+                            == 0
+                            || self
+                                .roll_reentry_preserved_child(scope, index, entry)
+                                .is_none()) =>
+                {
+                    return false;
+                }
+                super::ConflictAdmission::Allowed | super::ConflictAdmission::Invalid => {}
+            }
         }
         // A scope with no participating event is absent, rather than complete.
-        (row.start()..row.end()).any(participates)
+        let mut index = row.start();
+        while index < row.end() {
+            match self.event_conflict_row_admission(
+                self.machine().event_conflict_for_index(index),
+                ScopeId::none(),
+                None,
+                selected_arm_for_scope,
+            ) {
+                super::ConflictAdmission::Excluded { scope, arm } => {
+                    index = self.excluded_arm_end(index, scope, arm).min(row.end());
+                }
+                super::ConflictAdmission::Allowed
+                    if self.event_lane_at(index).is_some()
+                        && self.event_actor_is_local(index, selected_arm_for_scope)
+                            != Some(false) =>
+                {
+                    return true;
+                }
+                super::ConflictAdmission::Allowed | super::ConflictAdmission::Invalid => index += 1,
+            }
+        }
+        false
     }
 
     #[inline(never)]

@@ -86,6 +86,11 @@ fn scope_completion_matches_selected_members_for_every_completion_pattern() {
     )
     .roll();
     let nested = g::seq(exchange, g::send::<0, 1, Notice>()).roll();
+    let nested_choice = g::route(
+        g::route(g::send::<0, 1, Request>(), g::send::<0, 1, Reply>()),
+        g::par(g::send::<0, 1, Notice>(), g::send::<0, 1, Other>()),
+    )
+    .roll();
     type Loan = Msg<9, Endpoint<'static, 10>>;
     let owned = g::seq(
         g::send::<10, 2, Request>(),
@@ -106,9 +111,72 @@ fn scope_completion_matches_selected_members_for_every_completion_pattern() {
         project::<2>(&choice).role_image_ref(),
         project::<0>(&nested).role_image_ref(),
         project::<1>(&nested).role_image_ref(),
+        project::<0>(&nested_choice).role_image_ref(),
+        project::<1>(&nested_choice).role_image_ref(),
         project::<0>(&owned).role_image_ref(),
         project::<1>(&owned).role_image_ref(),
     ] {
         compare_completion_domains(rows);
+    }
+}
+
+#[test]
+fn roll_completion_skips_excluded_arms_without_skipping_the_continuation() {
+    fn block<const LABEL: u8>() -> impl crate::global::program::Projectable {
+        let one = || g::send::<0, 1, Msg<LABEL, ()>>();
+        let two = || g::seq(one(), one());
+        let four = || g::seq(two(), two());
+        let eight = || g::seq(four(), four());
+        let sixteen = || g::seq(eight(), eight());
+        g::seq(sixteen(), sixteen())
+    }
+    let global = g::seq(
+        g::route(block::<1>(), block::<2>()),
+        g::send::<0, 1, Msg<3, ()>>(),
+    )
+    .roll();
+    for image in [
+        project::<0>(&global).role_image_ref(),
+        project::<1>(&global).role_image_ref(),
+    ] {
+        assert_eq!(image.local_step_count(), 65);
+        let choice = image.route_scope_by_slot(0).unwrap();
+        with_rows(image, |cursor| {
+            let (scope, _) = cursor.machine().roll_scope_row_by_slot(0).unwrap();
+            for selected in [None, Some(0), Some(1)] {
+                for left in [false, true] {
+                    for right in [false, true] {
+                        for continuation in [false, true] {
+                            for index in 0..65 {
+                                let done = match index {
+                                    0..32 => left,
+                                    32..64 => right,
+                                    64 => continuation,
+                                    _ => unreachable!(),
+                                };
+                                if done {
+                                    cursor.mark_local_event_done(index);
+                                } else {
+                                    cursor.clear_local_event_done(index);
+                                }
+                            }
+                            let expected = continuation
+                                && (selected == Some(1) || left)
+                                && (selected == Some(0) || right);
+                            let before = cursor.completed_event_words().to_vec();
+                            assert_eq!(
+                                cursor.roll_scope_events_complete(scope, &mut |requested| {
+                                    assert_eq!(requested, choice);
+                                    selected
+                                }),
+                                expected,
+                                "selected={selected:?}, left={left}, right={right}, continuation={continuation}"
+                            );
+                            assert_eq!(cursor.completed_event_words(), before);
+                        }
+                    }
+                }
+            }
+        });
     }
 }
