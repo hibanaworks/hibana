@@ -12245,8 +12245,11 @@ Hibana.packed_route_arm_accepts_4096_event_start : @Eq.{1} (Option.{0} Hibana.De
         (@OfNat.ofNat.{0} Nat (nat_lit 4096) (instOfNatNat (nat_lit 4096)))
         (@OfNat.ofNat.{0} Nat (nat_lit 65536) (instOfNatNat (nat_lit 65536))))
       (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1))))
-    (@OfNat.ofNat.{0} Nat (nat_lit 3) (instOfNatNat (nat_lit 3)))
-    (@OfNat.ofNat.{0} Nat (nat_lit 4097) (instOfNatNat (nat_lit 4097))))
+    (@HAdd.hAdd.{0, 0, 0} Nat Nat Nat (@instHAdd.{0} Nat instAddNat)
+      (@OfNat.ofNat.{0} Nat (nat_lit 65536) (instOfNatNat (nat_lit 65536)))
+      (@OfNat.ofNat.{0} Nat (nat_lit 3) (instOfNatNat (nat_lit 3))))
+    (@OfNat.ofNat.{0} Nat (nat_lit 4097) (instOfNatNat (nat_lit 4097)))
+    (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0))))
   (@some.{0} Hibana.DecodedPackedRouteArm
     { eventStart := @OfNat.ofNat.{0} Nat (nat_lit 4096) (instOfNatNat (nat_lit 4096)),
       eventLength := @OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1)),
@@ -12256,10 +12259,11 @@ Hibana.packed_route_arm_encodes_full_lane_domain : @Eq.{1} (Option.{0} Hibana.De
   (Hibana.decodePackedRouteArm? (@OfNat.ofNat.{0} Nat (nat_lit 256) (instOfNatNat (nat_lit 256)))
     (@HAdd.hAdd.{0, 0, 0} Nat Nat Nat (@instHAdd.{0} Nat instAddNat)
       (@HMul.hMul.{0, 0, 0} Nat Nat Nat (@instHMul.{0} Nat instMulNat)
-        (@OfNat.ofNat.{0} Nat (nat_lit 255) (instOfNatNat (nat_lit 255)))
+        (@OfNat.ofNat.{0} Nat (nat_lit 256) (instOfNatNat (nat_lit 256)))
         (@OfNat.ofNat.{0} Nat (nat_lit 65536) (instOfNatNat (nat_lit 65536))))
       (@OfNat.ofNat.{0} Nat (nat_lit 65535) (instOfNatNat (nat_lit 65535))))
-    (@OfNat.ofNat.{0} Nat (nat_lit 256) (instOfNatNat (nat_lit 256))))
+    (@OfNat.ofNat.{0} Nat (nat_lit 256) (instOfNatNat (nat_lit 256)))
+    (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0))))
   (@some.{0} Hibana.DecodedPackedRouteArm
     { eventStart := @OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0)),
       eventLength := @OfNat.ofNat.{0} Nat (nat_lit 256) (instOfNatNat (nat_lit 256)),
@@ -12272,8 +12276,13 @@ Hibana.packed_route_arm_reaches_last_u16_event : @Eq.{1} (Option.{0} Hibana.Deco
         (@OfNat.ofNat.{0} Nat (nat_lit 65534) (instOfNatNat (nat_lit 65534)))
         (@OfNat.ofNat.{0} Nat (nat_lit 65536) (instOfNatNat (nat_lit 65536))))
       (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1))))
+    (@HAdd.hAdd.{0, 0, 0} Nat Nat Nat (@instHAdd.{0} Nat instAddNat)
+      (@HMul.hMul.{0, 0, 0} Nat Nat Nat (@instHMul.{0} Nat instMulNat)
+        (@OfNat.ofNat.{0} Nat (nat_lit 65535) (instOfNatNat (nat_lit 65535)))
+        (@OfNat.ofNat.{0} Nat (nat_lit 65536) (instOfNatNat (nat_lit 65536))))
+      (@OfNat.ofNat.{0} Nat (nat_lit 65535) (instOfNatNat (nat_lit 65535))))
     (@OfNat.ofNat.{0} Nat (nat_lit 65535) (instOfNatNat (nat_lit 65535)))
-    (@OfNat.ofNat.{0} Nat (nat_lit 65535) (instOfNatNat (nat_lit 65535))))
+    (@OfNat.ofNat.{0} Nat (nat_lit 65534) (instOfNatNat (nat_lit 65534))))
   (@some.{0} Hibana.DecodedPackedRouteArm
     { eventStart := @OfNat.ofNat.{0} Nat (nat_lit 65534) (instOfNatNat (nat_lit 65534)),
       eventLength := @OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1)),
@@ -12282,7 +12291,8 @@ Hibana.packed_route_arm_reaches_last_u16_event : @Eq.{1} (Option.{0} Hibana.Deco
 Hibana.packed_route_arm_rejects_noncanonical_empty_event_range : @Eq.{1} (Option.{0} Hibana.DecodedPackedRouteArm)
   (Hibana.decodePackedRouteArm? (@OfNat.ofNat.{0} Nat (nat_lit 65536) (instOfNatNat (nat_lit 65536)))
     (@OfNat.ofNat.{0} Nat (nat_lit 65535) (instOfNatNat (nat_lit 65535)))
-    (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1))))
+    (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1)))
+    (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0))))
   (@none.{0} Hibana.DecodedPackedRouteArm)
 Hibana.packed_route_authority_dynamic_roundtrip : ∀ (scope resolver : Nat),
   @LT.lt.{0} Nat instLTNat scope Hibana.productionScopeCapacity →
