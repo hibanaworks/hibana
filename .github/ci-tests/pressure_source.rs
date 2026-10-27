@@ -7,6 +7,7 @@ enum Messages {
     DistinctSchemas,
     CausalHandoff,
     Alternating,
+    DisjointPairs,
 }
 
 fn sequence(start: usize, end: usize, messages: Messages) -> String {
@@ -22,6 +23,11 @@ fn sequence(start: usize, end: usize, messages: Messages) -> String {
                 let source = idx % 2;
                 let target = 1 - source;
                 let label = 1 + source;
+                format!("g::send::<{source}, {target}, g::Msg<{label}, ()>>()")
+            }
+            Messages::DisjointPairs => {
+                let source = 2 * (idx % 3);
+                let target = source + 1;
                 format!("g::send::<{source}, {target}, g::Msg<{label}, ()>>()")
             }
             Messages::DistinctSchemas => {
@@ -42,6 +48,7 @@ fn generate(mode: &str, shape: &str, count: usize) -> Result<String, String> {
         return Err("pressure source count must be in 1..65535".into());
     }
     let (messages, template) = match (mode, shape) {
+        ("causal", "capacity") => (Messages::DisjointPairs, pressure_templates::CAPACITY),
         ("causal", "alternating") => (Messages::Alternating, pressure_templates::ALTERNATING),
         ("causal", _) => (Messages::CausalHandoff, pressure_templates::CAUSAL),
         ("route", _) => (Messages::DistinctSchemas, pressure_templates::ROUTE),
@@ -50,7 +57,7 @@ fn generate(mode: &str, shape: &str, count: usize) -> Result<String, String> {
     };
     let first = sequence(0, count, messages);
     let program = match (mode, shape) {
-        ("causal", "linear" | "alternating") | ("message", _) => first,
+        ("causal", "linear" | "alternating" | "capacity") | ("message", _) => first,
         ("causal", "route") => format!(
             "g::route({first}, {}).resolve::<7>()",
             sequence(count, count * 2, messages)

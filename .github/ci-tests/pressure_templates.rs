@@ -1,3 +1,16 @@
+pub const CAPACITY: &str = r###"#![no_std]
+#![deny(warnings)]
+#![forbid(long_running_const_eval)]
+
+use hibana::g;
+use hibana::runtime::program::{project, RoleProgram};
+
+#[inline(never)]
+pub fn projected_roles() -> (RoleProgram<0>, RoleProgram<1>, RoleProgram<2>, RoleProgram<3>, RoleProgram<4>, RoleProgram<5>) {
+    let program = {PROGRAM};
+    (project(&program), project(&program), project(&program), project(&program), project(&program), project(&program))
+}
+"###;
 pub const ALTERNATING: &str = r###"#![no_std]
 #![deny(warnings)]
 #![forbid(long_running_const_eval)]

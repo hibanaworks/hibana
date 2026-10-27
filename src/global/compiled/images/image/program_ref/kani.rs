@@ -320,6 +320,7 @@ static DIFFERENT_FINAL_BYTE: CompiledProgramRef = program(
 );
 
 #[kani::proof]
+#[kani::unwind(10)]
 fn program_atom_row_decoding_accepts_exact_domain() {
     let bytes: [u8; 9] = kani::any();
     let max_role: u8 = kani::any();
@@ -338,6 +339,32 @@ fn program_atom_row_decoding_accepts_exact_domain() {
         assert!(atom.payload.kind_bits() == bytes[7] & 2);
         assert!(atom.origin.packed_bits() == bytes[7] & 1);
         assert!(atom.lane == bytes[8]);
+
+        // One atom has nine bytes; construction loops visit at most those
+        // bytes or the single ownership row. Unwinding assertions stay enabled.
+        let image_bytes = [
+            bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+            bytes[8], 0, 0, 0, 0, bytes[0], 0, bytes[1], 0, bytes[3], bytes[0],
+        ];
+        // SAFETY: the bytes outlive all uses of this reference in the harness;
+        // neither the reference nor the compiled image escapes it.
+        let image_bytes: &'static [u8; 19] = unsafe { core::mem::transmute(&image_bytes) };
+        let image = if bytes[7] & 2 != 0 {
+            type Transfer = crate::g::Send<0, 1, crate::g::Msg<0, crate::Endpoint<'static, 2>>>;
+            const SOURCE: crate::g::ProgramSourceData<1> =
+                crate::g::ProgramSourceData::lower::<Transfer>();
+            const COLUMNS: ProgramImageColumns =
+                crate::global::compiled::images::ProgramImagePlan::from_source(&SOURCE).columns();
+            program(image_bytes, ProgramImageFacts { max_role }, COLUMNS)
+        } else {
+            program(
+                image_bytes,
+                ProgramImageFacts { max_role },
+                ProgramImageColumns::new(1, 0, 0, 0),
+            )
+        };
+        assert_eq!(image.atom_at(0), Some(atom));
+        assert_eq!(image.event_atom_at(0), atom);
     }
 }
 

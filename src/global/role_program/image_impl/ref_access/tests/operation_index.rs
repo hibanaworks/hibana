@@ -108,6 +108,24 @@ fn indexed_operations_match_decoded_rows_with_duplicates_parallelism_and_choices
 }
 
 #[test]
+fn indexed_operations_preserve_role_and_label_radix_boundaries() {
+    type Low = Msg<15, ()>;
+    type High = Msg<16, ()>;
+    type Max = Msg<255, ()>;
+    let global = g::seq(
+        g::par(g::send::<0, 15, Max>(), g::send::<16, 255, Low>()),
+        g::seq(
+            g::par(g::send::<15, 0, High>(), g::send::<255, 16, Max>()),
+            g::send::<255, 255, Max>(),
+        ),
+    );
+    compare(project::<0>(&global).role_image_ref());
+    compare(project::<15>(&global).role_image_ref());
+    compare(project::<16>(&global).role_image_ref());
+    compare(project::<255>(&global).role_image_ref());
+}
+
+#[test]
 fn actor_operation_index_preserves_logical_roles_and_rolled_rows() {
     type Loan = Msg<1, Endpoint<'static, 10>>;
     type Read = Msg<3, u32>;

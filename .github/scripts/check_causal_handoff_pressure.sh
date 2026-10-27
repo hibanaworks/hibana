@@ -63,6 +63,8 @@ build_case() {
   set +e
   if [[ "${shape}" == "linear" ]]; then
     pressure_label="causal_handoff_${count}"
+  elif [[ "${shape}" == "capacity" ]]; then
+    pressure_label="global_capacity_${count}"
   fi
   HIBANA_COMPILE_PRESSURE_LABEL="${pressure_label}" \
     HIBANA_COMPILE_PRESSURE_BUDGETS="${ROOT_DIR}/.github/measurement_snapshots/hibana-compile-pressure-budget.tsv" \
@@ -104,8 +106,10 @@ for shape in route roll; do
   done
 done
 build_case alternating 1024
+build_case alternating 4096
+build_case capacity 7281
 
 # Each independently compiled case is already bounded by its named snapshot-derived
 # time and RSS budgets. Cross-case comparisons of sampled peaks are not stable gates.
 
-echo "causal-handoff pressure passed target=${TARGET} linear-events=256 route-arm-events=64 roll-events=64 alternating-events=1024 linear-elapsed=${COMPILE_SECONDS[linear_256]}s route-elapsed=${COMPILE_SECONDS[route_64]}s roll-elapsed=${COMPILE_SECONDS[roll_64]}s alternating-elapsed=${COMPILE_SECONDS[alternating_1024]}s linear-rss=${COMPILE_RSS_MIB[linear_256]}MiB route-rss=${COMPILE_RSS_MIB[route_64]}MiB roll-rss=${COMPILE_RSS_MIB[roll_64]}MiB alternating-rss=${COMPILE_RSS_MIB[alternating_1024]}MiB"
+echo "causal-handoff pressure passed target=${TARGET} linear-events=256 route-arm-events=64 roll-events=64 alternating-events=4096 global-capacity-events=7281 linear-elapsed=${COMPILE_SECONDS[linear_256]}s route-elapsed=${COMPILE_SECONDS[route_64]}s roll-elapsed=${COMPILE_SECONDS[roll_64]}s alternating-elapsed=${COMPILE_SECONDS[alternating_4096]}s capacity-elapsed=${COMPILE_SECONDS[capacity_7281]}s linear-rss=${COMPILE_RSS_MIB[linear_256]}MiB route-rss=${COMPILE_RSS_MIB[route_64]}MiB roll-rss=${COMPILE_RSS_MIB[roll_64]}MiB alternating-rss=${COMPILE_RSS_MIB[alternating_4096]}MiB capacity-rss=${COMPILE_RSS_MIB[capacity_7281]}MiB"

@@ -322,9 +322,14 @@ so the local bindings do not repeat the global protocol's binary grouping.
 A role present in only one fragment borrows a one-element array, such as
 `let [mut work] = endpoint.par()?;`. Separate endpoints held by one participant
 can borrow their own fragments and be polled together.
+Borrowing a single fragment is optional: its operations can also use the parent
+endpoint directly. Keep a borrow when its scope determines a repeat boundary.
 For parallel work inside a choice, first observe it with
 `let label = endpoint.offer().await?.label();`, then borrow its fragments.
 They reuse the observed choice without waiting for the first message to finish.
+If an arm starts with parallel messages labeled `1` and `2`, either message can
+arrive first. Handle both labels in the same match arm, `1 | 2 => { ... }`, and
+drive its fragments together. The other arm must have distinguishable labels.
 These fragments are borrows, so they cannot themselves be delegated. A fragment
 can send another owned endpoint when the global protocol permits that transfer.
 
@@ -595,6 +600,7 @@ and restart policy.
 | Compiled global protocol | 65,535 bytes |
 | Compiled local protocol | 65,535 bytes per role |
 | Local route lookup index | Up to 16,384 additional bytes per role |
+| Global scope lookup index | Up to 88,290 additional bytes per protocol |
 | Message-only global protocol | Up to 7,281 events, at nine bytes per event |
 | Branch and repetition regions | Limited by protocol bytes, at least ten bytes per region |
 | Decision function identifiers | 65,536, the full `u16` range |
@@ -605,6 +611,10 @@ Both the global and local protocols must fit their byte limits. Branches,
 repetition, and dependencies consume additional bytes, so the event identifier
 range alone does not determine how many events fit. Branch metadata also uses
 this byte budget.
+The 7,281-event limit describes the global encoding; each role's local encoding
+must fit separately. Lookup indexes occupy flash. The global scope index is
+omitted for protocols without scopes and otherwise uses nine bytes per scope
+identifier slot and two bytes per event.
 
 Each message site uses its source position as its wire identifier, including
 ordered messages and messages on different lanes. Repetition reuses that

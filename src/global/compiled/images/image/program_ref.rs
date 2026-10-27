@@ -224,22 +224,48 @@ impl CompiledProgramRef {
                 Some(offset) => offset,
                 None => return None,
             };
-        let mut bytes = [0u8; PROGRAM_IMAGE_ATOM_STRIDE];
-        let mut byte = 0;
-        while byte < bytes.len() {
-            bytes[byte] = self.byte_at(offset + byte);
-            byte += 1;
-        }
-        match decode_program_atom(bytes, self.facts.max_role) {
-            Some(atom) => Some(atom),
-            None => crate::invariant(),
-        }
+        // Construction validates every field before this immutable image is
+        // published. Read fields directly so callers that need only a peer or
+        // label do not also load and validate the payload.
+        let flags = self.byte_at(offset + 7);
+        Some(EffAtom {
+            from: self.byte_at(offset),
+            to: self.byte_at(offset + 1),
+            label: self.byte_at(offset + 2),
+            payload: if flags & EventPayload::OWNED_FLAG == 0 {
+                EventPayload::Wire(u32::from_le_bytes([
+                    self.byte_at(offset + 3),
+                    self.byte_at(offset + 4),
+                    self.byte_at(offset + 5),
+                    self.byte_at(offset + 6),
+                ]))
+            } else {
+                EventPayload::Endpoint(self.byte_at(offset + 3))
+            },
+            origin: if flags & 1 == 0 {
+                EventOrigin::User
+            } else {
+                EventOrigin::Session
+            },
+            lane: self.byte_at(offset + 8),
+        })
     }
 
     const fn validate_atom_rows(&self) {
         let mut row = 0;
         while row < self.columns.atom_count() {
-            if self.atom_at(row).is_none() {
+            let offset =
+                match self.column_offset(self.columns.atoms(), row, PROGRAM_IMAGE_ATOM_STRIDE) {
+                    Some(offset) => offset,
+                    None => crate::invariant(),
+                };
+            let mut bytes = [0; PROGRAM_IMAGE_ATOM_STRIDE];
+            let mut byte = 0;
+            while byte < bytes.len() {
+                bytes[byte] = self.byte_at(offset + byte);
+                byte += 1;
+            }
+            if decode_program_atom(bytes, self.facts.max_role).is_none() {
                 crate::invariant();
             }
             row += 1;

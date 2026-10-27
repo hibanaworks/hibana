@@ -26,51 +26,9 @@ impl<const N: usize> RoleImageBytes<N> {
         )
     }
 
-    const fn operation_step_less<const E: usize>(
-        &self,
-        source: &EffList<E>,
-        events: ColumnRange,
-        left: usize,
-        right: usize,
-    ) -> bool {
-        let left_key = self.operation_key(source, events, left);
-        let right_key = self.operation_key(source, events, right);
-        left_key < right_key || (left_key == right_key && left < right)
-    }
-
-    const fn sift_operation_index<const E: usize>(
-        &mut self,
-        source: &EffList<E>,
-        index: ColumnRange,
-        events: ColumnRange,
-        mut root: usize,
-        end: usize,
-    ) {
-        loop {
-            let mut child = root * 2 + 1;
-            if child >= end {
-                return;
-            }
-            let root_step = self.operation_index_step(index, root);
-            let mut child_step = self.operation_index_step(index, child);
-            if child + 1 < end {
-                let right_step = self.operation_index_step(index, child + 1);
-                if self.operation_step_less(source, events, child_step, right_step) {
-                    child += 1;
-                    child_step = right_step;
-                }
-            }
-            if !self.operation_step_less(source, events, root_step, child_step) {
-                return;
-            }
-            self.w16(index, root, ROLE_IMAGE_U16_STRIDE, child_step as u16);
-            self.w16(index, child, ROLE_IMAGE_U16_STRIDE, root_step as u16);
-            root = child;
-        }
-    }
-
-    /// Sort in place with constant scratch space and O(n log n) comparisons.
-    /// Each existing local row contributes exactly one two-byte ordinal.
+    /// Stable radix ordering of direction, role and label. Starting with source
+    /// ordinals preserves their order among equal keys. An actor has at most
+    /// two local facets per source event; scratch exists only during projection.
     pub(super) const fn write_operation_index<const E: usize>(
         &mut self,
         source: &EffList<E>,
@@ -78,24 +36,61 @@ impl<const N: usize> RoleImageBytes<N> {
     ) {
         let index = columns.operation_index();
         let count = index.len as usize;
+        if count > 2 * E {
+            crate::invariant();
+        }
         let mut slot = 0;
         while slot < count {
             self.w16(index, slot, ROLE_IMAGE_U16_STRIDE, slot as u16);
             slot += 1;
         }
-        let mut root = count / 2;
-        while root > 0 {
-            root -= 1;
-            self.sift_operation_index(source, index, columns.events, root, count);
+        if count < 2 {
+            return;
         }
-        let mut end = count;
-        while end > 1 {
-            end -= 1;
-            let first = self.operation_index_step(index, 0);
-            let last = self.operation_index_step(index, end);
-            self.w16(index, 0, ROLE_IMAGE_U16_STRIDE, last as u16);
-            self.w16(index, end, ROLE_IMAGE_U16_STRIDE, first as u16);
-            self.sift_operation_index(source, index, columns.events, 0, end);
+        let mut scratch = [[0u16; E]; 2];
+        let mut shift = 0;
+        while shift <= 16 {
+            let buckets = if shift == 16 { 2 } else { 16 };
+            let mut positions = [0usize; 16];
+            slot = 0;
+            while slot < count {
+                let step = self.operation_index_step(index, slot);
+                let bucket = (self.operation_key(source, columns.events, step) >> shift) & 15;
+                positions[bucket as usize] += 1;
+                slot += 1;
+            }
+            let mut bucket = 0;
+            let mut start = 0;
+            while bucket < buckets {
+                let len = positions[bucket];
+                positions[bucket] = start;
+                start += len;
+                bucket += 1;
+            }
+            slot = 0;
+            while slot < count {
+                let step = self.operation_index_step(index, slot);
+                let bucket = (self.operation_key(source, columns.events, step) >> shift) & 15;
+                let target = positions[bucket as usize];
+                if target < E {
+                    scratch[0][target] = step as u16;
+                } else {
+                    scratch[1][target - E] = step as u16;
+                }
+                positions[bucket as usize] += 1;
+                slot += 1;
+            }
+            slot = 0;
+            while slot < count {
+                let step = if slot < E {
+                    scratch[0][slot]
+                } else {
+                    scratch[1][slot - E]
+                };
+                self.w16(index, slot, ROLE_IMAGE_U16_STRIDE, step);
+                slot += 1;
+            }
+            shift += 4;
         }
     }
 }
