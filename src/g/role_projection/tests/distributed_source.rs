@@ -121,6 +121,7 @@ where
         def distributedCut0 : DistributedSourceCut := .initial distributedInitialActors\n\n\
         def distributedEntries0 : List SourceAcceptance := []\n\n");
     let mut accepted = BTreeMap::new();
+    let mut channels = BTreeMap::<_, (std::vec::Vec<(u64, u16)>, usize)>::new();
     let mut stage = 0;
     let mut records = std::vec::Vec::new();
     for (index, operation) in operations.iter().enumerate() {
@@ -185,18 +186,51 @@ where
             if before.steps[event].reentry_scope.is_some() {
                 std::format!("((List.range distributedPreparedPair{index}.1.eventLength).map (distributedPreparedPair{index}.1.eventStart + ·))")
             } else { "[]".into() }).unwrap();
+        // Emit finite carrier snapshots rather than recursively embedding every
+        // earlier send and its Option proof. Each generated accept/receive
+        // theorem still checks this snapshot against the actual transition.
+        let (frames, delivered) = channels
+            .entry((
+                header.session().raw(),
+                header.lane(),
+                header.source_role(),
+                header.target_role(),
+            ))
+            .or_default();
+        match &operation.frame {
+            FrameBoundary::Sent(_) => frames.push((frame.witness, header.label().raw())),
+            FrameBoundary::Received(_) => {
+                assert_eq!(
+                    frames.get(*delivered),
+                    Some(&(frame.witness, header.label().raw())),
+                    "observed receive must consume the accepted FIFO head"
+                );
+                *delivered += 1;
+            }
+        }
+        let frame_source = frames
+            .iter()
+            .enumerate()
+            .map(|(sequence, (_, label))| {
+                std::format!(
+                    "{{ channel := distributedChannel{index}, sequence := {sequence}, frameLabel := ⟨{label}, by decide⟩ }}"
+                )
+            })
+            .collect::<std::vec::Vec<_>>()
+            .join(", ");
+        let next_stage = stage + 1;
+        writeln!(source, "def distributedTransport{next_stage} : TransportState := {{ channel := distributedChannel{index}, frames := [{frame_source}], delivered := {delivered}, peerClosed := false }}\n").unwrap();
         if matches!(operation.frame, FrameBoundary::Sent(_)) {
             accepted.insert(frame.witness, index);
             writeln!(source, "def distributedSend{index} : SourceSendAdmission := {{ image := distributedImage{actor}, base := {base}, pathIndex := {next_path}, event := {event}, wire := distributedWire{index} }}\n\n\
                 def distributedEntry{index} : SourceAcceptance := {{ sample := distributedSend{index}, channel := distributedChannel{index}, event := {}, mutation := {}, carrierWitness := {} }}\n\n\
-                def distributedTransport{} : TransportState := ((distributedCut{stage}.carriers distributedChannel{index}).send ⟨{}, by decide⟩).get (by decide)\n\n\
-                def distributedCut{} : DistributedSourceCut := distributedCut{stage}.carrierAt distributedChannel{index} distributedTransport{}\n\n\
-                def distributedEntries{} := distributedEntries{stage} ++ [distributedEntry{index}]\n",
+                def distributedCut{next_stage} : DistributedSourceCut := distributedCut{stage}.carrierAt distributedChannel{index} distributedTransport{next_stage}\n\n\
+                def distributedEntries{next_stage} := distributedEntries{stage} ++ [distributedEntry{index}]\n",
                 match before.steps[event].action {
                     super::LocalAction::Send {eff_index, ..} => eff_index.dense_ordinal(),
                     super::LocalAction::Recv { .. } | super::LocalAction::Local { .. } | super::LocalAction::Terminate => unreachable!("observed send source"),
                 },
-                before.completion_mutations, frame.witness, stage+1, header.label().raw(), stage+1, stage+1, stage+1).unwrap();
+                before.completion_mutations, frame.witness).unwrap();
             let preparation = if before.steps[event].reentry_scope.is_some() {
                 std::format!(
                     ".fresh (rolls := (distributedChoreo.canonicalActorRollRows? distributedImage{actor}.role).get (by decide)) (roll := distributedPreparedPair{index}.1) (by decide) (by decide) (by decide)"
@@ -213,11 +247,10 @@ where
                 stage+1,after.completion_mutations,stage+1,stage+1,stage+1,stage+1).unwrap();
         } else {
             let sent_index = accepted[&frame.witness];
-            writeln!(source, "def distributedTransport{} : TransportState := {{ distributedCut{stage}.carriers distributedChannel{index} with delivered := (distributedCut{stage}.carriers distributedChannel{index}).delivered + 1 }}\n\n\
-                def distributedCut{} : DistributedSourceCut := (distributedCut{stage}.actorAt {actor} (distributedAfter{index}, {})).carrierAt distributedChannel{index} distributedTransport{}\n\n\
-                def distributedEntries{} := distributedEntries{stage}\n\n\
-                private theorem distributedStep{} : DistributedSourceStep distributedImages distributedChoreo {session}\n  (distributedCut{stage}, distributedEntries{stage}) (distributedCut{}, distributedEntries{}) (some ({actor}, distributedCommit{index})) := by\n  exact .receive (frame := ((distributedCut{stage}.carriers distributedChannel{index}).frames[(distributedCut{stage}.carriers distributedChannel{index}).delivered]?).get (by decide)) (entry := distributedEntry{sent_index}) (witness := {}) (by decide) (by decide) (by rfl) (by decide) (a_concrete_receive_pair_has_coherent_local_witnesses (by decide)) (by decide) distributedMeasurement{index}\n",
-                stage+1,stage+1,after.completion_mutations,stage+1,stage+1,stage+1,stage+1,stage+1,frame.witness).unwrap();
+            writeln!(source, "def distributedCut{next_stage} : DistributedSourceCut := (distributedCut{stage}.actorAt {actor} (distributedAfter{index}, {})).carrierAt distributedChannel{index} distributedTransport{next_stage}\n\n\
+                def distributedEntries{next_stage} := distributedEntries{stage}\n\n\
+                private theorem distributedStep{next_stage} : DistributedSourceStep distributedImages distributedChoreo {session}\n  (distributedCut{stage}, distributedEntries{stage}) (distributedCut{next_stage}, distributedEntries{next_stage}) (some ({actor}, distributedCommit{index})) := by\n  exact .receive (frame := ((distributedCut{stage}.carriers distributedChannel{index}).frames[(distributedCut{stage}.carriers distributedChannel{index}).delivered]?).get (by decide)) (entry := distributedEntry{sent_index}) (witness := {}) (by decide) (by decide) (by rfl) (by decide) (a_concrete_receive_pair_has_coherent_local_witnesses (by decide)) (by decide) distributedMeasurement{index}\n",
+                after.completion_mutations,frame.witness).unwrap();
         }
         stage += 1;
         records.push(std::format!("({actor}, distributedCommit{index})"));
