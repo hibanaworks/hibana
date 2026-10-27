@@ -410,7 +410,7 @@ theorem distributedCurrentChoiceComesFromItsActualAcceptedFrame :
     std::fs::write(
         directory.join("DistributedChoiceGenerated.lean"),
         source
-            .replace("by decide", "by first | decide +kernel | rfl")
+            .replace("by decide", "by first | rfl | decide +kernel")
             .replace("· decide", "· decide +kernel")
             .replace("; decide", "; decide +kernel"),
     )
