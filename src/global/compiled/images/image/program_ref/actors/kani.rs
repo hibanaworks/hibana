@@ -143,6 +143,25 @@ mod source_order_fixture {
 
 #[kani::proof]
 #[kani::unwind(10)]
+fn source_roll_ancestors_preserve_membership_over_the_full_event_domain() {
+    let image = &source_order_fixture::IMAGE;
+    let event: usize = kani::any();
+    let mut ancestors = image.source_roll_ancestors(event);
+    if event == 2 || event == 3 {
+        assert_eq!(
+            ancestors.next(),
+            Some(crate::global::const_dsl::ScopeId::roll_scope(1))
+        );
+        assert_eq!(ancestors.next(), None);
+    } else {
+        assert_eq!(ancestors.next(), None);
+    }
+    kani::cover!(event == 2);
+    kani::cover!(event == usize::MAX);
+}
+
+#[kani::proof]
+#[kani::unwind(10)]
 fn source_order_keeps_parallel_and_route_arms_independent_through_roll_0_1() {
     source_order_fixture::check_pair::<0, 1>();
 }

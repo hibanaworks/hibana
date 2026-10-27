@@ -28,14 +28,8 @@ impl EventCursor {
     }
 
     fn roll_credit_words(&self, scope: ScopeId) -> usize {
-        let mut slot = 0;
-        while let Some((candidate, _)) = self.machine().roll_scope_row_by_slot(slot) {
-            if candidate.same(scope) {
-                return self.roll_credit_word_start() + 2 * slot;
-            }
-            slot += 1;
-        }
-        crate::invariant()
+        let slot = crate::invariant_some(self.machine().event_program().roll_scope_slot(scope));
+        self.roll_credit_word_start() + 2 * slot
     }
 
     pub(super) fn completed_roll_credits(&self, scope: ScopeId) -> u64 {
@@ -69,22 +63,23 @@ impl EventCursor {
             return None;
         }
         let parent_row = crate::invariant_some(self.machine().roll_scope_row(parent));
+        if index < parent_row.start() || parent_row.end() <= index {
+            return None;
+        }
         let credit_start = self.roll_credit_word_start();
         let credits = self.completed_event_words();
         let mut found = None;
-        let mut slot = 0;
-        while let Some((scope, row)) = self.machine().roll_scope_row_by_slot(slot) {
-            if !scope.same(parent)
-                && row.start() <= index
-                && index < row.end()
-                && read_word_pair(crate::invariant_some(
-                    credits[credit_start + 2 * slot..].first_chunk(),
-                )) != 0
-                && Self::roll_rows_nested_within((scope, row), (parent, parent_row))
-            {
-                found = Some(found.map_or(scope, |prior| self.outer_roll_scope(prior, scope)));
+        for scope in self.machine().event_program().roll_ancestors(index) {
+            if scope.same(parent) {
+                break;
             }
-            slot += 1;
+            let slot = crate::invariant_some(self.machine().event_program().roll_scope_slot(scope));
+            if read_word_pair(crate::invariant_some(
+                credits[credit_start + 2 * slot..].first_chunk(),
+            )) != 0
+            {
+                found = Some(scope);
+            }
         }
         found
     }
@@ -108,19 +103,7 @@ impl EventCursor {
         let source = crate::invariant_some(self.machine().event_program().operation_at(entry))
             .0
             .dense_ordinal();
-        let (start, end) =
-            crate::invariant_some((0..program.source_scope_marker_count()).find_map(|marker| {
-                let (scope, start, end) = program.source_roll_at(marker)?;
-                scope.same(child).then_some((start, end))
-            }));
-        (0..program.source_scope_marker_count()).any(|marker| {
-            program
-                .source_parallel_at(marker)
-                .is_some_and(|(a, split, b)| {
-                    (a <= start && end <= split && split <= source && source < b)
-                        || (a <= source && source < split && split <= start && end <= b)
-                })
-        })
+        program.source_roll_has_parallel_entry(child, source)
     }
 
     /// A child restart retains a completed parent visit, including completion
@@ -221,16 +204,10 @@ impl EventCursor {
     }
 
     pub(crate) fn roll_reentry_epoch(&self, scope: ScopeId) -> u64 {
-        let mut slot = 0;
-        while let Some((candidate, _)) = self.machine().roll_scope_row_by_slot(slot) {
-            if candidate.same(scope) {
-                let index = self.roll_epoch_word_start() + 2 * slot;
-                let words = self.completed_event_words();
-                return read_word_pair(crate::invariant_some(words[index..].first_chunk()));
-            }
-            slot += 1;
-        }
-        crate::invariant()
+        let slot = crate::invariant_some(self.machine().event_program().roll_scope_slot(scope));
+        let index = self.roll_epoch_word_start() + 2 * slot;
+        let words = self.completed_event_words();
+        read_word_pair(crate::invariant_some(words[index..].first_chunk()))
     }
 
     pub(crate) fn completed_parallel_reentry(
@@ -445,18 +422,15 @@ impl EventCursor {
         {
             return false;
         }
-        let mut slot = 0;
-        while let Some((_, range)) = self.machine().roll_scope_row_by_slot(slot) {
-            if range.start() <= predecessor
-                && predecessor < range.end()
-                && !(range.start() <= target && target < range.end())
-            {
+        for scope in self.machine().event_program().roll_ancestors(predecessor) {
+            let slot = crate::invariant_some(self.machine().event_program().roll_scope_slot(scope));
+            let (_, range) = crate::invariant_some(self.machine().roll_scope_row_by_slot(slot));
+            if !(range.start() <= target && target < range.end()) {
                 let index = self.local_steps_len() + slot;
                 if self.completed_event_words()[index / 32] & (1 << (index % 32)) != 0 {
                     return true;
                 }
             }
-            slot += 1;
         }
         false
     }

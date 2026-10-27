@@ -114,7 +114,7 @@ impl CompiledProgramRef {
         // every endpoint lookup. The private certificate is not protocol state.
         image.routes_sorted = image.validate_route_resolver_rows();
         image.validate_actor_rows();
-        let Some(scopes) = SourceOrderIndex::<0>::extent(
+        let Some((scopes, rolls)) = SourceOrderIndex::<0>::layout(
             columns,
             image.source_scope_marker_count(),
             blob.as_slice(),
@@ -125,7 +125,7 @@ impl CompiledProgramRef {
         let len = if scopes == 0 {
             0
         } else {
-            scopes * 9 + columns.atom_count() * 2
+            scopes * 9 + columns.atom_count() * if rolls { 4 } else { 2 }
         };
         image.source_order = BlobPtr::from_array_range(bytes, columns.blob_len(), len);
         if N <= crate::global::const_dsl::ScopeId::LOCAL_CAPACITY as usize && scopes <= N {

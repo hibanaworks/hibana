@@ -4,6 +4,9 @@
 //! zero-allocation authority over compiled role-local rows; projection checks
 //! compare this image against an independent oracle in tests.
 
+#[cfg(kani)]
+mod kani;
+
 use crate::global::{
     compiled::images::CompiledProgramRef,
     const_dsl::{ReentryMark, ScopeId, ScopeKind},
@@ -241,30 +244,41 @@ impl LocalEventProgram {
     }
 
     #[inline(always)]
-    pub(crate) fn roll_scope_row(&self, scope_id: ScopeId) -> Option<LocalEventRowSet> {
+    pub(crate) fn roll_scope_slot(&self, scope_id: ScopeId) -> Option<usize> {
         if scope_id.is_none() || !matches!(scope_id.kind(), Some(ScopeKind::Roll)) {
             return None;
         }
         let target = scope_id.local_ordinal();
-        let mut slot = 0usize;
-        while let Some((scope, row)) = self.roll_scope_row_by_slot(slot) {
-            if scope.local_ordinal() == target {
-                return Some(row);
+        let mut low = 0;
+        let mut high = self.footprint().roll_scope_count;
+        while low < high {
+            let middle = low + (high - low) / 2;
+            let row = crate::invariant_some(self.rows().roll_scope_row(middle));
+            match row.scope().local_ordinal().cmp(&target) {
+                core::cmp::Ordering::Less => low = middle + 1,
+                core::cmp::Ordering::Greater => high = middle,
+                core::cmp::Ordering::Equal => return Some(middle),
             }
-            slot += 1;
         }
         None
     }
 
+    #[inline(always)]
+    pub(crate) fn roll_scope_row(&self, scope_id: ScopeId) -> Option<LocalEventRowSet> {
+        self.roll_scope_row_by_slot(self.roll_scope_slot(scope_id)?)
+            .map(|(_, row)| row)
+    }
+
+    pub(crate) fn roll_ancestors(&self, index: usize) -> impl Iterator<Item = ScopeId> + '_ {
+        let source = match self.operation_at(index) {
+            Some((event, _)) => event.dense_ordinal(),
+            None => self.program_ref().columns.atom_count(),
+        };
+        self.program_ref().source_roll_ancestors(source)
+    }
+
     pub(crate) fn roll_entry_range(&self, scope: ScopeId) -> Option<PackedLaneRange> {
-        let mut slot = 0;
-        while let Some((candidate, _)) = self.roll_scope_row_by_slot(slot) {
-            if candidate == scope {
-                return Some(self.rows().roll_entry_range(slot));
-            }
-            slot += 1;
-        }
-        None
+        Some(self.rows().roll_entry_range(self.roll_scope_slot(scope)?))
     }
 
     pub(crate) fn roll_entry_view(&self, index: usize) -> (u8, u16) {

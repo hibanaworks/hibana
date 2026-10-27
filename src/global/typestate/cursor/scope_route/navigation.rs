@@ -41,34 +41,16 @@ impl EventCursor {
     }
 
     pub(crate) fn enclosing_route_scope_rows_at(&self, idx: usize) -> Option<RouteScopeRows> {
-        if matches!(self.action_at(idx), LocalAction::Terminate) {
+        if idx == self.local_steps_len() {
             return None;
         }
         let conflict = self.machine().event_conflict_for_index(idx);
-        let Some(LocalConflict::RouteArm { scope, arm }) = conflict.to_conflict() else {
-            let mut slot = 0usize;
-            while slot < self.machine().route_scope_slot_count() {
-                if self
-                    .machine()
-                    .route_scope_rows_by_slot(slot)
-                    .is_some_and(|region| region.start() <= idx && idx < region.end())
-                {
-                    crate::invariant();
-                }
-                slot += 1;
-            }
+        let Some(LocalConflict::RouteArm { scope, .. }) = conflict.to_conflict() else {
             return None;
         };
-        let Some(region) = self.route_scope_rows(scope) else {
-            crate::invariant();
-        };
-        if idx < region.start()
-            || idx >= region.end()
-            || self.route_arm_for_index(scope, idx) != Some(arm)
-        {
-            crate::invariant();
-        }
-        Some(region)
+        // RoleImageRef validates every event's exact enclosing interval and
+        // arm before publication, including the absence of any enclosing route.
+        Some(crate::invariant_some(self.route_scope_rows(scope)))
     }
 
     pub(crate) fn visit_route_arms_for_index(

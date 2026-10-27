@@ -11,6 +11,31 @@ use std::{boxed::Box, panic::catch_unwind};
 
 mod operation_index;
 
+#[test]
+fn ordinary_roll_rows_must_match_the_complete_source_projection() {
+    let global = g::seq(
+        g::send::<0, 1, Msg<1, ()>>().roll(),
+        g::send::<0, 1, Msg<2, ()>>().roll().roll(),
+    );
+    let rows = project::<0>(&global).role_image_ref();
+    assert!(!rows.program().has_actor_bindings());
+    reject(rows, |bytes, columns, _| {
+        put(
+            bytes,
+            columns.roll_scopes.offset as usize,
+            ScopeId::LOCAL_CAPACITY - 1,
+        );
+    });
+    reject(rows, |_, columns, _| columns.roll_scopes.len -= 1);
+    reject(rows, |bytes, columns, _| {
+        let start = columns.roll_scopes.offset as usize;
+        let stride = crate::global::role_program::ROLE_IMAGE_ROLL_SCOPE_STRIDE;
+        for byte in 0..stride {
+            bytes.swap(start + byte, start + stride + byte);
+        }
+    });
+}
+
 fn copy(rows: &RoleImageRef) -> [u8; 2048] {
     let mut bytes = [0; 2048];
     assert!(rows.columns.blob_len() <= bytes.len());

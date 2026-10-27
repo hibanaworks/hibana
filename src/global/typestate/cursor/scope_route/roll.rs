@@ -290,35 +290,20 @@ impl EventCursor {
         idx: usize,
         selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
     ) -> Option<ScopeId> {
-        let mut slot = 0usize;
-        let mut best = None;
+        if self.machine().event_program().footprint().roll_scope_count == 0 {
+            return None;
+        }
+        let mut ancestors = self.machine().event_program().roll_ancestors(idx);
         let lane = self.event_lane_at(idx);
-        while let Some((scope, row)) = self.machine().roll_scope_row_by_slot(slot) {
-            if row.start() <= idx
-                && idx < row.end()
-                && self.roll_scope_complete_for_entry(scope, idx, &mut *selected_arm_for_scope)
-            {
-                best = Some(match best {
-                    Some(current) => self.deeper_roll_scope(current, scope),
-                    None => scope,
-                });
-            }
-            slot += 1;
-        }
-        let best = best?;
-        // With one roll row, the second scan cannot find an ancestor.
-        if slot == 1 {
-            return Some(best);
-        }
+        // The immutable parent chain contains exactly the enclosing rolls,
+        // innermost first. Unrelated repetitions need no admission checks.
+        let best = ancestors.find(|&scope| {
+            self.roll_scope_complete_for_entry(scope, idx, &mut *selected_arm_for_scope)
+        })?;
         let mut sequential_reentry = None;
         if let Some(lane) = lane {
-            let mut slot = 0usize;
-            while let Some((scope, row)) = self.machine().roll_scope_row_by_slot(slot) {
-                if row.start() <= idx
-                    && idx < row.end()
-                    && !scope.same(best)
-                    && self.roll_scope_nested_within(best, scope)
-                    && self.roll_scope_complete_for_entry(scope, idx, &mut *selected_arm_for_scope)
+            for scope in ancestors {
+                if self.roll_scope_complete_for_entry(scope, idx, &mut *selected_arm_for_scope)
                     && self.roll_scope_has_later_sequential_done_event(
                         scope,
                         best,
@@ -336,12 +321,8 @@ impl EventCursor {
                         &mut *selected_arm_for_scope,
                     )
                 {
-                    sequential_reentry = Some(match sequential_reentry {
-                        Some(current) => self.outer_roll_scope(current, scope),
-                        None => scope,
-                    });
+                    sequential_reentry = Some(scope);
                 }
-                slot += 1;
             }
         }
         match sequential_reentry {

@@ -21,6 +21,39 @@ enum Tree {
 }
 
 impl Tree {
+    fn scopes(&self) -> u16 {
+        match self {
+            Self::Send => 0,
+            Self::Seq(a, b) => a.scopes() + b.scopes(),
+            Self::Par(a, b) | Self::Route(a, b) => 1 + a.scopes() + b.scopes(),
+            Self::Roll(a) => 1 + a.scopes(),
+        }
+    }
+
+    // Derive membership directly from the grammar, without image ranges or
+    // parent links. Results use the same source-preorder identifiers as emit.
+    fn rolls_at(&self, event: usize, ordinal: u16) -> Vec<ScopeId> {
+        if event >= self.events() {
+            return vec![];
+        }
+        match self {
+            Self::Send => vec![],
+            Self::Roll(body) => {
+                let mut found = body.rolls_at(event, ordinal + 1);
+                found.push(ScopeId::roll_scope(ordinal));
+                found
+            }
+            Self::Seq(a, b) | Self::Par(a, b) | Self::Route(a, b) => {
+                let first = ordinal + u16::from(!matches!(self, Self::Seq(..)));
+                if event < a.events() {
+                    a.rolls_at(event, first)
+                } else {
+                    b.rolls_at(event - a.events(), first + a.scopes())
+                }
+            }
+        }
+    }
+
     fn events(&self) -> usize {
         match self {
             Self::Send => 1,
@@ -131,6 +164,28 @@ fn compare<const E: usize, const B: usize>(tree: &Tree) {
             image.source_roll_at(marker),
             image.source_roll_at_scan(marker),
             "roll bounds {tree:?}: {marker}"
+        );
+        if let Some((child, start, end)) = image.source_roll_at_scan(marker) {
+            for event in (0..=events + 1).chain([usize::MAX]) {
+                let expected = (0..source.scope_markers().len()).any(|m| {
+                    image.source_parallel_at(m).is_some_and(|(a, split, b)| {
+                        (a <= start && end <= split && split <= event && event < b)
+                            || (a <= event && event < split && split <= start && end <= b)
+                    })
+                });
+                assert_eq!(
+                    image.source_roll_has_parallel_entry(child, event),
+                    expected,
+                    "parallel entry {tree:?}: {child:?} / {event}"
+                );
+            }
+        }
+    }
+    for event in (0..=events + 1).chain([usize::MAX]) {
+        assert_eq!(
+            image.source_roll_ancestors(event).collect::<Vec<_>>(),
+            tree.rolls_at(event, 0),
+            "roll ancestors {tree:?}: {event}"
         );
     }
     for first in (0..=events + 1).chain([usize::MAX]) {

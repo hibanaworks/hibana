@@ -39,14 +39,4 @@ impl EventCursor {
         }
         crate::invariant();
     }
-
-    pub(super) fn outer_roll_scope(&self, current: ScopeId, candidate: ScopeId) -> ScopeId {
-        if self.roll_scope_nested_within(current, candidate) {
-            return candidate;
-        }
-        if self.roll_scope_nested_within(candidate, current) {
-            return current;
-        }
-        crate::invariant();
-    }
 }

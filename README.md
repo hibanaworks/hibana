@@ -600,7 +600,7 @@ and restart policy.
 | Compiled global protocol | 65,535 bytes |
 | Compiled local protocol | 65,535 bytes per role |
 | Local route lookup index | Up to 16,384 additional bytes per role |
-| Global scope lookup index | Up to 88,290 additional bytes per protocol |
+| Global scope lookup index | Up to 102,852 additional bytes per protocol |
 | Message-only global protocol | Up to 7,281 events, at nine bytes per event |
 | Branch and repetition regions | Limited by protocol bytes, at least ten bytes per region |
 | Decision function identifiers | 65,536, the full `u16` range |
@@ -614,7 +614,8 @@ this byte budget.
 The 7,281-event limit describes the global encoding; each role's local encoding
 must fit separately. Lookup indexes occupy flash. The global scope index is
 omitted for protocols without scopes and otherwise uses nine bytes per scope
-identifier slot and two bytes per event.
+identifier slot and two bytes per event. Protocols with `roll` use two more
+bytes per event to locate its enclosing repetition directly.
 
 Each message site uses its source position as its wire identifier, including
 ordered messages and messages on different lanes. Repetition reuses that

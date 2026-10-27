@@ -10,6 +10,50 @@ use crate::global::{
 mod source_order;
 
 #[test]
+fn packed_repetition_heads_and_parent_links_are_checked_before_publication() {
+    use crate::{g, global::compiled::lowering::CompiledProgramImage};
+    type Step = g::Send<0, 1, g::Msg<1, ()>>;
+    type Steps = g::Seq<g::Roll<Step>, g::Roll<g::Roll<Step>>>;
+    const SOURCE: g::ProgramSourceData<16> = g::ProgramSourceData::lower::<Steps>();
+    const PLAN: ProgramImagePlan = ProgramImagePlan::from_source(&SOURCE);
+    const SUMMARY: CompiledProgramImage = CompiledProgramImage::scan_const(SOURCE.eff_list());
+    static BYTES: ProgramImageBytes<256> =
+        match ProgramImageBytes::from_source_if_fits(&SOURCE, PLAN.columns()) {
+            Some(bytes) => bytes,
+            None => panic!("repetition index fixture storage"),
+        };
+    const IMAGE: CompiledProgramRef = BYTES.compiled_ref(&SUMMARY, PLAN.columns());
+    const fn changed(offset: usize) -> [u8; 256] {
+        let mut bytes = [0; 256];
+        let base = PLAN.columns().blob_len();
+        let mut index = 0;
+        while index < base {
+            bytes[index] = IMAGE.byte_at(index);
+            index += 1;
+        }
+        index = 0;
+        while index < IMAGE.source_order.len() {
+            bytes[base + index] = IMAGE.source_order.byte_at(index);
+            index += 1;
+        }
+        bytes[base + offset] ^= 1;
+        bytes
+    }
+    static BAD_ROLL_HEAD: [u8; 256] = changed(3 * 9 + 2 * 2);
+    static BAD_BINARY_HEAD: [u8; 256] = changed(3 * 9);
+    static BAD_PARENT: [u8; 256] = changed(2 * 9 + 6);
+    assert_eq!(IMAGE.source_order.len(), 3 * 9 + 2 * 4);
+    for bytes in [&BAD_ROLL_HEAD, &BAD_BINARY_HEAD, &BAD_PARENT] {
+        assert!(
+            std::panic::catch_unwind(|| {
+                CompiledProgramRef::compact(IMAGE.facts, PLAN.columns(), bytes)
+            })
+            .is_err()
+        );
+    }
+}
+
+#[test]
 fn source_order_offsets_preserve_the_full_scope_identifier_domain() {
     use crate::eff::{EffAtom, EventOrigin, EventPayload};
     use crate::global::{

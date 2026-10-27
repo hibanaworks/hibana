@@ -27,7 +27,7 @@ impl RoleImageRef {
             invalid_resident_descriptor();
         }
         self.validate_actor_event_projection();
-        self.validate_roll_entry_resources();
+        self.validate_roll_projection();
         self.validate_owned_receipts();
         self.validate_roll_entry_receipts();
         self.validate_operation_index();

@@ -20,7 +20,7 @@ pub(crate) const PROGRAM_IMAGE_ATOM_ONLY_EVENT_CAPACITY: usize =
     COMPACT_DESCRIPTOR_BYTE_CAPACITY / PROGRAM_IMAGE_ATOM_STRIDE;
 pub(crate) const PROGRAM_IMAGE_STORAGE_BYTE_CAPACITY: usize = COMPACT_DESCRIPTOR_BYTE_CAPACITY
     + ScopeId::LOCAL_CAPACITY as usize * 9
-    + PROGRAM_IMAGE_ATOM_ONLY_EVENT_CAPACITY * 2;
+    + PROGRAM_IMAGE_ATOM_ONLY_EVENT_CAPACITY * 4;
 const _: () = assert!(
     PROGRAM_IMAGE_ATOM_ONLY_EVENT_CAPACITY < crate::eff::meta::COMPACT_EVENT_IDENTITY_CAPACITY
 );
@@ -421,10 +421,14 @@ impl ProgramImagePlan {
 pub(super) const fn source_order_byte_len<const E: usize>(eff_list: &EffList<E>) -> usize {
     let markers = eff_list.scope_markers();
     let mut extent = 0;
+    let mut rolls = false;
     let mut marker = 0;
     while marker < markers.len() {
         let scope = markers.at(marker).scope_id;
         if scope.kind().is_some() {
+            if matches!(scope.kind(), Some(ScopeKind::Roll)) {
+                rolls = true;
+            }
             let end = scope.local_ordinal() as usize + 1;
             if end > extent {
                 extent = end;
@@ -435,7 +439,7 @@ pub(super) const fn source_order_byte_len<const E: usize>(eff_list: &EffList<E>)
     if extent == 0 {
         0
     } else {
-        extent * 9 + eff_list.len() * 2
+        extent * 9 + eff_list.len() * if rolls { 4 } else { 2 }
     }
 }
 

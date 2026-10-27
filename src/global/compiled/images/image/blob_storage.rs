@@ -430,7 +430,8 @@ impl<const N: usize> ProgramImageBytes<N> {
             out.write_scope_marker(marker_column, idx, markers.at(idx));
             idx += 1;
         }
-        let Some(extent) = super::SourceOrderIndex::<0>::extent(columns, markers.len(), &out.bytes)
+        let Some((extent, _)) =
+            super::SourceOrderIndex::<0>::layout(columns, markers.len(), &out.bytes)
         else {
             crate::invariant();
         };
@@ -448,8 +449,8 @@ impl<const N: usize> ProgramImageBytes<N> {
         markers: usize,
     ) {
         if matches!(
-            super::SourceOrderIndex::<0>::extent(columns, markers, &self.bytes),
-            Some(0)
+            super::SourceOrderIndex::<0>::layout(columns, markers, &self.bytes),
+            Some((0, _))
         ) {
             return;
         }

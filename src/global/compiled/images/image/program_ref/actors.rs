@@ -163,6 +163,58 @@ impl CompiledProgramRef {
         ))
     }
 
+    /// Enclosing repetitions, from the innermost source scope to the root.
+    /// Dedicated repetition links skip binary scopes. The image constructor
+    /// checks the links and event heads once.
+    pub(crate) fn source_roll_ancestors(&self, event: usize) -> impl Iterator<Item = ScopeId> + '_ {
+        let offset = self.source_scopes as usize * 9 + self.columns.atom_count() * 2;
+        let mut scope = if self.source_scopes == 0
+            || event >= self.columns.atom_count()
+            || offset == self.source_order.len()
+        {
+            u16::MAX
+        } else {
+            self.source_order_u16(offset + event * 2)
+        };
+        core::iter::from_fn(move || {
+            if scope == u16::MAX {
+                return None;
+            }
+            let ordinal = scope;
+            scope = self.source_order_u16(ordinal as usize * 9 + 6);
+            Some(ScopeId::roll_scope(ordinal))
+        })
+    }
+
+    pub(crate) const fn source_roll_has_parallel_entry(
+        &self,
+        child: ScopeId,
+        event: usize,
+    ) -> bool {
+        if !matches!(child.kind(), Some(ScopeKind::Roll)) || event >= self.columns.atom_count() {
+            return false;
+        }
+        let Some((start, _, end)) = self.source_scope_bounds(child) else {
+            return false;
+        };
+        let mut parent = self.source_order_u16(self.source_scopes as usize * 9 + start * 2);
+        while parent != u16::MAX {
+            let row = parent as usize * 9;
+            if self.source_order.byte_at(row + 8) == ScopeKind::Parallel as u8 {
+                let a = self.source_order_u16(row) as usize;
+                let split = self.source_order_u16(row + 2) as usize;
+                let b = self.source_order_u16(row + 4) as usize;
+                if (a <= start && end <= split && split <= event && event < b)
+                    || (a <= event && event < split && split <= start && end <= b)
+                {
+                    return true;
+                }
+            }
+            parent = self.source_order_u16(row + 6);
+        }
+        false
+    }
+
     pub(crate) const fn roll_precedes(&self, scope: ScopeId, after: usize) -> bool {
         if !matches!(scope.kind(), Some(ScopeKind::Roll)) {
             return false;

@@ -8,8 +8,90 @@ use crate::{
     },
 };
 
+fn scan_completed_body(
+    cursor: &EventCursor,
+    index: usize,
+    selected: &mut dyn FnMut(ScopeId) -> Option<u8>,
+) -> Option<ScopeId> {
+    let rows: std::vec::Vec<_> = (0..cursor
+        .machine()
+        .event_program()
+        .footprint()
+        .roll_scope_count)
+        .map(|slot| cursor.machine().roll_scope_row_by_slot(slot).unwrap())
+        .collect();
+    let mut best = None;
+    for &(scope, range) in &rows {
+        if range.start() <= index
+            && index < range.end()
+            && cursor.roll_scope_complete_for_entry(scope, index, selected)
+        {
+            best = Some(match best {
+                Some(prior) => cursor.deeper_roll_scope(prior, scope),
+                None => scope,
+            });
+        }
+    }
+    let best = best?;
+    let mut promoted = None;
+    if let Some(lane) = cursor.event_lane_at(index) {
+        for &(scope, range) in &rows {
+            if range.start() <= index
+                && index < range.end()
+                && !scope.same(best)
+                && cursor.roll_scope_nested_within(best, scope)
+                && cursor.roll_scope_complete_for_entry(scope, index, selected)
+                && cursor
+                    .roll_scope_has_later_sequential_done_event(scope, best, index, lane, selected)
+                && cursor.roll_scope_head_allows_index(scope, index, lane, selected)
+            {
+                promoted = Some(match promoted {
+                    Some(prior) if cursor.roll_scope_nested_within(prior, scope) => scope,
+                    Some(prior) => {
+                        assert!(cursor.roll_scope_nested_within(scope, prior));
+                        prior
+                    }
+                    None => scope,
+                });
+            }
+        }
+    }
+    promoted.or(Some(best))
+}
+
 fn compare_completion_domains(rows: &'static RoleImageRef) {
     with_rows(rows, |cursor| {
+        let rolls: std::vec::Vec<_> = (0..cursor
+            .machine()
+            .event_program()
+            .footprint()
+            .roll_scope_count)
+            .map(|slot| cursor.machine().roll_scope_row_by_slot(slot).unwrap())
+            .collect();
+        for ordinal in 0..crate::global::const_dsl::ScopeId::LOCAL_CAPACITY {
+            let scope = ScopeId::roll_scope(ordinal);
+            let expected = rolls.iter().position(|(candidate, _)| *candidate == scope);
+            assert_eq!(
+                cursor.machine().event_program().roll_scope_slot(scope),
+                expected
+            );
+        }
+        for index in 0..=cursor.local_steps_len() {
+            let expected: std::vec::Vec<_> = rolls
+                .iter()
+                .rev()
+                .filter(|(_, range)| range.start() <= index && index < range.end())
+                .map(|(scope, _)| *scope)
+                .collect();
+            assert_eq!(
+                cursor
+                    .machine()
+                    .event_program()
+                    .roll_ancestors(index)
+                    .collect::<std::vec::Vec<_>>(),
+                expected
+            );
+        }
         let scopes: std::vec::Vec<_> = (0..cursor.machine().route_scope_slot_count())
             .map(|slot| {
                 cursor
@@ -66,6 +148,16 @@ fn compare_completion_domains(rows: &'static RoleImageRef) {
                         rows.role(),
                     );
                     assert_eq!(cursor.completed_event_words(), before);
+                    if slot == 0 {
+                        for index in 0..=steps {
+                            assert_eq!(
+                                cursor.complete_roll_body_scope_for_index(index, &mut selected),
+                                scan_completed_body(cursor, index, &mut selected),
+                                "actor={} index={index} assignment={assignment} completed={completed:x}",
+                                rows.role(),
+                            );
+                        }
+                    }
                 }
                 slot += 1;
             }
