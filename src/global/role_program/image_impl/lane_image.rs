@@ -10,9 +10,9 @@ use super::{
     route_arm_row_index,
 };
 use crate::global::const_dsl::ScopeId;
-use crate::global::typestate::{
-    LocalConflict, LocalDependency, PackedEventConflict, PackedLocalDependency,
-};
+#[cfg(all(test, hibana_repo_tests))]
+use crate::global::typestate::LocalConflict;
+use crate::global::typestate::{LocalDependency, PackedEventConflict, PackedLocalDependency};
 
 mod decode;
 #[cfg(all(test, hibana_repo_tests))]
@@ -231,12 +231,9 @@ impl<'a> RoleLaneImage<'a> {
         }
     }
 
+    #[cfg(all(test, hibana_repo_tests))]
     pub(crate) const fn route_commit_range_by_slot(&self, slot: usize, arm: u8) -> PackedLaneRange {
-        let row_idx = route_arm_row_index(slot, arm);
-        let row = self.lane_range_row(self.columns.route_commit_ranges, row_idx);
-        if row.is_zero_len() || row.end() > self.columns.route_commit_rows.len as usize {
-            invalid_resident_descriptor();
-        }
+        let row = self.certified_route_commit_range_by_slot(slot, arm);
         let Some(scope) = self.route_scope_row(slot) else {
             invalid_resident_descriptor();
         };
@@ -265,6 +262,20 @@ impl<'a> RoleLaneImage<'a> {
             expected = parent;
         }
         invalid_resident_descriptor()
+    }
+
+    #[inline(always)]
+    pub(super) const fn certified_route_commit_range_by_slot(
+        &self,
+        slot: usize,
+        arm: u8,
+    ) -> PackedLaneRange {
+        let row_idx = route_arm_row_index(slot, arm);
+        let row = self.lane_range_row(self.columns.route_commit_ranges, row_idx);
+        if row.is_zero_len() || row.end() > self.columns.route_commit_rows.len as usize {
+            invalid_resident_descriptor();
+        }
+        row
     }
 
     #[inline(always)]
@@ -373,6 +384,7 @@ impl<'a> RoleLaneImage<'a> {
         self.route_scope_row(slot)
     }
 
+    #[cfg(all(test, hibana_repo_tests))]
     pub(crate) const fn route_scope_slot(&self, scope: ScopeId) -> Option<usize> {
         let mut found = None;
         let mut slot = 0usize;
@@ -391,6 +403,7 @@ impl<'a> RoleLaneImage<'a> {
         found
     }
 
+    #[cfg(all(test, hibana_repo_tests))]
     const fn route_commit_parent(&self, scope: ScopeId) -> PackedEventConflict {
         let Some(slot) = self.route_scope_slot(scope) else {
             invalid_resident_descriptor();

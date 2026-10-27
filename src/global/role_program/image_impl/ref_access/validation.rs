@@ -11,6 +11,50 @@ const fn same_conflict(left: PackedEventConflict, right: PackedEventConflict) ->
 }
 
 impl RoleImageRef {
+    pub(super) const fn validate_route_commit_chains(&self) {
+        let lanes = self.lanes();
+        let mut slot = 0;
+        while slot < self.footprint().route_scope_count {
+            let Some(scope) = lanes.route_scope_by_slot(slot) else {
+                invalid_resident_descriptor();
+            };
+            let mut arm = 0;
+            while arm < 2 {
+                let row = lanes.certified_route_commit_range_by_slot(slot, arm);
+                let mut expected = PackedEventConflict::route_arm(scope, arm);
+                let mut pos = row.end();
+                while pos > row.start() {
+                    pos -= 1;
+                    let current = lanes.route_commit_row_at(pos);
+                    if !super::super::lane_image::route_commit_decisions_match(current, expected) {
+                        invalid_resident_descriptor();
+                    }
+                    let Some(LocalConflict::RouteArm { scope, .. }) = current.to_conflict() else {
+                        invalid_resident_descriptor();
+                    };
+                    let Some(parent_slot) = self.route_scope_slot(scope) else {
+                        invalid_resident_descriptor();
+                    };
+                    let parent = lanes.route_scope_conflict_by_slot(parent_slot);
+                    let parent = match parent.to_conflict() {
+                        Some(LocalConflict::RouteArm { scope: parent, .. })
+                            if parent.same(scope) =>
+                        {
+                            PackedEventConflict::none()
+                        }
+                        _ => parent,
+                    };
+                    if (pos == row.start()) != parent.is_none() {
+                        invalid_resident_descriptor();
+                    }
+                    expected = parent;
+                }
+                arm += 1;
+            }
+            slot += 1;
+        }
+    }
+
     /// Establish all immutable checks that receive metadata performs before
     /// inspecting live progress. Raw lane views remain checked independently;
     /// only this opaque, fully constructed image permits direct authority reads.

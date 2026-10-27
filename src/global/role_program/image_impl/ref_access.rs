@@ -99,6 +99,7 @@ impl RoleImageRef {
     #[cfg(hibana_profile)]
     pub(crate) fn profile_resident_validation(&self) {
         self.validate_resident_events();
+        self.validate_route_commit_chains();
     }
 
     pub(crate) const fn new<const N: usize>(
@@ -159,6 +160,7 @@ impl RoleImageRef {
             invalid_resident_descriptor();
         }
         image.validate_resident_events();
+        image.validate_route_commit_chains();
         image.validate_parallel_borrow_masks();
         if image.parallel_reentry_is_borrowable() {
             image.lookup_indexes |= PARALLEL_REENTRY_INDEX;
@@ -288,7 +290,8 @@ impl RoleImageRef {
 
     #[inline(always)]
     pub(crate) const fn route_commit_range_by_slot(&self, slot: usize, arm: u8) -> PackedLaneRange {
-        self.lanes().route_commit_range_by_slot(slot, arm)
+        // The constructor checks each immutable chain once, using the ID index.
+        self.lanes().certified_route_commit_range_by_slot(slot, arm)
     }
 
     #[inline(always)]

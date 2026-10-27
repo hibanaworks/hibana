@@ -1,4 +1,6 @@
 use super::*;
+#[path = "tests/enclosing.rs"]
+mod enclosing;
 use crate::{
     Endpoint,
     g::{self, Msg},

@@ -109,30 +109,24 @@ impl EventCursor {
         idx: usize,
         mut selected_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>,
     ) -> Option<usize> {
-        let mut selected = None;
-        let mut slot = 0usize;
-        while slot < self.machine().route_scope_slot_count() {
-            if let Some(region) = self.machine().route_scope_rows_by_slot(slot)
-                && idx >= region.start()
-                && idx < region.end()
-            {
-                let scope = region.scope();
-                if let Some(arm) = selected_arm_for_scope(scope)
-                    && self.selected_route_arm_completes_scope(
-                        scope,
-                        arm,
-                        &mut selected_arm_for_scope,
-                    )
-                {
-                    selected = Some(match selected {
-                        Some(current) => self.deeper_route_scope(current, scope),
-                        None => scope,
-                    });
-                }
-            }
-            slot += 1;
+        if idx >= self.local_steps_len() {
+            return None;
         }
-        selected.and_then(|scope| self.route_scope_end_by_id(scope))
+        let chain = self.route_commit_range_for_conflict(self.event_conflict_for_index(idx))?;
+        // Chains contain precisely this event's ancestors, from outer to inner.
+        for pos in (0..chain.len()).rev() {
+            let Some(LocalConflict::RouteArm { scope, .. }) =
+                self.route_commit_row_at(chain, pos)?.to_conflict()
+            else {
+                crate::invariant();
+            };
+            if let Some(arm) = selected_arm_for_scope(scope)
+                && self.selected_route_arm_completes_scope(scope, arm, &mut selected_arm_for_scope)
+            {
+                return self.route_scope_end_by_id(scope);
+            }
+        }
+        None
     }
 
     pub(crate) fn visit_branch_recv_reentry_route_rows(

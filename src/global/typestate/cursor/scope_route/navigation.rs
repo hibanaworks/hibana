@@ -62,16 +62,20 @@ impl EventCursor {
         idx: usize,
         mut visit: impl FnMut(ScopeId, u8),
     ) {
-        let mut slot = 0usize;
-        while slot < self.machine().route_scope_slot_count() {
-            if let Some(region) = self.machine().route_scope_rows_by_slot(slot)
-                && region.start() <= idx
-                && idx < region.end()
-                && let Some(arm) = self.route_arm_for_index(region.scope(), idx)
-            {
-                visit(region.scope(), arm);
-            }
-            slot += 1;
+        if idx >= self.local_steps_len() {
+            return;
+        }
+        let Some(chain) = self.route_commit_range_for_conflict(self.event_conflict_for_index(idx))
+        else {
+            return;
+        };
+        for pos in 0..chain.len() {
+            let Some(LocalConflict::RouteArm { scope, arm }) =
+                crate::invariant_some(self.route_commit_row_at(chain, pos)).to_conflict()
+            else {
+                crate::invariant();
+            };
+            visit(scope, arm);
         }
     }
 

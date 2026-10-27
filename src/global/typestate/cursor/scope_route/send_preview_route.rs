@@ -1,4 +1,5 @@
 use super::super::{EventCursor, ScopeId};
+use crate::global::typestate::LocalConflict;
 
 impl EventCursor {
     #[inline(never)]
@@ -6,23 +7,20 @@ impl EventCursor {
         &self,
         idx: usize,
     ) -> Option<ScopeId> {
-        let mut selected = None;
-        let mut slot = 0usize;
-        while slot < self.machine().route_scope_slot_count() {
-            if let Some(region) = self.machine().route_scope_rows_by_slot(slot)
-                && idx >= region.start()
-                && idx < region.end()
-            {
-                let scope = region.scope();
-                if self.contains_route_controller(scope) {
-                    selected = Some(match selected {
-                        Some(current) => self.deeper_route_scope(current, scope),
-                        None => scope,
-                    });
-                }
-            }
-            slot += 1;
+        if idx >= self.local_steps_len() {
+            return None;
         }
-        selected
+        let chain = self.route_commit_range_for_conflict(self.event_conflict_for_index(idx))?;
+        for pos in (0..chain.len()).rev() {
+            let Some(LocalConflict::RouteArm { scope, .. }) =
+                self.route_commit_row_at(chain, pos)?.to_conflict()
+            else {
+                crate::invariant();
+            };
+            if self.contains_route_controller(scope) {
+                return Some(scope);
+            }
+        }
+        None
     }
 }
