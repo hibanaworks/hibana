@@ -182,6 +182,7 @@
     ],
     "../../src/global/compiled/images/image/route_resolvers/kani.rs": [
       "global::compiled::images::image::route_resolvers::kani::canonical_route_participant_identity_accepts_full_u8_role_domain",
+      "global::compiled::images::image::route_resolvers::kani::dynamic_canonical_route_identity_accepts_all_role_and_resolver_bits",
       "global::compiled::images::image::route_resolvers::kani::dynamic_route_resolver_identity_is_scope_and_id",
       "global::compiled::images::image::route_resolvers::kani::packed_route_authority_roundtrip_is_exact",
       "global::compiled::images::image::route_resolvers::kani::route_resolver_row_decoding_accepts_exact_range_domain"
@@ -452,7 +453,7 @@
   "contract-harnesses": {},
   "contracts": [],
   "totals": {
-    "standard-harnesses": 324,
+    "standard-harnesses": 325,
     "contract-harnesses": 0,
     "functions-under-contract": 0
   }
