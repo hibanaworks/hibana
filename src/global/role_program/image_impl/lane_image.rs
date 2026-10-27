@@ -1,4 +1,4 @@
-#[cfg(any(kani, all(test, hibana_repo_tests)))]
+#[cfg(all(test, hibana_repo_tests))]
 use super::super::ROLE_IMAGE_LANE_STRIDE;
 use super::{
     super::{
@@ -55,7 +55,7 @@ impl<'a> RoleLaneImage<'a> {
         self.blob.byte_at(offset)
     }
 
-    #[cfg(any(kani, all(test, hibana_repo_tests)))]
+    #[cfg(all(test, hibana_repo_tests))]
     #[inline(always)]
     const fn read_u8(&self, column: ColumnRange, row: usize, stride: usize) -> Option<u8> {
         match self.column_offset(column, row, stride) {
@@ -111,7 +111,7 @@ impl<'a> RoleLaneImage<'a> {
         }
     }
 
-    #[cfg(any(kani, all(test, hibana_repo_tests)))]
+    #[cfg(all(test, hibana_repo_tests))]
     #[inline(always)]
     pub(crate) const fn local_step_lane(
         &self,
