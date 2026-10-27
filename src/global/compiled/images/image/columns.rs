@@ -20,7 +20,8 @@ pub(crate) const PROGRAM_IMAGE_ATOM_ONLY_EVENT_CAPACITY: usize =
     COMPACT_DESCRIPTOR_BYTE_CAPACITY / PROGRAM_IMAGE_ATOM_STRIDE;
 pub(crate) const PROGRAM_IMAGE_STORAGE_BYTE_CAPACITY: usize = COMPACT_DESCRIPTOR_BYTE_CAPACITY
     + ScopeId::LOCAL_CAPACITY as usize * 9
-    + PROGRAM_IMAGE_ATOM_ONLY_EVENT_CAPACITY * 4;
+    + PROGRAM_IMAGE_ATOM_ONLY_EVENT_CAPACITY * 4
+    + ScopeId::LOCAL_CAPACITY as usize * 2;
 const _: () = assert!(
     PROGRAM_IMAGE_ATOM_ONLY_EVENT_CAPACITY < crate::eff::meta::COMPACT_EVENT_IDENTITY_CAPACITY
 );
@@ -368,7 +369,7 @@ impl ProgramImageColumns {
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ProgramImagePlan {
     columns: ProgramImageColumns,
-    source_order_bytes: usize,
+    index_bytes: usize,
 }
 
 impl ProgramImagePlan {
@@ -403,7 +404,7 @@ impl ProgramImagePlan {
     pub(crate) const fn from_program<const E: usize>(eff_list: &EffList<E>) -> Self {
         Self {
             columns: program_image_columns(eff_list),
-            source_order_bytes: source_order_byte_len(eff_list),
+            index_bytes: index_byte_len(eff_list),
         }
     }
 
@@ -414,14 +415,15 @@ impl ProgramImagePlan {
 
     #[inline(always)]
     pub(crate) const fn blob_len(self) -> usize {
-        self.columns.blob_len() + self.source_order_bytes
+        self.columns.blob_len() + self.index_bytes
     }
 }
 
-pub(super) const fn source_order_byte_len<const E: usize>(eff_list: &EffList<E>) -> usize {
+pub(super) const fn index_byte_len<const E: usize>(eff_list: &EffList<E>) -> usize {
     let markers = eff_list.scope_markers();
     let mut extent = 0;
     let mut rolls = false;
+    let mut resolver_extent = 0;
     let mut marker = 0;
     while marker < markers.len() {
         let scope = markers.at(marker).scope_id;
@@ -430,6 +432,9 @@ pub(super) const fn source_order_byte_len<const E: usize>(eff_list: &EffList<E>)
                 rolls = true;
             }
             let end = scope.local_ordinal() as usize + 1;
+            if matches!(scope.kind(), Some(ScopeKind::Route)) && end > resolver_extent {
+                resolver_extent = end;
+            }
             if end > extent {
                 extent = end;
             }
@@ -439,7 +444,7 @@ pub(super) const fn source_order_byte_len<const E: usize>(eff_list: &EffList<E>)
     if extent == 0 {
         0
     } else {
-        extent * 9 + eff_list.len() * if rolls { 4 } else { 2 }
+        extent * 9 + eff_list.len() * if rolls { 4 } else { 2 } + resolver_extent * 2
     }
 }
 

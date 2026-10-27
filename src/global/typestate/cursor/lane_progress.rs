@@ -1,5 +1,5 @@
 use super::{
-    CursorInvariantError, CursorRefresh, EVENT_CURSOR_STATE_NONE, EventCursor, LocalAction,
+    CursorInvariantError, CursorRefresh, EVENT_CURSOR_STATE_NONE, EventCursor,
     RelocatableResidentLaneStep, ResidentLaneStep, StateIndex, state_index_to_usize,
 };
 impl EventCursor {
@@ -20,34 +20,15 @@ impl EventCursor {
                 let Some(state_idx) = self.step_state_index_at_lane(lane_idx) else {
                     crate::invariant();
                 };
-                let node = self.machine().node(state_index_to_usize(state_idx));
-                if self.logical_role_at(state_index_to_usize(state_idx)) != Some(role) {
+                let row = crate::invariant_some(self.event_row_at(state_index_to_usize(state_idx)));
+                if row.logical_role() != role {
                     lane_idx += 1;
                     continue;
                 }
-                let Some(label) = (match node.action() {
-                    LocalAction::Send { label, .. }
-                    | LocalAction::Recv { label, .. }
-                    | LocalAction::Local { label, .. } => Some(label),
-                    LocalAction::Terminate => None,
-                }) else {
-                    crate::invariant();
-                };
-                if label != target_label {
+                if row.atom().label != target_label {
                     crate::invariant();
                 }
-                let schema = if let Some(meta) =
-                    self.try_send_meta_at(state_index_to_usize(state_idx))
-                {
-                    meta.payload_kind
-                } else if let Some(meta) = self.try_recv_meta_at(state_index_to_usize(state_idx)) {
-                    meta.payload_kind
-                } else if let Some(meta) = self.try_local_meta_at(state_index_to_usize(state_idx)) {
-                    meta.payload_kind
-                } else {
-                    crate::invariant()
-                };
-                if schema != target_payload {
+                if row.atom().payload != target_payload {
                     lane_idx += 1;
                     continue;
                 }

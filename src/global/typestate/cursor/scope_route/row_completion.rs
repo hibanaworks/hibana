@@ -26,16 +26,11 @@ impl EventCursor {
         owns_endpoint: bool,
         selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
     ) -> bool {
-        use crate::{eff::EventPayload, global::typestate::LocalAction};
+        use crate::{eff::EventPayload, global::role_program::RoleLocalDirection};
         for idx in self.pending_event_steps(0..self.local_steps_len()) {
-            let action = self.machine().node(idx).action();
-            let (eff, receiving) = match action {
-                LocalAction::Send { eff_index, .. } | LocalAction::Local { eff_index, .. } => {
-                    (eff_index, false)
-                }
-                LocalAction::Recv { eff_index, .. } => (eff_index, true),
-                LocalAction::Terminate => continue,
-            };
+            let (eff, direction) =
+                crate::invariant_some(self.machine().event_program().operation_at(idx));
+            let receiving = direction == RoleLocalDirection::Recv;
             if !source.contains(&eff.dense_ordinal()) {
                 continue;
             }

@@ -9,7 +9,7 @@ pub(crate) use event_progress::{EventAdmissionError, EventArmView};
 
 use super::super::facts::{LocalConflict, PackedEventConflict, PassiveArmChildFact};
 use super::{
-    CursorInvariantError, DynamicRouteResolver, EffIndex, EventCursor, LaneSetView, LocalAction,
+    CursorInvariantError, DynamicRouteResolver, EffIndex, EventCursor, LaneSetView,
     LocalDependency, RecvMeta, RelocatableResidentLaneStep, RouteOfferCursorState, ScopeId,
     SendMeta, StateIndex, state_index_to_usize,
 };
@@ -294,7 +294,7 @@ impl EventCursor {
 
     #[inline]
     pub(crate) fn node_roll_scope(&self, index: usize) -> Option<ScopeId> {
-        let scope = self.typestate_node(index).scope();
+        let scope = self.node_scope_id_at(index);
         if scope.is_none() {
             None
         } else {
@@ -377,12 +377,10 @@ impl EventCursor {
             .machine()
             .event_program()
             .route_arm_lane_last_step_by_slot(slot, arm, lane)? as usize;
-        match self.machine().node(step).action() {
-            LocalAction::Send { eff_index, .. }
-            | LocalAction::Recv { eff_index, .. }
-            | LocalAction::Local { eff_index, .. } => Some(eff_index),
-            LocalAction::Terminate => None,
-        }
+        self.machine()
+            .event_program()
+            .operation_at(step)
+            .map(|(eff, _)| eff)
     }
 
     fn controller_arm_entry_by_arm_inner(

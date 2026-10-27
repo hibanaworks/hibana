@@ -198,11 +198,8 @@ impl EventCursor {
         // requires that view cannot complete while the send waits.
         // The row already matched this effect. Ownership needs only its
         // payload kind, not another complete send descriptor.
-        let moved_role = if self.is_send_at(idx)
-            && let crate::eff::EventPayload::Endpoint(role) = self
-                .program_ref()
-                .event_atom_at(event.eff_index.dense_ordinal())
-                .payload
+        let moved_role = if row.direction() == RoleLocalDirection::Send
+            && let crate::eff::EventPayload::Endpoint(role) = row.atom().payload
         {
             Some(role)
         } else {

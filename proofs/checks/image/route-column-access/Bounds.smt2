@@ -1,4 +1,4 @@
-; Full compact-domain arithmetic; search semantics use SortedRouteIndex.lean.
+; Full compact-domain arithmetic; resolver lookup uses DirectResolverIndex.lean.
 (set-logic QF_LIA)
 (declare-const offset Int)
 (declare-const count Int)

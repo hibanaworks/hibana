@@ -275,12 +275,11 @@ fn compiled_program_atom_descriptor_rejects_effect_index_query_out_of_range() {
 }
 
 #[test]
-fn immutable_resolver_certificate_fits_existing_descriptor_padding() {
+fn immutable_program_indexes_fit_the_static_descriptor_budget() {
     let image = forged_program_ref(&VALID, 1);
-    let prior_fields = (image.facts, image.columns, image.blob, image.source_order);
-    assert_eq!(
-        core::mem::size_of_val(&image),
-        core::mem::size_of_val(&prior_fields),
-        "the immutable index certificate must not enlarge the descriptor"
+    assert!(
+        core::mem::size_of_val(&image) <= 64
+            && core::mem::size_of_val(&image) <= 3 * core::mem::size_of_val(&image.blob) + 16,
+        "compiled facts and three borrowed byte ranges must fit the static descriptor budget"
     );
 }

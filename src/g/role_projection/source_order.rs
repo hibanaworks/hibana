@@ -250,6 +250,7 @@ impl<const E: usize> SourceOrder<'_, E> {
             | LocalAction::Local {
                 eff_index, lane, ..
             } => (eff_index.dense_ordinal(), lane),
+            #[cfg(any(kani, all(test, hibana_repo_tests)))]
             LocalAction::Terminate => crate::invariant(),
         }
     }

@@ -1,7 +1,10 @@
 use super::CompiledProgramRef;
 use crate::{
     endpoint::kernel::EndpointArenaLayout,
-    global::role_program::{DENSE_LANE_ABSENT, DenseLaneOrdinal, RoleImageRef},
+    global::{
+        event_program::LocalEventProgram,
+        role_program::{DENSE_LANE_ABSENT, DenseLaneOrdinal, RoleImageRef},
+    },
 };
 
 #[derive(Clone, Copy)]
@@ -22,7 +25,8 @@ impl RoleDescriptorRef {
     /// Cold construction of the exact logical views that can reside at this
     /// actor. This set allocates storage; it does not authorize ownership.
     pub(crate) fn logical_views(&self) -> LogicalViews {
-        use crate::{eff::EventPayload, global::typestate::LocalAction};
+        use crate::eff::EventPayload;
+        let program = LocalEventProgram::from_rows(self.resident);
         let mut views = LogicalViews { words: [0; 8] };
         views.insert(self.role());
         let mut role = 0usize;
@@ -33,16 +37,9 @@ impl RoleDescriptorRef {
             role += 1;
         }
         for step in 0..self.local_len() {
-            let action = crate::invariant_some(self.resident.local_step_node(step)).action();
-            let (eff, receiving) = match action {
-                LocalAction::Send { eff_index, .. } | LocalAction::Local { eff_index, .. } => {
-                    (eff_index, false)
-                }
-                LocalAction::Recv { eff_index, .. } => (eff_index, true),
-                LocalAction::Terminate => crate::invariant(),
-            };
-            let atom = self.program().event_atom_at(eff.dense_ordinal());
-            views.insert(if receiving { atom.to } else { atom.from });
+            let row = crate::invariant_some(program.event_row_at(step));
+            let atom = row.atom();
+            views.insert(row.logical_role());
             if let EventPayload::Endpoint(role) = atom.payload {
                 views.insert(role);
             }
@@ -51,56 +48,28 @@ impl RoleDescriptorRef {
     }
 
     pub(crate) fn has_view_lane(&self, role: u8, lane: usize) -> bool {
-        use crate::global::typestate::LocalAction;
+        let program = LocalEventProgram::from_rows(self.resident);
         // Existing session membership uses lane zero even for a role with no
         // visible operations. It carries no additional protocol authority.
         if lane == 0 {
             return true;
         }
         for step in 0..self.local_len() {
-            let action = crate::invariant_some(self.resident.local_step_node(step)).action();
-            let (eff, receiving, wire_lane) = match action {
-                LocalAction::Send {
-                    eff_index, lane, ..
-                }
-                | LocalAction::Local {
-                    eff_index, lane, ..
-                } => (eff_index, false, lane),
-                LocalAction::Recv {
-                    eff_index, lane, ..
-                } => (eff_index, true, lane),
-                LocalAction::Terminate => crate::invariant(),
-            };
-            if wire_lane as usize == lane {
-                let atom = self.program().event_atom_at(eff.dense_ordinal());
-                if (if receiving { atom.to } else { atom.from }) == role {
-                    return true;
-                }
+            let row = crate::invariant_some(program.event_row_at(step));
+            if row.atom().lane as usize == lane && row.logical_role() == role {
+                return true;
             }
         }
         false
     }
 
     pub(crate) fn view_lane_slot_count(&self, role: u8) -> usize {
-        use crate::global::typestate::LocalAction;
+        let program = LocalEventProgram::from_rows(self.resident);
         let mut count = 1;
         for step in 0..self.local_len() {
-            let action = crate::invariant_some(self.resident.local_step_node(step)).action();
-            let (eff, receiving, lane) = match action {
-                LocalAction::Send {
-                    eff_index, lane, ..
-                }
-                | LocalAction::Local {
-                    eff_index, lane, ..
-                } => (eff_index, false, lane),
-                LocalAction::Recv {
-                    eff_index, lane, ..
-                } => (eff_index, true, lane),
-                LocalAction::Terminate => crate::invariant(),
-            };
-            let atom = self.program().event_atom_at(eff.dense_ordinal());
-            if (if receiving { atom.to } else { atom.from }) == role {
-                count = count.max(lane as usize + 1);
+            let row = crate::invariant_some(program.event_row_at(step));
+            if row.logical_role() == role {
+                count = count.max(row.atom().lane as usize + 1);
             }
         }
         count

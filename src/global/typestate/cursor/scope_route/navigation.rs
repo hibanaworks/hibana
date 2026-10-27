@@ -1,6 +1,6 @@
 use super::super::{
-    ARM_SHARED, CursorInvariantError, EventCursor, InboundFrameKey, LocalAction,
-    PackedEventConflict, RouteScopeRows, ScopeId, StateIndex, state_index_to_usize,
+    ARM_SHARED, CursorInvariantError, EventCursor, InboundFrameKey, PackedEventConflict,
+    RouteScopeRows, ScopeId, StateIndex, state_index_to_usize,
 };
 use crate::global::typestate::LocalConflict;
 
@@ -134,12 +134,7 @@ impl EventCursor {
 
     pub(crate) fn route_arm_for_index(&self, scope_id: ScopeId, idx: usize) -> Option<u8> {
         let slot = self.route_scope_slot_inner(scope_id)?;
-        let lane = match self.action_at(idx) {
-            LocalAction::Send { lane, .. }
-            | LocalAction::Recv { lane, .. }
-            | LocalAction::Local { lane, .. } => lane,
-            LocalAction::Terminate => return None,
-        };
+        let lane = self.event_row_at(idx)?.atom().lane;
         let Ok(step) = self.relocatable_resident_lane_step_at_index(idx, lane as usize) else {
             crate::invariant();
         };
@@ -252,7 +247,7 @@ impl EventCursor {
     /// Scope ID stored on the current node (no parent traversal).
     #[inline(always)]
     pub(crate) fn node_scope_id(&self) -> ScopeId {
-        self.machine().node(self.idx_usize()).scope()
+        self.node_scope_id_at(self.idx_usize())
     }
 
     #[inline(always)]

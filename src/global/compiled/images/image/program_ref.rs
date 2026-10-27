@@ -47,11 +47,11 @@ pub(crate) struct CompiledProgramRef {
     pub(crate) columns: ProgramImageColumns,
     pub(crate) blob: BlobPtr,
     source_order: BlobPtr,
+    pub(super) resolver_index: BlobPtr,
     source_scopes: u16,
     // Independent facts of the checked, contiguous ownership tail.
     actor_binding_start: u16,
     actor_decisions: u16,
-    routes_sorted: bool,
 }
 
 impl core::fmt::Debug for CompiledProgramRef {
@@ -100,10 +100,10 @@ impl CompiledProgramRef {
             columns,
             blob,
             source_order: BlobPtr::from_array(bytes, 0),
+            resolver_index: BlobPtr::from_array(bytes, 0),
             source_scopes: 0,
             actor_binding_start: 0,
             actor_decisions: 0,
-            routes_sorted: false,
         };
         if let Some(ownership) = image.decode_ownership_columns() {
             image.actor_binding_start = ownership.bindings.offset;
@@ -112,8 +112,7 @@ impl CompiledProgramRef {
         image.validate_atom_rows();
         // Immutable descriptor validation belongs at construction, not on
         // every endpoint lookup. The private certificate is not protocol state.
-        image.routes_sorted = image.validate_route_resolver_rows();
-        image.validate_actor_rows();
+        image.validate_route_resolver_rows();
         let Some((scopes, rolls)) = SourceOrderIndex::<0>::layout(
             columns,
             image.source_scope_marker_count(),
@@ -128,11 +127,24 @@ impl CompiledProgramRef {
             scopes * 9 + columns.atom_count() * if rolls { 4 } else { 2 }
         };
         image.source_order = BlobPtr::from_array_range(bytes, columns.blob_len(), len);
+        let Some(resolver_extent) =
+            super::resolver_index::ResolverIndex::<0>::extent(columns, blob.as_slice())
+        else {
+            crate::invariant();
+        };
+        image.resolver_index =
+            BlobPtr::from_array_range(bytes, columns.blob_len() + len, resolver_extent * 2);
         if N <= crate::global::const_dsl::ScopeId::LOCAL_CAPACITY as usize && scopes <= N {
             image.validate_source_order::<N>();
         } else {
             image.validate_source_order::<{ crate::global::const_dsl::ScopeId::LOCAL_CAPACITY as usize }>();
         }
+        if N <= crate::global::const_dsl::ScopeId::LOCAL_CAPACITY as usize && resolver_extent <= N {
+            image.validate_resolver_index::<N>();
+        } else {
+            image.validate_resolver_index::<{ crate::global::const_dsl::ScopeId::LOCAL_CAPACITY as usize }>();
+        }
+        image.validate_actor_rows();
         image
     }
 
@@ -161,10 +173,6 @@ impl CompiledProgramRef {
             self.source_order.byte_at(offset),
             self.source_order.byte_at(offset + 1),
         ])
-    }
-
-    pub(super) const fn route_resolver_index_is_sorted(&self) -> bool {
-        self.routes_sorted
     }
 
     pub(crate) fn same_image(&self, other: &Self) -> bool {

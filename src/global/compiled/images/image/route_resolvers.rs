@@ -228,9 +228,7 @@ impl CompiledProgramRef {
         Some(decoded)
     }
 
-    pub(super) const fn validate_route_resolver_rows(&self) -> bool {
-        let mut previous = None;
-        let mut sorted = true;
+    pub(super) const fn validate_route_resolver_rows(&self) {
         let mut row = 0;
         while row < self.columns.route_resolver_count() {
             let decoded = match self.route_resolver_row_at(row) {
@@ -240,67 +238,55 @@ impl CompiledProgramRef {
             if !decoded.participants_are_canonical(self) {
                 crate::invariant();
             }
-            if let Some(raw) = previous
-                && raw >= decoded.scope.raw()
-            {
-                sorted = false;
-            }
-            previous = Some(decoded.scope.raw());
             row += 1;
         }
-        sorted
     }
 
-    #[inline]
-    pub(super) const fn route_scope_raw_at(&self, row: usize) -> u16 {
-        let offset = match self.column_offset(
-            self.columns.route_resolvers(),
-            row,
-            PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE,
-        ) {
-            Some(offset) => offset,
-            None => crate::invariant(),
+    pub(super) const fn validate_resolver_index<const E: usize>(&self) {
+        if self.columns.route_resolver_count() == 0 {
+            if self.resolver_index.len() != 0 {
+                crate::invariant();
+            }
+            return;
+        }
+        let Some(expected) = super::resolver_index::ResolverIndex::<E>::from_bytes(
+            self.columns,
+            self.blob.as_slice(),
+        ) else {
+            crate::invariant();
         };
-        // Constructor validation has decoded both the authority tag and scope.
-        self.read_u16_at(offset) & !ScopeId::RESERVED_BIT
+        if expected.packed_len() != self.resolver_index.len() {
+            crate::invariant();
+        }
+        let mut byte = 0;
+        while byte < expected.packed_len() {
+            if self.resolver_index.byte_at(byte) != expected.packed_byte(byte) {
+                crate::invariant();
+            }
+            byte += 1;
+        }
     }
 
-    #[inline(never)]
-    fn route_resolver_slot(&self, scope_id: ScopeId) -> Option<usize> {
-        if !matches!(scope_id.kind(), Some(ScopeKind::Route)) {
+    #[inline(always)]
+    pub(super) const fn route_resolver_slot(&self, scope_id: ScopeId) -> Option<usize> {
+        let query = scope_id.raw() as usize;
+        if query >= self.resolver_index.len() / 2 {
             return None;
         }
-        let query = scope_id.raw();
-        if self.route_resolver_index_is_sorted() {
-            let mut low = 0;
-            let mut high = self.columns.route_resolver_count();
-            while low < high {
-                let middle = low + (high - low) / 2;
-                let candidate = self.route_scope_raw_at(middle);
-                if candidate < query {
-                    low = middle + 1;
-                } else if query < candidate {
-                    high = middle;
-                } else {
-                    return Some(middle);
-                }
-            }
+        let byte = query * 2;
+        let slot = u16::from_le_bytes([
+            self.resolver_index.byte_at(byte),
+            self.resolver_index.byte_at(byte + 1),
+        ]);
+        if slot == u16::MAX {
             None
         } else {
-            // Preserve first-match semantics for valid unsorted/duplicate
-            // internal descriptors; no speculative dense-ordinal assumption.
-            let mut row = 0;
-            while row < self.columns.route_resolver_count() {
-                if self.route_scope_raw_at(row) == query {
-                    return Some(row);
-                }
-                row += 1;
-            }
-            None
+            Some(slot as usize)
         }
     }
 
     #[inline]
+    #[cfg(any(kani, all(test, hibana_repo_tests)))]
     fn route_resolver_row(&self, scope_id: ScopeId) -> RouteResolverRow {
         let slot = match self.route_resolver_slot(scope_id) {
             Some(slot) => slot,
@@ -312,14 +298,41 @@ impl CompiledProgramRef {
         }
     }
 
+    #[inline]
+    fn route_resolver_offset(&self, scope_id: ScopeId) -> usize {
+        let slot = match self.route_resolver_slot(scope_id) {
+            Some(slot) => slot,
+            None => crate::invariant(),
+        };
+        match self.column_offset(
+            self.columns.route_resolvers(),
+            slot,
+            PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE,
+        ) {
+            Some(offset) => offset,
+            None => crate::invariant(),
+        }
+    }
+
     #[inline(always)]
     pub(crate) fn route_controller_role(&self, scope_id: ScopeId) -> u8 {
-        self.route_resolver_row(scope_id).controller_role
+        // Construction validates the whole row and both participant ranges.
+        // Controller lookup needs only the role byte of that immutable row.
+        self.byte_at(self.route_resolver_offset(scope_id) + 4)
     }
 
     #[inline(always)]
     pub(crate) fn route_resolver(&self, scope_id: ScopeId) -> Option<DynamicRouteResolver> {
-        self.route_resolver_row(scope_id).resolver()
+        let offset = self.route_resolver_offset(scope_id);
+        let packed = self.read_u16_at(offset);
+        if packed & ScopeId::RESERVED_BIT == 0 {
+            None
+        } else {
+            Some(DynamicRouteResolver::new(
+                scope_id,
+                self.read_u16_at(offset + 2),
+            ))
+        }
     }
 
     #[inline]

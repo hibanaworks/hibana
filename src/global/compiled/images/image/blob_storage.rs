@@ -165,7 +165,7 @@ impl<const N: usize> ProgramImageBytes<N> {
         eff_list: &EffList<E>,
         columns: ProgramImageColumns,
     ) -> Option<Self> {
-        if columns.blob_len() + super::columns::source_order_byte_len(eff_list) > N {
+        if columns.blob_len() + super::columns::index_byte_len(eff_list) > N {
             None
         } else {
             Some(Self::from_image(eff_list, columns))
@@ -346,7 +346,7 @@ impl<const N: usize> ProgramImageBytes<N> {
         columns: ProgramImageColumns,
     ) -> Self {
         let projected_len = columns.blob_len();
-        if projected_len + super::columns::source_order_byte_len(eff_list) > N {
+        if projected_len + super::columns::index_byte_len(eff_list) > N {
             crate::invariant();
         }
         let markers = eff_list.scope_markers();
@@ -435,32 +435,57 @@ impl<const N: usize> ProgramImageBytes<N> {
         else {
             crate::invariant();
         };
-        if N <= ScopeId::LOCAL_CAPACITY as usize && extent <= N {
-            out.write_source_order::<N>(columns, markers.len());
+        let Some(resolver_extent) =
+            super::resolver_index::ResolverIndex::<0>::extent(columns, &out.bytes)
+        else {
+            crate::invariant();
+        };
+        if N <= ScopeId::LOCAL_CAPACITY as usize && extent <= N && resolver_extent <= N {
+            out.write_indexes::<N>(columns, markers.len());
         } else {
-            out.write_source_order::<{ ScopeId::LOCAL_CAPACITY as usize }>(columns, markers.len());
+            out.write_indexes::<{ ScopeId::LOCAL_CAPACITY as usize }>(columns, markers.len());
         }
         out
     }
 
-    const fn write_source_order<const E: usize>(
+    const fn write_indexes<const E: usize>(
         &mut self,
         columns: ProgramImageColumns,
         markers: usize,
     ) {
-        if matches!(
+        let source_empty = matches!(
             super::SourceOrderIndex::<0>::layout(columns, markers, &self.bytes),
             Some((0, _))
-        ) {
+        );
+        let source_bytes = if source_empty {
+            0
+        } else {
+            let Some(index) =
+                super::SourceOrderIndex::<E>::from_bytes(columns, markers, &self.bytes)
+            else {
+                crate::invariant();
+            };
+            let mut byte = 0;
+            while byte < index.packed_len() {
+                self.write_u8(columns.blob_len() + byte, index.packed_byte(byte));
+                byte += 1;
+            }
+            index.packed_len()
+        };
+        if columns.route_resolver_count() == 0 {
             return;
         }
-        let Some(index) = super::SourceOrderIndex::<E>::from_bytes(columns, markers, &self.bytes)
+        let Some(resolvers) =
+            super::resolver_index::ResolverIndex::<E>::from_bytes(columns, &self.bytes)
         else {
             crate::invariant();
         };
         let mut byte = 0;
-        while byte < index.packed_len() {
-            self.write_u8(columns.blob_len() + byte, index.packed_byte(byte));
+        while byte < resolvers.packed_len() {
+            self.write_u8(
+                columns.blob_len() + source_bytes + byte,
+                resolvers.packed_byte(byte),
+            );
             byte += 1;
         }
     }

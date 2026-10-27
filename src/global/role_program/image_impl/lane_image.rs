@@ -174,6 +174,11 @@ impl<'a> RoleLaneImage<'a> {
                 None => invalid_resident_descriptor(),
             };
         let row = self.read_u16_at(offset + 2);
+        self.dependency_row(row)
+    }
+
+    #[inline(always)]
+    pub(crate) const fn dependency_row(&self, row: u16) -> Option<LocalDependency> {
         if row == u16::MAX {
             return None;
         }

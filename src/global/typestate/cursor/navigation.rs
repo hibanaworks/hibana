@@ -1,7 +1,7 @@
 use super::{
-    EventCursor, LocalAction, LocalMeta, LocalNode, RecvMeta, ScopeId, SendMeta, StateIndex,
-    state_index_to_usize,
+    EventCursor, LocalMeta, RecvMeta, ScopeId, SendMeta, StateIndex, state_index_to_usize,
 };
+use crate::global::event_program::LocalEventRow;
 use crate::global::role_program::RoleLocalDirection;
 impl EventCursor {
     #[inline]
@@ -80,31 +80,29 @@ impl EventCursor {
         self.state().idx as usize
     }
 
-    /// Access a typestate node by index.
     #[inline(always)]
-    pub(crate) fn typestate_node(&self, index: usize) -> LocalNode {
-        self.machine().node(index)
+    pub(crate) fn event_row_at(&self, index: usize) -> Option<LocalEventRow> {
+        if index > self.local_steps_len() {
+            crate::invariant();
+        }
+        self.machine().event_program().event_row_at(index)
     }
 
     #[inline(always)]
     pub(crate) fn node_next_index_at(&self, index: usize) -> StateIndex {
-        self.machine().node(index).next()
+        self.event_row_at(index)
+            .map_or_else(|| StateIndex::from_usize(index), LocalEventRow::next)
     }
 
     #[inline(always)]
     pub(crate) fn node_route_arm_at(&self, index: usize) -> Option<u8> {
-        self.machine().node(index).route_arm()
-    }
-
-    #[inline(always)]
-    fn action(&self) -> LocalAction {
-        self.machine().node(self.idx_usize()).action()
+        self.event_row_at(index).and_then(LocalEventRow::route_arm)
     }
 
     /// Returns `true` when the cursor points at a receive action.
     #[inline(always)]
     pub(crate) fn is_recv(&self) -> bool {
-        self.action().is_recv()
+        self.is_recv_at(self.idx_usize())
     }
 
     /// Navigate to the projected passive arm entry for a given route scope.
@@ -147,8 +145,8 @@ impl EventCursor {
         idx < self.machine().node_len()
     }
 
-    #[inline(always)]
-    pub(crate) fn action_at(&self, idx: usize) -> LocalAction {
+    #[cfg(all(test, hibana_repo_tests))]
+    pub(crate) fn action_at(&self, idx: usize) -> super::LocalAction {
         self.machine().node(idx).action()
     }
 
@@ -178,22 +176,85 @@ impl EventCursor {
 
     #[inline(always)]
     pub(crate) fn node_scope_id_at(&self, idx: usize) -> ScopeId {
-        self.machine().node(idx).scope()
+        self.event_row_at(idx)
+            .map_or(ScopeId::none(), LocalEventRow::scope)
     }
 
     #[inline(always)]
     pub(crate) fn try_send_meta_at(&self, idx: usize) -> Option<SendMeta> {
-        self.try_send_meta_from_node(idx)
+        if idx > self.local_steps_len() {
+            crate::invariant();
+        }
+        let row = self.machine().event_program().event_row_at(idx)?;
+        if row.direction() != RoleLocalDirection::Send {
+            return None;
+        }
+        let atom = row.atom();
+        let route_arm = row.route_arm();
+        Some(SendMeta {
+            eff_index: row.effect(),
+            peer: atom.to,
+            label: atom.label,
+            payload_kind: atom.payload,
+            frame_label: row.effect().dense_ordinal() as u16,
+            origin: atom.origin,
+            next: state_index_to_usize(row.next()),
+            scope: row.scope(),
+            route_scope: row.route_scope(),
+            route_arm,
+            selected_route_arm: route_arm,
+            lane: atom.lane,
+        })
     }
 
     #[inline(always)]
     pub(crate) fn try_recv_meta_at(&self, idx: usize) -> Option<RecvMeta> {
-        self.try_recv_meta_from_node(idx)
+        if idx > self.local_steps_len() {
+            crate::invariant();
+        }
+        let row = self.machine().event_program().event_row_at(idx)?;
+        if row.direction() != RoleLocalDirection::Recv {
+            return None;
+        }
+        let atom = row.atom();
+        Some(RecvMeta {
+            eff_index: row.effect(),
+            peer: atom.from,
+            label: atom.label,
+            payload_kind: atom.payload,
+            frame_label: row.effect().dense_ordinal() as u16,
+            origin: atom.origin,
+            next: state_index_to_usize(row.next()),
+            scope: row.scope(),
+            route_scope: row.route_scope(),
+            route_arm: row.route_arm(),
+            choice: row.choice(),
+            lane: atom.lane,
+        })
     }
 
     #[inline(always)]
     pub(crate) fn try_local_meta_at(&self, idx: usize) -> Option<LocalMeta> {
-        self.try_local_meta_from_node(idx)
+        if idx > self.local_steps_len() {
+            crate::invariant();
+        }
+        let row = self.machine().event_program().event_row_at(idx)?;
+        if row.direction() != RoleLocalDirection::Local {
+            return None;
+        }
+        let atom = row.atom();
+        Some(LocalMeta {
+            eff_index: row.effect(),
+            label: atom.label,
+            payload_kind: atom.payload,
+            frame_label: row.effect().dense_ordinal() as u16,
+            origin: atom.origin,
+            next: state_index_to_usize(row.next()),
+            scope: row.scope(),
+            route_scope: row.route_scope(),
+            route_arm: row.route_arm(),
+            lane: atom.lane,
+        })
     }
 
     /// Logical operation owner, independent of the physical actor holding it.
@@ -253,132 +314,5 @@ impl EventCursor {
                 selected_arm,
             )
             .map(|actor| actor == self.role())
-    }
-
-    #[inline]
-    fn route_authority_at(&self, idx: usize, route_arm: Option<u8>) -> (ScopeId, Option<u8>) {
-        // RoleImageRef construction proves exact conflict/scope/arm membership,
-        // including exclusion from every route envelope when no conflict exists.
-        // Metadata reads never need to rediscover that immutable authority.
-        match self.machine().event_conflict_for_index(idx).to_conflict() {
-            Some(crate::global::typestate::LocalConflict::RouteArm { scope, .. }) => {
-                (scope, route_arm)
-            }
-            _ => (ScopeId::none(), None),
-        }
-    }
-
-    pub(super) fn try_send_meta_from_node(&self, idx: usize) -> Option<SendMeta> {
-        let node = self.machine().node(idx);
-        match node.action() {
-            LocalAction::Send {
-                eff_index,
-                peer,
-                label,
-                frame_label,
-                origin,
-                lane,
-            } => {
-                let payload_kind = self
-                    .machine()
-                    .program_ref()
-                    .event_atom_at(eff_index.dense_ordinal())
-                    .payload;
-                let scope = node.scope();
-                let route_arm = node.route_arm();
-                let (route_scope, selected_route_arm) = self.route_authority_at(idx, route_arm);
-                Some(SendMeta {
-                    eff_index,
-                    peer,
-                    label,
-                    payload_kind,
-                    frame_label,
-                    semantic: node.event_semantic(),
-                    origin,
-                    next: state_index_to_usize(node.next()),
-                    scope,
-                    route_scope,
-                    route_arm,
-                    selected_route_arm,
-                    lane,
-                })
-            }
-            LocalAction::Recv { .. } | LocalAction::Local { .. } | LocalAction::Terminate => None,
-        }
-    }
-
-    pub(super) fn try_recv_meta_from_node(&self, idx: usize) -> Option<RecvMeta> {
-        let node = self.machine().node(idx);
-        match node.action() {
-            LocalAction::Recv {
-                eff_index,
-                peer,
-                label,
-                frame_label,
-                origin,
-                lane,
-            } => {
-                let payload_kind = self
-                    .machine()
-                    .program_ref()
-                    .event_atom_at(eff_index.dense_ordinal())
-                    .payload;
-                let scope = node.scope();
-                let route_arm = node.route_arm();
-                let (route_scope, _) = self.route_authority_at(idx, route_arm);
-                Some(RecvMeta {
-                    eff_index,
-                    peer,
-                    label,
-                    payload_kind,
-                    frame_label,
-                    semantic: node.event_semantic(),
-                    origin,
-                    next: state_index_to_usize(node.next()),
-                    scope,
-                    route_scope,
-                    route_arm,
-                    choice: node.choice_mark(),
-                    lane,
-                })
-            }
-            LocalAction::Send { .. } | LocalAction::Local { .. } | LocalAction::Terminate => None,
-        }
-    }
-
-    pub(super) fn try_local_meta_from_node(&self, idx: usize) -> Option<LocalMeta> {
-        let node = self.machine().node(idx);
-        match node.action() {
-            LocalAction::Local {
-                eff_index,
-                label,
-                frame_label,
-                origin,
-                lane,
-            } => {
-                let payload_kind = self
-                    .machine()
-                    .program_ref()
-                    .event_atom_at(eff_index.dense_ordinal())
-                    .payload;
-                let scope = node.scope();
-                let route_arm = node.route_arm();
-                let (route_scope, _) = self.route_authority_at(idx, route_arm);
-                Some(LocalMeta {
-                    eff_index,
-                    label,
-                    payload_kind,
-                    frame_label,
-                    semantic: node.event_semantic(),
-                    origin,
-                    next: state_index_to_usize(node.next()),
-                    scope,
-                    route_scope,
-                    route_arm,
-                    lane,
-                })
-            }
-            LocalAction::Send { .. } | LocalAction::Recv { .. } | LocalAction::Terminate => None,
-        }
     }
 }

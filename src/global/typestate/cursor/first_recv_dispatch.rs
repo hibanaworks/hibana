@@ -1,5 +1,5 @@
 use super::{
-    CursorInvariantError, EventCursorMachine, InboundFrameKey, LocalAction, ScopeId, StateIndex,
+    CursorInvariantError, EventCursorMachine, InboundFrameKey, ScopeId, StateIndex,
     state_index_to_usize,
 };
 use crate::global::typestate::LocalConflict;
@@ -131,19 +131,16 @@ impl EventCursorMachine {
         let mut matched = UniqueMatch::NONE;
         let visited = self.visit_first_recv_dispatch(scope_id, |arm, target| {
             let arm = validated_dispatch_arm(arm, target);
-            let node = self.node(state_index_to_usize(target));
-            let LocalAction::Recv {
-                peer,
-                lane: target_lane,
-                frame_label: target_frame_label,
-                ..
-            } = node.action()
+            let Some(row) = self
+                .event_program()
+                .event_row_at(state_index_to_usize(target))
             else {
                 return;
             };
-            if peer == key.source_role
-                && target_lane == key.lane
-                && target_frame_label == key.frame_label
+            if row.direction() == crate::global::role_program::RoleLocalDirection::Recv
+                && row.atom().from == key.source_role
+                && row.atom().lane == key.lane
+                && row.effect().dense_ordinal() as u16 == key.frame_label
             {
                 matched = matched.add((arm, target));
             }

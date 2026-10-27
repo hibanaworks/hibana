@@ -1,6 +1,6 @@
 use crate::{
     eff::{EffIndex, EventOrigin},
-    global::{compiled::images::EventSemanticKind, const_dsl::ScopeId},
+    global::const_dsl::ScopeId,
 };
 
 use super::{RouteChoiceMark, StateIndex};
@@ -31,7 +31,6 @@ pub(crate) struct SendMeta {
     pub(crate) label: u8,
     pub(crate) payload_kind: crate::eff::EventPayload,
     pub(crate) frame_label: u16,
-    pub(crate) semantic: EventSemanticKind,
     pub(crate) origin: EventOrigin,
     pub(crate) next: usize,
     pub(crate) scope: ScopeId,
@@ -97,7 +96,6 @@ pub(crate) struct RecvMeta {
     pub(crate) label: u8,
     pub(crate) payload_kind: crate::eff::EventPayload,
     pub(crate) frame_label: u16,
-    pub(crate) semantic: EventSemanticKind,
     pub(crate) origin: EventOrigin,
     pub(crate) next: usize,
     pub(crate) scope: ScopeId,
@@ -130,7 +128,6 @@ pub(crate) struct LocalMeta {
     pub(crate) label: u8,
     pub(crate) payload_kind: crate::eff::EventPayload,
     pub(crate) frame_label: u16,
-    pub(crate) semantic: EventSemanticKind,
     pub(crate) origin: EventOrigin,
     pub(crate) next: usize,
     pub(crate) scope: ScopeId,

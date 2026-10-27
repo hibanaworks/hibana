@@ -34,7 +34,7 @@ identity and require FIFO delivery, nonduplication and run isolation.
 | [route-index](image/route-index) | [`metadata/route_index.rs`](../../src/global/role_program/image_impl/metadata/route_index.rs): route lookup, invalid keys and duplicates. [`program_ref/actors.rs`](../../src/global/compiled/images/image/program_ref/actors.rs): ancestor-arm queries from checked source intervals |
 | [operation-index](image/operation-index) | [`ref_access/operation_index.rs`](../../src/global/role_program/image_impl/ref_access/operation_index.rs) and [`cursor/navigation.rs`](../../src/global/typestate/cursor/navigation.rs): exact message keys, candidate ranges and completion filtering; bounded ordinal-certificate checks |
 | [route-column-access](image/route-column-access) | [`lane_image.rs`](../../src/global/role_program/image_impl/lane_image.rs): reads stay within their columns |
-| [resolver-index](image/resolver-index) | [`route_resolvers.rs`](../../src/global/compiled/images/image/route_resolvers.rs): immutable resolver-site lookup |
+| [resolver-index](image/resolver-index) | [`resolver_index.rs`](../../src/global/compiled/images/image/resolver_index.rs), [`route_resolvers.rs`](../../src/global/compiled/images/image/route_resolvers.rs): compiled direct lookup and first-match preservation for sparse, unsorted and duplicate scope IDs |
 | [dispatch-subtree](image/dispatch-subtree) | [`first_recv_dispatch.rs`](../../src/global/typestate/cursor/first_recv_dispatch.rs): traversal of the reachable dispatch subtree |
 
 ## Local execution

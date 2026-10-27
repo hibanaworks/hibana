@@ -2,10 +2,7 @@
 
 use crate::{
     eff::{EffIndex, EventOrigin},
-    global::{
-        compiled::images::EventSemanticKind,
-        const_dsl::{ReentryMark, ScopeId, ScopeKind},
-    },
+    global::const_dsl::{ReentryMark, ScopeId, ScopeKind},
 };
 
 mod dependency;
@@ -324,6 +321,7 @@ pub(crate) enum LocalAction {
         lane: u8,
     },
     /// Terminal node (no further actions).
+    #[cfg(any(kani, all(test, hibana_repo_tests)))]
     Terminate,
 }
 
@@ -352,6 +350,7 @@ enum PackedLocalAction {
         origin: EventOrigin,
         lane: u8,
     },
+    #[cfg(any(kani, all(test, hibana_repo_tests)))]
     Terminate,
 }
 
@@ -381,7 +380,6 @@ impl RouteChoiceMark {
 /// Non-message facts compiled for a typestate node.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct LocalNodeMeta {
-    pub(crate) semantic: EventSemanticKind,
     pub(crate) next: StateIndex,
     pub(crate) scope: ScopeId,
     pub(crate) route_arm: Option<u8>,
@@ -397,15 +395,10 @@ impl LocalAction {
     }
 
     /// True when the node corresponds to a receive action.
+    #[cfg(all(test, hibana_repo_tests))]
     #[inline(always)]
     pub(crate) const fn is_recv(&self) -> bool {
         matches!(self, Self::Recv { .. })
-    }
-
-    /// True when the node marks a terminal state.
-    #[inline(always)]
-    pub(crate) const fn is_terminal(&self) -> bool {
-        matches!(self, Self::Terminate)
     }
 
     /// True when the node corresponds to a local action.
@@ -432,8 +425,6 @@ pub(crate) struct LocalNode {
 impl LocalNode {
     const ROUTE_ARM_NONE: u8 = u8::MAX;
     const FLAG_CHOICE_DETERMINANT: u8 = 1 << 0;
-    const FLAG_SEMANTIC_SHIFT: u8 = 1;
-    const FLAG_SEMANTIC_MASK: u8 = 0b11 << Self::FLAG_SEMANTIC_SHIFT;
 
     #[inline(always)]
     const fn encode_route_arm(route_arm: Option<u8>) -> u8 {
@@ -444,6 +435,7 @@ impl LocalNode {
         }
     }
 
+    #[cfg(any(kani, all(test, hibana_repo_tests)))]
     #[inline(always)]
     const fn decode_optional_route_arm_raw(raw: u8) -> Option<Option<u8>> {
         match raw {
@@ -453,6 +445,7 @@ impl LocalNode {
         }
     }
 
+    #[cfg(all(test, hibana_repo_tests))]
     #[inline(never)]
     const fn decode_route_arm(raw: u8) -> Option<u8> {
         match Self::decode_optional_route_arm_raw(raw) {
@@ -462,20 +455,8 @@ impl LocalNode {
     }
 
     #[inline(always)]
-    const fn encode_semantic(semantic: EventSemanticKind) -> u8 {
-        semantic.packed_bits() << Self::FLAG_SEMANTIC_SHIFT
-    }
-
-    #[inline(always)]
-    const fn decode_semantic(flags: u8) -> EventSemanticKind {
-        EventSemanticKind::from_packed_bits(
-            (flags & Self::FLAG_SEMANTIC_MASK) >> Self::FLAG_SEMANTIC_SHIFT,
-        )
-    }
-
-    #[inline(always)]
-    const fn flags(choice: RouteChoiceMark, semantic: EventSemanticKind) -> u8 {
-        let mut flags = Self::encode_semantic(semantic);
+    const fn flags(choice: RouteChoiceMark) -> u8 {
+        let mut flags = 0;
         if choice.is_determinant() {
             flags |= Self::FLAG_CHOICE_DETERMINANT;
         }
@@ -496,7 +477,7 @@ impl LocalNode {
             next: meta.next,
             scope: meta.scope,
             route_arm_raw: Self::encode_route_arm(meta.route_arm),
-            flags: Self::flags(meta.choice, meta.semantic),
+            flags: Self::flags(meta.choice),
         }
     }
 
@@ -514,7 +495,7 @@ impl LocalNode {
             next: meta.next,
             scope: meta.scope,
             route_arm_raw: Self::encode_route_arm(meta.route_arm),
-            flags: Self::flags(meta.choice, meta.semantic),
+            flags: Self::flags(meta.choice),
         }
     }
 
@@ -531,11 +512,12 @@ impl LocalNode {
             next: meta.next,
             scope: meta.scope,
             route_arm_raw: Self::encode_route_arm(meta.route_arm),
-            flags: Self::flags(meta.choice, meta.semantic),
+            flags: Self::flags(meta.choice),
         }
     }
 
     /// Construct a terminal node that loops to itself.
+    #[cfg(any(kani, all(test, hibana_repo_tests)))]
     pub(crate) const fn terminal(index: StateIndex) -> Self {
         Self {
             action: PackedLocalAction::Terminate,
@@ -592,32 +574,38 @@ impl LocalNode {
                 origin,
                 lane,
             },
+            #[cfg(any(kani, all(test, hibana_repo_tests)))]
             PackedLocalAction::Terminate => LocalAction::Terminate,
         }
     }
 
     /// Successor state reached after performing the action.
+    #[cfg(all(test, hibana_repo_tests))]
     #[inline(always)]
     pub(crate) const fn next(&self) -> StateIndex {
         self.next
     }
 
+    #[cfg(all(test, hibana_repo_tests))]
     #[inline(always)]
     pub(crate) const fn scope(&self) -> ScopeId {
         self.scope
     }
 
+    #[cfg(all(test, hibana_repo_tests))]
     #[inline(always)]
     pub(crate) const fn route_arm(&self) -> Option<u8> {
         Self::decode_route_arm(self.route_arm_raw)
     }
 
     /// Whether this node is a choice determinant (first recv of a route arm).
+    #[cfg(all(test, hibana_repo_tests))]
     #[inline(always)]
     pub(crate) const fn is_choice_determinant(&self) -> bool {
         (self.flags & Self::FLAG_CHOICE_DETERMINANT) != 0
     }
 
+    #[cfg(all(test, hibana_repo_tests))]
     #[inline(always)]
     pub(crate) const fn choice_mark(&self) -> RouteChoiceMark {
         if self.is_choice_determinant() {
@@ -625,11 +613,6 @@ impl LocalNode {
         } else {
             RouteChoiceMark::Ordinary
         }
-    }
-
-    #[inline(always)]
-    pub(crate) const fn event_semantic(&self) -> EventSemanticKind {
-        Self::decode_semantic(self.flags)
     }
 }
 

@@ -7,13 +7,17 @@
 #[cfg(kani)]
 mod kani;
 
+#[cfg(all(test, hibana_repo_tests))]
+use crate::global::typestate::LocalNode;
 use crate::global::{
     compiled::images::CompiledProgramRef,
     const_dsl::{ReentryMark, ScopeId, ScopeKind},
-    role_program::{LaneSetView, PackedLaneRange, RoleImageRef, RoleLocalDirection},
+    role_program::{
+        LaneSetView, PackedLaneRange, PackedLocalEventRow, RoleImageRef, RoleLocalDirection,
+    },
     typestate::{
-        EventCommitMeta, LocalAction, LocalDependency, LocalNode, PackedEventConflict,
-        PassiveArmChildFact, RouteScopeRows, StateIndex,
+        EventCommitMeta, LocalDependency, PackedEventConflict, PassiveArmChildFact, RouteScopeRows,
+        StateIndex,
     },
 };
 
@@ -151,16 +155,7 @@ impl LocalEventProgram {
         self.local_len() + 1
     }
 
-    #[inline(always)]
-    pub(crate) fn checked_node(&self, idx: usize) -> Option<LocalNode> {
-        if idx >= self.node_len() {
-            None
-        } else {
-            Some(self.node(idx))
-        }
-    }
-
-    #[inline(always)]
+    #[cfg(all(test, hibana_repo_tests))]
     pub(crate) fn node(&self, idx: usize) -> LocalNode {
         match self.rows().local_step_node(idx) {
             Some(node) => node,
@@ -196,13 +191,14 @@ impl LocalEventProgram {
                 continue;
             };
             if row.start() < row.end() {
-                let eff = match self.node(row.start()).action() {
-                    LocalAction::Send { eff_index, .. } | LocalAction::Local { eff_index, .. } => {
-                        eff_index
-                    }
-                    LocalAction::Recv { .. } | LocalAction::Terminate => continue,
+                let Some((eff, direction)) = self.operation_at(row.start()) else {
+                    crate::invariant();
                 };
-                if self.program_ref().event_atom_at(eff.dense_ordinal()).from == controller {
+                if matches!(
+                    direction,
+                    RoleLocalDirection::Send | RoleLocalDirection::Local
+                ) && self.program_ref().event_atom_at(eff.dense_ordinal()).from == controller
+                {
                     return true;
                 }
             }
@@ -417,15 +413,14 @@ impl LocalEventProgram {
         if idx >= self.local_len() {
             return None;
         }
-        let node = self.checked_node(idx)?;
-        if node.action().is_terminal() {
-            return None;
-        }
-        let dependency = self.rows().dependency_for_index(idx);
+        let event = crate::invariant_some(self.rows().lanes().local_step_event(idx));
+        let atom = self.program_ref().event_atom_at(event.eff_index as usize);
         let conflict = self.rows().event_conflict_for_index(idx);
         Some(LocalEventRow {
-            node,
-            dependency,
+            image: self.rows(),
+            event,
+            atom,
+            next: StateIndex::from_usize(idx + 1),
             conflict,
         })
     }
@@ -469,22 +464,86 @@ impl LocalEventRowSet {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy)]
 pub(crate) struct LocalEventRow {
-    node: LocalNode,
-    dependency: Option<LocalDependency>,
+    image: &'static RoleImageRef,
+    event: PackedLocalEventRow,
+    atom: crate::eff::EffAtom,
+    next: StateIndex,
     conflict: PackedEventConflict,
 }
 
 impl LocalEventRow {
     #[inline(always)]
+    pub(crate) fn logical_role(self) -> u8 {
+        if self.direction() == RoleLocalDirection::Recv {
+            self.atom.to
+        } else {
+            self.atom.from
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn commit_meta(self) -> EventCommitMeta {
+        EventCommitMeta::new(
+            self.effect(),
+            self.atom.label,
+            self.atom.origin,
+            self.scope(),
+            self.route_arm(),
+            self.atom.lane,
+        )
+    }
+
+    #[inline(always)]
     pub(crate) const fn next(self) -> StateIndex {
-        self.node.next()
+        self.next
+    }
+
+    #[inline(always)]
+    pub(crate) const fn direction(self) -> RoleLocalDirection {
+        self.event.direction()
+    }
+
+    #[inline(always)]
+    pub(crate) const fn effect(self) -> crate::eff::EffIndex {
+        crate::eff::EffIndex::from_dense_ordinal(self.event.eff_index as usize)
+    }
+
+    #[inline(always)]
+    pub(crate) const fn atom(self) -> crate::eff::EffAtom {
+        self.atom
+    }
+
+    #[inline(always)]
+    pub(crate) const fn scope(self) -> ScopeId {
+        self.event.scope()
+    }
+
+    #[inline(always)]
+    pub(crate) const fn route_arm(self) -> Option<u8> {
+        match self.conflict.to_conflict() {
+            Some(crate::global::typestate::LocalConflict::RouteArm { arm, .. }) => Some(arm),
+            _ => None,
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) const fn route_scope(self) -> ScopeId {
+        match self.conflict.to_conflict() {
+            Some(crate::global::typestate::LocalConflict::RouteArm { scope, .. }) => scope,
+            _ => ScopeId::none(),
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) const fn choice(self) -> crate::global::typestate::RouteChoiceMark {
+        self.event.choice_mark()
     }
 
     #[inline(always)]
     pub(crate) const fn dependency(self) -> Option<LocalDependency> {
-        self.dependency
+        self.image.lanes().dependency_row(self.event.dependency_row)
     }
 
     #[inline(always)]
@@ -493,37 +552,11 @@ impl LocalEventRow {
     }
 
     pub(crate) fn matches_commit(self, event: EventCommitMeta) -> bool {
-        if self.node.scope() != event.scope || self.node.route_arm() != event.route_arm {
-            return false;
-        }
-        match self.node.action() {
-            LocalAction::Send {
-                eff_index: row_eff,
-                label: row_label,
-                origin: row_origin,
-                lane: row_lane,
-                ..
-            }
-            | LocalAction::Recv {
-                eff_index: row_eff,
-                label: row_label,
-                origin: row_origin,
-                lane: row_lane,
-                ..
-            }
-            | LocalAction::Local {
-                eff_index: row_eff,
-                label: row_label,
-                origin: row_origin,
-                lane: row_lane,
-                ..
-            } => {
-                row_eff == event.eff_index
-                    && row_label == event.label
-                    && row_origin == event.origin
-                    && row_lane == event.lane
-            }
-            LocalAction::Terminate => false,
-        }
+        self.scope() == event.scope
+            && self.route_arm() == event.route_arm
+            && self.effect() == event.eff_index
+            && self.atom.label == event.label
+            && self.atom.origin == event.origin
+            && self.atom.lane == event.lane
     }
 }

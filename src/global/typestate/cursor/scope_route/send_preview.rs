@@ -496,7 +496,6 @@ impl EventCursor {
                 label: local.label,
                 payload_kind: local.payload_kind,
                 frame_label: local.frame_label,
-                semantic: local.semantic,
                 origin: local.origin,
                 next: local.next,
                 scope: local.scope,

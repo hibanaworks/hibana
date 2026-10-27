@@ -37,9 +37,6 @@ const fn encoded_descriptor<const N: usize, const M: usize>(
     row: [u8; 8],
     participants: [u8; N],
 ) -> [u8; M] {
-    if M != 8 + N {
-        crate::invariant();
-    }
     let mut bytes = [0u8; M];
     let mut idx = 0usize;
     while idx < row.len() {
@@ -50,6 +47,24 @@ const fn encoded_descriptor<const N: usize, const M: usize>(
     while idx < participants.len() {
         bytes[8 + idx] = participants[idx];
         idx += 1;
+    }
+    let scope = u16::from_le_bytes([row[0], row[1]]) & !ScopeId::RESERVED_BIT;
+    let extent = if scope < ScopeId::LOCAL_CAPACITY {
+        scope as usize + 1
+    } else {
+        0
+    };
+    if M != 8 + N + extent * 2 {
+        crate::invariant();
+    }
+    idx = 8 + N;
+    while idx < M {
+        bytes[idx] = u8::MAX;
+        idx += 1;
+    }
+    if extent != 0 {
+        bytes[8 + N + scope as usize * 2] = 0;
+        bytes[8 + N + scope as usize * 2 + 1] = 0;
     }
     bytes
 }
@@ -63,12 +78,12 @@ fn forged_program_ref<const N: usize>(
     CompiledProgramRef::compact(ProgramImageFacts { max_role }, columns, bytes)
 }
 
-static INTRINSIC: [u8; 12] = encoded_descriptor(encoded_row(0, 0, 0, 0, 2), [0, 1, 0, 1]);
-static DYNAMIC: [u8; 11] = encoded_descriptor(encoded_row(dynamic_scope(1), 7, 0, 0, 1), [0, 0, 1]);
-static DYNAMIC_MAX: [u8; 10] =
+static INTRINSIC: [u8; 14] = encoded_descriptor(encoded_row(0, 0, 0, 0, 2), [0, 1, 0, 1]);
+static DYNAMIC: [u8; 15] = encoded_descriptor(encoded_row(dynamic_scope(1), 7, 0, 0, 1), [0, 0, 1]);
+static DYNAMIC_MAX: [u8; 12] =
     encoded_descriptor(encoded_row(dynamic_scope(0), u16::MAX, 0, 0, 1), [0, 0]);
-static NONCANONICAL_INTRINSIC: [u8; 10] = encoded_descriptor(encoded_row(0, 1, 0, 0, 1), [0, 0]);
-static ROLE_255: [u8; 10] =
+static NONCANONICAL_INTRINSIC: [u8; 12] = encoded_descriptor(encoded_row(0, 1, 0, 0, 1), [0, 0]);
+static ROLE_255: [u8; 12] =
     encoded_descriptor(encoded_row(0, 0, u8::MAX, 0, 1), [u8::MAX, u8::MAX]);
 static INVALID_PACKED_SCOPE: [u8; 10] =
     encoded_descriptor(encoded_row(u16::MAX, 7, 0, 0, 1), [0, 0]);
@@ -76,19 +91,19 @@ static NON_ROUTE_SCOPE: [u8; 10] = encoded_descriptor(
     encoded_row(dynamic_scope(ScopeId::roll_scope(0).raw()), 7, 0, 0, 1),
     [0, 0],
 );
-static EMPTY_RIGHT_PARTICIPANTS: [u8; 10] =
+static EMPTY_RIGHT_PARTICIPANTS: [u8; 12] =
     encoded_descriptor(encoded_row(dynamic_scope(0), 7, 0, 0, 2), [0, 1]);
-static ORPHAN_PARTICIPANT_PREFIX: [u8; 11] =
+static ORPHAN_PARTICIPANT_PREFIX: [u8; 13] =
     encoded_descriptor(encoded_row(dynamic_scope(0), 7, 0, 1, 1), [0, 0, 0]);
-static CONTROLLER_OUT_OF_RANGE: [u8; 12] =
+static CONTROLLER_OUT_OF_RANGE: [u8; 14] =
     encoded_descriptor(encoded_row(dynamic_scope(0), 7, 2, 0, 2), [0, 1, 0, 1]);
-static CONTROLLER_MISSING_FROM_ARM: [u8; 10] =
+static CONTROLLER_MISSING_FROM_ARM: [u8; 12] =
     encoded_descriptor(encoded_row(dynamic_scope(0), 7, 1, 0, 1), [0, 1]);
-static UNSORTED_PARTICIPANTS: [u8; 12] =
+static UNSORTED_PARTICIPANTS: [u8; 14] =
     encoded_descriptor(encoded_row(dynamic_scope(0), 7, 0, 0, 2), [1, 0, 0, 1]);
-static DUPLICATE_PARTICIPANTS: [u8; 12] =
+static DUPLICATE_PARTICIPANTS: [u8; 14] =
     encoded_descriptor(encoded_row(dynamic_scope(0), 7, 0, 0, 2), [0, 0, 0, 1]);
-static PARTICIPANT_OUT_OF_RANGE: [u8; 12] =
+static PARTICIPANT_OUT_OF_RANGE: [u8; 14] =
     encoded_descriptor(encoded_row(dynamic_scope(0), 7, 0, 0, 2), [0, 2, 0, 1]);
 
 #[test]
@@ -294,8 +309,8 @@ fn compiled_program_descriptor_rejects_missing_route_scope_query() {
     let _ = descriptor.route_controller_role(ScopeId::route(1));
 }
 
-const fn encoded_resolver_index(scopes: [u16; 3]) -> [u8; 30] {
-    let mut bytes = [0u8; 30];
+const fn encoded_resolver_index<const N: usize>(scopes: [u16; 3]) -> [u8; N] {
+    let mut bytes = [0u8; N];
     let mut slot = 0;
     while slot < scopes.len() {
         let row = encoded_row(
@@ -313,12 +328,29 @@ const fn encoded_resolver_index(scopes: [u16; 3]) -> [u8; 30] {
         slot += 1;
     }
     // Six role-zero entries follow the three packed descriptor rows.
+    let mut at = 30;
+    while at < N {
+        bytes[at] = u8::MAX;
+        at += 1;
+    }
+    slot = 0;
+    while slot < scopes.len() {
+        let at = 30 + scopes[slot] as usize * 2;
+        if at + 1 >= N {
+            crate::invariant();
+        }
+        if bytes[at] == u8::MAX && bytes[at + 1] == u8::MAX {
+            bytes[at] = slot as u8;
+            bytes[at + 1] = 0;
+        }
+        slot += 1;
+    }
     bytes
 }
 
-static SORTED_RESOLVER_INDEX: [u8; 30] = encoded_resolver_index([1, 7, 31]);
-static UNSORTED_RESOLVER_INDEX: [u8; 30] = encoded_resolver_index([31, 1, 7]);
-static DUPLICATE_RESOLVER_INDEX: [u8; 30] = encoded_resolver_index([1, 1, 7]);
+static SORTED_RESOLVER_INDEX: [u8; 94] = encoded_resolver_index([1, 7, 31]);
+static UNSORTED_RESOLVER_INDEX: [u8; 94] = encoded_resolver_index([31, 1, 7]);
+static DUPLICATE_RESOLVER_INDEX: [u8; 94] = encoded_resolver_index([1, 1, 7]);
 
 #[test]
 fn sealed_resolver_index_matches_linear_lookup_for_all_encoded_scopes() {
@@ -331,10 +363,6 @@ fn sealed_resolver_index_matches_linear_lookup_for_all_encoded_scopes() {
             ProgramImageFacts { max_role: 0 },
             ProgramImageColumns::new(0, 3, 6, 0),
             bytes,
-        );
-        assert_eq!(
-            descriptor.route_resolver_index_is_sorted(),
-            scopes == [1, 7, 31]
         );
         for raw in 0..=u16::MAX {
             let Some(query) = ScopeId::decode_raw(raw) else {
@@ -355,4 +383,39 @@ fn sealed_resolver_index_matches_linear_lookup_for_all_encoded_scopes() {
 fn sealing_rejects_bad_participants_before_any_lookup() {
     // Previously this was rediscovered by every selected row lookup.
     let _ = forged_program_ref(&DUPLICATE_PARTICIPANTS, 1, 4);
+}
+
+#[test]
+fn sealing_rejects_missing_wrong_out_of_bounds_and_late_duplicate_index_entries() {
+    static MISSING: [u8; 94] = {
+        let mut bytes = SORTED_RESOLVER_INDEX;
+        bytes[32] = 255;
+        bytes[33] = 255;
+        bytes
+    };
+    static WRONG: [u8; 94] = {
+        let mut bytes = SORTED_RESOLVER_INDEX;
+        bytes[32] = 1;
+        bytes
+    };
+    static OUT_OF_BOUNDS: [u8; 94] = {
+        let mut bytes = SORTED_RESOLVER_INDEX;
+        bytes[32] = 3;
+        bytes
+    };
+    static LATE_DUPLICATE: [u8; 94] = {
+        let mut bytes = DUPLICATE_RESOLVER_INDEX;
+        bytes[32] = 1;
+        bytes
+    };
+    for bytes in [&MISSING, &WRONG, &OUT_OF_BOUNDS, &LATE_DUPLICATE] {
+        assert!(
+            std::panic::catch_unwind(|| CompiledProgramRef::compact(
+                ProgramImageFacts { max_role: 0 },
+                ProgramImageColumns::new(0, 3, 6, 0),
+                bytes
+            ))
+            .is_err()
+        );
+    }
 }

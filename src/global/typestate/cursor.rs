@@ -3,10 +3,11 @@
 use core::slice;
 
 use super::facts::{
-    ARM_SHARED, InboundFrameKey, LocalAction, LocalDependency, LocalMeta, LocalNode,
-    PackedEventConflict, PassiveArmChildFact, RecvMeta, RouteScopeRows, SendMeta, StateIndex,
-    state_index_to_usize,
+    ARM_SHARED, InboundFrameKey, LocalDependency, LocalMeta, PackedEventConflict,
+    PassiveArmChildFact, RecvMeta, RouteScopeRows, SendMeta, StateIndex, state_index_to_usize,
 };
+#[cfg(all(test, hibana_repo_tests))]
+use super::facts::{LocalAction, LocalNode};
 use crate::endpoint::kernel::FrontierScratchLayout;
 use crate::runtime_core::layout::u32_word_count;
 use crate::{
@@ -221,7 +222,7 @@ impl EventCursorMachine {
         self.event_program().node_len()
     }
 
-    #[inline(always)]
+    #[cfg(all(test, hibana_repo_tests))]
     fn node(&self, idx: usize) -> LocalNode {
         self.event_program().node(idx)
     }
@@ -323,16 +324,7 @@ impl EventCursorMachine {
         let row = self
             .event_program()
             .route_arm_event_row_by_slot(slot, arm)?;
-        let mut idx = row.start();
-        while idx < row.end() {
-            match self.node(idx).action() {
-                LocalAction::Send { .. } | LocalAction::Recv { .. } | LocalAction::Local { .. } => {
-                    return Some(StateIndex::from_usize(idx));
-                }
-                LocalAction::Terminate => idx += 1,
-            }
-        }
-        None
+        (row.start() < row.end()).then(|| StateIndex::from_usize(row.start()))
     }
 
     #[inline(always)]
@@ -343,7 +335,13 @@ impl EventCursorMachine {
             .route_arm_event_row_by_slot(slot, arm)?;
         let mut idx = row.start();
         while idx < row.end() {
-            if let LocalAction::Recv { .. } = self.node(idx).action() {
+            if self
+                .event_program()
+                .operation_at(idx)
+                .is_some_and(|(_, direction)| {
+                    direction == crate::global::role_program::RoleLocalDirection::Recv
+                })
+            {
                 return Some(StateIndex::from_usize(idx));
             }
             idx += 1;
@@ -388,12 +386,11 @@ impl EventCursorMachine {
             .route_arm_event_row_by_slot(slot, arm)?;
         let mut idx = row.start();
         while idx < row.end() {
-            match self.node(idx).action() {
-                LocalAction::Send { label, .. } | LocalAction::Local { label, .. } => {
-                    return Some((StateIndex::from_usize(idx), label));
-                }
-                LocalAction::Recv { .. } | LocalAction::Terminate => idx += 1,
+            let event = crate::invariant_some(self.event_program().event_row_at(idx));
+            if event.direction() != crate::global::role_program::RoleLocalDirection::Recv {
+                return Some((StateIndex::from_usize(idx), event.atom().label));
             }
+            idx += 1;
         }
         None
     }
@@ -810,13 +807,8 @@ impl EventCursor {
 
     fn resolved_label_for_lane(&self, lane_idx: usize) -> Option<u8> {
         let state_idx = self.step_state_index_at_lane(lane_idx)?;
-        let node = self.machine().node(state_index_to_usize(state_idx));
-        match node.action() {
-            LocalAction::Send { label, .. }
-            | LocalAction::Recv { label, .. }
-            | LocalAction::Local { label, .. } => Some(label),
-            LocalAction::Terminate => None,
-        }
+        self.event_row_at(state_index_to_usize(state_idx))
+            .map(|row| row.atom().label)
     }
 
     fn rebuild_current_step_label_codes(&mut self) {

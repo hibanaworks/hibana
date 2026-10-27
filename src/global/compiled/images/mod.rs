@@ -1,13 +1,10 @@
 pub(super) mod image;
 pub(super) mod program;
 
-pub(crate) use self::{
-    image::{
-        ACTOR_DECISION_CAPACITY, COMPACT_DESCRIPTOR_BYTE_CAPACITY, CompiledProgramRef,
-        PROGRAM_IMAGE_STORAGE_BYTE_CAPACITY, ProgramImageBytes, ProgramImageColumns,
-        ProgramImagePlan, RoleDescriptorRef, RoleImageSlice,
-    },
-    program::EventSemanticKind,
+pub(crate) use self::image::{
+    ACTOR_DECISION_CAPACITY, COMPACT_DESCRIPTOR_BYTE_CAPACITY, CompiledProgramRef,
+    PROGRAM_IMAGE_STORAGE_BYTE_CAPACITY, ProgramImageBytes, ProgramImageColumns, ProgramImagePlan,
+    RoleDescriptorRef, RoleImageSlice,
 };
 
 #[cfg(any(kani, all(test, hibana_repo_tests)))]

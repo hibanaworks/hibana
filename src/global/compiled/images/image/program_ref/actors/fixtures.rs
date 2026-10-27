@@ -43,5 +43,11 @@ pub(super) const fn encoded_bytes() -> [u8; 128] {
         bytes[COLUMNS.blob_len() + offset] = PROGRAM.source_order.byte_at(offset);
         offset += 1;
     }
+    let mut offset = 0;
+    while offset < PROGRAM.resolver_index.len() {
+        bytes[COLUMNS.blob_len() + PROGRAM.source_order.len() + offset] =
+            PROGRAM.resolver_index.byte_at(offset);
+        offset += 1;
+    }
     bytes
 }

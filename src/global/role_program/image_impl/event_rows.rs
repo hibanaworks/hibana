@@ -1,6 +1,6 @@
 use super::super::{PackedLocalEventRow, RoleLaneImage, ScopeId};
 use crate::global::{
-    compiled::images::{CompiledProgramRef, EventSemanticKind},
+    compiled::images::CompiledProgramRef,
     typestate::{
         LocalAtomFacts, LocalConflict, LocalNode, LocalNodeMeta, PackedEventConflict,
         RouteChoiceMark, StateIndex,
@@ -252,7 +252,7 @@ impl PackedLocalEventRow {
     }
 
     #[inline(always)]
-    const fn choice_mark(self) -> RouteChoiceMark {
+    pub(crate) const fn choice_mark(self) -> RouteChoiceMark {
         if self.is_choice_determinant() {
             RouteChoiceMark::Determinant
         } else {
@@ -282,7 +282,6 @@ impl PackedLocalEventRow {
         let eff_idx = self.eff_index as usize;
         let atom = program.event_atom_at(eff_idx);
         let scope = self.scope;
-        let semantic = EventSemanticKind::ProtocolEvent;
         let route_arm = match conflict.to_conflict() {
             Some(LocalConflict::RouteArm { arm, .. }) => Some(arm),
             Some(LocalConflict::Unconditional | LocalConflict::SharedRoute) | None => None,
@@ -297,7 +296,6 @@ impl PackedLocalEventRow {
             lane: atom.lane,
         };
         let meta = LocalNodeMeta {
-            semantic,
             next,
             scope,
             route_arm,

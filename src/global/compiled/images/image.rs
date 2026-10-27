@@ -3,6 +3,7 @@ use crate::global::role_program::RoleImageRef;
 mod blob_storage;
 mod columns;
 mod program_ref;
+mod resolver_index;
 mod role_descriptor_ref;
 mod route_resolvers;
 

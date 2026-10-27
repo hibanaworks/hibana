@@ -6,7 +6,10 @@ use super::super::super::{
     preview_selected_arm_for_scope_from_parts, state_index_to_usize,
 };
 use crate::eff::EventOrigin;
-use crate::global::typestate::{EventArmView, InboundFrameKey, LocalAction};
+use crate::global::{
+    role_program::RoleLocalDirection,
+    typestate::{EventArmView, InboundFrameKey},
+};
 impl<'r, T> OperationKernel<'_, 'r, T>
 where
     T: Transport + 'r,
@@ -359,20 +362,25 @@ where
             let arm_entry_idx = state_index_to_usize(arm_entry_idx);
             // Every real event retains its exact resident identity, including
             // its wire color. Synthetic arm metadata belongs only to terminal arms.
-            match self.progress.cursor.action_at(arm_entry_idx) {
-                LocalAction::Send { .. } => Self::cached_recv_meta_from_send(
+            match self
+                .progress
+                .cursor
+                .event_row_at(arm_entry_idx)
+                .map(|row| row.direction())
+            {
+                Some(RoleLocalDirection::Send) => Self::cached_recv_meta_from_send(
                     arm_entry_idx,
                     crate::invariant_some(self.progress.cursor.try_send_meta_at(arm_entry_idx)),
                 ),
-                LocalAction::Recv { .. } => Self::cached_recv_meta_from_recv(
+                Some(RoleLocalDirection::Recv) => Self::cached_recv_meta_from_recv(
                     arm_entry_idx,
                     crate::invariant_some(self.progress.cursor.try_recv_meta_at(arm_entry_idx)),
                 ),
-                LocalAction::Local { .. } => self.cached_recv_meta_from_local(
+                Some(RoleLocalDirection::Local) => self.cached_recv_meta_from_local(
                     arm_entry_idx,
                     crate::invariant_some(self.progress.cursor.try_local_meta_at(arm_entry_idx)),
                 ),
-                LocalAction::Terminate => self.route_arm_cached_recv_meta(
+                None => self.route_arm_cached_recv_meta(
                     arm_entry_idx,
                     arm_entry_label,
                     selection.offer_lane,

@@ -88,11 +88,25 @@ fn packed_route_authority_roundtrip_is_exact() {
     }
 }
 
-#[kani::proof]
-fn canonical_route_participant_identity_accepts_full_u8_role_domain() {
-    let controller: u8 = kani::any();
-    let bytes = [0, 0, 0, 0, controller, 0, 0, 0, controller, controller];
-    let bytes: &'static [u8; 10] = unsafe {
+// Separate the two wire tags so each constructor has a fixed byte layout.
+// Together the harnesses retain both tags, all u8 roles and all dynamic u16 IDs.
+fn check_canonical_participant_identity<const DYNAMIC: bool>(controller: u8, resolver_id: u16) {
+    let packed_scope = if DYNAMIC { ScopeId::RESERVED_BIT } else { 0 };
+    let bytes = [
+        packed_scope as u8,
+        (packed_scope >> 8) as u8,
+        resolver_id as u8,
+        (resolver_id >> 8) as u8,
+        controller,
+        0,
+        0,
+        0,
+        controller,
+        controller,
+        0,
+        0,
+    ];
+    let bytes: &'static [u8; 12] = unsafe {
         /* SAFETY: `bytes` remains live until the descriptor has completed every
         query and the forged program reference does not escape this harness. */
         core::mem::transmute(&bytes)
@@ -103,8 +117,17 @@ fn canonical_route_participant_identity_accepts_full_u8_role_domain() {
     let scope = ScopeId::route(0);
 
     kani::cover!(controller == u8::MAX);
+    if DYNAMIC {
+        kani::cover!(resolver_id == u16::MAX);
+    }
     assert!(program.role_count() == 256);
     assert!(program.route_controller_role(scope) == controller);
+    assert!(
+        program
+            .route_resolver(scope)
+            .map(|resolver| resolver.resolver_id())
+            == if DYNAMIC { Some(resolver_id) } else { None }
+    );
     assert!(program.route_participant_count(scope, 0) == 1);
     assert!(program.route_participant_count(scope, 1) == 1);
     assert!(program.route_participant_at(scope, 0, 0) == Some(controller));
@@ -112,6 +135,18 @@ fn canonical_route_participant_identity_accepts_full_u8_role_domain() {
     assert!(program.route_participant_at(scope, 0, 1).is_none());
     assert!(program.route_has_participant(scope, 0, controller));
     assert!(program.route_has_participant(scope, 1, controller));
+}
+
+#[kani::proof]
+#[kani::unwind(258)]
+fn canonical_route_participant_identity_accepts_full_u8_role_domain() {
+    check_canonical_participant_identity::<false>(kani::any(), 0);
+}
+
+#[kani::proof]
+#[kani::unwind(258)]
+fn dynamic_canonical_route_identity_accepts_all_role_and_resolver_bits() {
+    check_canonical_participant_identity::<true>(kani::any(), kani::any());
 }
 
 #[kani::proof]

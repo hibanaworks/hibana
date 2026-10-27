@@ -614,13 +614,7 @@ impl CompiledProgramRef {
             {
                 crate::invariant();
             }
-            let mut route = 0;
-            while route < self.columns.route_resolver_count()
-                && self.route_scope_raw_at(route) != scope.raw()
-            {
-                route += 1;
-            }
-            if route == self.columns.route_resolver_count() {
+            if self.route_resolver_slot(scope).is_none() {
                 crate::invariant();
             }
             row += 1;

@@ -1,7 +1,7 @@
 use super::{OperationKernel, PublicActiveOp, SendError, SendResult, Transport};
 use crate::{
     endpoint::carrier::OperationRegion,
-    global::typestate::{EventArmView, EventCommitMeta, LocalAction},
+    global::typestate::{EventArmView, EventCommitMeta},
 };
 
 impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
@@ -56,14 +56,10 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
     }
 
     pub(crate) fn permits_event(&self, index: usize) -> bool {
-        match self.progress.cursor.action_at(index) {
-            LocalAction::Send { eff_index, .. }
-            | LocalAction::Recv { eff_index, .. }
-            | LocalAction::Local { eff_index, .. } => {
-                self.region.contains(eff_index.dense_ordinal())
-            }
-            LocalAction::Terminate => false,
-        }
+        self.progress
+            .cursor
+            .event_row_at(index)
+            .is_some_and(|row| self.region.contains(row.effect().dense_ordinal()))
     }
 
     pub(crate) fn owns_lane(&self, lane: usize) -> bool {
@@ -77,21 +73,10 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
 
     fn arm_lane(&self, source: core::ops::Range<usize>) -> Option<usize> {
         (0..self.progress.cursor.local_steps_len()).find_map(|index| {
-            let (eff, lane) = match self.progress.cursor.action_at(index) {
-                LocalAction::Send {
-                    eff_index, lane, ..
-                }
-                | LocalAction::Recv {
-                    eff_index, lane, ..
-                }
-                | LocalAction::Local {
-                    eff_index, lane, ..
-                } => (eff_index, lane),
-                LocalAction::Terminate => return None,
-            };
-            (self.progress.cursor.logical_role_at(index) == Some(self.public_header.role())
-                && source.contains(&eff.dense_ordinal()))
-            .then_some(usize::from(lane))
+            let row = self.progress.cursor.event_row_at(index)?;
+            (row.logical_role() == self.public_header.role()
+                && source.contains(&row.effect().dense_ordinal()))
+            .then_some(usize::from(row.atom().lane))
         })
     }
 
@@ -118,28 +103,14 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
         usize,
         Result<(), crate::global::typestate::EventAdmissionError>,
     )> {
-        if self.progress.cursor.logical_role_at(index) != Some(self.public_header.role())
-            || !self.permits_event(index)
+        let row = self.progress.cursor.event_row_at(index)?;
+        if row.logical_role() != self.public_header.role()
+            || !self.region.contains(row.effect().dense_ordinal())
         {
             return None;
         }
-        let event: EventCommitMeta =
-            if let Some(meta) = self.progress.cursor.try_send_meta_at(index) {
-                meta.into()
-            } else if let Some(meta) = self.progress.cursor.try_recv_meta_at(index) {
-                meta.into()
-            } else {
-                let meta = self.progress.cursor.try_local_meta_at(index)?;
-                EventCommitMeta::new(
-                    meta.eff_index,
-                    meta.label,
-                    meta.origin,
-                    meta.scope,
-                    meta.route_arm,
-                    meta.lane,
-                )
-            };
-        let conflict = self.progress.cursor.event_conflict_for_index(index);
+        let event = row.commit_meta();
+        let conflict = row.conflict();
         let admission = self.event_enabled(index, event, &mut |scope, view| match view {
             // A fresh preview can select another arm, but cannot
             // change which arm completed the preceding roll visit.
