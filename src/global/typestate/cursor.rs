@@ -147,6 +147,17 @@ pub(crate) enum CursorRefresh {
     AllLanes,
 }
 
+impl CursorRefresh {
+    /// Combine cache invalidations inside one atomic progress update.
+    #[inline]
+    pub(crate) fn merge(self, next: Self) -> Self {
+        match (self, next) {
+            (Self::Lane(left), Self::Lane(right)) if left == right => Self::Lane(left),
+            _ => Self::AllLanes,
+        }
+    }
+}
+
 // =============================================================================
 // =============================================================================
 

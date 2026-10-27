@@ -1,8 +1,7 @@
 use super::{
-    CommitEventRow, OperationKernel, PreparedRouteCommitRows, PreparedViewCommit,
-    RelocatableResidentLaneStep, SelectedRouteCommitRow, Transport,
-    commit_delta::CommitDeltaApplyPermit, commit_delta::CommittedCommitDelta,
-    commit_delta::PreparedCommitDelta, state_index_to_usize,
+    CommitEventRow, CursorRefresh, OperationKernel, PreparedRouteCommitRows, PreparedViewCommit,
+    SelectedRouteCommitRow, Transport, commit_delta::CommitDeltaApplyPermit,
+    commit_delta::CommittedCommitDelta, commit_delta::PreparedCommitDelta, state_index_to_usize,
 };
 use crate::global::const_dsl::{ReentryMark, ScopeId};
 
@@ -23,6 +22,7 @@ where
         let applies_route_completion =
             delta.event().is_some() || delta.selected_routes().len() != 0;
         let body_reentry_scope = self.prepared_body_reentry_scope(delta.event());
+        let mut refresh = None;
         if let Some(scope) = body_reentry_scope {
             let event = crate::invariant_some(delta.event());
             let entry = crate::invariant_some(
@@ -31,6 +31,7 @@ where
                     .node_index_for_relocatable_step(event.progress_step()),
             );
             self.clear_reentry_scope_state(scope, entry);
+            refresh = Some(CursorRefresh::AllLanes);
         }
         let route_lane = delta.selected_route_lane();
         let mut idx = 0usize;
@@ -44,22 +45,37 @@ where
             let completed_iteration_arm = self.selected_arm_for_scope(row.scope()).filter(|&arm| {
                 delta.route_is_fresh(idx) && self.reentrant_selected_arm_complete(row.scope(), arm)
             });
-            self.apply_prepared_selected_route_commit_row(row, lane, completed_iteration_arm);
+            let change =
+                self.apply_prepared_selected_route_commit_row(row, lane, completed_iteration_arm);
+            refresh = Some(refresh.map_or(change, |prior| prior.merge(change)));
             idx += 1;
         }
         self.apply_prepared_cursor_index(state_index_to_usize(delta.cursor_after()));
         if let Some(event) = delta.event() {
-            self.apply_prepared_lane_advance(event.progress_step());
+            let change = self
+                .progress
+                .cursor
+                .advance_lane_to_relocatable_step(event.progress_step());
+            refresh = Some(refresh.map_or(change, |prior| prior.merge(change)));
         }
         if let Some(step) = delta.lane_relocation() {
-            self.apply_prepared_lane_relocation(step);
+            let change = self
+                .progress
+                .cursor
+                .set_lane_cursor_to_relocatable_step(step);
+            refresh = Some(refresh.map_or(change, |prior| prior.merge(change)));
         }
         if applies_route_completion {
             self.apply_prepared_route_completion_cursor(delta.selected_routes());
         }
         // A parallel sibling may resume in an earlier compiled row. Refresh
         // lookup caches at the final position without changing event progress.
-        if let Some(refresh) = self.progress.cursor.refresh_resident_row_at_index() {
+        if let Some(change) = self.progress.cursor.refresh_resident_row_at_index() {
+            refresh = Some(refresh.map_or(change, |prior| prior.merge(change)));
+        }
+        // No operation observes offer caches while this kernel borrow applies
+        // the delta. Build them once from the final cursor and route choices.
+        if let Some(refresh) = refresh {
             self.refresh_after_cursor_move(refresh);
         }
         let committed = CommittedCommitDelta::from_applied(
@@ -119,30 +135,11 @@ where
             lane_idx += 1;
         }
         self.progress.cursor.clear_reentry_scope_events(reset);
-        self.sync_lane_offer_state();
     }
 
     #[inline(always)]
     fn apply_prepared_cursor_index(&mut self, idx: usize) {
         self.progress.cursor.set_index(idx);
-    }
-
-    #[inline(always)]
-    fn apply_prepared_lane_advance(&mut self, target: RelocatableResidentLaneStep) {
-        let refresh = self
-            .progress
-            .cursor
-            .advance_lane_to_relocatable_step(target);
-        self.refresh_after_cursor_move(refresh);
-    }
-
-    #[inline(always)]
-    fn apply_prepared_lane_relocation(&mut self, target: RelocatableResidentLaneStep) {
-        let refresh = self
-            .progress
-            .cursor
-            .set_lane_cursor_to_relocatable_step(target);
-        self.refresh_after_cursor_move(refresh);
     }
 
     #[inline(always)]
@@ -196,7 +193,7 @@ where
         row: SelectedRouteCommitRow,
         lane: u8,
         completed_iteration_arm: Option<u8>,
-    ) {
+    ) -> CursorRefresh {
         let lane_idx = lane as usize;
         let scope = row.scope();
         let Some(scope_slot) = self.progress.cursor.route_scope_slot(scope) else {
@@ -255,9 +252,9 @@ where
             CommitDeltaApplyPermit::new(),
         );
         if completed_iteration_arm.is_some() {
-            self.sync_lane_offer_state();
+            CursorRefresh::AllLanes
         } else {
-            self.refresh_lane_offer_state(lane_idx);
+            CursorRefresh::Lane(lane)
         }
     }
 }
