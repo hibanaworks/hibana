@@ -19,12 +19,21 @@ enum ResultClass {
 }
 
 struct CompletionEndpoint {
+    admission: ResultClass,
     outcome: ResultClass,
     polls: u8,
     publications: u8,
 }
 
 impl<'r> SendKernelEndpoint<'r> for CompletionEndpoint {
+    fn revalidate_send_kernel(&mut self, _: &mut PendingSendIo<'r>) -> Poll<SendResult<()>> {
+        match self.admission {
+            ResultClass::Pending => Poll::Pending,
+            ResultClass::Success => Poll::Ready(Ok(())),
+            ResultClass::Failure => Poll::Ready(Err(SendError::OutOfOrder)),
+        }
+    }
+
     fn poll_send_preview_kernel(
         &mut self,
         _: u8,
@@ -82,6 +91,10 @@ struct Observation {
 }
 
 fn observe(boundary: ResultClass) -> Observation {
+    observe_admission(boundary, ResultClass::Success)
+}
+
+fn observe_admission(boundary: ResultClass, admission: ResultClass) -> Observation {
     // The real loop treats this private plan as opaque. No mock plan is ever
     // passed to a real OperationKernel or used to authorize a source step.
     let plan = SendCommitPlan {
@@ -117,6 +130,7 @@ fn observe(boundary: ResultClass) -> Observation {
         },
     };
     let mut endpoint = CompletionEndpoint {
+        admission,
         outcome: boundary,
         polls: 0,
         publications: 0,
@@ -144,6 +158,50 @@ fn observe(boundary: ResultClass) -> Observation {
         publications: endpoint.publications,
         done,
         retained,
+    }
+}
+
+fn check_admission(observed: Observation, admission: ResultClass) {
+    if admission == ResultClass::Success {
+        check(observed);
+    } else {
+        assert_eq!(observed.returned, admission);
+        assert_eq!(observed.polls, 0);
+        assert_eq!(observed.publications, 0);
+        assert_eq!(observed.done, admission == ResultClass::Failure);
+        assert_eq!(observed.retained, admission == ResultClass::Pending);
+    }
+}
+
+#[cfg(kani)]
+#[kani::proof]
+#[kani::unwind(2)]
+fn a_resumed_send_requires_admission_before_transport_or_publication() {
+    let class = |value: u8| match value % 3 {
+        0 => ResultClass::Pending,
+        1 => ResultClass::Success,
+        _ => ResultClass::Failure,
+    };
+    let boundary = class(kani::any());
+    let admission = class(kani::any());
+    check_admission(observe_admission(boundary, admission), admission);
+}
+
+#[cfg(all(test, hibana_repo_tests))]
+#[test]
+fn resumed_send_admission_can_wait_or_reject_without_io() {
+    for boundary in [
+        ResultClass::Pending,
+        ResultClass::Success,
+        ResultClass::Failure,
+    ] {
+        for admission in [
+            ResultClass::Pending,
+            ResultClass::Success,
+            ResultClass::Failure,
+        ] {
+            check_admission(observe_admission(boundary, admission), admission);
+        }
     }
 }
 

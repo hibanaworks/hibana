@@ -118,6 +118,8 @@ pub(crate) trait SendKernelEndpoint<'r> {
         cx: &mut core::task::Context<'_>,
     ) -> Poll<SendResult<SendCommitPlan<'r>>>;
 
+    fn revalidate_send_kernel(&mut self, pending: &mut PendingSendIo<'r>) -> Poll<SendResult<()>>;
+
     fn finish_send_after_transport_kernel(
         &mut self,
         commit_plan: SendCommitPlan<'r>,
@@ -201,63 +203,71 @@ pub(crate) fn kernel_send<'r>(
     payload: &mut Option<lane_port::SendInput>,
     cx: &mut core::task::Context<'_>,
 ) -> Poll<SendResult<SendCommitOutcome<'r>>> {
-    loop {
-        match state {
-            SendState::Preparing {
-                logical_label,
-                payload_kind,
-                input,
-            } => {
-                if let Some(payload) = payload.take()
-                    && input.replace(payload).is_some()
-                {
-                    crate::invariant();
+    match state {
+        SendState::Preparing {
+            logical_label,
+            payload_kind,
+            input,
+        } => {
+            if let Some(payload) = payload.take()
+                && input.replace(payload).is_some()
+            {
+                crate::invariant();
+            }
+            let preview = match endpoint.poll_send_preview_kernel(*logical_label, *payload_kind) {
+                Poll::Pending => return Poll::Pending,
+                Poll::Ready(Err(error)) => {
+                    *state = SendState::Done;
+                    return Poll::Ready(Err(error));
                 }
-                let preview = match endpoint.poll_send_preview_kernel(*logical_label, *payload_kind)
-                {
-                    Poll::Pending => return Poll::Pending,
-                    Poll::Ready(Err(error)) => {
-                        *state = SendState::Done;
-                        return Poll::Ready(Err(error));
-                    }
-                    Poll::Ready(Ok(preview)) => preview,
-                };
-                let descriptor = SendRuntimeDesc::new(
-                    *logical_label,
-                    crate::transport::FrameLabel::new(preview.frame_label()),
-                );
-                let (meta, cursor_index, route_authority) = preview.into_parts();
-                match endpoint.poll_send_init_kernel(
-                    descriptor,
-                    meta,
-                    Some(cursor_index),
-                    route_authority,
-                    input.take(),
-                ) {
-                    SendInitOutcome::Ready(result) => {
-                        *state = SendState::Done;
-                        return Poll::Ready(result);
-                    }
-                    SendInitOutcome::Pending { pending } => {
-                        *state = SendState::Sending { pending };
-                    }
+                Poll::Ready(Ok(preview)) => preview,
+            };
+            let descriptor = SendRuntimeDesc::new(
+                *logical_label,
+                crate::transport::FrameLabel::new(preview.frame_label()),
+            );
+            let (meta, cursor_index, route_authority) = preview.into_parts();
+            match endpoint.poll_send_init_kernel(
+                descriptor,
+                meta,
+                Some(cursor_index),
+                route_authority,
+                input.take(),
+            ) {
+                SendInitOutcome::Ready(result) => {
+                    *state = SendState::Done;
+                    return Poll::Ready(result);
+                }
+                SendInitOutcome::Pending { pending } => {
+                    *state = SendState::Sending { pending };
                 }
             }
-            SendState::Sending { pending } => {
-                match endpoint.poll_send_pending_kernel(pending, cx) {
-                    Poll::Pending => return Poll::Pending,
-                    Poll::Ready(Ok(commit_plan)) => {
-                        let result = endpoint.finish_send_after_transport_kernel(commit_plan);
-                        *state = SendState::Done;
-                        return Poll::Ready(Ok(result));
-                    }
-                    Poll::Ready(Err(err)) => {
-                        *state = SendState::Done;
-                        return Poll::Ready(Err(err));
-                    }
-                }
+        }
+        SendState::Sending { pending } => match endpoint.revalidate_send_kernel(pending) {
+            Poll::Pending => return Poll::Pending,
+            Poll::Ready(Err(error)) => {
+                *state = SendState::Done;
+                return Poll::Ready(Err(error));
             }
-            SendState::Done => crate::invariant(),
+            Poll::Ready(Ok(())) => (),
+        },
+        SendState::Done => crate::invariant(),
+    }
+    // Preparing built this plan under the same exclusive kernel borrow.
+    // Only a send resumed after returning Pending needs fresh admission.
+    let SendState::Sending { pending } = state else {
+        crate::invariant();
+    };
+    match endpoint.poll_send_pending_kernel(pending, cx) {
+        Poll::Pending => Poll::Pending,
+        Poll::Ready(Ok(commit_plan)) => {
+            let result = endpoint.finish_send_after_transport_kernel(commit_plan);
+            *state = SendState::Done;
+            Poll::Ready(Ok(result))
+        }
+        Poll::Ready(Err(error)) => {
+            *state = SendState::Done;
+            Poll::Ready(Err(error))
         }
     }
 }
@@ -300,6 +310,11 @@ where
         cx: &mut core::task::Context<'_>,
     ) -> Poll<SendResult<SendCommitPlan<'r>>> {
         self.poll_send_pending(pending, cx)
+    }
+
+    #[inline]
+    fn revalidate_send_kernel(&mut self, pending: &mut PendingSendIo<'r>) -> Poll<SendResult<()>> {
+        self.revalidate_send(pending)
     }
 
     #[inline]

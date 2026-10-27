@@ -71,7 +71,9 @@ impl EventCursor {
     ) -> bool {
         let target = progress_step.0;
         let retained = self.has_retained_roll_completion();
-        for step_idx in self.pending_event_steps(0..usize::from(target.step_idx)) {
+        let end = usize::from(target.step_idx);
+        let mut pending = self.pending_event_steps(0..end);
+        while let Some(step_idx) = pending.next() {
             if (!retained
                 || !self.retained_roll_allows_predecessor(step_idx, usize::from(target.step_idx)))
                 && self.machine().event_program().local_step_lane(step_idx) == Some(target.lane)
@@ -81,13 +83,21 @@ impl EventCursor {
                     .map(state_index_to_usize)
                 && role.is_none_or(|role| self.uses_view_at(pending_idx, role))
                 && self.event_actor_is_local(pending_idx, selected_arm_for_scope) != Some(false)
-                && self.event_conflict_row_allows_with_preview(
+            {
+                match self.event_conflict_row_admission_with_preview(
                     self.machine().event_conflict_for_index(pending_idx),
                     preview_conflict,
                     selected_arm_for_scope,
-                )
-            {
-                return false;
+                ) {
+                    ConflictAdmission::Allowed => return false,
+                    ConflictAdmission::Excluded { scope, arm } => {
+                        // Every event in this arm has the same exclusion.
+                        // Skip its descriptor interval without changing progress.
+                        let next = self.excluded_arm_end(pending_idx, scope, arm).min(end);
+                        pending = self.pending_event_steps(next..end);
+                    }
+                    ConflictAdmission::Invalid => (),
+                }
             }
         }
         true

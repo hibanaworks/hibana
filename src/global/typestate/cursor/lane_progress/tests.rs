@@ -210,3 +210,71 @@ fn pending_prefix_preserves_rejection_for_every_completion_and_route_choice() {
         }
     }
 }
+
+#[test]
+fn excluded_nested_arms_match_each_step_admission_without_repeated_queries() {
+    let global = g::par(
+        g::seq(
+            g::route(
+                g::seq(
+                    g::send::<0, 1, Msg<1, ()>>(),
+                    g::route(g::send::<0, 1, Msg<2, ()>>(), g::send::<0, 1, Msg<3, ()>>()),
+                ),
+                g::seq(g::send::<0, 1, Msg<4, ()>>(), g::send::<0, 1, Msg<5, ()>>()),
+            ),
+            g::send::<0, 1, Msg<6, ()>>(),
+        ),
+        g::send::<0, 2, Msg<7, ()>>(),
+    )
+    .roll();
+    let program = project::<0>(&global);
+    let rows = program.role_image_ref();
+    super::super::validated_metadata_tests::with_rows(rows, |cursor| {
+        let len = rows.local_step_count();
+        let routes = rows.footprint().route_scope_count;
+        assert!(len < 12 && routes < 4);
+        let mut saved = 0;
+        for completion in 0..1u32 << len {
+            cursor.completed_event_words_mut()[0] = completion;
+            for choices in 0..3usize.pow(routes as u32) {
+                let selected = |scope| {
+                    let slot = cursor.route_scope_slot(scope).unwrap();
+                    match choices / 3usize.pow(slot as u32) % 3 {
+                        0 => None,
+                        1 => Some(0),
+                        _ => Some(1),
+                    }
+                };
+                for step in 0..len {
+                    let target = RelocatableResidentLaneStep(ResidentLaneStep {
+                        step_idx: step as u16,
+                        lane: rows.local_step_lane(step).unwrap(),
+                    });
+                    let preview = cursor.machine().event_conflict_for_index(step);
+                    let mut reference_queries = 0;
+                    let expected = (0..step).all(|previous| {
+                        completion & (1 << previous) != 0
+                            || rows.local_step_lane(previous) != Some(target.0.lane)
+                            || !cursor.event_conflict_row_allows_with_preview(
+                                cursor.machine().event_conflict_for_index(previous),
+                                preview,
+                                &mut |scope| {
+                                    reference_queries += 1;
+                                    selected(scope)
+                                },
+                            )
+                    });
+                    let mut queries = 0;
+                    let actual = cursor.event_lane_head_allows(target, preview, &mut |scope| {
+                        queries += 1;
+                        selected(scope)
+                    });
+                    assert_eq!(actual, expected, "{completion:x}/{choices}/{step}");
+                    assert!(queries <= reference_queries);
+                    saved += reference_queries - queries;
+                }
+            }
+        }
+        assert!(saved > 0, "excluded arms must avoid per-event queries");
+    });
+}

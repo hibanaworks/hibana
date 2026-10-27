@@ -5,6 +5,10 @@ use super::*;
 struct WaitingEndpoint;
 
 impl<'r> SendKernelEndpoint<'r> for WaitingEndpoint {
+    fn revalidate_send_kernel(&mut self, _: &mut PendingSendIo<'r>) -> Poll<SendResult<()>> {
+        panic!("a waiting preview cannot revalidate prepared I/O")
+    }
+
     fn poll_send_preview_kernel(
         &mut self,
         _label: u8,

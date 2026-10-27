@@ -183,20 +183,23 @@ where
         payload: Option<lane_port::SendInput>,
         route_authority: SendRouteAuthority,
     ) -> SendResult<PendingSendIo<'r>> {
-        let mut commit_plan =
-            self.build_send_commit_plan(preview_cursor_index, meta, route_authority)?;
         let payload = payload.ok_or(SendError::PhaseInvariant)?;
-        match (&payload, meta.payload_kind) {
-            (lane_port::SendInput::Payload(_), crate::eff::EventPayload::Wire(_)) => {}
+        let transfer = match (&payload, meta.payload_kind) {
+            (lane_port::SendInput::Payload(_), crate::eff::EventPayload::Wire(_)) => None,
             (
                 lane_port::SendInput::Endpoint(transfer),
                 crate::eff::EventPayload::Endpoint(role),
             ) => {
                 self.reserve_transfer_out(*transfer, role)?;
-                commit_plan.proof.transfer = Some(*transfer);
+                Some(*transfer)
             }
             _ => return Err(SendError::PhaseInvariant),
-        }
+        };
+        // Reserve the owned payload before the final entry/commit checks.
+        // No callback or semantic progress occurs before its first I/O poll.
+        let mut commit_plan =
+            self.build_send_commit_plan(preview_cursor_index, meta, route_authority)?;
+        commit_plan.proof.transfer = transfer;
         let port = self.port_for_lane(meta.lane as usize);
         let lane = port.lane();
         let carrier = if meta.peer == self.public_header.role() {
@@ -272,10 +275,9 @@ where
     }
 
     #[inline(never)]
-    fn poll_send_transport(
+    pub(crate) fn revalidate_send(
         &mut self,
         pending: &mut PendingSendIo<'r>,
-        cx: &mut core::task::Context<'_>,
     ) -> Poll<SendResult<()>> {
         let lane_idx = pending.lane_idx();
         self.reconcile_retirements();
@@ -298,6 +300,16 @@ where
             }
             Poll::Ready(Ok(())) => (),
         }
+        Poll::Ready(Ok(()))
+    }
+
+    #[inline(never)]
+    fn poll_send_transport(
+        &mut self,
+        pending: &mut PendingSendIo<'r>,
+        cx: &mut core::task::Context<'_>,
+    ) -> Poll<SendResult<()>> {
+        let lane_idx = pending.lane_idx();
         let port = self.port_for_lane(lane_idx);
         let lane_wire = pending.lane_wire();
         let transport_poll = lane_port::poll_send_outgoing(&mut pending.transport, port, cx);

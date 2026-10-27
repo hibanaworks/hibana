@@ -317,18 +317,34 @@ impl EventCursor {
     #[inline(never)]
     pub(crate) fn event_conflict_row_allows_with_preview(
         &self,
-        mut conflict: PackedEventConflict,
+        conflict: PackedEventConflict,
         preview_conflict: PackedEventConflict,
         selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
     ) -> bool {
+        matches!(
+            self.event_conflict_row_admission_with_preview(
+                conflict,
+                preview_conflict,
+                selected_arm_for_scope,
+            ),
+            super::ConflictAdmission::Allowed
+        )
+    }
+
+    pub(super) fn event_conflict_row_admission_with_preview(
+        &self,
+        mut conflict: PackedEventConflict,
+        preview_conflict: PackedEventConflict,
+        selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
+    ) -> super::ConflictAdmission {
         let mut depth = 0usize;
         let depth_bound = self.route_chain_bound();
         while depth < depth_bound {
             let Some(row) = conflict.to_conflict() else {
-                return true;
+                return super::ConflictAdmission::Allowed;
             };
             let LocalConflict::RouteArm { scope, arm } = row else {
-                return true;
+                return super::ConflictAdmission::Allowed;
             };
             let selected = match selected_arm_for_scope(scope) {
                 Some(arm) => Some(arm),
@@ -337,12 +353,12 @@ impl EventCursor {
             if let Some(selected) = selected
                 && selected != arm
             {
-                return false;
+                return super::ConflictAdmission::Excluded { scope, arm };
             }
             conflict = self.route_scope_conflict_row(scope);
             depth += 1;
         }
-        false
+        super::ConflictAdmission::Invalid
     }
 
     #[inline(never)]
