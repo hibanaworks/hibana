@@ -70,18 +70,17 @@ impl EventCursor {
         selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
     ) -> bool {
         let target = progress_step.0;
-        let retained = self.has_retained_roll_completion();
         let end = usize::from(target.step_idx);
+        let retained = self.is_recv_at(end) && self.has_retained_roll_completion();
         let mut pending = self.pending_event_steps(0..end);
         while let Some(step_idx) = pending.next() {
-            if (!retained
-                || !self.retained_roll_allows_predecessor(step_idx, usize::from(target.step_idx)))
-                && self.machine().event_program().local_step_lane(step_idx) == Some(target.lane)
+            if self.machine().event_program().local_step_lane(step_idx) == Some(target.lane)
                 && let Some(pending_idx) = self
                     .machine()
                     .state_for_step_index(step_idx)
                     .map(state_index_to_usize)
                 && role.is_none_or(|role| self.uses_view_at(pending_idx, role))
+                && (!retained || !self.retained_roll_allows_predecessor(step_idx, end))
                 && self.event_actor_is_local(pending_idx, selected_arm_for_scope) != Some(false)
             {
                 match self.event_conflict_row_admission_with_preview(

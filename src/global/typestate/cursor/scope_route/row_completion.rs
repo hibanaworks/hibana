@@ -143,7 +143,7 @@ impl EventCursor {
             .machine()
             .event_program()
             .dependency_row_set(dependency);
-        let retained = self.has_retained_roll_completion();
+        let retained = self.is_recv_at(target) && self.has_retained_roll_completion();
         let mut pending = self.pending_event_steps(row_set.start()..row_set.end());
         while let Some(idx) = pending.next() {
             if retained && self.retained_roll_allows_predecessor(idx, target) {
