@@ -31,7 +31,7 @@ identity and require FIFO delivery, nonduplication and run isolation.
 | --- | --- |
 | [arm-row-index](image/arm-row-index) | [`lane_image.rs`](../../src/global/role_program/image_impl/lane_image.rs): packed arm fields and bounds |
 | [passive-parent-index](image/passive-parent-index) | [`metadata/passive_parent.rs`](../../src/global/role_program/image_impl/metadata/passive_parent.rs): parent lookup preserves checked scan results |
-| [route-index](image/route-index) | [`metadata/route_index.rs`](../../src/global/role_program/image_impl/metadata/route_index.rs): ordered route lookup, invalid keys and duplicates |
+| [route-index](image/route-index) | [`metadata/route_index.rs`](../../src/global/role_program/image_impl/metadata/route_index.rs): route lookup, invalid keys and duplicates. [`program_ref/actors.rs`](../../src/global/compiled/images/image/program_ref/actors.rs): ancestor-arm queries from checked source intervals |
 | [operation-index](image/operation-index) | [`ref_access/operation_index.rs`](../../src/global/role_program/image_impl/ref_access/operation_index.rs) and [`cursor/navigation.rs`](../../src/global/typestate/cursor/navigation.rs): exact message keys, candidate ranges and completion filtering; bounded ordinal-certificate checks |
 | [route-column-access](image/route-column-access) | [`lane_image.rs`](../../src/global/role_program/image_impl/lane_image.rs): reads stay within their columns |
 | [resolver-index](image/resolver-index) | [`route_resolvers.rs`](../../src/global/compiled/images/image/route_resolvers.rs): immutable resolver-site lookup |

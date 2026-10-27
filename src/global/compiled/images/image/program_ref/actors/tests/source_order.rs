@@ -21,6 +21,33 @@ enum Tree {
 }
 
 impl Tree {
+    fn route_paths(
+        &self,
+        ordinal: u16,
+        path: &mut Vec<(ScopeId, u8)>,
+        routes: &mut Vec<(ScopeId, Vec<(ScopeId, u8)>)>,
+    ) {
+        match self {
+            Self::Send => (),
+            Self::Roll(body) => body.route_paths(ordinal + 1, path, routes),
+            Self::Seq(a, b) | Self::Par(a, b) => {
+                let first = ordinal + u16::from(matches!(self, Self::Par(..)));
+                a.route_paths(first, path, routes);
+                b.route_paths(first + a.scopes(), path, routes);
+            }
+            Self::Route(a, b) => {
+                let scope = ScopeId::route(ordinal);
+                routes.push((scope, path.clone()));
+                path.push((scope, 0));
+                a.route_paths(ordinal + 1, path, routes);
+                path.pop();
+                path.push((scope, 1));
+                b.route_paths(ordinal + 1 + a.scopes(), path, routes);
+                path.pop();
+            }
+        }
+    }
+
     fn scopes(&self) -> u16 {
         match self {
             Self::Send => 0,
@@ -159,6 +186,29 @@ fn compare<const E: usize, const B: usize>(tree: &Tree) {
     )));
     let image = bytes.compiled_ref(&summary, plan.columns());
     let index = SourceOrderIndex::<E>::from_program(&image).expect("source order index");
+    let mut routes = Vec::new();
+    tree.route_paths(0, &mut Vec::new(), &mut routes);
+    for (descendant, path) in &routes {
+        for (ancestor, _) in &routes {
+            let expected = path
+                .iter()
+                .find_map(|&(scope, arm)| scope.same(*ancestor).then_some(arm));
+            assert_eq!(
+                image.source_route_ancestor_arm(*descendant, *ancestor),
+                expected,
+                "route ancestry {tree:?}: {descendant:?} / {ancestor:?}"
+            );
+        }
+        for absent in [
+            ScopeId::none(),
+            ScopeId::parallel(8191),
+            ScopeId::roll_scope(8191),
+            ScopeId::route(8191),
+        ] {
+            assert_eq!(image.source_route_ancestor_arm(*descendant, absent), None);
+            assert_eq!(image.source_route_ancestor_arm(absent, *descendant), None);
+        }
+    }
     for marker in 0..=source.scope_markers().len() {
         assert_eq!(
             image.source_roll_at(marker),

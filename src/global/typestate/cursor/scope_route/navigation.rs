@@ -4,6 +4,10 @@ use super::super::{
 };
 use crate::global::typestate::LocalConflict;
 
+#[cfg(all(test, hibana_repo_tests))]
+#[path = "navigation/tests.rs"]
+mod tests;
+
 impl EventCursor {
     pub(crate) fn deeper_route_scope(&self, current: ScopeId, candidate: ScopeId) -> ScopeId {
         if current.same(candidate) || self.route_scope_descends_from(current, candidate) {
@@ -364,25 +368,24 @@ impl EventCursor {
     #[inline(never)]
     pub(super) fn preview_conflict_arm(
         &self,
-        mut conflict: PackedEventConflict,
+        conflict: PackedEventConflict,
         target_scope: ScopeId,
     ) -> Option<u8> {
         if target_scope.is_none() {
             return None;
         }
-        let mut depth = 0usize;
-        let depth_bound = self.route_chain_bound();
-        while depth < depth_bound {
-            let LocalConflict::RouteArm { scope, arm } = conflict.to_conflict()? else {
-                return None;
-            };
-            if scope == target_scope {
-                return Some(arm);
-            }
-            conflict = self.route_scope_conflict_row(scope);
-            depth += 1;
+        let LocalConflict::RouteArm { scope, arm } = conflict.to_conflict()? else {
+            return None;
+        };
+        if scope == target_scope {
+            return Some(arm);
         }
-        None
+        // Projection can omit routes with no local operations. Such a global
+        // ancestor is not part of this endpoint's preview context.
+        self.route_scope_slot_inner(scope)?;
+        self.route_scope_slot_inner(target_scope)?;
+        self.program_ref()
+            .source_route_ancestor_arm(scope, target_scope)
     }
 
     #[inline(always)]

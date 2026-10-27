@@ -142,6 +142,30 @@ impl CompiledProgramRef {
         self.source_scope_bounds(scope)
     }
 
+    /// Arm of an enclosing route containing a complete descendant route.
+    /// Global arms are nonempty, so distinct nested routes cannot have equal
+    /// bounds. The checked source intervals determine ancestry directly.
+    #[inline]
+    pub(crate) const fn source_route_ancestor_arm(
+        &self,
+        descendant: ScopeId,
+        ancestor: ScopeId,
+    ) -> Option<u8> {
+        let Some((start, _, end)) = self.source_route_bounds(descendant) else {
+            return None;
+        };
+        let Some((first, split, boundary)) = self.source_route_bounds(ancestor) else {
+            return None;
+        };
+        if first <= start && end <= split {
+            Some(0)
+        } else if split <= start && end <= boundary {
+            Some(1)
+        } else {
+            None
+        }
+    }
+
     #[inline]
     const fn source_scope_bounds(&self, scope: ScopeId) -> Option<(usize, usize, usize)> {
         let slot = scope.local_ordinal() as usize;
