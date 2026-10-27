@@ -41,36 +41,62 @@ where
                 || completed_choice
                 || self.enabled_view_event(index).is_none()
             {
-                let next = self.enabled_view_events().find_map(|(entry_idx, _)| {
-                    let cursor = &self.progress.cursor;
-                    let candidate = cursor
-                        .route_scope_for_offer_node(self.offer_scope_id_at(entry_idx), entry_idx)?;
-                    if candidate == scope && !completed_choice {
-                        return None;
-                    }
-                    // Resolve the descendant while its ancestor's choice is live.
-                    if self.selected_live_arm_for_scope(candidate).is_some()
-                        && cursor
-                            .route_scope_conflict_arm_for_scope(scope, candidate)
-                            .is_some()
-                    {
-                        return None;
-                    }
-                    let entry = cursor.route_scope_offer_entry(candidate)?;
-                    let entry_idx = if entry.is_absent() {
-                        entry_idx
-                    } else {
-                        entry.as_usize()
-                    };
-                    (entry_idx != index
-                        && !visited.contains(entry_idx)
-                        && cursor.route_offer_entry_allows_current(
-                            candidate,
-                            entry_idx,
-                            self.preview_live_selected_arm_for_scope(candidate),
-                        ))
-                    .then_some((entry_idx, candidate))
-                });
+                // Equal source contexts select the same route while this
+                // kernel borrow keeps choices and completions unchanged.
+                let context = if self.progress.cursor.has_route_scope(scope) {
+                    self.progress
+                        .cursor
+                        .event_row_at(index)
+                        .map(|row| (row.scope(), row.conflict()))
+                } else {
+                    None
+                };
+                let next = {
+                    let mut previews = self.preview_queries();
+                    (0..self.progress.cursor.local_steps_len()).find_map(|node_idx| {
+                        let cursor = &self.progress.cursor;
+                        let row = cursor.event_row_at(node_idx)?;
+                        if row.logical_role() != self.public_header.role()
+                            || !self.region.contains(row.effect().dense_ordinal())
+                            || (!completed_choice && context == Some((row.scope(), row.conflict())))
+                        {
+                            return None;
+                        }
+                        let candidate = cursor.route_scope_for_offer_node(
+                            self.offer_scope_id_at(node_idx),
+                            node_idx,
+                        )?;
+                        if candidate == scope && !completed_choice {
+                            return None;
+                        }
+                        // Resolve the descendant while its ancestor's choice is live.
+                        if self.selected_live_arm_for_scope(candidate).is_some()
+                            && cursor
+                                .route_scope_conflict_arm_for_scope(scope, candidate)
+                                .is_some()
+                        {
+                            return None;
+                        }
+                        let entry = cursor.route_scope_offer_entry(candidate)?;
+                        let entry_idx = if entry.is_absent() {
+                            node_idx
+                        } else {
+                            entry.as_usize()
+                        };
+                        if entry_idx == index
+                            || visited.contains(entry_idx)
+                            || !cursor.route_offer_entry_allows_current(
+                                candidate,
+                                entry_idx,
+                                self.preview_live_selected_arm_for_scope(candidate),
+                            )
+                        {
+                            return None;
+                        }
+                        let (_, admission) = self.view_event_admission(node_idx, &mut previews)?;
+                        admission.is_ok().then_some((entry_idx, candidate))
+                    })
+                };
                 if let Some((entry_idx, _)) = next {
                     if self
                         .commit_offer_alignment_realign(entry_idx, visited)?

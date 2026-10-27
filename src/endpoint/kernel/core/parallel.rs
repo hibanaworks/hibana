@@ -80,22 +80,12 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
         })
     }
 
-    pub(in crate::endpoint::kernel) fn enabled_view_events(
-        &self,
-    ) -> impl Iterator<Item = (usize, usize)> + '_ {
-        let mut previews = self.preview_queries();
-        (0..self.progress.cursor.local_steps_len()).filter_map(move |index| {
-            let (source, admission) = self.view_event_admission(index, &mut previews)?;
-            admission.is_ok().then_some((index, source))
-        })
-    }
-
     pub(in crate::endpoint::kernel) fn enabled_view_event(&self, index: usize) -> Option<usize> {
         let (source, admission) = self.view_event_admission(index, &mut self.preview_queries())?;
         admission.is_ok().then_some(source)
     }
 
-    fn view_event_admission(
+    pub(in crate::endpoint::kernel) fn view_event_admission(
         &self,
         index: usize,
         previews: &mut dyn FnMut(crate::global::const_dsl::ScopeId) -> Option<u8>,

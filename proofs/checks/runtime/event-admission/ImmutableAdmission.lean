@@ -113,4 +113,52 @@ theorem later_admission_uses_its_current_live_check {σ : Type}
 #print axioms identity_mismatch_rejects_without_live_observation
 #print axioms later_admission_uses_its_current_live_check
 
+-- Scope selection reads one frozen kernel cut. Its memoized previews are pure
+-- queries of that cut; candidate filtering performs no transport or commit.
+def admitThenSelect {α β : Type} (admit : α → Bool) (candidate : α → Option β) :
+    List α → Option β
+  | [] => none
+  | row :: tail =>
+    if admit row then
+      match candidate row with
+      | some selected => some selected
+      | none => admitThenSelect admit candidate tail
+    else admitThenSelect admit candidate tail
+
+def selectThenAdmit {α β : Type} (admit : α → Bool) (candidate : α → Option β) :
+    List α → Option β
+  | [] => none
+  | row :: tail =>
+    match candidate row with
+    | none => selectThenAdmit admit candidate tail
+    | some selected =>
+      if admit row then some selected else selectThenAdmit admit candidate tail
+
+theorem scope_filter_before_admission_preserves_first_candidate {α β : Type}
+    (rows : List α) (admit : α → Bool) (candidate : α → Option β) :
+    admitThenSelect admit candidate rows = selectThenAdmit admit candidate rows := by
+  induction rows with
+  | nil => rfl
+  | cons row tail induction =>
+    cases decision : admit row <;> cases selected : candidate row <;>
+      simp [admitThenSelect, selectThenAdmit, decision, selected, induction]
+
+theorem excluded_context_needs_no_admission {α β : Type}
+    (rows : List α) (admit excluded : α → Bool) (candidate : α → Option β)
+    (irrelevant : ∀ row, excluded row = true → candidate row = none) :
+    selectThenAdmit admit candidate rows =
+      selectThenAdmit (fun row => !excluded row && admit row) candidate rows := by
+  induction rows with
+  | nil => rfl
+  | cons row tail induction =>
+    cases ignored : excluded row with
+    | true =>
+      have absent := irrelevant row ignored
+      simp [selectThenAdmit, absent, induction]
+    | false =>
+      cases selected : candidate row <;> simp [selectThenAdmit, ignored, selected, induction]
+
+#print axioms scope_filter_before_admission_preserves_first_candidate
+#print axioms excluded_context_needs_no_admission
+
 end Hibana.ImmutableAdmission
