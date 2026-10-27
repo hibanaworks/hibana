@@ -84,16 +84,6 @@ fn atom_columns() -> ProgramImageColumns {
     ProgramImageColumns::new(1, 0, 0, 0)
 }
 
-fn route_columns() -> ProgramImageColumns {
-    // Both route arms require a participant. The old one-byte participant
-    // fixture was malformed and is now rejected by constructor validation.
-    ProgramImageColumns::new(0, 1, 2, 7)
-}
-
-fn alternate_columns() -> ProgramImageColumns {
-    ProgramImageColumns::new(5, 0, 0, 0)
-}
-
 #[test]
 fn compiled_program_column_range_rejects_stride_multiplication_overflow() {
     assert!(
@@ -143,7 +133,16 @@ static VALID: [u8; 9] = encoded_atom(0, 1, 9, VALID_SCHEMA, 1, u8::MAX);
 static VALID_COPY: [u8; 9] = encoded_atom(0, 1, 9, VALID_SCHEMA, 1, u8::MAX);
 static SCHEMA_DIFFERENT: [u8; 9] = encoded_atom(0, 1, 9, 0x7856_3413, 1, u8::MAX);
 static LAST_BYTE_DIFFERENT: [u8; 9] = encoded_atom(0, 1, 9, VALID_SCHEMA, 1, 0);
-static SAME_COLUMN_BYTES: [u8; 45] = [0; 45];
+static MORE_ATOMS: [u8; 18] = {
+    let row = encoded_atom(0, 1, 9, VALID_SCHEMA, 1, u8::MAX);
+    let mut bytes = [0; 18];
+    let mut at = 0;
+    while at < 18 {
+        bytes[at] = row[at % 9];
+        at += 1;
+    }
+    bytes
+};
 static FROM_OUT_OF_RANGE: [u8; 9] = encoded_atom(2, 1, 9, VALID_SCHEMA, 1, 0);
 static TO_OUT_OF_RANGE: [u8; 9] = encoded_atom(0, 2, 9, VALID_SCHEMA, 1, 0);
 static ORIGIN_OUT_OF_RANGE: [u8; 9] = encoded_atom(0, 1, 9, VALID_SCHEMA, 4, 0);
@@ -180,28 +179,20 @@ fn compiled_program_image_identity_is_exact_over_facts_columns_and_blob() {
     let canonical = forged_program_ref(&VALID, 1);
     let same_image_at_another_address = forged_program_ref(&VALID_COPY, 1);
     let different_facts = forged_program_ref(&VALID_COPY, 2);
-    let canonical_columns = CompiledProgramRef::compact(
-        ProgramImageFacts { max_role: 1 },
-        route_columns(),
-        &SAME_COLUMN_BYTES,
-    );
     let different_columns = CompiledProgramRef::compact(
         ProgramImageFacts { max_role: 1 },
-        alternate_columns(),
-        &SAME_COLUMN_BYTES,
+        ProgramImageColumns::new(2, 0, 0, 0),
+        &MORE_ATOMS,
     );
     let different_schema = forged_program_ref(&SCHEMA_DIFFERENT, 1);
     let different_final_byte = forged_program_ref(&LAST_BYTE_DIFFERENT, 1);
 
-    assert_eq!(
-        canonical_columns.columns.blob_len(),
-        different_columns.columns.blob_len()
-    );
     assert!(canonical.same_image(&canonical));
     assert!(canonical.same_image(&same_image_at_another_address));
     assert!(same_image_at_another_address.same_image(&canonical));
     assert!(!canonical.same_image(&different_facts));
-    assert!(!canonical_columns.same_image(&different_columns));
+    assert!(!canonical.same_image(&different_columns));
+    assert!(!different_columns.same_image(&canonical));
     assert!(!canonical.same_image(&different_schema));
     assert!(!canonical.same_image(&different_final_byte));
 }
@@ -214,6 +205,17 @@ fn compiled_program_atom_decoder_rejects_exact_invalid_boundaries() {
     assert!(decode_program_atom(fields(1, 0, 0), 0).is_none());
     assert!(decode_program_atom(fields(0, 1, 0), 0).is_none());
     assert!(decode_program_atom(fields(u8::MAX, u8::MAX, 0), u8::MAX).is_some());
+}
+
+#[test]
+#[should_panic]
+fn source_order_rejects_unclosed_route_markers() {
+    static BYTES: [u8; 64] = [0; 64];
+    let _ = CompiledProgramRef::compact(
+        ProgramImageFacts { max_role: 1 },
+        ProgramImageColumns::new(0, 1, 2, 7),
+        &BYTES,
+    );
 }
 
 #[test]
@@ -275,7 +277,7 @@ fn compiled_program_atom_descriptor_rejects_effect_index_query_out_of_range() {
 #[test]
 fn immutable_resolver_certificate_fits_existing_descriptor_padding() {
     let image = forged_program_ref(&VALID, 1);
-    let prior_fields = (image.facts, image.columns, image.blob);
+    let prior_fields = (image.facts, image.columns, image.blob, image.source_order);
     assert_eq!(
         core::mem::size_of_val(&image),
         core::mem::size_of_val(&prior_fields),

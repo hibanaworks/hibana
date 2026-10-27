@@ -4,11 +4,14 @@ pub(super) mod program;
 pub(crate) use self::{
     image::{
         ACTOR_DECISION_CAPACITY, COMPACT_DESCRIPTOR_BYTE_CAPACITY, CompiledProgramRef,
-        ProgramImageBytes, ProgramImageColumns, ProgramImagePlan, RoleDescriptorRef,
-        RoleImageSlice, SourceOrderIndex,
+        PROGRAM_IMAGE_STORAGE_BYTE_CAPACITY, ProgramImageBytes, ProgramImageColumns,
+        ProgramImagePlan, RoleDescriptorRef, RoleImageSlice,
     },
     program::EventSemanticKind,
 };
+
+#[cfg(any(kani, all(test, hibana_repo_tests)))]
+pub(crate) use self::image::SourceOrderIndex;
 
 #[cfg(all(test, hibana_repo_tests))]
 pub(crate) use self::image::{

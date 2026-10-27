@@ -165,7 +165,7 @@ impl<const N: usize> ProgramImageBytes<N> {
         eff_list: &EffList<E>,
         columns: ProgramImageColumns,
     ) -> Option<Self> {
-        if columns.blob_len() > N {
+        if columns.blob_len() + super::columns::source_order_byte_len(eff_list) > N {
             None
         } else {
             Some(Self::from_image(eff_list, columns))
@@ -346,7 +346,7 @@ impl<const N: usize> ProgramImageBytes<N> {
         columns: ProgramImageColumns,
     ) -> Self {
         let projected_len = columns.blob_len();
-        if projected_len > N {
+        if projected_len + super::columns::source_order_byte_len(eff_list) > N {
             crate::invariant();
         }
         let markers = eff_list.scope_markers();
@@ -430,6 +430,37 @@ impl<const N: usize> ProgramImageBytes<N> {
             out.write_scope_marker(marker_column, idx, markers.at(idx));
             idx += 1;
         }
+        let Some(extent) = super::SourceOrderIndex::<0>::extent(columns, markers.len(), &out.bytes)
+        else {
+            crate::invariant();
+        };
+        if N <= ScopeId::LOCAL_CAPACITY as usize && extent <= N {
+            out.write_source_order::<N>(columns, markers.len());
+        } else {
+            out.write_source_order::<{ ScopeId::LOCAL_CAPACITY as usize }>(columns, markers.len());
+        }
         out
+    }
+
+    const fn write_source_order<const E: usize>(
+        &mut self,
+        columns: ProgramImageColumns,
+        markers: usize,
+    ) {
+        if matches!(
+            super::SourceOrderIndex::<0>::extent(columns, markers, &self.bytes),
+            Some(0)
+        ) {
+            return;
+        }
+        let Some(index) = super::SourceOrderIndex::<E>::from_bytes(columns, markers, &self.bytes)
+        else {
+            crate::invariant();
+        };
+        let mut byte = 0;
+        while byte < index.packed_len() {
+            self.write_u8(columns.blob_len() + byte, index.packed_byte(byte));
+            byte += 1;
+        }
     }
 }

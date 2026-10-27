@@ -1,7 +1,9 @@
 use core::marker::PhantomData;
 
 use super::{ProgramProjection, ProgramShape};
-use crate::global::compiled::images::COMPACT_DESCRIPTOR_BYTE_CAPACITY;
+use crate::global::compiled::images::{
+    COMPACT_DESCRIPTOR_BYTE_CAPACITY, PROGRAM_IMAGE_STORAGE_BYTE_CAPACITY,
+};
 use crate::global::role_program::ROLE_IMAGE_STORAGE_BYTE_CAPACITY;
 
 #[cfg(kani)]
@@ -89,6 +91,8 @@ where
             Self::program_ref::<32768>()
         } else if Self::PROGRAM_BLOB_LEN <= COMPACT_DESCRIPTOR_BYTE_CAPACITY {
             Self::program_ref::<{ COMPACT_DESCRIPTOR_BYTE_CAPACITY }>()
+        } else if Self::PROGRAM_BLOB_LEN <= PROGRAM_IMAGE_STORAGE_BYTE_CAPACITY {
+            Self::program_ref::<{ PROGRAM_IMAGE_STORAGE_BYTE_CAPACITY }>()
         } else {
             panic!("program image exceeds compact offset domain")
         }

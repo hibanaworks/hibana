@@ -46,6 +46,8 @@ pub(crate) struct CompiledProgramRef {
     pub(crate) facts: ProgramImageFacts,
     pub(crate) columns: ProgramImageColumns,
     pub(crate) blob: BlobPtr,
+    source_order: BlobPtr,
+    source_scopes: u16,
     // Independent facts of the checked, contiguous ownership tail.
     actor_binding_start: u16,
     actor_decisions: u16,
@@ -97,6 +99,8 @@ impl CompiledProgramRef {
             facts,
             columns,
             blob,
+            source_order: BlobPtr::from_array(bytes, 0),
+            source_scopes: 0,
             actor_binding_start: 0,
             actor_decisions: 0,
             routes_sorted: false,
@@ -110,7 +114,53 @@ impl CompiledProgramRef {
         // every endpoint lookup. The private certificate is not protocol state.
         image.routes_sorted = image.validate_route_resolver_rows();
         image.validate_actor_rows();
+        let Some(scopes) = SourceOrderIndex::<0>::extent(
+            columns,
+            image.source_scope_marker_count(),
+            blob.as_slice(),
+        ) else {
+            crate::invariant();
+        };
+        image.source_scopes = scopes as u16;
+        let len = if scopes == 0 {
+            0
+        } else {
+            scopes * 9 + columns.atom_count() * 2
+        };
+        image.source_order = BlobPtr::from_array_range(bytes, columns.blob_len(), len);
+        if N <= crate::global::const_dsl::ScopeId::LOCAL_CAPACITY as usize && scopes <= N {
+            image.validate_source_order::<N>();
+        } else {
+            image.validate_source_order::<{ crate::global::const_dsl::ScopeId::LOCAL_CAPACITY as usize }>();
+        }
         image
+    }
+
+    const fn validate_source_order<const E: usize>(&self) {
+        if self.source_scopes == 0 {
+            return;
+        }
+        let Some(index) = SourceOrderIndex::<E>::from_program(self) else {
+            crate::invariant();
+        };
+        if index.packed_len() != self.source_order.len() {
+            crate::invariant();
+        }
+        let mut byte = 0;
+        while byte < index.packed_len() {
+            if index.packed_byte(byte) != self.source_order.byte_at(byte) {
+                crate::invariant();
+            }
+            byte += 1;
+        }
+    }
+
+    #[inline(always)]
+    const fn source_order_u16(&self, offset: usize) -> u16 {
+        u16::from_le_bytes([
+            self.source_order.byte_at(offset),
+            self.source_order.byte_at(offset + 1),
+        ])
     }
 
     pub(super) const fn route_resolver_index_is_sorted(&self) -> bool {

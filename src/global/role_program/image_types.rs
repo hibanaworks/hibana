@@ -343,6 +343,20 @@ pub(crate) struct BlobPtr {
 }
 
 impl BlobPtr {
+    pub(in crate::global) const fn from_array_range<const N: usize>(
+        bytes: &'static [u8; N],
+        start: usize,
+        len: usize,
+    ) -> Self {
+        Self {
+            bytes: bytes.split_at(start).1.split_at(len).0,
+        }
+    }
+
+    pub(in crate::global) const fn as_slice(self) -> &'static [u8] {
+        self.bytes
+    }
+
     #[inline(always)]
     pub(in crate::global) const fn from_array<const N: usize>(
         bytes: &'static [u8; N],

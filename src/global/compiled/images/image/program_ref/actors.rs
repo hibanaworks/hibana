@@ -102,30 +102,7 @@ impl CompiledProgramRef {
         if !matches!(scope.kind(), Some(ScopeKind::Parallel)) || self.byte_at(offset + 4) & 3 != 0 {
             return None;
         }
-        let start = self.read_u16_at(offset) as usize;
-        let mut split = None;
-        let mut index = marker + 1;
-        while index < markers.len as usize {
-            let at = markers.offset as usize + index * PROGRAM_IMAGE_SCOPE_MARKER_STRIDE;
-            if self.read_u16_at(at + 2) == scope.raw() {
-                match self.byte_at(at + 4) & 3 {
-                    1 => split = Some(self.read_u16_at(at) as usize),
-                    2 => {
-                        let end = self.read_u16_at(at) as usize;
-                        let Some(split) = split else {
-                            crate::invariant();
-                        };
-                        if start >= split || split >= end || end > self.columns.atom_count() {
-                            crate::invariant();
-                        }
-                        return Some((start, split, end));
-                    }
-                    _ => (),
-                }
-            }
-            index += 1;
-        }
-        crate::invariant()
+        self.source_scope_bounds(scope)
     }
 
     pub(crate) const fn source_route_separates(
@@ -162,46 +139,38 @@ impl CompiledProgramRef {
         if !matches!(scope.kind(), Some(ScopeKind::Route)) {
             return None;
         }
-        let markers = self
-            .columns
-            .scope_markers_for(self.source_scope_marker_count());
-        let mut first = None;
-        let mut split = None;
-        let mut index = 0;
-        while index < markers.len as usize {
-            let at = markers.offset as usize + index * PROGRAM_IMAGE_SCOPE_MARKER_STRIDE;
-            if self.read_u16_at(at + 2) == scope.raw() {
-                match self.byte_at(at + 4) & 3 {
-                    0 if first.is_none() => first = Some(self.read_u16_at(at) as usize),
-                    2 => {
-                        let boundary = self.read_u16_at(at) as usize;
-                        match (first, split) {
-                            (Some(first), Some(split)) => {
-                                return Some((first, split, boundary));
-                            }
-                            (Some(_), None) => split = Some(boundary),
-                            _ => crate::invariant(),
-                        }
-                    }
-                    _ => (),
-                }
-            }
-            index += 1;
+        self.source_scope_bounds(scope)
+    }
+
+    #[inline]
+    const fn source_scope_bounds(&self, scope: ScopeId) -> Option<(usize, usize, usize)> {
+        let slot = scope.local_ordinal() as usize;
+        if slot >= self.source_scopes as usize {
+            return None;
         }
-        None
+        let kind = match scope.kind() {
+            Some(kind) => kind as u8,
+            _ => return None,
+        };
+        let row = slot * 9;
+        if self.source_order.byte_at(row + 8) != kind {
+            return None;
+        }
+        Some((
+            self.source_order_u16(row) as usize,
+            self.source_order_u16(row + 2) as usize,
+            self.source_order_u16(row + 4) as usize,
+        ))
     }
 
     pub(crate) const fn roll_precedes(&self, scope: ScopeId, after: usize) -> bool {
-        let mut marker = 0;
-        while marker < self.source_scope_marker_count() {
-            if let Some((candidate, _, end)) = self.source_roll_at(marker)
-                && candidate.same(scope)
-            {
-                return self.source_precedes(end - 1, after);
-            }
-            marker += 1;
+        if !matches!(scope.kind(), Some(ScopeKind::Roll)) {
+            return false;
         }
-        false
+        let Some((_, _, end)) = self.source_scope_bounds(scope) else {
+            return false;
+        };
+        self.source_precedes(end - 1, after)
     }
 
     const fn source_marker_lower_bound(&self, offset: usize) -> usize {
@@ -234,8 +203,30 @@ impl CompiledProgramRef {
 
     /// Strict single-visit source order. Enumeration orders sequential terms,
     /// except for operations separated by parallel or alternative arms.
-    /// Read the existing immutable markers; do not create a dependency ledger.
+    /// Follow precomputed enclosing scopes, without rescanning source markers.
+    #[inline]
     pub(crate) const fn source_precedes(&self, before: usize, after: usize) -> bool {
+        if before >= after || after >= self.columns.atom_count() {
+            return false;
+        }
+        if self.source_scopes == 0 {
+            return true;
+        }
+        let mut scope = self.source_order_u16(self.source_scopes as usize * 9 + before * 2);
+        while scope != u16::MAX {
+            let row = scope as usize * 9;
+            let split = self.source_order_u16(row + 2) as usize;
+            let end = self.source_order_u16(row + 4) as usize;
+            if before < split && split <= after && after < end {
+                return false;
+            }
+            scope = self.source_order_u16(row + 6);
+        }
+        true
+    }
+
+    #[cfg(any(kani, all(test, hibana_repo_tests)))]
+    pub(super) const fn source_precedes_scan(&self, before: usize, after: usize) -> bool {
         if before >= after || after >= self.columns.atom_count() {
             return false;
         }
@@ -323,7 +314,31 @@ impl CompiledProgramRef {
         if !matches!(scope.kind(), Some(ScopeKind::Roll)) || self.byte_at(offset + 4) & 3 != 0 {
             return None;
         }
-        let start = self.read_u16_at(offset) as usize;
+        let Some((start, _, end)) = self.source_scope_bounds(scope) else {
+            crate::invariant();
+        };
+        Some((scope, start, end))
+    }
+
+    #[cfg(all(test, hibana_repo_tests))]
+    pub(super) const fn source_roll_at_scan(
+        &self,
+        marker: usize,
+    ) -> Option<(ScopeId, usize, usize)> {
+        let markers = self
+            .columns
+            .scope_markers_for(self.source_scope_marker_count());
+        if marker >= markers.len as usize {
+            return None;
+        }
+        let at = markers.offset as usize + marker * PROGRAM_IMAGE_SCOPE_MARKER_STRIDE;
+        let Some(scope) = ScopeId::decode_raw(self.read_u16_at(at + 2)) else {
+            crate::invariant();
+        };
+        if !matches!(scope.kind(), Some(ScopeKind::Roll)) || self.byte_at(at + 4) & 3 != 0 {
+            return None;
+        }
+        let start = self.read_u16_at(at) as usize;
         let mut index = marker + 1;
         while index < markers.len as usize {
             let offset = markers.offset as usize + index * PROGRAM_IMAGE_SCOPE_MARKER_STRIDE;

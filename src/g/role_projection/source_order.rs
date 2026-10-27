@@ -13,7 +13,6 @@ use crate::{
     },
 };
 
-use crate::global::compiled::images::SourceOrderIndex;
 mod presence;
 use presence::SourcePresence;
 
@@ -26,15 +25,11 @@ pub(super) const fn check<Steps: ProgramShape, const E: usize>(image: &RoleImage
     if data.actors().is_none() {
         return true;
     }
-    let Some(order) = SourceOrderIndex::from_program(image.program()) else {
-        return false;
-    };
     let mut check = SourceOrder {
         source: &Steps::SOURCE_NODE,
         data,
         image,
         rows: [[None; 2]; E],
-        order,
         presence: &ProgramProjection::<Steps, E>::SOURCE_PRESENCE,
         expected: [[false; 2]; E],
     };
@@ -72,7 +67,7 @@ pub(super) const fn check<Steps: ProgramShape, const E: usize>(image: &RoleImage
             let right = check.operation(after);
             let (second, _) = check.row(after).coordinates;
             let precedes = source_successors[second];
-            if check.order.before(first, second) != precedes {
+            if image.program().source_precedes(first, second) != precedes {
                 return false;
             }
             check.expected[after / 2][after % 2] = if first == second {
@@ -143,7 +138,6 @@ struct SourceOrder<'a, const E: usize> {
     // A source message contributes at most a send and a receive locally.
     // Decode the immutable image once in compiler scratch, not per edge.
     rows: [[Option<SourceRow>; 2]; E],
-    order: SourceOrderIndex<E>,
     presence: &'a SourcePresence<E>,
     expected: [[bool; 2]; E],
 }

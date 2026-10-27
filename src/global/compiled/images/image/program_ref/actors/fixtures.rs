@@ -38,5 +38,10 @@ pub(super) const fn encoded_bytes() -> [u8; 128] {
         bytes[index] = PROGRAM.byte_at(index);
         index += 1;
     }
+    let mut offset = 0;
+    while offset < PROGRAM.source_order.len() {
+        bytes[COLUMNS.blob_len() + offset] = PROGRAM.source_order.byte_at(offset);
+        offset += 1;
+    }
     bytes
 }

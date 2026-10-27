@@ -137,6 +137,7 @@ mod source_order_fixture {
         let actual = IMAGE.source_precedes(BEFORE, AFTER);
         assert_eq!(actual, BEFORE < 2 && (AFTER == 2 || AFTER == 3));
         assert_eq!(INDEX.before(BEFORE, AFTER), actual);
+        assert_eq!(IMAGE.source_precedes_scan(BEFORE, AFTER), actual);
     }
 }
 

@@ -10,6 +10,87 @@ use crate::global::{
 mod source_order;
 
 #[test]
+fn source_order_offsets_preserve_the_full_scope_identifier_domain() {
+    use crate::eff::{EffAtom, EventOrigin, EventPayload};
+    use crate::global::{
+        compiled::{images::PROGRAM_IMAGE_STORAGE_BYTE_CAPACITY, lowering::CompiledProgramImage},
+        const_dsl::EffList,
+    };
+    const SOURCE: EffList<5> = {
+        let mut source = EffList::new_partitioned(2, 3, 0);
+        let atom = EffAtom {
+            from: 0,
+            to: 1,
+            label: 1,
+            payload: EventPayload::Wire(0),
+            origin: EventOrigin::User,
+            lane: 0,
+        };
+        source.push_event_mut(atom);
+        source.push_event_mut(atom);
+        source.push_parallel_scope_mut(ScopeId::parallel(ScopeId::LOCAL_CAPACITY - 1), 0, 1, 2);
+        source
+    };
+    const PLAN: ProgramImagePlan = ProgramImagePlan::from_program(&SOURCE);
+    const SUMMARY: CompiledProgramImage = CompiledProgramImage::scan_const(&SOURCE);
+    static BYTES: ProgramImageBytes<PROGRAM_IMAGE_STORAGE_BYTE_CAPACITY> =
+        ProgramImageBytes::from_image(&SOURCE, PLAN.columns());
+    const IMAGE: CompiledProgramRef = BYTES.compiled_ref(&SUMMARY, PLAN.columns());
+    assert!(IMAGE.source_order.len() > u16::MAX as usize);
+    assert_eq!(IMAGE.source_parallel_at(0), Some((0, 1, 2)));
+    assert!(!IMAGE.source_precedes(0, 1));
+    assert_eq!(
+        IMAGE.source_precedes(0, 1),
+        IMAGE.source_precedes_scan(0, 1)
+    );
+    assert_eq!(
+        IMAGE.source_route_bounds(ScopeId::route(ScopeId::LOCAL_CAPACITY - 1)),
+        None
+    );
+    assert!(!IMAGE.source_precedes(0, usize::MAX));
+}
+
+#[test]
+fn packed_source_order_checks_ranges_parents_kinds_and_event_heads() {
+    static VALID: [u8; 128] = encoded_bytes();
+    assert!(PROGRAM.same_image(&CompiledProgramRef::compact(PROGRAM.facts, COLUMNS, &VALID)));
+    const fn changed(offset: usize) -> [u8; 128] {
+        let mut bytes = [0; 128];
+        let mut at = 0;
+        while at < COLUMNS.blob_len() {
+            bytes[at] = PROGRAM.byte_at(at);
+            at += 1;
+        }
+        let mut index = 0;
+        while index < PROGRAM.source_order.len() {
+            bytes[at + index] = PROGRAM.source_order.byte_at(index);
+            index += 1;
+        }
+        bytes[at + offset] ^= 1;
+        bytes
+    }
+    static BAD_START: [u8; 128] = changed(0);
+    static BAD_SPLIT: [u8; 128] = changed(2);
+    static BAD_END: [u8; 128] = changed(4);
+    static BAD_PARENT: [u8; 128] = changed(6);
+    static BAD_KIND: [u8; 128] = changed(8);
+    static BAD_HEAD: [u8; 128] = changed(9);
+    for bytes in [
+        &BAD_START,
+        &BAD_SPLIT,
+        &BAD_END,
+        &BAD_PARENT,
+        &BAD_KIND,
+        &BAD_HEAD,
+    ] {
+        assert!(
+            std::panic::catch_unwind(|| CompiledProgramRef::compact(PROGRAM.facts, COLUMNS, bytes))
+                .is_err()
+        );
+    }
+}
+
+#[test]
 fn a_shared_route_preview_is_visible_inside_an_arm_or_around_the_whole_choice() {
     use crate::{g, global::compiled::lowering::CompiledProgramImage};
     type Step = g::Send<0, 1, g::Msg<1, ()>>;

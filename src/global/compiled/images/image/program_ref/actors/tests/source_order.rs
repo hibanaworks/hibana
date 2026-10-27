@@ -126,6 +126,13 @@ fn compare<const E: usize, const B: usize>(tree: &Tree) {
     )));
     let image = bytes.compiled_ref(&summary, plan.columns());
     let index = SourceOrderIndex::<E>::from_program(&image).expect("source order index");
+    for marker in 0..=source.scope_markers().len() {
+        assert_eq!(
+            image.source_roll_at(marker),
+            image.source_roll_at_scan(marker),
+            "roll bounds {tree:?}: {marker}"
+        );
+    }
     for first in (0..=events + 1).chain([usize::MAX]) {
         for second in (0..=events + 1).chain([usize::MAX]) {
             let expected = tree.before(first, second);
@@ -133,6 +140,11 @@ fn compare<const E: usize, const B: usize>(tree: &Tree) {
                 image.source_precedes(first, second),
                 expected,
                 "{tree:?}: {first}->{second}"
+            );
+            assert_eq!(
+                image.source_precedes_scan(first, second),
+                expected,
+                "marker oracle {tree:?}: {first}->{second}"
             );
             assert_eq!(
                 index.before(first, second),

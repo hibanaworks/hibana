@@ -11,9 +11,8 @@ use crate::global::compiled::images::image::columns::{
 use crate::global::const_dsl::{EffList, ReentryMark, ScopeEvent};
 use crate::global::role_program::ColumnRange;
 
-// Use constructor-valid images for both column interpretations: one resolver
-// with two participant arms and seven markers, or five atom rows. Identity
-// still compares the full facts, columns and bytes, including the last byte.
+// Two constructor-valid layouts over the same bytes: participant entries, or
+// five atom rows. Identity compares facts, columns and the complete byte span.
 static CANONICAL_IMAGE: [u8; 45] = [0; 45];
 static SAME_IMAGE: [u8; 45] = CANONICAL_IMAGE;
 static LAST_BYTE_DIFFERENT: [u8; 45] = {
@@ -23,8 +22,8 @@ static LAST_BYTE_DIFFERENT: [u8; 45] = {
 };
 static DENSE_ATOM_ROWS: [u8; 27] = atom_rows();
 
-const fn route_columns() -> ProgramImageColumns {
-    ProgramImageColumns::new(0, 1, 2, 7)
+const fn participant_columns() -> ProgramImageColumns {
+    ProgramImageColumns::new(0, 0, 45, 0)
 }
 
 const fn identity_columns() -> ProgramImageColumns {
@@ -297,17 +296,17 @@ fn compiled_program_image_identity_checks_the_final_byte() {
 static CANONICAL_PROGRAM: CompiledProgramRef = program(
     &CANONICAL_IMAGE,
     ProgramImageFacts { max_role: 1 },
-    route_columns(),
+    participant_columns(),
 );
 static SAME_PROGRAM: CompiledProgramRef = program(
     &SAME_IMAGE,
     ProgramImageFacts { max_role: 1 },
-    route_columns(),
+    participant_columns(),
 );
 static DIFFERENT_FACTS: CompiledProgramRef = program(
     &SAME_IMAGE,
     ProgramImageFacts { max_role: 2 },
-    route_columns(),
+    participant_columns(),
 );
 static DIFFERENT_COLUMNS: CompiledProgramRef = program(
     &SAME_IMAGE,
@@ -317,7 +316,7 @@ static DIFFERENT_COLUMNS: CompiledProgramRef = program(
 static DIFFERENT_FINAL_BYTE: CompiledProgramRef = program(
     &LAST_BYTE_DIFFERENT,
     ProgramImageFacts { max_role: 1 },
-    route_columns(),
+    participant_columns(),
 );
 
 #[kani::proof]
