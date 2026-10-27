@@ -367,12 +367,17 @@ impl EventCursor {
                 && prior_lane == lane
             {
                 let prior_conflict = self.machine().event_conflict_for_index(scan);
-                if self.event_conflict_row_allows_with_preview(
+                match self.event_conflict_row_admission_with_preview(
                     prior_conflict,
                     preview_conflict,
                     &mut *selected_arm_for_scope,
                 ) {
-                    return false;
+                    super::ConflictAdmission::Allowed => return false,
+                    super::ConflictAdmission::Excluded { scope, arm } => {
+                        scan = self.excluded_arm_end(scan, scope, arm).min(idx).min(end);
+                        continue;
+                    }
+                    super::ConflictAdmission::Invalid => (),
                 }
             }
             scan += 1;
@@ -389,20 +394,28 @@ impl EventCursor {
                 .machine()
                 .event_program()
                 .dependency_row_set(dependency);
-            for prior in rows.start()..rows.end() {
+            let mut prior = rows.start();
+            while prior < rows.end() {
                 if contains(prior)
                     && self.event_actor_is_local(prior, &mut *selected_arm_for_scope) != Some(false)
                     && prior < self.local_steps_len()
-                    && self.event_conflict_row_allows_with_preview(
+                {
+                    match self.event_conflict_row_admission_with_preview(
                         self.machine()
                             .event_program()
                             .event_conflict_for_index(prior),
                         preview_conflict,
                         &mut *selected_arm_for_scope,
-                    )
-                {
-                    return false;
+                    ) {
+                        super::ConflictAdmission::Allowed => return false,
+                        super::ConflictAdmission::Excluded { scope, arm } => {
+                            prior = self.excluded_arm_end(prior, scope, arm).min(rows.end());
+                            continue;
+                        }
+                        super::ConflictAdmission::Invalid => (),
+                    }
                 }
+                prior += 1;
             }
         }
         true

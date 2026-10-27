@@ -59,6 +59,45 @@ fn scan_completed_body(
     promoted.or(Some(best))
 }
 
+fn scan_roll_head(
+    cursor: &EventCursor,
+    scope: ScopeId,
+    index: usize,
+    lane: u8,
+    selected: &mut dyn FnMut(ScopeId) -> Option<u8>,
+) -> bool {
+    let row = cursor.machine().roll_scope_row(scope).unwrap();
+    if !(row.start()..row.end()).contains(&index) || cursor.event_lane_at(index) != Some(lane) {
+        return false;
+    }
+    let preview = cursor.machine().event_conflict_for_index(index);
+    let dependency = cursor
+        .machine()
+        .event_program()
+        .dependency_for_index(index)
+        .filter(|&dependency| EventCursor::dependency_applies(dependency, &mut *selected));
+    let mut live = |prior| {
+        cursor.event_actor_is_local(prior, selected) != Some(false)
+            && cursor.event_conflict_row_allows_with_preview(
+                cursor.machine().event_conflict_for_index(prior),
+                preview,
+                selected,
+            )
+    };
+    if (row.start()..index).any(|prior| cursor.event_lane_at(prior) == Some(lane) && live(prior)) {
+        return false;
+    }
+    if let Some(dependency) = dependency {
+        let dependency = cursor
+            .machine()
+            .event_program()
+            .dependency_row_set(dependency);
+        return !(dependency.start()..dependency.end())
+            .any(|prior| (row.start()..row.end()).contains(&prior) && live(prior));
+    }
+    true
+}
+
 fn compare_completion_domains(rows: &'static RoleImageRef) {
     with_rows(rows, |cursor| {
         let rolls: std::vec::Vec<_> = (0..cursor
@@ -117,6 +156,15 @@ fn compare_completion_domains(rows: &'static RoleImageRef) {
             };
             let mut slot = 0;
             while let Some((scope, row)) = cursor.machine().roll_scope_row_by_slot(slot) {
+                for index in 0..steps {
+                    let lane = cursor.event_lane_at(index).unwrap();
+                    assert_eq!(
+                        cursor.roll_scope_head_allows_index(scope, index, lane, &mut selected),
+                        scan_roll_head(cursor, scope, index, lane, &mut selected),
+                        "head actor={} slot={slot} index={index} assignment={assignment}",
+                        rows.role(),
+                    );
+                }
                 // The selected local domain is independent of completion.
                 // Its set inclusion in the completion word specifies completion
                 // without depending on either iterator's traversal order.

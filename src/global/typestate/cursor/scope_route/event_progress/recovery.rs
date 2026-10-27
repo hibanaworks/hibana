@@ -41,10 +41,13 @@ impl EventCursor {
         let conflict = self.machine().event_conflict_for_index(index);
         let mut selected = |scope| arms(scope, EventArmView::Preview);
         let mut wait = EventAdmissionError::OtherViewPending;
-        for prior in row.start()..index.min(row.end()) {
+        let end = index.min(row.end());
+        let mut prior = row.start();
+        while prior < end {
             if !(self.uses_view_at(prior, role)
                 || sent.is_some_and(|sent| self.uses_view_at(prior, sent)))
             {
+                prior += 1;
                 continue;
             }
             let (before, _) = self
@@ -59,19 +62,28 @@ impl EventCursor {
                     .program_ref()
                     .source_precedes(before.dense_ordinal(), event.eff_index.dense_ordinal()))
                 && self.event_actor_is_local(prior, &mut selected) != Some(false)
-                && self.event_conflict_row_allows_with_preview(
+            {
+                match self.event_conflict_row_admission_with_preview(
                     self.machine().event_conflict_for_index(prior),
                     conflict,
                     &mut selected,
-                )
-            {
-                if self.uses_view_at(prior, role) {
-                    return EventAdmissionError::PredecessorPending;
-                }
-                if sent.is_some_and(|sent| self.uses_view_at(prior, sent)) {
-                    wait = EventAdmissionError::PayloadPredecessorPending;
+                ) {
+                    super::super::ConflictAdmission::Allowed => {
+                        if self.uses_view_at(prior, role) {
+                            return EventAdmissionError::PredecessorPending;
+                        }
+                        if sent.is_some_and(|sent| self.uses_view_at(prior, sent)) {
+                            wait = EventAdmissionError::PayloadPredecessorPending;
+                        }
+                    }
+                    super::super::ConflictAdmission::Excluded { scope, arm } => {
+                        prior = self.excluded_arm_end(prior, scope, arm).min(end);
+                        continue;
+                    }
+                    super::super::ConflictAdmission::Invalid => (),
                 }
             }
+            prior += 1;
         }
         wait
     }

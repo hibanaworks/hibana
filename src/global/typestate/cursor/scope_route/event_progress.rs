@@ -57,7 +57,8 @@ impl EventCursor {
             .unwrap_or_else(|| crate::invariant());
         // Constructor-checked rows follow source order, with a send before
         // its co-resident receive. A predecessor must occur in this prefix.
-        for prior in self.pending_event_steps(0..index) {
+        let mut pending = self.pending_event_steps(0..index);
+        while let Some(prior) = pending.next() {
             let uses_caller = self.uses_view_at(prior, blocked.0);
             if !(uses_caller || blocked.1.is_some_and(|role| self.uses_view_at(prior, role))) {
                 continue;
@@ -74,18 +75,24 @@ impl EventCursor {
                 self.program_ref()
                     .source_precedes(before.dense_ordinal(), after.dense_ordinal())
             };
-            if precedes
-                && self.event_actor_is_local(prior, selected) != Some(false)
-                && self.event_conflict_row_allows_with_preview(
+            if precedes && self.event_actor_is_local(prior, selected) != Some(false) {
+                match self.event_conflict_row_admission_with_preview(
                     self.machine().event_conflict_for_index(prior),
                     conflict,
                     selected,
-                )
-            {
-                if uses_caller {
-                    return EventAdmissionError::PredecessorPending;
+                ) {
+                    super::ConflictAdmission::Allowed => {
+                        if uses_caller {
+                            return EventAdmissionError::PredecessorPending;
+                        }
+                        wait = EventAdmissionError::PayloadPredecessorPending;
+                    }
+                    super::ConflictAdmission::Excluded { scope, arm } => {
+                        let next = self.excluded_arm_end(prior, scope, arm).min(index);
+                        pending = self.pending_event_steps(next..index);
+                    }
+                    super::ConflictAdmission::Invalid => (),
                 }
-                wait = EventAdmissionError::PayloadPredecessorPending;
             }
         }
         wait
@@ -257,6 +264,122 @@ impl EventCursor {
 mod tests {
     use super::*;
     use crate::{Endpoint, g, runtime::program::project};
+
+    #[test]
+    fn nested_owned_prefix_classification_matches_the_source_predecessor_set() {
+        type Loan<'r> = g::Msg<1, Endpoint<'r, 3>>;
+        let global = g::seq(
+            g::send::<0, 1, Loan<'_>>(),
+            g::seq(
+                g::par(
+                    g::route(
+                        g::seq(
+                            g::send::<3, 2, g::Msg<2, ()>>(),
+                            g::send::<2, 3, g::Msg<3, ()>>(),
+                        ),
+                        g::seq(
+                            g::send::<3, 2, g::Msg<4, ()>>(),
+                            g::send::<2, 3, g::Msg<5, ()>>(),
+                        ),
+                    ),
+                    g::route(
+                        g::send::<1, 2, g::Msg<6, ()>>(),
+                        g::send::<1, 2, g::Msg<7, ()>>(),
+                    ),
+                ),
+                g::send::<1, 0, Loan<'_>>(),
+            ),
+        )
+        .roll();
+        let program = project::<1>(&global);
+        super::super::super::validated_metadata_tests::with_rows(
+            program.role_image_ref(),
+            |cursor| {
+                let steps = cursor.local_steps_len();
+                let routes = cursor.machine().route_scope_slot_count();
+                assert!(steps <= 10 && routes <= 3);
+                for completed in 0..1u32 << steps {
+                    cursor.completed_event_words_mut()[0] = completed;
+                    for choices in 0..3usize.pow(routes as u32) {
+                        let selected = |scope| {
+                            let slot = cursor.route_scope_slot(scope)?;
+                            match choices / 3usize.pow(slot as u32) % 3 {
+                                0 => None,
+                                1 => Some(0),
+                                _ => Some(1),
+                            }
+                        };
+                        for index in 0..steps {
+                            let (after, after_direction) = cursor
+                                .machine()
+                                .event_program()
+                                .operation_at(index)
+                                .unwrap();
+                            let conflict = cursor.machine().event_conflict_for_index(index);
+                            for caller in 0..4 {
+                                for payload in [None, Some(0), Some(1), Some(2), Some(3)] {
+                                    let live: std::vec::Vec<_> = (0..index)
+                                        .filter(|&prior| {
+                                            let (before, direction) = cursor
+                                                .machine()
+                                                .event_program()
+                                                .operation_at(prior)
+                                                .unwrap();
+                                            completed & (1 << prior) == 0
+                                                && (if before == after {
+                                                    direction == RoleLocalDirection::Send
+                                                        && after_direction
+                                                            == RoleLocalDirection::Recv
+                                                } else {
+                                                    cursor.program_ref().source_precedes(
+                                                        before.dense_ordinal(),
+                                                        after.dense_ordinal(),
+                                                    )
+                                                })
+                                                && cursor
+                                                    .event_actor_is_local(prior, &mut |scope| {
+                                                        selected(scope)
+                                                    })
+                                                    != Some(false)
+                                                && cursor.event_conflict_row_allows_with_preview(
+                                                    cursor
+                                                        .machine()
+                                                        .event_conflict_for_index(prior),
+                                                    conflict,
+                                                    &mut |scope| selected(scope),
+                                                )
+                                        })
+                                        .collect();
+                                    let expected = if live
+                                        .iter()
+                                        .any(|&prior| cursor.uses_view_at(prior, caller))
+                                    {
+                                        EventAdmissionError::PredecessorPending
+                                    } else if payload.is_some_and(|role| {
+                                        live.iter().any(|&prior| cursor.uses_view_at(prior, role))
+                                    }) {
+                                        EventAdmissionError::PayloadPredecessorPending
+                                    } else {
+                                        EventAdmissionError::OtherViewPending
+                                    };
+                                    assert_eq!(
+                                        cursor.source_predecessor_wait(
+                                            index,
+                                            (caller, payload),
+                                            conflict,
+                                            &mut |scope| selected(scope)
+                                        ),
+                                        expected,
+                                        "{completed:x}/{choices}/{index}/{caller}/{payload:?}"
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+        );
+    }
 
     #[test]
     fn payload_prefixes_are_distinct_from_the_borrowed_views_own_prefixes() {

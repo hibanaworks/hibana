@@ -21,16 +21,23 @@ where
         let fresh_route_start = delta.fresh_route_start;
         let applies_route_completion =
             delta.event().is_some() || delta.selected_routes().len() != 0;
-        let body_reentry_scope = self.prepared_body_reentry_scope(delta.event());
+        let body_reentry_scope = delta.body_reentry();
+        #[cfg(all(test, hibana_repo_tests))]
+        assert_eq!(
+            body_reentry_scope,
+            self.prepared_body_reentry_scope(delta.event())
+                .unwrap_or(ScopeId::none()),
+            "prepared repetition entry changed before publication"
+        );
         let mut refresh = None;
-        if let Some(scope) = body_reentry_scope {
+        if !body_reentry_scope.is_none() {
             let event = crate::invariant_some(delta.event());
             let entry = crate::invariant_some(
                 self.progress
                     .cursor
                     .node_index_for_relocatable_step(event.progress_step()),
             );
-            self.clear_reentry_scope_state(scope, entry);
+            self.clear_reentry_scope_state(body_reentry_scope, entry);
             refresh = Some(CursorRefresh::AllLanes);
         }
         let route_lane = delta.selected_route_lane();
