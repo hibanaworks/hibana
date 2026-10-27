@@ -245,6 +245,21 @@ fn compare(cursor: &EventCursor) {
                 if receiving { atom.to } else { atom.from }
             })
         );
+        let owner = cursor.logical_role_at(idx);
+        let payload = old.try_send_meta_from_node(idx).and_then(|meta| {
+            if let crate::eff::EventPayload::Endpoint(role) = meta.payload_kind {
+                Some(role)
+            } else {
+                None
+            }
+        });
+        for role in 0..=u8::MAX {
+            assert_eq!(
+                cursor.uses_view_at(idx, role),
+                owner == Some(role) || payload == Some(role),
+                "row {idx}, logical role {role}"
+            );
+        }
         for arm in [None, Some(0), Some(1)] {
             let mut observed = std::vec::Vec::new();
             let actual = cursor.event_actor_is_local(idx, &mut |scope| {

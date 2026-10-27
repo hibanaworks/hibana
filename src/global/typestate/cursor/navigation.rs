@@ -210,10 +210,18 @@ impl EventCursor {
     /// An operation borrows its carrier view; an owned send also consumes its
     /// payload view. Waiting while holding either prerequisite cannot progress.
     pub(super) fn uses_view_at(&self, idx: usize, role: u8) -> bool {
-        self.logical_role_at(idx) == Some(role)
-            || self.try_send_meta_at(idx).is_some_and(|meta| {
-                matches!(meta.payload_kind, crate::eff::EventPayload::Endpoint(key) if key == role)
-            })
+        let Some((effect, direction)) = self.machine().event_program().operation_at(idx) else {
+            return false;
+        };
+        let atom = self.program_ref().event_atom_at(effect.dense_ordinal());
+        let owner = if direction == RoleLocalDirection::Recv {
+            atom.to
+        } else {
+            atom.from
+        };
+        owner == role
+            || (direction == RoleLocalDirection::Send
+                && atom.payload == crate::eff::EventPayload::Endpoint(role))
     }
 
     /// Select an immutable actor binding through the existing route decisions.

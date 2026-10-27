@@ -1,0 +1,60 @@
+use super::*;
+use crate::{
+    Endpoint, g,
+    global::role_program::{RoleImageRef, project},
+};
+
+fn compare_event_facts(rows: &RoleImageRef) {
+    let image = rows.lanes();
+    for step in 0..rows.local_step_count() {
+        let full = image.local_step_event(step).unwrap();
+        let dependency = if full.dependency_row == u16::MAX {
+            None
+        } else {
+            Some(
+                image
+                    .packed_dependency_row(full.dependency_row as usize)
+                    .to_dependency(rows.local_step_count())
+                    .unwrap(),
+            )
+        };
+        assert_eq!(image.dependency_for_index(step), dependency);
+        let conflict = if full.conflict_row == u16::MAX {
+            PackedEventConflict::none()
+        } else {
+            PackedEventConflict::from_raw(
+                image
+                    .read_u16(
+                        image.columns.conflicts,
+                        full.conflict_row as usize,
+                        ROLE_IMAGE_CONFLICT_STRIDE,
+                    )
+                    .unwrap(),
+            )
+        };
+        assert_eq!(image.event_conflict_for_index(step).raw(), conflict.raw());
+    }
+}
+
+#[test]
+fn direct_event_facts_match_full_rows_across_owned_parallel_choices_and_repetition() {
+    type Loan = g::Msg<1, Endpoint<'static, 10>>;
+    type Read = g::Msg<3, u32>;
+    type Value = g::Msg<4, u32>;
+    let global = g::seq(
+        g::send::<0, 1, Loan>(),
+        g::seq(
+            g::par(
+                g::seq(g::send::<10, 2, Read>(), g::send::<2, 10, Value>()).roll(),
+                g::route(g::send::<3, 4, Read>(), g::send::<3, 4, Value>()),
+            ),
+            g::send::<1, 0, Loan>(),
+        ),
+    );
+    compare_event_facts(project::<0>(&global).role_image_ref());
+    compare_event_facts(project::<1>(&global).role_image_ref());
+    compare_event_facts(project::<2>(&global).role_image_ref());
+    compare_event_facts(project::<3>(&global).role_image_ref());
+    compare_event_facts(project::<4>(&global).role_image_ref());
+    compare_event_facts(project::<10>(&global).role_image_ref());
+}

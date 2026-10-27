@@ -15,6 +15,8 @@ use crate::global::typestate::{
 };
 
 mod decode;
+#[cfg(all(test, hibana_repo_tests))]
+mod tests;
 pub(super) use decode::{
     decode_resident_local_step_lane, decode_resident_roll_scope,
     decode_resident_route_arm_lane_step, decode_resident_route_scope, passive_child_parent_matches,
@@ -166,14 +168,16 @@ impl<'a> RoleLaneImage<'a> {
 
     #[inline(always)]
     pub(crate) const fn dependency_for_index(&self, current_idx: usize) -> Option<LocalDependency> {
-        let event = match self.local_step_event(current_idx) {
-            Some(event) => event,
-            None => invalid_resident_descriptor(),
-        };
-        if event.dependency_row == u16::MAX {
+        let offset =
+            match self.column_offset(self.columns.events, current_idx, ROLE_IMAGE_EVENT_STRIDE) {
+                Some(offset) => offset,
+                None => invalid_resident_descriptor(),
+            };
+        let row = self.read_u16_at(offset + 2);
+        if row == u16::MAX {
             return None;
         }
-        let row = event.dependency_row as usize;
+        let row = row as usize;
         if row >= self.columns.dependencies.len as usize {
             invalid_resident_descriptor();
         } else {
@@ -189,14 +193,16 @@ impl<'a> RoleLaneImage<'a> {
 
     #[inline]
     pub(crate) const fn event_conflict_for_index(&self, current_idx: usize) -> PackedEventConflict {
-        let event = match self.local_step_event(current_idx) {
-            Some(event) => event,
-            None => invalid_resident_descriptor(),
-        };
-        if event.conflict_row == u16::MAX {
+        let offset =
+            match self.column_offset(self.columns.events, current_idx, ROLE_IMAGE_EVENT_STRIDE) {
+                Some(offset) => offset,
+                None => invalid_resident_descriptor(),
+            };
+        let row = self.read_u16_at(offset + 4);
+        if row == u16::MAX {
             return PackedEventConflict::none();
         }
-        let row = event.conflict_row as usize;
+        let row = row as usize;
         if row >= self.columns.conflicts.len as usize {
             invalid_resident_descriptor();
         } else {

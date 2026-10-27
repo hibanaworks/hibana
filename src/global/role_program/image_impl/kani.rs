@@ -446,6 +446,73 @@ fn resident_event_header_decoding_accepts_exact_domain() {
             RoleLocalDirection::Send => assert!((2..=3).contains(&flags)),
             RoleLocalDirection::Recv => assert!((4..=5).contains(&flags)),
         }
+
+        let has_dependency: bool = kani::any();
+        let has_conflict: bool = kani::any();
+        let dependency_row = if has_dependency { 0_u16 } else { u16::MAX };
+        let conflict_row = if has_conflict { 0_u16 } else { u16::MAX };
+        let route: u16 = kani::any();
+        let arm: bool = kani::any();
+        let reentry: ReentryMark = kani::any();
+        let conflict = PackedEventConflict::route_arm(
+            ScopeId::route(route & (ScopeId::LOCAL_CAPACITY - 1)),
+            u8::from(arm),
+        )
+        .with_route_reentry(reentry);
+        let conflict_bytes = conflict.raw().to_le_bytes();
+        let event_bytes = eff_index.to_le_bytes();
+        let scope_bytes = scope_raw.to_le_bytes();
+        let dependency_bytes = dependency_row.to_le_bytes();
+        let conflict_row_bytes = conflict_row.to_le_bytes();
+        let bytes = [
+            event_bytes[0],
+            event_bytes[1],
+            dependency_bytes[0],
+            dependency_bytes[1],
+            conflict_row_bytes[0],
+            conflict_row_bytes[1],
+            scope_bytes[0],
+            scope_bytes[1],
+            flags,
+            0,
+            0,
+            1,
+            0,
+            255,
+            255,
+            0,
+            0,
+            conflict_bytes[0],
+            conflict_bytes[1],
+        ];
+        // SAFETY: bytes outlive every read and no image escapes this harness.
+        let bytes: &'static [u8; 19] = unsafe { core::mem::transmute(&bytes) };
+        let mut columns = one_event_role_image_plan().columns;
+        columns.dependencies = ColumnRange::new(9, 1, super::super::ROLE_IMAGE_DEPENDENCY_STRIDE);
+        columns.conflicts = ColumnRange::new(17, 1, super::super::ROLE_IMAGE_CONFLICT_STRIDE);
+        let image = super::super::RoleLaneImage::new(
+            &columns,
+            super::super::BlobPtr::from_array(bytes, bytes.len()),
+        );
+        let expected_dependency = has_dependency.then(|| {
+            crate::global::typestate::LocalDependency::with_conflict_range(
+                ScopeId::none(),
+                crate::global::typestate::LocalConflict::Unconditional,
+                0,
+                1,
+            )
+        });
+        assert!(image.dependency_for_index(0) == expected_dependency);
+        let expected_conflict = if has_conflict {
+            conflict
+        } else {
+            PackedEventConflict::none()
+        };
+        assert!(image.event_conflict_for_index(0).raw() == expected_conflict.raw());
+        kani::cover!(has_dependency && has_conflict);
+        kani::cover!(!has_dependency && has_conflict);
+        kani::cover!(has_dependency && !has_conflict);
+        kani::cover!(!has_dependency && !has_conflict);
     }
 }
 

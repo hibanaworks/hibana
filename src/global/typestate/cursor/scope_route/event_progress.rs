@@ -1,7 +1,7 @@
 use super::super::super::facts::LocalDependencyState;
 use super::super::{
     CursorInvariantError, EnabledEventCommit, EventCursor, LocalDependency, PackedEventConflict,
-    RelocatableResidentLaneStep, ScopeId, StateIndex, state_index_to_usize,
+    RelocatableResidentLaneStep, ScopeId, StateIndex,
 };
 use crate::global::{role_program::RoleLocalDirection, typestate::EventCommitMeta};
 
@@ -55,17 +55,11 @@ impl EventCursor {
             .event_program()
             .operation_at(index)
             .unwrap_or_else(|| crate::invariant());
-        for step in self.pending_event_steps(0..self.local_steps_len()) {
-            let Some(prior) = self
-                .machine()
-                .state_for_step_index(step)
-                .map(state_index_to_usize)
-            else {
-                crate::invariant();
-            };
-            if !(self.uses_view_at(prior, blocked.0)
-                || blocked.1.is_some_and(|role| self.uses_view_at(prior, role)))
-            {
+        // Constructor-checked rows follow source order, with a send before
+        // its co-resident receive. A predecessor must occur in this prefix.
+        for prior in self.pending_event_steps(0..index) {
+            let uses_caller = self.uses_view_at(prior, blocked.0);
+            if !(uses_caller || blocked.1.is_some_and(|role| self.uses_view_at(prior, role))) {
                 continue;
             }
             let (before, before_direction) = self
@@ -88,7 +82,7 @@ impl EventCursor {
                     selected,
                 )
             {
-                if self.uses_view_at(prior, blocked.0) {
+                if uses_caller {
                     return EventAdmissionError::PredecessorPending;
                 }
                 wait = EventAdmissionError::PayloadPredecessorPending;
