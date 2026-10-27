@@ -58,3 +58,49 @@ fn direct_event_facts_match_full_rows_across_owned_parallel_choices_and_repetiti
     compare_event_facts(project::<4>(&global).role_image_ref());
     compare_event_facts(project::<10>(&global).role_image_ref());
 }
+
+#[test]
+fn cumulative_arm_spans_match_prefix_sums_including_empty_arms() {
+    const ARMS: usize = 256;
+    const BYTES: usize =
+        ARMS * (ROLE_IMAGE_ROUTE_ARM_STRIDE + ROLE_IMAGE_ROUTE_ARM_LANE_STEP_STRIDE);
+    static DATA: ([u8; BYTES], [usize; ARMS], usize) = {
+        let mut bytes = [0; BYTES];
+        let mut ends = [0; ARMS];
+        let mut end = 0;
+        let mut row = 0;
+        while row < ARMS {
+            let length = if row % 3 == 0 { 0 } else { 1 };
+            end += length;
+            ends[row] = end;
+            let offset = row * ROLE_IMAGE_ROUTE_ARM_STRIDE;
+            bytes[offset] = length as u8;
+            bytes[offset + 4] = u8::MAX;
+            bytes[offset + 5] = u8::MAX;
+            bytes[offset + 6] = end as u8;
+            bytes[offset + 7] = (end >> 8) as u8;
+            row += 1;
+        }
+        (bytes, ends, end)
+    };
+    let global = g::route(
+        g::send::<0, 1, g::Msg<0, ()>>(),
+        g::send::<0, 1, g::Msg<1, ()>>(),
+    );
+    let mut columns = project::<0>(&global).role_image_ref().columns();
+    columns.events = ColumnRange::new(0, 1, ROLE_IMAGE_EVENT_STRIDE);
+    columns.route_arms = ColumnRange::new(0, ARMS, ROLE_IMAGE_ROUTE_ARM_STRIDE);
+    columns.route_arm_lane_step_rows = ColumnRange::new(
+        ARMS * ROLE_IMAGE_ROUTE_ARM_STRIDE,
+        DATA.2,
+        ROLE_IMAGE_ROUTE_ARM_LANE_STEP_STRIDE,
+    );
+    let image = RoleLaneImage::new(&columns, BlobPtr::from_array(&DATA.0, BYTES));
+    let mut start = 0;
+    for (row, end) in DATA.1.into_iter().enumerate() {
+        let span = image.route_arm_lane_step_range(row);
+        assert_eq!((span.start(), span.end()), (start, end));
+        assert_eq!(image.route_arm_row(row).event_row().len(), end - start);
+        start = end;
+    }
+}

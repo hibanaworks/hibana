@@ -263,9 +263,9 @@ fn lane_column_coherence_is_exact_for_one_binary_route() {
     bytes[30..34].copy_from_slice(&((2u32 << 16) | 1).to_le_bytes());
     bytes[34..38].copy_from_slice(&((3u32 << 16) | 1).to_le_bytes());
     bytes[38..42].copy_from_slice(&1u32.to_le_bytes());
-    bytes[42..46].copy_from_slice(&(u16::MAX as u32).to_le_bytes());
+    bytes[42..46].copy_from_slice(&((1u32 << 16) | u16::MAX as u32).to_le_bytes());
     bytes[46..50].copy_from_slice(&((1u32 << 16) | 1).to_le_bytes());
-    bytes[50..54].copy_from_slice(&(u16::MAX as u32).to_le_bytes());
+    bytes[50..54].copy_from_slice(&((2u32 << 16) | u16::MAX as u32).to_le_bytes());
     bytes[54] = left_lane;
     bytes[59] = right_lane;
     bytes[60..62].copy_from_slice(&1u16.to_le_bytes());
@@ -676,7 +676,7 @@ fn packed_route_arm_row_round_trips_full_compact_domains() {
         assert!(packed.event_row_raw() == event_raw);
         assert!(packed.event_row().start() == event_start as usize);
         assert!(packed.event_row().len() == event_len as usize);
-        assert!(packed.lane_step_len() == lane_step_len as usize);
+        assert!(packed.lane_step_end() == lane_step_start as usize + lane_step_len as usize);
         let expected_child = if child_slot == u16::MAX {
             None
         } else {

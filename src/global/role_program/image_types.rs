@@ -136,14 +136,12 @@ impl RouteArmLaneStepRow {
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct PackedRouteArmRow {
     event_row: PackedLaneRange,
-    lane_step_len_and_child_slot: u32,
+    lane_step_end_and_child_slot: u32,
 }
 
 impl PackedRouteArmRow {
-    const LANE_STEP_LENGTH_SHIFT: u32 = 16;
+    const LANE_STEP_END_SHIFT: u32 = 16;
     const CHILD_SLOT_MASK: u32 = u16::MAX as u32;
-    const BYTE_MASK: u32 = u8::MAX as u32;
-    const RESERVED_MASK: u32 = (u8::MAX as u32) << 24;
     const CHILD_ABSENT_SLOT: u32 = u16::MAX as u32;
 
     pub(crate) const fn new(
@@ -169,14 +167,10 @@ impl PackedRouteArmRow {
             }
             None => Self::CHILD_ABSENT_SLOT,
         };
-        let encoded_lane_step_len = if lane_step_row.is_zero_len() {
-            0
-        } else {
-            (lane_step_row.len() - 1) as u32
-        };
         Self {
             event_row,
-            lane_step_len_and_child_slot: (encoded_lane_step_len << Self::LANE_STEP_LENGTH_SHIFT)
+            lane_step_end_and_child_slot: ((lane_step_row.end() as u32)
+                << Self::LANE_STEP_END_SHIFT)
                 | child,
         }
     }
@@ -184,18 +178,15 @@ impl PackedRouteArmRow {
     #[inline(always)]
     pub(crate) const fn from_packed_parts(
         event_row_raw: u32,
-        lane_step_len_and_child_slot: u32,
+        lane_step_end_and_child_slot: u32,
     ) -> Self {
-        if (lane_step_len_and_child_slot & Self::RESERVED_MASK) != 0 {
-            crate::invariant();
-        }
         let event_row = PackedLaneRange::from_raw(event_row_raw);
         if !event_row.is_canonical_optional_range() {
             crate::invariant();
         }
         Self {
             event_row,
-            lane_step_len_and_child_slot,
+            lane_step_end_and_child_slot,
         }
     }
 
@@ -205,8 +196,8 @@ impl PackedRouteArmRow {
     }
 
     #[inline(always)]
-    pub(crate) const fn lane_step_len_and_child_slot_raw(self) -> u32 {
-        self.lane_step_len_and_child_slot
+    pub(crate) const fn lane_step_end_and_child_slot_raw(self) -> u32 {
+        self.lane_step_end_and_child_slot
     }
 
     #[inline(always)]
@@ -224,21 +215,8 @@ impl PackedRouteArmRow {
     }
 
     #[inline(always)]
-    pub(crate) const fn lane_step_len(self) -> usize {
-        if self.is_empty() {
-            0
-        } else {
-            let encoded_len = (self.lane_step_len_and_child_slot >> Self::LANE_STEP_LENGTH_SHIFT)
-                & Self::BYTE_MASK;
-            if self.event_row.is_zero_len() {
-                if encoded_len != 0 {
-                    crate::invariant();
-                }
-                0
-            } else {
-                encoded_len as usize + 1
-            }
-        }
+    pub(crate) const fn lane_step_end(self) -> usize {
+        (self.lane_step_end_and_child_slot >> Self::LANE_STEP_END_SHIFT) as usize
     }
 
     #[inline(always)]
@@ -246,7 +224,7 @@ impl PackedRouteArmRow {
         if self.is_empty() {
             None
         } else {
-            let slot = self.lane_step_len_and_child_slot & Self::CHILD_SLOT_MASK;
+            let slot = self.lane_step_end_and_child_slot & Self::CHILD_SLOT_MASK;
             if slot == Self::CHILD_ABSENT_SLOT {
                 None
             } else {

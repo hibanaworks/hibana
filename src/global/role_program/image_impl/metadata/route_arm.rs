@@ -1,4 +1,4 @@
-use super::{ColumnRange, ROLE_IMAGE_ROUTE_ARM_STRIDE, column_row_offset, read_u32};
+use super::{ColumnRange, ROLE_IMAGE_ROUTE_ARM_STRIDE, column_row_offset, read_u16, read_u32};
 
 #[derive(Clone, Copy)]
 pub(super) struct RouteArmLaneMetadata {
@@ -30,25 +30,26 @@ pub(super) const fn decode_route_arm_lane_metadata<const N: usize>(
     };
     let event_start = (event_range >> 16) as usize;
     let event_len = (event_range & u16::MAX as u32) as usize;
-    let encoded_step_len = ((metadata >> 16) & u8::MAX as u32) as usize;
-    if event_range == u32::MAX
-        || (event_len == 0 && event_start != 0)
-        || metadata & 0xff00_0000 != 0
-    {
-        return None;
-    }
-    let lane_step_len = if event_len == 0 {
-        if encoded_step_len == 0 {
-            0
-        } else {
-            return None;
-        }
+    let end = (metadata >> 16) as usize;
+    let start = if row == 0 {
+        0
     } else {
-        match encoded_step_len.checked_add(1) {
-            Some(len) => len,
+        let prior = match column_row_offset(route_arms, row - 1, ROLE_IMAGE_ROUTE_ARM_STRIDE, 6) {
+            Some(prior) => prior,
+            None => return None,
+        };
+        match read_u16(bytes, prior) {
+            Some(start) => start as usize,
             None => return None,
         }
     };
+    if event_range == u32::MAX || (event_len == 0 && event_start != 0) || end < start {
+        return None;
+    }
+    let lane_step_len = end - start;
+    if lane_step_len > super::LANE_DOMAIN_SIZE || ((event_len == 0) != (lane_step_len == 0)) {
+        return None;
+    }
     Some(RouteArmLaneMetadata {
         event_start,
         event_len,

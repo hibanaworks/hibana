@@ -438,16 +438,9 @@ impl<'a> RoleLaneImage<'a> {
     const fn route_arm_row(&self, row_idx: usize) -> PackedRouteArmRow {
         let row = self.packed_route_arm_row(row_idx);
         let event_row = row.event_row();
-        let mut lane_step_start = 0usize;
-        let mut idx = 0usize;
-        while idx < row_idx {
-            lane_step_start += self.packed_route_arm_row(idx).lane_step_len();
-            idx += 1;
-        }
-        let lane_step_end = lane_step_start + row.lane_step_len();
+        let range = self.route_arm_lane_step_range(row_idx);
         if event_row.end() > self.columns.events.len as usize
-            || (event_row.is_zero_len() != (row.lane_step_len() == 0))
-            || lane_step_end > self.columns.route_arm_lane_step_rows.len as usize
+            || (event_row.is_zero_len() != range.is_zero_len())
         {
             invalid_resident_descriptor();
         }
@@ -647,18 +640,19 @@ impl<'a> RoleLaneImage<'a> {
     }
 
     const fn route_arm_lane_step_range(&self, row_idx: usize) -> PackedLaneRange {
-        let mut start = 0usize;
-        let mut idx = 0usize;
-        while idx < row_idx {
-            start += self.packed_route_arm_row(idx).lane_step_len();
-            idx += 1;
-        }
-        let len = self.packed_route_arm_row(row_idx).lane_step_len();
-        let row = PackedLaneRange::new(start, len);
-        if row.end() > self.columns.route_arm_lane_step_rows.len as usize {
+        let start = if row_idx == 0 {
+            0
+        } else {
+            self.packed_route_arm_row(row_idx - 1).lane_step_end()
+        };
+        let end = self.packed_route_arm_row(row_idx).lane_step_end();
+        if end < start
+            || end - start > super::super::LANE_DOMAIN_SIZE
+            || end > self.columns.route_arm_lane_step_rows.len as usize
+        {
             invalid_resident_descriptor();
         }
-        row
+        PackedLaneRange::new(start, end - start)
     }
 
     #[inline(always)]

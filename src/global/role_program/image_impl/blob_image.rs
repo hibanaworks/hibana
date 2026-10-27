@@ -151,7 +151,7 @@ impl<const N: usize> RoleImageBytes<N> {
     ) {
         let offset = Self::column_offset(column, row, ROLE_IMAGE_ROUTE_ARM_STRIDE);
         self.write_u32(offset, arm_row.event_row_raw());
-        self.write_u32(offset + 4, arm_row.lane_step_len_and_child_slot_raw());
+        self.write_u32(offset + 4, arm_row.lane_step_end_and_child_slot_raw());
     }
 
     #[inline(always)]

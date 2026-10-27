@@ -1114,9 +1114,9 @@ private def RustDescriptorImage.decodeRouteArmRow?
   if row < image.routeScopeCount * 2 then pure () else none
   let offset := image.roleRouteArmOffset + row * productionRoleRouteArmStride
   let eventRangeRaw ← readU32LE? image.roleBytes offset
-  let laneStepLenAndChild ← readU32LE? image.roleBytes (offset + 4)
+  let laneStepEndAndChild ← readU32LE? image.roleBytes (offset + 4)
   let decoded ← decodePackedRouteArm?
-    eventRangeRaw laneStepLenAndChild image.eventCount
+    eventRangeRaw laneStepEndAndChild image.eventCount laneStepStart
   if laneStepStart + decoded.laneStepLength ≤ image.routeArmLaneStepCount ∧
       (decoded.childSlot = 65535 ∨
         (row / 2 < decoded.childSlot ∧ decoded.childSlot < image.routeScopeCount)) then

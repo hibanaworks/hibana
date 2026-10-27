@@ -85,9 +85,9 @@ fn lane_column_fixture() -> ([u8; 64], RoleImageColumns, RuntimeRoleFootprint) {
     write_u32(&mut bytes, 30, (2 << 16) | 1);
     write_u32(&mut bytes, 34, (3 << 16) | 1);
     write_u32(&mut bytes, 38, 1);
-    write_u32(&mut bytes, 42, u16::MAX as u32);
+    write_u32(&mut bytes, 42, (1 << 16) | u16::MAX as u32);
     write_u32(&mut bytes, 46, (1 << 16) | 1);
-    write_u32(&mut bytes, 50, u16::MAX as u32);
+    write_u32(&mut bytes, 50, (2 << 16) | u16::MAX as u32);
     bytes[54] = 0;
     bytes[59] = 1;
     write_u16(&mut bytes, 60, 1);
@@ -250,10 +250,10 @@ const fn write_u32<const N: usize>(bytes: &mut [u8; N], offset: usize, value: u3
     write_u16(bytes, offset + 2, (value >> 16) as u16);
 }
 
-const fn route_arm_bytes(event_row: u32, lane_step_len_and_child_slot: u32) -> [u8; BLOB_LEN] {
+const fn route_arm_bytes(event_row: u32, lane_step_end_and_child_slot: u32) -> [u8; BLOB_LEN] {
     let mut bytes = [0; BLOB_LEN];
     write_u32(&mut bytes, 0, event_row);
-    write_u32(&mut bytes, 4, lane_step_len_and_child_slot);
+    write_u32(&mut bytes, 4, lane_step_end_and_child_slot);
     bytes
 }
 
@@ -394,7 +394,7 @@ const fn route_commit_chain_bytes(len: u16, rows: [u16; 3]) -> [u8; BLOB_LEN] {
 const fn passive_child_without_parent_bytes() -> [u8; BLOB_LEN] {
     let mut bytes = [0; BLOB_LEN];
     write_u32(&mut bytes, 0, 1);
-    write_u32(&mut bytes, 4, 1);
+    write_u32(&mut bytes, 4, (1 << 16) | 1);
     write_u16(&mut bytes, 8, ScopeId::route(0).raw());
     write_u16(&mut bytes, 10, ScopeId::route(1).raw());
     write_u16(&mut bytes, 12, u16::MAX);

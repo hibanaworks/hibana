@@ -2456,16 +2456,17 @@ structure DecodedPackedRouteArm where
   deriving Repr, DecidableEq
 
 def decodePackedRouteArm?
-    (eventRangeRaw laneStepLenAndChild eventCapacity : Nat) :
+    (eventRangeRaw laneStepEndAndChild eventCapacity laneStepStart : Nat) :
     Option DecodedPackedRouteArm := do
   let (eventStart, eventLength) ←
     decodePackedLaneRange? eventRangeRaw eventCapacity
-  let childSlot := laneStepLenAndChild % 65536
-  let encodedLaneStepLength := (laneStepLenAndChild / 65536) % 256
-  let laneStepLength := if eventLength = 0 then 0 else encodedLaneStepLength + 1
-  if laneStepLenAndChild / 16777216 = 0 ∧
+  let childSlot := laneStepEndAndChild % 65536
+  let laneStepEnd := laneStepEndAndChild / 65536
+  let laneStepLength := laneStepEnd - laneStepStart
+  if laneStepEndAndChild < 4294967296 ∧ laneStepStart ≤ laneStepEnd ∧
+      laneStepLength ≤ productionLaneCapacity ∧
       (eventLength = 0 → eventStart = 0) ∧
-      (eventLength = 0 → encodedLaneStepLength = 0) then
+      (eventLength = 0 ↔ laneStepLength = 0) then
     pure {
       eventStart
       eventLength
@@ -2477,7 +2478,7 @@ def decodePackedRouteArm?
 
 theorem packed_route_arm_accepts_4096_event_start :
     decodePackedRouteArm?
-      (4096 * 65536 + 1) 3 4097 =
+      (4096 * 65536 + 1) (65536 + 3) 4097 0 =
       some {
         eventStart := 4096
         eventLength := 1
@@ -2488,7 +2489,7 @@ theorem packed_route_arm_accepts_4096_event_start :
 
 theorem packed_route_arm_reaches_last_u16_event :
     decodePackedRouteArm?
-      (65534 * 65536 + 1) 65535 65535 =
+      (65534 * 65536 + 1) (65535 * 65536 + 65535) 65535 65534 =
       some {
         eventStart := 65534
         eventLength := 1
@@ -2498,7 +2499,7 @@ theorem packed_route_arm_reaches_last_u16_event :
   decide
 
 theorem packed_route_arm_encodes_full_lane_domain :
-    decodePackedRouteArm? 256 (255 * 65536 + 65535) 256 =
+    decodePackedRouteArm? 256 (256 * 65536 + 65535) 256 0 =
       some {
         eventStart := 0
         eventLength := 256
@@ -2508,17 +2509,21 @@ theorem packed_route_arm_encodes_full_lane_domain :
   decide
 
 theorem packed_route_arm_rejects_noncanonical_empty_event_range :
-    decodePackedRouteArm? 65536 65535 1 = none := by
+    decodePackedRouteArm? 65536 65535 1 0 = none := by
   decide
 
 def RustDescriptorImage.decodeRouteArmEvents?
     (image : RustDescriptorImage) (slot arm : Nat) : Option (List Nat) := do
   if slot < image.routeScopeCount ∧ arm < 2 then pure () else none
-  let offset := image.roleRouteArmOffset +
-    (slot * 2 + arm) * productionRoleRouteArmStride
+  let row := slot * 2 + arm
+  let offset := image.roleRouteArmOffset + row * productionRoleRouteArmStride
   let eventRangeRaw ← readU32LE? image.roleBytes offset
-  let laneStepLenAndChild ← readU32LE? image.roleBytes (offset + 4)
-  let decoded ← decodePackedRouteArm? eventRangeRaw laneStepLenAndChild image.eventCount
+  let laneStepEndAndChild ← readU32LE? image.roleBytes (offset + 4)
+  let laneStepStart ←
+    if row = 0 then some 0
+    else readU16LE? image.roleBytes (image.roleRouteArmOffset + (row - 1) * productionRoleRouteArmStride + 6)
+  let decoded ← decodePackedRouteArm?
+    eventRangeRaw laneStepEndAndChild image.eventCount laneStepStart
   let childSlot := decoded.childSlot
   if childSlot = 65535 ∨
       (slot < childSlot ∧ childSlot < image.routeScopeCount) then pure () else none

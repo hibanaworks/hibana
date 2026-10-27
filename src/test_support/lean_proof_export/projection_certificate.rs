@@ -282,11 +282,11 @@ pub(super) fn projection_certificate_source<const ROLE: u8>(
         assert_ne!(old_row.child_slot(), Some(0));
         assert_eq!(new_row.child_slot(), Some(0));
         assert_eq!(old_row.event_row().raw(), new_row.event_row().raw());
-        assert_eq!(old_row.lane_step_len(), new_row.lane_step_len());
+        assert_eq!(old_row.lane_step_end(), new_row.lane_step_end());
         assert_eq!(&before[..4], &after[..4]);
         assert_eq!(&before[6..], &after[6..]);
         format!(
-            "\n\n-- Self-child rejection: the retained slot-zero route points to itself; event range, lane length and reserved bytes are unchanged.\n\
+            "\n\n-- Self-child rejection: the retained slot-zero route points to itself; event range and lane-step end are unchanged.\n\
              def {mismatch_name} : Hibana.ExactDescriptorCertificate := {{\n  \
              {exact_name} with\n  image := {{ {exact_name}.image with\n    roleBytes := \
              ({exact_name}.image.roleBytes.set ({exact_name}.image.roleRouteArmOffset + 4) 0).set \

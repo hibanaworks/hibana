@@ -87,7 +87,7 @@ fn route_arm_row_keeps_exact_ranges_in_compact_scalar_limbs() {
     );
     assert!(
         ROLE_IMAGE_ROUTE_ARM_STRIDE < separate_exact_range_columns,
-        "route arm row should keep the event range, absolute child slot, and lane-step length in one compact scalar row"
+        "route arm row should keep the event range, child slot, and cumulative lane-step end in one compact scalar row"
     );
 }
 
@@ -100,21 +100,22 @@ fn route_arm_row_accepts_full_u16_event_starts() {
 
         assert_eq!(packed.event_row().start(), start);
         assert_eq!(packed.event_row().len(), len);
-        assert_eq!(packed.lane_step_len(), 1);
+        assert_eq!(packed.lane_step_end(), lane_step_row.end());
         assert_eq!(packed.child_slot(), Some(3));
     }
 }
 
 #[test]
 fn route_arm_row_encodes_the_full_lane_domain_without_growing() {
-    let packed = PackedRouteArmRow::new(
-        PackedLaneRange::new(0, 256),
-        None,
-        PackedLaneRange::new(0, LANE_DOMAIN_SIZE),
-    );
-
-    assert_eq!(packed.lane_step_len(), LANE_DOMAIN_SIZE);
-    assert_eq!(core::mem::size_of_val(&packed), ROLE_IMAGE_ROUTE_ARM_STRIDE);
+    for start in [0, u16::MAX as usize - LANE_DOMAIN_SIZE] {
+        let packed = PackedRouteArmRow::new(
+            PackedLaneRange::new(0, 256),
+            None,
+            PackedLaneRange::new(start, LANE_DOMAIN_SIZE),
+        );
+        assert_eq!(packed.lane_step_end(), start + LANE_DOMAIN_SIZE);
+        assert_eq!(core::mem::size_of_val(&packed), ROLE_IMAGE_ROUTE_ARM_STRIDE);
+    }
 }
 
 #[test]
