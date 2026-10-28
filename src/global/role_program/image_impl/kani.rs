@@ -1,8 +1,7 @@
 use super::{
     super::{
-        ColumnRange, PackedLaneRange, PackedRouteArmRow, ROLE_IMAGE_EVENT_STRIDE,
-        ROLE_IMAGE_U16_STRIDE, RoleImageColumns, RoleImagePlan, RouteArmLaneStepRow,
-        RuntimeRoleFacts,
+        ColumnRange, PackedLaneRange, PackedRouteArmRow, ROLE_IMAGE_EVENT_STRIDE, RoleImageColumns,
+        RoleImagePlan, RouteArmLaneStepRow, RuntimeRoleFacts,
     },
     ScopeFacts, decode_binary_route_arm_index,
     event_rows::{
@@ -36,7 +35,7 @@ fn empty_role_facts() -> RuntimeRoleFacts {
     })
 }
 
-fn one_event_role_image_plan() -> RoleImagePlan {
+const fn one_event_role_image_plan() -> RoleImagePlan {
     // Empty trailing columns retain the preceding event column's end offset.
     let empty = ColumnRange::new(ROLE_IMAGE_EVENT_STRIDE, 0, 1);
     RoleImagePlan {
@@ -65,13 +64,13 @@ fn one_event_role_image_plan() -> RoleImagePlan {
 
 #[kani::proof]
 fn role_image_fit_probe_rejects_undersized_storage() {
+    const BYTES: usize = one_event_role_image_plan().blob_len();
     let source = crate::global::const_dsl::EffList::<1>::new();
     let scopes = ScopeFacts::new(&source);
     let facts = empty_role_facts();
     let plan = one_event_role_image_plan();
-    assert!(plan.blob_len() == ROLE_IMAGE_EVENT_STRIDE + ROLE_IMAGE_U16_STRIDE);
     assert!(
-        plan.build_if_fits::<{ ROLE_IMAGE_EVENT_STRIDE + ROLE_IMAGE_U16_STRIDE - 1 }, 1>(
+        plan.build_if_fits::<{ BYTES - 1 }, 1>(
             (&source, &scopes),
             facts,
             super::projection::LocalRows::Role(0)
@@ -91,6 +90,7 @@ fn optional_event_fact_row_reserves_only_the_absent_u16_value() {
 #[kani::proof]
 #[kani::should_panic]
 fn role_image_fit_probe_rejects_plan_mismatch() {
+    const BYTES: usize = one_event_role_image_plan().blob_len();
     let source = crate::global::const_dsl::EffList::<1>::new();
     let scopes = ScopeFacts::new(&source);
     let facts = RuntimeRoleFacts::from_counts(RoleCompiledCounts {
@@ -102,7 +102,7 @@ fn role_image_fit_probe_rejects_plan_mismatch() {
         logical_lane_count: 1,
     });
     let plan = one_event_role_image_plan();
-    let _ = plan.build_if_fits::<{ ROLE_IMAGE_EVENT_STRIDE + ROLE_IMAGE_U16_STRIDE }, 1>(
+    let _ = plan.build_if_fits::<BYTES, 1>(
         (&source, &scopes),
         facts,
         super::projection::LocalRows::Role(0),

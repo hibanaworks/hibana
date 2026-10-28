@@ -6,6 +6,8 @@ use crate::{
 
 #[path = "handoff_tests/delegated_resolver.rs"]
 mod delegated_resolver;
+#[path = "handoff_tests/parallel_rolls.rs"]
+mod parallel_rolls;
 
 #[test]
 fn incoming_choice_can_arrive_at_either_of_the_actors_views() {

@@ -1,6 +1,35 @@
 ; Unbounded scalar checks of the source-linked offer selection guards.
 ; Descriptor decoding and the complete Rust executor are outside this model.
 (set-logic QF_LIA)
+; An unmade choice must not be hidden by an equally informed retained one.
+; Ingress/controller precedence and order among retained choices are unchanged.
+(define-fun offerPriority ((base Int) (unmade Bool)) Int
+  (+ (* 2 base) (ite unmade 1 0)))
+(declare-const basePriority Int)
+(declare-const lowerPriority Int)
+(declare-const higherPriority Int)
+(declare-const lowerUnmade Bool)
+(declare-const higherUnmade Bool)
+(push)
+(assert (= basePriority 3))
+(assert (< (offerPriority basePriority false) (offerPriority basePriority true)))
+(check-sat)
+(pop)
+(push)
+(assert (>= (offerPriority basePriority false) (offerPriority basePriority true)))
+(check-sat)
+(pop)
+(push)
+(assert (< lowerPriority higherPriority))
+(assert (>= (offerPriority lowerPriority lowerUnmade)
+            (offerPriority higherPriority higherUnmade)))
+(check-sat)
+(pop)
+(push)
+(assert (and (<= 1 basePriority) (<= basePriority 4)))
+(assert (> (offerPriority basePriority lowerUnmade) 9))
+(check-sat)
+(pop)
 ; Resolver entry admission preserves both operation and lane. Merely finding
 ; an eligible scope entry does not admit a different observed descendant.
 (declare-const entryEvent Int)

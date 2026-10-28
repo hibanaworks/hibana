@@ -599,6 +599,11 @@ run_miri_test \
   delegated_resolver_starts_before_the_holders_later_send
 
 run_miri_test \
+  delegated-parallel-roll-continuation \
+  -p hibana --lib \
+  a_delegated_view_offers_its_continuation_after_parallel_rolls_finish
+
+run_miri_test \
   current-roll-entry-blocks-completion \
   -p hibana --lib \
   unfinished_entry_admission_matches_all_enclosing_rolls_and_choice_assignments

@@ -311,6 +311,10 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
         } else {
             1
         };
+        // Among equally informed candidates, prefer a choice that has not yet
+        // been made. Retained ancestors keep their source order relative to
+        // child repeats; they must not force those repeats to finish.
+        let priority = priority * 2 + u8::from(self.selected_arm_for_scope(scope).is_none());
         if selected.is_some_and(|(prior_priority, prior)| {
             priority < prior_priority
                 || (priority == prior_priority && prior.entry_index.as_usize() <= entry)
