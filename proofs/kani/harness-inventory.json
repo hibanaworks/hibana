@@ -77,7 +77,8 @@
       "g::source::ownership::actors::knowledge::kani::an_actor_choice_equals_a_leaf_only_when_both_alternatives_equal_it",
       "g::source::ownership::actors::knowledge::kani::an_actor_leaf_equals_a_choice_only_when_both_alternatives_equal_it",
       "g::source::ownership::actors::knowledge::kani::equal_candidate_unions_cannot_erase_an_actual_participation_difference",
-      "g::source::ownership::actors::knowledge::kani::leaf_participation_is_exact_including_collapsed_choice_inputs"
+      "g::source::ownership::actors::knowledge::kani::leaf_participation_is_exact_including_collapsed_choice_inputs",
+      "g::source::ownership::actors::knowledge::kani::scoped_candidates_preserve_correlated_participation_rejection"
     ],
     "../../src/g/source/ownership/actors/reentry/kani.rs": [
       "g::source::ownership::actors::reentry::kani::a_fresh_permit_authorizes_the_dependent_sender",
@@ -400,7 +401,7 @@
 
   ],
   "totals": {
-    "standard-harnesses": 287,
+    "standard-harnesses": 288,
     "contract-harnesses": 0,
     "functions-under-contract": 0
   }
