@@ -54,11 +54,8 @@ coLocatedRowsRetainBothLogicalFacets : coLocatedRowsImage.decodeActions? =
 coLocatedRowsRetainLogicalViews : [coLocatedRowsImage.eventView? 0, coLocatedRowsImage.eventView? 1,
     coLocatedRowsImage.eventView? 2] =
   [some 1, some 10, some 1]
+cyclicRouteParentCommitColumnsRejected : cyclicRouteParentImage.routeCommitColumnsCoherent = false
 cyclicRouteParentOrderStillMatches : cyclicRouteParentImage.actorOrderCheck nestedActorRoutesChoreo = true
-cyclicRouteParentPriorRouteColumnsStillCoherent : (cyclicRouteParentImage.routeArmColumnsCoherent &&
-      cyclicRouteParentImage.routeCommitColumnsCoherent &&
-    cyclicRouteParentImage.passiveChildColumnsCoherent) =
-  true
 cyclicRouteParentSourceRouteRejected : cyclicRouteParentImage.actorRouteCheck nestedActorRoutesChoreo = false
 extraParallelWaitLaneColumnsStillCoherent : extraParallelWaitImage.laneColumnsCoherent = true
 extraParallelWaitOrderRejected : extraParallelWaitImage.actorOrderCheck nestedActorOrderChoreo = false

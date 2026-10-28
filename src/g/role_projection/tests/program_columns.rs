@@ -6,6 +6,53 @@ use crate::global::role_program::ROLE_IMAGE_EVENT_STRIDE;
 use crate::test_support::{lean_choreo::LeanChoreo, lean_descriptor::descriptor_source};
 use std::{format, fs, path::PathBuf, string::String, vec::Vec};
 
+#[test]
+fn a_delegated_nested_route_rejects_a_self_parent_in_its_resident_image() {
+    type Routed = RoleProjection<1, routing::Steps, 32>;
+    const LEN: usize = Routed::IMAGE_REF.columns().blob_len();
+    static ORIGINAL: [u8; LEN] = {
+        let mut bytes = [0; LEN];
+        let image = &Routed::IMAGE_REF;
+        let descriptor = RoleDescriptorRef::from_resident(image);
+        let mut offset = 0;
+        while offset < LEN {
+            bytes[offset] = descriptor.proof_byte_at(offset);
+            offset += 1;
+        }
+        bytes
+    };
+    static CYCLIC: [u8; LEN] = {
+        let mut bytes = ORIGINAL;
+        let image = &Routed::IMAGE_REF;
+        let root = image.route_scope_by_slot(0).unwrap();
+        let parent = (root.raw() * 2).to_le_bytes();
+        let offset = image.columns().route_scope_conflicts.offset as usize;
+        bytes[offset] = parent[0];
+        bytes[offset + 1] = parent[1];
+        bytes
+    };
+    let image = &Routed::IMAGE_REF;
+    let _ = RoleImageRef::new(
+        image.program(),
+        image.role(),
+        image.facts(),
+        image.columns(),
+        &ORIGINAL,
+    );
+    assert!(
+        std::panic::catch_unwind(|| {
+            RoleImageRef::new(
+                image.program(),
+                image.role(),
+                image.facts(),
+                image.columns(),
+                &CYCLIC,
+            )
+        })
+        .is_err()
+    );
+}
+
 fn bytes(values: impl IntoIterator<Item = u8>) -> String {
     let entries = values
         .into_iter()
@@ -236,7 +283,7 @@ fn export_program_columns_for_lean() {
     type Ordinary = g::Seq<g::Send<0, 1, Read>, g::Send<1, 0, Value>>;
     type Linear = g::Seq<DbLoan, g::Seq<g::Send<10, 3, Read>, g::Send<3, 10, Value>>>;
     type Parallel = g::Par<g::Roll<DbLoan>, g::Roll<AuthLoan>>;
-    let mut source = String::from("import Hibana\n\nset_option maxRecDepth 10000\n\n");
+    let mut source = String::from("import Hibana.ActorRouting\n\nset_option maxRecDepth 10000\n\n");
     source.push_str(&certificate::<Ordinary, 8>("ordinaryProgramColumns"));
     source.push_str(&certificate::<Linear, 8>("ownedLinearColumns"));
     source.push_str(&certificate::<Parallel, 16>("ownedParallelColumns"));
@@ -292,13 +339,18 @@ fn export_program_columns_for_lean() {
              (nestedActorRoutesImage.roleRouteScopeConflictOffset + 1) {high} }}\n\n\
              theorem {name}OrderStillMatches :\n  \
              {name}Image.actorOrderCheck nestedActorRoutesChoreo = true := by\n  decide\n\n\
-             theorem {name}PriorRouteColumnsStillCoherent :\n  \
-             ({name}Image.routeArmColumnsCoherent && {name}Image.routeCommitColumnsCoherent &&\n  \
-             {name}Image.passiveChildColumnsCoherent) = true := by\n  decide\n\n\
              theorem {name}SourceRouteRejected :\n  \
              {name}Image.actorRouteCheck nestedActorRoutesChoreo = false := by\n  decide\n\n",
         ));
     }
+    source.push_str(
+        "theorem falseRouteReentryPriorRouteColumnsStillCoherent :\n  \
+         (falseRouteReentryImage.routeArmColumnsCoherent &&\n  \
+         falseRouteReentryImage.routeCommitColumnsCoherent &&\n  \
+         falseRouteReentryImage.passiveChildColumnsCoherent) = true := by\n  decide\n\n\
+         theorem cyclicRouteParentCommitColumnsRejected :\n  \
+         cyclicRouteParentImage.routeCommitColumnsCoherent = false := by\n  decide\n\n",
+    );
     let nested =
         RoleDescriptorRef::from_resident(&RoleProjection::<1, order::Steps, 16>::IMAGE_REF);
     assert_eq!(nested.local_len(), 5);
