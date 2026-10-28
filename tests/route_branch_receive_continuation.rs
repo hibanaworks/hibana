@@ -1,10 +1,15 @@
 mod common;
 
 use common::TestTransport;
-use core::{future::poll_fn, pin::pin, task::Poll};
+use core::{cell::Cell, future::poll_fn, pin::pin, task::Poll};
 use hibana::{
     Endpoint, EndpointError, g,
-    runtime::{SessionKitStorage, ids::SessionId, program::project},
+    runtime::{
+        SessionKitStorage,
+        ids::SessionId,
+        program::project,
+        resolver::{DecisionArm, ResolverError, ResolverRef},
+    },
 };
 
 #[tokio::test(flavor = "current_thread", start_paused = true)]
@@ -58,7 +63,7 @@ async fn a_selected_branch_can_preview_its_next_receive_without_advancing() {
 }
 
 #[tokio::test(flavor = "current_thread", start_paused = true)]
-async fn the_choosing_role_can_preview_its_later_reply_without_resolving_again() {
+async fn the_choosing_role_can_preview_its_later_reply() {
     type Request = g::Msg<0, u64>;
     type Reply = g::Msg<1, u64>;
     type Other = g::Msg<2, u64>;
@@ -94,6 +99,62 @@ async fn the_choosing_role_can_preview_its_later_reply_without_resolving_again()
     .await
     .expect("a selected controller's incoming reply must be observable")
     .unwrap();
+}
+
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn a_committed_resolver_is_not_called_again_for_a_later_receive() {
+    type Request = g::Msg<0, u64>;
+    type Reply = g::Msg<1, u64>;
+    type Other = g::Msg<2, u64>;
+    let global = g::route(
+        g::seq(g::send::<0, 1, Request>(), g::send::<1, 0, Reply>()),
+        g::send::<0, 1, Other>(),
+    )
+    .resolve::<1>();
+    let p0 = project::<0>(&global);
+    let p1 = project::<1>(&global);
+    let calls = Cell::new(0usize);
+    let network = TestTransport::new();
+    let mut slab0 = [0; 16384];
+    let mut slab1 = [0; 16384];
+    let mut s0 = SessionKitStorage::uninit();
+    let mut s1 = SessionKitStorage::uninit();
+    let rv0 = s0.init().rendezvous(&mut slab0, network.clone()).unwrap();
+    let rv1 = s1.init().rendezvous(&mut slab1, network).unwrap();
+    rv0.set_resolver(
+        &p0,
+        ResolverRef::<1>::decision_state(&calls, |calls| {
+            let previous = calls.get();
+            calls.set(previous + 1);
+            if previous == 0 {
+                Ok(DecisionArm::Left)
+            } else {
+                Err(ResolverError::reject())
+            }
+        }),
+    )
+    .unwrap();
+    let sid = SessionId::new(950);
+    let mut client = rv0.enter(sid, &p0).unwrap();
+    let mut server = rv1.enter(sid, &p1).unwrap();
+    tokio::time::timeout(core::time::Duration::from_secs(1), async {
+        tokio::try_join!(
+            async {
+                client.send::<Request>(&7).await?;
+                assert_eq!(calls.get(), 1);
+                assert_eq!(client.offer().await?.recv::<Reply>().await?, 8);
+                Ok::<_, EndpointError>(())
+            },
+            async {
+                let number = server.offer().await?.recv::<Request>().await?;
+                server.send::<Reply>(&(number + 1)).await
+            }
+        )
+    })
+    .await
+    .expect("the later receive must keep the committed resolver decision")
+    .unwrap();
+    assert_eq!(calls.get(), 1);
 }
 
 #[tokio::test(flavor = "current_thread", start_paused = true)]
