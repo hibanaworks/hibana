@@ -94,13 +94,17 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     #[inline]
     /// Preview an operation in a protocol choice without advancing it.
     ///
-    /// This is a preview operation. It returns a [`RouteBranch`] whose
+    /// Returns a [`RouteBranch`] whose
     /// [`RouteBranch::label`] identifies the previewed operation. After a branch
     /// is selected, later calls can preview its next send or incoming receive.
     /// Dropping the future before completion leaves endpoint progress unchanged.
     /// Use [`Endpoint::recv`] when the expected message is known, and for
     /// receive steps outside a choice.
     /// Choices resolved by the application require a registered resolver.
+    ///
+    /// When independent choices are ready together, their preview order is
+    /// unspecified. Use `g::seq` for a required order. Borrow `g::par` fragments
+    /// with [`Endpoint::par`] and poll them concurrently to keep them independent.
     pub fn offer<'e>(
         &'e mut self,
     ) -> impl core::future::Future<
