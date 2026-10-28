@@ -114,7 +114,7 @@ fn check_source<Steps: ProgramShape>(source: &ProgramSourceData<128>, wire: bool
                 if source.eff_list().atom_at(first).lane == source.eff_list().atom_at(second).lane {
                     pairwise &= crate::global::const_dsl::receive_pair_is_causal(
                         source.eff_list(),
-                        &crate::global::const_dsl::ScopeOffsets::new(source.eff_list()),
+                        &crate::global::const_dsl::FlowIndex::new(source.eff_list(), actors),
                         actors,
                         first,
                         second,

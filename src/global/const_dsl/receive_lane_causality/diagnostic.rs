@@ -5,7 +5,7 @@ use super::*;
 pub(crate) const fn receive_lane_conflict<const E: usize>(
     eff_list: &EffList<E>,
 ) -> Option<(usize, usize, Option<u16>)> {
-    let scope_offsets = ScopeOffsets::new(eff_list);
+    let scope_offsets = FlowIndex::new::<0>(eff_list, None);
     let range = FlowRange {
         start: 0,
         end: eff_list.len(),

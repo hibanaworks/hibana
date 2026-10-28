@@ -3,6 +3,7 @@ use super::{EffList, ScopeEvent, ScopeKind, scope::ScopeEntry};
 
 mod actors;
 mod directions;
+mod participants;
 pub(crate) use actors::owned_receive_lane_conflict;
 pub(crate) use actors::receive_pair_is_causal;
 use actors::{ActorMap, NeedChoice};
@@ -33,6 +34,13 @@ impl CausalRoles {
 
     const fn insert(&mut self, role: u8) {
         self.0[role as usize / 64] |= 1u64 << (role as usize % 64);
+    }
+
+    const fn is_subset_of(&self, other: &Self) -> bool {
+        self.0[0] & !other.0[0] == 0
+            && self.0[1] & !other.0[1] == 0
+            && self.0[2] & !other.0[2] == 0
+            && self.0[3] & !other.0[3] == 0
     }
 
     const fn intersect(self, other: Self) -> Self {
@@ -69,19 +77,77 @@ struct FlowRange {
     marker_floor: usize,
 }
 
-/// First marker at or after each source event. Lane recoloring leaves this
-/// geometry unchanged, so all causal queries share the same index.
-pub(crate) struct ScopeOffsets<const E: usize> {
+/// Scope entries and possible participants, shared by source causal queries.
+/// Lane recoloring preserves both, so the index is built once per source.
+pub(crate) struct FlowIndex<const E: usize> {
     first: [u16; E],
+    scopes: [FlowScope; E],
+    marker_len: usize,
+    participants: participants::Participants<E>,
 }
 
-impl<const E: usize> ScopeOffsets<E> {
-    pub(crate) const fn new(events: &EffList<E>) -> Self {
+#[derive(Clone, Copy)]
+struct FlowScope {
+    next: u16,
+    start: u16,
+    split: u16,
+    end: u16,
+    kind: ScopeKind,
+}
+
+impl<const E: usize> FlowIndex<E> {
+    pub(crate) const fn new<const D: usize>(
+        events: &EffList<E>,
+        actors: Option<&crate::g::SourceActorImage<E, D>>,
+    ) -> Self {
         let markers = events.scope_markers();
         if markers.len() > u16::MAX as usize {
             crate::invariant();
         }
-        let mut result = Self { first: [0; E] };
+        let mut result = Self {
+            first: [0; E],
+            scopes: [FlowScope {
+                next: markers.len() as u16,
+                start: 0,
+                split: 0,
+                end: 0,
+                kind: ScopeKind::Roll,
+            }; E],
+            marker_len: markers.len(),
+            participants: participants::Participants::new(events, actors),
+        };
+        let mut marker = markers.len();
+        let mut next = markers.len() as u16;
+        while marker != 0 {
+            marker -= 1;
+            let entry = markers.at(marker);
+            if entry.event.is_primary_enter() {
+                next = marker as u16;
+                let (kind, split, end) = match (entry.event, entry.scope_id.kind()) {
+                    (
+                        ScopeEvent::Enter(ScopeEntry::Route { right_end }),
+                        Some(ScopeKind::Route),
+                    ) => (ScopeKind::Route, entry.segment_end(), right_end as usize),
+                    (
+                        ScopeEvent::Enter(ScopeEntry::Parallel { split }),
+                        Some(ScopeKind::Parallel),
+                    ) => (ScopeKind::Parallel, split as usize, entry.segment_end()),
+                    (ScopeEvent::Enter(ScopeEntry::Roll), Some(ScopeKind::Roll)) => {
+                        (ScopeKind::Roll, entry.segment_end(), entry.segment_end())
+                    }
+                    _ => crate::invariant(),
+                };
+                result.scopes[marker] = FlowScope {
+                    next,
+                    start: entry.offset() as u16,
+                    split: split as u16,
+                    end: end as u16,
+                    kind,
+                };
+            } else {
+                result.scopes[marker].next = next;
+            }
+        }
         let mut marker = 0;
         let mut event = 0;
         while event < events.len() {
@@ -148,7 +214,7 @@ impl FlowGoal {
 
 struct CausalFlow<'a, const E: usize> {
     eff_list: &'a EffList<E>,
-    scope_offsets: &'a ScopeOffsets<E>,
+    scope_offsets: &'a FlowIndex<E>,
     earlier: usize,
     goal: FlowGoal,
     body_start: usize,
@@ -194,8 +260,8 @@ impl<const E: usize> CausalFlow<'_, E> {
     }
 
     const fn scope_at(&self, range: &mut FlowRange) -> Option<(usize, ScopeKind, usize, usize)> {
-        let markers = self.eff_list.scope_markers();
-        if range.marker_floor > markers.len() {
+        let scopes = self.scope_offsets;
+        if range.marker_floor > scopes.marker_len {
             crate::invariant();
         }
         let first = self.scope_offsets.first[range.start] as usize;
@@ -204,34 +270,22 @@ impl<const E: usize> CausalFlow<'_, E> {
         } else {
             first
         };
-        while idx < markers.len() {
-            let marker = markers.at(idx);
-            let offset = marker.offset();
+        while idx < scopes.marker_len {
+            idx = scopes.scopes[idx].next as usize;
+            if idx == scopes.marker_len {
+                break;
+            }
+            let scope = scopes.scopes[idx];
+            let offset = scope.start as usize;
             if offset < range.start {
                 crate::invariant();
             }
             if offset > range.start {
                 break;
             }
-            if marker.event.is_primary_enter() {
-                let (kind, left_end, end) = match (marker.event, marker.scope_id.kind()) {
-                    (
-                        ScopeEvent::Enter(ScopeEntry::Route { right_end }),
-                        Some(ScopeKind::Route),
-                    ) => (ScopeKind::Route, marker.segment_end(), right_end as usize),
-                    (
-                        ScopeEvent::Enter(ScopeEntry::Parallel { split }),
-                        Some(ScopeKind::Parallel),
-                    ) => (ScopeKind::Parallel, split as usize, marker.segment_end()),
-                    (ScopeEvent::Enter(ScopeEntry::Roll), Some(ScopeKind::Roll)) => {
-                        (ScopeKind::Roll, marker.segment_end(), marker.segment_end())
-                    }
-                    _ => crate::invariant(),
-                };
-                if end <= range.end {
-                    range.marker_floor = idx;
-                    return Some((idx, kind, left_end, end));
-                }
+            if scope.end as usize <= range.end {
+                range.marker_floor = idx;
+                return Some((idx, scope.kind, scope.split as usize, scope.end as usize));
             }
             idx += 1;
         }
@@ -265,50 +319,22 @@ impl<const E: usize> CausalFlow<'_, E> {
         } else {
             self.body_start + (stop - self.iteration_start)
         };
-        // A range before the cutoff may be skipped only if it preserves all
-        // incoming facts. At the cutoff its outgoing facts are unused: it is
-        // enough that every remaining target's sender already knows the seed.
-        // Both checks include unselected arms; facts are monotone on each path.
-        if range.start + 1 < range.end && !facts.is_empty() {
-            let tail = match self.goal {
-                FlowGoal::ReceiveLane(_, _) | FlowGoal::ReceiveEvent(_, _) => {
-                    range.end >= source_stop
-                }
-                #[cfg(any(kani, all(test, hibana_repo_tests)))]
-                FlowGoal::Target(_) => false,
-                FlowGoal::Closure => false,
-            };
-            let mut event = range.start;
-            let mut covered = true;
-            while event < range.end && (!tail || event < source_stop) {
-                let atom = self.eff_list.atom_at(event);
-                if tail && !self.goal.sender_change(self.occurrence(event), atom) {
-                    event += 1;
-                    continue;
-                }
-                if (tail || self.goal.sender_change(self.occurrence(event), atom))
-                    && !matches!(
-                        actors.sender_known(event, atom, self.iteration_start, &facts),
-                        Ok(true)
-                    )
-                {
-                    covered = false;
-                    break;
-                }
-                if !tail {
-                    match actors.receiver(event, atom, self.iteration_start) {
-                        Ok(receiver) if facts.contains(receiver) => {}
-                        _ => {
-                            covered = false;
-                            break;
-                        }
-                    }
-                }
-                event += 1;
-            }
-            if covered {
-                return Ok(Ok(facts));
-            }
+        // Every possible participant in this prefix already knows the seed.
+        // Its relays and branch joins preserve these facts, and each receive
+        // target has a known sender. The interval index shares this check
+        // across queries rather than scanning the same subtree again.
+        let prefix_end = if range.end < source_stop {
+            range.end
+        } else {
+            source_stop
+        };
+        if !facts.is_empty()
+            && self
+                .scope_offsets
+                .participants
+                .covered(range.start, prefix_end, &facts)
+        {
+            return Ok(Ok(facts));
         }
         // An independent arm cannot relay a fact that it never received.
         // If it contains neither the seed nor a target, its whole subtree
@@ -325,18 +351,24 @@ impl<const E: usize> CausalFlow<'_, E> {
             // a containing route/par must still fork using its shared input.
             if self.occurrence(range.start) < self.earlier && facts.is_empty() {
                 let seed = self.body_start + self.earlier - self.iteration_start;
-                let markers = self.eff_list.scope_markers();
+                let scopes = self.scope_offsets;
                 let first = self.scope_offsets.first[range.start] as usize;
                 let next = if range.marker_floor > first {
                     range.marker_floor
                 } else {
                     first
                 };
-                let boundary = if next < markers.len() && markers.at(next).offset() < seed {
-                    markers.at(next).offset()
+                let next = if next < scopes.marker_len {
+                    scopes.scopes[next].next as usize
                 } else {
-                    seed
+                    next
                 };
+                let boundary =
+                    if next < scopes.marker_len && (scopes.scopes[next].start as usize) < seed {
+                        scopes.scopes[next].start as usize
+                    } else {
+                        seed
+                    };
                 if boundary > range.start {
                     range.start = boundary;
                 }
@@ -419,9 +451,9 @@ impl<const E: usize> CausalFlow<'_, E> {
             } else {
                 // Scope lookup is unchanged until the next source marker.
                 // Run the intervening sequential events without seeking again.
-                let markers = self.eff_list.scope_markers();
-                let boundary = if range.marker_floor < markers.len() {
-                    let next = markers.at(range.marker_floor).offset();
+                let scopes = self.scope_offsets;
+                let boundary = if range.marker_floor < scopes.marker_len {
+                    let next = scopes.scopes[range.marker_floor].start as usize;
                     if next < range.end { next } else { range.end }
                 } else {
                     range.end
@@ -514,7 +546,7 @@ const fn receive_precedes_later_send<const E: usize>(
     earlier_eff_idx: usize,
     later_eff_idx: usize,
 ) -> bool {
-    let scope_offsets = ScopeOffsets::new(eff_list);
+    let scope_offsets = FlowIndex::new::<0>(eff_list, None);
     let flow = CausalFlow {
         eff_list,
         scope_offsets: &scope_offsets,
@@ -589,7 +621,7 @@ const fn receive_precedes_after_roll_reentry<const E: usize>(
     earlier_eff_idx: usize,
     later_eff_idx: usize,
 ) -> bool {
-    let scope_offsets = ScopeOffsets::new(eff_list);
+    let scope_offsets = FlowIndex::new::<0>(eff_list, None);
     if !body.is_valid_for(eff_list)
         || !body.contains(earlier_eff_idx)
         || !body.contains(later_eff_idx)
@@ -629,7 +661,7 @@ const fn validate_roll_body_receive_lane_causality<const E: usize>(
     eff_list: &EffList<E>,
     body: RollBodyRange,
 ) -> bool {
-    let scope_offsets = ScopeOffsets::new(eff_list);
+    let scope_offsets = FlowIndex::new::<0>(eff_list, None);
     if !body.is_valid_for(eff_list) {
         return false;
     }
@@ -697,7 +729,7 @@ const fn validate_roll_receive_lane_causality<const E: usize>(eff_list: &EffList
 }
 
 const fn validate_structured_receive_lane_causality<const E: usize>(eff_list: &EffList<E>) -> bool {
-    let scope_offsets = ScopeOffsets::new(eff_list);
+    let scope_offsets = FlowIndex::new::<0>(eff_list, None);
     let directions = ReceiveDirectionIndex::new(eff_list, 0, eff_list.len());
     let range = FlowRange {
         start: 0,

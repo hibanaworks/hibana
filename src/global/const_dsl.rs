@@ -30,7 +30,7 @@ pub(crate) use self::endpoint_selectors::{
     validate_parallel_endpoint_selectors, validate_roll_reentry_endpoint_selectors,
 };
 #[cfg(all(test, hibana_repo_tests))]
-pub(crate) use self::receive_lane_causality::ScopeOffsets;
+pub(crate) use self::receive_lane_causality::FlowIndex;
 pub(crate) use self::receive_lane_causality::{
     owned_receive_lane_conflict, receive_lane_conflict, receive_pair_is_causal,
     validate_receive_lane_causality,

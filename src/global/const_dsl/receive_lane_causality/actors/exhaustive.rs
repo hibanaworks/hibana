@@ -1,5 +1,5 @@
 use super::{
-    EffAtom, EffList, FlowGoal, Obligation, Paths, RollBodyRange, ScopeOffsets, SourceActorImage,
+    EffAtom, EffList, FlowGoal, FlowIndex, Obligation, Paths, RollBodyRange, SourceActorImage,
     SourceContext, SourceScope,
     fixtures::{PARALLEL, ROUTE, prefix_source, receive_conflict},
     owned_receive_lane_conflict,
@@ -125,7 +125,7 @@ fn split_seed_scans_and_cached_scope_offsets_match_full_queries() {
                 }
             }
             let actors = SourceActorImage::<8, 0>::causal_fixture(&references, &[]);
-            let offsets = ScopeOffsets::new(&events);
+            let offsets = FlowIndex::new(&events, Some(&actors));
             let markers = events.scope_markers();
             for event in 0..events.len() {
                 for floor in 0..=markers.len() {
@@ -176,7 +176,7 @@ fn cached_offsets_keep_all_nested_markers_at_a_shared_boundary() {
     events.push_route_scope_mut(ScopeId::route(0), 0, 1, 2, ReentryMark::SinglePass);
     events.push_parallel_scope_mut(ScopeId::parallel(0), 0, 2, 3);
     events.push_roll_scope_mut(ScopeId::roll_scope(0), 0, 4);
-    let offsets = ScopeOffsets::new(&events);
+    let offsets = FlowIndex::new::<0>(&events, None);
     let markers = events.scope_markers();
     for event in 0..events.len() {
         for floor in 0..=markers.len() {
@@ -247,7 +247,7 @@ fn prefix_queries_cover_every_u8_actor_triple_and_visit() {
                     for earlier in [1, 2] {
                         let query = Obligation {
                             events,
-                            scope_offsets: &ScopeOffsets::new(events),
+                            scope_offsets: &FlowIndex::new(events, Some(&actors)),
                             actors: Some(&actors),
                             earlier,
                             end: 4,
@@ -390,7 +390,7 @@ fn bulk_failure_witnesses_match_pointwise_queries_for_small_structured_sources()
                     for end in earlier + 1..=4 {
                         let obligation = Obligation {
                             events: &events,
-                            scope_offsets: &ScopeOffsets::new(&events),
+                            scope_offsets: &FlowIndex::new(&events, Some(&image)),
                             actors: Some(&image),
                             earlier,
                             end,
@@ -411,7 +411,7 @@ fn bulk_failure_witnesses_match_pointwise_queries_for_small_structured_sources()
                         for end in start + 1..=stop {
                             let obligation = Obligation {
                                 events: &events,
-                                scope_offsets: &ScopeOffsets::new(&events),
+                                scope_offsets: &FlowIndex::new(&events, Some(&image)),
                                 actors: Some(&image),
                                 earlier,
                                 end,
@@ -451,7 +451,7 @@ fn dropping_an_enclosing_parallel_fork_changes_the_causal_answer() {
     };
     let obligation = Obligation {
         events: &events,
-        scope_offsets: &ScopeOffsets::new(&events),
+        scope_offsets: &FlowIndex::new(&events, Some(&image)),
         actors: Some(&image),
         earlier: 1,
         end: 4,

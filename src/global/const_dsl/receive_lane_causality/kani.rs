@@ -19,6 +19,52 @@ fn event(from: u8, to: u8, lane: u8) -> EffAtom {
     }
 }
 
+fn interval_participants_match_roles<const OWNED: bool>() {
+    let mut events = EffList::<3>::new();
+    let mut references = [[0u16; 2]; 3];
+    for pair in &mut references {
+        events.push_event_mut(event(kani::any(), kani::any(), 0));
+        *pair = [u16::from(kani::any::<u8>()), u16::from(kani::any::<u8>())];
+    }
+    let image = crate::g::SourceActorImage::<3, 0>::causal_fixture(&references, &[]);
+    let index =
+        super::participants::Participants::new(&events, if OWNED { Some(&image) } else { None });
+    let facts = CausalRoles(kani::any());
+    let left = usize::from(kani::any::<u8>() % 4);
+    let right = usize::from(kani::any::<u8>() % 4);
+    let start = left.min(right);
+    let stop = left.max(right);
+    let mut expected = true;
+    for (event, pair) in references.iter().enumerate() {
+        if start <= event && event < stop {
+            let atom = events.atom_at(event);
+            let (sender, receiver) = if OWNED {
+                (pair[0] as u8, pair[1] as u8)
+            } else {
+                (atom.from, atom.to)
+            };
+            expected &= facts.contains(sender) && facts.contains(receiver);
+        }
+    }
+    let covered = index.covered(start, stop, &facts);
+    assert_eq!(covered, expected);
+    kani::cover!(start == stop);
+    kani::cover!(covered && start < stop);
+    kani::cover!(!covered);
+}
+
+#[kani::proof]
+#[kani::unwind(6)]
+fn logical_interval_participants_are_exact() {
+    interval_participants_match_roles::<false>();
+}
+
+#[kani::proof]
+#[kani::unwind(6)]
+fn physical_interval_participants_are_exact() {
+    interval_participants_match_roles::<true>();
+}
+
 #[kani::proof]
 #[kani::unwind(5)]
 fn a_relay_between_known_participants_preserves_all_causal_facts() {
@@ -122,7 +168,7 @@ fn boundary_seek_matches_the_first_qualifying_marker_for_all_compact_offsets() {
         indexed.rows[4 + index] = rows[index];
     }
     indexed.scope_marker_len = 4;
-    let scope_offsets = super::ScopeOffsets::new(&indexed);
+    let scope_offsets = super::FlowIndex::new::<0>(&indexed, None);
     let source_event = usize::from(kani::any::<u8>() % 4);
     assert_eq!(
         floor.max(scope_offsets.first[source_event] as usize),

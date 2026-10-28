@@ -2,8 +2,8 @@
 //! the physical actor holding each endpoint at that source event. Both come
 //! from the same checked source; possible-holder sets are never authority.
 use super::{
-    CausalFlow, CausalRoles, EffList, FlowGoal, FlowRange, ReceiveDirectionIndex, RollBodyRange,
-    ScopeKind, ScopeOffsets, roll_body_range_from_enter,
+    CausalFlow, CausalRoles, EffList, FlowGoal, FlowIndex, FlowRange, ReceiveDirectionIndex,
+    RollBodyRange, ScopeKind, roll_body_range_from_enter,
 };
 use crate::{
     eff::EffAtom,
@@ -191,7 +191,7 @@ impl<const E: usize, const D: usize> ActorMap<'_, E, D> {
 
 struct Obligation<'a, const E: usize, const D: usize> {
     events: &'a EffList<E>,
-    scope_offsets: &'a ScopeOffsets<E>,
+    scope_offsets: &'a FlowIndex<E>,
     actors: Option<&'a SourceActorImage<E, D>>,
     earlier: usize,
     end: usize,
@@ -359,7 +359,7 @@ impl<const E: usize, const D: usize> Obligation<'_, E, D> {
 /// numbers do not enter this query: allocation uses it before choosing them.
 pub(crate) const fn receive_pair_is_causal<const E: usize, const D: usize>(
     events: &EffList<E>,
-    scope_offsets: &ScopeOffsets<E>,
+    scope_offsets: &FlowIndex<E>,
     actors: Option<&SourceActorImage<E, D>>,
     earlier: usize,
     later: usize,
@@ -439,7 +439,7 @@ pub(crate) const fn owned_receive_lane_conflict<const E: usize, const D: usize>(
     events: &EffList<E>,
     actors: &SourceActorImage<E, D>,
 ) -> Option<(usize, usize, Option<u16>)> {
-    let scope_offsets = ScopeOffsets::new(events);
+    let scope_offsets = FlowIndex::new(events, Some(actors));
     owned_receive_lane_conflict_in(events, &scope_offsets, actors, ReceiveScan::From(None))
 }
 
@@ -453,7 +453,7 @@ pub(crate) enum ReceiveScan {
 
 pub(crate) const fn owned_receive_lane_conflict_in<const E: usize, const D: usize>(
     events: &EffList<E>,
-    scope_offsets: &ScopeOffsets<E>,
+    scope_offsets: &FlowIndex<E>,
     actors: &SourceActorImage<E, D>,
     scan: ReceiveScan,
 ) -> Option<(usize, usize, Option<u16>)> {

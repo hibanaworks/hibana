@@ -17,6 +17,18 @@
 (check-sat)
 (pop)
 
+; An interval union is covered exactly when each of its component masks is.
+(declare-const left_members (_ BitVec 256))
+(declare-const right_members (_ BitVec 256))
+(push)
+(assert (distinct
+  (= (bvand (bvor left_members right_members) (bvnot facts)) (_ bv0 256))
+  (and (= (bvand left_members (bvnot facts)) (_ bv0 256))
+       (= (bvand right_members (bvnot facts)) (_ bv0 256)))))
+; EXPECT: unsat
+(check-sat)
+(pop)
+
 ; Checking only the sender would skip a real relay to an unknown receiver.
 (push)
 (assert (= (bvand facts sender_bit) sender_bit))

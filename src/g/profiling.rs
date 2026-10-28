@@ -29,6 +29,8 @@ pub struct SourceProfile {
     pub alignment_attempts: usize,
     /// Successful changes to the lane assignment.
     pub recolorings: usize,
+    /// Pointwise causal queries while checking proposed lane assignments.
+    pub alignment_pair_queries: usize,
 }
 
 pub(crate) struct Counters {
@@ -36,6 +38,7 @@ pub(crate) struct Counters {
     pub resumed_inspections: usize,
     pub alignment_attempts: usize,
     pub recolorings: usize,
+    pub alignment_pair_queries: usize,
 }
 
 impl Counters {
@@ -45,6 +48,7 @@ impl Counters {
             resumed_inspections: 0,
             alignment_attempts: 0,
             recolorings: 0,
+            alignment_pair_queries: 0,
         }
     }
 }

@@ -2,7 +2,7 @@
 use super::lane_matching::{LaneCompatibility, LaneEndpointIndex, maximum_lane_matching};
 use super::{BYTE_DOMAIN, BYTE_DOMAIN_MASK_BYTES};
 use crate::global::const_dsl::{
-    receive_lane_causality::{ReceiveScan, ScopeOffsets, owned_receive_lane_conflict_in},
+    receive_lane_causality::{FlowIndex, ReceiveScan, owned_receive_lane_conflict_in},
     receive_pair_is_causal,
 };
 use crate::{
@@ -15,7 +15,7 @@ use crate::{
 
 const fn inspect<const E: usize>(
     events: &EffList<E>,
-    scope_offsets: &ScopeOffsets<E>,
+    scope_offsets: &FlowIndex<E>,
     actors: Option<&SourceActorImage<E>>,
     scan: ReceiveScan,
     #[cfg(hibana_profile)] counters: &mut crate::g::profiling::Counters,
@@ -43,7 +43,7 @@ const fn inspect<const E: usize>(
 
 const fn align_range<const E: usize>(
     events: &mut EffList<E>,
-    scope_offsets: &ScopeOffsets<E>,
+    scope_offsets: &FlowIndex<E>,
     actors: Option<&SourceActorImage<E>>,
     arm: (usize, usize),
     conflict: (usize, usize),
@@ -160,32 +160,44 @@ const fn align_range<const E: usize>(
                 while outside < events.len() {
                     if outside < arm.0 || arm.1 <= outside {
                         let b = events.atom_at(outside);
-                        if b.from != b.to
-                            && a.to == b.to
-                            && a.from != b.from
-                            && color == b.lane
-                            && (!receive_pair_is_causal(
-                                events,
-                                scope_offsets,
-                                actors,
-                                inside,
-                                outside,
-                            ) || !receive_pair_is_causal(
-                                events,
-                                scope_offsets,
-                                actors,
-                                outside,
-                                inside,
-                            ))
-                        {
-                            let edge = &mut edges[a.lane as usize * row_bytes + color as usize / 8];
-                            let bit = 1 << (color % 8);
-                            if *edge & bit == 0 {
-                                crate::invariant();
+                        if b.from != b.to && a.to == b.to && a.from != b.from && color == b.lane {
+                            #[cfg(hibana_profile)]
+                            {
+                                counters.alignment_pair_queries += 1;
                             }
-                            *edge &= !bit;
-                            rejected = true;
-                            break;
+                            let forward = receive_pair_is_causal(
+                                events,
+                                scope_offsets,
+                                actors,
+                                inside,
+                                outside,
+                            );
+                            let reverse = if forward {
+                                #[cfg(hibana_profile)]
+                                {
+                                    counters.alignment_pair_queries += 1;
+                                }
+                                receive_pair_is_causal(
+                                    events,
+                                    scope_offsets,
+                                    actors,
+                                    outside,
+                                    inside,
+                                )
+                            } else {
+                                false
+                            };
+                            if !forward || !reverse {
+                                let edge =
+                                    &mut edges[a.lane as usize * row_bytes + color as usize / 8];
+                                let bit = 1 << (color % 8);
+                                if *edge & bit == 0 {
+                                    crate::invariant();
+                                }
+                                *edge &= !bit;
+                                rejected = true;
+                                break;
+                            }
                         }
                     }
                     outside += 1;
@@ -219,7 +231,7 @@ pub(crate) const fn assign_receive_lanes<const E: usize>(
     actors: Option<&SourceActorImage<E>>,
     #[cfg(hibana_profile)] counters: &mut crate::g::profiling::Counters,
 ) -> bool {
-    let scope_offsets = ScopeOffsets::new(events);
+    let scope_offsets = FlowIndex::new(events, actors);
     let mut checked = inspect(
         events,
         &scope_offsets,

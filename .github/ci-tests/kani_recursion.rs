@@ -153,7 +153,7 @@ fn function_names() -> Vec<String> {
         format!("{root}::CausalFlow::<'_, 3>::advance_as::<0>"),
         format!("{root}::actors::Obligation::<'_, 3, 0>::conflict_from"),
         format!("{root}::actors::ActorMap::<'_, 3, 0>::reference_known"),
-        format!("{root}::ScopeOffsets::<3>::new"),
+        format!("{root}::FlowIndex::<3>::new::<0>"),
     ]
 }
 
