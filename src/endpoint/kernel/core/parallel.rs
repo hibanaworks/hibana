@@ -228,17 +228,25 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
         {
             return Err(SendError::PhaseInvariant);
         }
-        let ((start, split, end), origin) = {
+        let ((start, split, end), origin, left, right) = {
             let mut previews = self.preview_queries();
             let mut repeated = None;
             let current =
                 (0..self.context.program.source_scope_marker_count()).find_map(|marker| {
                     let (start, split, end) = self.context.program.source_parallel_at(marker)?;
                     let parent = self.region.bounds();
-                    if start < parent.start
-                        || end > parent.end
-                        || self.arm_lane(start..end).is_none()
+                    if start < parent.start || end > parent.end {
+                        return None;
+                    }
+                    let left = self.arm_lane(start..split);
+                    let right = self.arm_lane(split..end);
+                    if (left.is_none() && right.is_none())
+                        || (regions.len() > 1 && (left.is_none() || right.is_none()))
                     {
+                        // A source par with only one local arm introduces no
+                        // local fork. Explicit one-fragment borrows can retain
+                        // it; a multi-fragment borrow looks through it. All
+                        // candidates still have to cover the current frontier.
                         return None;
                     }
                     let origin = self
@@ -262,7 +270,7 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
                                 },
                             )
                         });
-                    let candidate = ((start, split, end), origin);
+                    let candidate = ((start, split, end), origin, left, right);
                     // Classify completed repetitions before comparing enabled groups.
                     if origin.is_some() && repeated.is_some() {
                         return None;
@@ -286,8 +294,6 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
 
         // Preserve the current forward group before choosing an alternative
         // restart. Scope selection precedes width checks and borrow issuance.
-        let left = self.arm_lane(start..split);
-        let right = self.arm_lane(split..end);
         if left.is_some() && left == right {
             return Err(SendError::PhaseInvariant);
         }

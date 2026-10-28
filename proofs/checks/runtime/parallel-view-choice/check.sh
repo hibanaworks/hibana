@@ -8,11 +8,14 @@ mkdir -p "$EVIDENCE"
 cd "$ROOT"
 source "$ROOT/.github/scripts/lib/proof_audit.sh"
 FAILED=0
-check_trusted_proof_sources 'parallel view choice declarations' "$PROOFS/Check.lean"
+check_trusted_proof_sources 'parallel view choice declarations' "$PROOFS/Check.lean" "$PROOFS/LocalFork.lean"
 [[ "$FAILED" -eq 0 ]]
 lean --version | bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" version
 lean "$PROOFS/Check.lean" > "$EVIDENCE/lean.log" 2>&1
 bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" lean "$EVIDENCE/lean.log" 17
+lean "$PROOFS/LocalFork.lean" > "$EVIDENCE/local-fork-lean.log" 2>&1
+bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" lean "$EVIDENCE/local-fork-lean.log" 5
+bash "$ROOT/.github/scripts/check_smt2.sh" "$PROOFS/LocalFork.smt2"
 z3 "$PROOFS/Check.smt2" > "$EVIDENCE/z3.log"
 bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" smt-sequence "$EVIDENCE/z3.log" unsat unsat unsat sat unsat unsat unsat sat unsat unsat unsat unsat sat
 printf 'Parallel view choices: Lean and Z3 passed. Evidence: %s\n' "$EVIDENCE"

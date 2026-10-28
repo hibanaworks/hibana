@@ -50,6 +50,10 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     /// The array can have one element when this endpoint participates in only
     /// one fragment. Other endpoints held by the participant can borrow their
     /// own fragments and run alongside it.
+    /// When requesting multiple fragments, a source `par` with only one local
+    /// arm is skipped to reach a nested local fork. A one-fragment borrow can
+    /// retain that outer scope explicitly. Sequential prefixes still have to
+    /// complete before the nested fork can be borrowed.
     /// A fragment may wait for a preceding operation on another held endpoint.
     /// Borrowing it leaves that dependency in place for its sends and receives.
     /// Adjacent `par` groups are flattened. Sequential prefixes and enclosing

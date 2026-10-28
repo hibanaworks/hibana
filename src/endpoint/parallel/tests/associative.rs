@@ -308,3 +308,72 @@ fn borrowing_parallel_arms_does_not_choose_an_unresolved_route() {
         });
     assert!(network.queue_is_empty());
 }
+#[tokio::test(flavor = "current_thread")]
+async fn erased_outer_parallel_arms_do_not_hide_the_next_local_fork() {
+    use crate::{
+        g,
+        runtime::{SessionKitStorage, ids::SessionId, program::project},
+        test_support::transport::TestTransport,
+    };
+    type Begin = g::Msg<201, u32>;
+    type Left = g::Msg<202, u32>;
+    type Right = g::Msg<203, u32>;
+    type Done = g::Msg<204, u32>;
+    type Independent = g::Msg<205, u32>;
+    let global = g::par(
+        g::seq(
+            g::send::<0, 1, Begin>(),
+            g::seq(
+                g::par(g::send::<0, 1, Left>(), g::send::<0, 1, Right>()),
+                g::send::<1, 0, Done>(),
+            ),
+        ),
+        g::send::<2, 3, Independent>(),
+    );
+    let p0 = project::<0>(&global);
+    let p1 = project::<1>(&global);
+    let p2 = project::<2>(&global);
+    let p3 = project::<3>(&global);
+    let mut slab = [0; 32 * 1024];
+    let mut storage = SessionKitStorage::uninit();
+    let network = TestTransport::new();
+    let runtime = storage
+        .init()
+        .rendezvous(&mut slab, network.clone())
+        .unwrap();
+    let session = SessionId::new(2610);
+    let mut a = runtime.enter(session, &p0).unwrap();
+    let mut b = runtime.enter(session, &p1).unwrap();
+    let mut c = runtime.enter(session, &p2).unwrap();
+    let mut d = runtime.enter(session, &p3).unwrap();
+    let (_, _, independent, _) = tokio::join!(
+        async {
+            assert!(a.par::<2>().is_err());
+            a.send::<Begin>(&1).await.unwrap();
+            assert!(a.par::<4>().is_err());
+            {
+                let [mut left, mut right] = a.par().unwrap();
+                let (left, right) = tokio::join!(left.send::<Left>(&2), right.send::<Right>(&3));
+                left.unwrap();
+                right.unwrap();
+            }
+            assert_eq!(a.recv::<Done>().await.unwrap(), 4);
+        },
+        async {
+            let [mut work] = b.par().unwrap();
+            assert_eq!(work.recv::<Begin>().await.unwrap(), 1);
+            {
+                let [mut left, mut right] = work.par().unwrap();
+                let (right, left) = tokio::join!(right.recv::<Right>(), left.recv::<Left>());
+                assert_eq!((left.unwrap(), right.unwrap()), (2, 3));
+            }
+            work.send::<Done>(&4).await.unwrap();
+        },
+        c.send::<Independent>(&5),
+        async {
+            assert_eq!(d.recv::<Independent>().await.unwrap(), 5);
+        },
+    );
+    independent.unwrap();
+    assert!(network.queue_is_empty());
+}
