@@ -20,15 +20,26 @@ runs:
     - name: Reuse the pinned compiler
       uses: actions/cache@v6
       with:
-        path: ~/.elan/toolchains
-        key: lean-compiler-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('proofs/lean/lean-toolchain') }}
+        path: ~/.cache/lean
+        key: lean-release-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('proofs/lean/lean-toolchain', '.github/actions/setup-lean/action.yml') }}
     - name: Install the pinned compiler
       shell: bash
       run: |
         set -euo pipefail
         toolchain="$(< proofs/lean/lean-toolchain)"
-        for attempt in 1 2 3; do
-          if elan run --install "$toolchain" lean --version; then exit 0; fi
-          if [[ "$attempt" == 3 ]]; then exit 1; fi
-          sleep 5
-        done
+        [[ "$toolchain" == leanprover/lean4:v4.30.0 ]]
+        compiler="${HOME}/.cache/lean/4.30.0-linux_aarch64"
+        if [[ ! -d "$compiler" ]]; then
+          lean_tmp="$(mktemp -d)"
+          trap 'rm -r "$lean_tmp"' EXIT
+          curl --proto '=https' --tlsv1.2 --retry 2 --retry-delay 5 -sSfL \
+            https://github.com/leanprover/lean4/releases/download/v4.30.0/lean-4.30.0-linux_aarch64.tar.zst \
+            -o "${lean_tmp}/lean.tar.zst"
+          echo "c99c6f0edd446956d4758c59d4383e8e6411ff6cc71a01f9caabe5eba454121d  ${lean_tmp}/lean.tar.zst" | sha256sum --check -
+          mkdir "${lean_tmp}/compiler"
+          tar --zstd -xf "${lean_tmp}/lean.tar.zst" -C "${lean_tmp}/compiler" --strip-components=1
+          mkdir -p "$(dirname "$compiler")"
+          mv "${lean_tmp}/compiler" "$compiler"
+        fi
+        elan toolchain link "$toolchain" "$compiler"
+        elan run "$toolchain" lean --version
