@@ -594,6 +594,11 @@ run_miri_test \
   a_waiting_offer_polls_each_direction_once_and_receives_an_independent_choice
 
 run_miri_test \
+  delegated-resolver-entry-identity \
+  -p hibana --lib \
+  delegated_resolver_starts_before_the_holders_later_send
+
+run_miri_test \
   current-roll-entry-blocks-completion \
   -p hibana --lib \
   unfinished_entry_admission_matches_all_enclosing_rolls_and_choice_assignments

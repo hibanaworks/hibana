@@ -4,6 +4,9 @@ use crate::{
     runtime::{SessionKitStorage, ids::SessionId, program::project},
 };
 
+#[path = "handoff_tests/delegated_resolver.rs"]
+mod delegated_resolver;
+
 #[test]
 fn incoming_choice_can_arrive_at_either_of_the_actors_views() {
     tokio::runtime::Builder::new_current_thread()

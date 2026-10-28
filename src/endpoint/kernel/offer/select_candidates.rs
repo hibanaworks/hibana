@@ -317,16 +317,25 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
         }) {
             return Ok(());
         }
-        if controller && dynamic && live_arm.is_none() {
-            if !self.resolver_offer_entry_enabled(scope, previews) {
+        let candidate_row = if controller && dynamic && live_arm.is_none() {
+            let Some(entry) = self.resolver_offer_entry(scope, previews) else {
+                return Ok(());
+            };
+            entry
+        } else {
+            if !receive_enabled.unwrap_or_else(|| self.offer_row_is_enabled(row, previews)) {
                 return Ok(());
             }
-        } else if !receive_enabled.unwrap_or_else(|| self.offer_row_is_enabled(row, previews)) {
-            return Ok(());
-        }
-        let mut candidate = self
-            .offer_scope_selection_for_scope_lane_with_selected_arm(scope, entry, lane, live_arm)?;
-        candidate.candidate_index = checked_state_index(index).ok_or(RecvError::PhaseInvariant)?;
+            row
+        };
+        let mut candidate = self.offer_scope_selection_for_scope_lane_with_selected_arm(
+            scope,
+            entry,
+            candidate_row.atom().lane,
+            live_arm,
+        )?;
+        candidate.candidate_index =
+            checked_state_index(candidate_row.index()).ok_or(RecvError::PhaseInvariant)?;
         *selected = Some((priority, candidate));
         Ok(())
     }

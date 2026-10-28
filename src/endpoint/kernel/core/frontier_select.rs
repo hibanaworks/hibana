@@ -46,12 +46,14 @@ where
 
     /// The caller established that this view controls an unresolved dynamic
     /// scope. A resolver can run without ingress only at an eligible projected
-    /// Send/Local entry; this read neither invokes it nor advances progress.
-    pub(in crate::endpoint::kernel) fn resolver_offer_entry_enabled(
+    /// Send/Local entry. Return that exact row so selection cannot substitute
+    /// a blocked descendant on another lane. This read does not invoke the
+    /// resolver or advance progress.
+    pub(in crate::endpoint::kernel) fn resolver_offer_entry(
         &self,
         scope: ScopeId,
         previews: &mut dyn FnMut(ScopeId) -> Option<u8>,
-    ) -> bool {
+    ) -> Option<crate::global::event_program::LocalEventRow> {
         use crate::global::{role_program::RoleLocalDirection, typestate::EventArmView};
 
         for arm in 0..=1 {
@@ -70,6 +72,8 @@ where
             };
             if row.logical_role() != self.public_header.role()
                 || row.direction() == RoleLocalDirection::Recv
+                || !self.region.contains(row.effect().dense_ordinal())
+                || !self.owns_lane(usize::from(row.atom().lane))
             {
                 continue;
             }
@@ -80,9 +84,9 @@ where
                     .or_else(|| self.selected_arm_for_recv_event(row.conflict(), candidate, view)),
             };
             if self.event_eligibility(row, &mut selected).is_ok() {
-                return true;
+                return Some(row);
             }
         }
-        false
+        None
     }
 }

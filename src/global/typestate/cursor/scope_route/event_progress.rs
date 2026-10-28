@@ -8,6 +8,10 @@ use crate::global::{role_program::RoleLocalDirection, typestate::EventCommitMeta
 
 mod recovery;
 
+#[cfg(all(test, hibana_repo_tests))]
+#[path = "event_progress/reentry_tests.rs"]
+mod reentry_tests;
+
 /// Completion belongs to the committed visit; conflict preview belongs to the
 /// candidate visit. A prospective arm must never rewrite completion history.
 pub(crate) enum EventArmView {
@@ -153,6 +157,19 @@ impl EventCursor {
         // work can move it past an unfinished step. Completion and committed
         // choices determine whether this step belongs to the current visit.
         if !self.relocatable_step_done(progress_step) {
+            let conflict = self.machine().event_conflict_for_index(idx);
+            let mut committed = |scope| arm_for_scope(scope, EventArmView::Committed);
+            let current_arm_allows =
+                self.event_conflict_row_allows_with_preview(conflict, conflict, &mut committed);
+            // An unfinished participating entry prevents every enclosing roll
+            // from completing for that same entry. Its committed path is also
+            // the final admission check below; evaluate it once at this cut.
+            if current_arm_allows
+                && (self.machine().event_program().footprint().roll_scope_count == 0
+                    || self.event_actor_is_local(idx, &mut committed) != Some(false))
+            {
+                return Ok(());
+            }
             // A clear bit can belong to an unchosen arm at the lane head.
             // Without a completed explicit roll, committed choices still own
             // this visit. A candidate preview cannot replace that authority.
@@ -166,13 +183,7 @@ impl EventCursor {
                 .then_some(())
                 .ok_or(EventBlocker::Reentry);
             }
-            let conflict = self.machine().event_conflict_for_index(idx);
-            let mut committed = |scope| arm_for_scope(scope, EventArmView::Committed);
-            return if self.event_conflict_row_allows_with_preview(
-                conflict,
-                conflict,
-                &mut committed,
-            ) {
+            return if current_arm_allows {
                 Ok(())
             } else {
                 Err(EventBlocker::Invariant)

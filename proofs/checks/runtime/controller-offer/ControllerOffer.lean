@@ -30,6 +30,41 @@ def firstLabel : Tree → Nat
   | .leaf label => label
   | .route _ left _ => firstLabel left
 
+/-- A scope's canonical entry and an observed descendant are distinct
+locators. Preserve the operation and lane of the row that passed admission. -/
+structure ResolverEntry where
+  event : Nat
+  lane : Nat
+  deriving DecidableEq
+
+def firstAdmitted (entries : List ResolverEntry) (admitted : ResolverEntry → Bool) :
+    Option ResolverEntry := entries.find? admitted
+
+theorem a_resolver_candidate_is_the_admitted_entry
+    (entries : List ResolverEntry) (admitted : ResolverEntry → Bool) (row : ResolverEntry) :
+    firstAdmitted entries admitted = some row → row ∈ entries ∧ admitted row = true := by
+  induction entries with
+  | nil => simp [firstAdmitted]
+  | cons first rest ih =>
+      intro selected
+      cases allowed : admitted first with
+      | false =>
+          have found : firstAdmitted rest admitted = some row := by
+            simpa [firstAdmitted, allowed] using selected
+          obtain ⟨member, valid⟩ := ih found
+          exact ⟨List.mem_cons_of_mem first member, valid⟩
+      | true =>
+          have same : first = row := by simpa [firstAdmitted, allowed] using selected
+          subst row
+          exact ⟨List.mem_cons_self, allowed⟩
+
+theorem an_eligible_scope_does_not_admit_its_blocked_descendant :
+    firstAdmitted [⟨1, 2⟩, ⟨3, 1⟩] (fun row => row.event == 1) = some ⟨1, 2⟩ ∧
+    ((ResolverEntry.mk 3 1).event == 1) = false := by decide
+
+#print axioms a_resolver_candidate_is_the_admitted_entry
+#print axioms an_eligible_scope_does_not_admit_its_blocked_descendant
+
 theorem leaf_has_no_decisions (decide : Nat → Option Bool) (label : Nat) :
     select decide (.leaf label) = some (label, []) := rfl
 

@@ -111,6 +111,23 @@ theorem an_entering_child_requires_its_current_completion
   have current := List.all_eq_true.mp complete entry member
   simpa [rowComplete, sameChild] using current
 
+/-- A participating unfinished entry makes the search over all of its
+enclosing repeated bodies empty, regardless of retained sibling visits. -/
+theorem an_unfinished_entry_blocks_every_enclosing_roll
+    (scopes : List Nat) (rows : Nat → List Nat) (done credited : Nat → Bool)
+    (independent : Nat → Nat → Bool) (entry : Nat)
+    (member : ∀ scope ∈ scopes, entry ∈ rows scope)
+    (sameChild : independent entry entry = false) (unfinished : done entry = false) :
+    scopes.find? (fun scope => completeAt (rows scope) done credited independent entry) = none := by
+  apply List.find?_eq_none.mpr
+  intro scope inside
+  cases complete : completeAt (rows scope) done credited independent entry with
+  | false => simp
+  | true =>
+      have finished := an_entering_child_requires_its_current_completion
+        (rows scope) done credited independent entry (member scope inside) sameChild complete
+      simp [unfinished] at finished
+
 theorem an_unfinished_uncredited_sibling_blocks_parent_reentry
     (rows : List Nat) (done credited : Nat → Bool)
     (independent : Nat → Nat → Bool) (entry blocked : Nat)
@@ -129,6 +146,7 @@ theorem raw_completion_loses_a_valid_parallel_boundary :
 
 #print axioms independent_completed_visits_satisfy_the_parent
 #print axioms an_entering_child_requires_its_current_completion
+#print axioms an_unfinished_entry_blocks_every_enclosing_roll
 #print axioms an_unfinished_uncredited_sibling_blocks_parent_reentry
 #print axioms raw_completion_loses_a_valid_parallel_boundary
 end ParallelVisitCompletion

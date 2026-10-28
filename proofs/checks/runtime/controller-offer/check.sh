@@ -12,7 +12,7 @@ check_trusted_proof_sources 'controller-offer trusted proof declarations' "$PROO
 [[ "$FAILED" -eq 0 ]]
 lean --version | bash "$(cd "$(dirname "$0")/../../../.." && pwd)/.github/scripts/lib/supplemental_proofs_tool.sh" version
 lean "$PROOFS/ControllerOffer.lean" > "$EVIDENCE/lean.log" 2>&1
-bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" lean "$EVIDENCE/lean.log" 33
+bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" lean "$EVIDENCE/lean.log" 35
 z3 "$PROOFS/ControllerOffer.smt2" > "$EVIDENCE/z3.log"
-bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" smt-counts "$EVIDENCE/z3.log" 7 27
-printf 'Controller-offer proofs passed: 33 Lean kernel theorems; Z3 27 UNSAT obligations and 7 SAT witnesses. Evidence: %s\n' "$EVIDENCE"
+bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" smt-counts "$EVIDENCE/z3.log" 8 29
+printf 'Controller-offer proofs passed: 35 Lean kernel theorems; Z3 29 UNSAT obligations and 8 SAT witnesses. Evidence: %s\n' "$EVIDENCE"
