@@ -3,11 +3,23 @@ use super::*;
 fn compare_all_chains(rows: &RoleImageRef) {
     for slot in 0..rows.columns.route_scopes.len as usize {
         for arm in 0..2 {
+            let chain = rows.route_commit_range_by_slot(slot, arm);
             assert_eq!(
-                rows.route_commit_range_by_slot(slot, arm).raw(),
+                chain.raw(),
                 rows.lanes().route_commit_range_by_slot(slot, arm).raw(),
                 "slot {slot}, arm {arm}"
             );
+            let borrowed: std::vec::Vec<_> = rows
+                .route_commit_bytes(chain)
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|bytes| PackedEventConflict::from_raw(u16::from_le_bytes(*bytes)))
+                .collect();
+            let checked: std::vec::Vec<_> = (chain.start()..chain.end())
+                .map(|index| rows.lanes().route_commit_row_at(index))
+                .collect();
+            assert_eq!(borrowed, checked);
         }
     }
 }
@@ -96,4 +108,46 @@ fn route_commit_constructor_validation_dominates_every_raw_chain_check() {
         }
     }
     assert!(accepted > 0 && raw_rejected > 0);
+}
+
+#[test]
+fn an_empty_post_join_peer_context_is_valid_but_cannot_be_its_own_parent() {
+    type Loan = Msg<9, crate::Endpoint<'static, 10>>;
+    type Notice = Msg<8, ()>;
+    let source = g::seq(
+        g::route(
+            g::seq(g::send::<0, 1, Loan>(), g::send::<0, 2, Notice>()),
+            g::seq(g::send::<0, 1, Notice>(), g::send::<0, 2, Loan>()),
+        )
+        .resolve::<701>(),
+        g::seq(
+            g::send::<10, 3, Msg<1, ()>>(),
+            g::send::<3, 10, Msg<2, ()>>(),
+        ),
+    );
+    // Actor 3 has no branch operation. Its peer after the join still depends
+    // on this route, so projection must retain the empty source context.
+    let rows = project::<3>(&source).role_image_ref();
+    assert_eq!(rows.footprint().route_scope_count, 1);
+    assert_eq!(rows.local_step_count(), 2);
+    let scope = rows.route_scope_by_slot(0).unwrap();
+    assert!(rows.route_scope_conflict_by_slot(0).is_none());
+    for arm in 0..2 {
+        assert!(rows.route_arm_event_row_by_slot(0, arm).is_zero_len());
+        let chain = rows.route_commit_range_by_slot(0, arm);
+        assert_eq!(chain.len(), 1);
+        assert_eq!(
+            rows.route_commit_row_at(chain.start()).to_conflict(),
+            Some(LocalConflict::RouteArm { scope, arm }),
+        );
+    }
+    for arm in 0..2 {
+        reject(rows, |bytes, columns, _| {
+            put(
+                bytes,
+                columns.route_scope_conflicts.offset as usize,
+                PackedEventConflict::route_arm(scope, arm).raw(),
+            );
+        });
+    }
 }

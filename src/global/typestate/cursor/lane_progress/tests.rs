@@ -1,10 +1,11 @@
 use super::super::CURRENT_STEP_UNLABELED_CODE;
 use super::*;
 use crate::{
+    Endpoint,
     g::{self, Msg},
     global::{
         compiled::images::RoleDescriptorRef,
-        role_program::{RoleProgram, project},
+        role_program::{RoleImageRef, RoleLocalDirection, RoleProgram, project},
         typestate::cursor::EventCursorState,
     },
 };
@@ -44,10 +45,7 @@ fn compare_lane_heads<const ROLE: u8>(program: &RoleProgram<ROLE>) {
             let target = cursor
                 .relocatable_resident_lane_step_at_index(step, lane)
                 .expect("matching lane identity");
-            assert_eq!(
-                cursor.advance_lane_to_relocatable_step(target),
-                CursorRefresh::Lane(lane as u8)
-            );
+            cursor.advance_lane_to_relocatable_step(target);
             assert!(cursor.relocatable_step_done(target));
             assert_eq!(
                 cursor.step_index_at_lane(lane),
@@ -103,10 +101,7 @@ fn compare_lane_heads<const ROLE: u8>(program: &RoleProgram<ROLE>) {
         let previous = cursor.lane_cursors().to_vec();
         let previous_labels = cursor.current_step_label_codes().to_vec();
         let mutations = cursor.completion_mutations();
-        assert_eq!(
-            cursor.set_lane_cursor_to_relocatable_step(target),
-            CursorRefresh::Lane(lane as u8)
-        );
+        cursor.set_lane_cursor_to_relocatable_step(target);
         assert_eq!(cursor.completion_mutations(), mutations);
         assert_eq!(cursor.step_index_at_lane(lane), Some(step));
         assert_eq!(cursor.node_index_for_relocatable_step(target), Some(step));
@@ -162,6 +157,120 @@ fn whole_image_lane_heads_match_descriptor_order_for_routes_and_roll() {
     compare_lane_heads(&role0);
     compare_lane_heads(&role1);
     compare_lane_heads(&role2);
+}
+
+#[test]
+fn every_completion_order_preserves_each_lanes_first_unfinished_row() {
+    let global = g::seq(
+        g::send::<0, 1, Msg<61, ()>>(),
+        g::seq(
+            g::par(
+                g::seq(
+                    g::send::<0, 1, Msg<62, ()>>(),
+                    g::send::<1, 0, Msg<63, ()>>(),
+                ),
+                g::seq(
+                    g::send::<0, 2, Msg<64, ()>>(),
+                    g::send::<2, 0, Msg<65, ()>>(),
+                ),
+            ),
+            g::send::<0, 1, Msg<66, ()>>(),
+        ),
+    );
+    let rows = project::<0>(&global).role_image_ref();
+    let count = rows.local_step_count();
+    assert_eq!(count, 6);
+    let orders: usize = (1..=count).product();
+    for order in 0..orders {
+        super::super::validated_metadata_tests::with_rows(rows, |cursor| {
+            let mut remaining: std::vec::Vec<_> = (0..count).collect();
+            let mut rank = order;
+            let mut completed = std::vec![false; count];
+            cursor.set_index(count);
+            while !remaining.is_empty() {
+                let ordinal = rank % remaining.len();
+                rank /= remaining.len();
+                let step = remaining.remove(ordinal);
+                let lane = usize::from(rows.local_step_lane(step).unwrap());
+                let target = cursor
+                    .relocatable_resident_lane_step_at_index(step, lane)
+                    .unwrap();
+                // This isolates completion bookkeeping from semantic admission:
+                // every permutation must preserve the same derived-head law.
+                cursor.advance_lane_to_relocatable_step(target);
+                completed[step] = true;
+                assert_eq!(
+                    cursor.index(),
+                    count,
+                    "completion cannot move lookup context"
+                );
+                for candidate_lane in 0..cursor.logical_lane_count() {
+                    // The oracle scans raw descriptor rows, never successors.
+                    let expected = (0..count).find(|&candidate| {
+                        !completed[candidate]
+                            && rows.local_step_lane(candidate) == Some(candidate_lane as u8)
+                    });
+                    assert_eq!(
+                        cursor.step_index_at_lane(candidate_lane),
+                        expected,
+                        "order={order} completed={step} lane={candidate_lane}"
+                    );
+                    assert_eq!(
+                        cursor.current_step_label_codes()[candidate_lane],
+                        expected.map_or(CURRENT_STEP_UNLABELED_CODE, |next| {
+                            u16::from(cursor.event_row_at(next).unwrap().atom().label)
+                        })
+                    );
+                }
+                let heads = cursor.lane_cursors().to_vec();
+                let labels = cursor.current_step_label_codes().to_vec();
+                cursor.advance_lane_to_relocatable_step(target);
+                assert_eq!(cursor.lane_cursors(), heads);
+                assert_eq!(cursor.current_step_label_codes(), labels);
+            }
+        });
+    }
+}
+
+#[test]
+fn offer_head_normalization_never_consumes_unknown_or_revived_choices() {
+    let global = g::seq(
+        g::route(
+            g::send::<0, 1, Msg<71, ()>>(),
+            g::send::<0, 1, Msg<72, ()>>(),
+        ),
+        g::send::<0, 1, Msg<73, ()>>(),
+    );
+    let rows = project::<1>(&global).role_image_ref();
+    super::super::validated_metadata_tests::with_rows(rows, |cursor| {
+        let lane = usize::from(rows.local_step_lane(0).unwrap());
+        assert!((0..3).all(|step| rows.local_step_lane(step) == Some(lane as u8)));
+        let heads = cursor.lane_cursors().to_vec();
+        let labels = cursor.current_step_label_codes().to_vec();
+        let done = cursor.completed_event_words().to_vec();
+        let mutations = cursor.completion_mutations();
+        assert_eq!(cursor.offer_lane_head(1, lane, &mut |_| None), Some(0));
+        assert_eq!(cursor.offer_lane_head(1, lane, &mut |_| Some(1)), Some(1));
+        assert_eq!(cursor.offer_lane_head(1, lane, &mut |_| Some(0)), Some(0));
+        assert_eq!(cursor.offer_lane_head(1, lane, &mut |_| None), Some(0));
+        assert_eq!(cursor.lane_cursors(), heads);
+        assert_eq!(cursor.current_step_label_codes(), labels);
+        assert_eq!(cursor.completed_event_words(), done);
+        assert_eq!(cursor.completion_mutations(), mutations);
+        let target = cursor
+            .relocatable_resident_lane_step_at_index(0, lane)
+            .unwrap();
+        cursor.advance_lane_to_relocatable_step(target);
+        assert_eq!(cursor.step_index_at_lane(lane), Some(1));
+        assert_eq!(cursor.offer_lane_head(1, lane, &mut |_| Some(0)), Some(2));
+        assert_eq!(cursor.offer_lane_head(1, lane, &mut |_| None), Some(1));
+        assert_eq!(cursor.step_index_at_lane(lane), Some(1));
+        assert!(
+            cursor
+                .offer_lane_head(1, cursor.logical_lane_count(), &mut |_| None)
+                .is_none()
+        );
+    });
 }
 
 #[test]
@@ -282,12 +391,11 @@ fn accepted_old_continuation_preserves_the_fresh_body_head_and_label() {
         let target = cursor
             .relocatable_resident_lane_step_at_index(1, lane)
             .unwrap();
-        assert_eq!(
-            cursor.advance_lane_to_relocatable_step(target),
-            CursorRefresh::Lane(lane as u8)
-        );
+        cursor.set_index(1);
+        cursor.advance_lane_to_relocatable_step(target);
         assert_eq!(cursor.step_index_at_lane(lane), Some(0));
         assert_eq!(cursor.current_step_label_codes()[lane], head_label);
+        assert_eq!(cursor.index(), 1);
         assert!(!cursor.local_event_done(0));
         assert!(cursor.local_event_done(1));
     });
@@ -433,5 +541,370 @@ fn excluded_nested_arms_match_each_step_admission_without_repeated_queries() {
             }
         }
         assert!(saved > 0, "excluded arms must avoid per-event queries");
+    });
+}
+
+fn compare_offer_head_to_raw_rows(rows: &'static RoleImageRef) {
+    super::super::validated_metadata_tests::with_rows(rows, |cursor| {
+        let raw = rows.lanes();
+        let count = rows.local_step_count();
+        let scopes: std::vec::Vec<_> = (0..rows.footprint().route_scope_count)
+            .map(|slot| {
+                cursor
+                    .machine()
+                    .route_scope_rows_by_slot(slot)
+                    .unwrap()
+                    .scope()
+            })
+            .collect();
+        assert!(count <= 10 && scopes.len() <= 3);
+        for completion in 0..1u32 << count {
+            cursor.completed_event_words_mut()[0] = completion;
+            for choices in 0..3usize.pow(scopes.len() as u32) {
+                let mut selected = |scope| {
+                    let slot = scopes.iter().position(|&candidate| candidate == scope)?;
+                    match choices / 3usize.pow(slot as u32) % 3 {
+                        0 => None,
+                        1 => Some(0),
+                        _ => Some(1),
+                    }
+                };
+                let before = cursor.completed_event_words().to_vec();
+                let heads = cursor.lane_cursors().to_vec();
+                for lane in 0..cursor.logical_lane_count() {
+                    for view in [0, 1, 2, 3, 254, 255] {
+                        // Test every raw source facet separately, without the
+                        // indexed lower bound or sparse arm summaries.
+                        let expected = (0..count).find(|&step| {
+                            let event = raw.local_step_event(step).unwrap();
+                            let atom = rows.program().event_atom_at(usize::from(event.eff_index));
+                            let logical_role = if event.direction() == RoleLocalDirection::Recv {
+                                atom.to
+                            } else {
+                                atom.from
+                            };
+                            logical_role == view
+                                && completion & (1 << step) == 0
+                                && raw.local_step_lane(step, rows.footprint().logical_lane_count)
+                                    == Some(lane as u8)
+                                && cursor.event_actor_is_local(step, &mut selected) != Some(false)
+                                && cursor.event_conflict_row_allows(
+                                    raw.event_conflict_for_index(step),
+                                    ScopeId::none(),
+                                    None,
+                                    &mut selected,
+                                )
+                        });
+                        assert_eq!(
+                            cursor.offer_lane_head(view, lane, &mut selected),
+                            expected,
+                            "actor={} view={view} completion={completion:x} choices={choices} lane={lane}",
+                            rows.role()
+                        );
+                    }
+                }
+                assert_eq!(cursor.lane_cursors(), heads);
+                assert_eq!(cursor.completed_event_words(), before);
+            }
+        }
+    });
+}
+
+#[test]
+fn excluded_arm_jumps_match_raw_rows_across_nested_sparse_lanes_and_views() {
+    let global = g::seq(
+        g::route(
+            g::seq(
+                g::send::<0, 1, Msg<81, ()>>(),
+                g::route(
+                    g::par(
+                        g::send::<0, 1, Msg<82, ()>>(),
+                        g::send::<0, 2, Msg<83, ()>>(),
+                    ),
+                    g::par(
+                        g::send::<0, 1, Msg<84, ()>>(),
+                        g::send::<0, 2, Msg<85, ()>>(),
+                    ),
+                ),
+            ),
+            g::par(
+                g::send::<0, 1, Msg<86, ()>>(),
+                g::send::<0, 2, Msg<87, ()>>(),
+            ),
+        ),
+        g::send::<0, 1, Msg<88, ()>>(),
+    );
+    compare_offer_head_to_raw_rows(project::<0>(&global).role_image_ref());
+    compare_offer_head_to_raw_rows(project::<1>(&global).role_image_ref());
+    compare_offer_head_to_raw_rows(project::<2>(&global).role_image_ref());
+
+    type Loan<'r> = Msg<88, Endpoint<'r, 2>>;
+    let delegated = g::seq(
+        g::send::<0, 1, Loan<'_>>(),
+        g::route(
+            g::seq(
+                g::send::<2, 1, Msg<89, ()>>(),
+                g::send::<1, 2, Msg<90, ()>>(),
+            ),
+            g::seq(
+                g::send::<2, 1, Msg<91, ()>>(),
+                g::send::<1, 2, Msg<92, ()>>(),
+            ),
+        ),
+    );
+    let rows = project::<1>(&delegated).role_image_ref();
+    assert!((0..rows.local_step_count()).any(|step| {
+        rows.local_step_logical_role(step) == 2
+            && (0..rows.local_step_count()).any(|other| {
+                rows.local_step_logical_role(other) == 1
+                    && rows.local_step_lane(step) == rows.local_step_lane(other)
+            })
+    }));
+    compare_offer_head_to_raw_rows(rows);
+}
+
+#[test]
+fn alternative_co_resident_views_each_have_their_own_potential_lane_head() {
+    type Loan<'r> = Msg<112, Endpoint<'r, 3>>;
+    let global = g::seq(
+        g::route(
+            g::send::<0, 1, Msg<110, ()>>(),
+            g::send::<0, 3, Msg<111, ()>>(),
+        ),
+        g::seq(g::send::<1, 2, Loan<'_>>(), g::send::<0, 3, Msg<113, ()>>()),
+    );
+    let rows = project::<1>(&global).role_image_ref();
+    super::super::validated_metadata_tests::with_rows(rows, |cursor| {
+        let left = (0..rows.local_step_count())
+            .find(|&step| {
+                cursor
+                    .try_recv_meta_at(step)
+                    .is_some_and(|meta| meta.label == 110)
+            })
+            .unwrap();
+        let right = (0..rows.local_step_count())
+            .find(|&step| {
+                cursor
+                    .try_recv_meta_at(step)
+                    .is_some_and(|meta| meta.label == 111)
+            })
+            .unwrap();
+        let lane = usize::from(rows.local_step_lane(left).unwrap());
+        assert_eq!(rows.local_step_lane(right), Some(lane as u8));
+        assert_eq!(cursor.index_for_lane_step(lane), Some(left));
+        let heads = cursor.lane_cursors().to_vec();
+        let done = cursor.completed_event_words().to_vec();
+        assert_eq!(cursor.offer_lane_head(1, lane, &mut |_| None), Some(left));
+        assert_eq!(cursor.offer_lane_head(3, lane, &mut |_| None), Some(right));
+        let right_meta = cursor.try_recv_meta_at(right).unwrap();
+        assert!(
+            cursor
+                .event_enabled(right, right_meta.into(), &mut |_, _| None)
+                .is_ok()
+        );
+        assert_eq!(cursor.offer_lane_head(3, lane, &mut |_| Some(0)), None);
+        let loan = cursor.offer_lane_head(1, lane, &mut |_| Some(1)).unwrap();
+        let loan_meta = cursor.try_send_meta_at(loan).unwrap();
+        // A candidate can pass another view's prefix; it still cannot commit
+        // the transfer before that view consumes its incoming choice.
+        assert!(
+            cursor
+                .event_enabled(loan, loan_meta.into(), &mut |_, _| Some(1))
+                .is_err()
+        );
+        assert_eq!(cursor.lane_cursors(), heads);
+        assert_eq!(cursor.completed_event_words(), done);
+    });
+    compare_offer_head_to_raw_rows(rows);
+}
+
+fn compare_view_lane_lower_bounds(rows: &RoleImageRef) {
+    let raw = rows.lanes();
+    let count = rows.local_step_count();
+    let view = |step| {
+        let event = raw.local_step_event(step).unwrap();
+        let atom = rows.program().event_atom_at(usize::from(event.eff_index));
+        if event.direction() == RoleLocalDirection::Recv {
+            atom.to
+        } else {
+            atom.from
+        }
+    };
+    for requested_view in [0, 1, 2, 3, 254, 255] {
+        for lane in (0..rows.footprint().logical_lane_count).chain([254, 255]) {
+            for start in 0..=count + 1 {
+                let expected = (rows.footprint().route_scope_count != 0)
+                    .then(|| {
+                        (start..count).find(|&step| {
+                            view(step) == requested_view
+                                && raw.local_step_lane(step, rows.footprint().logical_lane_count)
+                                    == Some(lane as u8)
+                        })
+                    })
+                    .flatten();
+                assert_eq!(
+                    rows.view_lane_step_at_or_after(requested_view, lane as u8, start),
+                    expected,
+                    "view={requested_view} lane={lane} start={start}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn retained_view_lane_lower_bounds_match_raw_source_facets_and_omitted_indices() {
+    type Loan<'r> = Msg<93, Endpoint<'r, 2>>;
+    let global = g::seq(
+        g::send::<0, 1, Loan<'_>>(),
+        g::par(
+            g::route(
+                g::seq(
+                    g::send::<2, 1, Msg<94, ()>>(),
+                    g::send::<1, 2, Msg<95, ()>>(),
+                ),
+                g::seq(
+                    g::send::<2, 1, Msg<96, ()>>(),
+                    g::send::<1, 2, Msg<97, ()>>(),
+                ),
+            ),
+            g::send::<1, 3, Msg<98, ()>>(),
+        ),
+    );
+    compare_view_lane_lower_bounds(project::<1>(&global).role_image_ref());
+    compare_view_lane_lower_bounds(project::<3>(&global).role_image_ref());
+    let no_routes = g::seq(
+        g::send::<0, 1, Msg<99, ()>>(),
+        g::send::<1, 0, Msg<100, ()>>(),
+    );
+    compare_view_lane_lower_bounds(project::<0>(&no_routes).role_image_ref());
+}
+
+#[test]
+fn nested_retained_anchors_match_raw_source_rolls_for_all_progress_and_choices() {
+    let global = g::seq(
+        g::seq(
+            g::send::<0, 1, Msg<101, ()>>().roll(),
+            g::route(
+                g::send::<0, 1, Msg<102, ()>>(),
+                g::send::<0, 1, Msg<103, ()>>(),
+            ),
+        )
+        .roll(),
+        g::route(
+            g::send::<0, 1, Msg<104, ()>>(),
+            g::send::<0, 1, Msg<105, ()>>(),
+        ),
+    );
+    let rows = project::<1>(&global).role_image_ref();
+    super::super::validated_metadata_tests::with_rows(rows, |cursor| {
+        let raw = rows.lanes();
+        let count = rows.local_step_count();
+        let lane = rows.local_step_lane(0).unwrap();
+        assert_eq!(count, 5);
+        assert!((0..count).all(|step| rows.local_step_lane(step) == Some(lane)));
+        let source = rows.program();
+        let scopes: std::vec::Vec<_> = (0..rows.footprint().route_scope_count)
+            .map(|slot| {
+                cursor
+                    .machine()
+                    .route_scope_rows_by_slot(slot)
+                    .unwrap()
+                    .scope()
+            })
+            .collect();
+        let mut rolls: std::vec::Vec<_> = (0..source.source_scope_marker_count())
+            .filter_map(|marker| source.source_roll_at(marker))
+            .collect();
+        rolls.reverse();
+        assert_eq!(rolls.len(), 2);
+        for completion in 0..1u32 << count {
+            for retained in 0..4 {
+                for step in 0..count {
+                    cursor.write_completion_bit(step, completion & (1 << step) != 0);
+                }
+                for (ordinal, &(scope, _, _)) in rolls.iter().enumerate() {
+                    let slot = cursor
+                        .machine()
+                        .event_program()
+                        .roll_scope_slot(scope)
+                        .unwrap();
+                    cursor.write_completion_bit(count + slot, retained & (1 << ordinal) != 0);
+                }
+                for choices in 0..9usize {
+                    let mut selected = |scope| {
+                        let slot = scopes.iter().position(|&candidate| candidate == scope)?;
+                        match choices / 3usize.pow(slot as u32) % 3 {
+                            0 => None,
+                            1 => Some(0),
+                            _ => Some(1),
+                        }
+                    };
+                    for head in 0..count {
+                        let effect = usize::from(raw.local_step_event(head).unwrap().eff_index);
+                        let expected: std::vec::Vec<_> = rolls
+                            .iter()
+                            .enumerate()
+                            .filter(|(ordinal, (_, start, end))| {
+                                retained & (1 << *ordinal) != 0 && *start <= effect && effect < *end
+                            })
+                            .filter_map(|(_, (_, _, end))| {
+                                (0..count).find(|&step| {
+                                    usize::from(raw.local_step_event(step).unwrap().eff_index)
+                                        >= *end
+                                        && completion & (1 << step) == 0
+                                        && cursor.event_conflict_row_allows(
+                                            raw.event_conflict_for_index(step),
+                                            ScopeId::none(),
+                                            None,
+                                            &mut selected,
+                                        )
+                                })
+                            })
+                            .collect();
+                        let before = cursor.completed_event_words().to_vec();
+                        assert_eq!(
+                            cursor
+                                .retained_offer_lane_candidates(head, 1, lane, &mut selected)
+                                .collect::<std::vec::Vec<_>>(),
+                            expected,
+                            "completion={completion:x} retained={retained} choices={choices} head={head}"
+                        );
+                        assert_eq!(cursor.completed_event_words(), before);
+                    }
+                }
+            }
+        }
+    });
+}
+
+#[test]
+fn a_pending_send_stops_the_retained_receive_anchor() {
+    let global = g::seq(
+        g::send::<0, 1, Msg<106, ()>>().roll(),
+        g::seq(
+            g::route(
+                g::send::<1, 0, Msg<107, ()>>(),
+                g::send::<1, 0, Msg<108, ()>>(),
+            ),
+            g::send::<0, 1, Msg<109, ()>>(),
+        ),
+    );
+    let rows = project::<1>(&global).role_image_ref();
+    super::super::validated_metadata_tests::with_rows(rows, |cursor| {
+        assert_eq!(rows.local_step_count(), 4);
+        let lane = rows.local_step_lane(0).unwrap();
+        cursor.write_completion_bit(4, true);
+        let candidates = |cursor: &EventCursor| {
+            cursor
+                .retained_offer_lane_candidates(0, 1, lane, &mut |_| None)
+                .collect::<std::vec::Vec<_>>()
+        };
+        assert!(candidates(cursor).is_empty());
+        cursor.mark_local_event_done(1);
+        assert!(candidates(cursor).is_empty());
+        cursor.mark_local_event_done(2);
+        assert_eq!(candidates(cursor), [3]);
+        assert!(!cursor.local_event_done(0));
     });
 }

@@ -192,17 +192,11 @@ pub(crate) struct RouteScopeRows {
     scope: ScopeId,
     start: usize,
     end: usize,
-    reentry: ReentryMark,
 }
 
 impl RouteScopeRows {
     #[inline(always)]
-    pub(crate) const fn new(
-        scope: ScopeId,
-        start: usize,
-        end: usize,
-        reentry: ReentryMark,
-    ) -> Option<Self> {
+    pub(crate) const fn new(scope: ScopeId, start: usize, end: usize) -> Option<Self> {
         if scope.is_none()
             || !matches!(scope.kind(), Some(ScopeKind::Route))
             || start >= end
@@ -210,12 +204,7 @@ impl RouteScopeRows {
         {
             None
         } else {
-            Some(Self {
-                scope,
-                start,
-                end,
-                reentry,
-            })
+            Some(Self { scope, start, end })
         }
     }
 
@@ -232,11 +221,6 @@ impl RouteScopeRows {
     #[inline(always)]
     pub(crate) const fn end(self) -> usize {
         self.end
-    }
-
-    #[inline(always)]
-    pub(crate) const fn reentry(self) -> bool {
-        self.reentry.is_reentrant()
     }
 }
 
@@ -271,11 +255,6 @@ impl StateIndex {
             Some(index) => index,
             None => crate::invariant(),
         }
-    }
-
-    #[inline(always)]
-    pub(crate) const fn raw(self) -> u16 {
-        self.0
     }
 
     #[inline(always)]

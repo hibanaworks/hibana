@@ -110,7 +110,6 @@ where
             core::ptr::addr_of_mut!((*dst).slab_len).write(runtime_slab_len);
             core::ptr::addr_of_mut!((*dst).slab_marker).write(PhantomData);
             core::ptr::addr_of_mut!((*dst).image_frontier).write(Cell::new(image_frontier));
-            core::ptr::addr_of_mut!((*dst).frontier_workspace_bytes).write(Cell::new(0));
             core::ptr::addr_of_mut!((*dst).endpoint_lease_generation).write(Cell::new(0));
             core::ptr::addr_of_mut!((*dst).endpoint_lease_storage).write(Cell::new(Sidecar::EMPTY));
             core::ptr::addr_of_mut!((*dst).lane_base).write(Cell::new(lane_range.start as u32));

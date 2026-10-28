@@ -1,18 +1,7 @@
 use super::{EvidenceFingerprint, OfferEvidenceOutcome, OfferProgressState};
-use crate::endpoint::kernel::frontier::OfferEntryEvidence;
 
-fn evidence(bits: u8) -> OfferEntryEvidence {
-    let evidence = OfferEntryEvidence::empty();
-    let evidence = if bits & 1 != 0 {
-        evidence.with_ready_arm()
-    } else {
-        evidence
-    };
-    if bits & 2 != 0 {
-        evidence.with_ingress_ready()
-    } else {
-        evidence
-    }
+fn evidence(bits: u8) -> EvidenceFingerprint {
+    EvidenceFingerprint::new(bits & 1 != 0, bits & 2 != 0)
 }
 
 #[kani::proof]
@@ -21,12 +10,9 @@ fn offer_progress_classifies_every_evidence_transition_exactly() {
     let next = evidence(kani::any());
     let mut progress = OfferProgressState::new();
 
+    assert_eq!(progress.on_defer(first), OfferEvidenceOutcome::NewEvidence);
     assert_eq!(
-        progress.on_defer(EvidenceFingerprint::from_offer_entry_evidence(first)),
-        OfferEvidenceOutcome::NewEvidence
-    );
-    assert_eq!(
-        progress.on_defer(EvidenceFingerprint::from_offer_entry_evidence(next)),
+        progress.on_defer(next),
         if first == next {
             OfferEvidenceOutcome::Pending
         } else {

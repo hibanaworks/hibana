@@ -49,14 +49,8 @@ where
             if matches!(view, crate::global::typestate::EventArmView::Committed) {
                 return self.selected_arm_for_scope(scope);
             }
-            let mut row_idx = 0usize;
-            while row_idx < route_rows.len() {
-                if let Some(row) = route_rows.get(&self.progress.cursor, row_idx)
-                    && row.scope() == scope
-                {
-                    return Some(row.selected_arm());
-                }
-                row_idx += 1;
+            if let Some(arm) = route_rows.arm_for_scope(&self.progress.cursor, scope) {
+                return Some(arm);
             }
             if scope == meta.route_scope {
                 meta.selected_route_arm
@@ -85,14 +79,8 @@ where
             .progress
             .cursor
             .send_reentry_cursor_step(meta, |scope| {
-                let mut row_idx = 0usize;
-                while row_idx < route_rows.len() {
-                    if let Some(row) = route_rows.get(&self.progress.cursor, row_idx)
-                        && row.scope() == scope
-                    {
-                        return Some(row.selected_arm());
-                    }
-                    row_idx += 1;
+                if let Some(arm) = route_rows.arm_for_scope(&self.progress.cursor, scope) {
+                    return Some(arm);
                 }
                 if scope == current_route_scope {
                     return current_route_arm;

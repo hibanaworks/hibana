@@ -1,8 +1,6 @@
 use crate::{
     eff::{EffIndex, EventOrigin},
-    endpoint::kernel::decision_state::{
-        RouteOnlyCommitRowsRef, SelectedRouteCommitRow, SelectedRouteCommitRowsRef,
-    },
+    endpoint::kernel::decision_state::{RouteOnlyCommitRowsRef, SelectedRouteCommitRowsRef},
     global::{
         const_dsl::ScopeId,
         typestate::{RecvMeta, RelocatableResidentLaneStep, SendMeta, StateIndex},
@@ -147,16 +145,6 @@ impl CommitDelta {
     }
 
     #[inline(always)]
-    pub(crate) const fn cursor_only(cursor_after: StateIndex) -> Self {
-        Self {
-            event: None,
-            selected_routes: SelectedRouteCommitRowsRef::EMPTY,
-            lane_relocation: None,
-            cursor_after,
-        }
-    }
-
-    #[inline(always)]
     pub(crate) const fn with_lane_relocation(
         mut self,
         step: Option<RelocatableResidentLaneStep>,
@@ -171,14 +159,7 @@ impl CommitDelta {
     }
 
     #[inline(always)]
-    pub(crate) const fn selected_routes(&self) -> SelectedRouteCommitSet {
-        SelectedRouteCommitSet::new(self.selected_routes)
-    }
-
-    #[inline(always)]
-    pub(in crate::endpoint::kernel) const fn selected_route_rows_ref(
-        &self,
-    ) -> SelectedRouteCommitRowsRef {
+    pub(crate) const fn selected_routes(&self) -> SelectedRouteCommitRowsRef {
         self.selected_routes
     }
 
@@ -195,37 +176,6 @@ impl CommitDelta {
     #[inline(always)]
     pub(crate) const fn cursor_after(&self) -> StateIndex {
         self.cursor_after
-    }
-}
-
-#[derive(Clone, Copy)]
-pub(crate) struct SelectedRouteCommitSet {
-    rows: SelectedRouteCommitRowsRef,
-}
-
-impl SelectedRouteCommitSet {
-    #[inline(always)]
-    const fn new(rows: SelectedRouteCommitRowsRef) -> Self {
-        Self { rows }
-    }
-
-    #[inline(always)]
-    pub(crate) const fn is_empty(self) -> bool {
-        self.rows.len() == 0
-    }
-
-    #[inline(always)]
-    pub(crate) const fn len(self) -> usize {
-        self.rows.len()
-    }
-
-    #[inline(always)]
-    pub(crate) fn get(
-        self,
-        cursor: &crate::global::typestate::EventCursor,
-        idx: usize,
-    ) -> Option<SelectedRouteCommitRow> {
-        self.rows.get(cursor, idx)
     }
 }
 

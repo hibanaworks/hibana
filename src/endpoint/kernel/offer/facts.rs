@@ -17,10 +17,9 @@ where
         frontier_visited: &mut FrontierVisitSet,
     ) -> OfferFrontierFacts {
         let scope_id = selection.scope_id;
-        frontier_visited.record(self.progress.cursor.index());
-        let entry = selection.entry_position;
+        frontier_visited.record(selection.entry_index.as_usize());
         let profile = self.offer_scope_profile(scope_id);
-        let evidence = self.offer_ingress_evidence(selection, entry, profile);
+        let evidence = self.offer_ingress_evidence(selection, profile);
 
         OfferFrontierFacts {
             selection,

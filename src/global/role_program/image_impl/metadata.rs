@@ -12,6 +12,7 @@ mod passive_parent;
 pub(super) use passive_parent::passive_parent_rows_are_coherent;
 
 mod route_index;
+#[cfg(all(test, hibana_repo_tests))]
 pub(super) use route_index::route_scopes_are_sorted;
 pub(super) use route_index::{route_index_is_coherent, route_slot};
 

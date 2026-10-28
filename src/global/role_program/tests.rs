@@ -146,8 +146,6 @@ fn inactive_role_keeps_only_its_session_lane_and_no_frontier_reserve() {
     assert_eq!(image.first_active_lane(), None);
     assert_eq!(image.active_lane_row().start(), 0);
     assert_eq!(image.active_lane_row().len(), 0);
-    assert_eq!(footprint.frontier_entry_count(), 0);
-    assert_eq!(layout.frontier_root_active_slots().count(), 0);
     assert_eq!(layout.frontier_visited_position_bits().count(), 0);
 }
 
@@ -170,7 +168,7 @@ fn route_frontier_visit_capacity_covers_the_exact_cursor_position_domain() {
     let layout = RoleDescriptorRef::from_resident(image).endpoint_arena_layout();
 
     assert!(footprint.route_scope_count > 0);
-    assert!(footprint.local_step_count > footprint.frontier_entry_count() + 1);
+    assert!(footprint.local_step_count > footprint.active_lane_count + 1);
     assert_eq!(
         footprint.frontier_visit_position_count(),
         footprint.local_step_count + 1
@@ -380,7 +378,8 @@ fn simple_controller_route_arm_event_rows_are_exact() {
     assert_eq!(left_commit.len(), 1);
     assert_eq!(right_commit.len(), 1);
     assert_eq!(
-        events
+        role0
+            .role_image_ref()
             .route_commit_row_at(left_commit.start())
             .to_conflict(),
         Some(LocalConflict::RouteArm {
@@ -389,7 +388,8 @@ fn simple_controller_route_arm_event_rows_are_exact() {
         })
     );
     assert_eq!(
-        events
+        role0
+            .role_image_ref()
             .route_commit_row_at(right_commit.start())
             .to_conflict(),
         Some(LocalConflict::RouteArm {
@@ -427,18 +427,6 @@ fn logical_lane_count_stays_inside_wire_lane_domain() {
     assert_eq!(logical_lane_count_for_role(254, 255), 255);
     assert_eq!(logical_lane_count_for_role(255, 256), LANE_DOMAIN_SIZE);
     assert_eq!(logical_lane_count_for_role(256, 256), LANE_DOMAIN_SIZE);
-}
-
-#[test]
-#[should_panic]
-fn lane_set_mutation_rejects_a_lane_outside_its_exact_span() {
-    let mut words = [0u32; 1];
-    let mut set = core::mem::MaybeUninit::<LaneSet>::uninit();
-    unsafe {
-        LaneSet::init_from_parts(set.as_mut_ptr(), words.as_mut_ptr(), words.len());
-    }
-    let mut set = unsafe { set.assume_init() };
-    set.insert(LaneWord::BITS as usize);
 }
 
 #[test]

@@ -797,3 +797,89 @@ fn forgotten_route_recv_future_leaves_endpoint_fail_closed() {
         });
     });
 }
+
+#[test]
+fn nested_same_lane_receive_choices_keep_their_exact_branch_admission() {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .start_paused(true)
+        .build()
+        .unwrap()
+        .block_on(async {
+            for choice in 0..3u8 {
+                for receiver_first in [false, true] {
+                    type A = Msg<210, ()>;
+                    type B = Msg<211, ()>;
+                    type C = Msg<212, ()>;
+                    let global = g::route(
+                        g::send::<0, 1, A>(),
+                        g::route(g::send::<0, 1, B>(), g::send::<0, 1, C>()),
+                    );
+                    let p0 = project::<0>(&global);
+                    let p1 = project::<1>(&global);
+                    let network = TestTransport::new();
+                    let [mut slab0, mut slab1] = [[0; 32 * 1024]; 2];
+                    let mut storage0 = SessionKitStorage::uninit();
+                    let mut storage1 = SessionKitStorage::uninit();
+                    let rv0 = storage0
+                        .init()
+                        .rendezvous(&mut slab0, network.clone())
+                        .unwrap();
+                    let rv1 = storage1
+                        .init()
+                        .rendezvous(&mut slab1, network.clone())
+                        .unwrap();
+                    let sid = SessionId::new(9490);
+                    let mut sender = rv0.enter(sid, &p0).unwrap();
+                    let mut receiver = rv1.enter(sid, &p1).unwrap();
+                    tokio::time::timeout(core::time::Duration::from_secs(1), async {
+                        let send = async {
+                            match choice {
+                                0 => sender.send::<A>(&()).await.unwrap(),
+                                1 => sender.send::<B>(&()).await.unwrap(),
+                                2 => sender.send::<C>(&()).await.unwrap(),
+                                _ => unreachable!(),
+                            }
+                            let header = network.queued_frame(1).0.bytes();
+                            assert_eq!(&header[4..7], &[0, 0, 1]);
+                            assert_eq!(
+                                u16::from_be_bytes([header[7], header[8]]),
+                                u16::from(choice)
+                            );
+                        };
+                        let receive = async {
+                            let branch = receiver.offer().await.unwrap();
+                            assert_eq!(
+                                branch.label(),
+                                210 + choice,
+                                "choice={choice} receiver_first={receiver_first}"
+                            );
+                            drop(branch);
+                            let branch = receiver.offer().await.unwrap();
+                            assert_eq!(
+                                branch.label(),
+                                210 + choice,
+                                "repeated preview choice={choice} receiver_first={receiver_first}"
+                            );
+                            match choice {
+                                0 => branch.recv::<A>().await.unwrap(),
+                                1 => branch.recv::<B>().await.unwrap(),
+                                2 => branch.recv::<C>().await.unwrap(),
+                                _ => unreachable!(),
+                            }
+                        };
+                        if receiver_first {
+                            tokio::join!(biased; receive, send);
+                        } else {
+                            tokio::join!(biased; send, receive);
+                        }
+                    })
+                    .await
+                    .unwrap_or_else(|error| {
+                        panic!("choice={choice} receiver_first={receiver_first}: {error:?}")
+                    });
+                    assert!(network.queue_is_empty());
+                }
+            }
+        });
+}

@@ -156,16 +156,6 @@ impl RoleDescriptorRef {
     }
 
     #[inline(always)]
-    pub(crate) fn frontier_scratch_layout(&self) -> crate::endpoint::kernel::FrontierScratchLayout {
-        crate::endpoint::kernel::FrontierScratchLayout::new(self.max_frontier_entries())
-    }
-
-    #[inline(always)]
-    pub(crate) fn max_frontier_entries(&self) -> usize {
-        self.footprint().frontier_entry_count()
-    }
-
-    #[inline(always)]
     pub(crate) fn max_route_commit_count(&self) -> usize {
         self.footprint().max_route_commit_count
     }

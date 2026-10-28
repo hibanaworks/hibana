@@ -29,6 +29,10 @@ const fn valid_reference(reference: u16, decisions: usize, max_role: u8) -> bool
     }
 }
 
+const fn source_order_word(bytes: &[u8], offset: usize) -> u16 {
+    u16::from_le_bytes([bytes[offset], bytes[offset + 1]])
+}
+
 impl CompiledProgramRef {
     #[inline(always)]
     pub(crate) const fn has_actor_bindings(&self) -> bool {
@@ -118,6 +122,34 @@ impl CompiledProgramRef {
             || (first <= right && right < split && split <= left && left < end)
     }
 
+    /// The binary source scope separating two ordered effects, when it is a
+    /// route. A parallel split and sequential terms do not create alternatives.
+    pub(crate) const fn source_separating_route(
+        &self,
+        before: usize,
+        after: usize,
+    ) -> Option<(ScopeId, usize)> {
+        if before >= after || after >= self.columns.atom_count() || self.source_scopes == 0 {
+            return None;
+        }
+        let bytes = self.source_order.as_slice();
+        let mut scope = source_order_word(bytes, self.source_scopes as usize * 9 + before * 2);
+        while scope != u16::MAX {
+            let row = scope as usize * 9;
+            let split = source_order_word(bytes, row + 2) as usize;
+            let end = source_order_word(bytes, row + 4) as usize;
+            if before < split && split <= after && after < end {
+                return if bytes[row + 8] == ScopeKind::Route as u8 {
+                    Some((ScopeId::route(scope), split))
+                } else {
+                    None
+                };
+            }
+            scope = source_order_word(bytes, row + 6);
+        }
+        None
+    }
+
     pub(crate) const fn source_route_visible_from_range(
         &self,
         scope: ScopeId,
@@ -140,6 +172,24 @@ impl CompiledProgramRef {
             return None;
         }
         self.source_scope_bounds(scope)
+    }
+
+    #[inline]
+    pub(crate) const fn source_route_arm_for_event(
+        &self,
+        scope: ScopeId,
+        event: usize,
+    ) -> Option<u8> {
+        let Some((first, split, finish)) = self.source_route_bounds(scope) else {
+            return None;
+        };
+        if first <= event && event < split {
+            Some(0)
+        } else if split <= event && event < finish {
+            Some(1)
+        } else {
+            None
+        }
     }
 
     /// Arm of an enclosing route containing a complete descendant route.
@@ -177,13 +227,14 @@ impl CompiledProgramRef {
             _ => return None,
         };
         let row = slot * 9;
-        if self.source_order.byte_at(row + 8) != kind {
+        let bytes = self.source_order.as_slice();
+        if bytes[row + 8] != kind {
             return None;
         }
         Some((
-            self.source_order_u16(row) as usize,
-            self.source_order_u16(row + 2) as usize,
-            self.source_order_u16(row + 4) as usize,
+            source_order_word(bytes, row) as usize,
+            source_order_word(bytes, row + 2) as usize,
+            source_order_word(bytes, row + 4) as usize,
         ))
     }
 
@@ -302,7 +353,7 @@ impl CompiledProgramRef {
     }
 
     #[cfg(any(kani, all(test, hibana_repo_tests)))]
-    pub(super) const fn source_precedes_scan(&self, before: usize, after: usize) -> bool {
+    pub(crate) const fn source_precedes_scan(&self, before: usize, after: usize) -> bool {
         if before >= after || after >= self.columns.atom_count() {
             return false;
         }

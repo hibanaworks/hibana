@@ -1,5 +1,5 @@
 use super::{
-    CommitDelta, CursorInvariantError, OperationKernel, ScopeId, SelectedRouteCommitRow,
+    CommitDelta, CursorInvariantError, OperationKernel, SelectedRouteCommitRow,
     SelectedRouteCommitRowsRef, Transport, state_index_to_usize,
 };
 
@@ -18,28 +18,12 @@ where
         if delta.selected_route_lane().is_none() {
             return Err(CursorInvariantError::INVARIANT);
         }
-        let route_rows = delta.selected_route_rows_ref();
+        let route_rows = delta.selected_routes();
         let cursor_after = state_index_to_usize(delta.cursor_after());
         (cursor_after == self.progress.cursor.index()
             || self.route_only_cursor_after_is_materialization_target(route_rows, cursor_after))
         .then_some(())
         .ok_or(CursorInvariantError::INVARIANT)
-    }
-
-    fn route_only_rows_arm_for_scope(
-        &self,
-        routes: SelectedRouteCommitRowsRef,
-        scope: ScopeId,
-    ) -> Option<u8> {
-        let mut idx = 0usize;
-        while idx < routes.len() {
-            let row = routes.get(&self.progress.cursor, idx)?;
-            if row.scope() == scope {
-                return Some(row.selected_arm());
-            }
-            idx += 1;
-        }
-        None
     }
 
     #[inline(never)]
@@ -79,12 +63,12 @@ where
                 scope,
                 nested_scope,
                 arm,
-                |candidate| match self.route_only_rows_arm_for_scope(routes, candidate) {
+                |candidate| match routes.arm_for_scope(&self.progress.cursor, candidate) {
                     Some(prepared) => Some(prepared),
                     None => self.selected_arm_for_scope(candidate),
                 },
                 |candidate, selected| {
-                    self.route_only_rows_arm_for_scope(routes, candidate) == Some(selected)
+                    routes.arm_for_scope(&self.progress.cursor, candidate) == Some(selected)
                         || self.selected_arm_for_scope(candidate) == Some(selected)
                 },
             )

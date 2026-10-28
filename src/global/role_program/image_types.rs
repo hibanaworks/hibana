@@ -8,13 +8,17 @@ pub(crate) const ROLE_IMAGE_CONFLICT_STRIDE: usize = 2;
 pub(crate) const ROLE_IMAGE_U16_STRIDE: usize = 2;
 pub(crate) const ROLE_IMAGE_ROUTE_SCOPE_STRIDE: usize = 2;
 pub(crate) const ROLE_IMAGE_ROUTE_ARM_STRIDE: usize = 8;
+/// Both packed arm rows of each local route fit inside the u16 byte span.
+/// Scope identifiers remain in the global domain; only local slots use this bound.
+pub(crate) const ROLE_IMAGE_ROUTE_SCOPE_CAPACITY: usize =
+    u16::MAX as usize / (2 * ROLE_IMAGE_ROUTE_ARM_STRIDE);
 pub(crate) const ROLE_IMAGE_LANE_RANGE_STRIDE: usize = 4;
 pub(crate) const ROLE_IMAGE_ROUTE_ARM_LANE_STEP_STRIDE: usize = 5;
 pub(crate) const ROLE_IMAGE_ROLL_SCOPE_STRIDE: usize = 6;
 pub(crate) const ROLE_IMAGE_ROLL_ENTRY_STRIDE: usize = 7;
 pub(crate) const ROLE_IMAGE_STORAGE_BYTE_CAPACITY: usize = u16::MAX as usize
     + ScopeId::LOCAL_CAPACITY as usize * (ROLE_IMAGE_U16_STRIDE + 8)
-    + (u16::MAX as usize / ROLE_IMAGE_EVENT_STRIDE) * 6;
+    + (u16::MAX as usize / ROLE_IMAGE_EVENT_STRIDE) * 12;
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct PackedLaneRange(u32);
@@ -434,7 +438,30 @@ pub(crate) struct RoleImageColumns {
 impl RoleImageColumns {
     #[inline(always)]
     pub(crate) const fn blob_len(&self) -> usize {
-        self.lane_successors().end
+        self.offer_alternative_outer().end
+    }
+
+    pub(crate) const fn offer_alternative_heads(&self) -> core::ops::Range<usize> {
+        let start = self.lane_successors().end;
+        start..start + self.offer_alternative_byte_len()
+    }
+
+    pub(crate) const fn offer_alternative_scopes(&self) -> core::ops::Range<usize> {
+        let start = self.offer_alternative_heads().end;
+        start..start + self.offer_alternative_byte_len()
+    }
+
+    pub(crate) const fn offer_alternative_outer(&self) -> core::ops::Range<usize> {
+        let start = self.offer_alternative_scopes().end;
+        start..start + self.offer_alternative_byte_len()
+    }
+
+    const fn offer_alternative_byte_len(&self) -> usize {
+        if self.route_scopes.len == 0 {
+            0
+        } else {
+            self.events.len as usize * 2
+        }
     }
 
     pub(crate) const fn lane_successors(&self) -> core::ops::Range<usize> {
@@ -636,11 +663,6 @@ impl RuntimeRoleFootprint {
     #[inline(always)]
     pub(crate) const fn scope_evidence_count(self) -> usize {
         self.route_scope_count
-    }
-
-    #[inline(always)]
-    pub(crate) const fn frontier_entry_count(self) -> usize {
-        self.active_lane_count
     }
 
     #[inline(always)]

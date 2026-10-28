@@ -3,6 +3,174 @@ use crate::global::role_program::PackedLaneRange;
 use core::mem::MaybeUninit;
 
 #[test]
+fn rooted_route_chain_prefixes_match_independent_membership_and_merging() {
+    use crate::{
+        Endpoint,
+        g::{self, Msg},
+        global::{
+            compiled::images::RoleDescriptorRef, role_program::RoleImageRef,
+            typestate::EventCursorState,
+        },
+        runtime::program::project,
+    };
+
+    fn compare(image: &'static RoleImageRef) {
+        let mut chains = std::vec![SelectedRouteCommitRowsRef::EMPTY];
+        for slot in 0..image.footprint().route_scope_count {
+            for arm in 0..2 {
+                chains.push(SelectedRouteCommitRowsRef::from_resident_range_for_lane(
+                    image.route_commit_range_by_slot(slot, arm),
+                    0,
+                ));
+            }
+        }
+        let members = |chain: SelectedRouteCommitRowsRef| {
+            (0..chain.len())
+                .map(|index| {
+                    match image
+                        .route_commit_row_at(chain.range().start() + index)
+                        .to_conflict()
+                        .unwrap()
+                    {
+                        LocalConflict::RouteArm { scope, arm } => (scope, arm),
+                        LocalConflict::Unconditional | LocalConflict::SharedRoute => {
+                            panic!("a sealed chain contains only route decisions")
+                        }
+                    }
+                })
+                .collect::<std::vec::Vec<_>>()
+        };
+        let mut state = MaybeUninit::<EventCursorState>::uninit();
+        let mut cursor = MaybeUninit::<EventCursor>::uninit();
+        let mut heads = [0u16; 256];
+        let mut labels = [0u16; 256];
+        let mut completed = std::vec![0u32; image.footprint().completion_bit_count().div_ceil(32)];
+        // SAFETY: the static image and disjoint, stationary backing columns
+        // outlive the cursor. No cursor or backing pointer escapes this test.
+        let cursor = unsafe {
+            EventCursor::init_from_compiled(
+                cursor.as_mut_ptr(),
+                state.as_mut_ptr(),
+                heads.as_mut_ptr(),
+                labels.as_mut_ptr(),
+                completed.as_mut_ptr(),
+                RoleDescriptorRef::from_resident(image),
+            );
+            cursor.assume_init_mut()
+        };
+        let pool_end = chains
+            .iter()
+            .filter(|chain| !chain.is_empty())
+            .map(|chain| chain.range().end())
+            .max()
+            .unwrap_or(0);
+        for start in 0..pool_end {
+            for end in start + 1..=pool_end {
+                let range = PackedLaneRange::new(start, end - start);
+                let candidate = SelectedRouteCommitRowsRef::from_resident_range_for_lane(range, 0);
+                let registered = chains
+                    .iter()
+                    .any(|chain| !chain.is_empty() && chain.range().raw() == range.raw());
+                assert_eq!(candidate.is_complete_chain(cursor), registered);
+                if registered {
+                    let entries = members(candidate);
+                    for (index, (scope, _)) in entries.iter().enumerate() {
+                        assert!(entries[..index].iter().all(|(prior, _)| prior != scope));
+                    }
+                }
+                for &chain in &chains {
+                    assert_eq!(
+                        candidate.matches_range(chain.range()),
+                        registered && candidate.range().raw() == chain.range().raw()
+                    );
+                }
+            }
+        }
+        for &left in &chains {
+            let left_members = members(left);
+            for length in 0..=left.len() {
+                let prefix = SelectedRouteCommitRowsRef::from_resident_range_for_lane(
+                    PackedLaneRange::new(left.range().start(), length),
+                    0,
+                );
+                for scope in (0..image.footprint().route_scope_count)
+                    .map(|slot| image.route_scope_by_slot(slot).unwrap())
+                    .chain([
+                        ScopeId::none(),
+                        ScopeId::route(ScopeId::MAX_LOCAL_ORDINAL),
+                        ScopeId::roll_scope(0),
+                        ScopeId::parallel(0),
+                    ])
+                {
+                    let expected = left_members[..length]
+                        .iter()
+                        .find_map(|&(candidate, arm)| (candidate == scope).then_some(arm));
+                    assert_eq!(prefix.arm_for_scope(cursor, scope), expected);
+                }
+            }
+            for &right in &chains {
+                let right_members = members(right);
+                let left_contains = right_members.iter().all(|row| left_members.contains(row));
+                let right_contains = left_members.iter().all(|row| right_members.contains(row));
+                assert_eq!(left.starts_with(cursor, right), left_contains);
+                if right.is_empty() {
+                    continue;
+                }
+                let &(scope, arm) = right_members.last().unwrap();
+                let mut selected = SelectedRouteCommitRows {
+                    routes: left,
+                    max_len: image.footprint().max_route_commit_count as u16,
+                };
+                let result =
+                    selected.merge_chain(cursor, 0, PackedEventConflict::route_arm(scope, arm));
+                assert_eq!(result.is_ok(), left_contains || right_contains);
+                if result.is_ok() {
+                    let expected = if left_contains {
+                        &left_members
+                    } else {
+                        &right_members
+                    };
+                    assert_eq!(&members(selected.routes), expected);
+                } else {
+                    assert_eq!(members(selected.routes), left_members);
+                }
+            }
+        }
+    }
+
+    let parallel = g::par(
+        g::route(
+            g::route(g::send::<0, 1, Msg<1, ()>>(), g::send::<0, 1, Msg<2, ()>>()),
+            g::send::<0, 1, Msg<3, ()>>(),
+        )
+        .roll(),
+        g::route(g::send::<0, 1, Msg<4, ()>>(), g::send::<0, 1, Msg<5, ()>>()),
+    );
+    compare(project::<0>(&parallel).role_image_ref());
+    compare(project::<1>(&parallel).role_image_ref());
+
+    type Loan<'r> = Msg<6, Endpoint<'r, 2>>;
+    let delegated = g::seq(
+        g::send::<0, 1, Loan<'_>>(),
+        g::seq(
+            g::route(
+                g::seq(g::send::<2, 3, Msg<7, ()>>(), g::send::<3, 2, Msg<8, ()>>()),
+                g::seq(
+                    g::send::<2, 3, Msg<9, ()>>(),
+                    g::send::<3, 2, Msg<10, ()>>(),
+                ),
+            ),
+            g::send::<1, 0, Loan<'_>>(),
+        ),
+    )
+    .roll();
+    compare(project::<0>(&delegated).role_image_ref());
+    compare(project::<1>(&delegated).role_image_ref());
+    compare(project::<2>(&delegated).role_image_ref());
+    compare(project::<3>(&delegated).role_image_ref());
+}
+
+#[test]
 fn existing_route_reselection_preserves_exact_reference_count() {
     let mut sole = RouteScopeSelectedArmSlot { arm: 0, refs: 1 };
     sole.commit_existing_lane_reselection(0, 1);
@@ -24,7 +192,7 @@ fn route_commit_row_set_builder_accepts_more_than_64_route_scopes() {
     let mut builder = unsafe { builder.assume_init() };
     let list = builder.begin();
 
-    assert_eq!(list.len(), 0);
+    assert_eq!(list.routes.len(), 0);
 }
 
 #[test]
@@ -42,7 +210,7 @@ fn prepared_route_commit_rows_use_builder_capacity_not_fixed_inline_cap() {
 
     assert_eq!(value.len(), 9);
     assert_eq!(value.selected_lane(), Some(3));
-    assert_eq!(builder.begin().len(), 0);
+    assert_eq!(builder.begin().routes.len(), 0);
 }
 
 #[test]
@@ -186,5 +354,5 @@ fn decode_commit_row_set_builder_accepts_more_than_64_route_scopes() {
     let mut builder = unsafe { builder.assume_init() };
     let list = builder.begin();
 
-    assert_eq!(list.len(), 0);
+    assert_eq!(list.routes.len(), 0);
 }

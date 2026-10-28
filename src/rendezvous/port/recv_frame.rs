@@ -610,6 +610,24 @@ const fn source_label(source_role: u8, label: u16) -> u32 {
 }
 
 impl<'r> ReceivedFrame<'r> {
+    #[inline]
+    pub(crate) const fn lane_idx(&self) -> usize {
+        self.core.lane_idx()
+    }
+
+    /// Restore an accepted but unconsumed frame after a callback invalidates
+    /// its event intent, using the same port/receipt checks as preamble requeue.
+    #[inline]
+    pub(crate) fn requeue_on<T>(
+        self,
+        port: &Port<'r, T>,
+    ) -> Result<(), crate::transport::TransportError>
+    where
+        T: Transport + 'r,
+    {
+        self.core.requeue_on(port)
+    }
+
     #[inline(always)]
     pub(crate) fn from_descriptor_checked_payload<T>(
         port: &Port<'r, T>,

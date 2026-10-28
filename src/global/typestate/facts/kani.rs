@@ -76,7 +76,7 @@ fn state_index_preserves_the_exact_present_identity_domain() {
 
     let state = StateIndex::new(raw);
 
-    assert_eq!(state.raw(), raw);
+    assert_eq!(state.as_usize(), usize::from(raw));
     assert!(!state.is_absent());
 }
 

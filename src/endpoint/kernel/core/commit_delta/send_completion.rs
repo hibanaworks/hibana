@@ -101,12 +101,14 @@ fn observe_admission(boundary: ResultClass, admission: ResultClass) -> Observati
         proof: SendCommitProof {
             transfer: None,
             progress: SendProgressCommitPlan {
-                delta: PreparedCommitDelta::from_preflighted(
-                    CommitDelta::cursor_only(StateIndex::new(0)),
-                    PreparedRouteCommitRows::empty(),
-                    None,
-                    None,
-                ),
+                delta: PreparedCommitDelta {
+                    event: None,
+                    selected_routes: PreparedRouteCommitRows::empty(),
+                    fresh_route_start: PreparedCommitDelta::NO_FRESH_ROUTE,
+                    lane_relocation: None,
+                    cursor_after: StateIndex::new(0),
+                    body_reentry: ScopeId::none(),
+                },
                 route_audit: SendRouteAudit::None,
             },
             _borrow: core::marker::PhantomData,

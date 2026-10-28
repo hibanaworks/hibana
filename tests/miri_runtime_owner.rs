@@ -522,7 +522,9 @@ fn failed_resolver_growth_preserves_existing_registration_and_dispatch() {
     let first = wide_roll_shared_site_program::<0>();
     let second = narrow_roll_shared_site_program::<0>();
 
-    let first_owner_fits = |slab_bytes: usize| {
+    // Establish encoding capacity before testing resolver rollback. Attaching
+    // the resident state alone does not guarantee payload workspace.
+    let first_dispatch_fits = |slab_bytes: usize| {
         let mut slab = AlignedSlab([0; 65_536]);
         let mut storage = SessionKitStorage::<NoopTransport>::uninit();
         let kit = storage.init();
@@ -538,18 +540,21 @@ fn failed_resolver_growth_preserves_existing_registration_and_dispatch() {
         {
             return false;
         }
-        rv.enter(SessionId::new(33), &first).is_ok()
+        let Ok(mut endpoint) = rv.enter(SessionId::new(33), &first) else {
+            return false;
+        };
+        futures::executor::block_on(endpoint.send::<Msg<44, u32>>(&44)).is_ok()
     };
 
     let mut first_fitting_bytes = 1usize;
     let mut upper = 8192usize;
     assert!(
-        first_owner_fits(upper),
+        first_dispatch_fits(upper),
         "proof fixture upper bound must fit"
     );
     while first_fitting_bytes < upper {
         let midpoint = first_fitting_bytes + (upper - first_fitting_bytes) / 2;
-        if first_owner_fits(midpoint) {
+        if first_dispatch_fits(midpoint) {
             upper = midpoint;
         } else {
             first_fitting_bytes = midpoint + 1;

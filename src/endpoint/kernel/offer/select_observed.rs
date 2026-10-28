@@ -1,7 +1,4 @@
-use super::{
-    ObservedIngressSelection, OfferScopeSelection, OperationKernel, RecvError, RecvResult,
-    Transport, state_index_to_usize,
-};
+use super::{ObservedIngressSelection, OperationKernel, RecvError, RecvResult, Transport};
 use crate::{
     endpoint::kernel::frontier::checked_state_index,
     global::typestate::{EventAdmissionError, EventArmView, InboundFrameKey},
@@ -16,6 +13,7 @@ where
     /// Only a projected first-visible branch receive can select an offer.
     /// Ordinary input stays available to recv; future input waits for its
     /// projected predecessor. Both share recv's identity and progress checks.
+    #[inline(never)]
     pub(in crate::endpoint::kernel::offer) fn select_observed_ingress(
         &mut self,
         carried_key: Option<InboundFrameKey>,
@@ -24,7 +22,6 @@ where
         let Some(key) = carried_key else {
             return Ok(None);
         };
-        let current_idx = self.progress.cursor.index();
         let mut matched = UniqueMatch::NONE;
         let mut admission_pending = false;
         for idx in self
@@ -146,10 +143,6 @@ where
             );
             return Err(RecvError::PhaseInvariant);
         }
-        if target_idx != current_idx {
-            self.commit_cursor_realign_index(target_idx)
-                .map_err(|_| RecvError::PhaseInvariant)?;
-        }
         let mut selection = self.offer_scope_selection_for_scope_lane_with_selected_arm(
             scope_id,
             target_idx,
@@ -216,31 +209,5 @@ where
             .progress
             .cursor
             .reentrant_route_arm_event_row_done(scope, current, &mut committed)
-    }
-
-    pub(in crate::endpoint::kernel::offer) fn select_carried_ingress_scope(
-        &mut self,
-        carried_lane: Option<u8>,
-    ) -> RecvResult<Option<OfferScopeSelection>> {
-        let Some(lane_idx) = carried_lane.map(usize::from) else {
-            return Ok(None);
-        };
-        if lane_idx >= self.progress.cursor.logical_lane_count() {
-            return Err(RecvError::PhaseInvariant);
-        }
-        let info = self.progress.decision_state.lane_offer_state(lane_idx);
-        if info.scope.is_none() {
-            return Ok(None);
-        }
-        if !info.entry.is_absent()
-            && state_index_to_usize(info.entry) != self.progress.cursor.index()
-        {
-            self.commit_cursor_realign_index(state_index_to_usize(info.entry))
-                .map_err(|_| RecvError::PhaseInvariant)?;
-        }
-        let scope_id = info.scope;
-        let current_idx = self.progress.cursor.index();
-        self.offer_scope_selection_for_scope_lane(scope_id, current_idx, lane_idx as u8)
-            .map(Some)
     }
 }

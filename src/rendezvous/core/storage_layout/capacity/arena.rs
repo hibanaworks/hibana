@@ -217,10 +217,7 @@ where
             }
         }
 
-        let reserved_end = crate::invariant_some(
-            frontier.checked_add(self.frontier_workspace_bytes.get() as usize),
-        );
-        if reserved_end > self.endpoint_storage_floor() {
+        if frontier > self.endpoint_storage_floor() {
             crate::invariant();
         }
         self.set_image_frontier(crate::invariant_ok(u32::try_from(frontier)));

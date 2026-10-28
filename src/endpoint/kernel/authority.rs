@@ -56,6 +56,7 @@ pub(super) enum RouteArmToken {
     Ack(Arm),
     Resolver(Arm),
     Poll(Arm),
+    Committed(Arm),
 }
 
 impl RouteArmToken {
@@ -75,9 +76,14 @@ impl RouteArmToken {
     }
 
     #[inline]
+    pub(super) const fn from_committed(arm: Arm) -> Self {
+        Self::Committed(arm)
+    }
+
+    #[inline]
     pub(super) const fn arm(self) -> Arm {
         match self {
-            Self::Ack(arm) | Self::Resolver(arm) | Self::Poll(arm) => arm,
+            Self::Ack(arm) | Self::Resolver(arm) | Self::Poll(arm) | Self::Committed(arm) => arm,
         }
     }
 
@@ -97,11 +103,18 @@ impl RouteArmToken {
     }
 
     #[inline]
+    pub(super) const fn is_committed(self) -> bool {
+        matches!(self, Self::Committed(_))
+    }
+
+    #[inline]
     pub(super) const fn as_tap_seq(self) -> u8 {
         match self {
             Self::Ack(_) => 1,
             Self::Resolver(_) => 2,
             Self::Poll(_) => 3,
+            // A retained choice is no new resolver or transport observation.
+            Self::Committed(_) => crate::invariant(),
         }
     }
 }
@@ -126,6 +139,10 @@ mod tests {
         assert!(RouteArmToken::from_ack(left).is_ack());
         assert!(RouteArmToken::from_resolver(left).is_resolver());
         assert!(RouteArmToken::from_poll(left).is_poll());
+        let committed = RouteArmToken::from_committed(left);
+        assert_eq!(committed.arm(), left);
+        assert!(committed.is_committed());
+        assert!(!committed.is_ack() && !committed.is_resolver() && !committed.is_poll());
     }
 
     #[test]

@@ -12,7 +12,7 @@ pub(crate) use self::facts::LocalAction;
 pub(crate) use self::facts::StateIndex;
 pub(crate) use self::{
     cursor::{
-        CursorInvariantError, CursorRefresh, EnabledEventCommit, EventAdmissionError, EventArmView,
+        CursorInvariantError, EnabledEventCommit, EventAdmissionError, EventArmView, EventBlocker,
         EventCursor, EventCursorState, RelocatableResidentLaneStep, SendPreviewError,
     },
     facts::{

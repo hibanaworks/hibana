@@ -1,4 +1,5 @@
 use super::{OperationKernel, PublicActiveOp, SendError, SendResult, Transport};
+use crate::global::event_program::LocalEventRow;
 use crate::{
     endpoint::carrier::OperationRegion,
     global::typestate::{EventArmView, EventCommitMeta},
@@ -41,6 +42,20 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
         self.progress.cursor.event_enabled(index, event, arms)
     }
 
+    pub(crate) fn event_eligibility(
+        &self,
+        row: LocalEventRow,
+        arms: &mut dyn FnMut(crate::global::const_dsl::ScopeId, EventArmView) -> Option<u8>,
+    ) -> Result<crate::global::typestate::EnabledEventCommit, crate::global::typestate::EventBlocker>
+    {
+        let body_reentry = self
+            .borrowed_reentry_scope(row.index())
+            .unwrap_or_else(crate::global::const_dsl::ScopeId::none);
+        self.progress
+            .cursor
+            .event_eligibility(row, body_reentry, arms)
+    }
+
     pub(crate) fn has_other_active_operations(&self) -> bool {
         // This admission check runs before a fresh borrow starts, rather than
         // in the transport poll loop. Forgotten children cannot be overwritten
@@ -80,9 +95,27 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
         })
     }
 
-    pub(in crate::endpoint::kernel) fn enabled_view_event(&self, index: usize) -> Option<usize> {
-        let (source, admission) = self.view_event_admission(index, &mut self.preview_queries())?;
-        admission.is_ok().then_some(source)
+    pub(in crate::endpoint::kernel) fn view_event_is_enabled(
+        &self,
+        index: usize,
+        previews: &mut dyn FnMut(crate::global::const_dsl::ScopeId) -> Option<u8>,
+    ) -> bool {
+        let Some(row) = self.progress.cursor.event_row_at(index) else {
+            return false;
+        };
+        if row.logical_role() != self.public_header.role()
+            || !self.region.contains(row.effect().dense_ordinal())
+        {
+            return false;
+        }
+        let conflict = row.conflict();
+        self.event_eligibility(row, &mut |scope, view| match view {
+            EventArmView::Committed => self.selected_arm_for_scope(scope),
+            EventArmView::Preview => {
+                previews(scope).or_else(|| self.selected_arm_for_recv_event(conflict, scope, view))
+            }
+        })
+        .is_ok()
     }
 
     pub(in crate::endpoint::kernel) fn view_event_admission(

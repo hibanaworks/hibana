@@ -11,10 +11,8 @@ impl EventCursor {
             return None;
         }
         let chain = self.route_commit_range_for_conflict(self.event_conflict_for_index(idx))?;
-        for pos in (0..chain.len()).rev() {
-            let Some(LocalConflict::RouteArm { scope, .. }) =
-                self.route_commit_row_at(chain, pos)?.to_conflict()
-            else {
+        for row in self.route_commit_rows(chain).rev() {
+            let Some(LocalConflict::RouteArm { scope, .. }) = row.to_conflict() else {
                 crate::invariant();
             };
             if self.contains_route_controller(scope) {

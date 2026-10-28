@@ -245,8 +245,7 @@ impl ProductionCursorTrace {
         self.clear_body_reentry_scope(reentry_scope, operation.event_id);
         self.record_event_conflict_selection(operation.event_id);
         self.cursor_mut().set_index(cursor_after);
-        let _ = self
-            .cursor_mut()
+        self.cursor_mut()
             .advance_lane_to_relocatable_step(progress_step);
         self.apply_selected_route_completion_cursor();
     }

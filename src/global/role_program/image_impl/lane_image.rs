@@ -485,28 +485,33 @@ impl<'a> RoleLaneImage<'a> {
         }
     }
 
+    #[cfg(all(test, hibana_repo_tests))]
     pub(crate) const fn passive_arm_child_ordinal_by_slot(
         &self,
         slot: usize,
         arm: u8,
     ) -> Option<u16> {
-        self.passive_arm_child_ordinal_with_certificate(slot, arm, false)
+        let row = self.route_arm_row(route_arm_row_index(slot, arm));
+        self.passive_arm_child_ordinal_from_row(slot, arm, row)
     }
 
-    pub(super) const fn passive_arm_child_ordinal_with_certificate(
+    pub(super) const fn certified_passive_arm_child_ordinal_by_slot(
         &self,
         slot: usize,
         arm: u8,
-        rows_certified: bool,
     ) -> Option<u16> {
-        let row_idx = route_arm_row_index(slot, arm);
+        let row = self.packed_route_arm_row(route_arm_row_index(slot, arm));
+        self.passive_arm_child_ordinal_from_row(slot, arm, row)
+    }
+
+    const fn passive_arm_child_ordinal_from_row(
+        &self,
+        slot: usize,
+        arm: u8,
+        row: PackedRouteArmRow,
+    ) -> Option<u16> {
         let Some(parent_scope) = self.route_scope_by_slot(slot) else {
             invalid_resident_descriptor();
-        };
-        let row = if rows_certified {
-            self.packed_route_arm_row(row_idx)
-        } else {
-            self.route_arm_row(row_idx)
         };
         match row.child_slot() {
             Some(child_slot) => {
@@ -531,6 +536,7 @@ impl<'a> RoleLaneImage<'a> {
         }
     }
 
+    #[cfg(all(test, hibana_repo_tests))]
     #[inline(always)]
     pub(crate) const fn route_arm_event_row_by_slot(
         &self,

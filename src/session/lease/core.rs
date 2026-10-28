@@ -14,7 +14,7 @@
 
 use core::{cell::Cell, ptr::NonNull};
 
-use crate::rendezvous::core::{EndpointLeaseId, EndpointResidentBudget, LaneRelease, Rendezvous};
+use crate::rendezvous::core::{EndpointLeaseId, LaneRelease, Rendezvous};
 use crate::session::types::{Lane, RendezvousId, SessionId};
 use crate::transport::Transport;
 

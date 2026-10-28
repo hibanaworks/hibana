@@ -206,12 +206,6 @@ where
             return Err(err);
         }
 
-        /* SAFETY: endpoint attach owns `dst` until this finalization call.
-        Finish synchronizes initialized lane state before the public endpoint
-        handle can be returned. */
-        unsafe {
-            crate::endpoint::kernel::endpoint_init::finish_init(dst, ROLE);
-        }
         Ok(())
     }
 

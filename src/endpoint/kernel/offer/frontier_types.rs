@@ -1,6 +1,5 @@
 //! Offer frontier observation and materialization metadata.
 
-use super::super::frontier::FrontierKind;
 use super::Arm;
 use super::first_recv_dispatch::FirstRecvDispatchCache;
 use crate::eff::{EffIndex, EventOrigin};
@@ -89,34 +88,6 @@ impl ScopeArmMaterializationMeta {
     }
 }
 
-#[derive(Clone, Copy)]
-pub(in crate::endpoint::kernel) struct CurrentScopeSelectionMeta {
-    pub(in crate::endpoint::kernel) flags: u8,
-}
-
-impl CurrentScopeSelectionMeta {
-    pub(in crate::endpoint::kernel) const FLAG_ROUTE_ENTRY: u8 = 1;
-    pub(in crate::endpoint::kernel) const FLAG_HAS_OFFER_LANES: u8 = 1 << 1;
-    pub(in crate::endpoint::kernel) const FLAG_CONTROLLER: u8 = 1 << 2;
-
-    pub(in crate::endpoint::kernel) const EMPTY: Self = Self { flags: 0 };
-
-    #[inline]
-    pub(in crate::endpoint::kernel) fn is_route_entry(self) -> bool {
-        (self.flags & Self::FLAG_ROUTE_ENTRY) != 0
-    }
-
-    #[inline]
-    pub(in crate::endpoint::kernel) fn has_offer_lanes(self) -> bool {
-        !self.is_route_entry() || (self.flags & Self::FLAG_HAS_OFFER_LANES) != 0
-    }
-
-    #[inline]
-    pub(in crate::endpoint::kernel) fn is_controller(self) -> bool {
-        (self.flags & Self::FLAG_CONTROLLER) != 0
-    }
-}
-
 #[cfg(all(test, hibana_repo_tests))]
 mod tests {
     use super::CachedRecvMeta;
@@ -125,107 +96,5 @@ mod tests {
     fn cached_recv_meta_is_exactly_ten_bytes() {
         assert_eq!(core::mem::size_of::<CachedRecvMeta>(), 10);
         assert_eq!(core::mem::align_of::<CachedRecvMeta>(), 2);
-    }
-}
-
-#[derive(Clone, Copy, Eq, PartialEq)]
-pub(in crate::endpoint::kernel) enum CurrentReentryControllerEvidence {
-    ProgressSatisfiedOrNotController,
-    ProgressEvidenceAbsent,
-}
-
-impl CurrentReentryControllerEvidence {
-    #[inline]
-    pub(in crate::endpoint::kernel) const fn allows_cross_frontier_progress_sibling(self) -> bool {
-        matches!(self, Self::ProgressEvidenceAbsent)
-    }
-}
-
-#[derive(Clone, Copy)]
-pub(in crate::endpoint::kernel) struct CurrentFrontierSelectionState {
-    pub(in crate::endpoint::kernel) frontier: FrontierKind,
-    pub(in crate::endpoint::kernel) parallel_root: ScopeId,
-    pub(in crate::endpoint::kernel) flags: u8,
-}
-
-impl CurrentFrontierSelectionState {
-    pub(in crate::endpoint::kernel) const FLAG_CONTROLLER: u8 = 1;
-    pub(in crate::endpoint::kernel) const FLAG_READY: u8 = 1 << 1;
-    pub(in crate::endpoint::kernel) const FLAG_PROGRESS_EVIDENCE: u8 = 1 << 2;
-
-    #[inline]
-    pub(in crate::endpoint::kernel) fn is_controller(self) -> bool {
-        (self.flags & Self::FLAG_CONTROLLER) != 0
-    }
-
-    #[inline]
-    pub(in crate::endpoint::kernel) const fn ready(self) -> bool {
-        (self.flags & Self::FLAG_READY) != 0
-    }
-
-    #[inline]
-    pub(in crate::endpoint::kernel) const fn has_progress_evidence(self) -> bool {
-        (self.flags & Self::FLAG_PROGRESS_EVIDENCE) != 0
-    }
-
-    #[inline]
-    pub(in crate::endpoint::kernel) fn record_ready(&mut self) {
-        self.flags |= Self::FLAG_READY;
-    }
-
-    #[inline]
-    pub(in crate::endpoint::kernel) fn record_progress_evidence(&mut self) {
-        self.flags |= Self::FLAG_PROGRESS_EVIDENCE;
-    }
-
-    #[inline]
-    pub(in crate::endpoint::kernel) fn parallel(self) -> Option<ScopeId> {
-        if self.parallel_root.is_none() {
-            None
-        } else {
-            Some(self.parallel_root)
-        }
-    }
-
-    #[inline]
-    pub(in crate::endpoint::kernel) fn reentry_controller_evidence(
-        self,
-    ) -> CurrentReentryControllerEvidence {
-        if self.frontier == FrontierKind::Reentry
-            && self.is_controller()
-            && self.ready()
-            && !self.has_progress_evidence()
-        {
-            CurrentReentryControllerEvidence::ProgressEvidenceAbsent
-        } else {
-            CurrentReentryControllerEvidence::ProgressSatisfiedOrNotController
-        }
-    }
-}
-
-#[derive(Clone, Copy)]
-pub(in crate::endpoint::kernel) struct FrontierFacts {
-    pub(in crate::endpoint::kernel) frontier: FrontierKind,
-    pub(in crate::endpoint::kernel) readiness: FrontierReadiness,
-}
-
-#[repr(u8)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::endpoint::kernel) enum FrontierReadiness {
-    Waiting = 0,
-    Ready = 1,
-}
-
-impl FrontierReadiness {
-    #[inline]
-    pub(in crate::endpoint::kernel) const fn is_ready(self) -> bool {
-        matches!(self, Self::Ready)
-    }
-}
-
-impl FrontierFacts {
-    #[inline]
-    pub(in crate::endpoint::kernel) const fn ready(self) -> bool {
-        self.readiness.is_ready()
     }
 }

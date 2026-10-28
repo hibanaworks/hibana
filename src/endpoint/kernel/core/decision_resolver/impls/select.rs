@@ -1,7 +1,8 @@
 use super::super::super::{
-    Arm, CachedRecvMeta, ClusterError, CommitDelta, EffIndex, OfferScopeSelection, OperationKernel,
-    RecvError, RecvMeta, RecvResult, ResolvedRouteArm, RouteArmToken, RouteResolveStep, ScopeId,
-    SendMeta, TapEvent, Transport, checked_state_index, controller_arm_label, emit, events,
+    AdmittedOfferEvent, Arm, BranchKind, CachedRecvMeta, ClusterError, CommitDelta, EffIndex,
+    OfferScopeSelection, OperationKernel, RecvError, RecvMeta, RecvResult, ResolvedRouteArm,
+    RouteArmToken, RouteResolveStep, ScopeId, SendMeta, TapEvent, Transport, checked_state_index,
+    controller_arm_label, emit, events,
     prepare_route_site_materialization_rows_from_resident_route_commit_range,
     preview_selected_arm_for_scope_from_parts, state_index_to_usize,
 };
@@ -184,13 +185,6 @@ where
         let arm = Arm::from_raw(arm);
         let arm_raw = arm.as_u8();
         let scope_id = selection.scope_id;
-        if is_route_controller
-            && self
-                .controller_arm_send_preview(scope_id, arm_raw)
-                .is_some()
-        {
-            return false;
-        }
         let at_route_entry = selection.entry_position.is_route_entry();
         let controller_arm_entry = self
             .progress
@@ -292,35 +286,102 @@ where
         self.progress.cursor.try_recv_meta_at(entry_idx)
     }
 
-    pub(in crate::endpoint::kernel) fn controller_arm_send_preview(
+    #[inline(never)]
+    pub(in crate::endpoint::kernel) fn controller_arm_outbound_preview(
         &self,
-        scope: ScopeId,
+        selection: OfferScopeSelection,
         arm: u8,
-    ) -> Option<CachedRecvMeta> {
+    ) -> Option<AdmittedOfferEvent> {
+        let scope = selection.scope_id;
         if !self.is_route_controller(scope) {
             return None;
         }
         let cursor = &self.progress.cursor;
         cursor.passive_child_scope(scope, arm)?;
-        let rows = cursor.route_scope_rows(scope)?;
-        (rows.start()..rows.end()).find_map(|index| {
-            if cursor.logical_role_at(index) != Some(self.public_header.role())
-                || !self.permits_event(index)
+        let mut first: Option<AdmittedOfferEvent> = None;
+        let mut previews = self.preview_queries();
+        let mut consider = |index| {
+            if first
+                .as_ref()
+                .is_some_and(|prior| prior.metadata.cursor_index.as_usize() <= index)
             {
-                return None;
+                return;
             }
-            let meta = cursor.try_send_meta_at(index)?;
-            if meta.route_scope != scope || cursor.route_arm_for_index(scope, index) != Some(arm) {
-                return None;
+            let Some(row) = cursor.event_row_at(index) else {
+                return;
+            };
+            if row.logical_role() != self.public_header.role()
+                || !self.permits_event(index)
+                || !self.owns_lane(usize::from(row.atom().lane))
+                || row.route_scope() != scope
+                || cursor.route_arm_for_index(scope, index) != Some(arm)
+                || row.direction() == RoleLocalDirection::Recv
+            {
+                return;
             }
-            self.event_enabled(index, meta.into(), &mut |candidate, view| match view {
-                EventArmView::Committed => self.selected_arm_for_scope(candidate),
-                EventArmView::Preview if candidate == scope => Some(arm),
-                EventArmView::Preview => self.preview_live_selected_arm_for_scope(candidate),
-            })
-            .ok()?;
-            Some(Self::cached_recv_meta_from_send(index, meta))
-        })
+            let Ok(enabled) = self.event_enabled(
+                index,
+                row.commit_meta(),
+                &mut |candidate, view| match view {
+                    EventArmView::Committed => self.selected_arm_for_scope(candidate),
+                    EventArmView::Preview if candidate == scope => Some(arm),
+                    EventArmView::Preview => previews(candidate),
+                },
+            ) else {
+                return;
+            };
+            let (metadata, kind) = match row.direction() {
+                RoleLocalDirection::Send => (
+                    Self::cached_recv_meta_from_send(
+                        index,
+                        crate::invariant_some(cursor.try_send_meta_at(index)),
+                    ),
+                    BranchKind::ArmSend,
+                ),
+                RoleLocalDirection::Local => (
+                    self.cached_recv_meta_from_local(
+                        index,
+                        crate::invariant_some(cursor.try_local_meta_at(index)),
+                    ),
+                    BranchKind::LocalAction,
+                ),
+                RoleLocalDirection::Recv => crate::invariant(),
+            };
+            first = Some(AdmittedOfferEvent {
+                metadata,
+                enabled,
+                kind,
+            });
+        };
+        consider(selection.candidate_index.as_usize());
+        let lanes = cursor.route_scope_arm_lane_set(scope, arm)?;
+        let lane_limit = cursor.logical_lane_count();
+        let mut next = lanes.first_set(lane_limit);
+        while let Some(lane) = next {
+            if self.owns_lane(lane) {
+                let head =
+                    cursor.offer_lane_head(self.public_header.role(), lane, &mut |candidate| {
+                        if candidate == scope {
+                            Some(arm)
+                        } else {
+                            self.preview_live_selected_arm_for_scope(candidate)
+                        }
+                    });
+                let entry = cursor.route_arm_view_lane_entry(
+                    scope,
+                    arm,
+                    self.public_header.role(),
+                    lane as u8,
+                );
+                // Current heads cover progress past a passive child; static
+                // entries cover an uncommitted or fresh visit of the arm.
+                for index in [head, entry].into_iter().flatten() {
+                    consider(index);
+                }
+            }
+            next = lanes.next_set_from(lane + 1, lane_limit);
+        }
+        first
     }
 
     #[inline(never)]
@@ -347,8 +408,21 @@ where
                 .ok_or(RecvError::PhaseInvariant)?;
             return Ok(Self::cached_recv_meta_from_recv(target_idx, meta));
         }
-        if let Some(meta) = self.controller_arm_send_preview(scope_id, selected_arm) {
-            return Ok(meta);
+        // Preserve the projected candidate identity when authority selected
+        // its arm. A different resolver arm uses its compiled entry below.
+        let index = selection.candidate_index.as_usize();
+        if self.progress.cursor.logical_role_at(index) == Some(self.public_header.role())
+            && self.progress.cursor.route_arm_for_index(scope_id, index) == Some(selected_arm)
+        {
+            if let Some(meta) = self.progress.cursor.try_recv_meta_at(index) {
+                return Ok(Self::cached_recv_meta_from_recv(index, meta));
+            }
+            if let Some(meta) = self.progress.cursor.try_send_meta_at(index) {
+                return Ok(Self::cached_recv_meta_from_send(index, meta));
+            }
+            if let Some(meta) = self.progress.cursor.try_local_meta_at(index) {
+                return Ok(self.cached_recv_meta_from_local(index, meta));
+            }
         }
         let controller_arm_entry = if self.is_route_controller(scope_id) {
             self.progress
@@ -411,17 +485,17 @@ where
     pub(in crate::endpoint::kernel) fn descend_selected_passive_route(
         &mut self,
         selection: OfferScopeSelection,
-        resolved: ResolvedRouteArm,
+        resolved: &ResolvedRouteArm,
         observed_frame: Option<InboundFrameKey>,
     ) -> RecvResult<bool> {
         let scope_id = selection.scope_id;
         let selected_arm = resolved.selected_arm;
-        // An exact enabled receive already names the operation to preview.
-        // Its arm can also contain a nested choice on an independent lane.
-        if selection.observed_target_index().is_some() {
+        // Exact event selection already names the operation to preview. Its
+        // arm can also contain a nested choice on an independent lane.
+        if selection.observed_target_index().is_some() || resolved.route_token.is_committed() {
             return Ok(false);
         }
-        let materialization_meta = self.selection_materialization_meta(selection);
+        let materialization_meta = self.compute_scope_arm_materialization_meta(scope_id);
         let Some(nested_scope) =
             materialization_meta.passive_child_scope(Arm::from_raw(selected_arm))
         else {
@@ -497,7 +571,6 @@ where
         if emit_poll_selection {
             self.emit_route_arm_selection(scope_id, resolved.route_token, selection.offer_lane);
         }
-        self.sync_lane_offer_state();
         Ok(true)
     }
 

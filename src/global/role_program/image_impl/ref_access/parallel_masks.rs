@@ -2,7 +2,7 @@
 //! No live cursor, route selection or ownership state participates in a mask.
 use super::{RoleImageRef, invalid_resident_descriptor};
 use crate::global::role_program::{
-    PackedLaneRange,
+    LaneSetView, PackedLaneRange,
     image_impl::{event_rows::RoleLocalDirection, parallel_masks::HEADER_BYTES},
 };
 
@@ -201,6 +201,20 @@ impl RoleImageRef {
         None
     }
 
+    /// Complete candidate lanes for an existing borrow, or the actor image.
+    /// Membership is static and includes Send/Local as well as receive rows.
+    pub(crate) fn offer_candidate_lanes(&self, borrow_mask: Option<u16>) -> LaneSetView<'static> {
+        let Some(mask) = borrow_mask else {
+            return self.active_lane_set();
+        };
+        let offset = usize::from(mask);
+        let len = usize::from(self.mask_byte(offset + 5));
+        self.lanes().lane_bit_view(
+            PackedLaneRange::new(offset + HEADER_BYTES, len),
+            self.footprint().lane_word_count(),
+        )
+    }
+
     /// One checked immutable byte lookup; no event or scope scan on the hot path.
     #[inline]
     pub(crate) fn parallel_borrow_owns_lane(&self, mask: u16, lane: usize) -> bool {
@@ -352,5 +366,99 @@ mod tests {
             // allocation. No RoleImageRef escaped, so the test can reclaim it.
             unsafe { drop(Box::from_raw(bytes)) };
         }
+    }
+
+    #[test]
+    fn candidate_lane_iteration_matches_raw_rows_for_coresident_views_and_local_actions() {
+        use crate::Endpoint;
+        use std::collections::BTreeSet;
+
+        type Local = g::Msg<251, ()>;
+        type Notice = g::Msg<252, ()>;
+        type Loan<'r> = g::Msg<253, Endpoint<'r, 3>>;
+        let global = g::seq(
+            g::par(g::send::<1, 1, Local>(), g::send::<3, 0, Notice>()),
+            g::send::<1, 2, Loan<'_>>(),
+        );
+        let owner = project::<1>(&global);
+        let peer = project::<0>(&global);
+        let owner_rows = owner.role_image_ref();
+        let views: BTreeSet<_> = (0..owner_rows.local_step_count())
+            .map(|step| owner_rows.local_step_logical_role(step))
+            .collect();
+        assert!(views.contains(&1) && views.contains(&3));
+        assert!(
+            (0..owner_rows.local_step_count())
+                .any(|step| { owner_rows.local_step_direction(step) == RoleLocalDirection::Local })
+        );
+        let mut masks_checked = 0;
+        for rows in [owner_rows, peer.role_image_ref()] {
+            let lane_limit = rows.footprint().logical_lane_count;
+            let raw = rows.lanes();
+            let membership = |view: Option<u8>, first: usize, stop: usize| {
+                let mut expected = BTreeSet::new();
+                for step in 0..rows.local_step_count() {
+                    let event = raw.local_step_event(step).unwrap();
+                    let atom = rows.program().event_atom_at(event.eff_index as usize);
+                    let actual_view = match event.direction() {
+                        RoleLocalDirection::Recv => atom.to,
+                        RoleLocalDirection::Local | RoleLocalDirection::Send => atom.from,
+                    };
+                    if view.is_none_or(|view| actual_view == view)
+                        && first <= event.eff_index as usize
+                        && (event.eff_index as usize) < stop
+                    {
+                        expected.insert(usize::from(atom.lane));
+                    }
+                }
+                expected.into_iter().collect::<std::vec::Vec<_>>()
+            };
+            let collect = |mask| {
+                let lanes = rows.offer_candidate_lanes(mask);
+                let mut actual = std::vec::Vec::new();
+                let mut start = 0;
+                while let Some(lane) = lanes.next_set_from(start, lane_limit) {
+                    actual.push(lane);
+                    start = lane + 1;
+                }
+                actual
+            };
+            assert_eq!(collect(None), membership(None, 0, usize::MAX));
+            for marker in 0..rows.program().source_scope_marker_count() {
+                let Some((first, split, stop)) = rows.program().source_parallel_at(marker) else {
+                    continue;
+                };
+                for (first, stop) in [(first, split), (split, stop)] {
+                    for view in 0..=3 {
+                        let expected = membership(Some(view), first, stop);
+                        let mask = rows.parallel_borrow_mask(view, first, stop);
+                        if expected.is_empty() {
+                            assert!(mask.is_none());
+                            continue;
+                        }
+                        let mask = mask.unwrap();
+                        masks_checked += 1;
+                        let actual = collect(Some(mask));
+                        assert_eq!(actual, expected, "view={view} source={first}..{stop}");
+                        for lane in 0..lane_limit {
+                            assert_eq!(
+                                actual.contains(&lane),
+                                rows.parallel_borrow_owns_lane(mask, lane)
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        assert_eq!(masks_checked, 3);
+        // Actor zero receives only the source-second parallel action. Its
+        // lower lane is an actor-inactive hole, not a candidate to discover.
+        let peer_rows = peer.role_image_ref();
+        let peer_lanes = peer_rows.offer_candidate_lanes(None);
+        assert!(!peer_lanes.contains(0));
+        assert_eq!(
+            peer_lanes.first_set(peer_rows.footprint().logical_lane_count),
+            Some(1)
+        );
     }
 }

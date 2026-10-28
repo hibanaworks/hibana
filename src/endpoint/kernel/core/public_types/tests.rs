@@ -91,7 +91,7 @@ fn another_actor_in_the_same_rendezvous_cannot_use_the_mutation_lease() {
 }
 
 #[test]
-fn shared_frontier_workspace_outlives_retired_view_ports() {
+fn shared_encoding_workspace_outlives_retired_view_ports() {
     let protocol = g::route(
         g::send::<0, 1, Msg<1, u32>>(),
         g::send::<0, 1, Msg<2, u32>>(),
@@ -124,17 +124,21 @@ fn shared_frontier_workspace_outlives_retired_view_ports() {
         actor.views.get(0).unwrap(),
         crate::endpoint::carrier::OperationRegion::WHOLE,
         |kernel| {
-            let mut scratch = kernel
+            kernel.retire_transport_handles();
+            assert!(kernel.io.ports.iter().all(Option::is_none));
+            let rendezvous = kernel.context.session.rendezvous();
+            let mut lease = kernel
                 .context
                 .session
                 .rendezvous()
                 .try_scratch_lease()
                 .expect("workspace");
-            kernel.retire_transport_handles();
-            assert!(kernel.io.ports.iter().all(Option::is_none));
             // This must borrow the common owner, even though this view no longer
             // has a transport port through which to reach its workspace.
-            core::hint::black_box(kernel.frontier_scratch_workspace(&mut scratch));
+            let scratch = rendezvous.scratch(&mut lease);
+            assert!(!scratch.is_empty());
+            scratch[0] = 0x5a;
+            assert_eq!(core::hint::black_box(scratch[0]), 0x5a);
         },
     );
     drop(operation);

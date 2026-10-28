@@ -1,6 +1,5 @@
 use super::{
-    LANE_DOMAIN_SIZE, LANE_SET_VIEW_WORDS, LaneSet, LaneSetView, LaneWord,
-    logical_lane_count_for_role,
+    LANE_DOMAIN_SIZE, LANE_SET_VIEW_WORDS, LaneSetView, LaneWord, logical_lane_count_for_role,
 };
 
 #[kani::proof]
@@ -26,25 +25,6 @@ fn logical_lane_capacity_is_the_exact_descriptor_lane_span() {
         ),
         endpoint_lane_slot_count as usize
     );
-}
-
-#[kani::proof]
-fn lane_set_mutation_is_exact_over_the_complete_lane_domain() {
-    let lane: u8 = kani::any();
-    let mut words = [0u32; LANE_SET_VIEW_WORDS];
-    let mut set = core::mem::MaybeUninit::<LaneSet>::uninit();
-    /* SAFETY: `set` is writable uninitialized storage and `words` is one live,
-    exclusively borrowed full-domain lane-word allocation. */
-    unsafe {
-        LaneSet::init_from_parts(set.as_mut_ptr(), words.as_mut_ptr(), words.len());
-    }
-    /* SAFETY: `init_from_parts` initialized every `LaneSet` field above. */
-    let mut set = unsafe { set.assume_init() };
-
-    set.insert(lane as usize);
-    assert!(set.view().contains(lane as usize));
-    set.remove(lane as usize);
-    assert!(!set.view().contains(lane as usize));
 }
 
 #[kani::proof]
@@ -146,13 +126,4 @@ fn nonempty_lane_set_view_rejects_null_storage() {
     /* SAFETY: this deliberately violates the view contract to prove null is
     rejected before any read. */
     let _ = unsafe { LaneSetView::from_parts(core::ptr::null(), 1) };
-}
-
-#[kani::proof]
-#[kani::should_panic]
-fn nonempty_lane_set_owner_rejects_null_storage() {
-    let mut set = core::mem::MaybeUninit::<LaneSet>::uninit();
-    /* SAFETY: this deliberately violates the owner contract to prove null is
-    rejected before initialization writes. */
-    unsafe { LaneSet::init_from_parts(set.as_mut_ptr(), core::ptr::null_mut(), 1) };
 }

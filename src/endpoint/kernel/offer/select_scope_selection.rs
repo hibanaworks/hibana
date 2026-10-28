@@ -2,6 +2,7 @@ use super::{
     OfferEntryPosition, OfferScopeSelection, OperationKernel, RecvError, RecvResult, ScopeId,
     Transport,
 };
+use crate::endpoint::kernel::frontier::checked_state_index;
 
 impl<'r, T> OperationKernel<'_, 'r, T>
 where
@@ -57,10 +58,8 @@ where
             };
         Ok(OfferScopeSelection {
             scope_id,
-            frontier_parallel_root: OperationKernel::<T>::parallel_scope_root(
-                &self.progress.cursor,
-                scope_id,
-            ),
+            entry_index: checked_state_index(current_idx).ok_or(RecvError::PhaseInvariant)?,
+            candidate_index: checked_state_index(current_idx).ok_or(RecvError::PhaseInvariant)?,
             offer_lane,
             entry_position,
             observed_target: crate::global::typestate::StateIndex::ABSENT,

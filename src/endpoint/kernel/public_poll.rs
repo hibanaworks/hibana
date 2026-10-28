@@ -59,16 +59,7 @@ where
         }
         let mut offer_state =
             core::mem::replace(&mut self.operation.public_offer_state, OfferState::new());
-        let poll = {
-            let Some(mut scratch_lease) = self.context.session.rendezvous().try_scratch_lease()
-            else {
-                self.operation.public_offer_state = offer_state;
-                cx.waker().wake_by_ref();
-                return Poll::Pending;
-            };
-            let mut frontier_scratch = self.frontier_scratch_workspace(&mut scratch_lease);
-            self.poll_offer_state(&mut offer_state, cx, &mut frontier_scratch)
-        };
+        let poll = self.poll_offer_state(&mut offer_state, cx);
         self.reconcile_retirements();
         let poll = match self.session_fault() {
             Some(kind) => Poll::Ready(Err(RecvError::SessionFault(kind))),

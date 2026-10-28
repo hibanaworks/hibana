@@ -1,7 +1,4 @@
-use super::{
-    EndpointLeaseId, EndpointLeaseSlot, EndpointLeaseState, EndpointResidentBudget, Rendezvous,
-    Transport,
-};
+use super::{EndpointLeaseId, EndpointLeaseSlot, EndpointLeaseState, Rendezvous, Transport};
 use crate::{session::cluster::error::ResourceScope, session::types::SessionId};
 mod placement;
 mod session_binding;
@@ -19,7 +16,6 @@ where
         role: u8,
         bytes: usize,
         align: usize,
-        resident_budget: EndpointResidentBudget,
     ) -> Result<(EndpointLeaseId, u32, usize, usize), ResourceScope> {
         if bytes > u32::MAX as usize || self.endpoint_lease_generation.get() == u32::MAX {
             return Err(ResourceScope::EndpointLease);
@@ -73,7 +69,6 @@ where
                 role,
                 offset: lease_offset,
                 len: lease_len,
-                resident_budget,
                 state: EndpointLeaseState::Reserved,
             },
         );
@@ -147,7 +142,6 @@ where
         self.shrink_assoc_table_capacity(self.active_lane_attachment_count());
         self.shrink_lane_range(self.assoc.active_lane_slots());
         self.shrink_endpoint_lease_capacity();
-        self.recompute_frontier_workspace_bytes();
     }
 
     #[inline]

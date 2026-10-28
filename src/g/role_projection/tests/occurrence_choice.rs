@@ -330,7 +330,7 @@ fn write_distributed(
     let mut source =
         super::distributed_source::execution_source::<Steps>(images, initial, operations, &paths);
     source.insert_str(0, "import Hibana.DistributedChoiceHistory\n");
-    source.push_str(r#"
+    let choice_facts = r#"
 theorem distributedCurrentChoice2HasItsActualGlobalOrigin :
   ∃ before after prior later record cleared,
     DistributedSourceExecution distributedImages distributedChoreo 9063 (distributedCut0, distributedEntries0) before prior ∧
@@ -377,9 +377,8 @@ theorem distributedChoiceAfterReturnDoesNotAssertValueCustody :
     distributedAfter16.doneState.selected 2 = some .left ∧
     distributedAfter16.viewIssued 10 = false := by decide
 
-def distributedCurrentSource := (distributedSend14.ownedFacts? distributedChoreo).get (by decide)
-def distributedCurrentReceipt :=
-  (distributedCommit15.step.ownedFacts? distributedImage1 distributedChoreo).get (by decide)
+def distributedCurrentSource := distributedOwnedSource14
+def distributedCurrentReceipt := distributedOwnedCommit15
 def distributedCurrentMemberships :=
   (canonicalEventRoutePath? (canonicalProgramSource distributedChoreo) distributedCurrentSource.effIndex).get (by decide)
 
@@ -399,10 +398,21 @@ theorem distributedCurrentChoiceComesFromItsActualAcceptedFrame :
     (receiverImage := distributedImage1) (choreo := distributedChoreo) (session := 9063)
     (scope := 2) (arm := .left) (previous := none)
     (count := (distributedCut24.actors 1).2) (final := distributedCut33.actors 1)
-    (by decide) (Option.some_get (by decide)).symm
-    (by decide) (Option.some_get (by decide)).symm (by decide) (by decide)
+    distributedSend14Checked distributedOwnedSource14Decoded
+    (by distributed_decide) distributedOwnedCommit15Decoded (by decide) (by decide)
     (Option.some_get (by decide)).symm (by decide) (by decide) distributedActualPostReceiptChoiceSuffix
-"#);
+"#;
+    source.push_str(
+        &choice_facts
+            .replace(
+                "by decide",
+                &std::format!("by {}", super::distributed_source::DISTRIBUTED_DECIDE),
+            )
+            .replace(
+                "distributed_decide",
+                super::distributed_source::DISTRIBUTED_DECIDE,
+            ),
+    );
     let directory = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/lean-proof");
     std::fs::create_dir_all(&directory).unwrap();
     // Kernel-checked auxiliary lemmas share repeated decidable facts. Structural

@@ -5,6 +5,11 @@ use crate::global::event_program::LocalEventRow;
 use crate::global::role_program::RoleLocalDirection;
 impl EventCursor {
     #[inline]
+    pub(crate) fn has_route_scopes(&self) -> bool {
+        self.machine().route_scope_slot_count() != 0
+    }
+
+    #[inline]
     pub(super) fn outbound_candidates<'a>(
         &'a self,
         selector: crate::global::typestate::MessageSelector,
@@ -103,12 +108,6 @@ impl EventCursor {
     #[inline(always)]
     pub(crate) fn node_route_arm_at(&self, index: usize) -> Option<u8> {
         self.event_row_at(index).and_then(LocalEventRow::route_arm)
-    }
-
-    /// Returns `true` when the cursor points at a receive action.
-    #[inline(always)]
-    pub(crate) fn is_recv(&self) -> bool {
-        self.is_recv_at(self.idx_usize())
     }
 
     /// Navigate to the projected passive arm entry for a given route scope.

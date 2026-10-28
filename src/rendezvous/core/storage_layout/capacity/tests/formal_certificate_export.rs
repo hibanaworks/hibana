@@ -59,7 +59,7 @@ fn allocator_snapshot_source(
         rv.assoc_storage.get().bytes(),
         rv.resolver_storage_sidecar().bytes(),
         rv.image_frontier.get(),
-        rv.frontier_workspace_bytes.get(),
+        0,
         rv.endpoint_storage_floor(),
         rv.active_lane_attachment_count(),
         association_witnesses.join(",\n"),
@@ -74,13 +74,7 @@ fn allocation_failure_certificate_source() -> String {
         let rv = init_test_rendezvous(&mut slab);
         let before = allocator_snapshot_source("generatedInitialFailureBefore", rv, &[]);
         assert_eq!(
-            rv.allocate_endpoint_lease(
-                SessionId::new(1),
-                0,
-                slab_bytes,
-                1,
-                crate::rendezvous::core::EndpointResidentBudget::ZERO,
-            ),
+            rv.allocate_endpoint_lease(SessionId::new(1), 0, slab_bytes, 1,),
             Err(ResourceScope::EndpointLease)
         );
         let after = allocator_snapshot_source("generatedInitialFailureAfter", rv, &[]);
@@ -94,24 +88,12 @@ fn allocation_failure_certificate_source() -> String {
         let mut slab = [0u8; 4096];
         let slab_bytes = slab.len();
         let rv = init_test_rendezvous(&mut slab);
-        rv.allocate_endpoint_lease(
-            SessionId::new(1),
-            0,
-            64,
-            core::mem::align_of::<usize>(),
-            crate::rendezvous::core::EndpointResidentBudget::ZERO,
-        )
-        .expect("existing endpoint lease");
+        rv.allocate_endpoint_lease(SessionId::new(1), 0, 64, core::mem::align_of::<usize>())
+            .expect("existing endpoint lease");
         populate_non_endpoint_sidecars(rv);
         let before = allocator_snapshot_source("generatedGrowthFailureBefore", rv, &[]);
         assert_eq!(
-            rv.allocate_endpoint_lease(
-                SessionId::new(2),
-                0,
-                slab_bytes,
-                1,
-                crate::rendezvous::core::EndpointResidentBudget::ZERO,
-            ),
+            rv.allocate_endpoint_lease(SessionId::new(2), 0, slab_bytes, 1,),
             Err(ResourceScope::EndpointLease)
         );
         let after = allocator_snapshot_source("generatedGrowthFailureAfter", rv, &[]);
@@ -125,24 +107,12 @@ fn allocation_failure_certificate_source() -> String {
         let mut slab = [0u8; 4096];
         let rv = init_test_rendezvous(&mut slab);
         let (first_slot, first_generation, _, _) = rv
-            .allocate_endpoint_lease(
-                SessionId::new(1),
-                0,
-                64,
-                core::mem::align_of::<usize>(),
-                crate::rendezvous::core::EndpointResidentBudget::ZERO,
-            )
+            .allocate_endpoint_lease(SessionId::new(1), 0, 64, core::mem::align_of::<usize>())
             .expect("existing endpoint lease");
         rv.publish_endpoint_lease(first_slot, first_generation);
         let before = allocator_snapshot_source("generatedAbortFailureBefore", rv, &[]);
         let (aborted_slot, aborted_generation, _, _) = rv
-            .allocate_endpoint_lease(
-                SessionId::new(2),
-                0,
-                64,
-                core::mem::align_of::<usize>(),
-                crate::rendezvous::core::EndpointResidentBudget::ZERO,
-            )
+            .allocate_endpoint_lease(SessionId::new(2), 0, 64, core::mem::align_of::<usize>())
             .expect("aborted endpoint lease");
         rv.abort_endpoint_lease_reservation(aborted_slot, aborted_generation);
         let after = allocator_snapshot_source("generatedAbortFailureAfter", rv, &[]);
@@ -158,15 +128,7 @@ fn allocation_failure_certificate_source() -> String {
         let sid = SessionId::new(1);
         let lane = Lane::new(0);
         let (first_slot, first_generation, _, _) = rv
-            .allocate_endpoint_lease(
-                sid,
-                0,
-                64,
-                core::mem::align_of::<usize>(),
-                crate::rendezvous::core::EndpointResidentBudget {
-                    frontier_workspace_bytes: 0,
-                },
-            )
+            .allocate_endpoint_lease(sid, 0, 64, core::mem::align_of::<usize>())
             .expect("existing endpoint lease");
         rv.publish_endpoint_lease(first_slot, first_generation);
         populate_non_endpoint_sidecars(rv);
@@ -176,13 +138,7 @@ fn allocation_failure_certificate_source() -> String {
         let before =
             allocator_snapshot_source("generatedCompactingAbortBefore", rv, &association_witnesses);
         let (aborted_slot, aborted_generation, _, _) = rv
-            .allocate_endpoint_lease(
-                SessionId::new(2),
-                0,
-                64,
-                core::mem::align_of::<usize>(),
-                crate::rendezvous::core::EndpointResidentBudget::ZERO,
-            )
+            .allocate_endpoint_lease(SessionId::new(2), 0, 64, core::mem::align_of::<usize>())
             .expect("aborted endpoint lease");
         rv.abort_endpoint_lease_reservation(aborted_slot, aborted_generation);
         let after =
@@ -260,7 +216,7 @@ fn layout_certificate_source(rv: &Rendezvous<'_, '_, FailingTransport>) -> (Stri
          Hibana.slab_layout_certificate_sound generatedSlabLayoutAccepted\n",
         slab_ptr.addr(),
         rv.image_frontier.get(),
-        rv.frontier_workspace_bytes.get(),
+        0,
         rv.endpoint_storage_floor(),
         regions.join(",\n"),
     );
@@ -349,17 +305,8 @@ theorem generatedMaximumLeaseGenerationExhausted :
 fn export_runtime_certificates_for_lean() {
     let mut slab = [0u8; 8192];
     let rv = init_test_rendezvous(&mut slab);
-    let resident_budget = crate::rendezvous::core::EndpointResidentBudget {
-        frontier_workspace_bytes: 32,
-    };
     let (_lease, _generation, endpoint_offset, endpoint_bytes) = rv
-        .allocate_endpoint_lease(
-            SessionId::new(1),
-            0,
-            128,
-            PROOF_ENDPOINT_ALIGN,
-            resident_budget,
-        )
+        .allocate_endpoint_lease(SessionId::new(1), 0, 128, PROOF_ENDPOINT_ALIGN)
         .expect("proof endpoint lease");
     let (runtime_slab, _) = rv.slab_ptr_and_len();
     assert_eq!(
@@ -367,8 +314,6 @@ fn export_runtime_certificates_for_lean() {
         0
     );
     assert_eq!(endpoint_bytes, 128);
-    rv.ensure_endpoint_resident_capacity()
-        .expect("proof workspace storage");
     rv.ensure_core_lane_tables_for_assoc_entries(3, 3)
         .expect("proof association storage");
     rv.ensure_dynamic_resolver_capacity(2)

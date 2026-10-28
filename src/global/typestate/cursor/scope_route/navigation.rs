@@ -2,7 +2,7 @@ use super::super::{
     ARM_SHARED, CursorInvariantError, EventCursor, InboundFrameKey, PackedEventConflict,
     RouteScopeRows, ScopeId, StateIndex, state_index_to_usize,
 };
-use crate::global::typestate::LocalConflict;
+use crate::global::{role_program::PackedLaneRange, typestate::LocalConflict};
 
 #[cfg(all(test, hibana_repo_tests))]
 #[path = "navigation/tests.rs"]
@@ -69,10 +69,8 @@ impl EventCursor {
         else {
             return;
         };
-        for pos in 0..chain.len() {
-            let Some(LocalConflict::RouteArm { scope, arm }) =
-                crate::invariant_some(self.route_commit_row_at(chain, pos)).to_conflict()
-            else {
+        for row in self.route_commit_rows(chain) {
+            let Some(LocalConflict::RouteArm { scope, arm }) = row.to_conflict() else {
                 crate::invariant();
             };
             visit(scope, arm);
@@ -244,12 +242,6 @@ impl EventCursor {
             .contains_route_controller(scope_id)
     }
 
-    /// Scope ID stored on the current node (no parent traversal).
-    #[inline(always)]
-    pub(crate) fn node_scope_id(&self) -> ScopeId {
-        self.node_scope_id_at(self.idx_usize())
-    }
-
     #[inline(always)]
     pub(crate) fn route_conflict_parent_arm(&self, scope_id: ScopeId) -> Option<(ScopeId, u8)> {
         let LocalConflict::RouteArm { scope, arm } =
@@ -284,17 +276,50 @@ impl EventCursor {
         )
     }
 
+    /// Execute the supplied decision, then its sealed ancestors from inner
+    /// to outer. The final absent row retains the depth-bound termination
+    /// check, including raw decisions whose scope is not local to this image.
+    fn route_conflict_guard_rows(
+        &self,
+        conflict: PackedEventConflict,
+    ) -> impl Iterator<Item = PackedEventConflict> + '_ {
+        let mut first = Some(conflict);
+        let mut remaining = self.route_chain_bound();
+        let mut ancestors = None;
+        core::iter::from_fn(move || {
+            if remaining == 0 {
+                return None;
+            }
+            remaining -= 1;
+            if let Some(row) = first.take() {
+                return Some(row);
+            }
+            // Open the compiled span only if the caller asks for an ancestor.
+            // A rejected first decision needs no image lookup.
+            let rows = ancestors.get_or_insert_with(|| {
+                let range = self
+                    .route_commit_range_for_conflict(conflict)
+                    .map_or(PackedLaneRange::EMPTY, |chain| {
+                        PackedLaneRange::new(chain.start(), chain.len() - 1)
+                    });
+                self.route_commit_rows(range).rev()
+            });
+            Some(rows.next().unwrap_or_else(|| {
+                remaining = 0;
+                PackedEventConflict::none()
+            }))
+        })
+    }
+
     #[inline(never)]
     pub(in crate::global::typestate::cursor) fn event_conflict_row_admission(
         &self,
-        mut conflict: PackedEventConflict,
+        conflict: PackedEventConflict,
         preview_scope: ScopeId,
         preview_arm: Option<u8>,
         selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
     ) -> super::ConflictAdmission {
-        let mut depth = 0usize;
-        let depth_bound = self.route_chain_bound();
-        while depth < depth_bound {
+        for conflict in self.route_conflict_guard_rows(conflict) {
             let Some(row) = conflict.to_conflict() else {
                 return super::ConflictAdmission::Allowed;
             };
@@ -311,8 +336,6 @@ impl EventCursor {
             {
                 return super::ConflictAdmission::Excluded { scope, arm };
             }
-            conflict = self.route_scope_conflict_row(scope);
-            depth += 1;
         }
         super::ConflictAdmission::Invalid
     }
@@ -336,13 +359,11 @@ impl EventCursor {
 
     pub(super) fn event_conflict_row_admission_with_preview(
         &self,
-        mut conflict: PackedEventConflict,
+        conflict: PackedEventConflict,
         preview_conflict: PackedEventConflict,
         selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
     ) -> super::ConflictAdmission {
-        let mut depth = 0usize;
-        let depth_bound = self.route_chain_bound();
-        while depth < depth_bound {
+        for conflict in self.route_conflict_guard_rows(conflict) {
             let Some(row) = conflict.to_conflict() else {
                 return super::ConflictAdmission::Allowed;
             };
@@ -358,8 +379,6 @@ impl EventCursor {
             {
                 return super::ConflictAdmission::Excluded { scope, arm };
             }
-            conflict = self.route_scope_conflict_row(scope);
-            depth += 1;
         }
         super::ConflictAdmission::Invalid
     }
@@ -398,41 +417,33 @@ impl EventCursor {
     pub(crate) fn offer_scope_id_at(
         &self,
         index: usize,
-        selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
         preview_selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
     ) -> ScopeId {
         let node_scope = self.node_scope_id_at(index);
         if node_scope.is_none() {
             return node_scope;
         }
-        let mut conflict = self.machine().event_conflict_for_index(index);
+        let conflict = self.machine().event_conflict_for_index(index);
         // Conflict rows run from the event outwards. An unresolved ancestor
         // must decide before any of its descendants, including on a fresh roll.
+        // The operation's shared query already prefers the committed live arm
+        // before ingress/parked preview knowledge; do not recompute it here.
         let mut pending_scope = ScopeId::none();
-        let mut depth = 0usize;
-        let depth_bound = self.route_chain_bound();
-        while depth < depth_bound {
+        for conflict in self.route_conflict_guard_rows(conflict) {
             let Some(row) = conflict.to_conflict() else {
                 break;
             };
             let LocalConflict::RouteArm { scope, arm } = row else {
                 break;
             };
-            let selected = match selected_arm_for_scope(scope) {
-                Some(arm) => Some(arm),
-                None => preview_selected_arm_for_scope(scope),
-            };
+            let selected = preview_selected_arm_for_scope(scope);
             let Some(selected) = selected else {
                 pending_scope = scope;
-                conflict = self.route_scope_conflict_row(scope);
-                depth += 1;
                 continue;
             };
             if selected != arm {
                 pending_scope = scope;
             }
-            conflict = self.route_scope_conflict_row(scope);
-            depth += 1;
         }
         if !pending_scope.is_none() {
             return pending_scope;

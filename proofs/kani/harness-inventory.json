@@ -16,9 +16,6 @@
       "endpoint::kernel::core::commit_delta::send_completion::a_prepared_send_publishes_or_finishes_without_post_acceptance_pending",
       "endpoint::kernel::core::commit_delta::send_completion::a_resumed_send_requires_admission_before_transport_or_publication"
     ],
-    "../../src/endpoint/kernel/core/frontier_observation.rs": [
-      "endpoint::kernel::core::frontier_observation::tests::excluded_scope_never_supplies_progress_sibling_authority"
-    ],
     "../../src/endpoint/kernel/core/public_operation/kani.rs": [
       "endpoint::kernel::core::public_operation::kani::public_operation_transition_classifier_is_exact"
     ],
@@ -41,42 +38,6 @@
       "endpoint::kernel::evidence_store::tests::ready_arm_conflicting_with_live_selection_is_sticky",
       "endpoint::kernel::evidence_store::tests::ready_evidence_transitions_preserve_canonical_masks"
     ],
-    "../../src/endpoint/kernel/frontier/active_offer_entry/kani.rs": [
-      "endpoint::kernel::frontier::active_offer_entry::kani::active_offer_entry_accepts_only_exact_scope_entry_metadata",
-      "endpoint::kernel::frontier::active_offer_entry::kani::active_offer_entry_foreign_scope_is_exact_rejection"
-    ],
-    "../../src/endpoint/kernel/frontier/entry_sets/kani.rs": [
-      "endpoint::kernel::frontier::entry_sets::kani::active_frontier_entry_rejects_absent_exact_key",
-      "endpoint::kernel::frontier::entry_sets::kani::exact_observation_buffer_groups_all_cursor_target_order_classes",
-      "endpoint::kernel::frontier::entry_sets::kani::exact_observation_buffer_retains_same_entry_witness_rows",
-      "endpoint::kernel::frontier::entry_sets::kani::exact_observation_capacity_exhaustion_is_fail_closed",
-      "endpoint::kernel::frontier::entry_sets::kani::frontier_entry_capacity_preserves_the_full_lane_domain",
-      "endpoint::kernel::frontier::entry_sets::kani::frontier_entry_identity_distinguishes_scope_at_same_entry",
-      "endpoint::kernel::frontier::entry_sets::kani::frontier_observation_packing_is_exact",
-      "endpoint::kernel::frontier::entry_sets::kani::frontier_observation_rejects_absent_exact_key",
-      "endpoint::kernel::frontier::entry_sets::kani::frontier_observation_rejects_first_bit_outside_exact_kind_domain",
-      "endpoint::kernel::frontier::entry_sets::kani::frontier_observation_rejects_first_flag_outside_exact_domain",
-      "endpoint::kernel::frontier::entry_sets::kani::frontier_observation_rows_preserve_exact_witnesses_for_one_cursor_target",
-      "endpoint::kernel::frontier::entry_sets::kani::offer_entry_key_rejects_non_route_scopes",
-      "endpoint::kernel::frontier::entry_sets::kani::selectable_ready_query_never_admits_an_excluded_exact_witness"
-    ],
-    "../../src/endpoint/kernel/frontier/progress_selection/kani.rs": [
-      "endpoint::kernel::frontier::progress_selection::kani::streaming_progress_selection_matches_the_exact_filtered_reference",
-      "endpoint::kernel::frontier::progress_selection::kani::streaming_progress_selection_preserves_first_matching_frontier_priority",
-      "endpoint::kernel::frontier::progress_selection::kani::streaming_progress_selection_retains_first_admissible_in_constant_state"
-    ],
-    "../../src/endpoint/kernel/frontier/scratch/kani.rs": [
-      "endpoint::kernel::frontier::scratch::kani::arbitrary_scratch_bytes_are_canonicalized_before_typed_publication",
-      "endpoint::kernel::frontier::scratch::kani::frontier_scratch_capacity_is_derived_once_from_its_layout",
-      "endpoint::kernel::frontier::scratch::kani::frontier_scratch_rejects_capacity_beyond_lane_domain",
-      "endpoint::kernel::frontier::scratch::kani::lane_domain_frontier_workspace_fits_compact_resident_budget",
-      "endpoint::kernel::frontier::scratch::kani::zero_capacity_frontier_scratch_rejects_misaligned_storage_before_slice_publication",
-      "endpoint::kernel::frontier::scratch::kani::zero_capacity_frontier_scratch_yields_empty_typed_views"
-    ],
-    "../../src/endpoint/kernel/frontier/select/kani.rs": [
-      "endpoint::kernel::frontier::select::kani::progress_candidate_exists_exactly_for_production_progress_evidence",
-      "endpoint::kernel::frontier::select::kani::progress_candidate_rejects_evidence_without_readiness"
-    ],
     "../../src/endpoint/kernel/frontier/visit_set/kani.rs": [
       "endpoint::kernel::frontier::visit_set::kani::frontier_visit_capacity_is_exact_nonempty_cursor_position_domain",
       "endpoint::kernel::frontier::visit_set::kani::local_step_count_rejects_values_beyond_the_packed_descriptor_domain",
@@ -85,29 +46,12 @@
       "endpoint::kernel::frontier::visit_set::kani::terminal_cursor_position_is_not_an_absent_event_identity",
       "endpoint::kernel::frontier::visit_set::kani::visited_cursor_position_identity_is_exact_and_never_silent"
     ],
-    "../../src/endpoint/kernel/frontier_state/kani.rs": [
-      "endpoint::kernel::frontier_state::kani::root_frontier_owner_slot_survives_first_entry_removal",
-      "endpoint::kernel::frontier_state::kani::root_frontier_owner_slot_survives_last_entry_removal",
-      "endpoint::kernel::frontier_state::kani::root_frontier_owner_slot_survives_row_compaction",
-      "endpoint::kernel::frontier_state::kani::root_frontier_owner_slots_distinguish_scope_at_same_entry",
-      "endpoint::kernel::frontier_state::kani::root_frontier_owner_slots_preserve_symbolic_lane_order"
-    ],
     "../../src/endpoint/kernel/offer/ingress/kani.rs": [
       "endpoint::kernel::offer::ingress::kani::preferred_lane_scan_first_step_is_exact_over_the_full_lane_domain",
       "endpoint::kernel::offer::ingress::kani::remaining_lane_scan_step_is_exact_over_the_full_lane_domain"
     ],
     "../../src/endpoint/kernel/offer/progress/kani.rs": [
       "endpoint::kernel::offer::progress::kani::offer_progress_classifies_every_evidence_transition_exactly"
-    ],
-    "../../src/endpoint/kernel/offer/select_alignment/model/pool/tests.rs": [
-      "endpoint::kernel::offer::select_alignment::model::pool::tests::exact_scope_rows_never_synthesize_controller_progress_authority",
-      "endpoint::kernel::offer::select_alignment::model::pool::tests::excluded_exact_current_never_permits_retention",
-      "endpoint::kernel::offer::select_alignment::model::pool::tests::resolver_readiness_preserves_exact_admission_without_synthesizing_authority",
-      "endpoint::kernel::offer::select_alignment::model::pool::tests::same_entry_erased_flags_cannot_change_exact_current_observation"
-    ],
-    "../../src/endpoint/kernel/offer/select_alignment/model/selection.rs": [
-      "endpoint::kernel::offer::select_alignment::model::selection::verification::erased_candidate_can_only_request_distinct_realign",
-      "endpoint::kernel::offer::select_alignment::model::selection::verification::exact_current_selection_never_becomes_realign"
     ],
     "../../src/endpoint/transfer/kani.rs": [
       "endpoint::transfer::kani::owned_envelope_cannot_alias_different_resources_or_events",
@@ -293,9 +237,7 @@
       "global::role_program::lane_set::kani::descriptor_lane_byte_iteration_returns_the_first_set_lane_in_the_exact_domain",
       "global::role_program::lane_set::kani::descriptor_lane_byte_view_rejects_lengths_beyond_the_lane_domain",
       "global::role_program::lane_set::kani::lane_set_iteration_returns_the_first_set_lane_in_the_exact_domain",
-      "global::role_program::lane_set::kani::lane_set_mutation_is_exact_over_the_complete_lane_domain",
       "global::role_program::lane_set::kani::logical_lane_capacity_is_the_exact_descriptor_lane_span",
-      "global::role_program::lane_set::kani::nonempty_lane_set_owner_rejects_null_storage",
       "global::role_program::lane_set::kani::nonempty_lane_set_view_rejects_null_storage"
     ],
     "../../src/global/typestate/cursor/kani.rs": [
@@ -450,10 +392,13 @@
       "transport::wire::kani::fixed_array_schema_identity_rejects_the_first_colliding_width"
     ]
   },
-  "contract-harnesses": {},
-  "contracts": [],
+  "contract-harnesses": {
+  },
+  "contracts": [
+
+  ],
   "totals": {
-    "standard-harnesses": 325,
+    "standard-harnesses": 285,
     "contract-harnesses": 0,
     "functions-under-contract": 0
   }

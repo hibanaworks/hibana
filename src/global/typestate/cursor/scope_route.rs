@@ -5,13 +5,13 @@ mod row_completion;
 mod send_preview;
 mod send_preview_route;
 mod send_preview_start;
-pub(crate) use event_progress::{EventAdmissionError, EventArmView};
+pub(crate) use event_progress::{EventAdmissionError, EventArmView, EventBlocker};
 
 use super::super::facts::{LocalConflict, PackedEventConflict, PassiveArmChildFact};
 use super::{
     CursorInvariantError, DynamicRouteResolver, EffIndex, EventCursor, LaneSetView,
-    LocalDependency, RecvMeta, RelocatableResidentLaneStep, RouteOfferCursorState, ScopeId,
-    SendMeta, StateIndex, state_index_to_usize,
+    LocalDependency, RecvMeta, RelocatableResidentLaneStep, ScopeId, SendMeta, StateIndex,
+    state_index_to_usize,
 };
 use crate::global::role_program::PackedLaneRange;
 
@@ -19,18 +19,6 @@ pub(in crate::global::typestate::cursor) enum ConflictAdmission {
     Allowed,
     Excluded { scope: ScopeId, arm: u8 },
     Invalid,
-}
-
-pub(crate) enum CurrentRouteArmAuthorization {
-    NotAuthorized,
-    Authorized,
-}
-
-impl CurrentRouteArmAuthorization {
-    #[inline]
-    pub(crate) const fn authorizes_current_arm(self) -> bool {
-        matches!(self, Self::Authorized)
-    }
 }
 
 #[derive(Clone, Copy)]
@@ -80,9 +68,16 @@ impl EventCursor {
                     .state_for_step_index(step_idx)
                     .map(state_index_to_usize)
                 && role.is_none_or(|role| self.uses_view_at(pending_idx, role))
-                && (!retained || !self.retained_roll_allows_predecessor(step_idx, end))
-                && self.event_actor_is_local(pending_idx, selected_arm_for_scope) != Some(false)
             {
+                if retained
+                    && let Some(retained_end) = self.retained_roll_predecessor_end(step_idx, end)
+                {
+                    pending = self.pending_event_steps(retained_end.min(end)..end);
+                    continue;
+                }
+                if self.event_actor_is_local(pending_idx, selected_arm_for_scope) == Some(false) {
+                    continue;
+                }
                 match self.event_conflict_row_admission_with_preview(
                     self.machine().event_conflict_for_index(pending_idx),
                     preview_conflict,
@@ -113,10 +108,8 @@ impl EventCursor {
         }
         let chain = self.route_commit_range_for_conflict(self.event_conflict_for_index(idx))?;
         // Chains contain precisely this event's ancestors, from outer to inner.
-        for pos in (0..chain.len()).rev() {
-            let Some(LocalConflict::RouteArm { scope, .. }) =
-                self.route_commit_row_at(chain, pos)?.to_conflict()
-            else {
+        for row in self.route_commit_rows(chain).rev() {
+            let Some(LocalConflict::RouteArm { scope, .. }) = row.to_conflict() else {
                 crate::invariant();
             };
             if let Some(arm) = selected_arm_for_scope(scope)
@@ -284,21 +277,6 @@ impl EventCursor {
             LocalConflict::Unconditional => true,
             LocalConflict::SharedRoute => false,
             LocalConflict::RouteArm { scope, arm } => selected_arm_for_scope(scope) == Some(arm),
-        }
-    }
-
-    #[inline]
-    pub(crate) fn enclosing_roll_scope(&self, scope_id: ScopeId) -> Option<ScopeId> {
-        self.machine().enclosing_roll(scope_id)
-    }
-
-    #[inline]
-    pub(crate) fn node_roll_scope(&self, index: usize) -> Option<ScopeId> {
-        let scope = self.node_scope_id_at(index);
-        if scope.is_none() {
-            None
-        } else {
-            self.enclosing_roll_scope(scope)
         }
     }
 
@@ -580,134 +558,6 @@ impl EventCursor {
         )
     }
 
-    #[inline]
-    fn route_offer_entry_for_index(
-        &self,
-        scope_id: ScopeId,
-        current_idx: usize,
-        selected_arm: Option<u8>,
-        canonical_entry: StateIndex,
-    ) -> usize {
-        if canonical_entry.is_absent()
-            || self
-                .route_offer_entry_cursor_position(scope_id, current_idx, selected_arm)
-                .is_some_and(RouteOfferEntryCursorPosition::is_at_entry)
-        {
-            current_idx
-        } else {
-            state_index_to_usize(canonical_entry)
-        }
-    }
-
-    pub(crate) fn current_route_arm_authorization(
-        &self,
-        role: u8,
-        mut selected_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>,
-        mut preview_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>,
-    ) -> Result<CurrentRouteArmAuthorization, CursorInvariantError> {
-        let Some(scope) =
-            self.route_scope_for_offer_node(self.node_scope_id_at(self.index()), self.index())
-        else {
-            return Ok(CurrentRouteArmAuthorization::NotAuthorized);
-        };
-        let region = self
-            .route_scope_rows(scope)
-            .ok_or(CursorInvariantError::INVARIANT)?;
-        let is_controller = self.contains_route_controller(scope)
-            && self.machine().route_controller_role(scope) == role;
-        let Some(current_arm) = self.route_arm_for_index(scope, self.index()) else {
-            return Ok(CurrentRouteArmAuthorization::NotAuthorized);
-        };
-        if self.index() == region.start() && is_controller {
-            return Ok(CurrentRouteArmAuthorization::NotAuthorized);
-        }
-        if let Some(selected_arm) = selected_arm_for_scope(scope) {
-            if selected_arm != current_arm && self.route_scope_reentry(scope) {
-                return Ok(CurrentRouteArmAuthorization::Authorized);
-            }
-            if selected_arm == current_arm {
-                return Ok(CurrentRouteArmAuthorization::Authorized);
-            }
-            return Ok(CurrentRouteArmAuthorization::NotAuthorized);
-        }
-        if let Some(preview_arm) = preview_arm_for_scope(scope) {
-            if preview_arm == current_arm {
-                return Ok(CurrentRouteArmAuthorization::Authorized);
-            }
-            return Ok(CurrentRouteArmAuthorization::NotAuthorized);
-        }
-        if !is_controller {
-            return Ok(CurrentRouteArmAuthorization::NotAuthorized);
-        }
-        Err(CursorInvariantError::INVARIANT)
-    }
-
-    pub(crate) fn normalize_lane_offer_entry(
-        &self,
-        scope_id: ScopeId,
-        entry_idx: usize,
-        selected_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>,
-        reentry_offer: impl FnMut() -> Option<(ScopeId, StateIndex)>,
-    ) -> Option<RouteOfferCursorState> {
-        self.normalize_lane_offer_entry_inner(
-            scope_id,
-            entry_idx,
-            selected_arm_for_scope,
-            reentry_offer,
-        )
-    }
-
-    fn normalize_lane_offer_entry_inner(
-        &self,
-        mut scope_id: ScopeId,
-        mut entry_idx: usize,
-        mut selected_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>,
-        mut reentry_offer: impl FnMut() -> Option<(ScopeId, StateIndex)>,
-    ) -> Option<RouteOfferCursorState> {
-        let mut region = self.route_scope_rows(scope_id)?;
-        let mut entry = crate::invariant_some(self.route_scope_offer_entry(region.scope()));
-        if !entry.is_absent() && state_index_to_usize(entry) != entry_idx {
-            let selected_arm = selected_arm_for_scope(scope_id);
-            if self
-                .route_offer_entry_cursor_position(scope_id, entry_idx, selected_arm)
-                .is_some_and(RouteOfferEntryCursorPosition::is_at_entry)
-            {
-                return self
-                    .contains_node_index(entry_idx)
-                    .then_some(RouteOfferCursorState::new(region.scope(), entry_idx));
-            }
-            let canonical_entry = state_index_to_usize(entry);
-            if canonical_entry >= region.start() && canonical_entry < region.end() {
-                if region.reentry() || selected_arm.is_none() {
-                    entry_idx = canonical_entry;
-                } else {
-                    let (reentry_scope, reentry_entry) = reentry_offer()?;
-                    scope_id = reentry_scope;
-                    entry_idx = state_index_to_usize(reentry_entry);
-                    region = self.route_scope_rows(scope_id)?;
-                    entry = crate::invariant_some(self.route_scope_offer_entry(region.scope()));
-                    if !entry.is_absent() && state_index_to_usize(entry) != entry_idx {
-                        return None;
-                    }
-                }
-            } else {
-                let (reentry_scope, reentry_entry) = reentry_offer()?;
-                scope_id = reentry_scope;
-                entry_idx = state_index_to_usize(reentry_entry);
-                region = self.route_scope_rows(scope_id)?;
-                entry = crate::invariant_some(self.route_scope_offer_entry(region.scope()));
-                if !entry.is_absent() && state_index_to_usize(entry) != entry_idx {
-                    return None;
-                }
-            }
-        }
-        let selected_arm = selected_arm_for_scope(scope_id);
-        let entry_idx =
-            self.route_offer_entry_for_index(region.scope(), entry_idx, selected_arm, entry);
-        self.contains_node_index(entry_idx)
-            .then_some(RouteOfferCursorState::new(region.scope(), entry_idx))
-    }
-
     pub(crate) fn active_reentry_offer_entry(
         &self,
         scope_id: ScopeId,
@@ -742,17 +592,16 @@ impl EventCursor {
         (!range.is_absent_or_zero_len()).then_some(range)
     }
 
-    #[inline]
-    pub(crate) fn route_commit_row_at(
+    pub(crate) fn route_commit_rows(
         &self,
         range: PackedLaneRange,
-        idx: usize,
-    ) -> Option<PackedEventConflict> {
-        if range.is_empty() || idx >= range.len() {
-            return None;
-        }
-        let row = self.machine().route_commit_row_at(range.start() + idx);
-        row.to_conflict().is_some().then_some(row)
+    ) -> impl DoubleEndedIterator<Item = PackedEventConflict> + ExactSizeIterator + use<> {
+        self.machine()
+            .route_commit_bytes(range)
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|row| PackedEventConflict::from_raw(u16::from_le_bytes(*row)))
     }
 
     pub(crate) fn route_scope_first_recv_dispatch_arm_mask(&self, scope_id: ScopeId) -> Option<u8> {

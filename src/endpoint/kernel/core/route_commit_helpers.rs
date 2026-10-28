@@ -135,11 +135,8 @@ fn prepare_selected_route_commit_rows_from_resident_route_commit_range(
     let range = cursor
         .route_commit_range_for_conflict(conflict)
         .ok_or(RecvError::PhaseInvariant)?;
-    let mut idx = 0usize;
-    while idx < range.len() {
-        let route_row = cursor
-            .route_commit_row_at(range, idx)
-            .and_then(super::SelectedRouteCommitRow::from_resident_conflict)
+    for conflict in cursor.route_commit_rows(range) {
+        let route_row = super::SelectedRouteCommitRow::from_resident_conflict(conflict)
             .ok_or(RecvError::PhaseInvariant)?;
         let scope = route_row.scope();
         let arm = route_row.selected_arm();
@@ -154,7 +151,6 @@ fn prepare_selected_route_commit_rows_from_resident_route_commit_range(
         if row.scope() != scope || row.selected_arm() != arm {
             return Err(RecvError::PhaseInvariant);
         }
-        idx += 1;
     }
     rows.merge_chain(cursor, lane, conflict)
 }

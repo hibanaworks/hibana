@@ -145,6 +145,15 @@ impl Transport for ReentrantRequeueTransport {
 
 #[test]
 fn transport_requeue_callback_reentry_revalidates_generation() {
+    assert_requeue_callback_revalidates_generation(false);
+}
+
+#[test]
+fn accepted_frame_requeue_callback_revalidates_generation() {
+    assert_requeue_callback_revalidates_generation(true);
+}
+
+fn assert_requeue_callback_revalidates_generation(accept_before_requeue: bool) {
     let role0 = program::<0>();
     let role1 = program::<1>();
     let mut slab = AlignedSlab([0; 65_536]);
@@ -201,9 +210,23 @@ fn transport_requeue_callback_reentry_revalidates_generation() {
                 Poll::Pending => panic!("test transport must return one frame"),
             };
 
-            let error = kernel
-                .requeue_offer_transport_payload(frame)
-                .expect_err("requeue callback must expose the peer-drop session fault");
+            let requeue = if accept_before_requeue {
+                let frame = frame
+                    .accept_parts(sid.raw(), 1, 0, u16::from(REQUEUE_LABEL))
+                    .expect("accept the exact frame before restoring it");
+                let lane = frame.lane_idx();
+                let requeue = frame.requeue_on(kernel.port_for_lane(lane));
+                kernel.reconcile_retirements();
+                if let Some(kind) = kernel.session_fault() {
+                    Err(crate::endpoint::RecvError::SessionFault(kind))
+                } else {
+                    requeue.map_err(crate::endpoint::RecvError::Transport)
+                }
+            } else {
+                kernel.requeue_offer_transport_payload(frame)
+            };
+            let error =
+                requeue.expect_err("requeue callback must expose the peer-drop session fault");
 
             assert!(state.fired.get());
             assert!(peer.borrow().is_none());

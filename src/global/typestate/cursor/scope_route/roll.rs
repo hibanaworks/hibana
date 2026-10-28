@@ -293,6 +293,22 @@ impl EventCursor {
         if self.machine().event_program().footprint().roll_scope_count == 0 {
             return None;
         }
+        // This entry cannot retain credit for its own unfinished work. If it
+        // participates in the current visit, it blocks every enclosing roll;
+        // no ancestor's body needs to be searched for another blocker.
+        if idx < self.local_steps_len()
+            && !self.local_event_done(idx)
+            && self.event_lane_at(idx).is_some()
+            && self.event_conflict_row_allows(
+                self.machine().event_conflict_for_index(idx),
+                ScopeId::none(),
+                None,
+                selected_arm_for_scope,
+            )
+            && self.event_actor_is_local(idx, selected_arm_for_scope) != Some(false)
+        {
+            return None;
+        }
         let mut ancestors = self.machine().event_program().roll_ancestors(idx);
         let lane = self.event_lane_at(idx);
         // The immutable parent chain contains exactly the enclosing rolls,

@@ -178,6 +178,5 @@ pub(super) use self::core::*;
 pub(crate) use self::core::{
     OperationKernel, OperationRetirement, PublicSlotOwnership, ResidentActor, SendPreview,
 };
-pub(crate) use self::frontier::FrontierScratchLayout;
 pub(crate) use self::lane_port::RawSendPayload;
 pub(crate) use self::layout::EndpointArenaLayout;

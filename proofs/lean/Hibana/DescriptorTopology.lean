@@ -1208,16 +1208,6 @@ def RustDescriptorImage.passiveChildColumnsCoherent
         | _, _ => false
   | _, _ => false
 
-/-- Match Rust's `route_commit_parent` when checking precomputed commit rows.
-The event conflict walk uses the raw parent and must not erase a self-edge. -/
-private def RustDescriptorImage.routeCommitParentMembership?
-    (image : RustDescriptorImage) (scope : Nat) : Option (Option (Nat × Nat)) := do
-  let parent ← image.routeParentMembership? scope
-  match parent with
-  | some (parentScope, arm) =>
-      if parentScope = scope then some none else some (some (parentScope, arm))
-  | none => some none
-
 private def RustDescriptorImage.routeCommitChainMatches
     (image : RustDescriptorImage) : List Nat -> (Nat × Nat) -> Bool
   | [], _ => false
@@ -1225,7 +1215,7 @@ private def RustDescriptorImage.routeCommitChainMatches
       match packedConflictMembership? current with
       | some (some membership) =>
           membership = expected &&
-            match image.routeCommitParentMembership? membership.1, rest with
+            match image.routeParentMembership? membership.1, rest with
             | some none, [] => true
             | some (some parent), _ :: _ =>
                 image.routeCommitChainMatches rest parent
@@ -1366,6 +1356,54 @@ def RustDescriptorImage.routeCommitColumnsCoherent
               (scope, rowIndex % 2)
         | _, _ => false
   | _, _, _ => false
+
+-- A peer binding after a join can retain a route with empty local arms.
+-- Its guard chain still terminates at an absent parent.
+private def emptyRouteCommitContextColumns (parent : Nat) : RustDescriptorImage := {
+  roleCount := 4
+  role := 3
+  logicalLaneCount := 1
+  activeLaneCount := 0
+  endpointLaneSlotCount := 1
+  maxRouteCommitCount := 1
+  firstActiveLane := 65535
+  activeLaneStart := 0
+  activeLaneLength := 0
+  atomCount := 0
+  routeResolverCount := 0
+  routeParticipantCount := 0
+  scopeMarkerCount := 0
+  eventCount := 0
+  dependencyRowCount := 0
+  conflictRowCount := 0
+  routeScopeCount := 1
+  residentBoundaryCount := 0
+  laneBitCount := 0
+  routeArmLaneStepCount := 0
+  routeCommitRowCount := 2
+  rollScopeCount := 0
+  rollEntryViewCount := 0
+  ownedReceiptCount := 0
+  programColumnBytes := []
+  programBytes := []
+  roleBytes :=
+    [0, 0] ++ [parent % 256, parent / 256] ++ -- route identity and parent
+    [0, 0, 0, 0, 255, 255, 0, 0] ++        -- empty left arm
+    [0, 0, 0, 0, 255, 255, 0, 0] ++        -- empty right arm
+    List.replicate 12 0 ++                  -- arm-lane and offer-lane rows
+    [1, 0, 0, 0, 1, 0, 1, 0] ++           -- commit ranges (0,1), (1,1)
+    [0, 0, 1, 0]                           -- singleton left/right chains
+}
+
+private theorem empty_route_context_keeps_rooted_commit_chains :
+    (emptyRouteCommitContextColumns 65535).decodeRouteArmRows?.isSome = true ∧
+    (emptyRouteCommitContextColumns 65535).routeCommitColumnsCoherent = true := by
+  decide
+
+private theorem empty_route_context_rejects_self_parent_commit_chains :
+    (emptyRouteCommitContextColumns 0).routeCommitColumnsCoherent = false ∧
+    (emptyRouteCommitContextColumns 1).routeCommitColumnsCoherent = false := by
+  decide
 
 def RustDescriptorImage.routeCommitCapacityExact
     (image : RustDescriptorImage) : Bool :=
@@ -1789,15 +1827,138 @@ private def RustDescriptorImage.roleOfferTopologyCheck?
           predecessor == greatestOfferViewPredecessor events regions step event
       | _, _ => false)
 
+private structure OfferAlternativeRoute where
+  scope : Nat
+  start : Nat
+  split : Nat
+  stop : Nat
+
+private structure OfferAlternativeFork where
+  route : OfferAlternativeRoute
+  previous : Nat
+
+private def offerAlternativeRoutes?
+    (markers : List DecodedScopeMarker) (atomCount : Nat) :
+    Option (List OfferAlternativeRoute) := do
+  let rows : List (List OfferAlternativeRoute) ←
+    (List.range markers.length).mapM fun index => do
+      let marker ← markers[index]?
+      if firstCanonicalEnterForScope markers index marker &&
+          marker.scope / productionScopeCapacity == 0 then
+        let (left, right) ← routeArmRanges? markers marker.scope
+        if left.1 < left.2 ∧ left.2 = right.1 ∧ right.1 < right.2 ∧
+            right.2 ≤ atomCount then
+          pure [{ scope := marker.scope, start := left.1, split := right.1, stop := right.2 }]
+        else none
+      else pure []
+  pure rows.flatten
+
+private def sameOfferViewLane (left right : OfferTopologyEvent) : Bool :=
+  left.view == right.view && left.lane == right.lane
+
+/-- Derive a target's fork from its preceding same-key source row. The causal
+predecessor is recomputed from all earlier rows, never from the stored table. -/
+private def expectedOfferAlternativeFork
+    (events : List OfferTopologyEvent) (regions : List ParallelRegion)
+    (routes : List OfferAlternativeRoute) (step : Nat)
+    (event : OfferTopologyEvent) : Option OfferAlternativeFork := do
+  let previous ← ((events.take step).zipIdx.reverse).find? fun entry =>
+    sameOfferViewLane entry.1 event
+  let route ← resolveUnique? (routes.filter fun route =>
+    decide (route.start ≤ previous.1.effect ∧ previous.1.effect < route.split ∧
+      route.split ≤ event.effect ∧ event.effect < route.stop))
+  let predecessor := greatestOfferViewPredecessor events regions step event
+  if predecessor == packedU16Absent then
+    pure { route, previous := previous.2 }
+  else
+    let prior ← events[predecessor]?
+    if prior.effect < route.split then
+      pure { route, previous := previous.2 }
+    else none
+
+/-- Search source-derived records in increasing row order. Outer links use
+the target's previous left witness, not the target in the route's right arm. -/
+private def expectedOfferAlternativeTarget
+    (events : List OfferTopologyEvent) (forks : List (Option OfferAlternativeFork))
+    (after witness : Nat) : Nat :=
+  match events[witness]? with
+  | none => packedU16Absent
+  | some left =>
+      ((List.range events.length).find? fun target =>
+        decide (after < target) &&
+        match events[target]?, forks[target]? with
+        | some right, some (some fork) =>
+            sameOfferViewLane left right &&
+            decide (fork.route.start ≤ left.effect ∧ left.effect < fork.route.split)
+        | _, _ => false).getD packedU16Absent
+
+private def offerAlternativeColumnsExact
+    (events : List OfferTopologyEvent) (regions : List ParallelRegion)
+    (routes : List OfferAlternativeRoute) (scopes heads forkSlots outer : List Nat) : Bool :=
+  let forks := events.zipIdx.map fun (event, step) =>
+    expectedOfferAlternativeFork events regions routes step event
+  decide scopes.Nodup &&
+  heads.length == events.length && forkSlots.length == events.length &&
+  outer.length == events.length &&
+  (List.range events.length).all fun step =>
+    heads[step]? == some (expectedOfferAlternativeTarget events forks step step) &&
+    match forks[step]?, forkSlots[step]?, outer[step]? with
+    | some none, some slot, some next => slot == packedU16Absent && next == packedU16Absent
+    | some (some fork), some slot, some next =>
+        scopes[slot]? == some fork.route.scope &&
+        next == expectedOfferAlternativeTarget events forks step fork.previous
+    | _, _, _ => false
+
+private def RustDescriptorImage.roleOfferAlternativesCheck?
+    (image : RustDescriptorImage) : Option Bool := do
+  let markers ← image.decodeScopeMarkers?
+  let regions ← offerSourceBinaryRegions? markers image.atomCount
+  let routes ← offerAlternativeRoutes? markers image.atomCount
+  let events ← image.decodeOfferTopologyEvents?
+  let scopes ← image.decodeRouteScopeRows?
+  let readColumn := fun (offset : Nat) =>
+    (List.range image.eventCount).mapM fun step =>
+      readU16LE? image.roleBytes (offset + step * productionRoleU16Stride)
+  let heads ← readColumn image.roleOfferAlternativeHeadOffset
+  let forkSlots ← readColumn image.roleOfferAlternativeScopeOffset
+  let outer ← readColumn image.roleOfferAlternativeOuterOffset
+  pure (offerAlternativeColumnsExact events regions routes scopes heads forkSlots outer)
+
+private def nestedRightOfferAlternativeColumns (heads forkSlots outer : List Nat) : Bool :=
+  let events : List OfferTopologyEvent :=
+    [{ effect := 0, view := 0, lane := 0, receive := true },
+     { effect := 1, view := 0, lane := 0, receive := true },
+     { effect := 2, view := 0, lane := 0, receive := true }]
+  let regions : List ParallelRegion :=
+    [{ start := 0, split := 1, stop := 3 }, { start := 1, split := 2, stop := 3 }]
+  let routes : List OfferAlternativeRoute :=
+    [{ scope := 0, start := 0, split := 1, stop := 3 },
+     { scope := 1, start := 1, split := 2, stop := 3 }]
+  offerAlternativeColumnsExact events regions routes [0, 1] heads forkSlots outer
+
+/-- Omitting a head, changing a fork identity, or linking into a right-arm
+descendant must fail even if the remaining targets stay in source order. -/
+private theorem nested_right_offer_alternative_source_controls :
+    nestedRightOfferAlternativeColumns [1, 2, 65535] [65535, 0, 1]
+      [65535, 65535, 65535] = true ∧
+    nestedRightOfferAlternativeColumns [65535, 2, 65535] [65535, 0, 1]
+      [65535, 65535, 65535] = false ∧
+    nestedRightOfferAlternativeColumns [1, 2, 65535] [65535, 1, 1]
+      [65535, 65535, 65535] = false ∧
+    nestedRightOfferAlternativeColumns [1, 2, 65535] [65535, 0, 1]
+      [65535, 2, 65535] = false := by
+  decide
+
 /-- Immutable offer topology is checked independently of Rust's emitted links:
 every first receive/outbound row is exact; the view/lane index is a strictly
 sorted complete permutation; every predecessor is the greatest same-view row
-under marker-derived strict source order. Images without retained routes omit
-these route-specific tables; their lane-successor table is checked separately.
-None of these facts grants live event authority. -/
+under marker-derived strict source order; and every alternative head, fork
+identity and enclosing link equals a source-row search. Images without retained
+routes omit these tables; lane successors are checked separately. None of these
+facts grants live event authority. -/
 def RustDescriptorImage.roleOfferTopologyCoherent (image : RustDescriptorImage) : Bool :=
   if image.routeScopeCount = 0 then true
-  else image.roleOfferTopologyCheck?.getD false
+  else image.roleOfferTopologyCheck?.getD false && image.roleOfferAlternativesCheck?.getD false
 
 /-- Scan all row ordinals in increasing order instead of reproducing Rust's
 reverse pass or following its emitted links. The first matching later row is

@@ -13,8 +13,7 @@ use crate::endpoint::kernel::decision_state::{
     RouteCommitRowSetBuilder, RouteState, RouteStateCapacity, RouteStateStorage,
 };
 use crate::endpoint::kernel::frontier_state::{
-    FrontierState, FrontierStateCapacity, FrontierStateStorage, RootFrontierCapacity,
-    RootFrontierStorage,
+    FrontierState, FrontierStateCapacity, FrontierStateStorage,
 };
 use crate::endpoint::session::SessionCtx;
 use crate::global::compiled::images::RoleDescriptorRef;
@@ -272,7 +271,7 @@ unsafe fn init_endpoint_route<'r, T>(
                 active_lane_dense_by_lane,
                 arena_layout.route_state_lane_dense_by_lane().count(),
             ));
-        if active_lane_count != arena_layout.lane_offer_state_slots().count() {
+        if active_lane_count != arena_layout.route_state_lane_route_arm_lengths().count() {
             crate::invariant();
         }
         let decision_state =
@@ -304,11 +303,6 @@ unsafe fn init_endpoint_route<'r, T>(
                     arena_storage,
                     arena_layout.route_state_lane_route_arm_lengths(),
                 ),
-                lane_offer_state_storage: section_ptr::<
-                    crate::endpoint::kernel::frontier::LaneOfferState,
-                >(
-                    arena_storage, arena_layout.lane_offer_state_slots()
-                ),
                 scope_evidence_slots: section_ptr::<ScopeEvidenceSlot>(
                     arena_storage,
                     arena_layout.scope_evidence_slots(),
@@ -320,23 +314,10 @@ unsafe fn init_endpoint_route<'r, T>(
                     arena_layout.route_state_scope_selected_arms(),
                 ),
                 lane_dense_by_lane: active_lane_dense_by_lane,
-                lane_reentry_words: section_ptr::<crate::global::role_program::LaneWord>(
-                    arena_storage,
-                    arena_layout.route_state_lane_reentry_lanes(),
-                ),
-                lane_offer_reentry_words: section_ptr::<crate::global::role_program::LaneWord>(
-                    arena_storage,
-                    arena_layout.route_state_lane_offer_reentry_lanes(),
-                ),
-                active_offer_lane_words: section_ptr::<crate::global::role_program::LaneWord>(
-                    arena_storage,
-                    arena_layout.route_state_active_offer_lanes(),
-                ),
             },
             RouteStateCapacity {
                 lane_slot_count: arena_layout.route_state_lane_dense_by_lane().count(),
-                lane_word_count: arena_layout.route_state_lane_reentry_lanes().count(),
-                lane_offer_state_count: arena_layout.lane_offer_state_slots().count(),
+                active_lane_count: arena_layout.route_state_lane_route_arm_lengths().count(),
                 route_arm_state_capacity: arena_layout.route_arm_history().count(),
                 scope_evidence_count: arena_layout.scope_evidence_slots().count(),
                 scope_selected_arm_count: arena_layout.route_state_scope_selected_arms().count(),
@@ -354,9 +335,7 @@ unsafe fn init_endpoint_frontier<'r, T>(
 ) where
     T: Transport + 'r,
 {
-    /* SAFETY: frontier initialization owns the unpublished endpoint frontier
-    field. The root rows, active slots, observation slots, and offer-entry slots
-    are disjoint arena sections selected by the compiled endpoint layout. */
+    /* SAFETY: initialization owns the unpublished offer-visit storage and its disjoint arena bitmap. */
     unsafe {
         let progress = (*dst).progress.as_ptr().cast::<ActorProgress>();
         let frontier_state =
@@ -368,26 +347,12 @@ unsafe fn init_endpoint_frontier<'r, T>(
         FrontierState::init_empty(
             frontier_state,
             FrontierStateStorage {
-                root: RootFrontierStorage {
-                    rows: section_ptr::<crate::endpoint::kernel::frontier::RootFrontierState>(
-                        arena_storage,
-                        arena_layout.frontier_root_rows(),
-                    ),
-                    active_entries: section_ptr::<crate::endpoint::kernel::frontier::ActiveEntrySlot>(
-                        arena_storage,
-                        arena_layout.frontier_root_active_slots(),
-                    ),
-                },
                 visited_position_bits: section_ptr::<u8>(
                     arena_storage,
                     arena_layout.frontier_visited_position_bits(),
                 ),
             },
             FrontierStateCapacity {
-                root: RootFrontierCapacity {
-                    row_count: arena_layout.frontier_root_rows().count(),
-                    pool_capacity: arena_layout.frontier_root_active_slots().count(),
-                },
                 visited_position_count: role_descriptor
                     .local_event_rows()
                     .footprint()
@@ -489,22 +454,5 @@ pub(crate) unsafe fn write_guard_slot<'r, T>(
     unsafe {
         let view = crate::invariant_some((*dst).views.get(role));
         (&mut *view.io.get()).guards[logical_lane] = Some(guard);
-    }
-}
-
-pub(crate) unsafe fn finish_init<'r, T>(dst: *mut ResidentActor<'r, T>, role: u8)
-where
-    T: Transport + 'r,
-{
-    /* SAFETY: endpoint initialization still owns `dst`; lane offer state is
-    synchronized after all lane slots and route/frontier sections have been
-    initialized and before endpoint publication. */
-    unsafe {
-        let actor = &*dst;
-        crate::invariant_some(actor.try_with_kernel(
-            crate::invariant_some(actor.views.get(role)),
-            crate::endpoint::carrier::OperationRegion::WHOLE,
-            |kernel| kernel.sync_lane_offer_state(),
-        ));
     }
 }

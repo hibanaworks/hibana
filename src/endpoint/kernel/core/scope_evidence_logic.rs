@@ -1,8 +1,7 @@
 use super::super::evidence_store::ReadyArmEvidence;
 use super::{
-    Arm, EventCursor, EvidenceFingerprint, IngressEvidenceState, OfferEntryEvidence,
-    OperationKernel, ScopeArmMaterializationMeta, ScopeEvidence, ScopeId, Transport,
-    state_index_to_usize,
+    Arm, EventCursor, EvidenceFingerprint, IngressEvidenceState, OperationKernel,
+    ScopeArmMaterializationMeta, ScopeEvidence, ScopeId, Transport, state_index_to_usize,
 };
 impl<'r, T> OperationKernel<'_, 'r, T>
 where
@@ -139,14 +138,10 @@ where
         scope_id: ScopeId,
         ingress: IngressEvidenceState,
     ) -> EvidenceFingerprint {
-        let mut evidence = OfferEntryEvidence::empty();
-        if self.scope_has_ready_arm_evidence(scope_id) {
-            evidence = evidence.with_ready_arm();
-        }
-        if ingress.is_ready() {
-            evidence = evidence.with_ingress_ready();
-        }
-        EvidenceFingerprint::from_offer_entry_evidence(evidence)
+        EvidenceFingerprint::new(
+            self.scope_has_ready_arm_evidence(scope_id),
+            ingress.is_ready(),
+        )
     }
 
     #[inline]
@@ -156,15 +151,6 @@ where
     ) -> Option<Arm> {
         let mask = self.scope_poll_ready_arm_mask(scope_id);
         Arm::from_single_ready_mask(mask)
-    }
-
-    #[inline]
-    pub(in crate::endpoint::kernel) fn scope_has_controller_arm_entry(
-        cursor: &EventCursor,
-        scope_id: ScopeId,
-    ) -> bool {
-        cursor.controller_arm_entry_by_arm(scope_id, 0).is_some()
-            || cursor.controller_arm_entry_by_arm(scope_id, 1).is_some()
     }
 
     #[inline]
@@ -209,17 +195,18 @@ where
     }
 
     #[inline]
-    pub(in crate::endpoint::kernel) fn arm_requires_materialization_ready_evidence(
+    pub(in crate::endpoint::kernel) fn arm_requires_materialization_ready_evidence_at(
         &self,
         scope_id: ScopeId,
         arm: u8,
+        entry_index: usize,
     ) -> bool {
-        let at_scope_offer_entry =
-            crate::invariant_some(self.progress.cursor.route_scope_offer_entry(scope_id).map(
-                |entry| {
-                    entry.is_absent() || self.progress.cursor.index() == state_index_to_usize(entry)
-                },
-            ));
+        let at_scope_offer_entry = crate::invariant_some(
+            self.progress
+                .cursor
+                .route_scope_offer_entry(scope_id)
+                .map(|entry| entry.is_absent() || entry_index == state_index_to_usize(entry)),
+        );
         if self.is_route_controller(scope_id)
             && at_scope_offer_entry
             && let Some((entry, _)) = self

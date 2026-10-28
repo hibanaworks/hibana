@@ -1810,8 +1810,7 @@ impl ProductionCursorTrace {
                 self.clear_body_reentry_scope(reentry_scope, idx);
                 self.record_event_conflict_selection(idx);
                 self.cursor_mut().set_index(cursor_after);
-                let _ = self
-                    .cursor_mut()
+                self.cursor_mut()
                     .advance_lane_to_relocatable_step(progress_step);
                 self.apply_selected_route_completion_cursor();
                 return true;
@@ -2016,7 +2015,7 @@ impl ProductionCursorTrace {
                     region.scope(),
                     region.start(),
                     region.end(),
-                    region.reentry()
+                    self.event_program.route_scope_reentry(region.scope())
                 );
             } else {
                 let _ = writeln!(out, "  slot={slot} local-rows=empty");

@@ -3,9 +3,8 @@ use core::ops::{Deref, DerefMut};
 use super::decision_state::{RouteCommitRowSetBuilder, RouteScopeSelectedArmSlot, RouteState};
 use super::evidence::RouteArmState;
 use super::evidence_store::ScopeEvidenceSlot;
-use super::frontier::{ActiveEntrySlot, LaneOfferState, RootFrontierState};
 use super::frontier_state::FrontierState;
-use crate::global::role_program::{DenseLaneOrdinal, LaneWord, RuntimeRoleFootprint};
+use crate::global::role_program::{DenseLaneOrdinal, RuntimeRoleFootprint};
 use crate::global::typestate::EventCursorState;
 use crate::runtime_core::layout::{add, align_up, mul, u32_word_count};
 
@@ -81,10 +80,7 @@ impl EndpointArenaSection {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct RouteFrontierArenaLayout {
     route_arm_history: EndpointArenaSection,
-    lane_offer_state_slots: EndpointArenaSection,
     frontier_state: EndpointArenaSection,
-    frontier_root_rows: EndpointArenaSection,
-    frontier_root_active_slots: EndpointArenaSection,
     frontier_visited_position_bits: EndpointArenaSection,
     scope_evidence_slots: EndpointArenaSection,
 }
@@ -100,9 +96,6 @@ pub(crate) struct EndpointArenaLayout {
     route_state_lane_dense_by_lane: EndpointArenaSection,
     route_state_lane_route_arm_lengths: EndpointArenaSection,
     route_state_scope_selected_arms: EndpointArenaSection,
-    route_state_lane_reentry_lanes: EndpointArenaSection,
-    route_state_lane_offer_reentry_lanes: EndpointArenaSection,
-    route_state_active_offer_lanes: EndpointArenaSection,
     route_commit_row_set_builder: EndpointArenaSection,
     frontier: RouteFrontierArenaLayout,
     total_bytes: usize,
@@ -154,22 +147,6 @@ impl EndpointArenaLayout {
         offset = route_state_scope_selected_arms.end_offset();
         total_align = max_usize(total_align, route_state_scope_selected_arms.align());
 
-        let route_state_lane_word_count = footprint.lane_word_count();
-        let route_state_lane_reentry_lanes =
-            Self::section_array::<LaneWord>(offset, route_state_lane_word_count);
-        offset = route_state_lane_reentry_lanes.end_offset();
-        total_align = max_usize(total_align, route_state_lane_reentry_lanes.align());
-
-        let route_state_lane_offer_reentry_lanes =
-            Self::section_array::<LaneWord>(offset, route_state_lane_word_count);
-        offset = route_state_lane_offer_reentry_lanes.end_offset();
-        total_align = max_usize(total_align, route_state_lane_offer_reentry_lanes.align());
-
-        let route_state_active_offer_lanes =
-            Self::section_array::<LaneWord>(offset, route_state_lane_word_count);
-        offset = route_state_active_offer_lanes.end_offset();
-        total_align = max_usize(total_align, route_state_active_offer_lanes.align());
-
         let route_commit_row_set_builder = Self::section::<RouteCommitRowSetBuilder>(offset);
         offset = route_commit_row_set_builder.end_offset();
         total_align = max_usize(total_align, route_commit_row_set_builder.align());
@@ -179,24 +156,9 @@ impl EndpointArenaLayout {
         offset = route_arm_history.end_offset();
         total_align = max_usize(total_align, route_arm_history.align());
 
-        let lane_offer_state_slots =
-            Self::section_array::<LaneOfferState>(offset, footprint.active_lane_count);
-        offset = lane_offer_state_slots.end_offset();
-        total_align = max_usize(total_align, lane_offer_state_slots.align());
-
         let frontier_state = Self::section::<FrontierState>(offset);
         offset = frontier_state.end_offset();
         total_align = max_usize(total_align, frontier_state.align());
-
-        let frontier_root_rows =
-            Self::section_array::<RootFrontierState>(offset, footprint.active_lane_count);
-        offset = frontier_root_rows.end_offset();
-        total_align = max_usize(total_align, frontier_root_rows.align());
-
-        let frontier_root_active_slots =
-            Self::section_array::<ActiveEntrySlot>(offset, footprint.frontier_entry_count());
-        offset = frontier_root_active_slots.end_offset();
-        total_align = max_usize(total_align, frontier_root_active_slots.align());
 
         let frontier_visited_position_bits =
             Self::section_array::<u8>(offset, footprint.frontier_visit_byte_count());
@@ -218,16 +180,10 @@ impl EndpointArenaLayout {
             route_state_lane_dense_by_lane,
             route_state_lane_route_arm_lengths,
             route_state_scope_selected_arms,
-            route_state_lane_reentry_lanes,
-            route_state_lane_offer_reentry_lanes,
-            route_state_active_offer_lanes,
             route_commit_row_set_builder,
             frontier: RouteFrontierArenaLayout {
                 route_arm_history,
-                lane_offer_state_slots,
                 frontier_state,
-                frontier_root_rows,
-                frontier_root_active_slots,
                 frontier_visited_position_bits,
                 scope_evidence_slots,
             },
@@ -249,11 +205,6 @@ impl EndpointArenaLayout {
     #[inline(always)]
     pub(crate) const fn route_arm_history(&self) -> EndpointArenaSection {
         self.frontier.route_arm_history
-    }
-
-    #[inline(always)]
-    pub(crate) const fn lane_offer_state_slots(&self) -> EndpointArenaSection {
-        self.frontier.lane_offer_state_slots
     }
 
     #[inline(always)]
@@ -297,32 +248,8 @@ impl EndpointArenaLayout {
     }
 
     #[inline(always)]
-    pub(crate) const fn route_state_lane_reentry_lanes(&self) -> EndpointArenaSection {
-        self.route_state_lane_reentry_lanes
-    }
-
-    #[inline(always)]
-    pub(crate) const fn route_state_lane_offer_reentry_lanes(&self) -> EndpointArenaSection {
-        self.route_state_lane_offer_reentry_lanes
-    }
-
-    #[inline(always)]
-    pub(crate) const fn route_state_active_offer_lanes(&self) -> EndpointArenaSection {
-        self.route_state_active_offer_lanes
-    }
-
-    #[inline(always)]
     pub(crate) const fn route_commit_row_set_builder(&self) -> EndpointArenaSection {
         self.route_commit_row_set_builder
-    }
-
-    pub(crate) const fn frontier_root_rows(&self) -> EndpointArenaSection {
-        self.frontier.frontier_root_rows
-    }
-
-    #[inline(always)]
-    pub(crate) const fn frontier_root_active_slots(&self) -> EndpointArenaSection {
-        self.frontier.frontier_root_active_slots
     }
 
     #[inline(always)]
@@ -439,14 +366,9 @@ mod tests {
     }
 
     #[test]
-    fn frontier_storage_separates_active_keys_from_visited_cursor_positions() {
+    fn frontier_storage_contains_only_visited_cursor_positions() {
         let footprint = test_footprint(8, 3, 65, 65, 3, 4);
         let layout = EndpointArenaLayout::from_footprint(footprint);
-        assert_eq!(layout.frontier_root_rows().count(), 3);
-        assert_eq!(
-            layout.frontier_root_active_slots().count(),
-            footprint.frontier_entry_count()
-        );
         assert_eq!(
             layout.frontier_visited_position_bits().count(),
             footprint.frontier_visit_byte_count()
@@ -490,17 +412,5 @@ mod tests {
         assert_eq!(base_layout.scope_evidence_slots().count(), 0);
         assert_eq!(scoped_layout.route_state_scope_selected_arms().count(), 16);
         assert_eq!(scoped_layout.scope_evidence_slots().count(), 16);
-        assert_eq!(
-            scoped_layout.route_state_lane_reentry_lanes().count(),
-            base_layout.route_state_lane_reentry_lanes().count()
-        );
-        assert_eq!(
-            scoped_layout.route_state_lane_offer_reentry_lanes().count(),
-            base_layout.route_state_lane_offer_reentry_lanes().count()
-        );
-        assert_eq!(
-            scoped_layout.route_state_active_offer_lanes().count(),
-            base_layout.route_state_active_offer_lanes().count()
-        );
     }
 }

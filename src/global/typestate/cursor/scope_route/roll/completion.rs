@@ -406,33 +406,35 @@ impl EventCursor {
         }
     }
 
-    /// Only a prerequisite inside a completed visit can serve an operation
-    /// outside it. A fresh operation inside that visit still needs its current
-    /// predecessors. No old completion can authorize another body operation.
+    /// End of the outermost retained visit that covers this prerequisite but
+    /// not the incoming target. Every row from the prerequisite to this end
+    /// has the same retained-completion justification and can be skipped.
     #[inline]
-    pub(crate) fn retained_roll_allows_predecessor(
+    pub(crate) fn retained_roll_predecessor_end(
         &self,
         predecessor: usize,
         target: usize,
-    ) -> bool {
+    ) -> Option<usize> {
         // A new outgoing acceptance belongs to the current local visit. Only
         // a peer's already accepted incoming continuation can arrive late.
         if self.machine().event_program().footprint().roll_scope_count == 0
             || !self.is_recv_at(target)
         {
-            return false;
+            return None;
         }
+        let mut retained_end = None;
         for scope in self.machine().event_program().roll_ancestors(predecessor) {
             let slot = crate::invariant_some(self.machine().event_program().roll_scope_slot(scope));
             let (_, range) = crate::invariant_some(self.machine().roll_scope_row_by_slot(slot));
             if !(range.start() <= target && target < range.end()) {
                 let index = self.local_steps_len() + slot;
                 if self.completed_event_words()[index / 32] & (1 << (index % 32)) != 0 {
-                    return true;
+                    retained_end =
+                        Some(retained_end.map_or(range.end(), |end: usize| end.max(range.end())));
                 }
             }
         }
-        false
+        retained_end
     }
 
     /// An earlier completed visit can keep a later receive enabled while an
@@ -486,22 +488,5 @@ impl EventCursor {
         let start = self.local_steps_len();
         let words = self.completed_event_words();
         (start..start + count).any(|index| words[index / 32] & (1 << (index % 32)) != 0)
-    }
-
-    /// Forward continuation candidates begin after a retained body containing
-    /// this head. A roll with no suffix needs no candidate scan.
-    pub(crate) fn retained_continuation_start(&self, head: usize) -> Option<usize> {
-        let mut first = None;
-        let mut slot = 0;
-        while let Some((_, range)) = self.machine().roll_scope_row_by_slot(slot) {
-            if range.start() <= head && head < range.end() && range.end() < self.local_steps_len() {
-                let index = self.local_steps_len() + slot;
-                if self.completed_event_words()[index / 32] & (1 << (index % 32)) != 0 {
-                    first = Some(first.map_or(range.end(), |end: usize| end.min(range.end())));
-                }
-            }
-            slot += 1;
-        }
-        first
     }
 }

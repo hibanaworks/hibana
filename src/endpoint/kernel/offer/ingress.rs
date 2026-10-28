@@ -16,6 +16,31 @@ mod kani;
 #[cfg(all(test, hibana_repo_tests))]
 mod tests;
 
+/// Ascending incoming directions from one read cut. These borrowed arrays
+/// choose ports to poll; they never carry event admission across a callback.
+fn incoming_offer_lanes<'a>(
+    incoming: &'a [LaneWord; LANE_SET_VIEW_WORDS],
+    deferred: &'a [LaneWord; LANE_SET_VIEW_WORDS],
+    lane_limit: usize,
+) -> impl Iterator<Item = usize> + 'a {
+    incoming
+        .iter()
+        .zip(deferred)
+        .enumerate()
+        .flat_map(move |(word, (&incoming, &deferred))| {
+            let mut remaining = incoming & !deferred;
+            core::iter::from_fn(move || {
+                if remaining == 0 {
+                    return None;
+                }
+                let bit = remaining.trailing_zeros() as usize;
+                remaining &= remaining - 1;
+                let lane = word * LaneWord::BITS as usize + bit;
+                (lane < lane_limit).then_some(lane)
+            })
+        })
+}
+
 #[derive(Clone, Copy)]
 pub(super) struct OfferFrontierFacts {
     pub(super) selection: OfferScopeSelection,
@@ -87,7 +112,7 @@ where
         pending_recv: &mut lane_port::PendingRecv,
         facts: OfferFrontierFacts,
         cx: &mut core::task::Context<'_>,
-        deferred_lanes: &[LaneWord; LANE_SET_VIEW_WORDS],
+        inspected_lanes: &mut [LaneWord; LANE_SET_VIEW_WORDS],
     ) -> Poll<RecvResult<Option<lane_port::PreambleFrame<'r>>>> {
         if matches!(facts.ingress_mode, OfferIngressMode::ResolvedWithoutFrame) {
             return Poll::Ready(Ok(None));
@@ -97,7 +122,7 @@ where
             pending_recv,
             facts,
             cx,
-            deferred_lanes,
+            inspected_lanes,
         ) {
             Poll::Pending => return Poll::Pending,
             Poll::Ready(Ok(frame)) => frame,
@@ -111,24 +136,18 @@ where
         &mut self,
         pending_recv: &mut lane_port::PendingRecv,
         cx: &mut core::task::Context<'_>,
-        deferred_lanes: &[LaneWord; LANE_SET_VIEW_WORDS],
+        inspected_lanes: &mut [LaneWord; LANE_SET_VIEW_WORDS],
+        incoming: &[LaneWord; LANE_SET_VIEW_WORDS],
     ) -> Poll<RecvResult<Option<lane_port::PreambleFrame<'r>>>> {
         let lane_limit = self.progress.cursor.logical_lane_count();
-        let mut start = 0usize;
-        while let Some(lane_idx) = {
-            self.progress
-                .decision_state
-                .active_offer_lanes()
-                .next_set_from(start, lane_limit)
-        } {
-            let (word, bit) = lane_word_index(lane_idx);
-            if !self.owns_lane(lane_idx)
-                || deferred_lanes[word] & bit != 0
-                || self.io.ports.get(lane_idx).is_none_or(Option::is_none)
+        let previously_inspected = *inspected_lanes;
+        for lane_idx in incoming_offer_lanes(incoming, &previously_inspected, lane_limit) {
+            if !self.owns_lane(lane_idx) || self.io.ports.get(lane_idx).is_none_or(Option::is_none)
             {
-                start = lane_idx + 1;
                 continue;
             }
+            let (word, bit) = lane_word_index(lane_idx);
+            inspected_lanes[word] |= bit;
             match self.poll_received_framed_transport_frame_for_lane(
                 pending_recv,
                 lane_idx,
@@ -139,7 +158,6 @@ where
                 Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
                 Poll::Pending => {}
             }
-            start = lane_idx + 1;
         }
         Poll::Ready(Ok(None))
     }
@@ -149,7 +167,7 @@ where
         pending_recv: &mut lane_port::PendingRecv,
         facts: OfferFrontierFacts,
         cx: &mut core::task::Context<'_>,
-        deferred_lanes: &[LaneWord; LANE_SET_VIEW_WORDS],
+        inspected_lanes: &mut [LaneWord; LANE_SET_VIEW_WORDS],
     ) -> Poll<RecvResult<lane_port::PreambleFrame<'r>>> {
         let lane_limit = self.progress.cursor.logical_lane_count();
         let lanes = self.transport_lane_set_for_offer(facts);
@@ -158,11 +176,12 @@ where
         while let Some(lane_idx) = lanes.next() {
             let (word, bit) = lane_word_index(lane_idx);
             if !self.owns_lane(lane_idx)
-                || deferred_lanes[word] & bit != 0
+                || inspected_lanes[word] & bit != 0
                 || self.io.ports.get(lane_idx).is_none_or(Option::is_none)
             {
                 continue;
             }
+            inspected_lanes[word] |= bit;
             match self.poll_received_framed_transport_frame_for_lane(
                 pending_recv,
                 lane_idx,

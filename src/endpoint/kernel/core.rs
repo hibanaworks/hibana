@@ -3,10 +3,10 @@
 //! Pinned actor storage owns semantic progress; logical-view storage owns ports
 //! and pending I/O. Each carrier entry borrows both for one synchronous poll.
 
-use core::{ops::ControlFlow, task::Poll};
+use core::task::Poll;
 
 use super::authority::{Arm, RouteArmToken, RouteResolveStep};
-use super::evidence::{ScopeEvidence, ScopeReentryMeta};
+use super::evidence::ScopeEvidence;
 use super::frontier::*;
 use super::frontier_state::FrontierState;
 use super::lane_port;
@@ -19,8 +19,8 @@ use crate::eff::EffIndex;
 use crate::global::const_dsl::ScopeId;
 use crate::global::role_program::LaneSetView;
 use crate::global::typestate::{
-    CursorInvariantError, CursorRefresh, EventCursor, RecvMeta, RelocatableResidentLaneStep,
-    SendMeta, SendPreviewError, StateIndex, state_index_to_usize,
+    CursorInvariantError, EventCursor, RecvMeta, RelocatableResidentLaneStep, SendMeta,
+    SendPreviewError, StateIndex, state_index_to_usize,
 };
 use crate::{
     endpoint::{
@@ -29,7 +29,7 @@ use crate::{
     observe::core::{TapEvent, emit},
     observe::{events, ids},
     rendezvous::SessionFaultKind,
-    rendezvous::{core::EndpointLeaseId, core::ScratchLease, port::Port},
+    rendezvous::{core::EndpointLeaseId, port::Port},
     session::{
         cluster::error::ClusterError,
         types::{Lane, RendezvousId, SessionId},
@@ -336,15 +336,12 @@ fn controller_arm_label(cursor: &EventCursor, scope_id: ScopeId, arm: u8) -> Opt
 mod commit_delta;
 mod commit_delta_apply;
 mod commit_delta_route_only;
-mod frontier_observation;
 mod frontier_select;
-mod offer_refresh;
 mod parallel;
 mod public_operation;
 mod scope_evidence_logic;
 
 mod decision_resolver;
-mod frontier_helpers;
 mod owned;
 mod public_types;
 mod retirement;
@@ -404,16 +401,6 @@ where
     }
 
     #[inline]
-    pub(crate) fn frontier_scratch_workspace<'lease>(
-        &self,
-        lease: &'lease mut ScratchLease<'r>,
-    ) -> FrontierScratchWorkspace<'lease> {
-        let scratch = self.context.session.rendezvous().frontier_scratch(lease);
-        let layout = self.progress.cursor.frontier_scratch_layout();
-        FrontierScratchWorkspace::from_storage(scratch, layout)
-    }
-
-    #[inline]
     pub(crate) fn offer_lane_set_for_scope(&self, scope_id: ScopeId) -> LaneSetView<'static> {
         match self.progress.cursor.route_scope_offer_lane_set(scope_id) {
             Some(lanes) => lanes,
@@ -439,8 +426,7 @@ where
     }
 
     #[inline]
-    pub(crate) fn controller_arm_at_cursor(&self, scope_id: ScopeId) -> Option<u8> {
-        let idx = self.progress.cursor.index();
+    pub(crate) fn controller_arm_at_index(&self, scope_id: ScopeId, idx: usize) -> Option<u8> {
         if let Some((entry, _)) = self
             .progress
             .cursor

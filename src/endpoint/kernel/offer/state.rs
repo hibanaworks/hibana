@@ -228,17 +228,12 @@ impl<'r> OfferState<'r> {
             carried_transport_payload: self.carried_ingress.take_transport(),
             stage_transport_payload: None,
         };
-        match core::mem::replace(&mut self.execution, OfferExecution::Uninitialized) {
-            OfferExecution::Uninitialized | OfferExecution::Selecting { .. } => return items,
-            OfferExecution::Collecting { stage, .. } => {
-                let mut ingress = stage.ingress;
-                items.stage_transport_payload = ingress.take_transport();
-            }
-            OfferExecution::Resolving { stage, .. } => {
-                let mut ingress = stage.ingress;
-                items.stage_transport_payload = ingress.take_transport();
-            }
-        }
+        items.stage_transport_payload = match &mut self.execution {
+            OfferExecution::Uninitialized | OfferExecution::Selecting { .. } => None,
+            OfferExecution::Collecting { stage, .. } => stage.ingress.take_transport(),
+            OfferExecution::Resolving { stage, .. } => stage.ingress.take_transport(),
+        };
+        self.execution = OfferExecution::Uninitialized;
         items
     }
 

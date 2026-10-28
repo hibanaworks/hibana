@@ -1,7 +1,12 @@
 use super::{
-    Arm, OperationKernel, RecvError, RecvResult, ScopeId, TapFrameMeta, Transport, emit, events,
-    state_index_to_usize,
+    Arm, CursorInvariantError, OperationKernel, ReentryScopeLiveness, ScopeId, StateIndex,
+    TapFrameMeta, Transport, emit, events,
 };
+use crate::global::role_program::ROLE_IMAGE_ROUTE_SCOPE_CAPACITY;
+
+#[cfg(all(test, hibana_repo_tests))]
+#[path = "route_preview/tests.rs"]
+mod tests;
 
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -26,19 +31,16 @@ where
     pub(in crate::endpoint::kernel) fn preview_queries(
         &self,
     ) -> impl FnMut(ScopeId) -> Option<u8> + '_ {
-        let mut answers = [0u8; (ScopeId::LOCAL_CAPACITY as usize).div_ceil(4)];
+        let mut answers = [0u8; ROLE_IMAGE_ROUTE_SCOPE_CAPACITY.div_ceil(4)];
         move |scope| {
-            if !matches!(
-                scope.kind(),
-                Some(crate::global::const_dsl::ScopeKind::Route)
-            ) {
-                return self.preview_live_selected_arm_for_scope(scope);
-            }
-            let index = scope.local_ordinal() as usize;
+            let slot = self.scope_slot_for_route(scope);
+            let Some(index) = slot else {
+                return self.preview_arm_from_scope_slot(scope, None);
+            };
             let shift = (index % 4) * 2;
             match (answers[index / 4] >> shift) & 3 {
                 0 => {
-                    let answer = self.preview_live_selected_arm_for_scope(scope);
+                    let answer = self.preview_arm_from_scope_slot(scope, slot);
                     let encoded = match answer {
                         None => 1,
                         Some(0) => 2,
@@ -95,15 +97,6 @@ where
         )
     }
 
-    pub(crate) fn route_scope_offer_entry_index(&self, scope_id: ScopeId) -> Option<usize> {
-        let offer_entry = self.progress.cursor.route_scope_offer_entry(scope_id)?;
-        Some(if offer_entry.is_absent() {
-            self.progress.cursor.index()
-        } else {
-            state_index_to_usize(offer_entry)
-        })
-    }
-
     pub(crate) fn preview_passive_materialization_index_for_selected_arm(
         &self,
         scope_id: ScopeId,
@@ -120,7 +113,10 @@ where
         &self,
         scope_id: ScopeId,
     ) -> Option<u8> {
-        let slot = self.scope_slot_for_route(scope_id);
+        self.preview_arm_from_scope_slot(scope_id, self.scope_slot_for_route(scope_id))
+    }
+
+    fn preview_arm_from_scope_slot(&self, scope_id: ScopeId, slot: Option<usize>) -> Option<u8> {
         let selected = slot
             .and_then(|slot| {
                 self.progress
@@ -215,15 +211,12 @@ where
     }
 
     #[inline]
-    pub(crate) fn offer_scope_id_at(&self, index: usize) -> ScopeId {
-        let mut selected_arm_for_scope = |scope| self.selected_live_arm_for_scope(scope);
-        let mut preview_selected_arm_for_scope =
-            |scope| self.preview_live_selected_arm_for_scope(scope);
-        self.progress.cursor.offer_scope_id_at(
-            index,
-            &mut selected_arm_for_scope,
-            &mut preview_selected_arm_for_scope,
-        )
+    pub(crate) fn offer_scope_id_at(
+        &self,
+        index: usize,
+        previews: &mut dyn FnMut(ScopeId) -> Option<u8>,
+    ) -> ScopeId {
+        self.progress.cursor.offer_scope_id_at(index, previews)
     }
 
     pub(crate) fn rebase_passive_descendant_scope(
@@ -238,18 +231,6 @@ where
             })
     }
 
-    pub(crate) fn current_route_arm_authorized(&self) -> RecvResult<bool> {
-        self.progress
-            .cursor
-            .current_route_arm_authorization(
-                self.public_header.role(),
-                |scope| self.selected_live_arm_for_scope(scope),
-                |scope| self.preview_live_selected_arm_for_scope(scope),
-            )
-            .map(|authorization| authorization.authorizes_current_arm())
-            .map_err(|_| RecvError::PhaseInvariant)
-    }
-
     pub(crate) fn emit_endpoint_event(&self, id: u16, meta: TapFrameMeta, lane: u8) {
         let port = self.port_for_lane(lane as usize);
         let packed = ((self.public_header.role() as u32) << 24)
@@ -257,5 +238,34 @@ where
             | ((meta.label as u32) << 8);
         let event = events::raw_event(id).with_arg0(meta.sid).with_arg1(packed);
         emit(port.tap(), event);
+    }
+    pub(in crate::endpoint::kernel) fn active_reentry_offer_for_lane(
+        &self,
+        lane_idx: usize,
+    ) -> Option<(ScopeId, StateIndex)> {
+        if lane_idx >= self.progress.cursor.logical_lane_count() {
+            return None;
+        }
+        let scope =
+            match self
+                .progress
+                .decision_state
+                .active_reentry_scope_for_lane(lane_idx, |scope| {
+                    if !self.is_reentry_route(scope) {
+                        return Ok(ReentryScopeLiveness::NotReentry);
+                    }
+                    let Some(arm) = self.selected_arm_for_scope(scope) else {
+                        return Ok(ReentryScopeLiveness::Incomplete);
+                    };
+                    Ok(if self.reentrant_selected_arm_complete(scope, arm) {
+                        ReentryScopeLiveness::Complete
+                    } else {
+                        ReentryScopeLiveness::Incomplete
+                    })
+                }) {
+                Ok(scope) => scope?,
+                Err(CursorInvariantError::INVARIANT) => crate::invariant(),
+            };
+        self.progress.cursor.active_reentry_offer_entry(scope)
     }
 }

@@ -175,6 +175,46 @@ theorem passive_descent_requires_an_unresolved_target (target child : Option Nat
 theorem an_unresolved_target_can_descend (scope : Nat) :
     passivePreview none (some scope) = .descend scope := rfl
 
+-- A lane mask belongs to one poll only. Repeated Pending observations can be
+-- omitted within this cut; the transport must wake the next poll on readiness.
+-- This does not keep admission or transport observations across polls.
+def uninspected {Frame : Type} (seen : Nat → Bool)
+    (inputs : List (Nat × Observation Frame)) : List (Nat × Observation Frame) :=
+  inputs.filter fun entry => !seen entry.1
+
+theorem an_uninspected_direction_remains {Frame : Type} (seen : Nat → Bool)
+    (inputs : List (Nat × Observation Frame)) (entry : Nat × Observation Frame)
+    (present : entry ∈ inputs) (fresh : seen entry.1 = false) :
+    entry ∈ uninspected seen inputs := by
+  simp [uninspected, present, fresh]
+
+theorem an_inspected_direction_is_not_repeated {Frame : Type} (seen : Nat → Bool)
+    (inputs : List (Nat × Observation Frame)) (entry : Nat × Observation Frame)
+    (inspected : seen entry.1 = true) :
+    entry ∉ uninspected seen inputs := by
+  simp [uninspected, inspected]
+
+theorem skipping_pending_directions_preserves_scan {Frame : Type} (seen : Nat → Bool)
+    (inputs : List (Nat × Observation Frame))
+    (pending : ∀ entry ∈ inputs, seen entry.1 = true → entry.2 = .pending) :
+    scan ((uninspected seen inputs).map Prod.snd) = scan (inputs.map Prod.snd) := by
+  induction inputs with
+  | nil => rfl
+  | cons entry rest ih =>
+    have restPending : ∀ item ∈ rest, seen item.1 = true → item.2 = .pending := by
+      intro item member inspected
+      exact pending item (List.mem_cons_of_mem entry member) inspected
+    by_cases inspected : seen entry.1 = true
+    · have observed := pending entry List.mem_cons_self inspected
+      simp only [uninspected, List.filter_cons, inspected, Bool.not_true,
+        Bool.false_eq_true, ↓reduceIte, List.map_cons, observed, scan]
+      exact ih restPending
+    · have fresh : seen entry.1 = false := by
+        cases value : seen entry.1 <;> simp_all
+      cases entry with
+      | mk lane observation =>
+        cases observation <;> simp_all [uninspected, scan]
+
 #print axioms owned_is_evidence
 #print axioms waiting_requires_empty
 #print axioms carried_frame_bypasses_active
@@ -193,5 +233,8 @@ theorem an_unresolved_target_can_descend (scope : Nat) :
 #print axioms an_exact_receive_cannot_restart_at_a_child
 #print axioms passive_descent_requires_an_unresolved_target
 #print axioms an_unresolved_target_can_descend
+#print axioms an_uninspected_direction_remains
+#print axioms an_inspected_direction_is_not_repeated
+#print axioms skipping_pending_directions_preserves_scan
 
 end Hibana.ParallelOfferIngress

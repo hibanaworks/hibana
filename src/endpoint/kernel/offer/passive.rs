@@ -1,8 +1,8 @@
 use super::{
-    FrameEvidenceResolution, FrontierDeferOutcome, FrontierDeferRequest, FrontierScratchWorkspace,
-    FrontierVisitSet, IngressEvidenceState, OfferProgressState, OfferResolveState,
-    OfferScopeSelection, OfferStagedIngress, OperationKernel, Poll, RecvError, RecvResult,
-    ResolvePendingState, ResolveTokenOutcome, Transport, lane_port,
+    FrameEvidenceResolution, FrontierDeferOutcome, FrontierDeferRequest, FrontierVisitSet,
+    IngressEvidenceState, OfferProgressState, OfferResolveState, OfferScopeSelection,
+    OfferStagedIngress, OperationKernel, Poll, RecvError, RecvResult, ResolvePendingState,
+    ResolveTokenOutcome, Transport, lane_port,
 };
 pub(super) struct PassiveRouteEvidenceInput {
     pub(super) selection: OfferScopeSelection,
@@ -121,14 +121,12 @@ where
         mut state: PassiveRouteEvidenceContext<'_, 'r>,
         pending_recv: &mut lane_port::PendingRecv,
         cx: &mut core::task::Context<'_>,
-        scratch: &mut FrontierScratchWorkspace<'_>,
     ) -> Poll<RecvResult<PassiveRouteEvidenceOutcome>> {
         let PassiveRouteEvidenceInput {
             selection,
             mut frame_evidence,
         } = input;
         let scope_id = selection.scope_id;
-        let frontier_parallel_root = selection.frontier_parallel_root;
         let mut wire_turn = PassiveWireTurn::Unpolled;
         loop {
             frame_evidence.record(self.refresh_passive_scope_evidence(selection, &mut state)?);
@@ -161,11 +159,10 @@ where
                 state.progress,
                 FrontierDeferRequest {
                     scope_id,
-                    current_parallel: frontier_parallel_root,
+                    entry_index: selection.entry_index,
                     ingress: state.evidence_state(),
                 },
                 state.frontier_visited,
-                scratch,
             ))? {
                 FrontierDeferOutcome::Continue => break,
                 FrontierDeferOutcome::Yielded => {

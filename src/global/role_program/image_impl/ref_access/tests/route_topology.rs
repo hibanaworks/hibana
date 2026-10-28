@@ -87,6 +87,74 @@ fn compare(rows: &RoleImageRef) {
             }
         }
     }
+    compare_alternative_links(rows);
+}
+
+/// Scan raw arm rows and source markers, without alternative links, the sorted
+/// key index or compiled causal predecessors in the expected answer.
+fn compare_alternative_links(rows: &RoleImageRef) {
+    let raw = rows.lanes();
+    let count = rows.local_step_count();
+    let scopes = rows.columns.route_scopes.len as usize;
+    let assignments = 3usize.pow(scopes as u32);
+    for assignment in 0..assignments {
+        let preview_at = |slot: usize| match (assignment / 3usize.pow(slot as u32)) % 3 {
+            0 => None,
+            1 => Some(0),
+            _ => Some(1),
+        };
+        for step in 0..count {
+            let view = rows.local_step_logical_role(step);
+            let lane = rows.local_step_lane(step).unwrap();
+            let effect = raw.local_step_event(step).unwrap().eff_index as usize;
+            let mut expected = None;
+            for slot in 0..scopes {
+                if preview_at(slot).is_some() {
+                    continue;
+                }
+                let right = raw.route_arm_event_row_by_slot(slot, 1);
+                if right.is_absent_or_zero_len() {
+                    continue;
+                }
+                let entry = (right.start()..right.end()).find(|&candidate| {
+                    rows.local_step_logical_role(candidate) == view
+                        && raw.local_step_lane(candidate, rows.footprint().logical_lane_count)
+                            == Some(lane)
+                });
+                let Some(entry) = entry.filter(|&entry| entry > step) else {
+                    continue;
+                };
+                let target = raw.local_step_event(entry).unwrap().eff_index as usize;
+                let scope = raw.route_scope_by_slot(slot).unwrap();
+                if !rows.program().source_route_separates(scope, effect, target)
+                    || (right.start()..right.end()).any(|before| {
+                        rows.local_step_logical_role(before) == view
+                            && rows.program().source_precedes_scan(
+                                raw.local_step_event(before).unwrap().eff_index as usize,
+                                target,
+                            )
+                    })
+                {
+                    continue;
+                }
+                if expected.is_none_or(|prior| entry < prior) {
+                    expected = Some(entry);
+                }
+            }
+            let actual = rows.next_offer_lane_alternative(step, &mut |scope| {
+                preview_at(rows.route_scope_slot(scope).unwrap())
+            });
+            assert_eq!(
+                actual, expected,
+                "step={step}, ternary assignment={assignment}"
+            );
+            if let Some(target) = actual {
+                assert!(target > step);
+                assert_eq!(rows.local_step_logical_role(target), view);
+                assert_eq!(rows.local_step_lane(target), Some(lane));
+            }
+        }
+    }
 }
 
 #[test]
@@ -163,4 +231,61 @@ fn lane_successors_cover_a_protocol_without_routes() {
             reject(rows, |bytes, _, _| bytes[offset] ^= 1 << bit);
         }
     }
+}
+
+#[test]
+fn alternative_outer_links_are_pruned_at_the_left_witness() {
+    let global = g::route(
+        g::send::<0, 1, Msg<1, ()>>(),
+        g::route(
+            g::send::<0, 1, Msg<2, ()>>(),
+            g::route(g::send::<0, 1, Msg<3, ()>>(), g::send::<0, 1, Msg<4, ()>>()),
+        ),
+    );
+    for rows in [
+        project::<0>(&global).role_image_ref(),
+        project::<1>(&global).role_image_ref(),
+    ] {
+        compare(rows);
+        let bytes = copy(rows);
+        // Nested right targets cannot enclose this outer fork's left witness.
+        assert_eq!(
+            u16_at(&bytes, rows.columns.offer_alternative_outer().start + 2),
+            u16::MAX
+        );
+        reject(rows, |bytes, columns, _| {
+            put(bytes, columns.offer_alternative_outer().start + 2, 2);
+        });
+        reject(rows, |bytes, columns, _| {
+            put(bytes, columns.offer_alternative_heads().start, u16::MAX);
+            put(
+                bytes,
+                columns.offer_alternative_scopes().start + 2,
+                u16::MAX,
+            );
+            put(bytes, columns.offer_alternative_outer().start + 2, u16::MAX);
+        });
+        reject(rows, |bytes, columns, _| {
+            put(bytes, columns.offer_alternative_scopes().start + 2, 1);
+        });
+        reject(rows, |bytes, columns, _| {
+            put(bytes, columns.offer_alternative_heads().start, 0);
+        });
+    }
+}
+
+#[test]
+fn alternative_links_preserve_projected_empty_children_and_roll_wrappers() {
+    let global = g::route(
+        g::seq(
+            g::send::<0, 1, Msg<1, ()>>(),
+            g::route(g::send::<0, 2, Msg<2, ()>>(), g::send::<0, 2, Msg<3, ()>>()),
+        ),
+        g::seq(g::send::<0, 1, Msg<4, ()>>(), g::send::<0, 2, Msg<5, ()>>()),
+    )
+    .roll()
+    .roll();
+    compare(project::<0>(&global).role_image_ref());
+    compare(project::<1>(&global).role_image_ref());
+    compare(project::<2>(&global).role_image_ref());
 }

@@ -1,6 +1,8 @@
 use super::*;
 #[path = "tests/enclosing.rs"]
 mod enclosing;
+#[path = "tests/guard_rows.rs"]
+mod guard_rows;
 use crate::{
     Endpoint,
     g::{self, Msg},
@@ -24,6 +26,7 @@ fn walk(cursor: &EventCursor, mut conflict: PackedEventConflict, target: ScopeId
 }
 
 fn compare(rows: &'static RoleImageRef) {
+    guard_rows::compare(rows);
     with_rows(rows, |cursor| {
         let scopes: std::vec::Vec<_> = (0..cursor.machine().route_scope_slot_count())
             .map(|slot| rows.route_scope_by_slot(slot).unwrap())

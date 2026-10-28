@@ -1,9 +1,9 @@
 use super::{
-    CommitEventRow, CursorRefresh, OperationKernel, PreparedRouteCommitRows, PreparedViewCommit,
+    CommitEventRow, OperationKernel, PreparedRouteCommitRows, PreparedViewCommit,
     SelectedRouteCommitRow, Transport, commit_delta::CommitDeltaApplyPermit,
     commit_delta::CommittedCommitDelta, commit_delta::PreparedCommitDelta, state_index_to_usize,
 };
-use crate::global::const_dsl::{ReentryMark, ScopeId};
+use crate::global::const_dsl::ScopeId;
 
 impl<'r, T> OperationKernel<'_, 'r, T>
 where
@@ -29,7 +29,6 @@ where
                 .unwrap_or(ScopeId::none()),
             "prepared repetition entry changed before publication"
         );
-        let mut refresh = None;
         if !body_reentry_scope.is_none() {
             let event = crate::invariant_some(delta.event());
             let entry = crate::invariant_some(
@@ -38,7 +37,6 @@ where
                     .node_index_for_relocatable_step(event.progress_step()),
             );
             self.clear_reentry_scope_state(body_reentry_scope, entry);
-            refresh = Some(CursorRefresh::AllLanes);
         }
         let route_lane = delta.selected_route_lane();
         let mut idx = 0usize;
@@ -52,48 +50,22 @@ where
             let completed_iteration_arm = self.selected_arm_for_scope(row.scope()).filter(|&arm| {
                 delta.route_is_fresh(idx) && self.reentrant_selected_arm_complete(row.scope(), arm)
             });
-            let change =
-                self.apply_prepared_selected_route_commit_row(row, lane, completed_iteration_arm);
-            refresh = Some(refresh.map_or(change, |prior| prior.merge(change)));
+            self.apply_prepared_selected_route_commit_row(row, lane, completed_iteration_arm);
             idx += 1;
         }
         self.apply_prepared_cursor_index(state_index_to_usize(delta.cursor_after()));
         if let Some(event) = delta.event() {
-            let change = self
-                .progress
+            self.progress
                 .cursor
                 .advance_lane_to_relocatable_step(event.progress_step());
-            refresh = Some(refresh.map_or(change, |prior| prior.merge(change)));
         }
         if let Some(step) = delta.lane_relocation() {
-            let change = self
-                .progress
+            self.progress
                 .cursor
                 .set_lane_cursor_to_relocatable_step(step);
-            refresh = Some(refresh.map_or(change, |prior| prior.merge(change)));
         }
         if applies_route_completion {
             self.apply_prepared_route_completion_cursor(delta.selected_routes());
-        }
-        if delta.event().is_some() && refresh != Some(CursorRefresh::AllLanes) {
-            let mut route = 0;
-            while route < delta.selected_routes().len() {
-                let row = crate::invariant_some(
-                    delta.selected_routes().get(&self.progress.cursor, route),
-                );
-                // Completing a repeated choice can expose a fresh entry on
-                // every participating lane, even when only this head moved.
-                if self.reentrant_selected_arm_complete(row.scope(), row.selected_arm()) {
-                    refresh = Some(CursorRefresh::AllLanes);
-                    break;
-                }
-                route += 1;
-            }
-        }
-        // No operation observes offer caches while this kernel borrow applies
-        // the delta. Build them once from the final cursor and route choices.
-        if let Some(refresh) = refresh {
-            self.refresh_after_cursor_move(refresh);
         }
         let committed = CommittedCommitDelta::from_applied(
             delta.event(),
@@ -144,7 +116,6 @@ where
                                     && !cursor.roll_reentry_preserves_route(scope, candidate, entry)
                             },
                             |candidate| cursor.route_scope_slot(candidate),
-                            |candidate| cursor.route_scope_reentry(candidate),
                             CommitDeltaApplyPermit::new(),
                         );
                 }
@@ -157,23 +128,6 @@ where
     #[inline(always)]
     fn apply_prepared_cursor_index(&mut self, idx: usize) {
         self.progress.cursor.set_index(idx);
-    }
-
-    #[inline(always)]
-    fn selected_arm_from_prepared_rows(
-        rows: &PreparedRouteCommitRows,
-        cursor: &super::EventCursor,
-        scope: ScopeId,
-    ) -> Option<u8> {
-        let mut idx = 0usize;
-        while idx < rows.len() {
-            let row = rows.get(cursor, idx)?;
-            if row.scope() == scope {
-                return Some(row.selected_arm());
-            }
-            idx += 1;
-        }
-        None
     }
 
     #[inline(always)]
@@ -190,7 +144,7 @@ where
         let cursor = &self.progress.cursor;
         let decision_state = &self.progress.decision_state;
         let Some(end) = cursor.selected_enclosing_route_scope_end_at(idx, |scope| {
-            match Self::selected_arm_from_prepared_rows(rows, cursor, scope) {
+            match rows.as_ref().arm_for_scope(cursor, scope) {
                 Some(prepared) => Some(prepared),
                 None => {
                     let scope_slot = cursor.route_scope_slot(scope)?;
@@ -210,17 +164,11 @@ where
         row: SelectedRouteCommitRow,
         lane: u8,
         completed_iteration_arm: Option<u8>,
-    ) -> CursorRefresh {
+    ) {
         let lane_idx = lane as usize;
         let scope = row.scope();
-        let selection_changed = self.selected_arm_for_scope(scope) != Some(row.selected_arm());
         let Some(scope_slot) = self.progress.cursor.route_scope_slot(scope) else {
             crate::invariant();
-        };
-        let reentry = if self.progress.cursor.route_scope_reentry(scope) {
-            ReentryMark::Reentrant
-        } else {
-            ReentryMark::SinglePass
         };
         if let Some(completed_arm) = completed_iteration_arm {
             let cursor = &self.progress.cursor;
@@ -245,7 +193,6 @@ where
                                     == Some(completed_arm)
                             },
                             |candidate| cursor.route_scope_slot(candidate),
-                            |candidate| cursor.route_scope_reentry(candidate),
                             CommitDeltaApplyPermit::new(),
                         );
                 }
@@ -265,14 +212,8 @@ where
         self.progress.decision_state.apply_prepared_route_selection(
             lane_idx,
             scope_slot,
-            reentry,
             row,
             CommitDeltaApplyPermit::new(),
         );
-        if selection_changed || completed_iteration_arm.is_some() {
-            CursorRefresh::AllLanes
-        } else {
-            CursorRefresh::Lane(lane)
-        }
     }
 }

@@ -2,6 +2,7 @@ use super::super::projection::ActorEventProjection;
 use super::{PackedLaneRange, RoleImageRef, invalid_resident_descriptor};
 use crate::global::{
     const_dsl::ReentryMark,
+    role_program::ROLE_IMAGE_ROUTE_SCOPE_CAPACITY,
     typestate::{LocalConflict, PackedEventConflict},
 };
 
@@ -36,14 +37,9 @@ impl RoleImageRef {
                         invalid_resident_descriptor();
                     };
                     let parent = lanes.route_scope_conflict_by_slot(parent_slot);
-                    let parent = match parent.to_conflict() {
-                        Some(LocalConflict::RouteArm { scope: parent, .. })
-                            if parent.same(scope) =>
-                        {
-                            PackedEventConflict::none()
-                        }
-                        _ => parent,
-                    };
+                    // Every chain must actually terminate, including routes
+                    // retained only for a post-join actor binding. A self-parent
+                    // is malformed metadata, not an absent source ancestor.
                     if (pos == row.start()) != parent.is_none() {
                         invalid_resident_descriptor();
                     }
@@ -61,7 +57,10 @@ impl RoleImageRef {
     pub(super) const fn validate_resident_events(&self) {
         let count = self.local_step_count();
         let scopes = self.footprint().route_scope_count;
-        if self.columns.events.len as usize != count
+        // validate_blob_bound bounds the packed arm span; resident arity
+        // below gives two eight-byte rows per local route.
+        if scopes > ROLE_IMAGE_ROUTE_SCOPE_CAPACITY
+            || self.columns.events.len as usize != count
             || self.columns.lanes.len as usize != count
             || self.columns.route_scopes.len as usize != scopes
             || self.columns.route_scope_conflicts.len as usize != scopes
@@ -81,8 +80,8 @@ impl RoleImageRef {
             let Some(scope) = lanes.route_scope_by_slot(slot) else {
                 invalid_resident_descriptor();
             };
-            // Reuse the constructor's existing sorted-ID proof when available.
-            // Unsorted images retain the same checked uniqueness scan.
+            // The exact scope index proves uniqueness without requiring the
+            // descriptor's scope identifiers to be sorted by slot.
             match self.route_scope_slot(scope) {
                 Some(found) if found == slot => {}
                 _ => invalid_resident_descriptor(),
@@ -92,7 +91,7 @@ impl RoleImageRef {
         }
         // The mandatory lane_columns_are_coherent pass in new already validates
         // every arm encoding, event bound, zero/step relation and cumulative
-        // lane-step prefix, including unsorted images. Reuse those proved row
+        // lane-step prefix. Reuse those proved row
         // bounds instead of re-scanning all preceding packed rows.
         // Route rows occur in source preorder. Walk their nested intervals once
         // to verify every parent and event context, including omitted ancestors.

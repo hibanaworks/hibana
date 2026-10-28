@@ -190,11 +190,7 @@ where
             self.preflight_event_selected_route_chain(idx, delta)?;
             body_reentry
         } else {
-            if delta.selected_routes().is_empty() {
-                self.preflight_cursor_realign_delta(delta)?;
-            } else {
-                self.preflight_route_only_cursor_after(delta)?;
-            }
+            self.preflight_route_only_cursor_after(delta)?;
             None
         };
         self.preflight_selected_route_rows(delta)?;
@@ -221,37 +217,7 @@ where
                 Err(CursorInvariantError::INVARIANT)
             };
         };
-        if routes.len() != range.len() {
-            return Err(CursorInvariantError::INVARIANT);
-        }
-        let mut idx = 0usize;
-        while idx < range.len() {
-            let Some(expected) = self
-                .progress
-                .cursor
-                .route_commit_row_at(range, idx)
-                .and_then(SelectedRouteCommitRow::from_resident_conflict)
-            else {
-                return Err(CursorInvariantError::INVARIANT);
-            };
-            let Some(row) = routes.get(&self.progress.cursor, idx) else {
-                return Err(CursorInvariantError::INVARIANT);
-            };
-            if row.scope() != expected.scope() || row.selected_arm() != expected.selected_arm() {
-                return Err(CursorInvariantError::INVARIANT);
-            }
-            idx += 1;
-        }
-        Ok(())
-    }
-
-    #[inline]
-    fn preflight_cursor_realign_delta(
-        &self,
-        delta: &CommitDelta,
-    ) -> Result<(), CursorInvariantError> {
-        let cursor_after = state_index_to_usize(delta.cursor_after());
-        if cursor_after >= self.progress.cursor.local_steps_len() {
+        if !routes.matches_range(range) {
             return Err(CursorInvariantError::INVARIANT);
         }
         Ok(())
@@ -263,6 +229,9 @@ where
         delta: &CommitDelta,
     ) -> Result<(), CursorInvariantError> {
         let routes = delta.selected_routes();
+        if !routes.is_complete_chain(&self.progress.cursor) {
+            return Err(CursorInvariantError::INVARIANT);
+        }
         let route_lane = if routes.is_empty() {
             None
         } else {
@@ -275,16 +244,6 @@ where
                 .ok_or(CursorInvariantError::INVARIANT)?;
             let lane = route_lane.ok_or(CursorInvariantError::INVARIANT)?;
             self.preflight_selected_route_row(row, lane)?;
-            let mut prev_idx = 0usize;
-            while prev_idx < idx {
-                let prev = routes
-                    .get(&self.progress.cursor, prev_idx)
-                    .ok_or(CursorInvariantError::INVARIANT)?;
-                if prev.scope() == row.scope() {
-                    return Err(CursorInvariantError::INVARIANT);
-                }
-                prev_idx += 1;
-            }
             idx += 1;
         }
         Ok(())
@@ -294,7 +253,7 @@ where
         &self,
         delta: &CommitDelta,
     ) -> Result<Option<usize>, CursorInvariantError> {
-        let routes = delta.selected_route_rows_ref();
+        let routes = delta.selected_routes();
         let entry_idx = match delta.event() {
             Some(event) => self
                 .progress
@@ -312,7 +271,9 @@ where
         entry_idx: usize,
         lane: Option<u8>,
     ) -> Result<Option<usize>, CursorInvariantError> {
-        let mut start = None;
+        if !routes.is_complete_chain(&self.progress.cursor) {
+            return Err(CursorInvariantError::INVARIANT);
+        }
         let mut idx = 0usize;
         while idx < routes.len() {
             let row = routes
@@ -351,29 +312,18 @@ where
                         }
                 }
             };
-            if let Some(root_idx) = start {
-                // A fresh containing visit also owns its descriptor-proven
-                // descendants, even when their previous selection was live.
-                let root = routes
-                    .get(&self.progress.cursor, root_idx)
-                    .ok_or(CursorInvariantError::INVARIANT)?;
-                if self
-                    .progress
-                    .cursor
-                    .route_scope_conflict_arm_for_scope(scope, root.scope())
-                    != Some(root.selected_arm())
-                {
-                    return Err(CursorInvariantError::INVARIANT);
-                }
-            } else if fresh {
-                start = Some(idx);
-            } else if self.selected_arm_for_scope(scope) != Some(row.selected_arm()) {
+            if fresh {
+                // A complete root-first chain contains only descendants after
+                // this row. Starting this visit starts that entire suffix.
+                return Ok(Some(idx));
+            }
+            if self.selected_arm_for_scope(scope) != Some(row.selected_arm()) {
                 // A retained ancestor cannot change its arm or lose its prefix.
                 return Err(CursorInvariantError::INVARIANT);
             }
             idx += 1;
         }
-        Ok(start)
+        Ok(None)
     }
 
     #[inline]
@@ -462,7 +412,7 @@ where
         let selected_routes = self
             .progress
             .route_commit_rows
-            .seal(delta.selected_route_rows_ref())
+            .seal(delta.selected_routes())
             .map_err(|_| CursorInvariantError::INVARIANT)?;
         Ok(PreparedCommitDelta::from_preflighted(
             delta,
@@ -493,7 +443,7 @@ where
         let selected_routes = self
             .progress
             .route_commit_rows
-            .seal(delta.selected_route_rows_ref())
+            .seal(delta.selected_routes())
             .map_err(|_| CursorInvariantError::INVARIANT)?;
         Ok(PreparedCommitDelta::from_preflighted(
             delta,
@@ -501,18 +451,5 @@ where
             fresh_route_start,
             body_reentry,
         ))
-    }
-
-    #[inline(always)]
-    pub(in crate::endpoint::kernel) fn commit_cursor_realign_index(
-        &mut self,
-        idx: usize,
-    ) -> Result<(), CursorInvariantError> {
-        let cursor_after =
-            StateIndex::checked_from_usize(idx).ok_or(CursorInvariantError::INVARIANT)?;
-        let delta = CommitDelta::cursor_only(cursor_after);
-        let delta = self.prepare_commit_delta(delta)?;
-        let _ = self.commit_prepared_delta(delta, None);
-        Ok(())
     }
 }

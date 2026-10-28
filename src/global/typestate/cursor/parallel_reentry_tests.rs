@@ -662,12 +662,15 @@ fn check_parallel_offer_scope(candidate: u8) {
     assert_eq!(route.is_some(), index != 0);
     if let Some(route) = route {
         assert!(cursor.has_route_scope(route));
-        let normalized = cursor
-            .normalize_lane_offer_entry(route, index, |_| None, || None)
-            .unwrap();
-        assert!(normalized.scope_id().same(route));
-        assert_eq!(cursor.logical_role_at(normalized.entry_idx()), Some(1));
-        assert!(cursor.route_arm_for_index(route, index).is_some());
+        let arm = cursor.route_arm_for_index(route, index).unwrap();
+        let lane = cursor.event_lane_at(index).unwrap();
+        // Each parallel arm head is an explicit source-minimal candidate.
+        // Choosing its enclosing route never requires moving lookup context.
+        assert_eq!(
+            cursor.route_arm_view_lane_entry(route, arm, 1, lane),
+            Some(index)
+        );
+        assert_eq!(cursor.logical_role_at(index), Some(1));
     }
     if index == 1 {
         assert!(!cursor.has_route_scope(node_scope));

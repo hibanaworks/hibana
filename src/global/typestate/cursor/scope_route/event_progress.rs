@@ -3,6 +3,7 @@ use super::super::{
     CursorInvariantError, EnabledEventCommit, EventCursor, LocalDependency, PackedEventConflict,
     RelocatableResidentLaneStep, ScopeId, StateIndex,
 };
+use crate::global::event_program::LocalEventRow;
 use crate::global::{role_program::RoleLocalDirection, typestate::EventCommitMeta};
 
 mod recovery;
@@ -24,6 +25,23 @@ pub(crate) enum EventAdmissionError {
     /// The view's own preceding actions are complete. Another co-resident view
     /// must commit first; waiting grants no transport or progress authority.
     OtherViewPending,
+}
+
+/// Eligibility rejects immediately; only a caller that needs an error category
+/// inspects which view must perform the blocked prefix.
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum EventBlocker {
+    Invariant,
+    OwnershipPending,
+    SourcePredecessor,
+    Reentry,
+}
+
+impl From<CursorInvariantError> for EventBlocker {
+    fn from(_: CursorInvariantError) -> Self {
+        Self::Invariant
+    }
 }
 
 impl From<CursorInvariantError> for EventAdmissionError {
@@ -99,11 +117,6 @@ impl EventCursor {
     }
 
     #[inline]
-    pub(crate) fn parallel_scope_root(&self, scope_id: ScopeId) -> Option<ScopeId> {
-        self.machine().parallel_root(scope_id)
-    }
-
-    #[inline]
     fn dependency_state(
         &self,
         target: usize,
@@ -121,18 +134,18 @@ impl EventCursor {
     }
 
     #[inline]
-    fn validate_event_enabled_reentry(
+    fn validate_event_eligibility_reentry(
         &self,
         idx: usize,
         progress_step: RelocatableResidentLaneStep,
-        event: EventCommitMeta,
+        body_reentry: ScopeId,
+        lane: u8,
         arm_for_scope: &mut dyn FnMut(ScopeId, EventArmView) -> Option<u8>,
-    ) -> Result<(), EventAdmissionError> {
-        if !event.body_reentry.is_none() {
+    ) -> Result<(), EventBlocker> {
+        if !body_reentry.is_none() {
             let mut preview = |scope| arm_for_scope(scope, EventArmView::Preview);
-            if !self.roll_scope_head_allows_index(event.body_reentry, idx, event.lane, &mut preview)
-            {
-                return Err(self.reentry_view_wait(idx, event, arm_for_scope));
+            if !self.roll_scope_head_allows_index(body_reentry, idx, lane, &mut preview) {
+                return Err(EventBlocker::Reentry);
             }
             return Ok(());
         }
@@ -143,27 +156,32 @@ impl EventCursor {
             // A clear bit can belong to an unchosen arm at the lane head.
             // Without a completed explicit roll, committed choices still own
             // this visit. A candidate preview cannot replace that authority.
-            let mut committed = |scope| arm_for_scope(scope, EventArmView::Committed);
-            if self
-                .complete_roll_body_scope_for_index(idx, &mut committed)
-                .is_none()
-            {
-                let conflict = self.machine().event_conflict_for_index(idx);
-                return if self.event_conflict_row_allows_with_preview(
-                    conflict,
-                    conflict,
-                    &mut committed,
-                ) {
-                    Ok(())
-                } else {
-                    Err(EventAdmissionError::Invariant)
-                };
+            let completed_scope = self.complete_roll_body_scope_for_index(idx, &mut |scope| {
+                arm_for_scope(scope, EventArmView::Committed)
+            });
+            if let Some(scope) = completed_scope {
+                let mut preview = |scope| arm_for_scope(scope, EventArmView::Preview);
+                return (self.has_reentry_scopes()
+                    && self.roll_scope_head_allows_index(scope, idx, lane, &mut preview))
+                .then_some(())
+                .ok_or(EventBlocker::Reentry);
             }
+            let conflict = self.machine().event_conflict_for_index(idx);
+            let mut committed = |scope| arm_for_scope(scope, EventArmView::Committed);
+            return if self.event_conflict_row_allows_with_preview(
+                conflict,
+                conflict,
+                &mut committed,
+            ) {
+                Ok(())
+            } else {
+                Err(EventBlocker::Invariant)
+            };
         }
         if !self.has_reentry_scopes()
-            || !self.roll_reentry_event_allows_index(idx, event.lane, arm_for_scope)
+            || !self.roll_reentry_event_allows_index(idx, lane, arm_for_scope)
         {
-            return Err(self.reentry_view_wait(idx, event, arm_for_scope));
+            return Err(EventBlocker::Reentry);
         }
         Ok(())
     }
@@ -175,36 +193,57 @@ impl EventCursor {
         event: EventCommitMeta,
         arm_for_scope: &mut dyn FnMut(ScopeId, EventArmView) -> Option<u8>,
     ) -> Result<EnabledEventCommit, EventAdmissionError> {
-        // Descriptor facts are immutable within this admission. Keep one
-        // checked row; completion, route choice and reentry remain live checks.
         let row = self
             .machine()
             .event_program()
             .event_row_at(idx)
-            .ok_or(CursorInvariantError::INVARIANT)?;
-        if !row.matches_commit(event) {
-            return Err(EventAdmissionError::Invariant);
+            .filter(|row| row.matches_commit(event))
+            .ok_or(EventAdmissionError::Invariant)?;
+        self.event_eligibility(row, event.body_reentry, arm_for_scope)
+            .map_err(|blocker| match blocker {
+                EventBlocker::Invariant => EventAdmissionError::Invariant,
+                EventBlocker::OwnershipPending => EventAdmissionError::PredecessorPending,
+                EventBlocker::SourcePredecessor => {
+                    let moved_role = if row.direction() == RoleLocalDirection::Send
+                        && let crate::eff::EventPayload::Endpoint(role) = row.atom().payload
+                    {
+                        Some(role)
+                    } else {
+                        None
+                    };
+                    self.source_predecessor_wait(
+                        idx,
+                        (row.logical_role(), moved_role),
+                        row.conflict(),
+                        &mut |scope| arm_for_scope(scope, EventArmView::Preview),
+                    )
+                }
+                EventBlocker::Reentry => self.reentry_view_wait(idx, event, arm_for_scope),
+            })
+    }
+
+    #[inline(never)]
+    pub(crate) fn event_eligibility(
+        &self,
+        row: LocalEventRow,
+        body_reentry: ScopeId,
+        arm_for_scope: &mut dyn FnMut(ScopeId, EventArmView) -> Option<u8>,
+    ) -> Result<EnabledEventCommit, EventBlocker> {
+        // The row constructor establishes operation identity. A row from
+        // another image cannot authorize this cursor's progress.
+        if !self.machine().event_program().contains_row(row) {
+            return Err(EventBlocker::Invariant);
         }
+        let idx = row.index();
+        let lane = row.atom().lane;
         match self.event_actor_is_local(idx, &mut |scope| {
             arm_for_scope(scope, EventArmView::Preview)
         }) {
             Some(true) => {}
-            Some(false) => return Err(EventAdmissionError::Invariant),
-            None => return Err(EventAdmissionError::PredecessorPending),
+            Some(false) => return Err(EventBlocker::Invariant),
+            None => return Err(EventBlocker::OwnershipPending),
         }
-        let progress_step =
-            self.relocatable_resident_lane_step_at_index(idx, event.lane as usize)?;
-        // An owned send holds the resource view in its future. Work that still
-        // requires that view cannot complete while the send waits.
-        // The row already matched this effect. Ownership needs only its
-        // payload kind, not another complete send descriptor.
-        let moved_role = if row.direction() == RoleLocalDirection::Send
-            && let crate::eff::EventPayload::Endpoint(role) = row.atom().payload
-        {
-            Some(role)
-        } else {
-            None
-        };
+        let progress_step = self.relocatable_resident_lane_step_at_index(idx, lane as usize)?;
         let cursor_after = row.next();
         let preview_conflict = row.conflict();
         let dependency_state = {
@@ -223,31 +262,25 @@ impl EventCursor {
                 preview_conflict,
                 &mut preview,
             ) {
-                return Err(EventAdmissionError::Invariant);
+                return Err(EventBlocker::Invariant);
             }
             dependency_state
         };
-        self.validate_event_enabled_reentry(idx, progress_step, event, arm_for_scope)?;
+        self.validate_event_eligibility_reentry(
+            idx,
+            progress_step,
+            body_reentry,
+            lane,
+            arm_for_scope,
+        )?;
         // A valid future event need not be a current lane head. Its projected
         // predecessor must commit before that head can become available.
         if dependency_state.is_some_and(|state| !state.allows_event()) {
-            let role = crate::invariant_some(self.logical_role_at(idx));
-            return Err(self.source_predecessor_wait(
-                idx,
-                (role, moved_role),
-                preview_conflict,
-                &mut |scope| arm_for_scope(scope, EventArmView::Preview),
-            ));
+            return Err(EventBlocker::SourcePredecessor);
         }
         let mut preview = |scope| arm_for_scope(scope, EventArmView::Preview);
         if !self.event_lane_head_allows(progress_step, preview_conflict, &mut preview) {
-            let role = crate::invariant_some(self.logical_role_at(idx));
-            return Err(self.source_predecessor_wait(
-                idx,
-                (role, moved_role),
-                preview_conflict,
-                &mut preview,
-            ));
+            return Err(EventBlocker::SourcePredecessor);
         }
         Ok(EnabledEventCommit::new(
             StateIndex::from_usize(idx),
@@ -261,6 +294,57 @@ impl EventCursor {
 mod tests {
     use super::*;
     use crate::{Endpoint, g, runtime::program::project};
+
+    #[test]
+    fn canonical_row_admission_preserves_metadata_and_image_boundaries() {
+        let global = g::seq(
+            g::send::<0, 1, g::Msg<1, ()>>(),
+            g::send::<1, 0, g::Msg<2, ()>>(),
+        );
+        let program = project::<0>(&global);
+        let foreign_global = g::send::<0, 1, g::Msg<3, ()>>();
+        let foreign = project::<0>(&foreign_global);
+        let foreign_program =
+            crate::global::event_program::LocalEventProgram::from_rows(foreign.role_image_ref());
+        super::super::super::validated_metadata_tests::with_rows(
+            program.role_image_ref(),
+            |cursor| {
+                let row = cursor.event_row_at(0).unwrap();
+                let event = row.commit_meta();
+                let canonical = cursor
+                    .event_eligibility(row, ScopeId::none(), &mut |_, _| None)
+                    .unwrap();
+                assert_eq!(
+                    cursor.event_enabled(0, event, &mut |_, _| None),
+                    Ok(canonical),
+                );
+                let mut malformed = [event; 6];
+                malformed[0].eff_index = cursor.event_row_at(1).unwrap().effect();
+                malformed[1].label = 2;
+                malformed[2].origin = crate::eff::EventOrigin::Session;
+                malformed[3].scope = ScopeId::route(0);
+                malformed[4].route_arm = Some(0);
+                malformed[5].lane = 1;
+                for (field, event) in malformed.into_iter().enumerate() {
+                    assert_eq!(
+                        cursor.event_enabled(0, event, &mut |_, _| None),
+                        Err(EventAdmissionError::Invariant),
+                        "changed metadata field {field}",
+                    );
+                }
+                assert_eq!(
+                    cursor.event_eligibility(
+                        foreign_program.event_row_at(0).unwrap(),
+                        ScopeId::none(),
+                        &mut |_, _| None,
+                    ),
+                    Err(EventBlocker::Invariant),
+                );
+                assert!(!cursor.local_event_done(0));
+                assert!(!cursor.local_event_done(1));
+            },
+        );
+    }
 
     #[test]
     fn nested_owned_prefix_classification_matches_the_source_predecessor_set() {
@@ -405,10 +489,21 @@ mod tests {
                     for hint in 0..=u8::MAX {
                         cursor.set_index(usize::from(hint) % cursor.machine().node_len());
                         let event = cursor.try_send_meta_at(transfer).unwrap().into();
+                        let eligibility = cursor.event_eligibility(
+                            cursor.event_row_at(transfer).unwrap(),
+                            ScopeId::none(),
+                            &mut |_, _| None,
+                        );
                         let admission = cursor.event_enabled(transfer, event, &mut |_, _| None);
                         if received {
-                            assert!(admission.is_ok(), "hint={hint}");
+                            assert!(eligibility.is_ok(), "hint={hint}");
+                            assert_eq!(eligibility.unwrap(), admission.unwrap(), "hint={hint}");
                         } else {
+                            assert_eq!(
+                                eligibility,
+                                Err(EventBlocker::SourcePredecessor),
+                                "hint={hint}"
+                            );
                             assert!(
                                 matches!(
                                     admission,

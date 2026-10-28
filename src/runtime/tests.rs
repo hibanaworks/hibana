@@ -59,7 +59,6 @@ struct RuntimeShapeMetrics {
     tap_ring_bytes: usize,
     sidecar_scratch_high_water_bytes: usize,
     image_frontier_bytes: usize,
-    frontier_workspace_bytes: usize,
     live_endpoint_bytes: usize,
     peak_live_slab_bytes: usize,
     localside_peak_stack_bytes: usize,
@@ -511,9 +510,7 @@ fn run_attached_shape(
                 .get_local(&rv.base.rv)
                 .expect("registered rendezvous must stay reachable");
             let sidecar_scratch_high_water_bytes = local_rv.endpoint_lease_floor();
-            let frontier_workspace_bytes = local_rv.resident_frontier_workspace_floor();
-            let image_frontier_bytes =
-                metric_sub(sidecar_scratch_high_water_bytes, frontier_workspace_bytes);
+            let image_frontier_bytes = sidecar_scratch_high_water_bytes;
             let (_, runtime_slab_len) = local_rv.slab_ptr_and_len();
             let resident_prefix_bytes = metric_sub(full_slab_len, runtime_slab_len);
             let live_endpoint_bytes =
@@ -525,7 +522,6 @@ fn run_attached_shape(
                 tap_ring_bytes: core::mem::size_of::<[TapRecord; TAP_EVENTS]>(),
                 sidecar_scratch_high_water_bytes,
                 image_frontier_bytes,
-                frontier_workspace_bytes,
                 live_endpoint_bytes,
                 peak_live_slab_bytes: metric_add(
                     sidecar_scratch_high_water_bytes,
@@ -565,14 +561,13 @@ fn assert_large_choreography_runtime_metrics(shape: &'static str, metrics: Runti
         "{shape} measured host live slab usage must fit within the host measurement slab"
     );
     println!(
-        "large-choreography-runtime shape={shape} slab_bytes={} session_kit_storage_bytes={} resident_prefix_bytes={} tap_ring_bytes={} sidecar_scratch_high_water_bytes={} image_frontier_bytes={} frontier_workspace_bytes={} live_endpoint_bytes={} peak_live_slab_bytes={} localside_peak_stack_bytes={} peak_stack_bytes={}",
+        "large-choreography-runtime shape={shape} slab_bytes={} session_kit_storage_bytes={} resident_prefix_bytes={} tap_ring_bytes={} sidecar_scratch_high_water_bytes={} image_frontier_bytes={} live_endpoint_bytes={} peak_live_slab_bytes={} localside_peak_stack_bytes={} peak_stack_bytes={}",
         metrics.slab_bytes,
         metrics.session_kit_storage_bytes,
         metrics.resident_prefix_bytes,
         metrics.tap_ring_bytes,
         metrics.sidecar_scratch_high_water_bytes,
         metrics.image_frontier_bytes,
-        metrics.frontier_workspace_bytes,
         metrics.live_endpoint_bytes,
         metrics.peak_live_slab_bytes,
         metrics.localside_peak_stack_bytes,

@@ -147,12 +147,9 @@ fn retained_roll_completion_is_scoped_and_cannot_authorize_an_outgoing_step() {
     cursor.mark_local_event_done(1);
     let reset = cursor.prepare_roll_reset(inner, None, &mut |_| None);
     cursor.clear_reentry_scope_events(reset);
-    assert!(cursor.retained_roll_allows_predecessor(0, 2));
-    assert!(!cursor.retained_roll_allows_predecessor(0, 1));
-    assert!(!cursor.retained_roll_allows_predecessor(1, 0));
-    assert_eq!(cursor.retained_continuation_start(0), Some(2));
-    assert_eq!(cursor.retained_continuation_start(1), Some(2));
-    assert_eq!(cursor.retained_continuation_start(2), None);
+    assert!(cursor.retained_roll_predecessor_end(0, 2).is_some());
+    assert!(cursor.retained_roll_predecessor_end(0, 1).is_none());
+    assert!(cursor.retained_roll_predecessor_end(1, 0).is_none());
     let target = usize::from(kani::any::<u8>() % 3);
     if target < 2 {
         assert!(!cursor.local_event_done(target));
@@ -162,7 +159,6 @@ fn retained_roll_completion_is_scoped_and_cannot_authorize_an_outgoing_step() {
     cursor.mark_local_event_done(2);
     let reset = cursor.prepare_roll_reset(outer, None, &mut |_| None);
     cursor.clear_reentry_scope_events(reset);
-    assert!(!cursor.retained_roll_allows_predecessor(0, target));
-    assert_eq!(cursor.retained_continuation_start(target), None);
+    assert!(cursor.retained_roll_predecessor_end(0, target).is_none());
     assert_eq!(cursor.completion_mutations(), 13);
 }

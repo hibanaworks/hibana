@@ -24,7 +24,7 @@ mod passive_parent;
 mod route_index;
 
 const DATA_END: usize = 40;
-const BLOB_LEN: usize = DATA_END + ROLE_IMAGE_U16_STRIDE + 2 * 8 + 6;
+const BLOB_LEN: usize = DATA_END + ROLE_IMAGE_U16_STRIDE + 2 * 8 + 12;
 
 #[test]
 fn active_lane_metadata_is_derived_from_one_canonical_bitmap() {

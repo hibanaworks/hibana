@@ -1,4 +1,6 @@
-use super::super::super::{BlobPtr, ColumnRange, ROLE_IMAGE_ROUTE_SCOPE_STRIDE, RoleImageColumns};
+use super::super::super::{BlobPtr, RoleImageColumns};
+#[cfg(all(test, hibana_repo_tests))]
+use super::super::super::{ColumnRange, ROLE_IMAGE_ROUTE_SCOPE_STRIDE};
 use crate::global::const_dsl::ScopeId;
 
 #[inline(always)]
@@ -20,6 +22,7 @@ pub(in crate::global::role_program::image_impl) const fn route_slot(
     }
 }
 
+#[cfg(all(test, hibana_repo_tests))]
 pub(in crate::global::role_program::image_impl) const fn route_scopes_are_sorted<const N: usize>(
     bytes: &[u8; N],
     routes: ColumnRange,

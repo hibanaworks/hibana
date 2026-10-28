@@ -43,7 +43,8 @@ impl FrameEvidenceResolution {
 #[derive(Clone, Copy)]
 pub(in crate::endpoint::kernel) struct OfferScopeSelection {
     pub(in crate::endpoint::kernel) scope_id: ScopeId,
-    pub(in crate::endpoint::kernel) frontier_parallel_root: Option<ScopeId>,
+    pub(in crate::endpoint::kernel) entry_index: StateIndex,
+    pub(in crate::endpoint::kernel) candidate_index: StateIndex,
     pub(in crate::endpoint::kernel) offer_lane: u8,
     pub(in crate::endpoint::kernel) entry_position: OfferEntryPosition,
     pub(in crate::endpoint::kernel) observed_target: StateIndex,

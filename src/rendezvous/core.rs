@@ -118,38 +118,11 @@ pub(crate) enum LaneRelease {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct EndpointResidentBudget {
-    pub(crate) frontier_workspace_bytes: u16,
-}
-
-impl EndpointResidentBudget {
-    pub(crate) const ZERO: Self = Self {
-        frontier_workspace_bytes: 0,
-    };
-
-    #[inline]
-    const fn compact_u16(value: usize) -> u16 {
-        if value > u16::MAX as usize {
-            crate::invariant();
-        }
-        value as u16
-    }
-
-    #[inline]
-    pub(crate) const fn with_frontier_workspace(frontier_workspace_bytes: usize) -> Self {
-        Self {
-            frontier_workspace_bytes: Self::compact_u16(frontier_workspace_bytes),
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct EndpointLeaseSlot {
     pub(crate) generation: u32,
     pub(crate) sid: SessionId,
     pub(crate) offset: u32,
     pub(crate) len: u32,
-    pub(crate) resident_budget: EndpointResidentBudget,
     pub(crate) role: u8,
     pub(crate) state: EndpointLeaseState,
 }
@@ -160,7 +133,6 @@ impl EndpointLeaseSlot {
         sid: SessionId::new(0),
         offset: 0,
         len: 0,
-        resident_budget: EndpointResidentBudget::ZERO,
         role: 0,
         state: EndpointLeaseState::Vacant,
     };
@@ -264,7 +236,6 @@ where
     slab_len: usize,
     slab_marker: PhantomData<&'cfg mut [u8]>,
     image_frontier: Cell<u32>,
-    frontier_workspace_bytes: Cell<u32>,
     endpoint_lease_generation: Cell<u32>,
     endpoint_lease_storage: Cell<Sidecar<EndpointLeaseRecord>>,
     lane_base: Cell<u32>,

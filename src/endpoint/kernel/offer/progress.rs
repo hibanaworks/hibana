@@ -1,5 +1,3 @@
-use crate::endpoint::kernel::frontier::OfferEntryEvidence;
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::endpoint::kernel) enum FrontierDeferOutcome {
     Continue,
@@ -11,14 +9,12 @@ pub(in crate::endpoint::kernel) struct EvidenceFingerprint(u8);
 
 impl EvidenceFingerprint {
     #[inline]
-    pub(in crate::endpoint::kernel) const fn from_offer_entry_evidence(
-        evidence: OfferEntryEvidence,
-    ) -> Self {
+    pub(in crate::endpoint::kernel) const fn new(ready_arm: bool, ingress_ready: bool) -> Self {
         let mut bits = 0u8;
-        if evidence.has_ready_arm() {
+        if ready_arm {
             bits |= 1 << 0;
         }
-        if evidence.ingress_ready() {
+        if ingress_ready {
             bits |= 1 << 1;
         }
         Self(bits)

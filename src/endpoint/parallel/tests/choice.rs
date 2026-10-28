@@ -453,3 +453,202 @@ fn a_resource_view_can_preview_a_message_from_its_current_owner() {
         });
     assert!(network.queue_is_empty());
 }
+
+#[test]
+fn repeated_parallel_offers_keep_each_lanes_received_preview() {
+    use crate::runtime::resolver::{DecisionArm, ResolverRef};
+    use core::cell::Cell;
+
+    tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .start_paused(true)
+        .build()
+        .unwrap()
+        .block_on(async {
+            for second_sibling_first in [false, true] {
+                for receive_first in [false, true] {
+                    type LeftFirst = g::Msg<224, u32>;
+                    type LeftSecond = g::Msg<225, u32>;
+                    type RightFirst = g::Msg<226, u32>;
+                    type RightSecond = g::Msg<227, u32>;
+                    let global = g::route(
+                        g::par(
+                            g::send::<0, 1, LeftFirst>(),
+                            g::send::<0, 1, LeftSecond>(),
+                        ),
+                        g::par(
+                            g::send::<0, 1, RightFirst>(),
+                            g::send::<0, 1, RightSecond>(),
+                        ),
+                    )
+                    .resolve::<224>()
+                    .roll();
+                    let sender_program = project::<0>(&global);
+                    let receiver_program = project::<1>(&global);
+                    let decision = Cell::new(DecisionArm::Right);
+                    let resolver_calls = Cell::new(0_u32);
+                    let policy_input = (&decision, &resolver_calls);
+                    let network = TestTransport::new();
+                    let mut sender_slab = [0; 65536];
+                    let mut receiver_slab = [0; 65536];
+                    let mut sender_storage = SessionKitStorage::uninit();
+                    let mut receiver_storage = SessionKitStorage::uninit();
+                    let sender_runtime = sender_storage
+                        .init()
+                        .rendezvous(&mut sender_slab, network.clone())
+                        .unwrap();
+                    let receiver_runtime = receiver_storage
+                        .init()
+                        .rendezvous(&mut receiver_slab, network.clone())
+                        .unwrap();
+                    sender_runtime
+                        .set_resolver(
+                            &sender_program,
+                            ResolverRef::<224>::decision_state(
+                                &policy_input,
+                                |input: &(&Cell<DecisionArm>, &Cell<u32>)| {
+                                    input.1.set(input.1.get() + 1);
+                                    Ok(input.0.get())
+                                },
+                            ),
+                        )
+                        .unwrap();
+                    let session = SessionId::new(
+                        28760 + u32::from(second_sibling_first) * 2 + u32::from(receive_first),
+                    );
+                    let mut sender = sender_runtime.enter(session, &sender_program).unwrap();
+                    let mut receiver = receiver_runtime.enter(session, &receiver_program).unwrap();
+
+                    tokio::time::timeout(core::time::Duration::from_secs(1), async {
+                        for (selected, value) in [
+                            (DecisionArm::Right, 1_u32),
+                            (DecisionArm::Left, 2_u32),
+                            (DecisionArm::Right, 3_u32),
+                        ] {
+                            decision.set(selected);
+                            let right = selected == DecisionArm::Right;
+                            let arm_label = if right { 226 } else { 224 };
+                            let branch = sender.offer().await.unwrap();
+                            assert_eq!(branch.label(), arm_label);
+                            drop(branch);
+                            let [send_first, send_second] = sender.par().unwrap();
+                            let [mut send_arriving, mut send_later] = if second_sibling_first {
+                                [send_second, send_first]
+                            } else {
+                                [send_first, send_second]
+                            };
+                            if right {
+                                if second_sibling_first {
+                                    send_arriving.send::<RightSecond>(&value).await.unwrap();
+                                } else {
+                                    send_arriving.send::<RightFirst>(&value).await.unwrap();
+                                }
+                            } else if second_sibling_first {
+                                send_arriving.send::<LeftSecond>(&value).await.unwrap();
+                            } else {
+                                send_arriving.send::<LeftFirst>(&value).await.unwrap();
+                            }
+
+                            let arriving_label = arm_label + u8::from(second_sibling_first);
+                            let later_label = arm_label + u8::from(!second_sibling_first);
+                            // Reoffering restores the exact frame without consuming it.
+                            let branch = receiver.offer().await.unwrap();
+                            assert_eq!(branch.label(), arriving_label);
+                            drop(branch);
+                            let branch = receiver.offer().await.unwrap();
+                            assert_eq!(branch.label(), arriving_label);
+                            drop(branch);
+
+                            let [recv_first, recv_second] = receiver.par().unwrap();
+                            let [mut recv_arriving, mut recv_later] = if second_sibling_first {
+                                [recv_second, recv_first]
+                            } else {
+                                [recv_first, recv_second]
+                            };
+                            // The other lane cannot borrow this lane's parked frame,
+                            // even though its enclosing choice is already known.
+                            let observed = if receive_first {
+                                tokio::select! {
+                                    biased;
+                                    branch = recv_arriving.offer() => branch.unwrap().label(),
+                                    branch = recv_later.offer() => panic!(
+                                        "empty sibling offered early: {:?}",
+                                        branch.map(|branch| branch.label())
+                                    ),
+                                }
+                            } else {
+                                tokio::select! {
+                                    biased;
+                                    branch = recv_later.offer() => panic!(
+                                        "empty sibling offered early: {:?}",
+                                        branch.map(|branch| branch.label())
+                                    ),
+                                    branch = recv_arriving.offer() => branch.unwrap().label(),
+                                }
+                            };
+                            assert_eq!(observed, arriving_label);
+                            let branch = recv_arriving.offer().await.unwrap();
+                            assert_eq!(branch.label(), arriving_label);
+                            let received = if right {
+                                if second_sibling_first {
+                                    branch.recv::<RightSecond>().await.unwrap()
+                                } else {
+                                    branch.recv::<RightFirst>().await.unwrap()
+                                }
+                            } else if second_sibling_first {
+                                branch.recv::<LeftSecond>().await.unwrap()
+                            } else {
+                                branch.recv::<LeftFirst>().await.unwrap()
+                            };
+                            assert_eq!(received, value);
+
+                            let send = async {
+                                if right {
+                                    if second_sibling_first {
+                                        send_later.send::<RightFirst>(&value).await.unwrap();
+                                    } else {
+                                        send_later.send::<RightSecond>(&value).await.unwrap();
+                                    }
+                                } else if second_sibling_first {
+                                    send_later.send::<LeftFirst>(&value).await.unwrap();
+                                } else {
+                                    send_later.send::<LeftSecond>(&value).await.unwrap();
+                                }
+                            };
+                            let receive = async {
+                                let branch = recv_later.offer().await.unwrap();
+                                assert_eq!(branch.label(), later_label);
+                                if right {
+                                    if second_sibling_first {
+                                        branch.recv::<RightFirst>().await.unwrap()
+                                    } else {
+                                        branch.recv::<RightSecond>().await.unwrap()
+                                    }
+                                } else if second_sibling_first {
+                                    branch.recv::<LeftFirst>().await.unwrap()
+                                } else {
+                                    branch.recv::<LeftSecond>().await.unwrap()
+                                }
+                            };
+                            let received = if receive_first {
+                                let (received, ()) = tokio::join!(biased; receive, send);
+                                received
+                            } else {
+                                let ((), received) = tokio::join!(biased; send, receive);
+                                received
+                            };
+                            assert_eq!(received, value);
+                        }
+                        assert_eq!(resolver_calls.get(), 3);
+                    })
+                    .await
+                    .unwrap_or_else(|_| {
+                        panic!(
+                            "parallel reentry stalled: second_sibling_first={second_sibling_first}, receive_first={receive_first}"
+                        )
+                    });
+                    assert!(network.queue_is_empty());
+                }
+            }
+        });
+}

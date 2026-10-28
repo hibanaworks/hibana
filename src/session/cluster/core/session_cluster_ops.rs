@@ -115,12 +115,6 @@ where
             required_assoc_slots,
             role_descriptor,
         } = request;
-        let resident_budget =
-            crate::rendezvous::core::EndpointResidentBudget::with_frontier_workspace(
-                crate::rendezvous::core::Rendezvous::<T>::frontier_workspace_guard_bytes(
-                    role_descriptor.frontier_scratch_layout(),
-                ),
-            );
         let (slot, generation, offset, _len) = self
             .locals()
             .allocate_endpoint_lease_for_session_role(EndpointLeaseRequest {
@@ -130,7 +124,6 @@ where
                 program: role_descriptor.program(),
                 bytes: required_bytes,
                 align: required_align,
-                resident_budget,
             })?;
         let rv = self
             .locals()
@@ -140,10 +133,6 @@ where
         let storage_end = crate::invariant_some(offset.checked_add(required_bytes));
         if storage_end > slab_len {
             crate::invariant();
-        }
-        if let Err(resource) = rv.ensure_endpoint_resident_capacity() {
-            rv.abort_endpoint_lease_reservation(slot, generation);
-            return Err(ClusterError::resource_exhausted(resource));
         }
         if let Err(resource) =
             rv.ensure_core_lane_storage_for_assoc_entries(logical_lane_count, required_assoc_slots)

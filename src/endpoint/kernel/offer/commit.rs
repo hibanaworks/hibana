@@ -24,6 +24,12 @@ where
         if lane_idx >= self.progress.cursor.logical_lane_count() {
             return Err(RecvError::PhaseInvariant);
         }
+        if branch.route_token.is_committed()
+            && self.committed_nonreceive_offer_arm(scope_id, branch.cursor_index.as_usize())
+                != Some(Arm::from_raw(selected_arm))
+        {
+            return Err(RecvError::PhaseInvariant);
+        }
         let route_seed_rows = {
             let crate::endpoint::kernel::core::ActorProgress {
                 cursor,
@@ -45,17 +51,7 @@ where
         if route_seed_rows.is_empty() {
             return Err(RecvError::PhaseInvariant);
         }
-        let mut branch_scope_arm = None;
-        let mut row_idx = 0usize;
-        while row_idx < route_seed_rows.len() {
-            if let Some(row) = route_seed_rows.get(&self.progress.cursor, row_idx)
-                && row.scope() == scope_id
-            {
-                branch_scope_arm = Some(row.selected_arm());
-                break;
-            }
-            row_idx += 1;
-        }
+        let branch_scope_arm = route_seed_rows.arm_for_scope(&self.progress.cursor, scope_id);
         if branch_scope_arm != Some(selected_arm) {
             return Err(RecvError::PhaseInvariant);
         }
@@ -158,7 +154,11 @@ where
             route_idx += 1;
         }
 
-        if route_token.is_resolver() {
+        if route_token.is_committed() {
+            if branch_route_fresh || self.selected_arm_for_scope(scope_id) != Some(selected_arm) {
+                crate::invariant();
+            }
+        } else if route_token.is_resolver() {
             // Another independent fragment may already have committed this
             // preview's choice. It must have selected the same arm.
             if !branch_route_fresh && self.selected_arm_for_scope(scope_id) != Some(selected_arm) {

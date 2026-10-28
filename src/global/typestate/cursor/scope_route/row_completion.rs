@@ -141,7 +141,8 @@ impl EventCursor {
         let retained = self.is_recv_at(target) && self.has_retained_roll_completion();
         let mut pending = self.pending_event_steps(row_set.start()..row_set.end());
         while let Some(idx) = pending.next() {
-            if retained && self.retained_roll_allows_predecessor(idx, target) {
+            if retained && let Some(end) = self.retained_roll_predecessor_end(idx, target) {
+                pending = self.pending_event_steps(end.min(row_set.end())..row_set.end());
                 continue;
             }
             match self.event_conflict_row_admission(

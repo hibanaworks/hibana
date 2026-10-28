@@ -1,6 +1,6 @@
 use core::{ptr, ptr::NonNull};
 
-use super::{EndpointLeaseId, EndpointResidentBudget, RendezvousTable};
+use super::{EndpointLeaseId, RendezvousTable};
 use crate::{
     rendezvous::core::Rendezvous,
     session::{
@@ -18,7 +18,6 @@ pub(crate) struct EndpointLeaseRequest {
     pub(crate) program: &'static crate::global::compiled::images::CompiledProgramRef,
     pub(crate) bytes: usize,
     pub(crate) align: usize,
-    pub(crate) resident_budget: EndpointResidentBudget,
 }
 
 impl<'cfg, T> RendezvousTable<'cfg, T>
@@ -75,7 +74,6 @@ where
             program,
             bytes,
             align,
-            resident_budget,
         } = request;
         let mut target = None;
         let mut current = self.head.get();
@@ -125,7 +123,7 @@ where
             target.as_ref()
         };
         rendezvous
-            .allocate_endpoint_lease(sid, role, bytes, align, resident_budget)
+            .allocate_endpoint_lease(sid, role, bytes, align)
             .map_err(ClusterError::resource_exhausted)
     }
 

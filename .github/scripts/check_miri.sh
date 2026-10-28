@@ -518,7 +518,7 @@ run_miri_test \
   transport-requeue-owner \
   -p hibana \
   --lib \
-  transport_requeue_callback_reentry_revalidates_generation
+  endpoint::kernel::offer::requeue_callback_tests::
 
 run_miri_test \
   receive-frame-receipt-owner \
@@ -545,10 +545,36 @@ run_miri_test \
   endpoint::kernel::decision_state::tests::route_arm_history_accepts_257_descriptor_relations
 
 run_miri_test \
-  descriptor-domain-offer-frontier-owner \
+  local-route-preview-owner \
   -p hibana \
   --lib \
-  endpoint::kernel::frontier::entry_sets::tests::observed_entry_set_streams_the_full_lane_domain
+  endpoint::kernel::core::route_preview::tests::
+
+run_miri_test \
+  compiled-route-chain-span \
+  -p hibana --lib \
+  constructed_route_commit_chains_match_checked_reads_in_parallel_rolled_and_owned_images
+
+run_miri_test \
+  source-keyed-receive-dispatch \
+  -p hibana --lib \
+  compiled_receive_dispatch_matches_raw_nested_parallel_rolled_and_delegated_images
+
+run_miri_test \
+  canonical-event-row-admission \
+  -p hibana --lib \
+  canonical_row_admission_preserves_metadata_and_image_boundaries
+
+run_miri_test \
+  compiled-route-chain-prefix \
+  -p hibana --lib \
+  rooted_route_chain_prefixes_match_independent_membership_and_merging
+
+run_miri_test \
+  compiled-offer-lane-membership \
+  -p hibana \
+  --lib \
+  candidate_lane_iteration_matches_raw_rows_for_coresident_views_and_local_actions
 
 run_miri_test \
   exact-frontier-cursor-position-owner \
@@ -557,22 +583,20 @@ run_miri_test \
   endpoint::kernel::frontier::visit_set::tests
 
 run_miri_test \
-  constant-state-frontier-selection-owner \
+  incoming-offer-lane-order \
   -p hibana \
   --lib \
-  endpoint::kernel::frontier::progress_selection::tests
+  incoming_lane_iteration_matches_the_full_scan_at_sparse_word_edges
 
 run_miri_test \
-  root-frontier-packed-pool-owner \
-  -p hibana \
-  --lib \
-  endpoint::kernel::frontier_state::tests
+  pending-offer-direction-wakeups \
+  -p hibana --lib \
+  a_waiting_offer_polls_each_direction_once_and_receives_an_independent_choice
 
 run_miri_test \
-  frontier-scratch-workspace-owner \
-  -p hibana \
-  --lib \
-  endpoint::kernel::frontier::scratch::tests
+  current-roll-entry-blocks-completion \
+  -p hibana --lib \
+  unfinished_entry_admission_matches_all_enclosing_rolls_and_choice_assignments
 
 MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_PROOF_EXPORT_TIMEOUT_SECONDS:-360}" \
 MIRIFLAGS="${MIRIFLAGS} -Zmiri-disable-isolation" run_miri_test \
@@ -886,8 +910,7 @@ run_miri_test \
 run_miri_test \
   incoming-choice-before-view-handoff \
   -p hibana --lib \
-  endpoint::kernel::offer::handoff_tests::incoming_choice_can_arrive_at_either_of_the_actors_views \
-  -- --exact
+  endpoint::kernel::offer::handoff_tests::
 
 run_miri_test \
   parallel-borrow-before-owned-payload-prefix \

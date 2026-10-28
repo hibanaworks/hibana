@@ -9,7 +9,7 @@ mod capacity;
 // resident table ingress. The slab pointer and endpoint-lease table are created
 // by the rendezvous constructor and remain pinned for the rendezvous lifetime.
 // Every raw allocation returned here is aligned and range-checked against live
-// owner roots, frontier workspace, and endpoint storage. Typed owners bind only
+// owner roots and endpoint storage. Typed owners bind only
 // after replacement initialization, and retirement canonically packs live roots
 // before lowering the image frontier.
 
@@ -86,18 +86,6 @@ impl<'rv, 'cfg, T: Transport> Rendezvous<'rv, 'cfg, T>
 where
     'cfg: 'rv,
 {
-    #[inline(always)]
-    pub(crate) const fn frontier_workspace_guard_bytes(
-        layout: crate::endpoint::kernel::FrontierScratchLayout,
-    ) -> usize {
-        let align = layout.total_align();
-        if !align.is_power_of_two() {
-            crate::invariant();
-        }
-        let pad = align - 1;
-        crate::runtime_core::layout::add(layout.total_bytes(), pad)
-    }
-
     #[inline]
     pub(crate) fn slab_ptr_and_len(&self) -> (*mut u8, usize) {
         (self.slab_ptr, self.slab_len)
@@ -120,10 +108,7 @@ where
 
     #[inline]
     pub(crate) fn endpoint_lease_floor(&self) -> usize {
-        crate::invariant_some(
-            (self.image_frontier.get() as usize)
-                .checked_add(self.frontier_workspace_bytes.get() as usize),
-        )
+        self.image_frontier.get() as usize
     }
 
     #[inline]
@@ -134,10 +119,5 @@ where
     #[inline]
     fn set_image_frontier(&self, frontier: u32) {
         self.image_frontier.set(frontier);
-    }
-
-    #[inline]
-    fn set_frontier_workspace_bytes(&self, bytes: u32) {
-        self.frontier_workspace_bytes.set(bytes);
     }
 }

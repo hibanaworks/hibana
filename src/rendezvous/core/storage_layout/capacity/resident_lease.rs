@@ -55,12 +55,11 @@ where
                 start = crate::runtime_core::layout::checked_align_offset(base, next, align)?;
                 continue;
             }
-            let reserved_end = end.checked_add(self.frontier_workspace_bytes.get() as usize)?;
-            if reserved_end > self.endpoint_storage_floor() || end > u32::MAX as usize {
+            if end > self.endpoint_storage_floor() || end > u32::MAX as usize {
                 return None;
             }
             let ptr = /* SAFETY: `start..end` is disjoint from every live
-            sidecar and `reserved_end` stays below endpoint storage. */ unsafe {
+            sidecar and `end` stays below endpoint storage. */ unsafe {
                 slab_ptr.add(start)
             };
             return Some(PersistentSidecarLease {

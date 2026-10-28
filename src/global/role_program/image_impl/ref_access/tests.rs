@@ -74,7 +74,7 @@ fn reject(
 }
 
 /// The mandatory constructor pass must prove every guard omitted by direct
-/// arm-bound reads, even without sorted/passive-parent certificates.
+/// arm-bound reads, independently of scope identifier ordering.
 fn assert_lane_validation_dominates_raw_arm_reads(rows: &RoleImageRef) {
     use super::super::metadata::lane_columns_are_coherent;
     use crate::global::role_program::{BlobPtr, ROLE_IMAGE_ROUTE_ARM_STRIDE, RoleLaneImage};
@@ -124,7 +124,6 @@ fn mandatory_lane_validation_proves_raw_arm_bounds() {
         g::send::<0, 1, Msg<3, ()>>(),
     ));
     let rows = program.role_image_ref();
-    assert!(rows.has_passive_parent_index());
     assert_lane_validation_dominates_raw_arm_reads(rows);
 }
 

@@ -4,10 +4,10 @@ use super::passive::{
     PassiveRouteEvidenceContext, PassiveRouteEvidenceInput, PassiveRouteEvidenceOutcome,
 };
 use super::{
-    Arm, FrameEvidenceResolution, FrontierDeferOutcome, FrontierDeferRequest,
-    FrontierScratchWorkspace, FrontierVisitSet, IngressEvidenceState, OfferAuthorityPath,
-    OfferResolveState, OperationKernel, RecvError, RecvResult, ResolveTokenOutcome,
-    ResolvedRouteArm, RouteArmCommitEvidence, RouteArmToken, RouteResolveStep, Transport,
+    Arm, FrameEvidenceResolution, FrontierDeferOutcome, FrontierDeferRequest, FrontierVisitSet,
+    IngressEvidenceState, OfferAuthorityPath, OfferResolveState, OperationKernel, RecvError,
+    RecvResult, ResolveTokenOutcome, ResolvedRouteArm, RouteArmCommitEvidence, RouteArmToken,
+    RouteResolveStep, Transport,
 };
 pub(super) struct RouteAuthorityResolution {
     pub(super) route_token: RouteArmToken,
@@ -45,34 +45,33 @@ where
         pending_recv: &mut super::lane_port::PendingRecv,
         frontier_visited: &mut FrontierVisitSet,
         cx: &mut core::task::Context<'_>,
-        scratch: &mut FrontierScratchWorkspace<'_>,
     ) -> Poll<RecvResult<ResolveTokenOutcome>> {
         if !state.pending.is_ready() {
             return self.poll_resolve_pending_state(state, pending_recv, cx);
         }
 
-        let authority = match self.collect_route_authority(
-            state,
-            pending_recv,
-            frontier_visited,
-            cx,
-            scratch,
-        ) {
-            Poll::Pending => return Poll::Pending,
-            Poll::Ready(Ok(RouteAuthorityOutcome::RestartFrontier)) => {
-                return Poll::Ready(Ok(ResolveTokenOutcome::RestartFrontier));
-            }
-            Poll::Ready(Ok(RouteAuthorityOutcome::Resolved(authority))) => authority,
-            Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
-        };
+        let authority =
+            match self.collect_route_authority(state, pending_recv, frontier_visited, cx) {
+                Poll::Pending => return Poll::Pending,
+                Poll::Ready(Ok(RouteAuthorityOutcome::RestartFrontier)) => {
+                    return Poll::Ready(Ok(ResolveTokenOutcome::RestartFrontier));
+                }
+                Poll::Ready(Ok(RouteAuthorityOutcome::Resolved(authority))) => authority,
+                Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
+            };
 
+        // Resolver and wire/tap callbacks can retire a co-resident view. No
+        // admission grant is constructed until those effects are reconciled.
+        self.reconcile_retirements();
+        if let Some(kind) = self.session_fault() {
+            return Poll::Ready(Err(RecvError::SessionFault(kind)));
+        }
         let resolved = match self.ensure_materialization_ready(
             state,
             pending_recv,
             authority,
             frontier_visited,
             cx,
-            scratch,
         ) {
             Poll::Pending => return Poll::Pending,
             Poll::Ready(Ok(MaterializationReadyOutcome::RestartFrontier)) => {
@@ -92,12 +91,23 @@ where
         pending_recv: &mut super::lane_port::PendingRecv,
         frontier_visited: &mut FrontierVisitSet,
         cx: &mut core::task::Context<'_>,
-        scratch: &mut FrontierScratchWorkspace<'_>,
     ) -> Poll<RecvResult<RouteAuthorityOutcome>> {
         let selection = state.selection();
         let profile = state.facts.profile;
         let scope_id = selection.scope_id;
 
+        if profile.is_passive()
+            && !state.ingress.has_transport()
+            && let Some(arm) = self
+                .committed_nonreceive_offer_intent(scope_id, selection.candidate_index.as_usize())
+        {
+            return Poll::Ready(Ok(RouteAuthorityOutcome::Resolved(
+                RouteAuthorityResolution {
+                    route_token: RouteArmToken::from_committed(arm),
+                    commit_evidence: RouteArmCommitEvidence::Committed,
+                },
+            )));
+        }
         let frame_evidence = FrameEvidenceResolution::unresolved();
         if profile.frame_evidence_is_branch_authority() {
             match self.staged_transport_passive_route_token(state, scope_id) {
@@ -135,7 +145,6 @@ where
                 frontier_visited,
                 cx,
                 frame_evidence,
-                scratch,
             ),
             OfferAuthorityPath::LocalSources => self.poll_route_authority_after_local_sources_miss(
                 state,
@@ -143,7 +152,6 @@ where
                 frontier_visited,
                 cx,
                 frame_evidence,
-                scratch,
             ),
         }
     }
@@ -196,7 +204,6 @@ where
         frontier_visited: &mut FrontierVisitSet,
         cx: &mut core::task::Context<'_>,
         frame_evidence: FrameEvidenceResolution,
-        scratch: &mut FrontierScratchWorkspace<'_>,
     ) -> Poll<RecvResult<RouteAuthorityOutcome>> {
         match self.passive_evidence_authority(
             state,
@@ -204,7 +211,6 @@ where
             frontier_visited,
             cx,
             frame_evidence,
-            scratch,
         ) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Ok(PassiveRouteAuthorityOutcome::RestartFrontier)) => {
@@ -217,7 +223,6 @@ where
                     frontier_visited,
                     cx,
                     frame_evidence,
-                    scratch,
                 ),
             Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
         }
@@ -230,7 +235,6 @@ where
         frontier_visited: &mut FrontierVisitSet,
         cx: &mut core::task::Context<'_>,
         frame_evidence: FrameEvidenceResolution,
-        scratch: &mut FrontierScratchWorkspace<'_>,
     ) -> Poll<RecvResult<RouteAuthorityOutcome>> {
         let scope_id = state.selection().scope_id;
         if state.facts.profile.frame_evidence_is_branch_authority() {
@@ -253,7 +257,6 @@ where
             frontier_visited,
             cx,
             frame_evidence,
-            scratch,
         )
     }
 
@@ -265,7 +268,6 @@ where
         frontier_visited: &mut FrontierVisitSet,
         cx: &mut core::task::Context<'_>,
         frame_evidence: FrameEvidenceResolution,
-        scratch: &mut FrontierScratchWorkspace<'_>,
     ) -> Poll<RecvResult<RouteAuthorityOutcome>> {
         if state.facts.profile.is_passive()
             && !state.ingress.has_transport()
@@ -277,7 +279,6 @@ where
                 frontier_visited,
                 cx,
                 IngressEvidenceState::Absent,
-                scratch,
             ) {
                 Poll::Pending => return Poll::Pending,
                 Poll::Ready(Ok(RouteResolveOutcome::RestartFrontier)) => {
@@ -288,7 +289,7 @@ where
             }
         }
 
-        self.poll_or_defer_route_authority(state, pending_recv, frontier_visited, cx, scratch)
+        self.poll_or_defer_route_authority(state, pending_recv, frontier_visited, cx)
     }
 
     fn controller_resolver_authority(
@@ -316,7 +317,6 @@ where
         frontier_visited: &mut FrontierVisitSet,
         cx: &mut core::task::Context<'_>,
         frame_evidence: FrameEvidenceResolution,
-        scratch: &mut FrontierScratchWorkspace<'_>,
     ) -> Poll<RecvResult<PassiveRouteAuthorityOutcome>> {
         let selection = state.selection();
         match self.poll_passive_route_evidence(
@@ -331,7 +331,6 @@ where
             ),
             pending_recv,
             cx,
-            scratch,
         ) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Ok(PassiveRouteEvidenceOutcome::RestartFrontier)) => {
@@ -353,7 +352,6 @@ where
         pending_recv: &mut super::lane_port::PendingRecv,
         frontier_visited: &mut FrontierVisitSet,
         cx: &mut core::task::Context<'_>,
-        scratch: &mut FrontierScratchWorkspace<'_>,
     ) -> Poll<RecvResult<RouteAuthorityOutcome>> {
         let selection = state.selection();
         if state.facts.profile.is_passive()
@@ -373,7 +371,6 @@ where
             frontier_visited,
             cx,
             state.ingress.evidence_state(),
-            scratch,
         ) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Ok(RouteResolveOutcome::RestartFrontier)) => {
@@ -412,18 +409,16 @@ where
         frontier_visited: &mut FrontierVisitSet,
         cx: &mut core::task::Context<'_>,
         ingress: IngressEvidenceState,
-        scratch: &mut FrontierScratchWorkspace<'_>,
     ) -> Poll<RecvResult<RouteResolveOutcome>> {
         let selection = state.selection();
         match core::task::ready!(self.on_frontier_defer(
             &mut state.progress,
             FrontierDeferRequest {
                 scope_id: selection.scope_id,
-                current_parallel: selection.frontier_parallel_root,
+                entry_index: selection.entry_index,
                 ingress,
             },
             frontier_visited,
-            scratch,
         ))? {
             // No branch or cursor changed. Retain the current child and wait.
             FrontierDeferOutcome::Continue => Poll::Pending,

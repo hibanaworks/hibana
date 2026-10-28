@@ -11,7 +11,7 @@ mod kani;
 use crate::global::typestate::LocalNode;
 use crate::global::{
     compiled::images::CompiledProgramRef,
-    const_dsl::{ReentryMark, ScopeId, ScopeKind},
+    const_dsl::{ScopeId, ScopeKind},
     role_program::{LaneSetView, PackedLaneRange, RoleImageRef, RoleLocalDirection},
     typestate::{
         EventCommitMeta, LocalDependency, PackedEventConflict, PassiveArmChildFact, RouteScopeRows,
@@ -108,6 +108,10 @@ impl LocalEventProgram {
 
     pub(crate) fn parallel_borrow_mask(&self, view: u8, start: usize, stop: usize) -> Option<u16> {
         self.rows().parallel_borrow_mask(view, start, stop)
+    }
+
+    pub(crate) fn offer_candidate_lanes(&self, borrow_mask: Option<u16>) -> LaneSetView<'static> {
+        self.rows().offer_candidate_lanes(borrow_mask)
     }
 
     #[inline]
@@ -236,6 +240,14 @@ impl LocalEventProgram {
         self.rows().next_lane_step(step)
     }
 
+    pub(crate) fn next_offer_lane_alternative(
+        &self,
+        step: usize,
+        preview: &mut dyn FnMut(ScopeId) -> Option<u8>,
+    ) -> Option<usize> {
+        self.rows().next_offer_lane_alternative(step, preview)
+    }
+
     pub(crate) fn route_arm_view_lane_entry(
         &self,
         slot: usize,
@@ -244,6 +256,15 @@ impl LocalEventProgram {
         lane: u8,
     ) -> Option<usize> {
         self.rows().route_arm_view_lane_entry(slot, arm, view, lane)
+    }
+
+    pub(crate) fn view_lane_step_at_or_after(
+        &self,
+        view: u8,
+        lane: u8,
+        start: usize,
+    ) -> Option<usize> {
+        self.rows().view_lane_step_at_or_after(view, lane, start)
     }
 
     #[inline(always)]
@@ -340,12 +361,7 @@ impl LocalEventProgram {
             arm += 1;
         }
         let (start, end) = bounds?;
-        let reentry = if self.rows().route_scope_reentry_by_slot(slot) {
-            ReentryMark::Reentrant
-        } else {
-            ReentryMark::SinglePass
-        };
-        RouteScopeRows::new(scope_id, start, end, reentry)
+        RouteScopeRows::new(scope_id, start, end)
     }
 
     #[inline(always)]
@@ -380,14 +396,8 @@ impl LocalEventProgram {
         self.rows().route_commit_range_by_slot(slot, arm)
     }
 
-    #[inline(always)]
-    pub(crate) fn route_commit_row_at(&self, idx: usize) -> PackedEventConflict {
-        self.rows().route_commit_row_at(idx)
-    }
-
-    #[inline(always)]
-    pub(crate) fn has_passive_parent_index(&self) -> bool {
-        self.rows().has_passive_parent_index()
+    pub(crate) fn route_commit_bytes(&self, range: PackedLaneRange) -> &'static [u8] {
+        self.rows().route_commit_bytes(range)
     }
 
     #[inline(always)]
@@ -435,6 +445,11 @@ impl LocalEventProgram {
             image: self.rows(),
             index: idx as u16,
         })
+    }
+
+    #[inline]
+    pub(crate) fn contains_row(&self, row: LocalEventRow) -> bool {
+        core::ptr::eq(self.rows(), row.image)
     }
 }
 
@@ -486,6 +501,11 @@ pub(crate) struct LocalEventRow {
 }
 
 impl LocalEventRow {
+    #[inline]
+    pub(crate) const fn index(self) -> usize {
+        self.index as usize
+    }
+
     #[inline(always)]
     pub(crate) fn logical_role(self) -> u8 {
         self.image.local_step_logical_role(self.index as usize)

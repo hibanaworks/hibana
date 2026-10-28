@@ -76,22 +76,14 @@ pub(crate) const fn checked_align_offset(
     aligned.checked_sub(base)
 }
 
-#[inline(always)]
-pub(crate) const fn align_offset(base: usize, offset: usize, align: usize) -> usize {
-    match checked_align_offset(base, offset, align) {
-        Some(offset) => offset,
-        None => crate::invariant(),
-    }
-}
-
 #[cfg(all(test, hibana_repo_tests))]
 mod tests {
-    use super::{align_offset, align_up, checked_align_offset, checked_align_up, u32_word_count};
+    use super::{align_up, checked_align_offset, checked_align_up, u32_word_count};
 
     #[test]
     fn alignment_is_minimal_and_absolute_offsets_include_the_base() {
         assert_eq!(align_up(5, 8), 8);
-        assert_eq!(align_offset(3, 5, 8), 5);
+        assert_eq!(checked_align_offset(3, 5, 8), Some(5));
         assert_eq!(checked_align_up(usize::MAX, 2), None);
         assert_eq!(checked_align_offset(usize::MAX, 1, 1), None);
     }

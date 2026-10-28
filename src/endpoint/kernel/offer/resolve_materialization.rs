@@ -4,9 +4,8 @@ use core::task::Poll;
 
 use super::resolve::{MaterializationReadyOutcome, RouteAuthorityResolution};
 use super::{
-    FrontierDeferOutcome, FrontierDeferRequest, FrontierScratchWorkspace, FrontierVisitSet,
-    OfferResolveState, OperationKernel, RecvError, RecvResult, ResolvedRouteArm, RouteArmToken,
-    Transport,
+    FrontierDeferOutcome, FrontierDeferRequest, FrontierVisitSet, OfferResolveState,
+    OperationKernel, RecvError, RecvResult, ResolvedRouteArm, RouteArmToken, Transport,
 };
 
 impl<'r, T> OperationKernel<'_, 'r, T>
@@ -21,15 +20,36 @@ where
         authority: RouteAuthorityResolution,
         frontier_visited: &mut FrontierVisitSet,
         cx: &mut core::task::Context<'_>,
-        scratch: &mut FrontierScratchWorkspace<'_>,
     ) -> Poll<RecvResult<MaterializationReadyOutcome>> {
         let RouteAuthorityResolution {
             mut route_token,
             mut commit_evidence,
         } = authority;
 
-        let selected_arm = loop {
+        let (selected_arm, outbound) = loop {
+            // Each resolver/poll turn can retire views or update evidence.
+            // Construct a grant only after those effects have been applied.
+            self.reconcile_retirements();
+            if let Some(kind) = self.session_fault() {
+                return Poll::Ready(Err(RecvError::SessionFault(kind)));
+            }
             let selected_arm = route_token.arm().as_u8();
+            if state.facts.profile.is_controller()
+                && let Some(event) =
+                    self.controller_arm_outbound_preview(state.selection(), selected_arm)
+            {
+                break (selected_arm, Some(event));
+            }
+            if route_token.is_committed() {
+                if self.committed_nonreceive_offer_intent(
+                    state.selection().scope_id,
+                    state.selection().candidate_index.as_usize(),
+                ) != Some(route_token.arm())
+                {
+                    return Poll::Ready(Ok(MaterializationReadyOutcome::RestartFrontier));
+                }
+                break (selected_arm, None);
+            }
             let missing = match self.selected_arm_missing_materialization_evidence(
                 state,
                 selected_arm,
@@ -39,7 +59,7 @@ where
                 Err(err) => return Poll::Ready(Err(err)),
             };
             if !missing {
-                break selected_arm;
+                break (selected_arm, None);
             }
             if let Some(authority) = self.poll_unready_resolver_authority(state, route_token) {
                 route_token = authority.route_token;
@@ -64,13 +84,13 @@ where
                 frontier_visited,
                 cx,
                 route_token,
-                scratch,
             );
         };
         Poll::Ready(Ok(MaterializationReadyOutcome::Ready(ResolvedRouteArm {
             route_token,
             selected_arm,
             route_arm_selection_commit_evidence: commit_evidence,
+            outbound,
         })))
     }
 
@@ -174,7 +194,6 @@ where
         frontier_visited: &mut FrontierVisitSet,
         cx: &mut core::task::Context<'_>,
         route_token: RouteArmToken,
-        scratch: &mut FrontierScratchWorkspace<'_>,
     ) -> Poll<RecvResult<MaterializationReadyOutcome>> {
         let selection = state.selection();
         if let Some(payload) = state.ingress.take_transport()
@@ -199,11 +218,10 @@ where
             &mut state.progress,
             FrontierDeferRequest {
                 scope_id: selection.scope_id,
-                current_parallel: selection.frontier_parallel_root,
+                entry_index: selection.entry_index,
                 ingress: state.ingress.evidence_state(),
             },
             frontier_visited,
-            scratch,
         ))? {
             FrontierDeferOutcome::Continue => {
                 if state.facts.profile.intrinsic_passive_progress_after_defer() {

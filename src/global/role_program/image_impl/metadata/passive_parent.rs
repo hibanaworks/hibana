@@ -6,9 +6,9 @@ use super::super::lane_image::{decode_resident_route_scope, passive_child_parent
 use super::{column_row_offset, decode_route_arm_lane_metadata, read_u16};
 use crate::global::typestate::PackedEventConflict;
 
-/// Certify every read skipped by reverse-parent lookup without changing errors.
-/// The sorted-scope certificate must additionally establish unique row keys.
-/// A false result keeps the original ordered scan, including its early returns.
+/// Validate every child edge and every arm prefix before image publication.
+/// The separate exact scope index establishes unique row keys, including
+/// descriptors whose scope identifiers are not sorted by slot.
 pub(in crate::global::role_program::image_impl) const fn passive_parent_rows_are_coherent<
     const N: usize,
 >(
@@ -47,7 +47,7 @@ pub(in crate::global::role_program::image_impl) const fn passive_parent_rows_are
         ) else {
             return false;
         };
-        // Direct lookup newly reads even owners not reached by any passive edge.
+        // Every scope owner must decode, including scopes with no passive edge.
         if PackedEventConflict::decode_raw(raw).is_none() {
             return false;
         }

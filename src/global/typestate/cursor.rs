@@ -8,13 +8,12 @@ use super::facts::{
 };
 #[cfg(all(test, hibana_repo_tests))]
 use super::facts::{LocalAction, LocalNode};
-use crate::endpoint::kernel::FrontierScratchLayout;
 use crate::runtime_core::layout::u32_word_count;
 use crate::{
     eff::EffIndex,
     global::{
         compiled::images::RoleDescriptorRef,
-        const_dsl::{DynamicRouteResolver, ScopeId, ScopeKind},
+        const_dsl::{DynamicRouteResolver, ScopeId},
         event_program::{LocalEventProgram, LocalEventRowSet},
         role_program::{LaneSetView, PackedLaneRange},
     },
@@ -32,7 +31,7 @@ mod receive_handoff;
 mod scope_route;
 #[cfg(all(test, hibana_repo_tests))]
 mod validated_metadata_tests;
-pub(crate) use scope_route::{EventAdmissionError, EventArmView};
+pub(crate) use scope_route::{EventAdmissionError, EventArmView, EventBlocker};
 
 #[cfg(all(test, hibana_repo_tests))]
 mod compact_cursor_position_tests {
@@ -113,49 +112,6 @@ impl EnabledEventCommit {
     #[inline(always)]
     pub(crate) const fn cursor_after(self) -> StateIndex {
         self.cursor_after
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct RouteOfferCursorState {
-    scope_id: ScopeId,
-    entry_idx: usize,
-}
-
-impl RouteOfferCursorState {
-    #[inline(always)]
-    pub(crate) const fn new(scope_id: ScopeId, entry_idx: usize) -> Self {
-        Self {
-            scope_id,
-            entry_idx,
-        }
-    }
-
-    #[inline(always)]
-    pub(crate) const fn scope_id(self) -> ScopeId {
-        self.scope_id
-    }
-
-    #[inline(always)]
-    pub(crate) const fn entry_idx(self) -> usize {
-        self.entry_idx
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum CursorRefresh {
-    Lane(u8),
-    AllLanes,
-}
-
-impl CursorRefresh {
-    /// Combine cache invalidations inside one atomic progress update.
-    #[inline]
-    pub(crate) fn merge(self, next: Self) -> Self {
-        match (self, next) {
-            (Self::Lane(left), Self::Lane(right)) if left == right => Self::Lane(left),
-            _ => Self::AllLanes,
-        }
     }
 }
 
@@ -243,11 +199,6 @@ impl EventCursorMachine {
     }
 
     #[inline(always)]
-    fn parallel_root(&self, scope_id: ScopeId) -> Option<ScopeId> {
-        matches!(scope_id.kind(), Some(ScopeKind::Parallel)).then_some(scope_id)
-    }
-
-    #[inline(always)]
     fn event_conflict_for_index(&self, current_idx: usize) -> PackedEventConflict {
         self.event_program().event_conflict_for_index(current_idx)
     }
@@ -262,30 +213,14 @@ impl EventCursorMachine {
         self.event_program().route_commit_range_by_slot(slot, arm)
     }
 
-    #[inline(always)]
-    fn route_commit_row_at(&self, idx: usize) -> PackedEventConflict {
-        self.event_program().route_commit_row_at(idx)
+    fn route_commit_bytes(&self, range: PackedLaneRange) -> &'static [u8] {
+        self.event_program().route_commit_bytes(range)
     }
 
     #[inline(always)]
     fn passive_arm_child_fact_by_slot(&self, slot: usize, arm: u8) -> Option<PassiveArmChildFact> {
         self.event_program()
             .passive_arm_child_fact_by_slot(slot, arm)
-    }
-
-    #[inline(always)]
-    fn enclosing_roll(&self, scope_id: ScopeId) -> Option<ScopeId> {
-        matches!(scope_id.kind(), Some(ScopeKind::Roll)).then_some(scope_id)
-    }
-
-    #[inline(always)]
-    fn frontier_scratch_layout(&self) -> FrontierScratchLayout {
-        FrontierScratchLayout::new(self.max_frontier_entries())
-    }
-
-    #[inline(always)]
-    fn max_frontier_entries(&self) -> usize {
-        self.event_program().footprint().frontier_entry_count()
     }
 
     #[inline(always)]
@@ -484,11 +419,6 @@ impl EventCursor {
     }
 
     #[inline(always)]
-    fn idx_usize(&self) -> usize {
-        self.state().idx as usize
-    }
-
-    #[inline(always)]
     fn machine(&self) -> &EventCursorMachine {
         &self.machine
     }
@@ -504,6 +434,12 @@ impl EventCursor {
         self.machine()
             .event_program()
             .parallel_borrow_mask(view, start, stop)
+    }
+
+    pub(crate) fn offer_candidate_lanes(&self, borrow_mask: Option<u16>) -> LaneSetView<'static> {
+        self.machine()
+            .event_program()
+            .offer_candidate_lanes(borrow_mask)
     }
 
     #[inline]
@@ -532,11 +468,6 @@ impl EventCursor {
         /* SAFETY: `&mut self` is the cursor mutation token, so this is the only
         mutable borrow of the resident cursor-state section for the operation. */
         unsafe { &mut *self.state }
-    }
-
-    #[inline(always)]
-    pub(crate) fn frontier_scratch_layout(&self) -> FrontierScratchLayout {
-        self.machine().frontier_scratch_layout()
     }
 
     #[inline(always)]

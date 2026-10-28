@@ -7,7 +7,7 @@ use super::lane_image::invalid_resident_descriptor;
 use super::metadata::{
     derive_active_lane_metadata, lane_columns_are_coherent, passive_parent_rows_are_coherent,
     roll_scope_columns_are_coherent, route_commit_capacity_is_exact, route_index_is_coherent,
-    route_scopes_are_sorted, route_slot,
+    route_slot,
 };
 use crate::global::{
     compiled::images::CompiledProgramRef,
@@ -94,7 +94,6 @@ impl RuntimeRoleFacts {
     }
 }
 
-const PASSIVE_PARENT_INDEX: u8 = 2;
 const PARALLEL_REENTRY_INDEX: u8 = 4;
 const REENTRY_INDEX: u8 = 8;
 
@@ -103,6 +102,7 @@ impl RoleImageRef {
     pub(crate) fn profile_resident_validation(&self) {
         self.validate_resident_events();
         self.validate_route_commit_chains();
+        self.validate_route_topology();
     }
 
     pub(crate) const fn new<const N: usize>(
@@ -121,15 +121,11 @@ impl RoleImageRef {
             Some(metadata) => metadata,
             None => invalid_resident_descriptor(),
         };
-        let mut lookup_indexes = 0;
         if !route_index_is_coherent(bytes, columns) {
             invalid_resident_descriptor();
         }
-        if columns.route_scopes.len as usize == footprint.route_scope_count
-            && route_scopes_are_sorted(bytes, columns.route_scopes)
-            && passive_parent_rows_are_coherent(bytes, columns)
-        {
-            lookup_indexes |= PASSIVE_PARENT_INDEX;
+        if !passive_parent_rows_are_coherent(bytes, columns) {
+            invalid_resident_descriptor();
         }
         let mut image = Self {
             program,
@@ -139,7 +135,7 @@ impl RoleImageRef {
             blob,
             first_active_lane: metadata.first_active_lane,
             route_index_start: compact_count(columns.route_index().start),
-            lookup_indexes,
+            lookup_indexes: 0,
         };
         if metadata.active_lane_count != footprint.active_lane_count
             || metadata.logical_lane_count != footprint.logical_lane_count
@@ -211,11 +207,6 @@ impl RoleImageRef {
 
     pub(crate) const fn active_lane_row(&self) -> PackedLaneRange {
         self.facts.active_lane_row()
-    }
-
-    #[inline(always)]
-    pub(crate) const fn has_passive_parent_index(&self) -> bool {
-        self.lookup_indexes & PASSIVE_PARENT_INDEX != 0
     }
 
     #[inline(always)]
@@ -307,8 +298,24 @@ impl RoleImageRef {
     }
 
     #[inline(always)]
+    #[cfg(all(test, hibana_repo_tests))]
     pub(crate) const fn route_commit_row_at(&self, idx: usize) -> PackedEventConflict {
         self.lanes().route_commit_row_at(idx)
+    }
+
+    pub(crate) fn route_commit_bytes(&self, range: PackedLaneRange) -> &'static [u8] {
+        if range.is_absent_or_zero_len() {
+            return &[];
+        }
+        let column = self.columns.route_commit_rows;
+        if range.end() > usize::from(column.len) {
+            invalid_resident_descriptor();
+        }
+        // The published image seals these contiguous two-byte rows. Borrow
+        // the span once so iteration needs no column lookup for each row.
+        let start = usize::from(column.offset) + range.start() * 2;
+        let stop = usize::from(column.offset) + range.end() * 2;
+        &self.blob.as_slice()[start..stop]
     }
 
     #[inline(always)]
@@ -340,7 +347,7 @@ impl RoleImageRef {
         self.lanes().route_scope_by_slot(slot)
     }
 
-    #[inline(never)]
+    #[inline]
     pub(crate) const fn route_scope_slot(
         &self,
         scope: crate::global::const_dsl::ScopeId,
@@ -364,13 +371,8 @@ impl RoleImageRef {
         slot: usize,
         arm: u8,
     ) -> Option<u16> {
-        if self.has_passive_parent_index() {
-            // The immutable certificate covers every skipped prefix and bound.
-            self.lanes()
-                .passive_arm_child_ordinal_with_certificate(slot, arm, true)
-        } else {
-            self.lanes().passive_arm_child_ordinal_by_slot(slot, arm)
-        }
+        self.lanes()
+            .certified_passive_arm_child_ordinal_by_slot(slot, arm)
     }
 
     #[inline(always)]
@@ -379,12 +381,8 @@ impl RoleImageRef {
         slot: usize,
         arm: u8,
     ) -> PackedLaneRange {
-        if self.has_passive_parent_index() {
-            self.lanes()
-                .certified_route_arm_event_row_by_slot(slot, arm)
-        } else {
-            self.lanes().route_arm_event_row_by_slot(slot, arm)
-        }
+        self.lanes()
+            .certified_route_arm_event_row_by_slot(slot, arm)
     }
 
     #[inline]

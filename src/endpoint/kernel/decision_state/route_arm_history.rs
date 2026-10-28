@@ -74,7 +74,7 @@ impl RouteArmHistoryView {
     }
 
     #[inline]
-    fn lane_dense_ordinal(&self, lane_idx: usize) -> Option<usize> {
+    pub(super) fn lane_dense_ordinal(&self, lane_idx: usize) -> Option<usize> {
         if lane_idx >= self.lane_slot_count {
             return None;
         }

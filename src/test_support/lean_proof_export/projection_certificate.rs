@@ -78,7 +78,7 @@ fn lean_projection_routes(production: &ProductionCursorTrace) -> String {
                         |row| lean_usize_list(row.start()..row.end()),
                     )
             };
-            let reentry = if region.reentry() {
+            let reentry = if production.event_program.route_scope_reentry(region.scope()) {
                 ".rolled"
             } else {
                 ".singlePass"

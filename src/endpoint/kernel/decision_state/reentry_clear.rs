@@ -78,23 +78,17 @@ impl RouteState {
         Ok(completed_reentry)
     }
 
-    pub(in crate::endpoint::kernel) fn clear_lane_route_selections_in_scope<F, G, H>(
+    pub(in crate::endpoint::kernel) fn clear_lane_route_selections_in_scope<F, G>(
         &mut self,
         lane_idx: usize,
         mut contains_route_scope: F,
         mut route_scope_slot: G,
-        mut route_scope_reentry: H,
         _permit: CommitDeltaApplyPermit,
     ) where
         F: FnMut(ScopeId) -> bool,
         G: FnMut(ScopeId) -> Option<usize>,
-        H: FnMut(ScopeId) -> bool,
     {
-        if self
-            .lane_offer_states
-            .lane_dense_ordinal(lane_idx)
-            .is_none()
-        {
+        if self.lane_route_arms.lane_dense_ordinal(lane_idx).is_none() {
             crate::invariant();
         }
         let mut len = self.lane_route_arms.lane_len(lane_idx);
@@ -115,21 +109,6 @@ impl RouteState {
             // The removed visit owns its readiness evidence too. Keeping an
             // old nested arm's evidence would conflict with the next visit.
             self.scope_evidence.clear(scope_slot);
-        }
-        let mut has_reentry = false;
-        let mut remaining = 0usize;
-        while remaining < len {
-            let scope = self.lane_route_arms.get(lane_idx, remaining).scope;
-            if !scope.is_none() && route_scope_reentry(scope) {
-                has_reentry = true;
-                break;
-            }
-            remaining += 1;
-        }
-        if has_reentry {
-            self.lane_reentry_lanes.insert(lane_idx);
-        } else {
-            self.lane_reentry_lanes.remove(lane_idx);
         }
     }
 

@@ -66,14 +66,14 @@ impl OfferControllerLocalEvidence {
 
 #[derive(Clone, Copy)]
 pub(in crate::endpoint::kernel::offer) enum OfferPassiveReadySignal {
-    Observed,
+    Known,
     Absent,
 }
 
 impl OfferPassiveReadySignal {
     #[inline]
-    const fn is_observed(self) -> bool {
-        matches!(self, Self::Observed)
+    const fn is_known(self) -> bool {
+        matches!(self, Self::Known)
     }
 }
 
@@ -107,7 +107,7 @@ impl OfferPassiveEvidence {
 
     #[inline]
     pub(in crate::endpoint::kernel::offer) const fn has_ready_signal(self) -> bool {
-        self.ready_signal.is_observed()
+        self.ready_signal.is_known()
     }
 
     #[inline]

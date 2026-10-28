@@ -37,7 +37,7 @@ fn compare_view(view: RoleLaneImage<'_>, slot: usize, arm: u8) {
         outcome(|| view.route_arm_event_row_by_slot(slot, arm).raw()),
     );
     assert_eq!(
-        outcome(|| view.passive_arm_child_ordinal_with_certificate(slot, arm, true)),
+        outcome(|| view.certified_passive_arm_child_ordinal_by_slot(slot, arm)),
         outcome(|| view.passive_arm_child_ordinal_by_slot(slot, arm)),
     );
 }
@@ -45,7 +45,6 @@ fn compare_view(view: RoleLaneImage<'_>, slot: usize, arm: u8) {
 #[test]
 fn certified_arm_rows_match_original_with_full_query_guards() {
     let rows = projected_image();
-    assert!(rows.has_passive_parent_index());
     for slot in (0..rows.columns().route_scopes.len as usize + 2).chain([usize::MAX]) {
         for arm in [0, 1, 2, u8::MAX] {
             compare_view(rows.lanes(), slot, arm);
@@ -111,12 +110,8 @@ fn malformed_prefix_requires_checked_decoding_and_later_damage_keeps_early_succe
     );
     assert!(outcome(|| view.route_arm_event_row_by_slot(0, 0)).is_ok());
     assert!(outcome(|| view.passive_arm_child_ordinal_by_slot(0, 0)).is_ok());
-    assert_eq!(
-        outcome(|| view.passive_arm_child_ordinal_with_certificate(0, 0, false)),
-        outcome(|| view.passive_arm_child_ordinal_by_slot(0, 0)),
-    );
     assert!(outcome(|| view.route_arm_event_row_by_slot(1, 0)).is_err());
-    assert!(outcome(|| view.passive_arm_child_ordinal_with_certificate(1, 0, false)).is_err());
+    assert!(outcome(|| view.passive_arm_child_ordinal_by_slot(1, 0)).is_err());
     // This deliberate guard-dropping mutant exposes the skipped predecessor.
     assert!(outcome(|| view.certified_route_arm_event_row_by_slot(1, 0)).is_ok());
 }

@@ -1,8 +1,18 @@
 use super::{
-    CursorInvariantError, CursorRefresh, EVENT_CURSOR_STATE_NONE, EventCursor,
-    RelocatableResidentLaneStep, ResidentLaneStep, StateIndex, state_index_to_usize,
+    CursorInvariantError, EVENT_CURSOR_STATE_NONE, EventCursor, RelocatableResidentLaneStep,
+    ResidentLaneStep, ScopeId, StateIndex, state_index_to_usize,
 };
 impl EventCursor {
+    pub(crate) fn next_offer_lane_alternative(
+        &self,
+        index: usize,
+        preview: &mut dyn FnMut(ScopeId) -> Option<u8>,
+    ) -> Option<usize> {
+        self.machine()
+            .event_program()
+            .next_offer_lane_alternative(index, preview)
+    }
+
     /// Find a pending lane-head event with the given message contract.
     ///
     /// Returns `Some((lane_idx, step))` if found, `None` otherwise.
@@ -60,11 +70,6 @@ impl EventCursor {
     pub(crate) fn index_for_lane_step(&self, lane_idx: usize) -> Option<usize> {
         let state_idx = self.step_state_index_at_lane(lane_idx)?;
         Some(state_index_to_usize(state_idx))
-    }
-
-    #[inline]
-    pub(crate) fn lane_has_pending_step(&self, lane_idx: usize) -> bool {
-        self.index_for_lane_step(lane_idx).is_some()
     }
 
     pub(crate) fn first_pending_step_index(&self) -> Option<usize> {
@@ -144,11 +149,8 @@ impl EventCursor {
         }
     }
 
-    /// Complete an admitted event and advance only its lane's lookup position.
-    pub(crate) fn advance_lane_to_relocatable_step(
-        &mut self,
-        target: RelocatableResidentLaneStep,
-    ) -> CursorRefresh {
+    /// Complete an admitted event and advance past this lane's completed prefix.
+    pub(crate) fn advance_lane_to_relocatable_step(&mut self, target: RelocatableResidentLaneStep) {
         let target = target.0;
         let lane_idx = target.lane as usize;
         if lane_idx >= self.logical_lane_count()
@@ -157,26 +159,98 @@ impl EventCursor {
             crate::invariant();
         }
         self.mark_local_event_done(target.step_idx as usize);
-        // An enclosing continuation can arrive after this lane has begun its
-        // next body visit. Consuming it must not park the lane past that fresh
-        // visit's unfinished head. Locators remain caches of current progress.
-        if let Some(head) = self.step_index_at_lane(lane_idx)
-            && head < usize::from(target.step_idx)
-            && !self.local_event_done(head)
-            && self.retained_roll_allows_predecessor(head, usize::from(target.step_idx))
-        {
-            self.set_index(head);
-            return CursorRefresh::Lane(target.lane);
+        let previous = usize::from(self.lane_cursors()[lane_idx]);
+        let mut next = previous;
+        let end = self.local_steps_len();
+        // Admission may complete a later independent event or an old receive
+        // continuation. Neither consumes this visit's earlier unfinished head.
+        while next < end && self.local_event_done(next) {
+            next = self.machine().event_program().next_lane_step(next);
         }
-        let next = self
-            .machine()
-            .event_program()
-            .next_lane_step(usize::from(target.step_idx));
-        if next > self.lane_cursors()[lane_idx] as usize {
+        if next != previous {
             self.lane_cursors_mut()[lane_idx] = Self::encode_index(next);
             self.refresh_current_step_label_code(lane_idx);
         }
-        CursorRefresh::Lane(target.lane)
+    }
+
+    /// The view's first potentially live unfinished candidate on this lane.
+    /// Other views can occupy an earlier alternative on the physical lane;
+    /// source admission, rather than this lookup, decides their dependencies.
+    /// Only completion advances the stored physical head.
+    pub(crate) fn offer_lane_head(
+        &self,
+        view: u8,
+        lane: usize,
+        selected: &mut dyn FnMut(ScopeId) -> Option<u8>,
+    ) -> Option<usize> {
+        self.potential_offer_lane_step(view, lane as u8, self.step_index_at_lane(lane)?, selected)
+    }
+
+    fn potential_offer_lane_step(
+        &self,
+        view: u8,
+        lane: u8,
+        mut start: usize,
+        selected: &mut dyn FnMut(ScopeId) -> Option<u8>,
+    ) -> Option<usize> {
+        use super::scope_route::ConflictAdmission;
+
+        let program = self.machine().event_program();
+        while let Some(step) = program.view_lane_step_at_or_after(view, lane, start) {
+            if self.local_event_done(step) {
+                start = step + 1;
+                continue;
+            }
+            let conflict = self.machine().event_conflict_for_index(step);
+            match self.event_conflict_row_admission(conflict, ScopeId::none(), None, selected) {
+                ConflictAdmission::Allowed => {}
+                ConflictAdmission::Excluded { scope, arm } => {
+                    let slot = crate::invariant_some(program.route_scope_slot(scope));
+                    // The committed choice excludes the complete arm. Resume
+                    // this view's index after it, including across other views.
+                    start =
+                        crate::invariant_some(program.route_arm_event_row_by_slot(slot, arm)).end();
+                    continue;
+                }
+                ConflictAdmission::Invalid => crate::invariant(),
+            }
+            if self.event_actor_is_local(step, selected) != Some(false) {
+                return Some(step);
+            }
+            start = step + 1;
+        }
+        None
+    }
+
+    /// A retained visit can expose its first pending incoming continuation
+    /// while this lane starts a fresh body visit. Each enclosing retained roll
+    /// contributes at most one candidate; ordinary eligibility still checks it.
+    pub(crate) fn retained_offer_lane_candidates<'a>(
+        &'a self,
+        head: usize,
+        view: u8,
+        lane: u8,
+        selected: &'a mut dyn FnMut(ScopeId) -> Option<u8>,
+    ) -> impl Iterator<Item = usize> + 'a {
+        self.machine()
+            .event_program()
+            .roll_ancestors(head)
+            .filter_map(move |scope| {
+                let program = self.machine().event_program();
+                let slot = crate::invariant_some(program.roll_scope_slot(scope));
+                let bit = self.local_steps_len() + slot;
+                if self.completed_event_words()[bit / 32] & (1 << (bit % 32)) == 0 {
+                    return None;
+                }
+                let (_, range) = crate::invariant_some(program.roll_scope_row_by_slot(slot));
+                let candidate =
+                    self.potential_offer_lane_step(view, lane, range.end(), selected)?;
+                (self.is_recv_at(candidate)
+                    && self
+                        .retained_roll_predecessor_end(head, candidate)
+                        .is_some())
+                .then_some(candidate)
+            })
     }
 
     #[inline(always)]
@@ -209,7 +283,7 @@ impl EventCursor {
     pub(crate) fn set_lane_cursor_to_relocatable_step(
         &mut self,
         target: RelocatableResidentLaneStep,
-    ) -> CursorRefresh {
+    ) {
         let target = target.0;
         let lane_idx = target.lane as usize;
         if lane_idx >= self.logical_lane_count()
@@ -219,7 +293,6 @@ impl EventCursor {
         }
         self.lane_cursors_mut()[lane_idx] = target.step_idx;
         self.refresh_current_step_label_code(lane_idx);
-        CursorRefresh::Lane(target.lane)
     }
 }
 

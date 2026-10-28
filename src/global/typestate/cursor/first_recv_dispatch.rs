@@ -1,62 +1,25 @@
-use super::{
-    CursorInvariantError, EventCursorMachine, InboundFrameKey, ScopeId, StateIndex,
-    state_index_to_usize,
-};
+#[cfg(all(test, hibana_repo_tests))]
+use super::state_index_to_usize;
+use super::{CursorInvariantError, EventCursorMachine, InboundFrameKey, ScopeId, StateIndex};
+#[cfg(all(test, hibana_repo_tests))]
 use crate::global::typestate::LocalConflict;
 use crate::runtime_core::UniqueMatch;
 
-#[inline(always)]
-fn validated_dispatch_arm(arm: u8, target: StateIndex) -> u8 {
-    if arm > 1 || target.is_absent() {
-        crate::invariant();
-    }
-    arm
-}
-
 impl EventCursorMachine {
+    #[cfg(all(test, hibana_repo_tests))]
     pub(in crate::global::typestate::cursor) fn visit_first_recv_dispatch(
         &self,
         scope_id: ScopeId,
         mut visitor: impl FnMut(u8, StateIndex),
     ) -> Option<()> {
         self.route_scope_dense_ordinal(scope_id)?;
-        if self.event_program().has_passive_parent_index() {
-            self.visit_indexed_dispatch_subtree(scope_id, &mut visitor);
-            return Some(());
-        }
-        self.visit_scanned_first_recv_dispatch(scope_id, visitor)
-    }
-
-    fn visit_scanned_first_recv_dispatch(
-        &self,
-        scope_id: ScopeId,
-        mut visitor: impl FnMut(u8, StateIndex),
-    ) -> Option<()> {
-        self.route_scope_dense_ordinal(scope_id)?;
-        let route_count = self.event_program().footprint().route_scope_count;
-        let mut slot = 0usize;
-        while slot < route_count {
-            if let Some(region) = self.route_scope_rows_by_slot(slot) {
-                let route_scope = region.scope();
-                if route_scope.same(scope_id) {
-                    self.visit_first_recv_dispatch_arm(route_scope, 0, 0, &mut visitor);
-                    self.visit_first_recv_dispatch_arm(route_scope, 1, 1, &mut visitor);
-                } else if let Some(root_arm) =
-                    self.first_recv_dispatch_root_arm(scope_id, route_scope)
-                {
-                    self.visit_first_recv_dispatch_arm(route_scope, 0, root_arm, &mut visitor);
-                    self.visit_first_recv_dispatch_arm(route_scope, 1, root_arm, &mut visitor);
-                }
-            }
-            slot += 1;
-        }
+        self.visit_indexed_dispatch_subtree(scope_id, &mut visitor);
         Some(())
     }
 
-    // The certificate proves forward child slots, unique inverse parents and
-    // complete static row validation. Visit only the reachable subtree; the
-    // two consumers accumulate an OR mask or an order-independent UniqueMatch.
-    // Uncertified descriptors retain the original ordered scan and failures.
+    // Full subtree enumeration is retained as a test oracle. Production uses
+    // the received event's source path below.
+    #[cfg(all(test, hibana_repo_tests))]
     fn visit_indexed_dispatch_subtree(
         &self,
         root: ScopeId,
@@ -89,8 +52,7 @@ impl EventCursorMachine {
                         next_arm = 0;
                     }
                 } else {
-                    let Some((parent, arm)) = self.indexed_passive_child_parent_route(current)
-                    else {
+                    let Some((parent, arm)) = self.passive_child_parent_route(current) else {
                         crate::invariant();
                     };
                     if parent.same(root) {
@@ -115,12 +77,12 @@ impl EventCursorMachine {
         &self,
         scope_id: ScopeId,
     ) -> Option<u8> {
-        let mut mask = 0u8;
-        self.visit_first_recv_dispatch(scope_id, |arm, target| {
-            let arm = validated_dispatch_arm(arm, target);
-            mask |= 1u8 << arm;
-        })?;
-        Some(mask)
+        let slot = self.route_scope_dense_ordinal(scope_id)?;
+        let program = self.event_program();
+        Some(
+            u8::from(program.route_arm_first_operation(slot, 0, true).is_some())
+                | (u8::from(program.route_arm_first_operation(slot, 1, true).is_some()) << 1),
+        )
     }
 
     pub(in crate::global::typestate::cursor) fn first_recv_descendant_target_for_key(
@@ -128,32 +90,60 @@ impl EventCursorMachine {
         scope_id: ScopeId,
         key: InboundFrameKey,
     ) -> Result<Option<(u8, StateIndex)>, CursorInvariantError> {
+        self.route_scope_dense_ordinal(scope_id)
+            .ok_or(CursorInvariantError::INVARIANT)?;
         let mut matched = UniqueMatch::NONE;
-        let visited = self.visit_first_recv_dispatch(scope_id, |arm, target| {
-            let arm = validated_dispatch_arm(arm, target);
-            let Some(row) = self
-                .event_program()
-                .event_row_at(state_index_to_usize(target))
-            else {
-                return;
-            };
-            if row.direction() == crate::global::role_program::RoleLocalDirection::Recv
-                && row.atom().from == key.source_role
-                && row.atom().lane == key.lane
-                && row.effect().dense_ordinal() as u16 == key.frame_label
+        let source_event = usize::from(key.frame_label);
+        for index in self.event_program().source_effect_candidates(source_event) {
+            let row = crate::invariant_some(self.event_program().event_row_at(index));
+            let atom = row.atom();
+            if row.direction() != crate::global::role_program::RoleLocalDirection::Recv
+                || atom.from != key.source_role
+                || atom.lane != key.lane
             {
-                matched = matched.add((arm, target));
+                continue;
             }
-        });
-        let Some(()) = visited else {
-            return Err(CursorInvariantError::INVARIANT);
-        };
+            let Some(root_arm) = self
+                .program_ref()
+                .source_route_arm_for_event(scope_id, source_event)
+            else {
+                continue;
+            };
+            let target = StateIndex::from_usize(index);
+            let mut current = scope_id;
+            let mut remaining = self.event_program().footprint().route_scope_count;
+            loop {
+                if remaining == 0 {
+                    crate::invariant();
+                }
+                remaining -= 1;
+                let Some(arm) = self
+                    .program_ref()
+                    .source_route_arm_for_event(current, source_event)
+                else {
+                    break;
+                };
+                if self.route_scope_rows(current).is_some()
+                    && self.route_recv_state(current, arm) == Some(target)
+                {
+                    matched = matched.add((root_arm, target));
+                    // Further hits on this path name the same target and root
+                    // arm. UniqueMatch treats those repeated observations as one.
+                    break;
+                }
+                let Some(child) = self.indexed_dispatch_child(current, arm) else {
+                    break;
+                };
+                current = child;
+            }
+        }
         matched
             .finish_optional()
             .map_err(|_| CursorInvariantError::INVARIANT)
     }
 
     #[inline(always)]
+    #[cfg(all(test, hibana_repo_tests))]
     fn visit_first_recv_dispatch_arm(
         &self,
         scope_id: ScopeId,
@@ -166,39 +156,8 @@ impl EventCursorMachine {
         }
     }
 
-    #[inline(always)]
-    fn first_recv_dispatch_root_arm(
-        &self,
-        root_scope: ScopeId,
-        candidate_scope: ScopeId,
-    ) -> Option<u8> {
-        if candidate_scope.same(root_scope) {
-            return None;
-        }
-        self.route_scope_dense_ordinal(candidate_scope)?;
-        let route_count = self.event_program().footprint().route_scope_count;
-        let mut current = candidate_scope;
-        let mut hops = 0usize;
-        while hops < route_count {
-            let (parent, arm) = self.passive_child_parent_route(current)?;
-            if parent.same(root_scope) {
-                return Some(arm);
-            }
-            current = parent;
-            hops += 1;
-        }
-        crate::invariant();
-    }
-
+    #[cfg(all(test, hibana_repo_tests))]
     fn passive_child_parent_route(&self, child_scope: ScopeId) -> Option<(ScopeId, u8)> {
-        if self.event_program().has_passive_parent_index() {
-            self.indexed_passive_child_parent_route(child_scope)
-        } else {
-            self.scanned_passive_child_parent_route(child_scope)
-        }
-    }
-
-    fn indexed_passive_child_parent_route(&self, child_scope: ScopeId) -> Option<(ScopeId, u8)> {
         let child_slot = self.route_scope_dense_ordinal(child_scope)?;
         let LocalConflict::RouteArm { scope: parent, arm } = self
             .route_scope_conflict_by_slot(child_slot)
@@ -211,26 +170,6 @@ impl EventCursorMachine {
         row.child_route_scope()
             .is_some_and(|child| child.same(child_scope))
             .then_some((row.route_scope(), row.arm()))
-    }
-
-    fn scanned_passive_child_parent_route(&self, child_scope: ScopeId) -> Option<(ScopeId, u8)> {
-        let route_count = self.event_program().footprint().route_scope_count;
-        let mut slot = 0usize;
-        while slot < route_count {
-            let mut arm = 0u8;
-            while arm < 2 {
-                if let Some(row) = self.passive_arm_child_fact_by_slot(slot, arm)
-                    && row
-                        .child_route_scope()
-                        .is_some_and(|child| child.same(child_scope))
-                {
-                    return Some((row.route_scope(), row.arm()));
-                }
-                arm += 1;
-            }
-            slot += 1;
-        }
-        None
     }
 }
 

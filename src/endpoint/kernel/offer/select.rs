@@ -1,16 +1,16 @@
 use super::super::evidence_store::ReadyArmEvidence;
+use super::select_candidates::ProjectedOfferFrontier;
 use super::{
-    Arm, ControlFlow, CurrentFrontierSelectionState, CurrentScopeSelectionMeta,
-    FrontierDeferOutcome, FrontierProgressSelection, FrontierScratchWorkspace, FrontierVisitSet,
-    IngressEvidenceState, ObservedIngressSelection, OfferEntryKey, OfferEvidenceOutcome,
-    OfferProgressState, OfferScopeSelection, OfferStagedIngress, OperationKernel, Poll, RecvError,
-    RecvResult, ScopeId, Transport, lane_port, state_index_to_usize,
+    Arm, FrontierDeferOutcome, FrontierVisitSet, IngressEvidenceState, ObservedIngressSelection,
+    OfferEvidenceOutcome, OfferProgressState, OfferScopeSelection, OfferStagedIngress,
+    OperationKernel, Poll, RecvError, RecvResult, ScopeId, Transport, lane_port,
+    state_index_to_usize,
 };
 use crate::global::typestate::InboundFrameKey;
 
 pub(super) struct FrontierDeferRequest {
     pub(super) scope_id: ScopeId,
-    pub(super) current_parallel: Option<ScopeId>,
+    pub(super) entry_index: crate::global::typestate::StateIndex,
     pub(super) ingress: IngressEvidenceState,
 }
 
@@ -18,31 +18,13 @@ impl<'r, T> OperationKernel<'_, 'r, T>
 where
     T: Transport + 'r,
 {
-    #[inline]
-    pub(super) fn offer_refresh_mask(
-        endpoint: &OperationKernel<'_, 'r, T>,
-        lane_idx: usize,
-    ) -> bool {
-        endpoint.progress.cursor.lane_has_pending_step(lane_idx)
-            || endpoint
-                .progress
-                .decision_state
-                .lane_reentry_lanes()
-                .contains(lane_idx)
-            || endpoint
-                .progress
-                .decision_state
-                .lane_offer_reentry_lanes()
-                .contains(lane_idx)
-    }
-
-    pub(in crate::endpoint::kernel) fn select_scope(
+    pub(super) fn select_scope(
         &mut self,
         carried_lane: Option<u8>,
         carried_key: Option<InboundFrameKey>,
         carried_observation: Option<lane_port::FrameObservation>,
         frontier_visited: &mut FrontierVisitSet,
-        scratch: &mut FrontierScratchWorkspace<'_>,
+        projected: Option<ProjectedOfferFrontier>,
     ) -> RecvResult<Option<ObservedIngressSelection>> {
         if let Some(selection) = self.select_observed_ingress(carried_key, carried_observation)? {
             return Ok(Some(selection));
@@ -56,55 +38,29 @@ where
             );
             return Err(RecvError::PhaseInvariant);
         }
-        if let Some(selection) = self.select_carried_ingress_scope(carried_lane)? {
-            return Ok(Some(ObservedIngressSelection::Branch(selection)));
-        }
-        let Some(node_scope) = self.align_cursor_to_selected_scope(frontier_visited, scratch)?
-        else {
-            return Ok(None);
-        };
-        let current_idx = self.progress.cursor.index();
-        let Some(scope_id) = self
-            .progress
-            .cursor
-            .route_scope_for_offer_node(node_scope, current_idx)
-        else {
-            if current_idx < self.progress.cursor.local_steps_len() {
-                return Ok(None);
+        if carried_lane.is_none()
+            && let Some(frontier) = projected
+        {
+            let no_callback = frontier.incoming.iter().all(|word| *word == 0);
+            match frontier.candidate {
+                Some(candidate) if no_callback => {
+                    return Ok(Some(ObservedIngressSelection::Branch(candidate)));
+                }
+                Some(candidate) => {
+                    if let Some(candidate) =
+                        self.recheck_projected_offer_candidate(candidate, frontier_visited)?
+                    {
+                        return Ok(Some(ObservedIngressSelection::Branch(candidate)));
+                    }
+                }
+                None if no_callback => return Ok(None),
+                None => {}
             }
-            return Err(RecvError::PhaseInvariant);
-        };
-        if !self.progress.cursor.route_offer_entry_allows_current(
-            scope_id,
-            self.progress.cursor.index(),
-            self.preview_live_selected_arm_for_scope(scope_id),
-        ) {
-            return Err(RecvError::PhaseInvariant);
         }
-        let current_key = crate::invariant_some(OfferEntryKey::from_index(scope_id, current_idx));
-        let current_active_entry = self.active_offer_entry(current_key);
-        let current_entry_active = current_active_entry.is_some();
-        // Offer-lane choice remains local to the selected route scope.
-        let offer_lanes = self.offer_lane_set_for_scope(scope_id);
-        let lane_limit = self.progress.cursor.logical_lane_count();
-        let carried_offer_lane = carried_lane
-            .map(usize::from)
-            .filter(|&lane_idx| lane_idx < lane_limit && offer_lanes.contains(lane_idx))
-            .map(|lane_idx| lane_idx as u8);
-        let offer_lane = if let Some(lane) = carried_offer_lane {
-            Some(lane)
-        } else if current_entry_active {
-            Some(crate::invariant_some(current_active_entry).representative_lane())
-        } else {
-            offer_lanes
-                .first_set(lane_limit)
-                .map(|lane_idx| lane_idx as u8)
-        };
-        let Some(offer_lane) = offer_lane else {
-            return Err(RecvError::PhaseInvariant);
-        };
-        self.offer_scope_selection_for_scope_lane(scope_id, current_idx, offer_lane)
-            .map(|selection| Some(ObservedIngressSelection::Branch(selection)))
+        // A callback can retire a view or replace parked branch knowledge.
+        // Invalidated intent requires a fresh frontier, not a cached negative.
+        self.read_projected_offer_frontier(frontier_visited, carried_lane)
+            .map(|frontier| frontier.candidate.map(ObservedIngressSelection::Branch))
     }
 
     #[inline]
@@ -192,11 +148,10 @@ where
         progress: &mut OfferProgressState,
         request: FrontierDeferRequest,
         visited: &mut FrontierVisitSet,
-        scratch: &mut FrontierScratchWorkspace<'_>,
     ) -> Poll<RecvResult<FrontierDeferOutcome>> {
         let FrontierDeferRequest {
             scope_id,
-            current_parallel,
+            entry_index,
             ingress,
         } = request;
         let fingerprint = self.evidence_fingerprint(scope_id, ingress);
@@ -204,128 +159,17 @@ where
             OfferEvidenceOutcome::NewEvidence => Poll::Ready(Ok(FrontierDeferOutcome::Continue)),
             OfferEvidenceOutcome::Pending => Poll::Pending,
         };
-        let current_entry_idx = self.progress.cursor.index();
+        let current_entry_idx = entry_index.as_usize();
         visited.record(current_entry_idx);
-        let current_is_controller = self.is_route_controller(scope_id);
-        let mut selection = FrontierProgressSelection::new(
-            scope_id,
-            current_entry_idx,
-            match current_parallel {
-                Some(root) => root,
-                None => ScopeId::none(),
-            },
-            OperationKernel::<T>::frontier_kind_for_cursor(
-                &self.progress.cursor,
-                scope_id,
-                current_is_controller,
-            ),
-        );
-        self.for_each_active_offer_progress_candidate(
-            current_parallel,
-            &mut scratch.global_active_entries,
-            |candidate| {
-                selection.consider(candidate, visited);
-                ControlFlow::<()>::Continue(())
-            },
-        );
-        let Some(candidate) = selection.selected() else {
+        if self
+            .read_projected_offer_frontier(visited, None)?
+            .candidate
+            .is_none()
+        {
             return no_candidate;
-        };
-        let candidate_entry = candidate.entry.as_usize();
-        visited.record(candidate_entry);
-        if candidate_entry != self.progress.cursor.index() {
-            self.commit_cursor_realign_index(candidate_entry)
-                .map_err(|_| RecvError::PhaseInvariant)?;
         }
         Poll::Ready(Ok(FrontierDeferOutcome::Yielded))
     }
-    pub(super) fn current_scope_selection_meta(
-        &self,
-        scope_id: ScopeId,
-        current_idx: usize,
-        current_frontier: CurrentFrontierSelectionState,
-    ) -> Option<CurrentScopeSelectionMeta> {
-        if let Some(meta) = self.offer_entry_selection_meta(scope_id, current_idx) {
-            return Some(meta);
-        }
-        if !self.progress.cursor.has_route_scope(scope_id) {
-            return Some(CurrentScopeSelectionMeta::EMPTY);
-        }
-        let at_route_entry = self.progress.cursor.route_offer_entry_cursor_position(
-            scope_id,
-            current_idx,
-            self.preview_live_selected_arm_for_scope(scope_id),
-        )?;
-        if !at_route_entry.is_at_entry() {
-            return Some(CurrentScopeSelectionMeta::EMPTY);
-        }
-        let mut flags = CurrentScopeSelectionMeta::FLAG_ROUTE_ENTRY;
-        if !self.offer_lane_set_for_scope(scope_id).is_empty() {
-            flags |= CurrentScopeSelectionMeta::FLAG_HAS_OFFER_LANES;
-        }
-        if current_frontier.is_controller() {
-            flags |= CurrentScopeSelectionMeta::FLAG_CONTROLLER;
-        }
-        Some(CurrentScopeSelectionMeta { flags })
-    }
-
-    pub(super) fn current_frontier_selection_state(
-        &self,
-        scope_id: ScopeId,
-        current_idx: usize,
-    ) -> CurrentFrontierSelectionState {
-        let active_entry = OfferEntryKey::from_index(scope_id, current_idx)
-            .and_then(|key| self.active_offer_entry(key));
-        if let Some(active) = active_entry {
-            let info = active.representative();
-            let parallel_root = active.parallel_root();
-            let mut flags = 0u8;
-            if self.is_route_controller(scope_id) {
-                flags |= CurrentFrontierSelectionState::FLAG_CONTROLLER;
-            }
-            if info.intrinsic_ready() {
-                flags |= CurrentFrontierSelectionState::FLAG_READY;
-            }
-            return CurrentFrontierSelectionState {
-                frontier: active.frontier(),
-                parallel_root,
-                flags,
-            };
-        }
-        let current_is_controller = self.is_route_controller(scope_id);
-        let current_is_dynamic = current_is_controller
-            && self
-                .progress
-                .cursor
-                .route_scope_resolver(scope_id)
-                .is_some();
-        let frontier_facts = OperationKernel::<T>::frontier_facts_at(
-            &self.progress.cursor,
-            scope_id,
-            current_is_controller,
-            current_is_dynamic,
-            current_idx,
-        );
-        let current_parallel =
-            OperationKernel::<T>::parallel_scope_root(&self.progress.cursor, scope_id)
-                .filter(|&root| self.root_frontier_has_active_entries(root));
-        let mut flags = 0u8;
-        if current_is_controller {
-            flags |= CurrentFrontierSelectionState::FLAG_CONTROLLER;
-        }
-        if frontier_facts.ready() {
-            flags |= CurrentFrontierSelectionState::FLAG_READY;
-        }
-        CurrentFrontierSelectionState {
-            frontier: frontier_facts.frontier,
-            parallel_root: match current_parallel {
-                Some(root) => root,
-                None => ScopeId::none(),
-            },
-            flags,
-        }
-    }
-
     pub(super) fn await_intrinsic_passive_progress(
         &mut self,
         pending_recv: &mut lane_port::PendingRecv,
@@ -334,7 +178,7 @@ where
         ingress: &mut OfferStagedIngress<'r>,
         cx: &mut core::task::Context<'_>,
     ) -> Poll<RecvResult<()>> {
-        let materialization_meta = self.selection_materialization_meta(selection);
+        let materialization_meta = self.compute_scope_arm_materialization_meta(selection.scope_id);
         let selected_arm = selected_arm.map(Arm::from_raw);
         let progress_lane = match selected_arm {
             Some(arm) => self
