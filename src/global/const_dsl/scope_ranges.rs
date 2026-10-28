@@ -5,8 +5,11 @@ pub(crate) use nesting::{StructuredScopeRange, innermost_scope_range, outermost_
 
 mod route;
 pub(crate) use route::{
-    closed_route_arm_ranges_from_first_enter, passive_route_child_scope,
+    closed_route_arm_ranges_from_first_enter, passive_route_child_enter,
     route_arm_event_ranges_for_scope, route_arm_ranges_from_first_enter,
+};
+#[cfg(any(kani, all(test, hibana_repo_tests)))]
+pub(crate) use route::{
     route_parent_arm_for_scope, route_scope_slot_for_scope, structured_scope_event_range,
 };
 

@@ -73,7 +73,9 @@ fn role_image_fit_probe_rejects_undersized_storage() {
         plan.build_if_fits::<{ BYTES - 1 }, 1>(
             (&source, &scopes),
             facts,
-            super::projection::LocalRows::Role(0)
+            super::projection::LocalRows::Role(&crate::global::role_program::RoleLocalRows::new(
+                &source, 0
+            ))
         )
         .is_none()
     );
@@ -105,7 +107,9 @@ fn role_image_fit_probe_rejects_plan_mismatch() {
     let _ = plan.build_if_fits::<BYTES, 1>(
         (&source, &scopes),
         facts,
-        super::projection::LocalRows::Role(0),
+        super::projection::LocalRows::Role(&crate::global::role_program::RoleLocalRows::new(
+            &source, 0,
+        )),
     );
 }
 

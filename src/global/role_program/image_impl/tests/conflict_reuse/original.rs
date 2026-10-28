@@ -69,6 +69,7 @@ impl<const N: usize> RoleImageBytes<N> {
         columns: RoleImageColumns,
     ) -> RoleImageBuild<N> {
         let (eff_list, scopes) = source;
+        let role_rows = crate::global::role_program::RoleLocalRows::new(eff_list, role);
         let footprint = facts.footprint();
         let local_len = footprint.local_step_count;
         let route_scope_len = footprint.route_scope_count;
@@ -81,8 +82,11 @@ impl<const N: usize> RoleImageBytes<N> {
         let mut dependency_row = 0usize;
         let mut conflict_row = 0usize;
         let mut local_step = 0usize;
-        let mut dependencies =
-            projection::DependencyCursor::new(eff_list, scopes, projection::LocalRows::Role(role));
+        let mut dependencies = projection::DependencyCursor::new(
+            eff_list,
+            scopes,
+            projection::LocalRows::Role(&role_rows),
+        );
         let mut eff_idx = 0usize;
         while eff_idx < eff_list.len() {
             let atom = eff_list.atom_at(eff_idx);
@@ -127,7 +131,7 @@ impl<const N: usize> RoleImageBytes<N> {
 
         let active_lane_facts = projection::LocalLaneFacts::for_eff_range(
             eff_list,
-            projection::LocalRows::Role(role),
+            projection::LocalRows::Role(&role_rows),
             0,
             eff_list.len(),
         );
@@ -140,7 +144,7 @@ impl<const N: usize> RoleImageBytes<N> {
             columns.resident_boundaries.len as usize - 1
         };
         let mut resident_rows =
-            projection::ResidentRowCursor::new(eff_list, projection::LocalRows::Role(role));
+            projection::ResidentRowCursor::new(eff_list, projection::LocalRows::Role(&role_rows));
         let mut resident_row = 0usize;
         let mut resident_end = None;
         while let Some(row) = resident_rows.next() {
@@ -207,7 +211,7 @@ impl<const N: usize> RoleImageBytes<N> {
                     let (start_eff, end_eff) = ranges[arm];
                     let lane_facts = projection::LocalLaneFacts::for_eff_range(
                         eff_list,
-                        projection::LocalRows::Role(role),
+                        projection::LocalRows::Role(&role_rows),
                         start_eff,
                         end_eff,
                     );
@@ -228,15 +232,17 @@ impl<const N: usize> RoleImageBytes<N> {
                         columns.route_arm_lane_step_rows,
                         route_arm_lane_step_row,
                         eff_list,
-                        projection::LocalRows::Role(role),
+                        projection::LocalRows::Role(&role_rows),
                         &lane_facts,
                     );
                     let lane_step_row =
                         PackedLaneRange::new(route_arm_lane_step_row, written_steps);
                     route_arm_lane_step_row += written_steps;
                     let child_slot =
-                        match projection::passive_arm_child_scope(markers, scope, arm as u8) {
-                            Some(child_scope) => {
+                        match projection::passive_route_child_enter(markers, marker_idx, arm as u8)
+                        {
+                            Some(child) => {
+                                let child_scope = markers.at(child).scope_id;
                                 let Some(child_slot) =
                                     projection::route_scope_slot_for_scope(markers, child_scope)
                                 else {
@@ -318,7 +324,7 @@ impl<const N: usize> RoleImageBytes<N> {
                     eff_list,
                     marker.offset(),
                     end_eff,
-                    projection::LocalRows::Role(role),
+                    projection::LocalRows::Role(&role_rows),
                 );
                 if !row.is_absent_or_zero_len() {
                     out.write_roll_scope_row(
@@ -333,7 +339,7 @@ impl<const N: usize> RoleImageBytes<N> {
         }
 
         let mut masks = crate::global::role_program::image_impl::parallel_masks::MaskRows::new();
-        while let Some(row) = masks.next(eff_list, projection::LocalRows::Role(role)) {
+        while let Some(row) = masks.next(eff_list, projection::LocalRows::Role(&role_rows)) {
             let mut byte = 0;
             while byte < row.len() {
                 out.w8(

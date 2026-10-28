@@ -1,5 +1,5 @@
 use super::{
-    closed_route_arm_ranges_from_first_enter, passive_route_child_scope,
+    closed_route_arm_ranges_from_first_enter, passive_route_child_enter,
     route_parent_arm_for_scope, route_scope_slot_for_scope, structured_scope_event_range,
 };
 use crate::global::const_dsl::{ReentryMark, ScopeEvent, ScopeId, ScopeMarker, ScopeMarkerView};
@@ -60,7 +60,7 @@ fn nested_route_topology_authorities_are_exact_and_coherent() {
     };
 
     assert!(structured_scope_event_range(markers, inner) == Some((0, 4)));
-    assert!(passive_route_child_scope(markers, outer, 0) == Some(inner));
+    assert!(passive_route_child_enter(markers, 0, 0) == Some(1));
     assert!(route_parent_arm_for_scope(markers, inner) == Some((outer, 0)));
     assert!(route_scope_slot_for_scope(markers, outer) == Some(0));
     assert!(route_scope_slot_for_scope(markers, inner) == Some(1));

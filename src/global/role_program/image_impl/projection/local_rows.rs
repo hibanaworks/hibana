@@ -120,11 +120,42 @@ impl<const E: usize> ActorLocalRows<E> {
     }
 }
 
-/// Identity bindings require no per-event workspace. Delegation uses the same
-/// compiler algorithms with an actor's immutable candidate rows.
+pub(crate) struct RoleLocalRows<const E: usize> {
+    role: u8,
+    starts: [u16; E],
+    events: usize,
+    len: u16,
+}
+
+impl<const E: usize> RoleLocalRows<E> {
+    pub(crate) const fn new(effects: &EffList<E>, role: u8) -> Self {
+        let mut rows = Self {
+            role,
+            starts: [0; E],
+            events: effects.len(),
+            len: 0,
+        };
+        let mut event = 0;
+        while event < rows.events {
+            rows.starts[event] = rows.len;
+            let atom = effects.atom_at(event);
+            if atom.from == role || atom.to == role {
+                rows.len = match rows.len.checked_add(1) {
+                    Some(len) => len,
+                    None => panic!("role local operation count exceeds compact domain"),
+                };
+            }
+            event += 1;
+        }
+        rows
+    }
+}
+
+/// Both projections retain immutable prefix counts during image construction.
+/// These compiler rows are never stored in a runtime endpoint.
 #[derive(Clone, Copy)]
 pub(crate) enum LocalRows<'a, const E: usize> {
-    Role(u8),
+    Role(&'a RoleLocalRows<E>),
     Actor(&'a ActorLocalRows<E>),
 }
 
@@ -194,16 +225,16 @@ impl<const E: usize> LocalRows<'_, E> {
 
     pub(crate) const fn actor(self) -> u8 {
         match self {
-            Self::Role(role) => role,
+            Self::Role(rows) => rows.role,
             Self::Actor(rows) => rows.actor,
         }
     }
 
     pub(crate) const fn count(self, effects: &EffList<E>, event: usize) -> usize {
         match self {
-            Self::Role(role) => {
+            Self::Role(rows) => {
                 let atom = effects.atom_at(event);
-                (atom.from == role || atom.to == role) as usize
+                (atom.from == rows.role || atom.to == rows.role) as usize
             }
             Self::Actor(rows) => {
                 if event >= rows.events || rows.events != effects.len() {
@@ -221,12 +252,12 @@ impl<const E: usize> LocalRows<'_, E> {
         side: usize,
     ) -> RoleLocalDirection {
         match self {
-            Self::Role(role) => {
+            Self::Role(rows) => {
                 if side != 0 {
                     crate::invariant();
                 }
                 let atom = effects.atom_at(event);
-                match role_local_direction(role, atom.from, atom.to) {
+                match role_local_direction(rows.role, atom.from, atom.to) {
                     Some(direction) => direction,
                     None => crate::invariant(),
                 }
@@ -261,22 +292,21 @@ impl<const E: usize> LocalRows<'_, E> {
             crate::invariant();
         }
         let (start, len) = match self {
-            Self::Role(role) => {
-                let mut before = 0;
-                let mut len = 0;
-                let mut event = 0;
-                while event < end {
-                    let atom = effects.atom_at(event);
-                    if atom.from == role || atom.to == role {
-                        if event < start {
-                            before += 1;
-                        } else {
-                            len += 1;
-                        }
-                    }
-                    event += 1;
+            Self::Role(rows) => {
+                if rows.events != effects.len() {
+                    crate::invariant();
                 }
-                (before, len)
+                let first = if start == rows.events {
+                    rows.len
+                } else {
+                    rows.starts[start]
+                };
+                let stop = if end == rows.events {
+                    rows.len
+                } else {
+                    rows.starts[end]
+                };
+                (first as usize, (stop - first) as usize)
             }
             Self::Actor(rows) => {
                 if rows.events != effects.len() {
@@ -296,5 +326,66 @@ impl<const E: usize> LocalRows<'_, E> {
             }
         };
         PackedLaneRange::new(if len == 0 { 0 } else { start }, len)
+    }
+}
+
+#[cfg(all(test, hibana_repo_tests))]
+mod tests {
+    use super::*;
+    use crate::eff::{EffAtom, EventOrigin, EventPayload};
+
+    #[test]
+    fn prefix_ranges_match_direct_counting_for_every_small_membership_mask() {
+        for mask in 0u16..256 {
+            let mut source = EffList::<8>::new();
+            for event in 0..8 {
+                let (from, to) = if mask & (1 << event) == 0 {
+                    (1, 2)
+                } else {
+                    match event % 3 {
+                        0 => (0, 1),
+                        1 => (1, 0),
+                        _ => (0, 0),
+                    }
+                };
+                source.push_event_mut(EffAtom {
+                    from,
+                    to,
+                    label: event,
+                    lane: 0,
+                    payload: EventPayload::Wire(0),
+                    origin: EventOrigin::User,
+                });
+            }
+            for role in [0, 1, 2, 255] {
+                let index = RoleLocalRows::new(&source, role);
+                let rows = LocalRows::Role(&index);
+                let participates = |event| {
+                    let atom = source.atom_at(event);
+                    atom.from == role || atom.to == role
+                };
+                for start in 0..=8 {
+                    for end in start..=8 {
+                        let before = (0..start).filter(|&event| participates(event)).count();
+                        let length = (start..end).filter(|&event| participates(event)).count();
+                        let actual = rows.range(&source, start, end);
+                        assert_eq!(
+                            actual.len(),
+                            length,
+                            "mask={mask} role={role} {start}..{end}"
+                        );
+                        assert_eq!(actual.start(), if length == 0 { 0 } else { before });
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn an_empty_source_has_one_empty_boundary_and_no_event_lookup() {
+        let source = EffList::<0>::new();
+        let index = RoleLocalRows::new(&source, 255);
+        let range = LocalRows::Role(&index).range(&source, 0, 0);
+        assert_eq!((range.start(), range.len()), (0, 0));
     }
 }

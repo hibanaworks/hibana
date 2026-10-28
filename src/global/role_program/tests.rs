@@ -655,13 +655,19 @@ fn streaming_role_image_tracks_actual_event_count() {
     let plan = RoleImagePlan::from_program(
         (&OVER_LOCAL_STEP_CAPACITY_ATOMS, &scopes),
         facts,
-        LocalRows::Role(0),
+        LocalRows::Role(&crate::global::role_program::RoleLocalRows::new(
+            &OVER_LOCAL_STEP_CAPACITY_ATOMS,
+            0,
+        )),
     );
     let build = plan
         .build_if_fits::<{ u16::MAX as usize }, { LOCAL_STEP_STRESS_ROW_BUDGET + 1 }>(
             (&OVER_LOCAL_STEP_CAPACITY_ATOMS, &scopes),
             facts,
-            LocalRows::Role(0),
+            LocalRows::Role(&crate::global::role_program::RoleLocalRows::new(
+                &OVER_LOCAL_STEP_CAPACITY_ATOMS,
+                0,
+            )),
         )
         .expect("streaming role descriptor fits the compact byte domain");
 
@@ -704,9 +710,17 @@ fn streaming_role_image_accepts_more_than_256_resident_rows() {
         logical_lane_count: 2,
     });
     let scopes = ScopeFacts::new(&source);
-    let plan = RoleImagePlan::from_program((&source, &scopes), facts, LocalRows::Role(0));
+    let plan = RoleImagePlan::from_program(
+        (&source, &scopes),
+        facts,
+        LocalRows::Role(&crate::global::role_program::RoleLocalRows::new(&source, 0)),
+    );
     let build = plan
-        .build_if_fits::<{ u16::MAX as usize }, 2048>((&source, &scopes), facts, LocalRows::Role(0))
+        .build_if_fits::<{ u16::MAX as usize }, 2048>(
+            (&source, &scopes),
+            facts,
+            LocalRows::Role(&crate::global::role_program::RoleLocalRows::new(&source, 0)),
+        )
         .expect("257 resident phases fit their exact role image");
 
     assert_eq!(build.columns.resident_boundaries.len as usize, PHASES + 1);

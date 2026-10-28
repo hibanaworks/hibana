@@ -18,6 +18,11 @@ struct RoleProjectionBlob<const ROLE: u8, Steps, const CAPACITY: usize, const N:
     PhantomData<Steps>,
 );
 
+enum ProjectionRows<const E: usize> {
+    Role(&'static crate::global::role_program::RoleLocalRows<E>),
+    Actor(&'static crate::global::role_program::ActorLocalRows<E>),
+}
+
 impl<Steps, const CAPACITY: usize, const N: usize> ProgramProjectionBlob<Steps, CAPACITY, N>
 where
     Steps: ProgramShape,
@@ -108,22 +113,23 @@ where
             Some(actor) => actor,
             None => ROLE,
         };
-    // Keeping the guard inside the constant prevents ordinary large programs
-    // from eagerly constructing an unused actor map during const evaluation.
-    const ACTOR_ROWS: Option<crate::global::role_program::ActorLocalRows<CAPACITY>> = {
+    const SOURCE_ROWS: ProjectionRows<CAPACITY> = {
         if Steps::SOURCE_NODE.has_delegation() {
-            Some(crate::global::role_program::ActorLocalRows::new(
+            ProjectionRows::Actor(&crate::global::role_program::ActorLocalRows::new(
                 &ProgramProjection::<Steps, CAPACITY>::PROGRAM_REF,
                 Self::ACTOR,
             ))
         } else {
-            None
+            ProjectionRows::Role(&crate::global::role_program::RoleLocalRows::new(
+                ProgramProjection::<Steps, CAPACITY>::SOURCE_EFF_LIST,
+                Self::ACTOR,
+            ))
         }
     };
-    const ROWS: crate::global::role_program::LocalRows<'static, CAPACITY> = match &Self::ACTOR_ROWS
+    const ROWS: crate::global::role_program::LocalRows<'static, CAPACITY> = match Self::SOURCE_ROWS
     {
-        Some(rows) => crate::global::role_program::LocalRows::Actor(rows),
-        None => crate::global::role_program::LocalRows::Role(Self::ACTOR),
+        ProjectionRows::Actor(rows) => crate::global::role_program::LocalRows::Actor(rows),
+        ProjectionRows::Role(rows) => crate::global::role_program::LocalRows::Role(rows),
     };
     const COUNTS: crate::global::compiled::lowering::RoleCompiledCounts =
         ProgramProjection::<Steps, CAPACITY>::IMAGE.role_lowering_counts(

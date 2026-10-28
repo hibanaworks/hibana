@@ -1,10 +1,16 @@
 use super::{
-    closed_route_arm_ranges_from_first_enter, passive_route_child_scope,
+    closed_route_arm_ranges_from_first_enter, passive_route_child_enter,
     route_parent_arm_for_scope, route_scope_slot_for_scope, structured_scope_event_range,
 };
 use crate::global::const_dsl::{ReentryMark, ScopeEvent, ScopeId, ScopeMarker, ScopeMarkerView};
 
 use super::super::source_arena::SourceRow;
+
+// The reference queries identities; the production query starts at a known row.
+fn child_scope(markers: ScopeMarkerView<'_>, route: ScopeId, arm: u8) -> Option<ScopeId> {
+    let enter = markers.first_enter_index(route)?;
+    passive_route_child_enter(markers, enter, arm).map(|index| markers.at(index).scope_id)
+}
 
 const fn route_marker(offset: usize, split: usize, end: usize, scope: ScopeId) -> SourceRow {
     SourceRow::Scope(ScopeMarker::new(
@@ -59,8 +65,8 @@ fn nested_route_topology_has_one_range_parent_child_and_slot_authority() {
 
     assert_eq!(structured_scope_event_range(markers, outer), Some((0, 6)));
     assert_eq!(structured_scope_event_range(markers, inner), Some((0, 4)));
-    assert_eq!(passive_route_child_scope(markers, outer, 0), Some(inner));
-    assert_eq!(passive_route_child_scope(markers, outer, 1), None);
+    assert_eq!(child_scope(markers, outer, 0), Some(inner));
+    assert_eq!(child_scope(markers, outer, 1), None);
     assert_eq!(route_parent_arm_for_scope(markers, inner), Some((outer, 0)));
     assert_eq!(route_scope_slot_for_scope(markers, outer), Some(0));
     assert_eq!(route_scope_slot_for_scope(markers, inner), Some(1));
@@ -130,7 +136,7 @@ fn passive_child_window_matches_full_scan_across_sorted_ties_gaps_and_domains() 
             for arm in [0, 1, 2, u8::MAX] {
                 let scope = ScopeId::route(ordinal);
                 assert_eq!(
-                    passive_route_child_scope(markers, scope, arm),
+                    child_scope(markers, scope, arm),
                     passive_child_full_scan(markers, scope, arm),
                     "mask={mask}, ordinal={ordinal}, arm={arm}",
                 );
@@ -142,7 +148,7 @@ fn passive_child_window_matches_full_scan_across_sorted_ties_gaps_and_domains() 
             ScopeId::parallel(0),
         ] {
             assert_eq!(
-                passive_route_child_scope(markers, scope, 0),
+                child_scope(markers, scope, 0),
                 passive_child_full_scan(markers, scope, 0),
             );
         }
@@ -173,7 +179,7 @@ fn passive_child_window_keeps_later_candidates_and_outermost_equal_range_ties() 
     assert_eq!(passive_child_full_scan(markers, parent, 0), Some(outer));
     for arm in 0..=2 {
         assert_eq!(
-            passive_route_child_scope(markers, parent, arm),
+            child_scope(markers, parent, arm),
             passive_child_full_scan(markers, parent, arm),
         );
     }
@@ -182,7 +188,9 @@ fn passive_child_window_keeps_later_candidates_and_outermost_equal_range_ties() 
         start: 0,
         len: 0,
     };
-    assert_eq!(passive_route_child_scope(empty, parent, 0), None);
+    assert_eq!(passive_route_child_enter(empty, 0, 0), None);
+    assert_eq!(passive_route_child_enter(markers, markers.len(), 0), None);
+    assert_eq!(passive_route_child_enter(markers, usize::MAX, 0), None);
 }
 
 #[test]
@@ -200,7 +208,7 @@ fn passive_child_window_retains_duplicate_candidate_invariant_failure() {
         len: rows.len(),
     };
     let old = std::panic::catch_unwind(|| passive_child_full_scan(markers, parent, 0));
-    let new = std::panic::catch_unwind(|| passive_route_child_scope(markers, parent, 0));
+    let new = std::panic::catch_unwind(|| child_scope(markers, parent, 0));
     assert!(old.is_err());
     assert!(new.is_err());
 }

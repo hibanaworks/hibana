@@ -1,4 +1,4 @@
-use super::{DependencyCursor, LocalRows, ScopeFacts, passive_arm_child_scope, route_arm_ranges};
+use super::{DependencyCursor, LocalRows, ScopeFacts, passive_route_child_enter, route_arm_ranges};
 use crate::global::{
     const_dsl::{EffList, ScopeId, ScopeKind},
     typestate::LocalConflict,
@@ -91,11 +91,12 @@ pub(in crate::global::role_program::image_impl) const fn retained_route_scopes<c
             {
                 let mut arm = 0u8;
                 while arm < 2 {
-                    if let Some(child) = passive_arm_child_scope(markers, marker.scope_id, arm)
-                        && !retained[child.local_ordinal() as usize]
-                    {
-                        retained[child.local_ordinal() as usize] = true;
-                        changed = true;
+                    if let Some(child) = passive_route_child_enter(markers, marker_idx, arm) {
+                        let ordinal = markers.at(child).scope_id.local_ordinal() as usize;
+                        if !retained[ordinal] {
+                            retained[ordinal] = true;
+                            changed = true;
+                        }
                     }
                     arm += 1;
                 }

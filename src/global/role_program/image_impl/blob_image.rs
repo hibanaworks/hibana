@@ -350,8 +350,10 @@ impl<const N: usize> RoleImageBytes<N> {
                         PackedLaneRange::new(route_arm_lane_step_row, written_steps);
                     route_arm_lane_step_row += written_steps;
                     let child_slot =
-                        match projection::passive_arm_child_scope(markers, scope, arm as u8) {
-                            Some(child_scope) => {
+                        match projection::passive_route_child_enter(markers, marker_idx, arm as u8)
+                        {
+                            Some(child) => {
+                                let child_scope = markers.at(child).scope_id;
                                 let Some(child_slot) =
                                     retained_slots[child_scope.local_ordinal() as usize]
                                 else {

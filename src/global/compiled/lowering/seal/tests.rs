@@ -79,7 +79,9 @@ fn projection_derives_exact_route_capacity_beyond_256_rows() {
             .role_lowering_counts(
                 &source,
                 &crate::global::role_program::ScopeFacts::new(&source),
-                crate::global::role_program::LocalRows::Role(0)
+                crate::global::role_program::LocalRows::Role(
+                    &crate::global::role_program::RoleLocalRows::new(&source, 0)
+                )
             )
             .max_route_commit_count,
         257
@@ -107,7 +109,9 @@ fn projection_derives_one_row_for_one_route() {
             .role_lowering_counts(
                 &source,
                 &crate::global::role_program::ScopeFacts::new(&source),
-                crate::global::role_program::LocalRows::Role(0)
+                crate::global::role_program::LocalRows::Role(
+                    &crate::global::role_program::RoleLocalRows::new(&source, 0)
+                )
             )
             .max_route_commit_count,
         1

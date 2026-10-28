@@ -1,7 +1,6 @@
-use super::{
-    ScopeId, ScopeKind, ScopeMarkerView, StructuredScopeRange, innermost_scope_range,
-    outermost_scope_range, scope_segment_end_from_enter,
-};
+use super::{ScopeId, ScopeKind, ScopeMarkerView, StructuredScopeRange, outermost_scope_range};
+#[cfg(any(kani, all(test, hibana_repo_tests)))]
+use super::{innermost_scope_range, scope_segment_end_from_enter};
 
 pub(crate) type RouteArmRanges = [(usize, usize); 2];
 
@@ -40,6 +39,7 @@ pub(crate) const fn route_arm_event_ranges_for_scope(
     closed_route_arm_ranges_from_first_enter(scope_markers, enter_idx)
 }
 
+#[cfg(any(kani, all(test, hibana_repo_tests)))]
 pub(crate) const fn structured_scope_event_range(
     scope_markers: ScopeMarkerView<'_>,
     scope: ScopeId,
@@ -66,6 +66,7 @@ pub(crate) const fn structured_scope_event_range(
     }
 }
 
+#[cfg(any(kani, all(test, hibana_repo_tests)))]
 pub(crate) const fn route_scope_slot_for_scope(
     scope_markers: ScopeMarkerView<'_>,
     route: ScopeId,
@@ -90,6 +91,7 @@ pub(crate) const fn route_scope_slot_for_scope(
     None
 }
 
+#[cfg(any(kani, all(test, hibana_repo_tests)))]
 pub(crate) const fn route_parent_arm_for_scope(
     scope_markers: ScopeMarkerView<'_>,
     scope: ScopeId,
@@ -136,20 +138,22 @@ pub(crate) const fn route_parent_arm_for_scope(
     }
 }
 
-pub(crate) const fn passive_route_child_scope(
+pub(crate) const fn passive_route_child_enter(
     scope_markers: ScopeMarkerView<'_>,
-    route: ScopeId,
+    enter: usize,
     arm: u8,
-) -> Option<ScopeId> {
-    if arm > 1 || !matches!(route.kind(), Some(ScopeKind::Route)) {
+) -> Option<usize> {
+    if arm > 1 {
         return None;
     }
-    let ranges = match route_arm_event_ranges_for_scope(scope_markers, route) {
+    let ranges = match closed_route_arm_ranges_from_first_enter(scope_markers, enter) {
         Some(ranges) => ranges,
         None => return None,
     };
+    let route = scope_markers.at(enter).scope_id;
     let (arm_start, arm_end) = ranges[arm as usize];
     let mut child: Option<StructuredScopeRange> = None;
+    let mut child_enter = None;
     let mut idx = scope_markers.offset_lower_bound(arm_start, 0);
     while idx < scope_markers.len() {
         let marker = scope_markers.at(idx);
@@ -168,18 +172,19 @@ pub(crate) const fn passive_route_child_scope(
                 };
             if child_end <= arm_end {
                 let candidate = StructuredScopeRange::new(marker.scope_id, arm_start, child_end);
-                child = Some(match child {
+                let selected = match child {
                     Some(current) => outermost_scope_range(current, candidate),
                     None => candidate,
-                });
+                };
+                if selected.scope().same(marker.scope_id) {
+                    child_enter = Some(idx);
+                }
+                child = Some(selected);
             }
         }
         idx += 1;
     }
-    match child {
-        Some(child) => Some(child.scope()),
-        None => None,
-    }
+    child_enter
 }
 
 pub(crate) const fn route_arm_ranges_from_first_enter(

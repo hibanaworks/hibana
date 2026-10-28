@@ -5,7 +5,6 @@ use super::{
 use crate::global::{
     const_dsl::{
         EffList, StructuredScopeRange, innermost_scope_range, parallel_arm_ranges_from_enter,
-        structured_scope_event_range,
     },
     typestate::{LocalConflict, PackedEventConflict, RouteChoiceMark},
 };
@@ -13,7 +12,7 @@ use crate::global::{
 mod actors;
 pub(super) use actors::ActorEventProjection;
 mod local_rows;
-pub(crate) use local_rows::{ActorLocalRows, LocalRows};
+pub(crate) use local_rows::{ActorLocalRows, LocalRows, RoleLocalRows};
 mod dependency;
 mod lanes;
 mod resident;
@@ -22,7 +21,7 @@ mod route;
 pub(crate) use retained_routes::retained_route_counts;
 pub(super) use retained_routes::retained_route_scopes;
 mod scope_facts;
-pub(super) use crate::global::const_dsl::passive_route_child_scope as passive_arm_child_scope;
+pub(super) use crate::global::const_dsl::passive_route_child_enter;
 pub(super) use crate::global::const_dsl::route_arm_event_ranges_for_scope as route_arm_ranges;
 #[cfg(all(test, hibana_repo_tests))]
 pub(super) use crate::global::const_dsl::route_scope_slot_for_scope;
@@ -33,6 +32,7 @@ pub(super) use resident::ResidentRowCursor;
 pub(super) use route::{RouteCommitCursor, route_commit_row_count};
 pub(crate) use scope_facts::ScopeFacts;
 
+#[cfg(all(test, hibana_repo_tests))]
 pub(super) const fn same_scope(left: ScopeId, right: ScopeId) -> bool {
     !left.is_none() && left.same(right)
 }
@@ -54,6 +54,7 @@ pub(super) const fn scope_markers_contain_kind(
     false
 }
 
+#[cfg(all(test, hibana_repo_tests))]
 const fn scope_dependency_bounds(
     markers: ScopeMarkerView<'_>,
     segment_limit: usize,
@@ -63,16 +64,18 @@ const fn scope_dependency_bounds(
         Some(kind) => kind,
         None => return None,
     };
-    let (start, end) = match structured_scope_event_range(markers, scope_id) {
-        Some(range) => range,
-        None => crate::invariant(),
-    };
+    let (start, end) =
+        match crate::global::const_dsl::structured_scope_event_range(markers, scope_id) {
+            Some(range) => range,
+            None => crate::invariant(),
+        };
     if end > segment_limit {
         crate::invariant();
     }
     Some((kind, start, end))
 }
 
+#[cfg(all(test, hibana_repo_tests))]
 pub(super) const fn route_arm_for_scope_start(
     markers: ScopeMarkerView<'_>,
     route: ScopeId,
@@ -100,6 +103,7 @@ const fn route_arm_for_enter(markers: ScopeMarkerView<'_>, enter_idx: usize) -> 
     marker.event.route_arm()
 }
 
+#[cfg(all(test, hibana_repo_tests))]
 pub(super) const fn nearest_route_for_scope(
     markers: ScopeMarkerView<'_>,
     segment_limit: usize,
@@ -185,6 +189,7 @@ pub(super) const fn route_conflict_for_eff(
     }
 }
 
+#[cfg(all(test, hibana_repo_tests))]
 pub(super) const fn dependency_conflict_for_scope(
     markers: ScopeMarkerView<'_>,
     view_len: usize,

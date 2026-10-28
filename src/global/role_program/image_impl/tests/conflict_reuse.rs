@@ -51,7 +51,9 @@ fn compare<const E: usize, const N: usize>(
         let image = RoleImageBytes::<N>::emit(
             (source, scopes),
             facts,
-            projection::LocalRows::Role(role),
+            projection::LocalRows::Role(&crate::global::role_program::RoleLocalRows::new(
+                source, role,
+            )),
             columns,
         );
         (image.bytes.bytes, format!("{:?}", image.columns))
@@ -78,13 +80,20 @@ fn case_source(source: &EffList<512>, totals: &mut [usize; 4]) {
         global_bytes.compiled_ref(&compiled, global_columns),
     ));
     for role in 0..=compiled.max_role() {
-        let counts =
-            compiled.role_lowering_counts(source, &scopes, projection::LocalRows::Role(role));
+        let counts = compiled.role_lowering_counts(
+            source,
+            &scopes,
+            projection::LocalRows::Role(&crate::global::role_program::RoleLocalRows::new(
+                source, role,
+            )),
+        );
         let facts = RuntimeRoleFacts::from_counts(counts);
         let plan = RoleImagePlan::from_program(
             (source, &scopes),
             facts,
-            projection::LocalRows::Role(role),
+            projection::LocalRows::Role(&crate::global::role_program::RoleLocalRows::new(
+                source, role,
+            )),
         );
         let full_counts = RoleImagePlan::full_reference_counts(source, role);
         let full_facts = RuntimeRoleFacts::from_counts(full_counts);
@@ -128,7 +137,9 @@ fn case_source(source: &EffList<512>, totals: &mut [usize; 4]) {
                     projection::local_event_row_for_eff(
                         source,
                         index,
-                        projection::LocalRows::Role(role),
+                        projection::LocalRows::Role(
+                            &crate::global::role_program::RoleLocalRows::new(source, role)
+                        ),
                         0
                     )
                     .0
@@ -144,7 +155,9 @@ fn case_source(source: &EffList<512>, totals: &mut [usize; 4]) {
             let (_, reused) = projection::local_event_row_for_eff(
                 source,
                 index,
-                projection::LocalRows::Role(role),
+                projection::LocalRows::Role(&crate::global::role_program::RoleLocalRows::new(
+                    source, role,
+                )),
                 0,
             );
             assert_eq!(
@@ -214,7 +227,9 @@ fn case_source(source: &EffList<512>, totals: &mut [usize; 4]) {
             projection::local_event_row_for_eff(
                 source,
                 usize::MAX,
-                projection::LocalRows::Role(role),
+                projection::LocalRows::Role(&crate::global::role_program::RoleLocalRows::new(
+                    source, role,
+                )),
                 0,
             )
             .0
@@ -255,7 +270,9 @@ fn overlapping_marker_failures_match() {
                     projection::local_event_row_for_eff(
                         &source,
                         index,
-                        projection::LocalRows::Role(role),
+                        projection::LocalRows::Role(
+                            &crate::global::role_program::RoleLocalRows::new(&source, role)
+                        ),
                         0
                     )
                     .0
@@ -311,7 +328,9 @@ fn normalized_compare<const E: usize>(
     let new = RoleImageBytes::<4096>::emit(
         (source, scopes),
         new_facts,
-        projection::LocalRows::Role(role),
+        projection::LocalRows::Role(&crate::global::role_program::RoleLocalRows::new(
+            source, role,
+        )),
         new_columns,
     );
     let full_bytes = Box::leak(Box::new(full.bytes.bytes));

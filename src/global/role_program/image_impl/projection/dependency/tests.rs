@@ -34,7 +34,8 @@ fn source_marker_slots_keep_sparse_scope_kinds_distinct() {
         source.push_parallel_scope_mut(ScopeId::parallel(parallel_id), 1, 2, 3);
         let scopes = ScopeFacts::new(&source);
         for role in [0, 1] {
-            let mut cursor = DependencyCursor::new(&source, &scopes, LocalRows::Role(role));
+            let role_rows = crate::global::role_program::RoleLocalRows::new(&source, role);
+            let mut cursor = DependencyCursor::new(&source, &scopes, LocalRows::Role(&role_rows));
             let dependencies: [_; 5] =
                 core::array::from_fn(|event| cursor.next(event, source.atom_at(event).lane, event));
             // Source: prefix; choice { par(left, right), other }; continuation.
@@ -185,7 +186,9 @@ fn reference_dependency<const E: usize>(
                     eff_list,
                     floor,
                     marker.offset(),
-                    LocalRows::Role(role),
+                    LocalRows::Role(&crate::global::role_program::RoleLocalRows::new(
+                        eff_list, role,
+                    )),
                 );
                 if !input.is_absent_or_zero_len()
                     && (dependency.is_none() || input.end() > dependency.end() as usize)
@@ -204,7 +207,9 @@ fn reference_dependency<const E: usize>(
                 eff_list,
                 marker.offset(),
                 exit_eff,
-                LocalRows::Role(role),
+                LocalRows::Role(&crate::global::role_program::RoleLocalRows::new(
+                    eff_list, role,
+                )),
             );
             let end = row.end();
             if row.start() < end && target >= end {
@@ -246,7 +251,8 @@ fn sequential_prefix_is_retained_at_nested_forks_without_sibling_edges() {
 
 fn assert_cursor_matches_reference<const E: usize>(eff_list: &EffList<E>, role: u8) {
     let scopes = ScopeFacts::new(eff_list);
-    let mut cursor = DependencyCursor::new(eff_list, &scopes, LocalRows::Role(role));
+    let role_rows = crate::global::role_program::RoleLocalRows::new(eff_list, role);
+    let mut cursor = DependencyCursor::new(eff_list, &scopes, LocalRows::Role(&role_rows));
     let mut local_step = 0usize;
     let mut eff_idx = 0usize;
     while eff_idx < eff_list.len() {
@@ -285,7 +291,8 @@ fn reentrant_route_parallel_dependencies_preserve_source_order_in_each_alternati
                 atom.from == role || atom.to == role
             })
             .collect();
-        let mut cursor = DependencyCursor::new(effects, &scopes, LocalRows::Role(role));
+        let role_rows = crate::global::role_program::RoleLocalRows::new(effects, role);
+        let mut cursor = DependencyCursor::new(effects, &scopes, LocalRows::Role(&role_rows));
         for (target, &event) in rows.iter().enumerate() {
             let lane = effects.atom_at(event).lane;
             let actual = cursor.next(event, lane, target).to_dependency(rows.len());

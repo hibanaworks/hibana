@@ -11,6 +11,10 @@ topology_evidence="$(mktemp -d /tmp/hibana-route-topology.XXXXXX)"
 trap 'rm -r -- "$topology_evidence"' EXIT
 topology_log="$topology_evidence/lean.log"
 chain_log="$topology_evidence/chain.log"
+scope_log="$topology_evidence/scope.log"
+"$LEAN_BIN" "$HERE/ScopeParent.lean" > "$scope_log" 2>&1
+cat "$scope_log"
+bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" lean "$scope_log" 2
 "$LEAN_BIN" "$HERE/CanonicalChain.lean" > "$chain_log" 2>&1
 cat "$chain_log"
 bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" lean "$chain_log" 6
@@ -25,6 +29,7 @@ rustc +stable --edition=2024 -O "$HERE/source_shape_check.rs" \
 "$topology_evidence/source-shape-check"
 bash "$ROOT/.github/scripts/check_smt2.sh" "$HERE/RouteIndex.smt2"
 bash "$ROOT/.github/scripts/check_smt2.sh" "$HERE/RouteAncestry.smt2"
+bash "$ROOT/.github/scripts/check_smt2.sh" "$HERE/ScopeParent.smt2"
 bash "$ROOT/.github/scripts/check_smt2.sh" "$HERE/RouteTopology.smt2"
 bash "$ROOT/.github/scripts/check_smt2.sh" "$HERE/RetainedRange.smt2"
 bash "$ROOT/.github/scripts/check_smt2.sh" "$HERE/CanonicalChain.smt2"

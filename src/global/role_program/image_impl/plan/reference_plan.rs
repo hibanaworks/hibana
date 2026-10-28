@@ -120,6 +120,7 @@ impl RoleImageColumnCounts {
         role: u8,
     ) -> Self {
         let (eff_list, scopes) = source;
+        let role_rows = crate::global::role_program::RoleLocalRows::new(eff_list, role);
         if logical_lane_count == 0 || logical_lane_count > LANE_DOMAIN_SIZE {
             panic!("role logical lane domain invalid");
         }
@@ -129,8 +130,11 @@ impl RoleImageColumnCounts {
         let mut dependency_rows = 0usize;
         let mut conflict_rows = 0usize;
         let mut max_lane_plus_one = 0usize;
-        let mut dependencies =
-            projection::DependencyCursor::new(eff_list, scopes, projection::LocalRows::Role(role));
+        let mut dependencies = projection::DependencyCursor::new(
+            eff_list,
+            scopes,
+            projection::LocalRows::Role(&role_rows),
+        );
         let mut idx = 0usize;
         while idx < eff_list.len() {
             let atom = eff_list.atom_at(idx);
@@ -172,7 +176,7 @@ impl RoleImageColumnCounts {
                 + route_facts.lane_bits
                 + super::super::parallel_masks::MaskRows::byte_len(
                     eff_list,
-                    projection::LocalRows::Role(role),
+                    projection::LocalRows::Role(&role_rows),
                 ),
             route_arm_lane_steps: route_facts.route_arm_lane_steps,
             route_commit_rows: route_facts.route_commit_rows,
@@ -182,8 +186,9 @@ impl RoleImageColumnCounts {
     }
 
     const fn resident_row_count<const E: usize>(eff_list: &EffList<E>, role: u8) -> usize {
+        let role_rows = crate::global::role_program::RoleLocalRows::new(eff_list, role);
         let mut rows =
-            projection::ResidentRowCursor::new(eff_list, projection::LocalRows::Role(role));
+            projection::ResidentRowCursor::new(eff_list, projection::LocalRows::Role(&role_rows));
         let mut row_count = 0usize;
         while rows.next().is_some() {
             row_count += 1;
@@ -196,6 +201,7 @@ impl RoleImageColumnCounts {
         role: u8,
     ) -> RouteImagePlanRouteFacts {
         let (eff_list, scopes) = source;
+        let role_rows = crate::global::role_program::RoleLocalRows::new(eff_list, role);
         let markers = eff_list.scope_markers();
         if !projection::scope_markers_contain_kind(markers, ScopeKind::Route) {
             return RouteImagePlanRouteFacts {
@@ -231,7 +237,7 @@ impl RoleImageColumnCounts {
                     let (start, end) = ranges[arm];
                     let lanes = projection::LocalLaneFacts::for_eff_range(
                         eff_list,
-                        projection::LocalRows::Role(role),
+                        projection::LocalRows::Role(&role_rows),
                         start,
                         end,
                     );
@@ -254,6 +260,7 @@ impl RoleImageColumnCounts {
     }
 
     const fn roll_scope_count<const E: usize>(eff_list: &EffList<E>, role: u8) -> usize {
+        let role_rows = crate::global::role_program::RoleLocalRows::new(eff_list, role);
         let markers = eff_list.scope_markers();
         if !projection::scope_markers_contain_kind(markers, ScopeKind::Roll) {
             return 0;
@@ -271,7 +278,7 @@ impl RoleImageColumnCounts {
                     eff_list,
                     marker.offset(),
                     end_eff,
-                    projection::LocalRows::Role(role),
+                    projection::LocalRows::Role(&role_rows),
                 );
                 if !row.is_absent_or_zero_len() {
                     count += 1;
