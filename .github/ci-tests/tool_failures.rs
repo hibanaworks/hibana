@@ -379,7 +379,7 @@ fn standalone_proof_logs_preserve_failed_tool_status_and_diagnostics() {
         let lean_success = if let Some((_, rest)) = source.split_once("<<'EOF'\n") {
             rest.split_once("\nEOF").unwrap().0.to_owned() + "\n"
         } else if family == "parallel-offer-ingress" {
-            (0..18)
+            (0..21)
                 .map(|i| format!("'Fixture{i}' depends on axioms: [propext]\n"))
                 .collect()
         } else {
@@ -390,7 +390,13 @@ fn standalone_proof_logs_preserve_failed_tool_status_and_diagnostics() {
         fs::write(&z3, "#!/bin/bash\nprintf 'solver stdout diagnostic\\n'\nprintf 'solver stderr diagnostic\\n' >&2\nexit 23\n").unwrap();
         fs::set_permissions(&z3, fs::Permissions::from_mode(0o755)).unwrap();
         let output = run("solver");
-        assert_eq!(output.status.code(), Some(23), "{family}");
+        assert_eq!(
+            output.status.code(),
+            Some(23),
+            "{family}: {}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
         assert!(String::from_utf8_lossy(&output.stdout).contains("solver stdout diagnostic"));
         assert!(String::from_utf8_lossy(&output.stderr).contains("solver stderr diagnostic"));
         assert!(
