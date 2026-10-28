@@ -89,7 +89,7 @@ fn main() {
         (
             "compiler-participant-mask",
             vec!["ParticipantMask"],
-            vec!["ParticipantMask"],
+            vec!["ParticipantMask", "ActorParticipants"],
         ),
         (
             "passive-child-window",

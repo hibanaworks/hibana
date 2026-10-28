@@ -7,6 +7,81 @@ use super::{ActorImage, ActorRef};
 #[path = "knowledge/kani.rs"]
 mod kani;
 
+#[cfg(all(test, hibana_repo_tests))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scoped_participant_filter_preserves_every_actor_and_correlated_path() {
+        let prior = Scope {
+            start: 0,
+            split: 1,
+            stop: 2,
+        };
+        let other = Scope {
+            start: 2,
+            split: 3,
+            stop: 4,
+        };
+        let image = ActorImage::<6, 3>::causal_fixture(
+            &[
+                [255, 256],
+                [255, 257],
+                [258, 1],
+                [2, 258],
+                [254, 0],
+                [0, 255],
+            ],
+            &[(prior, [0, 1]), (prior, [1, 0]), (other, [256, 257])],
+        );
+        let checker = Checker { image: &image };
+        let mut comparisons = 0;
+        for first in [None, Some(Arm::Left), Some(Arm::Right)] {
+            for second in [None, Some(Arm::Left), Some(Arm::Right)] {
+                let context = Context::new(&[]);
+                let first_path;
+                let context = if let Some(arm) = first {
+                    first_path = context.select(Selection { scope: prior, arm });
+                    &first_path
+                } else {
+                    &context
+                };
+                let second_path;
+                let context = if let Some(arm) = second {
+                    second_path = context.select(Selection { scope: other, arm });
+                    &second_path
+                } else {
+                    context
+                };
+                for start in 0..4 {
+                    for split in start + 1..6 {
+                        for stop in split + 1..=6 {
+                            let scope = Scope { start, split, stop };
+                            let candidates = checker.participants(scope);
+                            let controller = image.events[start as usize].sender;
+                            for role in 0u16..=255 {
+                                let full = checker
+                                    .matching_presence(scope, role as u8, controller, context);
+                                let filtered =
+                                    candidates[role as usize / 8] & (1 << (role % 8)) == 0 || full;
+                                assert_eq!(
+                                    filtered, full,
+                                    "scope={start}/{split}/{stop} role={role}"
+                                );
+                                comparisons += 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert_eq!(comparisons, 78_336);
+        let candidates = checker.participants(prior);
+        assert!(candidates[0] & 1 != 0);
+        assert!(!checker.matching_presence(prior, 0, ActorRef(255), &Context::new(&[])));
+    }
+}
+
 pub(super) const fn check<const E: usize, const D: usize>(
     source: &Source<'_>,
     image: &ActorImage<E, D>,
@@ -47,6 +122,30 @@ const fn route_scope(start: usize, left: &Source<'_>, right: &Source<'_>) -> Sco
 }
 
 impl<const E: usize, const D: usize> Checker<'_, E, D> {
+    /// Roles absent from every possible endpoint holder in this choice have
+    /// equal, false participation in both arms. The union only excludes these
+    /// absent roles; remaining roles still use the correlated path check.
+    const fn participants(&self, scope: Scope) -> [u8; 32] {
+        let mut participants = [0; 32];
+        let mut event = scope.start as usize;
+        while event < scope.stop as usize {
+            let pair = self.image.events[event];
+            if pair.sender.0 < 256 && pair.receiver.0 < 256 {
+                participants[pair.sender.0 as usize / 8] |= 1 << (pair.sender.0 % 8);
+                participants[pair.receiver.0 as usize / 8] |= 1 << (pair.receiver.0 % 8);
+            } else {
+                let candidates = self.image.possible_actors(event);
+                let mut word = 0;
+                while word < participants.len() {
+                    participants[word] |= candidates[word];
+                    word += 1;
+                }
+            }
+            event += 1;
+        }
+        participants
+    }
+
     const fn selected(&self, mut reference: ActorRef, path: &Context<'_>) -> ActorRef {
         while reference.0 >= 256 {
             let index = reference.0 as usize - 256;
@@ -322,9 +421,12 @@ impl<const E: usize, const D: usize> Checker<'_, E, D> {
                 let controller = self.image.events[start].sender;
                 // Keep the current conservative merge rule: a noncontroller
                 // actor must participate in both alternatives or neither.
+                let participants = self.participants(scope);
                 let mut role = 0usize;
                 while role < 256 {
-                    if !self.matching_presence(scope, role as u8, controller, path) {
+                    if participants[role / 8] & (1 << (role % 8)) != 0
+                        && !self.matching_presence(scope, role as u8, controller, path)
+                    {
                         return Some((scope, Some(role as u8), None));
                     }
                     role += 1;

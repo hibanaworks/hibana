@@ -162,6 +162,47 @@ theorem ordered_skip_successful (roles : List Role) (mask : Mask)
       · simp [List.filter, hm, ordered, hs role hm, ih]
       · simp [List.filter, hm, ordered, ih]
 
+/-- A conservative union of possible holders may only omit roles absent from
+every path. The original check still compares the two arms on the same path. -/
+theorem correlated_presence_filter_exact {Path : Type} (paths : List Path)
+    (roles : List Role) (mask : Mask)
+    (left right : Path → List Event) (controller : Path → Role)
+    (covers : ∀ path event, event ∈ left path ∨ event ∈ right path →
+      mask event.sender = true ∧ mask event.receiver = true) :
+    let check := fun role =>
+      if paths.all (fun path => decide (role = controller path) || decide (
+          (left path).any (fun event => occurs event role) =
+          (right path).any (fun event => occurs event role)))
+      then none else some Error.projectionRouteUnprojectable
+    ordered (roles.filter mask) check = ordered roles check := by
+  dsimp
+  apply ordered_skip_successful
+  intro role absent
+  have same : paths.all (fun path => decide (role = controller path) || decide (
+      (left path).any (fun event => occurs event role) =
+      (right path).any (fun event => occurs event role))) = true := by
+    apply List.all_eq_true.mpr
+    intro path _
+    have noEvent : ∀ event, event ∈ left path ∨ event ∈ right path →
+        occurs event role = false := by
+      intro event member
+      obtain ⟨sender, receiver⟩ := covers path event member
+      have hs : event.sender ≠ role := by
+        intro eq; simp_all
+      have hr : event.receiver ≠ role := by
+        intro eq; simp_all
+      simp [occurs, hs, hr]
+    have hl : (left path).any (fun event => occurs event role) = false := by
+      simp only [List.any_eq_false]
+      intro event member
+      simp [noEvent event (Or.inl member)]
+    have hr : (right path).any (fun event => occurs event role) = false := by
+      simp only [List.any_eq_false]
+      intro event member
+      simp [noEvent event (Or.inr member)]
+    simp [hl, hr]
+  simp [same]
+
 theorem observer_validation_exact (events left right : List Event) (leftStart rightStart : Nat)
     (controller : Role) (roles : List Role)
     (hl : ∀ event ∈ left, event ∈ events) (hr : ∀ event ∈ right, event ∈ events) :
@@ -263,4 +304,5 @@ example : (255 : Nat) / 8 = 31 ∧ (255 : Nat) % 8 = 7 := by decide
 #print axioms role_count_bounds
 #print axioms participant_below_bound
 #print axioms byte_index_bounds
+#print axioms correlated_presence_filter_exact
 end Hibana.ParticipantMask

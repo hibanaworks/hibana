@@ -134,6 +134,31 @@ fn equal_candidate_unions_cannot_erase_an_actual_participation_difference() {
     );
 }
 
+// Keep the 32-byte union loop separate from the recursive presence proof above.
+// Both retain symbolic u8 actor values; the union must mark every possible leaf.
+#[kani::proof]
+#[kani::unwind(33)]
+fn scoped_candidates_preserve_correlated_participation_rejection() {
+    let first: u8 = kani::any();
+    let second: u8 = kani::any();
+    let actor: u8 = kani::any();
+    let mut image = pair_image::<2>([first, second], [second, first], true);
+    image.events[0] = ActorPair {
+        sender: ActorRef::actor(255),
+        receiver: ActorRef::node(0).unwrap(),
+    };
+    image.events[1] = ActorPair {
+        sender: ActorRef::actor(255),
+        receiver: ActorRef::node(1).unwrap(),
+    };
+    image.event_len = 2;
+    let candidates = Checker { image: &image }.participants(PRIOR);
+    let marked = candidates[actor as usize / 8] & (1 << (actor % 8)) != 0;
+    assert_eq!(marked, actor == 255 || actor == first || actor == second);
+    let full = actor == 255 || ((actor == first) == (actor == second));
+    assert_eq!(!marked || full, full);
+}
+
 #[kani::proof]
 #[kani::unwind(3)]
 fn leaf_participation_is_exact_including_collapsed_choice_inputs() {
@@ -160,5 +185,12 @@ fn leaf_participation_is_exact_including_collapsed_choice_inputs() {
             &Context::new(&[])
         ),
         actor == 255 || ((actor == first) == (actor == second))
+    );
+    let checker = Checker { image: &image };
+    let candidates = checker.participants(PRIOR);
+    let full = checker.matching_presence(PRIOR, actor, ActorRef::actor(255), &Context::new(&[]));
+    assert_eq!(
+        candidates[actor as usize / 8] & (1 << (actor % 8)) == 0 || full,
+        full
     );
 }
