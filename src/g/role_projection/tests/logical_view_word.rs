@@ -240,8 +240,8 @@ private def logicalActorGroup{actor} : SourceOrderGroup distributedImage{actor} 
   data := distributedWordData{actor}
   rolls := distributedWordRolls{actor}
   choices := []
-  decoded := (Option.some_get _).symm
-  decodedRolls := (Option.some_get _).symm
+  decoded := distributedWordData{actor}Decoded
+  decodedRolls := distributedWordRolls{actor}Decoded
   nonempty := by decide
   paths := by decide
   choiceMembers := by decide

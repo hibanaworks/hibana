@@ -215,7 +215,7 @@ theorem logicalSecondHolderMatchesReceiverBeforePublication
       (previousPath := 0) (pathIndex := 0) (event := 2)
       (wirePosition := distributedFrameKey3_2.color) (data := distributedWordData3)
       logicalBeforeSecondHolderReceipt (by decide)
-      (Option.some_get _).symm (Option.some_get _).symm (Option.some_get _).symm
+      distributedWordData3Decoded (Option.some_get _).symm (Option.some_get _).symm
       (by decide) (by decide) current (by decide) received
   have actualSource : distributedImage3.eventEffIndex? 2 = some 3 := by decide
   have sourceSame : source = 3 := Option.some.inj (receiverSource.symm.trans actualSource)
