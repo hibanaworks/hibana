@@ -96,10 +96,15 @@ where
         let profile = state.facts.profile;
         let scope_id = selection.scope_id;
 
-        if profile.is_passive()
-            && !state.ingress.has_transport()
-            && let Some(arm) = self
-                .committed_nonreceive_offer_intent(scope_id, selection.candidate_index.as_usize())
+        // A retained choice does not decide between another body visit and
+        // its incoming continuation. Reuse it for a receive only with a frame.
+        if (!self
+            .progress
+            .cursor
+            .is_recv_at(selection.candidate_index.as_usize())
+            || state.ingress.has_transport())
+            && let Some(arm) =
+                self.committed_offer_intent(scope_id, selection.candidate_index.as_usize())
         {
             return Poll::Ready(Ok(RouteAuthorityOutcome::Resolved(
                 RouteAuthorityResolution {

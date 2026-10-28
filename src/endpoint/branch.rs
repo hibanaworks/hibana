@@ -16,8 +16,8 @@ impl<'e, 'r, const ROLE: u8> RouteBranch<'e, 'r, ROLE> {
 
     /// Return the logical message label of the previewed operation.
     ///
-    /// A branch can start with several parallel operations. The label
-    /// identifies one operation that can enter the selected branch.
+    /// A branch can contain several independent operations. The label
+    /// identifies the operation selected by this preview.
     ///
     /// Reading the label does not advance the protocol or invoke a resolver.
     #[inline]
@@ -25,9 +25,9 @@ impl<'e, 'r, const ROLE: u8> RouteBranch<'e, 'r, ROLE> {
         *self.target.metadata()
     }
 
-    /// Receive the first payload of a selected route arm.
+    /// Receive the payload of the previewed operation.
     ///
-    /// On success, this consumes the preview and advances its first operation.
+    /// On success, this consumes the preview and advances that operation.
     /// The label and payload format must match `M`. For a self-role unit step,
     /// it consumes `()` locally without receiving a frame. A rejected payload
     /// faults the local session run.
@@ -47,10 +47,10 @@ impl<'e, 'r, const ROLE: u8> RouteBranch<'e, 'r, ROLE> {
         <M::Payload as crate::global::PayloadSpec>::branch_recv::<M, ROLE>(self)
     }
 
-    /// Send the first payload of a selected route arm.
+    /// Send the payload of the previewed operation.
     ///
-    /// The selected arm must begin with a send. On success, this advances that
-    /// first operation. Ordinary payloads are borrowed. An Endpoint payload moves
+    /// The preview must identify a send. On success, this advances that
+    /// operation. Ordinary payloads are borrowed. An Endpoint payload moves
     /// into the future. Dropping the future does not advance the protocol or
     /// return a moved Endpoint. A protocol mismatch faults the local session run.
     #[inline]

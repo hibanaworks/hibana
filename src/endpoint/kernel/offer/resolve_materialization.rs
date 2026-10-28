@@ -41,7 +41,7 @@ where
                 break (selected_arm, Some(event));
             }
             if route_token.is_committed() {
-                if self.committed_nonreceive_offer_intent(
+                if self.committed_offer_intent(
                     state.selection().scope_id,
                     state.selection().candidate_index.as_usize(),
                 ) != Some(route_token.arm())

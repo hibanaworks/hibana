@@ -18,7 +18,7 @@ pub struct Endpoint<'r, const ROLE: u8> {
 /// Preview of a selected route branch returned by [`Endpoint::offer`].
 ///
 /// Inspect [`RouteBranch::label`], then use [`RouteBranch::recv`] or
-/// [`RouteBranch::send`] for its first operation. Dropping a preview does not
+/// [`RouteBranch::send`] for the previewed operation. Dropping a preview does not
 /// advance the protocol. A self-role unit step is consumed with `recv` as a
 /// local operation, without transport I/O.
 pub struct RouteBranch<'e, 'r, const ROLE: u8> {

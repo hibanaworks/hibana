@@ -292,8 +292,9 @@ message to that role in the global protocol.
 
 At runtime, the received frame identifies a permitted branch. `offer()` returns
 a `RouteBranch`, which lets the participant inspect the selected branch without
-advancing the protocol. `label()` identifies an operation that can start the
-selected branch. A branch with parallel work can have several such operations.
+advancing the protocol. `label()` identifies the previewed operation in that
+branch. Later calls can also preview the selected branch's next send or incoming
+receive. A branch with parallel work can have several enabled operations.
 A successful send or receive through the preview runs that operation and
 advances the protocol. Reading or dropping the preview does not.
 
@@ -401,7 +402,7 @@ change sender.
 | `Endpoint::recv::<M>()` | Validates the permitted message and returns its decoded payload |
 | `Endpoint::offer()` | Returns a branch preview without advancing |
 | `RouteBranch::label()` | Returns the logical message label of the previewed operation |
-| `RouteBranch::send` / `recv` | Consumes the preview and executes the branch's first visible step |
+| `RouteBranch::send` / `recv` | Consumes the preview and executes that operation |
 
 An operation **commits** when it advances the local protocol. Dropping a branch
 preview, dropping an operation before commit, or rejecting an operation does

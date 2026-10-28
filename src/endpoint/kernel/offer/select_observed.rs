@@ -74,12 +74,16 @@ where
                 .cursor
                 .route_scope_for_offer_node(self.progress.cursor.node_scope_id_at(idx), idx)
                 && let Some(arm) = self.progress.cursor.route_arm_for_index(scope, idx)
-                && self.progress.cursor.route_arm_view_lane_entry(
+                && (self.progress.cursor.route_arm_view_lane_entry(
                     scope,
                     arm,
                     self.public_header.role(),
                     meta.lane,
                 ) == Some(idx)
+                    || self
+                        .committed_offer_intent(scope, idx)
+                        .map(|arm| arm.as_u8())
+                        == Some(arm))
             {
                 Some(scope)
             } else {

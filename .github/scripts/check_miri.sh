@@ -604,6 +604,10 @@ run_miri_test \
   a_delegated_view_offers_its_continuation_after_parallel_rolls_finish
 
 run_miri_test \
+  selected-branch-receive-continuation \
+  -p hibana --test route_branch_receive_continuation
+
+run_miri_test \
   current-roll-entry-blocks-completion \
   -p hibana --lib \
   unfinished_entry_admission_matches_all_enclosing_rolls_and_choice_assignments

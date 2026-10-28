@@ -25,7 +25,7 @@ where
             return Err(RecvError::PhaseInvariant);
         }
         if branch.route_token.is_committed()
-            && self.committed_nonreceive_offer_arm(scope_id, branch.cursor_index.as_usize())
+            && self.committed_offer_arm(scope_id, branch.cursor_index.as_usize())
                 != Some(Arm::from_raw(selected_arm))
         {
             return Err(RecvError::PhaseInvariant);

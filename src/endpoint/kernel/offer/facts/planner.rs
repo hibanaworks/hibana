@@ -19,19 +19,15 @@ impl<'r, T> OperationKernel<'_, 'r, T>
 where
     T: Transport + 'r,
 {
-    /// An already committed choice can expose this view's next send/local
-    /// action after another co-resident view consumed the branch receive.
+    /// An already committed choice can expose this view's next operation.
     /// This is choice/shape intent only. Final materialization and public
     /// branch commit independently admit the exact event before publication.
-    pub(in crate::endpoint::kernel) fn committed_nonreceive_offer_intent(
+    pub(in crate::endpoint::kernel) fn committed_offer_intent(
         &self,
         scope: crate::global::const_dsl::ScopeId,
         index: usize,
     ) -> Option<Arm> {
         let cursor = &self.progress.cursor;
-        if !cursor.is_send_at(index) && !cursor.is_local_action_at(index) {
-            return None;
-        }
         let arm = cursor.route_arm_for_index(scope, index)?;
         let mut committed = true;
         cursor.visit_route_arms_for_index(index, |scope, arm| {
@@ -44,12 +40,12 @@ where
     }
 
     #[inline(never)]
-    pub(in crate::endpoint::kernel) fn committed_nonreceive_offer_arm(
+    pub(in crate::endpoint::kernel) fn committed_offer_arm(
         &self,
         scope: crate::global::const_dsl::ScopeId,
         index: usize,
     ) -> Option<Arm> {
-        let arm = self.committed_nonreceive_offer_intent(scope, index)?;
+        let arm = self.committed_offer_intent(scope, index)?;
         self.view_event_is_enabled(index, &mut self.preview_queries())
             .then_some(arm)
     }
@@ -233,12 +229,13 @@ where
 
     fn passive_ready_signal(&self, input: &OfferIngressPlannerInput) -> OfferPassiveReadySignal {
         if self.scope_has_ready_arm_evidence(input.selection.scope_id)
-            || self
-                .committed_nonreceive_offer_intent(
-                    input.selection.scope_id,
-                    input.selection.candidate_index.as_usize(),
-                )
-                .is_some()
+            || (matches!(input.cursor, OfferCursorReadiness::NonRecv)
+                && self
+                    .committed_offer_intent(
+                        input.selection.scope_id,
+                        input.selection.candidate_index.as_usize(),
+                    )
+                    .is_some())
         {
             OfferPassiveReadySignal::Known
         } else {

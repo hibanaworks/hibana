@@ -169,6 +169,10 @@ name = "route_branch_send"
 path = "tests/route_branch_send.rs"
 
 [[test]]
+name = "route_branch_receive_continuation"
+path = "tests/route_branch_receive_continuation.rs"
+
+[[test]]
 name = "route_multiphase_progress_arm"
 path = "tests/route_multiphase_progress_arm.rs"
 

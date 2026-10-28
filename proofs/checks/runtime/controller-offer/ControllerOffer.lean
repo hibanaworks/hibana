@@ -100,6 +100,27 @@ theorem offer_priority_fits_its_runtime_byte
 #print axioms primary_offer_priority_is_preserved
 #print axioms offer_priority_fits_its_runtime_byte
 
+/-- Reusing a selected branch supplies its known decision, not a new receive
+observation. Exact event admission and frame matching are separate checks. -/
+def reuseKnownDecision (coherent receiving framed : Bool) : Bool :=
+  coherent && (!receiving || framed)
+
+theorem a_retained_receive_requires_an_acquired_frame (coherent framed : Bool)
+    (allowed : reuseKnownDecision coherent true framed = true) : framed = true := by
+  cases coherent <;> cases framed <;> simp_all [reuseKnownDecision]
+
+theorem reusing_a_decision_requires_the_committed_branch
+    (coherent receiving framed : Bool)
+    (allowed : reuseKnownDecision coherent receiving framed = true) : coherent = true := by
+  cases coherent <;> simp_all [reuseKnownDecision]
+
+theorem a_known_send_requires_no_incoming_frame :
+    reuseKnownDecision true false false = true := by decide
+
+#print axioms a_retained_receive_requires_an_acquired_frame
+#print axioms reusing_a_decision_requires_the_committed_branch
+#print axioms a_known_send_requires_no_incoming_frame
+
 theorem leaf_has_no_decisions (decide : Nat → Option Bool) (label : Nat) :
     select decide (.leaf label) = some (label, []) := rfl
 

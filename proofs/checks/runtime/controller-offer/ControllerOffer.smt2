@@ -1,6 +1,40 @@
 ; Unbounded scalar checks of the source-linked offer selection guards.
 ; Descriptor decoding and the complete Rust executor are outside this model.
 (set-logic QF_LIA)
+
+; Reuse existing branch knowledge only after receiving an actual frame, or for
+; a non-receive operation. Event admission and exact frame matching remain
+; independent requirements of offer publication.
+(declare-const coherentDecision Bool)
+(declare-const receivingOperation Bool)
+(declare-const acquiredFrame Bool)
+(define-fun reuseKnownDecision () Bool
+  (and coherentDecision (or (not receivingOperation) acquiredFrame)))
+(push)
+(assert receivingOperation)
+(assert (not acquiredFrame))
+(assert reuseKnownDecision)
+(check-sat)
+(pop)
+(push)
+(assert (not coherentDecision))
+(assert reuseKnownDecision)
+(check-sat)
+(pop)
+(push)
+(assert coherentDecision)
+(assert (not receivingOperation))
+(assert (not acquiredFrame))
+(assert (not reuseKnownDecision))
+(check-sat)
+(pop)
+(push)
+(assert coherentDecision)
+(assert receivingOperation)
+(assert acquiredFrame)
+(assert reuseKnownDecision)
+(check-sat)
+(pop)
 ; An unmade choice must not be hidden by an equally informed retained one.
 ; Ingress/controller precedence and order among retained choices are unchanged.
 (define-fun offerPriority ((base Int) (unmade Bool)) Int
