@@ -8,6 +8,7 @@ use crate::global::{
 };
 use crate::{Endpoint, g};
 use core::mem::MaybeUninit;
+mod adjacent_rolls;
 mod admission;
 mod bounded_conformance;
 mod carrier_contract;

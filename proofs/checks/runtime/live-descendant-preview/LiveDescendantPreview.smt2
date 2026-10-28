@@ -40,3 +40,38 @@
 (assert (and completed (= selected 0) (= ready 1) (= old 0) (= preview 1)))
 (check-sat)
 (pop)
+
+(declare-const reentrant Bool)
+(declare-const candidate Int)
+(assert (and (<= 0 candidate) (<= candidate 1)))
+(define-fun candidateSelection () Int
+  (ite (and (>= selected 0) (not (= selected candidate)) reentrant completed) (- 1) selected))
+(define-fun candidateVisible () Bool
+  (or (= candidateSelection (- 1)) (= candidateSelection candidate)))
+; Incomplete and ordinary choices keep their exact selection.
+(push)
+(assert (not completed))
+(assert (not (= candidateSelection selected)))
+(check-sat)
+(pop)
+(push)
+(assert (not reentrant))
+(assert (not (= candidateSelection selected)))
+(check-sat)
+(pop)
+; Completion of a rolled visit exposes either next arm.
+(push)
+(assert (and reentrant completed (not candidateVisible)))
+(check-sat)
+(pop)
+; Every visible alternative has unknown, matching, or completed rolled history.
+(push)
+(assert (not (= candidateVisible
+  (or (= selected (- 1)) (= selected candidate) (and reentrant completed)))))
+(check-sat)
+(pop)
+; Committed-only filtering hides the completed Left / next Right candidate.
+(push)
+(assert (and (= selected 0) (= candidate 1) reentrant completed candidateVisible))
+(check-sat)
+(pop)

@@ -274,6 +274,113 @@ fn offer_head_normalization_never_consumes_unknown_or_revived_choices() {
 }
 
 #[test]
+fn offer_heads_keep_live_and_completed_visit_contexts_separate() {
+    let global = g::seq(
+        g::route(
+            g::seq(
+                g::send::<0, 1, Msg<201, ()>>(),
+                g::send::<1, 0, Msg<202, ()>>(),
+            ),
+            g::send::<0, 1, Msg<203, ()>>(),
+        )
+        .roll(),
+        g::route(
+            g::seq(
+                g::send::<0, 1, Msg<204, ()>>(),
+                g::send::<1, 0, Msg<205, ()>>(),
+            ),
+            g::seq(
+                g::send::<0, 1, Msg<206, ()>>(),
+                g::send::<1, 0, Msg<207, ()>>(),
+            ),
+        )
+        .roll(),
+    );
+    let rows = project::<1>(&global).role_image_ref();
+    super::super::validated_metadata_tests::with_rows(rows, |cursor| {
+        assert_eq!(rows.local_step_count(), 7);
+        for index in 0..7 {
+            let label = match cursor.action_at(index) {
+                super::super::LocalAction::Send { label, .. }
+                | super::super::LocalAction::Recv { label, .. } => label,
+                super::super::LocalAction::Local { .. } | super::super::LocalAction::Terminate => {
+                    panic!("expected a message row")
+                }
+            };
+            assert_eq!(label, 201 + index as u8);
+        }
+        let scopes: std::vec::Vec<_> = (0..2)
+            .map(|slot| {
+                cursor
+                    .machine()
+                    .route_scope_rows_by_slot(slot)
+                    .unwrap()
+                    .scope()
+            })
+            .collect();
+        let phase = [0, 0, 0, 1, 1, 1, 1];
+        let arm = [0, 0, 1, 0, 0, 1, 1];
+        let arm_rows = [[0b0000011, 0b0000100], [0b0011000, 0b1100000]];
+        for completion in 0..128u32 {
+            for index in 0..7 {
+                cursor.write_completion_bit(index, completion & (1 << index) != 0);
+            }
+            for choices in 0..9usize {
+                let selected_arms = [choices % 3, choices / 3].map(|value| match value {
+                    0 => None,
+                    1 => Some(0),
+                    _ => Some(1),
+                });
+                let mut selected = |scope| {
+                    selected_arms[scopes.iter().position(|&candidate| candidate == scope)?]
+                };
+                for head in 0..7 {
+                    let lane = usize::from(rows.local_step_lane(head).unwrap());
+                    let target = cursor
+                        .relocatable_resident_lane_step_at_index(head, lane)
+                        .unwrap();
+                    cursor.set_lane_cursor_to_relocatable_step(target);
+                    let expected = (head..7).find(|&step| {
+                        completion & (1 << step) == 0
+                            && rows.local_step_lane(step) == Some(lane as u8)
+                            && selected_arms[phase[step]]
+                                .is_none_or(|selected| arm[step] == selected)
+                    });
+                    let heads = cursor.lane_cursors().to_vec();
+                    let done = cursor.completed_event_words().to_vec();
+                    assert_eq!(
+                        cursor.offer_lane_head(1, lane, &mut selected),
+                        expected,
+                        "completion={completion:x} choices={choices} head={head} lane={lane}"
+                    );
+                    let mut live = |scope| {
+                        let phase = scopes.iter().position(|&candidate| candidate == scope)?;
+                        let selected = selected_arms[phase]?;
+                        let selected_rows = arm_rows[phase][usize::from(selected)];
+                        (completion & selected_rows != selected_rows).then_some(selected)
+                    };
+                    let expected_live = (head..7).find(|&step| {
+                        completion & (1 << step) == 0
+                            && rows.local_step_lane(step) == Some(lane as u8)
+                            && selected_arms[phase[step]].is_none_or(|selected| {
+                                let selected_rows = arm_rows[phase[step]][usize::from(selected)];
+                                arm[step] == selected || completion & selected_rows == selected_rows
+                            })
+                    });
+                    assert_eq!(
+                        cursor.offer_lane_head(1, lane, &mut live),
+                        expected_live,
+                        "preview completion={completion:x} choices={choices} head={head} lane={lane}"
+                    );
+                    assert_eq!(cursor.lane_cursors(), heads);
+                    assert_eq!(cursor.completed_event_words(), done);
+                }
+            }
+        }
+    });
+}
+
+#[test]
 fn lookup_context_changes_preserve_every_lane_head_label_and_completion() {
     let global = g::seq(
         g::send::<0, 1, Msg<11, ()>>(),

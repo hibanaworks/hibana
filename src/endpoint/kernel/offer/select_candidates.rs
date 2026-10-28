@@ -214,6 +214,12 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
                         continue 'lanes;
                     }
                 }
+                // The next visit can first use a lane absent from the previous
+                // arm's history. Its raw head still locates that completed
+                // choice; keep it alongside the ordinary continuation above.
+                if let Some(entry) = self.foreign_reentry_offer_seed(index, lane as u8, previews) {
+                    let _ = yield_entry(entry, lane as u8, previews);
+                }
             }
             if let Some((_, entry)) = self.active_reentry_offer_for_lane(lane) {
                 let index = entry.as_usize();
@@ -230,9 +236,9 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
         }
     }
 
-    // A reentry scope starts at an actor-wide row, which can belong to another
-    // view or lane. Resolve this seed once; subsequent same-key alternatives
-    // follow the compiled links exclusively.
+    // A seed can be actor-wide, or a lane first used by the next visit's arm.
+    // Resolve its first visible entry once; later alternatives follow the
+    // compiled links. No committed choice or lane head changes here.
     fn foreign_reentry_offer_seed(
         &self,
         index: usize,
@@ -252,7 +258,10 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
                         arm,
                         self.public_header.role(),
                         lane,
-                    ) && entry > index
+                    ) && (entry > index
+                        || (entry == index
+                            && self.is_reentry_route(scope)
+                            && self.selected_arm_for_scope(scope).is_some()))
                         && next.is_none_or(|current| entry < current)
                     {
                         next = Some(entry);
