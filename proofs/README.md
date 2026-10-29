@@ -434,6 +434,12 @@ and after lane alignment. The theorem does not prove equivalence
 of those Rust checks or completeness of the lane search. Public endpoint tests
 cover differing parallel-child orders, delayed notices and retained previews;
 Miri checks their buffer and borrow use.
+A receive inside a repeated body also needs separation from a different sender
+in its following continuation: a fresh visit can overlap that continuation even
+when a single-visit relay orders the original frames. `StaticProjectability`
+checks this boundary separately from handoffs within a body. A public Endpoint
+regression queues a fresh controller notification while a different borrower
+holds the resource and verifies that its pending return remains receivable.
 
 The nested-roll check uses `(Prefix; (Exchange+ | Tick)+)+`, where `|` is
 parallel composition. It enumerates prefixes of at most seven complete exchanges

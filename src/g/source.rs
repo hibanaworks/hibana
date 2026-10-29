@@ -331,6 +331,7 @@ pub(super) fn profile<Steps: ProgramShape, const CAPACITY: usize>()
         alignment_attempts: counters.alignment_attempts,
         recolorings: counters.recolorings,
         alignment_pair_queries: counters.alignment_pair_queries,
+        alignment_candidate_inspections: counters.alignment_candidate_inspections,
     }
 }
 

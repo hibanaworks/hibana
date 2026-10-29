@@ -55,4 +55,65 @@
 ; EXPECT: unsat
 (check-sat)
 (pop)
+; Candidate lists use logical receivers, including every nonlocal event.
+; Remapping lanes preserves those lists; actor ownership never selects them.
+(declare-const sender-a (_ BitVec 8))
+(declare-const receiver-a (_ BitVec 8))
+(declare-const sender-b (_ BitVec 8))
+(declare-const receiver-b (_ BitVec 8))
+(define-fun indexed-candidate () Bool
+  (and (distinct sender-b receiver-b) (= receiver-a receiver-b)))
+(define-fun conflicting-candidate () Bool
+  (and (distinct sender-a receiver-a) (distinct sender-b receiver-b)
+       (= receiver-a receiver-b) (distinct sender-a sender-b)
+       (= aligned-a aligned-b)))
+(push)
+(assert conflicting-candidate)
+(assert (not indexed-candidate))
+; Index lookup cannot omit a cross-boundary receive-order obligation.
+; EXPECT: unsat
+(check-sat)
+(pop)
+(push)
+(assert indexed-candidate)
+(assert (not conflicting-candidate))
+; Index membership is only a candidate; causal and lane checks still apply.
+; EXPECT: sat
+(check-sat)
+(pop)
+(push)
+(assert (= sender-b receiver-b))
+(assert conflicting-candidate)
+; Zero-byte local operations create no wire receive-order obligation.
+; EXPECT: unsat
+(check-sat)
+(pop)
+; A source occurrence inside a roll and an occurrence after its end need
+; independent receive directions when their logical senders differ.
+(declare-const roll-start (_ BitVec 16))
+(declare-const roll-end (_ BitVec 16))
+(declare-const event-a (_ BitVec 16))
+(declare-const event-b (_ BitVec 16))
+(define-fun reentry-crossing () Bool
+  (and (bvule roll-start event-a) (bvult event-a roll-end)
+       (bvule roll-end event-b)))
+(define-fun receive-direction-needs-separation () Bool
+  (and reentry-crossing (distinct sender-a receiver-a)
+       (distinct sender-b receiver-b) (= receiver-a receiver-b)
+       (distinct sender-a sender-b)))
+(push)
+(assert receive-direction-needs-separation)
+(assert (= aligned-a aligned-b))
+; Source order in one visit alone permits this erroneous coloring.
+; EXPECT: sat
+(check-sat)
+(pop)
+(push)
+(assert (=> receive-direction-needs-separation (distinct aligned-a aligned-b)))
+(assert receive-direction-needs-separation)
+(assert (= aligned-a aligned-b))
+; The reentry constraint excludes that coloring for the entire u16 domain.
+; EXPECT: unsat
+(check-sat)
+(pop)
 (exit)

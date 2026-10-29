@@ -2,6 +2,84 @@ use super::{
     CausalRoles, FlowIndex, RollBodyRange, receive_precedes_after_roll_reentry,
     receive_precedes_later_send,
 };
+use std::vec::Vec;
+
+#[test]
+fn reentry_boundaries_match_nested_shared_and_adjacent_rolls() {
+    for regions in [
+        &[][..],
+        &[(1, 5)][..],
+        &[(0, 6), (1, 5)][..],
+        &[(0, 3), (3, 6)][..],
+        &[(0, 6), (0, 3), (0, 3)][..],
+    ] {
+        let mut events = EffList::<32>::new_partitioned(6, regions.len() * 2, 0);
+        for row in 0..6 {
+            events.push_event_mut(event((row % 3) as u8, ((row + 1) % 3) as u8));
+        }
+        for (scope, &(start, end)) in regions.iter().enumerate() {
+            events.push_roll_scope_mut(ScopeId::roll_scope(scope as u16), start, end);
+        }
+        let index = FlowIndex::new::<0>(&events, None);
+        for first in 0..6 {
+            for second in 0..6 {
+                let (body, tail) = (first.min(second), first.max(second));
+                let expected = regions
+                    .iter()
+                    .any(|&(start, end)| start <= body && body < end && end <= tail);
+                assert_eq!(index.reentry_can_cross(first, second), expected);
+            }
+        }
+    }
+}
+
+#[test]
+fn receive_lists_match_full_source_scans_before_and_after_recoloring() {
+    let roles = [0, 128, 255];
+    let mut checked = 0;
+    for encoding in 0usize..9usize.pow(4) {
+        let mut events = EffList::<4>::new();
+        let mut word = encoding;
+        for _ in 0..4 {
+            let pair = word % 9;
+            word /= 9;
+            events.push_event_mut(event(roles[pair / 3], roles[pair % 3]));
+        }
+        let index = FlowIndex::new::<0>(&events, None);
+        for recolored in [false, true] {
+            if recolored {
+                for occurrence in 0..events.len() {
+                    let mut atom = events.atom_at(occurrence);
+                    atom.lane = occurrence as u8;
+                    events.replace_atom(occurrence, atom);
+                }
+            }
+            for receiver in 0..=u8::MAX {
+                let expected: Vec<_> = (0..events.len())
+                    .filter(|&event| {
+                        let atom = events.atom_at(event);
+                        atom.from != atom.to && atom.to == receiver
+                    })
+                    .collect();
+                let mut actual = Vec::new();
+                let mut next = index.first_receive_to(receiver);
+                while next != u16::MAX {
+                    assert!(actual.len() < events.len(), "cyclic receive list");
+                    actual.push(next as usize);
+                    next = index.next_receive_to(next);
+                }
+                assert_eq!(actual, expected);
+                checked += 1;
+            }
+        }
+    }
+    assert_eq!(checked, 3_359_232);
+    let empty = EffList::<0>::new();
+    let index = FlowIndex::new::<0>(&empty, None);
+    for receiver in 0..=u8::MAX {
+        assert_eq!(index.first_receive_to(receiver), u16::MAX);
+    }
+}
 
 #[test]
 fn bounded_obligations_match_full_scans_across_routes_parallel_and_reentry() {
@@ -42,6 +120,17 @@ fn bounded_obligations_match_full_scans_across_routes_parallel_and_reentry() {
                 }
                 _ => unreachable!(),
             }
+            let indexed = super::receive_lane_conflict_in::<16, 0>(
+                &events,
+                &FlowIndex::new::<0>(&events, None),
+                None,
+                super::ReceiveScan::From(None),
+            );
+            assert_eq!(
+                indexed.is_none(),
+                super::validate_receive_lane_causality(&events),
+                "logical source encoding={encoding} shape={shape}"
+            );
             let range = FlowRange {
                 start: 0,
                 end: 4,

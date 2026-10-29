@@ -7,7 +7,7 @@ mod participants;
 pub(crate) use actors::owned_receive_lane_conflict;
 pub(crate) use actors::receive_pair_is_causal;
 use actors::{ActorMap, NeedChoice};
-pub(crate) use actors::{ReceiveScan, owned_receive_lane_conflict_in};
+pub(crate) use actors::{ReceiveScan, receive_lane_conflict_in};
 use directions::ReceiveDirectionIndex;
 
 const CAUSAL_ROLE_COUNT: usize = u8::MAX as usize + 1;
@@ -61,6 +61,7 @@ impl CausalRoles {
         ])
     }
 
+    #[cfg(any(kani, all(test, hibana_repo_tests)))]
     const fn handoff(&mut self, atom: crate::eff::EffAtom) {
         if self.contains(atom.from) {
             self.insert(atom.to);
@@ -81,6 +82,9 @@ struct FlowRange {
 /// Lane recoloring preserves both, so the index is built once per source.
 pub(crate) struct FlowIndex<const E: usize> {
     first: [u16; E],
+    first_receive: [u16; CAUSAL_ROLE_COUNT],
+    next_receive: [u16; E],
+    reentry_end: [u16; E],
     scopes: [FlowScope; E],
     marker_len: usize,
     participants: participants::Participants<E>,
@@ -101,11 +105,14 @@ impl<const E: usize> FlowIndex<E> {
         actors: Option<&crate::g::SourceActorImage<E, D>>,
     ) -> Self {
         let markers = events.scope_markers();
-        if markers.len() > u16::MAX as usize {
+        if markers.len() > u16::MAX as usize || events.len() > u16::MAX as usize {
             crate::invariant();
         }
         let mut result = Self {
             first: [0; E],
+            first_receive: [u16::MAX; CAUSAL_ROLE_COUNT],
+            next_receive: [u16::MAX; E],
+            reentry_end: [u16::MAX; E],
             scopes: [FlowScope {
                 next: markers.len() as u16,
                 start: 0,
@@ -116,6 +123,15 @@ impl<const E: usize> FlowIndex<E> {
             marker_len: markers.len(),
             participants: participants::Participants::new(events, actors),
         };
+        let mut event = events.len();
+        while event != 0 {
+            event -= 1;
+            let atom = events.atom_at(event);
+            if atom.from != atom.to {
+                result.next_receive[event] = result.first_receive[atom.to as usize];
+                result.first_receive[atom.to as usize] = event as u16;
+            }
+        }
         let mut marker = markers.len();
         let mut next = markers.len() as u16;
         while marker != 0 {
@@ -150,14 +166,84 @@ impl<const E: usize> FlowIndex<E> {
         }
         let mut marker = 0;
         let mut event = 0;
+        let mut roll_ends = [u16::MAX; E];
+        let mut rolls = 0;
         while event < events.len() {
             while marker < markers.len() && markers.at(marker).offset() < event {
                 marker += 1;
             }
             result.first[event] = marker as u16;
+            while rolls != 0 && roll_ends[rolls - 1] as usize <= event {
+                rolls -= 1;
+            }
+            let mut entry = marker;
+            while entry < markers.len() && markers.at(entry).offset() == event {
+                let scope = result.scopes[entry];
+                if markers.at(entry).event.is_primary_enter()
+                    && matches!(scope.kind, ScopeKind::Roll)
+                    && scope.end as usize > event
+                {
+                    // Structured source scopes are nested or disjoint.
+                    // The innermost live roll has the earliest ending point.
+                    if rolls != 0 && scope.end > roll_ends[rolls - 1] {
+                        crate::invariant();
+                    }
+                    roll_ends[rolls] = scope.end;
+                    rolls += 1;
+                }
+                entry += 1;
+            }
+            if rolls != 0 {
+                result.reentry_end[event] = roll_ends[rolls - 1];
+            }
             event += 1;
         }
         result
+    }
+
+    /// Nonlocal receives at this logical role, in source order. Lane
+    /// recoloring changes neither the receiver nor membership in this list.
+    pub(crate) const fn first_receive_to(&self, receiver: u8) -> u16 {
+        self.first_receive[receiver as usize]
+    }
+
+    pub(crate) const fn next_receive_to(&self, event: u16) -> u16 {
+        self.next_receive[event as usize]
+    }
+
+    /// A fresh visit can coexist with this roll's following continuation.
+    /// Single-visit causal relays do not order that fresh receive against it.
+    const fn reentry_can_cross(&self, first: usize, second: usize) -> bool {
+        let (body, continuation) = if first < second {
+            (first, second)
+        } else {
+            (second, first)
+        };
+        self.reentry_end[body] as usize <= continuation
+    }
+
+    const fn first_reentry_conflict(
+        &self,
+        events: &EffList<E>,
+        earlier: usize,
+        stop: usize,
+    ) -> Option<usize> {
+        let cutoff = self.reentry_end[earlier] as usize;
+        if cutoff >= stop {
+            return None;
+        }
+        let before = events.atom_at(earlier);
+        let mut next = self.first_receive_to(before.to);
+        while next != u16::MAX && (next as usize) < stop {
+            if next as usize >= cutoff {
+                let after = events.atom_at(next as usize);
+                if after.from != before.from && after.lane == before.lane {
+                    return Some(next as usize);
+                }
+            }
+            next = self.next_receive_to(next);
+        }
+        None
     }
 }
 
@@ -293,6 +379,7 @@ impl<const E: usize> CausalFlow<'_, E> {
         None
     }
 
+    #[cfg(any(kani, all(test, hibana_repo_tests)))]
     const fn advance(&self, range: FlowRange, facts: CausalRoles) -> Option<CausalRoles> {
         match self.advance_as(range, facts, &ActorMap::<E, 0>::Logical) {
             Ok(Ok(facts)) => Some(facts),
@@ -570,6 +657,7 @@ const fn receive_precedes_later_send<const E: usize>(
 
 /// A sequence has no fork contexts, so one forward closure checks all later
 /// senders for an earlier receive without recomputing their common prefixes.
+#[cfg(any(kani, all(test, hibana_repo_tests)))]
 const fn validate_linear_later_senders<const E: usize>(
     eff_list: &EffList<E>,
     earlier_eff_idx: usize,
@@ -595,6 +683,7 @@ const fn validate_linear_later_senders<const E: usize>(
     true
 }
 
+#[cfg(any(kani, all(test, hibana_repo_tests)))]
 const fn validate_linear_receive_lane_causality<const E: usize>(eff_list: &EffList<E>) -> bool {
     let directions = ReceiveDirectionIndex::new(eff_list, 0, eff_list.len());
     let mut earlier_eff_idx = 0usize;
@@ -657,6 +746,7 @@ const fn receive_precedes_after_roll_reentry<const E: usize>(
 /// The last sender change bounds all obligations for this receive. No later
 /// scope or event can affect an earlier handoff; do not evaluate that suffix.
 /// This also identifies sender-stable lanes without allocating lane tables.
+#[cfg(any(kani, all(test, hibana_repo_tests)))]
 const fn validate_roll_body_receive_lane_causality<const E: usize>(
     eff_list: &EffList<E>,
     body: RollBodyRange,
@@ -704,6 +794,7 @@ const fn validate_roll_body_receive_lane_causality<const E: usize>(
     true
 }
 
+#[cfg(any(kani, all(test, hibana_repo_tests)))]
 const fn validate_roll_receive_lane_causality<const E: usize>(eff_list: &EffList<E>) -> bool {
     let markers = eff_list.scope_markers();
     let mut marker_idx = 0usize;
@@ -728,6 +819,7 @@ const fn validate_roll_receive_lane_causality<const E: usize>(eff_list: &EffList
     true
 }
 
+#[cfg(any(kani, all(test, hibana_repo_tests)))]
 const fn validate_structured_receive_lane_causality<const E: usize>(eff_list: &EffList<E>) -> bool {
     let scope_offsets = FlowIndex::new::<0>(eff_list, None);
     let directions = ReceiveDirectionIndex::new(eff_list, 0, eff_list.len());
@@ -744,6 +836,12 @@ const fn validate_structured_receive_lane_causality<const E: usize>(eff_list: &E
                 earlier_idx += 1;
                 continue;
             };
+            if scope_offsets
+                .first_reentry_conflict(eff_list, earlier_idx, end)
+                .is_some()
+            {
+                return false;
+            }
             let flow = CausalFlow {
                 eff_list,
                 scope_offsets: &scope_offsets,
@@ -764,6 +862,7 @@ const fn validate_structured_receive_lane_causality<const E: usize>(eff_list: &E
 /// A physical receive lane may change sender only after a descriptor-derived
 /// causal handoff proves that the earlier frame was consumed, or across
 /// mutually exclusive route arms. Parallel arms already use disjoint lanes.
+#[cfg(any(kani, all(test, hibana_repo_tests)))]
 pub(crate) const fn validate_receive_lane_causality<const E: usize>(eff_list: &EffList<E>) -> bool {
     let markers = eff_list.scope_markers();
     let receive_lanes_are_safe = if markers.len() == 0 {
@@ -774,8 +873,14 @@ pub(crate) const fn validate_receive_lane_causality<const E: usize>(eff_list: &E
     receive_lanes_are_safe && validate_roll_receive_lane_causality(eff_list)
 }
 
-mod diagnostic;
-pub(crate) use diagnostic::receive_lane_conflict;
+/// Find the same first rejected pair used by allocation, without rebuilding
+/// a separate per-target causal search for the diagnostic.
+pub(crate) const fn receive_lane_conflict<const E: usize>(
+    events: &EffList<E>,
+) -> Option<(usize, usize, Option<u16>)> {
+    let index = FlowIndex::new::<0>(events, None);
+    receive_lane_conflict_in::<E, 0>(events, &index, None, ReceiveScan::From(None))
+}
 
 #[cfg(kani)]
 mod kani;

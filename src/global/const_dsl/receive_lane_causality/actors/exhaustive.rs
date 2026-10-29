@@ -103,7 +103,7 @@ fn a_failure_witness_is_the_first_receive_across_both_actor_paths() {
 
 #[test]
 fn split_seed_scans_and_cached_scope_offsets_match_full_queries() {
-    use super::{ReceiveScan, owned_receive_lane_conflict_in};
+    use super::{ReceiveScan, receive_lane_conflict_in};
     let mut checked = 0;
     let mut accepted = 0;
     let mut rejected = 0;
@@ -144,16 +144,16 @@ fn split_seed_scans_and_cached_scope_offsets_match_full_queries() {
                 }
                 for event in 0..events.len() {
                     let cut = (event, scope);
-                    let before = owned_receive_lane_conflict_in(
+                    let before = receive_lane_conflict_in(
                         &events,
                         &offsets,
-                        &actors,
+                        Some(&actors),
                         ReceiveScan::Before(cut),
                     );
-                    let after = owned_receive_lane_conflict_in(
+                    let after = receive_lane_conflict_in(
                         &events,
                         &offsets,
-                        &actors,
+                        Some(&actors),
                         ReceiveScan::From(Some(cut)),
                     );
                     assert_eq!(before.or(after), full, "encoding={encoding} cut={cut:?}");

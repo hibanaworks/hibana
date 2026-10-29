@@ -836,11 +836,75 @@ def Choreo.checkRollReentryLinearityFrom
           (body.outboundReentryHeadsFrom base) continuation &&
         body.checkRollReentryLinearityFrom base continuation
 
+/-- A fresh visit of a roll can overlap its following continuation. Source
+order within one visit is insufficient to share a receive FIFO across it. -/
+def Choreo.reentryCrosses (choreo : Choreo) (earlier later : Nat) : Bool :=
+  choreo.globalRolls.any fun region =>
+    region.events.contains earlier && region.events.all (· < later)
+
+def Choreo.ReentryReceivePairSeparated
+    (choreo : Choreo) (left right : StaticGlobalOccurrence) : Prop :=
+  choreo.reentryCrosses left.globalId right.globalId = false ∨
+    left.event.sender = left.event.receiver ∨
+    right.event.sender = right.event.receiver ∨
+    left.event.receiver ≠ right.event.receiver ∨
+    left.event.sender = right.event.sender ∨
+    left.event.lane ≠ right.event.lane
+
+instance (choreo : Choreo) (left right : StaticGlobalOccurrence) :
+    Decidable (choreo.ReentryReceivePairSeparated left right) := by
+  unfold Choreo.ReentryReceivePairSeparated
+  infer_instance
+
+def Choreo.ReceiveReentrySeparation (choreo : Choreo) : Prop :=
+  choreo.staticGlobalOccurrences.Pairwise choreo.ReentryReceivePairSeparated
+
+instance (choreo : Choreo) : Decidable choreo.ReceiveReentrySeparation := by
+  unfold Choreo.ReceiveReentrySeparation
+  infer_instance
+
+def Choreo.checkReceiveReentrySeparation (choreo : Choreo) : Bool :=
+  decide choreo.ReceiveReentrySeparation
+
+theorem receive_reentry_separation_checker_sound
+    {choreo : Choreo} (accepted : choreo.checkReceiveReentrySeparation = true) :
+    choreo.ReceiveReentrySeparation :=
+  of_decide_eq_true accepted
+
+theorem crossing_reentry_requires_distinct_receive_lanes
+    {choreo : Choreo} {left right : StaticGlobalOccurrence}
+    (separated : choreo.ReentryReceivePairSeparated left right)
+    (crossing : choreo.reentryCrosses left.globalId right.globalId = true)
+    (leftNonlocal : left.event.sender ≠ left.event.receiver)
+    (rightNonlocal : right.event.sender ≠ right.event.receiver)
+    (sameReceiver : left.event.receiver = right.event.receiver)
+    (differentSender : left.event.sender ≠ right.event.sender) :
+    left.event.lane ≠ right.event.lane := by
+  rcases separated with h | h | h | h | h | h
+  · simp [crossing] at h
+  · exact False.elim (leftNonlocal h)
+  · exact False.elim (rightNonlocal h)
+  · exact False.elim (h sameReceiver)
+  · exact False.elim (differentSender h)
+  · exact h
+
+/-- A single-visit relay can pass the old handoff check while a fresh visit
+of its first sender races the receive in the continuation. -/
+theorem single_visit_handoff_does_not_separate_reentry :
+    let source := Choreo.seq
+      (.roll (.seq (.send 3 0 1 0) (.send 0 2 2 0)))
+      (.send 2 0 3 0)
+    source.checkReceiveLaneCausality 4 = true ∧
+      source.checkRollReceiveLaneCausality 4 = true ∧
+      source.checkReceiveReentrySeparation = false := by
+  decide
+
 structure Choreo.StaticProjectable
     (roleCount : Nat) (choreo : Choreo) : Prop where
   inboundOccurrenceColoring : choreo.InboundOccurrenceColoring
   receiveLaneCausality : choreo.ReceiveLaneCausalSafety roleCount
   rollReceiveLaneCausality : choreo.RollReceiveLaneCausalSafety roleCount
+  receiveReentrySeparation : choreo.ReceiveReentrySeparation
   parallelEndpointLinear : choreo.checkParallelEndpointLinearityFrom 0 = true
   routeKnowledge : choreo.checkRouteKnowledgeFrom roleCount 0 = true
   rollReentryLinear : choreo.checkRollReentryLinearityFrom 0 [] = true
@@ -849,6 +913,7 @@ def checkStaticProjectability (roleCount : Nat) (choreo : Choreo) : Bool :=
     choreo.checkInboundOccurrenceColoring &&
     choreo.checkReceiveLaneCausality roleCount &&
     choreo.checkRollReceiveLaneCausality roleCount &&
+    choreo.checkReceiveReentrySeparation &&
     choreo.checkParallelEndpointLinearityFrom 0 &&
     choreo.checkRouteKnowledgeFrom roleCount 0 &&
     choreo.checkRollReentryLinearityFrom 0 []
@@ -859,10 +924,11 @@ theorem static_projectability_checker_sound
     choreo.StaticProjectable roleCount := by
   simp only [checkStaticProjectability, Bool.and_eq_true] at accepted
   rcases accepted with
-    ⟨⟨⟨⟨⟨inbound, receiveLane⟩, rollReceiveLane⟩, parallel⟩, route⟩, roll⟩
+    ⟨⟨⟨⟨⟨⟨inbound, receiveLane⟩, rollReceiveLane⟩, reentry⟩, parallel⟩, route⟩, roll⟩
   exact ⟨inbound_occurrence_coloring_checker_sound inbound,
     receive_lane_causality_checker_sound receiveLane,
     roll_receive_lane_causality_checker_sound rollReceiveLane,
+    receive_reentry_separation_checker_sound reentry,
     parallel, route, roll⟩
 
 /-- A resolver disambiguates one controller's operation; it is not a

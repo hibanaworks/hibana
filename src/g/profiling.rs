@@ -31,6 +31,8 @@ pub struct SourceProfile {
     pub recolorings: usize,
     /// Pointwise causal queries while checking proposed lane assignments.
     pub alignment_pair_queries: usize,
+    /// Receive candidates inspected while refining proposed lane assignments.
+    pub alignment_candidate_inspections: usize,
 }
 
 pub(crate) struct Counters {
@@ -39,6 +41,7 @@ pub(crate) struct Counters {
     pub alignment_attempts: usize,
     pub recolorings: usize,
     pub alignment_pair_queries: usize,
+    pub alignment_candidate_inspections: usize,
 }
 
 impl Counters {
@@ -49,6 +52,7 @@ impl Counters {
             alignment_attempts: 0,
             recolorings: 0,
             alignment_pair_queries: 0,
+            alignment_candidate_inspections: 0,
         }
     }
 }

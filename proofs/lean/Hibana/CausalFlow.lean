@@ -365,4 +365,47 @@ theorem source_cutoff_preserves_occurrence_order
       simpa only [Nat.add_sub_of_le sourceIn] using h
     simpa only [Nat.add_sub_of_le cutoffIn] using Nat.add_lt_add_left mid iteration
 
+/-- The lane allocator groups nonlocal receives by logical receiver. Building
+each list backwards by prepending preserves the original event order. -/
+def indexedReceives (receiver : Nat) (rows : List (Nat × GlobalEvent)) :
+    List (Nat × GlobalEvent) :=
+  rows.foldr (fun row tail =>
+    if row.2.sender != row.2.receiver && row.2.receiver == receiver then
+      row :: tail else tail) []
+
+theorem receive_index_preserves_exact_source_order
+    (receiver : Nat) (rows : List (Nat × GlobalEvent)) :
+    indexedReceives receiver rows = rows.filter (fun row =>
+      row.2.sender != row.2.receiver && row.2.receiver == receiver) := by
+  induction rows with
+  | nil => rfl
+  | cons head tail ih =>
+      simp only [indexedReceives, List.foldr_cons, List.filter_cons] at ih ⊢
+      rw [ih]
+
+theorem receive_index_preserves_every_matching_obligation
+    (receiver : Nat) (rows : List (Nat × GlobalEvent))
+    (valid : Nat × GlobalEvent → Bool) :
+    (indexedReceives receiver rows).all valid =
+      rows.all (fun row => if
+        row.2.sender != row.2.receiver && row.2.receiver == receiver
+        then valid row else true) := by
+  rw [receive_index_preserves_exact_source_order]
+  induction rows with
+  | nil => rfl
+  | cons head tail ih =>
+      simp only [List.filter_cons, List.all_cons]
+      split <;> simp_all
+
+theorem recoloring_preserves_receive_index_positions
+    (receiver : Nat) (rows : List (Nat × GlobalEvent)) (color : Nat → Nat) :
+    (indexedReceives receiver (rows.map fun row =>
+      (row.1, { row.2 with lane := color row.1 }))).map Prod.fst =
+      (indexedReceives receiver rows).map Prod.fst := by
+  induction rows with
+  | nil => rfl
+  | cons head tail ih =>
+      simp only [List.map_cons, indexedReceives, List.foldr_cons]
+      split <;> simp_all [indexedReceives]
+
 end Hibana

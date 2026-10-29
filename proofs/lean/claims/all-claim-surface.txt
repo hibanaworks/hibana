@@ -8445,6 +8445,10 @@ Hibana.causal_flow_preserves_known_facts : ∀ (flow : Hibana.CausalFlowExpr) (f
   {before after : Hibana.CausalRoleTimes},
   Hibana.TimedCausalFlowRun origin flow before after →
     ∀ {facts : Hibana.CausalRoles}, facts.SoundAt origin before → (flow.eval facts).SoundAt origin after
+@Hibana.causal_path_event_positions_are_monotone : ∀ {Point : Type} {edge : Point → Point → Prop}
+  (position : Point → Nat),
+  (∀ {a b : Point}, edge a b → @LE.le.{0} Nat instLENat (position a) (position b)) →
+    ∀ {a b : Point}, @Relation.TransGen.{1} Point edge a b → @LE.le.{0} Nat instLENat (position a) (position b)
 @Hibana.checked_active_rows_are_exactly_the_source_actions : ∀ {image : Hibana.RustDescriptorImage}
   {choreo : Hibana.Choreo} {data : Hibana.DecodedActorOrder} {path : Hibana.EndpointDelegation.NormalizedPath},
   @Eq.{1} Bool (image.actorRowsCheck choreo) true →
@@ -9133,6 +9137,12 @@ Hibana.causal_flow_preserves_known_facts : ∀ (flow : Hibana.CausalFlowExpr) (f
                 (@List.instMembership.{0} Hibana.ActorCommitRecord) records record →
               And (@Eq.{1} Bool (record.step.before.doneState.done event) true)
                 (@Eq.{1} Bool (record.step.after.doneState.done event) true))
+@Hibana.checking_one_representative_per_resource_preserves_the_verdict : ∀ {Index Key : Type} (key : Index → Key)
+  (first : Index → Index),
+  (∀ (i : Index), @Eq.{1} Key (key (first i)) (key i)) →
+    (∀ (i : Index), @Eq.{1} Index (first (first i)) (first i)) →
+      ∀ (accepts : Key → Prop),
+        Iff (∀ (i : Index), accepts (key i)) (∀ (i : Index), @Eq.{1} Index (first i) i → accepts (key i))
 Hibana.close_and_receipt_requeue_commute : ∀ (before after : Hibana.TransportState) (frame : Hibana.TransportFrame),
   @Eq.{1} (Option.{0} Hibana.TransportBoundaryState)
     ((Hibana.TransportBoundaryState.offered before frame after).closePeer.resolve Hibana.ReceiptResolution.requeue)
@@ -9507,6 +9517,14 @@ Hibana.cross_rendezvous_session_attach_rejected : ∀ (binding : Hibana.SessionB
       @Membership.mem.{0, 0} Hibana.ProductionKernelOwner (List.{0} Hibana.ProductionKernelOwner)
           (@List.instMembership.{0} Hibana.ProductionKernelOwner) Hibana.requiredProductionKernelOwners owner →
         OwnerVerified owner kernel
+@Hibana.crossing_reentry_requires_distinct_receive_lanes : ∀ {choreo : Hibana.Choreo}
+  {left right : Hibana.StaticGlobalOccurrence},
+  choreo.ReentryReceivePairSeparated left right →
+    @Eq.{1} Bool (choreo.reentryCrosses left.globalId right.globalId) true →
+      @Ne.{1} Nat left.event.sender left.event.receiver →
+        @Ne.{1} Nat right.event.sender right.event.receiver →
+          @Eq.{1} Nat left.event.receiver right.event.receiver →
+            @Ne.{1} Nat left.event.sender right.event.sender → @Ne.{1} Nat left.event.lane right.event.lane
 Hibana.current_offer_owner_is_not_frontier_progress_admissible : ∀ (currentScope currentEntry frontier : Nat)
   (currentParallelRoot : Option.{0} Nat) (visitedEntries : List.{0} Nat),
   @Eq.{1} Bool
@@ -13174,6 +13192,37 @@ Hibana.receive_direction_summary_preserves_latest_sender_change : ∀ (events : 
         (fun event =>
           @bne.{0} Nat (@instBEqOfDecidableEq.{0} Nat instDecidableEqNat) (@Prod.fst.{0, 0} Nat Nat event) sender)
         events))
+Hibana.receive_index_preserves_every_matching_obligation : ∀ (receiver : Nat)
+  (rows : List.{0} (Prod.{0, 0} Nat Hibana.GlobalEvent)) (valid : Prod.{0, 0} Nat Hibana.GlobalEvent → Bool),
+  @Eq.{1} Bool (@List.all.{0} (Prod.{0, 0} Nat Hibana.GlobalEvent) (Hibana.indexedReceives receiver rows) valid)
+    (@List.all.{0} (Prod.{0, 0} Nat Hibana.GlobalEvent) rows fun row =>
+      @ite.{1} Bool
+        (@Eq.{1} Bool
+          ((@bne.{0} Nat (@instBEqOfDecidableEq.{0} Nat instDecidableEqNat)
+                (@Prod.snd.{0, 0} Nat Hibana.GlobalEvent row).sender
+                (@Prod.snd.{0, 0} Nat Hibana.GlobalEvent row).receiver).and
+            (@BEq.beq.{0} Nat (@instBEqOfDecidableEq.{0} Nat instDecidableEqNat)
+              (@Prod.snd.{0, 0} Nat Hibana.GlobalEvent row).receiver receiver))
+          true)
+        (instDecidableEqBool
+          ((@bne.{0} Nat (@instBEqOfDecidableEq.{0} Nat instDecidableEqNat)
+                (@Prod.snd.{0, 0} Nat Hibana.GlobalEvent row).sender
+                (@Prod.snd.{0, 0} Nat Hibana.GlobalEvent row).receiver).and
+            (@BEq.beq.{0} Nat (@instBEqOfDecidableEq.{0} Nat instDecidableEqNat)
+              (@Prod.snd.{0, 0} Nat Hibana.GlobalEvent row).receiver receiver))
+          true)
+        (valid row) true)
+Hibana.receive_index_preserves_exact_source_order : ∀ (receiver : Nat)
+  (rows : List.{0} (Prod.{0, 0} Nat Hibana.GlobalEvent)),
+  @Eq.{1} (List.{0} (Prod.{0, 0} Nat Hibana.GlobalEvent)) (Hibana.indexedReceives receiver rows)
+    (@List.filter.{0} (Prod.{0, 0} Nat Hibana.GlobalEvent)
+      (fun row =>
+        (@bne.{0} Nat (@instBEqOfDecidableEq.{0} Nat instDecidableEqNat)
+              (@Prod.snd.{0, 0} Nat Hibana.GlobalEvent row).sender
+              (@Prod.snd.{0, 0} Nat Hibana.GlobalEvent row).receiver).and
+          (@BEq.beq.{0} Nat (@instBEqOfDecidableEq.{0} Nat instDecidableEqNat)
+            (@Prod.snd.{0, 0} Nat Hibana.GlobalEvent row).receiver receiver))
+      rows)
 @Hibana.receive_lane_causality_checker_sound : ∀ {choreo : Hibana.Choreo} {roleCount : Nat},
   @Eq.{1} Bool (choreo.checkReceiveLaneCausality roleCount) true → choreo.ReceiveLaneCausalSafety roleCount
 @Hibana.receive_lane_sender_change_requires_exclusion_or_causal_handoff : ∀
@@ -13191,9 +13240,25 @@ Hibana.receive_direction_summary_preserves_latest_sender_change : ∀ (events : 
   {earlier later : Hibana.StaticGlobalOccurrence},
   @Eq.{1} Bool (Hibana.receivePrecedesLaterSend flow roleCount earlier later) true →
     Hibana.MustCausalHandoff flow later.event.sender
+@Hibana.receive_reentry_separation_checker_sound : ∀ {choreo : Hibana.Choreo},
+  @Eq.{1} Bool choreo.checkReceiveReentrySeparation true → choreo.ReceiveReentrySeparation
 @Hibana.receive_seed_partition_preserves_validation : ∀ {α : Type} (seeds : List.{0} α) (cut : Nat) (valid : α → Bool),
   @Eq.{1} Bool (@List.all.{0} α seeds valid)
     ((@List.all.{0} α (@List.take.{0} α cut seeds) valid).and (@List.all.{0} α (@List.drop.{0} α cut seeds) valid))
+Hibana.recoloring_preserves_receive_index_positions : ∀ (receiver : Nat)
+  (rows : List.{0} (Prod.{0, 0} Nat Hibana.GlobalEvent)) (color : Nat → Nat),
+  @Eq.{1} (List.{0} Nat)
+    (@List.map.{0, 0} (Prod.{0, 0} Nat Hibana.GlobalEvent) Nat (@Prod.fst.{0, 0} Nat Hibana.GlobalEvent)
+      (Hibana.indexedReceives receiver
+        (@List.map.{0, 0} (Prod.{0, 0} Nat Hibana.GlobalEvent) (Prod.{0, 0} Nat Hibana.GlobalEvent)
+          (fun row =>
+            @Prod.mk.{0, 0} Nat Hibana.GlobalEvent (@Prod.fst.{0, 0} Nat Hibana.GlobalEvent row)
+              (have __src := @Prod.snd.{0, 0} Nat Hibana.GlobalEvent row;
+              { sender := __src.sender, receiver := __src.receiver, label := __src.label, schema := __src.schema,
+                lane := color (@Prod.fst.{0, 0} Nat Hibana.GlobalEvent row) }))
+          rows)))
+    (@List.map.{0, 0} (Prod.{0, 0} Nat Hibana.GlobalEvent) Nat (@Prod.fst.{0, 0} Nat Hibana.GlobalEvent)
+      (Hibana.indexedReceives receiver rows))
 @Hibana.recv_step_consumes_unique_message : ∀ {config next : Hibana.GlobalConfig} {globalId : Nat},
   @Eq.{1} (Option.{0} Hibana.GlobalConfig) (config.recvStep? globalId) (@some.{0} Hibana.GlobalConfig next) →
     @Exists.{1} Hibana.GlobalEvent fun event =>
@@ -13623,6 +13688,18 @@ Hibana.resolver_select_never_rejects : ∀ (graph : Hibana.EventGraph) (state : 
                   (∀ (other : Nat),
                     @Ne.{1} Nat other conflict →
                       @Eq.{1} (Option.{0} Hibana.RouteArm) (next.selected other) (base.selected other))))))
+@Hibana.restricting_a_causal_query_to_its_event_interval_preserves_paths : ∀ {Point : Type}
+  {edge : Point → Point → Prop} (position : Point → Nat),
+  (∀ {a b : Point}, edge a b → @LE.le.{0} Nat instLENat (position a) (position b)) →
+    ∀ (lower upper : Nat) {a b : Point},
+      @LE.le.{0} Nat instLENat lower (position a) →
+        @LE.le.{0} Nat instLENat (position b) upper →
+          Iff (@Relation.TransGen.{1} Point edge a b)
+            (@Relation.TransGen.{1} Point
+              (fun x y =>
+                And (edge x y)
+                  (And (@LE.le.{0} Nat instLENat lower (position x)) (@LE.le.{0} Nat instLENat (position y) upper)))
+              a b)
 @Hibana.retained_sender_witness_has_its_acceptance_origin : ∀ {View Frame : Type} {initialValue value : View}
   {state : Hibana.EndpointTransfer.Observation View Frame},
   @Hibana.EndpointTransfer.Execution View Frame (@Hibana.EndpointTransfer.initial View Frame initialValue) state →
@@ -14434,6 +14511,24 @@ Hibana.sequential_input_guards_both_parallel_arms : ∀ (entry split exit left r
   {operation : Hibana.SessionPoolOperation},
   pool.WellFormed →
     @Eq.{1} (Option.{0} Hibana.SessionPool) (pool.step? operation) (@some.{0} Hibana.SessionPool next) → next.WellFormed
+Hibana.single_visit_handoff_does_not_separate_reentry : have source :=
+  ((Hibana.Choreo.send (@OfNat.ofNat.{0} Nat (nat_lit 3) (instOfNatNat (nat_lit 3)))
+              (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0)))
+              (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1)))
+              (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0)))).seq
+          (Hibana.Choreo.send (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0)))
+            (@OfNat.ofNat.{0} Nat (nat_lit 2) (instOfNatNat (nat_lit 2)))
+            (@OfNat.ofNat.{0} Nat (nat_lit 2) (instOfNatNat (nat_lit 2)))
+            (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0))))).roll.seq
+    (Hibana.Choreo.send (@OfNat.ofNat.{0} Nat (nat_lit 2) (instOfNatNat (nat_lit 2)))
+      (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0)))
+      (@OfNat.ofNat.{0} Nat (nat_lit 3) (instOfNatNat (nat_lit 3)))
+      (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0))));
+And (@Eq.{1} Bool (source.checkReceiveLaneCausality (@OfNat.ofNat.{0} Nat (nat_lit 4) (instOfNatNat (nat_lit 4)))) true)
+  (And
+    (@Eq.{1} Bool (source.checkRollReceiveLaneCausality (@OfNat.ofNat.{0} Nat (nat_lit 4) (instOfNatNat (nat_lit 4))))
+      true)
+    (@Eq.{1} Bool source.checkReceiveReentrySeparation false))
 @Hibana.slab_layout_certificate_sound : ∀ {certificate : Hibana.SlabLayoutCertificate},
   @Eq.{1} Bool certificate.check true → certificate.WellFormed
 Hibana.source_acceptance_observation_checks_are_exact : ∀ (entries : List.{0} Hibana.SourceAcceptance)

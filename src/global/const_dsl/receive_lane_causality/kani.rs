@@ -330,3 +330,22 @@ fn roll_reentry_causal_closure_accepts_closed_cycle() {
         0,
     ));
 }
+#[kani::proof]
+#[kani::unwind(5)]
+fn indexed_receives_cover_each_matching_event_once_in_source_order() {
+    let mut events = EffList::<3>::new();
+    for _ in 0..3 {
+        events.push_event_mut(event(kani::any(), kani::any(), kani::any()));
+    }
+    let receiver = kani::any::<u8>();
+    let index = super::FlowIndex::new::<0>(&events, None);
+    let mut next = index.first_receive_to(receiver);
+    for occurrence in 0..events.len() {
+        let atom = events.atom_at(occurrence);
+        if atom.from != atom.to && atom.to == receiver {
+            assert_eq!(next as usize, occurrence);
+            next = index.next_receive_to(next);
+        }
+    }
+    assert_eq!(next, u16::MAX);
+}

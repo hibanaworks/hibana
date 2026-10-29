@@ -4,6 +4,8 @@ use crate::{
     test_support::transport::TestTransport,
 };
 
+mod distinct_controller;
+
 #[test]
 fn a_rolled_body_cannot_restart_after_its_resource_has_left_in_the_continuation() {
     use crate::endpoint::proof_snapshot::actor_snapshot;

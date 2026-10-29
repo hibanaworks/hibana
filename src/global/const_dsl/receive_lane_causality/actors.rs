@@ -376,6 +376,9 @@ pub(crate) const fn receive_pair_is_causal<const E: usize, const D: usize>(
     {
         return true;
     }
+    if scope_offsets.reentry_can_cross(earlier, later) {
+        return false;
+    }
     let empty = SourceContext::new(&[]);
     let paths = Paths {
         shared: &empty,
@@ -440,7 +443,12 @@ pub(crate) const fn owned_receive_lane_conflict<const E: usize, const D: usize>(
     actors: &SourceActorImage<E, D>,
 ) -> Option<(usize, usize, Option<u16>)> {
     let scope_offsets = FlowIndex::new(events, Some(actors));
-    owned_receive_lane_conflict_in(events, &scope_offsets, actors, ReceiveScan::From(None))
+    receive_lane_conflict_in(
+        events,
+        &scope_offsets,
+        Some(actors),
+        ReceiveScan::From(None),
+    )
 }
 
 /// Source order is the whole-source region, followed by each roll body.
@@ -451,10 +459,10 @@ pub(crate) enum ReceiveScan {
     Before((usize, Option<u16>)),
 }
 
-pub(crate) const fn owned_receive_lane_conflict_in<const E: usize, const D: usize>(
+pub(crate) const fn receive_lane_conflict_in<const E: usize, const D: usize>(
     events: &EffList<E>,
     scope_offsets: &FlowIndex<E>,
-    actors: &SourceActorImage<E, D>,
+    actors: Option<&SourceActorImage<E, D>>,
     scan: ReceiveScan,
 ) -> Option<(usize, usize, Option<u16>)> {
     let mut resume = match scan {
@@ -541,16 +549,29 @@ pub(crate) const fn owned_receive_lane_conflict_in<const E: usize, const D: usiz
             };
             if atom.from != atom.to
                 && let Some(end) = directions.last_change(atom, range.start)
-                && let Some(later) = (Obligation {
+            {
+                let reentry = if repeated.is_none() {
+                    scope_offsets.first_reentry_conflict(events, earlier, end)
+                } else {
+                    None
+                };
+                let ordinary = (Obligation {
                     events,
                     scope_offsets,
-                    actors: Some(actors),
+                    actors,
                     earlier,
                     end,
                     repeated,
                 })
-                .conflict(paths, None)
-            {
+                .conflict(paths, None);
+                let later = match (reentry, ordinary) {
+                    (Some(a), Some(b)) => Some(if a < b { a } else { b }),
+                    (a, None) | (None, a) => a,
+                };
+                let Some(later) = later else {
+                    earlier += 1;
+                    continue;
+                };
                 if later < range.start
                     || later >= end
                     || !(FlowGoal::ReceiveLane(atom, later + 1))

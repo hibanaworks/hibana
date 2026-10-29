@@ -2,14 +2,13 @@
 use super::lane_matching::{LaneCompatibility, LaneEndpointIndex, maximum_lane_matching};
 use super::{BYTE_DOMAIN, BYTE_DOMAIN_MASK_BYTES};
 use crate::global::const_dsl::{
-    receive_lane_causality::{FlowIndex, ReceiveScan, owned_receive_lane_conflict_in},
+    receive_lane_causality::{FlowIndex, ReceiveScan, receive_lane_conflict_in},
     receive_pair_is_causal,
 };
 use crate::{
     g::SourceActorImage,
     global::const_dsl::{
-        EffList, ScopeKind, parallel_arm_ranges_from_enter, receive_lane_conflict,
-        route_arm_ranges_from_first_enter, validate_receive_lane_causality,
+        EffList, ScopeKind, parallel_arm_ranges_from_enter, route_arm_ranges_from_first_enter,
     },
 };
 
@@ -19,25 +18,16 @@ const fn inspect<const E: usize>(
     actors: Option<&SourceActorImage<E>>,
     scan: ReceiveScan,
     #[cfg(hibana_profile)] counters: &mut crate::g::profiling::Counters,
-) -> Result<(), Option<(usize, usize, Option<u16>)>> {
+) -> Result<(), (usize, usize, Option<u16>)> {
     #[cfg(hibana_profile)]
-    if matches!(scan, ReceiveScan::From(Some(_))) && actors.is_some() {
+    if matches!(scan, ReceiveScan::From(Some(_))) {
         counters.resumed_inspections += 1;
     } else {
         counters.full_inspections += 1;
     }
-    match actors {
-        Some(image) => match owned_receive_lane_conflict_in(events, scope_offsets, image, scan) {
-            Some(pair) => Err(Some(pair)),
-            None => Ok(()),
-        },
-        None => {
-            if validate_receive_lane_causality(events) {
-                Ok(())
-            } else {
-                Err(receive_lane_conflict(events))
-            }
-        }
+    match receive_lane_conflict_in(events, scope_offsets, actors, scan) {
+        Some(pair) => Err(pair),
+        None => Ok(()),
     }
 }
 
@@ -156,8 +146,13 @@ const fn align_range<const E: usize>(
                 None => crate::invariant(),
             };
             if a.from != a.to {
-                let mut outside = 0;
-                while outside < events.len() {
+                let mut receiver_event = scope_offsets.first_receive_to(a.to);
+                while receiver_event != u16::MAX {
+                    let outside = receiver_event as usize;
+                    #[cfg(hibana_profile)]
+                    {
+                        counters.alignment_candidate_inspections += 1;
+                    }
                     if outside < arm.0 || arm.1 <= outside {
                         let b = events.atom_at(outside);
                         if b.from != b.to && a.to == b.to && a.from != b.from && color == b.lane {
@@ -200,7 +195,7 @@ const fn align_range<const E: usize>(
                             }
                         }
                     }
-                    outside += 1;
+                    receiver_event = scope_offsets.next_receive_to(receiver_event);
                 }
             }
             inside += 1;
@@ -261,8 +256,7 @@ pub(crate) const fn assign_receive_lanes<const E: usize>(
     while remaining != 0 {
         let (first, second, scope) = match checked {
             Ok(()) => crate::invariant(),
-            Err(Some(pair)) => pair,
-            Err(None) => return false,
+            Err(pair) => pair,
         };
         let mut changed = false;
         let mut palette = 0;
@@ -338,10 +332,6 @@ pub(crate) const fn assign_receive_lanes<const E: usize>(
             counters,
         );
         if checked.is_ok() {
-            // The logical-role checker above already scanned the whole source.
-            if actors.is_none() {
-                return true;
-            }
             return inspect(
                 events,
                 &scope_offsets,
