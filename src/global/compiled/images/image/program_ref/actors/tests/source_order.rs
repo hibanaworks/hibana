@@ -213,12 +213,12 @@ fn compare<const E: usize, const B: usize>(tree: &Tree) {
     tree.emit(&mut source, &mut 0);
     let plan = ProgramImagePlan::from_program(&source);
     let summary = CompiledProgramImage::scan_const(&source);
-    // Compiled references require storage lasting for the test process.
-    let bytes = Box::leak(Box::new(ProgramImageBytes::<B>::from_image(
-        &source,
-        plan.columns(),
-    )));
-    let image = bytes.compiled_ref(&summary, plan.columns());
+    let bytes = Box::new(ProgramImageBytes::<B>::from_image(&source, plan.columns()));
+    // SAFETY: the compiled reference and its derived index stay in this call.
+    // Their backing Box remains alive until all comparisons finish, including
+    // during unwinding. No reference escapes the test's temporary storage.
+    let temporary = unsafe { &*core::ptr::from_ref(bytes.as_ref()) };
+    let image = temporary.compiled_ref(&summary, plan.columns());
     let index = SourceOrderIndex::<E>::from_program(&image).expect("source order index");
     let mut routes = Vec::new();
     tree.route_paths(0, &mut Vec::new(), &mut routes);
@@ -381,6 +381,18 @@ fn sampled_tree(state: &mut u64, depth: usize) -> Tree {
             }
         }
     }
+}
+
+#[test]
+fn source_order_comparison_releases_its_temporary_storage() {
+    let tree = Tree::Seq(
+        Box::new(Tree::Par(
+            Box::new(Tree::Send),
+            Box::new(Tree::Roll(Box::new(Tree::Send))),
+        )),
+        Box::new(Tree::Route(Box::new(Tree::Send), Box::new(Tree::Send))),
+    );
+    compare::<32, 256>(&tree);
 }
 
 #[test]
