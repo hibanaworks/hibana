@@ -50,6 +50,9 @@ fn generate(mode: &str, shape: &str, count: usize) -> Result<String, String> {
     if count == 0 || count > 65535 {
         return Err("pressure source count must be in 1..65535".into());
     }
+    if (mode, shape) == ("causal", "delegation") {
+        return Ok(delegation(count));
+    }
     let (messages, template) = match (mode, shape) {
         ("causal", "capacity") => (Messages::DisjointPairs, pressure_templates::CAPACITY),
         ("causal", "alternating") => (Messages::Alternating, pressure_templates::ALTERNATING),
@@ -73,6 +76,25 @@ fn generate(mode: &str, shape: &str, count: usize) -> Result<String, String> {
         _ => return Err("unknown causal pressure shape".into()),
     };
     Ok(template.replace("{PROGRAM}", &program))
+}
+
+fn delegation(transfers: usize) -> String {
+    let mut program = String::new();
+    for event in 0..transfers {
+        let (from, to) = if event % 2 == 0 { (1, 2) } else { (2, 1) };
+        let send = format!("g::send::<{from}, {to}, Loan>()");
+        if event == 0 {
+            program.push_str(&format!("    let program = {send};\n"));
+        } else {
+            program.push_str(&format!("    let program = g::seq(program, {send});\n"));
+        }
+    }
+    // The type is deliberately left-associated; allow its structural trait
+    // depth while retaining the const-evaluation work limit.
+    let recursion = 4 * transfers + 128;
+    format!(
+        "#![no_std]\n#![deny(warnings)]\n#![forbid(long_running_const_eval)]\n#![recursion_limit=\"{recursion}\"]\n\nuse hibana::{{Endpoint, g, runtime::program::{{project, RoleProgram}}}};\ntype Loan = g::Msg<1, Endpoint<'static, 9>>;\n\n#[inline(never)]\npub fn projected_roles() -> (RoleProgram<1>, RoleProgram<2>) {{\n{program}    (project(&program), project(&program))\n}}\n"
+    )
 }
 
 fn combine(parts: &[String], operator: &str) -> String {

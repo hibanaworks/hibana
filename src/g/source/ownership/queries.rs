@@ -161,7 +161,7 @@ impl<'a> Query<'a> {
         previous: Value,
         context: &Context<'_>,
     ) -> Value {
-        if at.cut <= start || !source.transfers(at.key) {
+        if at.cut <= start || !source.has_delegation() {
             return previous;
         }
         match source {

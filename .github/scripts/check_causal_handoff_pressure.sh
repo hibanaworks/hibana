@@ -111,6 +111,9 @@ for shape in route roll; do
     build_case "${shape}" "${count}"
   done
 done
+for count in 64 128 256; do
+  build_case delegation "${count}"
+done
 build_case alternating 1024
 build_case alternating 4096
 build_case capacity 7281
@@ -120,4 +123,4 @@ build_case hierarchical 100
 # Each independently compiled case is already bounded by its named snapshot-derived
 # time and RSS budgets. Cross-case comparisons of sampled peaks are not stable gates.
 
-echo "causal-handoff pressure passed target=${TARGET} linear-events=256 route-arm-events=64 roll-events=64 alternating-events=4096 global-capacity-events=7281 orchestration-roles=100 orchestration-events=4000 linear-elapsed=${COMPILE_SECONDS[linear_256]}s route-elapsed=${COMPILE_SECONDS[route_64]}s roll-elapsed=${COMPILE_SECONDS[roll_64]}s alternating-elapsed=${COMPILE_SECONDS[alternating_4096]}s capacity-elapsed=${COMPILE_SECONDS[capacity_7281]}s linear-rss=${COMPILE_RSS_MIB[linear_256]}MiB route-rss=${COMPILE_RSS_MIB[route_64]}MiB roll-rss=${COMPILE_RSS_MIB[roll_64]}MiB alternating-rss=${COMPILE_RSS_MIB[alternating_4096]}MiB capacity-rss=${COMPILE_RSS_MIB[capacity_7281]}MiB"
+echo "causal-handoff pressure passed target=${TARGET} linear-events=256 route-arm-events=64 roll-events=64 left-associated-transfers=256 alternating-events=4096 global-capacity-events=7281 orchestration-roles=100 orchestration-events=4000 linear-elapsed=${COMPILE_SECONDS[linear_256]}s route-elapsed=${COMPILE_SECONDS[route_64]}s roll-elapsed=${COMPILE_SECONDS[roll_64]}s delegation-elapsed=${COMPILE_SECONDS[delegation_256]}s alternating-elapsed=${COMPILE_SECONDS[alternating_4096]}s capacity-elapsed=${COMPILE_SECONDS[capacity_7281]}s linear-rss=${COMPILE_RSS_MIB[linear_256]}MiB route-rss=${COMPILE_RSS_MIB[route_64]}MiB roll-rss=${COMPILE_RSS_MIB[roll_64]}MiB delegation-rss=${COMPILE_RSS_MIB[delegation_256]}MiB alternating-rss=${COMPILE_RSS_MIB[alternating_4096]}MiB capacity-rss=${COMPILE_RSS_MIB[capacity_7281]}MiB"

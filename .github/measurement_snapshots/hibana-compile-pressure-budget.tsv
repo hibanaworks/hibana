@@ -1,5 +1,5 @@
 # Compile-time limits are baseline measurements plus explicit headroom.
-# Measurements use Linux ARM, except alternating, global_capacity and orchestration:
+# Measurements use Linux ARM, except delegation, alternating, global_capacity and orchestration:
 # macOS ARM targeting thumbv6m-none-eabi. Orchestration memory uses the 415 MiB
 # aggregate guard peak across both builds as a conservative bound for each case.
 # These are build regression limits, not runtime capacities.
@@ -24,6 +24,9 @@ causal_handoff_route_64	5	300	25	384
 causal_handoff_roll_4	1	119	15	128
 causal_handoff_roll_32	1	95	20	256
 causal_handoff_roll_64	3	206	25	384
+causal_handoff_delegation_64	5	381	30	256
+causal_handoff_delegation_128	4	168	30	256
+causal_handoff_delegation_256	15	422	60	256
 causal_handoff_alternating_1024	9	415	51	256
 causal_handoff_alternating_4096	20	385	100	256
 global_capacity_7281	39	384	141	384

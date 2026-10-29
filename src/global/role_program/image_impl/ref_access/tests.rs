@@ -89,19 +89,16 @@ fn reject(
     let mut facts = rows.facts;
     edit(&mut bytes, &mut columns, &mut facts);
     let bytes = Box::new(bytes);
+    let columns = Box::new(columns);
     assert!(
         catch_unwind(|| {
             // SAFETY: the constructor requires static storage, but this test
-            // discards its result inside this closure. The Box stays alive
+            // discards its result inside this closure. Both Boxes stay alive
             // throughout validation and no reference escapes, even on panic.
             let temporary = unsafe { &*core::ptr::from_ref(bytes.as_ref()) };
-            let _ = RoleImageRef::new(
-                rows.program,
-                rows.role,
-                facts,
-                Box::leak(Box::new(columns)),
-                temporary,
-            );
+            // SAFETY: the same temporary lifetime extension applies to columns.
+            let columns = unsafe { &*core::ptr::from_ref(columns.as_ref()) };
+            let _ = RoleImageRef::new(rows.program, rows.role, facts, columns, temporary);
         })
         .is_err()
     );
