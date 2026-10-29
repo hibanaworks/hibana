@@ -277,7 +277,21 @@ run_miri_test \
   typed-endpoint-ownership-source \
   -p hibana \
   --lib \
-  g::source::tests
+  g::source::tests \
+  -- --skip first_transfer_matches_linear_source_enumeration_for_every_small_tree \
+  --skip predecessor_ranges_match_source_order_for_every_small_shape
+
+run_miri_test \
+  typed-source-transfer-enumeration \
+  -p hibana --lib \
+  g::source::tests::first_transfer_matches_linear_source_enumeration_for_every_small_tree \
+  -- --exact
+
+run_miri_test \
+  typed-source-predecessor-enumeration \
+  -p hibana --lib \
+  g::source::tests::predecessor_ranges_match_source_order_for_every_small_shape \
+  -- --exact
 
 run_miri_test \
   independent-actor-rows \

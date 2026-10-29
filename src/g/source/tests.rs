@@ -47,16 +47,72 @@ fn transfer_role_index_preserves_components_across_every_role() {
     }
 }
 
+fn source_pair<'a>(
+    left: &'a tree::Source<'a>,
+    right: &'a tree::Source<'a>,
+    shape: u8,
+) -> tree::Source<'a> {
+    match shape {
+        0 => tree::Source::seq(left, right),
+        1 => tree::Source::par(left, right),
+        _ => tree::Source::route(left, right, (shape == 3).then_some(7)),
+    }
+}
+
+#[test]
+fn predecessor_ranges_match_source_order_for_every_small_shape() {
+    use tree::{EndpointKey, Message, Payload, Source};
+    let leaves: [_; 4] = core::array::from_fn(|index| {
+        Source::Send(Message {
+            from: EndpointKey {
+                component: 0,
+                role: 0,
+            },
+            to: EndpointKey {
+                component: 0,
+                role: 1,
+            },
+            label: index as u8,
+            payload: Payload::Wire { schema: 0 },
+        })
+    });
+    let mut checked = 0;
+    for left_shape in 0..4 {
+        let left = source_pair(&leaves[0], &leaves[1], left_shape);
+        for right_shape in 0..4 {
+            let right = source_pair(&leaves[2], &leaves[3], right_shape);
+            let rolled = Source::roll(&right);
+            for root_shape in 0..4 {
+                let root = source_pair(&left, &rolled, root_shape);
+                // These methods depend only on constructors and event counts.
+                // Payload combinations are tested separately below.
+                for event in 0..leaves.len() {
+                    for lower in 0..=leaves.len() {
+                        let mut found = [false; 4];
+                        let mut next = lower;
+                        while let Some((start, end)) = root.predecessor_range(event, next) {
+                            assert!(next <= start && start < end && end <= event);
+                            for member in &mut found[start..end] {
+                                assert!(!*member);
+                                *member = true;
+                            }
+                            next = end;
+                        }
+                        for (prior, &present) in found.iter().enumerate() {
+                            assert_eq!(present, prior >= lower && root.before(prior, event));
+                        }
+                    }
+                }
+                checked += 1;
+            }
+        }
+    }
+    assert_eq!(checked, 64);
+}
+
 #[test]
 fn first_transfer_matches_linear_source_enumeration_for_every_small_tree() {
     use tree::{EndpointKey, Message, Payload, Source};
-    fn pair<'a>(a: &'a Source<'a>, b: &'a Source<'a>, shape: u8) -> Source<'a> {
-        match shape {
-            0 => Source::seq(a, b),
-            1 => Source::par(a, b),
-            _ => Source::route(a, b, (shape == 3).then_some(7)),
-        }
-    }
     let keys = [
         EndpointKey {
             component: 0,
@@ -84,49 +140,24 @@ fn first_transfer_matches_linear_source_enumeration_for_every_small_tree() {
                 },
             })
         });
+        // Read the independent input leaves, without asking another source
+        // traversal to produce the expected first occurrence.
+        let expected = keys.map(|key| leaves.iter().position(|leaf| {
+            matches!(leaf, Source::Send(Message { payload: Payload::Endpoint(payload), .. }) if payload.same(key))
+        }));
+        let delegated = expected.iter().any(Option::is_some);
         for left_shape in 0..4 {
+            let left = source_pair(&leaves[0], &leaves[1], left_shape);
             for right_shape in 0..4 {
-                let left = pair(&leaves[0], &leaves[1], left_shape);
-                let right = pair(&leaves[2], &leaves[3], right_shape);
+                let right = source_pair(&leaves[2], &leaves[3], right_shape);
                 let rolled = Source::roll(&right);
                 for root_shape in 0..4 {
-                    let root = pair(&left, &rolled, root_shape);
+                    let root = source_pair(&left, &rolled, root_shape);
                     assert_eq!(root.event_count(), leaves.len());
-                    assert_eq!(
-                        root.has_delegation(),
-                        leaves.iter().any(|leaf| {
-                            matches!(
-                                leaf,
-                                Source::Send(Message {
-                                    payload: Payload::Endpoint(_),
-                                    ..
-                                })
-                            )
-                        })
-                    );
-                    for event in 0..leaves.len() {
-                        for lower in 0..=leaves.len() {
-                            let mut found = [false; 4];
-                            let mut next = lower;
-                            while let Some((start, end)) = root.predecessor_range(event, next) {
-                                assert!(next <= start && start < end && end <= event);
-                                for member in &mut found[start..end] {
-                                    assert!(!*member);
-                                    *member = true;
-                                }
-                                next = end;
-                            }
-                            for (prior, &present) in found.iter().enumerate() {
-                                assert_eq!(present, prior >= lower && root.before(prior, event));
-                            }
-                        }
-                    }
-                    for key in keys {
-                        let expected = (0..root.event_count()).find(|&event| {
-                            matches!(root.message_at(event).payload, Payload::Endpoint(payload) if payload.same(key))
-                        });
-                        assert_eq!(root.first_transfer(key), expected);
-                        assert_eq!(root.transfers(key), expected.is_some());
+                    assert_eq!(root.has_delegation(), delegated);
+                    for (key, first) in keys.into_iter().zip(expected) {
+                        assert_eq!(root.first_transfer(key), first);
+                        assert_eq!(root.transfers(key), first.is_some());
                         checked += 1;
                     }
                 }
