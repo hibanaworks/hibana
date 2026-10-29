@@ -86,13 +86,7 @@ fn an_accepted_return_can_wait_for_its_independent_receipt() {
         >,
     >;
     type Protocol = g::Seq<g::Roll<Body>, EarlyRelease>;
-    let source = const { crate::g::source::ProgramSourceData::<16>::lower::<Protocol>() };
-    assert!(
-        source
-            .actors()
-            .unwrap()
-            .has_reentry_knowledge(&<Protocol as g::ProgramShape>::SOURCE_NODE,)
-    );
+    assert!(crate::g::source::ProgramSourceData::<16>::reentry_knowledge::<Protocol>());
 }
 
 #[test]
@@ -112,13 +106,7 @@ fn a_guard_cannot_come_back_before_another_loan_needed_to_return_the_resource() 
         >,
     >;
     type Protocol = g::Seq<g::Roll<Body>, EarlyRelease>;
-    let source = const { crate::g::source::ProgramSourceData::<16>::lower::<Protocol>() };
-    assert!(
-        !source
-            .actors()
-            .unwrap()
-            .has_reentry_knowledge(&<Protocol as g::ProgramShape>::SOURCE_NODE,)
-    );
+    assert!(!crate::g::source::ProgramSourceData::<16>::reentry_knowledge::<Protocol>());
 }
 
 #[test]

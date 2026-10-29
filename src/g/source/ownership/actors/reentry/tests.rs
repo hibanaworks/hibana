@@ -50,10 +50,8 @@ fn bounded_closure_matches_all_prior_action_edges_across_mixed_shapes() {
                 let rolled = Source::roll(&right);
                 for root_shape in 0..4 {
                     let root = pair(&left, &rolled, root_shape);
-                    let checker = Checker {
-                        root: &root,
-                        image: &image,
-                    };
+                    let messages = wire_events::<4>(&root);
+                    let checker = Checker::wire_fixture(&root, &image, &messages);
                     for choices in 0..16 {
                         let arm = |bit| {
                             if choices & (1 << bit) == 0 {

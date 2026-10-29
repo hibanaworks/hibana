@@ -2,6 +2,10 @@
 //! checking, never on the production runtime's hot path.
 use super::{EndpointKey, Payload, Source};
 
+#[cfg(kani)]
+#[path = "queries/kani.rs"]
+mod kani;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Scope {
     pub start: u16,
@@ -115,15 +119,76 @@ pub(super) enum Evaluation {
 
 pub(super) struct Query<'a> {
     source: &'a Source<'a>,
+    pub(super) symbols: &'a [Option<super::Symbol>],
+    initial: &'a [super::InitialOwner],
 }
 
 impl<'a> Query<'a> {
-    pub(super) const fn new(source: &'a Source<'a>) -> Self {
-        Self { source }
+    pub(super) const fn new(
+        source: &'a Source<'a>,
+        symbols: &'a [Option<super::Symbol>],
+        initial: &'a [super::InitialOwner],
+    ) -> Self {
+        Self {
+            source,
+            symbols,
+            initial,
+        }
+    }
+
+    const fn normalize(&self, atom: Atom) -> Atom {
+        let Atom::Initial(key) = atom else {
+            return atom;
+        };
+        let mut index = 0;
+        while index < self.symbols.len() {
+            if let Some(symbol) = self.symbols[index]
+                && symbol.key.same(key)
+            {
+                while self.initial[index].parent as usize != index {
+                    index = self.initial[index].parent as usize;
+                }
+                return match self.initial[index].actor {
+                    Some(actor) => Atom::Actor(actor),
+                    None => atom,
+                };
+            }
+            index += 1;
+        }
+        panic!("queried initial owner was not collected")
+    }
+
+    const fn same_atom(left: Atom, right: Atom) -> bool {
+        match (left, right) {
+            (Atom::Actor(left), Atom::Actor(right)) => left == right,
+            (Atom::Initial(left), Atom::Initial(right)) => left.same(right),
+            _ => false,
+        }
+    }
+
+    const fn known_atom(&self, value: Value) -> Option<Atom> {
+        match value {
+            Value::Atom(atom) => Some(self.normalize(atom)),
+            Value::Before(at) if !self.is_delegated(at.key) => Some(Atom::Actor(at.key.role)),
+            Value::Before(_) | Value::Choice { .. } => None,
+        }
+    }
+
+    const fn is_delegated(&self, key: EndpointKey) -> bool {
+        let mut index = 0;
+        while index < self.symbols.len() {
+            if let Some(symbol) = self.symbols[index]
+                && symbol.key.same(key)
+            {
+                return matches!(symbol.kind, super::EndpointKind::Delegated);
+            }
+            index += 1;
+        }
+        false
     }
 
     pub(super) const fn owner(&self, at: At, context: &Context<'_>) -> Evaluation {
-        if !self.source.transfers(at.key) {
+        if !self.is_delegated(at.key) {
             return Evaluation::Atom(Atom::Actor(at.key.role));
         }
         let value = self.after(
@@ -138,7 +203,7 @@ impl<'a> Query<'a> {
 
     const fn evaluate(&self, value: Value, context: &Context<'_>) -> Evaluation {
         match value {
-            Value::Atom(atom) => Evaluation::Atom(atom),
+            Value::Atom(atom) => Evaluation::Atom(self.normalize(atom)),
             Value::Before(at) => self.owner(at, context),
             Value::Choice { key, scope } => match context.get(scope) {
                 Some(_) => self.owner(
@@ -161,7 +226,7 @@ impl<'a> Query<'a> {
         previous: Value,
         context: &Context<'_>,
     ) -> Value {
-        if at.cut <= start || !source.has_delegation() {
+        if at.cut <= start || !source.may_transfer(at.key) {
             return previous;
         }
         match source {
@@ -203,8 +268,24 @@ impl<'a> Query<'a> {
                 match selected {
                     Some(Arm::Left) => self.after(left, start, at, previous, context),
                     Some(Arm::Right) => self.after(right, split, at, previous, context),
-                    None if source.transfers(at.key) => Value::Choice { key: at.key, scope },
-                    None => previous,
+                    None => {
+                        let left_path = context.select(Selection {
+                            scope,
+                            arm: Arm::Left,
+                        });
+                        let right_path = context.select(Selection {
+                            scope,
+                            arm: Arm::Right,
+                        });
+                        let left = self.after(left, start, at, previous, &left_path);
+                        let right = self.after(right, split, at, previous, &right_path);
+                        match (self.known_atom(left), self.known_atom(right)) {
+                            (Some(left), Some(right)) if Self::same_atom(left, right) => {
+                                Value::Atom(left)
+                            }
+                            _ => Value::Choice { key: at.key, scope },
+                        }
+                    }
                 }
             }
             Source::Roll(body, _) => self.after(body, start, at, previous, context),

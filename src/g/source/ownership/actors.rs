@@ -150,8 +150,12 @@ impl<const E: usize, const D: usize> ActorImage<E, D> {
 
     /// A resource-changing continuation cannot leave a remote reentry sender
     /// able to initiate another visit without the entry owner's permission.
-    pub const fn has_reentry_knowledge(&self, source: &Source<'_>) -> bool {
-        reentry::check(source, self)
+    pub const fn has_reentry_knowledge<const S: usize>(
+        &self,
+        source: &Source<'_>,
+        facts: &Scratch<S, E>,
+    ) -> bool {
+        reentry::check(source, self, facts)
     }
 
     pub const fn decision_count(&self) -> usize {
@@ -335,7 +339,13 @@ impl<const E: usize, const D: usize> ActorImage<E, D> {
         at: At,
         context: &Context<'_>,
     ) -> Result<ActorRef, Error> {
-        let scope = match Query::new(source).owner(at, context) {
+        let scope = match Query::new(
+            source,
+            scratch.symbols.split_at(scratch.symbol_len).0,
+            &scratch.initial,
+        )
+        .owner(at, context)
+        {
             Evaluation::Atom(Atom::Actor(actor)) => return Ok(ActorRef::actor(actor)),
             Evaluation::Atom(Atom::Initial(key)) => {
                 let Some(index) = scratch.index(key) else {

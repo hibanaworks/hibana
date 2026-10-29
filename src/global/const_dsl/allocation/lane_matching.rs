@@ -7,6 +7,7 @@ mod index;
 #[cfg(all(test, hibana_repo_tests))]
 mod tests;
 
+pub(super) use index::EndpointSet;
 pub(super) use index::LaneEndpointIndex;
 
 const fn validate_lane_span<const E: usize>(

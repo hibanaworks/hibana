@@ -8,7 +8,7 @@ pub(crate) use actors::owned_receive_lane_conflict;
 pub(crate) use actors::receive_pair_is_causal;
 use actors::{ActorMap, NeedChoice};
 pub(crate) use actors::{ReceiveScan, receive_lane_conflict_in};
-use directions::ReceiveDirectionIndex;
+use directions::{Direction, ReceiveDirectionIndex};
 
 const CAUSAL_ROLE_COUNT: usize = u8::MAX as usize + 1;
 const CAUSAL_ROLE_WORDS: usize = CAUSAL_ROLE_COUNT / u64::BITS as usize;
@@ -748,7 +748,8 @@ const fn validate_linear_later_senders<const E: usize>(
 
 #[cfg(any(kani, all(test, hibana_repo_tests)))]
 const fn validate_linear_receive_lane_causality<const E: usize>(eff_list: &EffList<E>) -> bool {
-    let directions = ReceiveDirectionIndex::new(eff_list, 0, eff_list.len());
+    let mut storage = [Direction::EMPTY; E];
+    let directions = ReceiveDirectionIndex::new(eff_list, (0, eff_list.len()), &mut storage);
     let mut earlier_eff_idx = 0usize;
     while earlier_eff_idx < eff_list.len() {
         let earlier = eff_list.atom_at(earlier_eff_idx);
@@ -824,7 +825,8 @@ const fn validate_roll_body_receive_lane_causality<const E: usize>(
         marker_floor: 0,
     };
     let mut earlier_idx = body.start;
-    let directions = ReceiveDirectionIndex::new(eff_list, body.start, body.end);
+    let mut storage = [Direction::EMPTY; E];
+    let directions = ReceiveDirectionIndex::new(eff_list, (body.start, body.end), &mut storage);
     while earlier_idx < body.end {
         let earlier = eff_list.atom_at(earlier_idx);
         if earlier.from != earlier.to {
@@ -885,7 +887,8 @@ const fn validate_roll_receive_lane_causality<const E: usize>(eff_list: &EffList
 #[cfg(any(kani, all(test, hibana_repo_tests)))]
 const fn validate_structured_receive_lane_causality<const E: usize>(eff_list: &EffList<E>) -> bool {
     let scope_offsets = FlowIndex::new::<0>(eff_list, None);
-    let directions = ReceiveDirectionIndex::new(eff_list, 0, eff_list.len());
+    let mut storage = [Direction::EMPTY; E];
+    let directions = ReceiveDirectionIndex::new(eff_list, (0, eff_list.len()), &mut storage);
     let range = FlowRange {
         start: 0,
         end: eff_list.len(),

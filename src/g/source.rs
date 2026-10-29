@@ -45,6 +45,11 @@ pub(crate) type SourceActorImage<
 
 struct SourceActors<Steps, const CAPACITY: usize>(core::marker::PhantomData<Steps>);
 
+struct SourceOwnership<const E: usize> {
+    actors: SourceActorImage<E>,
+    facts: ownership::Scratch<256, E>,
+}
+
 struct SourceEvents<Steps, const CAPACITY: usize>(core::marker::PhantomData<Steps>);
 
 impl<Steps: ProgramShape, const CAPACITY: usize> SourceEvents<Steps, CAPACITY> {
@@ -52,7 +57,7 @@ impl<Steps: ProgramShape, const CAPACITY: usize> SourceEvents<Steps, CAPACITY> {
 }
 
 impl<Steps: ProgramShape, const CAPACITY: usize> SourceActors<Steps, CAPACITY> {
-    const IMAGE: Result<Option<SourceActorImage<CAPACITY>>, ownership::Error> =
+    const OWNERSHIP: Result<Option<SourceOwnership<CAPACITY>>, ownership::Error> =
         if !Steps::SOURCE_NODE.has_delegation() {
             // References to associated constants can be evaluated eagerly even in
             // an untaken caller branch. Keep the guard inside the referenced value
@@ -63,7 +68,10 @@ impl<Steps: ProgramShape, const CAPACITY: usize> SourceActors<Steps, CAPACITY> {
             let mut image = ownership::ActorImage::new();
             match ownership::compile_actor_image_into(&Steps::SOURCE_NODE, &mut scratch, &mut image)
             {
-                Ok(()) => Ok(Some(image)),
+                Ok(()) => Ok(Some(SourceOwnership {
+                    actors: image,
+                    facts: scratch,
+                })),
                 Err(error) => Err(error),
             }
         };
@@ -186,7 +194,7 @@ impl<const CAPACITY: usize> SourceLowering<CAPACITY> {
 impl<const CAPACITY: usize> ProgramSourceData<CAPACITY> {
     pub(crate) const fn ownership_diagnostic<Steps: ProgramShape>()
     -> Option<super::ProjectionDiagnostic> {
-        match &SourceActors::<Steps, CAPACITY>::IMAGE {
+        match &SourceActors::<Steps, CAPACITY>::OWNERSHIP {
             Err(error) => Some(super::ProjectionDiagnostic::from_ownership_error(*error)),
             Ok(_) => None,
         }
@@ -199,8 +207,8 @@ impl<const CAPACITY: usize> ProgramSourceData<CAPACITY> {
         if Steps::SOURCE_ROW_COUNT == 0 || Steps::SOURCE_ROW_COUNT > CAPACITY {
             panic!("source bucket selection");
         }
-        let actors = match &SourceActors::<Steps, CAPACITY>::IMAGE {
-            Ok(Some(image)) => Some(image),
+        let actors = match &SourceActors::<Steps, CAPACITY>::OWNERSHIP {
+            Ok(Some(ownership)) => Some(&ownership.actors),
             Ok(None) => None,
             Err(error) => super::diagnostic_message::panic_diagnostic(
                 super::ProjectionDiagnostic::from_ownership_error(*error),
@@ -224,8 +232,8 @@ impl<const CAPACITY: usize> ProgramSourceData<CAPACITY> {
 
     pub(crate) const fn lower<Steps: ProgramShape>() -> Self {
         let mut eff = SourceEvents::<Steps, CAPACITY>::EVENTS;
-        let actors = match &SourceActors::<Steps, CAPACITY>::IMAGE {
-            Ok(Some(image)) => Some(image),
+        let actors = match &SourceActors::<Steps, CAPACITY>::OWNERSHIP {
+            Ok(Some(ownership)) => Some(&ownership.actors),
             Ok(None) => None,
             Err(error) => super::diagnostic_message::panic_diagnostic(
                 super::ProjectionDiagnostic::from_ownership_error(*error),
@@ -253,6 +261,18 @@ impl<const CAPACITY: usize> ProgramSourceData<CAPACITY> {
 
     pub(crate) const fn actors(&self) -> Option<&'static SourceActorImage<CAPACITY>> {
         self.actors
+    }
+
+    pub(crate) const fn reentry_knowledge<Steps: ProgramShape>() -> bool {
+        match &SourceActors::<Steps, CAPACITY>::OWNERSHIP {
+            Ok(Some(ownership)) => ownership
+                .actors
+                .has_reentry_knowledge(&Steps::SOURCE_NODE, &ownership.facts),
+            Ok(None) => true,
+            Err(error) => super::diagnostic_message::panic_diagnostic(
+                super::ProjectionDiagnostic::from_ownership_error(*error),
+            ),
+        }
     }
 
     pub(crate) const fn receive_causal(&self) -> bool {
@@ -291,12 +311,26 @@ pub(super) fn profile_construction<Steps: ProgramShape, const CAPACITY: usize>(
             )
             .is_ok();
             core::hint::black_box(image);
+            core::hint::black_box(scratch);
             correct
         }
         super::profiling::SourcePass::Scopes => {
             let source = core::hint::black_box(&SourceEvents::<Steps, CAPACITY>::EVENTS);
             core::hint::black_box(crate::global::role_program::ScopeFacts::new(source));
             true
+        }
+        super::profiling::SourcePass::Reentry => {
+            match &SourceActors::<Steps, CAPACITY>::OWNERSHIP {
+                Ok(Some(ownership)) => core::hint::black_box(&ownership.actors)
+                    .has_reentry_knowledge(
+                        core::hint::black_box(&Steps::SOURCE_NODE),
+                        core::hint::black_box(&ownership.facts),
+                    ),
+                Ok(None) => true,
+                Err(error) => super::diagnostic_message::panic_diagnostic(
+                    super::ProjectionDiagnostic::from_ownership_error(*error),
+                ),
+            }
         }
     }
 }
@@ -305,8 +339,8 @@ pub(super) fn profile_construction<Steps: ProgramShape, const CAPACITY: usize>(
 pub(super) fn profile<Steps: ProgramShape, const CAPACITY: usize>()
 -> super::profiling::SourceProfile {
     let mut eff = SourceEvents::<Steps, CAPACITY>::EVENTS;
-    let actors = match &SourceActors::<Steps, CAPACITY>::IMAGE {
-        Ok(Some(image)) => Some(image),
+    let actors = match &SourceActors::<Steps, CAPACITY>::OWNERSHIP {
+        Ok(Some(ownership)) => Some(&ownership.actors),
         Ok(None) => None,
         Err(error) => super::diagnostic_message::panic_diagnostic(
             super::ProjectionDiagnostic::from_ownership_error(*error),

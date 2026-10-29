@@ -2,8 +2,8 @@
 //! the physical actor holding each endpoint at that source event. Both come
 //! from the same checked source; possible-holder sets are never authority.
 use super::{
-    CausalFlow, CausalRoles, EffList, FlowGoal, FlowIndex, FlowRange, ReceiveDirectionIndex,
-    RollBodyRange, ScopeKind, roll_body_range_from_enter,
+    CausalFlow, CausalRoles, Direction, EffList, FlowGoal, FlowIndex, FlowRange,
+    ReceiveDirectionIndex, RollBodyRange, ScopeKind, roll_body_range_from_enter,
 };
 use crate::{
     eff::EffAtom,
@@ -463,6 +463,7 @@ pub(crate) const fn receive_lane_conflict_in<const E: usize, const D: usize>(
     };
     let mut region = 0;
     let markers = events.scope_markers();
+    let mut direction_storage = [Direction::EMPTY; E];
     while region <= markers.len() {
         let (start, stop, repeated, scope) = if region == 0 {
             (0, events.len(), None, None)
@@ -516,7 +517,7 @@ pub(crate) const fn receive_lane_conflict_in<const E: usize, const D: usize>(
             }
             None => start,
         };
-        let directions = ReceiveDirectionIndex::new(events, start, stop);
+        let directions = ReceiveDirectionIndex::new(events, (start, stop), &mut direction_storage);
         while earlier < stop {
             if let Some(event) = stop_before
                 && earlier == event

@@ -4,7 +4,8 @@
 //! The workspace below is compiler scratch, never resident protocol state.
 
 use super::super::{
-    Arm, At, Atom, Context, EndpointKey, Evaluation, Payload, Query, Scope, Selection, Source,
+    Arm, At, Atom, Context, EndpointKey, EndpointKind, Evaluation, Message, Payload, Query, Scope,
+    Scratch, Selection, Source,
 };
 use super::{ActorImage, ActorRef};
 
@@ -16,16 +17,23 @@ mod kani;
 #[path = "reentry/tests.rs"]
 mod tests;
 
-pub(super) const fn check<const E: usize, const D: usize>(
+pub(super) const fn check<const S: usize, const E: usize, const D: usize>(
     source: &Source<'_>,
     image: &ActorImage<E, D>,
+    facts: &Scratch<S, E>,
 ) -> bool {
-    if source.event_count() != image.event_len {
-        panic!("reentry source and actor image disagree");
+    if source.event_count() != image.event_len || facts.event_len != image.event_len {
+        panic!("reentry source, ownership facts and actor image disagree");
     }
     Checker {
         root: source,
         image,
+        query: Query::new(
+            source,
+            facts.symbols.split_at(facts.symbol_len).0,
+            &facts.initial,
+        ),
+        messages: facts.events.split_at(facts.event_len).0,
     }
     .nested(source, 0, &Context::new(&[]))
 }
@@ -33,6 +41,8 @@ pub(super) const fn check<const E: usize, const D: usize>(
 struct Checker<'a, const E: usize, const D: usize> {
     root: &'a Source<'a>,
     image: &'a ActorImage<E, D>,
+    query: Query<'a>,
+    messages: &'a [Option<Message>],
 }
 
 struct Body<'a> {
@@ -41,7 +51,41 @@ struct Body<'a> {
     key: EndpointKey,
 }
 
+#[cfg(any(kani, all(test, hibana_repo_tests)))]
+const fn wire_events<const E: usize>(source: &Source<'_>) -> [Option<Message>; E] {
+    assert!(!source.has_delegation() && source.event_count() <= E);
+    let mut messages = [None; E];
+    let mut event = 0;
+    while event < source.event_count() {
+        messages[event] = Some(source.message_at(event));
+        event += 1;
+    }
+    messages
+}
+
 impl<const E: usize, const D: usize> Checker<'_, E, D> {
+    #[cfg(any(kani, all(test, hibana_repo_tests)))]
+    const fn wire_fixture<'a>(
+        source: &'a Source<'a>,
+        image: &'a ActorImage<E, D>,
+        messages: &'a [Option<Message>],
+    ) -> Checker<'a, E, D> {
+        assert!(!source.has_delegation());
+        Checker {
+            root: source,
+            image,
+            query: Query::new(source, &[], &[]),
+            messages,
+        }
+    }
+
+    const fn message_at(&self, event: usize) -> Message {
+        match self.messages[event] {
+            Some(message) => message,
+            None => panic!("checked source message is missing"),
+        }
+    }
+
     const fn actor(&self, mut reference: ActorRef, path: &Context<'_>) -> Result<u8, Scope> {
         while reference.0 >= 256 {
             let choice = self.image.choices[reference.0 as usize - 256];
@@ -55,25 +99,10 @@ impl<const E: usize, const D: usize> Checker<'_, E, D> {
     }
 
     const fn owner(&self, key: EndpointKey, cut: usize, path: &Context<'_>) -> Result<u8, Scope> {
-        match Query::new(self.root).owner(At { key, cut }, path) {
+        match self.query.owner(At { key, cut }, path) {
             Evaluation::Atom(Atom::Actor(actor)) => Ok(actor),
             Evaluation::Choice(scope) => Err(scope),
-            Evaluation::Atom(Atom::Initial(key)) => {
-                let mut event = 0;
-                while event < self.image.event_len {
-                    let message = self.root.message_at(event);
-                    if message.from.same(key)
-                        || matches!(message.payload, Payload::Endpoint(payload) if payload.same(key))
-                    {
-                        return self.actor(self.image.events[event].sender, path);
-                    }
-                    if message.to.same(key) {
-                        return self.actor(self.image.events[event].receiver, path);
-                    }
-                    event += 1;
-                }
-                panic!("initial resource has no source occurrence");
-            }
+            Evaluation::Atom(Atom::Initial(_)) => panic!("unresolved checked initial owner"),
         }
     }
 
@@ -144,7 +173,7 @@ impl<const E: usize, const D: usize> Checker<'_, E, D> {
         key: EndpointKey,
         path: &Context<'_>,
     ) -> Result<Option<(u8, u8)>, Scope> {
-        if !matches!(self.root.message_at(event).payload,
+        if !matches!(self.message_at(event).payload,
             Payload::Endpoint(payload) if payload.same(key))
         {
             return Ok(None);
@@ -193,7 +222,7 @@ impl<const E: usize, const D: usize> Checker<'_, E, D> {
                     }
                     let mut outgoing = body.start;
                     while outgoing < end {
-                        if let Payload::Endpoint(key) = self.root.message_at(outgoing).payload
+                        if let Payload::Endpoint(key) = self.message_at(outgoing).payload
                             && !key.same(body.key)
                         {
                             let present =
@@ -203,7 +232,7 @@ impl<const E: usize, const D: usize> Checker<'_, E, D> {
                                 };
                             let mut prior = event;
                             while present && prior <= returned {
-                                let message = self.root.message_at(prior);
+                                let message = self.message_at(prior);
                                 let uses = (message.from.same(key) && returning[prior] & 1 != 0)
                                     || (message.to.same(key) && returning[prior] & 2 != 0)
                                     || (matches!(message.payload, Payload::Endpoint(payload) if payload.same(key))
@@ -276,7 +305,7 @@ impl<const E: usize, const D: usize> Checker<'_, E, D> {
     ) -> Result<bool, Scope> {
         let mut guard = body.start + body.source.event_count();
         while guard < departure {
-            if let Payload::Endpoint(key) = self.root.message_at(guard).payload
+            if let Payload::Endpoint(key) = self.message_at(guard).payload
                 && !key.same(body.key)
                 && body.source.uses(key)
             {
@@ -363,7 +392,7 @@ impl<const E: usize, const D: usize> Checker<'_, E, D> {
         let end = body.start + body.source.event_count();
         let mut event = body.start;
         while event < end {
-            let message = self.root.message_at(event);
+            let message = self.message_at(event);
             if message.from.same(body.key)
                 || message.to.same(body.key)
                 || matches!(message.payload, Payload::Endpoint(key) if key.same(body.key))
@@ -641,23 +670,28 @@ impl<const E: usize, const D: usize> Checker<'_, E, D> {
                 )
             }
             Source::Roll(inner, _) => {
-                let mut event = 0;
-                while event < self.image.event_len {
-                    if let Payload::Endpoint(key) = self.root.message_at(event).payload
-                        && inner.uses(key)
-                        && matches!(self.root.first_transfer(key), Some(first) if first == event)
+                // Collection already contains each complete resource key once.
+                // Reentry checks quantify over those keys, not every ordinary
+                // message followed by another search for its first transfer.
+                let mut index = 0;
+                while index < self.query.symbols.len() {
+                    let Some(symbol) = self.query.symbols[index] else {
+                        panic!("collected reentry resource");
+                    };
+                    if matches!(symbol.kind, EndpointKind::Delegated)
+                        && inner.uses(symbol.key)
                         && !self.body(
                             &Body {
                                 source: inner,
                                 start,
-                                key,
+                                key: symbol.key,
                             },
                             path,
                         )
                     {
                         return false;
                     }
-                    event += 1;
+                    index += 1;
                 }
                 self.nested(inner, start, path)
             }

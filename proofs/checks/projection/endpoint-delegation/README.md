@@ -27,10 +27,33 @@ one Local row. A message between distinct logical roles requires each actor's
 Send and Recv rows, including both when one actor handles both sides. The
 check rejects missing, extra, repeated, reordered and wrong-direction rows.
 For one actor it takes O(D + E + L) work for D decisions, E global events and
-L local rows, using one scratch bit per decision. This check trusts the global
-actor bindings; their agreement with source ownership is checked separately.
+L local rows, using one scratch bit per decision. The actor bindings still come
+from the source ownership compiler. This row check does not independently prove
+that compiler's assignment of logical roles to actors.
 [`ActorRows.lean`](../../image/operation-index/ActorRows.lean) specifies the
 direction rule. Native mutation tests, Miri and Kani check the implementation.
+
+Each source subtree indexes the roles whose Endpoints it transfers. Queries
+skip a subtree only when that role is absent, and still compare the complete
+component and role at each leaf. This construction-only index is not stored in
+runtime progress. `TransferIndex.lean` proves that role pruning preserves exact
+key membership; `TransferIndex.smt2` checks the 256-role bitmap. Kani checks
+production sequence, parallel, choice and repeated sources over symbolic full
+endpoint keys and payload kinds.
+
+Ownership queries reuse the initial-owner equations already inferred for the
+source. When both arms reduce to the same owner, the join retains that owner
+without enumerating another choice. Ownership compilation retains its checked
+equations and message rows alongside the actor bindings. Reentry checks borrow
+those facts and index source messages directly. `OwnerJoin.lean` and
+`OwnerJoin.smt2` state the normalization and join rules. Kani checks normalization
+against production union equations over symbolic complete keys, including aliases
+and independent unbound keys.
+
+Reentry checks reuse the collected resource keys instead of rediscovering each
+key at every ordinary message. Kani checks unique catalog membership over full
+component/role keys, including control uses before the first transfer and aliases.
+The same catalog answers whether a queried role is delegated.
 
 The same entry point exhausts every `u8` actor triple for fixed parallel, route
 and repeated-prefix sources: 184,549,376 production queries in total. Independent

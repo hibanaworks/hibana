@@ -53,6 +53,35 @@ fn generate(mode: &str, shape: &str, count: usize) -> Result<String, String> {
     if (mode, shape) == ("causal", "delegation") {
         return Ok(delegation(count));
     }
+    if (mode, shape) == ("causal", "receive_cycles") {
+        let directions = [
+            (0, 1),
+            (1, 0),
+            (2, 3),
+            (3, 2),
+            (4, 5),
+            (5, 4),
+            (6, 7),
+            (7, 6),
+        ];
+        if count > directions.len() * usize::from(u8::MAX) / 3 {
+            return Err("receive cycles exceed distinct message selectors".into());
+        }
+        // Distinct selectors keep each loop's reentry separate from every
+        // later continuation while retaining hundreds of receive regions.
+        let cycles = (0..count).map(|index| {
+            let (from, to) = directions[index % directions.len()];
+            let first = 1 + 3 * (index / directions.len());
+            let second = first + 1;
+            let stop = first + 2;
+            format!("g::seq(g::route(g::send::<{from}, {to}, g::Msg<{first}, ()>>(), g::send::<{from}, {to}, g::Msg<{second}, ()>>()).resolve::<7>().roll(), g::send::<{from}, {to}, g::Msg<{stop}, ()>>())")
+        }).collect::<Vec<_>>();
+        let tail = combine(&cycles, "seq");
+        return Ok(pressure_templates::RECEIVE_CYCLES.replace(
+            "{PROGRAM}",
+            &format!("g::seq(g::send::<0, 2, g::Msg<254, ()>>(), {tail})"),
+        ));
+    }
     let (messages, template) = match (mode, shape) {
         ("causal", "capacity") => (Messages::DisjointPairs, pressure_templates::CAPACITY),
         ("causal", "alternating") => (Messages::Alternating, pressure_templates::ALTERNATING),

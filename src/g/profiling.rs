@@ -99,6 +99,12 @@ pub fn actor_image(program: &impl Projectable) -> bool {
     construction_pass(program, SourcePass::Actors)
 }
 
+/// Check resource-dependent repetition using the retained ownership facts.
+/// Source ownership compilation remains outside this native measurement.
+pub fn reentry_knowledge(program: &impl Projectable) -> bool {
+    construction_pass(program, SourcePass::Reentry)
+}
+
 /// Rebuild the shared scope information used by local projection.
 pub fn scope_facts(program: &impl Projectable) -> bool {
     construction_pass(program, SourcePass::Scopes)
@@ -107,6 +113,7 @@ pub fn scope_facts(program: &impl Projectable) -> bool {
 pub(super) enum SourcePass {
     Emission,
     Actors,
+    Reentry,
     Scopes,
 }
 

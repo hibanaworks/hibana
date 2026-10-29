@@ -136,4 +136,23 @@
 ; EXPECT: sat
 (check-sat)
 (pop)
+; A batch contains only one old lane class. Injectivity inside that selected
+; set follows even when the candidate map is otherwise unrestricted.
+(declare-const batch-lane (_ BitVec 8))
+(push)
+(assert (=> inside-a (= lane-a batch-lane)))
+(assert (=> inside-b (= lane-b batch-lane)))
+(assert (not injective))
+; EXPECT: unsat
+(check-sat)
+(pop)
+(push)
+(assert inside-a)
+(assert inside-b)
+(assert (= lane-a batch-lane))
+(assert (not injective))
+; Omitting the second membership check admits a collision between old classes.
+; EXPECT: sat
+(check-sat)
+(pop)
 (exit)

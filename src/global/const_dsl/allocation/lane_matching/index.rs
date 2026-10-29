@@ -5,7 +5,22 @@ use crate::global::const_dsl::EffList;
 pub(in super::super) struct EndpointSet<const ROLE_BYTES: usize>([u8; ROLE_BYTES]);
 
 impl<const ROLE_BYTES: usize> EndpointSet<ROLE_BYTES> {
-    const EMPTY: Self = Self([0; ROLE_BYTES]);
+    pub(in super::super) const EMPTY: Self = Self([0; ROLE_BYTES]);
+
+    pub(in super::super) const fn include<const E: usize>(
+        &mut self,
+        events: &EffList<E>,
+        actors: Option<&crate::g::SourceActorImage<E>>,
+        event: usize,
+    ) {
+        if let Some(actors) = actors {
+            actors.include_possible_actors(event, &mut self.0);
+        } else {
+            let atom = events.atom_at(event);
+            self.insert(atom.from);
+            self.insert(atom.to);
+        }
+    }
 
     #[inline(always)]
     const fn insert(&mut self, role: u8) {
@@ -92,6 +107,36 @@ pub(in super::super) struct LaneEndpointIndex<const ROLE_BYTES: usize> {
 }
 
 impl<const ROLE_BYTES: usize> LaneEndpointIndex<ROLE_BYTES> {
+    pub(in super::super) const fn new() -> Self {
+        Self {
+            slot_by_lane: [u16::MAX; BYTE_DOMAIN],
+            endpoints: [EndpointSet::EMPTY; BYTE_DOMAIN],
+            len: 0,
+        }
+    }
+
+    pub(in super::super) const fn include<const E: usize>(
+        &mut self,
+        eff_list: &EffList<E>,
+        actors: Option<&crate::g::SourceActorImage<E>>,
+        event: usize,
+    ) {
+        let atom = eff_list.atom_at(event);
+        let lane = atom.lane as usize;
+        let slot = if self.slot_by_lane[lane] == u16::MAX {
+            if self.len as usize >= BYTE_DOMAIN {
+                panic!("parallel lane index exceeds wire domain");
+            }
+            let slot = self.len;
+            self.len += 1;
+            self.slot_by_lane[lane] = slot;
+            slot
+        } else {
+            self.slot_by_lane[lane]
+        };
+        self.endpoints[slot as usize].include(eff_list, actors, event);
+    }
+
     pub(in super::super) const fn from_range<const E: usize>(
         eff_list: &EffList<E>,
         actors: Option<&crate::g::SourceActorImage<E>>,
@@ -102,32 +147,10 @@ impl<const ROLE_BYTES: usize> LaneEndpointIndex<ROLE_BYTES> {
             panic!("parallel lane index range exceeds compact event domain");
         }
 
-        let mut index = Self {
-            slot_by_lane: [u16::MAX; BYTE_DOMAIN],
-            endpoints: [EndpointSet::EMPTY; BYTE_DOMAIN],
-            len: 0,
-        };
+        let mut index = Self::new();
         let mut idx = start;
         while idx < end {
-            let atom = eff_list.atom_at(idx);
-            let lane = atom.lane as usize;
-            let slot = if index.slot_by_lane[lane] == u16::MAX {
-                if index.len as usize >= BYTE_DOMAIN {
-                    panic!("parallel lane index exceeds wire domain");
-                }
-                let slot = index.len;
-                index.len += 1;
-                index.slot_by_lane[lane] = slot;
-                slot
-            } else {
-                index.slot_by_lane[lane]
-            };
-            if let Some(actors) = actors {
-                actors.include_possible_actors(idx, &mut index.endpoints[slot as usize].0);
-            } else {
-                index.endpoints[slot as usize].insert(atom.from);
-                index.endpoints[slot as usize].insert(atom.to);
-            }
+            index.include(eff_list, actors, idx);
             idx += 1;
         }
         index

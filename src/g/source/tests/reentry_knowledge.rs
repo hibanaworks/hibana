@@ -21,22 +21,10 @@ type Steps<const GATE: u8> =
 
 #[test]
 fn the_permit_and_resource_holder_use_the_same_selected_outer_choice() {
-    let source = const { crate::g::source::ProgramSourceData::<32>::lower::<Steps<AUTH>>() };
-    assert!(
-        source
-            .actors()
-            .unwrap()
-            .has_reentry_knowledge(&Steps::<AUTH>::SOURCE_NODE)
-    );
+    assert!(crate::g::source::ProgramSourceData::<32>::reentry_knowledge::<Steps<AUTH>>());
 }
 
 #[test]
 fn a_fixed_actor_cannot_authorize_both_resource_holders() {
-    let source = const { crate::g::source::ProgramSourceData::<32>::lower::<Steps<A>>() };
-    assert!(
-        !source
-            .actors()
-            .unwrap()
-            .has_reentry_knowledge(&Steps::<A>::SOURCE_NODE)
-    );
+    assert!(!crate::g::source::ProgramSourceData::<32>::reentry_knowledge::<Steps<A>>());
 }

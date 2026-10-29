@@ -1,5 +1,5 @@
 use super::super::super::Message;
-use super::{ActorImage, Body, Checker, Context, EndpointKey, Payload, Source};
+use super::{ActorImage, Body, Checker, Context, EndpointKey, Payload, Source, wire_events};
 
 // This family checks the actual causal closure for a non-restoring resource.
 // Prefix ownership is supplied by the existing source query in run(), rather
@@ -48,11 +48,7 @@ fn a_remote_origin_without_a_fresh_permit_is_rejected() {
         &[],
     );
     assert_eq!(
-        Checker {
-            root: &WORK,
-            image: &image
-        }
-        .origins(
+        Checker::wire_fixture(&WORK, &image, &wire_events::<2>(&WORK)).origins(
             &Body {
                 source: &WORK,
                 start: 0,
@@ -78,11 +74,7 @@ fn a_fresh_permit_authorizes_the_dependent_sender() {
         &[],
     );
     assert_eq!(
-        Checker {
-            root: &PERMITTED,
-            image: &image
-        }
-        .origins(
+        Checker::wire_fixture(&PERMITTED, &image, &wire_events::<3>(&PERMITTED)).origins(
             &Body {
                 source: &PERMITTED,
                 start: 0,
@@ -108,10 +100,11 @@ fn a_parallel_permit_does_not_authorize_an_independently_enabled_send() {
         &[],
     );
     assert_eq!(
-        Checker {
-            root: &PARALLEL_PERMIT,
-            image: &image
-        }
+        Checker::wire_fixture(
+            &PARALLEL_PERMIT,
+            &image,
+            &wire_events::<3>(&PARALLEL_PERMIT)
+        )
         .origins(
             &Body {
                 source: &PARALLEL_PERMIT,
@@ -131,10 +124,11 @@ fn an_unrelated_parallel_sender_needs_no_resource_permit() {
     let (holder, _) = actors();
     let image = ActorImage::<2, 0>::causal_fixture(&[[holder.into(), 4], [6, 7]], &[]);
     assert_eq!(
-        Checker {
-            root: &PARALLEL_UNRELATED,
-            image: &image
-        }
+        Checker::wire_fixture(
+            &PARALLEL_UNRELATED,
+            &image,
+            &wire_events::<2>(&PARALLEL_UNRELATED)
+        )
         .origins(
             &Body {
                 source: &PARALLEL_UNRELATED,
@@ -158,11 +152,11 @@ fn receipt_causality_comes_from_the_actual_actor_handoff() {
     let image =
         ActorImage::<2, 0>::causal_fixture(&[[a.into(), b.into()], [c.into(), d.into()]], &[]);
     assert_eq!(
-        Checker {
-            root: &WORK,
-            image: &image
-        }
-        .causally_before((0, 1), (1, 1), &Context::new(&[])),
+        Checker::wire_fixture(&WORK, &image, &wire_events::<2>(&WORK)).causally_before(
+            (0, 1),
+            (1, 1),
+            &Context::new(&[])
+        ),
         Ok(b == c || b == d),
     );
 }
@@ -177,10 +171,11 @@ fn parallel_preorder_does_not_supply_a_resource_guard_handoff() {
     let image =
         ActorImage::<2, 0>::causal_fixture(&[[a.into(), b.into()], [c.into(), d.into()]], &[]);
     assert_eq!(
-        Checker {
-            root: &PARALLEL_UNRELATED,
-            image: &image
-        }
+        Checker::wire_fixture(
+            &PARALLEL_UNRELATED,
+            &image,
+            &wire_events::<2>(&PARALLEL_UNRELATED)
+        )
         .causally_before((0, 1), (1, 1), &Context::new(&[])),
         Ok(false),
     );
@@ -222,10 +217,8 @@ fn bounded_predecessors_preserve_every_queried_action<const SHAPE: u8>() {
     };
     let selections = [selection];
     let path = Context::new(&selections);
-    let checker = Checker {
-        root: source,
-        image: &image,
-    };
+    let messages = wire_events::<2>(source);
+    let checker = Checker::wire_fixture(source, &image, &messages);
     let floor = usize::from(kani::any::<u8>() % 3);
     let seed: u8 = kani::any();
     let mut actual = [0u8; 2];

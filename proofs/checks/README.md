@@ -15,7 +15,7 @@ every Rust execution follows it.
 | [passive-child-window](projection/passive-child-window) | [`seal/passive_child.rs`](../../src/global/compiled/lowering/seal/passive_child.rs): lower bounds with duplicate offsets |
 | [projection-conflict-reuse](projection/projection-conflict-reuse) | [`projection.rs`](../../src/global/role_program/image_impl/projection.rs): reuse of an immutable conflict calculation preserves results and errors |
 | [projection-diagnostics](projection/projection-diagnostics) | [`g/diagnostic.rs`](../../src/g/diagnostic.rs): rejected protocol classifications |
-| [lane-allocation](projection/lane-allocation) | [`allocation.rs`](../../src/global/const_dsl/allocation.rs): choice-arm lane remapping |
+| [lane-allocation](projection/lane-allocation) | [`allocation.rs`](../../src/global/const_dsl/allocation.rs): lane remapping within choice arms and parallel-local communication directions |
 | [message-identity](projection/message-identity) | [`event_rows.rs`](../../src/global/role_program/image_impl/event_rows.rs), [`FrameHeader`](../../src/transport.rs) and [`DescriptorImage`](../lean/Hibana/DescriptorImage.lean): static source positions distinguish message sites |
 | [explicit-resource-join](projection/explicit-resource-join) | [`g/source/ownership.rs`](../../src/g/source/ownership.rs): independent resource work and its join |
 

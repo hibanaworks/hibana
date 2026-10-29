@@ -33,7 +33,7 @@ pub struct Message {
 #[derive(Clone, Copy, Debug)]
 pub struct Summary {
     events: usize,
-    delegation: bool,
+    transferred_roles: [u64; (u8::MAX as usize + 1).div_ceil(u64::BITS as usize)],
 }
 
 impl Summary {
@@ -43,7 +43,12 @@ impl Summary {
                 Some(events) => events,
                 None => panic!("source event count overflow"),
             },
-            delegation: left.has_delegation() || right.has_delegation(),
+            transferred_roles: [
+                left.transfer_role_word(0) | right.transfer_role_word(0),
+                left.transfer_role_word(1) | right.transfer_role_word(1),
+                left.transfer_role_word(2) | right.transfer_role_word(2),
+                left.transfer_role_word(3) | right.transfer_role_word(3),
+            ],
         }
     }
 }
@@ -85,7 +90,12 @@ impl<'a> Source<'a> {
             body,
             Summary {
                 events: body.event_count(),
-                delegation: body.has_delegation(),
+                transferred_roles: [
+                    body.transfer_role_word(0),
+                    body.transfer_role_word(1),
+                    body.transfer_role_word(2),
+                    body.transfer_role_word(3),
+                ],
             },
         )
     }
@@ -162,12 +172,28 @@ impl<'a> Source<'a> {
     }
 
     pub const fn has_delegation(&self) -> bool {
+        self.transfer_role_word(0)
+            | self.transfer_role_word(1)
+            | self.transfer_role_word(2)
+            | self.transfer_role_word(3)
+            != 0
+    }
+
+    // Source-only subtree index over the complete u8 role domain. A matching
+    // bit still requires the leaf's full component and role to match.
+    const fn transfer_role_word(&self, word: usize) -> u64 {
         match self {
-            Self::Send(message) => matches!(message.payload, Payload::Endpoint(_)),
+            Self::Send(Message {
+                payload: Payload::Endpoint(key),
+                ..
+            }) if key.role as usize / u64::BITS as usize == word => {
+                1 << (key.role as usize % u64::BITS as usize)
+            }
+            Self::Send(_) => 0,
             Self::Seq(_, _, summary)
             | Self::Par(_, _, summary)
             | Self::Route { summary, .. }
-            | Self::Roll(_, summary) => summary.delegation,
+            | Self::Roll(_, summary) => summary.transferred_roles[word],
         }
     }
 
@@ -196,8 +222,14 @@ impl<'a> Source<'a> {
         }
     }
 
+    pub(super) const fn may_transfer(&self, key: EndpointKey) -> bool {
+        self.transfer_role_word(key.role as usize / u64::BITS as usize)
+            & (1 << (key.role as usize % u64::BITS as usize))
+            != 0
+    }
+
     pub const fn transfers(&self, key: EndpointKey) -> bool {
-        if !self.has_delegation() {
+        if !self.may_transfer(key) {
             return false;
         }
         match self {
@@ -214,7 +246,7 @@ impl<'a> Source<'a> {
     /// The first source occurrence carrying this complete endpoint key.
     /// Choice arms are source alternatives; this query does not select one.
     pub const fn first_transfer(&self, key: EndpointKey) -> Option<usize> {
-        if !self.has_delegation() {
+        if !self.may_transfer(key) {
             return None;
         }
         match self {

@@ -100,6 +100,10 @@
       "g::source::ownership::actors::reentry::kani::source_first_transfer_preserves_complete_key_in_roll",
       "g::source::ownership::actors::reentry::kani::source_first_transfer_preserves_complete_key_in_sequence"
     ],
+    "../../src/g/source/ownership/queries/kani.rs": [
+      "g::source::ownership::queries::kani::collected_resource_catalog_contains_each_transferred_complete_key",
+      "g::source::ownership::queries::kani::normalization_reuses_only_established_complete_key_equations"
+    ],
     "../../src/global/compiled/images/image/program_ref/actors/kani.rs": [
       "global::compiled::images::image::program_ref::actors::kani::actor_row_lookups_reject_every_out_of_range_index",
       "global::compiled::images::image::program_ref::actors::kani::initial_issuance_lookup_preserves_the_complete_role_domain",
@@ -166,6 +170,9 @@
     "../../src/global/const_dsl/allocation/lane_matching/index.rs": [
       "global::const_dsl::allocation::lane_matching::index::wordwise_intersection_preserves_the_complete_role_domain"
     ],
+    "../../src/global/const_dsl/allocation/receive_lanes/kani.rs": [
+      "global::const_dsl::allocation::receive_lanes::kani::direction_candidates_preserve_every_symbolic_parallel_exclusion"
+    ],
     "../../src/global/const_dsl/endpoint_controller/kani.rs": [
       "global::const_dsl::endpoint_controller::kani::controller_merge_accepts_exact_single_role_domain"
     ],
@@ -201,9 +208,6 @@
       "global::const_dsl::receive_lane_causality::kani::three_event_linear_scan_matches_pairwise_checker",
       "global::const_dsl::receive_lane_causality::kani::three_event_structured_scan_matches_pairwise_checker"
     ],
-    "../../src/global/const_dsl/scope/kani.rs": [
-      "global::const_dsl::scope::kani::scope_id_decoding_accepts_exact_compact_domain"
-    ],
     "../../src/global/const_dsl/scope_ranges/kani.rs": [
       "global::const_dsl::scope_ranges::kani::nested_route_topology_authorities_are_exact_and_coherent",
       "global::const_dsl::scope_ranges::kani::normalized_route_primary_preserves_all_valid_compact_bounds",
@@ -213,6 +217,9 @@
       "global::const_dsl::scope_ranges::nesting::kani::crossing_scope_ranges_are_rejected",
       "global::const_dsl::scope_ranges::nesting::kani::equal_projected_scope_ranges_follow_source_preorder",
       "global::const_dsl::scope_ranges::nesting::kani::strict_scope_containment_is_authoritative"
+    ],
+    "../../src/global/const_dsl/scope/kani.rs": [
+      "global::const_dsl::scope::kani::scope_id_decoding_accepts_exact_compact_domain"
     ],
     "../../src/global/event_program/kani.rs": [
       "global::event_program::kani::binary_roll_lookup_matches_all_rows_and_absent_identifiers"
@@ -415,13 +422,10 @@
       "transport::wire::kani::fixed_array_schema_identity_rejects_the_first_colliding_width"
     ]
   },
-  "contract-harnesses": {
-  },
-  "contracts": [
-
-  ],
+  "contract-harnesses": {},
+  "contracts": [],
   "totals": {
-    "standard-harnesses": 302,
+    "standard-harnesses": 304,
     "contract-harnesses": 0,
     "functions-under-contract": 0
   }

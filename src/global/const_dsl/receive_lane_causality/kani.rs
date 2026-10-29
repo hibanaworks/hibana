@@ -109,7 +109,10 @@ fn direction_index_is_the_last_matching_receive_in_every_subrange() {
             expected = Some(index + 1);
         }
     }
-    let directions = super::ReceiveDirectionIndex::new(&events, range.start, range.end);
+    let mut storage = [super::Direction::EMPTY; 4];
+    let _ = super::ReceiveDirectionIndex::new(&events, (0, events.len()), &mut storage);
+    let directions =
+        super::ReceiveDirectionIndex::new(&events, (range.start, range.end), &mut storage);
     assert_eq!(directions.last_change(earlier, range.start), expected);
     kani::cover!(expected.is_none());
     kani::cover!(expected == Some(1));

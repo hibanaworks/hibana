@@ -243,7 +243,11 @@ impl<const S: usize, const E: usize> Scratch<S, E> {
         right: At,
         context: &Context<'_>,
     ) -> bool {
-        let query = Query::new(source);
+        let query = Query::new(
+            source,
+            self.symbols.split_at(self.symbol_len).0,
+            &self.initial,
+        );
         let left_owner = query.owner(left, context);
         let right_owner = query.owner(right, context);
         let scope = match (left_owner, right_owner) {

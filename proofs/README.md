@@ -41,6 +41,13 @@ completion, close and abort. Mutation checks establish that the comparisons
 can detect incorrect ownership, unwanted serialization and lost dependencies.
 This is executable correspondence testing, not a complete Rust refinement proof.
 
+Local-image validation checks operation presence, direction and storage order
+without using the iterator that generates those rows. It uses the global events
+and actor bindings produced by the source compiler. The binding derivation is
+shared; this is not a compiler-independent proof of the complete projection.
+The [projection checks](checks/projection/endpoint-delegation/README.md) describe
+the separate ownership, row and dependency checks.
+
 The syntax-depth catalog generates trees from individual messages, `seq`,
 `par`, `route`, resolved `route` and `roll`. Both children of every binary
 constructor independently range over the grammar. A message has depth zero;

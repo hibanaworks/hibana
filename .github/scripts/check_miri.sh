@@ -285,6 +285,17 @@ run_miri_test \
   global::role_program::image_impl::ref_access::tests::actor_rows
 
 run_miri_test \
+  receive-direction-coloring \
+  -p hibana --lib \
+  global::const_dsl::allocation::receive_lanes::tests
+
+run_miri_test \
+  receive-direction-workspace-reuse \
+  -p hibana --lib \
+  global::const_dsl::receive_lane_causality::tests::direction_workspace_reuse_matches_full_scans_for_every_subrange \
+  -- --exact
+
+run_miri_test \
   owned-actor-image \
   -p hibana \
   --lib \

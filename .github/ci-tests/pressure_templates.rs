@@ -24,8 +24,22 @@ pub fn projected_pair() -> (RoleProgram<0>, RoleProgram<1>) {
     (project(&program), project(&program))
 }
 "###;
+pub const RECEIVE_CYCLES: &str = r###"#![no_std]
+#![deny(warnings)]
+#![forbid(long_running_const_eval)]
+
+use hibana::g;
+use hibana::runtime::program::{project, RoleProgram};
+
+#[inline(never)]
+pub fn projected_roles() -> (RoleProgram<0>, RoleProgram<1>, RoleProgram<2>, RoleProgram<3>, RoleProgram<4>, RoleProgram<5>, RoleProgram<6>, RoleProgram<7>) {
+    let program = {PROGRAM};
+    (project(&program), project(&program), project(&program), project(&program), project(&program), project(&program), project(&program), project(&program))
+}
+"###;
 pub const CAUSAL: &str = r###"#![no_std]
 #![deny(warnings)]
+#![forbid(long_running_const_eval)]
 
 use hibana::g;
 use hibana::runtime::program::{project, RoleProgram};
@@ -38,6 +52,7 @@ pub fn projected_roles() -> (RoleProgram<0>, RoleProgram<1>, RoleProgram<2>) {
 "###;
 pub const ROUTE: &str = r###"#![no_std]
 #![deny(warnings)]
+#![forbid(long_running_const_eval)]
 
 use hibana::g;
 use hibana::runtime::program::{project, RoleProgram};
@@ -70,6 +85,7 @@ pub fn projected_pair() -> (RoleProgram<0>, RoleProgram<1>) {
 "###;
 pub const MESSAGE: &str = r###"#![no_std]
 #![deny(warnings)]
+#![forbid(long_running_const_eval)]
 
 use hibana::g;
 use hibana::runtime::program::{project, RoleProgram};

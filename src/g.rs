@@ -290,10 +290,7 @@ where
         crate::global::const_dsl::validate_parallel_endpoint_selectors(Self::SOURCE_EFF_LIST);
     const REENTRY_SELECTORS: bool =
         crate::global::const_dsl::validate_roll_reentry_endpoint_selectors(Self::SOURCE_EFF_LIST);
-    const REENTRY_KNOWLEDGE: bool = match Self::SOURCE.actors() {
-        Some(actors) => actors.has_reentry_knowledge(&Steps::SOURCE_NODE),
-        None => true,
-    };
+    const REENTRY_KNOWLEDGE: bool = ProgramSourceData::<CAPACITY>::reentry_knowledge::<Steps>();
     const PASSIVE_ERROR: Option<ProgramSourceError> =
         crate::global::compiled::lowering::validate_passive_child_projection_guarantees(
             Self::SOURCE_EFF_LIST.scope_markers(),

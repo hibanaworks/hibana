@@ -5,6 +5,44 @@ use super::{
 use std::vec::Vec;
 
 #[test]
+fn direction_workspace_reuse_matches_full_scans_for_every_subrange() {
+    let mut events = EffList::<5>::new();
+    for (from, to, lane) in [
+        (255, 128, 0),
+        (1, 128, 255),
+        (0, 128, 0),
+        (255, 128, 0),
+        (128, 128, 0),
+    ] {
+        let mut atom = event(from, to);
+        atom.lane = lane;
+        events.push_event_mut(atom);
+    }
+    let mut storage = [super::Direction::EMPTY; 5];
+    for start in (0..=events.len()).rev().chain(0..=events.len()) {
+        for end in start..=events.len() {
+            let index = super::ReceiveDirectionIndex::new(&events, (start, end), &mut storage);
+            for query in 0..events.len() {
+                let seed = events.atom_at(query);
+                for cutoff in start..=end {
+                    let expected = (cutoff..end)
+                        .filter(|&candidate| {
+                            let atom = events.atom_at(candidate);
+                            atom.from != atom.to
+                                && atom.to == seed.to
+                                && atom.lane == seed.lane
+                                && atom.from != seed.from
+                        })
+                        .next_back()
+                        .map(|event| event + 1);
+                    assert_eq!(index.last_change(seed, cutoff), expected);
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn reentry_boundaries_match_nested_shared_and_adjacent_rolls() {
     for regions in [
         &[][..],

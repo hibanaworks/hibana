@@ -5,6 +5,49 @@ mod receive_causality;
 mod reentry_knowledge;
 
 #[test]
+fn transfer_role_index_preserves_components_across_every_role() {
+    use tree::{EndpointKey, Message, Payload, Source};
+    for role in 0..=u8::MAX {
+        let first = EndpointKey { component: 7, role };
+        let second = EndpointKey {
+            component: u16::MAX,
+            role: role.wrapping_add(1),
+        };
+        let left = Source::Send(Message {
+            from: first,
+            to: second,
+            label: 1,
+            payload: Payload::Endpoint(first),
+        });
+        let right = Source::Send(Message {
+            payload: Payload::Endpoint(second),
+            ..left.message_at(0)
+        });
+        let pair = Source::seq(&left, &right);
+        let rolled = Source::roll(&pair);
+        let alternatives = Source::route(&left, &rolled, Some(1));
+        for source in [&pair, &rolled, &alternatives] {
+            assert!(source.has_delegation());
+            for key in [
+                first,
+                second,
+                EndpointKey { component: 0, role },
+                EndpointKey {
+                    component: 0,
+                    ..second
+                },
+            ] {
+                let expected = (0..source.event_count()).find(|&event| {
+                    matches!(source.message_at(event).payload, Payload::Endpoint(payload) if payload.same(key))
+                });
+                assert_eq!(source.first_transfer(key), expected);
+                assert_eq!(source.transfers(key), expected.is_some());
+            }
+        }
+    }
+}
+
+#[test]
 fn first_transfer_matches_linear_source_enumeration_for_every_small_tree() {
     use tree::{EndpointKey, Message, Payload, Source};
     fn pair<'a>(a: &'a Source<'a>, b: &'a Source<'a>, shape: u8) -> Source<'a> {

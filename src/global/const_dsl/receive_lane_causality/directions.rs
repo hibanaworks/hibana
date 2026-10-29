@@ -3,7 +3,7 @@ use crate::{eff::EffAtom, global::const_dsl::EffList};
 const ABSENT: u16 = u16::MAX;
 
 #[derive(Clone, Copy)]
-struct Direction {
+pub(super) struct Direction {
     key: u16,
     sender: u8,
     latest: u16,
@@ -11,7 +11,7 @@ struct Direction {
 }
 
 impl Direction {
-    const EMPTY: Self = Self {
+    pub(super) const EMPTY: Self = Self {
         key: 0,
         sender: 0,
         latest: ABSENT,
@@ -22,14 +22,14 @@ impl Direction {
 /// Source-only lookup for the last receive from a different sender. Each
 /// direction needs its latest event and its latest event from another sender.
 /// Entries are sorted by logical receiver/lane; no actor ownership is stored.
-pub(super) struct ReceiveDirectionIndex<const E: usize> {
-    directions: [Direction; E],
+pub(super) struct ReceiveDirectionIndex<'a> {
+    directions: &'a mut [Direction],
     len: usize,
     start: usize,
     end: usize,
 }
 
-impl<const E: usize> ReceiveDirectionIndex<E> {
+impl<'a> ReceiveDirectionIndex<'a> {
     const fn position(&self, key: u16) -> usize {
         let mut low = 0;
         let mut high = self.len;
@@ -44,12 +44,21 @@ impl<const E: usize> ReceiveDirectionIndex<E> {
         low
     }
 
-    pub(super) const fn new(events: &EffList<E>, start: usize, end: usize) -> Self {
-        if start > end || end > events.len() || events.len() > u16::MAX as usize {
+    pub(super) const fn new<const E: usize>(
+        events: &EffList<E>,
+        range: (usize, usize),
+        storage: &'a mut [Direction],
+    ) -> Self {
+        let (start, end) = range;
+        if start > end
+            || end > events.len()
+            || events.len() > u16::MAX as usize
+            || storage.len() < end - start
+        {
             crate::invariant();
         }
         let mut index = Self {
-            directions: [Direction::EMPTY; E],
+            directions: storage,
             len: 0,
             start,
             end,
