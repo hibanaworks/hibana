@@ -116,4 +116,24 @@
 ; EXPECT: unsat
 (check-sat)
 (pop)
+; Role sets are unchanged when intersection reads four 64-bit words.
+(declare-const roles-left (_ BitVec 256))
+(declare-const roles-right (_ BitVec 256))
+(define-fun word-intersection-empty () Bool
+  (and (= (bvand ((_ extract 63 0) roles-left) ((_ extract 63 0) roles-right)) (_ bv0 64))
+       (= (bvand ((_ extract 127 64) roles-left) ((_ extract 127 64) roles-right)) (_ bv0 64))
+       (= (bvand ((_ extract 191 128) roles-left) ((_ extract 191 128) roles-right)) (_ bv0 64))
+       (= (bvand ((_ extract 255 192) roles-left) ((_ extract 255 192) roles-right)) (_ bv0 64))))
+(push)
+(assert (distinct word-intersection-empty (= (bvand roles-left roles-right) (_ bv0 256))))
+; EXPECT: unsat
+(check-sat)
+(pop)
+(push)
+(assert (= (bvand ((_ extract 191 0) roles-left) ((_ extract 191 0) roles-right)) (_ bv0 192)))
+(assert (distinct (bvand roles-left roles-right) (_ bv0 256)))
+; Dropping the final word loses an obligation in the full wire-role domain.
+; EXPECT: sat
+(check-sat)
+(pop)
 (exit)

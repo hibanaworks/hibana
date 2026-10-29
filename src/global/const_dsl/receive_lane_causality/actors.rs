@@ -398,27 +398,13 @@ pub(crate) const fn receive_pair_is_causal<const E: usize, const D: usize>(
     {
         return false;
     }
-    let markers = events.scope_markers();
-    let mut index = 0;
-    while index < markers.len() {
-        let marker = markers.at(index);
-        // Markers are ordered by source offset. A later start cannot contain
-        // both receives, including when their order crosses a roll boundary.
-        if marker.offset() > earlier || marker.offset() > later {
-            break;
-        }
-        if !marker.event.is_primary_enter()
-            || !matches!(marker.scope_id.kind(), Some(ScopeKind::Roll))
-        {
-            index += 1;
-            continue;
-        }
-        let start = marker.offset();
-        let end = marker.segment_end();
-        if end <= start {
-            return false;
-        }
-        if earlier < end
+    let mut index = scope_offsets.enclosing_scope(earlier);
+    while index != u16::MAX {
+        let scope = scope_offsets.scopes[index as usize];
+        let start = scope.start as usize;
+        let end = scope.end as usize;
+        if matches!(scope.kind, ScopeKind::Roll)
+            && start <= later
             && later < end
             && !(Obligation {
                 events,
@@ -432,7 +418,7 @@ pub(crate) const fn receive_pair_is_causal<const E: usize, const D: usize>(
         {
             return false;
         }
-        index += 1;
+        index = scope.parent;
     }
     true
 }

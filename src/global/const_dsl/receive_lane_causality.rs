@@ -85,6 +85,7 @@ pub(crate) struct FlowIndex<const E: usize> {
     first_receive: [u16; CAUSAL_ROLE_COUNT],
     next_receive: [u16; E],
     reentry_end: [u16; E],
+    enclosing: [u16; E],
     scopes: [FlowScope; E],
     marker_len: usize,
     participants: participants::Participants<E>,
@@ -97,6 +98,8 @@ struct FlowScope {
     split: u16,
     end: u16,
     kind: ScopeKind,
+    parent: u16,
+    reentry_end: u16,
 }
 
 impl<const E: usize> FlowIndex<E> {
@@ -113,12 +116,15 @@ impl<const E: usize> FlowIndex<E> {
             first_receive: [u16::MAX; CAUSAL_ROLE_COUNT],
             next_receive: [u16::MAX; E],
             reentry_end: [u16::MAX; E],
+            enclosing: [u16::MAX; E],
             scopes: [FlowScope {
                 next: markers.len() as u16,
                 start: 0,
                 split: 0,
                 end: 0,
                 kind: ScopeKind::Roll,
+                parent: u16::MAX,
+                reentry_end: u16::MAX,
             }; E],
             marker_len: markers.len(),
             participants: participants::Participants::new(events, actors),
@@ -159,6 +165,8 @@ impl<const E: usize> FlowIndex<E> {
                     split: split as u16,
                     end: end as u16,
                     kind,
+                    parent: u16::MAX,
+                    reentry_end: u16::MAX,
                 };
             } else {
                 result.scopes[marker].next = next;
@@ -166,39 +174,94 @@ impl<const E: usize> FlowIndex<E> {
         }
         let mut marker = 0;
         let mut event = 0;
-        let mut roll_ends = [u16::MAX; E];
-        let mut rolls = 0;
+        let mut ancestors = [u16::MAX; E];
+        let mut depth = 0;
         while event < events.len() {
             while marker < markers.len() && markers.at(marker).offset() < event {
                 marker += 1;
             }
             result.first[event] = marker as u16;
-            while rolls != 0 && roll_ends[rolls - 1] as usize <= event {
-                rolls -= 1;
+            while depth != 0 && result.scopes[ancestors[depth - 1] as usize].end as usize <= event {
+                depth -= 1;
             }
+            let inherited = depth;
             let mut entry = marker;
             while entry < markers.len() && markers.at(entry).offset() == event {
                 let scope = result.scopes[entry];
-                if markers.at(entry).event.is_primary_enter()
-                    && matches!(scope.kind, ScopeKind::Roll)
-                    && scope.end as usize > event
-                {
-                    // Structured source scopes are nested or disjoint.
-                    // The innermost live roll has the earliest ending point.
-                    if rolls != 0 && scope.end > roll_ends[rolls - 1] {
+                if markers.at(entry).event.is_primary_enter() && scope.end as usize > event {
+                    if inherited != 0
+                        && scope.end > result.scopes[ancestors[inherited - 1] as usize].end
+                    {
                         crate::invariant();
                     }
-                    roll_ends[rolls] = scope.end;
-                    rolls += 1;
+                    // Equal-offset markers may be emitted in another ID order.
+                    // Link their enclosing intervals from outermost to innermost.
+                    let mut place = depth;
+                    while place > inherited
+                        && scope.end > result.scopes[ancestors[place - 1] as usize].end
+                    {
+                        ancestors[place] = ancestors[place - 1];
+                        place -= 1;
+                    }
+                    ancestors[place] = entry as u16;
+                    depth += 1;
                 }
                 entry += 1;
             }
-            if rolls != 0 {
-                result.reentry_end[event] = roll_ends[rolls - 1];
+            let mut level = inherited;
+            while level < depth {
+                let entry = ancestors[level] as usize;
+                let parent = if level == 0 {
+                    u16::MAX
+                } else {
+                    ancestors[level - 1]
+                };
+                result.scopes[entry].parent = parent;
+                result.scopes[entry].reentry_end =
+                    if matches!(result.scopes[entry].kind, ScopeKind::Roll) {
+                        result.scopes[entry].end
+                    } else if parent == u16::MAX {
+                        u16::MAX
+                    } else {
+                        result.scopes[parent as usize].reentry_end
+                    };
+                level += 1;
+            }
+            if depth != 0 {
+                let inner = ancestors[depth - 1];
+                result.enclosing[event] = inner;
+                result.reentry_end[event] = result.scopes[inner as usize].reentry_end;
             }
             event += 1;
         }
         result
+    }
+
+    pub(crate) const fn enclosing_scope(&self, event: usize) -> u16 {
+        self.enclosing[event]
+    }
+
+    pub(crate) const fn parent_scope(&self, scope: u16) -> u16 {
+        self.scopes[scope as usize].parent
+    }
+
+    pub(crate) const fn parallel_sibling(
+        &self,
+        scope: u16,
+        start: usize,
+        end: usize,
+    ) -> Option<(usize, usize)> {
+        let scope = self.scopes[scope as usize];
+        if !matches!(scope.kind, ScopeKind::Parallel) {
+            return None;
+        }
+        if scope.start as usize <= start && end <= scope.split as usize {
+            Some((scope.split as usize, scope.end as usize))
+        } else if scope.split as usize <= start && end <= scope.end as usize {
+            Some((scope.start as usize, scope.split as usize))
+        } else {
+            None
+        }
     }
 
     /// Nonlocal receives at this logical role, in source order. Lane

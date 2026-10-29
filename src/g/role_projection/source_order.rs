@@ -36,20 +36,43 @@ pub(super) const fn check<Steps: ProgramShape, const E: usize>(image: &RoleImage
     if !check.same_source() {
         return false;
     }
-    if image.local_step_count() > E * 2 {
+    let row_count = image.local_step_count();
+    if row_count > E * 2 {
         return false;
     }
+    let order = image.program().source_order_index::<E>();
     let mut lane_heads = [u16::MAX; u8::MAX as usize + 1];
     let mut row = 0;
-    while row < image.local_step_count() {
+    while row < row_count {
         let Some(node) = image.local_step_node(row) else {
             crate::invariant()
         };
         let coordinates = SourceOrder::<E>::coordinates(node.action());
+        let Some(actors) = data.actors() else {
+            crate::invariant()
+        };
+        let Some(references) = actors.event_references(coordinates.0) else {
+            crate::invariant()
+        };
+        let actor = if matches!(node.action(), LocalAction::Recv { .. }) {
+            references[1]
+        } else {
+            references[0]
+        };
+        let dependency = image.dependency_for_index(row);
+        let guard_scope = match dependency {
+            Some(dependency) => match dependency.conflict() {
+                LocalConflict::RouteArm { scope, .. } => Some(check.source_scope(scope)),
+                LocalConflict::Unconditional | LocalConflict::SharedRoute => None,
+            },
+            None => None,
+        };
         check.rows[row / 2][row % 2] = Some(SourceRow {
             action: node.action(),
-            dependency: image.dependency_for_index(row),
+            dependency,
+            guard_scope,
             coordinates,
+            actor,
             previous_lane: lane_heads[coordinates.1 as usize],
         });
         lane_heads[coordinates.1 as usize] = row as u16;
@@ -57,17 +80,17 @@ pub(super) const fn check<Steps: ProgramShape, const E: usize>(image: &RoleImage
     }
     let mut selections = [None; E];
     let mut before = 0;
-    while before < image.local_step_count() {
+    while before < row_count {
         let left = check.operation(before);
         let (first, _) = check.row(before).coordinates;
         let mut source_successors = [false; E];
         mark_source_successors(check.source, 0, first, &mut source_successors);
         let mut after = 0;
-        while after < image.local_step_count() {
+        while after < row_count {
             let right = check.operation(after);
             let (second, _) = check.row(after).coordinates;
             let precedes = source_successors[second];
-            if image.program().source_precedes(first, second) != precedes {
+            if order.before(first, second) != precedes {
                 return false;
             }
             check.expected[after / 2][after % 2] = if first == second {
@@ -79,14 +102,14 @@ pub(super) const fn check<Steps: ProgramShape, const E: usize>(image: &RoleImage
             after += 1;
         }
         let mut after = 0;
-        while after < image.local_step_count() {
+        while after < row_count {
             let (second, _) = check.row(after).coordinates;
             if check.presence.merge_path(first, &mut selections)
                 && check.presence.merge_path(second, &mut selections)
             {
                 // Inactive pairs impose no obligation. Check precisely the
                 // common paths on which both source events can occur.
-                if !check.every_selection(before, after, &SourceContext::from_index(&selections)) {
+                if !check.every_selection(before, after, &mut selections) {
                     return false;
                 }
             }
@@ -146,8 +169,10 @@ struct SourceOrder<'a, const E: usize> {
 struct SourceRow {
     action: LocalAction,
     dependency: Option<LocalDependency>,
+    guard_scope: Option<SourceScope>,
     coordinates: (usize, u8),
     previous_lane: u16,
+    actor: u16,
 }
 
 impl<const E: usize> SourceOrder<'_, E> {
@@ -256,23 +281,22 @@ impl<const E: usize> SourceOrder<'_, E> {
     }
 
     const fn active(&self, row: usize, path: &SourceContext<'_>) -> Result<bool, SourceScope> {
-        let operation = self.operation(row);
         let (event, _) = self.row(row).coordinates;
         match self.presence.active(event, path) {
-            Ok(true) => (),
-            other => return other,
+            Ok(true) => self.holder_active(row, path),
+            other => other,
         }
+    }
+
+    const fn holder_active(
+        &self,
+        row: usize,
+        path: &SourceContext<'_>,
+    ) -> Result<bool, SourceScope> {
         let Some(actors) = self.data.actors() else {
             crate::invariant()
         };
-        let Some(references) = actors.event_references(event) else {
-            crate::invariant()
-        };
-        let mut actor = if matches!(operation, LocalAction::Recv { .. }) {
-            references[1]
-        } else {
-            references[0]
-        };
+        let mut actor = self.row(row).actor;
         while actor >= 256 {
             let Some((scope, branches)) = actors.decision(actor as usize - 256) else {
                 crate::invariant();
@@ -306,19 +330,24 @@ impl<const E: usize> SourceOrder<'_, E> {
         if before < dependency.start() || before >= dependency.end() {
             return Ok(false);
         }
-        self.dependency_active(dependency, path)
+        self.dependency_active(row, path)
     }
 
     const fn dependency_active(
         &self,
-        dependency: LocalDependency,
+        row: SourceRow,
         path: &SourceContext<'_>,
     ) -> Result<bool, SourceScope> {
+        let Some(dependency) = row.dependency else {
+            crate::invariant()
+        };
         match dependency.conflict() {
             LocalConflict::Unconditional => Ok(true),
             LocalConflict::SharedRoute => Ok(false),
-            LocalConflict::RouteArm { scope, arm } => {
-                let scope = self.source_scope(scope);
+            LocalConflict::RouteArm { arm, .. } => {
+                let Some(scope) = row.guard_scope else {
+                    crate::invariant()
+                };
                 match path.get(scope) {
                     Some(SourceArm::Left) => Ok(arm == 0),
                     Some(SourceArm::Right) => Ok(arm == 1),
@@ -344,12 +373,12 @@ impl<const E: usize> SourceOrder<'_, E> {
         {
             return Ok(true);
         }
-        match self.active(after, path) {
+        match self.holder_active(after, path) {
             Ok(true) => (),
             Ok(false) => return Ok(true),
             Err(scope) => return Err(scope),
         }
-        match self.active(before, path) {
+        match self.holder_active(before, path) {
             Ok(true) => (),
             Ok(false) => return Ok(true),
             Err(scope) => return Err(scope),
@@ -385,7 +414,7 @@ impl<const E: usize> SourceOrder<'_, E> {
             previous = self.row(middle).previous_lane;
         }
         if let Some(dependency) = row.dependency {
-            let edge = self.dependency_active(dependency, path);
+            let edge = self.dependency_active(row, path);
             if !matches!(edge, Ok(false)) {
                 let mut middle = dependency.start();
                 while middle < after && middle < dependency.end() {
@@ -418,25 +447,35 @@ impl<const E: usize> SourceOrder<'_, E> {
         }
     }
 
-    const fn every_selection(&self, before: usize, after: usize, path: &SourceContext<'_>) -> bool {
-        let scope = match self.pair(before, after, path) {
+    const fn every_selection(
+        &self,
+        before: usize,
+        after: usize,
+        selections: &mut [Option<SourceSelection>; E],
+    ) -> bool {
+        let scope = match self.pair(before, after, &SourceContext::from_index(selections)) {
             Ok(result) => return result,
             Err(scope) => scope,
         };
-        self.every_selection(
-            before,
-            after,
-            &path.select(SourceSelection {
-                scope,
-                arm: SourceArm::Left,
-            }),
-        ) && self.every_selection(
-            before,
-            after,
-            &path.select(SourceSelection {
+        let slot = scope.split as usize;
+        if slot >= E || selections[slot].is_some() {
+            return false;
+        }
+        selections[slot] = Some(SourceSelection {
+            scope,
+            arm: SourceArm::Left,
+        });
+        let left = self.every_selection(before, after, selections);
+        let right = if left {
+            selections[slot] = Some(SourceSelection {
                 scope,
                 arm: SourceArm::Right,
-            }),
-        )
+            });
+            self.every_selection(before, after, selections)
+        } else {
+            false
+        };
+        selections[slot] = None;
+        left && right
     }
 }

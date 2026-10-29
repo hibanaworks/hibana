@@ -47,6 +47,32 @@ impl<const ROLE_BYTES: usize> EndpointSet<ROLE_BYTES> {
     #[inline(always)]
     pub(in super::super) const fn is_disjoint(self, other: Self) -> bool {
         let mut byte = 0;
+        while byte + 8 <= ROLE_BYTES {
+            let left = u64::from_le_bytes([
+                self.0[byte],
+                self.0[byte + 1],
+                self.0[byte + 2],
+                self.0[byte + 3],
+                self.0[byte + 4],
+                self.0[byte + 5],
+                self.0[byte + 6],
+                self.0[byte + 7],
+            ]);
+            let right = u64::from_le_bytes([
+                other.0[byte],
+                other.0[byte + 1],
+                other.0[byte + 2],
+                other.0[byte + 3],
+                other.0[byte + 4],
+                other.0[byte + 5],
+                other.0[byte + 6],
+                other.0[byte + 7],
+            ]);
+            if left & right != 0 {
+                return false;
+            }
+            byte += 8;
+        }
         while byte < ROLE_BYTES {
             if self.0[byte] & other.0[byte] != 0 {
                 return false;
@@ -97,15 +123,7 @@ impl<const ROLE_BYTES: usize> LaneEndpointIndex<ROLE_BYTES> {
                 index.slot_by_lane[lane]
             };
             if let Some(actors) = actors {
-                let members = actors.possible_actors(idx);
-                let mut byte = 0;
-                while byte < members.len() {
-                    if byte >= ROLE_BYTES {
-                        panic!("actor lane domain is incomplete");
-                    }
-                    index.endpoints[slot as usize].0[byte] |= members[byte];
-                    byte += 1;
-                }
+                actors.include_possible_actors(idx, &mut index.endpoints[slot as usize].0);
             } else {
                 index.endpoints[slot as usize].insert(atom.from);
                 index.endpoints[slot as usize].insert(atom.to);
@@ -179,5 +197,58 @@ impl<const ROLE_BYTES: usize> LaneEndpointIndex<ROLE_BYTES> {
             },
             len: 3,
         }
+    }
+}
+
+#[cfg(kani)]
+#[kani::proof]
+#[kani::unwind(33)]
+fn wordwise_intersection_preserves_the_complete_role_domain() {
+    let left: [u8; 32] = kani::any();
+    let right: [u8; 32] = kani::any();
+    let mut expected = true;
+    for byte in 0..32 {
+        expected &= left[byte] & right[byte] == 0;
+    }
+    assert_eq!(EndpointSet(left).is_disjoint(EndpointSet(right)), expected);
+    kani::cover!(expected);
+    kani::cover!(!expected);
+}
+
+#[cfg(all(test, hibana_repo_tests))]
+mod tests {
+    use super::EndpointSet;
+
+    #[test]
+    fn intersection_preserves_every_role_bit_and_partial_word_boundary() {
+        for left in 0..256usize {
+            for right in 0..256usize {
+                let mut a = [0u8; 32];
+                let mut b = [0u8; 32];
+                a[left / 8] = 1 << (left % 8);
+                b[right / 8] = 1 << (right % 8);
+                assert_eq!(EndpointSet(a).is_disjoint(EndpointSet(b)), left != right);
+            }
+        }
+        fn boundaries<const N: usize>() {
+            for bit in 0..N * 8 {
+                let mut a = [0u8; N];
+                a[bit / 8] = 1 << (bit % 8);
+                assert!(!EndpointSet(a).is_disjoint(EndpointSet(a)));
+                assert!(EndpointSet(a).is_disjoint(EndpointSet([0; N])));
+            }
+            assert!(EndpointSet([0; N]).is_disjoint(EndpointSet([0; N])));
+        }
+        boundaries::<0>();
+        boundaries::<1>();
+        boundaries::<2>();
+        boundaries::<7>();
+        boundaries::<8>();
+        boundaries::<9>();
+        boundaries::<15>();
+        boundaries::<16>();
+        boundaries::<17>();
+        boundaries::<31>();
+        boundaries::<32>();
     }
 }

@@ -259,7 +259,7 @@ pub(super) fn profile_local_pass<const ROLE: u8, Steps, const CAPACITY: usize>(
 where
     Steps: ProgramShape,
 {
-    let image = core::hint::black_box(role_projection_image_for::<ROLE, Steps, CAPACITY>());
+    let image = core::hint::black_box(&RoleProjection::<ROLE, Steps, CAPACITY>::BUILT_IMAGE_REF);
     match pass {
         super::profiling::LocalPass::OperationOrder => {
             source_order::check::<Steps, CAPACITY>(image)

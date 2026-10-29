@@ -134,10 +134,12 @@ impl CompiledProgramRef {
         };
         image.resolver_index =
             BlobPtr::from_array_range(bytes, columns.blob_len() + len, resolver_extent * 2);
-        if N <= crate::global::const_dsl::ScopeId::LOCAL_CAPACITY as usize && scopes <= N {
-            image.validate_source_order::<N>();
-        } else {
-            image.validate_source_order::<{ crate::global::const_dsl::ScopeId::LOCAL_CAPACITY as usize }>();
+        if scopes != 0 {
+            if N <= crate::global::const_dsl::ScopeId::LOCAL_CAPACITY as usize && scopes <= N {
+                image.source_order_index::<N>();
+            } else {
+                image.source_order_index::<{ crate::global::const_dsl::ScopeId::LOCAL_CAPACITY as usize }>();
+            }
         }
         if N <= crate::global::const_dsl::ScopeId::LOCAL_CAPACITY as usize && resolver_extent <= N {
             image.validate_resolver_index::<N>();
@@ -148,10 +150,7 @@ impl CompiledProgramRef {
         image
     }
 
-    const fn validate_source_order<const E: usize>(&self) {
-        if self.source_scopes == 0 {
-            return;
-        }
+    pub(crate) const fn source_order_index<const E: usize>(&self) -> SourceOrderIndex<E> {
         let Some(index) = SourceOrderIndex::<E>::from_program(self) else {
             crate::invariant();
         };
@@ -165,6 +164,7 @@ impl CompiledProgramRef {
             }
             byte += 1;
         }
+        index
     }
 
     #[inline(always)]

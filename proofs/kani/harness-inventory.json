@@ -155,6 +155,9 @@
     "../../src/global/const_dsl/allocation/kani/scopes.rs": [
       "global::const_dsl::allocation::kani::scopes::route_scope_publication_is_closed_and_atomic"
     ],
+    "../../src/global/const_dsl/allocation/lane_matching/index.rs": [
+      "global::const_dsl::allocation::lane_matching::index::wordwise_intersection_preserves_the_complete_role_domain"
+    ],
     "../../src/global/const_dsl/endpoint_controller/kani.rs": [
       "global::const_dsl::endpoint_controller::kani::controller_merge_accepts_exact_single_role_domain"
     ],
@@ -407,7 +410,7 @@
 
   ],
   "totals": {
-    "standard-harnesses": 294,
+    "standard-harnesses": 295,
     "contract-harnesses": 0,
     "functions-under-contract": 0
   }

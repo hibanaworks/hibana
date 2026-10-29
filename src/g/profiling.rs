@@ -251,7 +251,7 @@ mod tests {
     }
 
     #[test]
-    fn ordinary_recoloring_counts_full_inspections() {
+    fn ordinary_recoloring_counts_partitioned_inspections() {
         let global = g::seq(
             g::send::<0, 2, g::Msg<1, ()>>(),
             g::send::<1, 2, g::Msg<2, ()>>(),
@@ -260,7 +260,7 @@ mod tests {
         assert!(result.receive_causal);
         assert_eq!((result.events, result.lanes), (2, 2));
         assert_eq!(result.full_inspections, 2);
-        assert_eq!(result.resumed_inspections, 0);
+        assert_eq!(result.resumed_inspections, 1);
         assert_eq!(result.recolorings, 1);
     }
 

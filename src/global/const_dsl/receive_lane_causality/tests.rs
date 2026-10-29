@@ -459,3 +459,53 @@ fn diagnostic_witness_matches_acceptance_for_bounded_structured_sources() {
         }
     }
 }
+
+#[test]
+fn enclosing_parallel_paths_match_full_marker_scans_for_every_interval() {
+    use super::super::parallel_arm_ranges_from_enter;
+    let mut events = EffList::<32>::new_partitioned(6, 26, 0);
+    for id in 0..6 {
+        events.push_event_mut(event(id % 3, (id + 1) % 3));
+    }
+    events.push_roll_scope_mut(ScopeId::roll_scope(0), 0, 6);
+    events.push_parallel_scope_mut(ScopeId::parallel(0), 0, 3, 6);
+    events.push_route_scope_mut(ScopeId::route(0), 0, 1, 3, ReentryMark::SinglePass);
+    events.push_roll_scope_mut(ScopeId::roll_scope(1), 1, 3);
+    events.push_parallel_scope_mut(ScopeId::parallel(1), 3, 4, 6);
+    events.push_roll_scope_mut(ScopeId::roll_scope(2), 4, 6);
+    let index = FlowIndex::new::<0>(&events, None);
+    for start in 0..events.len() {
+        for end in start + 1..=events.len() {
+            let mut expected = std::vec::Vec::new();
+            let markers = events.scope_markers();
+            for marker in 0..markers.len() {
+                let entry = markers.at(marker);
+                if entry.event.is_primary_enter()
+                    && matches!(entry.scope_id.kind(), Some(super::ScopeKind::Parallel))
+                {
+                    let (left, split, _, stop) =
+                        parallel_arm_ranges_from_enter(markers, marker).unwrap();
+                    if left <= start && end <= split {
+                        expected.push((split, stop));
+                    } else if split <= start && end <= stop {
+                        expected.push((left, split));
+                    }
+                }
+            }
+            let mut actual = std::vec::Vec::new();
+            let mut scope = index.enclosing_scope(start);
+            let mut visited = 0;
+            while scope != u16::MAX {
+                visited += 1;
+                assert!(visited <= markers.len(), "scope parent cycle");
+                if let Some(sibling) = index.parallel_sibling(scope, start, end) {
+                    actual.push(sibling);
+                }
+                scope = index.parent_scope(scope);
+            }
+            actual.sort_unstable();
+            expected.sort_unstable();
+            assert_eq!(actual, expected, "interval={start}..{end}");
+        }
+    }
+}

@@ -7,9 +7,7 @@ use crate::global::const_dsl::{
 };
 use crate::{
     g::SourceActorImage,
-    global::const_dsl::{
-        EffList, ScopeKind, parallel_arm_ranges_from_enter, route_arm_ranges_from_first_enter,
-    },
+    global::const_dsl::{EffList, ScopeKind, route_arm_ranges_from_first_enter},
 };
 
 const fn inspect<const E: usize>(
@@ -61,49 +59,30 @@ const fn align_range<const E: usize>(
         lane += 1;
     }
     // Only enclosing parallel scopes can have one side outside this arm.
-    let markers = events.scope_markers();
-    let mut marker_index = 0;
-    while marker_index < markers.len() {
-        let marker = markers.at(marker_index);
-        if marker.event.is_primary_enter()
-            && matches!(marker.scope_id.kind(), Some(ScopeKind::Parallel))
-        {
-            let Some((start, split, _, end)) =
-                parallel_arm_ranges_from_enter(markers, marker_index)
-            else {
-                crate::invariant()
-            };
-            let sibling = if start <= arm.0 && arm.1 <= split {
-                Some((split, end))
-            } else if split <= arm.0 && arm.1 <= end {
-                Some((start, split))
-            } else {
-                None
-            };
-            if let Some((start, end)) = sibling {
-                let siblings = LaneEndpointIndex::<BYTE_DOMAIN_MASK_BYTES>::from_range(
-                    events, actors, start, end,
-                );
-                lane = 0;
-                while lane < span {
-                    if members.contains_lane(lane as u8) {
-                        let mut color = 0;
-                        while color < span {
-                            if !members
-                                .endpoint_set(lane as u8)
-                                .is_disjoint(siblings.endpoint_set(color as u8))
-                            {
-                                edges[lane as usize * row_bytes + color as usize / 8] &=
-                                    !(1 << (color % 8));
-                            }
-                            color += 1;
+    let mut scope = scope_offsets.enclosing_scope(arm.0);
+    while scope != u16::MAX {
+        if let Some((start, end)) = scope_offsets.parallel_sibling(scope, arm.0, arm.1) {
+            let siblings =
+                LaneEndpointIndex::<BYTE_DOMAIN_MASK_BYTES>::from_range(events, actors, start, end);
+            lane = 0;
+            while lane < span {
+                if members.contains_lane(lane as u8) {
+                    let mut color = 0;
+                    while color < span {
+                        if !members
+                            .endpoint_set(lane as u8)
+                            .is_disjoint(siblings.endpoint_set(color as u8))
+                        {
+                            edges[lane as usize * row_bytes + color as usize / 8] &=
+                                !(1 << (color % 8));
                         }
+                        color += 1;
                     }
-                    lane += 1;
                 }
+                lane += 1;
             }
         }
-        marker_index += 1;
+        scope = scope_offsets.parent_scope(scope);
     }
     let first_inside = arm.0 <= conflict.0 && conflict.0 < arm.1;
     let second_inside = arm.0 <= conflict.1 && conflict.1 < arm.1;
@@ -266,6 +245,16 @@ pub(crate) const fn assign_receive_lanes<const E: usize>(
             } else {
                 BYTE_DOMAIN as u16
             };
+            changed = align_range(
+                events,
+                &scope_offsets,
+                actors,
+                (second, second + 1),
+                (first, second),
+                (span, colors),
+                #[cfg(hibana_profile)]
+                counters,
+            );
             let mut marker_index = events.scope_markers().len();
             while marker_index != 0 && !changed {
                 marker_index -= 1;
@@ -294,20 +283,6 @@ pub(crate) const fn assign_receive_lanes<const E: usize>(
                         }
                     }
                 }
-            }
-            if !changed {
-                // Refine the conflicting occurrence when no whole choice arm
-                // can move. The same constraints apply inside and outside routes.
-                changed = align_range(
-                    events,
-                    &scope_offsets,
-                    actors,
-                    (second, second + 1),
-                    (first, second),
-                    (span, colors),
-                    #[cfg(hibana_profile)]
-                    counters,
-                );
             }
             palette += 1;
         }

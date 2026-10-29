@@ -176,12 +176,28 @@ impl<const E: usize, const D: usize> ActorImage<E, D> {
     /// a current holder or authorize an operation. Backward references let each
     /// reachable node be processed once, without recursive expansion.
     pub(crate) const fn possible_actors(&self, event: usize) -> [u8; 32] {
+        let mut result = [0; 32];
+        self.include_possible_actors(event, &mut result);
+        result
+    }
+
+    pub(crate) const fn include_possible_actors<const N: usize>(
+        &self,
+        event: usize,
+        actors: &mut [u8; N],
+    ) {
         if event >= self.event_len {
             panic!("actor membership event outside source");
         }
         let pair = self.events[event];
         let roots = [pair.sender, pair.receiver];
-        let mut actors = [0u8; 32];
+        if pair.sender.0 < 256 && pair.receiver.0 < 256 {
+            let sender = pair.sender.0 as usize;
+            let receiver = pair.receiver.0 as usize;
+            actors[sender / 8] |= 1 << (sender % 8);
+            actors[receiver / 8] |= 1 << (receiver % 8);
+            return;
+        }
         let mut pending = [false; D];
         let mut bound = 0;
         let mut side = 0;
@@ -222,7 +238,6 @@ impl<const E: usize, const D: usize> ActorImage<E, D> {
                 }
             }
         }
-        actors
     }
 
     pub const fn decision(&self, index: usize) -> Option<(Scope, [u16; 2])> {
