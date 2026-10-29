@@ -30,6 +30,33 @@
 (check-sat)
 (pop)
 
+; Causal paths cannot leave their endpoint interval when every wire/source
+; edge preserves event order. Prefix expansion supplies no additional path.
+(declare-const first_position Int)
+(declare-const middle_position Int)
+(declare-const last_position Int)
+(declare-const lower_bound Int)
+(declare-const upper_bound Int)
+(push)
+(assert (and (<= lower_bound first_position)
+             (<= first_position middle_position)
+             (<= middle_position last_position)
+             (<= last_position upper_bound)))
+(assert (or (< middle_position lower_bound) (> middle_position upper_bound)))
+; EXPECT: unsat
+(check-sat)
+(pop)
+
+; Without source order, a path may leave the interval and return. This
+; countermodel prevents replacing the ordering premise with source preorder.
+(push)
+(assert (and (<= lower_bound first_position)
+             (<= last_position upper_bound)
+             (< middle_position lower_bound)))
+; EXPECT: sat
+(check-sat)
+(pop)
+
 ; A temporary return is not enough: reentry can move another resource needed
 ; for that return. A causally enclosing local resource supplies a safe guard.
 ; These are occurrences at one causally closed cut, not runtime fields.

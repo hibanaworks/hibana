@@ -72,4 +72,63 @@ theorem an_uninformed_reentry_origin_is_the_entry_owner
   · exact owns
   · exact False.elim (uninformed earlier order recipient)
 
+/-- Source-order edges increase the event number, and the wire edge keeps it.
+Every intermediate point in a causal path therefore lies between its endpoints. -/
+theorem causal_path_event_positions_are_monotone
+    {Point : Type} {edge : Point → Point → Prop} (position : Point → Nat)
+    (monotone : ∀ {a b}, edge a b → position a ≤ position b)
+    {a b : Point} (path : Relation.TransGen edge a b) : position a ≤ position b := by
+  induction path with
+  | single step => exact monotone step
+  | tail path step ih => exact Nat.le_trans ih (monotone step)
+
+/-- A query about two actions needs no predecessor before its first event or
+after its last event. This is a graph statement; Rust's bounded closure is
+also compared with the complete scan over selected seq/par/route/roll sources. -/
+theorem restricting_a_causal_query_to_its_event_interval_preserves_paths
+    {Point : Type} {edge : Point → Point → Prop} (position : Point → Nat)
+    (monotone : ∀ {a b}, edge a b → position a ≤ position b)
+    (lower upper : Nat) {a b : Point}
+    (starts : lower ≤ position a) (ends : position b ≤ upper) :
+    Relation.TransGen edge a b ↔
+      Relation.TransGen (fun x y => edge x y ∧ lower ≤ position x ∧ position y ≤ upper) a b := by
+  constructor
+  · intro path
+    have restrict : ∀ {x y}, Relation.TransGen edge x y →
+        lower ≤ position x → position y ≤ upper →
+        Relation.TransGen (fun p q => edge p q ∧ lower ≤ position p ∧ position q ≤ upper) x y := by
+      intro x y history
+      induction history with
+      | single step =>
+          intro first last
+          exact .single ⟨step, first, last⟩
+      | tail priorPath step ih =>
+          intro first last
+          exact .tail (ih first (Nat.le_trans (monotone step) last))
+            ⟨step, Nat.le_trans first (causal_path_event_positions_are_monotone position monotone priorPath), last⟩
+    exact restrict path starts ends
+  · intro path
+    have forgetBounds : ∀ {x y},
+        Relation.TransGen (fun p q => edge p q ∧ lower ≤ position p ∧ position q ≤ upper) x y →
+        Relation.TransGen edge x y := by
+      intro x y history
+      induction history with
+      | single step => exact .single step.1
+      | tail _ step ih => exact .tail ih step.1
+    exact forgetBounds path
+
+/-- Rechecking the same resource under the same source path changes no verdict.
+The representative retains the full endpoint key, including its component. -/
+theorem checking_one_representative_per_resource_preserves_the_verdict
+    {Index Key : Type} (key : Index → Key) (first : Index → Index)
+    (same : ∀ i, key (first i) = key i)
+    (stable : ∀ i, first (first i) = first i) (accepts : Key → Prop) :
+    (∀ i, accepts (key i)) ↔ (∀ i, first i = i → accepts (key i)) := by
+  constructor
+  · intro all i _
+    exact all i
+  · intro representatives i
+    have accepted := representatives (first i) (stable i)
+    exact (same i) ▸ accepted
+
 end Hibana

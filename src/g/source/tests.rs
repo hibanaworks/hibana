@@ -4,6 +4,69 @@ use crate::{Endpoint, g};
 mod receive_causality;
 mod reentry_knowledge;
 
+#[test]
+fn first_transfer_matches_linear_source_enumeration_for_every_small_tree() {
+    use tree::{EndpointKey, Message, Payload, Source};
+    fn pair<'a>(a: &'a Source<'a>, b: &'a Source<'a>, shape: u8) -> Source<'a> {
+        match shape {
+            0 => Source::Seq(a, b, a.event_count() + b.event_count()),
+            1 => Source::Par(a, b, a.event_count() + b.event_count()),
+            _ => Source::Route {
+                left: a,
+                right: b,
+                resolver: (shape == 3).then_some(7),
+                events: a.event_count() + b.event_count(),
+            },
+        }
+    }
+    let keys = [
+        EndpointKey {
+            component: 0,
+            role: 0,
+        },
+        EndpointKey {
+            component: 1,
+            role: 0,
+        },
+        EndpointKey {
+            component: u16::MAX,
+            role: u8::MAX,
+        },
+    ];
+    let mut checked = 0;
+    for word in 0usize..256 {
+        let leaves: [_; 4] = core::array::from_fn(|index| {
+            Source::Send(Message {
+                from: keys[0],
+                to: keys[1],
+                label: index as u8,
+                payload: match (word >> (2 * index)) & 3 {
+                    3 => Payload::Wire { schema: 0 },
+                    value => Payload::Endpoint(keys[value]),
+                },
+            })
+        });
+        for left_shape in 0..4 {
+            for right_shape in 0..4 {
+                let left = pair(&leaves[0], &leaves[1], left_shape);
+                let right = pair(&leaves[2], &leaves[3], right_shape);
+                let rolled = Source::Roll(&right, 2);
+                for root_shape in 0..4 {
+                    let root = pair(&left, &rolled, root_shape);
+                    for key in keys {
+                        let expected = (0..root.event_count()).find(|&event| {
+                            matches!(root.message_at(event).payload, Payload::Endpoint(payload) if payload.same(key))
+                        });
+                        assert_eq!(root.first_transfer(key), expected);
+                        checked += 1;
+                    }
+                }
+            }
+        }
+    }
+    assert_eq!(checked, 49_152);
+}
+
 const P: u8 = 0;
 const A: u8 = 1;
 const B: u8 = 2;

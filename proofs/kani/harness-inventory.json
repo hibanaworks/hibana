@@ -85,8 +85,13 @@
       "g::source::ownership::actors::reentry::kani::a_parallel_permit_does_not_authorize_an_independently_enabled_send",
       "g::source::ownership::actors::reentry::kani::a_remote_origin_without_a_fresh_permit_is_rejected",
       "g::source::ownership::actors::reentry::kani::an_unrelated_parallel_sender_needs_no_resource_permit",
+      "g::source::ownership::actors::reentry::kani::bounded_parallel_predecessors_preserve_every_queried_action",
+      "g::source::ownership::actors::reentry::kani::bounded_rolled_predecessors_preserve_every_queried_action",
+      "g::source::ownership::actors::reentry::kani::bounded_selected_predecessors_preserve_every_queried_action",
+      "g::source::ownership::actors::reentry::kani::bounded_sequential_predecessors_preserve_every_queried_action",
       "g::source::ownership::actors::reentry::kani::parallel_preorder_does_not_supply_a_resource_guard_handoff",
-      "g::source::ownership::actors::reentry::kani::receipt_causality_comes_from_the_actual_actor_handoff"
+      "g::source::ownership::actors::reentry::kani::receipt_causality_comes_from_the_actual_actor_handoff",
+      "g::source::ownership::actors::reentry::kani::source_first_transfer_preserves_the_complete_endpoint_key"
     ],
     "../../src/global/compiled/images/image/program_ref/actors/kani.rs": [
       "global::compiled::images::image::program_ref::actors::kani::actor_row_lookups_reject_every_out_of_range_index",
@@ -401,7 +406,7 @@
 
   ],
   "totals": {
-    "standard-harnesses": 288,
+    "standard-harnesses": 290,
     "contract-harnesses": 0,
     "functions-under-contract": 0
   }

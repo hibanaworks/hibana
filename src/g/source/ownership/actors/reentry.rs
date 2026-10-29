@@ -12,6 +12,10 @@ use super::{ActorImage, ActorRef};
 #[path = "reentry/kani.rs"]
 mod kani;
 
+#[cfg(all(test, hibana_repo_tests))]
+#[path = "reentry/tests.rs"]
+mod tests;
+
 pub(super) const fn check<const E: usize, const D: usize>(
     source: &Source<'_>,
     image: &ActorImage<E, D>,
@@ -183,7 +187,7 @@ impl<const E: usize, const D: usize> Checker<'_, E, D> {
                     };
                     let mut returning = [0; E];
                     returning[returned] = 2;
-                    match self.close_dependencies(self.root, 0, &mut returning, path) {
+                    match self.close_dependencies_after(self.root, 0, event, &mut returning, path) {
                         Ok(()) => (),
                         Err(scope) => return Err(scope),
                     }
@@ -252,7 +256,7 @@ impl<const E: usize, const D: usize> Checker<'_, E, D> {
         }
         let mut needed = [0; E];
         needed[second.0] = 1 << second.1;
-        match self.close_dependencies(self.root, 0, &mut needed, path) {
+        match self.close_dependencies_after(self.root, 0, first.0, &mut needed, path) {
             Ok(()) => Ok(needed[first.0] & (1 << first.1) != 0),
             Err(scope) => Err(scope),
         }
@@ -424,7 +428,76 @@ impl<const E: usize, const D: usize> Checker<'_, E, D> {
         Ok(true)
     }
 
+    /// Close this visit's action dependencies with the original source order.
     const fn close_dependencies(
+        &self,
+        source: &Source<'_>,
+        start: usize,
+        needed: &mut [u8; E],
+        path: &Context<'_>,
+    ) -> Result<(), Scope> {
+        self.close_dependencies_after(source, start, start, needed, path)
+    }
+
+    /// Queries about a suffix need no earlier predecessor. Source dependencies
+    /// strictly increase event position, so a path cannot leave the suffix and
+    /// return. Keeping the lower bound also avoids expanding irrelevant choices.
+    const fn close_dependencies_after(
+        &self,
+        source: &Source<'_>,
+        start: usize,
+        floor: usize,
+        needed: &mut [u8; E],
+        path: &Context<'_>,
+    ) -> Result<(), Scope> {
+        let begin = if floor > start { floor } else { start };
+        let mut event = start + source.event_count();
+        while event > begin && needed[event - 1] == 0 {
+            event -= 1;
+        }
+        while event > begin {
+            event -= 1;
+            if needed[event] & 2 != 0 {
+                needed[event] |= 1;
+            }
+            let mut side = 0;
+            while side < 2 {
+                if needed[event] & (1 << side) != 0 {
+                    let actor = match self.side(event, side, path) {
+                        Ok(actor) => actor,
+                        Err(choice) => return Err(choice),
+                    };
+                    let mut prior = begin;
+                    while prior < event {
+                        if source.before(prior - start, event - start) {
+                            let mut previous_side = 0;
+                            while previous_side < 2 {
+                                let previous = match self.side(prior, previous_side, path) {
+                                    Ok(actor) => actor,
+                                    Err(choice) => return Err(choice),
+                                };
+                                if previous == actor {
+                                    match Self::present(source, start, prior, path) {
+                                        Ok(true) => needed[prior] |= 1 << previous_side,
+                                        Ok(false) => (),
+                                        Err(choice) => return Err(choice),
+                                    }
+                                }
+                                previous_side += 1;
+                            }
+                        }
+                        prior += 1;
+                    }
+                }
+                side += 1;
+            }
+        }
+
+        Ok(())
+    }
+
+    #[cfg(any(kani, all(test, hibana_repo_tests)))]
+    const fn reference_close_dependencies(
         &self,
         source: &Source<'_>,
         start: usize,
@@ -528,6 +601,7 @@ impl<const E: usize, const D: usize> Checker<'_, E, D> {
                 while event < self.image.event_len {
                     if let Payload::Endpoint(key) = self.root.message_at(event).payload
                         && inner.uses(key)
+                        && matches!(self.root.first_transfer(key), Some(first) if first == event)
                         && !self.body(
                             &Body {
                                 source: inner,

@@ -134,4 +134,28 @@ impl Source<'_> {
             Self::Roll(body, _) => body.transfers(key),
         }
     }
+
+    /// The first source occurrence carrying this complete endpoint key.
+    /// Choice arms are source alternatives; this query does not select one.
+    pub const fn first_transfer(&self, key: EndpointKey) -> Option<usize> {
+        match self {
+            Self::Send(message) => {
+                if matches!(message.payload, Payload::Endpoint(payload) if payload.same(key)) {
+                    Some(0)
+                } else {
+                    None
+                }
+            }
+            Self::Seq(left, right, _)
+            | Self::Par(left, right, _)
+            | Self::Route { left, right, .. } => match left.first_transfer(key) {
+                Some(event) => Some(event),
+                None => match right.first_transfer(key) {
+                    Some(event) => Some(left.event_count() + event),
+                    None => None,
+                },
+            },
+            Self::Roll(body, _) => body.first_transfer(key),
+        }
+    }
 }
