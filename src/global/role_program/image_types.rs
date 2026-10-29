@@ -16,7 +16,9 @@ pub(crate) const ROLE_IMAGE_LANE_RANGE_STRIDE: usize = 4;
 pub(crate) const ROLE_IMAGE_ROUTE_ARM_LANE_STEP_STRIDE: usize = 5;
 pub(crate) const ROLE_IMAGE_ROLL_SCOPE_STRIDE: usize = 6;
 pub(crate) const ROLE_IMAGE_ROLL_ENTRY_STRIDE: usize = 7;
-pub(crate) const ROLE_IMAGE_STORAGE_BYTE_CAPACITY: usize = u16::MAX as usize
+// Each packed column has its own u16 byte/count domain. Their aggregate
+// address is wider; unrelated columns must not consume each other's span.
+pub(crate) const ROLE_IMAGE_STORAGE_BYTE_CAPACITY: usize = 19 * u16::MAX as usize
     + ScopeId::LOCAL_CAPACITY as usize * (ROLE_IMAGE_U16_STRIDE + 8)
     + (u16::MAX as usize / ROLE_IMAGE_EVENT_STRIDE) * 12;
 
@@ -376,14 +378,14 @@ mod blob_tests;
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ColumnRange {
-    pub(crate) offset: u16,
+    pub(crate) offset: u32,
     pub(crate) len: u16,
 }
 
 impl ColumnRange {
     #[inline(always)]
     pub(crate) const fn new(offset: usize, len: usize, stride: usize) -> Self {
-        if offset > u16::MAX as usize || len > u16::MAX as usize {
+        if offset > u32::MAX as usize || len > u16::MAX as usize {
             panic!("role image packed column descriptor overflow");
         }
         if stride == 0 {
@@ -393,11 +395,11 @@ impl ColumnRange {
             Some(byte_len) => byte_len,
             None => panic!("role image packed column byte range overflow"),
         };
-        if byte_len > (u16::MAX as usize - offset) {
+        if byte_len > u16::MAX as usize || byte_len > (u32::MAX as usize - offset) {
             panic!("role image packed column byte range overflow");
         }
         Self {
-            offset: offset as u16,
+            offset: offset as u32,
             len: len as u16,
         }
     }
@@ -595,7 +597,7 @@ pub(crate) struct RoleImageBuild<const N: usize> {
 #[derive(Clone, Copy)]
 pub(crate) struct RoleLaneImage<'a> {
     pub(crate) columns: &'a RoleImageColumns,
-    pub(crate) blob: BlobPtr,
+    pub(crate) bytes: &'static [u8],
 }
 
 #[derive(Clone, Copy)]

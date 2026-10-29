@@ -85,6 +85,23 @@ fn grammar_predecessors(source: &Source) -> Vec<u32> {
     }
 }
 
+fn predecessor_cut(source: &Source, before: usize, after: usize) -> Option<usize> {
+    match source {
+        Source::Atom => None,
+        Source::Roll(body) => predecessor_cut(body, before, after),
+        Source::Binary(kind, left, right) => {
+            let split = grammar_predecessors(left).len();
+            if after < split {
+                predecessor_cut(left, before, after)
+            } else if before < split {
+                (!matches!(kind, Composition::Sequential)).then_some(0)
+            } else {
+                predecessor_cut(right, before - split, after - split).map(|cut| split + cut)
+            }
+        }
+    }
+}
+
 #[derive(Debug, Default, PartialEq, Eq)]
 struct Counts {
     shapes: usize,
@@ -126,6 +143,15 @@ fn main() {
                             continue;
                         }
                         let mut prior = last;
+                        let mut cut_prior = last;
+                        while let Some(index) = cut_prior {
+                            let Some(cut) = predecessor_cut(&source, index, step) else { break };
+                            assert!(cut <= index);
+                            for omitted in cut..=index {
+                                assert_eq!(before[step] & (1 << omitted), 0);
+                            }
+                            cut_prior = (0..cut).rev().find(|&candidate| view & (1 << candidate) != 0);
+                        }
                         while let Some(index) = prior {
                             if before[step] & (1u32 << index) != 0 {
                                 break;
@@ -134,6 +160,7 @@ fn main() {
                             prior = links[index];
                         }
                         links[step] = prior;
+                        assert_eq!(cut_prior, prior, "interval skip: source={source:?} view={view} step={step}");
                         last = Some(step);
                         let exhaustive = before[step] & view;
                         let greatest = (exhaustive != 0)

@@ -62,30 +62,19 @@ impl LocalLaneFacts {
             crate::invariant();
         }
         let mut lanes = LocalLaneAccumulator::new();
-        let mut local_step = 0usize;
-        let mut local_start = None;
-        let mut local_len = 0usize;
-        let mut eff_idx = 0usize;
+        let local_row = rows.range(eff_list, start_eff, end_eff);
+        let mut local_step = local_row.start();
+        let mut eff_idx = start_eff;
         while eff_idx < end_eff {
             let atom = eff_list.atom_at(eff_idx);
             let mut side = 0;
             while side < rows.count(eff_list, eff_idx) {
-                if eff_idx >= start_eff {
-                    if local_start.is_none() {
-                        local_start = Some(local_step);
-                    }
-                    lanes.record(atom.lane, local_step);
-                    local_len += 1;
-                }
+                lanes.record(atom.lane, local_step);
                 local_step += 1;
                 side += 1;
             }
             eff_idx += 1;
         }
-        let local_row = match local_start {
-            Some(start) => PackedLaneRange::new(start, local_len),
-            None => PackedLaneRange::new(0, 0),
-        };
         Self {
             lanes,
             eff_range: (start_eff, end_eff),

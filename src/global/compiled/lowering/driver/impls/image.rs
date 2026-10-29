@@ -142,14 +142,18 @@ impl CompiledProgramImage {
     pub(crate) const fn role_lowering_counts<const E: usize>(
         &self,
         eff_list: &EffList<E>,
-        scopes: &crate::global::role_program::ScopeFacts,
+        scopes: &crate::global::role_program::ScopeFacts<E>,
         rows: crate::global::role_program::LocalRows<'_, E>,
+        operations: &crate::global::role_program::OperationIndex<E>,
     ) -> RoleCompiledCounts {
         if !self.contains_role(rows.actor()) {
             panic!("projected role is outside the choreography role range");
         }
         let (route_scope_count, max_route_commit_count) =
-            crate::global::role_program::retained_route_counts((eff_list, scopes), rows);
+            crate::global::role_program::retained_route_counts(
+                (eff_list, scopes),
+                operations.retained(),
+            );
         let role = crate::global::compiled::lowering::seal::exact_role_facts(eff_list, rows);
         RoleCompiledCounts {
             max_route_commit_count,

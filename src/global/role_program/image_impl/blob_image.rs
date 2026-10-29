@@ -14,18 +14,17 @@ use crate::global::typestate::{PackedEventConflict, PackedLocalDependency};
 
 mod lanes;
 mod layout;
-mod operation_index;
 mod receipts;
 mod route_index;
-mod route_topology;
+pub(super) mod route_topology;
 use layout::validate_role_image_layout;
 
 impl RoleImagePlan {
     pub(crate) const fn build_if_fits<const N: usize, const E: usize>(
         &self,
-        source: (&EffList<E>, &projection::ScopeFacts),
+        source: (&EffList<E>, &projection::ScopeFacts<E>),
         facts: RuntimeRoleFacts,
-        rows: projection::LocalRows<'_, E>,
+        rows: (projection::LocalRows<'_, E>, &super::OperationIndex<E>),
     ) -> Option<RoleImageBuild<N>> {
         if self.blob_len() > N {
             return None;
@@ -42,7 +41,7 @@ impl<const N: usize> RoleImageBuild<N> {
         role: u8,
         facts: RuntimeRoleFacts,
     ) -> RoleImageRef {
-        self.bytes.image_ref(program, role, facts, self.columns)
+        self.bytes.image_ref(program, role, facts, &self.columns)
     }
 }
 
@@ -58,29 +57,30 @@ impl<const N: usize> RoleImageBytes<N> {
         program: &'static CompiledProgramRef,
         role: u8,
         facts: RuntimeRoleFacts,
-        columns: RoleImageColumns,
+        columns: &'static RoleImageColumns,
     ) -> RoleImageRef {
         RoleImageRef::new(program, role, facts, columns, &self.bytes)
     }
 
     #[inline(always)]
     const fn write_u8(&mut self, offset: usize, value: u8) {
-        if offset >= self.bytes.len() {
-            panic!("role image");
-        }
         self.bytes[offset] = value;
     }
 
     #[inline(always)]
     const fn write_u16(&mut self, offset: usize, value: u16) {
-        self.write_u8(offset, value as u8);
-        self.write_u8(offset + 1, (value >> 8) as u8);
+        let bytes = value.to_le_bytes();
+        self.bytes[offset] = bytes[0];
+        self.bytes[offset + 1] = bytes[1];
     }
 
     #[inline(always)]
     const fn write_u32(&mut self, offset: usize, value: u32) {
-        self.write_u16(offset, value as u16);
-        self.write_u16(offset + 2, (value >> 16) as u16);
+        let bytes = value.to_le_bytes();
+        self.bytes[offset] = bytes[0];
+        self.bytes[offset + 1] = bytes[1];
+        self.bytes[offset + 2] = bytes[2];
+        self.bytes[offset + 3] = bytes[3];
     }
 
     #[inline(always)]
@@ -168,12 +168,13 @@ impl<const N: usize> RoleImageBytes<N> {
     }
 
     pub(crate) const fn emit<const E: usize>(
-        source: (&EffList<E>, &projection::ScopeFacts),
+        source: (&EffList<E>, &projection::ScopeFacts<E>),
         facts: RuntimeRoleFacts,
-        rows: projection::LocalRows<'_, E>,
+        rows: (projection::LocalRows<'_, E>, &super::OperationIndex<E>),
         columns: RoleImageColumns,
     ) -> RoleImageBuild<N> {
         let (eff_list, scopes) = source;
+        let (rows, operations) = rows;
         let footprint = facts.footprint();
         let local_len = footprint.local_step_count;
         let route_scope_len = footprint.route_scope_count;
@@ -182,48 +183,42 @@ impl<const N: usize> RoleImageBytes<N> {
 
         let mut out = Self::empty();
         let markers = eff_list.scope_markers();
-        let has_route = projection::scope_markers_contain_kind(markers, ScopeKind::Route);
         let mut dependency_row = 0usize;
         let mut conflict_row = 0usize;
         let mut local_step = 0usize;
-        let mut dependencies = projection::DependencyCursor::new(eff_list, scopes, rows);
-        let mut eff_idx = 0usize;
-        while eff_idx < eff_list.len() {
-            let atom = eff_list.atom_at(eff_idx);
-            let mut side = 0;
-            while side < rows.count(eff_list, eff_idx) {
-                if atom.lane as usize >= footprint.logical_lane_count {
-                    panic!("local event lane outside role logical domain");
-                }
-                let (mut event, event_conflict) =
-                    projection::local_event_row_for_eff(eff_list, eff_idx, rows, side);
-                let dependency = dependencies.next(eff_idx, atom.lane, local_step);
-                if !dependency.is_none() {
-                    out.write_dependency_row(columns.dependencies, dependency_row, dependency);
-                    event = event.with_dependency_row(dependency_row);
-                    dependency_row += 1;
-                }
-                let conflict = if has_route {
-                    event_conflict
-                } else {
-                    PackedEventConflict::none()
-                };
-                if !conflict.is_none() {
-                    out.w16(
-                        columns.conflicts,
-                        conflict_row,
-                        ROLE_IMAGE_CONFLICT_STRIDE,
-                        conflict.raw(),
-                    );
-                    event = event.with_conflict_row(conflict_row);
-                    conflict_row += 1;
-                }
-                out.write_event(columns.events, local_step, event);
-                out.w8(columns.lanes, local_step, ROLE_IMAGE_LANE_STRIDE, atom.lane);
-                local_step += 1;
-                side += 1;
+        while local_step < operations.len() {
+            let projected = operations.row(local_step);
+            if projected.lane as usize >= footprint.logical_lane_count {
+                panic!("local event lane outside role logical domain");
             }
-            eff_idx += 1;
+            let mut event = projected.event;
+            if !projected.dependency.is_none() {
+                out.write_dependency_row(
+                    columns.dependencies,
+                    dependency_row,
+                    projected.dependency,
+                );
+                event = event.with_dependency_row(dependency_row);
+                dependency_row += 1;
+            }
+            if !projected.conflict.is_none() {
+                out.w16(
+                    columns.conflicts,
+                    conflict_row,
+                    ROLE_IMAGE_CONFLICT_STRIDE,
+                    projected.conflict.raw(),
+                );
+                event = event.with_conflict_row(conflict_row);
+                conflict_row += 1;
+            }
+            out.write_event(columns.events, local_step, event);
+            out.w8(
+                columns.lanes,
+                local_step,
+                ROLE_IMAGE_LANE_STRIDE,
+                projected.lane,
+            );
+            local_step += 1;
         }
         if local_step != local_len
             || dependency_row != columns.dependencies.len as usize
@@ -274,7 +269,7 @@ impl<const N: usize> RoleImageBytes<N> {
             resident_row += 1;
         }
 
-        let retained = projection::retained_route_scopes(source, rows);
+        let retained = operations.retained();
         let mut retained_slots = [None; crate::global::const_dsl::ScopeId::LOCAL_CAPACITY as usize];
         let mut retained_count = 0usize;
         let mut index = 0usize;
@@ -314,7 +309,11 @@ impl<const N: usize> RoleImageBytes<N> {
                     ROLE_IMAGE_CONFLICT_STRIDE,
                     scope_conflict.raw(),
                 );
-                let Some(ranges) = projection::route_arm_ranges(markers, scope) else {
+                let Some(ranges) =
+                    crate::global::const_dsl::closed_route_arm_ranges_from_first_enter(
+                        markers, marker_idx,
+                    )
+                else {
                     panic!("route scope missing binary arm ranges");
                 };
                 let commit_len = projection::route_commit_row_count(scopes, scope);
@@ -438,7 +437,7 @@ impl<const N: usize> RoleImageBytes<N> {
                 if !row.is_absent_or_zero_len() {
                     let first_entry = roll_entry;
                     let mut role = 0usize;
-                    while role < 256 {
+                    while columns.roll_entry_view_count != 0 && role < 256 {
                         if let Some(actor) =
                             rows.roll_entry_actor(eff_list, marker.offset(), end_eff, role as u8)
                         {
@@ -500,9 +499,22 @@ impl<const N: usize> RoleImageBytes<N> {
             panic!("role image plan mismatch");
         }
 
-        out.write_operation_index(eff_list, columns);
+        if operations.len() != local_len {
+            panic!("operation index does not cover local rows");
+        }
+        let operation_index = columns.operation_index();
+        let mut slot = 0;
+        while slot < operations.len() {
+            out.w16(
+                operation_index,
+                slot,
+                ROLE_IMAGE_U16_STRIDE,
+                operations.at(slot) as u16,
+            );
+            slot += 1;
+        }
         out.write_route_index(columns);
-        out.write_route_topology(eff_list, scopes, columns);
+        out.write_route_topology(scopes, operations, columns);
         let offset = columns.blob_len();
         if offset > super::super::ROLE_IMAGE_STORAGE_BYTE_CAPACITY {
             panic!("role image");

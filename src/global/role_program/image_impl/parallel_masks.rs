@@ -151,6 +151,14 @@ impl MaskRows {
                 (right_start, right_stop)
             };
             self.range = Some((start, stop));
+            if rows.range(effects, start, stop).is_absent_or_zero_len() {
+                continue;
+            }
+            if matches!(rows, LocalRows::Role(_)) {
+                let view = rows.actor() as usize;
+                self.views[view / 8] |= 1 << (view % 8);
+                continue;
+            }
             let mut event = start;
             while event < stop {
                 let mut side = 0;

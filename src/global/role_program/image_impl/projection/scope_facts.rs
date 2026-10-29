@@ -1,6 +1,8 @@
 use crate::global::{
-    const_dsl::{EffList, ScopeId, ScopeKind, ScopeMarker},
-    typestate::LocalConflict,
+    const_dsl::{
+        EffList, ScopeId, ScopeKind, ScopeMarker, StructuredScopeRange, innermost_scope_range,
+    },
+    typestate::{LocalConflict, PackedEventConflict},
 };
 
 const SCOPE_KIND_COUNT: usize = 3;
@@ -9,19 +11,29 @@ const SCOPE_ORDINAL_COUNT: usize = ScopeId::LOCAL_CAPACITY as usize;
 /// Immutable compiler facts shared by every role projection. The index is
 /// exactly the encoded scope kind/ordinal domain, including sparse ordinals;
 /// no event-count ceiling or runtime storage is introduced.
-pub(crate) struct ScopeFacts {
+pub(crate) struct ScopeFacts<const E: usize> {
     parents: [[Option<LocalConflict>; SCOPE_ORDINAL_COUNT]; SCOPE_KIND_COUNT],
     entries: [[u16; SCOPE_ORDINAL_COUNT]; SCOPE_KIND_COUNT],
     route_count: usize,
+    event_scopes: [ScopeId; E],
+    event_conflicts: [PackedEventConflict; E],
+    order_heads: [u16; E],
+    order_parents: [u16; E],
+    order_ranges: [[u16; 3]; E],
 }
 
-impl ScopeFacts {
-    pub(crate) const fn new<const E: usize>(source: &EffList<E>) -> Self {
+impl<const E: usize> ScopeFacts<E> {
+    pub(crate) const fn new(source: &EffList<E>) -> Self {
         let markers = source.scope_markers();
         let mut facts = Self {
             parents: [[None; SCOPE_ORDINAL_COUNT]; SCOPE_KIND_COUNT],
             entries: [[u16::MAX; SCOPE_ORDINAL_COUNT]; SCOPE_KIND_COUNT],
             route_count: 0,
+            event_scopes: [ScopeId::none(); E],
+            event_conflicts: [PackedEventConflict::none(); E],
+            order_heads: [u16::MAX; E],
+            order_parents: [u16::MAX; E],
+            order_ranges: [[u16::MAX; 3]; E],
         };
         let mut index = 0usize;
         let mut routes = [0u16; E];
@@ -97,7 +109,147 @@ impl ScopeFacts {
             }
             index = limit;
         }
+        // Sweep source boundaries once for all roles. Entries at the same
+        // boundary can arrive in either nesting order.
+        let mut active = [(0u16, u16::MAX, u16::MAX); E];
+        let mut depth = 0usize;
+        let mut marker_index = 0usize;
+        let mut event = 0usize;
+        while event < source.len() {
+            while depth != 0 && markers.at(active[depth - 1].0 as usize).segment_end() <= event {
+                depth -= 1;
+            }
+            while marker_index < markers.len() && markers.at(marker_index).offset() <= event {
+                let marker = markers.at(marker_index);
+                if marker.event.is_enter() && event < marker.segment_end() {
+                    if marker_index >= u16::MAX as usize || depth >= E {
+                        crate::invariant();
+                    }
+                    let mut insert = depth;
+                    while insert != 0 {
+                        let outer = markers.at(active[insert - 1].0 as usize);
+                        let selected = innermost_scope_range(
+                            StructuredScopeRange::new(
+                                outer.scope_id,
+                                outer.offset(),
+                                outer.segment_end(),
+                            ),
+                            StructuredScopeRange::new(
+                                marker.scope_id,
+                                marker.offset(),
+                                marker.segment_end(),
+                            ),
+                        );
+                        if selected.scope().same(marker.scope_id) {
+                            break;
+                        }
+                        active[insert] = active[insert - 1];
+                        insert -= 1;
+                    }
+                    active[insert] = (marker_index as u16, u16::MAX, u16::MAX);
+                    if matches!(
+                        marker.scope_id.kind(),
+                        Some(ScopeKind::Parallel | ScopeKind::Route)
+                    ) {
+                        let primary = markers.at(facts.first_enter(marker.scope_id));
+                        let (split, end) = match primary.event.parallel_split() {
+                            Some(split) => (split, primary.segment_end()),
+                            None => match primary.event.route_end() {
+                                Some(end) => (primary.segment_end(), end),
+                                None => crate::invariant(),
+                            },
+                        };
+                        facts.order_ranges[marker_index] =
+                            [primary.offset() as u16, split as u16, end as u16];
+                    }
+                    depth += 1;
+                    while insert < depth {
+                        let entry = active[insert].0;
+                        active[insert].1 = if matches!(
+                            markers.at(entry as usize).scope_id.kind(),
+                            Some(ScopeKind::Route)
+                        ) {
+                            entry
+                        } else if insert == 0 {
+                            u16::MAX
+                        } else {
+                            active[insert - 1].1
+                        };
+                        let parent = if insert == 0 {
+                            u16::MAX
+                        } else {
+                            active[insert - 1].2
+                        };
+                        active[insert].2 = if matches!(
+                            markers.at(entry as usize).scope_id.kind(),
+                            Some(ScopeKind::Parallel | ScopeKind::Route)
+                        ) {
+                            facts.order_parents[entry as usize] = parent;
+                            entry
+                        } else {
+                            parent
+                        };
+                        insert += 1;
+                    }
+                }
+                marker_index += 1;
+            }
+            if depth != 0 {
+                let (entry, route, order) = active[depth - 1];
+                facts.order_heads[event] = order;
+                facts.event_scopes[event] = markers.at(entry as usize).scope_id;
+                if route != u16::MAX {
+                    let route = markers.at(route as usize);
+                    let Some(arm) = route.event.route_arm() else {
+                        crate::invariant();
+                    };
+                    facts.event_conflicts[event] =
+                        PackedEventConflict::route_arm(route.scope_id, arm);
+                }
+            }
+            event += 1;
+        }
         facts
+    }
+
+    /// If a binary sibling separates the pair, every source occurrence from
+    /// its entry through `before` is also excluded. The next candidate must
+    /// lie strictly before this cut.
+    pub(in crate::global::role_program::image_impl) const fn predecessor_cut(
+        &self,
+        source: &EffList<E>,
+        before: usize,
+        after: usize,
+    ) -> Option<usize> {
+        if before >= after || after >= source.len() {
+            return Some(after);
+        }
+        let mut entry = self.order_heads[before];
+        while entry != u16::MAX {
+            let [start, split, end] = self.order_ranges[entry as usize];
+            if before < split as usize && split as usize <= after && after < end as usize {
+                return Some(start as usize);
+            }
+            if entry == self.order_heads[after] {
+                return None;
+            }
+            entry = self.order_parents[entry as usize];
+        }
+        None
+    }
+
+    pub(in crate::global::role_program::image_impl) const fn event_scope(
+        &self,
+        event: usize,
+    ) -> ScopeId {
+        self.event_scopes[event]
+    }
+
+    pub(in crate::global::role_program::image_impl) const fn event_conflict(
+        &self,
+        event: usize,
+    ) -> PackedEventConflict {
+        self.event_conflicts[event]
     }
 
     const fn end(marker: ScopeMarker) -> usize {
@@ -141,7 +293,7 @@ impl ScopeFacts {
     }
 
     #[inline(always)]
-    pub(super) const fn route_count(&self) -> usize {
+    pub(in crate::global::role_program::image_impl) const fn route_count(&self) -> usize {
         self.route_count
     }
 }
@@ -321,6 +473,67 @@ mod tests {
             append(&shapes, shape, &mut 0, &mut source);
             let facts = ScopeFacts::new(&source);
             let markers = source.scope_markers();
+            for event in 0..source.len() {
+                assert!(
+                    facts
+                        .event_scope(event)
+                        .same(super::super::scope_at(&source, event)),
+                    "event scope shape={shape} event={event}"
+                );
+                assert_eq!(
+                    facts.event_conflict(event),
+                    super::super::route_conflict_for_eff(markers, event),
+                    "event conflict shape={shape} event={event}"
+                );
+                for after in 0..=source.len() {
+                    assert_eq!(
+                        event < after
+                            && after < source.len()
+                            && facts.predecessor_cut(&source, event, after).is_none(),
+                        if after == source.len() {
+                            false
+                        } else {
+                            super::super::super::blob_image::route_topology::source_precedes_scan(
+                                &source, &facts, event, after,
+                            )
+                        },
+                        "source order shape={shape} before={event} after={after}",
+                    );
+                    if event < after
+                        && after < source.len()
+                        && let Some(cut) = facts.predecessor_cut(&source, event, after)
+                    {
+                        assert!(cut <= event);
+                        for omitted in cut..=event {
+                            assert!(!super::super::super::blob_image::route_topology::source_precedes_scan(
+                                &source, &facts, omitted, after,
+                            ));
+                        }
+                    }
+                    if event < after
+                        && after < source.len()
+                        && facts.event_conflict(event).raw() == facts.event_conflict(after).raw()
+                    {
+                        for index in 0..markers.len() {
+                            let marker = markers.at(index);
+                            if marker.event.is_primary_enter()
+                                && matches!(marker.scope_id.kind(), Some(ScopeKind::Route))
+                            {
+                                let [(_, split), (_, end)] =
+                                    crate::global::const_dsl::route_arm_ranges_from_first_enter(
+                                        markers, index,
+                                    );
+                                assert!(
+                                    !(marker.offset() <= event
+                                        && event < split
+                                        && split <= after
+                                        && after < end)
+                                );
+                            }
+                        }
+                    }
+                }
+            }
             assert_eq!(
                 crate::global::compiled::lowering::validate_passive_child_projection_guarantees(
                     markers
@@ -372,6 +585,43 @@ mod tests {
             source.scope_markers().first_enter_index(scope).unwrap()
         );
         assert_eq!(facts.route_count(), 1);
+    }
+
+    #[test]
+    fn sparse_scope_kinds_keep_separate_entries_when_ordinals_match() {
+        let mut source = EffList::<16>::new_partitioned(6, 7, 0);
+        for label in 0..6 {
+            source.push_event_mut(EffAtom {
+                from: 0,
+                to: 1,
+                label,
+                payload: crate::eff::EventPayload::Wire(1),
+                origin: EventOrigin::User,
+                lane: 0,
+            });
+        }
+        let last = ScopeId::LOCAL_CAPACITY - 1;
+        let parallel = ScopeId::parallel(last);
+        let route = ScopeId::route(last);
+        source.push_parallel_scope_mut(parallel, 0, 1, 2);
+        source.push_route_scope_mut(
+            route,
+            2,
+            3,
+            5,
+            crate::global::const_dsl::ReentryMark::SinglePass,
+        );
+        let facts = ScopeFacts::new(&source);
+        for scope in [parallel, route] {
+            assert_eq!(
+                source.scope_markers().at(facts.first_enter(scope)).scope_id,
+                scope
+            );
+            assert_eq!(facts.conflict(scope), LocalConflict::Unconditional);
+        }
+        assert_eq!(facts.event_scope(0), parallel);
+        assert_eq!(facts.event_scope(2), route);
+        assert!(facts.event_scope(5).is_none());
     }
 
     #[test]

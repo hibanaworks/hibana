@@ -161,7 +161,7 @@ impl<'a> Query<'a> {
         previous: Value,
         context: &Context<'_>,
     ) -> Value {
-        if at.cut <= start {
+        if at.cut <= start || !source.transfers(at.key) {
             return previous;
         }
         match source {

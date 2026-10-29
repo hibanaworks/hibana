@@ -577,7 +577,7 @@ fn resident_lane_views_stay_compact() {
         core::mem::size_of::<BlobPtr>() == 2 * word
             && core::mem::size_of::<CompiledProgramRef>()
                 <= 3 * core::mem::size_of::<BlobPtr>() + 16
-            && core::mem::size_of::<RoleImageRef>() <= 14 * word
+            && core::mem::size_of::<RoleImageRef>() <= 64
             && core::mem::size_of::<RoleLaneImage<'static>>() <= 3 * word,
         "resident refs retain one checked byte bound without copying their image"
     );
@@ -604,15 +604,15 @@ fn assert_minimal_send_footprint(image: RoleDescriptorRef) {
     assert_eq!(columns.route_arm_lane_rows.len, 0);
     assert_eq!(columns.route_offer_lane_rows.len, 0);
     assert_eq!(columns.route_arm_lane_step_rows.len, 0);
-    assert_eq!(core::mem::size_of::<ColumnRange>(), 4);
+    assert_eq!(core::mem::size_of::<ColumnRange>(), 8);
     assert_eq!(
         core::mem::size_of::<ProgramImageColumns>(),
         4 * core::mem::size_of::<u16>(),
         "program columns must contain only atom, resolver, participant, and scope counts"
     );
     assert!(
-        core::mem::size_of::<RoleImageColumns>() < 15 * 5,
-        "RoleImageColumns must not retain stride or forbidden passive metadata"
+        core::mem::size_of::<RoleImageColumns>() == 16 * core::mem::size_of::<ColumnRange>(),
+        "the static layout contains fifteen spans and three counts, including alignment"
     );
     assert!(
         core::mem::size_of::<RuntimeRoleFacts>() < 14 * core::mem::size_of::<u16>(),
@@ -655,19 +655,37 @@ fn streaming_role_image_tracks_actual_event_count() {
     let plan = RoleImagePlan::from_program(
         (&OVER_LOCAL_STEP_CAPACITY_ATOMS, &scopes),
         facts,
-        LocalRows::Role(&crate::global::role_program::RoleLocalRows::new(
-            &OVER_LOCAL_STEP_CAPACITY_ATOMS,
-            0,
-        )),
+        (
+            LocalRows::Role(&crate::global::role_program::RoleLocalRows::new(
+                &OVER_LOCAL_STEP_CAPACITY_ATOMS,
+                0,
+            )),
+            &crate::global::role_program::OperationIndex::new(
+                (&OVER_LOCAL_STEP_CAPACITY_ATOMS, &scopes),
+                LocalRows::Role(&crate::global::role_program::RoleLocalRows::new(
+                    &OVER_LOCAL_STEP_CAPACITY_ATOMS,
+                    0,
+                )),
+            ),
+        ),
     );
     let build = plan
         .build_if_fits::<{ u16::MAX as usize }, { LOCAL_STEP_STRESS_ROW_BUDGET + 1 }>(
             (&OVER_LOCAL_STEP_CAPACITY_ATOMS, &scopes),
             facts,
-            LocalRows::Role(&crate::global::role_program::RoleLocalRows::new(
-                &OVER_LOCAL_STEP_CAPACITY_ATOMS,
-                0,
-            )),
+            (
+                LocalRows::Role(&crate::global::role_program::RoleLocalRows::new(
+                    &OVER_LOCAL_STEP_CAPACITY_ATOMS,
+                    0,
+                )),
+                &crate::global::role_program::OperationIndex::new(
+                    (&OVER_LOCAL_STEP_CAPACITY_ATOMS, &scopes),
+                    LocalRows::Role(&crate::global::role_program::RoleLocalRows::new(
+                        &OVER_LOCAL_STEP_CAPACITY_ATOMS,
+                        0,
+                    )),
+                ),
+            ),
         )
         .expect("streaming role descriptor fits the compact byte domain");
 
@@ -713,13 +731,25 @@ fn streaming_role_image_accepts_more_than_256_resident_rows() {
     let plan = RoleImagePlan::from_program(
         (&source, &scopes),
         facts,
-        LocalRows::Role(&crate::global::role_program::RoleLocalRows::new(&source, 0)),
+        (
+            LocalRows::Role(&crate::global::role_program::RoleLocalRows::new(&source, 0)),
+            &crate::global::role_program::OperationIndex::new(
+                (&source, &scopes),
+                LocalRows::Role(&crate::global::role_program::RoleLocalRows::new(&source, 0)),
+            ),
+        ),
     );
     let build = plan
         .build_if_fits::<{ u16::MAX as usize }, 2048>(
             (&source, &scopes),
             facts,
-            LocalRows::Role(&crate::global::role_program::RoleLocalRows::new(&source, 0)),
+            (
+                LocalRows::Role(&crate::global::role_program::RoleLocalRows::new(&source, 0)),
+                &crate::global::role_program::OperationIndex::new(
+                    (&source, &scopes),
+                    LocalRows::Role(&crate::global::role_program::RoleLocalRows::new(&source, 0)),
+                ),
+            ),
         )
         .expect("257 resident phases fit their exact role image");
 

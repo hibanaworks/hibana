@@ -14,6 +14,34 @@ mod route_commit;
 mod route_topology;
 
 #[test]
+fn source_boundaries_preserve_missing_events_and_both_actor_facets() {
+    type Loan<'r> = Msg<1, crate::Endpoint<'r, 2>>;
+    let global = g::seq(
+        g::send::<0, 1, Loan<'_>>(),
+        g::seq(
+            g::par(g::send::<2, 3, Msg<2, ()>>(), g::send::<4, 5, Msg<3, ()>>()),
+            g::seq(g::send::<1, 0, Loan<'_>>(), g::send::<2, 0, Msg<4, ()>>()),
+        ),
+    );
+    let program = project::<0>(&global);
+    let image = program.role_image_ref();
+    let rows = validation::ValidationRows::<16>::new(image);
+    let effects: std::vec::Vec<_> = (0..image.local_step_count())
+        .map(|step| image.local_step_effect(step).dense_ordinal())
+        .collect();
+    let source_len = image.program().columns.atom_count();
+    assert!(effects.len() < source_len);
+    assert!(effects.windows(2).any(|pair| pair[0] == pair[1]));
+    for source in (0..=source_len + 1).chain([usize::MAX]) {
+        assert_eq!(
+            rows.bound(source),
+            effects.partition_point(|effect| *effect < source),
+            "source boundary {source}"
+        );
+    }
+}
+
+#[test]
 fn ordinary_roll_rows_must_match_the_complete_source_projection() {
     let global = g::seq(
         g::send::<0, 1, Msg<1, ()>>().roll(),
@@ -57,7 +85,7 @@ fn reject(
     edit: impl FnOnce(&mut [u8; 2048], &mut RoleImageColumns, &mut RuntimeRoleFacts),
 ) {
     let mut bytes = copy(rows);
-    let mut columns = rows.columns;
+    let mut columns = *rows.columns;
     let mut facts = rows.facts;
     edit(&mut bytes, &mut columns, &mut facts);
     let bytes = Box::new(bytes);
@@ -67,7 +95,13 @@ fn reject(
             // discards its result inside this closure. The Box stays alive
             // throughout validation and no reference escapes, even on panic.
             let temporary = unsafe { &*core::ptr::from_ref(bytes.as_ref()) };
-            let _ = RoleImageRef::new(rows.program, rows.role, facts, columns, temporary);
+            let _ = RoleImageRef::new(
+                rows.program,
+                rows.role,
+                facts,
+                Box::leak(Box::new(columns)),
+                temporary,
+            );
         })
         .is_err()
     );
@@ -88,8 +122,12 @@ fn assert_lane_validation_dominates_raw_arm_reads(rows: &RoleImageRef) {
         for value in [0, 1, 7, 0x7f, 0x80, 0xff] {
             let mut bytes = copy(rows);
             bytes[offset] = value;
-            if !lane_columns_are_coherent(&bytes, columns, rows.active_lane_row(), rows.footprint())
-            {
+            if !lane_columns_are_coherent(
+                &bytes,
+                *columns,
+                rows.active_lane_row(),
+                rows.footprint(),
+            ) {
                 rejected += 1;
                 continue;
             }
@@ -97,10 +135,8 @@ fn assert_lane_validation_dominates_raw_arm_reads(rows: &RoleImageRef) {
             // SAFETY: the raw image is read only in this iteration. Its
             // stationary backing array remains live and no reference escapes.
             let bytes = unsafe { &*core::ptr::from_ref(&bytes) };
-            let raw = RoleLaneImage::new(
-                &rows.columns,
-                BlobPtr::from_array(bytes, columns.blob_len()),
-            );
+            let raw =
+                RoleLaneImage::new(rows.columns, BlobPtr::from_array(bytes, columns.blob_len()));
             for slot in 0..columns.route_scopes.len as usize {
                 for arm in 0..2 {
                     // A malformed prefix or bound must panic in the raw query.

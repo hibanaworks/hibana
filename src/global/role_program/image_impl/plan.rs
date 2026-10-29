@@ -40,9 +40,9 @@ impl RoleImagePlan {
     }
 
     pub(crate) const fn from_program<const E: usize>(
-        source: (&EffList<E>, &projection::ScopeFacts),
+        source: (&EffList<E>, &projection::ScopeFacts<E>),
         facts: RuntimeRoleFacts,
-        rows: projection::LocalRows<'_, E>,
+        rows: (projection::LocalRows<'_, E>, &super::OperationIndex<E>),
     ) -> Self {
         let counts =
             RoleImageColumnCounts::from_program(source, facts.footprint().logical_lane_count, rows);
@@ -125,49 +125,23 @@ impl RoleImageColumnCounts {
 
 impl RoleImageColumnCounts {
     pub(super) const fn from_program<const E: usize>(
-        source: (&EffList<E>, &projection::ScopeFacts),
+        source: (&EffList<E>, &projection::ScopeFacts<E>),
         logical_lane_count: usize,
-        rows: projection::LocalRows<'_, E>,
+        rows: (projection::LocalRows<'_, E>, &super::OperationIndex<E>),
     ) -> Self {
-        let (eff_list, scopes) = source;
+        let (eff_list, _) = source;
+        let (rows, operations) = rows;
         if logical_lane_count == 0 || logical_lane_count > LANE_DOMAIN_SIZE {
             panic!("role logical lane domain invalid");
         }
-        let markers = eff_list.scope_markers();
-        let has_route = projection::scope_markers_contain_kind(markers, ScopeKind::Route);
-        let mut local_step_count = 0usize;
-        let mut dependency_rows = 0usize;
-        let mut conflict_rows = 0usize;
-        let mut max_lane_plus_one = 0usize;
-        let mut dependencies = projection::DependencyCursor::new(eff_list, scopes, rows);
-        let mut idx = 0usize;
-        while idx < eff_list.len() {
-            let atom = eff_list.atom_at(idx);
-            let mut side = 0;
-            while side < rows.count(eff_list, idx) {
-                let lane_plus_one = atom.lane as usize + 1;
-                if lane_plus_one > logical_lane_count {
-                    panic!("local event lane outside role logical domain");
-                }
-                if lane_plus_one > max_lane_plus_one {
-                    max_lane_plus_one = lane_plus_one;
-                }
-                if !dependencies
-                    .next(idx, atom.lane, local_step_count)
-                    .is_none()
-                {
-                    dependency_rows += 1;
-                }
-                if has_route && !projection::route_conflict_for_eff(markers, idx).is_none() {
-                    conflict_rows += 1;
-                }
-                local_step_count += 1;
-                side += 1;
-            }
-            idx += 1;
+        let dependency_rows = operations.dependency_count;
+        let conflict_rows = operations.conflict_count;
+        let max_lane_plus_one = operations.max_lane;
+        if max_lane_plus_one > logical_lane_count {
+            panic!("local event lane outside role logical domain");
         }
         let resident_rows = Self::resident_row_count(eff_list, rows);
-        let route_facts = Self::route_facts(source, rows);
+        let route_facts = Self::route_facts(source, rows, operations.retained());
         let roll_scopes = Self::roll_scope_count(eff_list, rows);
         let roll_entry_views = Self::roll_entry_view_count(eff_list, rows);
         let mut owned_receipts = 0;
@@ -218,6 +192,9 @@ impl RoleImageColumnCounts {
         eff_list: &EffList<E>,
         rows: projection::LocalRows<'_, E>,
     ) -> usize {
+        if matches!(rows, projection::LocalRows::Role(_)) {
+            return 0;
+        }
         let markers = eff_list.scope_markers();
         let mut count = 0;
         let mut marker_idx = 0;
@@ -264,12 +241,12 @@ impl RoleImageColumnCounts {
     }
 
     const fn route_facts<const E: usize>(
-        source: (&EffList<E>, &projection::ScopeFacts),
+        source: (&EffList<E>, &projection::ScopeFacts<E>),
         rows: projection::LocalRows<'_, E>,
+        retained: &[bool],
     ) -> RouteImagePlanRouteFacts {
         let (eff_list, scopes) = source;
         let markers = eff_list.scope_markers();
-        let retained = projection::retained_route_scopes(source, rows);
         if !projection::scope_markers_contain_kind(markers, ScopeKind::Route) {
             return RouteImagePlanRouteFacts {
                 lane_bits: 0,
@@ -296,7 +273,11 @@ impl RoleImageColumnCounts {
                 if extent > facts.route_index_len {
                     facts.route_index_len = extent;
                 }
-                let Some(ranges) = projection::route_arm_ranges(markers, scope) else {
+                let Some(ranges) =
+                    crate::global::const_dsl::closed_route_arm_ranges_from_first_enter(
+                        markers, marker_idx,
+                    )
+                else {
                     panic!("route scope missing binary arm ranges");
                 };
                 let mut arm = 0usize;

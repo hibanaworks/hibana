@@ -233,8 +233,15 @@ impl<const E: usize> LocalRows<'_, E> {
     pub(crate) const fn count(self, effects: &EffList<E>, event: usize) -> usize {
         match self {
             Self::Role(rows) => {
-                let atom = effects.atom_at(event);
-                (atom.from == rows.role || atom.to == rows.role) as usize
+                if event >= rows.events || rows.events != effects.len() {
+                    crate::invariant();
+                }
+                let end = if event + 1 == rows.events {
+                    rows.len
+                } else {
+                    rows.starts[event + 1]
+                };
+                (end - rows.starts[event]) as usize
             }
             Self::Actor(rows) => {
                 if event >= rows.events || rows.events != effects.len() {

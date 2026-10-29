@@ -88,7 +88,7 @@ fn route_index_preserves_the_complete_compact_protocol_byte_span() {
     assert!(columns.blob_len() <= CAPACITY);
     let mut overlapping = columns;
     overlapping.dependencies = ColumnRange {
-        offset: u16::MAX - 1,
+        offset: u16::MAX as u32 - 1,
         len: 1,
     };
     assert!(overlapping.dependencies.end_offset(8) < columns.blob_len());

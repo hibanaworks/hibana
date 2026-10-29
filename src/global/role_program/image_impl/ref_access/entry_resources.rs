@@ -1,10 +1,9 @@
 //! Re-derive entry obligations from checked global atoms and local membership.
 //! Missing rows cannot disable the check. Nothing survives as runtime state.
-use super::{RoleImageRef, invalid_resident_descriptor};
-use crate::eff::EventPayload;
+use super::{RoleImageRef, invalid_resident_descriptor, validation::ValidationRows};
 
 impl RoleImageRef {
-    pub(super) const fn validate_roll_projection(&self) {
+    pub(super) const fn validate_roll_projection<const E: usize>(&self, rows: &ValidationRows<E>) {
         let owned = self.program.actor_binding_at(0).is_some();
         if !owned && self.columns.roll_entry_view_count != 0 {
             invalid_resident_descriptor();
@@ -12,7 +11,7 @@ impl RoleImageRef {
         let mut resources = [0u8; 32];
         let mut event = 0;
         while owned && event < self.program.columns.atom_count() {
-            if let EventPayload::Endpoint(role) = self.program.event_atom_at(event).payload {
+            if let Some(role) = self.program.event_endpoint(event) {
                 resources[role as usize / 8] |= 1 << (role % 8);
             }
             event += 1;
@@ -27,8 +26,8 @@ impl RoleImageRef {
                 continue;
             };
             marker += 1;
-            let first = self.source_event_bound(start);
-            let finish = self.source_event_bound(end);
+            let first = rows.bound(start);
+            let finish = rows.bound(end);
             if first == finish {
                 continue;
             }
@@ -59,7 +58,7 @@ impl RoleImageRef {
             let mut resource = 0;
             while resource <= self.program.facts.max_role as usize {
                 if resources[resource / 8] & (1 << (resource % 8)) != 0
-                    && let Some(owner) = self.source_entry_owner(start, end, resource as u8)
+                    && let Some(owner) = self.source_entry_owner(rows, start, end, resource as u8)
                 {
                     if expected >= range.end() {
                         invalid_resident_descriptor();
@@ -83,35 +82,21 @@ impl RoleImageRef {
         }
     }
 
-    /// Actor rows are already checked against the source projection in order.
-    /// Two bounds identify the exact local part of a source interval.
-    const fn source_event_bound(&self, event: usize) -> usize {
-        let mut low = 0;
-        let mut high = self.local_step_count();
-        while low < high {
-            let middle = low + (high - low) / 2;
-            let row = match self.lanes().local_step_event(middle) {
-                Some(row) => row,
-                None => invalid_resident_descriptor(),
-            };
-            if (row.eff_index as usize) < event {
-                low = middle + 1;
-            } else {
-                high = middle;
-            }
-        }
-        low
-    }
-
-    const fn source_entry_owner(&self, start: usize, end: usize, resource: u8) -> Option<u16> {
+    const fn source_entry_owner<const E: usize>(
+        &self,
+        rows: &ValidationRows<E>,
+        start: usize,
+        end: usize,
+        resource: u8,
+    ) -> Option<u16> {
         let mut event = start;
         while event < end {
-            let atom = self.program.event_atom_at(event);
-            let side = if atom.from == resource
-                || matches!(atom.payload, EventPayload::Endpoint(role) if role == resource)
+            let (from, to) = self.program.event_roles(event);
+            let side = if from == resource
+                || matches!(self.program.event_endpoint(event), Some(role) if role == resource)
             {
                 0
-            } else if atom.to == resource {
+            } else if to == resource {
                 1
             } else {
                 event += 1;
@@ -121,14 +106,10 @@ impl RoleImageRef {
                 Some(bindings) => bindings,
                 None => invalid_resident_descriptor(),
             };
-            let direction = if atom.from == atom.to { 0 } else { side + 1 };
-            let mut local = 0;
-            while local < self.local_step_count() {
-                let row = match self.lanes().local_step_event(local) {
-                    Some(row) => row,
-                    None => invalid_resident_descriptor(),
-                };
-                if row.eff_index as usize == event && row.direction() as usize == direction {
+            let direction = if from == to { 0 } else { side + 1 };
+            let mut local = rows.bound(event);
+            while local < rows.len && rows.effects[local] as usize == event {
+                if rows.directions[local] as usize == direction {
                     return Some(bindings[side]);
                 }
                 local += 1;

@@ -1,46 +1,37 @@
 //! Mandatory source/row reconstruction for the immutable parallel lane table.
 //! No live cursor, route selection or ownership state participates in a mask.
-use super::{RoleImageRef, invalid_resident_descriptor};
+use super::{RoleImageRef, invalid_resident_descriptor, validation::ValidationRows};
 use crate::global::role_program::{
-    LaneSetView, PackedLaneRange,
-    image_impl::{event_rows::RoleLocalDirection, parallel_masks::HEADER_BYTES},
+    LaneSetView, PackedLaneRange, image_impl::parallel_masks::HEADER_BYTES,
 };
 
 impl RoleImageRef {
     /// Reset tokens are needed when a view can borrow a parallel fragment
     /// inside a repeated region. A participant may hold separate endpoints
     /// for the different fragments. Use source scopes and validated local rows.
-    pub(super) const fn parallel_reentry_is_borrowable(&self) -> bool {
+    pub(super) const fn parallel_reentry_is_borrowable<const E: usize>(
+        &self,
+        rows: &ValidationRows<E>,
+    ) -> bool {
         if self.columns.roll_scopes.len == 0 {
             return false;
         }
         let mut marker = 0;
         while marker < self.program.source_scope_marker_count() {
             if let Some((start, _, end)) = self.program.source_parallel_at(marker)
-                && self.mask_row_start(start) < self.mask_row_start(end)
+                && rows.bound(start) < rows.bound(end)
+                && let Some(scope) = self.program.source_roll_containing(start, end)
             {
-                let mut repeated = false;
-                let mut roll_marker = 0;
-                while roll_marker < self.program.source_scope_marker_count() {
-                    if let Some((scope, body_start, body_end)) =
-                        self.program.source_roll_at(roll_marker)
-                        && body_start <= start
-                        && end <= body_end
-                    {
-                        let mut slot = 0;
-                        while let Some(row) = self.roll_scope_row(slot) {
-                            if row.scope().raw() == scope.raw() {
-                                repeated = true;
-                                break;
-                            }
-                            slot += 1;
-                        }
+                let mut slot = 0;
+                while let Some(row) = self.roll_scope_row(slot) {
+                    if row.scope().raw() == scope.raw() {
+                        return true;
                     }
-                    roll_marker += 1;
+                    slot += 1;
                 }
-                if repeated {
-                    return true;
-                }
+                // Resident validation requires a local row for every
+                // source repetition containing a local operation.
+                invalid_resident_descriptor();
             }
             marker += 1;
         }
@@ -86,41 +77,10 @@ impl RoleImageRef {
         end
     }
 
-    const fn mask_event(&self, row: usize) -> (u8, usize, u8) {
-        let Some(event) = self.lanes().local_step_event(row) else {
-            invalid_resident_descriptor();
-        };
-        let eff = event.eff_index as usize;
-        let atom = self.program.event_atom_at(eff);
-        let view = match event.direction() {
-            RoleLocalDirection::Recv => atom.to,
-            RoleLocalDirection::Local | RoleLocalDirection::Send => atom.from,
-        };
-        (view, eff, atom.lane)
-    }
-
-    /// Resident validation has already established the complete source-ordered
-    /// row projection and each row's direction, atom and lane. Locate the arm
-    /// without decoding unrelated conflicts or scanning the entire local image.
-    /// Equal source indices retain both facets of an actor-held communication.
-    const fn mask_row_start(&self, source: usize) -> usize {
-        let mut low = 0;
-        let mut high = self.local_step_count();
-        while low < high {
-            let middle = low + (high - low) / 2;
-            let Some(event) = self.lanes().local_step_event(middle) else {
-                invalid_resident_descriptor();
-            };
-            if (event.eff_index as usize) < source {
-                low = middle + 1;
-            } else {
-                high = middle;
-            }
-        }
-        low
-    }
-
-    pub(super) const fn validate_parallel_borrow_masks(&self) {
+    pub(super) const fn validate_parallel_borrow_masks<const E: usize>(
+        &self,
+        rows: &ValidationRows<E>,
+    ) {
         let mut offset = self.mask_table_start();
         let mut marker = 0;
         while marker < self.program.source_scope_marker_count() {
@@ -129,12 +89,12 @@ impl RoleImageRef {
                 let mut arm = 0;
                 while arm < 2 {
                     let (start, stop) = ranges[arm];
-                    let first = self.mask_row_start(start);
-                    let end = self.mask_row_start(stop);
+                    let first = rows.bound(start);
+                    let end = rows.bound(stop);
                     let mut views = [0u8; 32];
                     let mut event = first;
                     while event < end {
-                        let (view, _, _) = self.mask_event(event);
+                        let view = (rows.keys[event] >> 8) as u8;
                         views[view as usize / 8] |= 1 << (view % 8);
                         event += 1;
                     }
@@ -147,7 +107,8 @@ impl RoleImageRef {
                             let mut len = 0;
                             let mut event = first;
                             while event < end {
-                                let (actual, _, lane) = self.mask_event(event);
+                                let actual = rows.keys[event] >> 8;
+                                let lane = rows.keys[event] as u8;
                                 if actual as usize == view {
                                     bits[lane as usize / 8] |= 1 << (lane % 8);
                                     let bound = lane as usize / 8 + 1;
@@ -227,7 +188,10 @@ impl RoleImageRef {
 #[cfg(all(test, hibana_repo_tests))]
 mod tests {
     use super::*;
-    use crate::{g, global::role_program::project};
+    use crate::{
+        g,
+        global::role_program::{RoleLocalDirection, project},
+    };
     use std::{boxed::Box, panic::catch_unwind};
 
     #[test]
@@ -325,7 +289,7 @@ mod tests {
         }
         for mutation in 0..4 {
             let mut bytes = original;
-            let mut columns = rows.columns;
+            let mut columns = *rows.columns;
             let base = columns.lane_bits.offset as usize + first;
             match mutation {
                 0 => bytes[base] ^= 1,                     // another valid role identifier
@@ -355,7 +319,7 @@ mod tests {
                     rows.program,
                     rows.role,
                     rows.facts,
-                    columns,
+                    Box::leak(Box::new(columns)),
                     // SAFETY: this allocation stays live through validation.
                     // A rejected constructor cannot let its reference escape.
                     unsafe { &*bytes }

@@ -20,7 +20,7 @@ fn missing_wrong_owner_and_unrelated_roll_entry_resources_are_rejected() {
             bytes[index] = descriptor.proof_byte_at(index);
             index += 1;
         }
-        let columns = image.columns();
+        let columns = *image.columns();
         assert!(columns.roll_entry_view_count == 1);
         let entry = columns.roll_entry_views().offset as usize;
         assert!(bytes[entry] == 10 && bytes[entry + 1] == 1);
@@ -72,13 +72,7 @@ fn missing_wrong_owner_and_unrelated_roll_entry_resources_are_rejected() {
     }
     for (index, (columns, bytes)) in MUTANTS.iter().enumerate() {
         let result = std::panic::catch_unwind(|| {
-            RoleImageRef::new(
-                image.program(),
-                image.role(),
-                image.facts(),
-                *columns,
-                bytes,
-            )
+            RoleImageRef::new(image.program(), image.role(), image.facts(), columns, bytes)
         });
         assert!(
             result.is_err(),

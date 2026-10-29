@@ -45,20 +45,12 @@ impl RoleLocalDirection {
         }
     }
 
+    /// Receive keys precede outbound keys; equal keys retain source order.
     pub(super) const fn operation_index_key(self, from: u8, to: u8, label: u8) -> u32 {
         match self {
             Self::Recv => ((to as u32) << 8) | label as u32,
             Self::Local | Self::Send => (1 << 16) | ((from as u32) << 8) | label as u32,
         }
-    }
-}
-
-/// Receive keys precede outbound keys. The original step ordinal breaks ties,
-/// preserving source order for every requested direction, role and label.
-pub(super) const fn operation_index_key(flags: u8, from: u8, to: u8, label: u8) -> u32 {
-    match RoleLocalDirection::decode(flags) {
-        Some(direction) => direction.operation_index_key(from, to, label),
-        None => crate::invariant(),
     }
 }
 
@@ -297,7 +289,8 @@ impl PackedLocalEventRow {
             crate::invariant();
         }
         let eff_idx = self.eff_index as usize;
-        let atom = program.event_atom_at(eff_idx);
+        let (from, to, label) = program.event_message(eff_idx);
+        let (origin, lane) = program.event_origin_lane(eff_idx);
         let scope = self.scope;
         let route_arm = match conflict.to_conflict() {
             Some(LocalConflict::RouteArm { arm, .. }) => Some(arm),
@@ -307,10 +300,10 @@ impl PackedLocalEventRow {
         let eff_index = crate::eff::EffIndex::from_dense_ordinal(eff_idx);
         let facts = LocalAtomFacts {
             eff_index,
-            label: atom.label,
+            label,
             frame_label: self.eff_index,
-            origin: atom.origin,
-            lane: atom.lane,
+            origin,
+            lane,
         };
         let meta = LocalNodeMeta {
             next,
@@ -319,13 +312,9 @@ impl PackedLocalEventRow {
             choice: self.choice_mark(),
         };
         match self.direction() {
-            RoleLocalDirection::Local if atom.from == atom.to => LocalNode::local(facts, meta),
-            RoleLocalDirection::Send if atom.from != atom.to => {
-                LocalNode::send(atom.to, facts, meta)
-            }
-            RoleLocalDirection::Recv if atom.from != atom.to => {
-                LocalNode::recv(atom.from, facts, meta)
-            }
+            RoleLocalDirection::Local if from == to => LocalNode::local(facts, meta),
+            RoleLocalDirection::Send if from != to => LocalNode::send(to, facts, meta),
+            RoleLocalDirection::Recv if from != to => LocalNode::recv(from, facts, meta),
             RoleLocalDirection::Local | RoleLocalDirection::Send | RoleLocalDirection::Recv => {
                 crate::invariant()
             }

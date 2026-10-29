@@ -23,7 +23,7 @@ if ! "$LEAN_BIN" "$HERE/RouteTopology.lean" > "$topology_log" 2>&1; then
   exit 1
 fi
 cat "$topology_log"
-bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" lean "$topology_log" 3
+bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" lean "$topology_log" 4
 rustc +stable --edition=2024 -O "$HERE/source_shape_check.rs" \
   -o "$topology_evidence/source-shape-check"
 "$topology_evidence/source-shape-check"

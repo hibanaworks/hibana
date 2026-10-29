@@ -30,7 +30,7 @@ const fn valid_reference(reference: u16, decisions: usize, max_role: u8) -> bool
 }
 
 const fn source_order_word(bytes: &[u8], offset: usize) -> u16 {
-    u16::from_le_bytes([bytes[offset], bytes[offset + 1]])
+    bytes[offset] as u16 | (bytes[offset + 1] as u16) << 8
 }
 
 impl CompiledProgramRef {
@@ -134,16 +134,22 @@ impl CompiledProgramRef {
         }
         let bytes = self.source_order.as_slice();
         let mut scope = source_order_word(bytes, self.source_scopes as usize * 9 + before * 2);
+        let after_scope = source_order_word(bytes, self.source_scopes as usize * 9 + after * 2);
         while scope != u16::MAX {
             let row = scope as usize * 9;
             let split = source_order_word(bytes, row + 2) as usize;
-            let end = source_order_word(bytes, row + 4) as usize;
-            if before < split && split <= after && after < end {
+            if before < split
+                && split <= after
+                && after < source_order_word(bytes, row + 4) as usize
+            {
                 return if bytes[row + 8] == ScopeKind::Route as u8 {
                     Some((ScopeId::route(scope), split))
                 } else {
                     None
                 };
+            }
+            if scope == after_scope {
+                return None;
             }
             scope = source_order_word(bytes, row + 6);
         }
@@ -217,7 +223,10 @@ impl CompiledProgramRef {
     }
 
     #[inline]
-    const fn source_scope_bounds(&self, scope: ScopeId) -> Option<(usize, usize, usize)> {
+    pub(crate) const fn source_scope_bounds(
+        &self,
+        scope: ScopeId,
+    ) -> Option<(usize, usize, usize)> {
         let slot = scope.local_ordinal() as usize;
         if slot >= self.source_scopes as usize {
             return None;
@@ -236,6 +245,10 @@ impl CompiledProgramRef {
             source_order_word(bytes, row + 2) as usize,
             source_order_word(bytes, row + 4) as usize,
         ))
+    }
+
+    pub(crate) const fn source_scope_count(&self) -> usize {
+        self.source_scopes as usize
     }
 
     /// Enclosing repetitions, from the innermost source scope to the root.
@@ -259,6 +272,28 @@ impl CompiledProgramRef {
             scope = self.source_order_u16(ordinal as usize * 9 + 6);
             Some(ScopeId::roll_scope(ordinal))
         })
+    }
+
+    /// Innermost repetition containing the complete source interval. Follow
+    /// the checked repetition links rather than searching every scope marker.
+    pub(crate) const fn source_roll_containing(&self, start: usize, end: usize) -> Option<ScopeId> {
+        let offset = self.source_scopes as usize * 9 + self.columns.atom_count() * 2;
+        if start >= end
+            || end > self.columns.atom_count()
+            || self.source_scopes == 0
+            || offset == self.source_order.len()
+        {
+            return None;
+        }
+        let mut scope = self.source_order_u16(offset + start * 2);
+        while scope != u16::MAX {
+            let row = scope as usize * 9;
+            if end <= self.source_order_u16(row + 4) as usize {
+                return Some(ScopeId::roll_scope(scope));
+            }
+            scope = self.source_order_u16(row + 6);
+        }
+        None
     }
 
     pub(crate) const fn source_roll_has_parallel_entry(
@@ -333,23 +368,40 @@ impl CompiledProgramRef {
     /// Follow precomputed enclosing scopes, without rescanning source markers.
     #[inline]
     pub(crate) const fn source_precedes(&self, before: usize, after: usize) -> bool {
+        self.source_predecessor_cut(before, after).is_none()
+    }
+
+    /// A separating sibling excludes every earlier occurrence in its left arm.
+    /// A predecessor search can resume before that arm's source entry.
+    pub(crate) const fn source_predecessor_cut(
+        &self,
+        before: usize,
+        after: usize,
+    ) -> Option<usize> {
         if before >= after || after >= self.columns.atom_count() {
-            return false;
+            return Some(after);
         }
         if self.source_scopes == 0 {
-            return true;
+            return None;
         }
-        let mut scope = self.source_order_u16(self.source_scopes as usize * 9 + before * 2);
+        let bytes = self.source_order.as_slice();
+        let mut scope = source_order_word(bytes, self.source_scopes as usize * 9 + before * 2);
+        let after_scope = source_order_word(bytes, self.source_scopes as usize * 9 + after * 2);
         while scope != u16::MAX {
             let row = scope as usize * 9;
-            let split = self.source_order_u16(row + 2) as usize;
-            let end = self.source_order_u16(row + 4) as usize;
-            if before < split && split <= after && after < end {
-                return false;
+            let split = source_order_word(bytes, row + 2) as usize;
+            if before < split
+                && split <= after
+                && after < source_order_word(bytes, row + 4) as usize
+            {
+                return Some(source_order_word(bytes, row) as usize);
             }
-            scope = self.source_order_u16(row + 6);
+            if scope == after_scope {
+                return None;
+            }
+            scope = source_order_word(bytes, row + 6);
         }
-        true
+        None
     }
 
     #[cfg(any(kani, all(test, hibana_repo_tests)))]

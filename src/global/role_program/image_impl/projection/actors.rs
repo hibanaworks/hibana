@@ -82,15 +82,24 @@ impl<'a> ActorEventProjection<'a> {
     pub(in crate::global::role_program::image_impl) const fn next(&mut self) -> Option<ActorEvent> {
         while self.event < self.program.columns.atom_count() {
             let event = self.event;
-            let atom = self.program.event_atom_at(event);
+            let (from, to) = self.program.event_roles(event);
+            if !self.program.has_actor_bindings() {
+                self.event += 1;
+                if let Some(direction) =
+                    super::super::event_rows::role_local_direction(self.actor, from, to)
+                {
+                    return Some(ActorEvent { event, direction });
+                }
+                continue;
+            }
             // Ordinary programs bind logical roles to themselves; an owned
             // image carries the compiled binding for every event.
             let [sender, receiver] = match self.program.actor_binding_at(event) {
                 Some(binding) => binding,
-                None => [atom.from as u16, atom.to as u16],
+                None => [from as u16, to as u16],
             };
             let (reference, direction) = if self.side == 0 {
-                if atom.from == atom.to {
+                if from == to {
                     if sender != receiver {
                         crate::invariant();
                     }

@@ -212,6 +212,12 @@ run_miri_test \
   -p hibana --lib \
   global::role_program::image_impl::ref_access::tests::operation_index
 
+run_miri_test \
+  wide-local-image-addresses \
+  -p hibana --lib \
+  global::role_program::image_impl::tests::packed_local_rows_cross_the_u16_aggregate_byte_boundary_without_aliasing \
+  -- --exact
+
 MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \
   parallel-endpoint-borrows \
   -p hibana --lib \

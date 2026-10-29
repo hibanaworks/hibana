@@ -1,31 +1,39 @@
-use super::{RoleImageRef, invalid_resident_descriptor};
+use super::{RoleImageRef, invalid_resident_descriptor, validation::ValidationRows};
 
 impl RoleImageRef {
     const fn operation_key_for_step(&self, step: usize) -> u32 {
-        let atom = self
+        let (from, to, label) = self
             .program()
-            .event_atom_at(self.local_step_effect(step).dense_ordinal());
+            .event_message(self.local_step_effect(step).dense_ordinal());
         self.local_step_direction(step)
-            .operation_index_key(atom.from, atom.to, atom.label)
+            .operation_index_key(from, to, label)
     }
 
     const fn operation_step_at(&self, slot: usize) -> usize {
-        match self.lanes().operation_index_step(slot) {
-            Some(step) if step < self.local_step_count() => step,
-            Some(_) | None => invalid_resident_descriptor(),
+        let count = self.local_step_count();
+        if slot >= count {
+            invalid_resident_descriptor();
         }
+        // The checked route-index base immediately follows this permutation.
+        let offset = self.route_index_start as usize - count * 2 + slot * 2;
+        let bytes = self.blob.as_slice();
+        let step = (bytes[offset] as u16 | (bytes[offset + 1] as u16) << 8) as usize;
+        if step >= count {
+            invalid_resident_descriptor();
+        }
+        step
     }
 
     /// A strictly sorted permutation of all row ordinals is a complete index.
     /// Duplicate, omitted, out-of-range and misordered entries are rejected
     /// before the immutable image can be used by an Endpoint.
-    pub(super) const fn validate_operation_index(&self) {
+    pub(super) const fn validate_operation_index<const E: usize>(&self, rows: &ValidationRows<E>) {
         let mut slot = 0;
         let mut previous_key = 0;
         let mut previous_step = 0;
         while slot < self.local_step_count() {
             let step = self.operation_step_at(slot);
-            let key = self.operation_key_for_step(step);
+            let key = rows.operation_keys[step];
             if slot != 0 && (key < previous_key || (key == previous_key && step <= previous_step)) {
                 invalid_resident_descriptor();
             }

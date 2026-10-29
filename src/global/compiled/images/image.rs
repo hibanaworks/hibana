@@ -11,7 +11,8 @@ pub(crate) use self::{
     blob_storage::ProgramImageBytes,
     columns::{
         ACTOR_DECISION_CAPACITY, COMPACT_DESCRIPTOR_BYTE_CAPACITY,
-        PROGRAM_IMAGE_STORAGE_BYTE_CAPACITY, ProgramImageColumns, ProgramImagePlan,
+        PROGRAM_IMAGE_ATOM_ONLY_EVENT_CAPACITY, PROGRAM_IMAGE_STORAGE_BYTE_CAPACITY,
+        ProgramImageColumns, ProgramImagePlan,
     },
     program_ref::{CompiledProgramRef, SourceOrderIndex},
     role_descriptor_ref::RoleDescriptorRef,
@@ -19,8 +20,8 @@ pub(crate) use self::{
 
 #[cfg(all(test, hibana_repo_tests))]
 pub(crate) use self::columns::{
-    PROGRAM_IMAGE_ATOM_ONLY_EVENT_CAPACITY, PROGRAM_IMAGE_ATOM_STRIDE,
-    PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE, PROGRAM_IMAGE_SCOPE_MARKER_STRIDE,
+    PROGRAM_IMAGE_ATOM_STRIDE, PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE,
+    PROGRAM_IMAGE_SCOPE_MARKER_STRIDE,
 };
 /// Sealed runtime owner for role-local immutable compiled facts within a compiled program ref.
 #[derive(Clone, Copy)]

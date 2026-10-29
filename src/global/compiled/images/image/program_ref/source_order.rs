@@ -239,6 +239,7 @@ impl<const E: usize> SourceOrderIndex<E> {
         }
     }
 
+    #[cfg(any(kani, all(test, hibana_repo_tests)))]
     pub(crate) const fn before(&self, first: usize, second: usize) -> bool {
         if first >= second || second >= self.events {
             return false;

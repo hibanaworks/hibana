@@ -599,7 +599,7 @@ and restart policy.
 | Role identifiers | 256, from `0` through `255` |
 | Event identifiers | 65,535, with `u16::MAX` reserved for absence |
 | Compiled global protocol | 65,535 bytes |
-| Compiled local protocol | 65,535 bytes per role |
+| Packed local columns | 65,535 bytes per column; separate columns have separate limits |
 | Local route lookup index | Up to 16,384 additional bytes per role |
 | Local offer lookup data | 10 bytes per local event and 8 per local route, when routes are present |
 | Local lane successors | 2 bytes per local event |
@@ -611,12 +611,13 @@ and restart policy.
 | Transport lanes | 256 |
 | Wire message identifiers | One per source event, within the event identifier limit |
 
-Both the global and local protocols must fit their byte limits. Branches,
-repetition, and dependencies consume additional bytes, so the event identifier
-range alone does not determine how many events fit. Branch metadata also uses
-this byte budget.
+The global protocol must fit its byte limit. Each local column must fit its
+own limit; their combined size can exceed 65,535 bytes. Branches, repetition,
+and dependencies consume additional bytes, so the event identifier range alone
+does not determine how many events fit.
 The 7,281-event limit describes the global encoding; each role's local encoding
-must fit separately. Lookup indexes occupy flash. The global scope index is
+must fit separately. Local columns and lookup indexes occupy flash; their
+layout is immutable and does not enlarge endpoint values. The global scope index is
 omitted for protocols without scopes and otherwise uses nine bytes per scope
 identifier slot and two bytes per event. Protocols with `roll` use two more
 bytes per event to locate its enclosing repetition directly.

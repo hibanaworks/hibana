@@ -42,12 +42,13 @@ pub(crate) use self::scope::{ScopeEvent, ScopeId, ScopeKind};
 pub(crate) use self::scope_ranges::outermost_scope_range;
 pub(crate) use self::scope_ranges::{
     StructuredScopeRange, closed_route_arm_ranges_from_first_enter, innermost_scope_range,
-    parallel_arm_ranges_from_enter, passive_route_child_enter, route_arm_event_ranges_for_scope,
-    route_arm_ranges_from_first_enter, scope_segment_end_from_enter,
+    parallel_arm_ranges_from_enter, passive_route_child_enter, route_arm_ranges_from_first_enter,
+    scope_segment_end_from_enter,
 };
 #[cfg(all(test, hibana_repo_tests))]
 pub(crate) use self::scope_ranges::{
-    route_parent_arm_for_scope, route_scope_slot_for_scope, structured_scope_event_range,
+    route_arm_event_ranges_for_scope, route_parent_arm_for_scope, route_scope_slot_for_scope,
+    structured_scope_event_range,
 };
 use self::source_arena::SourceRow;
 pub(crate) use self::source_arena::{EffList, ScopeMarker, ScopeMarkerView};

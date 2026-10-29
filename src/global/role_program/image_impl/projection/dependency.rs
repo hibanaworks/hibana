@@ -66,7 +66,7 @@ struct CompositionInput {
 
 pub(in crate::global::role_program::image_impl) struct DependencyCursor<'a, const E: usize> {
     eff_list: &'a EffList<E>,
-    scopes: &'a ScopeFacts,
+    scopes: &'a ScopeFacts<E>,
     rows: LocalRows<'a, E>,
     marker_index: usize,
     next_local_step: usize,
@@ -85,7 +85,7 @@ pub(in crate::global::role_program::image_impl) struct DependencyCursor<'a, cons
 impl<'a, const E: usize> DependencyCursor<'a, E> {
     pub(in crate::global::role_program::image_impl) const fn new(
         eff_list: &'a EffList<E>,
-        scopes: &'a ScopeFacts,
+        scopes: &'a ScopeFacts<E>,
         rows: LocalRows<'a, E>,
     ) -> Self {
         let markers = eff_list.scope_markers();

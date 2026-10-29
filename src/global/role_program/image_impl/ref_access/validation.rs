@@ -1,14 +1,96 @@
+use super::super::RoleLocalDirection;
 use super::super::projection::ActorEventProjection;
 use super::{PackedLaneRange, RoleImageRef, invalid_resident_descriptor};
+use crate::global::compiled::images::PROGRAM_IMAGE_ATOM_ONLY_EVENT_CAPACITY;
 use crate::global::{
     const_dsl::ReentryMark,
     role_program::ROLE_IMAGE_ROUTE_SCOPE_CAPACITY,
     typestate::{LocalConflict, PackedEventConflict},
 };
 
+/// Source-checked fields reused by the remaining immutable image checks.
+pub(super) struct ValidationRows<const E: usize> {
+    pub(super) effects: [u16; E],
+    pub(super) keys: [u16; E],
+    pub(super) operation_keys: [u32; E],
+    pub(super) directions: [RoleLocalDirection; E],
+    pub(super) len: usize,
+    source_len: usize,
+    source_bounds: [u16; PROGRAM_IMAGE_ATOM_ONLY_EVENT_CAPACITY + 1],
+}
+
+impl<const E: usize> ValidationRows<E> {
+    pub(super) const fn new(image: &RoleImageRef) -> Self {
+        let count = image.local_step_count();
+        if count > E {
+            invalid_resident_descriptor();
+        }
+        let mut rows = Self {
+            effects: [0; E],
+            keys: [0; E],
+            operation_keys: [0; E],
+            directions: [RoleLocalDirection::Local; E],
+            len: count,
+            source_len: image.program.columns.atom_count(),
+            source_bounds: [0; PROGRAM_IMAGE_ATOM_ONLY_EVENT_CAPACITY + 1],
+        };
+        image.validate_actor_event_projection(&mut rows);
+        let mut source = 0;
+        let mut step = 0;
+        while source <= rows.source_len {
+            while step < count && (rows.effects[step] as usize) < source {
+                step += 1;
+            }
+            rows.source_bounds[source] = step as u16;
+            source += 1;
+        }
+        rows
+    }
+
+    pub(super) const fn bound(&self, source: usize) -> usize {
+        if source >= self.source_len {
+            return self.len;
+        }
+        self.source_bounds[source] as usize
+    }
+}
+
 const fn same_conflict(left: PackedEventConflict, right: PackedEventConflict) -> bool {
     left.with_route_reentry(ReentryMark::SinglePass).raw()
         == right.with_route_reentry(ReentryMark::SinglePass).raw()
+}
+
+#[derive(Clone, Copy)]
+struct RouteContext {
+    scope: crate::global::const_dsl::ScopeId,
+    arms: [PackedLaneRange; 2],
+    extent: PackedLaneRange,
+    parent: PackedEventConflict,
+}
+
+impl RouteContext {
+    const fn conflict(&self, start: usize, end: usize) -> PackedEventConflict {
+        let mut arm = 0;
+        while arm < 2 {
+            let row = self.arms[arm];
+            if !row.is_zero_len() && row.start() <= start && end <= row.end() {
+                return PackedEventConflict::route_arm(self.scope, arm as u8);
+            }
+            arm += 1;
+        }
+        invalid_resident_descriptor()
+    }
+}
+
+const fn interval_conflict(
+    parent: Option<RouteContext>,
+    start: usize,
+    end: usize,
+) -> PackedEventConflict {
+    match parent {
+        Some(route) => route.conflict(start, end),
+        None => PackedEventConflict::none(),
+    }
 }
 
 impl RoleImageRef {
@@ -51,10 +133,8 @@ impl RoleImageRef {
         }
     }
 
-    /// Establish all immutable checks that receive metadata performs before
-    /// inspecting live progress. Raw lane views remain checked independently;
-    /// only this opaque, fully constructed image permits direct authority reads.
-    pub(super) const fn validate_resident_events(&self) {
+    /// Check the declared row counts before decoding resident events.
+    pub(super) const fn validate_resident_arity(&self) {
         let count = self.local_step_count();
         let scopes = self.footprint().route_scope_count;
         // validate_blob_bound bounds the packed arm span; resident arity
@@ -69,11 +149,13 @@ impl RoleImageRef {
         {
             invalid_resident_descriptor();
         }
-        self.validate_actor_event_projection();
-        self.validate_roll_projection();
-        self.validate_owned_receipts();
-        self.validate_roll_entry_receipts();
-        self.validate_operation_index();
+    }
+
+    pub(super) const fn validate_resident_events<const E: usize>(&self, rows: &ValidationRows<E>) {
+        let count = self.local_step_count();
+        let scopes = self.footprint().route_scope_count;
+        self.validate_roll_projection(rows);
+        self.validate_operation_index(rows);
         let lanes = self.lanes();
         let mut slot = 0;
         while slot < scopes {
@@ -95,28 +177,23 @@ impl RoleImageRef {
         // bounds instead of re-scanning all preceding packed rows.
         // Route rows occur in source preorder. Walk their nested intervals once
         // to verify every parent and event context, including omitted ancestors.
-        let mut current = None;
+        let mut current: Option<RouteContext> = None;
         let mut next_scope = 0;
+        let mut pending = self.route_context(next_scope);
         let mut idx = 0;
         while idx < count {
-            // Includes send/local rows, which try_recv_meta decodes before
-            // rejecting their direction. This checks program atom existence,
-            // event header, role direction, conflict and atom/resident lane.
-            let _ = self.local_step_node(idx);
-            // event_row_at, reached by receive route authority, checks this
-            // dependency even when the operation will not match a carried key.
-            let _ = lanes.dependency_for_index(idx);
-            while let Some(slot) = current {
-                let Some(extent) = self.route_extent(slot) else {
-                    invalid_resident_descriptor();
-                };
-                if idx < extent.end() {
+            while let Some(route) = current {
+                if idx < route.extent.end() {
                     break;
                 }
-                current = match lanes.route_scope_conflict_by_slot(slot).to_conflict() {
+                current = match route.parent.to_conflict() {
                     Some(LocalConflict::RouteArm { scope, .. }) => {
-                        match self.route_scope_slot(scope) {
-                            Some(parent) => Some(parent),
+                        let parent = match self.route_scope_slot(scope) {
+                            Some(parent) => parent,
+                            None => invalid_resident_descriptor(),
+                        };
+                        match self.route_context(parent) {
+                            Some(context) => Some(context),
                             None => invalid_resident_descriptor(),
                         }
                     }
@@ -124,107 +201,95 @@ impl RoleImageRef {
                 };
             }
             while next_scope < scopes {
-                let Some(extent) = self.route_extent(next_scope) else {
+                let Some(route) = pending else {
                     next_scope += 1;
+                    pending = self.route_context(next_scope);
                     continue;
                 };
-                if extent.start() > idx {
+                if route.extent.start() > idx {
                     break;
                 }
-                if extent.start() < idx {
+                if route.extent.start() < idx {
                     invalid_resident_descriptor();
                 }
-                let expected = self.interval_conflict(current, extent.start(), extent.end());
-                let actual = lanes.route_scope_conflict_by_slot(next_scope);
-                if !same_conflict(actual, expected) {
+                let expected = interval_conflict(current, route.extent.start(), route.extent.end());
+                if !same_conflict(route.parent, expected) {
                     invalid_resident_descriptor();
                 }
-                current = Some(next_scope);
+                current = Some(route);
                 next_scope += 1;
+                pending = self.route_context(next_scope);
             }
-            let expected = self.interval_conflict(current, idx, idx + 1);
+            let expected = interval_conflict(current, idx, idx + 1);
             if !same_conflict(self.event_conflict_for_index(idx), expected) {
                 invalid_resident_descriptor();
             }
             idx += 1;
         }
         while next_scope < scopes {
-            if self.route_extent(next_scope).is_some() {
+            if pending.is_some() {
                 invalid_resident_descriptor();
             }
             next_scope += 1;
+            pending = self.route_context(next_scope);
         }
+        let receipts = self.validate_owned_receipts();
+        self.validate_roll_entry_receipts(&receipts);
     }
 
-    const fn route_extent(&self, slot: usize) -> Option<PackedLaneRange> {
+    const fn route_context(&self, slot: usize) -> Option<RouteContext> {
+        if slot >= self.footprint().route_scope_count {
+            return None;
+        }
         let lanes = self.lanes();
         let first = lanes.certified_route_arm_event_row_by_slot(slot, 0);
         let second = lanes.certified_route_arm_event_row_by_slot(slot, 1);
-        if first.is_zero_len() {
-            return if second.is_zero_len() {
-                None
-            } else {
-                Some(second)
-            };
-        }
-        if second.is_zero_len() {
-            return Some(first);
-        }
-        if first.end() != second.start() {
-            invalid_resident_descriptor();
-        }
-        Some(PackedLaneRange::new(
-            first.start(),
-            second.end() - first.start(),
-        ))
-    }
-
-    const fn interval_conflict(
-        &self,
-        parent: Option<usize>,
-        start: usize,
-        end: usize,
-    ) -> PackedEventConflict {
-        let Some(slot) = parent else {
-            return PackedEventConflict::none();
+        let extent = if first.is_zero_len() {
+            if second.is_zero_len() {
+                return None;
+            }
+            second
+        } else if second.is_zero_len() {
+            first
+        } else {
+            if first.end() != second.start() {
+                invalid_resident_descriptor();
+            }
+            PackedLaneRange::new(first.start(), second.end() - first.start())
         };
-        let lanes = self.lanes();
         let scope = match lanes.route_scope_by_slot(slot) {
             Some(scope) => scope,
             None => invalid_resident_descriptor(),
         };
-        let mut arm = 0;
-        while arm < 2 {
-            let row = lanes.certified_route_arm_event_row_by_slot(slot, arm);
-            if !row.is_zero_len() && row.start() <= start && end <= row.end() {
-                return PackedEventConflict::route_arm(scope, arm);
-            }
-            arm += 1;
-        }
-        invalid_resident_descriptor()
+        Some(RouteContext {
+            scope,
+            arms: [first, second],
+            extent,
+            parent: lanes.route_scope_conflict_by_slot(slot),
+        })
     }
 
-    const fn validate_owned_receipts(&self) {
+    const fn validate_owned_receipts(&self) -> [PackedLaneRange; 256] {
         let count = self.columns.owned_receipt_count as usize;
         if self.columns.roll_entry_view_count == 0 && count != 0 {
             invalid_resident_descriptor();
         }
         let mut previous = None;
+        let mut counts = [0u16; 256];
         let mut index = 0;
         while index < count {
             let step = self.owned_receipt(index) as usize;
-            let node = match self.local_step_node(step) {
-                Some(node) => node,
-                None => invalid_resident_descriptor(),
-            };
-            let crate::global::typestate::LocalAction::Recv { eff_index, .. } = node.action()
-            else {
+            if step >= self.local_step_count()
+                || !matches!(
+                    self.local_step_direction(step),
+                    super::super::RoleLocalDirection::Recv
+                )
+            {
                 invalid_resident_descriptor();
-            };
-            let crate::eff::EventPayload::Endpoint(role) = self
+            }
+            let Some(role) = self
                 .program
-                .event_atom_at(eff_index.dense_ordinal())
-                .payload
+                .event_endpoint(self.local_step_effect(step).dense_ordinal())
             else {
                 invalid_resident_descriptor();
             };
@@ -234,23 +299,20 @@ impl RoleImageRef {
                 invalid_resident_descriptor();
             }
             previous = Some((role, step));
+            counts[role as usize] += 1;
             index += 1;
         }
         if self.columns.roll_entry_view_count != 0 {
             let mut expected = 0;
             let mut step = 0;
             while step < self.local_step_count() {
-                let node = match self.local_step_node(step) {
-                    Some(node) => node,
-                    None => invalid_resident_descriptor(),
-                };
-                if let crate::global::typestate::LocalAction::Recv { eff_index, .. } = node.action()
-                    && matches!(
-                        self.program
-                            .event_atom_at(eff_index.dense_ordinal())
-                            .payload,
-                        crate::eff::EventPayload::Endpoint(_)
-                    )
+                if matches!(
+                    self.local_step_direction(step),
+                    super::super::RoleLocalDirection::Recv
+                ) && self
+                    .program
+                    .event_endpoint(self.local_step_effect(step).dense_ordinal())
+                    .is_some()
                 {
                     expected += 1;
                 }
@@ -260,60 +322,60 @@ impl RoleImageRef {
                 invalid_resident_descriptor();
             }
         }
+        let mut ranges = [PackedLaneRange::new(0, 0); 256];
+        let mut start = 0;
+        let mut role = 0;
+        while role < ranges.len() {
+            ranges[role] = PackedLaneRange::new(start, counts[role] as usize);
+            start += counts[role] as usize;
+            role += 1;
+        }
+        if start != count {
+            invalid_resident_descriptor();
+        }
+        ranges
     }
 
-    const fn validate_roll_entry_receipts(&self) {
+    const fn validate_roll_entry_receipts(&self, catalog: &[PackedLaneRange; 256]) {
         // Resources, owners and roll ranges already match the source. Validate
         // every entry's slice against the independently checked receipt catalog.
         let mut index = 0;
         while index < self.columns.roll_entry_view_count as usize {
             let (role, _) = self.roll_entry_view(index);
             let receipts = self.roll_entry_receipts(index);
-            let mut receipt = receipts.start();
-            let mut step = 0;
-            while step < self.local_step_count() {
-                let node = match self.local_step_node(step) {
-                    Some(node) => node,
-                    None => invalid_resident_descriptor(),
-                };
-                if let crate::global::typestate::LocalAction::Recv { eff_index, .. } = node.action()
-                    && matches!(self.program.event_atom_at(eff_index.dense_ordinal()).payload,
-                        crate::eff::EventPayload::Endpoint(key) if key == role)
-                {
-                    if receipt == receipts.end() || self.owned_receipt(receipt) as usize != step {
-                        invalid_resident_descriptor();
-                    }
-                    receipt += 1;
-                }
-                step += 1;
-            }
-            if receipt != receipts.end() {
+            let expected = catalog[role as usize];
+            if receipts.start() != expected.start() || receipts.end() != expected.end() {
                 invalid_resident_descriptor();
             }
             index += 1;
         }
     }
 
-    const fn validate_actor_event_projection(&self) {
+    const fn validate_actor_event_projection<const E: usize>(&self, rows: &mut ValidationRows<E>) {
         if self.program.actor_decision_count() == 0 {
             // Ordinary identity bindings and unconditional loans need no
             // decision scratch. This specialization is construction-only.
-            self.validate_actor_events(&mut []);
+            self.validate_actor_events(rows, &mut []);
         } else {
             const BYTES: usize =
                 crate::global::compiled::images::ACTOR_DECISION_CAPACITY.div_ceil(8);
-            self.validate_actor_events(&mut [0; BYTES]);
+            self.validate_actor_events(rows, &mut [0; BYTES]);
         }
     }
 
-    const fn validate_actor_events(&self, scratch: &mut [u8]) {
+    const fn validate_actor_events<const E: usize>(
+        &self,
+        rows: &mut ValidationRows<E>,
+        scratch: &mut [u8],
+    ) {
         let Some(mut projected) = ActorEventProjection::new(self.program, self.role, scratch)
         else {
             invalid_resident_descriptor();
         };
         let mut index = 0;
+        let lanes = self.lanes();
         while let Some(expected) = projected.next() {
-            let Some(actual) = self.lanes().local_step_event(index) else {
+            let Some(actual) = lanes.local_step_event(index) else {
                 invalid_resident_descriptor();
             };
             if actual.eff_index as usize != expected.event
@@ -321,6 +383,24 @@ impl RoleImageRef {
             {
                 invalid_resident_descriptor();
             }
+            let Some(lane) = self.local_step_lane(index) else {
+                invalid_resident_descriptor();
+            };
+            if lane != self.program.event_lane(expected.event) {
+                invalid_resident_descriptor();
+            }
+            let _ = lanes.event_conflict_for_index(index);
+            let _ = lanes.dependency_for_index(index);
+            let (from, to, label) = self.program.event_message(expected.event);
+            let view = if matches!(expected.direction, RoleLocalDirection::Recv) {
+                to
+            } else {
+                from
+            };
+            rows.effects[index] = actual.eff_index;
+            rows.keys[index] = (view as u16) << 8 | lane as u16;
+            rows.operation_keys[index] = expected.direction.operation_index_key(from, to, label);
+            rows.directions[index] = expected.direction;
             index += 1;
         }
         if index != self.local_step_count() {

@@ -38,7 +38,7 @@ fn outcome<T>(f: impl FnOnce() -> T + std::panic::UnwindSafe) -> Result<T, Strin
 
 fn compare<const E: usize, const N: usize>(
     source: &EffList<E>,
-    scopes: &projection::ScopeFacts,
+    scopes: &projection::ScopeFacts<E>,
     facts: RuntimeRoleFacts,
     role: u8,
     columns: RoleImageColumns,
@@ -48,14 +48,11 @@ fn compare<const E: usize, const N: usize>(
         (image.bytes.bytes, format!("{:?}", image.columns))
     });
     let new = outcome(|| {
-        let image = RoleImageBytes::<N>::emit(
-            (source, scopes),
-            facts,
-            projection::LocalRows::Role(&crate::global::role_program::RoleLocalRows::new(
-                source, role,
-            )),
-            columns,
-        );
+        let local = crate::global::role_program::RoleLocalRows::new(source, role);
+        let rows = projection::LocalRows::Role(&local);
+        let operations = crate::global::role_program::OperationIndex::new((source, scopes), rows);
+        let image =
+            RoleImageBytes::<N>::emit((source, scopes), facts, (rows, &operations), columns);
         (image.bytes.bytes, format!("{:?}", image.columns))
     });
     assert_eq!(old, new, "role {role}, columns {columns:?}");
@@ -86,14 +83,28 @@ fn case_source(source: &EffList<512>, totals: &mut [usize; 4]) {
             projection::LocalRows::Role(&crate::global::role_program::RoleLocalRows::new(
                 source, role,
             )),
+            &crate::global::role_program::OperationIndex::new(
+                (source, &scopes),
+                projection::LocalRows::Role(&crate::global::role_program::RoleLocalRows::new(
+                    source, role,
+                )),
+            ),
         );
         let facts = RuntimeRoleFacts::from_counts(counts);
         let plan = RoleImagePlan::from_program(
             (source, &scopes),
             facts,
-            projection::LocalRows::Role(&crate::global::role_program::RoleLocalRows::new(
-                source, role,
-            )),
+            (
+                projection::LocalRows::Role(&crate::global::role_program::RoleLocalRows::new(
+                    source, role,
+                )),
+                &crate::global::role_program::OperationIndex::new(
+                    (source, &scopes),
+                    projection::LocalRows::Role(&crate::global::role_program::RoleLocalRows::new(
+                        source, role,
+                    )),
+                ),
+            ),
         );
         let full_counts = RoleImagePlan::full_reference_counts(source, role);
         let full_facts = RuntimeRoleFacts::from_counts(full_counts);
@@ -135,7 +146,7 @@ fn case_source(source: &EffList<512>, totals: &mut [usize; 4]) {
                 format!(
                     "{:?}",
                     projection::local_event_row_for_eff(
-                        source,
+                        (source, &scopes),
                         index,
                         projection::LocalRows::Role(
                             &crate::global::role_program::RoleLocalRows::new(source, role)
@@ -153,7 +164,7 @@ fn case_source(source: &EffList<512>, totals: &mut [usize; 4]) {
                 continue;
             }
             let (_, reused) = projection::local_event_row_for_eff(
-                source,
+                (source, &scopes),
                 index,
                 projection::LocalRows::Role(&crate::global::role_program::RoleLocalRows::new(
                     source, role,
@@ -201,7 +212,7 @@ fn case_source(source: &EffList<512>, totals: &mut [usize; 4]) {
                 _ => &mut columns.events,
             };
             if column == 15 {
-                selected.offset = u16::MAX;
+                selected.offset = u16::MAX as u32;
             } else {
                 selected.len += 1;
             }
@@ -225,7 +236,7 @@ fn case_source(source: &EffList<512>, totals: &mut [usize; 4]) {
         let old = outcome(|| original::local_event_row_for_eff(source, usize::MAX, role));
         let new = outcome(|| {
             projection::local_event_row_for_eff(
-                source,
+                (source, &scopes),
                 usize::MAX,
                 projection::LocalRows::Role(&crate::global::role_program::RoleLocalRows::new(
                     source, role,
@@ -255,35 +266,14 @@ fn overlapping_marker_failures_match() {
     }
     source.push_route_scope_mut(ScopeId::route(0), 0, 2, 4, ReentryMark::SinglePass);
     source.push_route_scope_mut(ScopeId::route(1), 1, 3, 6, ReentryMark::Reentrant);
-    let mut failures = 0;
-    for index in 0..6 {
-        for role in [0, 1, 2, 255] {
-            let old = outcome(|| {
-                format!(
-                    "{:?}",
-                    original::local_event_row_for_eff(&source, index, role)
-                )
-            });
-            let new = outcome(|| {
-                format!(
-                    "{:?}",
-                    projection::local_event_row_for_eff(
-                        &source,
-                        index,
-                        projection::LocalRows::Role(
-                            &crate::global::role_program::RoleLocalRows::new(&source, role)
-                        ),
-                        0
-                    )
-                    .0
-                )
-            });
-            assert_eq!(old, new, "overlapping marker index {index}, role {role}");
-            failures += usize::from(old.is_err());
-        }
-    }
-    assert!(failures > 0);
-    std::println!("projection-conflict-reuse overlapping_markers=24 exact_errors={failures}");
+    let reference = outcome(|| {
+        original::local_event_row_for_eff(&source, 1, 0);
+    });
+    let cached = outcome(|| {
+        projection::ScopeFacts::new(&source);
+    });
+    assert!(reference.is_err());
+    assert_eq!(reference, cached);
 }
 
 #[test]
@@ -315,7 +305,7 @@ fn emitted_projection_bytes_and_errors_match_original_corpus() {
 }
 
 fn normalized_compare<const E: usize>(
-    (source, scopes): (&EffList<E>, &projection::ScopeFacts),
+    (source, scopes): (&EffList<E>, &projection::ScopeFacts<E>),
     global: &'static crate::global::compiled::images::CompiledProgramRef,
     full_facts: RuntimeRoleFacts,
     full_columns: RoleImageColumns,
@@ -325,12 +315,13 @@ fn normalized_compare<const E: usize>(
 ) {
     let full =
         RoleImageBytes::<4096>::emit_reference((source, scopes), full_facts, role, full_columns);
+    let local = crate::global::role_program::RoleLocalRows::new(source, role);
+    let rows = projection::LocalRows::Role(&local);
+    let operations = crate::global::role_program::OperationIndex::new((source, scopes), rows);
     let new = RoleImageBytes::<4096>::emit(
         (source, scopes),
         new_facts,
-        projection::LocalRows::Role(&crate::global::role_program::RoleLocalRows::new(
-            source, role,
-        )),
+        (rows, &operations),
         new_columns,
     );
     let full_bytes = Box::leak(Box::new(full.bytes.bytes));
@@ -406,8 +397,8 @@ fn normalized_compare<const E: usize>(
             ..new_columns.lane_bits.offset as usize + active_bytes]
     );
 
-    // Independent authority oracle over OLD/FULL emitted rows and the unchanged
-    // global atlas. Do not call the production retained_route_scopes predicate.
+    // Derive required local routes from the full image and global protocol,
+    // independently of the compiler's retained-route workspace.
     let mut retained = std::vec![false; old_fp.route_scope_count];
     for (slot, retained) in retained.iter_mut().enumerate() {
         let scope = old.route_scope_by_slot(slot).unwrap();
@@ -577,14 +568,14 @@ fn normalized_compare<const E: usize>(
         global,
         role,
         full_facts,
-        full_columns,
+        Box::leak(Box::new(full_columns)),
         full_bytes,
     )));
     let new_rows = Box::leak(Box::new(RoleImageRef::new(
         global,
         role,
         new_facts,
-        new_columns,
+        Box::leak(Box::new(new_columns)),
         new_bytes,
     )));
     crate::global::typestate::EventCursor::assert_filtered_projection_callback_equivalence(

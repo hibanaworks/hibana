@@ -38,7 +38,7 @@ impl<Steps, const CAPACITY: usize> ProgramProjection<Steps, CAPACITY>
 where
     Steps: ProgramShape,
 {
-    const SCOPE_FACTS: &'static crate::global::role_program::ScopeFacts =
+    const SCOPE_FACTS: &'static crate::global::role_program::ScopeFacts<CAPACITY> =
         &crate::global::role_program::ScopeFacts::new(Self::SOURCE_EFF_LIST);
 
     const PROGRAM_PLAN: crate::global::compiled::images::ProgramImagePlan =
@@ -136,6 +136,7 @@ where
             ProgramProjection::<Steps, CAPACITY>::SOURCE_EFF_LIST,
             ProgramProjection::<Steps, CAPACITY>::SCOPE_FACTS,
             Self::ROWS,
+            Self::OPERATIONS,
         );
     const FACTS: crate::global::role_program::RuntimeRoleFacts =
         crate::global::role_program::RuntimeRoleFacts::from_counts(Self::COUNTS);
@@ -146,9 +147,17 @@ where
                 ProgramProjection::<Steps, CAPACITY>::SCOPE_FACTS,
             ),
             Self::FACTS,
-            Self::ROWS,
+            (Self::ROWS, Self::OPERATIONS),
         );
     const BLOB_LEN: usize = Self::PLAN.blob_len();
+    const OPERATIONS: &'static crate::global::role_program::OperationIndex<CAPACITY> =
+        &crate::global::role_program::OperationIndex::new(
+            (
+                ProgramProjection::<Steps, CAPACITY>::SOURCE_EFF_LIST,
+                ProgramProjection::<Steps, CAPACITY>::SCOPE_FACTS,
+            ),
+            Self::ROWS,
+        );
 
     #[cfg(hibana_profile)]
     fn profile_emit_bytes<const N: usize>() -> bool {
@@ -158,7 +167,10 @@ where
                 core::hint::black_box(ProgramProjection::<Steps, CAPACITY>::SCOPE_FACTS),
             ),
             core::hint::black_box(Self::FACTS),
-            core::hint::black_box(Self::ROWS),
+            (
+                core::hint::black_box(Self::ROWS),
+                core::hint::black_box(Self::OPERATIONS),
+            ),
         );
         let fits = build.is_some();
         core::hint::black_box(build);
@@ -175,6 +187,22 @@ where
             Self::ACTOR,
             Self::FACTS,
         )
+    }
+
+    #[cfg(hibana_profile)]
+    fn profile_validate_bytes<const N: usize>() -> bool {
+        let Some(build) =
+            core::hint::black_box(&RoleProjectionBlob::<ROLE, Steps, CAPACITY, N>::BUILD)
+        else {
+            return false;
+        };
+        let image = build.image_ref(
+            core::hint::black_box(&ProgramProjection::<Steps, CAPACITY>::PROGRAM_REF),
+            Self::ACTOR,
+            core::hint::black_box(Self::FACTS),
+        );
+        core::hint::black_box(image);
+        true
     }
 
     const BUILT_IMAGE_REF: crate::global::role_program::RoleImageRef = if Self::BLOB_LEN <= 32 {
@@ -207,6 +235,14 @@ where
         Self::image_ref::<32768>()
     } else if Self::BLOB_LEN <= COMPACT_DESCRIPTOR_BYTE_CAPACITY {
         Self::image_ref::<{ COMPACT_DESCRIPTOR_BYTE_CAPACITY }>()
+    } else if Self::BLOB_LEN <= 131072 {
+        Self::image_ref::<131072>()
+    } else if Self::BLOB_LEN <= 262144 {
+        Self::image_ref::<262144>()
+    } else if Self::BLOB_LEN <= 524288 {
+        Self::image_ref::<524288>()
+    } else if Self::BLOB_LEN <= 1048576 {
+        Self::image_ref::<1048576>()
     } else if Self::BLOB_LEN <= ROLE_IMAGE_STORAGE_BYTE_CAPACITY {
         Self::image_ref::<{ ROLE_IMAGE_STORAGE_BYTE_CAPACITY }>()
     } else {
@@ -235,7 +271,10 @@ where
                 ProgramProjection::<Steps, CAPACITY>::SCOPE_FACTS,
             ),
             RoleProjection::<ROLE, Steps, CAPACITY>::FACTS,
-            RoleProjection::<ROLE, Steps, CAPACITY>::ROWS,
+            (
+                RoleProjection::<ROLE, Steps, CAPACITY>::ROWS,
+                RoleProjection::<ROLE, Steps, CAPACITY>::OPERATIONS,
+            ),
         );
 }
 
@@ -253,75 +292,133 @@ where
 }
 
 #[cfg(hibana_profile)]
-pub(super) fn profile_local_pass<const ROLE: u8, Steps, const CAPACITY: usize>(
-    pass: super::profiling::LocalPass,
-) -> bool
-where
+pub(super) fn profile_local_pass<
+    const ROLE: u8,
     Steps: ProgramShape,
-{
+    const CAPACITY: usize,
+    const PASS: u8,
+>() -> bool {
+    let run: fn() -> bool = const {
+        match PASS {
+            0 => profile_operation_order::<ROLE, Steps, CAPACITY>,
+            1 => profile_role_plan::<ROLE, Steps, CAPACITY>,
+            2 => profile_resident_validation::<ROLE, Steps, CAPACITY>,
+            3 => profile_image_emission::<ROLE, Steps, CAPACITY>,
+            _ => panic!("unknown local projection measurement"),
+        }
+    };
+    run()
+}
+#[cfg(hibana_profile)]
+fn profile_operation_order<const ROLE: u8, Steps: ProgramShape, const CAPACITY: usize>() -> bool {
     let image = core::hint::black_box(&RoleProjection::<ROLE, Steps, CAPACITY>::BUILT_IMAGE_REF);
-    match pass {
-        super::profiling::LocalPass::OperationOrder => {
-            source_order::check::<Steps, CAPACITY>(image)
+    source_order::check::<Steps, CAPACITY>(image)
+}
+#[cfg(hibana_profile)]
+fn profile_role_plan<const ROLE: u8, Steps: ProgramShape, const CAPACITY: usize>() -> bool {
+    let plan = crate::global::role_program::RoleImagePlan::from_program(
+        (
+            core::hint::black_box(ProgramProjection::<Steps, CAPACITY>::SOURCE_EFF_LIST),
+            core::hint::black_box(ProgramProjection::<Steps, CAPACITY>::SCOPE_FACTS),
+        ),
+        core::hint::black_box(RoleProjection::<ROLE, Steps, CAPACITY>::FACTS),
+        (
+            core::hint::black_box(RoleProjection::<ROLE, Steps, CAPACITY>::ROWS),
+            core::hint::black_box(RoleProjection::<ROLE, Steps, CAPACITY>::OPERATIONS),
+        ),
+    );
+    plan.blob_len() == RoleProjection::<ROLE, Steps, CAPACITY>::BLOB_LEN
+}
+#[cfg(hibana_profile)]
+fn profile_resident_validation<const ROLE: u8, Steps: ProgramShape, const CAPACITY: usize>() -> bool
+{
+    let emit: fn() -> bool = const {
+        match RoleProjection::<ROLE, Steps, CAPACITY>::BLOB_LEN {
+            0..=32 => RoleProjection::<ROLE, Steps, CAPACITY>::profile_validate_bytes::<32>,
+            33..=64 => RoleProjection::<ROLE, Steps, CAPACITY>::profile_validate_bytes::<64>,
+            65..=96 => RoleProjection::<ROLE, Steps, CAPACITY>::profile_validate_bytes::<96>,
+            97..=128 => RoleProjection::<ROLE, Steps, CAPACITY>::profile_validate_bytes::<128>,
+            129..=192 => RoleProjection::<ROLE, Steps, CAPACITY>::profile_validate_bytes::<192>,
+            193..=256 => RoleProjection::<ROLE, Steps, CAPACITY>::profile_validate_bytes::<256>,
+            257..=384 => RoleProjection::<ROLE, Steps, CAPACITY>::profile_validate_bytes::<384>,
+            385..=512 => RoleProjection::<ROLE, Steps, CAPACITY>::profile_validate_bytes::<512>,
+            513..=1024 => RoleProjection::<ROLE, Steps, CAPACITY>::profile_validate_bytes::<1024>,
+            1025..=2048 => RoleProjection::<ROLE, Steps, CAPACITY>::profile_validate_bytes::<2048>,
+            2049..=4096 => RoleProjection::<ROLE, Steps, CAPACITY>::profile_validate_bytes::<4096>,
+            4097..=8192 => RoleProjection::<ROLE, Steps, CAPACITY>::profile_validate_bytes::<8192>,
+            8193..=16384 => {
+                RoleProjection::<ROLE, Steps, CAPACITY>::profile_validate_bytes::<16384>
+            }
+            16385..=32768 => {
+                RoleProjection::<ROLE, Steps, CAPACITY>::profile_validate_bytes::<32768>
+            }
+            32769..=COMPACT_DESCRIPTOR_BYTE_CAPACITY => {
+                RoleProjection::<ROLE, Steps, CAPACITY>::profile_validate_bytes::<
+                    { COMPACT_DESCRIPTOR_BYTE_CAPACITY },
+                >
+            }
+            65536..=131072 => {
+                RoleProjection::<ROLE, Steps, CAPACITY>::profile_validate_bytes::<131072>
+            }
+            131073..=262144 => {
+                RoleProjection::<ROLE, Steps, CAPACITY>::profile_validate_bytes::<262144>
+            }
+            262145..=524288 => {
+                RoleProjection::<ROLE, Steps, CAPACITY>::profile_validate_bytes::<524288>
+            }
+            524289..=1048576 => {
+                RoleProjection::<ROLE, Steps, CAPACITY>::profile_validate_bytes::<1048576>
+            }
+            1048577..=ROLE_IMAGE_STORAGE_BYTE_CAPACITY => {
+                RoleProjection::<ROLE, Steps, CAPACITY>::profile_validate_bytes::<
+                    { ROLE_IMAGE_STORAGE_BYTE_CAPACITY },
+                >
+            }
+            _ => panic!("role image exceeds compact offset domain"),
         }
-        super::profiling::LocalPass::RolePlan => {
-            let plan = crate::global::role_program::RoleImagePlan::from_program(
-                (
-                    core::hint::black_box(ProgramProjection::<Steps, CAPACITY>::SOURCE_EFF_LIST),
-                    core::hint::black_box(ProgramProjection::<Steps, CAPACITY>::SCOPE_FACTS),
-                ),
-                core::hint::black_box(RoleProjection::<ROLE, Steps, CAPACITY>::FACTS),
-                core::hint::black_box(RoleProjection::<ROLE, Steps, CAPACITY>::ROWS),
-            );
-            plan.blob_len() == RoleProjection::<ROLE, Steps, CAPACITY>::BLOB_LEN
+    };
+    emit()
+}
+#[cfg(hibana_profile)]
+fn profile_image_emission<const ROLE: u8, Steps: ProgramShape, const CAPACITY: usize>() -> bool {
+    let emit: fn() -> bool = const {
+        match RoleProjection::<ROLE, Steps, CAPACITY>::BLOB_LEN {
+            0..=32 => RoleProjection::<ROLE, Steps, CAPACITY>::profile_emit_bytes::<32>,
+            33..=64 => RoleProjection::<ROLE, Steps, CAPACITY>::profile_emit_bytes::<64>,
+            65..=96 => RoleProjection::<ROLE, Steps, CAPACITY>::profile_emit_bytes::<96>,
+            97..=128 => RoleProjection::<ROLE, Steps, CAPACITY>::profile_emit_bytes::<128>,
+            129..=192 => RoleProjection::<ROLE, Steps, CAPACITY>::profile_emit_bytes::<192>,
+            193..=256 => RoleProjection::<ROLE, Steps, CAPACITY>::profile_emit_bytes::<256>,
+            257..=384 => RoleProjection::<ROLE, Steps, CAPACITY>::profile_emit_bytes::<384>,
+            385..=512 => RoleProjection::<ROLE, Steps, CAPACITY>::profile_emit_bytes::<512>,
+            513..=1024 => RoleProjection::<ROLE, Steps, CAPACITY>::profile_emit_bytes::<1024>,
+            1025..=2048 => RoleProjection::<ROLE, Steps, CAPACITY>::profile_emit_bytes::<2048>,
+            2049..=4096 => RoleProjection::<ROLE, Steps, CAPACITY>::profile_emit_bytes::<4096>,
+            4097..=8192 => RoleProjection::<ROLE, Steps, CAPACITY>::profile_emit_bytes::<8192>,
+            8193..=16384 => RoleProjection::<ROLE, Steps, CAPACITY>::profile_emit_bytes::<16384>,
+            16385..=32768 => RoleProjection::<ROLE, Steps, CAPACITY>::profile_emit_bytes::<32768>,
+            32769..=COMPACT_DESCRIPTOR_BYTE_CAPACITY => {
+                RoleProjection::<ROLE, Steps, CAPACITY>::profile_emit_bytes::<
+                    { COMPACT_DESCRIPTOR_BYTE_CAPACITY },
+                >
+            }
+            65536..=131072 => RoleProjection::<ROLE, Steps, CAPACITY>::profile_emit_bytes::<131072>,
+            131073..=262144 => {
+                RoleProjection::<ROLE, Steps, CAPACITY>::profile_emit_bytes::<262144>
+            }
+            262145..=524288 => {
+                RoleProjection::<ROLE, Steps, CAPACITY>::profile_emit_bytes::<524288>
+            }
+            524289..=1048576 => {
+                RoleProjection::<ROLE, Steps, CAPACITY>::profile_emit_bytes::<1048576>
+            }
+            1048577..=ROLE_IMAGE_STORAGE_BYTE_CAPACITY => {
+                RoleProjection::<ROLE, Steps, CAPACITY>::profile_emit_bytes::<
+                    { ROLE_IMAGE_STORAGE_BYTE_CAPACITY },
+                >
+            }
+            _ => panic!("role image exceeds compact offset domain"),
         }
-        super::profiling::LocalPass::ResidentValidation => {
-            image.profile_resident_validation();
-            true
-        }
-        super::profiling::LocalPass::ImageEmission => {
-            let emit: fn() -> bool = const {
-                match RoleProjection::<ROLE, Steps, CAPACITY>::BLOB_LEN {
-                    0..=32 => RoleProjection::<ROLE, Steps, CAPACITY>::profile_emit_bytes::<32>,
-                    33..=64 => RoleProjection::<ROLE, Steps, CAPACITY>::profile_emit_bytes::<64>,
-                    65..=96 => RoleProjection::<ROLE, Steps, CAPACITY>::profile_emit_bytes::<96>,
-                    97..=128 => RoleProjection::<ROLE, Steps, CAPACITY>::profile_emit_bytes::<128>,
-                    129..=192 => RoleProjection::<ROLE, Steps, CAPACITY>::profile_emit_bytes::<192>,
-                    193..=256 => RoleProjection::<ROLE, Steps, CAPACITY>::profile_emit_bytes::<256>,
-                    257..=384 => RoleProjection::<ROLE, Steps, CAPACITY>::profile_emit_bytes::<384>,
-                    385..=512 => RoleProjection::<ROLE, Steps, CAPACITY>::profile_emit_bytes::<512>,
-                    513..=1024 => {
-                        RoleProjection::<ROLE, Steps, CAPACITY>::profile_emit_bytes::<1024>
-                    }
-                    1025..=2048 => {
-                        RoleProjection::<ROLE, Steps, CAPACITY>::profile_emit_bytes::<2048>
-                    }
-                    2049..=4096 => {
-                        RoleProjection::<ROLE, Steps, CAPACITY>::profile_emit_bytes::<4096>
-                    }
-                    4097..=8192 => {
-                        RoleProjection::<ROLE, Steps, CAPACITY>::profile_emit_bytes::<8192>
-                    }
-                    8193..=16384 => {
-                        RoleProjection::<ROLE, Steps, CAPACITY>::profile_emit_bytes::<16384>
-                    }
-                    16385..=32768 => {
-                        RoleProjection::<ROLE, Steps, CAPACITY>::profile_emit_bytes::<32768>
-                    }
-                    32769..=COMPACT_DESCRIPTOR_BYTE_CAPACITY => {
-                        RoleProjection::<ROLE, Steps, CAPACITY>::profile_emit_bytes::<
-                            { COMPACT_DESCRIPTOR_BYTE_CAPACITY },
-                        >
-                    }
-                    65536..=ROLE_IMAGE_STORAGE_BYTE_CAPACITY => {
-                        RoleProjection::<ROLE, Steps, CAPACITY>::profile_emit_bytes::<
-                            { ROLE_IMAGE_STORAGE_BYTE_CAPACITY },
-                        >
-                    }
-                    _ => panic!("role image exceeds compact offset domain"),
-                }
-            };
-            emit()
-        }
-    }
+    };
+    emit()
 }

@@ -30,10 +30,10 @@ const TICK: Source<'static> = wire(2, 1);
 const READ: Source<'static> = wire(10, 4);
 const PERMIT: Source<'static> = wire(1, 2);
 const UNRELATED: Source<'static> = wire(6, 7);
-const WORK: Source<'static> = Source::Seq(&TICK, &READ, 2);
-const PERMITTED: Source<'static> = Source::Seq(&PERMIT, &WORK, 3);
-const PARALLEL_PERMIT: Source<'static> = Source::Par(&PERMIT, &WORK, 3);
-const PARALLEL_UNRELATED: Source<'static> = Source::Par(&READ, &UNRELATED, 2);
+const WORK: Source<'static> = Source::seq(&TICK, &READ);
+const PERMITTED: Source<'static> = Source::seq(&PERMIT, &WORK);
+const PARALLEL_PERMIT: Source<'static> = Source::par(&PERMIT, &WORK);
+const PARALLEL_UNRELATED: Source<'static> = Source::par(&READ, &UNRELATED);
 
 fn actors() -> (u8, u8) {
     (kani::any(), kani::any())
@@ -195,15 +195,10 @@ fn bounded_predecessors_preserve_every_queried_action<const SHAPE: u8>() {
         [u16::from(sender), u16::from(receiver)]
     });
     let image = ActorImage::<2, 0>::causal_fixture(&pairs, &[]);
-    const SEQUENTIAL: Source<'static> = Source::Seq(&TICK, &READ, 2);
-    const PARALLEL: Source<'static> = Source::Par(&TICK, &READ, 2);
-    const CHOICE: Source<'static> = Source::Route {
-        left: &TICK,
-        right: &READ,
-        resolver: None,
-        events: 2,
-    };
-    const ROLLED: Source<'static> = Source::Roll(&SEQUENTIAL, 2);
+    const SEQUENTIAL: Source<'static> = Source::seq(&TICK, &READ);
+    const PARALLEL: Source<'static> = Source::par(&TICK, &READ);
+    const CHOICE: Source<'static> = Source::route(&TICK, &READ, None);
+    const ROLLED: Source<'static> = Source::roll(&SEQUENTIAL);
     let source = const {
         match SHAPE {
             0 => &SEQUENTIAL,
@@ -253,74 +248,110 @@ fn bounded_predecessors_preserve_every_queried_action<const SHAPE: u8>() {
     }
 }
 
+// Each closure traverses two events and at most two recursive source edges.
+// Three entries cover those loops and edges, including the terminating check.
 #[kani::proof]
-#[kani::unwind(4)]
+#[kani::unwind(3)]
 fn bounded_sequential_predecessors_preserve_every_queried_action() {
     bounded_predecessors_preserve_every_queried_action::<0>();
 }
 
 #[kani::proof]
-#[kani::unwind(4)]
+#[kani::unwind(3)]
 fn bounded_parallel_predecessors_preserve_every_queried_action() {
     bounded_predecessors_preserve_every_queried_action::<1>();
 }
 
 #[kani::proof]
-#[kani::unwind(4)]
+#[kani::unwind(3)]
 fn bounded_selected_predecessors_preserve_every_queried_action() {
     bounded_predecessors_preserve_every_queried_action::<2>();
 }
 
 #[kani::proof]
-#[kani::unwind(4)]
+#[kani::unwind(3)]
 fn bounded_rolled_predecessors_preserve_every_queried_action() {
     bounded_predecessors_preserve_every_queried_action::<3>();
 }
 
-#[kani::proof]
-#[kani::unwind(5)]
-fn source_first_transfer_preserves_the_complete_endpoint_key() {
+fn source_first_transfer_preserves_the_complete_endpoint_key<const SHAPE: u8>() {
     fn key() -> EndpointKey {
         EndpointKey {
             component: kani::any(),
             role: kani::any(),
         }
     }
-    fn transfer(key: EndpointKey) -> Source<'static> {
+    fn transfer(key: EndpointKey, owned: bool) -> Source<'static> {
         Source::Send(Message {
             from: RESOURCE,
             to: RESOURCE,
             label: 1,
-            payload: Payload::Endpoint(key),
+            payload: if owned {
+                Payload::Endpoint(key)
+            } else {
+                Payload::Wire { schema: 0 }
+            },
         })
     }
     let first = key();
     let second = key();
     let target = key();
-    let left = transfer(first);
-    let right = transfer(second);
-    let sequential = Source::Seq(&left, &right, 2);
-    let parallel = Source::Par(&left, &right, 2);
-    let choice = Source::Route {
-        left: &left,
-        right: &right,
-        resolver: None,
-        events: 2,
+    let first_owned: bool = kani::any();
+    let second_owned: bool = kani::any();
+    let left = transfer(first, first_owned);
+    let right = transfer(second, second_owned);
+    let combined = match SHAPE {
+        0 | 3 => Source::seq(&left, &right),
+        1 => Source::par(&left, &right),
+        2 => Source::route(&left, &right, None),
+        _ => panic!("unknown transfer source form"),
     };
-    let rolled = Source::Roll(&sequential, 2);
-    let shape: u8 = kani::any();
-    let source = match shape & 3 {
-        0 => &sequential,
-        1 => &parallel,
-        2 => &choice,
-        _ => &rolled,
-    };
-    let expected = if first.same(target) {
+    let rolled = Source::roll(&combined);
+    let source = if SHAPE == 3 { &rolled } else { &combined };
+    let expected = if first_owned && first.same(target) {
         Some(0)
-    } else if second.same(target) {
+    } else if second_owned && second.same(target) {
         Some(1)
     } else {
         None
     };
     assert_eq!(source.first_transfer(target), expected);
+    assert_eq!(source.transfers(target), expected.is_some());
+    assert_eq!(source.has_delegation(), first_owned || second_owned);
+    assert_eq!(source.event_count(), 2);
+    assert_eq!(
+        source.predecessor_range(1, 0),
+        if SHAPE == 0 || SHAPE == 3 {
+            Some((0, 1))
+        } else {
+            None
+        }
+    );
+}
+
+// The binary sources have depth two; the rolled source has depth three.
+// One extra unwind entry closes each recursive traversal. Unwinding assertions
+// remain enabled, and every endpoint key and payload-kind input stays symbolic.
+#[kani::proof]
+#[kani::unwind(3)]
+fn source_first_transfer_preserves_complete_key_in_sequence() {
+    source_first_transfer_preserves_the_complete_endpoint_key::<0>();
+}
+
+#[kani::proof]
+#[kani::unwind(3)]
+fn source_first_transfer_preserves_complete_key_in_parallel() {
+    source_first_transfer_preserves_the_complete_endpoint_key::<1>();
+}
+
+#[kani::proof]
+#[kani::unwind(3)]
+fn source_first_transfer_preserves_complete_key_in_choice() {
+    source_first_transfer_preserves_the_complete_endpoint_key::<2>();
+}
+
+#[kani::proof]
+#[kani::unwind(4)]
+fn source_first_transfer_preserves_complete_key_in_roll() {
+    source_first_transfer_preserves_the_complete_endpoint_key::<3>();
 }

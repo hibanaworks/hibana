@@ -56,33 +56,27 @@ const fn transfer(
     })
 }
 
-const EXCHANGE: Source<'static> = Source::Seq(
+const EXCHANGE: Source<'static> = Source::seq(
     &transfer(P, A, 1, DB),
-    &Source::Seq(
+    &Source::seq(
         &wire(DB, SERVER, 2),
-        &Source::Seq(
+        &Source::seq(
             &wire(SERVER, DB, 3),
-            &Source::Seq(&wire(SERVER, A, 4), &transfer(A, P, 5, DB), 2),
-            3,
+            &Source::seq(&wire(SERVER, A, 4), &transfer(A, P, 5, DB)),
         ),
-        4,
     ),
-    5,
 );
-const DB_ROUND: Source<'static> = Source::Seq(
+const DB_ROUND: Source<'static> = Source::seq(
     &transfer(P, A, 1, DB),
-    &Source::Seq(&wire(DB, SERVER, 2), &transfer(A, P, 3, DB), 2),
-    3,
+    &Source::seq(&wire(DB, SERVER, 2), &transfer(A, P, 3, DB)),
 );
-const AUTH_ROUND: Source<'static> = Source::Seq(
+const AUTH_ROUND: Source<'static> = Source::seq(
     &transfer(P, B, 4, AUTH),
-    &Source::Seq(&wire(AUTH, SERVER, 5), &transfer(B, P, 6, AUTH), 2),
-    3,
+    &Source::seq(&wire(AUTH, SERVER, 5), &transfer(B, P, 6, AUTH)),
 );
-const ALTERNATE_ROUND: Source<'static> = Source::Seq(
+const ALTERNATE_ROUND: Source<'static> = Source::seq(
     &transfer(P, B, 4, DB),
-    &Source::Seq(&wire(DB, SERVER, 5), &transfer(B, P, 6, DB), 2),
-    3,
+    &Source::seq(&wire(DB, SERVER, 5), &transfer(B, P, 6, DB)),
 );
 const CROSS_DB: EndpointKey = EndpointKey {
     component: 7,
@@ -101,152 +95,110 @@ const CONTROL_SERVER: EndpointKey = EndpointKey {
     role: SERVER.role,
 };
 
-const PAIRED_LEFT: Source<'static> =
-    Source::Seq(&transfer(P, A, 1, DB), &transfer(P, A, 2, AUTH), 2);
-const PAIRED_RIGHT: Source<'static> =
-    Source::Seq(&transfer(P, B, 3, DB), &transfer(P, B, 4, AUTH), 2);
-const PAIRED: Source<'static> = Source::Route {
-    left: &PAIRED_LEFT,
-    right: &PAIRED_RIGHT,
-    resolver: Some(701),
-    events: PAIRED_LEFT.event_count() + PAIRED_RIGHT.event_count(),
-};
+const PAIRED_LEFT: Source<'static> = Source::seq(&transfer(P, A, 1, DB), &transfer(P, A, 2, AUTH));
+const PAIRED_RIGHT: Source<'static> = Source::seq(&transfer(P, B, 3, DB), &transfer(P, B, 4, AUTH));
+const PAIRED: Source<'static> = Source::route(&PAIRED_LEFT, &PAIRED_RIGHT, Some(701));
 
 const CASES: &[(&str, &Source<'static>)] = &[
     (
         "owned-receive-teaches-holder",
-        &Source::Route {
-            left: &Source::Seq(&transfer(P, A, 1, DB), &wire(DB, SERVER, 3), 2),
-            right: &Source::Seq(&transfer(P, A, 2, DB), &wire(DB, SERVER, 4), 2),
-            resolver: None,
-            events: 4,
-        },
+        &Source::route(
+            &Source::seq(&transfer(P, A, 1, DB), &wire(DB, SERVER, 3)),
+            &Source::seq(&transfer(P, A, 2, DB), &wire(DB, SERVER, 4)),
+            None,
+        ),
     ),
     (
         "parallel-sibling-cannot-teach",
-        &Source::Seq(
+        &Source::seq(
             &transfer(P, A, 1, DB),
-            &Source::Route {
-                left: &Source::Par(&wire(P, A, 2), &wire(DB, SERVER, 4), 2),
-                right: &Source::Par(&wire(P, A, 3), &wire(DB, SERVER, 5), 2),
-                resolver: None,
-                events: 4,
-            },
-            5,
+            &Source::route(
+                &Source::par(&wire(P, A, 2), &wire(DB, SERVER, 4)),
+                &Source::par(&wire(P, A, 3), &wire(DB, SERVER, 5)),
+                None,
+            ),
         ),
     ),
     (
         "conditional-holder-controls-later-choice",
-        &Source::Seq(
-            &Source::Route {
-                left: &Source::Seq(&transfer(P, A, 1, DB), &wire(P, B, 2), 2),
-                right: &Source::Seq(&transfer(P, B, 3, DB), &wire(P, A, 4), 2),
-                resolver: None,
-                events: 4,
-            },
-            &Source::Route {
-                left: &wire(DB, SERVER, 5),
-                right: &wire(DB, SERVER, 6),
-                resolver: None,
-                events: 2,
-            },
-            6,
+        &Source::seq(
+            &Source::route(
+                &Source::seq(&transfer(P, A, 1, DB), &wire(P, B, 2)),
+                &Source::seq(&transfer(P, B, 3, DB), &wire(P, A, 4)),
+                None,
+            ),
+            &Source::route(&wire(DB, SERVER, 5), &wire(DB, SERVER, 6), None),
         ),
     ),
     (
         "equal-unions-different-actual-participants",
-        &Source::Seq(
-            &Source::Route {
-                left: &Source::Seq(&transfer(P, A, 1, DB), &transfer(P, B, 2, AUTH), 2),
-                right: &Source::Seq(&transfer(P, B, 3, DB), &transfer(P, A, 4, AUTH), 2),
-                resolver: None,
-                events: 4,
-            },
-            &Source::Seq(
-                &Source::Route {
-                    left: &wire(P, DB, 5),
-                    right: &wire(P, AUTH, 6),
-                    resolver: None,
-                    events: 2,
-                },
-                &wire(A, SERVER, 7),
-                3,
+        &Source::seq(
+            &Source::route(
+                &Source::seq(&transfer(P, A, 1, DB), &transfer(P, B, 2, AUTH)),
+                &Source::seq(&transfer(P, B, 3, DB), &transfer(P, A, 4, AUTH)),
+                None,
             ),
-            7,
+            &Source::seq(
+                &Source::route(&wire(P, DB, 5), &wire(P, AUTH, 6), None),
+                &wire(A, SERVER, 7),
+            ),
         ),
     ),
     ("handoff-work-control-return", &EXCHANGE),
     (
         "parallel-closed-loans",
-        &Source::Roll(
-            &Source::Par(
-                &Source::Roll(&DB_ROUND, DB_ROUND.event_count()),
-                &Source::Roll(&AUTH_ROUND, AUTH_ROUND.event_count()),
-                DB_ROUND.event_count() + AUTH_ROUND.event_count(),
-            ),
-            DB_ROUND.event_count() + AUTH_ROUND.event_count(),
-        ),
+        &Source::roll(&Source::par(
+            &Source::roll(&DB_ROUND),
+            &Source::roll(&AUTH_ROUND),
+        )),
     ),
     (
         "choice-closed",
-        &Source::Seq(
-            &Source::Route {
-                left: &DB_ROUND,
-                right: &ALTERNATE_ROUND,
-                resolver: Some(701),
-                events: DB_ROUND.event_count() + ALTERNATE_ROUND.event_count(),
-            },
+        &Source::seq(
+            &Source::route(&DB_ROUND, &ALTERNATE_ROUND, Some(701)),
             &wire(DB, SERVER, 7),
-            DB_ROUND.event_count() + ALTERNATE_ROUND.event_count() + 1,
         ),
     ),
     (
         "component-boundary",
-        &Source::Seq(
+        &Source::seq(
             &transfer(P, A, 1, CROSS_DB),
-            &Source::Seq(
+            &Source::seq(
                 &wire(CROSS_DB, CROSS_SERVER, 2),
-                &Source::Seq(
+                &Source::seq(
                     &wire(CONTROL_SERVER, CONTROL_A, 3),
                     &transfer(A, P, 4, CROSS_DB),
-                    2,
                 ),
-                3,
             ),
-            4,
         ),
     ),
     (
         "nested-carrier",
-        &Source::Seq(
+        &Source::seq(
             &transfer(P, B, 1, DB),
-            &Source::Seq(&transfer(A, B, 2, AUTH), &transfer(AUTH, P, 3, DB), 2),
-            3,
+            &Source::seq(&transfer(A, B, 2, AUTH), &transfer(AUTH, P, 3, DB)),
         ),
     ),
     (
         "early-resource-work",
-        &Source::Seq(
+        &Source::seq(
             &wire(DB, SERVER, 1),
-            &Source::Seq(&transfer(P, A, 2, DB), &wire(DB, SERVER, 3), 2),
-            3,
+            &Source::seq(&transfer(P, A, 2, DB), &wire(DB, SERVER, 3)),
         ),
     ),
     (
         "stable-parallel-resource",
-        &Source::Seq(
+        &Source::seq(
             &transfer(P, A, 1, DB),
-            &Source::Seq(
-                &Source::Par(&wire(DB, SERVER, 2), &wire(DB, B, 3), 2),
+            &Source::seq(
+                &Source::par(&wire(DB, SERVER, 2), &wire(DB, B, 3)),
                 &transfer(A, P, 4, DB),
-                3,
             ),
-            4,
         ),
     ),
     (
         "same-actor-two-views",
-        &Source::Seq(&transfer(P, A, 1, DB), &wire(DB, A, 2), 2),
+        &Source::seq(&transfer(P, A, 1, DB), &wire(DB, A, 2)),
     ),
     (
         "local-unit",
@@ -259,163 +211,100 @@ const CASES: &[(&str, &Source<'static>)] = &[
     ),
     (
         "parallel-double-grant",
-        &Source::Par(&transfer(P, A, 1, DB), &transfer(P, B, 2, DB), 2),
+        &Source::par(&transfer(P, A, 1, DB), &transfer(P, B, 2, DB)),
     ),
     (
         "parallel-move-and-use",
-        &Source::Par(&transfer(P, A, 1, DB), &wire(DB, SERVER, 2), 2),
+        &Source::par(&transfer(P, A, 1, DB), &wire(DB, SERVER, 2)),
     ),
-    ("roll-owner-drift", &Source::Roll(&transfer(P, A, 1, DB), 1)),
+    ("roll-owner-drift", &Source::roll(&transfer(P, A, 1, DB))),
     (
         "wrong-return-owner",
-        &Source::Seq(&transfer(P, A, 1, DB), &transfer(B, P, 2, DB), 2),
+        &Source::seq(&transfer(P, A, 1, DB), &transfer(B, P, 2, DB)),
     ),
     (
         "unrooted-issuance",
-        &Source::Seq(
+        &Source::seq(
             &transfer(DB, AUTH, 1, THIRD),
-            &Source::Seq(
-                &transfer(AUTH, THIRD, 2, DB),
-                &transfer(THIRD, DB, 3, AUTH),
-                2,
-            ),
-            3,
+            &Source::seq(&transfer(AUTH, THIRD, 2, DB), &transfer(THIRD, DB, 3, AUTH)),
         ),
     ),
     (
         "terminal-choice-different-owners",
-        &Source::Route {
-            left: &transfer(P, A, 1, DB),
-            right: &transfer(P, B, 2, DB),
-            resolver: None,
-            events: 2,
-        },
+        &Source::route(&transfer(P, A, 1, DB), &transfer(P, B, 2, DB), None),
     ),
     (
         "different-owners-unrelated-continuation",
-        &Source::Seq(
-            &Source::Route {
-                left: &transfer(P, A, 1, DB),
-                right: &transfer(P, B, 2, DB),
-                resolver: Some(701),
-                events: 2,
-            },
+        &Source::seq(
+            &Source::route(&transfer(P, A, 1, DB), &transfer(P, B, 2, DB), Some(701)),
             &wire(A, B, 3),
-            3,
         ),
     ),
     (
         "different-owners-live-continuation",
-        &Source::Seq(
-            &Source::Route {
-                left: &transfer(P, A, 1, DB),
-                right: &transfer(P, B, 2, DB),
-                resolver: None,
-                events: 2,
-            },
+        &Source::seq(
+            &Source::route(&transfer(P, A, 1, DB), &transfer(P, B, 2, DB), None),
             &wire(DB, SERVER, 3),
-            3,
         ),
     ),
     (
         "different-owners-next-visit",
-        &Source::Roll(
-            &Source::Route {
-                left: &transfer(P, A, 1, DB),
-                right: &transfer(P, B, 2, DB),
-                resolver: None,
-                events: 2,
-            },
-            2,
-        ),
+        &Source::roll(&Source::route(
+            &transfer(P, A, 1, DB),
+            &transfer(P, B, 2, DB),
+            None,
+        )),
     ),
     (
         "different-owners-nested-continuation",
-        &Source::Seq(
-            &Source::Seq(
+        &Source::seq(
+            &Source::seq(
                 &wire(P, A, 3),
-                &Source::Route {
-                    left: &transfer(P, A, 1, DB),
-                    right: &transfer(P, B, 2, DB),
-                    resolver: None,
-                    events: 2,
-                },
-                3,
+                &Source::route(&transfer(P, A, 1, DB), &transfer(P, B, 2, DB), None),
             ),
             &wire(SERVER, DB, 4),
-            4,
         ),
     ),
     (
         "different-owners-later-owned-payload",
-        &Source::Seq(
-            &Source::Route {
-                left: &transfer(P, A, 1, DB),
-                right: &transfer(P, B, 2, DB),
-                resolver: None,
-                events: 2,
-            },
+        &Source::seq(
+            &Source::route(&transfer(P, A, 1, DB), &transfer(P, B, 2, DB), None),
             &transfer(A, P, 3, DB),
-            3,
         ),
     ),
     ("self-owned-carrier", &transfer(DB, A, 1, DB)),
     (
         "correlated-resources-return-through-current-carrier",
-        &Source::Seq(
+        &Source::seq(
             &PAIRED,
-            &Source::Seq(&transfer(AUTH, P, 5, DB), &wire(DB, SERVER, 6), 2),
-            PAIRED.event_count() + 2,
+            &Source::seq(&transfer(AUTH, P, 5, DB), &wire(DB, SERVER, 6)),
         ),
     ),
     (
         "independent-parallel-owner-choices",
-        &Source::Seq(
-            &Source::Par(
-                &Source::Route {
-                    left: &transfer(P, A, 1, DB),
-                    right: &transfer(P, B, 2, DB),
-                    resolver: None,
-                    events: 2,
-                },
-                &Source::Route {
-                    left: &transfer(P, A, 3, AUTH),
-                    right: &transfer(P, B, 4, AUTH),
-                    resolver: None,
-                    events: 2,
-                },
-                4,
+        &Source::seq(
+            &Source::par(
+                &Source::route(&transfer(P, A, 1, DB), &transfer(P, B, 2, DB), None),
+                &Source::route(&transfer(P, A, 3, AUTH), &transfer(P, B, 4, AUTH), None),
             ),
-            &Source::Par(&wire(DB, SERVER, 5), &wire(AUTH, CONTROL_SERVER, 6), 2),
-            6,
+            &Source::par(&wire(DB, SERVER, 5), &wire(AUTH, CONTROL_SERVER, 6)),
         ),
     ),
     (
         "conditional-loop-entry-owner",
-        &Source::Seq(
+        &Source::seq(
             &PAIRED,
-            &Source::Roll(
-                &Source::Seq(
-                    &wire(DB, SERVER, 5),
-                    &Source::Seq(&transfer(AUTH, P, 6, DB), &transfer(P, AUTH, 7, DB), 2),
-                    3,
-                ),
-                3,
-            ),
-            PAIRED.event_count() + 3,
+            &Source::roll(&Source::seq(
+                &wire(DB, SERVER, 5),
+                &Source::seq(&transfer(AUTH, P, 6, DB), &transfer(P, AUTH, 7, DB)),
+            )),
         ),
     ),
     (
         "no-branch-dependent-initial-issuer",
-        &Source::Seq(
-            &Source::Route {
-                left: &transfer(P, A, 1, DB),
-                right: &transfer(P, B, 2, DB),
-                resolver: None,
-                events: 2,
-            },
+        &Source::seq(
+            &Source::route(&transfer(P, A, 1, DB), &transfer(P, B, 2, DB), None),
             &transfer(DB, P, 3, AUTH),
-            3,
         ),
     ),
 ];

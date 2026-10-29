@@ -7,16 +7,16 @@ use crate::global::{
 /// Walk one route's commit ancestors once. The emitted rows are written from
 /// the end toward the start, retaining outer-to-inner descriptor order without
 /// rescanning each prefix or allocating a chain buffer.
-pub(in crate::global::role_program::image_impl) struct RouteCommitCursor<'a> {
-    scopes: &'a ScopeFacts,
+pub(in crate::global::role_program::image_impl) struct RouteCommitCursor<'a, const E: usize> {
+    scopes: &'a ScopeFacts<E>,
     conflict: PackedEventConflict,
     remaining: usize,
 }
 
-impl<'a> RouteCommitCursor<'a> {
+impl<'a, const E: usize> RouteCommitCursor<'a, E> {
     #[inline(always)]
     pub(in crate::global::role_program::image_impl) const fn new(
-        scopes: &'a ScopeFacts,
+        scopes: &'a ScopeFacts<E>,
         scope: ScopeId,
         arm: u8,
     ) -> Self {
@@ -46,8 +46,8 @@ impl<'a> RouteCommitCursor<'a> {
 }
 
 #[inline(always)]
-pub(in crate::global::role_program::image_impl) const fn route_commit_row_count(
-    scopes: &ScopeFacts,
+pub(in crate::global::role_program::image_impl) const fn route_commit_row_count<const E: usize>(
+    scopes: &ScopeFacts<E>,
     scope: ScopeId,
 ) -> usize {
     // Both arms have this scope's same ancestor chain; only their first row's

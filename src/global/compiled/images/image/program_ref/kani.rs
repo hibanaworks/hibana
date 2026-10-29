@@ -216,10 +216,27 @@ fn packed_column_range_construction_is_exact_for_resident_stride_domain() {
         assert!(program.len == len);
         assert!(program.byte_len(stride) == byte_len);
         assert!(program.end_offset(stride) == usize::from(offset) + byte_len);
-        assert!(role.offset == offset);
+        assert!(role.offset == u32::from(offset));
         assert!(role.len == len);
         assert!(role.byte_len(stride) == byte_len);
         assert!(role.end_offset(stride) == usize::from(offset) + byte_len);
+    }
+}
+
+#[kani::proof]
+fn role_image_columns_preserve_wide_byte_addresses_and_compact_row_counts() {
+    let offset: u32 = kani::any();
+    let len: u16 = kani::any();
+    let stride = usize::from(kani::any::<u8>() % 9) + 1;
+    let bytes = usize::from(len) * stride;
+    let valid = bytes <= usize::from(u16::MAX) && offset <= u32::MAX - bytes as u32;
+    kani::cover!(valid && offset > u32::from(u16::MAX));
+    kani::cover!(!valid);
+    if valid {
+        let column = ColumnRange::new(offset as usize, usize::from(len), stride);
+        assert_eq!(column.offset, offset);
+        assert_eq!(column.len, len);
+        assert_eq!(column.end_offset(stride), offset as usize + bytes);
     }
 }
 
@@ -415,13 +432,16 @@ fn compiled_program_atom_blob_decoding_preserves_every_schema_bit() {
         decoded the row and the ref does not escape this proof harness. */
         core::mem::transmute(&bytes)
     };
-    let row = program(
+    let image = program(
         bytes,
         ProgramImageFacts { max_role: 1 },
         ProgramImageColumns::new(1, 0, 0, 0),
-    )
-    .atom_at(0)
-    .expect("valid symbolic atom");
+    );
+    let row = image.atom_at(0).expect("valid symbolic atom");
 
     assert!(row.payload.wire_schema() == payload_schema);
+    assert_eq!(image.event_roles(0), (row.from, row.to));
+    assert_eq!(image.event_message(0), (row.from, row.to, row.label));
+    assert_eq!(image.event_origin_lane(0), (row.origin, row.lane));
+    assert_eq!(image.event_endpoint(0), None);
 }

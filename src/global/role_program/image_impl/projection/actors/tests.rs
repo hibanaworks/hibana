@@ -227,18 +227,18 @@ fn resident_actor_image_checks_both_sides_before_publication() {
         bytes[crate::global::role_program::ROLE_IMAGE_EVENT_STRIDE + 8] = 0;
         bytes
     };
-    let image = RoleImageRef::new(&PROGRAM, 1, FACTS, COLUMNS, &LOCAL);
+    let image = RoleImageRef::new(&PROGRAM, 1, FACTS, &COLUMNS, &LOCAL);
     assert_eq!(image.local_step_count(), 3);
     assert!(image.local_step_node(1).unwrap().action().is_send());
     assert!(image.local_step_node(2).unwrap().action().is_recv());
     for malformed in [&DUPLICATED_SEND, &COLLAPSED_LOCAL] {
         assert!(
-            std::panic::catch_unwind(|| RoleImageRef::new(&PROGRAM, 1, FACTS, COLUMNS, malformed))
+            std::panic::catch_unwind(|| RoleImageRef::new(&PROGRAM, 1, FACTS, &COLUMNS, malformed))
                 .is_err()
         );
     }
     assert!(
-        std::panic::catch_unwind(|| RoleImageRef::new(&PROGRAM, 0, FACTS, COLUMNS, &LOCAL))
+        std::panic::catch_unwind(|| RoleImageRef::new(&PROGRAM, 0, FACTS, &COLUMNS, &LOCAL))
             .is_err()
     );
 }

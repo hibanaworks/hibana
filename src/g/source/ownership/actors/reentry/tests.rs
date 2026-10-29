@@ -2,16 +2,10 @@ use super::super::super::Message;
 use super::*;
 
 fn pair<'a>(left: &'a Source<'a>, right: &'a Source<'a>, shape: u8) -> Source<'a> {
-    let events = left.event_count() + right.event_count();
     match shape {
-        0 => Source::Seq(left, right, events),
-        1 => Source::Par(left, right, events),
-        _ => Source::Route {
-            left,
-            right,
-            resolver: (shape == 3).then_some(7),
-            events,
-        },
+        0 => Source::seq(left, right),
+        1 => Source::par(left, right),
+        _ => Source::route(left, right, (shape == 3).then_some(7)),
     }
 }
 
@@ -53,7 +47,7 @@ fn bounded_closure_matches_all_prior_action_edges_across_mixed_shapes() {
             let left = pair(&leaves[0], &leaves[1], left_shape);
             for right_shape in 0..4 {
                 let right = pair(&leaves[2], &leaves[3], right_shape);
-                let rolled = Source::Roll(&right, 2);
+                let rolled = Source::roll(&right);
                 for root_shape in 0..4 {
                     let root = pair(&left, &rolled, root_shape);
                     let checker = Checker {

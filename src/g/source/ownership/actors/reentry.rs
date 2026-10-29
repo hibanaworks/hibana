@@ -403,17 +403,24 @@ impl<const E: usize, const D: usize> Checker<'_, E, D> {
                 };
                 if actor != owner {
                     let mut informed = false;
-                    let mut prior = body.start;
-                    while prior < event && !informed {
-                        if needed[prior] & 2 != 0
-                            && body.source.before(prior - body.start, event - body.start)
-                        {
-                            match self.side(prior, 1, path) {
-                                Ok(receiver) => informed = receiver == actor,
-                                Err(choice) => return Err(choice),
+                    let mut lower = 0;
+                    while !informed {
+                        let Some((first, end)) =
+                            body.source.predecessor_range(event - body.start, lower)
+                        else {
+                            break;
+                        };
+                        let mut prior = body.start + first;
+                        while prior < body.start + end && !informed {
+                            if needed[prior] & 2 != 0 {
+                                match self.side(prior, 1, path) {
+                                    Ok(receiver) => informed = receiver == actor,
+                                    Err(choice) => return Err(choice),
+                                }
                             }
+                            prior += 1;
                         }
-                        prior += 1;
+                        lower = end;
                     }
                     if !informed {
                         match self.guarded_departures(body, owner, actor, path) {
@@ -455,6 +462,15 @@ impl<const E: usize, const D: usize> Checker<'_, E, D> {
         while event > begin && needed[event - 1] == 0 {
             event -= 1;
         }
+        let limit = event;
+        let mut remaining = [0u32; E];
+        let mut index = limit;
+        while index > begin {
+            index -= 1;
+            if needed[index] != 3 {
+                remaining[index / 32] |= 1 << (index % 32);
+            }
+        }
         while event > begin {
             event -= 1;
             if needed[event] & 2 != 0 {
@@ -467,26 +483,33 @@ impl<const E: usize, const D: usize> Checker<'_, E, D> {
                         Ok(actor) => actor,
                         Err(choice) => return Err(choice),
                     };
-                    let mut prior = begin;
-                    while prior < event {
-                        if source.before(prior - start, event - start) {
+                    let mut lower = begin - start;
+                    while let Some((first, end)) = source.predecessor_range(event - start, lower) {
+                        let mut prior = Self::next_remaining(&remaining, start + first, limit);
+                        while prior < start + end {
                             let mut previous_side = 0;
                             while previous_side < 2 {
-                                let previous = match self.side(prior, previous_side, path) {
-                                    Ok(actor) => actor,
-                                    Err(choice) => return Err(choice),
-                                };
-                                if previous == actor {
-                                    match Self::present(source, start, prior, path) {
-                                        Ok(true) => needed[prior] |= 1 << previous_side,
-                                        Ok(false) => (),
+                                if needed[prior] & (1 << previous_side) == 0 {
+                                    let previous = match self.side(prior, previous_side, path) {
+                                        Ok(actor) => actor,
                                         Err(choice) => return Err(choice),
+                                    };
+                                    if previous == actor {
+                                        match Self::present(source, start, prior, path) {
+                                            Ok(true) => needed[prior] |= 1 << previous_side,
+                                            Ok(false) => (),
+                                            Err(choice) => return Err(choice),
+                                        }
                                     }
                                 }
                                 previous_side += 1;
                             }
+                            if needed[prior] == 3 {
+                                remaining[prior / 32] &= !(1 << (prior % 32));
+                            }
+                            prior = Self::next_remaining(&remaining, prior + 1, limit);
                         }
-                        prior += 1;
+                        lower = end;
                     }
                 }
                 side += 1;
@@ -494,6 +517,27 @@ impl<const E: usize, const D: usize> Checker<'_, E, D> {
         }
 
         Ok(())
+    }
+
+    /// Compiler-only bits skip actions whose two facets are already included.
+    /// A word lookup has no mutable successor chains to chase or compress.
+    const fn next_remaining(bits: &[u32; E], first: usize, limit: usize) -> usize {
+        if first >= limit {
+            return limit;
+        }
+        let mut word = first / 32;
+        let mut available = bits[word] & (u32::MAX << (first % 32));
+        loop {
+            if available != 0 {
+                let next = word * 32 + available.trailing_zeros() as usize;
+                return if next < limit { next } else { limit };
+            }
+            word += 1;
+            if word * 32 >= limit {
+                return limit;
+            }
+            available = bits[word];
+        }
     }
 
     #[cfg(any(kani, all(test, hibana_repo_tests)))]

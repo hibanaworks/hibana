@@ -194,14 +194,17 @@ const fn outbound_roll_head<const E: usize>(
     candidate: usize,
 ) -> bool {
     let owner = eff_list.atom_at(candidate).from;
-    let mut prior = start;
-    while prior < candidate {
+    // A nearby sequential predecessor usually settles this query. Inspect
+    // nearest occurrences first; the condition still ranges over the complete
+    // prefix when every earlier action is in another choice or parallel arm.
+    let mut prior = candidate;
+    while prior > start {
+        prior -= 1;
         let atom = eff_list.atom_at(prior);
         if (atom.from == owner || atom.to == owner) && paths.separation(prior, candidate).is_none()
         {
             return false;
         }
-        prior += 1;
     }
     true
 }

@@ -3,8 +3,8 @@ pub(super) mod program;
 
 pub(crate) use self::image::{
     ACTOR_DECISION_CAPACITY, COMPACT_DESCRIPTOR_BYTE_CAPACITY, CompiledProgramRef,
-    PROGRAM_IMAGE_STORAGE_BYTE_CAPACITY, ProgramImageBytes, ProgramImageColumns, ProgramImagePlan,
-    RoleDescriptorRef, RoleImageSlice,
+    PROGRAM_IMAGE_ATOM_ONLY_EVENT_CAPACITY, PROGRAM_IMAGE_STORAGE_BYTE_CAPACITY, ProgramImageBytes,
+    ProgramImageColumns, ProgramImagePlan, RoleDescriptorRef, RoleImageSlice,
 };
 
 #[cfg(any(kani, all(test, hibana_repo_tests)))]
@@ -12,6 +12,6 @@ pub(crate) use self::image::SourceOrderIndex;
 
 #[cfg(all(test, hibana_repo_tests))]
 pub(crate) use self::image::{
-    PROGRAM_IMAGE_ATOM_ONLY_EVENT_CAPACITY, PROGRAM_IMAGE_ATOM_STRIDE,
-    PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE, PROGRAM_IMAGE_SCOPE_MARKER_STRIDE,
+    PROGRAM_IMAGE_ATOM_STRIDE, PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE,
+    PROGRAM_IMAGE_SCOPE_MARKER_STRIDE,
 };

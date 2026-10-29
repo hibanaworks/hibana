@@ -1,12 +1,16 @@
-use super::{ScopeId, ScopeKind, ScopeMarkerView};
+#[cfg(any(kani, all(test, hibana_repo_tests)))]
+use super::ScopeId;
+use super::{ScopeKind, ScopeMarkerView};
 
 mod nesting;
 pub(crate) use nesting::{StructuredScopeRange, innermost_scope_range, outermost_scope_range};
 
 mod route;
+#[cfg(all(test, hibana_repo_tests))]
+pub(crate) use route::route_arm_event_ranges_for_scope;
 pub(crate) use route::{
     closed_route_arm_ranges_from_first_enter, passive_route_child_enter,
-    route_arm_event_ranges_for_scope, route_arm_ranges_from_first_enter,
+    route_arm_ranges_from_first_enter,
 };
 #[cfg(any(kani, all(test, hibana_repo_tests)))]
 pub(crate) use route::{

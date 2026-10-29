@@ -9,14 +9,9 @@ fn first_transfer_matches_linear_source_enumeration_for_every_small_tree() {
     use tree::{EndpointKey, Message, Payload, Source};
     fn pair<'a>(a: &'a Source<'a>, b: &'a Source<'a>, shape: u8) -> Source<'a> {
         match shape {
-            0 => Source::Seq(a, b, a.event_count() + b.event_count()),
-            1 => Source::Par(a, b, a.event_count() + b.event_count()),
-            _ => Source::Route {
-                left: a,
-                right: b,
-                resolver: (shape == 3).then_some(7),
-                events: a.event_count() + b.event_count(),
-            },
+            0 => Source::seq(a, b),
+            1 => Source::par(a, b),
+            _ => Source::route(a, b, (shape == 3).then_some(7)),
         }
     }
     let keys = [
@@ -50,14 +45,45 @@ fn first_transfer_matches_linear_source_enumeration_for_every_small_tree() {
             for right_shape in 0..4 {
                 let left = pair(&leaves[0], &leaves[1], left_shape);
                 let right = pair(&leaves[2], &leaves[3], right_shape);
-                let rolled = Source::Roll(&right, 2);
+                let rolled = Source::roll(&right);
                 for root_shape in 0..4 {
                     let root = pair(&left, &rolled, root_shape);
+                    assert_eq!(root.event_count(), leaves.len());
+                    assert_eq!(
+                        root.has_delegation(),
+                        leaves.iter().any(|leaf| {
+                            matches!(
+                                leaf,
+                                Source::Send(Message {
+                                    payload: Payload::Endpoint(_),
+                                    ..
+                                })
+                            )
+                        })
+                    );
+                    for event in 0..leaves.len() {
+                        for lower in 0..=leaves.len() {
+                            let mut found = [false; 4];
+                            let mut next = lower;
+                            while let Some((start, end)) = root.predecessor_range(event, next) {
+                                assert!(next <= start && start < end && end <= event);
+                                for member in &mut found[start..end] {
+                                    assert!(!*member);
+                                    *member = true;
+                                }
+                                next = end;
+                            }
+                            for (prior, &present) in found.iter().enumerate() {
+                                assert_eq!(present, prior >= lower && root.before(prior, event));
+                            }
+                        }
+                    }
                     for key in keys {
                         let expected = (0..root.event_count()).find(|&event| {
                             matches!(root.message_at(event).payload, Payload::Endpoint(payload) if payload.same(key))
                         });
                         assert_eq!(root.first_transfer(key), expected);
+                        assert_eq!(root.transfers(key), expected.is_some());
                         checked += 1;
                     }
                 }

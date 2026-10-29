@@ -121,6 +121,40 @@ impl Tree {
         }
     }
 
+    fn separating_route(
+        &self,
+        first: usize,
+        second: usize,
+        ordinal: u16,
+        start: usize,
+    ) -> Option<(ScopeId, usize)> {
+        if first >= second || second >= self.events() {
+            return None;
+        }
+        match self {
+            Self::Send => None,
+            Self::Roll(body) => body.separating_route(first, second, ordinal + 1, start),
+            Self::Seq(a, b) | Self::Par(a, b) | Self::Route(a, b) => {
+                let child = ordinal + u16::from(!matches!(self, Self::Seq(..)));
+                let split = a.events();
+                if second < split {
+                    a.separating_route(first, second, child, start)
+                } else if first >= split {
+                    b.separating_route(
+                        first - split,
+                        second - split,
+                        child + a.scopes(),
+                        start + split,
+                    )
+                } else if matches!(self, Self::Route(..)) {
+                    Some((ScopeId::route(ordinal), start + split))
+                } else {
+                    None
+                }
+            }
+        }
+    }
+
     fn emit<const E: usize>(&self, source: &mut EffList<E>, next: &mut u16) {
         let kind = match self {
             Self::Send => {
@@ -240,7 +274,22 @@ fn compare<const E: usize, const B: usize>(tree: &Tree) {
     }
     for first in (0..=events + 1).chain([usize::MAX]) {
         for second in (0..=events + 1).chain([usize::MAX]) {
+            let containing = tree.rolls_at(first, 0).into_iter().find(|scope| {
+                first < second
+                    && second <= events
+                    && (first..second).all(|event| tree.rolls_at(event, 0).contains(scope))
+            });
+            assert_eq!(
+                image.source_roll_containing(first, second),
+                containing,
+                "containing roll {tree:?}: {first}..{second}"
+            );
             let expected = tree.before(first, second);
+            assert_eq!(
+                image.source_separating_route(first, second),
+                tree.separating_route(first, second, 0, 0),
+                "separating route {tree:?}: {first}->{second}"
+            );
             assert_eq!(
                 image.source_precedes(first, second),
                 expected,
@@ -251,6 +300,18 @@ fn compare<const E: usize, const B: usize>(tree: &Tree) {
                 expected,
                 "marker oracle {tree:?}: {first}->{second}"
             );
+            if first < second
+                && second < events
+                && let Some(cut) = image.source_predecessor_cut(first, second)
+            {
+                assert!(cut <= first, "cut {tree:?}: {first}->{second}");
+                for omitted in cut..=first {
+                    assert!(
+                        !tree.before(omitted, second),
+                        "skipped interval {tree:?}: {omitted}->{second}"
+                    );
+                }
+            }
             assert_eq!(
                 index.before(first, second),
                 expected,

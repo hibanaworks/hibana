@@ -21,7 +21,7 @@ fn missing_wrong_and_out_of_bounds_owned_receipts_are_rejected() {
             bytes[index] = descriptor.proof_byte_at(index);
             index += 1;
         }
-        let columns = image.columns();
+        let columns = *image.columns();
         assert!(columns.owned_receipt_count == 1);
         let entry = columns.roll_entry_views().offset as usize;
         assert!(bytes[entry] == 10);
@@ -74,7 +74,7 @@ fn missing_wrong_and_out_of_bounds_owned_receipts_are_rejected() {
                 image.program(),
                 image.role(),
                 image.facts(),
-                *columns,
+                columns,
                 malformed,
             )
         });

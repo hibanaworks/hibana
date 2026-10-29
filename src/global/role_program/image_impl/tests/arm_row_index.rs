@@ -74,7 +74,7 @@ fn certified_arm_byte_mutations_match_exact_original_rows() {
             let mut changed = bytes;
             changed[offset] = raw;
             if !route_scopes_are_sorted(&changed, columns.route_scopes)
-                || !passive_parent_rows_are_coherent(&changed, columns)
+                || !passive_parent_rows_are_coherent(&changed, *columns)
             {
                 rejected += 1;
                 continue;
@@ -102,7 +102,7 @@ fn malformed_prefix_requires_checked_decoding_and_later_damage_keeps_early_succe
     let start = rows.columns().route_arms.offset as usize;
     // Corrupt only the reserved byte of row1: row0 must still return normally.
     bytes[start + ROLE_IMAGE_ROUTE_ARM_STRIDE + 7] = 1;
-    assert!(!passive_parent_rows_are_coherent(&bytes, rows.columns()));
+    assert!(!passive_parent_rows_are_coherent(&bytes, *rows.columns()));
     let immutable = Box::leak(Box::new(bytes));
     let view = RoleLaneImage::new(
         rows.lanes().columns,

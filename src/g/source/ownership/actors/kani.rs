@@ -208,16 +208,7 @@ fn insufficient_actor_image_storage_cannot_publish_a_partial_rebuild() {
         label: 4,
         payload: Payload::Wire { schema: 0 },
     });
-    const SOURCE: Source<'static> = Source::Seq(
-        &Source::Route {
-            left: &LEFT,
-            right: &RIGHT,
-            resolver: None,
-            events: 2,
-        },
-        &WORK,
-        3,
-    );
+    const SOURCE: Source<'static> = Source::seq(&Source::route(&LEFT, &RIGHT, None), &WORK);
     let mut scratch = Scratch::<5, 3>::new();
     let mut image = ActorImage::<3, 0>::new();
     assert!(compile_actor_image_into(&BEFORE, &mut scratch, &mut image).is_ok());

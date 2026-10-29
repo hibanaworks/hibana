@@ -29,10 +29,10 @@ pub(crate) struct RoleImageRef {
     program: &'static CompiledProgramRef,
     role: u8,
     facts: RuntimeRoleFacts,
-    columns: RoleImageColumns,
+    columns: &'static RoleImageColumns,
     blob: BlobPtr,
     first_active_lane: u16,
-    route_index_start: u16,
+    route_index_start: u32,
     lookup_indexes: u8,
 }
 
@@ -98,18 +98,11 @@ const PARALLEL_REENTRY_INDEX: u8 = 4;
 const REENTRY_INDEX: u8 = 8;
 
 impl RoleImageRef {
-    #[cfg(hibana_profile)]
-    pub(crate) fn profile_resident_validation(&self) {
-        self.validate_resident_events();
-        self.validate_route_commit_chains();
-        self.validate_route_topology();
-    }
-
     pub(crate) const fn new<const N: usize>(
         program: &'static crate::global::compiled::images::CompiledProgramRef,
         role: u8,
         facts: RuntimeRoleFacts,
-        columns: RoleImageColumns,
+        columns: &'static RoleImageColumns,
         bytes: &'static [u8; N],
     ) -> Self {
         columns.validate_blob_bound();
@@ -121,10 +114,10 @@ impl RoleImageRef {
             Some(metadata) => metadata,
             None => invalid_resident_descriptor(),
         };
-        if !route_index_is_coherent(bytes, columns) {
+        if !route_index_is_coherent(bytes, *columns) {
             invalid_resident_descriptor();
         }
-        if !passive_parent_rows_are_coherent(bytes, columns) {
+        if !passive_parent_rows_are_coherent(bytes, *columns) {
             invalid_resident_descriptor();
         }
         let mut image = Self {
@@ -134,7 +127,7 @@ impl RoleImageRef {
             columns,
             blob,
             first_active_lane: metadata.first_active_lane,
-            route_index_start: compact_count(columns.route_index().start),
+            route_index_start: columns.route_index().start as u32,
             lookup_indexes: 0,
         };
         if metadata.active_lane_count != footprint.active_lane_count
@@ -143,7 +136,7 @@ impl RoleImageRef {
         {
             invalid_resident_descriptor();
         }
-        if !lane_columns_are_coherent(bytes, columns, active_lane_row, footprint) {
+        if !lane_columns_are_coherent(bytes, *columns, active_lane_row, footprint) {
             invalid_resident_descriptor();
         }
         if !roll_scope_columns_are_coherent(bytes, columns.roll_scopes, footprint.local_step_count)
@@ -158,13 +151,19 @@ impl RoleImageRef {
         ) {
             invalid_resident_descriptor();
         }
-        image.validate_resident_events();
-        image.validate_route_commit_chains();
-        image.validate_parallel_borrow_masks();
-        if image.parallel_reentry_is_borrowable() {
-            image.lookup_indexes |= PARALLEL_REENTRY_INDEX;
+        image.validate_resident_arity();
+        let count = image.local_step_count();
+        if count <= 32 {
+            image.validate_resident_data::<32>();
+        } else if count <= 128 {
+            image.validate_resident_data::<128>();
+        } else if count <= 512 {
+            image.validate_resident_data::<512>();
+        } else if count <= 2048 {
+            image.validate_resident_data::<2048>();
+        } else {
+            image.validate_resident_data::<{ u16::MAX as usize / super::super::ROLE_IMAGE_EVENT_STRIDE }>();
         }
-        image.validate_route_topology();
         if image.columns.roll_scopes.len != 0 {
             image.lookup_indexes |= REENTRY_INDEX;
         } else {
@@ -178,6 +177,17 @@ impl RoleImageRef {
             }
         }
         image
+    }
+
+    const fn validate_resident_data<const E: usize>(&mut self) {
+        let rows = validation::ValidationRows::<E>::new(self);
+        self.validate_resident_events(&rows);
+        self.validate_route_commit_chains();
+        self.validate_parallel_borrow_masks(&rows);
+        if self.parallel_reentry_is_borrowable(&rows) {
+            self.lookup_indexes |= PARALLEL_REENTRY_INDEX;
+        }
+        self.validate_route_topology(&rows);
     }
 
     #[inline(always)]
@@ -196,7 +206,7 @@ impl RoleImageRef {
     }
 
     #[cfg(all(test, hibana_repo_tests))]
-    pub(crate) const fn columns(&self) -> RoleImageColumns {
+    pub(crate) const fn columns(&self) -> &'static RoleImageColumns {
         self.columns
     }
 
@@ -216,7 +226,7 @@ impl RoleImageRef {
 
     #[inline(always)]
     pub(crate) const fn lanes(&self) -> RoleLaneImage<'_> {
-        RoleLaneImage::new(&self.columns, self.blob)
+        RoleLaneImage::new(self.columns, self.blob)
     }
 
     #[inline(always)]
@@ -313,8 +323,8 @@ impl RoleImageRef {
         }
         // The published image seals these contiguous two-byte rows. Borrow
         // the span once so iteration needs no column lookup for each row.
-        let start = usize::from(column.offset) + range.start() * 2;
-        let stop = usize::from(column.offset) + range.end() * 2;
+        let start = column.offset as usize + range.start() * 2;
+        let stop = column.offset as usize + range.end() * 2;
         &self.blob.as_slice()[start..stop]
     }
 

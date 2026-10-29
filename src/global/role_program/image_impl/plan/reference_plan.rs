@@ -1,5 +1,4 @@
-// Frozen full-route plan from the pre-filter diagnostic baseline.
-// Only module-relative imports, entrypoint names, and duplicate blob_len adapted.
+// Independent full-route plan used to validate local route compaction.
 use super::super::super::{
     ColumnRange, LANE_DOMAIN_SIZE, ROLE_IMAGE_CONFLICT_STRIDE, ROLE_IMAGE_DEPENDENCY_STRIDE,
     ROLE_IMAGE_EVENT_STRIDE, ROLE_IMAGE_LANE_RANGE_STRIDE, ROLE_IMAGE_LANE_STRIDE,
@@ -30,7 +29,7 @@ struct RouteImagePlanRouteFacts {
 
 impl RoleImagePlan {
     pub(crate) const fn from_program_reference<const E: usize>(
-        source: (&EffList<E>, &projection::ScopeFacts),
+        source: (&EffList<E>, &projection::ScopeFacts<E>),
         facts: RuntimeRoleFacts,
         role: u8,
     ) -> Self {
@@ -115,7 +114,7 @@ impl RoleImageColumnCounts {
 
 impl RoleImageColumnCounts {
     pub(super) const fn from_program_reference<const E: usize>(
-        source: (&EffList<E>, &projection::ScopeFacts),
+        source: (&EffList<E>, &projection::ScopeFacts<E>),
         logical_lane_count: usize,
         role: u8,
     ) -> Self {
@@ -197,7 +196,7 @@ impl RoleImageColumnCounts {
     }
 
     const fn route_facts<const E: usize>(
-        source: (&EffList<E>, &projection::ScopeFacts),
+        source: (&EffList<E>, &projection::ScopeFacts<E>),
         role: u8,
     ) -> RouteImagePlanRouteFacts {
         let (eff_list, scopes) = source;

@@ -29,7 +29,7 @@ where
     Right: ProgramShape,
 {
     const SOURCE_NODE: ProgramSourceNode =
-        ProgramSourceNode::Seq(&Left::SOURCE_NODE, &Right::SOURCE_NODE, Self::EVENT_COUNT);
+        ProgramSourceNode::seq(&Left::SOURCE_NODE, &Right::SOURCE_NODE);
     const EVENT_COUNT: usize = checked_source_count(Left::EVENT_COUNT, Right::EVENT_COUNT, 0);
     const SCOPE_MARKER_COUNT: usize =
         checked_source_count(Left::SCOPE_MARKER_COUNT, Right::SCOPE_MARKER_COUNT, 0);
@@ -42,12 +42,8 @@ where
     Left: ProgramShape,
     Right: ProgramShape,
 {
-    const SOURCE_NODE: ProgramSourceNode = ProgramSourceNode::Route {
-        left: &Left::SOURCE_NODE,
-        right: &Right::SOURCE_NODE,
-        resolver: None,
-        events: Self::EVENT_COUNT,
-    };
+    const SOURCE_NODE: ProgramSourceNode =
+        ProgramSourceNode::route(&Left::SOURCE_NODE, &Right::SOURCE_NODE, None);
     const EVENT_COUNT: usize = checked_source_count(Left::EVENT_COUNT, Right::EVENT_COUNT, 0);
     const SCOPE_MARKER_COUNT: usize =
         checked_source_count(Left::SCOPE_MARKER_COUNT, Right::SCOPE_MARKER_COUNT, 4);
@@ -61,7 +57,7 @@ where
     Right: ProgramShape,
 {
     const SOURCE_NODE: ProgramSourceNode =
-        ProgramSourceNode::Par(&Left::SOURCE_NODE, &Right::SOURCE_NODE, Self::EVENT_COUNT);
+        ProgramSourceNode::par(&Left::SOURCE_NODE, &Right::SOURCE_NODE);
     const EVENT_COUNT: usize = checked_source_count(Left::EVENT_COUNT, Right::EVENT_COUNT, 0);
     const SCOPE_MARKER_COUNT: usize =
         checked_source_count(Left::SCOPE_MARKER_COUNT, Right::SCOPE_MARKER_COUNT, 3);
@@ -74,12 +70,8 @@ where
     Left: ProgramShape,
     Right: ProgramShape,
 {
-    const SOURCE_NODE: ProgramSourceNode = ProgramSourceNode::Route {
-        left: &Left::SOURCE_NODE,
-        right: &Right::SOURCE_NODE,
-        resolver: Some(RESOLVER_ID),
-        events: Self::EVENT_COUNT,
-    };
+    const SOURCE_NODE: ProgramSourceNode =
+        ProgramSourceNode::route(&Left::SOURCE_NODE, &Right::SOURCE_NODE, Some(RESOLVER_ID));
     const EVENT_COUNT: usize = <Route<Left, Right> as ProgramShape>::EVENT_COUNT;
     const SCOPE_MARKER_COUNT: usize = <Route<Left, Right> as ProgramShape>::SCOPE_MARKER_COUNT;
     const RESOLVER_MARKER_COUNT: usize = checked_source_count(
@@ -93,8 +85,7 @@ impl<Inner> ProgramShape for Roll<Inner>
 where
     Inner: ProgramShape,
 {
-    const SOURCE_NODE: ProgramSourceNode =
-        ProgramSourceNode::Roll(&Inner::SOURCE_NODE, Self::EVENT_COUNT);
+    const SOURCE_NODE: ProgramSourceNode = ProgramSourceNode::roll(&Inner::SOURCE_NODE);
     const EVENT_COUNT: usize = Inner::EVENT_COUNT;
     const SCOPE_MARKER_COUNT: usize = checked_source_count(Inner::SCOPE_MARKER_COUNT, 0, 2);
     const RESOLVER_MARKER_COUNT: usize = Inner::RESOLVER_MARKER_COUNT;

@@ -74,6 +74,7 @@ impl ScopeMarkerView<'_> {
         low
     }
 
+    #[cfg(any(kani, all(test, hibana_repo_tests)))]
     pub(crate) const fn first_enter_index(self, scope: ScopeId) -> Option<usize> {
         if scope.is_none() {
             return None;

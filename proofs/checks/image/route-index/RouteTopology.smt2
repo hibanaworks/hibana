@@ -16,6 +16,24 @@
 ; EXPECT: unsat
 (check-sat)
 (pop)
+; A separating binary sibling excludes the whole interval, not only its
+; latest row. The recursive source-grammar theorem is in RouteTopology.lean.
+(declare-const cut Int)
+(declare-const split Int)
+(declare-const after Int)
+(push)
+(assert (and (<= 0 cut) (<= cut step) (< step split) (<= split after)
+             (<= cut witness) (<= witness step) (not (< witness split))))
+; EXPECT: unsat
+(check-sat)
+(pop)
+; Sensitivity: a query before the sibling entry cannot be discarded with it.
+(push)
+(assert (and (< witness cut) (<= 0 witness) (<= cut step) (< step split)
+             (<= split after)))
+; EXPECT: sat
+(check-sat)
+(pop)
 ; A greatest predecessor at/after the arm's start is itself a witness inside
 ; its upper boundary, because it strictly precedes the selected entry.
 (push)

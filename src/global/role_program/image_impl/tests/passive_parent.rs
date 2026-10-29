@@ -15,7 +15,7 @@ fn certified_byte_mutations_preserve_every_skipped_fact_and_owner_read() {
     for (offset, byte) in bytes.iter_mut().enumerate().take(columns.blob_len()) {
         *byte = original.blob().byte_at(offset);
     }
-    assert!(passive_parent_rows_are_coherent(&bytes, columns));
+    assert!(passive_parent_rows_are_coherent(&bytes, *columns));
     let mut certified = 0usize;
     let mut rejected = 0usize;
     for (column, stride) in [
@@ -28,7 +28,7 @@ fn certified_byte_mutations_preserve_every_skipped_fact_and_owner_read() {
                 let mut changed = bytes;
                 changed[offset] = raw;
                 if !(route_scopes_are_sorted(&changed, columns.route_scopes)
-                    && passive_parent_rows_are_coherent(&changed, columns))
+                    && passive_parent_rows_are_coherent(&changed, *columns))
                 {
                     rejected += 1;
                     continue;

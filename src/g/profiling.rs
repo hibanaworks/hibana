@@ -142,61 +142,54 @@ fn construction_pass<P: Projectable>(_program: &P, pass: SourcePass) -> bool {
 /// Source emission, image construction and the other projection checks remain
 /// compile-time work. Time the call externally and sample it in a separate run.
 pub fn operation_order<const ROLE: u8>(program: &impl Projectable) -> bool {
-    local_pass::<ROLE, _>(program, LocalPass::OperationOrder)
+    local_pass::<ROLE, _, 0>(program)
 }
 
 /// Rerun local image planning and compare its size with the compiled image.
 ///
 /// Source emission, actor rows and role counts are cached at compile time.
 pub fn role_plan<const ROLE: u8>(program: &impl Projectable) -> bool {
-    local_pass::<ROLE, _>(program, LocalPass::RolePlan)
+    local_pass::<ROLE, _, 1>(program)
 }
 
 /// Rewrite the local image using the same buffer size as normal projection.
 ///
 /// Planning, source emission and actor rows are cached at compile time.
 pub fn image_emission<const ROLE: u8>(program: &impl Projectable) -> bool {
-    local_pass::<ROLE, _>(program, LocalPass::ImageEmission)
+    local_pass::<ROLE, _, 3>(program)
 }
 
 /// Rerun the compiled image's event and ownership validation.
 ///
 /// This uses the same immutable image accepted by normal projection.
 pub fn resident_validation<const ROLE: u8>(program: &impl Projectable) -> bool {
-    local_pass::<ROLE, _>(program, LocalPass::ResidentValidation)
+    local_pass::<ROLE, _, 2>(program)
 }
 
-pub(super) enum LocalPass {
-    OperationOrder,
-    RolePlan,
-    ImageEmission,
-    ResidentValidation,
-}
-
-fn local_pass<const ROLE: u8, P: Projectable>(_program: &P, pass: LocalPass) -> bool {
-    let validate: fn(LocalPass) -> bool = const {
+fn local_pass<const ROLE: u8, P: Projectable, const PASS: u8>(_program: &P) -> bool {
+    let validate: fn() -> bool = const {
         let rows = P::Steps::SOURCE_ROW_COUNT;
         if rows <= 8 {
-            super::role_projection::profile_local_pass::<ROLE, P::Steps, 8>
+            super::role_projection::profile_local_pass::<ROLE, P::Steps, 8, PASS>
         } else if rows <= 32 {
-            super::role_projection::profile_local_pass::<ROLE, P::Steps, 32>
+            super::role_projection::profile_local_pass::<ROLE, P::Steps, 32, PASS>
         } else if rows <= 128 {
-            super::role_projection::profile_local_pass::<ROLE, P::Steps, 128>
+            super::role_projection::profile_local_pass::<ROLE, P::Steps, 128, PASS>
         } else if rows <= 512 {
-            super::role_projection::profile_local_pass::<ROLE, P::Steps, 512>
+            super::role_projection::profile_local_pass::<ROLE, P::Steps, 512, PASS>
         } else if rows <= 2048 {
-            super::role_projection::profile_local_pass::<ROLE, P::Steps, 2048>
+            super::role_projection::profile_local_pass::<ROLE, P::Steps, 2048, PASS>
         } else if rows <= 8192 {
-            super::role_projection::profile_local_pass::<ROLE, P::Steps, 8192>
+            super::role_projection::profile_local_pass::<ROLE, P::Steps, 8192, PASS>
         } else if rows <= 32768 {
-            super::role_projection::profile_local_pass::<ROLE, P::Steps, 32768>
+            super::role_projection::profile_local_pass::<ROLE, P::Steps, 32768, PASS>
         } else if rows <= 65535 {
-            super::role_projection::profile_local_pass::<ROLE, P::Steps, 65535>
+            super::role_projection::profile_local_pass::<ROLE, P::Steps, 65535, PASS>
         } else {
             panic!("choreography source exceeds compact descriptor domain")
         }
     };
-    validate(pass)
+    validate()
 }
 
 #[cfg(test)]

@@ -138,6 +138,12 @@ mod source_order_fixture {
         assert_eq!(actual, BEFORE < 2 && (AFTER == 2 || AFTER == 3));
         assert_eq!(INDEX.before(BEFORE, AFTER), actual);
         assert_eq!(IMAGE.source_precedes_scan(BEFORE, AFTER), actual);
+        if let Some(cut) = IMAGE.source_predecessor_cut(BEFORE, AFTER) {
+            assert!(cut <= BEFORE);
+            for omitted in cut..=BEFORE {
+                assert!(!IMAGE.source_precedes_scan(omitted, AFTER));
+            }
+        }
     }
 }
 

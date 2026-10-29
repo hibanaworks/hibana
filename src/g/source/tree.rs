@@ -31,20 +31,64 @@ pub struct Message {
 }
 
 #[derive(Clone, Copy, Debug)]
+pub struct Summary {
+    events: usize,
+    delegation: bool,
+}
+
+impl Summary {
+    const fn pair(left: &Source<'_>, right: &Source<'_>) -> Self {
+        Self {
+            events: match left.event_count().checked_add(right.event_count()) {
+                Some(events) => events,
+                None => panic!("source event count overflow"),
+            },
+            delegation: left.has_delegation() || right.has_delegation(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
 pub enum Source<'a> {
     Send(Message),
-    Seq(&'a Self, &'a Self, usize),
-    Par(&'a Self, &'a Self, usize),
+    Seq(&'a Self, &'a Self, Summary),
+    Par(&'a Self, &'a Self, Summary),
     Route {
         left: &'a Self,
         right: &'a Self,
         resolver: Option<u16>,
-        events: usize,
+        summary: Summary,
     },
-    Roll(&'a Self, usize),
+    Roll(&'a Self, Summary),
 }
 
-impl Source<'_> {
+impl<'a> Source<'a> {
+    pub const fn seq(left: &'a Self, right: &'a Self) -> Self {
+        Self::Seq(left, right, Summary::pair(left, right))
+    }
+
+    pub const fn par(left: &'a Self, right: &'a Self) -> Self {
+        Self::Par(left, right, Summary::pair(left, right))
+    }
+
+    pub const fn route(left: &'a Self, right: &'a Self, resolver: Option<u16>) -> Self {
+        Self::Route {
+            left,
+            right,
+            resolver,
+            summary: Summary::pair(left, right),
+        }
+    }
+
+    pub const fn roll(body: &'a Self) -> Self {
+        Self::Roll(
+            body,
+            Summary {
+                events: body.event_count(),
+                delegation: body.has_delegation(),
+            },
+        )
+    }
     /// Source occurrence lookup; its ordinal does not impose execution order.
     pub const fn message_at(&self, event: usize) -> Message {
         match self {
@@ -66,6 +110,7 @@ impl Source<'_> {
 
     /// Strict order comes from seq, never from enumeration, par, or two
     /// different route arms. Roll contributes its single-visit body order.
+    #[cfg(any(kani, all(test, hibana_repo_tests)))]
     pub const fn before(&self, first: usize, second: usize) -> bool {
         if first >= second {
             return false;
@@ -88,13 +133,41 @@ impl Source<'_> {
         }
     }
 
+    /// Next contiguous source range ordered before `event`, starting at `lower`.
+    /// Parallel siblings and alternative arms contribute no predecessor range.
+    pub const fn predecessor_range(&self, event: usize, lower: usize) -> Option<(usize, usize)> {
+        if lower >= event {
+            return None;
+        }
+        match self {
+            Self::Send(_) => None,
+            Self::Roll(body, _) => body.predecessor_range(event, lower),
+            Self::Seq(left, right, _)
+            | Self::Par(left, right, _)
+            | Self::Route { left, right, .. } => {
+                let split = left.event_count();
+                if event < split {
+                    left.predecessor_range(event, lower)
+                } else if matches!(self, Self::Seq(..)) && lower < split {
+                    Some((lower, split))
+                } else {
+                    let lower = lower.saturating_sub(split);
+                    match right.predecessor_range(event - split, lower) {
+                        Some((start, end)) => Some((start + split, end + split)),
+                        None => None,
+                    }
+                }
+            }
+        }
+    }
+
     pub const fn has_delegation(&self) -> bool {
         match self {
             Self::Send(message) => matches!(message.payload, Payload::Endpoint(_)),
-            Self::Seq(left, right, _)
-            | Self::Par(left, right, _)
-            | Self::Route { left, right, .. } => left.has_delegation() || right.has_delegation(),
-            Self::Roll(body, _) => body.has_delegation(),
+            Self::Seq(_, _, summary)
+            | Self::Par(_, _, summary)
+            | Self::Route { summary, .. }
+            | Self::Roll(_, summary) => summary.delegation,
         }
     }
 
@@ -102,10 +175,10 @@ impl Source<'_> {
     pub const fn event_count(&self) -> usize {
         match self {
             Self::Send(_) => 1,
-            Self::Seq(_, _, events)
-            | Self::Par(_, _, events)
-            | Self::Route { events, .. }
-            | Self::Roll(_, events) => *events,
+            Self::Seq(_, _, summary)
+            | Self::Par(_, _, summary)
+            | Self::Route { summary, .. }
+            | Self::Roll(_, summary) => summary.events,
         }
     }
 
@@ -124,6 +197,9 @@ impl Source<'_> {
     }
 
     pub const fn transfers(&self, key: EndpointKey) -> bool {
+        if !self.has_delegation() {
+            return false;
+        }
         match self {
             Self::Send(message) => {
                 matches!(message.payload, Payload::Endpoint(payload) if payload.same(key))
@@ -138,6 +214,9 @@ impl Source<'_> {
     /// The first source occurrence carrying this complete endpoint key.
     /// Choice arms are source alternatives; this query does not select one.
     pub const fn first_transfer(&self, key: EndpointKey) -> Option<usize> {
+        if !self.has_delegation() {
+            return None;
+        }
         match self {
             Self::Send(message) => {
                 if matches!(message.payload, Payload::Endpoint(payload) if payload.same(key)) {

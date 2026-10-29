@@ -1,17 +1,17 @@
-use super::{RoleImageRef, invalid_resident_descriptor};
+use super::{RoleImageRef, invalid_resident_descriptor, validation::ValidationRows};
 use crate::global::const_dsl::ScopeId;
 use crate::global::role_program::RoleLocalDirection;
 
 const fn read_u16(bytes: &[u8], offset: usize) -> u16 {
-    u16::from_le_bytes([bytes[offset], bytes[offset + 1]])
+    bytes[offset] as u16 | (bytes[offset + 1] as u16) << 8
 }
 
 struct OfferAlternativeReader<'a> {
+    effects: &'a [u16],
+    keys: &'a [u16],
     image: &'a RoleImageRef,
     bytes: &'a [u8],
     count: usize,
-    events: usize,
-    lanes: usize,
     route_scopes: usize,
     route_index: usize,
     predecessors: usize,
@@ -22,17 +22,17 @@ struct OfferAlternativeReader<'a> {
 }
 
 impl<'a> OfferAlternativeReader<'a> {
-    const fn new(image: &'a RoleImageRef) -> Self {
+    const fn new<const E: usize>(image: &'a RoleImageRef, rows: &'a ValidationRows<E>) -> Self {
         let count = image.columns.events.len as usize;
         let predecessors = image.topology_start() + image.columns.route_scopes.len as usize * 8;
         let permutation = predecessors + count * 2;
         let heads = permutation + count * 4;
         Self {
+            effects: rows.effects.split_at(rows.len).0,
+            keys: rows.keys.split_at(rows.len).0,
             image,
             bytes: image.blob.as_slice(),
             count,
-            events: image.columns.events.offset as usize,
-            lanes: image.columns.lanes.offset as usize,
             route_scopes: image.columns.route_scopes.offset as usize,
             route_index: image.route_index_start as usize,
             predecessors,
@@ -44,27 +44,11 @@ impl<'a> OfferAlternativeReader<'a> {
     }
 
     const fn effect(&self, step: usize) -> usize {
-        read_u16(
-            self.bytes,
-            self.events + step * crate::global::role_program::ROLE_IMAGE_EVENT_STRIDE,
-        ) as usize
+        self.effects[step] as usize
     }
 
     const fn key(&self, step: usize) -> u16 {
-        let at = self.events + step * crate::global::role_program::ROLE_IMAGE_EVENT_STRIDE;
-        let atom = self
-            .image
-            .program()
-            .event_atom_at(read_u16(self.bytes, at) as usize);
-        let view = if matches!(
-            RoleLocalDirection::from_validated_flags(self.bytes[at + 8]),
-            RoleLocalDirection::Recv
-        ) {
-            atom.to
-        } else {
-            atom.from
-        };
-        ((view as u16) << 8) | self.bytes[self.lanes + step] as u16
+        self.keys[step]
     }
 
     const fn left_contains(&self, target: u16, step: usize) -> bool {
@@ -175,8 +159,8 @@ impl RoleImageRef {
     /// Reconstruct every record and chain from source separation and the
     /// independently sealed key permutation and causal predecessors. Future
     /// targets are checked before their outer links are used by this sweep.
-    const fn validate_offer_alternatives(&self) {
-        let plan = OfferAlternativeReader::new(self);
+    const fn validate_offer_alternatives<const E: usize>(&self, rows: &ValidationRows<E>) {
+        let plan = OfferAlternativeReader::new(self, rows);
         if plan.count == 0 {
             return;
         }
@@ -245,7 +229,8 @@ impl RoleImageRef {
     }
 
     const fn topology_u16(&self, offset: usize) -> u16 {
-        u16::from_le_bytes([self.blob.byte_at(offset), self.blob.byte_at(offset + 1)])
+        let bytes = self.blob.as_slice();
+        bytes[offset] as u16 | (bytes[offset + 1] as u16) << 8
     }
 
     const fn view_lane_step_key(&self, step: usize) -> u32 {
@@ -347,14 +332,16 @@ impl RoleImageRef {
         (self.view_lane_step_key(step) >> 16 == prefix >> 16).then_some(step)
     }
 
-    pub(super) const fn validate_route_topology(&self) {
+    pub(super) const fn validate_route_topology<const E: usize>(&self, rows: &ValidationRows<E>) {
         let count = self.local_step_count();
+        let bytes = self.blob.as_slice();
+        let successors = self.lane_successor_start();
         let mut next = [count; 256];
         let mut step = count;
         while step != 0 {
             step -= 1;
             let lane = self.blob.byte_at(self.columns.lanes.offset as usize + step) as usize;
-            if self.next_lane_step(step) != next[lane] {
+            if read_u16(bytes, successors + step * 2) as usize != next[lane] {
                 invalid_resident_descriptor();
             }
             next[lane] = step;
@@ -363,31 +350,48 @@ impl RoleImageRef {
             return;
         }
         let mut last_view = [None; 256];
+        let permutation = self.view_lane_index_start();
+        let predecessors = self.predecessor_start();
         let mut step = 0;
         let mut previous_key = None;
         while step < count {
-            let indexed = self.view_lane_step_at(step);
-            let key = self.view_lane_step_key(indexed);
+            let indexed = read_u16(bytes, permutation + step * 2) as usize;
+            if indexed >= count {
+                invalid_resident_descriptor();
+            }
+            let key = (rows.keys[indexed] as u32) << 16 | indexed as u32;
             if let Some(previous) = previous_key
                 && key <= previous
             {
                 invalid_resident_descriptor();
             }
             previous_key = Some(key);
-            let view = self.local_step_logical_role(step) as usize;
-            let effect = self.local_step_effect(step).dense_ordinal();
+            let view = (rows.keys[step] >> 8) as usize;
+            let effect = rows.effects[step] as usize;
             let mut expected = last_view[view];
             while let Some(prior) = expected {
-                if self
+                let Some(cut) = self
                     .program()
-                    .source_precedes(self.local_step_effect(prior).dense_ordinal(), effect)
-                {
+                    .source_predecessor_cut(rows.effects[prior] as usize, effect)
+                else {
                     break;
+                };
+                let mut candidate = rows.bound(cut);
+                expected = None;
+                while candidate != 0 {
+                    candidate -= 1;
+                    if (rows.keys[candidate] >> 8) as usize == view {
+                        expected = Some(candidate);
+                        break;
+                    }
                 }
-                // All earlier links were checked before they can be traversed.
-                expected = self.view_predecessor(prior);
             }
-            let actual = self.view_predecessor(step);
+            let raw = read_u16(bytes, predecessors + step * 2);
+            let actual = if raw == u16::MAX {
+                None
+            } else {
+                Some(raw as usize)
+            };
             if !matches!((actual, expected), (None, None))
                 && !matches!((actual, expected), (Some(a), Some(b)) if a == b)
             {
@@ -396,7 +400,7 @@ impl RoleImageRef {
             last_view[view] = Some(step);
             step += 1;
         }
-        self.validate_offer_alternatives();
+        self.validate_offer_alternatives(rows);
         let mut slot = 0;
         while slot < self.columns.route_scopes.len as usize {
             let mut arm = 0;
@@ -406,7 +410,7 @@ impl RoleImageRef {
                 let mut send = None;
                 if !row.is_absent_or_zero_len() {
                     step = row.start();
-                    while step < row.end() {
+                    while step < row.end() && (recv.is_none() || send.is_none()) {
                         if matches!(self.local_step_direction(step), RoleLocalDirection::Recv) {
                             if recv.is_none() {
                                 recv = Some(step);

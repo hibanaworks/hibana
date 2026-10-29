@@ -1,6 +1,4 @@
-// Reference route emitter. Parallel-mask and operation-index serialization are
-// shared; their source membership is checked by the resident-image validator
-// and independent decoded-row comparisons.
+// Reference route emitter; operation rows use a comparison sort of decoded keys.
 use super::super::*;
 use crate::global::const_dsl::ScopeId;
 use crate::global::typestate::{LocalConflict, RouteChoiceMark};
@@ -62,8 +60,8 @@ pub(super) const fn local_event_row_for_eff<const E: usize>(
 }
 
 impl<const N: usize> RoleImageBytes<N> {
-    pub(super) const fn emit_reference<const E: usize>(
-        source: (&EffList<E>, &projection::ScopeFacts),
+    pub(super) fn emit_reference<const E: usize>(
+        source: (&EffList<E>, &projection::ScopeFacts<E>),
         facts: RuntimeRoleFacts,
         role: u8,
         columns: RoleImageColumns,
@@ -364,9 +362,32 @@ impl<const N: usize> RoleImageBytes<N> {
             panic!("role image plan mismatch");
         }
 
-        out.write_operation_index(eff_list, columns);
+        let mut operations: std::vec::Vec<_> = (0..columns.events.len as usize).collect();
+        operations.sort_by_key(|&step| {
+            let offset = columns.events.offset as usize + step * ROLE_IMAGE_EVENT_STRIDE;
+            let effect = u16::from_le_bytes([out.bytes[offset], out.bytes[offset + 1]]);
+            let atom = eff_list.atom_at(effect as usize);
+            let key = if out.bytes[offset + 8] & 4 != 0 {
+                ((atom.to as u32) << 8) | atom.label as u32
+            } else {
+                (1 << 16) | ((atom.from as u32) << 8) | atom.label as u32
+            };
+            (key, step)
+        });
+        for (slot, step) in operations.into_iter().enumerate() {
+            out.w16(
+                columns.operation_index(),
+                slot,
+                ROLE_IMAGE_U16_STRIDE,
+                step as u16,
+            );
+        }
         out.write_route_index(columns);
-        out.write_route_topology(eff_list, scopes, columns);
+        let operations = super::super::super::OperationIndex::new(
+            (eff_list, scopes),
+            projection::LocalRows::Role(&role_rows),
+        );
+        out.write_route_topology(scopes, &operations, columns);
         let offset = columns.blob_len();
         if offset > crate::global::role_program::ROLE_IMAGE_STORAGE_BYTE_CAPACITY {
             panic!("role image");

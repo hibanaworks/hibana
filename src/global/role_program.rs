@@ -17,8 +17,8 @@ mod tests;
 pub use program::{RoleProgram, project};
 
 pub(crate) use image_impl::{
-    ActorLocalRows, LocalRows, RoleImageRef, RoleLocalDirection, RoleLocalRows, ScopeFacts,
-    retained_route_counts,
+    ActorLocalRows, LocalRows, OperationIndex, RoleImageRef, RoleLocalDirection, RoleLocalRows,
+    ScopeFacts, retained_route_counts,
 };
 pub(crate) use image_types::*;
 pub(crate) use lane_set::*;

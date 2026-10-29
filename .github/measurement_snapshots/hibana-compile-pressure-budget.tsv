@@ -1,6 +1,8 @@
 # Compile-time limits are baseline measurements plus explicit headroom.
-# Measurements use Linux ARM, except alternating and global_capacity: macOS ARM targeting
-# thumbv6m-none-eabi. These are build regression limits, not runtime capacities.
+# Measurements use Linux ARM, except alternating, global_capacity and orchestration:
+# macOS ARM targeting thumbv6m-none-eabi. Orchestration memory uses the 415 MiB
+# aggregate guard peak across both builds as a conservative bound for each case.
+# These are build regression limits, not runtime capacities.
 label	observed_seconds	observed_rss_mib	seconds_headroom	rss_headroom_mib
 cold_parallel_route_nesting	9	834	31	190
 offer_branch_recv_evidence	2	228	30	256
@@ -25,3 +27,5 @@ causal_handoff_roll_64	3	206	25	384
 causal_handoff_alternating_1024	9	415	51	256
 causal_handoff_alternating_4096	20	385	100	256
 global_capacity_7281	39	384	141	384
+orchestration_mixed_100	164	415	120	256
+orchestration_hierarchical_100	141	415	120	256

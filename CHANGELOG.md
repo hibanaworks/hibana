@@ -14,6 +14,8 @@
   distinct resources with the same role in concurrent sessions. A new session
   does not renew issuance for an existing physical resource.
 - Endpoint ownership diagnostics returned as values by `g::diagnose`.
+- Separate byte ranges for local protocol columns. A role's combined image
+  can exceed 64 KiB while message positions and column lengths remain compact.
 - `OutOfOrder` errors for unfinished local predecessors, distinct from internal
   progress invariant errors. Both stop the affected local session run.
 - `Endpoint::par()` and nested parallel borrows. An array pattern selects the

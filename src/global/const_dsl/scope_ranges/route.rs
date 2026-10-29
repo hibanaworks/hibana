@@ -1,4 +1,6 @@
-use super::{ScopeId, ScopeKind, ScopeMarkerView, StructuredScopeRange, outermost_scope_range};
+#[cfg(any(kani, all(test, hibana_repo_tests)))]
+use super::ScopeId;
+use super::{ScopeKind, ScopeMarkerView, StructuredScopeRange, outermost_scope_range};
 #[cfg(any(kani, all(test, hibana_repo_tests)))]
 use super::{innermost_scope_range, scope_segment_end_from_enter};
 
@@ -28,6 +30,7 @@ pub(crate) const fn closed_route_arm_ranges_from_first_enter(
     Some([(first.offset(), split), (split, right_end)])
 }
 
+#[cfg(all(test, hibana_repo_tests))]
 pub(crate) const fn route_arm_event_ranges_for_scope(
     scope_markers: ScopeMarkerView<'_>,
     scope: ScopeId,

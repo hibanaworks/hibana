@@ -87,7 +87,7 @@ fn cumulative_arm_spans_match_prefix_sums_including_empty_arms() {
         g::send::<0, 1, g::Msg<0, ()>>(),
         g::send::<0, 1, g::Msg<1, ()>>(),
     );
-    let mut columns = project::<0>(&global).role_image_ref().columns();
+    let mut columns = *project::<0>(&global).role_image_ref().columns();
     columns.events = ColumnRange::new(0, 1, ROLE_IMAGE_EVENT_STRIDE);
     columns.route_arms = ColumnRange::new(0, ARMS, ROLE_IMAGE_ROUTE_ARM_STRIDE);
     columns.route_arm_lane_step_rows = ColumnRange::new(

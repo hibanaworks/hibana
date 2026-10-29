@@ -2,10 +2,10 @@ use super::{
     super::{PackedLaneRange, PackedLocalEventRow, ScopeId, ScopeKind, ScopeMarkerView},
     binary_route_arm_index,
 };
+#[cfg(all(test, hibana_repo_tests))]
+use crate::global::const_dsl::{StructuredScopeRange, innermost_scope_range};
 use crate::global::{
-    const_dsl::{
-        EffList, StructuredScopeRange, innermost_scope_range, parallel_arm_ranges_from_enter,
-    },
+    const_dsl::{EffList, parallel_arm_ranges_from_enter},
     typestate::{LocalConflict, PackedEventConflict, RouteChoiceMark},
 };
 
@@ -18,10 +18,11 @@ mod lanes;
 mod resident;
 mod retained_routes;
 mod route;
+pub(super) use retained_routes::finish_route_retention;
 pub(crate) use retained_routes::retained_route_counts;
-pub(super) use retained_routes::retained_route_scopes;
 mod scope_facts;
 pub(super) use crate::global::const_dsl::passive_route_child_enter;
+#[cfg(all(test, hibana_repo_tests))]
 pub(super) use crate::global::const_dsl::route_arm_event_ranges_for_scope as route_arm_ranges;
 #[cfg(all(test, hibana_repo_tests))]
 pub(super) use crate::global::const_dsl::route_scope_slot_for_scope;
@@ -95,6 +96,7 @@ pub(super) const fn route_arm_for_scope_start(
     None
 }
 
+#[cfg(all(test, hibana_repo_tests))]
 const fn route_arm_for_enter(markers: ScopeMarkerView<'_>, enter_idx: usize) -> Option<u8> {
     let marker = markers.at(enter_idx);
     if !matches!(marker.scope_id.kind(), Some(ScopeKind::Route)) {
@@ -151,6 +153,7 @@ pub(super) const fn nearest_route_for_scope(
     }
 }
 
+#[cfg(all(test, hibana_repo_tests))]
 pub(super) const fn route_conflict_for_eff(
     markers: ScopeMarkerView<'_>,
     eff_idx: usize,
@@ -233,6 +236,7 @@ pub(super) const fn local_step_range_for_eff_range<const E: usize>(
     rows.range(eff_list, start_eff, limit)
 }
 
+#[cfg(all(test, hibana_repo_tests))]
 pub(super) const fn scope_at<const E: usize>(eff_list: &EffList<E>, eff_idx: usize) -> ScopeId {
     let markers = eff_list.scope_markers();
     let mut best: Option<StructuredScopeRange> = None;
@@ -262,13 +266,17 @@ pub(super) const fn scope_at<const E: usize>(eff_list: &EffList<E>, eff_idx: usi
 }
 
 const fn first_recv_eff_for_route_arm<const E: usize>(
-    eff_list: &EffList<E>,
+    source: (&EffList<E>, &ScopeFacts<E>),
     route: ScopeId,
     arm: u8,
     rows: LocalRows<'_, E>,
 ) -> Option<usize> {
+    let (eff_list, scopes) = source;
     let arm = binary_route_arm_index(arm);
-    let Some(ranges) = route_arm_ranges(eff_list.scope_markers(), route) else {
+    let Some(ranges) = crate::global::const_dsl::closed_route_arm_ranges_from_first_enter(
+        eff_list.scope_markers(),
+        scopes.first_enter(route),
+    ) else {
         crate::invariant();
     };
     let (start, end) = ranges[arm];
@@ -290,30 +298,28 @@ const fn first_recv_eff_for_route_arm<const E: usize>(
 }
 
 pub(super) const fn local_event_row_for_eff<const E: usize>(
-    eff_list: &EffList<E>,
+    source: (&EffList<E>, &ScopeFacts<E>),
     eff_idx: usize,
     rows: LocalRows<'_, E>,
     side: usize,
 ) -> (PackedLocalEventRow, PackedEventConflict) {
-    let scope = scope_at(eff_list, eff_idx);
-    let conflict = route_conflict_for_eff(eff_list.scope_markers(), eff_idx);
+    let (eff_list, scopes) = source;
+    let _ = eff_list.atom_at(eff_idx);
+    let scope = scopes.event_scope(eff_idx);
+    let conflict = scopes.event_conflict(eff_idx);
     let direction = rows.direction(eff_list, eff_idx, side);
-    let choice = match conflict.to_conflict() {
-        Some(LocalConflict::RouteArm {
-            scope: route_scope,
-            arm,
-        }) => match first_recv_eff_for_route_arm(eff_list, route_scope, arm, rows) {
-            Some(first)
-                if first == eff_idx
-                    && matches!(direction, super::event_rows::RoleLocalDirection::Recv) =>
-            {
-                RouteChoiceMark::Determinant
-            }
+    let choice = match (direction, conflict.to_conflict()) {
+        (
+            super::event_rows::RoleLocalDirection::Recv,
+            Some(LocalConflict::RouteArm {
+                scope: route_scope,
+                arm,
+            }),
+        ) => match first_recv_eff_for_route_arm(source, route_scope, arm, rows) {
+            Some(first) if first == eff_idx => RouteChoiceMark::Determinant,
             Some(_) | None => RouteChoiceMark::Ordinary,
         },
-        Some(LocalConflict::Unconditional | LocalConflict::SharedRoute) | None => {
-            RouteChoiceMark::Ordinary
-        }
+        _ => RouteChoiceMark::Ordinary,
     };
     (
         PackedLocalEventRow::new(eff_idx, scope, choice, direction),

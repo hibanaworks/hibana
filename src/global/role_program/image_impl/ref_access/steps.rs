@@ -29,7 +29,8 @@ impl RoleImageRef {
 
     #[inline(always)]
     const fn step_u16(&self, offset: usize) -> u16 {
-        u16::from_le_bytes([self.blob.byte_at(offset), self.blob.byte_at(offset + 1)])
+        let bytes = self.blob.as_slice();
+        bytes[offset] as u16 | (bytes[offset + 1] as u16) << 8
     }
 
     #[inline(always)]
@@ -44,13 +45,13 @@ impl RoleImageRef {
 
     #[inline(always)]
     pub(crate) const fn local_step_logical_role(&self, index: usize) -> u8 {
-        let atom = self
+        let (from, to) = self
             .program()
-            .event_atom_at(self.local_step_effect(index).dense_ordinal());
+            .event_roles(self.local_step_effect(index).dense_ordinal());
         if matches!(self.local_step_direction(index), RoleLocalDirection::Recv) {
-            atom.to
+            to
         } else {
-            atom.from
+            from
         }
     }
 

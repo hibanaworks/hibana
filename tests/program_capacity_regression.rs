@@ -4,6 +4,9 @@
 use hibana::g::{self, Msg};
 use hibana::runtime::program::{RoleProgram, project};
 
+#[path = "program_capacity_regression/mixed.rs"]
+mod mixed;
+
 macro_rules! visible_route {
     ($left:literal, $right:literal) => {
         g::route(

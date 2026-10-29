@@ -62,6 +62,10 @@
       "g::role_projection::kani::initial_resource_issuance_cannot_confer_later_route_control",
       "g::role_projection::kani::received_controller_view_has_only_its_projected_route"
     ],
+    "../../src/g/role_projection/source_order/kani.rs": [
+      "g::role_projection::source_order::kani::omitted_source_order_pairs_have_equal_unconditional_answers",
+      "g::role_projection::source_order::kani::source_order_bit_ranges_preserve_every_boundary_and_membership"
+    ],
     "../../src/g/source/ownership/actors/kani.rs": [
       "g::source::ownership::actors::kani::actor_and_decision_references_have_exact_disjoint_domains",
       "g::source::ownership::actors::kani::actor_decisions_collapse_equal_alternatives_and_intern_equal_nodes",
@@ -91,7 +95,10 @@
       "g::source::ownership::actors::reentry::kani::bounded_sequential_predecessors_preserve_every_queried_action",
       "g::source::ownership::actors::reentry::kani::parallel_preorder_does_not_supply_a_resource_guard_handoff",
       "g::source::ownership::actors::reentry::kani::receipt_causality_comes_from_the_actual_actor_handoff",
-      "g::source::ownership::actors::reentry::kani::source_first_transfer_preserves_the_complete_endpoint_key"
+      "g::source::ownership::actors::reentry::kani::source_first_transfer_preserves_complete_key_in_choice",
+      "g::source::ownership::actors::reentry::kani::source_first_transfer_preserves_complete_key_in_parallel",
+      "g::source::ownership::actors::reentry::kani::source_first_transfer_preserves_complete_key_in_roll",
+      "g::source::ownership::actors::reentry::kani::source_first_transfer_preserves_complete_key_in_sequence"
     ],
     "../../src/global/compiled/images/image/program_ref/actors/kani.rs": [
       "global::compiled::images::image::program_ref::actors::kani::actor_row_lookups_reject_every_out_of_range_index",
@@ -128,7 +135,8 @@
       "global::compiled::images::image::program_ref::kani::program_image_constructor_rejects_undersized_storage",
       "global::compiled::images::image::program_ref::kani::program_image_fit_probe_rejects_undersized_storage",
       "global::compiled::images::image::program_ref::kani::proof_only_scope_entry_metadata_is_erased_from_descriptor_tags",
-      "global::compiled::images::image::program_ref::kani::role_image_column_range_rejects_stride_multiplication_overflow"
+      "global::compiled::images::image::program_ref::kani::role_image_column_range_rejects_stride_multiplication_overflow",
+      "global::compiled::images::image::program_ref::kani::role_image_columns_preserve_wide_byte_addresses_and_compact_row_counts"
     ],
     "../../src/global/compiled/images/image/route_resolvers/kani.rs": [
       "global::compiled::images::image::route_resolvers::kani::canonical_route_participant_identity_accepts_full_u8_role_domain",
@@ -410,7 +418,7 @@
 
   ],
   "totals": {
-    "standard-harnesses": 295,
+    "standard-harnesses": 301,
     "contract-harnesses": 0,
     "functions-under-contract": 0
   }

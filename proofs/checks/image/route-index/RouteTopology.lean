@@ -27,6 +27,61 @@ def precedes : Source → Nat → Nat → Prop
       else precedes right (before - width left) (after - width left)
   | .roll body, before, after => precedes body before after
 
+/-- A separating sibling excludes its whole prefix, not just one row. -/
+def predecessorCut : Source → Nat → Nat → Option Nat
+  | .atom, _, _ => none
+  | .roll body, before, after => predecessorCut body before after
+  | .binary kind left right, before, after =>
+      if after < width left then predecessorCut left before after
+      else if before < width left then
+        if kind = .sequential then none else some 0
+      else (predecessorCut right (before - width left) (after - width left)).map
+        (width left + ·)
+
+/-- Jumping before the returned cut preserves every possible predecessor,
+    including views that skip some source occurrences. -/
+theorem cut_excludes_the_entire_skipped_interval (source : Source) (before after cut : Nat)
+    (ordered : before < after) (inside : after < width source)
+    (found : predecessorCut source before after = some cut) :
+    cut ≤ before ∧ ∀ candidate, cut ≤ candidate → candidate ≤ before →
+      ¬ precedes source candidate after := by
+  induction source generalizing before after cut with
+  | atom => simp [predecessorCut] at found
+  | roll body ih => exact ih before after cut ordered inside found
+  | binary kind left right leftIH rightIH =>
+      by_cases afterLeft : after < width left
+      · simp only [predecessorCut, afterLeft, ↓reduceIte] at found
+        obtain ⟨bound, excluded⟩ := leftIH before after cut ordered afterLeft found
+        refine ⟨bound, ?_⟩
+        intro candidate lower upper
+        simpa only [precedes, afterLeft, ↓reduceIte] using excluded candidate lower upper
+      · by_cases beforeLeft : before < width left
+        · by_cases sequential : kind = .sequential
+          · simp [predecessorCut, afterLeft, beforeLeft, sequential] at found
+          · simp only [predecessorCut, afterLeft, beforeLeft, sequential, ↓reduceIte,
+              Option.some.injEq] at found
+            subst cut
+            refine ⟨Nat.zero_le _, ?_⟩
+            intro candidate _ upper
+            have candidateLeft : candidate < width left := by omega
+            simpa only [precedes, afterLeft, candidateLeft, ↓reduceIte] using sequential
+        · cases next : predecessorCut right (before - width left) (after - width left) with
+          | none => simp [predecessorCut, afterLeft, beforeLeft, next] at found
+          | some localCut =>
+            have equal : width left + localCut = cut := by
+              simpa only [predecessorCut, afterLeft, beforeLeft, ↓reduceIte, next,
+                Option.map_some, Option.some.injEq] using found
+            have rightInside : after - width left < width right := by
+              simp only [width] at inside
+              omega
+            obtain ⟨bound, excluded⟩ := rightIH (before - width left) (after - width left)
+              localCut (by omega) rightInside next
+            refine ⟨by omega, ?_⟩
+            intro candidate lower upper
+            have candidateRight : ¬ candidate < width left := by omega
+            have result := excluded (candidate - width left) (by omega) (by omega)
+            simpa only [precedes, afterLeft, candidateRight, ↓reduceIte] using result
+
 /-- An earlier applicable predecessor remains on the causal chain of a skipped
     nonpreceding sibling. This property follows from the grammar, rather than
     being assumed of an arbitrary partial order. -/
@@ -132,5 +187,6 @@ theorem compressed_entry_exact (source : Source) (view : Nat → Nat)
 #print axioms source_order_interpolation
 #print axioms skip_preserves_predecessors
 #print axioms compressed_entry_exact
+#print axioms cut_excludes_the_entire_skipped_interval
 
 end Hibana.RouteTopology

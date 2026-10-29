@@ -43,7 +43,7 @@ done
 hibana_disable_repo_tests_cfg
 source "$ROOT/.github/scripts/lib/proof_audit.sh"
 FAILED=0
-check_trusted_proof_sources 'endpoint delegation projection' "$MODEL" "$PROOFS/Claims.lean" "$PROOFS/Knowledge.lean" "$PROOFS/Issuance.lean" "$PROOFS/Causality.lean" "$PROOFS/ReceiptWait.lean"
+check_trusted_proof_sources 'endpoint delegation projection' "$MODEL" "$PROOFS/Claims.lean" "$PROOFS/Knowledge.lean" "$PROOFS/Issuance.lean" "$PROOFS/Causality.lean" "$PROOFS/ReceiptWait.lean" "$PROOFS/OrderFilter.lean"
 [[ "$FAILED" -eq 0 ]]
 lean --version | bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" version
 cargo +"$TOOLCHAIN" fmt --manifest-path "$PROOFS/compiler/Cargo.toml" --check
@@ -68,6 +68,8 @@ lean -o "$EVIDENCE/Issuance.olean" "$PROOFS/Issuance.lean" > "$EVIDENCE/lean-iss
 bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" lean "$EVIDENCE/lean-issuance.log" 4
 lean -j1 "$PROOFS/ReceiptWait.lean" > "$EVIDENCE/lean-receipt-wait.log" 2>&1
 bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" lean "$EVIDENCE/lean-receipt-wait.log" 3
+lean -j1 "$PROOFS/OrderFilter.lean" > "$EVIDENCE/lean-order-filter.log" 2>&1
+bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" lean "$EVIDENCE/lean-order-filter.log" 2
 LEAN_PATH="$EVIDENCE:$MODEL_PATH" lean "$EVIDENCE/Generated.lean" > "$EVIDENCE/lean-generated.log" 2>&1
 bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" lean "$EVIDENCE/lean-generated.log" 193
 model_count=0
@@ -77,4 +79,4 @@ for model in "$PROOFS"/*.smt2; do
   model_count=$((model_count + 1))
 done
 printf 'Endpoint delegation: all %s SMT models passed EXPECT checks; per-model logs: %s/z3-*.log\n' "$model_count" "$EVIDENCE"
-printf 'Endpoint ownership projection: Rust tests passed; 17 projection/knowledge, 4 issuance, 7 causality/source-order and 3 receipt-wait general Lean theorems; 193 generated. Evidence: %s\n' "$EVIDENCE"
+printf 'Endpoint ownership projection: Rust tests passed; 17 projection/knowledge, 4 issuance, 7 causality/source-order, 3 receipt-wait and 2 order-filter general Lean theorems; 193 generated. Evidence: %s\n' "$EVIDENCE"

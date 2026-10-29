@@ -35,7 +35,10 @@ pub(super) const fn invalid_resident_descriptor() -> ! {
 impl<'a> RoleLaneImage<'a> {
     #[inline(always)]
     pub(crate) const fn new(columns: &'a super::super::RoleImageColumns, blob: BlobPtr) -> Self {
-        Self { columns, blob }
+        Self {
+            columns,
+            bytes: blob.as_slice(),
+        }
     }
 
     #[inline(always)]
@@ -44,7 +47,7 @@ impl<'a> RoleLaneImage<'a> {
             return None;
         }
         let offset = column.offset as usize + row * stride;
-        if offset + stride > self.blob.len() {
+        if offset + stride > self.bytes.len() {
             invalid_resident_descriptor();
         }
         Some(offset)
@@ -52,7 +55,7 @@ impl<'a> RoleLaneImage<'a> {
 
     #[inline(always)]
     const fn byte_at(&self, offset: usize) -> u8 {
-        self.blob.byte_at(offset)
+        self.bytes[offset]
     }
 
     #[cfg(all(test, hibana_repo_tests))]
@@ -104,13 +107,6 @@ impl<'a> RoleLaneImage<'a> {
         }
     }
 
-    pub(crate) const fn operation_index_step(&self, slot: usize) -> Option<usize> {
-        match self.read_u16(self.columns.operation_index(), slot, ROLE_IMAGE_U16_STRIDE) {
-            Some(step) => Some(step as usize),
-            None => None,
-        }
-    }
-
     #[cfg(all(test, hibana_repo_tests))]
     #[inline(always)]
     pub(crate) const fn local_step_lane(
@@ -142,13 +138,13 @@ impl<'a> RoleLaneImage<'a> {
                 invalid_resident_descriptor();
             }
             let offset = self.columns.lane_bits.offset as usize + range.start();
-            if offset + range.len() > self.blob.len() {
+            if offset + range.len() > self.bytes.len() {
                 invalid_resident_descriptor();
             }
             /* SAFETY: the column directory bounds above cover the immutable
             static descriptor allocation for the complete returned view. */
             unsafe {
-                LaneSetView::from_bytes(self.blob.as_ptr().add(offset), range.len(), word_len)
+                LaneSetView::from_bytes(self.bytes.as_ptr().add(offset), range.len(), word_len)
             }
         }
     }

@@ -15,6 +15,11 @@ Its output is checked by `Knowledge.lean`, `Causality.lean` and the generated
 Lean claims. `kani/` checks production ownership-equation operations. `check.sh`
 runs every `.smt2` file in this directory against its declared `EXPECT` results.
 
+`OrderFilter.lean` and `OrderFilter.smt2` check the word-batched source-order
+comparison. A pair can be omitted only when its unconditional answers agree
+or its operations belong to incompatible choice arms. The Rust tests compare
+the optimized validator with a pairwise traversal over the same projected rows.
+
 The same entry point exhausts every `u8` actor triple for fixed parallel, route
 and repeated-prefix sources: 184,549,376 production queries in total. Independent
 scalar expectations check the results. Another 7,873,200 queries compare pruned

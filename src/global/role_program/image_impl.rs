@@ -5,6 +5,8 @@ pub(crate) use event_rows::RoleLocalDirection;
 mod kani;
 mod lane_image;
 mod metadata;
+mod operation_index;
+pub(crate) use operation_index::OperationIndex;
 mod parallel_masks;
 mod plan;
 mod projection;

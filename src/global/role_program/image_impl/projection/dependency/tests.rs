@@ -17,7 +17,7 @@ fn source_marker_slots_keep_sparse_scope_kinds_distinct() {
     use crate::global::const_dsl::{ReentryMark, ScopeId};
     let last = ScopeId::LOCAL_CAPACITY - 1;
     let mut checked = 0;
-    for (route_id, parallel_id) in [(0, 1), (last, last)] {
+    for (route_id, parallel_id) in [(0, 1), (last - 1, last), (last, last)] {
         let mut source = EffList::<12>::new_partitioned(5, 7, 0);
         for (label, lane) in [0, 1, 2, 1, 0].into_iter().enumerate() {
             source.push_event_mut(EffAtom {
@@ -32,6 +32,15 @@ fn source_marker_slots_keep_sparse_scope_kinds_distinct() {
         let route = ScopeId::route(route_id);
         source.push_route_scope_mut(route, 1, 3, 4, ReentryMark::SinglePass);
         source.push_parallel_scope_mut(ScopeId::parallel(parallel_id), 1, 2, 3);
+        if route_id == parallel_id {
+            // Equal ranges need distinct preorder ordinals even across kinds.
+            // The former event-row scan rejected this source too.
+            let reference = std::panic::catch_unwind(|| super::super::scope_at(&source, 1));
+            let cached = std::panic::catch_unwind(|| ScopeFacts::new(&source));
+            assert!(reference.is_err());
+            assert!(cached.is_err());
+            continue;
+        }
         let scopes = ScopeFacts::new(&source);
         for role in [0, 1] {
             let role_rows = crate::global::role_program::RoleLocalRows::new(&source, role);

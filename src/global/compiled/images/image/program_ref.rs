@@ -169,10 +169,8 @@ impl CompiledProgramRef {
 
     #[inline(always)]
     const fn source_order_u16(&self, offset: usize) -> u16 {
-        u16::from_le_bytes([
-            self.source_order.byte_at(offset),
-            self.source_order.byte_at(offset + 1),
-        ])
+        let bytes = self.source_order.as_slice();
+        bytes[offset] as u16 | (bytes[offset + 1] as u16) << 8
     }
 
     pub(crate) fn same_image(&self, other: &Self) -> bool {
@@ -227,11 +225,10 @@ impl CompiledProgramRef {
         if eff_idx >= crate::eff::meta::COMPACT_EVENT_IDENTITY_CAPACITY {
             crate::invariant();
         }
-        let offset =
-            match self.column_offset(self.columns.atoms(), eff_idx, PROGRAM_IMAGE_ATOM_STRIDE) {
-                Some(offset) => offset,
-                None => return None,
-            };
+        if eff_idx >= self.columns.atom_count() {
+            return None;
+        }
+        let offset = eff_idx * PROGRAM_IMAGE_ATOM_STRIDE;
         // Construction validates every field before this immutable image is
         // published. Read fields directly so callers that need only a peer or
         // label do not also load and validate the payload.
@@ -257,6 +254,58 @@ impl CompiledProgramRef {
             },
             lane: self.byte_at(offset + 8),
         })
+    }
+
+    #[inline(always)]
+    const fn event_offset(&self, event: usize) -> usize {
+        if event >= self.columns.atom_count() {
+            crate::invariant();
+        }
+        // Atoms are the first column. Its complete byte span was checked by
+        // construction; a field read need only check the requested ordinal.
+        event * PROGRAM_IMAGE_ATOM_STRIDE
+    }
+
+    /// Fields of an atom already checked by the immutable image constructor.
+    /// Const evaluation does not eliminate unused fields of an assembled atom.
+    #[inline(always)]
+    pub(crate) const fn event_roles(&self, event: usize) -> (u8, u8) {
+        let at = self.event_offset(event);
+        (self.byte_at(at), self.byte_at(at + 1))
+    }
+
+    #[inline(always)]
+    pub(crate) const fn event_message(&self, event: usize) -> (u8, u8, u8) {
+        let at = self.event_offset(event);
+        (self.byte_at(at), self.byte_at(at + 1), self.byte_at(at + 2))
+    }
+
+    #[inline(always)]
+    pub(crate) const fn event_origin_lane(&self, event: usize) -> (EventOrigin, u8) {
+        let at = self.event_offset(event);
+        (
+            if self.byte_at(at + 7) & 1 == 0 {
+                EventOrigin::User
+            } else {
+                EventOrigin::Session
+            },
+            self.byte_at(at + 8),
+        )
+    }
+
+    #[inline(always)]
+    pub(crate) const fn event_lane(&self, event: usize) -> u8 {
+        self.byte_at(self.event_offset(event) + 8)
+    }
+
+    #[inline(always)]
+    pub(crate) const fn event_endpoint(&self, event: usize) -> Option<u8> {
+        let at = self.event_offset(event);
+        if self.byte_at(at + 7) & EventPayload::OWNED_FLAG == 0 {
+            None
+        } else {
+            Some(self.byte_at(at + 3))
+        }
     }
 
     const fn validate_atom_rows(&self) {

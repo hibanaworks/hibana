@@ -321,3 +321,47 @@ impl<const E: usize> SourcePresence<E> {
         }
     }
 }
+
+#[cfg(all(test, hibana_repo_tests))]
+mod word_tests {
+    use super::super::{LaneBits, RowBits, pair_candidates};
+
+    #[test]
+    fn all_word_interval_boundaries_match_individual_row_membership() {
+        for start in 0..=128 {
+            for end in start..=128 {
+                let mut bits = RowBits::<2>::empty();
+                bits.insert_range(start, end);
+                for row in 0..128 {
+                    assert_eq!(bits.get(row), (start..end).contains(&row));
+                }
+                bits.clear(2);
+                assert_eq!(bits.words, [0; 2]);
+            }
+        }
+    }
+
+    #[test]
+    fn lane_masks_cover_all_u8_lanes_including_partial_final_words() {
+        let mut masks = LaneBits::<1>::empty();
+        for lane in 0..256 {
+            masks.insert(lane, lane % 64);
+        }
+        for lane in 0..256 {
+            assert_eq!(masks.get(lane), 1 << (lane % 64));
+        }
+    }
+
+    #[test]
+    fn the_word_filter_checks_missing_and_unwanted_ordering() {
+        for expected in [0, 1, u64::MAX, 0xaaaaaaaaaaaaaaaa] {
+            for actual in [0, 1, u64::MAX, 0x5555555555555555] {
+                assert_eq!(
+                    pair_candidates(expected, actual, actual, 0),
+                    expected ^ actual
+                );
+                assert_eq!(pair_candidates(expected, actual, actual, u64::MAX), 0);
+            }
+        }
+    }
+}

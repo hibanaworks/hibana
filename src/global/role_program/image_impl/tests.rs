@@ -27,6 +27,31 @@ const DATA_END: usize = 40;
 const BLOB_LEN: usize = DATA_END + ROLE_IMAGE_U16_STRIDE + 2 * 8 + 12;
 
 #[test]
+fn packed_local_rows_cross_the_u16_aggregate_byte_boundary_without_aliasing() {
+    const START: usize = 65_532;
+    static BYTES: [u8; START + 2 * ROLE_IMAGE_EVENT_STRIDE] = {
+        let mut bytes = [0; START + 2 * ROLE_IMAGE_EVENT_STRIDE];
+        let mut row = 0;
+        while row < 2 {
+            bytes[START + row * ROLE_IMAGE_EVENT_STRIDE] = 17 + row as u8;
+            bytes[START + row * ROLE_IMAGE_EVENT_STRIDE + 8] = 2;
+            row += 1;
+        }
+        bytes
+    };
+    let mut columns = empty_columns();
+    columns.events = ColumnRange::new(START, 2, ROLE_IMAGE_EVENT_STRIDE);
+    let rows = RoleLaneImage::new(&columns, BlobPtr::from_array(&BYTES, BYTES.len()));
+    assert_eq!(rows.local_step_event(0).unwrap().eff_index, 17);
+    assert_eq!(rows.local_step_event(1).unwrap().eff_index, 18);
+    assert!(rows.local_step_event(2).is_none());
+    assert_eq!(
+        columns.events.end_offset(ROLE_IMAGE_EVENT_STRIDE),
+        BYTES.len()
+    );
+}
+
+#[test]
 fn active_lane_metadata_is_derived_from_one_canonical_bitmap() {
     let bytes = [0b1001_0010u8, 0b0000_0010];
     let metadata = derive_active_lane_metadata(
@@ -571,17 +596,33 @@ fn resident_role_image_fit_probe_rejects_undersized_storage() {
     let plan = RoleImagePlan::from_program(
         (&eff_list, &scopes),
         facts,
-        projection::LocalRows::Role(&crate::global::role_program::RoleLocalRows::new(
-            &eff_list, 0,
-        )),
+        (
+            projection::LocalRows::Role(&crate::global::role_program::RoleLocalRows::new(
+                &eff_list, 0,
+            )),
+            &crate::global::role_program::OperationIndex::new(
+                (&eff_list, &scopes),
+                projection::LocalRows::Role(&crate::global::role_program::RoleLocalRows::new(
+                    &eff_list, 0,
+                )),
+            ),
+        ),
     );
     assert!(
         plan.build_if_fits::<0, 8>(
             (&eff_list, &scopes),
             facts,
-            projection::LocalRows::Role(&crate::global::role_program::RoleLocalRows::new(
-                &eff_list, 0
-            ))
+            (
+                projection::LocalRows::Role(&crate::global::role_program::RoleLocalRows::new(
+                    &eff_list, 0
+                )),
+                &crate::global::role_program::OperationIndex::new(
+                    (&eff_list, &scopes),
+                    projection::LocalRows::Role(&crate::global::role_program::RoleLocalRows::new(
+                        &eff_list, 0
+                    ))
+                )
+            ),
         )
         .is_none()
     );
@@ -605,17 +646,33 @@ fn resident_parallel_role_image_plan_matches_lane_bit_storage() {
     let plan = RoleImagePlan::from_program(
         (eff_list, &scopes),
         facts,
-        projection::LocalRows::Role(&crate::global::role_program::RoleLocalRows::new(
-            eff_list, 0,
-        )),
+        (
+            projection::LocalRows::Role(&crate::global::role_program::RoleLocalRows::new(
+                eff_list, 0,
+            )),
+            &crate::global::role_program::OperationIndex::new(
+                (eff_list, &scopes),
+                projection::LocalRows::Role(&crate::global::role_program::RoleLocalRows::new(
+                    eff_list, 0,
+                )),
+            ),
+        ),
     );
     let build = plan
         .build_if_fits::<64, 8>(
             (eff_list, &scopes),
             facts,
-            projection::LocalRows::Role(&crate::global::role_program::RoleLocalRows::new(
-                eff_list, 0,
-            )),
+            (
+                projection::LocalRows::Role(&crate::global::role_program::RoleLocalRows::new(
+                    eff_list, 0,
+                )),
+                &crate::global::role_program::OperationIndex::new(
+                    (eff_list, &scopes),
+                    projection::LocalRows::Role(&crate::global::role_program::RoleLocalRows::new(
+                        eff_list, 0,
+                    )),
+                ),
+            ),
         )
         .expect("planned parallel descriptor fits");
 
@@ -641,9 +698,17 @@ fn resident_role_image_fit_probe_rejects_plan_drift() {
     let mut plan = RoleImagePlan::from_program(
         (&eff_list, &scopes),
         facts,
-        projection::LocalRows::Role(&crate::global::role_program::RoleLocalRows::new(
-            &eff_list, 0,
-        )),
+        (
+            projection::LocalRows::Role(&crate::global::role_program::RoleLocalRows::new(
+                &eff_list, 0,
+            )),
+            &crate::global::role_program::OperationIndex::new(
+                (&eff_list, &scopes),
+                projection::LocalRows::Role(&crate::global::role_program::RoleLocalRows::new(
+                    &eff_list, 0,
+                )),
+            ),
+        ),
     );
     plan.columns.lane_bits.len += 1;
 
@@ -651,9 +716,17 @@ fn resident_role_image_fit_probe_rejects_plan_drift() {
         let _ = plan.build_if_fits::<64, 8>(
             (&eff_list, &scopes),
             facts,
-            projection::LocalRows::Role(&crate::global::role_program::RoleLocalRows::new(
-                &eff_list, 0,
-            )),
+            (
+                projection::LocalRows::Role(&crate::global::role_program::RoleLocalRows::new(
+                    &eff_list, 0,
+                )),
+                &crate::global::role_program::OperationIndex::new(
+                    (&eff_list, &scopes),
+                    projection::LocalRows::Role(&crate::global::role_program::RoleLocalRows::new(
+                        &eff_list, 0,
+                    )),
+                ),
+            ),
         );
     });
 }
@@ -674,16 +747,25 @@ fn resident_role_image_constructor_rejects_undersized_storage() {
     let plan = RoleImagePlan::from_program(
         (&eff_list, &scopes),
         facts,
-        projection::LocalRows::Role(&crate::global::role_program::RoleLocalRows::new(
-            &eff_list, 0,
-        )),
+        (
+            projection::LocalRows::Role(&crate::global::role_program::RoleLocalRows::new(
+                &eff_list, 0,
+            )),
+            &crate::global::role_program::OperationIndex::new(
+                (&eff_list, &scopes),
+                projection::LocalRows::Role(&crate::global::role_program::RoleLocalRows::new(
+                    &eff_list, 0,
+                )),
+            ),
+        ),
     );
+    let local = crate::global::role_program::RoleLocalRows::new(&eff_list, 0);
+    let rows = projection::LocalRows::Role(&local);
+    let operations = crate::global::role_program::OperationIndex::new((&eff_list, &scopes), rows);
     let _ = RoleImageBytes::<0>::emit(
         (&eff_list, &scopes),
         facts,
-        projection::LocalRows::Role(&crate::global::role_program::RoleLocalRows::new(
-            &eff_list, 0,
-        )),
+        (rows, &operations),
         plan.columns,
     );
 }
@@ -944,7 +1026,7 @@ fn resident_descriptor_rejects_program_lane_mismatch() {
             original.program(),
             0,
             original.facts(),
-            columns,
+            std::boxed::Box::leak(std::boxed::Box::new(columns)),
             &LOCAL_EVENT_LANE_MISMATCH_BYTES,
         );
     });
@@ -976,7 +1058,7 @@ fn resident_descriptor_rejects_foreign_role_event() {
             original.program(),
             2,
             original.facts(),
-            columns,
+            std::boxed::Box::leak(std::boxed::Box::new(columns)),
             &LOCAL_EVENT_LANE_MISMATCH_BYTES,
         );
     });
@@ -1002,7 +1084,7 @@ fn resident_descriptor_rejects_missing_program_event() {
             original.program(),
             0,
             original.facts(),
-            columns,
+            std::boxed::Box::leak(std::boxed::Box::new(columns)),
             &MISSING_PROGRAM_EVENT_BYTES,
         );
     });
@@ -1021,7 +1103,7 @@ fn resident_descriptor_rejects_in_range_missing_event_and_lane_columns() {
             original.program(),
             0,
             original.facts(),
-            columns,
+            std::boxed::Box::leak(std::boxed::Box::new(columns)),
             &EMPTY_DESCRIPTOR_BYTES,
         );
     });

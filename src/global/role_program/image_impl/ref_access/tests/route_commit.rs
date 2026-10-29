@@ -85,7 +85,7 @@ fn route_commit_constructor_validation_dominates_every_raw_chain_check() {
                 let bytes = unsafe { &*core::ptr::from_ref(&bytes) };
                 let raw_valid = catch_unwind(|| {
                     let raw = RoleLaneImage::new(
-                        &rows.columns,
+                        rows.columns,
                         BlobPtr::from_array(bytes, rows.columns.blob_len()),
                     );
                     for slot in 0..rows.columns.route_scopes.len as usize {
