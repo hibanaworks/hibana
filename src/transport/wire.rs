@@ -1,8 +1,8 @@
 //! Transport codec helpers.
 //!
 //! `WireEncode` is the send-side contract. `WirePayload` is the receive-side
-//! contract. `Payload` is the borrowed byte view passed from transport into a
-//! decoder.
+//! contract. `Payload` is a borrowed byte view used during validation.
+//! `ReceivedPayload` identifies the bytes of a committed endpoint receive.
 //!
 //! Decoding is exact for built-in fixed-size payloads: trailing bytes are
 //! rejected. Borrowed payload types may return views tied to the endpoint borrow.
@@ -98,12 +98,11 @@ pub trait WirePayload {
     /// before receive progress commits.
     fn validate_payload(input: Payload<'_>) -> Result<(), CodecError>;
 
-    /// Decode bytes already accepted by payload-local validation and any
-    /// endpoint-context validation owned by the calling kernel path.
+    /// Decode a payload after the endpoint accepted and committed its receive.
     ///
     /// Endpoint receive/decode progress is committed before this decode function runs,
     /// so this operation has no error channel.
-    fn decode_validated_payload<'a>(input: Payload<'a>) -> Self::Decoded<'a>;
+    fn decode_validated_payload<'a>(input: ReceivedPayload<'a, Self>) -> Self::Decoded<'a>;
 }
 
 impl WireEncode for () {
@@ -121,7 +120,7 @@ impl WirePayload for () {
         require_exact_len(input.as_bytes().len(), 0)
     }
 
-    fn decode_validated_payload<'a>(input: Payload<'a>) -> Self::Decoded<'a> {
+    fn decode_validated_payload<'a>(input: ReceivedPayload<'a, Self>) -> Self::Decoded<'a> {
         if !input.as_bytes().is_empty() {
             crate::invariant();
         }
@@ -152,7 +151,7 @@ impl WirePayload for bool {
         }
     }
 
-    fn decode_validated_payload<'a>(input: Payload<'a>) -> Self::Decoded<'a> {
+    fn decode_validated_payload<'a>(input: ReceivedPayload<'a, Self>) -> Self::Decoded<'a> {
         input.as_bytes()[0] != 0
     }
 }
@@ -178,7 +177,7 @@ macro_rules! impl_wire_for_int {
                 require_exact_len(input.as_bytes().len(), $len)
             }
 
-            fn decode_validated_payload<'a>(input: Payload<'a>) -> Self::Decoded<'a> {
+            fn decode_validated_payload<'a>(input: ReceivedPayload<'a, Self>) -> Self::Decoded<'a> {
                 let bytes = input.as_bytes();
                 let mut buf = [0u8; $len];
                 buf.copy_from_slice(&bytes[..$len]);
@@ -219,7 +218,7 @@ impl WirePayload for &[u8] {
         Ok(())
     }
 
-    fn decode_validated_payload<'a>(input: Payload<'a>) -> Self::Decoded<'a> {
+    fn decode_validated_payload<'a>(input: ReceivedPayload<'a, Self>) -> Self::Decoded<'a> {
         input.as_bytes()
     }
 }
@@ -243,7 +242,7 @@ impl<const N: usize> WirePayload for [u8; N] {
         require_exact_len(input.as_bytes().len(), N)
     }
 
-    fn decode_validated_payload<'a>(input: Payload<'a>) -> Self::Decoded<'a> {
+    fn decode_validated_payload<'a>(input: ReceivedPayload<'a, Self>) -> Self::Decoded<'a> {
         let bytes = input.as_bytes();
         let mut buf = [0u8; N];
         buf.copy_from_slice(&bytes[..N]);
@@ -258,7 +257,7 @@ mod tests {
     fn decode<'a, P: WirePayload>(input: &'a [u8]) -> Result<P::Decoded<'a>, CodecError> {
         let payload = Payload::new(input);
         P::validate_payload(payload)?;
-        Ok(P::decode_validated_payload(payload))
+        Ok(P::decode_validated_payload(ReceivedPayload::new(payload)))
     }
 
     #[test]
@@ -352,6 +351,71 @@ impl<'a> fmt::Debug for Payload<'a> {
         f.debug_struct("Payload")
             .field("len", &bytes.len())
             .field("preview", &&bytes[..preview_len])
+            .finish()
+    }
+}
+
+/// Bytes from one committed receive of payload type `P`.
+///
+/// Only endpoint receive operations construct this value. A decoder may retain
+/// it in its result when an integration must distinguish a received request
+/// from locally constructed request data. It cannot be cloned or relabeled.
+///
+/// Raw bytes do not establish that a receive occurred:
+///
+/// ```compile_fail
+/// use hibana::runtime::wire::{Payload, WirePayload};
+/// let _ = bool::decode_validated_payload(Payload::new(&[1]));
+/// ```
+///
+/// Received values cannot be constructed from local bytes:
+///
+/// ```compile_fail
+/// use hibana::runtime::wire::{Payload, ReceivedPayload};
+/// let _ = ReceivedPayload::<bool>::new(Payload::new(&[1]));
+/// ```
+///
+/// A received payload cannot be used twice:
+///
+/// ```compile_fail
+/// use hibana::runtime::wire::ReceivedPayload;
+/// fn twice(payload: ReceivedPayload<'_, bool>) {
+///     let first = payload;
+///     let second = payload;
+/// }
+/// ```
+///
+/// A receive of another payload type cannot stand in for it:
+///
+/// ```compile_fail
+/// use hibana::runtime::wire::ReceivedPayload;
+/// fn relabel(payload: ReceivedPayload<'_, u8>) -> ReceivedPayload<'_, bool> {
+///     payload
+/// }
+/// ```
+pub struct ReceivedPayload<'a, P: ?Sized> {
+    data: &'a [u8],
+    payload: core::marker::PhantomData<fn(&P) -> &P>,
+}
+
+impl<'a, P: ?Sized> ReceivedPayload<'a, P> {
+    pub(crate) const fn new(payload: Payload<'a>) -> Self {
+        Self {
+            data: payload.data,
+            payload: core::marker::PhantomData,
+        }
+    }
+
+    /// Inspect the received bytes without creating another received value.
+    pub fn as_bytes(&self) -> &'a [u8] {
+        self.data
+    }
+}
+
+impl<P: ?Sized> fmt::Debug for ReceivedPayload<'_, P> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ReceivedPayload")
+            .field("bytes", &Payload::new(self.data))
             .finish()
     }
 }

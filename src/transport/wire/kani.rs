@@ -1,4 +1,4 @@
-use super::{CodecError, Payload, WireEncode, WirePayload, fixed_array_schema_id};
+use super::{CodecError, Payload, ReceivedPayload, WireEncode, WirePayload, fixed_array_schema_id};
 
 #[kani::proof]
 fn fixed_array_schema_identity_is_injective_over_the_complete_admitted_domain() {
@@ -29,7 +29,7 @@ macro_rules! check_integer_codec {
         let payload = Payload::new(&encoded);
         assert_eq!(<$ty as WirePayload>::validate_payload(payload), Ok(()));
         assert_eq!(
-            <$ty as WirePayload>::decode_validated_payload(payload),
+            <$ty as WirePayload>::decode_validated_payload(ReceivedPayload::new(payload)),
             value
         );
 
@@ -96,7 +96,7 @@ fn builtin_bool_codec_accepts_exact_canonical_bytes() {
     let payload = Payload::new(&encoded);
     assert_eq!(<bool as WirePayload>::validate_payload(payload), Ok(()));
     assert_eq!(
-        <bool as WirePayload>::decode_validated_payload(payload),
+        <bool as WirePayload>::decode_validated_payload(ReceivedPayload::new(payload)),
         value
     );
     let mut empty = [];
@@ -121,7 +121,7 @@ fn builtin_unit_codec_is_exact() {
     assert_eq!(unit_output, original);
     assert_eq!(<() as WirePayload>::SCHEMA_ID, 0);
     assert_eq!(
-        <() as WirePayload>::decode_validated_payload(Payload::new(&[])),
+        <() as WirePayload>::decode_validated_payload(ReceivedPayload::new(Payload::new(&[]))),
         ()
     );
 
@@ -148,7 +148,7 @@ fn check_borrowed_bytes_roundtrip(value: &[u8]) {
     let payload = Payload::new(value);
     assert_eq!(<&[u8] as WirePayload>::validate_payload(payload), Ok(()));
     assert_eq!(
-        <&[u8] as WirePayload>::decode_validated_payload(payload),
+        <&[u8] as WirePayload>::decode_validated_payload(ReceivedPayload::new(payload)),
         value
     );
 }
@@ -196,7 +196,7 @@ macro_rules! check_fixed_array_codec {
             Ok(())
         );
         assert_eq!(
-            <[u8; $width] as WirePayload>::decode_validated_payload(payload),
+            <[u8; $width] as WirePayload>::decode_validated_payload(ReceivedPayload::new(payload)),
             value
         );
 

@@ -16,7 +16,7 @@ impl WireEncode for FramePayload {
 impl WirePayload for FramePayload {
     const SCHEMA_ID: u32 = 0x4000_0001;
 
-    type Decoded<'a> = Payload<'a>;
+    type Decoded<'a> = hibana::runtime::wire::ReceivedPayload<'a, Self>;
 
     fn validate_payload(input: Payload<'_>) -> Result<(), CodecError> {
         match input.as_bytes().len() {
@@ -26,7 +26,9 @@ impl WirePayload for FramePayload {
         }
     }
 
-    fn decode_validated_payload<'a>(input: Payload<'a>) -> Self::Decoded<'a> {
+    fn decode_validated_payload<'a>(
+        input: hibana::runtime::wire::ReceivedPayload<'a, Self>,
+    ) -> Self::Decoded<'a> {
         input
     }
 }

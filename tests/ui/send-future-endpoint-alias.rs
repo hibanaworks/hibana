@@ -28,7 +28,7 @@ impl WirePayload for TestPayload {
         }
     }
 
-    fn decode_validated_payload<'a>(input: hibana::runtime::wire::Payload<'a>) -> Self {
+    fn decode_validated_payload<'a>(input: hibana::runtime::wire::ReceivedPayload<'a, Self>) -> Self {
         let input = input.as_bytes();
         Self(input[0])
     }

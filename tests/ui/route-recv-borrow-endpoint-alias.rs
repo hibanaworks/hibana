@@ -26,8 +26,8 @@ impl WirePayload for FramePayload {
         }
     }
 
-    fn decode_validated_payload<'a>(input: Payload<'a>) -> Self::Decoded<'a> {
-        input
+    fn decode_validated_payload<'a>(input: hibana::runtime::wire::ReceivedPayload<'a, Self>) -> Self::Decoded<'a> {
+        Payload::new(input.as_bytes())
     }
 }
 

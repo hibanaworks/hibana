@@ -1,5 +1,5 @@
 use super::{EndpointError, EndpointOp, RecvResult, RouteBranch, carrier};
-use crate::transport::wire::{CodecError, Payload, WireEncode, WirePayload};
+use crate::transport::wire::{CodecError, Payload, ReceivedPayload, WireEncode, WirePayload};
 use core::{
     future::Future,
     pin::Pin,
@@ -186,7 +186,9 @@ where
             Poll::Pending => Poll::Pending,
             Poll::Ready(Ok(payload)) => {
                 let payload: Payload<'e> = /* SAFETY: the endpoint future owns the in-flight kernel borrow until Ready or Drop resolves the operation. */ unsafe { payload.into_payload() };
-                let decoded = <M::Payload as WirePayload>::decode_validated_payload(payload);
+                let decoded = <M::Payload as WirePayload>::decode_validated_payload(
+                    ReceivedPayload::new(payload),
+                );
                 Poll::Ready(Ok(decoded))
             }
             Poll::Ready(Err(err)) => Poll::Ready(Err(EndpointError::new(EndpointOp::Recv, err))),
@@ -216,7 +218,9 @@ where
             Poll::Pending => Poll::Pending,
             Poll::Ready(Ok(payload)) => {
                 let payload: Payload<'e> = /* SAFETY: the endpoint future owns the in-flight kernel borrow until Ready or Drop resolves the operation. */ unsafe { payload.into_payload() };
-                let decoded = <M::Payload as WirePayload>::decode_validated_payload(payload);
+                let decoded = <M::Payload as WirePayload>::decode_validated_payload(
+                    ReceivedPayload::new(payload),
+                );
                 Poll::Ready(Ok(decoded))
             }
             Poll::Ready(Err(err)) => Poll::Ready(Err(EndpointError::new(EndpointOp::Recv, err))),

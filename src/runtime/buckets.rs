@@ -31,7 +31,9 @@ pub mod resolver {
 
 /// Encode and validate message payloads in supplied buffers.
 pub mod wire {
-    pub use crate::transport::wire::{CodecError, Payload, WireEncode, WirePayload};
+    pub use crate::transport::wire::{
+        CodecError, Payload, ReceivedPayload, WireEncode, WirePayload,
+    };
 }
 
 /// Implement asynchronous I/O, frame buffers and resource bindings.

@@ -148,7 +148,7 @@ impl hibana::runtime::wire::WirePayload for RejectCountedPayload {
     }
 
     fn decode_validated_payload<'a>(
-        input: hibana::runtime::wire::Payload<'a>,
+        input: hibana::runtime::wire::ReceivedPayload<'a, Self>,
     ) -> Self::Decoded<'a> {
         let bytes = input.as_bytes();
         u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])

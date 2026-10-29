@@ -56,7 +56,7 @@ impl<const ID: u16> WirePayload for Payload<ID> {
     fn validate_payload(input: WirePayloadView<'_>) -> Result<(), CodecError> {
         if input.as_bytes().is_empty() { Ok(()) } else { Err(CodecError::Malformed) }
     }
-    fn decode_validated_payload<'a>(input: WirePayloadView<'a>) -> Self::Decoded<'a> {
+    fn decode_validated_payload<'a>(input: hibana::runtime::wire::ReceivedPayload<'a, Self>) -> Self::Decoded<'a> {
         let _ = input.as_bytes();
         Self
     }
@@ -88,7 +88,7 @@ impl<const ID: u16> WirePayload for Payload<ID> {
     fn validate_payload(input: WirePayloadView<'_>) -> Result<(), CodecError> {
         if input.as_bytes().is_empty() { Ok(()) } else { Err(CodecError::Malformed) }
     }
-    fn decode_validated_payload<'a>(input: WirePayloadView<'a>) -> Self::Decoded<'a> {
+    fn decode_validated_payload<'a>(input: hibana::runtime::wire::ReceivedPayload<'a, Self>) -> Self::Decoded<'a> {
         let _ = input.as_bytes();
         Self
     }

@@ -4,6 +4,8 @@
 mod common;
 #[path = "security_report_regressions/payload_replay.rs"]
 mod payload_replay;
+#[path = "security_report_regressions/received_payload.rs"]
+mod received_payload;
 #[path = "security_report_regressions/reentry_colors.rs"]
 mod reentry_colors;
 #[path = "security_report_regressions/rolled_routes.rs"]

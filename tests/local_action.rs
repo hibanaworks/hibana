@@ -42,7 +42,9 @@ impl WirePayload for InvalidUnitSchemaPayload {
         Ok(())
     }
 
-    fn decode_validated_payload<'a>(_input: Payload<'a>) -> Self::Decoded<'a> {
+    fn decode_validated_payload<'a>(
+        _input: hibana::runtime::wire::ReceivedPayload<'a, Self>,
+    ) -> Self::Decoded<'a> {
         Self
     }
 }
