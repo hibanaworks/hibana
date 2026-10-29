@@ -28,3 +28,10 @@ cat "$evidence/row-prefix.log"
 bash "$root/.github/scripts/lib/supplemental_proofs_tool.sh" lean "$evidence/row-prefix.log" 2
 bash "$root/.github/scripts/check_smt2.sh" "$proof_dir/Lookup.smt2"
 bash "$root/.github/scripts/check_smt2.sh" "$proof_dir/RowPrefix.smt2"
+if ! lean "$proof_dir/ActorRows.lean" > "$evidence/actor-rows.log" 2>&1; then
+  cat "$evidence/actor-rows.log" >&2
+  exit 1
+fi
+cat "$evidence/actor-rows.log"
+bash "$root/.github/scripts/lib/supplemental_proofs_tool.sh" lean "$evidence/actor-rows.log" 4
+bash "$root/.github/scripts/check_smt2.sh" "$proof_dir/ActorRows.smt2"

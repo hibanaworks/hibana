@@ -280,6 +280,11 @@ run_miri_test \
   g::source::tests
 
 run_miri_test \
+  independent-actor-rows \
+  -p hibana --lib \
+  global::role_program::image_impl::ref_access::tests::actor_rows
+
+run_miri_test \
   owned-actor-image \
   -p hibana \
   --lib \

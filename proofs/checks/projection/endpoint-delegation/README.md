@@ -20,6 +20,18 @@ comparison. A pair can be omitted only when its unconditional answers agree
 or its operations belong to incompatible choice arms. The Rust tests compare
 the optimized validator with a pairwise traversal over the same projected rows.
 
+The role-image constructor separately checks that those rows are complete.
+It walks every global event and the checked actor-binding DAG, independently
+of the iterator used to generate the rows. A logical self message requires
+one Local row. A message between distinct logical roles requires each actor's
+Send and Recv rows, including both when one actor handles both sides. The
+check rejects missing, extra, repeated, reordered and wrong-direction rows.
+For one actor it takes O(D + E + L) work for D decisions, E global events and
+L local rows, using one scratch bit per decision. This check trusts the global
+actor bindings; their agreement with source ownership is checked separately.
+[`ActorRows.lean`](../../image/operation-index/ActorRows.lean) specifies the
+direction rule. Native mutation tests, Miri and Kani check the implementation.
+
 The same entry point exhausts every `u8` actor triple for fixed parallel, route
 and repeated-prefix sources: 184,549,376 production queries in total. Independent
 scalar expectations check the results. Another 7,873,200 queries compare pruned

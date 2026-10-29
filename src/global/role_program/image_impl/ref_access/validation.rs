@@ -1,5 +1,4 @@
 use super::super::RoleLocalDirection;
-use super::super::projection::ActorEventProjection;
 use super::{PackedLaneRange, RoleImageRef, invalid_resident_descriptor};
 use crate::global::compiled::images::PROGRAM_IMAGE_ATOM_ONLY_EVENT_CAPACITY;
 use crate::global::{
@@ -7,6 +6,9 @@ use crate::global::{
     role_program::ROLE_IMAGE_ROUTE_SCOPE_CAPACITY,
     typestate::{LocalConflict, PackedEventConflict},
 };
+
+#[cfg(kani)]
+mod kani;
 
 /// Source-checked fields reused by the remaining immutable image checks.
 pub(super) struct ValidationRows<const E: usize> {
@@ -368,43 +370,104 @@ impl RoleImageRef {
         rows: &mut ValidationRows<E>,
         scratch: &mut [u8],
     ) {
-        let Some(mut projected) = ActorEventProjection::new(self.program, self.role, scratch)
-        else {
+        let decisions = self.program.actor_decision_count();
+        if scratch.len() < decisions.div_ceil(8) {
             invalid_resident_descriptor();
-        };
+        }
+        let mut decision = 0;
+        while decision < decisions {
+            let Some((_, children)) = self.program.actor_decision_at(decision) else {
+                invalid_resident_descriptor();
+            };
+            let member = actor_reference_is_member(children[0], self.role, scratch, decision)
+                || actor_reference_is_member(children[1], self.role, scratch, decision);
+            let bit = 1 << (decision % 8);
+            scratch[decision / 8] = (scratch[decision / 8] & !bit) | if member { bit } else { 0 };
+            decision += 1;
+        }
         let mut index = 0;
         let lanes = self.lanes();
-        while let Some(expected) = projected.next() {
-            let Some(actual) = lanes.local_step_event(index) else {
-                invalid_resident_descriptor();
+        let mut event = 0;
+        while event < self.program.columns.atom_count() {
+            let (from, to, label) = self.program.event_message(event);
+            let [sender, receiver] = match self.program.actor_binding_at(event) {
+                Some(binding) => binding,
+                None => [from as u16, to as u16],
             };
-            if actual.eff_index as usize != expected.event
-                || actual.direction() as u8 != expected.direction as u8
-            {
+            if from == to && sender != receiver {
                 invalid_resident_descriptor();
             }
-            let Some(lane) = self.local_step_lane(index) else {
-                invalid_resident_descriptor();
-            };
-            if lane != self.program.event_lane(expected.event) {
-                invalid_resident_descriptor();
+            let mut required = actor_operation_mask(
+                from,
+                to,
+                actor_reference_is_member(sender, self.role, scratch, decisions),
+                actor_reference_is_member(receiver, self.role, scratch, decisions),
+            );
+            while required != 0 {
+                let direction = match required.trailing_zeros() {
+                    0 => RoleLocalDirection::Local,
+                    1 => RoleLocalDirection::Send,
+                    2 => RoleLocalDirection::Recv,
+                    _ => invalid_resident_descriptor(),
+                };
+                required &= required - 1;
+                let Some(actual) = lanes.local_step_event(index) else {
+                    invalid_resident_descriptor();
+                };
+                if actual.eff_index as usize != event || actual.direction() as u8 != direction as u8
+                {
+                    invalid_resident_descriptor();
+                }
+                let Some(lane) = self.local_step_lane(index) else {
+                    invalid_resident_descriptor();
+                };
+                if lane != self.program.event_lane(event) {
+                    invalid_resident_descriptor();
+                }
+                let _ = lanes.event_conflict_for_index(index);
+                let _ = lanes.dependency_for_index(index);
+                let view = if matches!(direction, RoleLocalDirection::Recv) {
+                    to
+                } else {
+                    from
+                };
+                rows.effects[index] = actual.eff_index;
+                rows.keys[index] = (view as u16) << 8 | lane as u16;
+                rows.operation_keys[index] = direction.operation_index_key(from, to, label);
+                rows.directions[index] = direction;
+                index += 1;
             }
-            let _ = lanes.event_conflict_for_index(index);
-            let _ = lanes.dependency_for_index(index);
-            let (from, to, label) = self.program.event_message(expected.event);
-            let view = if matches!(expected.direction, RoleLocalDirection::Recv) {
-                to
-            } else {
-                from
-            };
-            rows.effects[index] = actual.eff_index;
-            rows.keys[index] = (view as u16) << 8 | lane as u16;
-            rows.operation_keys[index] = expected.direction.operation_index_key(from, to, label);
-            rows.directions[index] = expected.direction;
-            index += 1;
+            event += 1;
         }
         if index != self.local_step_count() {
             invalid_resident_descriptor();
         }
+    }
+}
+
+// Decisions have already been checked as a backwards-pointing DAG. The
+// constructor derives membership independently of the projection iterator.
+const fn actor_reference_is_member(
+    reference: u16,
+    actor: u8,
+    membership: &[u8],
+    checked: usize,
+) -> bool {
+    if reference < 256 {
+        reference == actor as u16
+    } else {
+        let decision = reference as usize - 256;
+        if decision >= checked || decision / 8 >= membership.len() {
+            invalid_resident_descriptor();
+        }
+        membership[decision / 8] & (1 << (decision % 8)) != 0
+    }
+}
+
+const fn actor_operation_mask(from: u8, to: u8, sender: bool, receiver: bool) -> u8 {
+    if from == to {
+        sender as u8
+    } else {
+        ((sender as u8) << 1) | ((receiver as u8) << 2)
     }
 }

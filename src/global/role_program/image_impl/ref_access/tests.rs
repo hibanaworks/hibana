@@ -9,6 +9,7 @@ use crate::{
 };
 use std::{boxed::Box, panic::catch_unwind};
 
+mod actor_rows;
 mod operation_index;
 mod route_commit;
 mod route_topology;
