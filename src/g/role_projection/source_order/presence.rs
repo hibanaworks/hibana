@@ -131,6 +131,22 @@ mod tests {
         };
         let mut indexed = [None; 32];
         for first in 0..source.event_count() {
+            for (choice, &scope) in scopes.iter().enumerate() {
+                let mut arms_seen = 0u8;
+                for full in 0..8 {
+                    let arms = [full & 1 == 0, full & 2 == 0, full & 4 == 0];
+                    if occurs(first, arms) {
+                        arms_seen |= if arms[choice] { 1 } else { 2 };
+                    }
+                }
+                let expected = match arms_seen {
+                    1 => Some(SourceArm::Left),
+                    2 => Some(SourceArm::Right),
+                    3 => None,
+                    _ => unreachable!(),
+                };
+                assert_eq!(presence.required_arm(first, scope), expected);
+            }
             let mut successors = [false; 32];
             super::super::mark_source_successors(source, 0, first, &mut successors);
             for (second, &expected) in successors.iter().enumerate().take(source.event_count()) {
@@ -181,8 +197,23 @@ mod tests {
                     });
                     assert!(matches!(extra.get(different_scope), Some(SourceArm::Right)));
                 }
-                presence.clear_path(first, &mut indexed);
-                presence.clear_path(second, &mut indexed);
+                presence.clear_path(second, Some(first), &mut indexed);
+                let mut retained = [None; 32];
+                assert!(presence.merge_path(first, &mut retained));
+                for (actual, expected) in indexed.iter().zip(retained) {
+                    let coordinates = |value: Option<SourceSelection>| {
+                        value.map(|selection| {
+                            (
+                                selection.scope.start,
+                                selection.scope.split,
+                                selection.scope.stop,
+                                selection.arm as u8,
+                            )
+                        })
+                    };
+                    assert_eq!(coordinates(*actual), coordinates(expected));
+                }
+                presence.clear_path(first, None, &mut indexed);
                 assert!(indexed.iter().all(Option::is_none));
             }
         }
@@ -195,6 +226,17 @@ pub(super) struct SourcePresence<const E: usize> {
 }
 
 impl<const E: usize> SourcePresence<E> {
+    pub(super) const fn first_choice(&self, event: usize) -> u16 {
+        self.heads[event]
+    }
+
+    pub(super) const fn choice(&self, link: u16) -> (SourceSelection, u16) {
+        let Some(condition) = self.conditions[link as usize] else {
+            crate::invariant();
+        };
+        (condition.selection, condition.parent)
+    }
+
     pub(super) const fn new(source: &ProgramSourceNode) -> Self {
         let mut index = Self {
             conditions: [None; E],
@@ -285,6 +327,7 @@ impl<const E: usize> SourcePresence<E> {
     pub(super) const fn clear_path(
         &self,
         event: usize,
+        retained: Option<usize>,
         selections: &mut [Option<SourceSelection>; E],
     ) {
         let mut link = self.heads[event];
@@ -292,9 +335,34 @@ impl<const E: usize> SourcePresence<E> {
             let Some(condition) = self.conditions[link as usize] else {
                 crate::invariant();
             };
+            if let Some(event) = retained
+                && condition.selection.scope.start as usize <= event
+                && event < condition.selection.scope.stop as usize
+            {
+                break;
+            }
             selections[condition.selection.scope.split as usize] = None;
             link = condition.parent;
         }
+    }
+
+    /// A source event's own branch requirement, if this choice encloses it.
+    pub(super) const fn required_arm(&self, event: usize, scope: SourceScope) -> Option<SourceArm> {
+        let mut link = self.heads[event];
+        while link != u16::MAX {
+            let Some(condition) = self.conditions[link as usize] else {
+                crate::invariant();
+            };
+            let actual = condition.selection.scope;
+            if actual.start == scope.start
+                && actual.split == scope.split
+                && actual.stop == scope.stop
+            {
+                return Some(condition.selection.arm);
+            }
+            link = condition.parent;
+        }
+        None
     }
 
     pub(super) const fn active(
@@ -324,17 +392,44 @@ impl<const E: usize> SourcePresence<E> {
 
 #[cfg(all(test, hibana_repo_tests))]
 mod word_tests {
-    use super::super::{LaneBits, RowBits, pair_candidates};
+    use super::super::{LaneBits, RowBits, last_common_before, pair_candidates};
 
     #[test]
-    fn all_word_interval_boundaries_match_individual_row_membership() {
+    fn predecessor_intersections_match_a_scalar_search_at_every_boundary() {
+        let words = [
+            0,
+            1,
+            1 << 63,
+            u64::MAX,
+            0xaaaa_aaaa_aaaa_aaaa,
+            0x0f0f_0f0f_0f0f_0f0f,
+        ];
+        for first in words {
+            for second in words {
+                for end in 0..=64 {
+                    let expected = (0..end).rev().find(|bit| first & second & (1 << bit) != 0);
+                    assert_eq!(last_common_before(first, second, end), expected);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn all_word_interval_boundaries_match_the_full_128_bit_range() {
         for start in 0..=128 {
             for end in start..=128 {
                 let mut bits = RowBits::<2>::empty();
                 bits.insert_range(start, end);
-                for row in 0..128 {
-                    assert_eq!(bits.get(row), (start..end).contains(&row));
-                }
+                // One equality covers every row of the two-word range. Use
+                // a wider integer as the oracle, independently of chunking.
+                let low = if start == 128 { 0 } else { u128::MAX << start };
+                let high = if end == 0 {
+                    0
+                } else {
+                    u128::MAX >> (128 - end)
+                };
+                let actual = u128::from(bits.words[0]) | (u128::from(bits.words[1]) << 64);
+                assert_eq!(actual, low & high);
                 bits.clear(2);
                 assert_eq!(bits.words, [0; 2]);
             }

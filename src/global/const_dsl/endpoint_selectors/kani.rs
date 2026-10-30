@@ -90,7 +90,7 @@ fn observer_path_decision_has_exact_merge_domain() {
 #[kani::proof]
 #[kani::unwind(8)]
 fn roll_reentry_rejects_a_later_equal_outbound_contract_after_inbound() {
-    use super::validate_roll_reentry_endpoint_selectors;
+    use super::roll_reentry_endpoint_conflict;
     use crate::global::const_dsl::{EffList, ScopeId, ScopeKind};
     let first_label: u8 = kani::any();
     let next_label: u8 = kani::any();
@@ -123,7 +123,7 @@ fn roll_reentry_rejects_a_later_equal_outbound_contract_after_inbound() {
     });
     source.push_roll_scope_mut(ScopeId::new(ScopeKind::Roll, 0), 0, 1);
     assert_eq!(
-        validate_roll_reentry_endpoint_selectors(&source),
+        roll_reentry_endpoint_conflict(&source, None).is_none(),
         first_label != next_label || first_schema != next_schema
     );
 }
@@ -131,7 +131,7 @@ fn roll_reentry_rejects_a_later_equal_outbound_contract_after_inbound() {
 #[kani::proof]
 #[kani::unwind(8)]
 fn receive_guarded_reentry_keeps_repeated_outbound_replies_projectable() {
-    use super::validate_roll_reentry_endpoint_selectors;
+    use super::roll_reentry_endpoint_conflict;
     use crate::global::const_dsl::{EffList, ScopeId, ScopeKind};
     let reply_label: u8 = kani::any();
     let schema: u32 = kani::any();
@@ -169,13 +169,13 @@ fn receive_guarded_reentry_keeps_repeated_outbound_replies_projectable() {
         lane: 0,
     });
     source.push_roll_scope_mut(ScopeId::new(ScopeKind::Roll, 0), 0, 2);
-    assert!(validate_roll_reentry_endpoint_selectors(&source));
+    assert!(roll_reentry_endpoint_conflict(&source, None).is_none());
 }
 
 #[kani::proof]
 #[kani::unwind(8)]
 fn role_erased_prefixes_cannot_hide_competing_roll_heads() {
-    use super::validate_roll_reentry_endpoint_selectors;
+    use super::roll_reentry_endpoint_conflict;
     use crate::global::const_dsl::{EffList, ScopeId, ScopeKind};
     let first_label: u8 = kani::any();
     let next_label: u8 = kani::any();
@@ -216,7 +216,7 @@ fn role_erased_prefixes_cannot_hide_competing_roll_heads() {
     });
     source.push_roll_scope_mut(ScopeId::new(ScopeKind::Roll, 0), 0, 2);
     assert_eq!(
-        validate_roll_reentry_endpoint_selectors(&source),
+        roll_reentry_endpoint_conflict(&source, None).is_none(),
         first_label != next_label || first_schema != next_schema
     );
 }
@@ -258,4 +258,77 @@ fn branch_ancestry_distinguishes_parallel_work_from_exclusive_choices() {
         None
     };
     assert_eq!(paths.separation(left, right), expected);
+}
+
+#[kani::proof]
+#[kani::unwind(5)]
+fn roll_head_uses_the_actor_of_each_view_for_every_actor() {
+    use super::{branch_paths::BranchPaths, outbound_roll_head};
+    use crate::{g::SourceActorImage, global::const_dsl::EffList};
+    let sender: u8 = kani::any();
+    let receiver: u8 = kani::any();
+    let holder: u8 = kani::any();
+    let mut source = EffList::<2>::new_partitioned(2, 0, 0);
+    let mut event = 0;
+    while event < 2 {
+        source.push_event_mut(EffAtom {
+            from: event * 2,
+            to: event * 2 + 1,
+            label: event,
+            payload: crate::eff::EventPayload::Wire(0),
+            origin: EventOrigin::User,
+            lane: 0,
+        });
+        event += 1;
+    }
+    let image = SourceActorImage::<2, 0>::causal_fixture(
+        &[[sender as u16, receiver as u16], [holder as u16, 4]],
+        &[],
+    );
+    let paths = BranchPaths::<2>::new(source.scope_markers());
+    assert_eq!(
+        outbound_roll_head(&source, Some(image.event_actors()), &paths, 0, 1),
+        holder != sender && holder != receiver,
+    );
+    assert!(outbound_roll_head(&source, None, &paths, 0, 1));
+}
+
+#[kani::proof]
+#[kani::unwind(10)]
+fn a_choice_prefix_guards_the_continuation_exactly_when_both_arms_do() {
+    use super::branch_paths::BranchPaths;
+    use crate::global::const_dsl::{EffList, ReentryMark, ScopeId, ScopeKind};
+    let mut source = EffList::<7>::new_partitioned(3, 4, 0);
+    let mut label = 0;
+    while label < 3 {
+        source.push_event_mut(EffAtom {
+            from: 0,
+            to: 1,
+            label,
+            payload: crate::eff::EventPayload::Wire(0),
+            origin: EventOrigin::User,
+            lane: 0,
+        });
+        label += 1;
+    }
+    source.push_route_scope_mut(
+        ScopeId::new(ScopeKind::Route, 0),
+        0,
+        1,
+        2,
+        ReentryMark::SinglePass,
+    );
+    let paths = BranchPaths::<7>::new(source.scope_markers());
+    let left: bool = kani::any();
+    let right: bool = kani::any();
+    let mut arms = [0; 7];
+    if left {
+        paths.record_guard(&mut arms, 0);
+    }
+    if right {
+        paths.record_guard(&mut arms, 1);
+    }
+    assert_eq!(paths.guards_every_path(&mut arms, 2), left && right);
+    assert!(!paths.precedes_on_every_path(0, 2));
+    assert!(!paths.precedes_on_every_path(1, 2));
 }

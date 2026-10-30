@@ -59,8 +59,27 @@ theorem distinct_owners_cannot_be_merged (environment : Key → Actor)
     _ = meaning environment (normalize known right) := congrArg _ equal
     _ = meaning environment right := normalization_preserves_ownership environment known sound right
 
+/-- Receivers record the actual actor captured at each transfer. Moving a
+    receiving role later does not change an earlier entry in this trace. -/
+def finalOwner (initial : Actor) (receivers : List Actor) : Actor :=
+  receivers.foldl (fun _ receiver => receiver) initial
+
+/-- A validated trace ending at its entry owner cannot leave any departure
+    without a later return. This is the return obligation used when a fresh
+    visit sends no other endpoint and thus seeds no irreversible dependency. -/
+theorem restoring_suffix_contains_a_return (initial departed : Actor)
+    (receivers : List Actor) (different : departed ≠ initial)
+    (restored : finalOwner departed receivers = initial) : initial ∈ receivers := by
+  induction receivers generalizing departed with
+  | nil => exact (different restored).elim
+  | cons receiver rest ih =>
+    by_cases same : receiver = initial
+    · simp [same]
+    · exact List.mem_cons.mpr (Or.inr (ih receiver same restored))
+
 end Hibana.OwnerJoin
 
 #print axioms Hibana.OwnerJoin.normalization_preserves_ownership
 #print axioms Hibana.OwnerJoin.equal_normalized_choices_preserve_both_arms
 #print axioms Hibana.OwnerJoin.distinct_owners_cannot_be_merged
+#print axioms Hibana.OwnerJoin.restoring_suffix_contains_a_return

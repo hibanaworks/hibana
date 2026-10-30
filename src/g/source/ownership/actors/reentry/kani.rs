@@ -1,5 +1,97 @@
 use super::super::super::Message;
-use super::{ActorImage, Body, Checker, Context, EndpointKey, Payload, Source, wire_events};
+use super::{ActorImage, Body, Checker, Context, EndpointKey, Payload, Query, Source, wire_events};
+
+fn check_outgoing_return<const RETURNED: bool, const ZERO_COMPONENT: bool>() {
+    let key = EndpointKey {
+        component: kani::any(),
+        role: kani::any(),
+    };
+    // The returned case is partitioned over the complete component domain.
+    // Both parts retain every role and actor; neither omits aliasing inputs.
+    if RETURNED {
+        kani::assume((key.component == 0) == ZERO_COMPONENT);
+    }
+    let owner: u8 = kani::any();
+    let borrower = owner.wrapping_add(1);
+    let returned = RETURNED;
+    let control = |role| EndpointKey { component: 0, role };
+    let body = Source::Send(Message {
+        from: key,
+        to: control(owner.wrapping_add(2)),
+        label: 1,
+        payload: Payload::Wire { schema: 0 },
+    });
+    let loan = Source::Send(Message {
+        from: control(owner),
+        to: control(borrower),
+        label: 2,
+        payload: Payload::Endpoint(key),
+    });
+    let back = Source::Send(Message {
+        from: control(borrower),
+        to: control(owner),
+        label: 3,
+        payload: Payload::Endpoint(key),
+    });
+    let suffix = Source::seq(&loan, &back);
+    let source = Source::seq(&body, if returned { &suffix } else { &loan });
+    let count = source.event_count();
+    let rows = [
+        [owner.into(), owner.wrapping_add(2).into()],
+        [owner.into(), borrower.into()],
+        [borrower.into(), owner.into()],
+    ];
+    let image = ActorImage::<3, 0>::causal_fixture(&rows[..count], &[]);
+    let mut messages = [None; 3];
+    let mut event = 0;
+    while event < count {
+        messages[event] = Some(source.message_at(event));
+        event += 1;
+    }
+    let checker = Checker {
+        root: &source,
+        image: &image,
+        query: Query::new(&source, &[], &[]),
+        messages: &messages[..count],
+    };
+    assert_eq!(
+        checker.temporary_departures(
+            &Body {
+                source: &body,
+                start: 0,
+                key
+            },
+            owner,
+            &Context::new(&[])
+        ),
+        Ok(returned)
+    );
+    if RETURNED && !ZERO_COMPONENT {
+        kani::cover!(key.component == u16::MAX && key.role == u8::MAX);
+    } else if RETURNED {
+        kani::cover!(key.component == 0 && key.role == u8::MAX);
+    } else {
+        kani::cover!(owner == u8::MAX);
+    }
+}
+
+#[kani::proof]
+#[kani::unwind(5)]
+fn no_other_outgoing_endpoint_preserves_a_return_for_component_zero() {
+    check_outgoing_return::<true, true>();
+}
+
+#[kani::proof]
+#[kani::unwind(5)]
+fn no_other_outgoing_endpoint_preserves_a_return_for_every_nonzero_component() {
+    check_outgoing_return::<true, false>();
+}
+
+#[kani::proof]
+#[kani::unwind(5)]
+fn no_other_outgoing_endpoint_rejects_a_missing_return_for_every_resource_key() {
+    check_outgoing_return::<false, false>();
+}
 
 // This family checks the actual causal closure for a non-restoring resource.
 // Prefix ownership is supplied by the existing source query in run(), rather

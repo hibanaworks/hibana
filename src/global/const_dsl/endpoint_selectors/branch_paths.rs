@@ -17,6 +17,7 @@ struct Fork {
 pub(super) struct BranchPaths<const E: usize> {
     event_forks: [u16; E],
     forks: [Fork; E],
+    fork_count: usize,
 }
 
 impl<const E: usize> BranchPaths<E> {
@@ -28,6 +29,7 @@ impl<const E: usize> BranchPaths<E> {
                 split: 0,
                 kind: ScopeKind::Route,
             }; E],
+            fork_count: 0,
         };
         let mut fork_count = 0;
         let mut idx = 0;
@@ -67,6 +69,7 @@ impl<const E: usize> BranchPaths<E> {
             }
             idx += 1;
         }
+        result.fork_count = fork_count;
         result
     }
 
@@ -91,6 +94,71 @@ impl<const E: usize> BranchPaths<E> {
         } else {
             None
         }
+    }
+
+    /// A sequential predecessor must occur on every path containing `later`.
+    pub(super) const fn precedes_on_every_path(&self, earlier: usize, later: usize) -> bool {
+        if earlier >= later || self.separation(earlier, later).is_some() {
+            return false;
+        }
+        let mut fork = self.event_forks[earlier];
+        while fork != NONE {
+            let ancestor = self.forks[fork as usize];
+            if matches!(ancestor.kind, ScopeKind::Route) {
+                let mut other = self.event_forks[later];
+                while other != NONE && other != fork {
+                    other = self.forks[other as usize].parent;
+                }
+                if other == NONE || (earlier < ancestor.split) != (later < ancestor.split) {
+                    return false;
+                }
+            }
+            fork = ancestor.parent;
+        }
+        true
+    }
+
+    pub(super) const fn record_guard(&self, arms: &mut [u8; E], earlier: usize) {
+        let fork = self.event_forks[earlier];
+        assert!(fork != NONE);
+        arms[fork as usize] |= if earlier < self.forks[fork as usize].split {
+            1
+        } else {
+            2
+        };
+    }
+
+    /// An earlier choice guards a later operation when both alternatives do.
+    /// Inside a fork only the candidate's own arm may supply its predecessor.
+    pub(super) const fn guards_every_path(&self, arms: &mut [u8; E], candidate: usize) -> bool {
+        let mut index = self.fork_count;
+        while index > 0 {
+            index -= 1;
+            let fork = self.forks[index];
+            let mut ancestor = self.event_forks[candidate];
+            while ancestor != NONE && ancestor as usize != index {
+                ancestor = self.forks[ancestor as usize].parent;
+            }
+            let covered = if ancestor != NONE {
+                arms[index] & if candidate < fork.split { 1 } else { 2 } != 0
+            } else if matches!(fork.kind, ScopeKind::Route) {
+                arms[index] == 3
+            } else {
+                arms[index] != 0
+            };
+            if covered {
+                if fork.parent == NONE {
+                    return true;
+                }
+                let parent = fork.parent as usize;
+                arms[parent] |= if fork.split < self.forks[parent].split {
+                    1
+                } else {
+                    2
+                };
+            }
+        }
+        false
     }
 }
 
@@ -135,6 +203,48 @@ mod tests {
                 };
                 assert_eq!(paths.separation(left, right), expected);
             }
+        }
+    }
+
+    #[test]
+    fn an_optional_prefix_cannot_guard_a_head_after_the_join() {
+        let mut source = EffList::<16>::new_partitioned(5, 11, 0);
+        for label in 0..5 {
+            source.push_event_mut(EffAtom {
+                from: 0,
+                to: 1,
+                label,
+                payload: crate::eff::EventPayload::Wire(0),
+                origin: EventOrigin::User,
+                lane: 0,
+            });
+        }
+        source.push_parallel_scope_mut(ScopeId::new(ScopeKind::Parallel, 1), 0, 1, 2);
+        source.push_route_scope_mut(
+            ScopeId::new(ScopeKind::Route, 0),
+            0,
+            3,
+            4,
+            ReentryMark::SinglePass,
+        );
+        let paths = BranchPaths::<16>::new(source.scope_markers());
+        assert!(!paths.precedes_on_every_path(0, 1));
+        assert!(paths.precedes_on_every_path(0, 2));
+        assert!(paths.precedes_on_every_path(1, 2));
+        for optional in 0..4 {
+            assert!(!paths.precedes_on_every_path(optional, 4));
+        }
+        for present in 0u8..16 {
+            let mut guards = [0; 16];
+            for event in 0..4 {
+                if present & (1 << event) != 0 {
+                    paths.record_guard(&mut guards, event);
+                }
+            }
+            assert_eq!(
+                paths.guards_every_path(&mut guards, 4),
+                present & 7 != 0 && present & 8 != 0,
+            );
         }
     }
 }

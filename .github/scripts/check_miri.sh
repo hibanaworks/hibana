@@ -66,6 +66,23 @@ run_miri_test \
   --test miri_runtime_owner
 
 run_miri_test \
+  source-order-word-filters \
+  -p hibana --lib \
+  g::role_projection::source_order::
+
+run_miri_test \
+  delegated-roll-continuation \
+  -p hibana --test rolled_continuation_reuse
+
+for case in \
+  an_empty_outgoing_seed_set_still_checks_the_resource_return \
+  every_small_restoring_trace_matches_the_explicit_departure_check \
+  a_different_component_with_the_same_role_still_needs_fresh_permission; do
+  run_miri_test "source-reentry-${case}" -p hibana --lib \
+    "g::source::ownership::actors::reentry::tests::${case}" -- --exact
+done
+
+run_miri_test \
   route-entry-cross-lane-prefix \
   -p hibana --lib \
   global::typestate::cursor::parallel_reentry_tests::route_entry_keeps_cross_lane_prefixes_and_independent_heads_distinct \
@@ -304,9 +321,15 @@ run_miri_test \
   global::const_dsl::allocation::receive_lanes::tests
 
 run_miri_test \
-  receive-direction-workspace-reuse \
+  receive-direction-interval-index \
   -p hibana --lib \
-  global::const_dsl::receive_lane_causality::tests::direction_workspace_reuse_matches_full_scans_for_every_subrange \
+  global::const_dsl::receive_lane_causality::tests::direction_index_matches_full_scans_for_every_subrange \
+  -- --exact
+
+run_miri_test \
+  receive-causal-word-columns \
+  -p hibana --lib \
+  global::const_dsl::receive_lane_causality::tests::causal_columns_cross_word_boundaries_in_routes_parallel_and_rolls \
   -- --exact
 
 run_miri_test \
@@ -891,6 +914,12 @@ run_miri_test \
   nested-controller-offer-ownership \
   -p hibana \
   --test nested_resolver_self_continuations
+
+MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \
+  admitted-send-candidate-and-known-offer \
+  -p hibana \
+  --lib \
+  g::role_projection::tests::send_candidate_identity::
 
 MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \
   nested-input-visit-ownership \

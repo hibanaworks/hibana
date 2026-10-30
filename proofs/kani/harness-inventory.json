@@ -53,6 +53,9 @@
     "../../src/endpoint/kernel/offer/progress/kani.rs": [
       "endpoint::kernel::offer::progress::kani::offer_progress_classifies_every_evidence_transition_exactly"
     ],
+    "../../src/endpoint/kernel/offer/select_candidates.rs": [
+      "endpoint::kernel::offer::select_candidates::kani::a_locally_ready_offer_precedes_every_waiting_offer_without_changing_base_order"
+    ],
     "../../src/endpoint/transfer/kani.rs": [
       "endpoint::transfer::kani::owned_envelope_cannot_alias_different_resources_or_events",
       "endpoint::transfer::kani::owned_envelope_preserves_the_resource_and_full_event_identifier"
@@ -64,6 +67,7 @@
     ],
     "../../src/g/role_projection/source_order/kani.rs": [
       "g::role_projection::source_order::kani::omitted_source_order_pairs_have_equal_unconditional_answers",
+      "g::role_projection::source_order::kani::predecessor_intersection_preserves_the_latest_eligible_row",
       "g::role_projection::source_order::kani::source_order_bit_ranges_preserve_every_boundary_and_membership"
     ],
     "../../src/g/source/ownership/actors/kani.rs": [
@@ -93,6 +97,9 @@
       "g::source::ownership::actors::reentry::kani::bounded_rolled_predecessors_preserve_every_queried_action",
       "g::source::ownership::actors::reentry::kani::bounded_selected_predecessors_preserve_every_queried_action",
       "g::source::ownership::actors::reentry::kani::bounded_sequential_predecessors_preserve_every_queried_action",
+      "g::source::ownership::actors::reentry::kani::no_other_outgoing_endpoint_preserves_a_return_for_component_zero",
+      "g::source::ownership::actors::reentry::kani::no_other_outgoing_endpoint_preserves_a_return_for_every_nonzero_component",
+      "g::source::ownership::actors::reentry::kani::no_other_outgoing_endpoint_rejects_a_missing_return_for_every_resource_key",
       "g::source::ownership::actors::reentry::kani::parallel_preorder_does_not_supply_a_resource_guard_handoff",
       "g::source::ownership::actors::reentry::kani::receipt_causality_comes_from_the_actual_actor_handoff",
       "g::source::ownership::actors::reentry::kani::source_first_transfer_preserves_complete_key_in_choice",
@@ -171,12 +178,17 @@
       "global::const_dsl::allocation::lane_matching::index::wordwise_intersection_preserves_the_complete_role_domain"
     ],
     "../../src/global/const_dsl/allocation/receive_lanes/kani.rs": [
-      "global::const_dsl::allocation::receive_lanes::kani::direction_candidates_preserve_every_symbolic_parallel_exclusion"
+      "global::const_dsl::allocation::receive_lanes::kani::direction_candidates_preserve_every_symbolic_parallel_exclusion",
+      "global::const_dsl::allocation::receive_lanes::kani::lane_class_checks_every_receiver_word0",
+      "global::const_dsl::allocation::receive_lanes::kani::lane_class_checks_every_receiver_word1",
+      "global::const_dsl::allocation::receive_lanes::kani::lane_class_checks_every_receiver_word2",
+      "global::const_dsl::allocation::receive_lanes::kani::lane_class_checks_every_receiver_word3"
     ],
     "../../src/global/const_dsl/endpoint_controller/kani.rs": [
       "global::const_dsl::endpoint_controller::kani::controller_merge_accepts_exact_single_role_domain"
     ],
     "../../src/global/const_dsl/endpoint_selectors/kani.rs": [
+      "global::const_dsl::endpoint_selectors::kani::a_choice_prefix_guards_the_continuation_exactly_when_both_arms_do",
       "global::const_dsl::endpoint_selectors::kani::branch_ancestry_distinguishes_parallel_work_from_exclusive_choices",
       "global::const_dsl::endpoint_selectors::kani::endpoint_selector_never_confuses_an_owned_endpoint_with_any_wire_schema",
       "global::const_dsl::endpoint_selectors::kani::inbound_selector_identity_is_exact_compact_event_identity",
@@ -184,6 +196,7 @@
       "global::const_dsl::endpoint_selectors::kani::outbound_selector_identity_is_exact_public_send_contract",
       "global::const_dsl::endpoint_selectors::kani::receive_guarded_reentry_keeps_repeated_outbound_replies_projectable",
       "global::const_dsl::endpoint_selectors::kani::role_erased_prefixes_cannot_hide_competing_roll_heads",
+      "global::const_dsl::endpoint_selectors::kani::roll_head_uses_the_actor_of_each_view_for_every_actor",
       "global::const_dsl::endpoint_selectors::kani::roll_reentry_rejects_a_later_equal_outbound_contract_after_inbound"
     ],
     "../../src/global/const_dsl/receive_lane_causality/actors/kani.rs": [
@@ -207,6 +220,10 @@
       "global::const_dsl::receive_lane_causality::kani::three_event_causal_handoff_accepts_every_valid_role_assignment",
       "global::const_dsl::receive_lane_causality::kani::three_event_linear_scan_matches_pairwise_checker",
       "global::const_dsl::receive_lane_causality::kani::three_event_structured_scan_matches_pairwise_checker"
+    ],
+    "../../src/global/const_dsl/receive_lane_causality/relations.rs": [
+      "global::const_dsl::receive_lane_causality::relations::kani::interval_mask_is_exact_for_the_compact_source_domain",
+      "global::const_dsl::receive_lane_causality::relations::kani::receive_seed_ordinals_cover_exactly_the_changing_receivers"
     ],
     "../../src/global/const_dsl/scope_ranges/kani.rs": [
       "global::const_dsl::scope_ranges::kani::nested_route_topology_authorities_are_exact_and_coherent",
@@ -425,7 +442,7 @@
   "contract-harnesses": {},
   "contracts": [],
   "totals": {
-    "standard-harnesses": 304,
+    "standard-harnesses": 318,
     "contract-harnesses": 0,
     "functions-under-contract": 0
   }

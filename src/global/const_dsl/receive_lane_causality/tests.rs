@@ -5,41 +5,176 @@ use super::{
 use std::vec::Vec;
 
 #[test]
-fn direction_workspace_reuse_matches_full_scans_for_every_subrange() {
-    let mut events = EffList::<5>::new();
+fn direction_index_matches_full_scans_for_every_subrange() {
+    check_direction_indexes::<4>();
+    check_direction_indexes::<64>();
+    check_direction_indexes::<128>();
+}
+
+fn check_direction_indexes<const E: usize>() {
+    let mut events = EffList::<E>::new();
     for (from, to, lane) in [
         (255, 128, 0),
         (1, 128, 255),
         (0, 128, 0),
         (255, 128, 0),
         (128, 128, 0),
-    ] {
+    ]
+    .into_iter()
+    .take(E)
+    {
         let mut atom = event(from, to);
         atom.lane = lane;
         events.push_event_mut(atom);
     }
-    let mut storage = [super::Direction::EMPTY; 5];
+    let mut storage = [super::Direction::EMPTY; E];
+    let index = super::ReceiveDirectionIndex::new(&events, &mut storage);
+    assert!(index.has_changes());
     for start in (0..=events.len()).rev().chain(0..=events.len()) {
         for end in start..=events.len() {
-            let index = super::ReceiveDirectionIndex::new(&events, (start, end), &mut storage);
             for query in 0..events.len() {
                 let seed = events.atom_at(query);
                 for cutoff in start..=end {
                     let expected = (cutoff..end)
-                        .filter(|&candidate| {
+                        .rfind(|&candidate| {
                             let atom = events.atom_at(candidate);
                             atom.from != atom.to
                                 && atom.to == seed.to
                                 && atom.lane == seed.lane
                                 && atom.from != seed.from
                         })
-                        .next_back()
                         .map(|event| event + 1);
-                    assert_eq!(index.last_change(seed, cutoff), expected);
+                    assert_eq!(index.last_change(seed, (cutoff, end)), expected);
                 }
             }
         }
     }
+    let logical = super::LogicalDirections::new(&events);
+    for lane in [0, 128, 255] {
+        for position in 0..events.len() {
+            let mut atom = events.atom_at(position);
+            atom.lane = lane;
+            events.replace_atom(position, atom);
+        }
+        for query in 0..events.len() {
+            let seed = events.atom_at(query);
+            let mut next = logical.first(query);
+            for position in 0..events.len() {
+                let atom = events.atom_at(position);
+                if atom.from == seed.from && atom.to == seed.to {
+                    assert_eq!(next, position as u16);
+                    next = logical.next(next);
+                }
+            }
+            assert_eq!(next, u16::MAX);
+        }
+    }
+}
+
+#[test]
+fn causal_columns_cross_word_boundaries_in_routes_parallel_and_rolls() {
+    use super::{ReceiveRelations, receive_pair_is_causal};
+    let mut checked = 0;
+    for all_seeds in [false, true] {
+        for start in [60, 63, 64, 65, 124, 127, 128] {
+            for shape in 0..6 {
+                let count = start + 4;
+                let mut events = EffList::<256>::new_partitioned(count, 12, 0);
+                for row in 0..count {
+                    let (from, to) = if all_seeds {
+                        [
+                            (0, 128),
+                            (128, 255),
+                            (255, 0),
+                            (0, 255),
+                            (255, 128),
+                            (128, 0),
+                        ][row % 6]
+                    } else {
+                        [(0, 128), (128, 255), (255, 128), (128, 0)][row % 4]
+                    };
+                    events.push_event_mut(event(from, to));
+                }
+                match shape {
+                    0 => {}
+                    1 => events.push_route_scope_mut(
+                        ScopeId::route(0),
+                        start,
+                        start + 2,
+                        count,
+                        ReentryMark::SinglePass,
+                    ),
+                    2 => events.push_parallel_scope_mut(
+                        ScopeId::parallel(0),
+                        start,
+                        start + 2,
+                        count,
+                    ),
+                    3 => events.push_roll_scope_mut(ScopeId::roll_scope(0), start, count),
+                    4 => {
+                        events.push_route_scope_mut(
+                            ScopeId::route(1),
+                            start,
+                            start + 2,
+                            count,
+                            ReentryMark::SinglePass,
+                        );
+                        events.push_roll_scope_mut(ScopeId::roll_scope(0), start, count);
+                    }
+                    _ => {
+                        events.push_roll_scope_mut(ScopeId::roll_scope(1), start, start + 2);
+                        events.push_parallel_scope_mut(
+                            ScopeId::parallel(0),
+                            start,
+                            start + 2,
+                            count,
+                        );
+                        events.push_roll_scope_mut(ScopeId::roll_scope(0), start, count);
+                    }
+                }
+                let scopes = FlowIndex::new::<0>(&events, None);
+                let columns = ReceiveRelations::<256, 4>::new::<0>(
+                    &events,
+                    &scopes,
+                    None,
+                    &super::ReceiveSeeds::new(&events),
+                );
+                let targets = [
+                    0,
+                    start,
+                    start + 1,
+                    start + 2,
+                    start + 3,
+                    63,
+                    64,
+                    65,
+                    127,
+                    128,
+                    129,
+                ];
+                for before in targets.into_iter().filter(|&row| row < count) {
+                    for after in targets.into_iter().filter(|&row| row < count) {
+                        assert_eq!(
+                            receive_pair_is_causal::<256, 0>(
+                                &events,
+                                &scopes,
+                                None,
+                                before,
+                                after,
+                                Some(columns.as_ref()),
+                            ),
+                            receive_pair_is_causal::<256, 0>(
+                                &events, &scopes, None, before, after, None,
+                            ),
+                            "start={start} shape={shape} before={before} after={after}",
+                        );
+                        checked += 1;
+                    }
+                }
+            }
+        }
+    }
+    assert!(checked > 6_000);
 }
 
 #[test]
@@ -163,6 +298,7 @@ fn bounded_obligations_match_full_scans_across_routes_parallel_and_reentry() {
                 &FlowIndex::new::<0>(&events, None),
                 None,
                 super::ReceiveScan::From(None),
+                None,
             );
             assert_eq!(
                 indexed.is_none(),

@@ -162,7 +162,19 @@ impl<const E: usize, const D: usize> Checker<'_, E, D> {
             Err(choice) => return Err(choice),
         };
         if owner == final_owner {
-            return self.temporary_departures(body, owner, path);
+            let mut event = body.start;
+            while event < body.start + body.source.event_count() {
+                if matches!(self.message_at(event).payload,
+                    Payload::Endpoint(key) if !key.same(body.key))
+                {
+                    return self.temporary_departures(body, owner, path);
+                }
+                event += 1;
+            }
+            // Validated ownership ends at the entry owner, so every later
+            // departure has a source return. Without another outgoing endpoint this
+            // body cannot seed any obligation obstructing those returns.
+            return Ok(true);
         }
         self.origins(body, owner, path)
     }

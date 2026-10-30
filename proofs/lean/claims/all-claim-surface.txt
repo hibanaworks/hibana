@@ -8445,10 +8445,17 @@ Hibana.causal_flow_preserves_known_facts : ∀ (flow : Hibana.CausalFlowExpr) (f
   {before after : Hibana.CausalRoleTimes},
   Hibana.TimedCausalFlowRun origin flow before after →
     ∀ {facts : Hibana.CausalRoles}, facts.SoundAt origin before → (flow.eval facts).SoundAt origin after
+Hibana.causal_join_with_an_absent_arm : ∀ (facts : Bool),
+  And (@Eq.{1} Bool (Hibana.conditionalCausalJoin facts true true false) facts)
+    (@Eq.{1} Bool (Hibana.conditionalCausalJoin true facts false true) facts)
 @Hibana.causal_path_event_positions_are_monotone : ∀ {Point : Type} {edge : Point → Point → Prop}
   (position : Point → Nat),
   (∀ {a b : Point}, edge a b → @LE.le.{0} Nat instLENat (position a) (position b)) →
     ∀ {a b : Point}, @Relation.TransGen.{1} Point edge a b → @LE.le.{0} Nat instLENat (position a) (position b)
+Hibana.causal_receive_column_is_the_scalar_update : ∀ (sender receiver isSeed : Bool),
+  @Eq.{1} Bool ((receiver.or sender).or isSeed)
+    (@ite.{1} Bool (@Eq.{1} Bool isSeed true) (instDecidableEqBool isSeed true) true
+      (@ite.{1} Bool (@Eq.{1} Bool sender true) (instDecidableEqBool sender true) true receiver))
 @Hibana.checked_active_rows_are_exactly_the_source_actions : ∀ {image : Hibana.RustDescriptorImage}
   {choreo : Hibana.Choreo} {data : Hibana.DecodedActorOrder} {path : Hibana.EndpointDelegation.NormalizedPath},
   @Eq.{1} Bool (image.actorRowsCheck choreo) true →
@@ -8566,6 +8573,25 @@ Hibana.causal_flow_preserves_known_facts : ∀ (flow : Hibana.CausalFlowExpr) (f
           (@Membership.mem.{0, 0} Hibana.EndpointDelegation.NormalizedPath
             (List.{0} Hibana.EndpointDelegation.NormalizedPath)
             (@List.instMembership.{0} Hibana.EndpointDelegation.NormalizedPath) normalized.paths path))
+@Hibana.checked_cover_candidates_have_equal_source_readiness : ∀ {expected : Nat → List.{0} Nat}
+  {actual candidates : List.{0} Nat} {event : Nat} {state : Hibana.CommitState},
+  (∀ {a b : Nat},
+      @Membership.mem.{0, 0} Nat (List.{0} Nat) (@List.instMembership.{0} Nat) (expected b) a →
+        @LT.lt.{0} Nat instLTNat a b) →
+    (∀ {a b c : Nat},
+        @Membership.mem.{0, 0} Nat (List.{0} Nat) (@List.instMembership.{0} Nat) (expected b) a →
+          @Membership.mem.{0, 0} Nat (List.{0} Nat) (@List.instMembership.{0} Nat) (expected c) b →
+            @Membership.mem.{0, 0} Nat (List.{0} Nat) (@List.instMembership.{0} Nat) (expected c) a) →
+      (∀ (before : Nat),
+          @Membership.mem.{0, 0} Nat (List.{0} Nat) (@List.instMembership.{0} Nat) actual before →
+            @Membership.mem.{0, 0} Nat (List.{0} Nat) (@List.instMembership.{0} Nat) (expected event) before) →
+        (∀ (before : Nat),
+            Hibana.sourceCover expected event before →
+              @Membership.mem.{0, 0} Nat (List.{0} Nat) (@List.instMembership.{0} Nat) candidates before) →
+          @Eq.{1} Bool (@List.all.{0} Nat candidates (Hibana.predecessorPairCheck expected actual event)) true →
+            state.PrefixClosed expected (expected event) →
+              Iff (@Eq.{1} Bool (@List.all.{0} Nat actual state.done) true)
+                (@Eq.{1} Bool (@List.all.{0} Nat (expected event) state.done) true)
 @Hibana.checked_descriptor_binds_active_lane_metadata : ∀ {image : Hibana.RustDescriptorImage},
   @Eq.{1} Bool image.check true → @Eq.{1} Bool image.activeLaneMetadataCoherent true
 @Hibana.checked_descriptor_binds_event_lane_column : ∀ {image : Hibana.RustDescriptorImage},
@@ -9304,6 +9330,11 @@ Hibana.close_and_receipt_requeue_commute : ∀ (before after : Hibana.TransportS
               (@Eq.{1} (Option.{0} Hibana.GlobalConfig) (config.step? operation)
                 (@some.{0} Hibana.GlobalConfig globalNext))
               (@Eq.{1} Hibana.CompactGlobalState next (Hibana.CompactGlobalState.fromGlobalConfig globalNext)))
+Hibana.compact_lane_vertices_preserve_class_injectivity : ∀ (active : Nat → Prop) (vertex color : Nat → Nat),
+  (∀ (a b : Nat), active a → active b → @Eq.{1} Nat (vertex a) (vertex b) → @Eq.{1} Nat a b) →
+    (∀ (a b : Nat),
+        active a → active b → @Eq.{1} Nat (color (vertex a)) (color (vertex b)) → @Eq.{1} Nat (vertex a) (vertex b)) →
+      ∀ (a b : Nat), active a → active b → @Eq.{1} Nat (color (vertex a)) (color (vertex b)) → @Eq.{1} Nat a b
 @Hibana.compiled_occurrence_lane_bound : ∀ {occurrence : Hibana.CompiledOccurrence}
   {occurrences : List.{0} Hibana.CompiledOccurrence},
   @Membership.mem.{0, 0} Hibana.CompiledOccurrence (List.{0} Hibana.CompiledOccurrence)
@@ -9444,10 +9475,34 @@ Hibana.composition_preserves_right_fragment_causality : ∀ (left right : Hibana
           (@HAdd.hAdd.{0, 0, 0} Nat Nat Nat (@instHAdd.{0} Nat instAddNat) left.eventCount first)
           (@HAdd.hAdd.{0, 0, 0} Nat Nat Nat (@instHAdd.{0} Nat instAddNat) left.eventCount second))
         (right.before first second)))
+Hibana.conditional_causal_join_matches_the_seed_path : ∀ (left right leftSeed rightSeed : Bool),
+  @Eq.{1} Bool (leftSeed.and (@decide (@Eq.{1} Bool rightSeed false) (instDecidableEqBool rightSeed false))) true →
+    @Eq.{1} Bool (Hibana.conditionalCausalJoin left right leftSeed rightSeed)
+      (@ite.{1} Bool (@Eq.{1} Bool leftSeed true) (instDecidableEqBool leftSeed true) left
+        (@ite.{1} Bool (@Eq.{1} Bool rightSeed true) (instDecidableEqBool rightSeed true) right (left.and right)))
 Hibana.conditional_public_operation_clear_is_exact : ∀ (current expected : Hibana.PublicOperationPhase),
   @Eq.{1} Hibana.PublicOperationPhase (Hibana.clearPublicOperationIfCurrent current expected)
     (@ite.{1} Hibana.PublicOperationPhase (@Eq.{1} Hibana.PublicOperationPhase current expected)
       (Hibana.instDecidableEqPublicOperationPhase current expected) Hibana.PublicOperationPhase.idle current)
+@Hibana.confirmed_lane_classes_supply_all_cross_boundary_checks : ∀ {α : Type} (inside : α → Bool) (lane : α → Nat)
+  (conflict : α → α → Prop) (confirmed : Nat → Nat → Bool) (remap : Nat → Nat),
+  (∀ (r c : Nat), @Eq.{1} Bool (confirmed r c) true → @Hibana.LaneClassCertificate α inside lane conflict r c) →
+    (∀ (a : α), @Eq.{1} Bool (inside a) true → @Eq.{1} Bool (confirmed (lane a) (remap (lane a))) true) →
+      ∀ (a b : α),
+        @Eq.{1} Bool (inside a) true →
+          @Eq.{1} Bool (inside b) false → Or (conflict a b) (conflict b a) → @Ne.{1} Nat (remap (lane a)) (lane b)
+@Hibana.confirming_a_whole_lane_class_preserves_certificate_soundness : ∀ {α : Type} (inside : α → Bool)
+  (lane : α → Nat) (conflict : α → α → Prop) (confirmed : Nat → Nat → Bool) (row color : Nat),
+  (∀ (r c : Nat), @Eq.{1} Bool (confirmed r c) true → @Hibana.LaneClassCertificate α inside lane conflict r c) →
+    @Hibana.LaneClassCertificate α inside lane conflict row color →
+      ∀ (r c : Nat),
+        @Eq.{1} Bool
+            (@ite.{1} Bool (And (@Eq.{1} Nat r row) (@Eq.{1} Nat c color))
+              (@instDecidableAnd (@Eq.{1} Nat r row) (@Eq.{1} Nat c color) (instDecidableEqNat r row)
+                (instDecidableEqNat c color))
+              true (confirmed r c))
+            true →
+          @Hibana.LaneClassCertificate α inside lane conflict r c
 Hibana.conflicted_ready_evidence_consumption_is_sticky : ∀ (arm : Hibana.RouteArm),
   @Eq.{1} Hibana.ScopeReadyEvidence (Hibana.consumeScopeReadyArm Hibana.ScopeReadyEvidence.conflicted arm)
     Hibana.ScopeReadyEvidence.conflicted
@@ -9497,6 +9552,23 @@ Hibana.constrained_parallel_lane_matching_uses_minimum_span : @Eq.{1} (List.{0} 
   @Eq.{1} Nat (@Hibana.EndpointTransfer.Observation.authorityCount View Frame state)
       (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1))) →
     @Hibana.TransferAuthorityLocated View Frame state
+@Hibana.cover_candidates_validate_predecessor_coverage : ∀ {expected : Nat → List.{0} Nat}
+  {actual candidates : List.{0} Nat} {event : Nat},
+  (∀ {a b : Nat},
+      @Membership.mem.{0, 0} Nat (List.{0} Nat) (@List.instMembership.{0} Nat) (expected b) a →
+        @LT.lt.{0} Nat instLTNat a b) →
+    (∀ {a b c : Nat},
+        @Membership.mem.{0, 0} Nat (List.{0} Nat) (@List.instMembership.{0} Nat) (expected b) a →
+          @Membership.mem.{0, 0} Nat (List.{0} Nat) (@List.instMembership.{0} Nat) (expected c) b →
+            @Membership.mem.{0, 0} Nat (List.{0} Nat) (@List.instMembership.{0} Nat) (expected c) a) →
+      (∀ (before : Nat),
+          @Membership.mem.{0, 0} Nat (List.{0} Nat) (@List.instMembership.{0} Nat) actual before →
+            @Membership.mem.{0, 0} Nat (List.{0} Nat) (@List.instMembership.{0} Nat) (expected event) before) →
+        (∀ (before : Nat),
+            Hibana.sourceCover expected event before →
+              @Membership.mem.{0, 0} Nat (List.{0} Nat) (@List.instMembership.{0} Nat) candidates before) →
+          @Eq.{1} Bool (@List.all.{0} Nat candidates (Hibana.predecessorPairCheck expected actual event)) true →
+            @Eq.{1} Bool (Hibana.predecessorCoverage expected actual event) true
 @Hibana.covered_predecessors_have_equal_readiness : ∀ {expected : Nat → List.{0} Nat} {actual : List.{0} Nat}
   {event : Nat} {state : Hibana.CommitState},
   @Eq.{1} Bool (Hibana.predecessorCoverage expected actual event) true →

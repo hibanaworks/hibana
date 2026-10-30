@@ -69,11 +69,11 @@ bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" lean "$EVIDENCE/lea
 lean -j1 "$PROOFS/ReceiptWait.lean" > "$EVIDENCE/lean-receipt-wait.log" 2>&1
 bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" lean "$EVIDENCE/lean-receipt-wait.log" 3
 lean -j1 "$PROOFS/OrderFilter.lean" > "$EVIDENCE/lean-order-filter.log" 2>&1
-bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" lean "$EVIDENCE/lean-order-filter.log" 2
+bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" lean "$EVIDENCE/lean-order-filter.log" 5
 lean -j1 "$PROOFS/TransferIndex.lean" > "$EVIDENCE/lean-transfer-index.log" 2>&1
 bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" lean "$EVIDENCE/lean-transfer-index.log" 4
 lean -j1 "$PROOFS/OwnerJoin.lean" > "$EVIDENCE/lean-owner-join.log" 2>&1
-bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" lean "$EVIDENCE/lean-owner-join.log" 3
+bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" lean "$EVIDENCE/lean-owner-join.log" 4
 LEAN_PATH="$EVIDENCE:$MODEL_PATH" lean "$EVIDENCE/Generated.lean" > "$EVIDENCE/lean-generated.log" 2>&1
 bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" lean "$EVIDENCE/lean-generated.log" 193
 model_count=0
@@ -83,4 +83,4 @@ for model in "$PROOFS"/*.smt2; do
   model_count=$((model_count + 1))
 done
 printf 'Endpoint delegation: all %s SMT models passed EXPECT checks; per-model logs: %s/z3-*.log\n' "$model_count" "$EVIDENCE"
-printf 'Endpoint ownership projection: Rust tests passed; 17 projection/knowledge, 4 issuance, 7 causality/source-order, 3 receipt-wait, 2 order-filter, 4 transfer-index and 3 owner-join general Lean theorems; 193 generated. Evidence: %s\n' "$EVIDENCE"
+printf 'Endpoint ownership projection: Rust tests passed; 17 projection/knowledge, 4 issuance, 7 causality/source-order, 3 receipt-wait, 5 order-filter, 4 transfer-index and 4 owner-join general Lean theorems; 193 generated. Evidence: %s\n' "$EVIDENCE"

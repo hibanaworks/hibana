@@ -3,7 +3,7 @@
 //! from the same checked source; possible-holder sets are never authority.
 use super::{
     CausalFlow, CausalRoles, Direction, EffList, FlowGoal, FlowIndex, FlowRange,
-    ReceiveDirectionIndex, RollBodyRange, ScopeKind, roll_body_range_from_enter,
+    ReceiveDirectionIndex, ReceiveOrder, RollBodyRange, ScopeKind, roll_body_range_from_enter,
 };
 use crate::{
     eff::EffAtom,
@@ -206,6 +206,47 @@ impl<const E: usize, const D: usize> Obligation<'_, E, D> {
         }
     }
 
+    const fn conflict_with_order(
+        &self,
+        target: Option<usize>,
+        order: Option<ReceiveOrder<'_>>,
+    ) -> Option<usize> {
+        let context = SourceContext::new(&[]);
+        let paths = Paths {
+            shared: &context,
+            current: &context,
+            next: &context,
+        };
+        let body = self.range();
+        let order = match (self.repeated, order) {
+            (Some(_), Some(order)) if order.covers_roll(self.earlier, body.start, body.end) => {
+                order
+            }
+            _ => return self.conflict(paths, target),
+        };
+        let before = self.events.atom_at(self.earlier);
+        let goal = match target {
+            Some(event) => FlowGoal::ReceiveEvent(before, event),
+            None => FlowGoal::ReceiveLane(before, self.end),
+        };
+        let mut later = match target {
+            Some(event) => event,
+            None => body.start,
+        };
+        while later < self.end {
+            if goal.sender_change(later, self.events.atom_at(later))
+                && !order.repeated_contains(self.earlier, later)
+            {
+                return Some(later);
+            }
+            if target.is_some() {
+                break;
+            }
+            later += 1;
+        }
+        None
+    }
+
     const fn run(
         &self,
         actors: &ActorMap<'_, E, D>,
@@ -240,6 +281,16 @@ impl<const E: usize, const D: usize> Obligation<'_, E, D> {
                 Err(choice) => return Err(choice),
             };
         if self.repeated.is_none() {
+            return Ok(None);
+        }
+        // A fact known after the complete current visit stays known through
+        // every next-visit prefix. No partial branch output is used here.
+        if let Some(event) = target
+            && matches!(
+                actors.sender_known(event, self.events.atom_at(event), body.len(), &facts),
+                Ok(true)
+            )
+        {
             return Ok(None);
         }
         let next = CausalFlow {
@@ -363,6 +414,7 @@ pub(crate) const fn receive_pair_is_causal<const E: usize, const D: usize>(
     actors: Option<&SourceActorImage<E, D>>,
     earlier: usize,
     later: usize,
+    closures: Option<ReceiveOrder<'_>>,
 ) -> bool {
     if earlier >= events.len() || later >= events.len() {
         return false;
@@ -385,40 +437,49 @@ pub(crate) const fn receive_pair_is_causal<const E: usize, const D: usize>(
         current: &empty,
         next: &empty,
     };
-    if earlier < later
-        && !(Obligation {
-            events,
-            scope_offsets,
-            actors,
-            earlier,
-            end: later + 1,
-            repeated: None,
-        })
-        .check(paths, Some(later))
-    {
-        return false;
+    if earlier < later {
+        let causal = match closures {
+            Some(order) => order.contains(earlier, later),
+            None => match scope_offsets.separating_scope(earlier, later) {
+                Some(ScopeKind::Parallel) => false,
+                Some(ScopeKind::Route) => true,
+                _ => (Obligation {
+                    events,
+                    scope_offsets,
+                    actors,
+                    earlier,
+                    end: later + 1,
+                    repeated: None,
+                })
+                .check(paths, Some(later)),
+            },
+        };
+        if !causal {
+            return false;
+        }
     }
-    let mut index = scope_offsets.enclosing_scope(earlier);
+    let mut index = scope_offsets.enclosing_roll(earlier);
     while index != u16::MAX {
         let scope = scope_offsets.scopes[index as usize];
         let start = scope.start as usize;
         let end = scope.end as usize;
-        if matches!(scope.kind, ScopeKind::Roll)
-            && start <= later
-            && later < end
-            && !(Obligation {
+        if start <= later && later < end {
+            let obligation = Obligation {
                 events,
                 scope_offsets,
                 actors,
                 earlier,
                 end: later + 1,
                 repeated: Some(RollBodyRange::new(start, end)),
-            })
-            .check(paths, Some(later))
-        {
-            return false;
+            };
+            if obligation
+                .conflict_with_order(Some(later), closures)
+                .is_some()
+            {
+                return false;
+            }
         }
-        index = scope.parent;
+        index = scope_offsets.parent_roll(index);
     }
     true
 }
@@ -434,6 +495,7 @@ pub(crate) const fn owned_receive_lane_conflict<const E: usize, const D: usize>(
         &scope_offsets,
         Some(actors),
         ReceiveScan::From(None),
+        None,
     )
 }
 
@@ -450,20 +512,16 @@ pub(crate) const fn receive_lane_conflict_in<const E: usize, const D: usize>(
     scope_offsets: &FlowIndex<E>,
     actors: Option<&SourceActorImage<E, D>>,
     scan: ReceiveScan,
+    closures: Option<ReceiveOrder<'_>>,
 ) -> Option<(usize, usize, Option<u16>)> {
     let mut resume = match scan {
         ReceiveScan::From(resume) => resume,
         ReceiveScan::Before(_) => None,
     };
-    let context = SourceContext::new(&[]);
-    let paths = Paths {
-        shared: &context,
-        current: &context,
-        next: &context,
-    };
     let mut region = 0;
     let markers = events.scope_markers();
     let mut direction_storage = [Direction::EMPTY; E];
+    let directions = ReceiveDirectionIndex::new(events, &mut direction_storage);
     while region <= markers.len() {
         let (start, stop, repeated, scope) = if region == 0 {
             (0, events.len(), None, None)
@@ -517,7 +575,6 @@ pub(crate) const fn receive_lane_conflict_in<const E: usize, const D: usize>(
             }
             None => start,
         };
-        let directions = ReceiveDirectionIndex::new(events, (start, stop), &mut direction_storage);
         while earlier < stop {
             if let Some(event) = stop_before
                 && earlier == event
@@ -535,22 +592,43 @@ pub(crate) const fn receive_lane_conflict_in<const E: usize, const D: usize>(
                 marker_floor: 0,
             };
             if atom.from != atom.to
-                && let Some(end) = directions.last_change(atom, range.start)
+                && let Some(end) = directions.last_change(atom, (range.start, stop))
             {
                 let reentry = if repeated.is_none() {
                     scope_offsets.first_reentry_conflict(events, earlier, end)
                 } else {
                     None
                 };
-                let ordinary = (Obligation {
-                    events,
-                    scope_offsets,
-                    actors,
-                    earlier,
-                    end,
-                    repeated,
-                })
-                .conflict(paths, None);
+                let ordinary = if repeated.is_none() && closures.is_some() {
+                    let order = match closures {
+                        Some(order) => order,
+                        None => crate::invariant(),
+                    };
+                    let mut later = scope_offsets.next_receive_to(earlier as u16);
+                    let mut rejected = None;
+                    while later != u16::MAX && (later as usize) < end {
+                        let candidate = later as usize;
+                        if (FlowGoal::ReceiveLane(atom, end))
+                            .sender_change(candidate, events.atom_at(candidate))
+                            && !order.contains(earlier, candidate)
+                        {
+                            rejected = Some(candidate);
+                            break;
+                        }
+                        later = scope_offsets.next_receive_to(later);
+                    }
+                    rejected
+                } else {
+                    (Obligation {
+                        events,
+                        scope_offsets,
+                        actors,
+                        earlier,
+                        end,
+                        repeated,
+                    })
+                    .conflict_with_order(None, closures)
+                };
                 let later = match (reentry, ordinary) {
                     (Some(a), Some(b)) => Some(if a < b { a } else { b }),
                     (a, None) | (None, a) => a,

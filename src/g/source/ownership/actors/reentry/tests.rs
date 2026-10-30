@@ -10,6 +10,171 @@ fn pair<'a>(left: &'a Source<'a>, right: &'a Source<'a>, shape: u8) -> Source<'a
 }
 
 #[test]
+fn an_empty_outgoing_seed_set_still_checks_the_resource_return() {
+    let key = EndpointKey {
+        component: 0,
+        role: 10,
+    };
+    let control = |role| EndpointKey { component: 0, role };
+    let body = Source::Send(Message {
+        from: key,
+        to: control(3),
+        label: 1,
+        payload: Payload::Wire { schema: 0 },
+    });
+    let loan = Source::Send(Message {
+        from: control(0),
+        to: control(1),
+        label: 2,
+        payload: Payload::Endpoint(key),
+    });
+    let returned = Source::Send(Message {
+        from: control(1),
+        to: control(0),
+        label: 3,
+        payload: Payload::Endpoint(key),
+    });
+    for returns in [false, true] {
+        let suffix = Source::seq(&loan, &returned);
+        let root = Source::seq(&body, if returns { &suffix } else { &loan });
+        let mut messages = [None; 3];
+        for (event, slot) in messages.iter_mut().enumerate().take(root.event_count()) {
+            *slot = Some(root.message_at(event));
+        }
+        let image = ActorImage::<3, 0>::causal_fixture(
+            &[[0, 3], [0, 1], [1, 0]][..root.event_count()],
+            &[],
+        );
+        let checker = Checker {
+            root: &root,
+            image: &image,
+            query: Query::new(&root, &[], &[]),
+            messages: &messages[..root.event_count()],
+        };
+        assert_eq!(
+            checker.temporary_departures(
+                &Body {
+                    source: &body,
+                    start: 0,
+                    key
+                },
+                0,
+                &Context::new(&[])
+            ),
+            Ok(returns)
+        );
+    }
+}
+
+#[test]
+fn every_small_restoring_trace_matches_the_explicit_departure_check() {
+    let key = EndpointKey {
+        component: 1,
+        role: 10,
+    };
+    let control = |role| EndpointKey { component: 0, role };
+    let body = Source::Send(Message {
+        from: key,
+        to: control(4),
+        label: 1,
+        payload: Payload::Wire { schema: 0 },
+    });
+    let mut compared = 0;
+    for word in 1..64 {
+        let holders = [0, word & 3, (word >> 2) & 3, (word >> 4) & 3, 0];
+        let steps = core::array::from_fn::<_, 4, _>(|event| {
+            let (sender, receiver) = (holders[event], holders[event + 1]);
+            Source::Send(Message {
+                from: control(sender),
+                to: control(if sender == receiver { 4 } else { receiver }),
+                label: 2 + event as u8,
+                payload: if sender == receiver {
+                    Payload::Wire { schema: 0 }
+                } else {
+                    Payload::Endpoint(key)
+                },
+            })
+        });
+        let left = Source::seq(&steps[0], &steps[1]);
+        let right = Source::seq(&steps[2], &steps[3]);
+        let suffix = Source::seq(&left, &right);
+        let root = Source::seq(&body, &suffix);
+        let mut facts = Scratch::<8, 8>::new();
+        let mut image = ActorImage::<8, 8>::new();
+        super::super::compile_actor_image_into(&root, &mut facts, &mut image).unwrap();
+        let checker = Checker {
+            root: &root,
+            image: &image,
+            query: Query::new(&root, &facts.symbols[..facts.symbol_len], &facts.initial),
+            messages: &facts.events[..facts.event_len],
+        };
+        let body = Body {
+            source: &body,
+            start: 0,
+            key,
+        };
+        let path = Context::new(&[]);
+        assert_eq!(checker.owner(key, 0, &path), Ok(0));
+        assert_eq!(checker.owner(key, root.event_count(), &path), Ok(0));
+        assert_eq!(checker.temporary_departures(&body, 0, &path), Ok(true));
+        assert_eq!(checker.run(&body, &path), Ok(true));
+        compared += 1;
+    }
+    assert_eq!(compared, 63);
+}
+
+#[test]
+fn a_different_component_with_the_same_role_still_needs_fresh_permission() {
+    let key = EndpointKey {
+        component: 1,
+        role: 10,
+    };
+    let other = EndpointKey {
+        component: 2,
+        role: 10,
+    };
+    let control = |role| EndpointKey { component: 0, role };
+    let send = |from, to, label, payload| {
+        Source::Send(Message {
+            from,
+            to,
+            label,
+            payload,
+        })
+    };
+    let out = send(control(1), control(3), 1, Payload::Endpoint(other));
+    let back = send(control(3), control(1), 2, Payload::Endpoint(other));
+    let other_work = Source::seq(&out, &back);
+    let use_key = send(key, control(4), 3, Payload::Wire { schema: 0 });
+    let body = Source::par(&other_work, &use_key);
+    let loan = send(control(0), control(2), 4, Payload::Endpoint(key));
+    let dependency = send(other, control(2), 5, Payload::Wire { schema: 0 });
+    let returned = send(control(2), control(0), 6, Payload::Endpoint(key));
+    let continuation = Source::seq(&dependency, &returned);
+    let suffix = Source::seq(&loan, &continuation);
+    let root = Source::seq(&body, &suffix);
+    let mut facts = Scratch::<8, 8>::new();
+    let mut image = ActorImage::<8, 8>::new();
+    super::super::compile_actor_image_into(&root, &mut facts, &mut image).unwrap();
+    let checker = Checker {
+        root: &root,
+        image: &image,
+        query: Query::new(&root, &facts.symbols[..facts.symbol_len], &facts.initial),
+        messages: &facts.events[..facts.event_len],
+    };
+    let body = Body {
+        source: &body,
+        start: 0,
+        key,
+    };
+    let path = Context::new(&[]);
+    assert_eq!(checker.owner(key, 0, &path), Ok(0));
+    assert_eq!(checker.owner(key, root.event_count(), &path), Ok(0));
+    assert_eq!(checker.temporary_departures(&body, 0, &path), Ok(false));
+    assert_eq!(checker.run(&body, &path), Ok(false));
+}
+
+#[test]
 fn bounded_closure_matches_all_prior_action_edges_across_mixed_shapes() {
     let key = EndpointKey {
         component: 0,

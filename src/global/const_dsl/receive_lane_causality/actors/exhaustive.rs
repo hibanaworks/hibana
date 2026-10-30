@@ -149,12 +149,14 @@ fn split_seed_scans_and_cached_scope_offsets_match_full_queries() {
                         &offsets,
                         Some(&actors),
                         ReceiveScan::Before(cut),
+                        None,
                     );
                     let after = receive_lane_conflict_in(
                         &events,
                         &offsets,
                         Some(&actors),
                         ReceiveScan::From(Some(cut)),
+                        None,
                     );
                     assert_eq!(before.or(after), full, "encoding={encoding} cut={cut:?}");
                     checked += 1;
@@ -307,6 +309,89 @@ fn pointwise_failure<const E: usize, const D: usize>(
     })
 }
 
+fn unpruned_pair<const E: usize>(
+    events: &EffList<E>,
+    offsets: &FlowIndex<E>,
+    image: &SourceActorImage<E, 0>,
+    earlier: usize,
+    later: usize,
+) -> bool {
+    let before = events.atom_at(earlier);
+    let after = events.atom_at(later);
+    if before.from == before.to
+        || after.from == after.to
+        || before.to != after.to
+        || before.from == after.from
+    {
+        return true;
+    }
+    if offsets.reentry_can_cross(earlier, later) {
+        return false;
+    }
+    let empty = SourceContext::new(&[]);
+    let paths = Paths {
+        shared: &empty,
+        current: &empty,
+        next: &empty,
+    };
+    let ordinary = Obligation {
+        events,
+        scope_offsets: offsets,
+        actors: Some(image),
+        earlier,
+        end: later + 1,
+        repeated: None,
+    };
+    if earlier < later && !ordinary.check(paths, Some(later)) {
+        return false;
+    }
+    let markers = events.scope_markers();
+    for marker in 0..markers.len() {
+        let entry = markers.at(marker);
+        if !entry.event.is_primary_enter()
+            || !matches!(entry.scope_id.kind(), Some(super::ScopeKind::Roll))
+        {
+            continue;
+        }
+        let (start, end) = super::roll_body_range_from_enter(markers, marker).unwrap();
+        if start <= earlier && earlier < end && start <= later && later < end {
+            let body = RollBodyRange::new(start, end);
+            let actors = super::ActorMap::Owned {
+                image,
+                events: image.event_actors(),
+                paths,
+                repeated: Some(body),
+            };
+            let range = super::FlowRange {
+                start,
+                end,
+                marker_floor: 0,
+            };
+            let flow = super::CausalFlow {
+                eff_list: events,
+                scope_offsets: offsets,
+                earlier: earlier - start,
+                goal: FlowGoal::Closure,
+                body_start: start,
+                iteration_start: 0,
+            };
+            let facts = match flow.advance_as(range, super::CausalRoles::empty(), &actors) {
+                Ok(Ok(facts)) => facts,
+                _ => panic!("static-actor closure failed"),
+            };
+            let next = super::CausalFlow {
+                goal: FlowGoal::ReceiveEvent(before, body.len() + later - start),
+                iteration_start: body.len(),
+                ..flow
+            };
+            if !matches!(next.advance_as(range, facts, &actors), Ok(Ok(_))) {
+                return false;
+            }
+        }
+    }
+    true
+}
+
 #[test]
 fn bulk_failure_witnesses_match_pointwise_queries_for_small_structured_sources() {
     let empty = SourceContext::new(&[]);
@@ -386,6 +471,41 @@ fn bulk_failure_witnesses_match_pointwise_queries_for_small_structured_sources()
                     }
                 };
                 let image = SourceActorImage::<24, 0>::causal_fixture(&references, &[]);
+                let offsets = FlowIndex::new(&events, Some(&image));
+                let order = super::super::ReceiveRelations::<24, 1>::new(
+                    &events,
+                    &offsets,
+                    Some(&image),
+                    &super::super::ReceiveSeeds::new(&events),
+                );
+                let closures = Some(order.as_ref());
+                assert_eq!(
+                    super::receive_lane_conflict_in(
+                        &events,
+                        &offsets,
+                        Some(&image),
+                        super::ReceiveScan::From(None),
+                        closures
+                    ),
+                    owned_receive_lane_conflict(&events, &image),
+                    "matrix bulk encoding={encoding} shape={shape} actors={actors:?}",
+                );
+                for earlier in 0..4 {
+                    for later in 0..4 {
+                        assert_eq!(
+                            super::receive_pair_is_causal(
+                                &events,
+                                &offsets,
+                                Some(&image),
+                                earlier,
+                                later,
+                                closures,
+                            ),
+                            unpruned_pair(&events, &offsets, &image, earlier, later),
+                            "pair encoding={encoding} shape={shape} earlier={earlier} later={later} actors={actors:?}"
+                        );
+                    }
+                }
                 for earlier in 0..4 {
                     for end in earlier + 1..=4 {
                         let obligation = Obligation {

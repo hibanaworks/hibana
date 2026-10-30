@@ -1,4 +1,4 @@
-error[E0080]: evaluation panicked: rolled reentry endpoint operations must be unambiguous; help: make rolled continuation and reentry endpoint selectors distinct
+error[E0080]: evaluation panicked: rolled reentry endpoint operations must be unambiguous; role=0; event#0(0->1 label=3 lane=0); event#2(0->1 label=3 lane=0); help: make rolled continuation and reentry endpoint selectors distinct
  --> src/g.rs
   |
   |             diagnostic_message::panic_diagnostic(diagnostic);

@@ -66,25 +66,10 @@ pub fn source<P: Projectable>(program: &P) -> SourceProfile {
     let _ = program;
     let lower: fn() -> SourceProfile = const {
         let rows = P::Steps::SOURCE_ROW_COUNT;
-        if rows <= 8 {
-            super::source::profile::<P::Steps, 8>
-        } else if rows <= 32 {
-            super::source::profile::<P::Steps, 32>
-        } else if rows <= 128 {
-            super::source::profile::<P::Steps, 128>
-        } else if rows <= 512 {
-            super::source::profile::<P::Steps, 512>
-        } else if rows <= 2048 {
-            super::source::profile::<P::Steps, 2048>
-        } else if rows <= 8192 {
-            super::source::profile::<P::Steps, 8192>
-        } else if rows <= 32768 {
-            super::source::profile::<P::Steps, 32768>
-        } else if rows <= 65535 {
-            super::source::profile::<P::Steps, 65535>
-        } else {
-            panic!("choreography source exceeds compact descriptor domain")
-        }
+        with_source_capacity!(
+            rows,
+            |CAPACITY| super::source::profile::<P::Steps, CAPACITY>
+        )
     };
     lower()
 }
@@ -120,25 +105,10 @@ pub(super) enum SourcePass {
 fn construction_pass<P: Projectable>(_program: &P, pass: SourcePass) -> bool {
     let run: fn(SourcePass) -> bool = const {
         let rows = P::Steps::SOURCE_ROW_COUNT;
-        if rows <= 8 {
-            super::source::profile_construction::<P::Steps, 8>
-        } else if rows <= 32 {
-            super::source::profile_construction::<P::Steps, 32>
-        } else if rows <= 128 {
-            super::source::profile_construction::<P::Steps, 128>
-        } else if rows <= 512 {
-            super::source::profile_construction::<P::Steps, 512>
-        } else if rows <= 2048 {
-            super::source::profile_construction::<P::Steps, 2048>
-        } else if rows <= 8192 {
-            super::source::profile_construction::<P::Steps, 8192>
-        } else if rows <= 32768 {
-            super::source::profile_construction::<P::Steps, 32768>
-        } else if rows <= 65535 {
-            super::source::profile_construction::<P::Steps, 65535>
-        } else {
-            panic!("choreography source exceeds compact descriptor domain")
-        }
+        with_source_capacity!(rows, |CAPACITY| super::source::profile_construction::<
+            P::Steps,
+            CAPACITY,
+        >)
     };
     run(pass)
 }
@@ -176,25 +146,10 @@ pub fn resident_validation<const ROLE: u8>(program: &impl Projectable) -> bool {
 fn local_pass<const ROLE: u8, P: Projectable, const PASS: u8>(_program: &P) -> bool {
     let validate: fn() -> bool = const {
         let rows = P::Steps::SOURCE_ROW_COUNT;
-        if rows <= 8 {
-            super::role_projection::profile_local_pass::<ROLE, P::Steps, 8, PASS>
-        } else if rows <= 32 {
-            super::role_projection::profile_local_pass::<ROLE, P::Steps, 32, PASS>
-        } else if rows <= 128 {
-            super::role_projection::profile_local_pass::<ROLE, P::Steps, 128, PASS>
-        } else if rows <= 512 {
-            super::role_projection::profile_local_pass::<ROLE, P::Steps, 512, PASS>
-        } else if rows <= 2048 {
-            super::role_projection::profile_local_pass::<ROLE, P::Steps, 2048, PASS>
-        } else if rows <= 8192 {
-            super::role_projection::profile_local_pass::<ROLE, P::Steps, 8192, PASS>
-        } else if rows <= 32768 {
-            super::role_projection::profile_local_pass::<ROLE, P::Steps, 32768, PASS>
-        } else if rows <= 65535 {
-            super::role_projection::profile_local_pass::<ROLE, P::Steps, 65535, PASS>
-        } else {
-            panic!("choreography source exceeds compact descriptor domain")
-        }
+        with_source_capacity!(
+            rows,
+            |CAPACITY| super::role_projection::profile_local_pass::<ROLE, P::Steps, CAPACITY, PASS>
+        )
     };
     validate()
 }

@@ -344,7 +344,10 @@ Inside a borrowed parallel group, an inner `roll` continues within that group.
 To repeat the whole group, end its completed borrows and call `par()` again.
 These boundaries matter when nested repeats can produce the same message sequence.
 
-Repetition can coexist with a later continuation. Projection rejects an
+Repetition can coexist with a later continuation. Executing that continuation
+does not disable the completed fragment: it can repeat alongside the
+continuation or after it finishes. The continuation itself does not repeat.
+Projection rejects an
 outgoing operation that could start a repeated fragment and also select that
 continuation through the same role, label, and payload schema. An intervening
 receive after the fragment does not resolve this ambiguity. A receive at the

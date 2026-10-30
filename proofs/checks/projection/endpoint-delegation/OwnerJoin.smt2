@@ -53,3 +53,35 @@
 ; EXPECT: sat
 (check-sat)
 (pop)
+
+; Closed source traces must contain a return after a departure. Transfer
+; receivers are snapshots, independent of later carrier-role movement.
+(declare-const initial (_ BitVec 8))
+(declare-const departed (_ BitVec 8))
+(declare-const r0 (_ BitVec 8))
+(declare-const r1 (_ BitVec 8))
+(declare-const r2 (_ BitVec 8))
+(declare-const sent0 Bool)
+(declare-const sent1 Bool)
+(declare-const sent2 Bool)
+(define-fun final-holder () (_ BitVec 8)
+  (ite sent2 r2 (ite sent1 r1 (ite sent0 r0 departed))))
+(define-fun has-return () Bool
+  (or (and sent0 (= r0 initial)) (and sent1 (= r1 initial))
+      (and sent2 (= r2 initial))))
+(push)
+(assert (distinct departed initial))
+(assert (= final-holder initial))
+(assert (not has-return))
+; EXPECT: unsat
+(check-sat)
+(pop)
+
+; Sensitivity: without the checked final owner a return need not exist.
+(push)
+(assert (distinct departed initial))
+(assert (distinct final-holder initial))
+(assert (not has-return))
+; EXPECT: sat
+(check-sat)
+(pop)

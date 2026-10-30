@@ -109,6 +109,7 @@ fn check_source<Steps: ProgramShape>(source: &ProgramSourceData<128>, wire: bool
     assert_eq!(schedules::check(&Steps::SOURCE_NODE, source), owned);
     for actors in [None, source.actors()] {
         let mut pairwise = true;
+        let closures = None;
         for first in 0..source.eff_list().len() {
             for second in 0..source.eff_list().len() {
                 if source.eff_list().atom_at(first).lane == source.eff_list().atom_at(second).lane {
@@ -118,6 +119,7 @@ fn check_source<Steps: ProgramShape>(source: &ProgramSourceData<128>, wire: bool
                         actors,
                         first,
                         second,
+                        closures,
                     );
                 }
             }

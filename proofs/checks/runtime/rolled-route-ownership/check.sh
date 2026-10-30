@@ -34,11 +34,11 @@ bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" smt-sequence \
 z3 "$PROOFS/Admission.smt2" > "$EVIDENCE/z3.log"
 bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" smt-admission "$EVIDENCE/z3.log"
 z3 "$PROOFS/SendContinuation.smt2" > "$EVIDENCE/send-continuation-z3.log"
-bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" smt-counts "$EVIDENCE/send-continuation-z3.log" 3 2
+bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" smt-counts "$EVIDENCE/send-continuation-z3.log" 5 3
 z3 "$PROOFS/SendEntry.smt2" > "$EVIDENCE/send-entry-z3.log"
 bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" smt-sequence "$EVIDENCE/send-entry-z3.log" sat unsat sat unsat sat
 z3 "$PROOFS/NestedVisit.smt2" > "$EVIDENCE/nested-visit-z3.log"
 bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" smt-sequence "$EVIDENCE/nested-visit-z3.log" sat unsat sat unsat sat unsat sat unsat
 z3 "$PROOFS/SharedSuffix.smt2" > "$EVIDENCE/shared-suffix-z3.log"
 bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" smt-sequence "$EVIDENCE/shared-suffix-z3.log" sat unsat sat unsat sat unsat sat unsat sat sat sat sat unsat sat unsat
-printf 'Rolled-route proofs passed: Lean 4.30.0, 10 proof files; 384 Rust/model comparisons; Z3 26 UNSAT obligations, 35 SAT premises/witnesses. Logs: %s\n' "$EVIDENCE"
+printf 'Rolled-route proofs passed: Lean 4.30.0, 10 proof files; 384 Rust/model comparisons; Z3 27 UNSAT obligations, 37 SAT premises/witnesses. Logs: %s\n' "$EVIDENCE"

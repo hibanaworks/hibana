@@ -27,7 +27,7 @@ pub(crate) use self::eff_list::const_send_typed;
 pub(crate) use self::endpoint_controller::first_visible_controller;
 pub(crate) use self::endpoint_selectors::{
     first_visible_endpoint_selector_conflicts_from_markers, local_route_observer_paths_mergeable,
-    validate_parallel_endpoint_selectors, validate_roll_reentry_endpoint_selectors,
+    roll_reentry_endpoint_conflict, validate_parallel_endpoint_selectors,
 };
 #[cfg(all(test, hibana_repo_tests))]
 pub(crate) use self::receive_lane_causality::FlowIndex;

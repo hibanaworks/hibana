@@ -2,7 +2,7 @@ use super::super::{
     EventCursor, PackedEventConflict, ScopeId, SendMeta, SendPreviewError, StateIndex,
     state_index_to_usize,
 };
-use crate::global::typestate::EventCommitMeta;
+use crate::global::typestate::{EventCommitMeta, MessageSelector};
 
 #[derive(Clone, Copy)]
 struct SendPreviewRouteArm {
@@ -23,6 +23,19 @@ struct SendPreviewDecisionContext<'a> {
 }
 
 impl EventCursor {
+    fn send_preview_outbound_contract_matches(
+        &self,
+        idx: usize,
+        selector: MessageSelector,
+    ) -> bool {
+        self.event_row_at(idx).is_some_and(|row| {
+            row.direction() != crate::global::role_program::RoleLocalDirection::Recv
+                && row.logical_role() == selector.role
+                && row.atom().label == selector.label
+                && row.atom().payload == selector.payload_kind
+        })
+    }
+
     fn send_preview_local_contract_lane_at(
         &self,
         idx: usize,
@@ -44,8 +57,7 @@ impl EventCursor {
         &self,
         scope_id: ScopeId,
         arm: u8,
-        target_label: u8,
-        target_payload: crate::eff::EventPayload,
+        selector: MessageSelector,
     ) -> Option<usize> {
         let slot = self.route_scope_slot(scope_id)?;
         let row = self
@@ -55,9 +67,8 @@ impl EventCursor {
         let mut completed = None;
         let mut idx = row.start();
         while idx < row.end() {
-            if let Some((label, schema, lane)) = self.send_preview_local_contract_lane_at(idx)
-                && label == target_label
-                && schema == target_payload
+            if self.send_preview_outbound_contract_matches(idx, selector)
+                && let Some(lane) = self.send_preview_lane_at(idx)
             {
                 if !self.node_event_done_for_lane(idx, lane) {
                     return Some(idx);
@@ -116,13 +127,28 @@ impl EventCursor {
     }
 
     #[inline(never)]
-    fn send_preview_selected_controller_arm_entry_for_contract(
+    fn send_preview_selected_controller_index_for_contract(
         &self,
         scope_id: ScopeId,
         arm: u8,
-        target_label: u8,
-        target_payload: crate::eff::EventPayload,
+        candidate: (usize, MessageSelector),
     ) -> Result<usize, SendPreviewError> {
+        let (index, selector) = candidate;
+        let target_label = selector.label;
+        let target_payload = selector.payload_kind;
+        // The indexed admission search already accounted for nested choices
+        // and source predecessors. A resolver confirms its arm; it must not
+        // replace that candidate with an earlier, inactive label occurrence.
+        let selected_rows = self.route_scope_slot(scope_id).and_then(|slot| {
+            self.machine()
+                .event_program()
+                .route_arm_event_row_by_slot(slot, arm)
+        });
+        if selected_rows.is_some_and(|rows| rows.start() <= index && index < rows.end())
+            && self.send_preview_outbound_contract_matches(index, selector)
+        {
+            return Ok(index);
+        }
         if let Some((entry, _)) = self.controller_arm_entry_by_arm(scope_id, arm) {
             let entry_idx = state_index_to_usize(entry);
             let Some((entry_label, entry_schema, _)) =
@@ -130,15 +156,10 @@ impl EventCursor {
             else {
                 return Err(SendPreviewError::Invariant);
             };
-            if entry_label == target_label && entry_schema == target_payload {
+            if self.send_preview_outbound_contract_matches(entry_idx, selector) {
                 return Ok(entry_idx);
             }
-            if let Some(idx) = self.send_preview_route_arm_contract_index(
-                scope_id,
-                arm,
-                target_label,
-                target_payload,
-            ) {
+            if let Some(idx) = self.send_preview_route_arm_contract_index(scope_id, arm, selector) {
                 return Ok(idx);
             }
             if entry_label == target_label {
@@ -152,7 +173,7 @@ impl EventCursor {
                 actual: target_label,
             });
         }
-        self.send_preview_route_arm_contract_index(scope_id, arm, target_label, target_payload)
+        self.send_preview_route_arm_contract_index(scope_id, arm, selector)
             .ok_or(SendPreviewError::Invariant)
     }
 
@@ -307,11 +328,17 @@ impl EventCursor {
             return Ok(());
         }
         if at_decision && let Some(selected) = (ctx.preview_controller_arm_for_scope)(scope_id) {
-            let entry_idx = self.send_preview_selected_controller_arm_entry_for_contract(
+            let selected_idx = self.send_preview_selected_controller_index_for_contract(
                 scope_id,
                 selected,
-                ctx.target_label,
-                ctx.target_payload,
+                (
+                    *idx,
+                    crate::global::typestate::MessageSelector::new(
+                        ctx.role,
+                        ctx.target_label,
+                        ctx.target_payload,
+                    ),
+                ),
             )?;
             if let Some(committed) = (ctx.committed_arm_for_scope)(scope_id)
                 && committed != selected
@@ -319,7 +346,7 @@ impl EventCursor {
             {
                 return Err(SendPreviewError::Invariant);
             }
-            *idx = entry_idx;
+            *idx = selected_idx;
             if let Some(lane) = self.send_preview_lane_at(*idx) {
                 *ctx.preview_route_arm = Some(SendPreviewRouteArm {
                     lane,

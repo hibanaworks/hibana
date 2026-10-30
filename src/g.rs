@@ -23,6 +23,58 @@
 //! are protocol identifiers. The transport's frame labels are assigned during
 //! projection.
 
+// Source-derived power-of-two workspaces keep padding below one source's size.
+macro_rules! with_source_capacity {
+    ($rows:expr, |$capacity:ident| $body:expr) => {{
+        let rows = $rows;
+        if rows <= 8 {
+            const $capacity: usize = 8;
+            $body
+        } else if rows <= 16 {
+            const $capacity: usize = 16;
+            $body
+        } else if rows <= 32 {
+            const $capacity: usize = 32;
+            $body
+        } else if rows <= 64 {
+            const $capacity: usize = 64;
+            $body
+        } else if rows <= 128 {
+            const $capacity: usize = 128;
+            $body
+        } else if rows <= 256 {
+            const $capacity: usize = 256;
+            $body
+        } else if rows <= 512 {
+            const $capacity: usize = 512;
+            $body
+        } else if rows <= 1024 {
+            const $capacity: usize = 1024;
+            $body
+        } else if rows <= 2048 {
+            const $capacity: usize = 2048;
+            $body
+        } else if rows <= 4096 {
+            const $capacity: usize = 4096;
+            $body
+        } else if rows <= 8192 {
+            const $capacity: usize = 8192;
+            $body
+        } else if rows <= 16384 {
+            const $capacity: usize = 16384;
+            $body
+        } else if rows <= 32768 {
+            const $capacity: usize = 32768;
+            $body
+        } else if rows <= 65535 {
+            const $capacity: usize = 65535;
+            $body
+        } else {
+            panic!("choreography source exceeds compact descriptor domain")
+        }
+    }};
+}
+
 mod source;
 mod terms;
 
@@ -109,6 +161,8 @@ impl<Steps> Program<Steps> {
     ///
     /// Projection requires guarded repetition. The following sequential
     /// continuation remains available under the projected dependencies.
+    /// Executing that continuation does not disable this fragment: it can
+    /// repeat alongside the continuation or after it finishes.
     pub const fn roll(self) -> Program<Roll<Steps>> {
         let _ = self;
         Program::new()
@@ -116,6 +170,9 @@ impl<Steps> Program<Steps> {
 }
 
 /// Sequentially compose two protocol fragments.
+///
+/// A completed rolled fragment on the left remains repeatable when the right
+/// fragment starts or finishes. Only the rolled fragment's operations repeat.
 pub const fn seq<
     Left: crate::global::program::Projectable,
     Right: crate::global::program::Projectable,
@@ -207,6 +264,22 @@ where
                     ProgramSourceError::RouteControllerMismatch,
                 ))
             }
+            Some(ProgramSourceError::ReentryAmbiguousEndpointSelector) => {
+                let mut diagnostic = ProjectionDiagnostic::from_error(
+                    ProgramSourceError::ReentryAmbiguousEndpointSelector,
+                );
+                let Some((first, second)) = Self::REENTRY_SELECTOR_CONFLICT else {
+                    crate::invariant();
+                };
+                let atom = Self::SOURCE_EFF_LIST.atom_at(first);
+                diagnostic.role = Some(atom.from);
+                diagnostic.first = Some(DiagnosticEvent::from_atom(first, atom));
+                diagnostic.second = Some(DiagnosticEvent::from_atom(
+                    second,
+                    Self::SOURCE_EFF_LIST.atom_at(second),
+                ));
+                Some(diagnostic)
+            }
             Some(error) => Some(if Steps::SOURCE_NODE.has_delegation() {
                 let mut diagnostic = ProjectionDiagnostic::from_error(error);
                 if matches!(error, ProgramSourceError::ReceiveLaneCausalityConflict)
@@ -288,8 +361,14 @@ where
     const RECEIVE_CAUSAL: bool = Self::SOURCE.receive_causal();
     const PARALLEL_SELECTORS: bool =
         crate::global::const_dsl::validate_parallel_endpoint_selectors(Self::SOURCE_EFF_LIST);
-    const REENTRY_SELECTORS: bool =
-        crate::global::const_dsl::validate_roll_reentry_endpoint_selectors(Self::SOURCE_EFF_LIST);
+    const REENTRY_SELECTOR_CONFLICT: Option<(usize, usize)> =
+        crate::global::const_dsl::roll_reentry_endpoint_conflict(
+            Self::SOURCE_EFF_LIST,
+            match Self::SOURCE.actors() {
+                Some(actors) => Some(actors.event_actors()),
+                None => None,
+            },
+        );
     const REENTRY_KNOWLEDGE: bool = ProgramSourceData::<CAPACITY>::reentry_knowledge::<Steps>();
     const PASSIVE_ERROR: Option<ProgramSourceError> =
         crate::global::compiled::lowering::validate_passive_child_projection_guarantees(
@@ -317,7 +396,7 @@ where
             Some(ProgramSourceError::ReceiveLaneCausalityConflict)
         } else if !Self::PARALLEL_SELECTORS {
             Some(ProgramSourceError::ParallelAmbiguousEndpointSelector)
-        } else if !Self::REENTRY_SELECTORS {
+        } else if Self::REENTRY_SELECTOR_CONFLICT.is_some() {
             Some(ProgramSourceError::ReentryAmbiguousEndpointSelector)
         } else if !Self::REENTRY_KNOWLEDGE {
             Some(ProgramSourceError::ReentryResourceKnowledge)
@@ -362,25 +441,9 @@ where
 {
     let image = {
         let required_rows = <Steps as ProgramShape>::SOURCE_ROW_COUNT;
-        if required_rows <= 8 {
-            role_projection::role_projection_image_for::<ROLE, Steps, 8>()
-        } else if required_rows <= 32 {
-            role_projection::role_projection_image_for::<ROLE, Steps, 32>()
-        } else if required_rows <= 128 {
-            role_projection::role_projection_image_for::<ROLE, Steps, 128>()
-        } else if required_rows <= 512 {
-            role_projection::role_projection_image_for::<ROLE, Steps, 512>()
-        } else if required_rows <= 2048 {
-            role_projection::role_projection_image_for::<ROLE, Steps, 2048>()
-        } else if required_rows <= 8192 {
-            role_projection::role_projection_image_for::<ROLE, Steps, 8192>()
-        } else if required_rows <= 32768 {
-            role_projection::role_projection_image_for::<ROLE, Steps, 32768>()
-        } else if required_rows <= 65535 {
-            role_projection::role_projection_image_for::<ROLE, Steps, 65535>()
-        } else {
-            panic!("choreography source exceeds compact descriptor domain")
-        }
+        with_source_capacity!(required_rows, |CAPACITY| {
+            role_projection::role_projection_image_for::<ROLE, Steps, CAPACITY>()
+        })
     };
     (
         PhantomData,

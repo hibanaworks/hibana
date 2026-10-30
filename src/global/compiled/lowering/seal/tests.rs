@@ -2,8 +2,8 @@ use super::*;
 use crate::{
     eff::{EffAtom, EventOrigin},
     global::const_dsl::{
-        ReentryMark, ScopeId, validate_parallel_endpoint_selectors,
-        validate_receive_lane_causality, validate_roll_reentry_endpoint_selectors,
+        ReentryMark, ScopeId, roll_reentry_endpoint_conflict, validate_parallel_endpoint_selectors,
+        validate_receive_lane_causality,
     },
 };
 
@@ -19,7 +19,7 @@ const fn projection_error_all_roles<const E: usize>(
     if !validate_parallel_endpoint_selectors(source) {
         return Some(ProgramSourceError::ParallelAmbiguousEndpointSelector);
     }
-    if !validate_roll_reentry_endpoint_selectors(source) {
+    if !roll_reentry_endpoint_conflict(source, None).is_none() {
         return Some(ProgramSourceError::ReentryAmbiguousEndpointSelector);
     }
     if let Some(error) = validate_passive_child_projection_guarantees(source.scope_markers()) {

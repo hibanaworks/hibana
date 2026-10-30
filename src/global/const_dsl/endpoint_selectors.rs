@@ -122,9 +122,13 @@ pub(crate) const fn validate_parallel_endpoint_selectors<const E: usize>(
 // occurrence evidence; outbound heads expose (role, label, payload kind).
 // A later receive does not retire an elastic roll, so compare its outbound
 // heads with every compatible continuation, including after a parallel join.
-pub(crate) const fn validate_roll_reentry_endpoint_selectors<const E: usize>(
+pub(crate) const fn roll_reentry_endpoint_conflict<const E: usize>(
     eff_list: &EffList<E>,
-) -> bool {
+    actors: Option<&[crate::g::ActorPair]>,
+) -> Option<(usize, usize)> {
+    if let Some(actors) = actors {
+        assert!(actors.len() == eff_list.len());
+    }
     let markers = eff_list.scope_markers();
     let mut marker_idx = 0;
     while marker_idx < markers.len()
@@ -136,7 +140,7 @@ pub(crate) const fn validate_roll_reentry_endpoint_selectors<const E: usize>(
         marker_idx += 1;
     }
     if marker_idx == markers.len() {
-        return true;
+        return None;
     }
     let paths = BranchPaths::<E>::new(markers);
     let mut outbound = [0u64; E];
@@ -153,11 +157,11 @@ pub(crate) const fn validate_roll_reentry_endpoint_selectors<const E: usize>(
             && matches!(marker.scope_id.kind(), Some(ScopeKind::Roll))
         {
             let Some((body_start, body_end)) = roll_body_range_from_enter(markers, idx) else {
-                return false;
+                crate::invariant();
             };
             let mut head = body_start;
             while head < body_end {
-                if outbound_roll_head(eff_list, &paths, body_start, head) {
+                if outbound_roll_head(eff_list, actors, &paths, body_start, head) {
                     let key = outbound[head];
                     let mut low = 0;
                     let mut high = eff_list.len();
@@ -174,7 +178,7 @@ pub(crate) const fn validate_roll_reentry_endpoint_selectors<const E: usize>(
                         if later >= body_end
                             && !matches!(paths.separation(head, later), Some(ScopeKind::Route))
                         {
-                            return false;
+                            return Some((head, later));
                         }
                         low += 1;
                     }
@@ -184,29 +188,63 @@ pub(crate) const fn validate_roll_reentry_endpoint_selectors<const E: usize>(
         }
         idx += 1;
     }
-    true
+    None
 }
 
 const fn outbound_roll_head<const E: usize>(
     eff_list: &EffList<E>,
+    actors: Option<&[crate::g::ActorPair]>,
     paths: &BranchPaths<E>,
     start: usize,
     candidate: usize,
 ) -> bool {
-    let owner = eff_list.atom_at(candidate).from;
+    let owner = match actors {
+        Some(actors) => actors[candidate].sender.0,
+        None => eff_list.atom_at(candidate).from as u16,
+    };
     // A nearby sequential predecessor usually settles this query. Inspect
     // nearest occurrences first; the condition still ranges over the complete
     // prefix when every earlier action is in another choice or parallel arm.
+    let mut conditional_guard = false;
     let mut prior = candidate;
     while prior > start {
         prior -= 1;
-        let atom = eff_list.atom_at(prior);
-        if (atom.from == owner || atom.to == owner) && paths.separation(prior, candidate).is_none()
-        {
-            return false;
+        let [sender, receiver] = match actors {
+            Some(actors) => [actors[prior].sender.0, actors[prior].receiver.0],
+            None => {
+                let atom = eff_list.atom_at(prior);
+                [atom.from as u16, atom.to as u16]
+            }
+        };
+        // Equal canonical references denote the same actor on this visit.
+        // Acquisition through another logical view is still a predecessor.
+        // A step in an optional arm cannot guard a head after that choice.
+        if (sender == owner || receiver == owner) && paths.separation(prior, candidate).is_none() {
+            if paths.precedes_on_every_path(prior, candidate) {
+                return false;
+            }
+            conditional_guard = true;
         }
     }
-    true
+    if !conditional_guard {
+        return true;
+    }
+    let mut guarded_arms = [0; E];
+    prior = candidate;
+    while prior > start {
+        prior -= 1;
+        let [sender, receiver] = match actors {
+            Some(actors) => [actors[prior].sender.0, actors[prior].receiver.0],
+            None => {
+                let atom = eff_list.atom_at(prior);
+                [atom.from as u16, atom.to as u16]
+            }
+        };
+        if (sender == owner || receiver == owner) && paths.separation(prior, candidate).is_none() {
+            paths.record_guard(&mut guarded_arms, prior);
+        }
+    }
+    !paths.guards_every_path(&mut guarded_arms, candidate)
 }
 
 // A bounded heap sort groups equal public send contracts once for all scopes.
@@ -650,6 +688,38 @@ mod roll_tests {
     use crate::eff::EventOrigin;
 
     #[test]
+    fn the_same_conditional_actor_reference_keeps_the_acquisition_before_use() {
+        use crate::g::{SourceActorImage, SourceScope};
+        let mut source = EffList::<2>::new_partitioned(2, 0, 0);
+        for event in 0..2 {
+            source.push_event_mut(eff::EffAtom {
+                from: event * 2,
+                to: event * 2 + 1,
+                label: event,
+                payload: crate::eff::EventPayload::Wire(0),
+                origin: EventOrigin::User,
+                lane: 0,
+            });
+        }
+        let paths = BranchPaths::<2>::new(source.scope_markers());
+        let choice = SourceScope {
+            start: 0,
+            split: 1,
+            stop: 2,
+        };
+        let image =
+            SourceActorImage::<2, 1>::causal_fixture(&[[4, 256], [256, 3]], &[(choice, [0, 1])]);
+        assert!(!outbound_roll_head(
+            &source,
+            Some(image.event_actors()),
+            &paths,
+            0,
+            1
+        ));
+        assert!(outbound_roll_head(&source, None, &paths, 0, 1));
+    }
+
+    #[test]
     fn projection_validation_rejects_only_the_competing_public_contract() {
         for first_label in [0, 3, 24, 255] {
             for next_label in [0, 3, 24, 255] {
@@ -686,7 +756,7 @@ mod roll_tests {
                             1,
                         );
                         assert_eq!(
-                            validate_roll_reentry_endpoint_selectors(&source),
+                            roll_reentry_endpoint_conflict(&source, None).is_none(),
                             first_label != next_label || first_schema != next_schema
                         );
                     }

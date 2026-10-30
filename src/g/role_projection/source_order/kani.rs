@@ -1,4 +1,23 @@
-use super::{RowBits, pair_candidates};
+use super::{RowBits, last_common_before, pair_candidates};
+
+#[kani::proof]
+fn predecessor_intersection_preserves_the_latest_eligible_row() {
+    let first: u64 = kani::any();
+    let second: u64 = kani::any();
+    let end = usize::from(kani::any::<u8>()) % 65;
+    let probe = usize::from(kani::any::<u8>()) % 64;
+    let eligible = probe < end && first & second & (1 << probe) != 0;
+    match last_common_before(first, second, end) {
+        Some(row) => {
+            assert!(row < end);
+            assert_ne!(first & second & (1 << row), 0);
+            assert!(!eligible || probe <= row);
+        }
+        None => assert!(!eligible),
+    }
+    kani::cover!(end == 0);
+    kani::cover!(end == 64 && probe == 63 && eligible);
+}
 
 #[kani::proof]
 fn omitted_source_order_pairs_have_equal_unconditional_answers() {

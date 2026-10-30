@@ -65,38 +65,49 @@ theorem an_eligible_scope_does_not_admit_its_blocked_descendant :
 #print axioms a_resolver_candidate_is_the_admitted_entry
 #print axioms an_eligible_scope_does_not_admit_its_blocked_descendant
 
-/-- Preserve transport/controller ordering, then prefer an unmade choice.
-Retained ancestors and child repeats keep their existing source order. -/
-def offerPriority (base : Nat) (unmade : Bool) : Nat :=
-  2 * base + if unmade then 1 else 0
+/-- A committed outgoing choice can proceed without a frame. Among candidates
+with the same local readiness, preserve transport/controller ordering. -/
+def offerPriority (base : Nat) (locallyReady unmade : Bool) : Nat :=
+  (if locallyReady then 16 else 0) + 2 * base + if unmade then 1 else 0
 
-theorem an_unmade_choice_precedes_an_equally_informed_retained_choice (base : Nat) :
-    offerPriority base false < offerPriority base true := by
+theorem an_unmade_choice_precedes_an_equally_informed_retained_choice
+    (base : Nat) (outgoing : Bool) :
+    offerPriority base outgoing false < offerPriority base outgoing true := by
   simp [offerPriority]
 
+theorem known_outgoing_precedes_an_unframed_receive
+    (readyBase waitingBase : Nat) (outgoingUnmade receivingUnmade : Bool)
+    (bounded : waitingBase ≤ 4) :
+    offerPriority waitingBase false receivingUnmade <
+      offerPriority readyBase true outgoingUnmade := by
+  cases outgoingUnmade <;> cases receivingUnmade <;> simp [offerPriority] <;> omega
+
 theorem primary_offer_priority_is_preserved
-    (lower higher : Nat) (first second : Bool) (ordered : lower < higher) :
-    offerPriority lower first < offerPriority higher second := by
+    (lower higher : Nat) (ready firstUnmade secondUnmade : Bool)
+    (ordered : lower < higher) :
+    offerPriority lower ready firstUnmade <
+      offerPriority higher ready secondUnmade := by
   have adjacent : lower + 1 ≤ higher := ordered
   have doubled : 2 * lower + 2 ≤ 2 * higher := by
     simpa [Nat.mul_add] using Nat.mul_le_mul_left 2 adjacent
-  have strict : 2 * lower + 1 < 2 * higher :=
+  have raw : 2 * lower + 1 < 2 * higher :=
     Nat.lt_of_lt_of_le (Nat.add_lt_add_left (by decide : (1 : Nat) < 2) _) doubled
-  have left : offerPriority lower first ≤ 2 * lower + 1 := by
-    cases first <;> simp [offerPriority]
-  have right : 2 * higher ≤ offerPriority higher second := by
-    cases second <;> simp [offerPriority]
+  let offset := if ready then 16 else 0
+  have strict : offset + 2 * lower + 1 < offset + 2 * higher := by
+    simpa [Nat.add_assoc] using Nat.add_lt_add_left raw offset
+  have left : offerPriority lower ready firstUnmade ≤ offset + 2 * lower + 1 := by
+    cases firstUnmade <;> simp [offerPriority, offset]
+  have right : offset + 2 * higher ≤ offerPriority higher ready secondUnmade := by
+    cases secondUnmade <;> simp [offerPriority, offset]
   exact Nat.lt_of_le_of_lt left (Nat.lt_of_lt_of_le strict right)
 
 theorem offer_priority_fits_its_runtime_byte
-    (base : Nat) (unmade : Bool) (bounded : base ≤ 4) :
-    offerPriority base unmade ≤ 9 := by
-  have doubled : 2 * base ≤ 8 := Nat.mul_le_mul_left 2 bounded
-  cases unmade with
-  | false => simpa [offerPriority] using Nat.le_trans doubled (by decide : (8 : Nat) ≤ 9)
-  | true => simpa [offerPriority] using Nat.add_le_add_right doubled 1
+    (base : Nat) (outgoing unmade : Bool) (bounded : base ≤ 4) :
+    offerPriority base outgoing unmade ≤ 25 := by
+  cases outgoing <;> cases unmade <;> simp [offerPriority] <;> omega
 
 #print axioms an_unmade_choice_precedes_an_equally_informed_retained_choice
+#print axioms known_outgoing_precedes_an_unframed_receive
 #print axioms primary_offer_priority_is_preserved
 #print axioms offer_priority_fits_its_runtime_byte
 

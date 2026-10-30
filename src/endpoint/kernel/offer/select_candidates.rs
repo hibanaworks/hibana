@@ -17,6 +17,10 @@ pub(super) struct ProjectedOfferFrontier {
     pub(super) candidate: Option<OfferScopeSelection>,
 }
 
+fn offer_priority(base: u8, locally_ready: bool, unmade: bool) -> u8 {
+    u8::from(locally_ready) * 16 + base * 2 + u8::from(unmade)
+}
+
 impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
     /// Read candidates and incoming directions from the same progress cut.
     /// The result contains locators, never admission that survives callbacks.
@@ -320,16 +324,6 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
         } else {
             1
         };
-        // Among equally informed candidates, prefer a choice that has not yet
-        // been made. Retained ancestors keep their source order relative to
-        // child repeats; they must not force those repeats to finish.
-        let priority = priority * 2 + u8::from(self.selected_arm_for_scope(scope).is_none());
-        if selected.is_some_and(|(prior_priority, prior)| {
-            priority < prior_priority
-                || (priority == prior_priority && prior.entry_index.as_usize() <= entry)
-        }) {
-            return Ok(());
-        }
         let candidate_row = if controller && dynamic && live_arm.is_none() {
             let Some(entry) = self.resolver_offer_entry(scope, previews) else {
                 return Ok(());
@@ -341,6 +335,25 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
             }
             row
         };
+        // Use the same committed choice required by collect_route_authority.
+        // Such an outgoing operation can proceed without waiting for input;
+        // a speculative repeat receive must not hide it. Actual ingress is
+        // selected separately, before this projected candidate is used.
+        let locally_ready = candidate_row.direction() != RoleLocalDirection::Recv
+            && self
+                .committed_offer_intent(scope, candidate_row.index())
+                .is_some();
+        let priority = offer_priority(
+            priority,
+            locally_ready,
+            self.selected_arm_for_scope(scope).is_none(),
+        );
+        if selected.is_some_and(|(prior_priority, prior)| {
+            priority < prior_priority
+                || (priority == prior_priority && prior.entry_index.as_usize() <= entry)
+        }) {
+            return Ok(());
+        }
         let mut candidate = self.offer_scope_selection_for_scope_lane_with_selected_arm(
             scope,
             entry,
@@ -351,5 +364,29 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
             checked_state_index(candidate_row.index()).ok_or(RecvError::PhaseInvariant)?;
         *selected = Some((priority, candidate));
         Ok(())
+    }
+}
+
+#[cfg(kani)]
+mod kani {
+    #[kani::proof]
+    fn a_locally_ready_offer_precedes_every_waiting_offer_without_changing_base_order() {
+        let left: u8 = kani::any();
+        let right: u8 = kani::any();
+        kani::assume((1..=4).contains(&left) && (1..=4).contains(&right));
+        let left_unmade: bool = kani::any();
+        let right_unmade: bool = kani::any();
+        let ready: bool = kani::any();
+        assert!(
+            super::offer_priority(left, true, left_unmade)
+                > super::offer_priority(right, false, right_unmade)
+        );
+        assert!(super::offer_priority(left, ready, left_unmade) <= 25);
+        if left < right {
+            assert!(
+                super::offer_priority(left, ready, left_unmade)
+                    < super::offer_priority(right, ready, right_unmade)
+            );
+        }
     }
 }

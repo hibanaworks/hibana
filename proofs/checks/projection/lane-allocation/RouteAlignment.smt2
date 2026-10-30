@@ -155,4 +155,57 @@
 ; EXPECT: sat
 (check-sat)
 (pop)
+; Compact vertices retain distinct active old lane classes.
+(declare-const vertex-a (_ BitVec 8))
+(declare-const vertex-b (_ BitVec 8))
+(declare-fun vertex-color ((_ BitVec 8)) (_ BitVec 8))
+(push)
+(assert (=> (= vertex-a vertex-b) (= lane-a lane-b)))
+(assert (=> (= (vertex-color vertex-a) (vertex-color vertex-b)) (= vertex-a vertex-b)))
+(assert (distinct lane-a lane-b))
+(assert (= (vertex-color vertex-a) (vertex-color vertex-b)))
+; EXPECT: unsat
+(check-sat)
+(pop)
+(push)
+(assert (=> (= (vertex-color vertex-a) (vertex-color vertex-b)) (= vertex-a vertex-b)))
+(assert (distinct lane-a lane-b))
+(assert (= (vertex-color vertex-a) (vertex-color vertex-b)))
+; Omitting packing injectivity can collapse two old classes.
+; EXPECT: sat
+(check-sat)
+(pop)
+; Confirmed edges use the same packed row/bit address as the constraint table.
+; A full wire-domain table has 65,536 bits. Ceil row width prevents aliasing
+; even when the candidate palette ends in a partial byte.
+(declare-const colors (_ BitVec 9))
+(define-fun row-bytes () (_ BitVec 9)
+  (bvlshr (bvadd colors (_ bv7 9)) (_ bv3 9)))
+(define-fun packed-bit ((row (_ BitVec 8)) (color (_ BitVec 8)) (width (_ BitVec 9))) (_ BitVec 24)
+  (bvadd (bvmul ((_ zero_extend 16) row)
+    (bvmul ((_ zero_extend 15) width) (_ bv8 24))) ((_ zero_extend 16) color)))
+(assert (bvugt colors (_ bv0 9)))
+(assert (bvule colors (_ bv256 9)))
+(assert (bvult ((_ zero_extend 1) lane-a) colors))
+(assert (bvult ((_ zero_extend 1) lane-b) colors))
+(push)
+(assert (or (distinct vertex-a vertex-b) (distinct lane-a lane-b)))
+(assert (= (packed-bit vertex-a lane-a row-bytes) (packed-bit vertex-b lane-b row-bytes)))
+; EXPECT: unsat
+(check-sat)
+(pop)
+(push)
+(assert (bvuge (packed-bit vertex-a lane-a row-bytes) (_ bv65536 24)))
+; The complete wire row/color domain fits the compiler table.
+; EXPECT: unsat
+(check-sat)
+(pop)
+(push)
+(assert (or (distinct vertex-a vertex-b) (distinct lane-a lane-b)))
+(assert (= (packed-bit vertex-a lane-a (bvlshr colors (_ bv3 9)))
+           (packed-bit vertex-b lane-b (bvlshr colors (_ bv3 9)))))
+; Truncating the partial row byte can certify a different edge by aliasing.
+; EXPECT: sat
+(check-sat)
+(pop)
 (exit)

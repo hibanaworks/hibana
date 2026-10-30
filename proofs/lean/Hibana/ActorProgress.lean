@@ -83,6 +83,89 @@ theorem pair_validation_is_exact_predecessor_coverage
             simpa only [predecessorPairCheck, direct, needed,
               Bool.false_eq_true, Bool.true_eq, ite_false, ite_true] using covered
 
+/-- A maximal active source predecessor of one operation. -/
+def sourceCover (expected : Nat → List Nat) (event before : Nat) : Prop :=
+  before ∈ expected event ∧
+    ∀ middle ∈ expected event, before ∉ expected middle
+
+private theorem source_predecessor_has_cover_above
+    {expected : Nat → List Nat} {event : Nat}
+    (backward : ∀ {a b : Nat}, a ∈ expected b → a < b)
+    (transitive : ∀ {a b c : Nat},
+      a ∈ expected b → b ∈ expected c → a ∈ expected c) :
+    ∀ before, before ∈ expected event →
+      ∃ cover, sourceCover expected event cover ∧
+        (cover = before ∨ before ∈ expected cover) := by
+  have bounded :
+      ∀ fuel before, event - before = fuel →
+        before ∈ expected event →
+        ∃ cover, sourceCover expected event cover ∧
+          (cover = before ∨ before ∈ expected cover) := by
+    intro fuel
+    induction fuel using Nat.strongRecOn with
+    | ind fuel ih =>
+        intro before distance member
+        by_cases later :
+            (expected event).any (fun middle => (expected middle).contains before) = true
+        · obtain ⟨middle, middleMember, present⟩ := List.any_eq_true.mp later
+          have preceding : before ∈ expected middle := by simpa using present
+          have increases := backward preceding
+          have boundedMiddle := backward middleMember
+          have smaller : event - middle < fuel := by omega
+          obtain ⟨cover, maximal, above⟩ :=
+            ih (event - middle) smaller middle rfl middleMember
+          refine ⟨cover, maximal, Or.inr ?_⟩
+          rcases above with same | previous
+          · simpa only [same] using preceding
+          · exact transitive preceding previous
+        · refine ⟨before, ⟨member, ?_⟩, Or.inl rfl⟩
+          intro middle middleMember preceding
+          exact later (List.any_eq_true.mpr ⟨middle, middleMember, by simpa using preceding⟩)
+  intro before member
+  exact bounded (event - before) before rfl member
+
+/-- Positive obligations need only a superset of source covers. Every extra
+actual predecessor must still be rejected. All lists refer to the same full
+choice and holder assignment, within one source visit. -/
+theorem cover_candidates_validate_predecessor_coverage
+    {expected : Nat → List Nat}
+    {actual candidates : List Nat} {event : Nat}
+    (backward : ∀ {a b : Nat}, a ∈ expected b → a < b)
+    (transitive : ∀ {a b c : Nat},
+      a ∈ expected b → b ∈ expected c → a ∈ expected c)
+    (noExtra : ∀ before ∈ actual, before ∈ expected event)
+    (complete : ∀ before,
+      sourceCover expected event before → before ∈ candidates)
+    (checked : candidates.all
+      (predecessorPairCheck expected actual event) = true) :
+    predecessorCoverage expected actual event = true := by
+  have coverActual :
+      ∀ before, sourceCover expected event before → before ∈ actual := by
+    intro before maximal
+    by_cases member : before ∈ actual
+    · exact member
+    have absent := member
+    have missing : actual.contains before = false := by simpa using absent
+    have needed : (expected event).contains before = true := by simpa using maximal.1
+    have ancestors :
+        actual.any (fun middle => (expected middle).contains before) = true := by
+      simpa only [predecessorPairCheck, missing, needed,
+        Bool.false_eq_true, Bool.true_eq, ite_false, ite_true] using
+        List.all_eq_true.mp checked before (complete before maximal)
+    obtain ⟨middle, member, preceding⟩ := List.any_eq_true.mp ancestors
+    exact False.elim (maximal.2 middle (noExtra middle member) (by simpa using preceding))
+  apply Bool.and_eq_true_iff.mpr
+  constructor
+  · apply List.all_eq_true.mpr
+    intro before member
+    simpa using noExtra before member
+  · apply List.all_eq_true.mpr
+    intro before member
+    obtain ⟨cover, maximal, above⟩ :=
+      source_predecessor_has_cover_above backward transitive before member
+    exact List.any_eq_true.mpr
+      ⟨cover, coverActual cover maximal, by simpa using above⟩
+
 /-- A compact dependency may require an intermediate operation instead of all
 its ancestors. On a source-closed prefix this preserves exactly the same next
 operations, without serializing independent source operations. -/
@@ -111,6 +194,24 @@ theorem covered_predecessors_have_equal_readiness
     have belongs : before ∈ expected event := by
       simpa using List.all_eq_true.mp coverage.1 before member
     exact List.all_eq_true.mp ready before belongs
+
+/-- Cover candidates and all negative obligations preserve the enabled set on
+the existing source-closed progress. -/
+theorem checked_cover_candidates_have_equal_source_readiness
+    {expected : Nat → List Nat} {actual candidates : List Nat}
+    {event : Nat} {state : CommitState}
+    (backward : ∀ {a b : Nat}, a ∈ expected b → a < b)
+    (transitive : ∀ {a b c : Nat},
+      a ∈ expected b → b ∈ expected c → a ∈ expected c)
+    (noExtra : ∀ before ∈ actual, before ∈ expected event)
+    (complete : ∀ before, sourceCover expected event before → before ∈ candidates)
+    (checked : candidates.all
+      (predecessorPairCheck expected actual event) = true)
+    (closed : state.PrefixClosed expected (expected event)) :
+    actual.all state.done = true ↔ (expected event).all state.done = true :=
+  covered_predecessors_have_equal_readiness
+    (cover_candidates_validate_predecessor_coverage
+      backward transitive noExtra complete checked) closed
 
 /-- Accepted pair obligations preserve exactly the source-enabled operations
 on the existing source-closed progress. This does not require another cursor

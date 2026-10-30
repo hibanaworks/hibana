@@ -263,4 +263,46 @@ theorem incompatible_lane_edge_preserves_valid_matchings
     simp [selected row, distinct]
   · simp [selected r, same]
 
+/-- Packing only the lane classes present in an arm preserves the wire-class
+injectivity required by remapping. Absent classes require no matching vertex. -/
+theorem compact_lane_vertices_preserve_class_injectivity
+    (active : Nat → Prop) (vertex color : Nat → Nat)
+    (packed : ∀ a b, active a → active b → vertex a = vertex b → a = b)
+    (matched : ∀ a b, active a → active b →
+      color (vertex a) = color (vertex b) → vertex a = vertex b) :
+    ∀ a b, active a → active b → color (vertex a) = color (vertex b) → a = b := by
+  intro a b first second same
+  exact packed a b first second (matched a b first second same)
+
+/-- A certificate covers every source occurrence in its old lane class.
+Changing another matching edge cannot alter this source-only predicate. -/
+def LaneClassCertificate {α : Type} (inside : α → Bool) (lane : α → Nat)
+    (conflict : α → α → Prop) (row color : Nat) : Prop :=
+  ∀ a b, inside a = true → lane a = row → inside b = false → lane b = color →
+    ¬ (conflict a b ∨ conflict b a)
+
+theorem confirming_a_whole_lane_class_preserves_certificate_soundness
+    {α : Type} (inside : α → Bool) (lane : α → Nat) (conflict : α → α → Prop)
+    (confirmed : Nat → Nat → Bool) (row color : Nat)
+    (sound : ∀ r c, confirmed r c = true → LaneClassCertificate inside lane conflict r c)
+    (checked : LaneClassCertificate inside lane conflict row color) :
+    ∀ r c, (if r = row ∧ c = color then true else confirmed r c) = true →
+      LaneClassCertificate inside lane conflict r c := by
+  intro r c available
+  by_cases same : r = row ∧ c = color
+  · rcases same with ⟨rfl, rfl⟩
+    exact checked
+  · exact sound r c (by simpa only [if_neg same] using available)
+
+theorem confirmed_lane_classes_supply_all_cross_boundary_checks
+    {α : Type} (inside : α → Bool) (lane : α → Nat) (conflict : α → α → Prop)
+    (confirmed : Nat → Nat → Bool) (remap : Nat → Nat)
+    (sound : ∀ r c, confirmed r c = true → LaneClassCertificate inside lane conflict r c)
+    (selected : ∀ a, inside a = true → confirmed (lane a) (remap (lane a)) = true) :
+    ∀ a b, inside a = true → inside b = false →
+      (conflict a b ∨ conflict b a) → remap (lane a) ≠ lane b := by
+  intro a b first second incompatible equal
+  exact sound (lane a) (remap (lane a)) (selected a first)
+    a b first rfl second equal.symm incompatible
+
 end Hibana

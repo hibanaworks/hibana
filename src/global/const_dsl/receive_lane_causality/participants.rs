@@ -4,20 +4,27 @@ use crate::g::SourceActorImage;
 /// Construction-only interval unions of the possible physical participants.
 /// The leaves occupy `len..2*len`; node zero is unused. Two nodes per arena
 /// row cover the complete source event domain without a separate capacity.
-pub(super) struct Participants<const E: usize> {
+pub(crate) struct Participants<const E: usize> {
     nodes: [[CausalRoles; 2]; E],
     len: usize,
 }
 
 impl<const E: usize> Participants<E> {
+    pub(crate) const fn empty(len: usize) -> Self {
+        if len > E {
+            crate::invariant();
+        }
+        Self {
+            nodes: [[CausalRoles::empty(); 2]; E],
+            len,
+        }
+    }
+
     pub(super) const fn new<const D: usize>(
         events: &EffList<E>,
         actors: Option<&SourceActorImage<E, D>>,
     ) -> Self {
-        let mut result = Self {
-            nodes: [[CausalRoles::empty(); 2]; E],
-            len: events.len(),
-        };
+        let mut result = Self::empty(events.len());
         let mut event = 0;
         while event < result.len {
             let mut members = CausalRoles::empty();
@@ -49,12 +56,33 @@ impl<const E: usize> Participants<E> {
             result.set(result.len + event, members);
             event += 1;
         }
-        let mut node = result.len;
+        result.build_parents();
+        result
+    }
+
+    pub(crate) const fn for_lane(&mut self, events: &EffList<E>, source: &Self, lane: u8) {
+        if events.len() != source.len || self.len != source.len {
+            crate::invariant();
+        }
+        let mut event = 0;
+        while event < self.len {
+            let members = if events.atom_at(event).lane == lane {
+                source.at(event)
+            } else {
+                CausalRoles::empty()
+            };
+            self.set(self.len + event, members);
+            event += 1;
+        }
+        self.build_parents();
+    }
+
+    const fn build_parents(&mut self) {
+        let mut node = self.len;
         while node > 1 {
             node -= 1;
-            result.set(node, result.get(node * 2).union(result.get(node * 2 + 1)));
+            self.set(node, self.get(node * 2).union(self.get(node * 2 + 1)));
         }
-        result
     }
 
     const fn get(&self, node: usize) -> CausalRoles {
@@ -63,6 +91,35 @@ impl<const E: usize> Participants<E> {
 
     const fn set(&mut self, node: usize, members: CausalRoles) {
         self.nodes[node / 2][node % 2] = members;
+    }
+
+    pub(crate) const fn at(&self, event: usize) -> CausalRoles {
+        if event >= self.len {
+            crate::invariant();
+        }
+        self.get(self.len + event)
+    }
+
+    pub(crate) const fn members(&self, start: usize, stop: usize) -> CausalRoles {
+        if start > stop || stop > self.len {
+            crate::invariant();
+        }
+        let mut result = CausalRoles::empty();
+        let mut left = self.len + start;
+        let mut right = self.len + stop;
+        while left < right {
+            if !left.is_multiple_of(2) {
+                result = result.union(self.get(left));
+                left += 1;
+            }
+            if !right.is_multiple_of(2) {
+                right -= 1;
+                result = result.union(self.get(right));
+            }
+            left /= 2;
+            right /= 2;
+        }
+        result
     }
 
     pub(super) const fn covered(&self, start: usize, stop: usize, facts: &CausalRoles) -> bool {
@@ -123,7 +180,7 @@ mod tests {
                     label: 0,
                     payload: EventPayload::Wire(0),
                     origin: EventOrigin::User,
-                    lane: 0,
+                    lane: (event % 3) as u8,
                 });
                 *pair = [
                     if event % 2 == 0 {
@@ -139,58 +196,78 @@ mod tests {
                 &[(first, [63, 128]), (second, [256, 255])],
             );
             for actors in [None, Some(&image)] {
-                let index = Participants::new(&events, actors);
-                for encoding in 0..256u16 {
-                    let mut facts = CausalRoles::empty();
-                    for (bit, role) in roles.iter().enumerate() {
-                        if encoding & (1 << bit) != 0 {
-                            facts.insert(*role);
+                let source = Participants::new(&events, actors);
+                let mut filtered = Participants::empty(events.len());
+                for lane in [None, Some(0), Some(1), Some(2), Some(0)] {
+                    let index = match lane {
+                        None => &source,
+                        Some(lane) => {
+                            filtered.for_lane(&events, &source, lane);
+                            &filtered
                         }
-                    }
-                    for start in 0..=len {
-                        for stop in start..=len {
-                            let mut expected = true;
-                            for event in start..stop {
-                                if let Some(image) = actors {
-                                    for left in [SourceArm::Left, SourceArm::Right] {
-                                        for right in [SourceArm::Left, SourceArm::Right] {
-                                            let (sender, receiver) = image
-                                                .actors_at(
-                                                    event,
-                                                    &[
-                                                        SourceSelection {
-                                                            scope: first,
-                                                            arm: left,
-                                                        },
-                                                        SourceSelection {
-                                                            scope: second,
-                                                            arm: right,
-                                                        },
-                                                    ],
-                                                )
-                                                .unwrap();
-                                            expected &=
-                                                facts.contains(sender) && facts.contains(receiver);
-                                        }
-                                    }
-                                } else {
-                                    let atom = events.atom_at(event);
-                                    expected &=
-                                        facts.contains(atom.from) && facts.contains(atom.to);
-                                }
+                    };
+                    for encoding in 0..256u16 {
+                        let mut facts = CausalRoles::empty();
+                        for (bit, role) in roles.iter().enumerate() {
+                            if encoding & (1 << bit) != 0 {
+                                facts.insert(*role);
                             }
-                            assert_eq!(
-                                index.covered(start, stop, &facts),
-                                expected,
-                                "len={len} encoding={encoding} range={start}..{stop} owned={}",
-                                actors.is_some()
-                            );
-                            checks += 1;
+                        }
+                        for start in 0..=len {
+                            for stop in start..=len {
+                                let mut expected = true;
+                                for event in start..stop {
+                                    if lane.is_some_and(|lane| events.atom_at(event).lane != lane) {
+                                        continue;
+                                    }
+                                    if let Some(image) = actors {
+                                        for left in [SourceArm::Left, SourceArm::Right] {
+                                            for right in [SourceArm::Left, SourceArm::Right] {
+                                                let (sender, receiver) = image
+                                                    .actors_at(
+                                                        event,
+                                                        &[
+                                                            SourceSelection {
+                                                                scope: first,
+                                                                arm: left,
+                                                            },
+                                                            SourceSelection {
+                                                                scope: second,
+                                                                arm: right,
+                                                            },
+                                                        ],
+                                                    )
+                                                    .unwrap();
+                                                expected &= facts.contains(sender)
+                                                    && facts.contains(receiver);
+                                            }
+                                        }
+                                    } else {
+                                        let atom = events.atom_at(event);
+                                        expected &=
+                                            facts.contains(atom.from) && facts.contains(atom.to);
+                                    }
+                                }
+                                assert_eq!(
+                                    index.covered(start, stop, &facts),
+                                    expected,
+                                    "len={len} encoding={encoding} range={start}..{stop} owned={}",
+                                    actors.is_some()
+                                );
+                                assert_eq!(
+                                    index.members(start, stop).is_subset_of(&facts),
+                                    expected
+                                );
+                                if start + 1 == stop {
+                                    assert_eq!(index.at(start).0, index.members(start, stop).0);
+                                }
+                                checks += 1;
+                            }
                         }
                     }
                 }
             }
         }
-        assert_eq!(checks, 112_640);
+        assert_eq!(checks, 563_200);
     }
 }

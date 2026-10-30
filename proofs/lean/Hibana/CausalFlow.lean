@@ -342,6 +342,34 @@ theorem known_target_sender_needs_no_suffix_search
     (known : facts sender = true) : flow.eval facts sender = true :=
   causal_flow_preserves_known_facts flow facts sender known
 
+/-- One bit in a batched route join. A seed in one arm needs only that arm's
+facts; a seed outside both arms needs the fact on every selected path. -/
+def conditionalCausalJoin (left right leftSeed rightSeed : Bool) : Bool :=
+  (left && right) || (left && leftSeed) || (right && rightSeed)
+
+theorem conditional_causal_join_matches_the_seed_path
+    (left right leftSeed rightSeed : Bool)
+    (distinctArms : leftSeed && rightSeed = false) :
+    conditionalCausalJoin left right leftSeed rightSeed =
+      if leftSeed then left else if rightSeed then right else left && right := by
+  cases left <;> cases right <;> cases leftSeed <;> cases rightSeed <;>
+    simp_all [conditionalCausalJoin]
+
+/-- Before a seed's receive, another arm of its route cannot coexist with
+that seed. Marking the absent arm true preserves the selected arm's facts. -/
+theorem causal_join_with_an_absent_arm (facts : Bool) :
+    conditionalCausalJoin facts true true false = facts ∧
+    conditionalCausalJoin true facts false true = facts := by
+  cases facts <;> decide
+
+/-- A bit at the receiving actor is the old bit, a relayed sender bit, or the
+new receive itself. This is the scalar seed/relay update for that column. -/
+theorem causal_receive_column_is_the_scalar_update
+    (sender receiver isSeed : Bool) :
+    (receiver || sender || isSeed) =
+      (if isSeed then true else if sender then true else receiver) := by
+  cases sender <;> cases receiver <;> cases isSeed <;> rfl
+
 /-- Split seed queries while retaining every target of each query. -/
 theorem receive_seed_partition_preserves_validation
     {α : Type} (seeds : List α) (cut : Nat) (valid : α → Bool) :

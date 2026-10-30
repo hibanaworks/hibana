@@ -235,25 +235,7 @@ pub fn diagnose<P: Projectable>(program: &P) -> Option<ProjectionDiagnostic> {
     let _ = program;
     const {
         let rows = P::Steps::SOURCE_ROW_COUNT;
-        if rows <= 8 {
-            diagnostic_for::<P::Steps, 8>()
-        } else if rows <= 32 {
-            diagnostic_for::<P::Steps, 32>()
-        } else if rows <= 128 {
-            diagnostic_for::<P::Steps, 128>()
-        } else if rows <= 512 {
-            diagnostic_for::<P::Steps, 512>()
-        } else if rows <= 2048 {
-            diagnostic_for::<P::Steps, 2048>()
-        } else if rows <= 8192 {
-            diagnostic_for::<P::Steps, 8192>()
-        } else if rows <= 32768 {
-            diagnostic_for::<P::Steps, 32768>()
-        } else if rows <= 65535 {
-            diagnostic_for::<P::Steps, 65535>()
-        } else {
-            panic!("choreography source exceeds compact descriptor domain")
-        }
+        with_source_capacity!(rows, |CAPACITY| diagnostic_for::<P::Steps, CAPACITY>())
     }
 }
 

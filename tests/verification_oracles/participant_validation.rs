@@ -97,7 +97,7 @@ pub(crate) const fn reference_projection_error_all_roles<const E: usize>(
     if !validate_parallel_endpoint_selectors(eff_list) {
         return Some(ProgramSourceError::ParallelAmbiguousEndpointSelector);
     }
-    if !validate_roll_reentry_endpoint_selectors(eff_list) {
+    if !roll_reentry_endpoint_conflict(eff_list, None).is_none() {
         return Some(ProgramSourceError::ReentryAmbiguousEndpointSelector);
     }
     if let Some(error) =

@@ -82,7 +82,7 @@ fn a_relay_between_known_participants_preserves_all_causal_facts() {
 }
 
 #[kani::proof]
-#[kani::unwind(5)]
+#[kani::unwind(9)]
 fn direction_index_is_the_last_matching_receive_in_every_subrange() {
     let mut events = EffList::<4>::new();
     for _ in 0..4 {
@@ -110,10 +110,19 @@ fn direction_index_is_the_last_matching_receive_in_every_subrange() {
         }
     }
     let mut storage = [super::Direction::EMPTY; 4];
-    let _ = super::ReceiveDirectionIndex::new(&events, (0, events.len()), &mut storage);
-    let directions =
-        super::ReceiveDirectionIndex::new(&events, (range.start, range.end), &mut storage);
-    assert_eq!(directions.last_change(earlier, range.start), expected);
+    let directions = super::ReceiveDirectionIndex::new(&events, &mut storage);
+    assert_eq!(
+        directions.last_change(earlier, (range.start, range.end)),
+        expected
+    );
+    let changes = (0..4).any(|first| {
+        (0..4).any(|second| {
+            let a = events.atom_at(first);
+            let b = events.atom_at(second);
+            a.from != a.to && b.from != b.to && a.to == b.to && a.lane == b.lane && a.from != b.from
+        })
+    });
+    assert_eq!(directions.has_changes(), changes);
     kani::cover!(expected.is_none());
     kani::cover!(expected == Some(1));
     kani::cover!(expected == Some(4));
@@ -223,6 +232,7 @@ fn causal_role_facts_and_joins_are_role_exact() {
         left.intersect(right).contains(query_role),
         query_role == first_role && query_role == second_role
     );
+    assert_eq!(left.is_disjoint(right), first_role != second_role);
 }
 
 fn three_event_pairwise_safe(events: &EffList<4>) -> bool {

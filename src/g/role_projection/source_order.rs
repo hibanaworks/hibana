@@ -45,8 +45,11 @@ const fn word_check<Steps: ProgramShape, const E: usize>(image: &RoleImageRef) -
         rows: [[None; 2]; E],
         presence: &ProgramProjection::<Steps, E>::SOURCE_PRESENCE,
         expected: RowBits::empty(),
+        covers: RowBits::empty(),
         excluded: RowBits::empty(),
+        lanes: LaneBits::empty(),
         source_rows: [0; E],
+        guard_rows: [u16::MAX; E],
     };
     if !check.same_source() {
         return false;
@@ -57,9 +60,7 @@ const fn word_check<Steps: ProgramShape, const E: usize>(image: &RoleImageRef) -
     }
     let mut starts = [[u16::MAX; 2]; E];
     let mut ends = [[u16::MAX; 2]; E];
-    let mut lane_bits = LaneBits::<E>::empty();
     let words = row_count.div_ceil(64);
-    let mut lane_heads = [u16::MAX; u8::MAX as usize + 1];
     let mut row = 0;
     let mut source = 0;
     while row < row_count {
@@ -114,19 +115,33 @@ const fn word_check<Steps: ProgramShape, const E: usize>(image: &RoleImageRef) -
             }
             _ => (u16::MAX, u16::MAX),
         };
+        let next_guard = match (dependency, guard_scope) {
+            (Some(edge), Some(scope)) => match edge.conflict() {
+                LocalConflict::RouteArm { .. }
+                    if check.presence.required_arm(coordinates.0, scope).is_none() =>
+                {
+                    let head = &mut check.guard_rows[scope.split as usize];
+                    let next = *head;
+                    *head = row as u16;
+                    next
+                }
+                LocalConflict::RouteArm { .. } => u16::MAX,
+                LocalConflict::Unconditional | LocalConflict::SharedRoute => crate::invariant(),
+            },
+            _ => u16::MAX,
+        };
         let lane_word = coordinates.1 as usize * words + row / 64;
-        lane_bits.insert(lane_word, row % 64);
+        check.lanes.insert(lane_word, row % 64);
         check.rows[row / 2][row % 2] = Some(SourceRow {
             action: node.action(),
             dependency,
             guard_scope,
             coordinates,
             actor,
-            previous_lane: lane_heads[coordinates.1 as usize],
             next_start,
             next_end,
+            next_guard,
         });
-        lane_heads[coordinates.1 as usize] = row as u16;
         row += 1;
     }
     while source < check.source.event_count() {
@@ -136,6 +151,8 @@ const fn word_check<Steps: ProgramShape, const E: usize>(image: &RoleImageRef) -
     let mut possible = RowBits::<E>::empty();
     let mut certain = RowBits::<E>::empty();
     let mut selections = [None; E];
+    let mut known_true = RowBits::<E>::empty();
+    let mut known_false = RowBits::<E>::empty();
     let mut before = 0;
     while before < row_count {
         let mut target = ends[before / 2][before % 2];
@@ -147,17 +164,57 @@ const fn word_check<Steps: ProgramShape, const E: usize>(image: &RoleImageRef) -
         let mut target = starts[before / 2][before % 2];
         while target != u16::MAX {
             let row = check.row(target as usize);
-            possible.set(target as usize, true);
-            if matches!(row.dependency, Some(edge) if matches!(edge.conflict(), LocalConflict::Unconditional))
-            {
-                certain.set(target as usize, true);
-            }
+            // Bounds need only hold when the target occurs. Its source path
+            // can settle a guarded dependency before any row-pair comparison.
+            let activation = match row.dependency {
+                Some(edge) => match edge.conflict() {
+                    LocalConflict::Unconditional => Some(true),
+                    LocalConflict::SharedRoute => Some(false),
+                    LocalConflict::RouteArm { arm, .. } => match row.guard_scope {
+                        Some(scope) => {
+                            match check.presence.required_arm(row.coordinates.0, scope) {
+                                Some(required) => Some(required as u8 == arm),
+                                None => None,
+                            }
+                        }
+                        None => crate::invariant(),
+                    },
+                },
+                None => crate::invariant(),
+            };
+            possible.set(target as usize, !matches!(activation, Some(false)));
+            certain.set(target as usize, matches!(activation, Some(true)));
             target = row.next_start;
         }
         check.expected.clear(words);
+        check.covers.clear(words);
         check.excluded.clear(words);
         let (first, lane) = check.row(before).coordinates;
-        check.mark_successors(check.source, 0, first);
+        known_true.clear(words);
+        known_false.clear(words);
+        let mut condition = check.presence.first_choice(first);
+        while condition != u16::MAX {
+            let (choice, parent) = check.presence.choice(condition);
+            selections[choice.scope.split as usize] = Some(choice);
+            let mut target = check.guard_rows[choice.scope.split as usize];
+            while target != u16::MAX {
+                let row = check.row(target as usize);
+                let Some(edge) = row.dependency else {
+                    crate::invariant();
+                };
+                let LocalConflict::RouteArm { arm, .. } = edge.conflict() else {
+                    crate::invariant();
+                };
+                if arm == choice.arm as u8 {
+                    known_true.set(target as usize, true);
+                } else {
+                    known_false.set(target as usize, true);
+                }
+                target = row.next_guard;
+            }
+            condition = parent;
+        }
+        check.mark_successors(check.source, 0, first, before);
         if matches!(check.operation(before), LocalAction::Send { .. })
             && before + 1 < row_count
             && check.row(before + 1).coordinates.0 == first
@@ -165,10 +222,12 @@ const fn word_check<Steps: ProgramShape, const E: usize>(image: &RoleImageRef) -
         {
             check.expected.set(before + 1, true);
         }
+        #[cfg(all(test, hibana_repo_tests))]
+        reference::assert_cover_candidates(&check, before);
         let mut word = before / 64;
         while word < words {
             let lane_word = lane as usize * words + word;
-            let same_lane = lane_bits.get(lane_word)
+            let same_lane = check.lanes.get(lane_word)
                 & if word != before / 64 {
                     u64::MAX
                 } else if before % 64 == 63 {
@@ -177,12 +236,21 @@ const fn word_check<Steps: ProgramShape, const E: usize>(image: &RoleImageRef) -
                     u64::MAX << (before % 64 + 1)
                 };
             let expected = check.expected.words[word];
-            let possible = same_lane | possible.words[word];
-            let certain = same_lane | certain.words[word];
-            // Discharge unconditional equalities together. Every conditional
-            // or missing edge still uses the choice/holder-sensitive check.
+            let possible_bound = possible.words[word];
+            let possible = same_lane | (possible_bound & !known_false.words[word]);
+            let certain =
+                same_lane | certain.words[word] | (possible_bound & known_true.words[word]);
+            #[cfg(all(test, hibana_repo_tests))]
+            {
+                assert!(known_true.words[word] & known_false.words[word] == 0);
+                assert!(certain & !possible == 0);
+            }
+            // Source covers suffice for positive obligations on a closed
+            // prefix. All negative obligations remain: extra direct order
+            // could otherwise hide a missing cover behind an intermediary.
             let mut pending =
-                pair_candidates(expected, possible, certain, check.excluded.words[word]);
+                pair_candidates(expected, possible, certain, check.excluded.words[word])
+                    & (!expected | check.covers.words[word]);
             if word == before / 64 {
                 pending &= u64::MAX << (before % 64);
             }
@@ -192,21 +260,22 @@ const fn word_check<Steps: ProgramShape, const E: usize>(image: &RoleImageRef) -
                     return false;
                 }
                 let second = check.row(after).coordinates.0;
-                if !matches!(
-                    check.pair(before, after, &SourceContext::new(&[])),
-                    Ok(true)
-                ) && check.presence.merge_path(first, &mut selections)
-                    && check.presence.merge_path(second, &mut selections)
+                // Both rows must occur for their order to matter. Seed those
+                // source choices before inspecting their predecessors, so an
+                // already selected arm is not scanned as an unknown choice.
+                if check.presence.merge_path(second, &mut selections)
                     && !check.every_selection(before, after, &mut selections)
                 {
                     return false;
                 }
-                check.presence.clear_path(first, &mut selections);
-                check.presence.clear_path(second, &mut selections);
+                check
+                    .presence
+                    .clear_path(second, Some(first), &mut selections);
                 pending &= pending - 1;
             }
             word += 1;
         }
+        check.presence.clear_path(first, None, &mut selections);
         before += 1;
     }
     true
@@ -247,6 +316,20 @@ const fn mark_source_successors<const E: usize>(
 
 const fn pair_candidates(expected: u64, possible: u64, certain: u64, excluded: u64) -> u64 {
     ((expected & !certain) | (!expected & possible)) & !excluded
+}
+
+const fn last_common_before(first: u64, second: u64, end: usize) -> Option<usize> {
+    let prefix = if end == 64 {
+        u64::MAX
+    } else {
+        (1u64 << end) - 1
+    };
+    let common = first & second & prefix;
+    if common == 0 {
+        None
+    } else {
+        Some(63 - common.leading_zeros() as usize)
+    }
 }
 
 struct RowBits<const E: usize> {
@@ -332,8 +415,11 @@ struct SourceOrder<'a, const E: usize> {
     rows: [[Option<SourceRow>; 2]; E],
     presence: &'a SourcePresence<E>,
     expected: RowBits<E>,
+    covers: RowBits<E>,
     excluded: RowBits<E>,
+    lanes: LaneBits<E>,
     source_rows: [u16; E],
+    guard_rows: [u16; E],
 }
 
 #[derive(Clone, Copy)]
@@ -342,13 +428,41 @@ struct SourceRow {
     dependency: Option<LocalDependency>,
     guard_scope: Option<SourceScope>,
     coordinates: (usize, u8),
-    previous_lane: u16,
     next_start: u16,
     next_end: u16,
+    next_guard: u16,
     actor: u16,
 }
 
 impl<const E: usize> SourceOrder<'_, E> {
+    /// Enumerate only source successors on this lane, newest first. The
+    /// lane masks are also used by the unconditional word check above.
+    const fn previous_expected(&self, lane: u8, mut end: usize) -> Option<usize> {
+        #[cfg(all(test, hibana_repo_tests))]
+        let expected = reference::previous_expected(self, lane, end);
+        let words = self.image.local_step_count().div_ceil(64);
+        let mut found = None;
+        while end != 0 {
+            let word = (end - 1) / 64;
+            if let Some(bit) = last_common_before(
+                self.lanes.get(lane as usize * words + word),
+                self.expected.words[word],
+                end - word * 64,
+            ) {
+                found = Some(word * 64 + bit);
+                break;
+            }
+            end = word * 64;
+        }
+        #[cfg(all(test, hibana_repo_tests))]
+        match (found, expected) {
+            (None, None) => (),
+            (Some(first), Some(second)) if first == second => (),
+            _ => panic!("indexed and scalar source predecessors disagree"),
+        }
+        found
+    }
+
     const fn row_start(&self, event: usize) -> usize {
         if event == self.source.event_count() {
             self.image.local_step_count()
@@ -357,32 +471,89 @@ impl<const E: usize> SourceOrder<'_, E> {
         }
     }
 
-    const fn mark_successors(&mut self, source: &ProgramSourceNode, start: usize, first: usize) {
+    /// Add every possible minimal local row. A literal actor binding is
+    /// present whenever its message occurs; a decision binding may be absent.
+    /// The result says whether some path may contain no local row.
+    const fn mark_minima(&mut self, source: &ProgramSourceNode, start: usize) -> bool {
         match source {
-            ProgramSourceNode::Send(_) => (),
-            ProgramSourceNode::Roll(body, _) => self.mark_successors(body, start, first),
+            ProgramSourceNode::Send(_) => {
+                let mut row = self.row_start(start);
+                let stop = self.row_start(start + 1);
+                while row < stop {
+                    self.covers.set(row, true);
+                    if self.row(row).actor == self.image.role() as u16 {
+                        return false;
+                    }
+                    row += 1;
+                }
+                true
+            }
+            ProgramSourceNode::Roll(body, _) => self.mark_minima(body, start),
+            ProgramSourceNode::Seq(left, right, _) => {
+                self.mark_minima(left, start) && self.mark_minima(right, start + left.event_count())
+            }
+            ProgramSourceNode::Par(left, right, _) => {
+                let left_empty = self.mark_minima(left, start);
+                let right_empty = self.mark_minima(right, start + left.event_count());
+                left_empty && right_empty
+            }
+            ProgramSourceNode::Route { left, right, .. } => {
+                let left_empty = self.mark_minima(left, start);
+                let right_empty = self.mark_minima(right, start + left.event_count());
+                left_empty || right_empty
+            }
+        }
+    }
+
+    /// Mark full source order and a conservative set containing every cover.
+    /// Return whether `before` may remain maximal in this subtree, assuming
+    /// that row occurs. Conditional rows are never used to prune a cover.
+    const fn mark_successors(
+        &mut self,
+        source: &ProgramSourceNode,
+        start: usize,
+        first: usize,
+        before: usize,
+    ) -> bool {
+        match source {
+            ProgramSourceNode::Send(_) => {
+                let mut row = before + 1;
+                let stop = self.row_start(start + 1);
+                while row < stop {
+                    self.covers.set(row, true);
+                    if self.row(row).actor == self.image.role() as u16 {
+                        return false;
+                    }
+                    row += 1;
+                }
+                true
+            }
+            ProgramSourceNode::Roll(body, _) => self.mark_successors(body, start, first, before),
             ProgramSourceNode::Seq(left, right, _)
             | ProgramSourceNode::Par(left, right, _)
             | ProgramSourceNode::Route { left, right, .. } => {
                 let split = start + left.event_count();
                 if first < split {
-                    self.mark_successors(left, start, first);
+                    let maximal = self.mark_successors(left, start, first, before);
                     if matches!(source, ProgramSourceNode::Seq(..)) {
                         let start = self.row_start(split);
                         let stop = self.row_start(split + right.event_count());
                         self.expected.insert_range(start, stop);
+                        return maximal && self.mark_minima(right, split);
                     } else if matches!(source, ProgramSourceNode::Route { .. }) {
                         self.excluded.insert_range(
                             self.row_start(split),
                             self.row_start(split + right.event_count()),
                         );
                     }
+                    maximal
                 } else {
-                    self.mark_successors(right, split, first);
+                    let maximal = self.mark_successors(right, split, first, before);
                     if matches!(source, ProgramSourceNode::Route { .. }) {
                         self.excluded
                             .insert_range(self.row_start(start), self.row_start(split));
                     }
+                    maximal
                 }
             }
         }
@@ -401,10 +572,6 @@ impl<const E: usize> SourceOrder<'_, E> {
 
     const fn same_source(&self) -> bool {
         let program = self.image.program();
-        let mut scope = 0;
-        if !self.same_scopes(self.source, 0, &mut scope) || scope != program.source_scope_count() {
-            return false;
-        }
         let Some(actors) = self.data.actors() else {
             crate::invariant()
         };
@@ -413,34 +580,11 @@ impl<const E: usize> SourceOrder<'_, E> {
         {
             return false;
         }
-        let mut event = 0;
-        while event < self.source.event_count() {
-            let expected = self.source.message_at(event);
-            let actual = program.event_atom_at(event);
-            if expected.from.component != 0
-                || expected.to.component != 0
-                || expected.from.role != actual.from
-                || expected.to.role != actual.to
-                || expected.label != actual.label
-            {
-                return false;
-            }
-            match (expected.payload, actual.payload) {
-                (SourcePayload::Wire { schema }, crate::eff::EventPayload::Wire(actual))
-                    if schema == actual => {}
-                (SourcePayload::Endpoint(key), crate::eff::EventPayload::Endpoint(role))
-                    if key.component == 0 && key.role == role => {}
-                _ => return false,
-            }
-            match (
-                actors.event_references(event),
-                program.actor_binding_at(event),
-            ) {
-                (Some(expected), Some(actual))
-                    if expected[0] == actual[0] && expected[1] == actual[1] => {}
-                _ => return false,
-            }
-            event += 1;
+        let mut scope = 0;
+        if !self.same_source_tree(self.source, 0, &mut scope)
+            || scope != program.source_scope_count()
+        {
+            return false;
         }
         let mut index = 0;
         while index < actors.decision_count() {
@@ -464,20 +608,50 @@ impl<const E: usize> SourceOrder<'_, E> {
         true
     }
 
-    /// Scope kind and bounds completely determine the series/parallel order.
-    /// Compare each typed node once; the program constructor already checks
-    /// its event heads and parent links against these immutable intervals.
-    const fn same_scopes(
+    /// Compare every typed message and scope once. Scope kind and bounds
+    /// determine series/parallel order; source messages supply each row's
+    /// roles, payload and actor binding independently of local projection.
+    const fn same_source_tree(
         &self,
         source: &ProgramSourceNode,
         start: usize,
         next: &mut usize,
     ) -> bool {
         let kind = match source {
-            ProgramSourceNode::Send(_) => return true,
+            ProgramSourceNode::Send(expected) => {
+                let program = self.image.program();
+                let actual = program.event_atom_at(start);
+                if expected.from.component != 0
+                    || expected.to.component != 0
+                    || expected.from.role != actual.from
+                    || expected.to.role != actual.to
+                    || expected.label != actual.label
+                {
+                    return false;
+                }
+                match (expected.payload, actual.payload) {
+                    (SourcePayload::Wire { schema }, crate::eff::EventPayload::Wire(actual))
+                        if schema == actual => {}
+                    (SourcePayload::Endpoint(key), crate::eff::EventPayload::Endpoint(role))
+                        if key.component == 0 && key.role == role => {}
+                    _ => return false,
+                }
+                let Some(actors) = self.data.actors() else {
+                    crate::invariant()
+                };
+                return match (
+                    actors.event_references(start),
+                    program.actor_binding_at(start),
+                ) {
+                    (Some(expected), Some(actual)) => {
+                        expected[0] == actual[0] && expected[1] == actual[1]
+                    }
+                    _ => false,
+                };
+            }
             ProgramSourceNode::Seq(left, right, _) => {
-                return self.same_scopes(left, start, next)
-                    && self.same_scopes(right, start + left.event_count(), next);
+                return self.same_source_tree(left, start, next)
+                    && self.same_source_tree(right, start + left.event_count(), next);
             }
             ProgramSourceNode::Par(..) => ScopeKind::Parallel,
             ProgramSourceNode::Route { .. } => ScopeKind::Route,
@@ -496,13 +670,13 @@ impl<const E: usize> SourceOrder<'_, E> {
         }
         match source {
             ProgramSourceNode::Roll(body, _) => {
-                split == u16::MAX as usize && self.same_scopes(body, start, next)
+                split == u16::MAX as usize && self.same_source_tree(body, start, next)
             }
             ProgramSourceNode::Par(left, right, _)
             | ProgramSourceNode::Route { left, right, .. } => {
                 split == start + left.event_count()
-                    && self.same_scopes(left, start, next)
-                    && self.same_scopes(right, split, next)
+                    && self.same_source_tree(left, start, next)
+                    && self.same_source_tree(right, split, next)
             }
             ProgramSourceNode::Send(_) | ProgramSourceNode::Seq(..) => crate::invariant(),
         }
@@ -512,8 +686,8 @@ impl<const E: usize> SourceOrder<'_, E> {
         self.row(row).action
     }
 
-    const fn row(&self, row: usize) -> SourceRow {
-        let Some(row) = self.rows[row / 2][row % 2] else {
+    const fn row(&self, row: usize) -> &SourceRow {
+        let Some(row) = &self.rows[row / 2][row % 2] else {
             crate::invariant()
         };
         row
@@ -576,7 +750,7 @@ impl<const E: usize> SourceOrder<'_, E> {
         if before < after && left_lane == right_lane {
             return Ok(true);
         }
-        let Some(row) = self.rows[after / 2][after % 2] else {
+        let Some(row) = &self.rows[after / 2][after % 2] else {
             crate::invariant()
         };
         let Some(dependency) = row.dependency else {
@@ -590,7 +764,7 @@ impl<const E: usize> SourceOrder<'_, E> {
 
     const fn dependency_active(
         &self,
-        row: SourceRow,
+        row: &SourceRow,
         path: &SourceContext<'_>,
     ) -> Result<bool, SourceScope> {
         let Some(dependency) = row.dependency else {
@@ -652,21 +826,18 @@ impl<const E: usize> SourceOrder<'_, E> {
         // independent route scopes do not form a Cartesian path enumeration.
         let mut unknown = None;
         let row = self.row(after);
-        let mut previous = row.previous_lane;
-        while previous != u16::MAX {
-            let middle = previous as usize;
-            if self.expected.get(middle) {
-                match self.active(middle, path) {
-                    Ok(true) => return Ok(true),
-                    Ok(false) => (),
-                    Err(scope) => {
-                        if unknown.is_none() {
-                            unknown = Some(scope);
-                        }
+        let mut end = after;
+        while let Some(middle) = self.previous_expected(row.coordinates.1, end) {
+            match self.active(middle, path) {
+                Ok(true) => return Ok(true),
+                Ok(false) => (),
+                Err(scope) => {
+                    if unknown.is_none() {
+                        unknown = Some(scope);
                     }
                 }
             }
-            previous = self.row(middle).previous_lane;
+            end = middle;
         }
         if let Some(dependency) = row.dependency {
             let edge = self.dependency_active(row, path);

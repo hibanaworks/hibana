@@ -54,6 +54,7 @@ mod retirement;
 mod return_reentry;
 mod roll_exit;
 mod routing;
+mod send_candidate_identity;
 mod send_wait;
 mod source_order;
 mod transitive_borrow;

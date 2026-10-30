@@ -1,6 +1,8 @@
 ; EXPECT: unsat
 ; EXPECT: unsat
 ; EXPECT: sat
+; EXPECT: unsat
+; EXPECT: sat
 ; Check the public send selector independently of peer and lane.
 (set-logic QF_BV)
 (declare-const role_a (_ BitVec 8))
@@ -15,6 +17,25 @@
 (assert (= key_a key_b))
 (assert (or (distinct role_a role_b) (distinct label_a label_b) (distinct schema_a schema_b)))
 (check-sat) ; unsat: no packed-key collision.
+(pop)
+
+; A source predecessor belongs to the actor, even across logical views.
+(declare-const prior_actor (_ BitVec 8))
+(declare-const next_actor (_ BitVec 8))
+(declare-const prior_role (_ BitVec 8))
+(declare-const next_role (_ BitVec 8))
+(declare-const present Bool)
+(declare-const ordered Bool)
+(define-fun actor_guard () Bool (and present ordered (= prior_actor next_actor)))
+(push)
+(assert (and present ordered (= prior_actor next_actor) (distinct prior_role next_role)))
+(assert (not actor_guard))
+(check-sat) ; unsat: changing the logical view cannot erase its actor predecessor.
+(pop)
+(push)
+(assert (and present ordered (= prior_actor next_actor) (distinct prior_role next_role)))
+(assert (not (and present ordered (= prior_role next_role))))
+(check-sat) ; sat: a logical-role-only guard misses a real actor predecessor.
 (pop)
 (push)
 (assert (and (= role_a role_b) (= label_a label_b) (= schema_a schema_b)))
