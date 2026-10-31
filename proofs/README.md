@@ -382,7 +382,11 @@ operations. Prefixes include the cut between a send and its matching receive,
 and continue through choices, delegation and the final return. Each probe uses
 a fresh runtime that replays the prefix first. Lean derives the required prefix
 inventory from the source tree and advances its occurrence model through those
-operations. These trees also exhaust every permitted order of the first four
+operations. Replay retains the resolver inputs used for each accepted prefix
+call, including calls whose message type also names another source occurrence.
+The JSON records those inputs; Lean checks their arity, identifier domain and
+admission against the source model. A control removes the recorded inputs and
+must fail validation. These trees also exhaust every permitted order of the first four
 public operations, probing every next operation at those cuts. Missing or
 duplicate probes fail the comparison. Separate controls
 change a continuation result and omit or duplicate a continuation probe.

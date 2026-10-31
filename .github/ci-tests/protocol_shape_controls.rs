@@ -800,6 +800,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 false,
                 "incomplete probe inventory",
             ),
+            (
+                "continuation-missing-resolver-inputs",
+                false,
+                "invalid replayed resolver inputs",
+            ),
         ] {
             let mut selected = None;
             for path in &paths {
@@ -831,6 +836,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     text.replace_range(separator..range.end, "");
                 }
                 "continuation-duplicate-probe" => text.insert_str(range.end, &format!(",{record}")),
+                "continuation-missing-resolver-inputs" => {
+                    let Json::Object(mut fields) = json::parse(&record)? else {
+                        return Err("invalid continuation record".into());
+                    };
+                    fields.insert("prefixChoices".into(), Json::Array(Vec::new()));
+                    text.replace_range(range, &source_json(&Json::Object(fields))?);
+                }
                 _ => {
                     text.replace_range(
                         range,

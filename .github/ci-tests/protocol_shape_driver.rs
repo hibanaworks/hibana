@@ -27,6 +27,7 @@ enum Decisions<'a> {
     Constant(&'a [u16]),
     AfterPrefix {
         choice: &'a [u16],
+        prefix: &'a [Vec<u16>],
         values: Vec<std::cell::Cell<bool>>,
     },
 }
@@ -42,15 +43,16 @@ impl Decisions<'_> {
             DecisionArm::Left
         }
     }
-    fn prepare(&self, scopes: &[u16], message: Message, probe: bool) {
-        if let Self::AfterPrefix { choice, values } = self {
+    fn prepare(&self, scopes: &[u16], index: usize, probe: bool) {
+        if let Self::AfterPrefix {
+            choice,
+            prefix,
+            values,
+        } = self
+        {
+            let choice = if probe { *choice } else { &prefix[index] };
             for id in scopes {
                 values[usize::from(*id)].set(choice.contains(id));
-            }
-            if !probe {
-                for (id, right) in message.decisions {
-                    values[usize::from(*id)].set(*right);
-                }
             }
         }
     }
@@ -384,7 +386,7 @@ async fn replay(
     let mut outcome = Outcome::Accepted;
     let scopes = (0..resolver_count).collect::<Vec<_>>();
     for (index, command) in commands.iter().enumerate() {
-        decisions.prepare(&scopes, command.message, index + 1 == commands.len());
+        decisions.prepare(&scopes, index, index + 1 == commands.len());
         macro_rules! observe {
             ($operation:expr) => {
                 match tokio::time::timeout(core::time::Duration::from_millis(1), $operation).await {
@@ -542,6 +544,65 @@ struct Scenario<'a> {
     completed_plan_words: &'a std::collections::BTreeSet<String>,
 }
 
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn alias_replay_keeps_the_recorded_resolver_input() {
+    type First = g::Msg<1, ()>;
+    type Reused = g::Msg<0, ()>;
+    let global = g::route(
+        g::seq(g::send::<0, 1, First>(), g::send::<0, 1, Reused>()),
+        g::send::<0, 1, Reused>(),
+    )
+    .resolve::<0>();
+    let programs = Programs {
+        p0: Some(project::<0>(&global)),
+        p1: Some(project::<1>(&global)),
+        p2: None,
+        p3: None,
+        resource: false,
+        owner: 0,
+        resolver_roles: &[0],
+    };
+    let alias = Message {
+        from: 0,
+        to: 1,
+        event: 1,
+        contract: 0,
+        owned: false,
+        decisions: &[(0, false)],
+    };
+    let actual = Message {
+        event: 2,
+        decisions: &[(0, true)],
+        ..alias
+    };
+    let decisions = Decisions::AfterPrefix {
+        choice: &[],
+        prefix: &[vec![0]],
+        values: vec![std::cell::Cell::new(false)],
+    };
+    assert_eq!(
+        replay(
+            &programs,
+            1,
+            &decisions,
+            &[
+                Command {
+                    message: alias,
+                    receive: false,
+                    preview: false
+                },
+                Command {
+                    message: actual,
+                    receive: true,
+                    preview: false
+                },
+            ]
+        )
+        .await,
+        Outcome::Accepted,
+    );
+}
+
 async fn qualify(programs: Programs, scenario: Scenario<'_>) {
     let Scenario {
         resolver_count,
@@ -572,15 +633,14 @@ async fn qualify(programs: Programs, scenario: Scenario<'_>) {
                 )
                 .await;
                 observations.push(format!(
-                    r#"{{"choice":{choice:?},"prefix":[],"event":{},"receive":{receive},"accepted":{}}}"#,
+                    r#"{{"choice":{choice:?},"prefix":[],"prefixChoices":[],"event":{},"receive":{receive},"accepted":{}}}"#,
                     message.event,
                     actual == Outcome::Accepted
                 ));
                 if prefix_visits == 1 && actual == Outcome::Accepted {
-                    prefixes.insert(
-                        vec![2 * u16::from(message.event) + u16::from(receive)],
-                        vec![command],
-                    );
+                    prefixes
+                        .entry(vec![2 * u16::from(message.event) + u16::from(receive)])
+                        .or_insert_with(|| (vec![command], vec![choice.to_vec()]));
                 }
                 // The independent occurrence-model checker decides whether
                 // this public call was permitted. Syntactic global order is
@@ -626,11 +686,21 @@ async fn qualify(programs: Programs, scenario: Scenario<'_>) {
         );
         if prefix_visits != 0 {
             let mut key = Vec::new();
+            let mut inputs = vec![false; usize::from(resolver_count)];
+            let mut history = Vec::new();
             for (index, command) in commands.iter().enumerate() {
                 key.push(2 * u16::from(command.message.event) + u16::from(command.receive));
+                for &(id, right) in command.message.decisions {
+                    inputs[usize::from(id)] = right;
+                }
+                history.push(
+                    (0..resolver_count)
+                        .filter(|&id| inputs[usize::from(id)])
+                        .collect::<Vec<_>>(),
+                );
                 prefixes
                     .entry(key.clone())
-                    .or_insert_with(|| commands[..=index].to_vec());
+                    .or_insert_with(|| (commands[..=index].to_vec(), history.clone()));
             }
         }
     }
@@ -645,7 +715,7 @@ async fn qualify(programs: Programs, scenario: Scenario<'_>) {
         "completed source plans and catalog words differ"
     );
     let mut checked_prefixes = std::collections::BTreeSet::new();
-    while let Some((key, prefix)) = prefixes.pop_first() {
+    while let Some((key, (prefix, history))) = prefixes.pop_first() {
         assert!(
             checked_prefixes.insert(key.clone()),
             "duplicate prefix replay"
@@ -664,6 +734,7 @@ async fn qualify(programs: Programs, scenario: Scenario<'_>) {
                         resolver_count,
                         &Decisions::AfterPrefix {
                             choice: *choice,
+                            prefix: &history,
                             values: (0..resolver_count)
                                 .map(|_| std::cell::Cell::new(false))
                                 .collect(),
@@ -672,14 +743,16 @@ async fn qualify(programs: Programs, scenario: Scenario<'_>) {
                     )
                     .await;
                     observations.push(format!(
-                        r#"{{"choice":{choice:?},"prefix":{key:?},"event":{},"receive":{receive},"accepted":{}}}"#,
+                        r#"{{"choice":{choice:?},"prefix":{key:?},"prefixChoices":{history:?},"event":{},"receive":{receive},"accepted":{}}}"#,
                         message.event, actual == Outcome::Accepted
                     ));
                     if prefix_visits == 1 && key.len() < 4 && actual == Outcome::Accepted {
                         let mut next = key.clone();
                         next.push(2 * u16::from(message.event) + u16::from(receive));
                         if !checked_prefixes.contains(&next) {
-                            prefixes.entry(next).or_insert(commands);
+                            let mut next_history = history.clone();
+                            next_history.push(choice.to_vec());
+                            prefixes.entry(next).or_insert((commands, next_history));
                         }
                     }
                 }

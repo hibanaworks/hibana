@@ -22,6 +22,7 @@ structure ShapeInput where
 structure ShapeAttempt where
   choice : List Nat
   «prefix» : List Nat
+  prefixChoices : List (List Nat)
   event : Nat
   receive : Bool
   accepted : Bool
@@ -224,6 +225,15 @@ def shapePermits (states : List (ShapePlan source × List SourcePoint))
   states.any fun (plan, points) =>
     shapeFreshChoices plan.plan points choice && !(shapeAdvance plan points label receive).isEmpty
 
+-- Resolver inputs belong to a call, not to the source alias used to name it.
+-- Every replayed call must have been permitted with its recorded inputs.
+def shapePrefixInputsMatch (source : Source) (plans : List (ShapePlan source))
+    (word : List Nat) (inputs : List (List Nat)) : Bool :=
+  word.length == inputs.length &&
+    (word.zip inputs).zipIdx.all fun ((command, choice), index) =>
+      shapePermits (shapeStates source plans (word.take index)) choice
+        (command / 2) (command % 2 == 1)
+
 def shapeRepetitions : Source → Nat
   | .send _ => 0
   | .seq left right | .par left right | .route _ left right =>
@@ -295,6 +305,18 @@ def shapeProbeKeys (source : Source)
 private def sameContractSequence : Source := .seq
   (.send ⟨⟨0, 0⟩, ⟨0, 1⟩, 7, .wire 0⟩)
   (.send ⟨⟨0, 0⟩, ⟨0, 2⟩, 7, .wire 0⟩)
+
+private def resolvedAliasSequence : Source := .route (some 0)
+  (.seq (.send ⟨⟨0, 0⟩, ⟨0, 1⟩, 1, .wire 0⟩)
+    (.send ⟨⟨0, 0⟩, ⟨0, 1⟩, 0, .wire 0⟩))
+  (.send ⟨⟨0, 0⟩, ⟨0, 1⟩, 0, .wire 0⟩)
+
+theorem a_resolved_alias_prefix_keeps_the_input_used_at_admission :
+    let plans := (shapePlans resolvedAliasSequence).map ShapePlan.of
+    shapePrefixInputsMatch resolvedAliasSequence plans [2] [[0]] = true ∧
+      shapePrefixInputsMatch resolvedAliasSequence plans [2] [[]] = false := by decide
+
+#print axioms a_resolved_alias_prefix_keeps_the_input_used_at_admission
 
 theorem an_alias_for_a_later_send_can_issue_the_first_source_operation :
     shapePermits (shapeStates sameContractSequence
@@ -692,6 +714,14 @@ def main (args : List String) : IO UInt32 := do
         actualKeys.mergeSort shapeKeyLess == (shapeProbeKeys source prefixes choices).mergeSort shapeKeyLess do
       throw (IO.userError s!"shape {input.name}: incomplete probe inventory")
     for (word, attempts) in shapeAttemptGroups output.attempts.toList do
+      let some first := attempts.head?
+        | throw (IO.userError "empty prefix group")
+      unless attempts.all (fun attempt => attempt.prefixChoices == first.prefixChoices) &&
+          first.prefixChoices.all (fun choice =>
+            choice == choice.eraseDups.mergeSort (· ≤ ·) &&
+              choice.all (· < input.resolvers)) &&
+          shapePrefixInputsMatch source plans word first.prefixChoices do
+        throw (IO.userError s!"shape {input.name}: invalid replayed resolver inputs")
       let states := shapeStates source plans word
       -- Mutation control: preserve the exact original probe inventory, then
       -- compare with a source that omits only its outer sequential dependency.
