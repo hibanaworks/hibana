@@ -71,6 +71,12 @@ MIRI_TIMEOUT_SECONDS=600 run_miri_test \
   compiled-protocol-observations \
   -p hibana --lib observe::projected::tests:: -- --test-threads=1
 
+run_miri_test \
+  canonical-tap-record \
+  -p hibana --lib \
+  observe::event::tests::canonical_records_preserve_all_fields_and_transport_lane_evidence \
+  -- --exact
+
 (
   export RUSTFLAGS="${RUSTFLAGS:-} --cfg hibana_profile"
   run_miri_test runtime-work-observation -p hibana --lib \

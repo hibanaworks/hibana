@@ -18,6 +18,22 @@ pub struct TapEvent {
     bytes: [u8; 16],
 }
 
+/// Read an untrusted observation in canonical `ts32, id16, causal_key16,
+/// arg0_32, arg1_32` big-endian order. Decoding a record does not establish
+/// that a runtime emitted it or that a protocol operation was permitted.
+impl From<[u8; 16]> for TapEvent {
+    fn from(bytes: [u8; 16]) -> Self {
+        Self { bytes }
+    }
+}
+
+/// Encode the complete observation without reinterpreting its event fields.
+impl From<TapEvent> for [u8; 16] {
+    fn from(event: TapEvent) -> Self {
+        event.bytes
+    }
+}
+
 /// Resident tap representation. The timestamp is the ring ordinal and is
 /// reconstructed when a reader materializes the public event.
 #[repr(transparent)]
@@ -260,6 +276,25 @@ mod tests {
     use super::{TapEvent, TapRecord};
     use crate::observe::ids;
     use std::format;
+
+    #[test]
+    fn canonical_records_preserve_all_fields_and_transport_lane_evidence() {
+        let bytes = [
+            0x12, 0x34, 0x56, 0x78, 0x02, 0x06, 0xa5, 0x00, 0x89, 0xab, 0xcd, 0xef, 0x01, 0x02,
+            0x01, 0x00,
+        ];
+        let event = TapEvent::from(bytes);
+        assert_eq!(event.ts(), 0x1234_5678);
+        assert_eq!(event.id(), ids::TRANSPORT_FRAME);
+        assert_eq!(event.causal_key(), 0xa500);
+        assert_eq!(event.arg0(), 0x89ab_cdef);
+        assert_eq!(event.arg1(), 0x0102_0100);
+        assert_eq!(
+            event.evidence().input(),
+            [0x89ab_cdef, 0x0102_0100, 0, 0x0206_a500,]
+        );
+        assert_eq!(<[u8; 16]>::from(event), bytes);
+    }
 
     #[test]
     fn transport_mismatch_evidence_carries_expected_lane_and_reason() {
