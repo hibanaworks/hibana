@@ -1,7 +1,7 @@
 //! Check native observations of Hibana's no_std runtime query counters.
 use std::{collections::BTreeMap, env, fmt::Write as _, fs, io::Write as _, path::Path};
 
-const CASES: [(&str, u32, u32); 7] = [
+const CASES: [(&str, u32, u32); 11] = [
     ("seq", 8, 128),
     ("seq", 256, 128),
     ("par", 8, 128),
@@ -9,6 +9,10 @@ const CASES: [(&str, u32, u32); 7] = [
     ("roll", 1, 512),
     ("roll", 8, 512),
     ("roll", 32, 512),
+    ("route", 0, 128),
+    ("route", 1, 128),
+    ("delegation", 1, 384),
+    ("nested-roll", 2, 384),
 ];
 const METRICS: [&str; 8] = [
     "operation_identity_queries",
@@ -66,6 +70,14 @@ fn measured(text: &str) -> Result<BTreeMap<Key, u64>, String> {
             return Err("an executed kernel has no observed runtime work".into());
         }
         result.insert(key, first);
+    }
+    for metric in METRICS {
+        if !result
+            .iter()
+            .any(|(key, count)| key.2 == metric && *count != 0)
+        {
+            return Err(format!("runtime work suite never exercised {metric}"));
+        }
     }
     Ok(result)
 }
@@ -255,6 +267,15 @@ mod tests {
     #[test]
     fn a_zero_cost_profile_cannot_replace_an_executed_kernel() {
         assert!(measured(&fixture().replace("\t100\n", "\t0\n")).is_err());
+    }
+
+    #[test]
+    fn every_instrumented_path_must_be_exercised_by_the_suite() {
+        let text = fixture();
+        for metric in METRICS {
+            let mutant = text.replace(&format!("\t{metric}\t100\n"), &format!("\t{metric}\t0\n"));
+            assert!(measured(&mutant).is_err(), "unmeasured path: {metric}");
+        }
     }
 
     #[test]

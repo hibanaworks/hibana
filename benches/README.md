@@ -48,9 +48,15 @@ With `--cfg hibana_profile`, each actor's caller-supplied storage holds eight
 `u64` counters (64 bytes). There is no clock, OS call, heap allocation, lock or
 global counter. Normal builds omit the counters and their updates. The host
 test adapter runs real endpoint operations and formats the observations after
-each measured window. It uses the same protocols and transport as the timing
-benchmarks: 128 operations for seq/par, 512 for roll. Attachment, `par()` setup
-and tail draining are excluded.
+each measured window. The eleven cases include the timing benchmarks' seq/par
+protocols (128 operations) and roll bodies (512 operations), both outcomes of a
+resolved route (128 operations each), a repeated resource handoff across three
+runtimes with concurrent resource/control operations (384 operations), and two
+nested rolls (384 operations). The handoff deliberately polls the resource
+request before its control-view predecessor to measure the legal pending path.
+Attachment and tail draining are excluded. The seq/par cases exclude `par()`
+setup; the handoff includes borrowing the service's parallel fragments on each
+visit. The transport is an in-process fixture, not a network-cost measurement.
 
 The counters record operation-identity lookups, conflict lookups, inspected
 outbound and inbound candidates, framed-receive candidate queries, admission
@@ -63,7 +69,10 @@ existing communication events; those events do not expose these internal
 search counts.
 
 Each case runs in two fresh sessions. Counts must agree exactly, and every case
-and metric must be present once per session. The reviewed limits in
+and metric must be present once per session. Every instrumented path must have
+a nonzero count in at least one case. This prevents a suite that never exercises
+framed candidates, predecessor checks or route queries from passing silently.
+The reviewed limits in
 `.github/measurement_snapshots/hibana-runtime-work.tsv` add 1% to the initial
 counts, rounded up; zero counts have zero allowance. The gate cannot rewrite
 these limits. Empty, duplicate, missing or inconsistent observations fail.

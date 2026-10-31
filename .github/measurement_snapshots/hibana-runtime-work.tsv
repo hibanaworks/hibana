@@ -1,6 +1,22 @@
 # Logical Rust query counts, not CPU instructions or elapsed time.
 # Initial limits add 1% rounded up. Changes require explicit review.
 case	parameter	endpoint_ops	metric	limit
+delegation	1	384	admission_checks	1708
+delegation	1	384	conflict_queries	9139
+delegation	1	384	frame_candidate_queries	0
+delegation	1	384	inbound_candidate_rows	836
+delegation	1	384	operation_identity_queries	7147
+delegation	1	384	outbound_candidate_rows	291
+delegation	1	384	predecessor_rows	66
+delegation	1	384	route_row_queries	0
+nested-roll	2	384	admission_checks	1549
+nested-roll	2	384	conflict_queries	11810
+nested-roll	2	384	frame_candidate_queries	0
+nested-roll	2	384	inbound_candidate_rows	773
+nested-roll	2	384	operation_identity_queries	3533
+nested-roll	2	384	outbound_candidate_rows	194
+nested-roll	2	384	predecessor_rows	0
+nested-roll	2	384	route_row_queries	0
 par	8	128	admission_checks	389
 par	8	128	conflict_queries	1425
 par	8	128	frame_candidate_queries	0
@@ -41,6 +57,22 @@ roll	32	512	operation_identity_queries	39227
 roll	32	512	outbound_candidate_rows	4267
 roll	32	512	predecessor_rows	0
 roll	32	512	route_row_queries	0
+route	0	128	admission_checks	740
+route	0	128	conflict_queries	5296
+route	0	128	frame_candidate_queries	33
+route	0	128	inbound_candidate_rows	129
+route	0	128	operation_identity_queries	2265
+route	0	128	outbound_candidate_rows	33
+route	0	128	predecessor_rows	0
+route	0	128	route_row_queries	926
+route	1	128	admission_checks	677
+route	1	128	conflict_queries	6589
+route	1	128	frame_candidate_queries	33
+route	1	128	inbound_candidate_rows	129
+route	1	128	operation_identity_queries	2877
+route	1	128	outbound_candidate_rows	33
+route	1	128	predecessor_rows	0
+route	1	128	route_row_queries	798
 seq	8	128	admission_checks	515
 seq	8	128	conflict_queries	1675
 seq	8	128	frame_candidate_queries	0
