@@ -1559,7 +1559,17 @@ fn syntax_cases(
 fn syntax_violations(source: &Protocol) -> Vec<(&'static str, &'static str)> {
     let ownership = ownership::violations(source);
     if ownership.is_empty() {
-        choice::violations(source)
+        let mut violations = choice::violations(source);
+        if !contracts::parallel_selector_witnesses(source).is_empty() {
+            violations.push((
+                "ParallelSelector",
+                "parallel endpoint operations must be unambiguous; help: make parallel endpoint selectors distinct",
+            ));
+        }
+        for (_, _, role) in contracts::reentry_selector_witnesses(source) {
+            violations.push(("ReentrySelector", contracts::reentry_diagnostic(role)));
+        }
+        violations
     } else {
         ownership.into_iter().collect()
     }
@@ -1785,6 +1795,15 @@ fn contract_cases(mut catalog: CaseSet) -> CaseSet {
                     );
                 }
             }
+            // Reusing a contract can introduce an illegal parallel selector
+            // even when the distinct-contract source is projectable. Retain
+            // that candidate and require a real compile-fail witness.
+            if let Some(&(problem, reason)) = syntax_violations(&source).first() {
+                rejections.insert(case, problem);
+                catalog
+                    .negative_sources
+                    .insert(format!("contracts_source_{case}"), (source.clone(), reason));
+            }
             cases.push((
                 case,
                 format!("{identity}/contracts={name}"),
@@ -1992,7 +2011,12 @@ long_running_const_eval = "forbid"
                     let reason = proven.iter().find_map(|(problem, reason)| {
                         matches_source_violation(verdict, problem, reason).then_some(*reason)
                     }).ok_or_else(|| format!("known illegal shape {case} did not report a source-proven violation {proven:?}: {verdict}"))?;
-                    negative_sources.insert(format!("syntax_{case}"), (global.clone(), reason));
+                    if !negative_sources
+                        .values()
+                        .any(|(previous, required)| previous == global && *required == reason)
+                    {
+                        negative_sources.insert(format!("syntax_{case}"), (global.clone(), reason));
+                    }
                 } else if !verdict.starts_with(&format!(
                     "rejected:ProjectionDiagnostic {{ problem: {expected},"
                 )) {

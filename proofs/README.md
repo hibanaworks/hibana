@@ -432,6 +432,15 @@ with the same logical endpoint, direction, label and payload type.
 Choice entries visible to any potential holder keep their distinct labels,
 so generated branch dispatch remains unambiguous. This does not enumerate
 every possible partition of messages into shared types.
+Reused outbound selectors in opposite parallel arms remain in the catalog as
+compile-fail cases. Their witnesses come from source role, label and payload
+kind, independently of the projection diagnostic; the generated build must
+reject them. Sequential reuse and distinct logical roles or payloads are not
+classified as parallel collisions.
+Elastic reentry negatives also use source witnesses: an unguarded global head
+and a matching send in its sequential continuation, including after a parallel
+join. This classifier does not infer additional local heads from logical roles.
+Rejections outside its proven cases still fail the gate as unclassified.
 The fixed `--contracts 0 6` catalog additionally combines repeated contracts
 with opposite directions, independent parallel fragments, a resolver, repetition
 and actual endpoint delegation. It runs in the depth-four fuzz job.
