@@ -81,6 +81,11 @@ impl EventCursor {
         // its co-resident receive. A predecessor must occur in this prefix.
         let mut pending = self.pending_event_steps(0..index);
         while let Some(prior) = pending.next() {
+            #[cfg(hibana_profile)]
+            self.machine
+                .event_program
+                .work
+                .hit(super::super::work::Metric::Predecessor);
             let uses_caller = self.uses_view_at(prior, blocked.0);
             if !(uses_caller || blocked.1.is_some_and(|role| self.uses_view_at(prior, role))) {
                 continue;
@@ -240,6 +245,11 @@ impl EventCursor {
         body_reentry: ScopeId,
         arm_for_scope: &mut dyn FnMut(ScopeId, EventArmView) -> Option<u8>,
     ) -> Result<EnabledEventCommit, EventBlocker> {
+        #[cfg(hibana_profile)]
+        self.machine
+            .event_program
+            .work
+            .hit(super::super::work::Metric::Admission);
         // The row constructor establishes operation identity. A row from
         // another image cannot authorize this cursor's progress.
         if !self.machine().event_program().contains_row(row) {

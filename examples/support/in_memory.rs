@@ -7,6 +7,7 @@ use std::{
     collections::VecDeque,
     rc::Rc,
     task::{Context, Poll, Waker},
+    vec::Vec,
 };
 
 use hibana::runtime::{
@@ -28,6 +29,11 @@ struct Network {
 }
 
 impl InMemoryTransport {
+    #[cfg(all(test, hibana_repo_tests, hibana_profile))]
+    pub(crate) fn queue_is_empty(&self) -> bool {
+        self.network.state.borrow().frames.is_empty()
+    }
+
     pub(crate) fn new(
         bindings: impl IntoIterator<Item = ((SessionId, u8), EndpointBinding)>,
     ) -> Self {
@@ -261,7 +267,7 @@ mod tests {
                 source: 3,
                 target: 2,
                 label: 0,
-                payload: vec![7],
+                payload: std::vec![7],
             }),
         };
         let mut replacement = Rx {

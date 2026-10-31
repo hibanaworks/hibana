@@ -65,6 +65,14 @@ run_miri_test \
   -p hibana \
   --test miri_runtime_owner
 
+(
+  export RUSTFLAGS="${RUSTFLAGS:-} --cfg hibana_profile"
+  run_miri_test runtime-work-observation -p hibana --lib \
+    endpoint::runtime_work_tests::work_observation_preserves_live_endpoint_progress -- --exact
+  run_miri_test runtime-work-counters -p hibana --lib \
+    global::event_program::work::tests -- --test-threads=1
+)
+
 run_miri_test \
   source-order-word-filters \
   -p hibana --lib \

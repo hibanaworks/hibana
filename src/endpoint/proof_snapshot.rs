@@ -319,6 +319,37 @@ pub(crate) unsafe fn actor_snapshot<const ROLE: u8>(
     }
 }
 
+/// Read only the runtime work counters, without decoding observation rows.
+///
+/// # Safety
+/// The tagged view and actor must remain alive, and `T` must be the concrete
+/// transport with which the actor was attached.
+#[cfg(hibana_profile)]
+pub(crate) unsafe fn work_counts<T: crate::transport::Transport>(
+    tag: ViewTagObservation,
+) -> impl AsRef<[(&'static str, u64)]> {
+    // SAFETY: the caller establishes T; this live Endpoint retains
+    // its pinned view and actor. The ordinary lease protects cursor access.
+    let (actor, role) = unsafe {
+        let header = tag.ptr.as_ref();
+        assert!(tag.handle.matches_header(header));
+        (
+            header.actor().cast::<ResidentActor<'_, T>>().as_ref(),
+            header.role(),
+        )
+    };
+    let mut operation = actor
+        .context
+        .try_operation_lease()
+        .expect("work observation lease");
+    actor.with_kernel(
+        &mut operation,
+        actor.views.get(role).expect("work observation view"),
+        super::carrier::OperationRegion::WHOLE,
+        |kernel| kernel.progress.cursor.work_counts(),
+    )
+}
+
 unsafe fn snapshot_from_handle<T: crate::transport::Transport>(
     ptr: core::ptr::NonNull<super::carrier::KernelEndpointHeader>,
     handle: super::carrier::EndpointHandle,

@@ -68,27 +68,29 @@ on:
         default: '4'
 
 jobs:
-  runtime-instructions:
+  runtime-work:
     if: github.event_name != 'schedule' && (github.event_name != 'workflow_dispatch' || (inputs.check != 'protocol-shapes' && inputs.check != 'protocol-syntax' && inputs.check != 'protocol-interactions' && inputs.check != 'protocol-spines' && inputs.check != 'protocol-representatives' && inputs.check != 'protocol-fuzz' && inputs.check != 'miri-parallel-reentry'))
-    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        os: [macos-15, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.os }}
     env:
       TOOLCHAIN: stable
     steps:
       - uses: actions/checkout@v7
-      - name: Install instruction profiler
+      - name: Install Rust and embedded targets
         run: |
-          sudo apt-get update
-          sudo apt-get install -y valgrind
           rustup toolchain install stable --profile minimal
-      - name: Measure the current kernel instruction counts
+          rustup target add --toolchain stable thumbv6m-none-eabi thumbv8m.main-none-eabihf
+      - name: Check portable runtime work counts
         run: >-
           bash .github/scripts/lib/resource_guard.sh
-          bash .github/scripts/measure_runtime_instructions.sh
+          bash .github/scripts/measure_runtime_work.sh
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: runtime-instructions
-          path: target/runtime-instructions/results/
+          name: runtime-work-${{ matrix.os }}
+          path: target/runtime-work/results/
 
   protocol-shape-matrix:
     if: github.event_name != 'schedule' && (github.event_name != 'workflow_dispatch' || (inputs.check != 'protocol-fuzz' && inputs.check != 'miri-parallel-reentry'))

@@ -3,6 +3,9 @@
 mod callgrind;
 #[path = "../examples/support/in_memory.rs"]
 mod in_memory;
+#[path = "support/protocol_repetition.rs"]
+mod protocol_repetition;
+use protocol_repetition::repeated;
 
 use hibana::{
     g::{self, Msg},
@@ -19,15 +22,6 @@ type Request = Msg<1, u32>;
 type Reply = Msg<2, u32>;
 const ROUNDS: u32 = 128;
 const OPERATIONS: u32 = 4 * ROUNDS;
-
-macro_rules! repeated {
-    ($term:expr; 1) => { $term };
-    ($term:expr; 2) => { g::seq(repeated!($term; 1), repeated!($term; 1)) };
-    ($term:expr; 4) => { g::seq(repeated!($term; 2), repeated!($term; 2)) };
-    ($term:expr; 8) => { g::seq(repeated!($term; 4), repeated!($term; 4)) };
-    ($term:expr; 16) => { g::seq(repeated!($term; 8), repeated!($term; 8)) };
-    ($term:expr; 32) => { g::seq(repeated!($term; 16), repeated!($term; 16)) };
-}
 
 async fn measure(body_rounds: u32, programs: &(RoleProgram<0>, RoleProgram<1>), samples: usize) {
     let mut durations = Vec::with_capacity(samples);

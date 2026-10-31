@@ -4,6 +4,9 @@
 mod callgrind;
 #[path = "../examples/support/in_memory.rs"]
 mod in_memory;
+#[path = "support/protocol_repetition.rs"]
+mod protocol_repetition;
+use protocol_repetition::repeated;
 
 use hibana::{
     g::{self, Msg},
@@ -24,15 +27,6 @@ type Reply = Msg<2, u32>;
 type Tail = Msg<3, ()>;
 const ROUNDS: u32 = 32;
 const OPERATIONS: u32 = 4 * ROUNDS;
-
-macro_rules! repeated {
-    ($term:expr; 1) => { $term };
-    ($term:expr; 2) => { g::seq(repeated!($term; 1), repeated!($term; 1)) };
-    ($term:expr; 4) => { g::seq(repeated!($term; 2), repeated!($term; 2)) };
-    ($term:expr; 8) => { g::seq(repeated!($term; 4), repeated!($term; 4)) };
-    ($term:expr; 16) => { g::seq(repeated!($term; 8), repeated!($term; 8)) };
-    ($term:expr; 32) => { g::seq(repeated!($term; 16), repeated!($term; 16)) };
-}
 
 macro_rules! tail {
     (1) => {

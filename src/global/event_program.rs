@@ -7,6 +7,9 @@
 #[cfg(kani)]
 mod kani;
 
+#[cfg(hibana_profile)]
+pub(crate) mod work;
+
 #[cfg(all(test, hibana_repo_tests))]
 use crate::global::typestate::LocalNode;
 use crate::global::{
@@ -21,6 +24,8 @@ use crate::global::{
 
 pub(crate) struct LocalEventProgram {
     rows: &'static RoleImageRef,
+    #[cfg(hibana_profile)]
+    pub(crate) work: work::Counters,
 }
 
 impl core::fmt::Debug for LocalEventProgram {
@@ -32,7 +37,11 @@ impl core::fmt::Debug for LocalEventProgram {
 impl LocalEventProgram {
     #[inline(always)]
     pub(crate) const fn from_rows(rows: &'static RoleImageRef) -> Self {
-        Self { rows }
+        Self {
+            rows,
+            #[cfg(hibana_profile)]
+            work: work::Counters::new(),
+        }
     }
 
     #[inline(always)]
@@ -75,6 +84,8 @@ impl LocalEventProgram {
         &self,
         idx: usize,
     ) -> Option<(crate::eff::EffIndex, RoleLocalDirection)> {
+        #[cfg(hibana_profile)]
+        self.work.hit(work::Metric::OperationIdentity);
         let count = self.local_len();
         if idx < count {
             Some((
@@ -343,6 +354,8 @@ impl LocalEventProgram {
     }
 
     pub(crate) fn route_scope_rows_by_slot(&self, slot: usize) -> Option<RouteScopeRows> {
+        #[cfg(hibana_profile)]
+        self.work.hit(work::Metric::RouteRows);
         let scope_id = self.rows().route_scope_by_slot(slot)?;
         let mut bounds: Option<(usize, usize)> = None;
         let mut arm = 0u8;
@@ -375,6 +388,8 @@ impl LocalEventProgram {
 
     #[inline(always)]
     pub(crate) fn event_conflict_for_index(&self, idx: usize) -> PackedEventConflict {
+        #[cfg(hibana_profile)]
+        self.work.hit(work::Metric::Conflict);
         if idx == self.local_len() {
             return PackedEventConflict::none();
         }

@@ -38,6 +38,8 @@ mod parallel;
 #[cfg(all(test, hibana_repo_tests))]
 pub(crate) mod proof_snapshot;
 mod public_types;
+#[cfg(all(test, hibana_repo_tests, hibana_profile))]
+mod runtime_work_tests;
 /// Send future.
 pub(crate) mod send;
 /// Endpoint session binding helpers.

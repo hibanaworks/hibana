@@ -126,6 +126,9 @@ struct EventCursorMachine {
     event_program: LocalEventProgram,
 }
 
+#[cfg(hibana_profile)]
+use crate::global::event_program::work;
+
 impl EventCursorMachine {
     #[inline(always)]
     unsafe fn init_from_event_rows(dst: *mut Self, role: u8, event_program: LocalEventProgram) {
@@ -405,6 +408,11 @@ pub(crate) struct EventCursor {
 }
 
 impl EventCursor {
+    #[cfg(all(hibana_profile, test, hibana_repo_tests))]
+    pub(crate) fn work_counts(&self) -> [(&'static str, u64); work::NAMES.len()] {
+        self.machine.event_program.work.report()
+    }
+
     #[inline(always)]
     pub(crate) fn role(&self) -> u8 {
         self.machine().role()

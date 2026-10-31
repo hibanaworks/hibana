@@ -20,6 +20,11 @@ impl EventCursor {
         indexed.filter(
             #[inline(always)]
             move |&index| {
+                #[cfg(hibana_profile)]
+                self.machine
+                    .event_program
+                    .work
+                    .hit(super::work::Metric::OutboundCandidate);
                 if !repeatable && self.local_event_done(index) {
                     return false;
                 }
@@ -45,6 +50,11 @@ impl EventCursor {
         mut indexed: impl Iterator<Item = usize>,
     ) -> bool {
         indexed.any(|index| {
+            #[cfg(hibana_profile)]
+            self.machine
+                .event_program
+                .work
+                .hit(super::work::Metric::OutboundCandidate);
             let (event, _) =
                 crate::invariant_some(self.machine().event_program().operation_at(index));
             source.contains(&event.dense_ordinal())
@@ -73,6 +83,11 @@ impl EventCursor {
             #[inline(always)]
             move || loop {
                 let index = candidates.next()?;
+                #[cfg(hibana_profile)]
+                self.machine
+                    .event_program
+                    .work
+                    .hit(super::work::Metric::InboundCandidate);
                 if repeatable || !self.local_event_done(index) {
                     return Some(index);
                 }
@@ -81,6 +96,11 @@ impl EventCursor {
     }
 
     pub(crate) fn framed_receive_candidates(&self, frame_label: u16) -> core::ops::Range<usize> {
+        #[cfg(hibana_profile)]
+        self.machine
+            .event_program
+            .work
+            .hit(super::work::Metric::FrameCandidate);
         self.machine()
             .event_program()
             .source_effect_candidates(usize::from(frame_label))

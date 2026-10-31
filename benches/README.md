@@ -33,34 +33,49 @@ median nanoseconds per endpoint operation.
 `HIBANA_PERF_TAIL` (`8`, `256`, or `all`) select measurement inputs. They do not
 select kernel execution paths.
 
-CI records these measurements. Wall-clock results vary with the host and are
-not an instruction-count regression gate. Keep profiler results separate from
-the timed samples. A profile of the whole process also includes attachment and
-tail draining.
+Wall-clock results vary with the host. Keep profiler results separate from the
+timed samples. A profile of the whole process also includes attachment and tail
+draining.
 
-The `runtime-instructions` CI job separately runs this same benchmark under
-Callgrind on Linux x86-64. Client requests enable instrumentation only around
-the operation windows above, excluding attachment, parallel-borrow setup and
-tail draining. Each process executes three warmups and one sample, so its
-inclusive `Ir` count covers 512 endpoint operations. Each seq/par case is
-run twice; raw profiles, exact tool versions and counts are uploaded. Profiling
-uses no alternate kernel, old implementation or extra core dependency. Other
-hosts retain the same benchmark without the platform-specific client requests.
+## Portable runtime work gate
 
-The Rust reader checks the final `totals` against the sum of self costs, excluding
-inclusive call costs to avoid double counting. Callgrind 3.22.0 can report zero
-in its optional `summary` after these instrumentation windows; that header is
-not used as the instruction count. Missing, truncated or inconsistent profiles
-fail the job.
+Run `bash .github/scripts/measure_runtime_work.sh` under the repository's
+resource guard. The `runtime-work` job uses the same check on macOS and Linux;
+neither operating system is required by the counter implementation. The core
+also builds with instrumentation for the Pico and Pico 2 bare-metal targets.
 
-The instruction budget in
-`.github/measurement_snapshots/hibana-runtime-instructions.tsv` records Linux
-x86-64, Rust 1.99.1 and Valgrind 3.22.0. Each limit is the larger of two
-measured instruction counts plus 1%, rounded up. Both runs must fit. Compiler or
-target changes require reviewing the new profiles, without automatically
-increasing the limits. The budgets detect cost growth in these workloads.
-They do not establish constant-time execution for arbitrary protocols.
-Instruction counts and elapsed time are separate measurements.
+With `--cfg hibana_profile`, each actor's caller-supplied storage holds eight
+`u64` counters (64 bytes). There is no clock, OS call, heap allocation, lock or
+global counter. Normal builds omit the counters and their updates. The host
+test adapter runs real endpoint operations and formats the observations after
+each measured window. It uses the same protocols and transport as the timing
+benchmarks: 128 operations for seq/par, 512 for roll. Attachment, `par()` setup
+and tail draining are excluded.
+
+The counters record operation-identity lookups, conflict lookups, inspected
+outbound and inbound candidates, framed-receive candidate queries, admission
+checks, inspected predecessor rows, and route-row queries. Each is counted at
+the corresponding query or loop body. These are named Rust work counts, not CPU
+instructions. They detect additional searches and checks at those sites; they
+do not detect a more expensive implementation of an unchanged query. Timing
+and native CPU profiles remain necessary for that question. EPF diagnoses the
+existing communication events; those events do not expose these internal
+search counts.
+
+Each case runs in two fresh sessions. Counts must agree exactly, and every case
+and metric must be present once per session. The reviewed limits in
+`.github/measurement_snapshots/hibana-runtime-work.tsv` add 1% to the initial
+counts, rounded up; zero counts have zero allowance. The gate cannot rewrite
+these limits. Empty, duplicate, missing or inconsistent observations fail.
+Results include the source hashes, current executable hash, compiler version
+and raw observations. The gate does not claim constant-time execution for
+arbitrary protocols.
+
+The optional `.github/scripts/measure_runtime_instructions.sh` profiler remains
+available on native Linux x86-64 with Callgrind. Its historical instruction
+budgets and raw profiles are separate from the portable gate. It counts `Ir`
+inside the benchmark windows and validates `totals` against summed self costs.
+It requires no container or VM.
 
 Run `cargo +stable bench --locked --bench roll_cost` to measure repeated
 request/reply communication. The roll body contains 1, 8, or 32 round trips.
@@ -75,10 +90,8 @@ Tokio polls both participants concurrently on its current-thread executor.
 inputs. The default is three warmups and 30 measured samples per body size.
 Callgrind windows use the same boundaries as the timer; with one measured
 sample their totals cover 2,048 endpoint operations. These workloads do not
-exercise nested repetition, branching or endpoint delegation. CI runs each body
-size twice under Callgrind and enforces a separate instruction budget for each.
-These budgets use the same tool versions and 1% margin described above. The
-`parameter` column records tail events for seq/par and body round trips for roll;
-the operation count is 512 for seq/par and 2,048 for roll. Reusing a label at many
-positions still increases candidate search cost; the budgets guard the measured
-workloads without claiming that this search is constant-time.
+exercise nested repetition, branching or endpoint delegation. The portable
+gate measures each body size separately. The optional Callgrind profiles cover
+2,048 operations after including warmups; the portable counters cover the single
+512-operation window. Reusing a label at many positions still increases
+candidate search cost.
