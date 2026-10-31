@@ -351,8 +351,20 @@ fn bounded_selected_predecessors_preserve_every_queried_action() {
 
 #[kani::proof]
 #[kani::unwind(3)]
-fn bounded_rolled_predecessors_preserve_every_queried_action() {
-    bounded_predecessors_preserve_every_queried_action::<3>(usize::from(kani::any::<u8>() % 3));
+fn bounded_rolled_predecessors_from_zero_preserve_every_queried_action() {
+    bounded_predecessors_preserve_every_queried_action::<3>(0);
+}
+
+#[kani::proof]
+#[kani::unwind(3)]
+fn bounded_rolled_predecessors_from_one_preserve_every_queried_action() {
+    bounded_predecessors_preserve_every_queried_action::<3>(1);
+}
+
+#[kani::proof]
+#[kani::unwind(3)]
+fn bounded_rolled_predecessors_from_two_preserve_every_queried_action() {
+    bounded_predecessors_preserve_every_queried_action::<3>(2);
 }
 
 fn source_first_transfer_preserves_the_complete_endpoint_key<const SHAPE: u8>() {
