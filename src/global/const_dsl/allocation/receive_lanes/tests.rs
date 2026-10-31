@@ -12,6 +12,66 @@ fn atom(from: u8, to: u8) -> EffAtom {
     }
 }
 
+// This fixture's only input is one u8. Execute its entire domain in both CTFE
+// and the native/Miri test, including every wrapping receiver and peer.
+const fn certify_receiver(receiver: u8) {
+    const fn row(from: u8, to: u8, lane: u8) -> EffAtom {
+        EffAtom {
+            from,
+            to,
+            lane,
+            label: 0,
+            payload: EventPayload::Wire(0),
+            origin: EventOrigin::User,
+        }
+    }
+    let mut events = EffList::<4>::new()
+        .push(row(receiver.wrapping_add(1), receiver, 7))
+        .push(row(receiver.wrapping_add(2), receiver, 0))
+        .push(row(receiver.wrapping_add(3), receiver.wrapping_add(4), 7))
+        .push(row(receiver.wrapping_add(5), receiver, 7));
+    let scopes = FlowIndex::new::<0>(&events, None);
+    #[cfg(hibana_profile)]
+    let mut counters = crate::g::profiling::Counters::new();
+    assert!(matches!(
+        align_range(
+            &mut events,
+            &scopes,
+            None,
+            (2, 4),
+            (0, 3),
+            (8, 8),
+            None,
+            #[cfg(hibana_profile)]
+            &mut counters,
+        ),
+        Some(2)
+    ));
+    assert!(events.atom_at(0).lane == 7);
+    assert!(events.atom_at(1).lane == 0);
+    assert!(events.atom_at(2).lane == 1);
+    assert!(events.atom_at(3).lane == 1);
+}
+
+const fn certify_receiver_word(word: u8) {
+    let mut low = 0;
+    while low < 64 {
+        certify_receiver(word * 64 | low);
+        low += 1;
+    }
+}
+const _: () = certify_receiver_word(0);
+const _: () = certify_receiver_word(1);
+const _: () = certify_receiver_word(2);
+const _: () = certify_receiver_word(3);
+
+#[test]
+fn lane_class_checks_every_receiver() {
+    for receiver in 0..=u8::MAX {
+        certify_receiver(receiver);
+    }
+}
+
 #[test]
 fn one_direction_recolors_all_of_its_incompatible_receives_together() {
     let mut events = EffList::<64>::new().push(atom(0, 2));

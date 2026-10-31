@@ -26,6 +26,16 @@ The sequential two-event predecessor check partitions its lower bound into
 Actor identifiers, seed bits and path selection remain symbolic in each part;
 all three parts keep the original assertions and unwind bound.
 
+The fixed receive-lane translation fixture has only one input, a `u8` receiver.
+Its complete 256-value domain is evaluated by mandatory const assertions and
+the native/Miri `lane_class_checks_every_receiver` test in
+`src/global/const_dsl/allocation/receive_lanes/tests.rs`. The four 64-value const
+blocks and runtime enumeration retain the same production call, wrapping peers
+and five result assertions. This finite check is counted separately from the
+Kani inventory. The Miri gate runs the entire receive-lane test module with
+strict provenance; it does not sample receiver identifiers. Symbolic direction
+exclusion, actor, ownership and matching obligations remain Kani checks.
+
 The gate rejects assumptions in production harnesses. Constrained symbolic
 inputs use total generators whose images retain the valid domain. Fixed
 rejection witnesses are distinguished from universally quantified rejection

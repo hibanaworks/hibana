@@ -179,11 +179,7 @@
       "global::const_dsl::allocation::lane_matching::index::wordwise_intersection_preserves_the_complete_role_domain"
     ],
     "../../src/global/const_dsl/allocation/receive_lanes/kani.rs": [
-      "global::const_dsl::allocation::receive_lanes::kani::direction_candidates_preserve_every_symbolic_parallel_exclusion",
-      "global::const_dsl::allocation::receive_lanes::kani::lane_class_checks_every_receiver_word0",
-      "global::const_dsl::allocation::receive_lanes::kani::lane_class_checks_every_receiver_word1",
-      "global::const_dsl::allocation::receive_lanes::kani::lane_class_checks_every_receiver_word2",
-      "global::const_dsl::allocation::receive_lanes::kani::lane_class_checks_every_receiver_word3"
+      "global::const_dsl::allocation::receive_lanes::kani::direction_candidates_preserve_every_symbolic_parallel_exclusion"
     ],
     "../../src/global/const_dsl/endpoint_controller/kani.rs": [
       "global::const_dsl::endpoint_controller::kani::controller_merge_accepts_exact_single_role_domain"
@@ -440,10 +436,13 @@
       "transport::wire::kani::fixed_array_schema_identity_rejects_the_first_colliding_width"
     ]
   },
-  "contract-harnesses": {},
-  "contracts": [],
+  "contract-harnesses": {
+  },
+  "contracts": [
+
+  ],
   "totals": {
-    "standard-harnesses": 319,
+    "standard-harnesses": 315,
     "contract-harnesses": 0,
     "functions-under-contract": 0
   }
