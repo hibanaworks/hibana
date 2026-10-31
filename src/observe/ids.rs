@@ -29,8 +29,9 @@ pub const ENDPOINT_SESSION: u16 = 0x0204;
 ///
 /// - `causal_key`: expected lane in high byte, mismatch reason in low byte
 /// - `arg0`: Expected session identifier (u32)
-/// - `arg1`: Observed session for session mismatch; otherwise observed
-///   `source<<24 | target<<16 | frame_label`, retaining the full 16-bit label
+/// - `arg1`: Observed session for session mismatch; observed lane for lane
+///   mismatch; otherwise `source<<24 | target<<16 | frame_label`, retaining
+///   the full 16-bit label
 pub const TRANSPORT_MISMATCH: u16 = 0x0205;
 
 /// Frame session ID differs from the port's session.
