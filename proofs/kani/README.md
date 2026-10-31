@@ -69,8 +69,8 @@ resource guard and runs one job at a time. Do not wrap it in another guard or
 run another heavy local check beside it. A 3GB memory-budget stop is interrupted
 verification, never success.
 
-The separate [ownership-equation harness](../checks/projection/endpoint-delegation/kani)
-includes the production source validator. The [CI workflow](../../.github/workflows/quality-gates.yml)
-checks both packages. Miri covers executed pointer, borrowing and destruction
+The ownership-equation proofs in
+[`src/g/source/ownership/kani.rs`](../../src/g/source/ownership/kani.rs) run in
+this same gate against the production source validator. Miri covers executed pointer, borrowing and destruction
 behavior; the [Lean models](../lean/README.md) cover the stated protocol and
 transport rules.

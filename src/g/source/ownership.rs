@@ -16,6 +16,9 @@ pub use queries::{Arm, Scope, Selection};
 use queries::{At, Atom, Evaluation, Query};
 #[path = "ownership/actors.rs"]
 mod actors;
+#[cfg(kani)]
+#[path = "ownership/kani.rs"]
+mod kani;
 pub use actors::{ActorImage, compile_actor_image_into};
 
 #[derive(Clone, Copy)]

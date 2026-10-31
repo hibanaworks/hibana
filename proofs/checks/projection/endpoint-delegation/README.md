@@ -12,7 +12,8 @@ the physical holder changes.
 
 `compiler/` builds the production validator with read-only proof observations.
 Its output is checked by `Knowledge.lean`, `Causality.lean` and the generated
-Lean claims. `kani/` checks production ownership-equation operations. `check.sh`
+Lean claims. The [Kani gate](../../../kani/README.md) checks production
+ownership-equation operations. `check.sh`
 runs every `.smt2` file in this directory against its declared `EXPECT` results.
 
 `OrderFilter.lean` and `OrderFilter.smt2` check dependency bounds used by the

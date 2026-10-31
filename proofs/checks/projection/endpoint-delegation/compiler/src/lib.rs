@@ -10,8 +10,6 @@ mod ownership {
     mod observations;
     pub use observations::*;
 
-    #[cfg(kani)]
-    mod kani;
     #[cfg(test)]
     mod tests;
 }

@@ -108,6 +108,12 @@
       "g::source::ownership::actors::reentry::kani::source_first_transfer_preserves_complete_key_in_roll",
       "g::source::ownership::actors::reentry::kani::source_first_transfer_preserves_complete_key_in_sequence"
     ],
+    "../../src/g/source/ownership/kani.rs": [
+      "g::source::ownership::kani::independent_equation_roots_keep_arbitrary_actors",
+      "g::source::ownership::kani::a_conflicting_merge_preserves_both_existing_roots",
+      "g::source::ownership::kani::unified_equations_cannot_be_rebound_to_a_different_actor",
+      "g::source::ownership::kani::root_merge_orientation_preserves_the_forced_owner"
+    ],
     "../../src/g/source/ownership/queries/kani.rs": [
       "g::source::ownership::queries::kani::collected_resource_catalog_contains_each_transferred_complete_key",
       "g::source::ownership::queries::kani::normalization_reuses_only_established_complete_key_equations"
@@ -442,7 +448,7 @@
 
   ],
   "totals": {
-    "standard-harnesses": 315,
+    "standard-harnesses": 319,
     "contract-harnesses": 0,
     "functions-under-contract": 0
   }
