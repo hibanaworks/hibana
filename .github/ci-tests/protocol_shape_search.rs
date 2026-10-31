@@ -292,6 +292,22 @@ pub(super) fn probe(
     Ok(observed.status.code().unwrap_or(1))
 }
 
+fn accepted_assignments(input: &str) -> Result<usize, Box<dyn Error>> {
+    let json::Json::Array(cases) = json::parse(input)? else {
+        return Err("invalid executed source inventory".into());
+    };
+    let mut seen = BTreeSet::new();
+    for case in &cases {
+        let Some(json::Json::Number(name)) = case.get("name") else {
+            return Err("executed contract assignment has no case identity".into());
+        };
+        if !["0", "1", "2"].contains(&name.as_str()) || !seen.insert(name) {
+            return Err("duplicate or unknown executed contract assignment".into());
+        }
+    }
+    Ok(cases.len())
+}
+
 pub(super) fn fuzz(
     repo: &Path,
     depth: usize,
@@ -305,6 +321,7 @@ pub(super) fn fuzz(
     let mut checked = 0;
     let mut executed = 0;
     let mut rejected = 0;
+    let mut assignments = 0;
     for line in fs::read_to_string(samples)?.lines().skip(1) {
         let fields = line.split('\t').collect::<Vec<_>>();
         let [_, _, ordinal, rank] = fields.as_slice() else {
@@ -335,14 +352,13 @@ pub(super) fn fuzz(
             .join("target/protocol-shapes")
             .join(super::syntax_paths::relative(depth, &rank, 1))
             .join("inputs.json");
-        let json::Json::Array(cases) = json::parse(&fs::read_to_string(generated)?)? else {
-            return Err("invalid executed source inventory".into());
-        };
-        match cases.len() {
-            0 => rejected += 1,
-            1 => executed += 1,
-            _ => return Err("one source probe emitted multiple cases".into()),
+        let accepted = accepted_assignments(&fs::read_to_string(generated)?)?;
+        if accepted == 0 {
+            rejected += 1;
+        } else {
+            executed += 1;
         }
+        assignments += accepted;
         checked += 1;
     }
     if checked != count {
@@ -351,16 +367,36 @@ pub(super) fn fuzz(
     fs::write(
         output.join("result.tsv"),
         format!(
-            "depth\tseed\tchecked\texecuted\trejected\n{depth}\t{seed}\t{checked}\t{executed}\t{rejected}\n"
+            "depth\tseed\tchecked_sources\texecuted_sources\trejected_sources\texecuted_assignments\n{depth}\t{seed}\t{checked}\t{executed}\t{rejected}\t{assignments}\n"
         ),
     )?;
-    println!("sampled protocols checked={checked} executed={executed} rejected={rejected}");
+    println!(
+        "sampled protocols checked_sources={checked} executed_sources={executed} rejected_sources={rejected} executed_assignments={assignments}"
+    );
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn one_sample_keeps_every_accepted_contract_assignment() {
+        assert_eq!(accepted_assignments("[]").unwrap(), 0);
+        assert_eq!(
+            accepted_assignments(r#"[{"name":0},{"name":1},{"name":2}]"#).unwrap(),
+            3
+        );
+        assert_eq!(accepted_assignments(r#"[{"name":2}]"#).unwrap(), 1);
+        for invalid in [
+            r#"[{"name":0},{"name":0}]"#,
+            r#"[{"name":3}]"#,
+            r#"[{"name":"0"}]"#,
+            r#"[{}]"#,
+            "{}",
+        ] {
+            assert!(accepted_assignments(invalid).is_err(), "accepted {invalid}");
+        }
+    }
     #[test]
     fn rejection_has_no_modulo_bias_on_a_complete_word_cycle() {
         let mut word = 0u64;
