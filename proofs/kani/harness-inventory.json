@@ -450,7 +450,7 @@
 
   ],
   "totals": {
-    "standard-harnesses": 319,
+    "standard-harnesses": 321,
     "contract-harnesses": 0,
     "functions-under-contract": 0
   }

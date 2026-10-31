@@ -60,7 +60,10 @@ fn inventory_names(inventory: &Json, total: u64) -> Audit<BTreeSet<String>> {
         }
     }
     if names.len() as u64 != total {
-        return Err("Kani inventory names/count disagree".into());
+        return Err(format!(
+            "Kani inventory names/count disagree: {} unique names, {total} reported",
+            names.len()
+        ));
     }
     Ok(names)
 }
@@ -427,6 +430,15 @@ mod tests {
             }
         }
     }
+    #[test]
+    fn reviewed_inventory_count_matches_its_complete_name_list() {
+        let text = include_str!("../../proofs/kani/harness-inventory.json");
+        let version = include_str!("../kani-version").trim();
+        let total = kani_json::inventory_total(text, version).unwrap();
+        let inventory = kani_json::parse(text).unwrap();
+        assert!(!inventory_names(&inventory, total).unwrap().is_empty());
+    }
+
     #[test]
     fn names_must_match_the_inventory_count_and_be_unique() {
         let value = kani_json::parse(r#"{"standard-harnesses":{"file":["a","b"]}}"#).unwrap();
