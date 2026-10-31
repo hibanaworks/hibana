@@ -26,6 +26,18 @@ The sequential two-event predecessor check partitions its lower bound into
 Actor identifiers, seed bits and path selection remain symbolic in each part;
 all three parts keep the original assertions and unwind bound.
 
+The three-event linear and structured receive checks use a separate pairwise
+reference: the first receiver knows that receive, and each intervening message
+can relay it from its sender to its receiver. This reference stores reached
+role identifiers directly; it does not call the production flow traversal or
+build its indexes. All nine sender, receiver and lane inputs remain arbitrary
+`u8` values in both proofs.
+The structured fixture has three messages in one marker-free block. Its
+message loop uses a bound of four and its block loop a bound of two, including
+their exit tests. Function identifiers come from the actual compiled metadata;
+all other loops and recursion retain the five-step bound. Unwinding assertions
+remain enabled, so a changed source requiring more iterations fails verification.
+
 The fixed receive-lane translation fixture has only one input, a `u8` receiver.
 Its complete 256-value domain is evaluated by mandatory const assertions and
 the native/Miri `lane_class_checks_every_receiver` test in

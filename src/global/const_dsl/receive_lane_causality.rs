@@ -786,7 +786,7 @@ impl RollBodyRange {
 /// Structured must analysis: sequence composes facts, route intersects them,
 /// and parallel forks share only their input. No concrete arm occurrence is
 /// fabricated as a witness for a fact established by every route arm.
-#[cfg(any(kani, all(test, hibana_repo_tests)))]
+#[cfg(all(test, hibana_repo_tests))]
 const fn receive_precedes_later_send<const E: usize>(
     eff_list: &EffList<E>,
     earlier_eff_idx: usize,

@@ -15,6 +15,7 @@ use std::{
 
 const PREFIX: &str = "global::const_dsl::receive_lane_causality::actors::kani::";
 const SOURCE_ORDER: &str = "global::compiled::images::image::program_ref::actors::kani::source_order_keeps_parallel_and_route_arms_independent_through_roll";
+const STRUCTURED: &str = "global::const_dsl::receive_lane_causality::kani::three_event_structured_scan_matches_pairwise_checker";
 
 pub(super) struct Group {
     pub label: &'static str,
@@ -89,6 +90,7 @@ fn partition(names: BTreeSet<String>) -> Audit<Vec<Group>> {
         "owned-linear",
         "parallel-reentry",
         "source-order",
+        "structured-causality",
     ]
     .map(|label| Group {
         label,
@@ -100,6 +102,7 @@ fn partition(names: BTreeSet<String>) -> Audit<Vec<Group>> {
             Some(name) if name.starts_with("owned_linear_seed_word") => 1,
             _ if name.starts_with("global::typestate::cursor::parallel_reentry_tests::") => 2,
             _ if source_order.contains(&name) => 3,
+            _ if name == STRUCTURED => 4,
             _ => 0,
         };
         groups[part].harnesses.push(name);
@@ -195,12 +198,15 @@ fn read_json(path: &Path) -> Audit<Json> {
     kani_json::parse(&fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?)
 }
 
-fn bounds(target: &Path) -> Audit<String> {
+fn bounds(
+    target: &Path,
+    wanted_family: &BTreeSet<String>,
+    wanted_functions: &[String],
+) -> Audit<BTreeMap<String, String>> {
     let target = target.canonicalize().map_err(|e| e.to_string())?;
     let mut files = Vec::new();
     metadata_files(&target, &mut files)?;
-    let wanted_family = family();
-    let mut result: Option<String> = None;
+    let mut result: Option<BTreeMap<String, String>> = None;
     for file in files {
         let metadata = read_json(&file)?;
         let Some(Json::Array(harnesses)) = metadata.get("proof_harnesses") else {
@@ -213,7 +219,7 @@ fn bounds(target: &Path) -> Audit<String> {
                 _ => None,
             })
             .collect();
-        if names != wanted_family || harnesses.len() != wanted_family.len() {
+        if &names != wanted_family || harnesses.len() != wanted_family.len() {
             continue;
         }
         for harness in harnesses {
@@ -237,7 +243,7 @@ fn bounds(target: &Path) -> Audit<String> {
                 }
             }
         }
-        let name = format!("{PREFIX}owned_linear_seed_word0");
+        let name = wanted_family.first().ok_or("empty receive proof family")?;
         let harness = harnesses
             .iter()
             .find(|h| h.get("pretty_name") == Some(&Json::String(name.clone())))
@@ -254,23 +260,14 @@ fn bounds(target: &Path) -> Audit<String> {
         if !map.starts_with(&target) {
             return Err("compiled name map outside proof target".into());
         }
-        let names = function_names();
-        let functions = collect_functions(read_json(&map)?, &names)?;
-        // The linear source has neither nested scopes nor actor decisions.
-        // A zero recursion bound asserts that those recursive calls are absent.
-        // The source-offset index retains the harness's five-step loop bound.
-        let limits = names[..3]
-            .iter()
-            .map(|name| format!("{}:0", functions[name]))
-            .collect::<Vec<_>>();
-        let compiled = limits.join(",");
+        let functions = collect_functions(read_json(&map)?, wanted_functions)?;
         if result
             .as_ref()
-            .is_some_and(|previous| previous != &compiled)
+            .is_some_and(|previous| previous != &functions)
         {
             return Err("inconsistent compiled recursive function identities".into());
         }
-        result = Some(compiled);
+        result = Some(functions);
     }
     result.ok_or_else(|| "missing complete code-generated receive proof family".into())
 }
@@ -300,10 +297,48 @@ pub(super) fn prepare(
         if !status.success() {
             return Err(format!("receive proof code generation failed: {status}"));
         }
-        let linear = bounds(target)?;
+        let names = function_names();
+        let functions = bounds(target, &family(), &names)?;
+        // No nested scopes or actor decisions occur in the linear source.
+        // Zero bounds assert that those recursive calls are absent; ordinary
+        // loops retain the harness's five-step bound.
+        let linear = names[..3]
+            .iter()
+            .map(|name| format!("{}:0", functions[name]))
+            .collect::<Vec<_>>()
+            .join(",");
         for group in &mut groups {
             if group.label == "owned-linear" {
                 group.recursion = Some(linear.clone());
+            }
+        }
+    }
+    if groups
+        .iter()
+        .any(|group| group.label == "structured-causality")
+    {
+        let status = cargo(root, target)
+            .args(["--only-codegen", "--exact", "--harness", STRUCTURED])
+            .status()
+            .map_err(|e| e.to_string())?;
+        if !status.success() {
+            return Err(format!(
+                "structured receive proof code generation failed: {status}"
+            ));
+        }
+        let names = [
+            "global::const_dsl::receive_lane_causality::CausalFlow::<'_, 4>::advance_as::<0>"
+                .to_owned(),
+        ];
+        let functions = bounds(target, &BTreeSet::from([STRUCTURED.to_owned()]), &names)?;
+        let flow = &functions[&names[0]];
+        // Three messages in one marker-free block need three inner iterations
+        // and one outer iteration, plus their exit tests. Keep the assertions
+        // that reject any execution exceeding those bounds. All other loops
+        // and recursive calls retain the original five-step bound.
+        for group in &mut groups {
+            if group.label == "structured-causality" {
+                group.recursion = Some(format!("{flow}.0:4,{flow}.1:2"));
             }
         }
     }
@@ -351,7 +386,10 @@ mod tests {
             total
         );
         for group in groups {
-            assert_eq!(group.recursion.is_some(), group.label.starts_with("owned-"));
+            assert_eq!(
+                group.recursion.is_some(),
+                group.label.starts_with("owned-") || group.label == "structured-causality"
+            );
         }
     }
     #[test]
@@ -361,6 +399,7 @@ mod tests {
         names.insert("global::typestate::cursor::parallel_reentry_tests::proof_a".into());
         names.insert("global::typestate::cursor::parallel_reentry_tests::proof_b".into());
         names.extend(source_order_family());
+        names.insert(STRUCTURED.into());
         let groups = partition(names.clone()).unwrap();
         let source_groups: Vec<_> = groups
             .iter()
@@ -368,6 +407,11 @@ mod tests {
             .collect();
         assert_eq!(source_groups.len(), source_order_family().len());
         assert!(source_groups.iter().all(|g| g.harnesses.len() == 1));
+        let structured = groups
+            .iter()
+            .find(|g| g.label == "structured-causality")
+            .unwrap();
+        assert_eq!(structured.harnesses, [STRUCTURED]);
         assert_eq!(
             groups
                 .into_iter()

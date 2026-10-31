@@ -1,5 +1,5 @@
 use super::{
-    CausalRoles, RollBodyRange, receive_precedes_after_roll_reentry, receive_precedes_later_send,
+    CausalRoles, RollBodyRange, receive_precedes_after_roll_reentry,
     validate_linear_receive_lane_causality, validate_receive_lane_causality,
     validate_structured_receive_lane_causality,
 };
@@ -236,7 +236,6 @@ fn causal_role_facts_and_joins_are_role_exact() {
 }
 
 fn three_event_pairwise_safe(events: &EffList<4>) -> bool {
-    let mut pairwise_safe = true;
     for earlier in 0..3 {
         for later in earlier + 1..3 {
             let first = events.atom_at(earlier);
@@ -247,22 +246,37 @@ fn three_event_pairwise_safe(events: &EffList<4>) -> bool {
                 && first.lane == next.lane
                 && first.from != next.from
             {
-                pairwise_safe &= receive_precedes_later_send(events, earlier, later);
+                // The earlier receive seeds its receiver. An intervening
+                // message relays that fact only from a participant who has it.
+                // Store reached roles directly, independently of the production
+                // bitsets, scope index and causal-flow traversal.
+                let mut reached = [first.to; 3];
+                let mut reached_len = 1;
+                for relay in earlier + 1..later {
+                    let atom = events.atom_at(relay);
+                    if reached[..reached_len].contains(&atom.from) {
+                        reached[reached_len] = atom.to;
+                        reached_len += 1;
+                    }
+                }
+                if !reached[..reached_len].contains(&next.from) {
+                    return false;
+                }
             }
         }
     }
-    pairwise_safe
+    true
 }
 
 // Separate universal obligations keep the solver's equations independent.
-// Both retain all u8 senders, receivers and lanes, with the same unwind bound.
+// Both retain all u8 senders, receivers and lanes, with checked loop bounds.
 #[kani::proof]
 #[kani::unwind(5)]
 fn three_event_linear_scan_matches_pairwise_checker() {
-    let events = EffList::<4>::new()
-        .push(event(kani::any(), kani::any(), kani::any()))
-        .push(event(kani::any(), kani::any(), kani::any()))
-        .push(event(kani::any(), kani::any(), kani::any()));
+    let mut events = EffList::<4>::new();
+    for _ in 0..3 {
+        events.push_event_mut(event(kani::any(), kani::any(), kani::any()));
+    }
     assert_eq!(
         validate_linear_receive_lane_causality(&events),
         three_event_pairwise_safe(&events)
@@ -272,10 +286,10 @@ fn three_event_linear_scan_matches_pairwise_checker() {
 #[kani::proof]
 #[kani::unwind(5)]
 fn three_event_structured_scan_matches_pairwise_checker() {
-    let events = EffList::<4>::new()
-        .push(event(kani::any(), kani::any(), kani::any()))
-        .push(event(kani::any(), kani::any(), kani::any()))
-        .push(event(kani::any(), kani::any(), kani::any()));
+    let mut events = EffList::<4>::new();
+    for _ in 0..3 {
+        events.push_event_mut(event(kani::any(), kani::any(), kani::any()));
+    }
     assert_eq!(
         validate_structured_receive_lane_causality(&events),
         three_event_pairwise_safe(&events)
