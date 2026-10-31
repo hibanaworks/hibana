@@ -1,4 +1,4 @@
-use super::{FlowIndex, LogicalDirections, Participants, align_range, direction_members};
+use super::{FlowIndex, LogicalDirections, Participants, direction_members};
 use crate::{
     eff::{EffAtom, EventOrigin, EventPayload},
     global::const_dsl::{EffList, ScopeId},
