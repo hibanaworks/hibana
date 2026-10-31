@@ -1786,7 +1786,14 @@ fn contract_cases(mut catalog: CaseSet) -> CaseSet {
             if catalog.delegated.contains(base) {
                 delegated.insert(case);
             }
-            if let Some(problem) = catalog.expected_rejections.get(base) {
+            // Classify the actual variant: aliasing can introduce a selector
+            // conflict before the original source's branch-knowledge error.
+            if let Some(&(problem, reason)) = syntax_violations(&source).first() {
+                rejections.insert(case, problem);
+                catalog
+                    .negative_sources
+                    .insert(format!("contracts_source_{case}"), (source.clone(), reason));
+            } else if let Some(problem) = catalog.expected_rejections.get(base) {
                 rejections.insert(case, *problem);
                 for (index, reason) in reasons.iter().enumerate() {
                     catalog.negative_sources.insert(
@@ -1794,15 +1801,6 @@ fn contract_cases(mut catalog: CaseSet) -> CaseSet {
                         (source.clone(), *reason),
                     );
                 }
-            }
-            // Reusing a contract can introduce an illegal parallel selector
-            // even when the distinct-contract source is projectable. Retain
-            // that candidate and require a real compile-fail witness.
-            if let Some(&(problem, reason)) = syntax_violations(&source).first() {
-                rejections.insert(case, problem);
-                catalog
-                    .negative_sources
-                    .insert(format!("contracts_source_{case}"), (source.clone(), reason));
             }
             cases.push((
                 case,
@@ -2407,6 +2405,33 @@ long_running_const_eval = "forbid"
 #[cfg(test)]
 mod population_tests {
     use super::*;
+
+    #[test]
+    fn contract_aliases_do_not_inherit_a_different_rejection_for_the_same_source() {
+        let catalog = contract_cases(template_cases(2, 1, 32));
+        let source = &catalog.cases.iter().find(|case| case.0 == 3652).unwrap().4;
+        let reasons = catalog
+            .negative_sources
+            .values()
+            .filter(|(candidate, _)| candidate == source)
+            .map(|(_, reason)| *reason)
+            .collect::<BTreeSet<_>>();
+        assert_eq!(
+            reasons,
+            BTreeSet::from([
+                "parallel endpoint operations must be unambiguous; help: make parallel endpoint selectors distinct",
+            ])
+        );
+        assert_eq!(
+            catalog.expected_rejections.get(&3652),
+            Some(&"ParallelSelector")
+        );
+        assert_eq!(
+            catalog.expected_rejections.get(&3651),
+            Some(&"MissingBranchKnowledge")
+        );
+        assert!(catalog.negative_sources.contains_key("contracts_3651_0"));
+    }
 
     #[test]
     fn smoke_partitions_preserve_every_source_and_negative_control() {
