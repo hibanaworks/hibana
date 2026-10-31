@@ -2217,7 +2217,7 @@ long_running_const_eval = "forbid"
         }
         writeln!(
             source,
-            "let global={};\nlet programs=Programs{{p0:{},p1:{},p2:{},p3:{},resource:{},owner:{owner},resolver_roles:&{:?}}};",
+            "fn programs()->Programs{{let global={};\nPrograms{{p0:{},p1:{},p2:{},p3:{},resource:{},owner:{owner},resolver_roles:&{:?}}}}}\nlet programs=programs();",
             global.rust(),
             if localside::present(global, 0, None) {
                 "Some(project::<0>(&global))"
