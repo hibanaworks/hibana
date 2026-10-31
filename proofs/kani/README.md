@@ -21,6 +21,10 @@ Descriptor-heavy cursor cases run separately with CBMC's array and arithmetic
 refinement. Every input, assertion and unwind check remains enabled. Fixed
 history/query products are partitioned before compilation to fit the memory
 budget, rather than merged into a single large verification equation.
+The sequential two-event predecessor check partitions its lower bound into
+`0`, `1` and `2`, the complete image of the former symbolic `u8 % 3` input.
+Actor identifiers, seed bits and path selection remain symbolic in each part;
+all three parts keep the original assertions and unwind bound.
 
 The gate rejects assumptions in production harnesses. Constrained symbolic
 inputs use total generators whose images retain the valid domain. Fixed

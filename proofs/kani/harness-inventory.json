@@ -96,7 +96,9 @@
       "g::source::ownership::actors::reentry::kani::bounded_parallel_predecessors_preserve_every_queried_action",
       "g::source::ownership::actors::reentry::kani::bounded_rolled_predecessors_preserve_every_queried_action",
       "g::source::ownership::actors::reentry::kani::bounded_selected_predecessors_preserve_every_queried_action",
-      "g::source::ownership::actors::reentry::kani::bounded_sequential_predecessors_preserve_every_queried_action",
+      "g::source::ownership::actors::reentry::kani::bounded_sequential_predecessors_from_one_preserve_every_queried_action",
+      "g::source::ownership::actors::reentry::kani::bounded_sequential_predecessors_from_two_preserve_every_queried_action",
+      "g::source::ownership::actors::reentry::kani::bounded_sequential_predecessors_from_zero_preserve_every_queried_action",
       "g::source::ownership::actors::reentry::kani::no_other_outgoing_endpoint_preserves_a_return_for_every_resource_key",
       "g::source::ownership::actors::reentry::kani::no_other_outgoing_endpoint_rejects_a_missing_return_for_every_resource_key",
       "g::source::ownership::actors::reentry::kani::parallel_preorder_does_not_supply_a_resource_guard_handoff",
@@ -441,7 +443,7 @@
   "contract-harnesses": {},
   "contracts": [],
   "totals": {
-    "standard-harnesses": 317,
+    "standard-harnesses": 319,
     "contract-harnesses": 0,
     "functions-under-contract": 0
   }

@@ -260,7 +260,7 @@ fn parallel_preorder_does_not_supply_a_resource_guard_handoff() {
 
 // Each source form has its own harness so CBMC need not merge four recursive
 // source trees. Together they retain every shape and every symbolic input.
-fn bounded_predecessors_preserve_every_queried_action<const SHAPE: u8>() {
+fn bounded_predecessors_preserve_every_queried_action<const SHAPE: u8>(floor: usize) {
     let pairs = core::array::from_fn::<_, 2, _>(|_| {
         let sender: u8 = kani::any();
         let receiver: u8 = kani::any();
@@ -296,7 +296,6 @@ fn bounded_predecessors_preserve_every_queried_action<const SHAPE: u8>() {
     let path = Context::new(&selections);
     let messages = wire_events::<2>(source);
     let checker = Checker::wire_fixture(source, &image, &messages);
-    let floor = usize::from(kani::any::<u8>() % 3);
     let seed: u8 = kani::any();
     let mut actual = [0u8; 2];
     for event in 0..2 {
@@ -322,26 +321,38 @@ fn bounded_predecessors_preserve_every_queried_action<const SHAPE: u8>() {
 // Three entries cover those loops and edges, including the terminating check.
 #[kani::proof]
 #[kani::unwind(3)]
-fn bounded_sequential_predecessors_preserve_every_queried_action() {
-    bounded_predecessors_preserve_every_queried_action::<0>();
+fn bounded_sequential_predecessors_from_zero_preserve_every_queried_action() {
+    bounded_predecessors_preserve_every_queried_action::<0>(0);
+}
+
+#[kani::proof]
+#[kani::unwind(3)]
+fn bounded_sequential_predecessors_from_one_preserve_every_queried_action() {
+    bounded_predecessors_preserve_every_queried_action::<0>(1);
+}
+
+#[kani::proof]
+#[kani::unwind(3)]
+fn bounded_sequential_predecessors_from_two_preserve_every_queried_action() {
+    bounded_predecessors_preserve_every_queried_action::<0>(2);
 }
 
 #[kani::proof]
 #[kani::unwind(3)]
 fn bounded_parallel_predecessors_preserve_every_queried_action() {
-    bounded_predecessors_preserve_every_queried_action::<1>();
+    bounded_predecessors_preserve_every_queried_action::<1>(usize::from(kani::any::<u8>() % 3));
 }
 
 #[kani::proof]
 #[kani::unwind(3)]
 fn bounded_selected_predecessors_preserve_every_queried_action() {
-    bounded_predecessors_preserve_every_queried_action::<2>();
+    bounded_predecessors_preserve_every_queried_action::<2>(usize::from(kani::any::<u8>() % 3));
 }
 
 #[kani::proof]
 #[kani::unwind(3)]
 fn bounded_rolled_predecessors_preserve_every_queried_action() {
-    bounded_predecessors_preserve_every_queried_action::<3>();
+    bounded_predecessors_preserve_every_queried_action::<3>(usize::from(kani::any::<u8>() % 3));
 }
 
 fn source_first_transfer_preserves_the_complete_endpoint_key<const SHAPE: u8>() {
