@@ -65,6 +65,12 @@ run_miri_test \
   -p hibana \
   --test miri_runtime_owner
 
+# The 257-operation wire-label test executes the entire protocol under Miri.
+# Keep the normal timeout for other fixtures and the same memory guard here.
+MIRI_TIMEOUT_SECONDS=600 run_miri_test \
+  compiled-protocol-observations \
+  -p hibana --lib observe::projected::tests:: -- --test-threads=1
+
 (
   export RUSTFLAGS="${RUSTFLAGS:-} --cfg hibana_profile"
   run_miri_test runtime-work-observation -p hibana --lib \

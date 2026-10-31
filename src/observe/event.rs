@@ -2,10 +2,11 @@
 
 use crate::observe::ids;
 
-/// A 16-byte runtime diagnostic event.
+/// A 16-byte protocol observation.
 ///
 /// Layout: `ts32, id16, causal_key16, arg0_32, arg1_32`
-/// - `ts`: Ring ordinal, saturated at `u32::MAX`; not wall-clock time
+/// - `ts`: Ring ordinal, or local row ordinal for compiled observations;
+///   not wall-clock time
 /// - `id`: Event identifier (from `crate::observe::ids::*`)
 /// - `causal_key`: Groups related events using event-specific fields
 ///   - High 8 bits: role or lane discriminator

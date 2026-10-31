@@ -56,7 +56,7 @@ const fn certify_receiver(receiver: u8) {
 const fn certify_receiver_word(word: u8) {
     let mut low = 0;
     while low < 64 {
-        certify_receiver(word * 64 | low);
+        certify_receiver((word * 64) | low);
         low += 1;
     }
 }

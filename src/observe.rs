@@ -15,3 +15,6 @@ pub(crate) mod ids;
 
 /// Tap event builders.
 pub(crate) mod events;
+
+/// Read-only observations of compiled local operations.
+pub(crate) mod projected;

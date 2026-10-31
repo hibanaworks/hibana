@@ -30,7 +30,7 @@ pub const ENDPOINT_SESSION: u16 = 0x0204;
 /// - `causal_key`: expected lane in high byte, mismatch reason in low byte
 /// - `arg0`: Expected session identifier (u32)
 /// - `arg1`: Observed session for session mismatch; otherwise observed
-///   lane/source/target/label packed as `lane<<24 | source<<16 | target<<8 | label`
+///   `source<<24 | target<<16 | frame_label`, retaining the full 16-bit label
 pub const TRANSPORT_MISMATCH: u16 = 0x0205;
 
 /// Frame session ID differs from the port's session.
@@ -50,7 +50,8 @@ pub const TRANSPORT_MISMATCH_LABEL: u8 = 5;
 /// remains represented by `ENDPOINT_RECV` / `ENDPOINT_SESSION`.
 ///
 /// - `arg0`: Observed session identifier (u32)
-/// - `arg1`: observed_lane<<24 | source_role<<16 | target_role<<8 | frame_label
+/// - `causal_key`: Observed lane in the high byte; zero in the low byte
+/// - `arg1`: `source_role<<24 | target_role<<16 | frame_label`
 pub const TRANSPORT_FRAME: u16 = 0x0206;
 
 /// Transport operation reached a carrier-local terminal condition.
@@ -102,6 +103,28 @@ pub const LANE_RELEASE: u16 = 0x0211;
 /// - `causal_key`: lane marker with authority token encoded in the sequence field
 ///   (1 = ack, 2 = resolver, 3 = poll)
 pub const ROUTE_ARM_SELECTION: u16 = 0x0221;
+
+/// Compiled local operation returned by [`projected`](super::projected::projected).
+///
+/// All three `PROJECTED_*` events have this layout:
+///
+/// - `ts`: Zero-based local row ordinal.
+/// - `causal_key`: Initial physical actor in the high byte, requested program
+///   role in the low byte. Delegated views can share a physical actor's image.
+/// - `arg0`: `wire_label<<16 | lane<<8 | message_label`.
+/// - `arg1`: `source_role<<24 | target_role<<16 | payload_kind<<8 | resource_role`.
+///   `payload_kind` is zero for a wire payload and one for an owned Endpoint;
+///   `resource_role` is zero for wire payloads.
+///
+/// These describe static rows, including alternative branches and operations
+/// on delegated views. They do not report a committed or currently enabled step.
+pub const PROJECTED_LOCAL: u16 = 0x0300;
+
+/// Compiled send operation, with the layout documented by [`PROJECTED_LOCAL`].
+pub const PROJECTED_SEND: u16 = 0x0301;
+
+/// Compiled receive operation, with the layout documented by [`PROJECTED_LOCAL`].
+pub const PROJECTED_RECV: u16 = 0x0302;
 
 /// Dynamic resolver decision evidence.
 ///
