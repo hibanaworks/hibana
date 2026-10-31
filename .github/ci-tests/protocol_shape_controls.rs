@@ -182,7 +182,7 @@ fn completed_controls(
                 node.get("kind") == Some(&Json::Number("0".into()))
                     && node.get("sender") != node.get("receiver")
             })
-            .filter_map(|node| match node.get("label") {
+            .filter_map(|node| match node.get("event") {
                 Some(Json::Number(label)) => Some(label.clone()),
                 _ => None,
             })

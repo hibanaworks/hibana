@@ -6,7 +6,7 @@ pub(super) fn contains(source: &Protocol, label: u8) -> bool {
     source.messages(&mut messages);
     messages
         .iter()
-        .any(|m| matches!(m, Protocol::Message { label: candidate, .. } if *candidate == label))
+        .any(|m| matches!(m, Protocol::Message { event: candidate, .. } if *candidate == label))
 }
 
 pub(super) fn message_selected_head(source: &Protocol, label: u8) -> bool {
@@ -67,7 +67,10 @@ pub(super) fn holder_after(source: &Protocol, execution: &Execution, holder: u8)
 pub(super) fn present(source: &Protocol, role: u8, primed: Option<u8>) -> bool {
     match source {
         Protocol::Message {
-            from, to, label, ..
+            from,
+            to,
+            event: label,
+            ..
         } => {
             [*from, *to].contains(&role) && (primed != Some(*label) || (*to == role && from != to))
         }
@@ -136,11 +139,14 @@ fn borrows_resource_mutably(source: &Protocol, actor: u8) -> bool {
     }
 }
 
-fn first_local(source: &Protocol, actor: u8, holder: u8) -> Vec<(u8, u8)> {
+pub(super) fn first_local(source: &Protocol, actor: u8, holder: u8) -> Vec<(u8, u8)> {
     let physical = |role| if role == 3 { holder } else { role };
     match source {
         Protocol::Message {
-            from, to, label, ..
+            from,
+            to,
+            event: label,
+            ..
         } => {
             if physical(*from) == actor {
                 vec![(*from, *label)]
@@ -267,7 +273,7 @@ impl Emitter<'_> {
         );
         let mut arms = String::new();
         for (message, receive) in super::scope_probes::outside_messages(self.source, part, role) {
-            let Protocol::Message { label, .. } = message else {
+            let Protocol::Message { event: label, .. } = message else {
                 unreachable!()
             };
             let call = if receive {
@@ -300,8 +306,9 @@ impl Emitter<'_> {
         let Protocol::Message {
             from,
             to,
-            label,
+            event: label,
             owned,
+            ..
         } = message
         else {
             unreachable!()
@@ -371,7 +378,10 @@ impl Emitter<'_> {
         let primed = primed.filter(|entry| contains(source, entry.label()));
         match source {
             Protocol::Message {
-                from, to, label, ..
+                from,
+                to,
+                event: label,
+                ..
             } => {
                 let mut code = String::new();
                 if from == to {
@@ -548,14 +558,14 @@ impl Emitter<'_> {
                 let allowed = entries
                     .iter()
                     .map(|message| match message {
-                        Protocol::Message { label, .. } => label.to_string(),
+                        Protocol::Message { contract, .. } => contract.to_string(),
                         _ => unreachable!(),
                     })
                     .collect::<Vec<_>>()
                     .join(",");
                 let mut previewed = std::collections::BTreeSet::new();
                 for message in &entries {
-                    let Protocol::Message { label, .. } = message else {
+                    let Protocol::Message { event: label, .. } = message else {
                         unreachable!()
                     };
                     let decisions = self.paths[label]
@@ -571,7 +581,7 @@ impl Emitter<'_> {
                         let alternatives = entries
                             .iter()
                             .filter_map(|message| match message {
-                                Protocol::Message { label: other, .. }
+                                Protocol::Message { event: other, .. }
                                     if !message_selected_head(body, *other)
                                         && self.paths[other] == self.paths[label] =>
                                 {
@@ -600,7 +610,7 @@ impl Emitter<'_> {
                                 let Protocol::Message {
                                     from,
                                     to,
-                                    label: entry_label,
+                                    event: entry_label,
                                     ..
                                 } = entry
                                 else {
@@ -613,12 +623,16 @@ impl Emitter<'_> {
                                         names,
                                         Some(Entry::LocalPreview(*entry_label)),
                                     );
-                                    local_arms +=
-                                        &format!("{entry_label}=>{{drop(branch);{remaining}}},");
+                                    local_arms += &format!(
+                                        "{}=>{{drop(branch);{remaining}}},",
+                                        self.source.contract_for(*entry_label)
+                                    );
                                 } else {
                                     let remaining = self.emit(body, actor, names, None);
-                                    local_arms +=
-                                        &format!("{entry_label}=>{{drop(branch);{remaining}}},");
+                                    local_arms += &format!(
+                                        "{}=>{{drop(branch);{remaining}}},",
+                                        self.source.contract_for(*entry_label)
+                                    );
                                 }
                             }
                             rest = format!(
@@ -650,7 +664,7 @@ impl Emitter<'_> {
             let allowed = left_entries
                 .iter()
                 .chain(&right_entries)
-                .map(|(_, label)| label.to_string())
+                .map(|(_, event)| self.source.contract_for(*event).to_string())
                 .collect::<Vec<_>>()
                 .join(",");
             preview_for(view, entry, &format!("&[{allowed}][..]"))
@@ -669,7 +683,7 @@ impl Emitter<'_> {
                     .map(|(_, label)| *label)
                     .collect::<std::collections::BTreeSet<_>>()
                     .into_iter()
-                    .map(|label| label.to_string())
+                    .map(|event| self.source.contract_for(event).to_string())
                     .collect::<Vec<_>>()
                     .join("|");
                 retake += &format!(
@@ -688,7 +702,7 @@ impl Emitter<'_> {
                 .map(|(_, label)| label)
                 .collect::<std::collections::BTreeSet<_>>()
                 .into_iter()
-                .map(|label| label.to_string())
+                .map(|event| self.source.contract_for(event).to_string())
                 .collect::<Vec<_>>()
                 .join("|");
             if !labels.is_empty() {
@@ -1035,8 +1049,9 @@ mod tests {
         Protocol::Message {
             from,
             to,
-            label: 0,
+            event: 0,
             owned,
+            contract: 0,
         }
     }
 

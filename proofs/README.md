@@ -352,7 +352,7 @@ preferences do not fix the order of completed calls. That actual order is
 recorded and checked separately. A flat word alone does not specify which
 repeated group has ended.
 The observer records successful sends and receives in completion order, with
-the participant, endpoint role, message label and direction. It reads the role
+the participant, endpoint role, requested source event and direction. It reads the role
 from the actual endpoint type. Lean replays each record against the source
 occurrence model with two visits at every repetition site, including nested
 repetition. Every source operation must complete exactly once. Script counts
@@ -406,7 +406,9 @@ Further trials try a send immediately before a necessary receive on the same
 logical endpoint, retaining the real execution prefix and parallel borrows.
 Each trial starts a fresh session. A source-level sequential dependency must
 require that receive on every relevant choice path, within the same roll
-scopes; message labels must identify unique source sites. These restrictions
+scopes. The target send must have a unique public contract on its logical
+endpoint; another enabled send with the same type could legally consume the
+call. These restrictions
 exclude independent siblings, optional receives and retained messages from
 earlier visits. Lean checks each dependency against the original source tree.
 A control replaces it with a self-dependency and must be rejected even when
@@ -419,15 +421,34 @@ Complete traces do not enumerate every schedule. Run
 `bash .github/scripts/check_protocol_shapes.sh [BUDGET [SHARD SHARDS]]` under the
 resource guard. The output records the compiler, source revision, source and
 input hashes, and separate compilation, execution and comparison times. Source
-hashes are checked again after execution. The generated families use distinct
-message labels and one resource role. Initial admission and the finite-prefix
+hashes are checked again after execution. The generated families use one
+resource role. Each source is emitted with distinct labels and up to two
+additional assignments that reuse the first or last compatible message contract.
+Identical assignments are removed. Source event IDs remain separate from the
+message labels in the catalog, scripts and observations. The checker derives
+the requested type from that event and considers every enabled occurrence
+with the same logical endpoint, direction, label and payload type.
+`contract-assignments.tsv` records each concrete assignment.
+Choice entries visible to any potential holder keep their distinct labels,
+so generated branch dispatch remains unambiguous. This does not enumerate
+every possible partition of messages into shared types.
+The fixed `--contracts 0 6` catalog additionally combines repeated contracts
+with opposite directions, independent parallel fragments, a resolver, repetition
+and actual endpoint delegation. It runs in the depth-four fuzz job.
+The same job runs `check_resolver_occurrence_sensitivity.sh`: the generated
+opposite-direction cases must pass on the current source and fail when only
+the resolver send-selection fix is reversed in a separate checkout. It retains
+the exact patch, input hashes and failure, then removes that checkout and its
+build cache.
+Initial admission and the finite-prefix
 probes are compared with Lean. Complete execution records are also compared
 with Lean, using both parallel-child orders and concurrent Tokio futures.
 These records do not enumerate every interleaving of nested parallel operations
 or split transport acceptance from send completion.
 The binary family allows multiple compound parallel pairs in one tree. Its
 operator budget applies to the whole tree, not separately to each child.
-Multiple resources and reused labels remain outside this grammar. A generated catalog is a test domain,
+Multiple resources and merged first-visible choice labels remain outside this grammar.
+A generated catalog is a test domain,
 not evidence that all its cases passed.
 
 Receive lane allocation prefers existing colors, then uses the remaining

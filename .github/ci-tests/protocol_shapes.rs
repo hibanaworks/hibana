@@ -22,6 +22,8 @@ mod causality;
 mod choice;
 #[path = "protocol_shape_context.rs"]
 mod context;
+#[path = "protocol_shape_contracts.rs"]
+mod contracts;
 #[path = "protocol_shape_coverage.rs"]
 mod coverage;
 #[path = "protocol_shape_decisions.rs"]
@@ -144,7 +146,8 @@ enum Protocol {
     Message {
         from: u8,
         to: u8,
-        label: u8,
+        event: u8,
+        contract: u8,
         owned: bool,
     },
     Seq(Box<Self>, Box<Self>),
@@ -154,6 +157,28 @@ enum Protocol {
     Roll(Box<Self>),
 }
 impl Protocol {
+    fn contract_for(&self, event: u8) -> u8 {
+        match self {
+            Self::Message {
+                event: current,
+                contract,
+                ..
+            } if *current == event => *contract,
+            Self::Message { .. } => panic!("unknown source event"),
+            Self::Roll(body) => body.contract_for(event),
+            Self::Seq(left, right)
+            | Self::Par(left, right)
+            | Self::Route(left, right)
+            | Self::Resolved(left, right, _) => {
+                if localside::contains(left, event) {
+                    left.contract_for(event)
+                } else {
+                    right.contract_for(event)
+                }
+            }
+        }
+    }
+
     fn syntax_depth(&self) -> usize {
         match self {
             Self::Message { .. } => 0,
@@ -177,7 +202,10 @@ impl Protocol {
     fn rust(&self) -> String {
         match self {
             Self::Message {
-                from, to, label, ..
+                from,
+                to,
+                event: label,
+                ..
             } => format!("g::send::<{from}, {to}, M{label}<'_>>()"),
             Self::Seq(a, b) => format!("g::seq({}, {})", a.rust(), b.rust()),
             Self::Par(a, b) => format!("g::par({}, {})", a.rust(), b.rust()),
@@ -193,15 +221,17 @@ impl Protocol {
             Self::Message {
                 from,
                 to,
-                label,
+                event: label,
+                contract,
                 owned,
+                ..
             } => format!(
-                r#"{{"kind":0,"left":0,"right":0,"sender":{from},"receiver":{to},"label":{label},"owned":{owned},"resolver":0}}"#
+                r#"{{"kind":0,"left":0,"right":0,"sender":{from},"receiver":{to},"event":{label},"label":{contract},"owned":{owned},"resolver":0}}"#
             ),
             Self::Roll(body) => {
                 let left = body.json_nodes(out);
                 format!(
-                    r#"{{"kind":5,"left":{left},"right":0,"sender":0,"receiver":0,"label":0,"owned":false,"resolver":0}}"#
+                    r#"{{"kind":5,"left":{left},"right":0,"sender":0,"receiver":0,"event":0,"label":0,"owned":false,"resolver":0}}"#
                 )
             }
             Self::Seq(a, b) | Self::Par(a, b) | Self::Route(a, b) | Self::Resolved(a, b, _) => {
@@ -215,7 +245,7 @@ impl Protocol {
                     _ => unreachable!(),
                 };
                 format!(
-                    r#"{{"kind":{kind},"left":{left},"right":{right},"sender":0,"receiver":0,"label":0,"owned":false,"resolver":{resolver}}}"#
+                    r#"{{"kind":{kind},"left":{left},"right":{right},"sender":0,"receiver":0,"event":0,"label":0,"owned":false,"resolver":{resolver}}}"#
                 )
             }
         };
@@ -286,7 +316,7 @@ impl Protocol {
         out: &mut BTreeMap<u8, Vec<(u16, bool)>>,
     ) {
         match self {
-            Self::Message { label, .. } => {
+            Self::Message { event: label, .. } => {
                 assert!(out.insert(*label, path.clone()).is_none());
             }
             Self::Resolved(a, b, id) => {
@@ -355,7 +385,7 @@ impl Protocol {
 
     fn execution_at(&self, rank: usize) -> Execution {
         match self {
-            Self::Message { label, .. } => {
+            Self::Message { event: label, .. } => {
                 assert_eq!(rank, 0);
                 Execution::Message(*label)
             }
@@ -404,8 +434,9 @@ fn message(next: &mut u8, from: u8, to: u8, owned: bool) -> Protocol {
     Protocol::Message {
         from,
         to,
-        label,
+        event: label,
         owned,
+        contract: label,
     }
 }
 // Every tree with at most `budget` operator nodes is enumerated. The leaf
@@ -1108,7 +1139,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
         return Ok(());
     }
-    let (catalog, diagnostics) = if args.get(2).is_some_and(|s| s == "--frontiers") {
+    let (catalog, diagnostics) = if args.get(2).is_some_and(|s| s == "--contracts") {
+        if args.len() != 5 && args.len() != 6 {
+            return Err(
+                "usage: protocol-shapes REPOSITORY OUTPUT --contracts FIRST COUNT [DIAGNOSTICS]"
+                    .into(),
+            );
+        }
+        (
+            contract_collision_cases(args[3].parse()?, args[4].parse()?)?,
+            args.get(5),
+        )
+    } else if args.get(2).is_some_and(|s| s == "--frontiers") {
         if args.len() != 5 && args.len() != 6 {
             return Err(
                 "usage: protocol-shapes REPOSITORY OUTPUT --frontiers FIRST COUNT [DIAGNOSTICS]"
@@ -1669,12 +1711,103 @@ fn interaction_cases(
     Ok(catalog)
 }
 
+fn contract_collision_cases(
+    first: usize,
+    count: usize,
+) -> Result<CaseSet, Box<dyn std::error::Error>> {
+    if count == 0
+        || first
+            .checked_add(count)
+            .is_none_or(|end| end > contracts::COUNT)
+    {
+        return Err("contract collision range exceeds its population".into());
+    }
+    let mut cases = Vec::new();
+    let mut delegated = BTreeSet::new();
+    let mut max_label = 0;
+    let mut max_resolvers = 0;
+    for rank in first..first + count {
+        let mut global = contracts::protocol(rank);
+        let (labels, resolvers) = syntax::number(&mut global);
+        max_label = max_label.max(labels);
+        max_resolvers = max_resolvers.max(resolvers);
+        if localside::mobile(&global) {
+            delegated.insert(rank);
+        }
+        cases.push((
+            rank,
+            format!("contract-collision={rank}"),
+            2,
+            0,
+            global,
+            resolvers,
+        ));
+    }
+    Ok(CaseSet {
+        namespace: format!("contracts-{first}-{count}"),
+        description: format!("message_contract_collisions first={first} count={count}"),
+        total: contracts::COUNT.to_string(),
+        cases,
+        delegated,
+        expected_rejections: BTreeMap::new(),
+        negative_sources: BTreeMap::new(),
+        max_label,
+        max_resolvers,
+        origin: CatalogOrigin::Contexts,
+    })
+}
+
+fn contract_cases(mut catalog: CaseSet) -> CaseSet {
+    let mut cases = Vec::new();
+    let mut delegated = BTreeSet::new();
+    let mut rejections = BTreeMap::new();
+    for (base, identity, service, owner, global, resolvers) in &catalog.cases {
+        let reasons = catalog
+            .negative_sources
+            .values()
+            .filter(|(source, _)| source == global)
+            .map(|(_, reason)| *reason)
+            .collect::<BTreeSet<_>>();
+        for (variant, (name, source)) in contracts::variants(global).into_iter().enumerate() {
+            let case = base
+                .checked_mul(3)
+                .and_then(|id| id.checked_add(variant))
+                .expect("contract case identity overflow");
+            if catalog.delegated.contains(base) {
+                delegated.insert(case);
+            }
+            if let Some(problem) = catalog.expected_rejections.get(base) {
+                rejections.insert(case, *problem);
+                for (index, reason) in reasons.iter().enumerate() {
+                    catalog.negative_sources.insert(
+                        format!("contracts_{case}_{index}"),
+                        (source.clone(), *reason),
+                    );
+                }
+            }
+            cases.push((
+                case,
+                format!("{identity}/contracts={name}"),
+                *service,
+                *owner,
+                source,
+                *resolvers,
+            ));
+        }
+    }
+    catalog.cases = cases;
+    catalog.delegated = delegated;
+    catalog.expected_rejections = rejections;
+    catalog
+}
+
 fn emit_cases(
     root: PathBuf,
     output: PathBuf,
     catalog: CaseSet,
     diagnostics: Option<&String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let catalog = contract_cases(catalog);
     let CaseSet {
         namespace,
         description,
@@ -1694,7 +1827,10 @@ fn emit_cases(
     fs::create_dir_all(output.join("src"))?;
     fs::write(
         output.join("catalog-scope.txt"),
-        format!("{description}\nexact_population={total_cases}\nnamespace={namespace}\n"),
+        format!(
+            "{description}\nexact_syntax_population={total_cases}\nmessage_contract_assignments=distinct,reuse-first,reuse-last\ncontract_assignment_scope=choice_entries_distinct;identical_assignments_deduplicated\nemitted_candidates={}\nnamespace={namespace}\n",
+            cases.len()
+        ),
     )?;
     let mut identities = String::from("case\tidentity\tsyntax_depth\toperator_count\n");
     for (case, identity, _, _, global, _) in &cases {
@@ -1706,6 +1842,24 @@ fn emit_cases(
         )?;
     }
     fs::write(output.join("case-identities.tsv"), identities)?;
+    let mut assignments = String::from("case\tevent\tmessage_label\towned\n");
+    for (case, _, _, _, source, _) in &cases {
+        let mut messages = Vec::new();
+        source.messages(&mut messages);
+        for message in messages {
+            let Protocol::Message {
+                event,
+                contract,
+                owned,
+                ..
+            } = message
+            else {
+                unreachable!()
+            };
+            writeln!(assignments, "{case}\t{event}\t{contract}\t{owned}")?;
+        }
+    }
+    fs::write(output.join("contract-assignments.tsv"), assignments)?;
     let mut candidate_inputs = Vec::new();
     for (case, _, _, _, global, resolvers) in &cases {
         let mut nodes = Vec::new();
@@ -1778,13 +1932,19 @@ long_running_const_eval = "forbid"
         let mut messages = Vec::new();
         global.messages(&mut messages);
         for m in messages {
-            let Protocol::Message { label, owned, .. } = m else {
+            let Protocol::Message {
+                event: label,
+                contract,
+                owned,
+                ..
+            } = m
+            else {
                 unreachable!()
             };
             let payload = if *owned { "Endpoint<'r,3>" } else { "()" };
             writeln!(
                 diagnostic_source,
-                "type M{label}<'r>=g::Msg<{label},{payload}>;"
+                "type M{label}<'r>=g::Msg<{contract},{payload}>;"
             )?;
         }
         writeln!(
@@ -1795,7 +1955,7 @@ long_running_const_eval = "forbid"
     }
     fs::create_dir_all(output.join("src/bin"))?;
     write_if_changed(&output.join("src/bin/diagnose.rs"), &diagnostic_source)?;
-    if origin.requires_diagnostics() && diagnostics.is_none() {
+    if diagnostics.is_none() {
         println!(
             "syntax catalog candidates={} {description} total_shapes={total_cases}; awaiting diagnostics before localside emission",
             cases.len()
@@ -1822,8 +1982,8 @@ long_running_const_eval = "forbid"
             {
                 if origin.requires_diagnostics() {
                     let global = &cases
-                        .get(case)
-                        .filter(|c| c.0 == case)
+                        .iter()
+                        .find(|c| c.0 == case)
                         .ok_or("unknown syntax diagnostic")?
                         .4;
                     let proven = syntax_violations(global);
@@ -1872,12 +2032,18 @@ long_running_const_eval = "forbid"
         let mut messages = Vec::new();
         global.messages(&mut messages);
         for message in messages {
-            let Protocol::Message { label, owned, .. } = message else {
+            let Protocol::Message {
+                event: label,
+                contract,
+                owned,
+                ..
+            } = message
+            else {
                 unreachable!()
             };
             writeln!(
                 source,
-                "type M{label}<'r>=g::Msg<{label},{}>;",
+                "type M{label}<'r>=g::Msg<{contract},{}>;",
                 if *owned { "Endpoint<'r,3>" } else { "()" }
             )?;
         }
@@ -1996,7 +2162,7 @@ long_running_const_eval = "forbid"
                 let mut prefix = Vec::new();
                 for &(label, _) in &trace.messages {
                     for receive in [false, true] {
-                        if messages.iter().any(|message| matches!(message, Protocol::Message { from, to, label: candidate, .. } if *candidate == label && from == to)) && receive {
+                        if messages.iter().any(|message| matches!(message, Protocol::Message { from, to, event: candidate, .. } if *candidate == label && from == to)) && receive {
                             continue;
                         }
                         prefix.push(2 * u16::from(label) + u16::from(receive));
@@ -2013,11 +2179,17 @@ long_running_const_eval = "forbid"
             "#[tokio::test(flavor=\"current_thread\",start_paused=true)]\nasync fn shape_{case}() {{"
         )?;
         for m in &messages {
-            let Protocol::Message { label, owned, .. } = m else {
+            let Protocol::Message {
+                event: label,
+                contract,
+                owned,
+                ..
+            } = m
+            else {
                 unreachable!()
             };
             let payload = if *owned { "Endpoint<'r,3>" } else { "()" };
-            writeln!(source, "type M{label}<'r>=g::Msg<{label},{payload}>;")?;
+            writeln!(source, "type M{label}<'r>=g::Msg<{contract},{payload}>;")?;
         }
         writeln!(
             source,
@@ -2084,15 +2256,17 @@ long_running_const_eval = "forbid"
             let Protocol::Message {
                 from,
                 to,
-                label,
+                event: label,
+                contract,
                 owned,
+                ..
             } = m
             else {
                 unreachable!()
             };
             writeln!(
                 source,
-                "Message{{from:{from},to:{to},label:{label},owned:{owned},decisions:&{:?}}},",
+                "Message{{from:{from},to:{to},event:{label},contract:{contract},owned:{owned},decisions:&{:?}}},",
                 decisions[label]
             )?;
         }
@@ -2103,7 +2277,7 @@ long_running_const_eval = "forbid"
         let mut trace_data = String::new();
         for trace in &traces {
             trace_data.push_str(&trace.line());
-            operations += trace.messages.iter().map(|(label,_)| if messages.iter().any(|m|matches!(m,Protocol::Message{from,to,label:candidate,..} if candidate==label && from==to)) {1} else {2}).sum::<usize>();
+            operations += trace.messages.iter().map(|(label,_)| if messages.iter().any(|m|matches!(m,Protocol::Message{from,to,event:candidate,..} if candidate==label && from==to)) {1} else {2}).sum::<usize>();
         }
         let trace_path = trace_directory.join(format!("{case}.txt"));
         write_if_changed(&trace_path, &trace_data)?;
@@ -2224,7 +2398,7 @@ mod population_tests {
                 let mut messages = Vec::new();
                 case.4.messages(&mut messages);
                 assert!(messages.iter().all(|message| match message {
-                    Protocol::Message { label, .. } => u16::from(*label) < part.max_label,
+                    Protocol::Message { event: label, .. } => u16::from(*label) < part.max_label,
                     _ => unreachable!(),
                 }));
                 assert!(case.5 <= part.max_resolvers);
@@ -2276,14 +2450,16 @@ mod population_tests {
             Box::new(Protocol::Message {
                 from: 2,
                 to: 0,
-                label: 0,
+                event: 0,
                 owned: false,
+                contract: 0,
             }),
             Box::new(Protocol::Message {
                 from: 0,
                 to: 1,
-                label: 1,
+                event: 1,
                 owned: true,
+                contract: 1,
             }),
         );
         let proven = syntax_violations(&source);

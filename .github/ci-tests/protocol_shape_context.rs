@@ -269,8 +269,9 @@ mod tests {
         let msg = |from, to, owned| Protocol::Message {
             from,
             to,
-            label: 0,
+            event: 0,
             owned,
+            contract: 0,
         };
         for sender in 0..3 {
             let source = Protocol::Seq(

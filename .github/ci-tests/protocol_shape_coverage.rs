@@ -306,8 +306,9 @@ mod tests {
         Protocol::Message {
             from: 0,
             to: 1,
-            label: 0,
+            event: 0,
             owned: false,
+            contract: 0,
         }
     }
 
@@ -373,15 +374,17 @@ mod tests {
             Box::new(Protocol::Message {
                 from: 0,
                 to: 1,
-                label: 0,
+                event: 0,
                 owned: true,
+                contract: 0,
             }),
             Box::new(Protocol::Par(
                 Box::new(Protocol::Roll(Box::new(Protocol::Message {
                     from: 3,
                     to: 2,
-                    label: 1,
+                    event: 1,
                     owned: false,
+                    contract: 1,
                 }))),
                 Box::new(Protocol::Resolved(Box::new(leaf()), Box::new(leaf()), 0)),
             )),

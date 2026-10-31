@@ -1,11 +1,11 @@
-//! Necessary receive-before-send order for unique-label source protocols.
+//! Necessary receive-before-send order for distinct public call contracts.
 //! A witness stays in the same roll scopes and cannot skip a choice containing
 //! the receive. This excludes retained continuations from an earlier visit.
 use super::Protocol;
 
 fn required(source: &Protocol, label: u8) -> bool {
     match source {
-        Protocol::Message { label: found, .. } => *found == label,
+        Protocol::Message { event: found, .. } => *found == label,
         Protocol::Seq(a, b) | Protocol::Par(a, b) => required(a, label) || required(b, label),
         Protocol::Route(..) | Protocol::Resolved(..) | Protocol::Roll(..) => false,
     }
@@ -13,7 +13,7 @@ fn required(source: &Protocol, label: u8) -> bool {
 
 fn without_roll(source: &Protocol, label: u8) -> bool {
     match source {
-        Protocol::Message { label: found, .. } => *found == label,
+        Protocol::Message { event: found, .. } => *found == label,
         Protocol::Seq(a, b)
         | Protocol::Par(a, b)
         | Protocol::Route(a, b)
@@ -45,8 +45,9 @@ pub(super) fn pairs(source: &Protocol) -> Vec<(u8, u8, u8)> {
         let Protocol::Message {
             from,
             to: role,
-            label,
+            event: label,
             owned: false,
+            ..
         } = before
         else {
             continue;
@@ -56,7 +57,7 @@ pub(super) fn pairs(source: &Protocol) -> Vec<(u8, u8, u8)> {
         }
         if messages
             .iter()
-            .filter(|m| matches!(m, Protocol::Message{label: other,..} if other == label))
+            .filter(|m| matches!(m, Protocol::Message{event: other,..} if other == label))
             .count()
             != 1
         {
@@ -65,7 +66,8 @@ pub(super) fn pairs(source: &Protocol) -> Vec<(u8, u8, u8)> {
         for target in &messages {
             let Protocol::Message {
                 from,
-                label: next,
+                event: next,
+                contract,
                 owned: false,
                 ..
             } = target
@@ -75,7 +77,7 @@ pub(super) fn pairs(source: &Protocol) -> Vec<(u8, u8, u8)> {
             if from != role
                 || messages
                     .iter()
-                    .filter(|m| matches!(m, Protocol::Message{label: other,..} if other == next))
+                    .filter(|m| matches!(m, Protocol::Message{from: sender,contract: other,owned:false,..} if sender == from && other == contract))
                     .count()
                     != 1
             {
@@ -96,8 +98,9 @@ mod tests {
         Protocol::Message {
             from,
             to,
-            label,
+            event: label,
             owned: false,
+            contract: label,
         }
     }
     #[test]

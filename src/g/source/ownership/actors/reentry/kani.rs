@@ -1,16 +1,11 @@
 use super::super::super::Message;
 use super::{ActorImage, Body, Checker, Context, EndpointKey, Payload, Query, Source, wire_events};
 
-fn check_outgoing_return<const RETURNED: bool, const ZERO_COMPONENT: bool>() {
+fn check_outgoing_return<const RETURNED: bool>() {
     let key = EndpointKey {
         component: kani::any(),
         role: kani::any(),
     };
-    // The returned case is partitioned over the complete component domain.
-    // Both parts retain every role and actor; neither omits aliasing inputs.
-    if RETURNED {
-        kani::assume((key.component == 0) == ZERO_COMPONENT);
-    }
     let owner: u8 = kani::any();
     let borrower = owner.wrapping_add(1);
     let returned = RETURNED;
@@ -66,31 +61,21 @@ fn check_outgoing_return<const RETURNED: bool, const ZERO_COMPONENT: bool>() {
         ),
         Ok(returned)
     );
-    if RETURNED && !ZERO_COMPONENT {
-        kani::cover!(key.component == u16::MAX && key.role == u8::MAX);
-    } else if RETURNED {
-        kani::cover!(key.component == 0 && key.role == u8::MAX);
-    } else {
-        kani::cover!(owner == u8::MAX);
-    }
+    kani::cover!(key.component == u16::MAX && key.role == u8::MAX);
+    kani::cover!(key.component == 0 && key.role == u8::MAX);
+    kani::cover!(owner == u8::MAX);
 }
 
 #[kani::proof]
 #[kani::unwind(5)]
-fn no_other_outgoing_endpoint_preserves_a_return_for_component_zero() {
-    check_outgoing_return::<true, true>();
-}
-
-#[kani::proof]
-#[kani::unwind(5)]
-fn no_other_outgoing_endpoint_preserves_a_return_for_every_nonzero_component() {
-    check_outgoing_return::<true, false>();
+fn no_other_outgoing_endpoint_preserves_a_return_for_every_resource_key() {
+    check_outgoing_return::<true>();
 }
 
 #[kani::proof]
 #[kani::unwind(5)]
 fn no_other_outgoing_endpoint_rejects_a_missing_return_for_every_resource_key() {
-    check_outgoing_return::<false, false>();
+    check_outgoing_return::<false>();
 }
 
 // This family checks the actual causal closure for a non-restoring resource.

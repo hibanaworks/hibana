@@ -226,6 +226,12 @@ impl<const E: usize, const D: usize> Checker<'_, E, D> {
                         Ok(None) => return Ok(false),
                         Err(scope) => return Err(scope),
                     };
+                    // With no Endpoint sends in the body, no newly moved
+                    // resource can obstruct this already located return.
+                    if !body.source.has_delegation() {
+                        event += 1;
+                        continue;
+                    }
                     let mut returning = [0; E];
                     returning[returned] = 2;
                     match self.close_dependencies_after(self.root, 0, event, &mut returning, path) {

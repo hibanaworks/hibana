@@ -86,8 +86,9 @@ mod tests {
                             Box::new(Protocol::Message {
                                 from,
                                 to,
-                                label,
+                                event: label,
                                 owned: false,
+                                contract: label,
                             })
                         };
                         for resolved in [false, true] {
@@ -117,21 +118,24 @@ mod tests {
                 Box::new(Protocol::Message {
                     from: 0,
                     to: 1,
-                    label: 0,
+                    event: 0,
                     owned: false,
+                    contract: 0,
                 }),
                 Box::new(Protocol::Message {
                     from: 0,
                     to: 2,
-                    label: 1,
+                    event: 1,
                     owned: false,
+                    contract: 1,
                 }),
             )),
             Box::new(Protocol::Message {
                 from: 0,
                 to: 1,
-                label: 2,
+                event: 2,
                 owned: false,
+                contract: 2,
             }),
         );
         assert!(violations(&source).is_empty());

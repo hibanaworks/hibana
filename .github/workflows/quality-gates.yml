@@ -277,6 +277,8 @@ jobs:
             target/debug/protocol-shapes syntax-fuzz "$PWD" "$FUZZ_DEPTH" "$task_seed" "$FUZZ_COUNT" "target/protocol-fuzz-${FUZZ_DEPTH}-${task_seed}"
             # These fixed inputs are shared by all sampled depths.
             if [[ "$FUZZ_DEPTH" == 4 ]]; then
+              bash .github/scripts/check_protocol_shapes.sh --contracts 0 6
+              bash .github/scripts/check_resolver_occurrence_sensitivity.sh
               target/debug/protocol-shapes syntax-shrink "$PWD" 3 19011422329217 target/protocol-fuzz-shrink-control \
                 -- "$PWD/target/debug/protocol-shape-controls" --shrink-probe
               target/debug/protocol-shape-controls --check-shrink target/protocol-fuzz-shrink-control
@@ -303,6 +305,8 @@ jobs:
           name: protocol-fuzz-${{ matrix.depth }}
           path: |
             target/protocol-fuzz-*/**
+            target/protocol-shapes/contracts/**
+            target/resolver-occurrence-sensitivity/**
             target/protocol-shapes/*/**/catalog.json
             target/protocol-shapes/*/**/catalog-scope.txt
             target/protocol-shapes/*/**/case-identities.tsv

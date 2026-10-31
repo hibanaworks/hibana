@@ -106,7 +106,8 @@ struct Programs {
 struct Message {
     from: u8,
     to: u8,
-    label: u8,
+    event: u8,
+    contract: u8,
     owned: bool,
     decisions: &'static [(u16, bool)],
 }
@@ -273,10 +274,10 @@ macro_rules! receive {
             let endpoint = $endpoint;
             if $command.preview {
                 let branch = endpoint.offer().await?;
-                assert_eq!(branch.label(), $command.message.label);
+                assert_eq!(branch.label(), $command.message.contract);
                 drop(branch);
                 let branch = endpoint.offer().await?;
-                assert_eq!(branch.label(), $command.message.label);
+                assert_eq!(branch.label(), $command.message.contract);
                 branch.recv::<$message>().await
             } else {
                 endpoint.recv::<$message>().await
@@ -395,7 +396,7 @@ async fn replay(
                             "prefix failed at {index}: {command:?}: {error:?}, trace={:?}",
                             commands
                                 .iter()
-                                .map(|c| (c.message.label, c.receive, c.preview))
+                                .map(|c| (c.message.event, c.receive, c.preview))
                                 .collect::<Vec<_>>()
                         );
                         Outcome::Rejected
@@ -510,9 +511,9 @@ async fn replay(
                 }
             }};
         }
-        outcome = match command.message.label {
+        outcome = match command.message.contract {
             0 => dispatch_labels!(),
-            _ => panic!("generated label outside dispatch inventory"),
+            _ => panic!("generated message contract outside dispatch inventory"),
         };
         assert!(
             databases.iter().filter(|db| db.is_some()).count() <= 1,
@@ -571,13 +572,13 @@ async fn qualify(programs: Programs, scenario: Scenario<'_>) {
                 )
                 .await;
                 observations.push(format!(
-                    r#"{{"choice":{choice:?},"prefix":[],"label":{},"receive":{receive},"accepted":{}}}"#,
-                    message.label,
+                    r#"{{"choice":{choice:?},"prefix":[],"event":{},"receive":{receive},"accepted":{}}}"#,
+                    message.event,
                     actual == Outcome::Accepted
                 ));
                 if prefix_visits == 1 && actual == Outcome::Accepted {
                     prefixes.insert(
-                        vec![2 * u16::from(message.label) + u16::from(receive)],
+                        vec![2 * u16::from(message.event) + u16::from(receive)],
                         vec![command],
                     );
                 }
@@ -600,7 +601,7 @@ async fn qualify(programs: Programs, scenario: Scenario<'_>) {
                 let label = label.parse::<u8>().expect("invalid trace label");
                 let message = *messages
                     .iter()
-                    .find(|message| message.label == label)
+                    .find(|message| message.event == label)
                     .expect("unknown trace label");
                 let commands = [
                     Command {
@@ -626,7 +627,7 @@ async fn qualify(programs: Programs, scenario: Scenario<'_>) {
         if prefix_visits != 0 {
             let mut key = Vec::new();
             for (index, command) in commands.iter().enumerate() {
-                key.push(2 * u16::from(command.message.label) + u16::from(command.receive));
+                key.push(2 * u16::from(command.message.event) + u16::from(command.receive));
                 prefixes
                     .entry(key.clone())
                     .or_insert_with(|| commands[..=index].to_vec());
@@ -671,12 +672,12 @@ async fn qualify(programs: Programs, scenario: Scenario<'_>) {
                     )
                     .await;
                     observations.push(format!(
-                        r#"{{"choice":{choice:?},"prefix":{key:?},"label":{},"receive":{receive},"accepted":{}}}"#,
-                        message.label, actual == Outcome::Accepted
+                        r#"{{"choice":{choice:?},"prefix":{key:?},"event":{},"receive":{receive},"accepted":{}}}"#,
+                        message.event, actual == Outcome::Accepted
                     ));
                     if prefix_visits == 1 && key.len() < 4 && actual == Outcome::Accepted {
                         let mut next = key.clone();
-                        next.push(2 * u16::from(message.label) + u16::from(receive));
+                        next.push(2 * u16::from(message.event) + u16::from(receive));
                         if !checked_prefixes.contains(&next) {
                             prefixes.entry(next).or_insert(commands);
                         }

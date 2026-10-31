@@ -32,7 +32,7 @@ pub(super) fn write_inventory(
 
 pub(super) fn first_label(source: &Protocol) -> u8 {
     match source {
-        Protocol::Message { label, .. } => *label,
+        Protocol::Message { event: label, .. } => *label,
         Protocol::Seq(a, _)
         | Protocol::Par(a, _)
         | Protocol::Route(a, _)
@@ -55,21 +55,45 @@ pub(super) fn outside_messages<'a>(
             let Protocol::Message {
                 from,
                 to,
-                label,
+                event: label,
                 owned: false,
+                ..
             } = message
             else {
                 return Vec::new();
             };
             if inside
                 .iter()
-                .any(|m| matches!(m, Protocol::Message { label: other, .. } if other == label))
+                .any(|m| matches!(m, Protocol::Message { event: other, .. } if other == label))
             {
                 return Vec::new();
             }
             [(false, *from), (true, *to)]
                 .into_iter()
                 .filter(|(_, participant)| *participant == role)
+                .filter(|(receive, _)| {
+                    !inside.iter().any(|other| {
+                        let Protocol::Message {
+                            from,
+                            to,
+                            contract,
+                            owned,
+                            ..
+                        } = other
+                        else {
+                            unreachable!()
+                        };
+                        let Protocol::Message {
+                            contract: expected, ..
+                        } = message
+                        else {
+                            unreachable!()
+                        };
+                        !*owned
+                            && contract == expected
+                            && (if *receive { *to } else { *from }) == role
+                    })
+                })
                 .map(|(receive, _)| (message, receive))
                 .collect()
         })
@@ -93,7 +117,7 @@ impl Planner<'_> {
         occurrence: usize,
     ) {
         match (source, script) {
-            (Protocol::Message { label, .. }, Execution::Message(actual)) => {
+            (Protocol::Message { event: label, .. }, Execution::Message(actual)) => {
                 assert_eq!(label, actual);
                 for &(before, target, role) in self.causal {
                     let receiver = if role == 3 && localside::mobile(self.global) {
@@ -153,7 +177,7 @@ impl Planner<'_> {
                             .find_map(|m| match m {
                                 Protocol::Message {
                                     from,
-                                    label: candidate,
+                                    event: candidate,
                                     ..
                                 } if *candidate == label => Some(*from),
                                 _ => None,
@@ -186,7 +210,7 @@ impl Planner<'_> {
                             continue;
                         }
                         for (message, receive) in outside_messages(self.global, part, role) {
-                            let Protocol::Message { label, .. } = message else {
+                            let Protocol::Message { event: label, .. } = message else {
                                 unreachable!()
                             };
                             self.probes.push(LocalProbe::Borrow {
@@ -265,8 +289,9 @@ mod tests {
         Protocol::Message {
             from,
             to,
-            label,
+            event: label,
             owned: false,
+            contract: label,
         }
     }
 
@@ -276,8 +301,9 @@ mod tests {
             Box::new(Protocol::Message {
                 from: 0,
                 to: 1,
-                label: 0,
+                event: 0,
                 owned: true,
+                contract: 0,
             }),
             Box::new(Protocol::Roll(Box::new(Protocol::Seq(
                 Box::new(message(2, 3, 1)),
@@ -391,8 +417,9 @@ mod tests {
             Box::new(Protocol::Message {
                 from: 0,
                 to: 1,
-                label: 1,
+                event: 1,
                 owned: true,
+                contract: 1,
             }),
             Box::new(Protocol::Par(
                 Box::new(message(3, 2, 2)),

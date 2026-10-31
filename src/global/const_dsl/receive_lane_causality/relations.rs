@@ -229,9 +229,10 @@ mod kani {
 
     #[kani::proof]
     fn interval_mask_is_exact_for_the_compact_source_domain() {
-        let start = usize::from(kani::any::<u16>());
-        let end = usize::from(kani::any::<u16>());
-        kani::assume(start <= end);
+        let first = usize::from(kani::any::<u16>());
+        let second = usize::from(kani::any::<u16>());
+        let start = first.min(second);
+        let end = first.max(second);
         let word = usize::from(kani::any::<u16>()) / 64;
         let bit = usize::from(kani::any::<u8>()) % 64;
         let point = word * 64 + bit;

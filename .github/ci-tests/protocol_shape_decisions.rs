@@ -102,7 +102,7 @@ mod tests {
         let (_, count) = super::super::syntax::number(&mut source);
         fn selected(source: &Protocol, choice: &[u16]) -> u8 {
             match source {
-                Protocol::Message { label, .. } => *label,
+                Protocol::Message { event: label, .. } => *label,
                 Protocol::Resolved(a, b, id) => {
                     selected(if choice.contains(id) { b } else { a }, choice)
                 }

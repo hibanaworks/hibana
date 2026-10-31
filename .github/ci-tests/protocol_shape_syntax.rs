@@ -146,8 +146,13 @@ impl Grammar {
 pub(super) fn number(source: &mut Protocol) -> (u16, u16) {
     fn visit(source: &mut Protocol, label: &mut u16, resolver: &mut u16) {
         match source {
-            Protocol::Message { label: value, .. } => {
+            Protocol::Message {
+                event: value,
+                contract,
+                ..
+            } => {
                 *value = u8::try_from(*label).expect("syntax label domain");
+                *contract = *value;
                 *label = label.checked_add(1).expect("syntax message count");
             }
             Protocol::Resolved(left, right, id) => {
@@ -271,7 +276,7 @@ mod tests {
         let labels = messages
             .into_iter()
             .map(|message| match message {
-                Protocol::Message { label, .. } => *label,
+                Protocol::Message { event: label, .. } => *label,
                 _ => unreachable!(),
             })
             .collect::<BTreeSet<_>>();

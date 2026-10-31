@@ -64,7 +64,7 @@ pub(super) fn parallel_pair_bound(source: &Protocol) -> usize {
 
 fn path_at(source: &Protocol, rank: usize) -> Execution {
     match source {
-        Protocol::Message { label, .. } => {
+        Protocol::Message { event: label, .. } => {
             assert_eq!(rank, 0);
             Execution::Message(*label)
         }
@@ -123,7 +123,7 @@ fn set_parallel_orders(execution: &mut Execution, values: &mut impl Iterator<Ite
 
 fn execution_rank(source: &Protocol, execution: &Execution) -> usize {
     match (source, execution) {
-        (Protocol::Message { label, .. }, Execution::Message(actual)) => {
+        (Protocol::Message { event: label, .. }, Execution::Message(actual)) => {
             assert_eq!(label, actual);
             0
         }

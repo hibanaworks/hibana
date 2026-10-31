@@ -11,8 +11,9 @@ fn message(from: u8, to: u8, owned: bool) -> Protocol {
     Protocol::Message {
         from,
         to,
-        label: 0,
+        event: 0,
         owned,
+        contract: 0,
     }
 }
 fn seq(a: Protocol, b: Protocol) -> Protocol {

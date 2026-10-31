@@ -1,7 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
-if [[ "${1:-}" == --frontiers ]]; then
+if [[ "${1:-}" == --contracts ]]; then
+  if [[ $# != 3 ]]; then
+    echo "usage: $0 --contracts FIRST COUNT" >&2
+    exit 2
+  fi
+  GENERATOR_ARGS=(--contracts "$2" "$3")
+  OUTPUT="${ROOT_DIR}/target/protocol-shapes/contracts/range-$2-count-$3"
+elif [[ "${1:-}" == --frontiers ]]; then
   if [[ $# != 3 ]]; then
     echo "usage: $0 --frontiers FIRST COUNT" >&2
     exit 2
@@ -76,7 +83,7 @@ cargo +"${TOOLCHAIN:-stable}" run --locked --manifest-path "${ROOT_DIR}/.github/
 (
   cd "${OUTPUT}"
   shopt -s nullglob
-  shasum -a 256 Cargo.toml catalog.json catalog-scope.txt case-identities.tsv case-depths.tsv source-coverage*.tsv inputs.json scope-inputs.json src/*.rs src/bin/diagnose.rs \
+  shasum -a 256 Cargo.toml catalog.json catalog-scope.txt case-identities.tsv contract-assignments.tsv case-depths.tsv source-coverage*.tsv inputs.json scope-inputs.json src/*.rs src/bin/diagnose.rs \
     diagnostics.tsv unclassified-rejections.txt traces/*.txt scope-plans/*.jsonl scripts/*.jsonl \
     rejected/Cargo.toml rejected/inventory.tsv rejected/src/bin/*.rs > inputs.sha256
 )

@@ -23,7 +23,7 @@ struct Node {
     #[serde(default)]
     receiver: u8,
     #[serde(default)]
-    label: u8,
+    event: u8,
     #[serde(default)]
     owned: bool,
 }
@@ -76,13 +76,13 @@ impl Source {
         }
         match node.kind {
             0 => {
-                if field(1)?.as_u64() != Some(u64::from(node.label)) {
+                if field(1)?.as_u64() != Some(u64::from(node.event)) {
                     return Err("source and script labels differ".into());
                 }
                 let actor = |role| if role == 3 { *owner } else { role };
                 let mut record = |role, receive| {
                     calls
-                        .entry((actor(role), role, node.label, receive))
+                        .entry((actor(role), role, node.event, receive))
                         .or_default()
                         .push_back(Planned {
                             leaf: at,
@@ -144,7 +144,7 @@ impl Source {
             .nodes
             .iter()
             .filter(|node| node.kind == 0 && node.sender == node.receiver && !node.owned)
-            .map(|node| (node.sender, node.label))
+            .map(|node| (node.sender, node.event))
             .collect::<BTreeSet<_>>();
         let mut completed = Vec::new();
         for (position, call) in observed.iter().enumerate() {
@@ -397,7 +397,7 @@ mod tests {
                 right: 0,
                 sender: 0,
                 receiver: 0,
-                label: 1,
+                event: 1,
                 owned: false,
             }],
         };
@@ -438,7 +438,7 @@ mod tests {
 
     #[test]
     fn syntax_alone_and_a_late_child_do_not_count_as_an_early_child() {
-        let source: Source = serde_json::from_str(r#"{"name":0,"nodes":[{"kind":0,"sender":0,"receiver":1,"label":1},{"kind":5,"left":0},{"kind":0,"sender":0,"receiver":1,"label":2},{"kind":2,"left":1,"right":2},{"kind":5,"left":3}]}"#).unwrap();
+        let source: Source = serde_json::from_str(r#"{"name":0,"nodes":[{"kind":0,"sender":0,"receiver":1,"event":1},{"kind":5,"left":0},{"kind":0,"sender":0,"receiver":1,"event":2},{"kind":2,"left":1,"right":2},{"kind":5,"left":3}]}"#).unwrap();
         assert_eq!(source.pairs(), vec![(4, 1, 2)]);
         let row = |leaf, parent, child| Completed {
             actor: 0,

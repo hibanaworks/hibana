@@ -1,0 +1,86 @@
+diff --git a/src/global/typestate/cursor/scope_route/send_preview.rs b/src/global/typestate/cursor/scope_route/send_preview.rs
+index 69e14ec..1ea864d 100644
+--- a/src/global/typestate/cursor/scope_route/send_preview.rs
++++ b/src/global/typestate/cursor/scope_route/send_preview.rs
+@@ -5 +5 @@ use super::super::{
+-use crate::global::typestate::{EventCommitMeta, MessageSelector};
++use crate::global::typestate::EventCommitMeta;
+@@ -26,13 +25,0 @@ impl EventCursor {
+-    fn send_preview_outbound_contract_matches(
+-        &self,
+-        idx: usize,
+-        selector: MessageSelector,
+-    ) -> bool {
+-        self.event_row_at(idx).is_some_and(|row| {
+-            row.direction() != crate::global::role_program::RoleLocalDirection::Recv
+-                && row.logical_role() == selector.role
+-                && row.atom().label == selector.label
+-                && row.atom().payload == selector.payload_kind
+-        })
+-    }
+-
+@@ -60 +47,2 @@ impl EventCursor {
+-        selector: MessageSelector,
++        target_label: u8,
++        target_payload: crate::eff::EventPayload,
+@@ -70,2 +58,3 @@ impl EventCursor {
+-            if self.send_preview_outbound_contract_matches(idx, selector)
+-                && let Some(lane) = self.send_preview_lane_at(idx)
++            if let Some((label, schema, lane)) = self.send_preview_local_contract_lane_at(idx)
++                && label == target_label
++                && schema == target_payload
+@@ -130 +119 @@ impl EventCursor {
+-    fn send_preview_selected_controller_index_for_contract(
++    fn send_preview_selected_controller_arm_entry_for_contract(
+@@ -134 +123,2 @@ impl EventCursor {
+-        candidate: (usize, MessageSelector),
++        target_label: u8,
++        target_payload: crate::eff::EventPayload,
+@@ -136,16 +125,0 @@ impl EventCursor {
+-        let (index, selector) = candidate;
+-        let target_label = selector.label;
+-        let target_payload = selector.payload_kind;
+-        // The indexed admission search already accounted for nested choices
+-        // and source predecessors. A resolver confirms its arm; it must not
+-        // replace that candidate with an earlier, inactive label occurrence.
+-        let selected_rows = self.route_scope_slot(scope_id).and_then(|slot| {
+-            self.machine()
+-                .event_program()
+-                .route_arm_event_row_by_slot(slot, arm)
+-        });
+-        if selected_rows.is_some_and(|rows| rows.start() <= index && index < rows.end())
+-            && self.send_preview_outbound_contract_matches(index, selector)
+-        {
+-            return Ok(index);
+-        }
+@@ -159 +133 @@ impl EventCursor {
+-            if self.send_preview_outbound_contract_matches(entry_idx, selector) {
++            if entry_label == target_label && entry_schema == target_payload {
+@@ -162 +136,6 @@ impl EventCursor {
+-            if let Some(idx) = self.send_preview_route_arm_contract_index(scope_id, arm, selector) {
++            if let Some(idx) = self.send_preview_route_arm_contract_index(
++                scope_id,
++                arm,
++                target_label,
++                target_payload,
++            ) {
+@@ -176 +155 @@ impl EventCursor {
+-        self.send_preview_route_arm_contract_index(scope_id, arm, selector)
++        self.send_preview_route_arm_contract_index(scope_id, arm, target_label, target_payload)
+@@ -331 +310 @@ impl EventCursor {
+-            let selected_idx = self.send_preview_selected_controller_index_for_contract(
++            let entry_idx = self.send_preview_selected_controller_arm_entry_for_contract(
+@@ -334,8 +313,2 @@ impl EventCursor {
+-                (
+-                    *idx,
+-                    crate::global::typestate::MessageSelector::new(
+-                        ctx.role,
+-                        ctx.target_label,
+-                        ctx.target_payload,
+-                    ),
+-                ),
++                ctx.target_label,
++                ctx.target_payload,
+@@ -349 +322 @@ impl EventCursor {
+-            *idx = selected_idx;
++            *idx = entry_idx;

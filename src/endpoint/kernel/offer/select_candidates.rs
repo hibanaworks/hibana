@@ -371,9 +371,8 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
 mod kani {
     #[kani::proof]
     fn a_locally_ready_offer_precedes_every_waiting_offer_without_changing_base_order() {
-        let left: u8 = kani::any();
-        let right: u8 = kani::any();
-        kani::assume((1..=4).contains(&left) && (1..=4).contains(&right));
+        let left = 1 + (kani::any::<u8>() & 3);
+        let right = 1 + (kani::any::<u8>() & 3);
         let left_unmade: bool = kani::any();
         let right_unmade: bool = kani::any();
         let ready: bool = kani::any();

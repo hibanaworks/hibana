@@ -211,8 +211,9 @@ mod tests {
         Protocol::Message {
             from,
             to,
-            label,
+            event: label,
             owned: true,
+            contract: label,
         }
     }
 
@@ -245,8 +246,9 @@ mod tests {
             Box::new(Protocol::Message {
                 from: 0,
                 to: 1,
-                label: 1,
+                event: 1,
                 owned: false,
+                contract: 1,
             }),
         );
         assert_eq!(flow(&choice).unwrap().ends, [3, 0, 0]);
@@ -273,8 +275,9 @@ mod tests {
             Box::new(Protocol::Message {
                 from: 0,
                 to: 1,
-                label: 2,
+                event: 2,
                 owned: false,
+                contract: 2,
             }),
         )));
         assert_eq!(flow(&source).unwrap().ends, [1, 0, 0]);
@@ -343,7 +346,7 @@ mod tests {
                         let all = source.executions().all(|execution| {
                             let mut owner = initial;
                             for (label,_) in execution.trace().messages {
-                                match messages.iter().find(|m| matches!(m, Protocol::Message { label: value,.. } if *value == label)).unwrap() {
+                                match messages.iter().find(|m| matches!(m, Protocol::Message { event: value,.. } if *value == label)).unwrap() {
                                     Protocol::Message { from,to,owned:true,.. } => {
                                         if *from != owner { return false; }
                                         owner = *to;

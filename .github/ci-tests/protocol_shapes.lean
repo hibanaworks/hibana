@@ -6,6 +6,7 @@ structure ShapeNode where
   right : Nat := 0
   sender : Nat := 0
   receiver : Nat := 0
+  event : Nat
   label : Nat := 0
   owned : Bool := false
   resolver : Nat := 0
@@ -21,7 +22,7 @@ structure ShapeInput where
 structure ShapeAttempt where
   choice : List Nat
   «prefix» : List Nat
-  label : Nat
+  event : Nat
   receive : Bool
   accepted : Bool
   deriving Lean.FromJson
@@ -33,8 +34,11 @@ structure ShapeOutput where
 
 def parseShape (input : ShapeInput) : Except String Source := do
   let mut sources : Array Source := #[]
+  let mut event := 0
   for node in input.nodes do
     let source ← if node.kind == 0 then
+      unless node.event == event do throw "source events must be distinct consecutive positions"
+      event := event + 1
       pure (.send ⟨⟨0, node.sender⟩, ⟨0, node.receiver⟩, node.label,
         if node.owned then .endpoint ⟨0, 3⟩ else .wire 0⟩)
     else do
@@ -158,10 +162,47 @@ theorem ShapePlan.ready_matches_source (prepared : ShapePlan source)
 #print axioms shapeRowsReady_matches_source_readiness
 #print axioms ShapePlan.ready_matches_source
 
+def shapeMessage? (source : Source) (event : Nat) : Option Message :=
+  ((source.messageEntries 0).find? (fun entry => entry.1 == event)).map Prod.snd
+
+-- A public call selects a logical role, direction and message contract.
+-- Its alias in a generated script does not select a source occurrence.
+def shapeMatchesRequest (expected actual : Message) (receive : Bool) : Bool :=
+  decide (expected.label = actual.label ∧ expected.payload = actual.payload ∧
+    (if receive then expected.receiver = actual.receiver else expected.sender = actual.sender))
+
+theorem shapeRequest_matches_its_exact_public_contract
+    (expected actual : Message) (receive : Bool) :
+    shapeMatchesRequest expected actual receive = true ↔
+      expected.label = actual.label ∧ expected.payload = actual.payload ∧
+        (if receive then expected.receiver = actual.receiver else expected.sender = actual.sender) := by
+  simp [shapeMatchesRequest]
+
+theorem a_send_alias_does_not_select_the_remote_peer
+    (message : Message) (peer : EndpointKey) :
+    shapeMatchesRequest message { message with receiver := peer } false = true := by
+  simp [shapeMatchesRequest]
+
+theorem a_receive_alias_does_not_select_the_remote_peer
+    (message : Message) (peer : EndpointKey) :
+    shapeMatchesRequest message { message with sender := peer } true = true := by
+  simp [shapeMatchesRequest]
+
+theorem equal_labels_do_not_erase_the_sending_role
+    (expected actual : Message) (different : expected.sender ≠ actual.sender) :
+    shapeMatchesRequest expected actual false = false := by
+  simp [shapeMatchesRequest, different]
+
+#print axioms shapeRequest_matches_its_exact_public_contract
+#print axioms a_send_alias_does_not_select_the_remote_peer
+#print axioms a_receive_alias_does_not_select_the_remote_peer
+#print axioms equal_labels_do_not_erase_the_sending_role
+
 def shapeAdvance (prepared : ShapePlan source) (points : List SourcePoint)
-    (label : Nat) (receive : Bool) : List (List SourcePoint) :=
-  prepared.plan.path.bindings.filterMap fun (event, binding) => do
-    if binding.message.label != label then none else do
+    (request : Nat) (receive : Bool) : List (List SourcePoint) := Id.run do
+  let some expected := shapeMessage? source request | return []
+  return prepared.plan.path.bindings.filterMap fun (event, binding) => do
+    if !shapeMatchesRequest expected binding.message receive then none else do
       let isLocal := binding.message.sender == binding.message.receiver
       if isLocal && receive then none else do
         let point := if isLocal then .committed ⟨event, .local⟩
@@ -189,14 +230,17 @@ def shapeRepetitions : Source → Nat
       shapeRepetitions left + shapeRepetitions right
   | .roll body => 1 + shapeRepetitions body
 
-def shapeFiniteWords : Source → List (List Nat)
-  | .send message => [if message.sender == message.receiver then [2 * message.label]
-      else [2 * message.label, 2 * message.label + 1]]
-  | .seq left right => (shapeFiniteWords left).flatMap fun first =>
-      (shapeFiniteWords right).map (first ++ ·)
-  | .par left right => (shapeFiniteWords left).flatMap fun first =>
-      (shapeFiniteWords right).flatMap fun second => [first ++ second, second ++ first]
-  | .route _ left right => shapeFiniteWords left ++ shapeFiniteWords right
+def shapeFiniteWords (source : Source) (start : Nat := 0) : List (List Nat) :=
+  match source with
+  | .send message => [if message.sender == message.receiver then [2 * start]
+      else [2 * start, 2 * start + 1]]
+  | .seq left right => (shapeFiniteWords left start).flatMap fun first =>
+      (shapeFiniteWords right (start + left.eventCount)).map (first ++ ·)
+  | .par left right => (shapeFiniteWords left start).flatMap fun first =>
+      (shapeFiniteWords right (start + left.eventCount)).flatMap fun second =>
+        [first ++ second, second ++ first]
+  | .route _ left right => shapeFiniteWords left start ++
+      shapeFiniteWords right (start + left.eventCount)
   | .roll _ => []
 
 def shapePlans : (source : Source) → List (SourceOccurrenceCut source)
@@ -231,11 +275,11 @@ def shapeShortPrefixes (source : Source) (plans : List (ShapePlan source))
       let mut next := []
       for word in level do
         let states := shapeStates source plans word
-        for (_, message) in source.messageEntries 0 do
+        for (event, _) in source.messageEntries 0 do
           for receive in [false, true] do
             if choices.any fun choice =>
-                shapePermits states choice message.label receive then
-              next := (word ++ [2 * message.label + if receive then 1 else 0]) :: next
+                shapePermits states choice event receive then
+              next := (word ++ [2 * event + if receive then 1 else 0]) :: next
       level := next.eraseDups
       found := found ++ level
     return found
@@ -245,8 +289,24 @@ def shapeProbeKeys (source : Source)
     (prefixes : List (List Nat)) (choices : List (List Nat)) : List (List Nat × List Nat × Nat × Bool) :=
   choices.flatMap fun choice =>
     prefixes.flatMap fun word =>
-      (source.messageEntries 0).flatMap fun (_, message) =>
-        [(choice, word, message.label, false), (choice, word, message.label, true)]
+      (source.messageEntries 0).flatMap fun (event, _) =>
+        [(choice, word, event, false), (choice, word, event, true)]
+
+private def sameContractSequence : Source := .seq
+  (.send ⟨⟨0, 0⟩, ⟨0, 1⟩, 7, .wire 0⟩)
+  (.send ⟨⟨0, 0⟩, ⟨0, 2⟩, 7, .wire 0⟩)
+
+theorem an_alias_for_a_later_send_can_issue_the_first_source_operation :
+    shapePermits (shapeStates sameContractSequence
+      ((shapePlans sameContractSequence).map ShapePlan.of) []) [] 1 false = true := by decide
+
+theorem repeated_aliases_consume_both_occurrences_and_cannot_replay_them :
+    let states := shapeStates sameContractSequence
+      ((shapePlans sameContractSequence).map ShapePlan.of) [2, 2]
+    !states.isEmpty ∧ shapePermits states [] 0 false = false := by decide
+
+#print axioms an_alias_for_a_later_send_can_issue_the_first_source_operation
+#print axioms repeated_aliases_consume_both_occurrences_and_cannot_replay_them
 
 def shapeKeyLess (a b : List Nat × List Nat × Nat × Bool) : Bool :=
   decide (a.1 < b.1) || (a.1 == b.1 && (decide (a.2.1 < b.2.1) ||
@@ -338,26 +398,26 @@ def shapeActiveChoices (source : Source) (path : List Selection) (start : Nat) :
 
 -- Validate the immutable script against the source. Its rank checks that
 -- every combination of choices, visit boundaries and parallel orders occurs.
-def shapeScriptKey (source : Source) (script : Lean.Json) (start next : Nat) :
+def shapeScriptKey (source : Source) (script : Lean.Json) (start origin next : Nat) :
     Except String (List String × Nat × Nat) := do
   let .arr fields := script | throw "script node is not an array"
   unless !fields.isEmpty do throw "empty script node"
   let kind : Nat ← Lean.fromJson? fields[0]!
   match source with
-  | .send message =>
+  | .send _ =>
     unless kind == 0 && fields.size == 3 do throw "invalid message script"
     let label : Nat ← Lean.fromJson? fields[1]!
     let occurrence : Nat ← Lean.fromJson? fields[2]!
-    unless label == message.label && occurrence == next do throw "wrong script message or occurrence"
+    unless label == origin && occurrence == next do throw "wrong script message or occurrence"
     pure ([], 0, next + 1)
   | .seq left right | .par left right =>
     let parallel := match source with | .par _ _ => true | _ => false
     unless kind == (if parallel then 2 else 1) && fields.size == (if parallel then 4 else 3) do
       throw "invalid sequential or parallel script"
     let reverse : Bool ← if parallel then Lean.fromJson? fields[3]! else pure false
-    let (first, firstRank, next) ← shapeScriptKey left fields[1]! start next
+    let (first, firstRank, next) ← shapeScriptKey left fields[1]! start origin next
     let (second, secondRank, next) ← shapeScriptKey right fields[2]!
-      (start + (shapeTwoCopies left).eventCount) next
+      (start + (shapeTwoCopies left).eventCount) (origin + left.eventCount) next
     let rank := firstRank * shapeScriptCount right + secondRank
     pure (first ++ second, if parallel then 2 * rank + (if reverse then 1 else 0) else rank, next)
   | .route _ left right =>
@@ -366,15 +426,15 @@ def shapeScriptKey (source : Source) (script : Lean.Json) (start next : Nat) :
     let split := start + (shapeTwoCopies left).eventCount
     let scope : Scope := ⟨start, split, split + (shapeTwoCopies right).eventCount⟩
     let (choices, rank, next) ← if chooseRight then
-      shapeScriptKey right fields[1]! split next
-    else shapeScriptKey left fields[1]! start next
+      shapeScriptKey right fields[1]! split (origin + left.eventCount) next
+    else shapeScriptKey left fields[1]! start origin next
     pure (shapeChoiceKey scope chooseRight :: choices,
       if chooseRight then shapeScriptCount left + rank else rank, next)
   | .roll body =>
     unless kind == 4 && fields.size == 3 do throw "invalid repeated script"
-    let (first, firstRank, next) ← shapeScriptKey body fields[1]! start next
+    let (first, firstRank, next) ← shapeScriptKey body fields[1]! start origin next
     let (second, secondRank, next) ← shapeScriptKey body fields[2]!
-      (start + (shapeTwoCopies body).eventCount) next
+      (start + (shapeTwoCopies body).eventCount) origin next
     pure (first ++ second, firstRank * shapeScriptCount body + secondRank, next)
 
 structure ShapeScriptHeader where
@@ -439,36 +499,37 @@ structure ShapeCompletedScript where
 -- Source witnesses for injected early sends. Crossing a choice on the receive
 -- side, or crossing a roll boundary on either side, would make this inference
 -- invalid: the receive could be absent or belong to another visit.
-def shapeRequiredMessages : Source → List Message
-  | .send message => [message]
-  | .seq a b | .par a b => shapeRequiredMessages a ++ shapeRequiredMessages b
+def shapeRequiredMessages (source : Source) (start : Nat) : List (Nat × Message) :=
+  match source with
+  | .send message => [(start, message)]
+  | .seq a b | .par a b => shapeRequiredMessages a start ++
+      shapeRequiredMessages b (start + a.eventCount)
   | .route _ _ _ | .roll _ => []
 
-def shapeMessagesWithoutRoll : Source → List Message
-  | .send message => [message]
+def shapeMessagesWithoutRoll (source : Source) (start : Nat) : List (Nat × Message) :=
+  match source with
+  | .send message => [(start, message)]
   | .seq a b | .par a b | .route _ a b =>
-    shapeMessagesWithoutRoll a ++ shapeMessagesWithoutRoll b
+      shapeMessagesWithoutRoll a start ++ shapeMessagesWithoutRoll b (start + a.eventCount)
   | .roll _ => []
 
-def shapeAllMessages : Source → List Message
-  | .send message => [message]
-  | .seq a b | .par a b | .route _ a b => shapeAllMessages a ++ shapeAllMessages b
-  | .roll body => shapeAllMessages body
-
-def shapeCausalPairs : Source → List (Message × Message)
+def shapeCausalPairs (source : Source) (start : Nat) : List ((Nat × Message) × (Nat × Message)) :=
+  match source with
   | .send _ => []
   | .seq a b =>
-    ((shapeRequiredMessages a).flatMap fun before =>
-      (shapeMessagesWithoutRoll b).map (before, ·)) ++ shapeCausalPairs a ++ shapeCausalPairs b
-  | .par a b | .route _ a b => shapeCausalPairs a ++ shapeCausalPairs b
-  | .roll body => shapeCausalPairs body
+    ((shapeRequiredMessages a start).flatMap fun before =>
+      (shapeMessagesWithoutRoll b (start + a.eventCount)).map (before, ·)) ++
+        shapeCausalPairs a start ++ shapeCausalPairs b (start + a.eventCount)
+  | .par a b | .route _ a b => shapeCausalPairs a start ++
+      shapeCausalPairs b (start + a.eventCount)
+  | .roll body => shapeCausalPairs body start
 
 def shapeCausalWitness (source : Source) (before target role : Nat) : Bool :=
-  (shapeAllMessages source).countP (·.label == before) == 1 &&
-  (shapeAllMessages source).countP (·.label == target) == 1 &&
-  (shapeCausalPairs source).any fun (a, b) =>
-    a.label == before && b.label == target && a.sender != a.receiver &&
+  (shapeCausalPairs source 0).any fun ((first, a), (second, b)) =>
+    first == before && second == target && a.sender != a.receiver &&
     a.receiver == b.sender && a.receiver.role == role &&
+    (source.messageEntries 0).all (fun (event, other) =>
+      event == target || !shapeMatchesRequest b other false) &&
     (match a.payload, b.payload with | .wire _, .wire _ => true | _, _ => false)
 
 def shapeCheckLocalWitnesses (source : Source) (probes : Array Lean.Json) : Except String Unit := do
@@ -494,8 +555,9 @@ def shapeCompletedAdvance (prepared : ShapePlan source) (points : List SourcePoi
     (actor role label : Nat) (receive : Bool) : List (List SourcePoint) :=
   -- A RouteBranch consumes a previewed self-role step with recv; both public
   -- local-operation forms denote the same local source point.
-  let localStep := prepared.plan.path.bindings.any fun (_, binding) =>
-    binding.message.label == label && binding.message.sender == binding.message.receiver
+  let localStep := match shapeMessage? source label with
+    | some message => message.sender == message.receiver
+    | none => false
   (shapeAdvance prepared points label (receive && !localStep)).filter fun next =>
     match next.getLast? with
     | some (.committed action) =>
@@ -528,7 +590,7 @@ def shapeCheckCompleted (source : Source) (name : Nat) (parallelCoverage : Bool)
   let mut calls := 0
   for index in [:count] do
     let script : Lean.Json ← shapeReadLine scripts
-    let (choices, rank, messages) ← match shapeScriptKey source script 0 0 with
+    let (choices, rank, messages) ← match shapeScriptKey source script 0 0 0 with
       | .ok value => pure value
       | .error error => throw (IO.userError s!"shape {name} script {index}: {error}")
     unless (parallelCoverage || rank == index) &&
@@ -625,7 +687,7 @@ def main (args : List String) : IO UInt32 := do
     unless prefixes.all (fun word => !(shapeStates source plans word).isEmpty) do
       throw (IO.userError s!"shape {input.name}: source prefix has no accepted occurrence execution")
     let output : ShapeOutput ← shapeRead (System.FilePath.mk outputPath / s!"{input.name}.json")
-    let actualKeys := output.attempts.toList.map fun a => (a.choice, a.prefix, a.label, a.receive)
+    let actualKeys := output.attempts.toList.map fun a => (a.choice, a.prefix, a.event, a.receive)
     unless input.name == output.name &&
         actualKeys.mergeSort shapeKeyLess == (shapeProbeKeys source prefixes choices).mergeSort shapeKeyLess do
       throw (IO.userError s!"shape {input.name}: incomplete probe inventory")
@@ -636,8 +698,8 @@ def main (args : List String) : IO UInt32 := do
       let permits : ShapeAttempt → Bool := if weakenRoot then
         let altered := match source with | .seq a b => .par a b | _ => source
         let alternate := shapeStates altered ((shapePlans altered).map ShapePlan.of) word
-        fun attempt => shapePermits alternate attempt.choice attempt.label attempt.receive
-      else fun attempt => shapePermits states attempt.choice attempt.label attempt.receive
+        fun attempt => shapePermits alternate attempt.choice attempt.event attempt.receive
+      else fun attempt => shapePermits states attempt.choice attempt.event attempt.receive
       for attempt in attempts do
         unless attempt.prefix == word do throw (IO.userError "inconsistent prefix group")
         let permitted := permits attempt
@@ -645,7 +707,7 @@ def main (args : List String) : IO UInt32 := do
         if !attempt.prefix.isEmpty then continuations := continuations + 1
         if permitted != attempt.accepted then
           if runtimeOnly + modelOnly < 10 then
-            IO.println s!"shape {input.name} choice={attempt.choice} prefix={attempt.prefix} label={attempt.label} receive={attempt.receive}: model={permitted} runtime={attempt.accepted}"
+            IO.println s!"shape {input.name} choice={attempt.choice} prefix={attempt.prefix} event={attempt.event} receive={attempt.receive}: model={permitted} runtime={attempt.accepted}"
           if attempt.accepted then runtimeOnly := runtimeOnly + 1 else modelOnly := modelOnly + 1
     unless runtimeOnly == 0 && modelOnly == 0 do
       throw (IO.userError s!"generated Endpoint/source conformance failed: runtime-only={runtimeOnly} model-only={modelOnly}")
