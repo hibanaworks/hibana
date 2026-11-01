@@ -54,6 +54,7 @@ bash proofs/checks/runtime/nested-resolver-reentry/check.sh
 bash proofs/checks/runtime/parallel-view-choice/check.sh
 bash proofs/checks/runtime/ordinary-offer-ingress/check.sh
 bash proofs/checks/runtime/offer-prefix-dependency/check.sh
+bash proofs/checks/runtime/parked-offer/check.sh
 bash proofs/checks/runtime/tap-commit/check.sh
 ELAN_TOOLCHAIN=leanprover/lean4:v4.30.0 \
   bash .github/scripts/check_projection_algorithms.sh --lean lean

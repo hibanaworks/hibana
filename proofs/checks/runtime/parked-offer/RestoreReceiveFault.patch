@@ -1,0 +1,28 @@
+diff --git b/src/endpoint/kernel/recv.rs a/src/endpoint/kernel/recv.rs
+index d7c57fe..86dbe3a 100644
+--- b/src/endpoint/kernel/recv.rs
++++ a/src/endpoint/kernel/recv.rs
+@@ -118 +117,0 @@ where
+-        let mut parked_lane = false;
+@@ -122,14 +120,0 @@ where
+-            // A retained preview already owns this port's FIFO head and Rx
+-            // borrow. Its matching contract resumes through branch_recv.
+-            // Other contracts can still receive on independent lanes, but
+-            // must neither poll behind this frame nor consume it as another arm.
+-            if self
+-                .operation
+-                .public_route_branch
+-                .as_ref()
+-                .and_then(|branch| branch.offered_frame.as_ref())
+-                .is_some_and(|frame| frame.lane() == lane_wire)
+-            {
+-                parked_lane = true;
+-                continue;
+-            }
+@@ -204,5 +189 @@ where
+-        if parked_lane && !pending_lane {
+-            Poll::Ready(Err(RecvError::OutOfOrder))
+-        } else {
+-            Poll::Pending
+-        }
++        Poll::Pending

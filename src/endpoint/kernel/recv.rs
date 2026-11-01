@@ -115,9 +115,24 @@ where
         let lanes = self.live_recv_lanes(target_label, target_payload, &mut words)?;
         let mut next = lanes.first_set(lane_limit);
         let mut pending_lane = false;
+        let mut parked_lane = false;
         while let Some(lane_idx) = next {
             next = lanes.next_set_from(lane_idx + 1, lane_limit);
             let lane_wire = self.port_for_lane(lane_idx).lane().as_wire();
+            // A retained preview already owns this port's FIFO head and Rx
+            // borrow. Its matching contract resumes through branch_recv.
+            // Other contracts can still receive on independent lanes, but
+            // must neither poll behind this frame nor consume it as another arm.
+            if self
+                .operation
+                .public_route_branch
+                .as_ref()
+                .and_then(|branch| branch.offered_frame.as_ref())
+                .is_some_and(|frame| frame.lane() == lane_wire)
+            {
+                parked_lane = true;
+                continue;
+            }
             let frame = match self.poll_received_transport_frame_for_lane(
                 pending_recv,
                 lane_idx,
@@ -186,7 +201,11 @@ where
             frame.discard_uncommitted();
             return Poll::Ready(Err(RecvError::PhaseInvariant));
         }
-        Poll::Pending
+        if parked_lane && !pending_lane {
+            Poll::Ready(Err(RecvError::OutOfOrder))
+        } else {
+            Poll::Pending
+        }
     }
 
     fn build_recv_commit_plan(

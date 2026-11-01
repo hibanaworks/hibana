@@ -490,6 +490,59 @@ fn drop_public_preview_branch_preserves_offer_progression() {
 }
 
 #[test]
+fn a_parked_frame_rejects_the_other_arm_without_polling_its_port_again() {
+    with_route_workspace(|controller, worker, _transport| {
+        futures::executor::block_on(async {
+            controller.send::<Msg<71, u32>>(&4444).await.unwrap();
+            let branch = worker.offer().await.unwrap();
+            assert_eq!(branch.label(), 71);
+            drop(branch);
+
+            let result = worker.recv::<Msg<72, u32>>().now_or_never();
+            assert!(matches!(result, Some(Err(_))), "{result:?}");
+        });
+    });
+}
+
+#[test]
+fn a_parked_frame_keeps_an_independent_receive_live() {
+    type Left = Msg<234, u32>;
+    type Right = Msg<235, u32>;
+    type Independent = Msg<236, u32>;
+    let global = g::par(
+        g::route(g::send::<0, 1, Left>(), g::send::<0, 1, Right>()),
+        g::send::<0, 1, Independent>(),
+    );
+    let p0 = project::<0>(&global);
+    let p1 = project::<1>(&global);
+    for wait in [false, true] {
+        let network = TestTransport::new();
+        let [mut slab0, mut slab1] = [[0; 32 * 1024]; 2];
+        let mut s0 = SessionKitStorage::uninit();
+        let mut s1 = SessionKitStorage::uninit();
+        let rv0 = s0.init().rendezvous(&mut slab0, network.clone()).unwrap();
+        let rv1 = s1.init().rendezvous(&mut slab1, network.clone()).unwrap();
+        let sid = SessionId::new(9484);
+        let mut sender = rv0.enter(sid, &p0).unwrap();
+        let mut receiver = rv1.enter(sid, &p1).unwrap();
+        futures::executor::block_on(async {
+            sender.send::<Left>(&41).await.unwrap();
+            let branch = receiver.offer().await.unwrap();
+            assert_eq!(branch.label(), 234);
+            drop(branch);
+
+            if wait {
+                assert!(receiver.recv::<Independent>().now_or_never().is_none());
+            }
+            sender.send::<Independent>(&73).await.unwrap();
+            assert_eq!(receiver.recv::<Independent>().await.unwrap(), 73);
+            assert_eq!(receiver.recv::<Left>().await.unwrap(), 41);
+            assert!(network.queue_is_empty());
+        });
+    }
+}
+
+#[test]
 fn live_endpoint_branch_recv_survives_endpoint_lease_table_growth() {
     with_runtime_workspace(|slab| {
         let transport = TestTransport::new();
