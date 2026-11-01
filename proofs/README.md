@@ -552,10 +552,14 @@ history or distinguish nested roll visits.
 `check_parked_offer_sensitivity.sh` runs all three contract assignments on the
 current source, then restores the old preview-handling production paths in a
 separate checkout. The restored version must reach and fail the generated
-`shape_32` localside with a send `PhaseInvariant`; this occurs before admission
+`contract-collision=8/contracts=distinct` localside with a send `PhaseInvariant`; this occurs before admission
 probe comparison. It checks that generated inputs are unchanged and retains
 the patch and failure.
 Compiler failures do not count as detecting this defect.
+The receive-contract, resolver-occurrence and parked send/receive sensitivity
+checks resolve their expected case IDs from the positive run's
+`case-identities.tsv`. Adding contract assignments cannot silently stale a
+hard-coded number; a missing or duplicated named case fails the check.
 The same job runs `check_resolver_occurrence_sensitivity.sh`: the generated
 opposite-direction cases must pass on the current source and fail when only
 the resolver send-selection fix is reversed in a separate checkout. It retains

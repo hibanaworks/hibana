@@ -32,6 +32,11 @@ if [[ "$(git -C "${MUTANT}" diff --name-only)" != "${CHANGED}" ]]; then
 fi
 git -C "${MUTANT}" diff --binary > "${OUTPUT}/mutation.patch"
 for rank in 6 7; do
+  relative="target/protocol-shapes/contracts/range-${rank}-count-1"
+  expected_case="$(awk -F '\t' -v name="contract-collision=${rank}/contracts=reuse-first" '
+    $2 == name && $1 ~ /^[0-9]+$/ { value = $1; count++ }
+    END { if (count != 1) exit 1; print value }
+  ' "${ROOT_DIR}/${relative}/case-identities.tsv")"
   status=0
   (
     cd "${MUTANT}"
@@ -40,7 +45,7 @@ for rank in 6 7; do
   if [[ "${rank}" == 6 ]]; then
     # Short-prefix exploration extends successful runtime calls. Restoring the
     # defect rejects a required receive, so later required probes are missing.
-    expected='uncaught exception: shape 19: incomplete probe inventory'
+    expected="uncaught exception: shape ${expected_case}: incomplete probe inventory"
   else
     # Delegated source traces already supply these prefixes; the same defect
     # therefore produces an explicit model-only admission mismatch.
@@ -51,11 +56,10 @@ for rank in 6 7; do
     tail -50 "${OUTPUT}/mutant-${rank}.log" >&2
     exit 1
   fi
-  if [[ "${rank}" == 7 ]] && ! grep -Fq 'shape 22 choice=' "${OUTPUT}/mutant-${rank}.log"; then
+  if [[ "${rank}" == 7 ]] && ! grep -Fq "shape ${expected_case} choice=" "${OUTPUT}/mutant-${rank}.log"; then
     echo "The delegated receive mutation failed outside its required admission probe" >&2
     exit 1
   fi
-  relative="target/protocol-shapes/contracts/range-${rank}-count-1"
   # Generated manifests and #[path] imports refer to their own checkout.
   # Verify each raw manifest, then compare every input with only that root
   # replaced. Protocols, contracts, scripts and compiler options stay exact.
@@ -75,7 +79,7 @@ for rank in 6 7; do
   mkdir -p "${OUTPUT}/mutant-inputs/range-${rank}-count-1"
   rsync -a --exclude=target "${MUTANT}/${relative}/" \
     "${OUTPUT}/mutant-inputs/range-${rank}-count-1/"
-  printf 'rank=%s\tmutant_exit=%s\n' "${rank}" "${status}" >> "${OUTPUT}/result.txt"
+  printf 'rank=%s\tcase=%s\tmutant_exit=%s\n' "${rank}" "${expected_case}" "${status}" >> "${OUTPUT}/result.txt"
 done
 rm -r -- "${MUTANT}"
 echo "Receive contract sensitivity: current source passes; restored defect fails generated cases"

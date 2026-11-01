@@ -14,6 +14,11 @@ git rev-parse HEAD > "${OUTPUT}/revision.txt"
 rustc +"${TOOLCHAIN:-stable}" --version > "${OUTPUT}/compiler.txt"
 bash .github/scripts/check_protocol_shapes.sh --contracts 2 1 \
   > "${OUTPUT}/positive.log" 2>&1
+relative="target/protocol-shapes/contracts/range-2-count-1"
+expected_case="$(awk -F '\t' '
+  $2 == "contract-collision=2/contracts=reuse-last" && $1 ~ /^[0-9]+$/ { value = $1; count++ }
+  END { if (count != 1) exit 1; print value }
+' "${ROOT_DIR}/${relative}/case-identities.tsv")"
 git clone --quiet --shared --no-checkout "${ROOT_DIR}" "${MUTANT}"
 # Copy the actual current source, including new verification files. Build
 # directories are ignored, and the mutant receives its own Cargo target.
@@ -37,7 +42,7 @@ status=0
   bash .github/scripts/check_protocol_shapes.sh --contracts 2 1
 ) > "${OUTPUT}/mutant.log" 2>&1 || status=$?
 if [[ "${status}" == 0 ]] ||
-   ! grep -Fq 'Error: "generated test shape_10 failed:' "${OUTPUT}/mutant.log"; then
+   ! grep -Fq "Error: \"generated test shape_${expected_case} failed:" "${OUTPUT}/mutant.log"; then
   echo "Generated cases did not detect the restored send-selection defect" >&2
   tail -50 "${OUTPUT}/mutant.log" >&2
   exit 1
@@ -46,7 +51,7 @@ mkdir -p "${OUTPUT}/mutant-inputs"
 rsync -a --exclude=target \
   "${MUTANT}/target/protocol-shapes/contracts/range-2-count-1/" \
   "${OUTPUT}/mutant-inputs/"
-printf 'mutant_exit=%s\nexpected_failed_case=shape_10\n' "${status}" \
+printf 'mutant_exit=%s\nexpected_failed_case=shape_%s\n' "${status}" "${expected_case}" \
   > "${OUTPUT}/result.txt"
 rm -r -- "${MUTANT}"
-echo "Resolver occurrence sensitivity: current source passes; restored defect fails shape_10"
+echo "Resolver occurrence sensitivity: current source passes; restored defect fails shape_${expected_case}"

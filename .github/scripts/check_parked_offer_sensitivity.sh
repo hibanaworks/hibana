@@ -12,6 +12,11 @@ cd "${ROOT_DIR}"
 git rev-parse HEAD > "${OUTPUT}/revision.txt"
 rustc +"${TOOLCHAIN:-stable}" --version > "${OUTPUT}/compiler.txt"
 bash .github/scripts/check_protocol_shapes.sh --contracts 8 1 > "${OUTPUT}/positive.log" 2>&1
+relative="target/protocol-shapes/contracts/range-8-count-1"
+expected_case="$(awk -F '\t' '
+  $2 == "contract-collision=8/contracts=distinct" && $1 ~ /^[0-9]+$/ { value = $1; count++ }
+  END { if (count != 1) exit 1; print value }
+' "${ROOT_DIR}/${relative}/case-identities.tsv")"
 git clone --quiet --shared --no-checkout "${ROOT_DIR}" "${MUTANT}"
 # Retain the current source and give the mutant a separate Cargo target.
 git ls-files --cached --others --exclude-standard -z |
@@ -28,13 +33,12 @@ status=0
   bash .github/scripts/check_protocol_shapes.sh --contracts 8 1
 ) > "${OUTPUT}/mutant.log" 2>&1 || status=$?
 if [[ "${status}" == 0 ]] ||
-   ! grep -Fq 'Error: "generated test shape_32 failed: exit status: 101"' "${OUTPUT}/mutant.log" ||
+   ! grep -Fq "Error: \"generated test shape_${expected_case} failed: exit status: 101\"" "${OUTPUT}/mutant.log" ||
    ! grep -Fq 'EndpointError { operation: "send", kind: PhaseInvariant }' "${OUTPUT}/mutant.log"; then
   echo "Generated nested localside did not detect the restored offer defect" >&2
   tail -50 "${OUTPUT}/mutant.log" >&2
   exit 1
 fi
-relative="target/protocol-shapes/contracts/range-8-count-1"
 for checkout in "${ROOT_DIR}" "${MUTANT}"; do
   (cd "${checkout}/${relative}" && shasum -a 256 --check inputs.sha256) \
     > "${OUTPUT}/inputs-check-$(basename "${checkout}").log"
@@ -52,6 +56,6 @@ mkdir -p "${OUTPUT}/mutant-inputs"
 rsync -a --exclude=target \
   "${MUTANT}/target/protocol-shapes/contracts/range-8-count-1/" \
   "${OUTPUT}/mutant-inputs/"
-printf 'mutant_exit=%s\nexpected_failed_case=shape_32\nexpected_failure=completed_localside_send_phase_invariant\n' "${status}" > "${OUTPUT}/result.txt"
+printf 'mutant_exit=%s\nexpected_failed_case=shape_%s\nexpected_failure=completed_localside_send_phase_invariant\n' "${status}" "${expected_case}" > "${OUTPUT}/result.txt"
 rm -r -- "${MUTANT}"
 echo "Parked offer sensitivity: current source passes; restored production fails a generated localside"
