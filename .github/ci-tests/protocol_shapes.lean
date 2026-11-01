@@ -103,7 +103,7 @@ def shapeFreshChoices (plan : SourceOccurrenceCut source) (points : List SourceP
         if choice.contains id then .right else .left
 
 theorem shapeLookupMappedRows (keys : List SourcePoint)
-    (value : SourcePoint → List SourcePoint) (point : SourcePoint) :
+    (value : SourcePoint → α) (point : SourcePoint) :
     (keys.map fun key => (key, value key)).lookup point =
       if keys.contains point then some (value point) else none := by
   induction keys with
@@ -142,6 +142,16 @@ theorem shapeRowsReady_matches_source_readiness
     simp [shapeRowsReady, shapeDependencyRows, shapeLookupMappedRows, present,
       SourceOccurrenceCut.ready, occurrenceCut]
 
+def shapeResumptionRows (plan : SourceOccurrenceCut source) :
+    List (SourcePoint × ((SourcePoint → Bool) → Bool)) :=
+  (sourceVisitPoints plan.path.bindings).map fun point => (point, plan.prepareResumption point)
+
+def shapeResumptionsReady (rows : List (SourcePoint × ((SourcePoint → Bool) → Bool)))
+    (points : List SourcePoint) (point : SourcePoint) : Bool :=
+  match rows.lookup point with
+  | none => false
+  | some check => check points.contains
+
 def shapeOriginalActorsMatch (plan : SourceOccurrenceCut source) : Bool :=
   plan.path.bindings.all fun (event, binding) =>
     match (plan.unfolding.occurrences 0)[event]? with
@@ -154,21 +164,29 @@ structure ShapePlan (source : Source) where
   plan : SourceOccurrenceCut source
   dependencies : List (SourcePoint × List SourcePoint)
   dependencies_eq : dependencies = shapeDependencyRows plan
+  resumptions : List (SourcePoint × ((SourcePoint → Bool) → Bool))
+  resumptions_eq : resumptions = shapeResumptionRows plan
 
 def ShapePlan.of (plan : SourceOccurrenceCut source) : ShapePlan source :=
-  ⟨plan, shapeDependencyRows plan, rfl⟩
+  ⟨plan, shapeDependencyRows plan, rfl, shapeResumptionRows plan, rfl⟩
 
 def ShapePlan.ready (prepared : ShapePlan source) (points : List SourcePoint)
     (point : SourcePoint) : Bool :=
   shapeRowsReady prepared.dependencies points point &&
-    (occurrenceCut prepared.plan points).resumptionReady point
+    shapeResumptionsReady prepared.resumptions points point
 
 theorem ShapePlan.ready_matches_source (prepared : ShapePlan source)
     (points : List SourcePoint) (point : SourcePoint) :
     prepared.ready points point = ((occurrenceCut prepared.plan points).ready point &&
       (occurrenceCut prepared.plan points).resumptionReady point) := by
   unfold ShapePlan.ready
-  rw [prepared.dependencies_eq, shapeRowsReady_matches_source_readiness]
+  rw [prepared.dependencies_eq, prepared.resumptions_eq]
+  by_cases present : point ∈ sourceVisitPoints prepared.plan.path.bindings
+  · rw [shapeRowsReady_matches_source_readiness]
+    simp [shapeResumptionsReady, shapeResumptionRows, shapeLookupMappedRows, present,
+      prepared_resumption_matches_source, occurrenceCut]
+  · simp [shapeRowsReady, shapeDependencyRows, shapeLookupMappedRows, present,
+      SourceOccurrenceCut.ready, occurrenceCut]
 
 #print axioms shapeLookupMappedRows
 #print axioms shapeRowsReady_matches_source_readiness

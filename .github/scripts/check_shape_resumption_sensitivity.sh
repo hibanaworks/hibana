@@ -18,7 +18,7 @@ for defect in resumption context actor; do
   cp "${OUTPUT}/current.lean" "${OUTPUT}/${defect}.lean"
   if [[ "${defect}" == resumption ]]; then
     perl -0pi -e '
-      s/shapeRowsReady prepared\.dependencies points point &&\n    \(occurrenceCut prepared\.plan points\)\.resumptionReady point/shapeRowsReady prepared.dependencies points point/ == 1 or die "missing resumption query\n";
+      s/shapeRowsReady prepared\.dependencies points point &&\n    shapeResumptionsReady prepared\.resumptions points point/shapeRowsReady prepared.dependencies points point/ == 1 or die "missing resumption query\n";
       s/prepared\.ready points point = \(\(occurrenceCut prepared\.plan points\)\.ready point &&\n      \(occurrenceCut prepared\.plan points\)\.resumptionReady point\)/prepared.ready points point = (occurrenceCut prepared.plan points).ready point/ == 1 or die "missing query specification\n";
     ' "${OUTPUT}/${defect}.lean"
     expected='shapeStates resumedOutgoingTail'

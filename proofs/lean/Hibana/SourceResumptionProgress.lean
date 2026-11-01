@@ -76,6 +76,48 @@ def SourceOccurrenceCut.resumptionReady (plan : SourceOccurrenceCut source)
   (sourceVisitPoints plan.path.bindings).all fun before =>
     !plan.resumptionDepends plan.observed before point || plan.observed before
 
+/-- Prepare immutable resumption tests once for one source point. The returned
+predicate reads the current observation word; source domains, actors and scope
+membership are computed before it is called. This does not change the source
+rule or introduce a second execution state. -/
+def SourceOccurrenceCut.prepareResumption (plan : SourceOccurrenceCut source)
+    (point : SourcePoint) : (SourcePoint → Bool) → Bool :=
+  let checks := (sourceVisitPoints plan.path.bindings).map fun prior =>
+    match prior, point with
+    | .committed before, .accepted after =>
+        match occurrenceActor? plan (.accepted after) with
+        | none => fun _ => true
+        | some actor =>
+            let sameActor := occurrenceActor? plan (.committed before) == some actor
+            let scopes := (plan.unfolding.resumptions 0).map fun scope =>
+              let applies := scope.inBody before.event && scope.inTail after
+              let body := (occurrenceLocalDomain plan actor).map fun member =>
+                (member, scope.inBody (pointEvent member))
+              fun observed => applies && body.any fun (member, inside) => inside && observed member
+            fun observed =>
+              !(sameActor && scopes.any (fun check => check observed)) || observed (.committed before)
+    | _, _ => fun _ => true
+  fun observed => checks.all (fun check => check observed)
+
+theorem prepared_resumption_matches_source
+    (plan : SourceOccurrenceCut source) (point : SourcePoint) (observed : SourcePoint → Bool) :
+    plan.prepareResumption point observed =
+      ({ plan with observed := observed } : SourceOccurrenceCut source).resumptionReady point := by
+  unfold SourceOccurrenceCut.prepareResumption SourceOccurrenceCut.resumptionReady
+  simp only [List.all_map]
+  apply congrArg (fun predicate => (sourceVisitPoints plan.path.bindings).all predicate)
+  funext prior
+  cases point with
+  | committed after =>
+      cases prior <;> simp [SourceOccurrenceCut.resumptionDepends]
+  | accepted after =>
+      cases prior with
+      | accepted before => simp [SourceOccurrenceCut.resumptionDepends]
+      | committed before =>
+          cases actorAt : occurrenceActor? plan (.accepted after) with
+          | none => simp [SourceOccurrenceCut.resumptionDepends, actorAt]
+          | some actor => simp [SourceOccurrenceCut.resumptionDepends, actorAt, List.any_map]
+
 /-- Every added prerequisite is a forward dependency in this same expansion.
 It cannot turn an earlier body or an independent par sibling into a waiter
 for the later continuation. -/
