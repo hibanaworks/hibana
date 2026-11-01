@@ -2,7 +2,7 @@ error[E0080]: evaluation panicked: Route unprojectable for this role: invalid, a
  --> src/g.rs
   |
   |             diagnostic_message::panic_diagnostic(diagnostic);
-  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `hibana::g::ProgramProjection::<hibana::g::Route<hibana::g::Seq<hibana::g::Send<0, 3, hibana::g::Msg<118, ()>>, hibana::g::Send<1, 2, hibana::g::Msg<42, ()>>>, hibana::g::Seq<hibana::g::Send<0, 3, hibana::g::Msg<119, ()>>, hibana::g::Seq<hibana::g::Send<1, 2, hibana::g::Msg<42, ()>>, hibana::g::Send<1, 2, hibana::g::Msg<77, ()>>>>>, 32>::VALIDATION` failed inside this call
+  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `hibana::g::ProgramProjection::<hibana::g::Route<hibana::g::Seq<hibana::g::Send<0, 3, hibana::g::Msg<118, ()>>, hibana::g::Send<1, 2, hibana::g::Msg<42, ()>>>, hibana::g::Seq<hibana::g::Send<0, 3, hibana::g::Msg<119, ()>>, hibana::g::Seq<hibana::g::Send<1, 2, hibana::g::Msg<42, ()>>, hibana::g::Send<1, 2, hibana::g::Msg<77, ()>>>>>, 16>::VALIDATION` failed inside this call
   |
 note: inside `g::diagnostic_message::panic_diagnostic`
  --> $RUST/core/src/panic.rs
