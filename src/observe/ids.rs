@@ -117,7 +117,7 @@ pub const ROUTE_ARM_SELECTION: u16 = 0x0221;
 
 /// Compiled local operation returned by [`projected`](super::projected::projected).
 ///
-/// All three `PROJECTED_*` events have this layout:
+/// The three local-row events have this layout:
 ///
 /// - `ts`: Zero-based local row ordinal.
 /// - `causal_key`: Initial physical actor in the high byte, requested program
@@ -136,6 +136,56 @@ pub const PROJECTED_SEND: u16 = 0x0301;
 
 /// Compiled receive operation, with the layout documented by [`PROJECTED_LOCAL`].
 pub const PROJECTED_RECV: u16 = 0x0302;
+
+/// First record of a compiled protocol snapshot from [`projected`](super::projected::projected).
+///
+/// `ts` is format version 1, with bit 16 set when actor bindings are present.
+/// `causal_key` is `initial_actor<<8 | requested_role`. `arg0` contains global
+/// event count in the high 16 bits and scope marker count in the low 16 bits;
+/// `arg1` contains actor decision count and initial actor count in that order.
+pub const PROJECTED_PROGRAM: u16 = 0x0310;
+
+/// Second snapshot header. `ts` is local row count, `arg0` is choice row count
+/// and `arg1` is the largest logical role. The key matches [`PROJECTED_PROGRAM`].
+pub const PROJECTED_ROLE: u16 = 0x0311;
+
+/// One global source operation, including operations outside this actor.
+///
+/// `ts` is its full source-event ordinal. `causal_key` contains origin (user 0,
+/// session 1) in the low byte and payload kind (wire 0, Endpoint 1) in the high
+/// byte. `arg0` is `source<<24 | target<<16 | lane<<8 | message_label`.
+/// `arg1` is the wire schema identifier or delegated logical role.
+pub const PROJECTED_SOURCE: u16 = 0x0312;
+
+/// One source scope marker, in the original marker order.
+///
+/// `ts` is marker ordinal, `causal_key` is the scope identifier shared with
+/// route observations, `arg0` is the event boundary, and `arg1` is
+/// `reentrant<<2 | boundary` (enter 0, parallel split 1, exit 2). A scope ID is
+/// `kind<<13 | ordinal`, with kind route 0, roll 1 or parallel 2. Marker order
+/// preserves nesting even when several scopes have identical event bounds.
+pub const PROJECTED_SCOPE: u16 = 0x0313;
+
+/// One compiled choice authority. `ts` is row ordinal, `causal_key` is its
+/// scope, `arg0` is the controlling logical role, and `arg1` is zero for an
+/// intrinsic choice or `resolver_id + 1` for a registered resolver.
+pub const PROJECTED_CHOICE: u16 = 0x0314;
+
+/// Immutable actor references for one source event. `ts` is source-event
+/// ordinal and `arg0`/`arg1` are sender/receiver references. Values below 256
+/// name an actor; larger values name a [`PROJECTED_ACTOR_DECISION`] record.
+/// The key matches [`PROJECTED_PROGRAM`].
+pub const PROJECTED_BINDING: u16 = 0x0315;
+
+/// One conditional actor reference. `ts` is its reference (256 plus row
+/// ordinal), `causal_key` is its choice scope and `arg0`/`arg1` are the left
+/// and right actor references. Both references precede this decision.
+pub const PROJECTED_ACTOR_DECISION: u16 = 0x0316;
+
+/// One initial delegated-role binding. `ts` is row ordinal, `arg0` is the
+/// logical role and `arg1` is its initial actor. Other roles initially name
+/// themselves. The key matches [`PROJECTED_PROGRAM`].
+pub const PROJECTED_INITIAL_ACTOR: u16 = 0x0317;
 
 /// Dynamic resolver decision evidence.
 ///

@@ -8,6 +8,176 @@ use futures::executor::block_on;
 use std::vec::Vec;
 
 #[test]
+fn compiled_structure_distinguishes_a_single_step_from_roll_and_sequence_from_choice() {
+    type First = g::Msg<20, ()>;
+    type Second = g::Msg<21, ()>;
+    let first = g::send::<0, 0, First>();
+    let second = g::send::<0, 0, Second>();
+    let finite: Vec<_> = projected(&project::<0>(&first)).collect();
+    let repeated: Vec<_> = projected(&project::<0>(&first.roll())).collect();
+    assert_eq!(finite.len(), 4);
+    assert_eq!(repeated.len(), 6);
+    assert_eq!(finite[0].id(), ids::PROJECTED_PROGRAM);
+    assert_eq!(finite[0].ts(), 1);
+    assert_eq!(finite[0].arg0(), 1 << 16);
+    assert_eq!(repeated[0].arg0(), 1 << 16 | 2);
+    let finite_row: [u8; 16] = (*finite.last().unwrap()).into();
+    let repeated_row: [u8; 16] = (*repeated.last().unwrap()).into();
+    assert_eq!(finite_row, repeated_row);
+    let boundaries: Vec<_> = repeated
+        .iter()
+        .filter(|row| row.id() == ids::PROJECTED_SCOPE)
+        .map(|row| (row.causal_key() >> 13, row.arg0(), row.arg1() & 3))
+        .collect();
+    assert_eq!(boundaries, [(1, 0, 0), (1, 1, 2)]);
+
+    let sequential: Vec<_> = projected(&project::<0>(&g::seq(first, second))).collect();
+    let alternative: Vec<_> = projected(&project::<0>(&g::route(first, second))).collect();
+    let sequential_rows: Vec<[u8; 16]> = sequential
+        .iter()
+        .filter(|row| row.id() == ids::PROJECTED_LOCAL)
+        .copied()
+        .map(Into::into)
+        .collect();
+    let alternative_rows: Vec<[u8; 16]> = alternative
+        .iter()
+        .filter(|row| row.id() == ids::PROJECTED_LOCAL)
+        .copied()
+        .map(Into::into)
+        .collect();
+    assert_eq!(sequential_rows, alternative_rows);
+    assert!(
+        !sequential
+            .iter()
+            .any(|row| row.id() == ids::PROJECTED_SCOPE)
+    );
+    let boundaries: Vec<_> = alternative
+        .iter()
+        .filter(|row| row.id() == ids::PROJECTED_SCOPE)
+        .map(|row| (row.arg0(), row.arg1() & 3))
+        .collect();
+    assert_eq!(boundaries, [(0, 0), (1, 2), (1, 0), (2, 2)]);
+    let choice = alternative
+        .iter()
+        .find(|row| row.id() == ids::PROJECTED_CHOICE)
+        .unwrap();
+    assert_eq!(choice.arg0(), 0);
+    assert_eq!(choice.arg1(), 0);
+}
+
+#[test]
+fn scope_markers_preserve_equal_bounds_and_mixed_nested_control_structure() {
+    let step = g::send::<0, 0, g::Msg<1, ()>>();
+    let nested: Vec<_> = projected(&project::<0>(&step.roll().roll()))
+        .filter(|row| row.id() == ids::PROJECTED_SCOPE)
+        .collect();
+    assert_eq!(nested.len(), 4);
+    assert_eq!(
+        nested.iter().map(|row| row.ts()).collect::<Vec<_>>(),
+        [0, 1, 2, 3]
+    );
+    assert_eq!(
+        nested
+            .iter()
+            .map(|row| (row.arg0(), row.arg1() & 3))
+            .collect::<Vec<_>>(),
+        [(0, 0), (0, 0), (1, 2), (1, 2)]
+    );
+    assert_eq!(nested[0].causal_key(), nested[3].causal_key());
+    assert_eq!(nested[1].causal_key(), nested[2].causal_key());
+    assert_ne!(nested[0].causal_key(), nested[1].causal_key());
+
+    let mixed = g::par(
+        g::seq(
+            g::send::<0, 1, g::Msg<1, ()>>(),
+            g::send::<1, 0, g::Msg<2, ()>>(),
+        ),
+        g::route(
+            g::send::<2, 3, g::Msg<3, ()>>(),
+            g::send::<2, 3, g::Msg<4, ()>>(),
+        )
+        .resolve::<17>(),
+    )
+    .roll();
+    let snapshot: Vec<_> = projected(&project::<0>(&mixed)).collect();
+    assert_eq!(snapshot[0].arg0(), 4 << 16 | 9);
+    let markers: Vec<_> = snapshot
+        .iter()
+        .filter(|row| row.id() == ids::PROJECTED_SCOPE)
+        .collect();
+    assert_eq!(markers.len(), 9);
+    for kind in 0..3 {
+        assert!(markers.iter().any(|row| row.causal_key() >> 13 == kind));
+    }
+    let choice = snapshot
+        .iter()
+        .find(|row| row.id() == ids::PROJECTED_CHOICE)
+        .unwrap();
+    assert_eq!(choice.arg0(), 2);
+    assert_eq!(choice.arg1(), 18);
+    let all_events: Vec<_> = snapshot
+        .iter()
+        .filter(|row| row.id() == ids::PROJECTED_SOURCE)
+        .collect();
+    assert_eq!(all_events.len(), 4);
+    assert_eq!(all_events[3].ts(), 3);
+    assert_eq!(all_events[3].arg0() >> 16, 2 << 8 | 3);
+    assert!(
+        !snapshot
+            .iter()
+            .any(|row| row.id() == ids::PROJECTED_BINDING)
+    );
+}
+
+#[test]
+fn source_snapshot_preserves_conditional_holders_and_initial_delegated_roles() {
+    type Loan = g::Msg<1, Endpoint<'static, 255>>;
+    let global = g::seq(
+        g::route(g::send::<0, 1, Loan>(), g::send::<0, 2, Loan>()).resolve::<701>(),
+        g::send::<255, 3, g::Msg<2, ()>>(),
+    );
+    let snapshot: Vec<_> = projected(&project::<0>(&global)).collect();
+    let header = snapshot[0];
+    assert_eq!(header.ts(), 1 | 1 << 16);
+    assert_eq!(header.arg0(), 3 << 16 | 4);
+    assert_eq!(header.arg1(), 1 << 16 | 1);
+    assert_eq!(snapshot[1].arg1(), 255);
+    let source: Vec<_> = snapshot
+        .iter()
+        .filter(|row| row.id() == ids::PROJECTED_SOURCE)
+        .collect();
+    assert_eq!(source[0].causal_key() >> 8, 1);
+    assert_eq!(source[0].arg1(), 255);
+    assert_eq!(source[2].causal_key() >> 8, 0);
+    let bindings: Vec<_> = snapshot
+        .iter()
+        .filter(|row| row.id() == ids::PROJECTED_BINDING)
+        .collect();
+    assert_eq!(bindings.len(), 3);
+    assert_eq!(bindings[2].ts(), 2);
+    assert_eq!((bindings[2].arg0(), bindings[2].arg1()), (256, 3));
+    let decision = snapshot
+        .iter()
+        .find(|row| row.id() == ids::PROJECTED_ACTOR_DECISION)
+        .unwrap();
+    assert_eq!(decision.ts(), 256);
+    assert_eq!((decision.arg0(), decision.arg1()), (1, 2));
+    let choice = snapshot
+        .iter()
+        .find(|row| row.id() == ids::PROJECTED_CHOICE)
+        .unwrap();
+    assert_eq!(choice.causal_key(), decision.causal_key());
+    assert_eq!((choice.arg0(), choice.arg1()), (0, 702));
+    let initial = snapshot
+        .iter()
+        .find(|row| row.id() == ids::PROJECTED_INITIAL_ACTOR)
+        .unwrap();
+    assert_eq!((initial.arg0(), initial.arg1()), (255, 0));
+    let expected = 2 + 3 + 4 + 1 + 3 + 1 + 1 + snapshot[1].ts() as usize;
+    assert_eq!(snapshot.len(), expected);
+}
+
+#[test]
 fn local_and_alternative_rows_keep_their_distinct_wire_positions() {
     let global = g::seq(
         g::send::<0, 0, g::Msg<99, ()>>(),
@@ -16,7 +186,14 @@ fn local_and_alternative_rows_keep_their_distinct_wire_positions() {
             g::send::<0, 1, g::Msg<8, u32>>(),
         ),
     );
-    let rows: Vec<_> = projected(&project::<0>(&global)).collect();
+    let rows: Vec<_> = projected(&project::<0>(&global))
+        .filter(|row| {
+            matches!(
+                row.id(),
+                ids::PROJECTED_LOCAL | ids::PROJECTED_SEND | ids::PROJECTED_RECV
+            )
+        })
+        .collect();
     assert_eq!(rows.len(), 3);
     assert_eq!(rows[0].id(), ids::PROJECTED_LOCAL);
     assert_eq!(rows[0].arg0(), 99);
@@ -24,8 +201,17 @@ fn local_and_alternative_rows_keep_their_distinct_wire_positions() {
     assert_eq!(rows[1].arg0(), 1 << 16 | 7);
     assert_eq!(rows[2].arg0(), 2 << 16 | 8);
     let mut receiver = projected(&project::<1>(&global));
-    assert_eq!(receiver.len(), 2);
-    assert_eq!(receiver.next().unwrap().id(), ids::PROJECTED_RECV);
+    let total = receiver.len();
+    assert_eq!(receiver.next().unwrap().id(), ids::PROJECTED_PROGRAM);
+    assert_eq!(receiver.len(), total - 1);
+    assert_eq!(
+        receiver
+            .by_ref()
+            .find(|row| row.id() == ids::PROJECTED_RECV)
+            .unwrap()
+            .ts(),
+        0
+    );
     assert_eq!(receiver.len(), 1);
     assert_eq!(receiver.next().unwrap().ts(), 1);
     assert_eq!(receiver.len(), 0);
@@ -54,8 +240,24 @@ fn all_257_wire_labels_match_actual_endpoint_frames_without_truncation() {
     let global = g::seq(p, g::send::<0, 1, Message>());
     let sender_program = project::<0>(&global);
     let receiver_program = project::<1>(&global);
-    let send_rows = projected(&sender_program);
-    let recv_rows = projected(&receiver_program);
+    let sender_snapshot: Vec<_> = projected(&sender_program).collect();
+    assert_eq!(sender_snapshot[0].arg0() >> 16, 257);
+    assert_eq!(
+        sender_snapshot
+            .iter()
+            .rev()
+            .find(|row| row.id() == ids::PROJECTED_SOURCE)
+            .unwrap()
+            .ts(),
+        256
+    );
+    let send_rows: Vec<_> = sender_snapshot
+        .into_iter()
+        .filter(|row| row.id() == ids::PROJECTED_SEND)
+        .collect();
+    let recv_rows: Vec<_> = projected(&receiver_program)
+        .filter(|row| row.id() == ids::PROJECTED_RECV)
+        .collect();
     assert_eq!(send_rows.len(), 257);
     let transport = TestTransport::new();
     let mut slab = std::vec![0; 128 * 1024];
@@ -68,7 +270,7 @@ fn all_257_wire_labels_match_actual_endpoint_frames_without_truncation() {
     let mut tap = rv.tap();
     let mut sender = rv.enter(sid, &sender_program).unwrap();
     let mut receiver = rv.enter(sid, &receiver_program).unwrap();
-    for (ordinal, (send, recv)) in send_rows.zip(recv_rows).enumerate() {
+    for (ordinal, (send, recv)) in send_rows.into_iter().zip(recv_rows).enumerate() {
         assert_eq!(send.id(), ids::PROJECTED_SEND);
         assert_eq!(recv.id(), ids::PROJECTED_RECV);
         assert_eq!((send.arg0(), send.arg1()), (recv.arg0(), recv.arg1()));
@@ -156,8 +358,22 @@ fn delegated_views_and_parallel_lanes_describe_the_frames_they_actually_send() {
     let db_program = project::<2>(&global);
     let service_program = project::<3>(&global);
     let audit_program = project::<4>(&global);
-    let owner_rows: Vec<_> = projected(&owner_program).collect();
-    let db_rows: Vec<_> = projected(&db_program).collect();
+    let owner_rows: Vec<_> = projected(&owner_program)
+        .filter(|row| {
+            matches!(
+                row.id(),
+                ids::PROJECTED_LOCAL | ids::PROJECTED_SEND | ids::PROJECTED_RECV
+            )
+        })
+        .collect();
+    let db_rows: Vec<_> = projected(&db_program)
+        .filter(|row| {
+            matches!(
+                row.id(),
+                ids::PROJECTED_LOCAL | ids::PROJECTED_SEND | ids::PROJECTED_RECV
+            )
+        })
+        .collect();
     assert_eq!(owner_rows.len(), db_rows.len());
     for (owner, db) in owner_rows.iter().zip(&db_rows) {
         assert_eq!(owner.causal_key(), 0);
@@ -167,7 +383,14 @@ fn delegated_views_and_parallel_lanes_describe_the_frames_they_actually_send() {
             (db.id(), db.arg0(), db.arg1())
         );
     }
-    let worker_rows: Vec<_> = projected(&worker_program).collect();
+    let worker_rows: Vec<_> = projected(&worker_program)
+        .filter(|row| {
+            matches!(
+                row.id(),
+                ids::PROJECTED_LOCAL | ids::PROJECTED_SEND | ids::PROJECTED_RECV
+            )
+        })
+        .collect();
     assert!(worker_rows.iter().all(|event| event.causal_key() == 0x0101));
     assert!(
         worker_rows
