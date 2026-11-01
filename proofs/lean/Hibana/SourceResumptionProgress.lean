@@ -120,7 +120,9 @@ theorem prepared_resumption_matches_source
       | committed before =>
           cases actorAt : occurrenceActor? plan (.accepted after) with
           | none => simp [SourceOccurrenceCut.resumptionDepends, actorAt]
-          | some actor => simp [SourceOccurrenceCut.resumptionDepends, actorAt, List.any_map]
+          | some actor =>
+              simp [SourceOccurrenceCut.resumptionDepends, actorAt, List.any_map]
+              rfl
 
 /-- Every added prerequisite is a forward dependency in this same expansion.
 It cannot turn an earlier body or an independent par sibling into a waiter
