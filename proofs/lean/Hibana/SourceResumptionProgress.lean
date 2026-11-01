@@ -82,21 +82,24 @@ membership are computed before it is called. This does not change the source
 rule or introduce a second execution state. -/
 def SourceOccurrenceCut.prepareResumption (plan : SourceOccurrenceCut source)
     (point : SourcePoint) : (SourcePoint → Bool) → Bool :=
-  let checks := (sourceVisitPoints plan.path.bindings).map fun prior =>
-    match prior, point with
-    | .committed before, .accepted after =>
-        match occurrenceActor? plan (.accepted after) with
-        | none => fun _ => true
-        | some actor =>
-            let sameActor := occurrenceActor? plan (.committed before) == some actor
-            let scopes := (plan.unfolding.resumptions 0).map fun scope =>
-              let applies := scope.inBody before.event && scope.inTail after
-              let body := (occurrenceLocalDomain plan actor).map fun member =>
-                (member, scope.inBody (pointEvent member))
-              fun observed => applies && body.any fun (member, inside) => inside && observed member
-            fun observed =>
-              !(sameActor && scopes.any (fun check => check observed)) || observed (.committed before)
-    | _, _ => fun _ => true
+  let checks : List ((SourcePoint → Bool) → Bool) :=
+    (sourceVisitPoints plan.path.bindings).map fun prior =>
+      match prior, point with
+      | .committed before, .accepted after =>
+          match occurrenceActor? plan (.accepted after) with
+          | none => fun _ => true
+          | some actor =>
+              let sameActor := occurrenceActor? plan (.committed before) == some actor
+              let scopes : List ((SourcePoint → Bool) → Bool) :=
+                (plan.unfolding.resumptions 0).map fun (scope : SourceResumption) =>
+                  let applies := scope.inBody before.event && scope.inTail after
+                  let body := (occurrenceLocalDomain plan actor).map fun member =>
+                    (member, scope.inBody (pointEvent member))
+                  fun (observed : SourcePoint → Bool) =>
+                    applies && body.any fun (member, inside) => inside && observed member
+              fun (observed : SourcePoint → Bool) =>
+                !(sameActor && scopes.any (fun check => check observed)) || observed (.committed before)
+      | _, _ => fun _ => true
   fun observed => checks.all (fun check => check observed)
 
 theorem prepared_resumption_matches_source
@@ -107,6 +110,7 @@ theorem prepared_resumption_matches_source
   simp only [List.all_map]
   apply congrArg (fun predicate => (sourceVisitPoints plan.path.bindings).all predicate)
   funext prior
+  change _ = (!plan.resumptionDepends observed prior point || observed prior)
   cases point with
   | committed after =>
       cases prior <;> simp [SourceOccurrenceCut.resumptionDepends]
