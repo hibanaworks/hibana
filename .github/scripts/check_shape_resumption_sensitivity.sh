@@ -33,7 +33,9 @@ for defect in resumption context actor guarded-context; do
     perl -0pi -e '
       s/(def shapeOriginalActorsMatch \(plan : SourceOccurrenceCut source\) : Bool :=)\n.*?\n\nstructure ShapePlan/$1\n  true\n\nstructure ShapePlan/s == 1 or die "missing original actor bindings\n";
     ' "${OUTPUT}/${defect}.lean"
-    expected='shapeStates returnedRollEndpoint'
+    # The entry-owner check also protects the concrete return example. Keep
+    # checking this predicate's own general contract when it is made vacuous.
+    expected="'shapeOriginalActorsMatch_checks_each_occurrence' depends on axioms: [propext, sorryAx]"
   else
     perl -0pi -e '
       s/\| \.roll body => ⟨\.hole, body, rfl⟩ :: \(\(shapeRollFocuses body\)\.map fun focus =>\n      ⟨\.roll focus.context, focus.body, by simp only \[RollContext.plug, focus.source_eq\]⟩\)/| .roll body => [⟨.hole, body, rfl⟩]/ == 1 or die "missing parent-roll context\n";
@@ -58,7 +60,41 @@ for defect in resumption context actor guarded-context; do
   fi
   printf '%s\t%s\n' "${defect}" "${status}" >> "${OUTPUT}/mutants.tsv"
 done
+
+# Ignore the source entry holders in an isolated model copy. The general query
+# proofs still compile; the two-resource executable regression must detect the
+# weakened interpretation. Keep a separate Lake output directory for the copy.
+owner_copy="$(mktemp -d "${OUTPUT}/owner-model.XXXXXX")"
+mkdir -p "${owner_copy}/proofs" "${owner_copy}/target/lean-proof"
+cp -R proofs/lean "${owner_copy}/proofs/lean"
+cp "${OUTPUT}/current.lean" "${owner_copy}/target/lean-proof/ProtocolShapesGenerated.lean"
+owner_source="proofs/lean/Hibana/SourceOccurrenceProgress.lean"
+shasum -a 256 "${owner_source}" > "${OUTPUT}/owner-original.sha256"
+git diff HEAD -- proofs/lean .github/ci-tests/endpoint_conformance.lean \
+  .github/ci-tests/protocol_shapes.lean > "${OUTPUT}/owner-baseline.patch"
+perl -0pi -e '
+  s/(def sourceOwnerBefore.*?: Nat :=)\n.*?\n\ndef SourceUnfolding.guardsCompatible/$1\n  key.role\n\ndef SourceUnfolding.guardsCompatible/s == 1 or die "missing source entry ownership fold\n";
+' "${owner_copy}/${owner_source}"
+diff -u "${owner_source}" "${owner_copy}/${owner_source}" \
+  > "${OUTPUT}/owner-context.patch" || test "$?" == 1
+shasum -a 256 "${owner_copy}/${owner_source}" > "${OUTPUT}/owner-mutant.sha256"
+bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" build-serial \
+  "${owner_copy}/proofs/lean" --native Hibana.SourceOccurrenceTrace \
+  > "${OUTPUT}/owner-build.log" 2>&1
+(cd "${owner_copy}/proofs/lean" && lake build protocolShapes) \
+  >> "${OUTPUT}/owner-build.log" 2>&1
+status=0
+"${owner_copy}/proofs/lean/.lake/build/bin/protocol-shapes" --check-guarded-reentry \
+  > "${OUTPUT}/owner-context.log" 2>&1 || status=$?
+if [[ "${status}" == 0 ]] || ! grep -Fq 'retained-owner regression:' "${OUTPUT}/owner-context.log"; then
+  echo 'The source checker did not detect omitted entry ownership' >&2
+  cat "${OUTPUT}/owner-context.log" >&2
+  exit 1
+fi
+printf 'owner-context\t%s\n' "${status}" >> "${OUTPUT}/mutants.tsv"
+shasum -a 256 --check "${OUTPUT}/owner-original.sha256" > "${OUTPUT}/owner-source-check.log"
+rm -r "${owner_copy}"
 shasum -a 256 --check "${OUTPUT}/source.sha256" > "${OUTPUT}/source-check.log"
 rm "${OUTPUT}/current.lean" "${OUTPUT}/resumption.lean" "${OUTPUT}/context.lean" \
   "${OUTPUT}/actor.lean" "${OUTPUT}/guarded-context.lean"
-echo 'Shape resumption sensitivity: all four restored checker omissions are rejected'
+echo 'Shape resumption sensitivity: all five restored checker omissions are rejected'

@@ -5240,6 +5240,34 @@ Hibana.a_pending_payload_requires_its_own_send : ∀ (resource : Nat) (sent : Op
                   Or (@Eq.{1} Bool (source.before transfer previousEvent) true)
                     (Or (@Eq.{1} Nat transfer previousEvent)
                       (Or (@Eq.{1} Nat transfer target) (@Eq.{1} Bool (source.before target transfer) true)))
+@Hibana.a_resumed_operation_preserves_its_selected_entry_owners : ∀ {source : Hibana.EndpointDelegation.Source}
+  {event : Nat} {binding : Hibana.EndpointDelegation.Binding} {first last : Nat}
+  {key : Hibana.EndpointDelegation.EndpointKey} (plan : Hibana.SourceOccurrenceCut source)
+  (resumed : Hibana.SourceResumption),
+  @Membership.mem.{0, 0} Hibana.SourceResumption (List.{0} Hibana.SourceResumption)
+      (@List.instMembership.{0} Hibana.SourceResumption)
+      (@Hibana.SourceUnfolding.resumptions source (@Hibana.SourceOccurrenceCut.expanded source plan)
+        (@Hibana.SourceOccurrenceCut.unfolding source plan)
+        (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0))))
+      resumed →
+    @Membership.mem.{0, 0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)
+        (List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding))
+        (@List.instMembership.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding))
+        (@Hibana.SourceOccurrenceCut.path source plan).bindings
+        (@Prod.mk.{0, 0} Nat Hibana.EndpointDelegation.Binding event binding) →
+      @LE.le.{0} Nat instLENat resumed.bodyStart event →
+        @LT.lt.{0} Nat instLTNat event resumed.bodyEnd →
+          @Eq.{1} (Option.{0} (Prod.{0, 0} Nat Nat)) resumed.anchor
+              (@some.{0} (Prod.{0, 0} Nat Nat) (@Prod.mk.{0, 0} Nat Nat first last)) →
+            @Membership.mem.{0, 0} Hibana.EndpointDelegation.EndpointKey
+                (List.{0} Hibana.EndpointDelegation.EndpointKey)
+                (@List.instMembership.{0} Hibana.EndpointDelegation.EndpointKey)
+                (Hibana.EndpointDelegation.Source.send binding.message).uses key →
+              @Eq.{1} Nat
+                (Hibana.sourceOwnerBefore (@Hibana.SourceOccurrenceCut.normalized source plan).issuance
+                  (@Hibana.SourceOccurrenceCut.path source plan).bindings first key)
+                (Hibana.sourceOwnerBefore (@Hibana.SourceOccurrenceCut.normalized source plan).issuance
+                  (@Hibana.SourceOccurrenceCut.path source plan).bindings resumed.bodyStart key)
 @Hibana.a_resumption_dependency_increases_source_rank : ∀ {source : Hibana.EndpointDelegation.Source}
   {plan : Hibana.SourceOccurrenceCut source} {observed : Hibana.SourcePoint → Bool} {before after : Hibana.SourcePoint},
   @Eq.{1} Bool (@Hibana.SourceOccurrenceCut.resumptionDepends source plan observed before after) true →
@@ -7484,9 +7512,9 @@ Hibana.ambiguous_receive_fails_closed : ∀ (before : Hibana.CompactGlobalState)
                                                   (@List.instMembership.{0} Nat) later event))
                                               (And (@Eq.{1} Bool (record.check sample.image choreo session) true)
                                                 (record.step.SourceOrdered sample.image choreo))))))
-@Hibana.an_active_resumption_has_each_selected_anchor : ∀ {source : Hibana.EndpointDelegation.Source} {event : Nat}
-  {binding : Hibana.EndpointDelegation.Binding} {anchor : Option.{0} (Prod.{0, 0} Nat Nat)}
-  (plan : Hibana.SourceOccurrenceCut source) (resumed : Hibana.SourceResumption),
+@Hibana.an_active_resumption_has_its_selected_anchor : ∀ {source : Hibana.EndpointDelegation.Source} {event : Nat}
+  {binding : Hibana.EndpointDelegation.Binding} (plan : Hibana.SourceOccurrenceCut source)
+  (resumed : Hibana.SourceResumption),
   @Membership.mem.{0, 0} Hibana.SourceResumption (List.{0} Hibana.SourceResumption)
       (@List.instMembership.{0} Hibana.SourceResumption)
       (@Hibana.SourceUnfolding.resumptions source (@Hibana.SourceOccurrenceCut.expanded source plan)
@@ -7500,22 +7528,20 @@ Hibana.ambiguous_receive_fails_closed : ∀ (before : Hibana.CompactGlobalState)
         (@Prod.mk.{0, 0} Nat Hibana.EndpointDelegation.Binding event binding) →
       @LE.le.{0} Nat instLENat resumed.bodyStart event →
         @LT.lt.{0} Nat instLTNat event resumed.bodyEnd →
-          @Membership.mem.{0, 0} (Option.{0} (Prod.{0, 0} Nat Nat)) (List.{0} (Option.{0} (Prod.{0, 0} Nat Nat)))
-              (@List.instMembership.{0} (Option.{0} (Prod.{0, 0} Nat Nat))) resumed.anchors anchor →
-            @Exists.{1} Nat fun first =>
-              @Exists.{1} Nat fun last =>
-                And
-                  (@Eq.{1} (Option.{0} (Prod.{0, 0} Nat Nat)) anchor
-                    (@some.{0} (Prod.{0, 0} Nat Nat) (@Prod.mk.{0, 0} Nat Nat first last)))
-                  (@Exists.{1} Nat fun origin =>
-                    @Exists.{1} Hibana.EndpointDelegation.Binding fun held =>
-                      And
-                        (@Membership.mem.{0, 0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)
-                          (List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding))
-                          (@List.instMembership.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding))
-                          (@Hibana.SourceOccurrenceCut.path source plan).bindings
-                          (@Prod.mk.{0, 0} Nat Hibana.EndpointDelegation.Binding origin held))
-                        (And (@LE.le.{0} Nat instLENat first origin) (@LT.lt.{0} Nat instLTNat origin last)))
+          @Exists.{1} Nat fun first =>
+            @Exists.{1} Nat fun last =>
+              And
+                (@Eq.{1} (Option.{0} (Prod.{0, 0} Nat Nat)) resumed.anchor
+                  (@some.{0} (Prod.{0, 0} Nat Nat) (@Prod.mk.{0, 0} Nat Nat first last)))
+                (@Exists.{1} Nat fun origin =>
+                  @Exists.{1} Hibana.EndpointDelegation.Binding fun held =>
+                    And
+                      (@Membership.mem.{0, 0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)
+                        (List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding))
+                        (@List.instMembership.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding))
+                        (@Hibana.SourceOccurrenceCut.path source plan).bindings
+                        (@Prod.mk.{0, 0} Nat Hibana.EndpointDelegation.Binding origin held))
+                      (And (@LE.le.{0} Nat instLENat first origin) (@LT.lt.{0} Nat instLTNat origin last)))
 @Hibana.an_admitted_fresh_public_operation_has_no_payload_borrow : ∀ {phase : Hibana.PublicOperationPhase}
   {edge : Hibana.PublicOperationEdge},
   Or (@Eq.{1} Hibana.PublicOperationEdge edge Hibana.PublicOperationEdge.beginSend)

@@ -565,6 +565,20 @@ private def guardedInnerRoll : Source := .seq
       (.roll (.send ⟨⟨0, 1⟩, ⟨0, 0⟩, 2, .wire 0⟩)))))
   (.send ⟨⟨0, 1⟩, ⟨0, 0⟩, 3, .wire 0⟩)
 
+private def returnedConditionalHolder : Source := .seq
+  (.route none
+    (.send ⟨⟨0, 0⟩, ⟨0, 1⟩, 0, .wire 0⟩)
+    (.seq
+      (.send ⟨⟨0, 0⟩, ⟨0, 1⟩, 1, .endpoint ⟨0, 3⟩⟩)
+      (.send ⟨⟨0, 0⟩, ⟨0, 1⟩, 2, .endpoint ⟨0, 2⟩⟩)))
+  (.seq (.roll (.send ⟨⟨0, 3⟩, ⟨0, 0⟩, 3, .wire 0⟩))
+    (.send ⟨⟨0, 2⟩, ⟨0, 0⟩, 4, .endpoint ⟨0, 3⟩⟩))
+
+private def movedUnrelatedResource : Source := .seq
+  (.send ⟨⟨0, 0⟩, ⟨0, 1⟩, 0, .endpoint ⟨0, 3⟩⟩)
+  (.seq (.roll (.send ⟨⟨0, 3⟩, ⟨0, 0⟩, 1, .wire 0⟩))
+    (.send ⟨⟨0, 0⟩, ⟨0, 1⟩, 2, .endpoint ⟨0, 2⟩⟩))
+
 def shapeWordPrefixes (word : List Nat) : List (List Nat) :=
   (List.range (word.length + 1)).map (word.take ·)
 
@@ -1001,8 +1015,18 @@ def main (args : List String) : IO UInt32 := do
       ([0, 1, 0, 1, 6, 7], false)] do
     unless shapePermits (shapeStates guardedInnerRoll guardedPlans word) [] 2 false == expected do
       throw (IO.userError s!"guarded inner-roll regression: word={word} expected={expected}")
+  let holderPlans := (shapePlans returnedConditionalHolder).map ShapePlan.of
+  for (word, expected) in [
+      ([2, 3, 4, 5, 6, 7], true),
+      ([2, 3, 4, 5, 6, 7, 8, 9], false),
+      ([0, 1, 6, 7, 8, 9], true)] do
+    unless shapePermits (shapeStates returnedConditionalHolder holderPlans word) [] 3 false == expected do
+      throw (IO.userError s!"retained-owner regression: word={word} expected={expected}")
+  unless shapePermits (shapeStates movedUnrelatedResource
+      ((shapePlans movedUnrelatedResource).map ShapePlan.of) [0, 1, 2, 3, 4, 5]) [] 1 false do
+    throw (IO.userError "an unrelated resource transfer blocked a retained roll")
   if args == ["--check-guarded-reentry"] then
-    IO.println "Guarded inner-roll regressions: all four source cuts passed"
+    IO.println "Guarded reentry regressions: all eight source cuts passed"
     return 0
   let (inputPath, outputPath, weakenRoot) ← match args with
     | [input, output] => pure (input, output, false)

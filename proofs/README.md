@@ -401,7 +401,7 @@ choice or roll requires the focused body to be selected in the last enclosing
 visit. The unfolding witness locates that body's expanded range, including
 scopes with identical event bounds. Each accepted source cut carries this
 guard check. A selected earlier visit cannot substitute for an unselected last
-visit. A general theorem checks each active body's selected anchors; native
+visit. A general theorem checks each active body's selected anchor; native
 regressions evaluate the full bounded plan set for both selected and unselected
 last visits, including a continuation whose receive is still pending.
 Admission also checks `SourceOccurrenceCut.resumptionReady`: once an actor has
@@ -417,11 +417,21 @@ Each expanded binding must also belong to the original source's actor
 projection. Merely normalizing an expanded body at its new holder is not
 enough: returning a resource does not give its new holder another actor's
 rolled operations. Reentry becomes possible again when the Endpoint returns
-to the roll's actor. Positive and negative regression theorems cover that
-round trip. Sensitivity checks remove the current-visit query, seq/par context
-traversal, original-actor check and guarded route/parent-roll traversal
-separately; each restored omission must fail. The guarded check is an executable
-source regression; the other three omissions fail kernel-checked examples.
+to the roll's actor. The selected body's entry holders must also match its
+retained visit. Merely appearing as a possible actor under a different source
+choice does not grant that operation. A two-resource, four-role regression
+checks the changed and unchanged holder cases through real Endpoints and the
+model; a general theorem checks each resumed operation's selected entry owners.
+Only resources used by the selected body participate in this comparison.
+Positive and negative regression theorems also cover the temporary round trip.
+Sensitivity checks remove the current-visit query, seq/par context
+traversal, original-actor check, guarded route/parent-roll traversal and source
+entry ownership separately; each omission must fail. The original-actor
+predicate is checked against its general per-occurrence theorem: the entry-owner
+check now also protects the earlier concrete return example. The context and
+owner checks use executable source regressions; the two progress omissions fail
+kernel-checked examples. The owner mutant is built in a separate model copy,
+and all its general query proofs must compile before its regression runs.
 Previously observed choices stay fixed; fresh choices try every resolver
 assignment. The continuation inventory is derived from source-validated planned
 scripts, including their selected parallel orders and both visits of each roll.

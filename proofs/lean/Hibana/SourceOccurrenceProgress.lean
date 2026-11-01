@@ -32,12 +32,6 @@ def RollContext.offset : RollContext → Nat
   | .seqRight left context | .parRight left context | .routeRight _ left context =>
       left.eventCount + context.offset
 
-def RollContext.hasGuards : RollContext → Bool
-  | .hole => false
-  | .seqLeft context _ | .seqRight _ context | .parLeft context _ | .parRight _ context =>
-      context.hasGuards
-  | .routeLeft _ _ _ | .routeRight _ _ _ | .roll _ => true
-
 theorem RollContext.contains_message (context : RollContext) (body : Source) (start : Nat)
     (present : entry ∈ body.messageEntries (start + context.offset)) :
     entry ∈ (context.plug body).messageEntries start := by
@@ -196,14 +190,13 @@ theorem source_unfolding_has_one_origin_per_occurrence
     simp [SourceUnfolding.occurrences, Source.eventCount, left, right, continuation]
 
 /-- Expanded positions for a retained body, its concurrent continuation and
-any source anchors required by enclosing choices or parent visits. An absent
-anchor rejects an active resumed body; an empty list is unconditional. -/
+its selected earlier visit. An absent anchor rejects an active resumed body. -/
 structure SourceResumption where
   bodyStart : Nat
   bodyEnd : Nat
   tailStart : Nat
   tailEnd : Nat
-  anchors : List (Option (Nat × Nat)) := []
+  anchor : Option (Nat × Nat)
   deriving Repr, DecidableEq
 
 private def SourceUnfolding.copyRanges : {body expanded : Source} →
@@ -234,12 +227,10 @@ private def RollContext.lastBodyRange : (context : RollContext) →
       (context.lastBodyRange next).map fun (a, b) => (earlier.eventCount + a, earlier.eventCount + b)
   | _, _, _, _ => none
 
-private def RollContext.anchors (context : RollContext)
+private def RollContext.anchor (context : RollContext)
     (earlier : SourceUnfolding (context.plug (.roll body)) expanded) (start : Nat) :
-    List (Option (Nat × Nat)) :=
-  if context.hasGuards then
-    [(context.lastBodyRange earlier).map fun (a, b) => (start + a, start + b)]
-  else []
+    Option (Nat × Nat) :=
+  (context.lastBodyRange earlier).map fun (a, b) => (start + a, start + b)
 
 def SourceUnfolding.resumptions : {source expanded : Source} →
     SourceUnfolding source expanded → Nat → List SourceResumption
@@ -254,29 +245,50 @@ def SourceUnfolding.resumptions : {source expanded : Source} →
   | _, .seq first nextSource, .resumeAfterContinuation context earlier next, start =>
       let nextStart := start + first.eventCount
       let nextEnd := nextStart + nextSource.eventCount
-      let own := if context.hasGuards then
-        let anchor := match earlier with
-          | .seq focused _ => context.anchors focused start
-          | _ => [none]
-        [{ bodyStart := nextStart, bodyEnd := nextEnd,
-           tailStart := nextEnd, tailEnd := nextEnd, anchors := anchor }]
-      else []
+      let anchor := match earlier with
+        | .seq focused _ => context.anchor focused start
+        | _ => none
+      let own : List SourceResumption := [{
+        bodyStart := nextStart
+        bodyEnd := nextEnd
+        tailStart := nextEnd
+        tailEnd := nextEnd
+        anchor
+      }]
       own ++ earlier.resumptions start ++ next.resumptions nextStart
   | _, .seq first (.par second tailSource), .resumeAlongsideContinuation context earlier next tail, start =>
       let nextStart := start + first.eventCount
       let tailStart := nextStart + second.eventCount
       let scopes := next.copyRanges nextStart |>.map fun (bodyStart, bodyEnd) =>
         { bodyStart, bodyEnd, tailStart, tailEnd := tailStart + tailSource.eventCount,
-          anchors := context.anchors earlier start }
+          anchor := context.anchor earlier start }
       scopes ++ earlier.resumptions start ++ next.resumptions nextStart ++ tail.resumptions tailStart
 
+/-- Ownership at a source boundary, derived from immutable selected bindings.
+Ordinary participants keep their role identity; transfers update only their
+payload's resource. The source cut supplies a validated initial issuance. -/
+def sourceOwnerBefore (issuance : List Issuance) (bindings : List (Nat × Binding))
+    (boundary : Nat) (key : EndpointKey) : Nat :=
+  bindings.foldl (fun owner (event, binding) =>
+    if event < boundary then
+      match binding.message.payload with
+      | .endpoint resource => if resource == key then binding.receiverActor else owner
+      | .wire _ => owner
+    else owner) ((issuer? issuance key).getD key.role)
+
 def SourceUnfolding.guardsCompatible (unfolding : SourceUnfolding source expanded)
-    (bindings : List (Nat × Binding)) : Bool :=
+    (issuance : List Issuance) (bindings : List (Nat × Binding)) : Bool :=
   (unfolding.resumptions 0).all fun resumed =>
     !(bindings.any fun (event, _) => resumed.bodyStart ≤ event && event < resumed.bodyEnd) ||
-      resumed.anchors.all fun anchor => match anchor with
+      match resumed.anchor with
         | none => false
-        | some (a, b) => bindings.any fun (event, _) => a ≤ event && event < b
+        | some (a, b) =>
+          (bindings.any fun (event, _) => a ≤ event && event < b) &&
+          bindings.all fun (event, binding) =>
+            !(resumed.bodyStart ≤ event && event < resumed.bodyEnd) ||
+              (Source.send binding.message).uses.all fun key =>
+                sourceOwnerBefore issuance bindings a key ==
+                  sourceOwnerBefore issuance bindings resumed.bodyStart key
 
 /-- Executable source dependency, including the distinct acceptance and
 publication boundaries. Message payload bytes do not choose an occurrence. -/
@@ -346,18 +358,17 @@ structure SourceOccurrenceCut (source : Source) where
   sameIssuance : normalized.issuance = original.issuance
   path : NormalizedPath
   selected : path ∈ normalized.paths
-  guarded : unfolding.guardsCompatible path.bindings = true
+  guarded : unfolding.guardsCompatible normalized.issuance path.bindings = true
   observed : SourcePoint → Bool
 
 /-- A resumed operation in a selected path has a selected anchor for every
 enclosing choice/visit guard. A previous, unselected arm cannot supply it. -/
-theorem an_active_resumption_has_each_selected_anchor
+theorem an_active_resumption_has_its_selected_anchor
     (plan : SourceOccurrenceCut source) (resumed : SourceResumption)
     (present : resumed ∈ plan.unfolding.resumptions 0)
     (active : (event, binding) ∈ plan.path.bindings)
-    (lower : resumed.bodyStart ≤ event) (upper : event < resumed.bodyEnd)
-    (required : anchor ∈ resumed.anchors) :
-    ∃ first last, anchor = some (first, last) ∧
+    (lower : resumed.bodyStart ≤ event) (upper : event < resumed.bodyEnd) :
+    ∃ first last, resumed.anchor = some (first, last) ∧
       ∃ origin held, (origin, held) ∈ plan.path.bindings ∧ first ≤ origin ∧ origin < last := by
   have bodySelected : (plan.path.bindings.any fun (position, _) =>
       resumed.bodyStart ≤ position && position < resumed.bodyEnd) = true :=
@@ -365,15 +376,39 @@ theorem an_active_resumption_has_each_selected_anchor
       Bool.and_eq_true_iff.mpr ⟨decide_eq_true lower, decide_eq_true upper⟩⟩
   have compatible := List.all_eq_true.mp plan.guarded resumed present
   simp only [bodySelected, Bool.not_true, Bool.false_or] at compatible
-  have selected := List.all_eq_true.mp compatible anchor required
-  cases anchor with
-  | none => contradiction
+  cases selected : resumed.anchor with
+  | none => simp only [selected, Bool.false_eq_true] at compatible
   | some range =>
+    simp only [selected] at compatible
     obtain ⟨first, last⟩ := range
-    obtain ⟨⟨origin, held⟩, member, inside⟩ := List.any_eq_true.mp selected
+    obtain ⟨⟨origin, held⟩, member, inside⟩ :=
+      List.any_eq_true.mp (Bool.and_eq_true_iff.mp compatible).1
     have bounds := Bool.and_eq_true_iff.mp inside
     exact ⟨first, last, rfl, origin, held, member,
       of_decide_eq_true bounds.1, of_decide_eq_true bounds.2⟩
+
+/-- Every resource used by a resumed selected operation starts with the same
+holder as at its retained visit's entry. An actor possible only under another
+source choice cannot substitute for that holder. Unused resources add no check. -/
+theorem a_resumed_operation_preserves_its_selected_entry_owners
+    (plan : SourceOccurrenceCut source) (resumed : SourceResumption)
+    (present : resumed ∈ plan.unfolding.resumptions 0)
+    (active : (event, binding) ∈ plan.path.bindings)
+    (lower : resumed.bodyStart ≤ event) (upper : event < resumed.bodyEnd)
+    (anchored : resumed.anchor = some (first, last))
+    (used : key ∈ (Source.send binding.message).uses) :
+    sourceOwnerBefore plan.normalized.issuance plan.path.bindings first key =
+      sourceOwnerBefore plan.normalized.issuance plan.path.bindings resumed.bodyStart key := by
+  have bodyAt : (resumed.bodyStart ≤ event && event < resumed.bodyEnd) = true :=
+    Bool.and_eq_true_iff.mpr ⟨decide_eq_true lower, decide_eq_true upper⟩
+  have bodySelected : (plan.path.bindings.any fun (position, _) =>
+      resumed.bodyStart ≤ position && position < resumed.bodyEnd) = true :=
+    List.any_eq_true.mpr ⟨(event, binding), active, bodyAt⟩
+  have compatible := List.all_eq_true.mp plan.guarded resumed present
+  simp only [bodySelected, Bool.not_true, Bool.false_or, anchored] at compatible
+  have row := List.all_eq_true.mp (Bool.and_eq_true_iff.mp compatible).2 (event, binding) active
+  simp only [bodyAt, Bool.not_true, Bool.false_or] at row
+  exact beq_iff_eq.mp (List.all_eq_true.mp row key used)
 
 /-- Reconstruct observations from the chronological operation word. -/
 def occurrenceCut (plan : SourceOccurrenceCut source) (points : List SourcePoint) :

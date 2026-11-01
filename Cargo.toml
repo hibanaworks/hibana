@@ -85,6 +85,10 @@ name = "endpoint_initial_issuance"
 path = "tests/endpoint_initial_issuance.rs"
 
 [[test]]
+name = "conditional_owner_reentry"
+path = "tests/conditional_owner_reentry.rs"
+
+[[test]]
 name = "cursor_send_recv_codec_demux"
 path = "tests/cursor_send_recv_codec_demux.rs"
 
