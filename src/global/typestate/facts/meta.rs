@@ -92,6 +92,7 @@ impl From<SendMeta> for EventCommitMeta {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct RecvMeta {
     pub(crate) eff_index: EffIndex,
+    pub(crate) logical_role: u8,
     pub(crate) peer: u8,
     pub(crate) label: u8,
     pub(crate) payload_kind: crate::eff::EventPayload,

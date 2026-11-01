@@ -19,7 +19,7 @@ where
         let Some(meta) = self.progress.cursor.try_recv_meta_at(idx) else {
             return Ok(None);
         };
-        if self.progress.cursor.logical_role_at(idx) != Some(self.public_header.role()) {
+        if meta.logical_role != self.public_header.role() {
             return Ok(None);
         }
         if meta.origin.is_session() {
@@ -51,21 +51,21 @@ where
 
     pub(in crate::endpoint::kernel::recv) fn unique_recv_candidate(
         &self,
-        target_label: u8,
-        target_payload: crate::eff::EventPayload,
         observed: InboundFrameKey,
     ) -> RecvResult<Result<RecvCandidate, UniqueMatchFailure>> {
         let mut accumulator = UniqueMatch::NONE;
         for idx in self
             .progress
             .cursor
-            .receive_candidates(self.public_header.role(), target_label)
+            .framed_receive_candidates(observed.frame_label)
         {
-            // Role and logical label came from the validated immutable index.
+            // The wire identity indexes the source occurrence before checking
+            // the requested public contract. A different legal lane head must
+            // remain available to its own receive.
             let Some(meta) = self.progress.cursor.try_recv_meta_at(idx) else {
                 continue;
             };
-            if meta.payload_kind != target_payload {
+            if meta.logical_role != self.public_header.role() {
                 continue;
             }
             if meta.origin.is_session() {

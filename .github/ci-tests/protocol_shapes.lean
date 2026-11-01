@@ -330,6 +330,21 @@ theorem repeated_aliases_consume_both_occurrences_and_cannot_replay_them :
 #print axioms an_alias_for_a_later_send_can_issue_the_first_source_operation
 #print axioms repeated_aliases_consume_both_occurrences_and_cannot_replay_them
 
+private def independentReceiveAlias : Source := .par
+  (.route none
+    (.send ⟨⟨0, 0⟩, ⟨0, 2⟩, 0, .wire 0⟩)
+    (.send ⟨⟨0, 0⟩, ⟨0, 2⟩, 1, .wire 0⟩))
+  (.send ⟨⟨0, 1⟩, ⟨0, 2⟩, 0, .wire 0⟩)
+
+theorem an_unread_selected_arm_does_not_block_an_independent_receive_alias :
+    let plans := (shapePlans independentReceiveAlias).map ShapePlan.of
+    shapePermits (shapeStates independentReceiveAlias plans [2, 4]) [] 0 true = true ∧
+      shapePermits (shapeStates independentReceiveAlias plans [2, 4, 1]) [] 1 true = true ∧
+      shapePermits (shapeStates independentReceiveAlias plans [2, 4, 1]) [] 0 true = false := by
+  decide
+
+#print axioms an_unread_selected_arm_does_not_block_an_independent_receive_alias
+
 def shapeKeyLess (a b : List Nat × List Nat × Nat × Bool) : Bool :=
   decide (a.1 < b.1) || (a.1 == b.1 && (decide (a.2.1 < b.2.1) ||
     (a.2.1 == b.2.1 && (a.2.2.1 < b.2.2.1 ||

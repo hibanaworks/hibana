@@ -63,74 +63,6 @@ where
             .selected_arm_for_reentry_preview_conflict(scope, preview_conflict, &mut selected_arm)
     }
 
-    fn poll_recv_preamble_for_label(
-        &mut self,
-        target_label: u8,
-        target_payload: crate::eff::EventPayload,
-        pending_recv: &mut lane_port::PendingRecv,
-        cx: &mut core::task::Context<'_>,
-    ) -> Poll<RecvResult<lane_port::PreambleFrame<'r>>> {
-        let lane_limit = self.progress.cursor.logical_lane_count();
-        let mut words = [0; LANE_SET_VIEW_WORDS];
-        let lanes = self.live_recv_lanes(target_label, target_payload, &mut words)?;
-        let mut start = 0usize;
-        while let Some(lane_idx) = lanes.next_set_from(start, lane_limit) {
-            let lane_wire = self.port_for_lane(lane_idx).lane().as_wire();
-            match self.poll_received_transport_frame_for_lane(pending_recv, lane_idx, lane_wire, cx)
-            {
-                Poll::Pending => {}
-                Poll::Ready(Ok(frame)) => return Poll::Ready(Ok(frame)),
-                Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
-            }
-            start = lane_idx + 1;
-        }
-        Poll::Pending
-    }
-
-    fn accept_framed_recv_frame(
-        &mut self,
-        target_label: u8,
-        target_payload: crate::eff::EventPayload,
-        frame: lane_port::PreambleFrame<'r>,
-    ) -> RecvResult<MatchedRecvFrame<'r>> {
-        let observed = InboundFrameKey::new(
-            frame.observed_source_role(),
-            frame.lane_wire(),
-            frame.observed_frame_label_raw(),
-        );
-        match self.unique_recv_candidate(target_label, target_payload, observed)? {
-            Ok(candidate) => {
-                let desc = candidate.desc;
-                let frame = self.accept_materialized_transport_frame(
-                    desc.meta.lane as usize,
-                    desc.meta.lane,
-                    desc.meta.peer,
-                    desc.meta.frame_label,
-                    frame,
-                )?;
-                Ok(MatchedRecvFrame { desc, frame })
-            }
-            Err(UniqueMatchFailure::None) => {
-                let mismatch = self.framed_recv_mismatch_for_unmatched_candidate(
-                    target_label,
-                    target_payload,
-                    &frame,
-                );
-                self.emit_materialization_mismatch_observation(
-                    frame.lane_idx(),
-                    frame.lane_wire(),
-                    mismatch,
-                );
-                frame.discard_uncommitted();
-                Err(RecvError::PhaseInvariant)
-            }
-            Err(UniqueMatchFailure::Ambiguous) => {
-                frame.discard_uncommitted();
-                Err(RecvError::PhaseInvariant)
-            }
-        }
-    }
-
     fn accept_deterministic_recv_frame(
         &mut self,
         target_label: u8,
@@ -171,19 +103,6 @@ where
         }
     }
 
-    fn accept_recv_frame(
-        &mut self,
-        target_label: u8,
-        target_payload: crate::eff::EventPayload,
-        frame: lane_port::PreambleFrame<'r>,
-    ) -> RecvResult<MatchedRecvFrame<'r>> {
-        if frame.is_deterministic() {
-            self.accept_deterministic_recv_frame(target_label, target_payload, frame)
-        } else {
-            self.accept_framed_recv_frame(target_label, target_payload, frame)
-        }
-    }
-
     fn poll_recv_frame_source(
         &mut self,
         target_label: u8,
@@ -191,14 +110,83 @@ where
         pending_recv: &mut lane_port::PendingRecv,
         cx: &mut core::task::Context<'_>,
     ) -> Poll<RecvResult<MatchedRecvFrame<'r>>> {
-        let frame =
-            match self.poll_recv_preamble_for_label(target_label, target_payload, pending_recv, cx)
-            {
-                Poll::Pending => return Poll::Pending,
+        let lane_limit = self.progress.cursor.logical_lane_count();
+        let mut words = [0; LANE_SET_VIEW_WORDS];
+        let lanes = self.live_recv_lanes(target_label, target_payload, &mut words)?;
+        let mut next = lanes.first_set(lane_limit);
+        let mut pending_lane = false;
+        while let Some(lane_idx) = next {
+            next = lanes.next_set_from(lane_idx + 1, lane_limit);
+            let lane_wire = self.port_for_lane(lane_idx).lane().as_wire();
+            let frame = match self.poll_received_transport_frame_for_lane(
+                pending_recv,
+                lane_idx,
+                lane_wire,
+                cx,
+            ) {
+                Poll::Pending => {
+                    pending_lane = true;
+                    continue;
+                }
                 Poll::Ready(Ok(frame)) => frame,
                 Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
             };
-        Poll::Ready(self.accept_recv_frame(target_label, target_payload, frame))
+            if frame.is_deterministic() {
+                return Poll::Ready(self.accept_deterministic_recv_frame(
+                    target_label,
+                    target_payload,
+                    frame,
+                ));
+            }
+            let observed = InboundFrameKey::new(
+                frame.observed_source_role(),
+                frame.lane_wire(),
+                frame.observed_frame_label_raw(),
+            );
+            match self.unique_recv_candidate(observed) {
+                Ok(Ok(candidate)) => {
+                    let desc = candidate.desc;
+                    if desc.meta.label == target_label && desc.meta.payload_kind == target_payload {
+                        return Poll::Ready(
+                            self.accept_materialized_transport_frame(
+                                lane_idx,
+                                lane_wire,
+                                desc.meta.peer,
+                                desc.meta.frame_label,
+                                frame,
+                            )
+                            .map(|frame| MatchedRecvFrame { desc, frame }),
+                        );
+                    }
+                    // The head belongs to a different admitted receive. Keep
+                    // its FIFO position while another requested lane can wait
+                    // or has yet to be polled. If every head excludes this
+                    // request, reject it. Retention commits no protocol progress.
+                    if pending_lane || next.is_some() {
+                        self.requeue_transport_frame(frame)?;
+                        continue;
+                    }
+                }
+                Ok(Err(UniqueMatchFailure::None)) => {}
+                Ok(Err(UniqueMatchFailure::Ambiguous)) => {
+                    frame.discard_uncommitted();
+                    return Poll::Ready(Err(RecvError::PhaseInvariant));
+                }
+                Err(error) => {
+                    frame.discard_uncommitted();
+                    return Poll::Ready(Err(error));
+                }
+            }
+            let mismatch = self.framed_recv_mismatch_for_unmatched_candidate(
+                target_label,
+                target_payload,
+                &frame,
+            );
+            self.emit_materialization_mismatch_observation(lane_idx, lane_wire, mismatch);
+            frame.discard_uncommitted();
+            return Poll::Ready(Err(RecvError::PhaseInvariant));
+        }
+        Poll::Pending
     }
 
     fn build_recv_commit_plan(

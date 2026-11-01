@@ -197,7 +197,7 @@ where
     ) -> Poll<RecvResult<MaterializationReadyOutcome>> {
         let selection = state.selection();
         if let Some(payload) = state.ingress.take_transport()
-            && let Err(err) = self.requeue_offer_transport_payload(payload)
+            && let Err(err) = self.requeue_transport_frame(payload)
         {
             return Poll::Ready(Err(err));
         }

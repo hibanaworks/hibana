@@ -4,7 +4,7 @@ use core::task::Poll;
 
 use super::{OfferScopeProfile, OfferScopeSelection, OfferStagedIngress, OperationKernel};
 use crate::{
-    endpoint::{RecvError, RecvResult},
+    endpoint::RecvResult,
     global::role_program::{LANE_SET_VIEW_WORDS, LaneWord, lane_word_index},
     transport::Transport,
 };
@@ -92,19 +92,6 @@ where
         };
         ingress.stage_transport(frame);
         Poll::Ready(Ok(()))
-    }
-
-    #[inline]
-    pub(super) fn requeue_offer_transport_payload(
-        &mut self,
-        payload: lane_port::PreambleFrame<'r>,
-    ) -> RecvResult<()> {
-        let port = self.port_for_lane(payload.lane_idx());
-        let requeue = payload.requeue_on(port);
-        if let Some(kind) = self.session_fault() {
-            return Err(RecvError::SessionFault(kind));
-        }
-        requeue.map_err(RecvError::Transport)
     }
 
     pub(super) fn collect_offer_ingress(

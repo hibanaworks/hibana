@@ -223,7 +223,7 @@ fn assert_requeue_callback_revalidates_generation(accept_before_requeue: bool) {
                     requeue.map_err(crate::endpoint::RecvError::Transport)
                 }
             } else {
-                kernel.requeue_offer_transport_payload(frame)
+                kernel.requeue_transport_frame(frame)
             };
             let error =
                 requeue.expect_err("requeue callback must expose the peer-drop session fault");

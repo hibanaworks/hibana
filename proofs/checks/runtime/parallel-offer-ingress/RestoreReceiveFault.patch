@@ -1,0 +1,6 @@
+diff --git a/src/endpoint/kernel/recv.rs b/src/endpoint/kernel/recv.rs
+--- a/src/endpoint/kernel/recv.rs
++++ b/src/endpoint/kernel/recv.rs
+@@ -165 +165 @@
+-                    if pending_lane || next.is_some() {
++                    if false && (pending_lane || next.is_some()) {

@@ -327,6 +327,157 @@ fn direct_recv_same_label_parallel_frames_commit_by_observed_evidence() {
 }
 
 #[test]
+fn direct_recv_preserves_a_different_selected_arm_while_receiving_an_independent_message() {
+    type Shared = Msg<68, u32>;
+    type Right = Msg<69, u32>;
+    with_runtime_workspace(|slab| {
+        let transport = TestTransport::new();
+        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+            let global = g::par(
+                g::route(g::send::<0, 2, Shared>(), g::send::<0, 2, Right>()),
+                g::send::<1, 2, Shared>(),
+            );
+            let choice_program: RoleProgram<0> = project(&global);
+            let independent_program: RoleProgram<1> = project(&global);
+            let receiver_program: RoleProgram<2> = project(&global);
+            let rv = cluster.rendezvous(slab, transport.clone()).unwrap();
+            let session = SessionId::new(68);
+            let mut choice = rv.enter(session, &choice_program).unwrap();
+            let mut independent = rv.enter(session, &independent_program).unwrap();
+            let mut receiver = rv.enter(session, &receiver_program).unwrap();
+            futures::executor::block_on(async {
+                choice.send::<Right>(&21).await.unwrap();
+                independent.send::<Shared>(&42).await.unwrap();
+                assert_eq!(receiver.recv::<Shared>().await.unwrap(), 42);
+                assert!(
+                    !transport.queue_is_empty(),
+                    "the chosen arm must remain unread"
+                );
+                let branch = receiver.offer().await.unwrap();
+                assert_eq!(branch.label(), 69);
+                assert_eq!(branch.recv::<Right>().await.unwrap(), 21);
+            });
+            assert!(transport.queue_is_empty());
+        });
+    });
+}
+
+#[test]
+fn direct_recv_keeps_an_unrelated_head_while_another_lane_waits() {
+    type Shared = Msg<68, u32>;
+    type Right = Msg<69, u8>;
+    with_runtime_workspace(|slab| {
+        let transport = TestTransport::new();
+        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+            let global = g::par(
+                g::send::<1, 2, Shared>(),
+                g::route(g::send::<0, 2, Shared>(), g::send::<0, 2, Right>()),
+            );
+            let choice_program: RoleProgram<0> = project(&global);
+            let independent_program: RoleProgram<1> = project(&global);
+            let receiver_program: RoleProgram<2> = project(&global);
+            let rv = cluster.rendezvous(slab, transport.clone()).unwrap();
+            let session = SessionId::new(69);
+            let mut choice = rv.enter(session, &choice_program).unwrap();
+            let mut independent = rv.enter(session, &independent_program).unwrap();
+            let mut receiver = rv.enter(session, &receiver_program).unwrap();
+            futures::executor::block_on(choice.send::<Right>(&21)).unwrap();
+            let wakes = core::cell::Cell::new(0);
+            let waker = counting_waker(&wakes);
+            let mut context = Context::from_waker(&waker);
+            {
+                let mut receive = core::pin::pin!(receiver.recv::<Shared>());
+                assert!(matches!(receive.as_mut().poll(&mut context), Poll::Pending));
+                assert!(!transport.queue_is_empty());
+                wakes.set(0);
+                futures::executor::block_on(independent.send::<Shared>(&42)).unwrap();
+                assert!(wakes.get() > 0, "the requested lane must retain its waiter");
+                assert!(matches!(
+                    receive.as_mut().poll(&mut context),
+                    Poll::Ready(Ok(42))
+                ));
+            }
+            assert_eq!(
+                futures::executor::block_on(receiver.recv::<Right>()).unwrap(),
+                21
+            );
+            assert!(transport.queue_is_empty());
+        });
+    });
+}
+
+#[test]
+fn direct_recv_rejects_when_all_lane_heads_have_other_contracts() {
+    type Shared = Msg<68, u32>;
+    type RightA = Msg<69, u32>;
+    type RightB = Msg<70, u32>;
+    with_runtime_workspace(|slab| {
+        let transport = TestTransport::new();
+        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+            let global = g::par(
+                g::route(g::send::<0, 2, Shared>(), g::send::<0, 2, RightA>()),
+                g::route(g::send::<1, 2, Shared>(), g::send::<1, 2, RightB>()),
+            );
+            let a_program: RoleProgram<0> = project(&global);
+            let b_program: RoleProgram<1> = project(&global);
+            let receiver_program: RoleProgram<2> = project(&global);
+            let rv = cluster.rendezvous(slab, transport).unwrap();
+            let session = SessionId::new(71);
+            let mut a = rv.enter(session, &a_program).unwrap();
+            let mut b = rv.enter(session, &b_program).unwrap();
+            let mut receiver = rv.enter(session, &receiver_program).unwrap();
+            futures::executor::block_on(a.send::<RightA>(&21)).unwrap();
+            futures::executor::block_on(b.send::<RightB>(&42)).unwrap();
+            let mut receive = core::pin::pin!(receiver.recv::<Shared>());
+            let mut context = Context::from_waker(Waker::noop());
+            let Poll::Ready(Err(error)) = receive.as_mut().poll(&mut context) else {
+                panic!("a wrong contract must be rejected when every lane head excludes it");
+            };
+            assert!(format!("{error:?}").contains("PhaseInvariant"));
+        });
+    });
+}
+
+#[test]
+fn direct_recv_rejects_an_unknown_head_instead_of_skipping_to_a_valid_lane() {
+    type Shared = Msg<68, u32>;
+    type Right = Msg<69, u32>;
+    with_runtime_workspace(|slab| {
+        let transport = TestTransport::new();
+        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+            let global = g::par(
+                g::route(g::send::<0, 2, Shared>(), g::send::<0, 2, Right>()),
+                g::send::<1, 2, Shared>(),
+            );
+            let independent_program: RoleProgram<1> = project(&global);
+            let receiver_program: RoleProgram<2> = project(&global);
+            let rv = cluster.rendezvous(slab, transport.clone()).unwrap();
+            let session = SessionId::new(70);
+            let mut independent = rv.enter(session, &independent_program).unwrap();
+            let mut receiver = rv.enter(session, &receiver_program).unwrap();
+            let mut tx = crate::common::TestTx {
+                session_id: session,
+                local_role: 5,
+                pending_role: None,
+                pending_frame: None,
+            };
+            transport.stage_send_with_session(&mut tx, session, 2, 0, 1, &21_u32.to_be_bytes());
+            assert!(matches!(
+                transport.poll_send_staged(&mut tx),
+                Poll::Ready(Ok(()))
+            ));
+            futures::executor::block_on(independent.send::<Shared>(&42)).unwrap();
+            let error = futures::executor::block_on(receiver.recv::<Shared>()).unwrap_err();
+            assert!(format!("{error:?}").contains("PhaseInvariant"));
+            assert!(
+                !transport.queue_is_empty(),
+                "the valid later lane must stay unread"
+            );
+        });
+    });
+}
+
+#[test]
 fn rolled_same_label_recv_requires_causal_exit_handoff() {
     with_runtime_workspace(|slab| {
         let transport = TestTransport::new();

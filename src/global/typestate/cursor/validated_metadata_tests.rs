@@ -159,6 +159,11 @@ impl Legacy<'_> {
                 let (route_scope, _) = self.route_authority_at(idx, route_arm);
                 Some(RecvMeta {
                     eff_index,
+                    logical_role: self
+                        .machine()
+                        .program_ref()
+                        .event_atom_at(eff_index.dense_ordinal())
+                        .to,
                     peer,
                     label,
                     payload_kind,

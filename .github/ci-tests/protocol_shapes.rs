@@ -1915,6 +1915,7 @@ incremental = false
 opt-level = 2
 [lints.rust]
 long_running_const_eval = "forbid"
+unexpected_cfgs = {{ level = "warn", check-cfg = ["cfg(hibana_repo_tests)", "cfg(hibana_profile)"] }}
 "#
         ),
     )?;

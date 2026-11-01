@@ -445,14 +445,26 @@ Elastic reentry negatives also use source witnesses: an unguarded global head
 and a matching send in its sequential continuation, including after a parallel
 join. This classifier does not infer additional local heads from logical roles.
 Rejections outside its proven cases still fail the gate as unclassified.
-The fixed `--contracts 0 6` catalog additionally combines repeated contracts
+The fixed `--contracts 0 8` catalog additionally combines repeated contracts
 with opposite directions, independent parallel fragments, a resolver, repetition
-and actual endpoint delegation. It runs in the depth-four fuzz job.
+and actual endpoint delegation. It also exercises an unread selected route arm
+beside an independent receive with the other arm's public contract, both with
+and without delegation. The selected frame remains unread while the independent
+receive progresses. It runs in the depth-four fuzz job.
 The same job runs `check_resolver_occurrence_sensitivity.sh`: the generated
 opposite-direction cases must pass on the current source and fail when only
 the resolver send-selection fix is reversed in a separate checkout. It retains
 the exact patch, input hashes and failure, then removes that checkout and its
 build cache.
+`check_recv_contract_sensitivity.sh` reverses only the unrelated-head retention
+condition. It runs both receive families, including every contract assignment.
+The plain family must fail its required probe inventory: rejecting the receive
+also prevents the runtime prefix search from reaching later required probes.
+The delegated family supplies its prefixes from source traces and must report
+model-only admission mismatches. Both families must pass without the mutation,
+and the mutated run must use identical generated inputs.
+The source-occurrence model permits the independent receive; the regression
+tests and replay check its correspondence to Rust's lane/frame selection.
 Initial admission and the finite-prefix
 probes are compared with Lean. Complete execution records are also compared
 with Lean, using both parallel-child orders and concurrent Tokio futures.

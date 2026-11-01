@@ -216,7 +216,7 @@ where
             payload.discard_uncommitted();
             return Err(RecvError::PhaseInvariant);
         }
-        self.requeue_offer_transport_payload(payload)?;
+        self.requeue_transport_frame(payload)?;
         Ok(None)
     }
 }

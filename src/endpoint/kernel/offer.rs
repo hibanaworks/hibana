@@ -172,7 +172,7 @@ where
             Ok(Some(ObservedIngressSelection::OrdinaryReceive(lane))) => {
                 let mut ingress = state.take_carried_ingress();
                 let payload = crate::invariant_some(ingress.take_transport());
-                if let Err(error) = self.requeue_offer_transport_payload(payload) {
+                if let Err(error) = self.requeue_transport_frame(payload) {
                     state.discard_terminal();
                     return Poll::Ready(Err(error));
                 }
@@ -185,7 +185,7 @@ where
             Ok(Some(ObservedIngressSelection::PendingReceive(lane))) => {
                 let mut ingress = state.take_carried_ingress();
                 let payload = crate::invariant_some(ingress.take_transport());
-                if let Err(error) = self.requeue_offer_transport_payload(payload) {
+                if let Err(error) = self.requeue_transport_frame(payload) {
                     state.discard_terminal();
                     return Poll::Ready(Err(error));
                 }

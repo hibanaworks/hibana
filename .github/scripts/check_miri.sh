@@ -760,6 +760,12 @@ run_miri_test \
   transport::tests::transport_contract_
 
 run_miri_test \
+  independent-receive-contracts \
+  -p hibana \
+  --test cursor_send_recv_send_recv \
+  direct_recv_
+
+run_miri_test \
   rolled-causal-exit-owner \
   -p hibana \
   --test cursor_send_recv_send_recv \

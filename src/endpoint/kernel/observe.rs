@@ -103,6 +103,19 @@ where
         }
     }
 
+    pub(in crate::endpoint::kernel) fn requeue_transport_frame(
+        &mut self,
+        frame: lane_port::PreambleFrame<'r>,
+    ) -> RecvResult<()> {
+        let lane = frame.lane_idx();
+        let requeue = frame.requeue_on(self.port_for_lane(lane));
+        self.reconcile_retirements();
+        if let Some(kind) = self.session_fault() {
+            return Err(RecvError::SessionFault(kind));
+        }
+        requeue.map_err(RecvError::Transport)
+    }
+
     #[inline]
     pub(in crate::endpoint::kernel) fn poll_accepted_transport_frame(
         &mut self,

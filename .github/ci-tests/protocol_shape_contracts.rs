@@ -2,7 +2,7 @@
 use super::{Protocol, localside};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub(super) const COUNT: usize = 6;
+pub(super) const COUNT: usize = 8;
 
 /// Source positions whose sends have the same public selector in opposite
 /// parallel arms. The receiver is inferred by send(), so it cannot distinguish
@@ -143,6 +143,24 @@ pub(super) fn protocol(rank: usize) -> Protocol {
         owned,
     };
     let seq = |left, right| Protocol::Seq(Box::new(left), Box::new(right));
+    if rank >= 6 {
+        let choice = Protocol::Route(
+            Box::new(message(0, 2, false)),
+            Box::new(message(0, 2, false)),
+        );
+        let independent = if rank == 6 {
+            message(1, 2, false)
+        } else {
+            seq(
+                message(0, 1, true),
+                seq(
+                    message(3, 2, false),
+                    seq(message(2, 3, false), message(1, 0, true)),
+                ),
+            )
+        };
+        return Protocol::Par(Box::new(choice), Box::new(independent));
+    }
     if rank < 2 {
         return if rank == 0 {
             seq(message(0, 1, false), message(0, 2, false))

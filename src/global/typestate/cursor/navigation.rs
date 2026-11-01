@@ -244,6 +244,7 @@ impl EventCursor {
         let atom = row.atom();
         Some(RecvMeta {
             eff_index: row.effect(),
+            logical_role: atom.to,
             peer: atom.from,
             label: atom.label,
             payload_kind: atom.payload,
