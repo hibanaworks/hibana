@@ -88,16 +88,9 @@ theorem elaborated_bindings_read_their_source_prefix_owners
         apply List.mem_append.mpr
         exact .inr (by simpa only [ownerPrefix] using loan key transferred)
   | par left right leftIH rightIH =>
-      simp only [elaborate] at accepted
-      split at accepted
-      next incompatible => simp at accepted
-      next compatible =>
-        have separated : incompatibleParallel left right = false := by
-          cases result : incompatibleParallel left right <;> simp_all
-        obtain ⟨leftRun, leftAt, tail⟩ := Option.bind_eq_some_iff.mp accepted
-        obtain ⟨rightRun, rightAt, result⟩ := Option.bind_eq_some_iff.mp tail
-        have same := Option.some.inj result
-        subst run
+      obtain ⟨leftRun, rightRun, leftAt, rightAt, separated, rfl⟩ :=
+        accepted_parallel_elaboration_has_separated_children accepted
+      ·
         intro index event binding present
         by_cases inLeft : index < leftRun.bindings.length
         · have atLeft : leftRun.bindings[index]? = some (event, binding) := by
@@ -115,18 +108,14 @@ theorem elaborated_bindings_read_their_source_prefix_owners
           have prefixRows : (leftRun.bindings ++ rightRun.bindings).take index =
               leftRun.bindings ++ rightRun.bindings.take (index - leftRun.bindings.length) := by
             rw [List.take_append, List.take_of_length_le afterLeft]
-          have fromSource : (event, binding.message) ∈ right.messageEntries (start + left.eventCount) := by
-            apply (elaboration_retains_exact_source_message_occurrences rightAt).subset
-            exact List.mem_map.mpr ⟨(event, binding), List.mem_of_getElem? atRight, rfl⟩
           have unchanged (key : EndpointKey)
               (used : binding.message.sender = key ∨ binding.message.receiver = key ∨ binding.message.payload = .endpoint key) :
               ownerAfterBindings key (owners key) leftRun.bindings = owners key := by
-            have usedInRight := source_message_use_is_a_source_use fromSource used
-            have notTransferred : key ∉ left.resources := by
-              intro member
-              exact separated_parallel_forbids_transfer_use_overlap separated member usedInRight
-            exact (elaborated_owner_is_the_symbolic_binding_flow key leftAt).symm.trans
-              (elaboration_cannot_change_an_untouched_owner leftAt notTransferred)
+            have usedInRight := selected_use_is_an_elaboration_use (List.mem_of_getElem? atRight) used
+            apply symbolic_owner_flow_preserves_an_untouched_resource
+            intro ⟨position, previous⟩ member transferred
+            exact separated_elaborations_forbid_transfer_use_overlap separated
+              (selected_transfer_is_an_elaboration_resource member transferred) usedInRight
           have ownerPrefix (key : EndpointKey)
               (used : binding.message.sender = key ∨ binding.message.receiver = key ∨ binding.message.payload = .endpoint key) :
               ownerAfterBindings key (owners key) ((leftRun.bindings ++ rightRun.bindings).take index) =

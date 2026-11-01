@@ -71,43 +71,27 @@ theorem elaborated_owner_is_the_symbolic_binding_flow
       have rightFlow := rightIH rightAt
       simpa only [symbolic_owner_flow_composes, ← leftFlow] using rightFlow
   | par left right leftIH rightIH =>
-      simp only [elaborate] at accepted
-      split at accepted
-      next incompatible => simp at accepted
-      next compatible =>
-        have separated : incompatibleParallel left right = false := by
-          cases result : incompatibleParallel left right <;> simp_all
-        obtain ⟨leftRun, leftAt, tail⟩ := Option.bind_eq_some_iff.mp accepted
-        obtain ⟨rightRun, rightAt, result⟩ := Option.bind_eq_some_iff.mp tail
-        have same := Option.some.inj result
-        subst run
-        by_cases inLeft : key ∈ left.resources
-        · have excluded := separated_parallel_forbids_transfer_use_overlap separated inLeft
-          have noRight : ∀ entry ∈ rightRun.bindings, entry.2.message.payload ≠ .endpoint key := by
-            intro entry member transfer
-            rcases entry with ⟨event, binding⟩
-            have fromSource : (event, binding.message) ∈ right.messageEntries (start + left.eventCount) := by
-              apply (elaboration_retains_exact_source_message_occurrences rightAt).subset
-              exact List.mem_map.mpr ⟨(event, binding), member, rfl⟩
-            exact excluded (source_message_use_is_a_source_use fromSource (.inr (.inr transfer)))
-          have ignores : ∀ owner, ownerAfterBindings key owner rightRun.bindings = owner := by
-            intro owner
-            exact symbolic_owner_flow_preserves_an_untouched_resource noRight
-          have contains : left.resources.contains key = true := by simpa using inLeft
-          simpa only [contains, Bool.true_eq, if_true, symbolic_owner_flow_composes, ignores]
-            using leftIH leftAt
-        · have noLeft : ∀ entry ∈ leftRun.bindings, entry.2.message.payload ≠ .endpoint key := by
-            intro entry member transfer
-            rcases entry with ⟨event, binding⟩
-            have fromSource : (event, binding.message) ∈ left.messageEntries start := by
-              apply (elaboration_retains_exact_source_message_occurrences leftAt).subset
-              exact List.mem_map.mpr ⟨(event, binding), member, rfl⟩
-            exact inLeft (source_message_transfer_is_a_source_resource fromSource transfer)
-          have ignores : ownerAfterBindings key (owners key) leftRun.bindings = owners key :=
-            symbolic_owner_flow_preserves_an_untouched_resource noLeft
-          have contains : left.resources.contains key = false := by simpa using inLeft
-          simpa only [contains, Bool.false_eq, if_false, symbolic_owner_flow_composes, ignores]
-            using rightIH rightAt
+      obtain ⟨leftRun, rightRun, leftAt, rightAt, separated, rfl⟩ :=
+        accepted_parallel_elaboration_has_separated_children accepted
+      by_cases inLeft : key ∈ leftRun.resources
+      · have excluded := separated_elaborations_forbid_transfer_use_overlap separated inLeft
+        have noRight : ∀ entry ∈ rightRun.bindings, entry.2.message.payload ≠ .endpoint key := by
+          intro ⟨event, binding⟩ member transfer
+          exact excluded (selected_use_is_an_elaboration_use member (.inr (.inr transfer)))
+        have ignores : ∀ owner, ownerAfterBindings key owner rightRun.bindings = owner := by
+          intro owner
+          exact symbolic_owner_flow_preserves_an_untouched_resource noRight
+        have contains : leftRun.resources.contains key = true := by simpa using inLeft
+        simpa only [contains, Bool.true_eq, if_true, symbolic_owner_flow_composes, ignores]
+          using leftIH leftAt
+      · have noLeft : ∀ entry ∈ leftRun.bindings, entry.2.message.payload ≠ .endpoint key := by
+          intro ⟨event, binding⟩ member transfer
+          exact inLeft (selected_transfer_is_an_elaboration_resource member transfer)
+        have ignores : ownerAfterBindings key (owners key) leftRun.bindings = owners key :=
+          symbolic_owner_flow_preserves_an_untouched_resource noLeft
+        have contains : leftRun.resources.contains key = false := by simpa using inLeft
+        simpa only [contains, Bool.false_eq, if_false, symbolic_owner_flow_composes, ignores]
+          using rightIH rightAt
   | route resolver left right leftIH rightIH =>
       simp only [elaborate] at accepted
       split at accepted

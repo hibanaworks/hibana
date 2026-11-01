@@ -16,7 +16,7 @@ cat .github/ci-tests/endpoint_conformance.lean .github/ci-tests/protocol_shapes.
 (cd proofs/lean && lake env lean -j1 --run "${OUTPUT}/current.lean" --check-guarded-reentry) \
   > "${OUTPUT}/guarded-positive.log" 2>&1
 : > "${OUTPUT}/mutants.tsv"
-for defect in resumption context actor guarded-context selected-expansion; do
+for defect in resumption context actor guarded-context selected-expansion continuation-position resolver-origin; do
   cp "${OUTPUT}/current.lean" "${OUTPUT}/${defect}.lean"
   if [[ "${defect}" == resumption ]]; then
     perl -0pi -e '
@@ -39,9 +39,19 @@ for defect in resumption context actor guarded-context selected-expansion; do
   elif [[ "${defect}" == guarded-context ]]; then
     perl -0pi -e '
       s/\| \.roll body => ⟨\.hole, body, rfl⟩ :: \(\(shapeRollFocuses body\)\.map fun focus =>\n      ⟨\.roll focus.context, focus.body, by simp only \[RollContext.plug, focus.source_eq\]⟩\)/| .roll body => [⟨.hole, body, rfl⟩]/ == 1 or die "missing parent-roll context\n";
-      s/(def shapeRollFocuses.*?\n)  \| \.route resolver left right =>.*?\n\ndef shapeAlongsidePlans/$1  | .route _ _ _ => []\n\ndef shapeAlongsidePlans/s == 1 or die "missing route context\n";
+      s/(def shapeRollFocuses.*?\n)  \| \.route resolver left right =>.*?\n\n-- Every subtree/$1  | .route _ _ _ => []\n\n-- Every subtree/s == 1 or die "missing route context\n";
     ' "${OUTPUT}/${defect}.lean"
     expected='guarded inner-roll regression:'
+  elif [[ "${defect}" == continuation-position ]]; then
+    perl -0pi -e '
+      s/\(shapeContinuationCuts tail\.1\)/([⟨RollContext.hole, tail.1, rfl⟩] : List (Σ context : RollContext, { focus : Source \/\/ context.plug focus = tail.1 }))/ == 1 or die "missing continuation insertion sites\n";
+    ' "${OUTPUT}/${defect}.lean"
+    expected='continuation-cut regression:'
+  elif [[ "${defect}" == resolver-origin ]]; then
+    perl -0pi -e '
+      s/shapeResolverEntered plan scope id (before|after)/shapeScopeEntered scope $1/g == 4 or die "missing resolver origin checks\n";
+    ' "${OUTPUT}/${defect}.lean"
+    expected='continuation-cut regression:'
   else
     perl -0pi -e '
       s/(  \| some original =>\n)(    match expandedAt : normalizeExpansion)/$1    if (normalize expanded).isNone then [] else\n$2/ == 1 or die "missing selected expansion normalization\n";
@@ -51,7 +61,8 @@ for defect in resumption context actor guarded-context selected-expansion; do
   diff -u "${OUTPUT}/current.lean" "${OUTPUT}/${defect}.lean" \
     > "${OUTPUT}/${defect}.patch" || test "$?" == 1
   status=0
-  if [[ "${defect}" == guarded-context || "${defect}" == selected-expansion ]]; then
+  if [[ "${defect}" == guarded-context || "${defect}" == selected-expansion ||
+        "${defect}" == continuation-position || "${defect}" == resolver-origin ]]; then
     (cd proofs/lean && lake env lean -j1 --run "${OUTPUT}/${defect}.lean" --check-guarded-reentry) \
       > "${OUTPUT}/${defect}.log" 2>&1 || status=$?
   else
@@ -101,5 +112,6 @@ shasum -a 256 --check "${OUTPUT}/owner-original.sha256" > "${OUTPUT}/owner-sourc
 rm -r "${owner_copy}"
 shasum -a 256 --check "${OUTPUT}/source.sha256" > "${OUTPUT}/source-check.log"
 rm "${OUTPUT}/current.lean" "${OUTPUT}/resumption.lean" "${OUTPUT}/context.lean" \
-  "${OUTPUT}/actor.lean" "${OUTPUT}/guarded-context.lean" "${OUTPUT}/selected-expansion.lean"
-echo 'Shape resumption sensitivity: all six restored checker omissions are rejected'
+  "${OUTPUT}/actor.lean" "${OUTPUT}/guarded-context.lean" "${OUTPUT}/selected-expansion.lean" \
+  "${OUTPUT}/continuation-position.lean" "${OUTPUT}/resolver-origin.lean"
+echo 'Shape resumption sensitivity: all eight restored checker omissions are rejected'

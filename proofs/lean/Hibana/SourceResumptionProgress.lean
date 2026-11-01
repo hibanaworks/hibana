@@ -8,10 +8,10 @@ private def pointEvent : SourcePoint → Nat
   | .committed action => action.event
 
 private def SourceResumption.inBody (scope : SourceResumption) (event : Nat) : Bool :=
-  scope.bodyStart ≤ event && event < scope.bodyEnd && event < scope.tailStart
+  scope.body.contains event && scope.tail.all (event < ·)
 
 private def SourceResumption.inTail (scope : SourceResumption) (event : Nat) : Bool :=
-  scope.tailStart ≤ event && event < scope.tailEnd
+  scope.tail.contains event
 
 /-- Outgoing continuations use this actor's current body after it enters that
 body. Incoming old continuations do not acquire a new prerequisite. Reads are
@@ -112,11 +112,9 @@ theorem a_resumption_dependency_increases_source_rank
               have fields := Bool.and_eq_true_iff.mp enabled
               have regions := Bool.and_eq_true_iff.mp fields.1
               have inside := Bool.and_eq_true_iff.mp regions.1
-              have outside := Bool.and_eq_true_iff.mp regions.2
+              have outside := List.contains_iff_mem.mp regions.2
               have earlier : before.event < after := by
-                have upper : before.event < scope.tailStart := of_decide_eq_true inside.2
-                have lower : scope.tailStart ≤ after := of_decide_eq_true outside.1
-                omega
+                exact of_decide_eq_true (List.all_eq_true.mp inside.2 after outside)
               cases sideAt : before.side <;> simp only [SourcePoint.rank, sideAt] <;> omega
 
 theorem a_resumption_dependency_stays_with_its_actor

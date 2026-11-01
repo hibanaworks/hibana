@@ -23,9 +23,20 @@ private theorem unfolding_keeps_resource_membership
     · intro observed
       exact observed.elim id (fun member => Or.inl (context.contains_resource _ member))
     · exact Or.inl
-  | resumeAlongsideContinuation context earlier next tail first second third =>
-    simp only [Source.resources, List.mem_eraseDups, List.mem_append] at first second third ⊢
+  | @resumeAlongsideContinuation body continuation earlierSource nextSource focus
+      context insertion earlier next tail first second third
+  | @resumeBeforeContinuation body continuation earlierSource nextSource focus
+      context insertion earlier next tail first second third =>
+    have unionPar := insertion.resource_plug_union
+      (key := key) (first := .par nextSource focus) (second := focus) nextSource.resources
+      (by simp only [Source.resources, List.mem_eraseDups, List.mem_append])
+    have unionSeq := insertion.resource_plug_union
+      (key := key) (first := .seq nextSource focus) (second := focus) nextSource.resources
+      (by simp only [Source.resources, List.mem_eraseDups, List.mem_append])
+    simp only [Source.resources, List.mem_eraseDups, List.mem_append]
+    first | rw [unionPar] | rw [unionSeq]
     rw [first, second, third]
+    simp only [Source.resources]
     constructor
     · intro observed
       rcases observed with first | second | tail

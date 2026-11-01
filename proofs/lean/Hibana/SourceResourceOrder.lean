@@ -18,6 +18,29 @@ end Hibana.EndpointDelegation
 namespace Hibana
 open EndpointDelegation
 
+/-- A parallel path joins only the selected children's effects. -/
+theorem accepted_parallel_elaboration_has_separated_children
+    {left right : Source} {resources : List EndpointKey} {owners : OwnerMap}
+    {path : List Selection} {start : Nat} {run : Elaboration}
+    (accepted : elaborate resources owners path (.par left right) start = some run) :
+    ∃ first second,
+      elaborate resources owners path left start = some first ∧
+      elaborate resources owners path right (start + left.eventCount) = some second ∧
+      incompatibleElaborations first second = false ∧
+      run = {
+        owners := fun key => if first.resources.contains key then first.owners key else second.owners key
+        bindings := first.bindings ++ second.bindings
+        equations := first.equations ++ second.equations
+      } := by
+  change (elaborate resources owners path left start).bind _ = some run at accepted
+  obtain ⟨first, firstAt, tail⟩ := Option.bind_eq_some_iff.mp accepted
+  obtain ⟨second, secondAt, result⟩ := Option.bind_eq_some_iff.mp tail
+  cases separated : incompatibleElaborations first second with
+  | true => simp [separated] at result
+  | false =>
+    simp only [separated, Bool.false_eq_true, ite_false] at result
+    exact ⟨first, second, firstAt, secondAt, separated, (Option.some.inj result).symm⟩
+
 /-- Elaboration cannot invent a source event, message, or resource use. The
 sublist retains exact occurrence identifiers, including across parallel parts.
 This is a source property, not a mutable execution or owner table. Enumeration order is not a runtime
@@ -55,16 +78,10 @@ theorem elaboration_retains_exact_source_message_occurrences
       simpa [Elaboration.messageEntries, Source.messageEntries, List.map_append] using
         List.Sublist.append (leftIH firstAt) (rightIH secondAt)
   | par left right leftIH rightIH =>
-      simp only [elaborate] at accepted
-      split at accepted
-      next incompatible => simp at accepted
-      next compatible =>
-        obtain ⟨first, firstAt, tail⟩ := Option.bind_eq_some_iff.mp accepted
-        obtain ⟨second, secondAt, result⟩ := Option.bind_eq_some_iff.mp tail
-        have same := Option.some.inj result
-        subst run
-        simpa [Elaboration.messageEntries, Source.messageEntries, List.map_append] using
-          List.Sublist.append (leftIH firstAt) (rightIH secondAt)
+      obtain ⟨first, second, firstAt, secondAt, _, rfl⟩ :=
+        accepted_parallel_elaboration_has_separated_children accepted
+      simpa [Elaboration.messageEntries, Source.messageEntries, List.map_append] using
+        List.Sublist.append (leftIH firstAt) (rightIH secondAt)
   | route resolver left right leftIH rightIH =>
       simp only [elaborate] at accepted
       split at accepted
@@ -148,31 +165,50 @@ theorem source_message_use_is_a_source_use
         simpa only [Source.uses, List.mem_eraseDups] using combined
   | roll body bodyIH => exact bodyIH present
 
-/-- The ownership separation check applies to the actual elaborated branches,
-not just their syntactic resource lists. Thus a transfer cannot be independent
-of any operation that uses the same endpoint in the other parallel branch. -/
+theorem selected_transfer_is_an_elaboration_resource
+    {run : Elaboration} {event : Nat} {binding : SymbolicBinding} {key : EndpointKey}
+    (present : (event, binding) ∈ run.bindings)
+    (transferred : binding.message.payload = .endpoint key) : key ∈ run.resources := by
+  simp only [Elaboration.resources, List.mem_eraseDups, List.mem_flatMap]
+  exact ⟨(event, binding), present,
+    source_message_transfer_is_a_source_resource (source := .send binding.message)
+      (start := 0) (event := 0) (message := binding.message)
+      (by simp [Source.messageEntries]) transferred⟩
+
+theorem selected_use_is_an_elaboration_use
+    {run : Elaboration} {event : Nat} {binding : SymbolicBinding} {key : EndpointKey}
+    (present : (event, binding) ∈ run.bindings)
+    (used : binding.message.sender = key ∨ binding.message.receiver = key ∨
+      binding.message.payload = .endpoint key) : key ∈ run.uses := by
+  simp only [Elaboration.uses, List.mem_eraseDups, List.mem_flatMap]
+  exact ⟨(event, binding), present,
+    source_message_use_is_a_source_use (source := .send binding.message)
+      (start := 0) (event := 0) (message := binding.message)
+      (by simp [Source.messageEntries]) used⟩
+
+theorem separated_elaborations_forbid_transfer_use_overlap
+    {left right : Elaboration} {key : EndpointKey}
+    (accepted : incompatibleElaborations left right = false)
+    (transferred : key ∈ left.resources) : key ∉ right.uses := by
+  intro used
+  have overlap : left.resources.any right.uses.contains = true := by
+    apply List.any_eq_true.mpr
+    exact ⟨key, transferred, by simpa using used⟩
+  simp [incompatibleElaborations, overlap] at accepted
+
+/-- A selected transfer cannot overlap any selected use in the sibling. -/
 theorem accepted_parallel_elaborations_cannot_alias_transfer_and_use
-    {left right : Source} {resources : List EndpointKey}
-    {leftOwners rightOwners : OwnerMap} {path : List Selection}
-    {leftStart rightStart leftEvent rightEvent : Nat}
+    {leftEvent rightEvent : Nat}
     {leftRun rightRun : Elaboration} {leftBinding rightBinding : SymbolicBinding}
     {key : EndpointKey}
-    (separated : incompatibleParallel left right = false)
-    (leftAccepted : elaborate resources leftOwners path left leftStart = some leftRun)
-    (rightAccepted : elaborate resources rightOwners path right rightStart = some rightRun)
+    (separated : incompatibleElaborations leftRun rightRun = false)
     (leftPresent : (leftEvent, leftBinding) ∈ leftRun.bindings)
     (rightPresent : (rightEvent, rightBinding) ∈ rightRun.bindings)
     (transferred : leftBinding.message.payload = .endpoint key)
     (used : rightBinding.message.sender = key ∨ rightBinding.message.receiver = key ∨
       rightBinding.message.payload = .endpoint key) : False := by
-  have leftSource : (leftEvent, leftBinding.message) ∈ left.messageEntries leftStart := by
-    apply (elaboration_retains_exact_source_message_occurrences leftAccepted).subset
-    exact List.mem_map.mpr ⟨(leftEvent, leftBinding), leftPresent, rfl⟩
-  have rightSource : (rightEvent, rightBinding.message) ∈ right.messageEntries rightStart := by
-    apply (elaboration_retains_exact_source_message_occurrences rightAccepted).subset
-    exact List.mem_map.mpr ⟨(rightEvent, rightBinding), rightPresent, rfl⟩
-  exact separated_parallel_forbids_transfer_use_overlap separated
-    (source_message_transfer_is_a_source_resource leftSource transferred)
-    (source_message_use_is_a_source_use rightSource used)
+  exact separated_elaborations_forbid_transfer_use_overlap separated
+    (selected_transfer_is_an_elaboration_resource leftPresent transferred)
+    (selected_use_is_an_elaboration_use rightPresent used)
 
 end Hibana

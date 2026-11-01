@@ -89,17 +89,11 @@ theorem elaboration_only_emits_valid_messages
       · exact leftIH firstAt leftMember
       · exact rightIH secondAt rightMember
   | par left right leftIH rightIH =>
-      simp only [elaborate] at accepted
-      split at accepted
-      next incompatible => simp at accepted
-      next compatible =>
-        obtain ⟨first, firstAt, remaining⟩ := Option.bind_eq_some_iff.mp accepted
-        obtain ⟨second, secondAt, written⟩ := Option.bind_eq_some_iff.mp remaining
-        have same := Option.some.inj written
-        subst run
-        rcases List.mem_append.mp member with leftMember | rightMember
-        · exact leftIH firstAt leftMember
-        · exact rightIH secondAt rightMember
+      obtain ⟨first, second, firstAt, secondAt, _, rfl⟩ :=
+        accepted_parallel_elaboration_has_separated_children accepted
+      rcases List.mem_append.mp member with leftMember | rightMember
+      · exact leftIH firstAt leftMember
+      · exact rightIH secondAt rightMember
   | route resolver left right leftIH rightIH =>
       simp only [elaborate] at accepted
       split at accepted

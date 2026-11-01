@@ -90,19 +90,58 @@ def shapeChoicePatterns (source : Source) : List (List Nat) :=
       if path.contains id then path.filter (· != id)
       else (id :: path).mergeSort (· ≤ ·)).eraseDups.mergeSort fun a b => decide (a ≤ b)
 
+def shapePointEvent : SourcePoint → Nat
+  | .accepted event => event
+  | .committed action => action.event
+
 def shapeScopeEntered (scope : Scope) (points : List SourcePoint) : Bool :=
   points.any fun point =>
-    let event := match point with
-      | .accepted event => event
-      | .committed action => action.event
+    let event := shapePointEvent point
     scope.start ≤ event && event < scope.stop
+
+-- A retained body inserted inside a continuation still belongs to its original
+-- source scope. Its position in the expanded tree cannot choose the surrounding
+-- continuation's resolver before a real operation of that scope is admitted.
+def shapeResolverEntered (plan : SourceOccurrenceCut source) (scope : Scope) (id : Nat)
+    (points : List SourcePoint) : Bool :=
+  shapeScopeEntered scope (points.filter fun point =>
+    match (plan.unfolding.occurrences 0)[shapePointEvent point]? with
+    | none => false
+    | some (origin, _) =>
+        (shapeResolvers source 0).any fun (original, resolver) =>
+          resolver == id && original.start ≤ origin && origin < original.stop)
+
+theorem an_entered_resolver_has_an_operation_in_its_original_source_scope
+    (plan : SourceOccurrenceCut source) (scope : Scope) (id : Nat) (points : List SourcePoint)
+    (entered : shapeResolverEntered plan scope id points = true) :
+    ∃ point ∈ points, ∃ (origin : Nat) (message : Message) (original : Scope),
+      (plan.unfolding.occurrences 0)[shapePointEvent point]? = some (origin, message) ∧
+      (original, id) ∈ shapeResolvers source 0 ∧
+      original.start ≤ origin ∧ origin < original.stop := by
+  unfold shapeResolverEntered shapeScopeEntered at entered
+  obtain ⟨point, present, _⟩ := List.any_eq_true.mp entered
+  obtain ⟨inPoints, selected⟩ := List.mem_filter.mp present
+  cases originAt : (plan.unfolding.occurrences 0)[shapePointEvent point]? with
+  | none => simp only [originAt, Bool.false_eq_true] at selected
+  | some entry =>
+    rcases entry with ⟨origin, message⟩
+    simp only [originAt] at selected
+    obtain ⟨⟨original, resolver⟩, inSource, fields⟩ := List.any_eq_true.mp selected
+    have upper := Bool.and_eq_true_iff.mp fields
+    have lower := Bool.and_eq_true_iff.mp upper.1
+    have same : resolver = id := beq_iff_eq.mp lower.1
+    subst resolver
+    exact ⟨point, inPoints, origin, message, original, originAt, inSource,
+      of_decide_eq_true lower.2, of_decide_eq_true upper.2⟩
+
+#print axioms an_entered_resolver_has_an_operation_in_its_original_source_scope
 
 -- Inputs choose only scopes entered by this call. Future visits stay free;
 -- a scope already entered keeps the selection in this same source plan.
 def shapeEntryChoices (plan : SourceOccurrenceCut source)
     (before after : List SourcePoint) (choice : List Nat) : Bool :=
   (shapeResolvers plan.expanded 0).all fun (scope, id) =>
-    shapeScopeEntered scope before || !shapeScopeEntered scope after ||
+    shapeResolverEntered plan scope id before || !shapeResolverEntered plan scope id after ||
     plan.path.selections.all fun selection =>
       selection.scope != scope || selection.arm ==
         if choice.contains id then .right else .left
@@ -112,8 +151,8 @@ theorem a_freshly_entered_resolver_uses_its_recorded_input
     (choice : List Nat) (scope : Scope) (id : Nat) (selection : Selection)
     (checked : shapeEntryChoices plan before after choice = true)
     (present : (scope, id) ∈ shapeResolvers plan.expanded 0)
-    (fresh : shapeScopeEntered scope before = false)
-    (entered : shapeScopeEntered scope after = true)
+    (fresh : shapeResolverEntered plan scope id before = false)
+    (entered : shapeResolverEntered plan scope id after = true)
     (selected : selection ∈ plan.path.selections) (same : selection.scope = scope) :
     (selection.arm == if choice.contains id then .right else .left) = true := by
   have scopeChecked := List.all_eq_true.mp checked (scope, id) present
@@ -432,15 +471,48 @@ def shapeRollFocuses : (source : Source) → List (ShapeRollFocus source)
         ⟨.routeRight resolver left focus.context, focus.body,
           by simp only [RollContext.plug, focus.source_eq]⟩
 
+-- Every subtree is an insertion point, including a point between two messages
+-- in one route arm. The equality retains the unmodified continuation around it.
+def shapeContinuationCuts : (source : Source) →
+    List (Σ context : RollContext, { focus : Source // context.plug focus = source })
+  | .send message => [⟨.hole, .send message, rfl⟩]
+  | .seq left right =>
+      ⟨.hole, .seq left right, rfl⟩ ::
+      ((shapeContinuationCuts left).map fun ⟨context, focus, equal⟩ =>
+        ⟨.seqLeft context right, focus, by simp only [RollContext.plug, equal]⟩) ++
+      (shapeContinuationCuts right).map fun ⟨context, focus, equal⟩ =>
+        ⟨.seqRight left context, focus, by simp only [RollContext.plug, equal]⟩
+  | .par left right =>
+      ⟨.hole, .par left right, rfl⟩ ::
+      ((shapeContinuationCuts left).map fun ⟨context, focus, equal⟩ =>
+        ⟨.parLeft context right, focus, by simp only [RollContext.plug, equal]⟩) ++
+      (shapeContinuationCuts right).map fun ⟨context, focus, equal⟩ =>
+        ⟨.parRight left context, focus, by simp only [RollContext.plug, equal]⟩
+  | .route resolver left right =>
+      ⟨.hole, .route resolver left right, rfl⟩ ::
+      ((shapeContinuationCuts left).map fun ⟨context, focus, equal⟩ =>
+        ⟨.routeLeft resolver context right, focus, by simp only [RollContext.plug, equal]⟩) ++
+      (shapeContinuationCuts right).map fun ⟨context, focus, equal⟩ =>
+        ⟨.routeRight resolver left context, focus, by simp only [RollContext.plug, equal]⟩
+  | .roll body =>
+      ⟨.hole, .roll body, rfl⟩ ::
+      (shapeContinuationCuts body).map fun ⟨context, focus, equal⟩ =>
+        ⟨.roll context, focus, by simp only [RollContext.plug, equal]⟩
+
 def shapeAlongsidePlans (focus : ShapeRollFocus left) (right : Source) :
     List (Σ expanded : Source, SourceUnfolding (.seq left right) expanded) :=
   match focus with
   | ⟨context, body, equal⟩ =>
       equal ▸ ((shapeBoundedUnfoldings (context.plug (.roll body))).flatMap fun earlier =>
         (shapeBoundedUnfoldings body).flatMap fun next =>
-          (shapeBoundedUnfoldings right).map fun tail =>
-            ⟨.seq earlier.1 (.par next.1 tail.1),
-              .resumeAlongsideContinuation context earlier.2 (.rollOnce next.2) tail.2⟩)
+          (shapeBoundedUnfoldings right).flatMap fun tail =>
+            (shapeContinuationCuts tail.1).flatMap fun ⟨insertion, part, same⟩ =>
+              let retained : SourceUnfolding right (insertion.plug part) :=
+                by simpa only [same] using tail.2
+              [⟨.seq earlier.1 (insertion.plug (.par next.1 part)),
+                .resumeAlongsideContinuation context insertion earlier.2 (.rollOnce next.2) retained⟩,
+               ⟨.seq earlier.1 (insertion.plug (.seq next.1 part)),
+                .resumeBeforeContinuation context insertion earlier.2 (.rollOnce next.2) retained⟩])
 
 def shapeAfterPlans (focus : ShapeRollFocus left) (right : Source) :
     List (Σ expanded : Source, SourceUnfolding (.seq left right) expanded) :=
@@ -558,6 +630,16 @@ private def ownerPreservingContinuation : Source := .seq
   (.route (some 17)
     (.send ⟨⟨0, 0⟩, ⟨0, 2⟩, 2, .wire 0⟩)
     (.send ⟨⟨0, 0⟩, ⟨0, 2⟩, 3, .endpoint ⟨0, 3⟩⟩))
+
+private def incomingLoanContinuation : Source := .seq
+  (.roll (.seq
+    (.send ⟨⟨0, 0⟩, ⟨0, 1⟩, 1, .endpoint ⟨0, 3⟩⟩)
+    (.seq (.send ⟨⟨0, 3⟩, ⟨0, 1⟩, 4, .wire 0⟩)
+      (.send ⟨⟨0, 1⟩, ⟨0, 0⟩, 1, .endpoint ⟨0, 3⟩⟩))))
+  (.route (some 0)
+    (.send ⟨⟨0, 2⟩, ⟨0, 0⟩, 2, .wire 0⟩)
+    (.seq (.send ⟨⟨0, 2⟩, ⟨0, 0⟩, 5, .wire 0⟩)
+      (.send ⟨⟨0, 0⟩, ⟨0, 2⟩, 3, .endpoint ⟨0, 3⟩⟩)))
 
 theorem a_new_holder_cannot_inherit_another_actors_rolled_operation :
     shapePermits (shapeStates returnedRollEndpoint
@@ -1135,8 +1217,26 @@ def main (args : List String) : IO UInt32 := do
       ([0, 1, 2, 3, 4, 5, 8, 9], false)] do
     unless shapePermits (shapeStates ownerPreservingContinuation selectedPlans word) [] 0 false == expected do
       throw (IO.userError s!"selected-expansion regression: word={word} expected={expected}")
+  -- Check this exact finite witness as well as the whole search. Subtree
+  -- insertion can find another witness for the same word; it must not hide a
+  -- check that incorrectly rejects an otherwise valid selected expansion.
+  let selectedAfter := (checkedPlans ownerPreservingContinuation _
+    (.resumeAfterContinuation .hole
+      (.seq (.rollOnce (.oneCopy _)) (.oneCopy _)) (.oneCopy _))).map ShapePlan.of
+  unless shapePermits (shapeStates ownerPreservingContinuation selectedAfter
+      [0, 1, 2, 3, 4, 5, 6, 7]) [] 0 false do
+    throw (IO.userError "selected-expansion regression: the exact after-continuation witness was rejected")
+  let incomingPlans := (shapePlans incomingLoanContinuation).map ShapePlan.of
+  for (word, choice, event, expected) in [
+      ([0, 1, 2, 3, 4, 5, 0, 1], [], 3, true),
+      ([0, 1, 2, 3, 4, 5, 0, 1], [0], 3, false),
+      ([0, 1, 2, 3, 4, 5, 0, 1, 2, 3, 4, 5, 8, 9], [0], 0, true),
+      ([0, 1, 2, 3, 4, 5, 0, 1, 2, 3, 4, 5, 8, 9, 10, 11], [0], 0, false)] do
+    unless shapePermits (shapeStates incomingLoanContinuation incomingPlans word)
+        choice event false == expected do
+      throw (IO.userError s!"continuation-cut regression: word={word} choice={choice} event={event} expected={expected}")
   if args == ["--check-guarded-reentry"] then
-    IO.println "Guarded reentry regressions: all ten source cuts passed"
+    IO.println "Guarded reentry regressions: all fifteen source cuts passed"
     return 0
   let (inputPath, outputPath, weakenRoot) ← match args with
     | [input, output] => pure (input, output, false)

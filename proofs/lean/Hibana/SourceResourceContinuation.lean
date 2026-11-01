@@ -76,6 +76,13 @@ private theorem sorting_issuance_preserves_equation
     equationAccepted (sortIssuance rows) equation = equationAccepted rows equation := by
   simp only [equationAccepted, sorting_issuance_preserves_instantiation]
 
+theorem accepted_global_retains_static_parallel_separation
+    {source : Source} {normalized : Normalization}
+    (accepted : normalize source = some normalized) : source.parallelSeparated = true := by
+  cases separated : source.parallelSeparated with
+  | false => simp [normalize, separated] at accepted
+  | true => rfl
+
 /-- Each accepted normalized path comes from an actual selected source
 elaboration with solved ownership equations and a total binding instantiation.
 The exposed, sorted issuance is exactly the one used to interpret every owner;
@@ -90,6 +97,8 @@ theorem accepted_normalized_path_has_its_exact_issuance_derivation
       (run.bindings.mapM fun (event, symbolic) => do
         let binding ← instantiateBinding normalized.issuance symbolic
         some (event, binding)) = some selected.bindings := by
+  have separated := accepted_global_retains_static_parallel_separation accepted
+  simp only [normalize, separated, Bool.not_true, Bool.false_eq_true, ite_false] at accepted
   change ((paths (source.scopes 0)).mapM fun selections => do
     let run ← elaborate source.resources (initialOwners source.resources) selections source 0
     some (selections, run)).bind _ = some normalized at accepted

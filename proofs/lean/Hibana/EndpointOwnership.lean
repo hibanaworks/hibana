@@ -118,7 +118,24 @@ structure Elaboration where
   bindings : List (Nat × SymbolicBinding)
   equations : List Equation
 
+def Elaboration.resources (run : Elaboration) : List EndpointKey :=
+  (run.bindings.flatMap fun entry => (Source.send entry.2.message).resources).eraseDups
+
+def Elaboration.uses (run : Elaboration) : List EndpointKey :=
+  (run.bindings.flatMap fun entry => (Source.send entry.2.message).uses).eraseDups
+
 def incompatibleParallel (left right : Source) : Bool :=
+  left.resources.any right.uses.contains || right.resources.any left.uses.contains
+
+def Source.parallelSeparated : Source → Bool
+  | .send _ => true
+  | .seq left right | .route _ left right =>
+      left.parallelSeparated && right.parallelSeparated
+  | .par left right =>
+      !incompatibleParallel left right && left.parallelSeparated && right.parallelSeparated
+  | .roll body => body.parallelSeparated
+
+def incompatibleElaborations (left right : Elaboration) : Bool :=
   left.resources.any right.uses.contains || right.resources.any left.uses.contains
 
 def validKey (key : EndpointKey) : Bool := key.component < 65536 && key.role < 256
@@ -157,12 +174,12 @@ def elaborate (resources : List EndpointKey) (owners : OwnerMap)
         equations := first.equations ++ second.equations
       }
   | .par left right, start => do
-      if incompatibleParallel left right then none else
       let first ← elaborate resources owners path left start
       let second ← elaborate resources owners path right (start + left.eventCount)
+      if incompatibleElaborations first second then none else
       some {
         owners := fun key =>
-          if left.resources.contains key then first.owners key else second.owners key
+          if first.resources.contains key then first.owners key else second.owners key
         bindings := first.bindings ++ second.bindings
         equations := first.equations ++ second.equations
       }
@@ -264,6 +281,7 @@ def sortIssuance : List Issuance → List Issuance
 their later holders; they cannot infer different initial owners. Functional
 maps and graph closure are independent of Rust's source-prefix query engine. -/
 def normalize (source : Source) : Option Normalization := do
+  if !source.parallelSeparated then none else
   let resources := source.resources
   let runs ← (paths (source.scopes 0)).mapM fun selections => do
     let elaborated ← elaborate resources (initialOwners resources) selections source 0

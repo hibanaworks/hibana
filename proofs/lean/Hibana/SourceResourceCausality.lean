@@ -135,16 +135,9 @@ theorem accepted_source_orders_transfer_against_uses
               (second - (start + left.eventCount)) (first - (start + left.eventCount))).1]
             using rightIH rightAt firstRight secondRight
   | par left right leftIH rightIH =>
-      simp only [elaborate] at accepted
-      split at accepted
-      next incompatible => simp at accepted
-      next compatible =>
-        have separated : incompatibleParallel left right = false := by
-          cases result : incompatibleParallel left right <;> simp_all
-        obtain ⟨leftRun, leftAt, tail⟩ := Option.bind_eq_some_iff.mp accepted
-        obtain ⟨rightRun, rightAt, result⟩ := Option.bind_eq_some_iff.mp tail
-        have same := Option.some.inj result
-        subst run
+      obtain ⟨leftRun, rightRun, leftAt, rightAt, separated, rfl⟩ :=
+        accepted_parallel_elaboration_has_separated_children accepted
+      ·
         rcases List.mem_append.mp firstPresent with firstLeft | firstRight
         · rcases List.mem_append.mp secondPresent with secondLeft | secondRight
           · have firstBound := elaborated_occurrence_is_within_its_fragment leftAt firstLeft
@@ -155,12 +148,12 @@ theorem accepted_source_orders_transfer_against_uses
               (composition_preserves_left_fragment_causality left right none insideSecond insideFirst).2.1]
               using leftIH leftAt firstLeft secondLeft
           · exact False.elim (accepted_parallel_elaborations_cannot_alias_transfer_and_use
-              separated leftAt rightAt firstLeft secondRight transferred used)
+              separated firstLeft secondRight transferred used)
         · rcases List.mem_append.mp secondPresent with secondLeft | secondRight
-          · have swapped : incompatibleParallel right left = false := by
-              simpa only [incompatibleParallel, Bool.or_comm] using separated
+          · have swapped : incompatibleElaborations rightRun leftRun = false := by
+              simpa only [incompatibleElaborations, Bool.or_comm] using separated
             exact False.elim (accepted_parallel_elaborations_cannot_alias_transfer_and_use
-              swapped rightAt leftAt firstRight secondLeft transferred used)
+              swapped firstRight secondLeft transferred used)
           · have firstBound := elaborated_occurrence_is_within_its_fragment rightAt firstRight
             have secondBound := elaborated_occurrence_is_within_its_fragment rightAt secondRight
             have firstShift : first - start = left.eventCount + (first - (start + left.eventCount)) := by omega

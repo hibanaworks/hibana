@@ -23,6 +23,7 @@ import Hibana.ResourceHeaderOrigin
 import Hibana.ActorVisitProgress
 import Hibana.SourceOccurrenceProgress
 import Hibana.SelectedExpansion
+import Hibana.SelectedContinuation
 import Hibana.SourceOccurrenceTrace
 import Hibana.OccurrenceResourceOrigin
 import Hibana.ResourceOccurrenceCausality
