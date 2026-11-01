@@ -17,7 +17,7 @@ use super::{
     decision_state::{SelectedRouteCommitRows, SelectedRouteCommitRowsRef},
     lane_port,
     offer::{BranchKind, BranchMeta},
-    recv_commit_plan::{EndpointRxEventPlan, RecvCommitPayload, RecvCommitPlan},
+    recv_commit_plan::{RecvCommitPayload, RecvCommitPlan},
 };
 use crate::{
     endpoint::{RecvError, RecvResult},

@@ -1,8 +1,7 @@
 use super::{
     CursorInvariantError, OperationKernel, PendingSendIo, Poll, SendCommitOutcome, SendCommitPlan,
     SendCommitProof, SendError, SendInitOutcome, SendMeta, SendProgressCommitPlan, SendResult,
-    SendRouteAudit, SendRouteAuthority, SendRuntimeDesc, StateIndex, TapFrameMeta, Transport, ids,
-    lane_port,
+    SendRouteAudit, SendRouteAuthority, SendRuntimeDesc, StateIndex, Transport, ids, lane_port,
 };
 use crate::global::typestate::state_index_to_usize;
 
@@ -340,16 +339,8 @@ where
     #[inline(never)]
     fn emit_send_after_transport_event(&mut self, delta: &super::CommittedCommitDelta) {
         let event = crate::invariant_some(delta.event());
-        let lane = event.lane();
-        let lane_wire = self.port_for_lane(lane as usize).lane().as_wire();
-        let logical_meta = TapFrameMeta::new(
-            self.context.sid.raw(),
-            lane_wire,
-            self.public_header.role(),
-            event.event_label(),
-        );
         let event_id = event.event_id(ids::ENDPOINT_SEND, ids::ENDPOINT_SESSION);
-        self.emit_endpoint_event(event_id, logical_meta, lane);
+        self.emit_endpoint_event(event_id, event, 1);
     }
 
     #[inline(never)]

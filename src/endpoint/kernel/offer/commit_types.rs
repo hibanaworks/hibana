@@ -3,7 +3,7 @@
 use super::super::authority::RouteArmToken;
 use super::super::decision_state::SelectedRouteCommitRowsRef;
 use super::profile::OfferScopeProfile;
-use crate::eff::{EffIndex, EventOrigin};
+use crate::eff::EffIndex;
 use crate::global::const_dsl::ScopeId;
 use crate::global::typestate::{RecvMeta, StateIndex};
 
@@ -51,8 +51,6 @@ pub(crate) struct BranchMeta {
     pub(crate) eff_index: EffIndex,
     /// Event label for the previewed branch step.
     pub(crate) label: u8,
-    /// Origin of the previewed branch step.
-    pub(crate) origin: EventOrigin,
     /// Transport/ingress discriminator expected for this branch.
     pub(crate) frame_label: u16,
     /// Branch first-step category.

@@ -452,7 +452,6 @@ pub trait Transport {
 
 mod binding;
 /// Observability helpers for logical frame inspection.
-pub(crate) mod trace;
 pub use binding::EndpointBinding;
 /// Wire helpers: payload views and serialization traits.
 pub(crate) mod wire;

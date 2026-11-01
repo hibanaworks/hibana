@@ -6,22 +6,32 @@
 
 // ────────────── Endpoint boundary (0x0200-0x020F) ──────────────
 
-/// Endpoint send operation observed at the tap boundary.
+/// Endpoint send after its progress and any Endpoint transfer have committed.
 ///
+/// All three `ENDPOINT_*` commit records have this layout:
+///
+/// - `causal_key`: Executing actor in the high byte; API direction in the low
+///   byte (send = 1, receive = 2).
 /// - `arg0`: Session identifier (u32)
-/// - `arg1`: Packed role/lane/label/zero (u32)
+/// - `arg1`: `logical_view<<24 | wire_lane<<16 | source_event`.
+///   `source_event` retains the complete 16-bit wire label. Obtain the logical
+///   message label from the compiled operation with that identity.
+///
+/// The executing actor can differ from the logical view after delegation.
+/// Repeated occurrences of an event in a roll have the same source-event
+/// identity. These fields do not encode nested roll visits or establish a
+/// complete dynamic audit on their own.
 pub const ENDPOINT_SEND: u16 = 0x0202;
 
-/// Endpoint receive operation observed at the tap boundary.
-///
-/// - `arg0`: Session identifier (u32)
-/// - `arg1`: Packed role/lane/label/zero (u32)
+/// Endpoint receive after payload validation and progress commit, with the
+/// layout documented by [`ENDPOINT_SEND`]. A staged frame alone emits no such
+/// record. A terminal route arm with no source operation is represented by
+/// route selection records rather than a receive of an invented source event.
 pub const ENDPOINT_RECV: u16 = 0x0203;
 
 /// Endpoint event whose committed choreography row is session-originated.
 ///
-/// - `arg0`: Session identifier (u32)
-/// - `arg1`: Packed role/lane/label/zero (u32)
+/// Uses the layout documented by [`ENDPOINT_SEND`], including the API direction.
 pub const ENDPOINT_SESSION: u16 = 0x0204;
 
 /// Transport frame observed but not delivered because its header did not match

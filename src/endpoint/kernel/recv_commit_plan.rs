@@ -8,17 +8,9 @@ use crate::{
     observe::ids,
     transport::{
         Transport,
-        trace::TapFrameMeta,
         wire::{CodecError, Payload},
     },
 };
-
-#[derive(Clone, Copy)]
-pub(super) struct EndpointRxEventPlan {
-    lane: u8,
-    label: u8,
-    event_id: u16,
-}
 
 pub(super) enum RecvCommitPayload<'r> {
     Wire(lane_port::ReceivedFrame<'r>),
@@ -27,7 +19,6 @@ pub(super) enum RecvCommitPayload<'r> {
 
 pub(super) struct RecvCommitPlan<'r> {
     kind: RecvCommitPlanKind,
-    event: EndpointRxEventPlan,
     delta: PreparedCommitDelta,
     payload: RecvCommitPayload<'r>,
 }
@@ -35,30 +26,6 @@ pub(super) struct RecvCommitPlan<'r> {
 enum RecvCommitPlanKind {
     Direct,
     Branch { branch: BranchMeta },
-}
-
-impl EndpointRxEventPlan {
-    #[inline]
-    pub(super) const fn direct(lane: u8, label: u8) -> Self {
-        Self {
-            lane,
-            label,
-            event_id: ids::ENDPOINT_RECV,
-        }
-    }
-
-    #[inline]
-    pub(super) const fn branch(lane: u8, label: u8, origin: crate::eff::EventOrigin) -> Self {
-        Self {
-            lane,
-            label,
-            event_id: if origin.is_session() {
-                ids::ENDPOINT_SESSION
-            } else {
-                ids::ENDPOINT_RECV
-            },
-        }
-    }
 }
 
 impl<'r> RecvCommitPayload<'r> {
@@ -100,13 +67,11 @@ impl<'r> RecvCommitPayload<'r> {
 impl<'r> RecvCommitPlan<'r> {
     #[inline]
     pub(super) const fn direct(
-        event: EndpointRxEventPlan,
         delta: PreparedCommitDelta,
         frame: lane_port::ReceivedFrame<'r>,
     ) -> Self {
         Self {
             kind: RecvCommitPlanKind::Direct,
-            event,
             delta,
             payload: RecvCommitPayload::Wire(frame),
         }
@@ -115,13 +80,11 @@ impl<'r> RecvCommitPlan<'r> {
     #[inline]
     pub(super) const fn branch(
         branch: BranchMeta,
-        event: EndpointRxEventPlan,
         delta: PreparedCommitDelta,
         payload: RecvCommitPayload<'r>,
     ) -> Self {
         Self {
             kind: RecvCommitPlanKind::Branch { branch },
-            event,
             delta,
             payload,
         }
@@ -163,7 +126,6 @@ where
 
         let RecvCommitPlan {
             kind,
-            event,
             delta,
             payload,
         } = plan;
@@ -174,26 +136,12 @@ where
             Some(owner) => crate::endpoint::transfer::RecvOutput::Endpoint(owner),
             None => crate::endpoint::transfer::RecvOutput::Payload(payload),
         };
-        match kind {
-            RecvCommitPlanKind::Direct => {
-                let endpoint_meta = TapFrameMeta::new(
-                    self.context.sid.raw(),
-                    event.lane,
-                    self.public_header.role(),
-                    event.label,
-                );
-                self.emit_endpoint_event(event.event_id, endpoint_meta, event.lane);
-            }
-            RecvCommitPlanKind::Branch { branch } => {
-                self.publish_branch_preview_commit_plan(branch, &committed);
-                let endpoint_meta = TapFrameMeta::new(
-                    self.context.sid.raw(),
-                    event.lane,
-                    self.public_header.role(),
-                    event.label,
-                );
-                self.emit_endpoint_event(event.event_id, endpoint_meta, event.lane);
-            }
+        if let RecvCommitPlanKind::Branch { branch } = kind {
+            self.publish_branch_preview_commit_plan(branch, &committed);
+        }
+        if let Some(event) = committed.event() {
+            let id = event.event_id(ids::ENDPOINT_RECV, ids::ENDPOINT_SESSION);
+            self.emit_endpoint_event(id, event, 2);
         }
         Ok(output)
     }

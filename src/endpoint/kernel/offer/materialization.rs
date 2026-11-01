@@ -109,7 +109,6 @@ where
             cursor_index: preview_meta.cursor_index,
             eff_index: preview_meta.eff_index,
             label: preview_meta.label,
-            origin: preview_meta.origin,
             frame_label: preview_meta.eff_index.dense_ordinal() as u16,
             kind: branch_kind,
             profile,

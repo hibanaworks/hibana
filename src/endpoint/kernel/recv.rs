@@ -8,7 +8,7 @@ use super::{
         prepare_event_selected_route_commit_rows_from_resident_route_commit_range,
     },
     lane_port,
-    recv_commit_plan::{EndpointRxEventPlan, RecvCommitPlan},
+    recv_commit_plan::RecvCommitPlan,
 };
 use crate::{
     endpoint::{RecvError, RecvResult},
@@ -216,11 +216,7 @@ where
                 return Err(err);
             }
         };
-        Ok(RecvCommitPlan::direct(
-            EndpointRxEventPlan::direct(desc.meta.lane, desc.meta.label),
-            delta,
-            frame,
-        ))
+        Ok(RecvCommitPlan::direct(delta, frame))
     }
 
     fn prepare_recv_commit_delta(

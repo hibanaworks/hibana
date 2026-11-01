@@ -1,6 +1,6 @@
 use super::{
     Arm, CursorInvariantError, OperationKernel, ReentryScopeLiveness, ScopeId, StateIndex,
-    TapFrameMeta, Transport, emit, events,
+    Transport, emit, events,
 };
 use crate::global::role_program::ROLE_IMAGE_ROUTE_SCOPE_CAPACITY;
 
@@ -231,12 +231,18 @@ where
             })
     }
 
-    pub(crate) fn emit_endpoint_event(&self, id: u16, meta: TapFrameMeta, lane: u8) {
-        let port = self.port_for_lane(lane as usize);
+    pub(crate) fn emit_endpoint_event(&self, id: u16, row: super::CommitEventRow, direction: u8) {
+        let port = self.port_for_lane(row.lane() as usize);
         let packed = ((self.public_header.role() as u32) << 24)
-            | ((meta.lane as u32) << 16)
-            | ((meta.label as u32) << 8);
-        let event = events::raw_event(id).with_arg0(meta.sid).with_arg1(packed);
+            | ((port.lane().as_wire() as u32) << 16)
+            | row.eff_index().dense_ordinal() as u32;
+        let event = events::raw_event(id)
+            .with_causal_key(crate::observe::core::TapEvent::make_causal_key(
+                self.progress.cursor.role(),
+                direction,
+            ))
+            .with_arg0(self.context.sid.raw())
+            .with_arg1(packed);
         emit(port.tap(), event);
     }
     pub(in crate::endpoint::kernel) fn active_reentry_offer_for_lane(

@@ -39,6 +39,13 @@ identity and require FIFO delivery, nonduplication and run isolation.
 
 ## Local execution
 
+The [tap-commit encoding check](runtime/tap-commit/check.sh) proves recovery and
+injectivity of the actor, view, lane, direction and complete source-event fields.
+Actual Endpoint tests compare the records with 257 repeated message contracts,
+delegated operations on separate runtimes, and rejection after frame staging.
+These checks do not reconstruct nested roll visits or certify a complete
+execution history.
+
 | Checks | Implementation and property |
 | --- | --- |
 | [event-admission](runtime/event-admission) | [`event_progress.rs`](../../src/global/typestate/cursor/scope_route/event_progress.rs) and [`select_candidates.rs`](../../src/endpoint/kernel/offer/select_candidates.rs): dependency/completion guards and candidate filtering before admission |

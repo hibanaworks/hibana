@@ -1,7 +1,7 @@
 use super::{
-    BranchKind, EndpointRxEventPlan, EventCursor, OperationKernel, Payload, Poll,
-    RecvCommitPayload, RecvCommitPlan, RecvError, RecvMeta, RecvResult, RouteState,
-    SelectedRouteCommitRows, StateIndex, Transport, branch_recv_phase_invariant, lane_port,
+    BranchKind, EventCursor, OperationKernel, Payload, Poll, RecvCommitPayload, RecvCommitPlan,
+    RecvError, RecvMeta, RecvResult, RouteState, SelectedRouteCommitRows, StateIndex, Transport,
+    branch_recv_phase_invariant, lane_port,
     prepare_descriptor_checked_recv_reentry_rows_from_resident_route_commit_range,
     scope_slot_for_route_from_cursor, state_index_to_usize,
 };
@@ -135,13 +135,10 @@ where
             BranchKind::LocalAction | BranchKind::TerminalArm => {
                 let payload = Self::non_wire_branch_payload();
                 let branch_plan = self.preflight_branch_preview_commit_plan(branch_meta)?;
-                let event =
-                    EndpointRxEventPlan::branch(branch_meta.lane_wire, label, branch_meta.origin);
                 let route_seed_rows = branch_plan.route_seed_rows();
                 let commit_plan = self.build_non_wire_branch_recv_commit_plan(
                     route_seed_rows,
                     branch_meta,
-                    event,
                     payload,
                 )?;
                 self.publish_recv_commit_plan(commit_plan, validate)
@@ -182,8 +179,6 @@ where
                 let branch_recv_meta =
                     branch_plan.meta().ok_or_else(branch_recv_phase_invariant)?;
                 let route_seed_rows = branch_plan.route_seed_rows();
-                let event =
-                    EndpointRxEventPlan::branch(branch_meta.lane_wire, label, branch_meta.origin);
                 let frame = {
                     let Some(branch) = self.operation.public_route_branch.as_mut() else {
                         return Err(branch_recv_phase_invariant());
@@ -195,7 +190,6 @@ where
                     meta,
                     branch_recv_meta,
                     branch_meta,
-                    event,
                     frame,
                 )?;
                 self.publish_recv_commit_plan(commit_plan, validate)
@@ -209,7 +203,6 @@ where
         meta: RecvMeta,
         branch_meta: RecvMeta,
         publish_branch: super::BranchMeta,
-        event: EndpointRxEventPlan,
         frame: lane_port::ReceivedFrame<'r>,
     ) -> RecvResult<RecvCommitPlan<'r>> {
         let branch_scope = publish_branch.scope_id;
@@ -285,7 +278,6 @@ where
             let frame = crate::invariant_some(frame.take());
             Ok(RecvCommitPlan::branch(
                 publish_branch,
-                event,
                 delta,
                 RecvCommitPayload::wire(frame),
             ))
@@ -302,7 +294,6 @@ where
         &mut self,
         route_seed_rows: super::SelectedRouteCommitRowsRef,
         publish_branch: super::BranchMeta,
-        event: EndpointRxEventPlan,
         payload: Payload<'r>,
     ) -> RecvResult<RecvCommitPlan<'r>> {
         let route_rows = SelectedRouteCommitRows::from_seed(route_seed_rows)?;
@@ -348,7 +339,6 @@ where
         };
         Ok(RecvCommitPlan::branch(
             publish_branch,
-            event,
             delta,
             RecvCommitPayload::non_wire(payload),
         ))

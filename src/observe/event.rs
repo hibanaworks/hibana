@@ -105,7 +105,8 @@ impl Evidence {
         self.reason
     }
 
-    /// Return diagnostic words whose interpretation depends on the event kind.
+    /// Return event-specific diagnostic words. Word 2 always retains the
+    /// record's ring ordinal (or the local row ordinal of a compiled observation).
     #[inline]
     pub const fn input(self) -> [u32; 4] {
         self.input
@@ -238,7 +239,7 @@ impl TapEvent {
                 input: [
                     self.arg0(),
                     self.arg1(),
-                    0,
+                    self.ts(),
                     ((id as u32) << 16) | ((self.causal_role() as u32) << 8),
                 ],
             }
@@ -248,7 +249,12 @@ impl TapEvent {
             Evidence {
                 kind: id,
                 reason: 0,
-                input: [self.arg0(), self.arg1(), 0, self.causal_key() as u32],
+                input: [
+                    self.arg0(),
+                    self.arg1(),
+                    self.ts(),
+                    self.causal_key() as u32,
+                ],
             }
         }
     }
@@ -264,7 +270,7 @@ impl TapEvent {
             input: [
                 self.arg0(),
                 self.arg1(),
-                0,
+                self.ts(),
                 ((id as u32) << 16) | (lane << 8) | (reason as u32),
             ],
         }
@@ -291,7 +297,7 @@ mod tests {
         assert_eq!(event.arg1(), 0x0102_0100);
         assert_eq!(
             event.evidence().input(),
-            [0x89ab_cdef, 0x0102_0100, 0, 0x0206_a500,]
+            [0x89ab_cdef, 0x0102_0100, 0x1234_5678, 0x0206_a500,]
         );
         assert_eq!(<[u8; 16]>::from(event), bytes);
     }

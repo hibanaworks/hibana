@@ -34,6 +34,7 @@ fn local_and_alternative_rows_keep_their_distinct_wire_positions() {
         assert_eq!(event.ts(), row as u32);
         assert_eq!(event.evidence().input()[0], event.arg0());
         assert_eq!(event.evidence().input()[1], event.arg1());
+        assert_eq!(event.evidence().input()[2], event.ts());
         assert_eq!(event.evidence().input()[3], u32::from(event.causal_key()));
     }
 }
@@ -64,6 +65,7 @@ fn all_257_wire_labels_match_actual_endpoint_frames_without_truncation() {
         .rendezvous(&mut slab, transport.clone())
         .unwrap();
     let sid = SessionId::new(300);
+    let mut tap = rv.tap();
     let mut sender = rv.enter(sid, &sender_program).unwrap();
     let mut receiver = rv.enter(sid, &receiver_program).unwrap();
     for (ordinal, (send, recv)) in send_rows.zip(recv_rows).enumerate() {
@@ -83,8 +85,57 @@ fn all_257_wire_labels_match_actual_endpoint_frames_without_truncation() {
             block_on(receiver.recv::<Message>()).unwrap(),
             ordinal as u32
         );
+        let commits: Vec<_> = tap
+            .by_ref()
+            .filter(|event| matches!(event.id(), ids::ENDPOINT_SEND | ids::ENDPOINT_RECV))
+            .collect();
+        assert_eq!(commits.len(), 2);
+        assert_eq!(commits[0].id(), ids::ENDPOINT_SEND);
+        assert_eq!(commits[0].causal_key(), 1);
+        assert_eq!(commits[1].id(), ids::ENDPOINT_RECV);
+        assert_eq!(commits[1].causal_key(), 0x0102);
+        for (view, commit) in commits.into_iter().enumerate() {
+            assert_eq!(commit.arg0(), sid.raw());
+            assert_eq!(commit.arg1() >> 24, view as u32);
+            assert_eq!((commit.arg1() >> 16) as u8, (send.arg0() >> 8) as u8);
+            assert_eq!(commit.arg1() as u16, ordinal as u16);
+        }
     }
     assert!(transport.queue_is_empty());
+}
+
+#[test]
+fn a_staged_frame_rejected_by_payload_validation_has_no_receive_commit() {
+    type Message = g::Msg<231, u32>;
+    let global = g::send::<0, 1, Message>();
+    let sender_program = project::<0>(&global);
+    let receiver_program = project::<1>(&global);
+    let transport = TestTransport::new();
+    let mut slab = std::vec![0; 64 * 1024];
+    let mut storage = SessionKitStorage::uninit();
+    let rv = storage
+        .init()
+        .rendezvous(&mut slab, transport.clone())
+        .unwrap();
+    let sid = SessionId::new(302);
+    let mut sender = rv.enter(sid, &sender_program).unwrap();
+    let mut receiver = rv.enter(sid, &receiver_program).unwrap();
+    block_on(sender.send::<Message>(&42)).unwrap();
+    let mut tap = rv.tap();
+    tap.by_ref().for_each(drop);
+    transport.truncate_next_payload(1, 1);
+    assert!(block_on(receiver.recv::<Message>()).is_err());
+    let events: Vec<_> = tap.collect();
+    assert!(
+        events
+            .iter()
+            .any(|event| event.id() == ids::TRANSPORT_FRAME)
+    );
+    assert!(
+        events
+            .iter()
+            .all(|event| { !matches!(event.id(), ids::ENDPOINT_RECV | ids::ENDPOINT_SESSION) })
+    );
 }
 
 #[test]
@@ -154,6 +205,10 @@ fn delegated_views_and_parallel_lanes_describe_the_frames_they_actually_send() {
         .rendezvous(&mut audit_slab, transport.clone())
         .unwrap();
     let sid = SessionId::new(301);
+    let mut owner_tap = owner_rv.tap();
+    let mut worker_tap = worker_rv.tap();
+    let mut service_tap = service_rv.tap();
+    let mut audit_tap = audit_rv.tap();
     let mut owner = owner_rv.enter(sid, &owner_program).unwrap();
     let db = owner_rv.enter(sid, &db_program).unwrap();
     let mut worker = worker_rv.enter(sid, &worker_program).unwrap();
@@ -188,4 +243,28 @@ fn delegated_views_and_parallel_lanes_describe_the_frames_they_actually_send() {
         drop(owner.recv::<Loan>().await.unwrap());
     });
     assert!(transport.queue_is_empty());
+    for (actor, tap, expected) in [
+        (0, &mut owner_tap, std::vec![(1, 0, 0), (2, 0, 4)]),
+        (
+            1,
+            &mut worker_tap,
+            std::vec![(2, 1, 0), (1, 2, 1), (1, 1, 2), (2, 2, 3), (1, 1, 4)],
+        ),
+        (3, &mut service_tap, std::vec![(2, 3, 1), (1, 3, 3)]),
+        (4, &mut audit_tap, std::vec![(2, 4, 2)]),
+    ] {
+        let commits: Vec<_> = tap
+            .filter(|event| matches!(event.id(), ids::ENDPOINT_SEND | ids::ENDPOINT_RECV))
+            .map(|event| {
+                assert_eq!(event.causal_key() >> 8, actor);
+                assert_eq!(event.arg0(), sid.raw());
+                (
+                    event.causal_key() as u8,
+                    (event.arg1() >> 24) as u8,
+                    event.arg1() as u16,
+                )
+            })
+            .collect();
+        assert_eq!(commits, expected);
+    }
 }

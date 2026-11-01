@@ -36,7 +36,6 @@ use crate::{
     },
     transport::{
         Transport,
-        trace::TapFrameMeta,
         wire::{CodecError, Payload},
     },
 };
