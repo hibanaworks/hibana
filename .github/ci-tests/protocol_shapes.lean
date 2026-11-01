@@ -142,6 +142,14 @@ theorem shapeRowsReady_matches_source_readiness
     simp [shapeRowsReady, shapeDependencyRows, shapeLookupMappedRows, present,
       SourceOccurrenceCut.ready, occurrenceCut]
 
+def shapeOriginalActorsMatch (plan : SourceOccurrenceCut source) : Bool :=
+  plan.path.bindings.all fun (event, binding) =>
+    match (plan.unfolding.occurrences 0)[event]? with
+    | none => false
+    | some (origin, message) => decide (binding.message = message) &&
+        plan.original.paths.any fun path =>
+          path.bindings.any fun original => decide (original = (origin, binding))
+
 structure ShapePlan (source : Source) where
   plan : SourceOccurrenceCut source
   dependencies : List (SourcePoint × List SourcePoint)
@@ -152,17 +160,39 @@ def ShapePlan.of (plan : SourceOccurrenceCut source) : ShapePlan source :=
 
 def ShapePlan.ready (prepared : ShapePlan source) (points : List SourcePoint)
     (point : SourcePoint) : Bool :=
-  shapeRowsReady prepared.dependencies points point
+  shapeRowsReady prepared.dependencies points point &&
+    (occurrenceCut prepared.plan points).resumptionReady point
 
 theorem ShapePlan.ready_matches_source (prepared : ShapePlan source)
     (points : List SourcePoint) (point : SourcePoint) :
-    prepared.ready points point = (occurrenceCut prepared.plan points).ready point := by
+    prepared.ready points point = ((occurrenceCut prepared.plan points).ready point &&
+      (occurrenceCut prepared.plan points).resumptionReady point) := by
   unfold ShapePlan.ready
   rw [prepared.dependencies_eq, shapeRowsReady_matches_source_readiness]
 
 #print axioms shapeLookupMappedRows
 #print axioms shapeRowsReady_matches_source_readiness
 #print axioms ShapePlan.ready_matches_source
+
+theorem shapeOriginalActorsMatch_checks_each_occurrence (plan : SourceOccurrenceCut source)
+    (checked : shapeOriginalActorsMatch plan = true)
+    (present : (event, binding) ∈ plan.path.bindings) :
+    ∃ origin message, (plan.unfolding.occurrences 0)[event]? = some (origin, message) ∧
+      binding.message = message ∧
+      ∃ path ∈ plan.original.paths, (origin, binding) ∈ path.bindings := by
+  have checkedAt := List.all_eq_true.mp checked (event, binding) present
+  cases originAt : (plan.unfolding.occurrences 0)[event]? with
+  | none => simp only [originAt, Bool.false_eq_true] at checkedAt
+  | some entry =>
+      obtain ⟨origin, message⟩ := entry
+      have fields := Bool.and_eq_true_iff.mp (by simpa only [originAt] using checkedAt)
+      obtain ⟨path, member, found⟩ := List.any_eq_true.mp fields.2
+      obtain ⟨original, originalMember, same⟩ := List.any_eq_true.mp found
+      have same : original = (origin, binding) := of_decide_eq_true same
+      exact ⟨origin, message, rfl, of_decide_eq_true fields.1,
+        path, member, same ▸ originalMember⟩
+
+#print axioms shapeOriginalActorsMatch_checks_each_occurrence
 
 def shapeMessage? (source : Source) (event : Nat) : Option Message :=
   ((source.messageEntries 0).find? (fun entry => entry.1 == event)).map Prod.snd
@@ -331,6 +361,50 @@ def shapeExtraUnfoldings :
         ⟨.seq (.seq first.1 second.1) third.1,
           .rollMore (.rollMore (.rollOnce first.2) second.2) third.2⟩
 
+structure ShapeRollFocus (source : Source) where
+  context : RollContext
+  body : Source
+  source_eq : context.plug (.roll body) = source
+
+-- Keep the guards of enclosing choices and visits in place. Traversing a
+-- sequence or parallel composition does not add either kind of guard.
+def shapeRollFocuses : (source : Source) → List (ShapeRollFocus source)
+  | .send _ | .route _ _ _ => []
+  | .roll body => [⟨.hole, body, rfl⟩]
+  | .seq left right =>
+      ((shapeRollFocuses left).map fun focus =>
+        ⟨.seqLeft focus.context right, focus.body,
+          by simp only [RollContext.plug, focus.source_eq]⟩) ++
+      (shapeRollFocuses right).map fun focus =>
+        ⟨.seqRight left focus.context, focus.body,
+          by simp only [RollContext.plug, focus.source_eq]⟩
+  | .par left right =>
+      ((shapeRollFocuses left).map fun focus =>
+        ⟨.parLeft focus.context right, focus.body,
+          by simp only [RollContext.plug, focus.source_eq]⟩) ++
+      (shapeRollFocuses right).map fun focus =>
+        ⟨.parRight left focus.context, focus.body,
+          by simp only [RollContext.plug, focus.source_eq]⟩
+
+def shapeAlongsidePlans (focus : ShapeRollFocus left) (right : Source) :
+    List (Σ expanded : Source, SourceUnfolding (.seq left right) expanded) :=
+  match focus with
+  | ⟨context, body, equal⟩ =>
+      equal ▸ ((shapeBoundedUnfoldings (context.plug (.roll body))).flatMap fun earlier =>
+        (shapeBoundedUnfoldings body).flatMap fun next =>
+          (shapeBoundedUnfoldings right).map fun tail =>
+            ⟨.seq earlier.1 (.par next.1 tail.1),
+              .resumeAlongsideContinuation context earlier.2 (.rollOnce next.2) tail.2⟩)
+
+def shapeAfterPlans (focus : ShapeRollFocus left) (right : Source) :
+    List (Σ expanded : Source, SourceUnfolding (.seq left right) expanded) :=
+  match focus with
+  | ⟨context, body, equal⟩ =>
+      equal ▸ ((shapeBoundedUnfoldings (.seq (context.plug (.roll body)) right)).flatMap fun earlier =>
+        (shapeBoundedUnfoldings body).map fun next =>
+          ⟨.seq earlier.1 next.1,
+            .resumeAfterContinuation context earlier.2 next.2⟩)
+
 -- The next public call may revisit a roll after its continuation has run.
 -- Use the established unfolding rule: a completed earlier copy releases both
 -- the next copy and the continuation. Their relative order is unrestricted.
@@ -347,14 +421,8 @@ def shapeElasticUnfoldings :
         (shapeBoundedUnfoldings left).flatMap fun first =>
           (shapeElasticUnfoldings right).map fun second =>
             ⟨.seq first.1 second.1, .seq first.2 second.2⟩
-      inside ++ match left with
-        | .roll body =>
-            (shapeBoundedUnfoldings (.roll body)).flatMap fun earlier =>
-              (shapeBoundedUnfoldings body).flatMap fun next =>
-                (shapeBoundedUnfoldings right).map fun tail =>
-                  ⟨.seq earlier.1 (.par next.1 tail.1),
-                    .resumeAlongsideContinuation earlier.2 (.rollOnce next.2) tail.2⟩
-        | _ => []
+      inside ++ (shapeRollFocuses left).flatMap fun focus =>
+        shapeAlongsidePlans focus right ++ shapeAfterPlans focus right
   | .par left right =>
       ((shapeElasticUnfoldings left).flatMap fun first =>
         (shapeBoundedUnfoldings right).map fun second =>
@@ -382,11 +450,72 @@ def shapePlans : (source : Source) → List (SourceOccurrenceCut source)
   | source =>
       let cuts := shapeBoundedUnfoldings source ++ shapeExtraUnfoldings source ++
         shapeElasticUnfoldings source
-      cuts.flatMap fun cut => checkedPlans source cut.1 cut.2
+      -- Qualify the whole expansion. Otherwise an incorrectly reassigned
+      -- resource operation could disappear from this actor's prerequisites,
+      -- incorrectly releasing its following ordinary send.
+      (cuts.flatMap fun cut => checkedPlans source cut.1 cut.2).filter shapeOriginalActorsMatch
 
 private def nestedRollCuts : Source := .roll (.seq
   (.roll (.send ⟨⟨0, 0⟩, ⟨0, 0⟩, 0, .wire 0⟩))
   (.send ⟨⟨0, 0⟩, ⟨0, 0⟩, 1, .wire 0⟩))
+
+private def resumedOutgoingTail : Source := .seq
+  (.roll (.seq
+    (.send ⟨⟨0, 0⟩, ⟨0, 1⟩, 0, .wire 0⟩)
+    (.send ⟨⟨0, 1⟩, ⟨0, 0⟩, 1, .wire 0⟩)))
+  (.send ⟨⟨0, 0⟩, ⟨0, 1⟩, 2, .wire 0⟩)
+
+theorem a_resumed_sender_finishes_its_current_body_before_the_continuation :
+    shapePermits (shapeStates resumedOutgoingTail
+      ((shapePlans resumedOutgoingTail).map ShapePlan.of) [0, 1, 2, 3, 0]) [] 2 false = false := by decide
+
+theorem a_completed_resumed_body_releases_the_continuation :
+    shapePermits (shapeStates resumedOutgoingTail
+      ((shapePlans resumedOutgoingTail).map ShapePlan.of) [0, 1, 2, 3, 0, 1, 2, 3]) [] 2 false = true := by decide
+
+#print axioms a_resumed_sender_finishes_its_current_body_before_the_continuation
+#print axioms a_completed_resumed_body_releases_the_continuation
+
+private def parallelRetainedRolls : Source := .seq
+  (.par
+    (.seq (.roll (.send ⟨⟨0, 1⟩, ⟨0, 0⟩, 0, .wire 0⟩))
+      (.send ⟨⟨0, 0⟩, ⟨0, 1⟩, 1, .wire 0⟩))
+    (.seq (.roll (.send ⟨⟨0, 1⟩, ⟨0, 2⟩, 2, .wire 0⟩))
+      (.send ⟨⟨0, 2⟩, ⟨0, 1⟩, 3, .wire 0⟩)))
+  (.send ⟨⟨0, 1⟩, ⟨0, 1⟩, 4, .wire 0⟩)
+
+theorem a_left_roll_can_resume_after_the_common_parallel_continuation :
+    shapePermits (shapeStates parallelRetainedRolls
+      ((shapePlans parallelRetainedRolls).map ShapePlan.of)
+      [0, 1, 0, 1, 2, 3, 4, 5, 4, 5, 6, 7, 8]) [] 0 false = true := by decide
+
+theorem a_right_roll_can_resume_after_the_common_parallel_continuation :
+    shapePermits (shapeStates parallelRetainedRolls
+      ((shapePlans parallelRetainedRolls).map ShapePlan.of)
+      [0, 1, 0, 1, 2, 3, 4, 5, 4, 5, 6, 7, 8]) [] 2 false = true := by decide
+
+#print axioms a_left_roll_can_resume_after_the_common_parallel_continuation
+#print axioms a_right_roll_can_resume_after_the_common_parallel_continuation
+
+private def returnedRollEndpoint : Source := .seq
+  (.send ⟨⟨0, 0⟩, ⟨0, 1⟩, 0, .endpoint ⟨0, 3⟩⟩)
+  (.seq
+    (.seq (.roll (.send ⟨⟨0, 3⟩, ⟨0, 2⟩, 1, .wire 0⟩))
+      (.send ⟨⟨0, 1⟩, ⟨0, 0⟩, 2, .endpoint ⟨0, 3⟩⟩))
+    (.send ⟨⟨0, 0⟩, ⟨0, 1⟩, 3, .endpoint ⟨0, 3⟩⟩))
+
+theorem a_new_holder_cannot_inherit_another_actors_rolled_operation :
+    shapePermits (shapeStates returnedRollEndpoint
+      ((shapePlans returnedRollEndpoint).map ShapePlan.of)
+      [0, 1, 2, 3, 2, 3, 4, 5]) [] 1 false = false := by decide
+
+theorem returning_the_endpoint_to_the_roll_actor_allows_reentry :
+    shapePermits (shapeStates returnedRollEndpoint
+      ((shapePlans returnedRollEndpoint).map ShapePlan.of)
+      [0, 1, 2, 3, 2, 3, 4, 5, 6, 7]) [] 1 false = true := by decide
+
+#print axioms a_new_holder_cannot_inherit_another_actors_rolled_operation
+#print axioms returning_the_endpoint_to_the_roll_actor_allows_reentry
 
 theorem an_inner_roll_can_exit_after_its_first_visit :
     shapePermits (shapeStates nestedRollCuts ((shapePlans nestedRollCuts).map ShapePlan.of)

@@ -4,6 +4,50 @@ import Hibana.SourceResourceOrder
 namespace Hibana
 open EndpointDelegation
 
+/-- A roll may remain available through surrounding sequence and parallel
+composition. Choice and enclosing roll boundaries are deliberately absent:
+moving a visit through either would require its own selection or visit guard. -/
+inductive RollContext where
+  | hole
+  | seqLeft (context : RollContext) (right : Source)
+  | seqRight (left : Source) (context : RollContext)
+  | parLeft (context : RollContext) (right : Source)
+  | parRight (left : Source) (context : RollContext)
+
+def RollContext.plug : RollContext → Source → Source
+  | .hole, body => body
+  | .seqLeft context right, body => .seq (context.plug body) right
+  | .seqRight left context, body => .seq left (context.plug body)
+  | .parLeft context right, body => .par (context.plug body) right
+  | .parRight left context, body => .par left (context.plug body)
+
+def RollContext.offset : RollContext → Nat
+  | .hole => 0
+  | .seqLeft context _ | .parLeft context _ => context.offset
+  | .seqRight left context | .parRight left context => left.eventCount + context.offset
+
+theorem RollContext.contains_message (context : RollContext) (body : Source) (start : Nat)
+    (present : entry ∈ body.messageEntries (start + context.offset)) :
+    entry ∈ (context.plug body).messageEntries start := by
+  induction context generalizing start with
+  | hole => simpa only [RollContext.offset, Nat.add_zero, RollContext.plug] using present
+  | seqLeft context right ih | parLeft context right ih =>
+    exact List.mem_append_left _ (ih start present)
+  | seqRight left context ih | parRight left context ih =>
+    exact List.mem_append_right _ (ih (start + left.eventCount)
+      (by simpa only [RollContext.offset, Nat.add_assoc] using present))
+
+theorem RollContext.contains_resource (context : RollContext) (body : Source)
+    (present : key ∈ body.resources) : key ∈ (context.plug body).resources := by
+  induction context with
+  | hole => exact present
+  | seqLeft context right ih | parLeft context right ih =>
+    simpa only [RollContext.plug, Source.resources, List.mem_eraseDups, List.mem_append]
+      using Or.inl (b := key ∈ right.resources) ih
+  | seqRight left context ih | parRight left context ih =>
+    simpa only [RollContext.plug, Source.resources, List.mem_eraseDups, List.mem_append]
+      using Or.inr (a := key ∈ left.resources) ih
+
 /-- A finite unfolding of the global source, used only by the logical model.
 Each roll copy may unfold its nested rolls differently. Copies retain their
 own route sites, so different visits may select different arms. No actor is
@@ -24,16 +68,17 @@ inductive SourceUnfolding : Source → Source → Type where
   | rollOnce : SourceUnfolding body expanded → SourceUnfolding (.roll body) expanded
   | rollMore : SourceUnfolding (.roll body) earlier → SourceUnfolding body next →
       SourceUnfolding (.roll body) (.seq earlier next)
-  | resumeAfterContinuation :
-      SourceUnfolding (.seq (.roll body) continuation) earlier → SourceUnfolding body next →
-      SourceUnfolding (.seq (.roll body) continuation) (.seq earlier next)
+  | resumeAfterContinuation (context : RollContext) :
+      SourceUnfolding (.seq (context.plug (.roll body)) continuation) earlier →
+      SourceUnfolding body next →
+      SourceUnfolding (.seq (context.plug (.roll body)) continuation) (.seq earlier next)
   /-- A completed body releases both a later copy and its continuation.
   Neither is ordered after the other. The cut still requires normalization
   of the whole expansion with the original affine issuance. -/
-  | resumeAlongsideContinuation :
-      SourceUnfolding (.roll body) earlier → SourceUnfolding (.roll body) next →
+  | resumeAlongsideContinuation (context : RollContext) :
+      SourceUnfolding (context.plug (.roll body)) earlier → SourceUnfolding (.roll body) next →
       SourceUnfolding continuation tail →
-      SourceUnfolding (.seq (.roll body) continuation) (.seq earlier (.par next tail))
+      SourceUnfolding (.seq (context.plug (.roll body)) continuation) (.seq earlier (.par next tail))
 
 def EndpointDelegation.Source.oneCopy : Source → Source
   | .send message => .send message
@@ -60,11 +105,11 @@ def SourceUnfolding.occurrences : {source expanded : Source} →
       first.occurrences start ++ second.occurrences (start + left.eventCount)
   | _, _, .rollOnce body, start => body.occurrences start
   | _, _, .rollMore earlier next, start => earlier.occurrences start ++ next.occurrences start
-  | _, _, .resumeAfterContinuation earlier next, start =>
-      earlier.occurrences start ++ next.occurrences start
-  | .seq (.roll body) _, _, .resumeAlongsideContinuation earlier next tail, start =>
-      earlier.occurrences start ++ next.occurrences start ++
-        tail.occurrences (start + body.eventCount)
+  | _, _, .resumeAfterContinuation context earlier next, start =>
+      earlier.occurrences start ++ next.occurrences (start + context.offset)
+  | _, _, @resumeAlongsideContinuation body _ _ _ _ context earlier next tail, start =>
+      earlier.occurrences start ++ next.occurrences (start + context.offset) ++
+        tail.occurrences (start + (context.plug (.roll body)).eventCount)
 
 def SourceUnfolding.origins (unfolding : SourceUnfolding source expanded) (start : Nat) : List Nat :=
   (unfolding.occurrences start).map Prod.fst
@@ -97,17 +142,19 @@ theorem source_unfolding_preserves_original_messages
     rcases List.mem_append.mp present with before | after
     · exact left start entry before
     · exact right start entry after
-  | resumeAfterContinuation earlier next left right =>
+  | resumeAfterContinuation context earlier next left right =>
     intro entry present
     rcases List.mem_append.mp present with before | after
     · exact left start entry before
-    · exact List.mem_append_left _ (right start entry after)
-  | resumeAlongsideContinuation earlier next tail left right continuation =>
+    · exact List.mem_append_left _
+        (context.contains_message _ start (right (start + context.offset) entry after))
+  | resumeAlongsideContinuation context earlier next tail left right continuation =>
     intro entry present
     rcases List.mem_append.mp present with body | later
     · rcases List.mem_append.mp body with before | after
       · exact List.mem_append_left _ (left start entry before)
-      · exact List.mem_append_left _ (right start entry after)
+      · exact List.mem_append_left _
+          (context.contains_message _ start (right (start + context.offset) entry after))
     · exact List.mem_append_right _ (continuation _ entry later)
 
 /-- Every occurrence has an origin, including later copies of the same
@@ -128,9 +175,9 @@ theorem source_unfolding_has_one_origin_per_occurrence
   | rollOnce body ih => exact ih start
   | rollMore earlier next left right =>
     simp [SourceUnfolding.occurrences, Source.eventCount, left, right]
-  | resumeAfterContinuation earlier next left right =>
+  | resumeAfterContinuation context earlier next left right =>
     simp [SourceUnfolding.occurrences, Source.eventCount, left, right]
-  | resumeAlongsideContinuation earlier next tail left right continuation =>
+  | resumeAlongsideContinuation context earlier next tail left right continuation =>
     simp [SourceUnfolding.occurrences, Source.eventCount, left, right, continuation]
 
 /-- Executable source dependency, including the distinct acceptance and
@@ -403,7 +450,7 @@ private def loanWithContinuation : Source := .seq (.roll loanBody) (.send contin
 private def resumedLoanSource : Source :=
   .seq (.seq loanBody (.send continuationMessage)) loanBody
 private def resumedLoanUnfolding : SourceUnfolding loanWithContinuation resumedLoanSource :=
-  .resumeAfterContinuation (.seq (.rollOnce loanBodyUnfolding) (.send _)) loanBodyUnfolding
+  .resumeAfterContinuation .hole (.seq (.rollOnce loanBodyUnfolding) (.send _)) loanBodyUnfolding
 private def resumedLoanBindings : List (Nat × Binding) :=
   loanBindings 0 ++ [(4, ⟨continuationMessage, 0, 1⟩)] ++ loanBindings 5
 private def resumedLoanCut : SourceOccurrenceCut loanWithContinuation := {
@@ -444,7 +491,7 @@ private def exchangeExpansion : Source := .seq exchangeBody
 private def exchangeBodyUnfolding : SourceUnfolding exchangeBody exchangeBody :=
   .seq (.send _) (.send _)
 private def exchangeUnfolding : SourceUnfolding exchangeSource exchangeExpansion :=
-  .resumeAlongsideContinuation (.rollOnce exchangeBodyUnfolding)
+  .resumeAlongsideContinuation .hole (.rollOnce exchangeBodyUnfolding)
     (.rollOnce exchangeBodyUnfolding) (.send _)
 private def exchangeBindings : List (Nat × Binding) :=
   [(0, ⟨exchangeStart, 0, 1⟩), (1, ⟨exchangeAck, 1, 0⟩),
@@ -487,7 +534,7 @@ private def exchangeBeforeContinuation : SourceOccurrenceCut exchangeSource := {
 private def exchangeAfterContinuation : SourceOccurrenceCut exchangeSource := {
   exchangePlan with
   expanded := .seq (.seq exchangeBody (.send exchangeFinish)) exchangeBody
-  unfolding := .resumeAfterContinuation
+  unfolding := .resumeAfterContinuation .hole
     (.seq (.rollOnce exchangeBodyUnfolding) (.send _)) exchangeBodyUnfolding
   normalized := ⟨[], [⟨[], [(0, ⟨exchangeStart, 0, 1⟩), (1, ⟨exchangeAck, 1, 0⟩),
     (2, ⟨exchangeFinish, 1, 0⟩), (3, ⟨exchangeStart, 0, 1⟩),

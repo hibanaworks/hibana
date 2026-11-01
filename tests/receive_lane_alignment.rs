@@ -23,6 +23,103 @@ type Seal = g::Msg<7, ()>;
 type Done = g::Msg<8, ()>;
 
 #[test]
+fn delegated_roll_reentry_keeps_the_current_body_before_outgoing_continuation() {
+    type Loan = g::Msg<60, Endpoint<'static, DB>>;
+    type First = g::Msg<61, ()>;
+    type Second = g::Msg<62, ()>;
+    type Reply = g::Msg<63, ()>;
+    type TailFirst = g::Msg<64, ()>;
+    type TailSecond = g::Msg<65, ()>;
+    type TailReply = g::Msg<66, ()>;
+    let global = g::seq(
+        g::send::<OWNER, WORKER, Loan>(),
+        g::seq(
+            g::seq(
+                g::seq(
+                    g::send::<DB, SERVICE, First>(),
+                    g::seq(
+                        g::send::<WORKER, SERVICE, Second>(),
+                        g::send::<SERVICE, DB, Reply>(),
+                    ),
+                )
+                .roll(),
+                g::seq(
+                    g::send::<DB, SERVICE, TailFirst>(),
+                    g::seq(
+                        g::send::<WORKER, SERVICE, TailSecond>(),
+                        g::send::<SERVICE, DB, TailReply>(),
+                    ),
+                ),
+            ),
+            g::send::<WORKER, OWNER, Loan>(),
+        ),
+    );
+    let p0 = project::<OWNER>(&global);
+    let p1 = project::<WORKER>(&global);
+    let p2 = project::<SERVICE>(&global);
+    let p3 = project::<DB>(&global);
+    for reject_early_tail in [false, true] {
+        let sid = SessionId::new(104 + u32::from(reject_early_tail));
+        // SAFETY: one physical resource, owned by this fixture's sole issuer.
+        let network = InMemoryTransport::new([((sid, DB), unsafe { EndpointBinding::new() })]);
+        let [mut slab0, mut slab1, mut slab2] = [
+            vec![0; 128 * 1024],
+            vec![0; 128 * 1024],
+            vec![0; 128 * 1024],
+        ];
+        let mut s0 = SessionKitStorage::uninit();
+        let mut s1 = SessionKitStorage::uninit();
+        let mut s2 = SessionKitStorage::uninit();
+        let rv0 = s0.init().rendezvous(&mut slab0, network.clone()).unwrap();
+        let rv1 = s1.init().rendezvous(&mut slab1, network.clone()).unwrap();
+        let rv2 = s2.init().rendezvous(&mut slab2, network.clone()).unwrap();
+        let mut owner = rv0.enter(sid, &p0).unwrap();
+        let mut worker = rv1.enter(sid, &p1).unwrap();
+        let mut service = rv2.enter(sid, &p2).unwrap();
+        let db = rv0.enter(sid, &p3).unwrap();
+        futures::executor::block_on(async {
+            owner.send::<Loan>(db).await.unwrap();
+            let mut db = worker.recv::<Loan>().await.unwrap();
+            for visit in 0..3 {
+                db.send::<First>(&()).await.unwrap();
+                if reject_early_tail && visit == 1 {
+                    let send = db.send::<TailFirst>(&());
+                    let mut send = core::pin::pin!(send);
+                    let result =
+                        core::future::poll_fn(|cx| Poll::Ready(send.as_mut().poll(cx))).await;
+                    let Poll::Ready(Err(error)) = result else {
+                        panic!(
+                            "a resumed actor must finish its current visit before a new outgoing continuation: {result:?}"
+                        );
+                    };
+                    assert!(format!("{error:?}").contains("OutOfOrder"), "{error:?}");
+                    return;
+                }
+                let send = worker.send::<Second>(&());
+                let mut send = core::pin::pin!(send);
+                let result = core::future::poll_fn(|cx| Poll::Ready(send.as_mut().poll(cx))).await;
+                assert!(
+                    matches!(result, Poll::Ready(Ok(()))),
+                    "the holder's send must follow its resource in visit {visit}: {result:?}"
+                );
+                service.recv::<First>().await.unwrap();
+                service.recv::<Second>().await.unwrap();
+                service.send::<Reply>(&()).await.unwrap();
+                db.recv::<Reply>().await.unwrap();
+            }
+            db.send::<TailFirst>(&()).await.unwrap();
+            worker.send::<TailSecond>(&()).await.unwrap();
+            service.recv::<TailFirst>().await.unwrap();
+            service.recv::<TailSecond>().await.unwrap();
+            service.send::<TailReply>(&()).await.unwrap();
+            db.recv::<TailReply>().await.unwrap();
+            worker.send::<Loan>(db).await.unwrap();
+            drop(owner.recv::<Loan>().await.unwrap());
+        });
+    }
+}
+
+#[test]
 fn a_carrier_borrows_its_parallel_arm_before_the_resources_prefix() {
     type First = g::Msg<21, ()>;
     type Second = g::Msg<22, ()>;

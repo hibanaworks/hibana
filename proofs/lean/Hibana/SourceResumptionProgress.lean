@@ -34,9 +34,9 @@ def SourceUnfolding.resumptions : {source expanded : Source} →
   | _, _, .rollOnce body, start => body.resumptions start
   | _, .seq first _, .rollMore earlier next, start =>
       earlier.resumptions start ++ next.resumptions (start + first.eventCount)
-  | _, .seq first _, .resumeAfterContinuation earlier next, start =>
+  | _, .seq first _, .resumeAfterContinuation _ earlier next, start =>
       earlier.resumptions start ++ next.resumptions (start + first.eventCount)
-  | _, .seq first (.par second tailSource), .resumeAlongsideContinuation earlier next tail, start =>
+  | _, .seq first (.par second tailSource), .resumeAlongsideContinuation _ earlier next tail, start =>
       let nextStart := start + first.eventCount
       let tailStart := nextStart + second.eventCount
       let scopes := next.copyRanges nextStart |>.map fun (bodyStart, bodyEnd) =>

@@ -56,11 +56,12 @@ def boundedPlans (source : Source) (oracle : Oracle) : List (SourceOccurrenceCut
     let first := SourceUnfolding.seq (.rollOnce (.oneCopy body)) (.oneCopy tail)
     let before := SourceUnfolding.seq
       (.rollMore (.rollOnce (.oneCopy body)) (.oneCopy body)) (.oneCopy tail)
-    let after := SourceUnfolding.resumeAfterContinuation first (.oneCopy body)
+    let after := SourceUnfolding.resumeAfterContinuation .hole first (.oneCopy body)
     let alongside := SourceUnfolding.resumeAlongsideContinuation
+      .hole
       (.rollOnce (.oneCopy body)) (.rollOnce (.oneCopy body)) (.oneCopy tail)
-    checkedPlans _ _ first ++ checkedPlans _ _ before ++ checkedPlans _ _ after ++
-      if oracle == .serialized then [] else checkedPlans _ _ alongside
+    checkedPlans _ _ first ++ checkedPlans _ _ before ++ checkedPlans (.seq (.roll body) tail) _ after ++
+      if oracle == .serialized then [] else checkedPlans (.seq (.roll body) tail) _ alongside
   | .par (.roll body) tail =>
     checkedPlans _ _ (.par (.rollOnce (.oneCopy body)) (.oneCopy tail)) ++
       checkedPlans _ _ (.par (.rollMore (.rollOnce (.oneCopy body)) (.oneCopy body)) (.oneCopy tail))

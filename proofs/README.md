@@ -394,6 +394,25 @@ Repeated protocols use complete traces with two visits at each nested `roll`.
 Admission plans allow one or two visits independently at those dynamic sites,
 a third visit at one site, and one elastic reentry alongside its continuation.
 Each expansion carries a witness from the source occurrence semantics.
+An elastic visit may come from a roll inside sequential or parallel children,
+not just a roll immediately before that continuation. The context preserves
+the original message positions and resources. It does not lift a visit through
+an enclosing choice or roll boundary. Such a lift would need the corresponding
+selection or parent-visit guard.
+Admission also checks `SourceOccurrenceCut.resumptionReady`: once an actor has
+entered a new body visit, its outgoing continuation waits for that visit's
+local body operations. A late incoming continuation can still use an earlier
+completed visit. The shape checker uses this same source rule as the separate
+public-operation conformance checker, rather than only its static dependency
+rows. Regression theorems and actual delegated Endpoint calls distinguish the
+unfinished and completed current-body cases.
+Each expanded binding must also belong to the original source's actor
+projection. Merely normalizing an expanded body at its new holder is not
+enough: returning a resource does not give its new holder another actor's
+rolled operations. Reentry becomes possible again when the Endpoint returns
+to the roll's actor. Positive and negative regression theorems cover that
+round trip. Sensitivity checks remove the current-visit query, context traversal
+and original-actor check separately; each restored omission must fail.
 Previously observed choices stay fixed; fresh choices try every resolver
 assignment. The controls also mutate continuation results, missing or duplicate
 probes and resolver inputs for nested repeated trees. These bounded comparisons

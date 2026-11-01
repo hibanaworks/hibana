@@ -16,21 +16,21 @@ private theorem unfolding_keeps_resource_membership
   | rollOnce body ih => exact ih
   | rollMore earlier next left right =>
     simp only [Source.resources, List.mem_eraseDups, List.mem_append, left, right, or_self]
-  | resumeAfterContinuation earlier next left right =>
+  | resumeAfterContinuation context earlier next left right =>
     simp only [Source.resources, List.mem_eraseDups, List.mem_append] at left ⊢
     rw [left, right]
     constructor
     · intro observed
-      exact observed.elim id Or.inl
+      exact observed.elim id (fun member => Or.inl (context.contains_resource _ member))
     · exact Or.inl
-  | resumeAlongsideContinuation earlier next tail first second third =>
+  | resumeAlongsideContinuation context earlier next tail first second third =>
     simp only [Source.resources, List.mem_eraseDups, List.mem_append] at first second third ⊢
     rw [first, second, third]
     constructor
     · intro observed
       rcases observed with first | second | tail
       · exact Or.inl first
-      · exact Or.inl second
+      · exact Or.inl (context.contains_resource _ second)
       · exact Or.inr tail
     · intro observed
       exact observed.elim Or.inl (fun tail => Or.inr (Or.inr tail))

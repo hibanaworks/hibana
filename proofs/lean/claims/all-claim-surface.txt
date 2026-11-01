@@ -325,6 +325,23 @@ Hibana.EndpointDelegation.withOwner_same : ∀ (owners : Hibana.EndpointDelegati
       (@Hibana.EndpointTransfer.initial View Frame initialValue) requests state →
     @LE.le.{0} Nat instLENat (@Hibana.EndpointTransfer.Observation.authorityCount View Frame state)
       (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1)))
+@Hibana.RollContext.contains_message : ∀ {entry : Prod.{0, 0} Nat Hibana.EndpointDelegation.Message}
+  (context : Hibana.RollContext) (body : Hibana.EndpointDelegation.Source) (start : Nat),
+  @Membership.mem.{0, 0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Message)
+      (List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Message))
+      (@List.instMembership.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Message))
+      (body.messageEntries (@HAdd.hAdd.{0, 0, 0} Nat Nat Nat (@instHAdd.{0} Nat instAddNat) start context.offset))
+      entry →
+    @Membership.mem.{0, 0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Message)
+      (List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Message))
+      (@List.instMembership.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Message))
+      ((context.plug body).messageEntries start) entry
+@Hibana.RollContext.contains_resource : ∀ {key : Hibana.EndpointDelegation.EndpointKey} (context : Hibana.RollContext)
+  (body : Hibana.EndpointDelegation.Source),
+  @Membership.mem.{0, 0} Hibana.EndpointDelegation.EndpointKey (List.{0} Hibana.EndpointDelegation.EndpointKey)
+      (@List.instMembership.{0} Hibana.EndpointDelegation.EndpointKey) body.resources key →
+    @Membership.mem.{0, 0} Hibana.EndpointDelegation.EndpointKey (List.{0} Hibana.EndpointDelegation.EndpointKey)
+      (@List.instMembership.{0} Hibana.EndpointDelegation.EndpointKey) (context.plug body).resources key
 @Hibana.a_binding_in_the_source_prefix_has_an_earlier_occurrence : ∀ {source : Hibana.EndpointDelegation.Source}
   {resources : List.{0} Hibana.EndpointDelegation.EndpointKey} {owners : Hibana.EndpointDelegation.OwnerMap}
   {path : List.{0} Hibana.EndpointDelegation.Selection} {start : Nat} {run : Hibana.EndpointDelegation.Elaboration}
