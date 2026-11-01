@@ -151,7 +151,7 @@ impl<'e, 'r, const ROLE: u8, const RESOURCE: u8> OwnedRecvFuture<'e, 'r, ROLE, R
         label: u8,
     ) -> Self {
         Self {
-            raw: RawRecvFuture::new(endpoint),
+            raw: RawRecvFuture::new(endpoint, label, EventPayload::Endpoint(RESOURCE)),
             label,
         }
     }

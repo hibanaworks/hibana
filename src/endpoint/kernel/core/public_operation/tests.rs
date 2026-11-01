@@ -33,21 +33,17 @@ fn public_operation_transition_classifier_covers_exact_state_product() {
 fn lean_edge(edge: PublicOpEdge) -> &'static str {
     match edge {
         PublicOpEdge::BeginOffer => ".beginOffer",
-        PublicOpEdge::ResumeOffer => ".resumeOffer",
         PublicOpEdge::PublishRouteBranch => ".publishRouteBranch",
         PublicOpEdge::FinishOffer => ".finishOffer",
-        PublicOpEdge::ParkOffer => ".parkOffer",
-        PublicOpEdge::ParkRouteBranch => ".parkRouteBranch",
+        PublicOpEdge::FinishRouteBranch => ".finishRouteBranch",
         PublicOpEdge::BeginSend => ".beginSend",
         PublicOpEdge::BeginBranchSend => ".beginBranchSend",
         PublicOpEdge::FinishSend => ".finishSend",
         PublicOpEdge::FinishBranchSend => ".finishBranchSend",
-        PublicOpEdge::ParkBranchSend => ".parkBranchSend",
         PublicOpEdge::BeginRecv => ".beginRecv",
         PublicOpEdge::BeginBranchRecv => ".beginBranchRecv",
         PublicOpEdge::FinishRecv => ".finishRecv",
         PublicOpEdge::FinishBranchRecv => ".finishBranchRecv",
-        PublicOpEdge::ParkBranchRecv => ".parkBranchRecv",
         PublicOpEdge::BeginSendPayload => ".beginSendPayload",
         PublicOpEdge::FinishSendPayload => ".finishSendPayload",
     }
@@ -61,7 +57,6 @@ fn lean_phase(phase: PublicActiveOp) -> &'static str {
         PublicActiveOp::Recv => ".recv",
         PublicActiveOp::Offer => ".offer",
         PublicActiveOp::RouteBranch => ".routeBranch",
-        PublicActiveOp::RestoredRouteBranch => ".restoredRouteBranch",
         PublicActiveOp::BranchRecv => ".branchRecv",
         PublicActiveOp::BranchSend => ".branchSend",
         PublicActiveOp::SendPayload => ".sendPayload",
@@ -109,7 +104,7 @@ fn export_public_operation_kernel_for_lean() {
          Hibana.PublicOperationTableExact generatedPublicOperationTable :=\n  \
          Hibana.public_operation_table_certificate_sound\n    \
          generatedPublicOperationTableAccepted\n\n\
-         #eval IO.println \"hibana Lean public-operation kernel proof passed states=10 edges=18 transitions=180\"\n",
+         #eval IO.println \"hibana Lean public-operation kernel proof passed states=9 edges=14 transitions=126\"\n",
         rows.join(",\n"),
     );
     let output_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/lean-proof");

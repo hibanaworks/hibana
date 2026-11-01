@@ -83,7 +83,6 @@ where
                 | PublicActiveOp::Recv
                 | PublicActiveOp::Offer
                 | PublicActiveOp::RouteBranch
-                | PublicActiveOp::RestoredRouteBranch
                 | PublicActiveOp::BranchRecv
                 | PublicActiveOp::SendPayload => {
                     return Poll::Ready(Err(SendError::PhaseInvariant));

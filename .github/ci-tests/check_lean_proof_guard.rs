@@ -44,7 +44,7 @@ fn markers(kind: &str) -> AuditResult<&'static [(&'static str, &'static str)]> {
         ]),
         "public-operation" => Ok(&[
             (
-                "hibana Lean public-operation kernel proof passed states=10 edges=18 transitions=180",
+                "hibana Lean public-operation kernel proof passed states=9 edges=14 transitions=126",
                 "public-operation certificate",
             ),
             (

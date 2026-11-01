@@ -752,23 +752,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         &observations,
         "incomplete probe inventory",
     )?;
-    let continuation_source = match &inventory {
-        Json::Array(cases) => cases.iter().any(|case| match case.get("nodes") {
-            Some(Json::Array(nodes)) => {
-                let repeats = nodes
-                    .iter()
-                    .filter(|node| node.get("kind") == Some(&Json::Number("5".into())))
-                    .count();
-                repeats == 0
-                    || (repeats == 1
-                        && nodes.last().and_then(|node| node.get("kind"))
-                            == Some(&Json::Number("5".into())))
-            }
-            _ => false,
-        }),
-        _ => return Err("invalid source inventory for continuation controls".into()),
-    };
-    if continuation_source {
+    {
         let Json::Array(cases) = &inventory else {
             return Err("invalid source inventory".into());
         };
@@ -862,10 +846,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!(
             "Generated continuation checker controls: {}: pass",
             checked.join(", ")
-        );
-    } else {
-        println!(
-            "Generated continuation checker controls: no source with continuation probes in this shard"
         );
     }
     println!(

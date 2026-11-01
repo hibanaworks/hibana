@@ -287,6 +287,8 @@ pub(crate) struct EndpointOps {
     pub(crate) init_public_recv_state: unsafe fn(
         ptr: NonNull<()>,
         handle: OperationHandle,
+        logical_label: u8,
+        payload_kind: crate::eff::EventPayload,
     ) -> crate::endpoint::kernel::PublicOpLease,
     pub(crate) begin_public_branch_recv_state: unsafe fn(
         ptr: NonNull<()>,

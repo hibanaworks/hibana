@@ -37,7 +37,7 @@ status=0
   bash .github/scripts/check_protocol_shapes.sh --contracts 2 1
 ) > "${OUTPUT}/mutant.log" 2>&1 || status=$?
 if [[ "${status}" == 0 ]] ||
-   ! rg -q 'Error: "generated test shape_8 failed:' "${OUTPUT}/mutant.log"; then
+   ! grep -Fq 'Error: "generated test shape_8 failed:' "${OUTPUT}/mutant.log"; then
   echo "Generated cases did not detect the restored send-selection defect" >&2
   tail -50 "${OUTPUT}/mutant.log" >&2
   exit 1

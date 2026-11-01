@@ -305,9 +305,8 @@ impl Protocol {
     }
     fn prefix_visits(&self) -> usize {
         match self {
-            Self::Roll(body) if body.repetition_count() == 0 => 2,
             _ if self.repetition_count() == 0 => 1,
-            _ => 0,
+            _ => 2,
         }
     }
     fn resolver_choices(

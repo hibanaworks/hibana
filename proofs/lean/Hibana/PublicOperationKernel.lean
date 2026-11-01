@@ -9,7 +9,6 @@ inductive PublicOperationPhase where
   | recv
   | offer
   | routeBranch
-  | restoredRouteBranch
   | branchRecv
   | branchSend
   | sendPayload
@@ -28,47 +27,40 @@ structure PublicOperationTransition where
 
 inductive PublicOperationEdge where
   | beginOffer
-  | resumeOffer
   | publishRouteBranch
   | finishOffer
-  | parkOffer
-  | parkRouteBranch
+  | finishRouteBranch
   | beginSend
   | beginBranchSend
   | finishSend
   | finishBranchSend
-  | parkBranchSend
   | beginRecv
   | beginBranchRecv
   | finishRecv
   | finishBranchRecv
-  | parkBranchRecv
   | beginSendPayload
   | finishSendPayload
   deriving Repr, DecidableEq
 
 def PublicOperationEdge.expected : PublicOperationEdge → PublicOperationPhase
   | .beginOffer | .beginSend | .beginRecv | .beginSendPayload => .idle
-  | .resumeOffer => .restoredRouteBranch
-  | .publishRouteBranch | .finishOffer | .parkOffer => .offer
-  | .parkRouteBranch | .beginBranchSend | .beginBranchRecv => .routeBranch
+  | .publishRouteBranch | .finishOffer => .offer
+  | .finishRouteBranch | .beginBranchSend | .beginBranchRecv => .routeBranch
   | .finishSend => .send
-  | .finishBranchSend | .parkBranchSend => .branchSend
+  | .finishBranchSend => .branchSend
   | .finishRecv => .recv
-  | .finishBranchRecv | .parkBranchRecv => .branchRecv
+  | .finishBranchRecv => .branchRecv
   | .finishSendPayload => .sendPayload
 
 def PublicOperationEdge.next : PublicOperationEdge → PublicOperationPhase
-  | .beginOffer | .resumeOffer => .offer
+  | .beginOffer => .offer
   | .publishRouteBranch => .routeBranch
-  | .parkOffer | .parkRouteBranch | .parkBranchSend | .parkBranchRecv =>
-      .restoredRouteBranch
   | .beginSend => .send
   | .beginBranchSend => .branchSend
   | .beginRecv => .recv
   | .beginBranchRecv => .branchRecv
   | .beginSendPayload => .sendPayload
-  | .finishOffer | .finishSend | .finishBranchSend | .finishRecv |
+  | .finishOffer | .finishRouteBranch | .finishSend | .finishBranchSend | .finishRecv |
       .finishBranchRecv | .finishSendPayload => .idle
 
 def transitionPublicOperation
@@ -124,7 +116,6 @@ def publicOperationPhases : List PublicOperationPhase := [
   .recv,
   .offer,
   .routeBranch,
-  .restoredRouteBranch,
   .branchRecv,
   .branchSend,
   .sendPayload
@@ -132,21 +123,17 @@ def publicOperationPhases : List PublicOperationPhase := [
 
 def publicOperationEdges : List PublicOperationEdge := [
   .beginOffer,
-  .resumeOffer,
   .publishRouteBranch,
   .finishOffer,
-  .parkOffer,
-  .parkRouteBranch,
+  .finishRouteBranch,
   .beginSend,
   .beginBranchSend,
   .finishSend,
   .finishBranchSend,
-  .parkBranchSend,
   .beginRecv,
   .beginBranchRecv,
   .finishRecv,
   .finishBranchRecv,
-  .parkBranchRecv,
   .beginSendPayload,
   .finishSendPayload
 ]

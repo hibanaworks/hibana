@@ -46,12 +46,12 @@ for rank in 6 7; do
     # therefore produces an explicit model-only admission mismatch.
     expected='generated Endpoint/source conformance failed: runtime-only=0 model-only=[1-9]'
   fi
-  if [[ "${status}" == 0 ]] || ! rg -q "${expected}" "${OUTPUT}/mutant-${rank}.log"; then
+  if [[ "${status}" == 0 ]] || ! grep -Eq "${expected}" "${OUTPUT}/mutant-${rank}.log"; then
     echo "Generated case ${rank} did not detect the restored receive-selection defect" >&2
     tail -50 "${OUTPUT}/mutant-${rank}.log" >&2
     exit 1
   fi
-  if [[ "${rank}" == 7 ]] && ! rg -q 'shape 22 choice=' "${OUTPUT}/mutant-${rank}.log"; then
+  if [[ "${rank}" == 7 ]] && ! grep -Fq 'shape 22 choice=' "${OUTPUT}/mutant-${rank}.log"; then
     echo "The delegated receive mutation failed outside its required admission probe" >&2
     exit 1
   fi

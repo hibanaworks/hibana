@@ -220,10 +220,7 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
             return Err(SendError::SessionFault(fault));
         }
         if regions.is_empty()
-            || !matches!(
-                self.operation.public_active_op,
-                PublicActiveOp::Idle | PublicActiveOp::RestoredRouteBranch
-            )
+            || self.operation.public_active_op != PublicActiveOp::Idle
             || self.has_other_active_operations()
         {
             return Err(SendError::PhaseInvariant);
@@ -372,7 +369,7 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
         &mut self,
         regions: &[OperationRegion],
     ) -> SendResult<()> {
-        if self.operation.public_active_op != PublicActiveOp::RestoredRouteBranch {
+        if self.operation.public_route_branch.is_none() {
             return Ok(());
         }
         let branch = self

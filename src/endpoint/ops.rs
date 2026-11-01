@@ -178,8 +178,20 @@ impl<'e, 'r, const ROLE: u8, D> super::target::OperationTarget<'e, 'r, ROLE, D> 
 
     #[inline]
     #[must_use]
-    pub(super) fn init_public_recv_state(&mut self) -> kernel::PublicOpLease {
-        self.call_lease_op(self.ops().init_public_recv_state)
+    pub(super) fn init_public_recv_state(
+        &mut self,
+        logical_label: u8,
+        payload_kind: crate::eff::EventPayload,
+    ) -> kernel::PublicOpLease {
+        // SAFETY: this target owns the operation borrow for its live view.
+        unsafe {
+            (self.ops().init_public_recv_state)(
+                self.erased_ptr(),
+                self.parts().1,
+                logical_label,
+                payload_kind,
+            )
+        }
     }
 
     #[inline]

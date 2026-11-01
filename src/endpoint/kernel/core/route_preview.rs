@@ -189,10 +189,7 @@ where
                 // SAFETY: all views belong to this actor. Its progress borrow
                 // excludes other kernels; the mutable current slot is excluded.
                 let operation = unsafe { &*operation.state.get() };
-                if matches!(
-                    operation.public_active_op,
-                    super::PublicActiveOp::Idle | super::PublicActiveOp::Poisoned
-                ) {
+                if operation.public_active_op == super::PublicActiveOp::Poisoned {
                     continue;
                 }
                 if let Some(arm) = operation

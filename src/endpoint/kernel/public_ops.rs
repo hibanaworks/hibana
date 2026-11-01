@@ -3,7 +3,7 @@
 use super::{
     core::{OperationKernel, PublicActiveOp, PublicOpEdge, SendState},
     lane_port,
-    offer::OfferState,
+    offer::{BranchKind, OfferState},
 };
 use crate::{
     endpoint::{RecvError, SendError, carrier::WaiterTransfer},
@@ -34,9 +34,7 @@ where
                 self.clear_endpoint_waiter(waiters);
                 self.finish_operation_io();
             }
-            PublicActiveOp::Idle
-            | PublicActiveOp::RestoredRouteBranch
-            | PublicActiveOp::SendPayload => crate::invariant(),
+            PublicActiveOp::Idle | PublicActiveOp::SendPayload => crate::invariant(),
         }
     }
 
@@ -95,11 +93,7 @@ where
     #[inline]
     pub(in crate::endpoint) fn reset_public_offer_state(&mut self, waiters: &mut WaiterTransfer) {
         self.clear_endpoint_waiter(waiters);
-        if self.operation.public_route_branch.is_some() {
-            self.park_public_route_branch(PublicOpEdge::ParkOffer);
-        } else {
-            let _ = self.transition_public_op(PublicOpEdge::FinishOffer);
-        }
+        let _ = self.transition_public_op(PublicOpEdge::FinishOffer);
         let mut state =
             core::mem::replace(&mut self.operation.public_offer_state, OfferState::new());
         self.restore_detached_offer_state(&mut state);
@@ -144,16 +138,7 @@ where
     #[must_use]
     pub(in crate::endpoint) fn init_public_offer_state(&mut self) -> super::core::PublicOpLease {
         let lease = match self.operation.public_active_op {
-            PublicActiveOp::Idle if self.operation.public_route_branch.is_none() => {
-                self.transition_public_op(PublicOpEdge::BeginOffer)
-            }
-            PublicActiveOp::RestoredRouteBranch if self.operation.public_route_branch.is_some() => {
-                self.transition_public_op(PublicOpEdge::ResumeOffer)
-            }
-            PublicActiveOp::Idle | PublicActiveOp::RestoredRouteBranch => {
-                self.public_op_busy_fault();
-                super::core::PublicOpLease::Rejected
-            }
+            PublicActiveOp::Idle => self.transition_public_op(PublicOpEdge::BeginOffer),
             PublicActiveOp::Poisoned => super::core::PublicOpLease::Faulted,
             PublicActiveOp::Send
             | PublicActiveOp::Recv
@@ -178,7 +163,7 @@ where
 
     #[inline]
     pub(in crate::endpoint) fn restore_public_route_branch(&mut self) {
-        self.park_public_route_branch(PublicOpEdge::ParkRouteBranch);
+        self.park_public_route_branch(PublicOpEdge::FinishRouteBranch);
     }
 
     /// Reuse the already materialized preview without polling I/O or rerunning
@@ -191,6 +176,39 @@ where
         self.transition_public_op(PublicOpEdge::PublishRouteBranch)
     }
 
+    fn preview_matches_contract(
+        &self,
+        logical_label: u8,
+        payload_kind: crate::eff::EventPayload,
+    ) -> bool {
+        let Some(branch) = self.operation.public_route_branch.as_ref() else {
+            return false;
+        };
+        let meta = branch.branch_meta;
+        if meta.label != logical_label {
+            return false;
+        }
+        let index = meta.cursor_index.as_usize();
+        match meta.kind {
+            BranchKind::ArmSend => self
+                .progress
+                .cursor
+                .try_send_meta_at(index)
+                .is_some_and(|row| row.payload_kind == payload_kind),
+            BranchKind::WireRecv => self
+                .progress
+                .cursor
+                .try_recv_meta_at(index)
+                .is_some_and(|row| row.payload_kind == payload_kind),
+            BranchKind::LocalAction | BranchKind::TerminalArm => {
+                payload_kind
+                    == crate::eff::EventPayload::Wire(
+                        <() as crate::transport::wire::WirePayload>::SCHEMA_ID,
+                    )
+            }
+        }
+    }
+
     #[inline]
     pub(in crate::endpoint) fn init_public_send_state(
         &mut self,
@@ -201,6 +219,26 @@ where
             return Err(crate::endpoint::SendError::SessionFault(kind));
         }
         let lease = match self.operation.public_active_op {
+            PublicActiveOp::Idle
+                if self.preview_matches_contract(logical_label, payload_kind)
+                    && self
+                        .operation
+                        .public_route_branch
+                        .as_ref()
+                        .is_some_and(|branch| {
+                            matches!(
+                                branch.branch_meta.kind,
+                                BranchKind::ArmSend | BranchKind::LocalAction
+                            )
+                        }) =>
+            {
+                let lease = self.resume_public_route_branch();
+                if lease == super::core::PublicOpLease::Held {
+                    self.transition_public_op(PublicOpEdge::BeginBranchSend)
+                } else {
+                    lease
+                }
+            }
             PublicActiveOp::Idle => self.transition_public_op(PublicOpEdge::BeginSend),
             PublicActiveOp::RouteBranch if self.operation.public_route_branch.is_some() => {
                 self.transition_public_op(PublicOpEdge::BeginBranchSend)
@@ -209,19 +247,10 @@ where
                 self.public_op_busy_fault();
                 super::core::PublicOpLease::Rejected
             }
-            PublicActiveOp::RestoredRouteBranch if self.operation.public_route_branch.is_some() => {
-                let lease = self.resume_public_route_branch();
-                if lease == super::core::PublicOpLease::Held {
-                    self.transition_public_op(PublicOpEdge::BeginBranchSend)
-                } else {
-                    lease
-                }
-            }
             PublicActiveOp::Poisoned => super::core::PublicOpLease::Faulted,
             PublicActiveOp::Send
             | PublicActiveOp::Recv
             | PublicActiveOp::Offer
-            | PublicActiveOp::RestoredRouteBranch
             | PublicActiveOp::BranchRecv
             | PublicActiveOp::BranchSend
             | PublicActiveOp::SendPayload => {
@@ -256,14 +285,13 @@ where
                 let _ = self.transition_public_op(PublicOpEdge::FinishSend);
             }
             PublicActiveOp::BranchSend => {
-                self.park_public_route_branch(PublicOpEdge::ParkBranchSend);
+                self.park_public_route_branch(PublicOpEdge::FinishBranchSend);
             }
             PublicActiveOp::Poisoned => {}
             PublicActiveOp::Idle
             | PublicActiveOp::Recv
             | PublicActiveOp::Offer
             | PublicActiveOp::RouteBranch
-            | PublicActiveOp::RestoredRouteBranch
             | PublicActiveOp::BranchRecv
             | PublicActiveOp::SendPayload => self.public_op_busy_fault(),
         }
@@ -291,8 +319,19 @@ where
 
     #[inline]
     #[must_use]
-    pub(in crate::endpoint) fn init_public_recv_state(&mut self) -> super::core::PublicOpLease {
-        if self.operation.public_active_op == PublicActiveOp::RestoredRouteBranch {
+    pub(in crate::endpoint) fn init_public_recv_state(
+        &mut self,
+        logical_label: u8,
+        payload_kind: crate::eff::EventPayload,
+    ) -> super::core::PublicOpLease {
+        if self.operation.public_active_op == PublicActiveOp::Idle
+            && self.preview_matches_contract(logical_label, payload_kind)
+            && self
+                .operation
+                .public_route_branch
+                .as_ref()
+                .is_some_and(|branch| branch.branch_meta.kind != BranchKind::ArmSend)
+        {
             let lease = self.resume_public_route_branch();
             return if lease == super::core::PublicOpLease::Held {
                 self.begin_public_branch_recv_state()
@@ -359,7 +398,7 @@ where
             self.operation.public_branch_recv_state = super::branch_recv::BranchRecvState::empty();
             return;
         }
-        self.park_public_route_branch(PublicOpEdge::ParkBranchRecv);
+        self.park_public_route_branch(PublicOpEdge::FinishBranchRecv);
         self.operation.public_branch_recv_state = super::branch_recv::BranchRecvState::empty();
     }
 

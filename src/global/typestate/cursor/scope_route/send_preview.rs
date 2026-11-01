@@ -517,20 +517,7 @@ impl EventCursor {
             let local = self
                 .try_local_meta_at(idx)
                 .ok_or(SendPreviewError::Invariant)?;
-            SendMeta {
-                eff_index: local.eff_index,
-                peer: role,
-                label: local.label,
-                payload_kind: local.payload_kind,
-                frame_label: local.frame_label,
-                origin: local.origin,
-                next: local.next,
-                scope: local.scope,
-                route_scope: local.route_scope,
-                route_arm: local.route_arm,
-                selected_route_arm: local.route_arm,
-                lane: local.lane,
-            }
+            local.into_send(role)
         } else {
             self.try_send_meta_at(idx)
                 .ok_or(SendPreviewError::Invariant)?

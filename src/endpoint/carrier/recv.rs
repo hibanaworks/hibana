@@ -8,6 +8,8 @@ where
     pub(super) unsafe fn init_public_recv_state_raw(
         ptr: NonNull<()>,
         handle: OperationHandle,
+        logical_label: u8,
+        payload_kind: crate::eff::EventPayload,
     ) -> crate::endpoint::kernel::PublicOpLease {
         unsafe {
             // SAFETY: recv-state initialization owns the carrier endpoint slot
@@ -16,7 +18,7 @@ where
                 ptr,
                 handle,
                 crate::endpoint::kernel::PublicOpLease::Rejected,
-                |kernel| kernel.init_public_recv_state(),
+                |kernel| kernel.init_public_recv_state(logical_label, payload_kind),
             )
         }
     }

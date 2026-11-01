@@ -293,7 +293,8 @@ async fn replay(
     resolver_count: u16,
     decisions: &Decisions<'_>,
     commands: &[Command],
-) -> Outcome {
+    park_before_last: bool,
+) -> (Outcome, Option<u8>) {
     let sid = SessionId::new(1);
     let network = InMemoryTransport::new(programs.resource.then(|| {
         // SAFETY: this replay owns the resource and its only initial issuer.
@@ -384,9 +385,43 @@ async fn replay(
         });
     }
     let mut outcome = Outcome::Accepted;
+    let mut parked_label = None;
     let scopes = (0..resolver_count).collect::<Vec<_>>();
     for (index, command) in commands.iter().enumerate() {
         decisions.prepare(&scopes, index, index + 1 == commands.len());
+        if park_before_last && index + 1 == commands.len() {
+            macro_rules! park {
+                ($endpoint:expr) => {{
+                    use core::{future::Future, task::Poll};
+                    let mut future = core::pin::pin!($endpoint.offer());
+                    match std::future::poll_fn(|cx| Poll::Ready(future.as_mut().poll(cx))).await {
+                        Poll::Ready(Ok(branch)) => {
+                            parked_label = Some(branch.label());
+                            drop(branch);
+                        }
+                        Poll::Ready(Err(_)) | Poll::Pending => return (outcome, None),
+                    }
+                }};
+            }
+            let view = if command.receive {
+                command.message.to
+            } else {
+                command.message.from
+            };
+            match view {
+                0 => park!(e0.as_mut().unwrap()),
+                1 => park!(e1.as_mut().unwrap()),
+                2 => park!(e2.as_mut().unwrap()),
+                3 => match e3
+                    .as_mut()
+                    .or_else(|| databases.iter_mut().find_map(Option::as_mut))
+                {
+                    Some(db) => park!(db),
+                    None => return (Outcome::Unavailable, None),
+                },
+                _ => panic!("preview view outside generated role domain"),
+            }
+        }
         macro_rules! observe {
             ($operation:expr) => {
                 match tokio::time::timeout(core::time::Duration::from_millis(1), $operation).await {
@@ -529,7 +564,7 @@ async fn replay(
             );
         }
     }
-    outcome
+    (outcome, parked_label)
 }
 
 struct Scenario<'a> {
@@ -596,14 +631,17 @@ async fn alias_replay_keeps_the_recorded_resolver_input() {
                     receive: true,
                     preview: false
                 },
-            ]
+            ],
+            false
         )
-        .await,
+        .await
+        .0,
         Outcome::Accepted,
     );
 }
 
 async fn qualify(programs: Programs, scenario: Scenario<'_>) {
+    use std::io::Write;
     let Scenario {
         resolver_count,
         id: case,
@@ -615,7 +653,13 @@ async fn qualify(programs: Programs, scenario: Scenario<'_>) {
         prefix_visits,
         completed_plan_words,
     } = scenario;
-    let mut observations = Vec::new();
+    let directory = observation_root().join("observations");
+    std::fs::create_dir_all(&directory).unwrap();
+    let mut observations = std::io::BufWriter::new(
+        std::fs::File::create(directory.join(format!("{case}.json"))).unwrap(),
+    );
+    write!(observations, r#"{{"name":{case},"attempts":["#).unwrap();
+    let mut separator = "";
     let mut prefixes = std::collections::BTreeMap::new();
     for choice in choices {
         for message in messages {
@@ -630,13 +674,28 @@ async fn qualify(programs: Programs, scenario: Scenario<'_>) {
                     resolver_count,
                     &Decisions::Constant(*choice),
                     &[command],
+                    false,
+                )
+                .await
+                .0;
+                let (parked, label) = replay(
+                    &programs,
+                    resolver_count,
+                    &Decisions::Constant(*choice),
+                    &[command],
+                    true,
                 )
                 .await;
-                observations.push(format!(
-                    r#"{{"choice":{choice:?},"prefix":[],"prefixChoices":[],"event":{},"receive":{receive},"accepted":{}}}"#,
+                let parked = label.map_or_else(
+                    || "[]".into(),
+                    |label| format!("[[{label},{}]]", parked == Outcome::Accepted),
+                );
+                write!(observations,
+                    r#"{separator}{{"choice":{choice:?},"prefix":[],"prefixChoices":[],"event":{},"receive":{receive},"accepted":{},"parked":{parked}}}"#,
                     message.event,
                     actual == Outcome::Accepted
-                ));
+                ).unwrap();
+                separator = ",";
                 if prefix_visits == 1 && actual == Outcome::Accepted {
                     prefixes
                         .entry(vec![2 * u16::from(message.event) + u16::from(receive)])
@@ -740,12 +799,33 @@ async fn qualify(programs: Programs, scenario: Scenario<'_>) {
                                 .collect(),
                         },
                         &commands,
+                        false,
+                    )
+                    .await
+                    .0;
+                    let (parked, label) = replay(
+                        &programs,
+                        resolver_count,
+                        &Decisions::AfterPrefix {
+                            choice: *choice,
+                            prefix: &history,
+                            values: (0..resolver_count)
+                                .map(|_| std::cell::Cell::new(false))
+                                .collect(),
+                        },
+                        &commands,
+                        true,
                     )
                     .await;
-                    observations.push(format!(
-                        r#"{{"choice":{choice:?},"prefix":{key:?},"prefixChoices":{history:?},"event":{},"receive":{receive},"accepted":{}}}"#,
+                    let parked = label.map_or_else(
+                        || "[]".into(),
+                        |label| format!("[[{label},{}]]", parked == Outcome::Accepted),
+                    );
+                    write!(observations,
+                        r#"{separator}{{"choice":{choice:?},"prefix":{key:?},"prefixChoices":{history:?},"event":{},"receive":{receive},"accepted":{},"parked":{parked}}}"#,
                         message.event, actual == Outcome::Accepted
-                    ));
+                    ).unwrap();
+                    separator = ",";
                     if prefix_visits == 1 && key.len() < 4 && actual == Outcome::Accepted {
                         let mut next = key.clone();
                         next.push(2 * u16::from(message.event) + u16::from(receive));
@@ -759,14 +839,6 @@ async fn qualify(programs: Programs, scenario: Scenario<'_>) {
             }
         }
     }
-    let directory = observation_root().join("observations");
-    std::fs::create_dir_all(&directory).unwrap();
-    std::fs::write(
-        directory.join(format!("{case}.json")),
-        format!(
-            r#"{{"name":{case},"attempts":[{}]}}"#,
-            observations.join(",")
-        ),
-    )
-    .unwrap();
+    write!(observations, "]}}").unwrap();
+    observations.flush().unwrap();
 }

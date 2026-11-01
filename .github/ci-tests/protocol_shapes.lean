@@ -26,6 +26,7 @@ structure ShapeAttempt where
   event : Nat
   receive : Bool
   accepted : Bool
+  parked : List (Nat × Bool)
   deriving Lean.FromJson
 
 structure ShapeOutput where
@@ -251,26 +252,170 @@ def shapeFiniteWords (source : Source) (start : Nat := 0) : List (List Nat) :=
         [first ++ second, second ++ first]
   | .route _ left right => shapeFiniteWords left start ++
       shapeFiniteWords right (start + left.eventCount)
-  | .roll _ => []
+  | .roll body =>
+      let words := shapeFiniteWords body start
+      words.flatMap fun first => words.map (first ++ ·)
+
+-- Completed scripts use two visits at each roll. A prefix may leave a roll
+-- after its first visit, including a nested roll in just one outer visit.
+-- Admission therefore uses every one/two-visit cut, not one fixed expansion.
+-- Next-call probes additionally allow a third visit at one dynamic roll site.
+def shapeTwoCopies : Source → Source
+  | .send message => .send message
+  | .seq left right => .seq (shapeTwoCopies left) (shapeTwoCopies right)
+  | .par left right => .par (shapeTwoCopies left) (shapeTwoCopies right)
+  | .route resolver left right => .route resolver (shapeTwoCopies left) (shapeTwoCopies right)
+  | .roll body => .seq (shapeTwoCopies body) (shapeTwoCopies body)
+
+def shapeTwoCopyUnfolding : (source : Source) → SourceUnfolding source (shapeTwoCopies source)
+  | .send message => .send message
+  | .seq left right => .seq (shapeTwoCopyUnfolding left) (shapeTwoCopyUnfolding right)
+  | .par left right => .par (shapeTwoCopyUnfolding left) (shapeTwoCopyUnfolding right)
+  | .route resolver left right => .route resolver (shapeTwoCopyUnfolding left) (shapeTwoCopyUnfolding right)
+  | .roll body => .rollMore (.rollOnce (shapeTwoCopyUnfolding body)) (shapeTwoCopyUnfolding body)
+
+def shapeBoundedUnfoldings :
+    (source : Source) → List (Σ expanded : Source, SourceUnfolding source expanded)
+  | .send message => [⟨.send message, .send message⟩]
+  | .seq left right =>
+      (shapeBoundedUnfoldings left).flatMap fun first =>
+        (shapeBoundedUnfoldings right).map fun second =>
+          ⟨.seq first.1 second.1, .seq first.2 second.2⟩
+  | .par left right =>
+      (shapeBoundedUnfoldings left).flatMap fun first =>
+        (shapeBoundedUnfoldings right).map fun second =>
+          ⟨.par first.1 second.1, .par first.2 second.2⟩
+  | .route resolver left right =>
+      (shapeBoundedUnfoldings left).flatMap fun first =>
+        (shapeBoundedUnfoldings right).map fun second =>
+          ⟨.route resolver first.1 second.1, .route resolver first.2 second.2⟩
+  | .roll body =>
+      let cuts := shapeBoundedUnfoldings body
+      cuts.map (fun cut => ⟨cut.1, .rollOnce cut.2⟩) ++
+      cuts.flatMap fun first => cuts.map fun second =>
+        ⟨.seq first.1 second.1, .rollMore (.rollOnce first.2) second.2⟩
+
+def shapeExtraUnfoldings :
+    (source : Source) → List (Σ expanded : Source, SourceUnfolding source expanded)
+  | .send _ => []
+  | .seq left right =>
+      ((shapeExtraUnfoldings left).flatMap fun first =>
+        (shapeBoundedUnfoldings right).map fun second =>
+          ⟨.seq first.1 second.1, .seq first.2 second.2⟩) ++
+      (shapeBoundedUnfoldings left).flatMap fun first =>
+        (shapeExtraUnfoldings right).map fun second =>
+          ⟨.seq first.1 second.1, .seq first.2 second.2⟩
+  | .par left right =>
+      ((shapeExtraUnfoldings left).flatMap fun first =>
+        (shapeBoundedUnfoldings right).map fun second =>
+          ⟨.par first.1 second.1, .par first.2 second.2⟩) ++
+      (shapeBoundedUnfoldings left).flatMap fun first =>
+        (shapeExtraUnfoldings right).map fun second =>
+          ⟨.par first.1 second.1, .par first.2 second.2⟩
+  | .route resolver left right =>
+      ((shapeExtraUnfoldings left).flatMap fun first =>
+        (shapeBoundedUnfoldings right).map fun second =>
+          ⟨.route resolver first.1 second.1, .route resolver first.2 second.2⟩) ++
+      (shapeBoundedUnfoldings left).flatMap fun first =>
+        (shapeExtraUnfoldings right).map fun second =>
+          ⟨.route resolver first.1 second.1, .route resolver first.2 second.2⟩
+  | .roll body =>
+      let cuts := shapeBoundedUnfoldings body
+      let extra := shapeExtraUnfoldings body
+      (extra.map fun cut => ⟨cut.1, .rollOnce cut.2⟩) ++
+      (extra.flatMap fun first => cuts.map fun second =>
+        ⟨.seq first.1 second.1, .rollMore (.rollOnce first.2) second.2⟩) ++
+      (cuts.flatMap fun first => extra.map fun second =>
+        ⟨.seq first.1 second.1, .rollMore (.rollOnce first.2) second.2⟩) ++
+      cuts.flatMap fun first => cuts.flatMap fun second => cuts.map fun third =>
+        ⟨.seq (.seq first.1 second.1) third.1,
+          .rollMore (.rollMore (.rollOnce first.2) second.2) third.2⟩
+
+-- The next public call may revisit a roll after its continuation has run.
+-- Use the established unfolding rule: a completed earlier copy releases both
+-- the next copy and the continuation. Their relative order is unrestricted.
+-- The extra visit occurs at one dynamic site; all other visits use the bounded
+-- cuts above. Every candidate carries its SourceUnfolding witness.
+def shapeElasticUnfoldings :
+    (source : Source) → List (Σ expanded : Source, SourceUnfolding source expanded)
+  | .send _ => []
+  | .seq left right =>
+      let inside : List (Σ expanded : Source, SourceUnfolding (.seq left right) expanded) :=
+        ((shapeElasticUnfoldings left).flatMap fun first =>
+          (shapeBoundedUnfoldings right).map fun second =>
+            ⟨.seq first.1 second.1, .seq first.2 second.2⟩) ++
+        (shapeBoundedUnfoldings left).flatMap fun first =>
+          (shapeElasticUnfoldings right).map fun second =>
+            ⟨.seq first.1 second.1, .seq first.2 second.2⟩
+      inside ++ match left with
+        | .roll body =>
+            (shapeBoundedUnfoldings (.roll body)).flatMap fun earlier =>
+              (shapeBoundedUnfoldings body).flatMap fun next =>
+                (shapeBoundedUnfoldings right).map fun tail =>
+                  ⟨.seq earlier.1 (.par next.1 tail.1),
+                    .resumeAlongsideContinuation earlier.2 (.rollOnce next.2) tail.2⟩
+        | _ => []
+  | .par left right =>
+      ((shapeElasticUnfoldings left).flatMap fun first =>
+        (shapeBoundedUnfoldings right).map fun second =>
+          ⟨.par first.1 second.1, .par first.2 second.2⟩) ++
+      (shapeBoundedUnfoldings left).flatMap fun first =>
+        (shapeElasticUnfoldings right).map fun second =>
+          ⟨.par first.1 second.1, .par first.2 second.2⟩
+  | .route resolver left right =>
+      ((shapeElasticUnfoldings left).flatMap fun first =>
+        (shapeBoundedUnfoldings right).map fun second =>
+          ⟨.route resolver first.1 second.1, .route resolver first.2 second.2⟩) ++
+      (shapeBoundedUnfoldings left).flatMap fun first =>
+        (shapeElasticUnfoldings right).map fun second =>
+          ⟨.route resolver first.1 second.1, .route resolver first.2 second.2⟩
+  | .roll body =>
+      let bounded := shapeBoundedUnfoldings body
+      let elastic := shapeElasticUnfoldings body
+      (elastic.map fun cut => ⟨cut.1, .rollOnce cut.2⟩) ++
+      (elastic.flatMap fun first => bounded.map fun second =>
+        ⟨.seq first.1 second.1, .rollMore (.rollOnce first.2) second.2⟩) ++
+      (bounded.flatMap fun first => elastic.map fun second =>
+        ⟨.seq first.1 second.1, .rollMore (.rollOnce first.2) second.2⟩)
 
 def shapePlans : (source : Source) → List (SourceOccurrenceCut source)
-  | .roll body =>
-      if shapeRepetitions body == 0 then
-        checkedPlans (.roll body) _ (.rollMore
-          (.rollMore (.rollOnce (.oneCopy body)) (.oneCopy body)) (.oneCopy body))
-      else checkedPlans (Source.roll body) (Source.roll body).oneCopy (.oneCopy (Source.roll body))
-  | source => checkedPlans source source.oneCopy (.oneCopy source)
+  | source =>
+      let cuts := shapeBoundedUnfoldings source ++ shapeExtraUnfoldings source ++
+        shapeElasticUnfoldings source
+      cuts.flatMap fun cut => checkedPlans source cut.1 cut.2
 
--- Two completed body visits require a third copy for the next-call probes.
--- Other repeating sources need continuation-aware occurrence unfoldings.
+private def nestedRollCuts : Source := .roll (.seq
+  (.roll (.send ⟨⟨0, 0⟩, ⟨0, 0⟩, 0, .wire 0⟩))
+  (.send ⟨⟨0, 0⟩, ⟨0, 0⟩, 1, .wire 0⟩))
+
+theorem an_inner_roll_can_exit_after_its_first_visit :
+    shapePermits (shapeStates nestedRollCuts ((shapePlans nestedRollCuts).map ShapePlan.of)
+      [0]) [] 1 false = true := by decide
+
+theorem nested_roll_visits_can_have_different_lengths :
+    shapePermits (shapeStates nestedRollCuts ((shapePlans nestedRollCuts).map ShapePlan.of)
+      [0, 0, 2, 0]) [] 1 false = true := by decide
+
+theorem the_next_call_can_start_a_third_outer_visit :
+    shapePermits (shapeStates nestedRollCuts ((shapePlans nestedRollCuts).map ShapePlan.of)
+      [0, 0, 2, 0, 0, 2]) [] 0 false = true := by decide
+
+theorem a_completed_tail_cannot_repeat_without_its_predecessor :
+    shapePermits (shapeStates nestedRollCuts ((shapePlans nestedRollCuts).map ShapePlan.of)
+      [0, 2]) [] 1 false = false := by decide
+
+theorem a_completed_continuation_does_not_close_its_inner_roll :
+    shapePermits (shapeStates nestedRollCuts ((shapePlans nestedRollCuts).map ShapePlan.of)
+      [0, 0, 2]) [] 0 false = true := by decide
+
+#print axioms an_inner_roll_can_exit_after_its_first_visit
+#print axioms nested_roll_visits_can_have_different_lengths
+#print axioms the_next_call_can_start_a_third_outer_visit
+#print axioms a_completed_tail_cannot_repeat_without_its_predecessor
+#print axioms a_completed_continuation_does_not_close_its_inner_roll
+
 def shapePrefixes (source : Source) : List (List Nat) :=
-  let words := match source with
-    | .roll body =>
-        if shapeRepetitions body == 0 then
-          (shapeFiniteWords body).flatMap fun first =>
-            (shapeFiniteWords body).map (first ++ ·)
-        else []
-    | _ => if shapeRepetitions source == 0 then shapeFiniteWords source else []
+  let words := shapeFiniteWords source
   ([] :: words.flatMap fun word =>
       (List.range (word.length + 1)).map (word.take ·)).eraseDups
 
@@ -387,22 +532,6 @@ theorem shapeAttemptGroups_keeps_order_and_multiplicity (attempts : List ShapeAt
 
 #print axioms shapeGroupStep_keeps_every_attempt
 #print axioms shapeAttemptGroups_keeps_order_and_multiplicity
-
--- The typed scripts execute exactly two visits at every roll site. This is
--- a finite witness in the existing source semantics, not a runtime counter.
-def shapeTwoCopies : Source → Source
-  | .send message => .send message
-  | .seq left right => .seq (shapeTwoCopies left) (shapeTwoCopies right)
-  | .par left right => .par (shapeTwoCopies left) (shapeTwoCopies right)
-  | .route resolver left right => .route resolver (shapeTwoCopies left) (shapeTwoCopies right)
-  | .roll body => .seq (shapeTwoCopies body) (shapeTwoCopies body)
-
-def shapeTwoCopyUnfolding : (source : Source) → SourceUnfolding source (shapeTwoCopies source)
-  | .send message => .send message
-  | .seq left right => .seq (shapeTwoCopyUnfolding left) (shapeTwoCopyUnfolding right)
-  | .par left right => .par (shapeTwoCopyUnfolding left) (shapeTwoCopyUnfolding right)
-  | .route resolver left right => .route resolver (shapeTwoCopyUnfolding left) (shapeTwoCopyUnfolding right)
-  | .roll body => .rollMore (.rollOnce (shapeTwoCopyUnfolding body)) (shapeTwoCopyUnfolding body)
 
 def shapeScriptCount : Source → Nat
   | .send _ => 1
@@ -705,6 +834,9 @@ def main (args : List String) : IO UInt32 := do
       throw (IO.userError "missing, duplicate or unknown completed script file")
   let mut checked := 0
   let mut continuations := 0
+  let mut parkedChecked := 0
+  let mut parkedRuntimeOnly := 0
+  let mut parkedModelOnly := 0
   let mut runtimeOnly := 0
   let mut modelOnly := 0
   let mut completedRuns := 0
@@ -717,6 +849,11 @@ def main (args : List String) : IO UInt32 := do
       | throw (IO.userError s!"shape {input.name}: source ownership rejected")
     unless ((shapeResolvers source 0).map Prod.snd).mergeSort (· ≤ ·) == List.range input.resolvers do
       throw (IO.userError s!"shape {input.name}: missing or duplicate resolver assignments")
+    -- Check complete execution records before the larger admission inventory.
+    -- A malformed execution is rejected without replaying every probe first.
+    let (runs, calls) ← shapeCheckCompleted source input.name input.parallelCoverage outputPath
+    completedRuns := completedRuns + runs
+    completedCalls := completedCalls + calls
     let plans := (shapePlans source).map ShapePlan.of
     unless !plans.isEmpty do throw (IO.userError s!"shape {input.name}: no accepted source plan")
     let choices := shapeChoicePatterns source
@@ -754,11 +891,35 @@ def main (args : List String) : IO UInt32 := do
           if runtimeOnly + modelOnly < 10 then
             IO.println s!"shape {input.name} choice={attempt.choice} prefix={attempt.prefix} event={attempt.event} receive={attempt.receive}: model={permitted} runtime={attempt.accepted}"
           if attempt.accepted then runtimeOnly := runtimeOnly + 1 else modelOnly := modelOnly + 1
+        match attempt.parked with
+        | [] => pure ()
+        | [(previewLabel, accepted)] =>
+            unless previewLabel < 256 do
+              throw (IO.userError s!"shape {input.name}: invalid parked preview label")
+            -- A preview adds no source step. Matching local recv consumes the
+            -- same self-role operation as send; other local recvs still need
+            -- their own materialized preview. Wire operations keep their usual
+            -- direction and the independently replayed source prefix.
+            let expected := match shapeMessage? source attempt.event with
+              | some message =>
+                  if attempt.receive && message.sender == message.receiver then
+                    message.label == previewLabel &&
+                      shapePermits states attempt.choice attempt.event false
+                  else permitted
+              | none => false
+            parkedChecked := parkedChecked + 1
+            if expected != accepted then
+              if parkedRuntimeOnly + parkedModelOnly < 10 then
+                IO.println s!"shape {input.name} parked={previewLabel} choice={attempt.choice} prefix={attempt.prefix} event={attempt.event} receive={attempt.receive}: model={expected} runtime={accepted}"
+              if accepted then parkedRuntimeOnly := parkedRuntimeOnly + 1
+              else parkedModelOnly := parkedModelOnly + 1
+              if accepted then runtimeOnly := runtimeOnly + 1 else modelOnly := modelOnly + 1
+        | _ => throw (IO.userError s!"shape {input.name}: duplicate parked preview observation")
+    unless parkedRuntimeOnly == 0 && parkedModelOnly == 0 do
+      IO.println s!"Parked previews/source mismatch: runtime-only={parkedRuntimeOnly} model-only={parkedModelOnly}"
     unless runtimeOnly == 0 && modelOnly == 0 do
       throw (IO.userError s!"generated Endpoint/source conformance failed: runtime-only={runtimeOnly} model-only={modelOnly}")
-    let (runs, calls) ← shapeCheckCompleted source input.name input.parallelCoverage outputPath
-    completedRuns := completedRuns + runs
-    completedCalls := completedCalls + calls
   IO.println s!"Completed shape scripts/source: shapes={inputs.size} runs={completedRuns} calls={completedCalls} all accepted"
   IO.println s!"Generated shapes/source: shapes={inputs.size} attempts={checked} initial={checked-continuations} continuation={continuations} runtime-only={runtimeOnly} model-only={modelOnly}"
+  IO.println s!"Successful parked previews/source: attempts={parkedChecked} runtime-only={parkedRuntimeOnly} model-only={parkedModelOnly}"
   pure 0

@@ -1,0 +1,485 @@
+diff --git b/src/endpoint/carrier.rs a/src/endpoint/carrier.rs
+index a98d08e..9f9461a 100644
+--- b/src/endpoint/carrier.rs
++++ a/src/endpoint/carrier.rs
+@@ -287,8 +287,6 @@ pub(crate) struct EndpointOps {
+     pub(crate) init_public_recv_state: unsafe fn(
+         ptr: NonNull<()>,
+         handle: OperationHandle,
+-        logical_label: u8,
+-        payload_kind: crate::eff::EventPayload,
+     ) -> crate::endpoint::kernel::PublicOpLease,
+     pub(crate) begin_public_branch_recv_state: unsafe fn(
+         ptr: NonNull<()>,
+diff --git b/src/endpoint/carrier/recv.rs a/src/endpoint/carrier/recv.rs
+index 99a7302..635d20c 100644
+--- b/src/endpoint/carrier/recv.rs
++++ a/src/endpoint/carrier/recv.rs
+@@ -8,8 +8,6 @@ where
+     pub(super) unsafe fn init_public_recv_state_raw(
+         ptr: NonNull<()>,
+         handle: OperationHandle,
+-        logical_label: u8,
+-        payload_kind: crate::eff::EventPayload,
+     ) -> crate::endpoint::kernel::PublicOpLease {
+         unsafe {
+             // SAFETY: recv-state initialization owns the carrier endpoint slot
+@@ -18,7 +16,7 @@ where
+                 ptr,
+                 handle,
+                 crate::endpoint::kernel::PublicOpLease::Rejected,
+-                |kernel| kernel.init_public_recv_state(logical_label, payload_kind),
++                |kernel| kernel.init_public_recv_state(),
+             )
+         }
+     }
+diff --git b/src/endpoint/futures.rs a/src/endpoint/futures.rs
+index 8210bf8..9b4991a 100644
+--- b/src/endpoint/futures.rs
++++ a/src/endpoint/futures.rs
+@@ -96,14 +96,8 @@ impl<'e, 'r, const ROLE: u8> RawRecvFuture<'e, 'r, ROLE> {
+         }
+     }
+     #[inline]
+-    pub(super) fn new(
+-        mut endpoint: super::target::OperationTarget<'e, 'r, ROLE>,
+-        logical_label: u8,
+-        payload_kind: crate::eff::EventPayload,
+-    ) -> Self {
+-        let lease = RecvFutureLease::from_public_lease(
+-            endpoint.init_public_recv_state(logical_label, payload_kind),
+-        );
++    pub(super) fn new(mut endpoint: super::target::OperationTarget<'e, 'r, ROLE>) -> Self {
++        let lease = RecvFutureLease::from_public_lease(endpoint.init_public_recv_state());
+         Self {
+             endpoint: endpoint.with_metadata(lease),
+         }
+@@ -164,11 +158,7 @@ where
+     #[inline]
+     pub(super) fn new(endpoint: super::target::OperationTarget<'e, 'r, ROLE>) -> Self {
+         Self {
+-            raw: RawRecvFuture::new(
+-                endpoint,
+-                M::LOGICAL_LABEL,
+-                crate::global::payload_kind::<M>(),
+-            ),
++            raw: RawRecvFuture::new(endpoint),
+             _msg: core::marker::PhantomData,
+         }
+     }
+diff --git b/src/endpoint/kernel/core/parallel.rs a/src/endpoint/kernel/core/parallel.rs
+index 51cb868..13df27a 100644
+--- b/src/endpoint/kernel/core/parallel.rs
++++ a/src/endpoint/kernel/core/parallel.rs
+@@ -220,7 +220,10 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
+             return Err(SendError::SessionFault(fault));
+         }
+         if regions.is_empty()
+-            || self.operation.public_active_op != PublicActiveOp::Idle
++            || !matches!(
++                self.operation.public_active_op,
++                PublicActiveOp::Idle | PublicActiveOp::RestoredRouteBranch
++            )
+             || self.has_other_active_operations()
+         {
+             return Err(SendError::PhaseInvariant);
+@@ -369,7 +372,7 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
+         &mut self,
+         regions: &[OperationRegion],
+     ) -> SendResult<()> {
+-        if self.operation.public_route_branch.is_none() {
++        if self.operation.public_active_op != PublicActiveOp::RestoredRouteBranch {
+             return Ok(());
+         }
+         let branch = self
+diff --git b/src/endpoint/kernel/core/public_operation.rs a/src/endpoint/kernel/core/public_operation.rs
+index fac21f8..b18191c 100644
+--- b/src/endpoint/kernel/core/public_operation.rs
++++ a/src/endpoint/kernel/core/public_operation.rs
+@@ -9,6 +9,7 @@ define_public_operation_kernel! {
+         Recv,
+         Offer,
+         RouteBranch,
++        RestoredRouteBranch,
+         BranchRecv,
+         BranchSend,
+         // This view is held as another view's owned-send payload.
+@@ -16,17 +17,21 @@ define_public_operation_kernel! {
+     }
+     edges {
+         BeginOffer => (Idle, Offer),
++        ResumeOffer => (RestoredRouteBranch, Offer),
+         PublishRouteBranch => (Offer, RouteBranch),
+         FinishOffer => (Offer, Idle),
+-        FinishRouteBranch => (RouteBranch, Idle),
++        ParkOffer => (Offer, RestoredRouteBranch),
++        ParkRouteBranch => (RouteBranch, RestoredRouteBranch),
+         BeginSend => (Idle, Send),
+         BeginBranchSend => (RouteBranch, BranchSend),
+         FinishSend => (Send, Idle),
+         FinishBranchSend => (BranchSend, Idle),
++        ParkBranchSend => (BranchSend, RestoredRouteBranch),
+         BeginRecv => (Idle, Recv),
+         BeginBranchRecv => (RouteBranch, BranchRecv),
+         FinishRecv => (Recv, Idle),
+         FinishBranchRecv => (BranchRecv, Idle),
++        ParkBranchRecv => (BranchRecv, RestoredRouteBranch),
+         BeginSendPayload => (Idle, SendPayload),
+         FinishSendPayload => (SendPayload, Idle),
+     }
+diff --git b/src/endpoint/kernel/core/route_preview.rs a/src/endpoint/kernel/core/route_preview.rs
+index 3596af9..0d1ff33 100644
+--- b/src/endpoint/kernel/core/route_preview.rs
++++ a/src/endpoint/kernel/core/route_preview.rs
+@@ -189,7 +189,10 @@ where
+                 // SAFETY: all views belong to this actor. Its progress borrow
+                 // excludes other kernels; the mutable current slot is excluded.
+                 let operation = unsafe { &*operation.state.get() };
+-                if operation.public_active_op == super::PublicActiveOp::Poisoned {
++                if matches!(
++                    operation.public_active_op,
++                    super::PublicActiveOp::Idle | super::PublicActiveOp::Poisoned
++                ) {
+                     continue;
+                 }
+                 if let Some(arm) = operation
+diff --git b/src/endpoint/kernel/core/send_preview.rs a/src/endpoint/kernel/core/send_preview.rs
+index 411b7fc..a2d6172 100644
+--- b/src/endpoint/kernel/core/send_preview.rs
++++ a/src/endpoint/kernel/core/send_preview.rs
+@@ -83,6 +83,7 @@ where
+                 | PublicActiveOp::Recv
+                 | PublicActiveOp::Offer
+                 | PublicActiveOp::RouteBranch
++                | PublicActiveOp::RestoredRouteBranch
+                 | PublicActiveOp::BranchRecv
+                 | PublicActiveOp::SendPayload => {
+                     return Poll::Ready(Err(SendError::PhaseInvariant));
+diff --git b/src/endpoint/kernel/core/send_preview_authority.rs a/src/endpoint/kernel/core/send_preview_authority.rs
+index 32b9a67..8fdef93 100644
+--- b/src/endpoint/kernel/core/send_preview_authority.rs
++++ a/src/endpoint/kernel/core/send_preview_authority.rs
+@@ -19,11 +19,7 @@ where
+         let branch_meta = branch.branch_meta;
+         let has_offered_frame = branch.offered_frame.is_some();
+ 
+-        if !matches!(
+-            branch_meta.kind,
+-            BranchKind::ArmSend | BranchKind::LocalAction
+-        ) || has_offered_frame
+-        {
++        if branch_meta.kind != BranchKind::ArmSend || has_offered_frame {
+             return Err(SendError::PhaseInvariant);
+         }
+         if target_label != branch_meta.label {
+@@ -39,15 +35,7 @@ where
+         {
+             return Err(SendError::PhaseInvariant);
+         }
+-        let Some(mut meta) = (match branch_meta.kind {
+-            BranchKind::ArmSend => self.progress.cursor.try_send_meta_at(cursor_index),
+-            BranchKind::LocalAction => self
+-                .progress
+-                .cursor
+-                .try_local_meta_at(cursor_index)
+-                .map(|local| local.into_send(self.public_header.role())),
+-            BranchKind::WireRecv | BranchKind::TerminalArm => None,
+-        }) else {
++        let Some(mut meta) = self.progress.cursor.try_send_meta_at(cursor_index) else {
+             return Err(SendError::PhaseInvariant);
+         };
+         if meta.payload_kind != target_payload {
+diff --git b/src/endpoint/kernel/public_ops.rs a/src/endpoint/kernel/public_ops.rs
+index 9c4be53..ff36315 100644
+--- b/src/endpoint/kernel/public_ops.rs
++++ a/src/endpoint/kernel/public_ops.rs
+@@ -3,7 +3,7 @@
+ use super::{
+     core::{OperationKernel, PublicActiveOp, PublicOpEdge, SendState},
+     lane_port,
+-    offer::{BranchKind, OfferState},
++    offer::OfferState,
+ };
+ use crate::{
+     endpoint::{RecvError, SendError, carrier::WaiterTransfer},
+@@ -34,7 +34,9 @@ where
+                 self.clear_endpoint_waiter(waiters);
+                 self.finish_operation_io();
+             }
+-            PublicActiveOp::Idle | PublicActiveOp::SendPayload => crate::invariant(),
++            PublicActiveOp::Idle
++            | PublicActiveOp::RestoredRouteBranch
++            | PublicActiveOp::SendPayload => crate::invariant(),
+         }
+     }
+ 
+@@ -93,7 +95,11 @@ where
+     #[inline]
+     pub(in crate::endpoint) fn reset_public_offer_state(&mut self, waiters: &mut WaiterTransfer) {
+         self.clear_endpoint_waiter(waiters);
+-        let _ = self.transition_public_op(PublicOpEdge::FinishOffer);
++        if self.operation.public_route_branch.is_some() {
++            self.park_public_route_branch(PublicOpEdge::ParkOffer);
++        } else {
++            let _ = self.transition_public_op(PublicOpEdge::FinishOffer);
++        }
+         let mut state =
+             core::mem::replace(&mut self.operation.public_offer_state, OfferState::new());
+         self.restore_detached_offer_state(&mut state);
+@@ -138,7 +144,16 @@ where
+     #[must_use]
+     pub(in crate::endpoint) fn init_public_offer_state(&mut self) -> super::core::PublicOpLease {
+         let lease = match self.operation.public_active_op {
+-            PublicActiveOp::Idle => self.transition_public_op(PublicOpEdge::BeginOffer),
++            PublicActiveOp::Idle if self.operation.public_route_branch.is_none() => {
++                self.transition_public_op(PublicOpEdge::BeginOffer)
++            }
++            PublicActiveOp::RestoredRouteBranch if self.operation.public_route_branch.is_some() => {
++                self.transition_public_op(PublicOpEdge::ResumeOffer)
++            }
++            PublicActiveOp::Idle | PublicActiveOp::RestoredRouteBranch => {
++                self.public_op_busy_fault();
++                super::core::PublicOpLease::Rejected
++            }
+             PublicActiveOp::Poisoned => super::core::PublicOpLease::Faulted,
+             PublicActiveOp::Send
+             | PublicActiveOp::Recv
+@@ -163,7 +178,7 @@ where
+ 
+     #[inline]
+     pub(in crate::endpoint) fn restore_public_route_branch(&mut self) {
+-        self.park_public_route_branch(PublicOpEdge::FinishRouteBranch);
++        self.park_public_route_branch(PublicOpEdge::ParkRouteBranch);
+     }
+ 
+     /// Reuse the already materialized preview without polling I/O or rerunning
+@@ -176,39 +191,6 @@ where
+         self.transition_public_op(PublicOpEdge::PublishRouteBranch)
+     }
+ 
+-    fn preview_matches_contract(
+-        &self,
+-        logical_label: u8,
+-        payload_kind: crate::eff::EventPayload,
+-    ) -> bool {
+-        let Some(branch) = self.operation.public_route_branch.as_ref() else {
+-            return false;
+-        };
+-        let meta = branch.branch_meta;
+-        if meta.label != logical_label {
+-            return false;
+-        }
+-        let index = meta.cursor_index.as_usize();
+-        match meta.kind {
+-            BranchKind::ArmSend => self
+-                .progress
+-                .cursor
+-                .try_send_meta_at(index)
+-                .is_some_and(|row| row.payload_kind == payload_kind),
+-            BranchKind::WireRecv => self
+-                .progress
+-                .cursor
+-                .try_recv_meta_at(index)
+-                .is_some_and(|row| row.payload_kind == payload_kind),
+-            BranchKind::LocalAction | BranchKind::TerminalArm => {
+-                payload_kind
+-                    == crate::eff::EventPayload::Wire(
+-                        <() as crate::transport::wire::WirePayload>::SCHEMA_ID,
+-                    )
+-            }
+-        }
+-    }
+-
+     #[inline]
+     pub(in crate::endpoint) fn init_public_send_state(
+         &mut self,
+@@ -219,26 +201,6 @@ where
+             return Err(crate::endpoint::SendError::SessionFault(kind));
+         }
+         let lease = match self.operation.public_active_op {
+-            PublicActiveOp::Idle
+-                if self.preview_matches_contract(logical_label, payload_kind)
+-                    && self
+-                        .operation
+-                        .public_route_branch
+-                        .as_ref()
+-                        .is_some_and(|branch| {
+-                            matches!(
+-                                branch.branch_meta.kind,
+-                                BranchKind::ArmSend | BranchKind::LocalAction
+-                            )
+-                        }) =>
+-            {
+-                let lease = self.resume_public_route_branch();
+-                if lease == super::core::PublicOpLease::Held {
+-                    self.transition_public_op(PublicOpEdge::BeginBranchSend)
+-                } else {
+-                    lease
+-                }
+-            }
+             PublicActiveOp::Idle => self.transition_public_op(PublicOpEdge::BeginSend),
+             PublicActiveOp::RouteBranch if self.operation.public_route_branch.is_some() => {
+                 self.transition_public_op(PublicOpEdge::BeginBranchSend)
+@@ -247,10 +209,19 @@ where
+                 self.public_op_busy_fault();
+                 super::core::PublicOpLease::Rejected
+             }
++            PublicActiveOp::RestoredRouteBranch if self.operation.public_route_branch.is_some() => {
++                let lease = self.resume_public_route_branch();
++                if lease == super::core::PublicOpLease::Held {
++                    self.transition_public_op(PublicOpEdge::BeginBranchSend)
++                } else {
++                    lease
++                }
++            }
+             PublicActiveOp::Poisoned => super::core::PublicOpLease::Faulted,
+             PublicActiveOp::Send
+             | PublicActiveOp::Recv
+             | PublicActiveOp::Offer
++            | PublicActiveOp::RestoredRouteBranch
+             | PublicActiveOp::BranchRecv
+             | PublicActiveOp::BranchSend
+             | PublicActiveOp::SendPayload => {
+@@ -285,13 +256,14 @@ where
+                 let _ = self.transition_public_op(PublicOpEdge::FinishSend);
+             }
+             PublicActiveOp::BranchSend => {
+-                self.park_public_route_branch(PublicOpEdge::FinishBranchSend);
++                self.park_public_route_branch(PublicOpEdge::ParkBranchSend);
+             }
+             PublicActiveOp::Poisoned => {}
+             PublicActiveOp::Idle
+             | PublicActiveOp::Recv
+             | PublicActiveOp::Offer
+             | PublicActiveOp::RouteBranch
++            | PublicActiveOp::RestoredRouteBranch
+             | PublicActiveOp::BranchRecv
+             | PublicActiveOp::SendPayload => self.public_op_busy_fault(),
+         }
+@@ -319,19 +291,8 @@ where
+ 
+     #[inline]
+     #[must_use]
+-    pub(in crate::endpoint) fn init_public_recv_state(
+-        &mut self,
+-        logical_label: u8,
+-        payload_kind: crate::eff::EventPayload,
+-    ) -> super::core::PublicOpLease {
+-        if self.operation.public_active_op == PublicActiveOp::Idle
+-            && self.preview_matches_contract(logical_label, payload_kind)
+-            && self
+-                .operation
+-                .public_route_branch
+-                .as_ref()
+-                .is_some_and(|branch| branch.branch_meta.kind != BranchKind::ArmSend)
+-        {
++    pub(in crate::endpoint) fn init_public_recv_state(&mut self) -> super::core::PublicOpLease {
++        if self.operation.public_active_op == PublicActiveOp::RestoredRouteBranch {
+             let lease = self.resume_public_route_branch();
+             return if lease == super::core::PublicOpLease::Held {
+                 self.begin_public_branch_recv_state()
+@@ -398,7 +359,7 @@ where
+             self.operation.public_branch_recv_state = super::branch_recv::BranchRecvState::empty();
+             return;
+         }
+-        self.park_public_route_branch(PublicOpEdge::FinishBranchRecv);
++        self.park_public_route_branch(PublicOpEdge::ParkBranchRecv);
+         self.operation.public_branch_recv_state = super::branch_recv::BranchRecvState::empty();
+     }
+ 
+diff --git b/src/endpoint/ops.rs a/src/endpoint/ops.rs
+index 7154124..3e200f8 100644
+--- b/src/endpoint/ops.rs
++++ a/src/endpoint/ops.rs
+@@ -178,20 +178,8 @@ impl<'e, 'r, const ROLE: u8, D> super::target::OperationTarget<'e, 'r, ROLE, D>
+ 
+     #[inline]
+     #[must_use]
+-    pub(super) fn init_public_recv_state(
+-        &mut self,
+-        logical_label: u8,
+-        payload_kind: crate::eff::EventPayload,
+-    ) -> kernel::PublicOpLease {
+-        // SAFETY: this target owns the operation borrow for its live view.
+-        unsafe {
+-            (self.ops().init_public_recv_state)(
+-                self.erased_ptr(),
+-                self.parts().1,
+-                logical_label,
+-                payload_kind,
+-            )
+-        }
++    pub(super) fn init_public_recv_state(&mut self) -> kernel::PublicOpLease {
++        self.call_lease_op(self.ops().init_public_recv_state)
+     }
+ 
+     #[inline]
+diff --git b/src/endpoint/transfer/futures.rs a/src/endpoint/transfer/futures.rs
+index 045933c..6bdaa1f 100644
+--- b/src/endpoint/transfer/futures.rs
++++ a/src/endpoint/transfer/futures.rs
+@@ -151,7 +151,7 @@ impl<'e, 'r, const ROLE: u8, const RESOURCE: u8> OwnedRecvFuture<'e, 'r, ROLE, R
+         label: u8,
+     ) -> Self {
+         Self {
+-            raw: RawRecvFuture::new(endpoint, label, EventPayload::Endpoint(RESOURCE)),
++            raw: RawRecvFuture::new(endpoint),
+             label,
+         }
+     }
+diff --git b/src/global/typestate/cursor/scope_route/send_preview.rs a/src/global/typestate/cursor/scope_route/send_preview.rs
+index f1b5c19..69e14ec 100644
+--- b/src/global/typestate/cursor/scope_route/send_preview.rs
++++ a/src/global/typestate/cursor/scope_route/send_preview.rs
+@@ -517,7 +517,20 @@ impl EventCursor {
+             let local = self
+                 .try_local_meta_at(idx)
+                 .ok_or(SendPreviewError::Invariant)?;
+-            local.into_send(role)
++            SendMeta {
++                eff_index: local.eff_index,
++                peer: role,
++                label: local.label,
++                payload_kind: local.payload_kind,
++                frame_label: local.frame_label,
++                origin: local.origin,
++                next: local.next,
++                scope: local.scope,
++                route_scope: local.route_scope,
++                route_arm: local.route_arm,
++                selected_route_arm: local.route_arm,
++                lane: local.lane,
++            }
+         } else {
+             self.try_send_meta_at(idx)
+                 .ok_or(SendPreviewError::Invariant)?
+diff --git b/src/global/typestate/facts/meta.rs a/src/global/typestate/facts/meta.rs
+index 187f9d8..89b9449 100644
+--- b/src/global/typestate/facts/meta.rs
++++ a/src/global/typestate/facts/meta.rs
+@@ -138,25 +138,6 @@ pub(crate) struct LocalMeta {
+     pub(crate) lane: u8,
+ }
+ 
+-impl LocalMeta {
+-    pub(crate) fn into_send(self, role: u8) -> SendMeta {
+-        SendMeta {
+-            eff_index: self.eff_index,
+-            peer: role,
+-            label: self.label,
+-            payload_kind: self.payload_kind,
+-            frame_label: self.frame_label,
+-            origin: self.origin,
+-            next: self.next,
+-            scope: self.scope,
+-            route_scope: self.route_scope,
+-            route_arm: self.route_arm,
+-            selected_route_arm: self.route_arm,
+-            lane: self.lane,
+-        }
+-    }
+-}
+-
+ impl From<LocalMeta> for EventCommitMeta {
+     #[inline(always)]
+     fn from(meta: LocalMeta) -> Self {

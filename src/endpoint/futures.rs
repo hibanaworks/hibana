@@ -96,8 +96,14 @@ impl<'e, 'r, const ROLE: u8> RawRecvFuture<'e, 'r, ROLE> {
         }
     }
     #[inline]
-    pub(super) fn new(mut endpoint: super::target::OperationTarget<'e, 'r, ROLE>) -> Self {
-        let lease = RecvFutureLease::from_public_lease(endpoint.init_public_recv_state());
+    pub(super) fn new(
+        mut endpoint: super::target::OperationTarget<'e, 'r, ROLE>,
+        logical_label: u8,
+        payload_kind: crate::eff::EventPayload,
+    ) -> Self {
+        let lease = RecvFutureLease::from_public_lease(
+            endpoint.init_public_recv_state(logical_label, payload_kind),
+        );
         Self {
             endpoint: endpoint.with_metadata(lease),
         }
@@ -158,7 +164,11 @@ where
     #[inline]
     pub(super) fn new(endpoint: super::target::OperationTarget<'e, 'r, ROLE>) -> Self {
         Self {
-            raw: RawRecvFuture::new(endpoint),
+            raw: RawRecvFuture::new(
+                endpoint,
+                M::LOGICAL_LABEL,
+                crate::global::payload_kind::<M>(),
+            ),
             _msg: core::marker::PhantomData,
         }
     }

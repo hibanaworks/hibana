@@ -19,7 +19,11 @@ where
         let branch_meta = branch.branch_meta;
         let has_offered_frame = branch.offered_frame.is_some();
 
-        if branch_meta.kind != BranchKind::ArmSend || has_offered_frame {
+        if !matches!(
+            branch_meta.kind,
+            BranchKind::ArmSend | BranchKind::LocalAction
+        ) || has_offered_frame
+        {
             return Err(SendError::PhaseInvariant);
         }
         if target_label != branch_meta.label {
@@ -35,7 +39,15 @@ where
         {
             return Err(SendError::PhaseInvariant);
         }
-        let Some(mut meta) = self.progress.cursor.try_send_meta_at(cursor_index) else {
+        let Some(mut meta) = (match branch_meta.kind {
+            BranchKind::ArmSend => self.progress.cursor.try_send_meta_at(cursor_index),
+            BranchKind::LocalAction => self
+                .progress
+                .cursor
+                .try_local_meta_at(cursor_index)
+                .map(|local| local.into_send(self.public_header.role())),
+            BranchKind::WireRecv | BranchKind::TerminalArm => None,
+        }) else {
             return Err(SendError::PhaseInvariant);
         };
         if meta.payload_kind != target_payload {

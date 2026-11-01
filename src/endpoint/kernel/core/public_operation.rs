@@ -9,7 +9,6 @@ define_public_operation_kernel! {
         Recv,
         Offer,
         RouteBranch,
-        RestoredRouteBranch,
         BranchRecv,
         BranchSend,
         // This view is held as another view's owned-send payload.
@@ -17,21 +16,17 @@ define_public_operation_kernel! {
     }
     edges {
         BeginOffer => (Idle, Offer),
-        ResumeOffer => (RestoredRouteBranch, Offer),
         PublishRouteBranch => (Offer, RouteBranch),
         FinishOffer => (Offer, Idle),
-        ParkOffer => (Offer, RestoredRouteBranch),
-        ParkRouteBranch => (RouteBranch, RestoredRouteBranch),
+        FinishRouteBranch => (RouteBranch, Idle),
         BeginSend => (Idle, Send),
         BeginBranchSend => (RouteBranch, BranchSend),
         FinishSend => (Send, Idle),
         FinishBranchSend => (BranchSend, Idle),
-        ParkBranchSend => (BranchSend, RestoredRouteBranch),
         BeginRecv => (Idle, Recv),
         BeginBranchRecv => (RouteBranch, BranchRecv),
         FinishRecv => (Recv, Idle),
         FinishBranchRecv => (BranchRecv, Idle),
-        ParkBranchRecv => (BranchRecv, RestoredRouteBranch),
         BeginSendPayload => (Idle, SendPayload),
         FinishSendPayload => (SendPayload, Idle),
     }

@@ -138,6 +138,25 @@ pub(crate) struct LocalMeta {
     pub(crate) lane: u8,
 }
 
+impl LocalMeta {
+    pub(crate) fn into_send(self, role: u8) -> SendMeta {
+        SendMeta {
+            eff_index: self.eff_index,
+            peer: role,
+            label: self.label,
+            payload_kind: self.payload_kind,
+            frame_label: self.frame_label,
+            origin: self.origin,
+            next: self.next,
+            scope: self.scope,
+            route_scope: self.route_scope,
+            route_arm: self.route_arm,
+            selected_route_arm: self.route_arm,
+            lane: self.lane,
+        }
+    }
+}
+
 impl From<LocalMeta> for EventCommitMeta {
     #[inline(always)]
     fn from(meta: LocalMeta) -> Self {

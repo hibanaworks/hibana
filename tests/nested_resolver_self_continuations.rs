@@ -268,24 +268,72 @@ fn nested_roll_can_reenter_before_its_sequential_tail_is_consumed() {
                     .await
                     .unwrap();
                 choices.1.set(DecisionArm::Right);
-                endpoint
-                    .offer()
-                    .await
-                    .unwrap()
-                    .recv::<Msg<3, ()>>()
-                    .await
-                    .unwrap();
+                let preview = endpoint.offer().await.unwrap();
+                assert!(matches!(preview.label(), 3 | 5));
+                drop(preview);
+                endpoint.send::<Msg<3, ()>>(&()).await.unwrap();
                 choices.0.set(DecisionArm::Right);
-                endpoint
-                    .offer()
-                    .await
-                    .unwrap()
-                    .recv::<Msg<4, ()>>()
-                    .await
-                    .unwrap();
+                let preview = endpoint.offer().await.unwrap();
+                assert!(matches!(preview.label(), 4 | 5));
+                drop(preview);
+                endpoint.send::<Msg<4, ()>>(&()).await.unwrap();
                 endpoint.send::<Msg<5, ()>>(&()).await.unwrap();
             });
         },
+    );
+}
+
+#[test]
+fn a_parked_wire_receive_survives_an_independent_typed_send() {
+    let global = g::par(
+        g::route(
+            g::send::<0, 1, Msg<10, u8>>(),
+            g::send::<0, 1, Msg<11, u8>>(),
+        )
+        .resolve::<101>(),
+        g::send::<1, 2, Msg<12, u8>>(),
+    );
+    let sender_program: RoleProgram<0> = project(&global);
+    let receiver_program: RoleProgram<1> = project(&global);
+    let observer_program: RoleProgram<2> = project(&global);
+    let choice = Choice::new(DecisionArm::Left);
+    let mut slab = [0; 32768];
+    let mut storage = SessionKitStorage::uninit();
+    let kit = storage
+        .init()
+        .rendezvous(&mut slab, TestTransport::new())
+        .unwrap();
+    kit.set_resolver(
+        &sender_program,
+        ResolverRef::<101>::decision_state(&choice, Choice::decide),
+    )
+    .unwrap();
+    let sid = SessionId::new(2);
+    let mut sender = kit.enter(sid, &sender_program).unwrap();
+    let mut receiver = kit.enter(sid, &receiver_program).unwrap();
+    let mut observer = kit.enter(sid, &observer_program).unwrap();
+
+    futures::executor::block_on(async {
+        sender.send::<Msg<10, u8>>(&71).await.unwrap();
+        let preview = receiver.offer().await.unwrap();
+        assert_eq!(preview.label(), 10);
+        drop(preview);
+        receiver.send::<Msg<12, u8>>(&93).await.unwrap();
+        assert_eq!(observer.recv::<Msg<12, u8>>().await.unwrap(), 93);
+        assert_eq!(receiver.recv::<Msg<10, u8>>().await.unwrap(), 71);
+    });
+    assert_eq!(choice.calls.get(), 1);
+    assert_eq!(
+        kit.tap()
+            .filter(|event| event.id() == tap::ENDPOINT_SEND)
+            .count(),
+        2
+    );
+    assert_eq!(
+        kit.tap()
+            .filter(|event| event.id() == tap::ENDPOINT_RECV)
+            .count(),
+        2
     );
 }
 

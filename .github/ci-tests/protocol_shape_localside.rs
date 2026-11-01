@@ -184,27 +184,6 @@ fn heads<'a>(source: &'a Protocol, out: &mut Vec<&'a Protocol>) {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Entry {
-    Consumed(u8),
-    LocalPreview(u8),
-}
-
-impl Entry {
-    fn label(self) -> u8 {
-        match self {
-            Self::Consumed(label) | Self::LocalPreview(label) => label,
-        }
-    }
-
-    fn consumed(self) -> Option<u8> {
-        match self {
-            Self::Consumed(label) => Some(label),
-            Self::LocalPreview(_) => None,
-        }
-    }
-}
-
 struct Emitter<'a> {
     source: &'a Protocol,
     paths: std::collections::BTreeMap<u8, Vec<(u16, bool)>>,
@@ -373,9 +352,9 @@ impl Emitter<'_> {
         source: &Protocol,
         actor: u8,
         names: &[String; 4],
-        primed: Option<Entry>,
+        primed: Option<u8>,
     ) -> String {
-        let primed = primed.filter(|entry| contains(source, entry.label()));
+        let primed = primed.filter(|&entry| contains(source, entry));
         match source {
             Protocol::Message {
                 from,
@@ -385,14 +364,11 @@ impl Emitter<'_> {
             } => {
                 let mut code = String::new();
                 if from == to {
-                    code += &match primed {
-                        Some(Entry::Consumed(_)) => String::new(),
-                        Some(Entry::LocalPreview(_)) => self.operation(source, actor, names, true),
-                        None => self.operation(source, actor, names, false),
-                    };
+                    if primed.is_none() {
+                        code += &self.operation(source, actor, names, false);
+                    }
                 } else {
-                    assert!(!matches!(primed, Some(Entry::LocalPreview(_))));
-                    if primed != Some(Entry::Consumed(*label)) {
+                    if primed != Some(*label) {
                         code += &self.operation(source, actor, names, false);
                     }
                     code += &self.operation(source, actor, names, true);
@@ -513,7 +489,7 @@ impl Emitter<'_> {
         actor: u8,
         before: u8,
         names: &[String; 4],
-        primed: Option<Entry>,
+        primed: Option<u8>,
     ) -> String {
         let (a, b) = match source {
             Protocol::Route(a, b) | Protocol::Resolved(a, b, _) => (a, b),
@@ -521,7 +497,7 @@ impl Emitter<'_> {
         };
         let select = "let (script,right)=match script{Script::Branch(body,right)=>(body.as_ref(),*right),_=>panic!(\"expected branch script\")};";
         if let Some(entry) = primed {
-            let label = entry.label();
+            let label = entry;
             let right = contains(b, label);
             let body = self.emit(if right { b } else { a }, actor, names, primed);
             if body.is_empty() {
@@ -555,14 +531,6 @@ impl Emitter<'_> {
                 let mut entries = Vec::new();
                 heads(body, &mut entries);
                 let mut arms = String::new();
-                let allowed = entries
-                    .iter()
-                    .map(|message| match message {
-                        Protocol::Message { contract, .. } => contract.to_string(),
-                        _ => unreachable!(),
-                    })
-                    .collect::<Vec<_>>()
-                    .join(",");
                 let mut previewed = std::collections::BTreeSet::new();
                 for message in &entries {
                     let Protocol::Message { event: label, .. } = message else {
@@ -575,7 +543,7 @@ impl Emitter<'_> {
                     if matches!(source, Protocol::Route(..)) || message_selected_head(body, *label)
                     {
                         let send = self.operation(message, actor, names, false);
-                        let rest = self.emit(body, actor, names, Some(Entry::Consumed(*label)));
+                        let rest = self.emit(body, actor, names, Some(*label));
                         arms += &format!("{label}=>{{{decisions}{send}{rest}}},");
                     } else if previewed.insert(self.paths[label].clone()) {
                         let alternatives = entries
@@ -591,54 +559,15 @@ impl Emitter<'_> {
                             })
                             .collect::<Vec<_>>()
                             .join("|");
-                        let mut preview =
-                            preview_for(controller_role, *label, &format!("&[{allowed}][..]"));
-                        let mut rest = self.emit(body, actor, names, None);
-                        if entries
-                            .iter()
-                            .any(|m| matches!(m,Protocol::Message{from,to,..} if from==to))
-                        {
-                            // Preserve the local preview until its own fragment
-                            // receives it, including across a parallel borrow.
-                            let endpoint = self.endpoint(controller_role, names);
-                            preview = format!(
-                                "let branch=record_pending({endpoint}.offer(),observed,ObservedCall::Preview({actor},{})).await?;let label=branch.label();drop(branch);let branch=record_pending({endpoint}.offer(),observed,ObservedCall::Preview({actor},{})).await?;assert_eq!(branch.label(),label);",
-                                label, label
-                            );
-                            let mut local_arms = String::new();
-                            for entry in &entries {
-                                let Protocol::Message {
-                                    from,
-                                    to,
-                                    event: entry_label,
-                                    ..
-                                } = entry
-                                else {
-                                    unreachable!()
-                                };
-                                if from == to {
-                                    let remaining = self.emit(
-                                        body,
-                                        actor,
-                                        names,
-                                        Some(Entry::LocalPreview(*entry_label)),
-                                    );
-                                    local_arms += &format!(
-                                        "{}=>{{drop(branch);{remaining}}},",
-                                        self.source.contract_for(*entry_label)
-                                    );
-                                } else {
-                                    let remaining = self.emit(body, actor, names, None);
-                                    local_arms += &format!(
-                                        "{}=>{{drop(branch);{remaining}}},",
-                                        self.source.contract_for(*entry_label)
-                                    );
-                                }
-                            }
-                            rest = format!(
-                                "match label{{{local_arms}_=>panic!(\"unknown local branch preview\")}}"
-                            );
-                        }
+                        // A completed roll and its suffix can both be enabled.
+                        // The controller's script selects the source arm; offer
+                        // need not preview that arm's first operation. Preserve
+                        // the preview while driving the complete typed body.
+                        let endpoint = self.endpoint(controller_role, names);
+                        let preview = format!(
+                            "let branch=record_pending({endpoint}.offer(),observed,ObservedCall::Preview({actor},{label})).await?;let label=branch.label();drop(branch);let branch=record_pending({endpoint}.offer(),observed,ObservedCall::Preview({actor},{label})).await?;assert_eq!(branch.label(),label);drop(branch);"
+                        );
+                        let rest = self.emit(body, actor, names, None);
                         arms += &format!("{alternatives}=>{{{decisions}{preview}{rest}}},");
                     }
                 }
@@ -719,7 +648,7 @@ impl Emitter<'_> {
         source: &Protocol,
         actor: u8,
         names: &[String; 4],
-        primed: Option<Entry>,
+        primed: Option<u8>,
     ) -> (String, String, String, bool) {
         let mut parts = Vec::new();
         parallel_parts(source, &mut parts);
@@ -778,7 +707,7 @@ impl Emitter<'_> {
             let bindings = indices
                 .iter()
                 .map(|i| {
-                    let used = present(parts[*i], role as u8, primed.and_then(Entry::consumed));
+                    let used = present(parts[*i], role as u8, primed);
                     let name = format!("{}p{role}_{i}", if used { "" } else { "_" });
                     part_names[*i][role] = name.clone();
                     inner.push(name.clone());
@@ -818,7 +747,7 @@ impl Emitter<'_> {
             actor: u8,
             names: &[[String; 4]],
             part: &mut usize,
-            primed: Option<Entry>,
+            primed: Option<u8>,
         ) -> (String, bool) {
             if let Protocol::Par(a, b) = source {
                 let (left, returns_left) = schedule(e, a, actor, names, part, primed);

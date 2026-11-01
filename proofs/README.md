@@ -376,7 +376,7 @@ source occurrence semantics. The expected initial operations come from that
 model, rather than the first textual message: an uninvolved sender may queue
 a later frame before the initial loan.
 
-For trees without `roll`, every prefix of the generated complete traces also
+For every generated tree, every prefix of the generated complete traces also
 probes every send and receive, including already completed and unselected
 operations. Prefixes include the cut between a send and its matching receive,
 and continue through choices, delegation and the final return. Each probe uses
@@ -386,16 +386,19 @@ operations. Replay retains the resolver inputs used for each accepted prefix
 call, including calls whose message type also names another source occurrence.
 The JSON records those inputs; Lean checks their arity, identifier domain and
 admission against the source model. A control removes the recorded inputs and
-must fail validation. These trees also exhaust every permitted order of the first four
-public operations, probing every next operation at those cuts. Missing or
+must fail validation. Trees without `roll` additionally exhaust every permitted
+order of the first four public operations, probing every next operation at those cuts. Missing or
 duplicate probes fail the comparison. Separate controls
 change a continuation result and omit or duplicate a continuation probe.
-A single outer `roll` with a finite body probes every prefix of its two-visit
-traces. The source model has three copies, allowing the next probe to start
-another visit. Previously observed choices stay fixed; fresh choices try every
-resolver assignment. These probes include the cut after a send and before its
-matching receive. More complex repetitions still use complete execution traces
-and initial admission checks. At every nested parallel borrow, including later
+Repeated protocols use complete traces with two visits at each nested `roll`.
+Admission plans allow one or two visits independently at those dynamic sites,
+a third visit at one site, and one elastic reentry alongside its continuation.
+Each expansion carries a witness from the source occurrence semantics.
+Previously observed choices stay fixed; fresh choices try every resolver
+assignment. The controls also mutate continuation results, missing or duplicate
+probes and resolver inputs for nested repeated trees. These bounded comparisons
+do not establish correspondence for arbitrary visit counts or several elastic
+reentries at once. At every nested parallel borrow, including later
 visits, additional probes try each ordinary message outside the borrowed
 fragment on that fragment's endpoint. The source tree determines scope
 membership; each visit has a separate occurrence number. Every probe starts
@@ -417,9 +420,6 @@ exclude independent siblings, optional receives and retained messages from
 earlier visits. Lean checks each dependency against the original source tree.
 A control replaces it with a self-dependency and must be rejected even when
 every recorded runtime outcome remains unchanged.
-Other later negative probes require
-continuation-aware occurrence unfoldings; a one-copy bound cannot determine
-whether another visit is permitted.
 
 Complete traces do not enumerate every schedule. Run
 `bash .github/scripts/check_protocol_shapes.sh [BUDGET [SHARD SHARDS]]` under the
@@ -445,12 +445,26 @@ Elastic reentry negatives also use source witnesses: an unguarded global head
 and a matching send in its sequential continuation, including after a parallel
 join. This classifier does not infer additional local heads from logical roles.
 Rejections outside its proven cases still fail the gate as unclassified.
-The fixed `--contracts 0 8` catalog additionally combines repeated contracts
+The fixed `--contracts 0 9` catalog additionally combines repeated contracts
 with opposite directions, independent parallel fragments, a resolver, repetition
 and actual endpoint delegation. It also exercises an unread selected route arm
 beside an independent receive with the other arm's public contract, both with
 and without delegation. The selected frame remains unread while the independent
 receive progresses. It runs in the depth-four fuzz job.
+The nested resolved-roll case also calls `offer`, drops its successful preview,
+then tries each typed operation from the same replayed prefix and resolver inputs.
+Matching operations may reuse that preview; other operations must still satisfy
+their own source dependencies. Its finite plans include unequal nested visit
+counts, a third visit at one dynamic roll site, and a visit overlapping the
+sequential continuation, using the source model's existing elastic-roll rule.
+These are bounded comparisons, not a proof for arbitrary visit counts.
+`check_parked_offer_sensitivity.sh` runs all three contract assignments on the
+current source, then restores the old preview-handling production paths in a
+separate checkout. The restored version must reach and fail the generated
+`shape_24` localside with a send `PhaseInvariant`; this occurs before admission
+probe comparison. It checks that generated inputs are unchanged and retains
+the patch and failure.
+Compiler failures do not count as detecting this defect.
 The same job runs `check_resolver_occurrence_sensitivity.sh`: the generated
 opposite-direction cases must pass on the current source and fail when only
 the resolver send-selection fix is reversed in a separate checkout. It retains
