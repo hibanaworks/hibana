@@ -91,6 +91,20 @@ impl CompiledProgramRef {
         }
     }
 
+    pub(crate) const fn source_marker_at(&self, row: usize) -> Option<(ScopeId, u16, u8)> {
+        let count = self.source_scope_marker_count();
+        if row >= count {
+            return None;
+        }
+        let markers = self.columns.scope_markers_for(count);
+        let at = markers.offset as usize + row * PROGRAM_IMAGE_SCOPE_MARKER_STRIDE;
+        let scope = match ScopeId::decode_raw(self.read_u16_at(at + 2)) {
+            Some(scope) => scope,
+            None => crate::invariant(),
+        };
+        Some((scope, self.read_u16_at(at), self.byte_at(at + 4)))
+    }
+
     pub(crate) const fn source_parallel_at(&self, marker: usize) -> Option<(usize, usize, usize)> {
         let markers = self
             .columns
@@ -584,7 +598,14 @@ impl CompiledProgramRef {
         Some(reference as u8)
     }
 
-    const fn initial_actor_at(&self, row: usize) -> Option<(u8, u8)> {
+    pub(crate) const fn initial_actor_count(&self) -> usize {
+        match self.ownership_columns() {
+            Some(columns) => columns.initial.len as usize,
+            None => 0,
+        }
+    }
+
+    pub(crate) const fn initial_actor_at(&self, row: usize) -> Option<(u8, u8)> {
         let Some(columns) = self.ownership_columns() else {
             return None;
         };

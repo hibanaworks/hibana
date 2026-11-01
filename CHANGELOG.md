@@ -14,6 +14,12 @@
   distinct resources with the same role in concurrent sessions. A new session
   does not renew issuance for an existing physical resource.
 - Endpoint ownership diagnostics returned as values by `g::diagnose`.
+- Read-only compiled protocol snapshots through `runtime::tap::projected`.
+  Snapshots include source operations, ordered route/par/roll markers, choice
+  authorities, conditional actor bindings and local rows from the execution's
+  sealed image. Inspect `PROJECTED_LOCAL`, `PROJECTED_SEND` and `PROJECTED_RECV`
+  for local rows. Snapshots supply protocol data for auditing; observed
+  execution histories and their dynamic eligibility still require validation.
 - Separate byte ranges for local protocol columns. A role's combined image
   can exceed 64 KiB while message positions and column lengths remain compact.
 - `OutOfOrder` errors for unfinished local predecessors, distinct from internal
