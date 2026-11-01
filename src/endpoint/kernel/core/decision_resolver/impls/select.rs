@@ -581,7 +581,7 @@ where
         lane: u8,
     ) {
         let port = self.port_for_lane(lane as usize);
-        let causal = TapEvent::make_causal_key(port.lane().as_wire(), token.as_tap_seq());
+        let causal = TapEvent::make_causal_key(self.progress.cursor.role(), token.as_tap_seq());
         let arg0 = self.context.sid.raw();
         let event =
             events::route_arm_selection_with_causal(causal, arg0, scope_id, token.arm().as_u8());

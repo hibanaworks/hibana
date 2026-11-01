@@ -539,6 +539,16 @@ entire group; inventory checking must reject it.
 `check_prefix_input_sensitivity.sh` rejects two temporary checker mutations:
 discarding the replayed choices after validation and fixing unentered scopes.
 Both must falsify the corresponding concrete Lean theorem.
+
+Control observations identify the executing actor in the high byte of their
+causal key, as Endpoint commits do. The compiled choice row supplies the logical
+controller; after delegation it can differ from that actor. Three real Endpoint
+tests cover repeated decisions, a delegated controller and a rejected decision
+without a subsequent commit. `check_control_actor_sensitivity.sh` restores only
+the two lane-based encoding paths and requires all three tests to fail.
+The existing `tap-commit/Encoding.lean` actor/key packing theorems cover every
+8-bit actor and result. These record checks do not certify a full execution
+history or distinguish nested roll visits.
 `check_parked_offer_sensitivity.sh` runs all three contract assignments on the
 current source, then restores the old preview-handling production paths in a
 separate checkout. The restored version must reach and fail the generated

@@ -221,6 +221,10 @@ name = "security_report_regressions"
 path = "tests/security_report_regressions.rs"
 
 [[test]]
+name = "tap_control_actor"
+path = "tests/tap_control_actor.rs"
+
+[[test]]
 name = "tap_resolver_audit"
 path = "tests/tap_resolver_audit.rs"
 

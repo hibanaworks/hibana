@@ -44,13 +44,13 @@ pub(crate) const fn route_arm_selection_with_causal(
 
 #[inline(always)]
 pub(crate) const fn resolver_audit(
-    lane: u8,
+    actor: u8,
     sid: u32,
     scope_id: ScopeId,
     resolver_id: u16,
     result: u8,
 ) -> TapEvent {
-    let causal = TapEvent::make_causal_key(lane, result);
+    let causal = TapEvent::make_causal_key(actor, result);
     let arg1 = ((route_site(scope_id) as u32) << 16) | (resolver_id as u32);
     TapEvent::new(0, ids::RESOLVER_AUDIT, causal, sid, arg1)
 }
@@ -91,6 +91,26 @@ mod tests {
         assert_eq!(first_audit.arg1() & 0xffff, 77);
         assert_eq!(second_audit.arg1() & 0xffff, 77);
         assert_eq!(first_audit.causal_key(), second_audit.causal_key());
+    }
+
+    #[test]
+    fn every_control_actor_preserves_the_site_resolver_and_result_fields() {
+        for actor in 0..=u8::MAX {
+            for result in [0, 1, u8::MAX] {
+                for site in [0, ScopeId::LOCAL_CAPACITY - 1] {
+                    for resolver in [0, u16::MAX] {
+                        let event =
+                            resolver_audit(actor, u32::MAX, ScopeId::route(site), resolver, result);
+                        assert_eq!(event.causal_key() >> 8, u16::from(actor));
+                        assert_eq!(event.causal_key() as u8, result);
+                        assert_eq!(event.arg0(), u32::MAX);
+                        assert_eq!(event.arg1() >> 16, site as u32);
+                        assert_eq!(event.arg1() as u16, resolver);
+                        assert_eq!(TapEvent::from(<[u8; 16]>::from(event)), event);
+                    }
+                }
+            }
+        }
     }
 
     #[test]

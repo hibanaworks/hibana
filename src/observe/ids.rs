@@ -111,8 +111,11 @@ pub const LANE_RELEASE: u16 = 0x0211;
 ///
 /// - `arg0`: Session identifier (u32)
 /// - `arg1`: route_site<<16 | arm (u32)
-/// - `causal_key`: lane marker with authority token encoded in the sequence field
-///   (1 = ack, 2 = resolver, 3 = poll)
+/// - `causal_key`: Executing actor in the high byte; selection mechanism in
+///   the low byte (1 = ack, 2 = resolver, 3 = poll).
+///
+/// Match the route site against `PROJECTED_CHOICE` to obtain its controlling
+/// logical role. Delegation can make that role differ from the executing actor.
 pub const ROUTE_ARM_SELECTION: u16 = 0x0221;
 
 /// Compiled local operation returned by [`projected`](super::projected::projected).
@@ -195,6 +198,10 @@ pub const PROJECTED_INITIAL_ACTOR: u16 = 0x0317;
 ///
 /// - `arg0`: full [`SessionId`](crate::runtime::ids::SessionId) raw value
 /// - `arg1`: route_site<<16 | resolver_id
-/// - `causal_key`: lane<<8 | result
+/// - `causal_key`: executing_actor<<8 | result
 /// - `result`: Left = 0, Right = 1, Reject = 0xff
+///
+/// `PROJECTED_CHOICE` identifies the controlling logical role for this site.
+/// The actor is recorded for rejected decisions too, even when no Endpoint
+/// operation subsequently commits.
 pub const RESOLVER_AUDIT: u16 = 0x0407;

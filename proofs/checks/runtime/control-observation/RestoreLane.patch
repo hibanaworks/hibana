@@ -1,0 +1,26 @@
+diff --git b/src/endpoint/kernel/core/decision_resolver/impls/audit.rs a/src/endpoint/kernel/core/decision_resolver/impls/audit.rs
+index f27343e..68d9be9 100644
+--- b/src/endpoint/kernel/core/decision_resolver/impls/audit.rs
++++ a/src/endpoint/kernel/core/decision_resolver/impls/audit.rs
+@@ -27,7 +27,7 @@ where
+     ) {
+         let port = self.port_for_lane(lane as usize);
+         let event = events::resolver_audit(
+-            self.progress.cursor.role(),
++            port.lane().as_wire(),
+             self.context.sid.raw(),
+             scope_id,
+             resolver_id,
+diff --git b/src/endpoint/kernel/core/decision_resolver/impls/select.rs a/src/endpoint/kernel/core/decision_resolver/impls/select.rs
+index b428c1b..7e1f2aa 100644
+--- b/src/endpoint/kernel/core/decision_resolver/impls/select.rs
++++ a/src/endpoint/kernel/core/decision_resolver/impls/select.rs
+@@ -581,7 +581,7 @@ where
+         lane: u8,
+     ) {
+         let port = self.port_for_lane(lane as usize);
+-        let causal = TapEvent::make_causal_key(self.progress.cursor.role(), token.as_tap_seq());
++        let causal = TapEvent::make_causal_key(port.lane().as_wire(), token.as_tap_seq());
+         let arg0 = self.context.sid.raw();
+         let event =
+             events::route_arm_selection_with_causal(causal, arg0, scope_id, token.arm().as_u8());
