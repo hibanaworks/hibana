@@ -256,9 +256,9 @@ impl Emitter<'_> {
                 unreachable!()
             };
             let call = if receive {
-                format!("{endpoint}.recv::<M{label}<'_>>()")
+                format!("{endpoint}.recv::<M{label}>()")
             } else {
-                format!("{endpoint}.send::<M{label}<'_>>(&())")
+                format!("{endpoint}.send::<M{label}>(&())")
             };
             arms += &format!(
                 "({label},{receive})=>{{let future={call};tokio::pin!(future);future.as_mut().poll(cx)}},"
@@ -303,10 +303,10 @@ impl Emitter<'_> {
             self.endpoint(role, names)
         };
         let call = if receive {
-            format!("{endpoint}.recv::<M{label}<'_>>()")
+            format!("{endpoint}.recv::<M{label}>()")
         } else {
             format!(
-                "{endpoint}.send::<M{label}<'_>>({})",
+                "{endpoint}.send::<M{label}>({})",
                 if *owned {
                     "db.take().expect(\"missing Endpoint to send\")"
                 } else {
@@ -330,7 +330,7 @@ impl Emitter<'_> {
         let mut causal = String::new();
         if receive {
             let arms = self.causal.iter().filter(|(before, _, receiver)| before == label && *receiver == role).map(|(_, target, _)| {
-                format!("{target}=>{{let future={endpoint}.send::<M{target}<'_>>(&());tokio::pin!(future);future.as_mut().poll(cx)}},")
+                format!("{target}=>{{let future={endpoint}.send::<M{target}>(&());tokio::pin!(future);future.as_mut().poll(cx)}},")
             }).collect::<String>();
             if !arms.is_empty() {
                 causal = format!(
@@ -853,7 +853,7 @@ pub(super) fn runs(plans: &super::plans::Plans<'_>, owner: u8, case: usize) -> S
       let decisions:Vec<std::cell::Cell<Option<bool>>>=(0..{}).map(|_|std::cell::Cell::new(None)).collect();let _=&decisions;
       let sid=SessionId::new(2);
       // SAFETY: this execution owns its resource and its only initial issuer.
-      let network=InMemoryTransport::new(programs.resource.then(||((sid,3),unsafe{{EndpointBinding::new()}})));
+      let network=InMemoryTransport::new(programs.issuance.iter().map(|&(role,_)|((sid,role),unsafe{{EndpointBinding::new()}})));
       let [mut slab0,mut slab1,mut slab2,mut slab3]=[vec![0;128*1024],vec![0;128*1024],vec![0;128*1024],vec![0;128*1024]];
       let mut s0=SessionKitStorage::uninit();let mut s1=SessionKitStorage::uninit();let mut s2=SessionKitStorage::uninit();let mut s3=SessionKitStorage::uninit();
       let rv0=s0.init().rendezvous(&mut slab0,network.clone()).unwrap();
@@ -877,9 +877,9 @@ pub(super) fn runs(plans: &super::plans::Plans<'_>, owner: u8, case: usize) -> S
             code += &format!(
                 "if {}{{rv{actor}.set_resolver(programs.p3.as_ref().unwrap(),ResolverRef::<{id}>::decision_state(&decisions,|d|Ok(if d[{id}].get().expect(\"unplanned choice\"){{DecisionArm::Right}}else{{DecisionArm::Left}}))).unwrap();}}",
                 if actor == 3 {
-                    "!programs.resource"
+                    "programs.issuance.is_empty()"
                 } else {
-                    "programs.resource"
+                    "!programs.issuance.is_empty()"
                 }
             );
         }

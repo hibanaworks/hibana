@@ -206,7 +206,7 @@ impl Protocol {
                 to,
                 event: label,
                 ..
-            } => format!("g::send::<{from}, {to}, M{label}<'_>>()"),
+            } => format!("g::send::<{from}, {to}, M{label}>()"),
             Self::Seq(a, b) => format!("g::seq({}, {})", a.rust(), b.rust()),
             Self::Par(a, b) => format!("g::par({}, {})", a.rust(), b.rust()),
             Self::Route(a, b) => format!("g::route({}, {})", a.rust(), b.rust()),
@@ -1959,9 +1959,10 @@ unexpected_cfgs = {{ level = "warn", check-cfg = ["cfg(hibana_repo_tests)", "cfg
                 unreachable!()
             };
             let payload = if *owned { "Endpoint<'r,3>" } else { "()" };
+            let lifetime = if *owned { "<'r>" } else { "" };
             writeln!(
                 diagnostic_source,
-                "type M{label}<'r>=g::Msg<{contract},{payload}>;"
+                "type M{label}{lifetime}=g::Msg<{contract},{payload}>;"
             )?;
         }
         writeln!(
@@ -2071,7 +2072,8 @@ unexpected_cfgs = {{ level = "warn", check-cfg = ["cfg(hibana_repo_tests)", "cfg
             };
             writeln!(
                 source,
-                "type M{label}<'r>=g::Msg<{contract},{}>;",
+                "type M{label}{}=g::Msg<{contract},{}>;",
+                if *owned { "<'r>" } else { "" },
                 if *owned { "Endpoint<'r,3>" } else { "()" }
             )?;
         }
@@ -2100,8 +2102,27 @@ unexpected_cfgs = {{ level = "warn", check-cfg = ["cfg(hibana_repo_tests)", "cfg
     let registers = (0..max_resolvers.max(1))
         .map(|id| format!("register!({id});\n"))
         .collect::<String>();
+    // The common replay regressions use these contracts even in a catalog
+    // shard whose own labels stop earlier. Emit just the required dispatches.
+    let replay_contracts = [
+        ("REPLAY_NOTICE", 0u8),
+        ("REPLAY_LOAN", 1),
+        ("REPLAY_PROXY", 2),
+        ("REPLAY_WORK", 3),
+        ("REPLAY_RETURNED", 4),
+    ];
+    for (name, label) in replay_contracts {
+        writeln!(source, "const {name}:u8={label};")?;
+    }
     let dispatch = (0..max_label)
+        .chain(replay_contracts.map(|(_, label)| u16::from(label)))
+        .collect::<BTreeSet<_>>()
+        .into_iter()
         .map(|label| format!("{label} => execute!({label}),\n"))
+        .collect::<String>();
+    let payload_dispatch = [2u8, 3]
+        .into_iter()
+        .map(|role| format!("Some({role})=>loan!($label,{role},$carrier,views{role}),"))
         .collect::<String>();
     let mut driver = fs::read_to_string(root.join(".github/ci-tests/protocol_shape_driver.rs"))?;
     driver.push_str(&fs::read_to_string(
@@ -2110,13 +2131,9 @@ unexpected_cfgs = {{ level = "warn", check-cfg = ["cfg(hibana_repo_tests)", "cfg
     // This source is part of the generated test module, not a nested module.
     source.push_str(
         &driver
-            .replacen(
-                "//! Shared replay engine for generated tests; contains no application protocol.",
-                "// Shared replay engine for generated tests.",
-                1,
-            )
             .replace("register_resolvers!();", &registers)
-            .replace("0 => dispatch_labels!(),", &dispatch),
+            .replace("0 => dispatch_labels!(),", &dispatch)
+            .replace("Some(0) => dispatch_endpoint_roles!(),", &payload_dispatch),
     );
     let (mut probes, mut trace_count, mut operations, mut concurrent_traces) = (0, 0, 0, 0);
     let (mut continuation_shapes, mut trace_prefix_probes) = (0, 0);
@@ -2217,11 +2234,15 @@ unexpected_cfgs = {{ level = "warn", check-cfg = ["cfg(hibana_repo_tests)", "cfg
                 unreachable!()
             };
             let payload = if *owned { "Endpoint<'r,3>" } else { "()" };
-            writeln!(source, "type M{label}<'r>=g::Msg<{contract},{payload}>;")?;
+            let lifetime = if *owned { "<'r>" } else { "" };
+            writeln!(
+                source,
+                "type M{label}{lifetime}=g::Msg<{contract},{payload}>;"
+            )?;
         }
         writeln!(
             source,
-            "fn programs()->Programs{{let global={};\nPrograms{{p0:{},p1:{},p2:{},p3:{},resource:{},owner:{owner},resolver_roles:&{:?}}}}}\nlet programs=programs();",
+            "fn programs()->Programs{{let global={};\nPrograms{{p0:{},p1:{},p2:{},p3:{},issuance:{},resolver_roles:&{:?}}}}}\nlet programs=programs();",
             global.rust(),
             if localside::present(global, 0, None) {
                 "Some(project::<0>(&global))"
@@ -2248,7 +2269,11 @@ unexpected_cfgs = {{ level = "warn", check-cfg = ["cfg(hibana_repo_tests)", "cfg
             } else {
                 "None"
             },
-            localside::mobile(global),
+            if localside::mobile(global) {
+                format!("&[(3,{owner})]")
+            } else {
+                "&[]".to_owned()
+            },
             {
                 let mut roles = Vec::new();
                 global.resolver_roles(&mut roles);
@@ -2294,7 +2319,8 @@ unexpected_cfgs = {{ level = "warn", check-cfg = ["cfg(hibana_repo_tests)", "cfg
             };
             writeln!(
                 source,
-                "Message{{from:{from},to:{to},event:{label},contract:{contract},owned:{owned},decisions:&{:?}}},",
+                "Message{{from:{from},to:{to},event:{label},contract:{contract},endpoint:{:?},decisions:&{:?}}},",
+                owned.then_some(3u8),
                 decisions[label]
             )?;
         }

@@ -58,6 +58,15 @@ and invalid Endpoint carriers are included. These payload and label choices
 are the catalog's test domain, not coverage of every possible Rust payload or
 of several independently delegated resources.
 
+The shared admission-probe driver stores actual Endpoints by logical role and
+runtime, with initial issuance taken from the source. Its regression inputs
+include two independently delegated resources on four roles, moving a resource
+through another resource's Endpoint, and selected-owner guards on retained
+roll operations. These inputs run on separate runtimes, both with typed
+receives and with dropped/reacquired choice previews. Moving an unused resource
+must preserve an otherwise legal reentry. They check the shared replay path;
+the ranked syntax catalog above still has one delegated resource.
+
 ```sh
 bash .github/scripts/check_protocol_shapes.sh --syntax-depth DEPTH FIRST COUNT
 ```
