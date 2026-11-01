@@ -90,17 +90,41 @@ def shapeChoicePatterns (source : Source) : List (List Nat) :=
       if path.contains id then path.filter (· != id)
       else (id :: path).mergeSort (· ≤ ·)).eraseDups.mergeSort fun a b => decide (a ≤ b)
 
-def shapeFreshChoices (plan : SourceOccurrenceCut source) (points : List SourcePoint)
-    (choice : List Nat) : Bool :=
+def shapeScopeEntered (scope : Scope) (points : List SourcePoint) : Bool :=
+  points.any fun point =>
+    let event := match point with
+      | .accepted event => event
+      | .committed action => action.event
+    scope.start ≤ event && event < scope.stop
+
+-- Inputs choose only scopes entered by this call. Future visits stay free;
+-- a scope already entered keeps the selection in this same source plan.
+def shapeEntryChoices (plan : SourceOccurrenceCut source)
+    (before after : List SourcePoint) (choice : List Nat) : Bool :=
   (shapeResolvers plan.expanded 0).all fun (scope, id) =>
-    points.any (fun point =>
-      let event := match point with
-        | .accepted event => event
-        | .committed action => action.event
-      scope.start ≤ event && event < scope.stop) ||
+    shapeScopeEntered scope before || !shapeScopeEntered scope after ||
     plan.path.selections.all fun selection =>
       selection.scope != scope || selection.arm ==
         if choice.contains id then .right else .left
+
+theorem a_freshly_entered_resolver_uses_its_recorded_input
+    (plan : SourceOccurrenceCut source) (before after : List SourcePoint)
+    (choice : List Nat) (scope : Scope) (id : Nat) (selection : Selection)
+    (checked : shapeEntryChoices plan before after choice = true)
+    (present : (scope, id) ∈ shapeResolvers plan.expanded 0)
+    (fresh : shapeScopeEntered scope before = false)
+    (entered : shapeScopeEntered scope after = true)
+    (selected : selection ∈ plan.path.selections) (same : selection.scope = scope) :
+    (selection.arm == if choice.contains id then .right else .left) = true := by
+  have scopeChecked := List.all_eq_true.mp checked (scope, id) present
+  simp only [fresh, entered, Bool.not_true, Bool.false_or] at scopeChecked
+  have arm := List.all_eq_true.mp scopeChecked selection selected
+  have reflexive : (scope != scope) = false := by
+    cases scope
+    simp [bne, BEq.beq, instBEqScope.beq]
+  simpa only [same, reflexive, Bool.false_or] using arm
+
+#print axioms a_freshly_entered_resolver_uses_its_recorded_input
 
 theorem shapeLookupMappedRows (keys : List SourcePoint)
     (value : SourcePoint → α) (point : SourcePoint) :
@@ -275,16 +299,24 @@ def shapeStates (source : Source) (plans : List (ShapePlan source))
 def shapePermits (states : List (ShapePlan source × List SourcePoint))
     (choice : List Nat) (label : Nat) (receive : Bool) : Bool :=
   states.any fun (plan, points) =>
-    shapeFreshChoices plan.plan points choice && !(shapeAdvance plan points label receive).isEmpty
+    (shapeAdvance plan points label receive).any fun after =>
+      shapeEntryChoices plan.plan points after choice
+
+def shapeInputStep (states : List (ShapePlan source × List SourcePoint))
+    (command : Nat) (choice : List Nat) : List (ShapePlan source × List SourcePoint) :=
+  states.flatMap fun (plan, points) =>
+    ((shapeAdvance plan points (command / 2) (command % 2 == 1)).filter fun after =>
+      shapeEntryChoices plan.plan points after choice).map (plan, ·)
 
 -- Resolver inputs belong to a call, not to the source alias used to name it.
--- Every replayed call must have been permitted with its recorded inputs.
-def shapePrefixInputsMatch (source : Source) (plans : List (ShapePlan source))
-    (word : List Nat) (inputs : List (List Nat)) : Bool :=
-  word.length == inputs.length &&
-    (word.zip inputs).zipIdx.all fun ((command, choice), index) =>
-      shapePermits (shapeStates source plans (word.take index)) choice
-        (command / 2) (command % 2 == 1)
+-- Keep one coherent source-plan witness through all the recorded calls.
+def shapeReplayStates (source : Source) (plans : List (ShapePlan source))
+    (word : List Nat) (inputs : List (List Nat)) :
+    Option (List (ShapePlan source × List SourcePoint)) :=
+  if word.length != inputs.length then none else
+    let states := (word.zip inputs).foldl (fun states (command, choice) =>
+      shapeInputStep states command choice) (plans.map (·, []))
+    if states.isEmpty then none else some states
 
 def shapeRepetitions : Source → Nat
   | .send _ => 0
@@ -639,10 +671,53 @@ private def resolvedAliasSequence : Source := .route (some 0)
 
 theorem a_resolved_alias_prefix_keeps_the_input_used_at_admission :
     let plans := (shapePlans resolvedAliasSequence).map ShapePlan.of
-    shapePrefixInputsMatch resolvedAliasSequence plans [2] [[0]] = true ∧
-      shapePrefixInputsMatch resolvedAliasSequence plans [2] [[]] = false := by decide
+    (shapeReplayStates resolvedAliasSequence plans [2] [[0]]).isSome = true ∧
+      (shapeReplayStates resolvedAliasSequence plans [2] [[]]).isSome = false := by decide
 
 #print axioms a_resolved_alias_prefix_keeps_the_input_used_at_admission
+
+private def sharedResolvedEntry : Source := .route (some 0)
+  (.seq (.send ⟨⟨0, 0⟩, ⟨0, 1⟩, 7, .wire 0⟩)
+    (.send ⟨⟨0, 0⟩, ⟨0, 1⟩, 8, .wire 0⟩))
+  (.seq (.send ⟨⟨0, 0⟩, ⟨0, 1⟩, 7, .wire 0⟩)
+    (.send ⟨⟨0, 0⟩, ⟨0, 1⟩, 9, .wire 0⟩))
+
+theorem a_shared_entry_keeps_the_recorded_left_arm :
+    let plans := (shapePlans sharedResolvedEntry).map ShapePlan.of
+    let states := (shapeReplayStates sharedResolvedEntry plans [0] [[]]).getD []
+    (shapeReplayStates sharedResolvedEntry plans [0] [[]]).isSome = true ∧
+      shapePermits states [0] 1 false = true ∧
+      shapePermits states [] 3 false = false := by decide
+
+theorem a_shared_entry_keeps_the_recorded_right_arm :
+    let plans := (shapePlans sharedResolvedEntry).map ShapePlan.of
+    let states := (shapeReplayStates sharedResolvedEntry plans [0] [[0]]).getD []
+    (shapeReplayStates sharedResolvedEntry plans [0] [[0]]).isSome = true ∧
+      shapePermits states [] 3 false = true ∧
+      shapePermits states [0] 1 false = false := by decide
+
+theorem replay_does_not_choose_a_future_resolver_before_entry :
+    let source := Source.seq (.send ⟨⟨0, 0⟩, ⟨0, 1⟩, 20, .wire 0⟩) sharedResolvedEntry
+    let plans := (shapePlans source).map ShapePlan.of
+    let states := (shapeReplayStates source plans [0, 1, 2] [[0], [0], []]).getD []
+    (shapeReplayStates source plans [0, 1, 2] [[0], [0], []]).isSome = true ∧
+      shapePermits states [0] 2 false = true ∧
+      shapePermits states [] 4 false = false := by decide
+
+theorem repeated_entries_can_use_different_recorded_inputs_in_each_visit :
+    let source := Source.roll sharedResolvedEntry
+    let plans := (shapePlans source).map ShapePlan.of
+    let word := [0, 1, 2, 3, 0]
+    let inputs := [[], [], [], [], [0]]
+    let states := (shapeReplayStates source plans word inputs).getD []
+    (shapeReplayStates source plans word inputs).isSome = true ∧
+      shapePermits states [] 3 false = true ∧
+      shapePermits states [0] 1 false = false := by decide
+
+#print axioms a_shared_entry_keeps_the_recorded_left_arm
+#print axioms a_shared_entry_keeps_the_recorded_right_arm
+#print axioms replay_does_not_choose_a_future_resolver_before_entry
+#print axioms repeated_entries_can_use_different_recorded_inputs_in_each_visit
 
 theorem an_alias_for_a_later_send_can_issue_the_first_source_operation :
     shapePermits (shapeStates sameContractSequence
@@ -1085,15 +1160,16 @@ def main (args : List String) : IO UInt32 := do
       unless attempts.all (fun attempt => attempt.prefixChoices == first.prefixChoices) &&
           first.prefixChoices.all (fun choice =>
             choice == choice.eraseDups.mergeSort (· ≤ ·) &&
-              choice.all (· < input.resolvers)) &&
-          shapePrefixInputsMatch source plans word first.prefixChoices do
+              choice.all (· < input.resolvers)) do
         throw (IO.userError s!"shape {input.name}: invalid replayed resolver inputs")
-      let states := shapeStates source plans word
+      let some states := shapeReplayStates source plans word first.prefixChoices
+        | throw (IO.userError s!"shape {input.name}: replayed inputs have no coherent source execution")
       -- Mutation control: preserve the exact original probe inventory, then
       -- compare with a source that omits only its outer sequential dependency.
       let permits : ShapeAttempt → Bool := if weakenRoot then
         let altered := match source with | .seq a b => .par a b | _ => source
-        let alternate := shapeStates altered ((shapePlans altered).map ShapePlan.of) word
+        let alternate := (shapeReplayStates altered ((shapePlans altered).map ShapePlan.of)
+          word first.prefixChoices).getD []
         fun attempt => shapePermits alternate attempt.choice attempt.event attempt.receive
       else fun attempt => shapePermits states attempt.choice attempt.event attempt.receive
       for attempt in attempts do

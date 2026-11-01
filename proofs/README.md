@@ -513,6 +513,17 @@ their own source dependencies. Its finite plans include unequal nested visit
 counts, a third visit at one dynamic roll site, and a visit overlapping the
 sequential continuation, using the source model's existing elastic-roll rule.
 These are bounded comparisons, not a proof for arbitrary visit counts.
+Every replayed call uses its recorded resolver input. The checker retains one
+coherent source-plan witness across the whole prefix; validating each call
+separately and then rebuilding unconstrained states would lose earlier choices.
+Only scopes entered by a call consume that input. Later visits remain free to
+choose differently. A general Lean theorem checks the entry condition, and four
+concrete theorems cover shared entries, changed inputs and future visits. Actual
+Endpoint tests check the same cases. The catalog above still preserves distinct
+choice-entry labels; its shared-entry localside generation is not complete.
+`check_prefix_input_sensitivity.sh` rejects two temporary checker mutations:
+discarding the replayed choices after validation and fixing unentered scopes.
+Both must falsify the corresponding concrete Lean theorem.
 `check_parked_offer_sensitivity.sh` runs all three contract assignments on the
 current source, then restores the old preview-handling production paths in a
 separate checkout. The restored version must reach and fail the generated

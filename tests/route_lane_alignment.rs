@@ -23,6 +23,130 @@ type ValueB = g::Msg<9, u32>;
 type ReturnB = g::Msg<10, Endpoint<'static, 3>>;
 
 #[test]
+fn a_recorded_resolver_choice_survives_an_identical_entry_contract() {
+    use core::{
+        future::Future,
+        pin::pin,
+        task::{Context, Poll, Waker},
+    };
+    type Entry = g::Msg<7, ()>;
+    type Left = g::Msg<8, ()>;
+    type Right = g::Msg<9, ()>;
+    let global = g::route(
+        g::seq(g::send::<0, 1, Entry>(), g::send::<0, 1, Left>()),
+        g::seq(g::send::<0, 1, Entry>(), g::send::<0, 1, Right>()),
+    )
+    .resolve::<0>();
+    let program = project::<0>(&global);
+    for selected_right in [false, true] {
+        for requested_right in [false, true] {
+            let choice = Cell::new(selected_right);
+            let mut slab = [0; 8192];
+            let mut storage = SessionKitStorage::uninit();
+            let kit = storage
+                .init()
+                .rendezvous(&mut slab, common::TestTransport::new())
+                .unwrap();
+            kit.set_resolver(
+                &program,
+                ResolverRef::<0>::decision_state(&choice, |right| {
+                    Ok(if right.get() {
+                        DecisionArm::Right
+                    } else {
+                        DecisionArm::Left
+                    })
+                }),
+            )
+            .unwrap();
+            let mut sender = kit.enter(SessionId::new(200), &program).unwrap();
+            let mut cx = Context::from_waker(Waker::noop());
+            {
+                let operation = pin!(sender.send::<Entry>(&()));
+                assert!(matches!(operation.poll(&mut cx), Poll::Ready(Ok(()))));
+            }
+            choice.set(!selected_right);
+            let result = if requested_right {
+                let operation = pin!(sender.send::<Right>(&()));
+                operation.poll(&mut cx)
+            } else {
+                let operation = pin!(sender.send::<Left>(&()));
+                operation.poll(&mut cx)
+            };
+            assert!(result.is_ready(), "a continuation must not wait");
+            assert_eq!(
+                matches!(result, Poll::Ready(Ok(()))),
+                requested_right == selected_right,
+                "selected_right={selected_right}, requested_right={requested_right}"
+            );
+        }
+    }
+}
+
+#[test]
+fn recorded_resolver_inputs_do_not_choose_future_visits() {
+    use core::{
+        future::Future,
+        pin::pin,
+        task::{Context, Poll, Waker},
+    };
+    type Prefix = g::Msg<20, ()>;
+    type Entry = g::Msg<7, ()>;
+    type Left = g::Msg<8, ()>;
+    type Right = g::Msg<9, ()>;
+    let global = g::seq(
+        g::send::<0, 1, Prefix>(),
+        g::route(
+            g::seq(g::send::<0, 1, Entry>(), g::send::<0, 1, Left>()),
+            g::seq(g::send::<0, 1, Entry>(), g::send::<0, 1, Right>()),
+        )
+        .resolve::<0>()
+        .roll(),
+    );
+    let p0 = project::<0>(&global);
+    let p1 = project::<1>(&global);
+    let choice = Cell::new(true);
+    let mut slab = [0; 16384];
+    let mut storage = SessionKitStorage::uninit();
+    let kit = storage
+        .init()
+        .rendezvous(&mut slab, common::TestTransport::new())
+        .unwrap();
+    kit.set_resolver(
+        &p0,
+        ResolverRef::<0>::decision_state(&choice, |right| {
+            Ok(if right.get() {
+                DecisionArm::Right
+            } else {
+                DecisionArm::Left
+            })
+        }),
+    )
+    .unwrap();
+    let mut sender = kit.enter(SessionId::new(201), &p0).unwrap();
+    let mut receiver = kit.enter(SessionId::new(201), &p1).unwrap();
+    let operation = pin!(async {
+        sender.send::<Prefix>(&()).await?;
+        receiver.recv::<Prefix>().await?;
+        for right in [false, true, false] {
+            choice.set(right);
+            sender.send::<Entry>(&()).await?;
+            receiver.recv::<Entry>().await?;
+            choice.set(!right);
+            if right {
+                sender.send::<Right>(&()).await?;
+                receiver.recv::<Right>().await?;
+            } else {
+                sender.send::<Left>(&()).await?;
+                receiver.recv::<Left>().await?;
+            }
+        }
+        Ok::<_, hibana::EndpointError>(())
+    });
+    let mut cx = Context::from_waker(Waker::noop());
+    assert!(matches!(operation.poll(&mut cx), Poll::Ready(Ok(()))));
+}
+
+#[test]
 fn a_parent_resolver_precedes_the_resolver_in_its_unselected_arm() {
     let global = g::route(
         g::seq(

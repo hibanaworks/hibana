@@ -281,6 +281,7 @@ jobs:
             if [[ "$FUZZ_DEPTH" == 4 ]]; then
               bash .github/scripts/check_protocol_shapes.sh --contracts 0 9
               bash .github/scripts/check_shape_resumption_sensitivity.sh
+              bash .github/scripts/check_prefix_input_sensitivity.sh
               bash .github/scripts/check_resolver_occurrence_sensitivity.sh
               bash .github/scripts/check_recv_contract_sensitivity.sh
               bash .github/scripts/check_parked_offer_sensitivity.sh
