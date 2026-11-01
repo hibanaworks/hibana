@@ -37,6 +37,11 @@ where
                     .node_index_for_relocatable_step(event.progress_step()),
             );
             self.clear_reentry_scope_state(body_reentry_scope, entry);
+            self.emit_scope_reentry(
+                body_reentry_scope,
+                event.eff_index().dense_ordinal() as u16,
+                event.lane(),
+            );
         }
         let route_lane = delta.selected_route_lane();
         let mut idx = 0usize;
@@ -208,6 +213,7 @@ where
                 row.selected_arm(),
             );
             self.progress.cursor.clear_reentry_scope_events(reset);
+            self.emit_scope_reentry(scope, u16::from(row.selected_arm()), lane);
         }
         self.progress.decision_state.apply_prepared_route_selection(
             lane_idx,
@@ -215,5 +221,16 @@ where
             row,
             CommitDeltaApplyPermit::new(),
         );
+    }
+
+    fn emit_scope_reentry(&self, scope: ScopeId, detail: u16, lane: u8) {
+        let event = crate::observe::events::scope_reentry(
+            self.progress.cursor.role(),
+            self.public_header.role(),
+            self.context.sid.raw(),
+            scope,
+            detail,
+        );
+        crate::observe::core::emit(self.port_for_lane(usize::from(lane)).tap(), event);
     }
 }

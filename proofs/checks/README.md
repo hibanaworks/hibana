@@ -40,11 +40,13 @@ identity and require FIFO delivery, nonduplication and run isolation.
 ## Local execution
 
 The [tap-commit encoding check](runtime/tap-commit/check.sh) proves recovery and
-injectivity of the actor, view, lane, direction and complete source-event fields.
+injectivity of the actor, view, lane, direction, complete source-event and scope
+reentry fields.
 Actual Endpoint tests compare the records with 257 repeated message contracts,
 delegated operations on separate runtimes, and rejection after frame staging.
-These checks do not reconstruct nested roll visits or certify a complete
-execution history.
+Real Endpoint tests also observe inner and outer roll reentry, including a
+delegated logical view. Omitting these new records must fail the history tests.
+The checks do not reconstruct or certify a complete execution history.
 
 | Checks | Implementation and property |
 | --- | --- |

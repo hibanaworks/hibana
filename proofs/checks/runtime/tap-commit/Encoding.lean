@@ -86,4 +86,40 @@ theorem causal_injective (a d a' d' : Fin 256)
 #print axioms direction_exact
 #print axioms causal_injective
 
+def reentry (scope detail : Fin 65536) : Nat :=
+  scope.val * 65536 + detail.val
+
+theorem reentry_fits (scope detail : Fin 65536) :
+    reentry scope detail < 4294967296 := by
+  have := scope.isLt
+  have := detail.isLt
+  simp only [reentry]
+  omega
+
+theorem reentry_scope_exact (scope detail : Fin 65536) :
+    reentry scope detail / 65536 = scope.val := by
+  have := detail.isLt
+  simp only [reentry]
+  omega
+
+theorem reentry_detail_exact (scope detail : Fin 65536) :
+    reentry scope detail % 65536 = detail.val := by
+  have := detail.isLt
+  simp only [reentry]
+  omega
+
+theorem reentry_injective (s d s' d' : Fin 65536)
+    (same : reentry s d = reentry s' d') : s = s' ∧ d = d' := by
+  have hs := congrArg (fun n => n / 65536) same
+  have hd := congrArg (fun n => n % 65536) same
+  dsimp only at hs hd
+  rw [reentry_scope_exact, reentry_scope_exact] at hs
+  rw [reentry_detail_exact, reentry_detail_exact] at hd
+  exact ⟨Fin.ext hs, Fin.ext hd⟩
+
+#print axioms reentry_fits
+#print axioms reentry_scope_exact
+#print axioms reentry_detail_exact
+#print axioms reentry_injective
+
 end Hibana.TapCommit

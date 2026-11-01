@@ -118,6 +118,21 @@ pub const LANE_RELEASE: u16 = 0x0211;
 /// logical role. Delegation can make that role differ from the executing actor.
 pub const ROUTE_ARM_SELECTION: u16 = 0x0221;
 
+/// Progress commit reused an already completed source scope.
+///
+/// - `causal_key`: Executing actor in the high byte, logical view in the low byte.
+/// - `arg0`: Session identifier (u32).
+/// - `arg1`: Full scope identifier in the high 16 bits. For a roll scope the
+///   low 16 bits identify the source event entering it again; for a route scope
+///   they contain the newly selected arm.
+///
+/// The scope is the one actually reset by progress commit. This does not assign
+/// a shared visit number to participants or report a preview as a committed
+/// operation. Nested scopes retained by that reset are not separate reentries.
+/// Route-only progress can emit this without an Endpoint commit; the record
+/// never stands in for a successful payload receive.
+pub const SCOPE_REENTRY: u16 = 0x0222;
+
 /// Compiled local operation returned by [`projected`](super::projected::projected).
 ///
 /// The three local-row events have this layout:

@@ -548,7 +548,28 @@ without a subsequent commit. `check_control_actor_sensitivity.sh` restores only
 the two lane-based encoding paths and requires all three tests to fail.
 The existing `tap-commit/Encoding.lean` actor/key packing theorems cover every
 8-bit actor and result. These record checks do not certify a full execution
-history or distinguish nested roll visits.
+history on their own.
+
+`SCOPE_REENTRY` records the source scope actually reused by progress commit,
+with the executing actor, logical view and session. Roll records identify the
+entry source event; route-only records identify the new arm and do not imply a
+payload receive. The runtime derives these records from the existing commit
+delta, without adding visit counters or another progress store. Actual Endpoint
+tests distinguish inner and outer roll reentry, cover a delegated view, and
+require that rejected calls and parked controller previews emit no reentry.
+`check_scope_reentry_sensitivity.sh` omits only the new record emission and must
+fail the nested-roll and delegated-history tests. The encoding check also
+proves exact recovery of the full scope and entry fields and detects a
+scope-kind truncation control. These are observations of progress reset;
+complete history capture, transport-call correspondence and dynamic source
+replay remain separate audit obligations.
+
+`TapPort::checkpoint()` reads the existing producer ordinal without advancing
+the reader or adding storage. A captured prefix must contain every ordinal
+from zero up to that independently saved boundary. Tests cover independent
+readers, ring overwrite, exhausted public ordinals and internal counter wrap,
+including strict-provenance Miri. A checkpoint does not certify session
+completion or authenticate the saved records.
 `check_parked_offer_sensitivity.sh` runs all three contract assignments on the
 current source, then restores the old preview-handling production paths in a
 separate checkout. The restored version must reach and fail the generated

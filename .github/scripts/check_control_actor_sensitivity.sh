@@ -25,7 +25,8 @@ status=0
 (
   cd "${MUTANT}"
   git ls-files -z | xargs -0 shasum -a 256 -- > "${OUTPUT}/mutant-source.sha256"
-  cargo +"${TOOLCHAIN:-stable}" test --locked --test tap_control_actor
+  cargo +"${TOOLCHAIN:-stable}" test --locked --test tap_control_actor -- \
+    --skip committed_reentries_distinguish_inner_rolls_from_their_parent
 ) > "${OUTPUT}/mutant.log" 2>&1 || status=$?
 if [[ "${status}" != 101 ]] || ! grep -Fq 'test result: FAILED. 0 passed; 3 failed;' "${OUTPUT}/mutant.log"; then
   echo "Restoring lane-based control records did not fail all three actor observations" >&2

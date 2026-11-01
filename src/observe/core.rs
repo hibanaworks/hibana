@@ -142,6 +142,23 @@ pub struct TapPort<'a> {
     ring: RingPort<'a>,
 }
 
+impl TapPort<'_> {
+    /// The next observation ordinal at this producer, independently of how
+    /// much this reader has consumed. Reading it does not drain the ring.
+    ///
+    /// Save this value independently alongside a capture. A full prefix must
+    /// contain exactly ordinals `0..checkpoint`; contiguous records alone
+    /// cannot reveal a lost suffix. This is a capture boundary, not evidence
+    /// that a session finished. Different producers have separate ordinals.
+    ///
+    /// Returns `None` once the public ordinal is exhausted. It stays exhausted
+    /// after the internal machine-sized counter wraps.
+    pub fn checkpoint(&self) -> Option<u32> {
+        let ordinal = timestamp(self.ring.head.get(), self.ring.state.get().head_era());
+        (ordinal != u32::MAX).then_some(ordinal)
+    }
+}
+
 impl Iterator for TapPort<'_> {
     type Item = TapEvent;
 

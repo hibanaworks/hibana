@@ -38,6 +38,23 @@ pub(crate) const fn route_arm_selection_with_causal(
     TapEvent::new(0, ids::ROUTE_ARM_SELECTION, causal, sid, arg1)
 }
 
+#[inline(always)]
+pub(crate) const fn scope_reentry(
+    actor: u8,
+    view: u8,
+    sid: u32,
+    scope: ScopeId,
+    detail: u16,
+) -> TapEvent {
+    TapEvent::new(
+        0,
+        ids::SCOPE_REENTRY,
+        TapEvent::make_causal_key(actor, view),
+        sid,
+        (scope.raw() as u32) << 16 | detail as u32,
+    )
+}
+
 // ────────────── Misuse detection (0x02FF) ──────────────
 
 // ────────────── Resolver audit (0x0400-0x041F) ──────────────
@@ -74,6 +91,23 @@ pub(crate) const fn raw_event(id: u16) -> TapEvent {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn scope_reentry_keeps_scope_kind_actor_view_and_full_detail() {
+        for (actor, view) in [(0, 255), (255, 0), (255, 255), (1, 9)] {
+            for scope in [ScopeId::route(8191), ScopeId::roll_scope(8191)] {
+                for detail in [0, 1, 256, u16::MAX] {
+                    let event = scope_reentry(actor, view, u32::MAX, scope, detail);
+                    assert_eq!(event.id(), ids::SCOPE_REENTRY);
+                    assert_eq!(event.causal_key() >> 8, u16::from(actor));
+                    assert_eq!(event.causal_key() as u8, view);
+                    assert_eq!(event.arg0(), u32::MAX);
+                    assert_eq!(event.arg1() >> 16, u32::from(scope.raw()));
+                    assert_eq!(event.arg1() as u16, detail);
+                }
+            }
+        }
+    }
 
     #[test]
     fn route_site_evidence_uses_scope_local_ordinal() {

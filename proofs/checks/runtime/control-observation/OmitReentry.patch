@@ -1,0 +1,11 @@
+diff --git a/src/endpoint/kernel/core/commit_delta_apply.rs b/src/endpoint/kernel/core/commit_delta_apply.rs
+--- a/src/endpoint/kernel/core/commit_delta_apply.rs
++++ b/src/endpoint/kernel/core/commit_delta_apply.rs
+@@ -234,6 +234,6 @@ where
+             scope,
+             detail,
+         );
+-        crate::observe::core::emit(self.port_for_lane(usize::from(lane)).tap(), event);
++        let _ = (self.port_for_lane(usize::from(lane)).tap(), event);
+     }
+ }

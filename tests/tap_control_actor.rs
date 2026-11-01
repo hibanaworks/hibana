@@ -46,6 +46,15 @@ fn repeated_control_records_identify_the_actor_instead_of_its_lane() {
     while records.next().is_some() {}
     for selected in [DecisionArm::Left, DecisionArm::Right, DecisionArm::Left] {
         input.set(selected);
+        {
+            let preview = pin!(async {
+                drop(endpoint.offer().await?);
+                Ok::<_, hibana::EndpointError>(())
+            });
+            assert!(matches!(preview.poll(&mut cx), Poll::Ready(Ok(()))));
+        }
+        let mut batch: Vec<_> = records.by_ref().collect();
+        assert!(!batch.iter().any(|record| record.id() == tap::SCOPE_REENTRY));
         let operation = pin!(async {
             let branch = endpoint.offer().await?;
             match branch.label() {
@@ -60,7 +69,7 @@ fn repeated_control_records_identify_the_actor_instead_of_its_lane() {
             Ok::<_, hibana::EndpointError>(())
         });
         assert!(matches!(operation.poll(&mut cx), Poll::Ready(Ok(()))));
-        let batch: Vec<_> = records.by_ref().collect();
+        batch.extend(records.by_ref());
         let audit = batch
             .iter()
             .find(|record| record.id() == tap::RESOLVER_AUDIT)
@@ -120,7 +129,10 @@ fn delegated_control_records_use_the_holder_actor_and_the_static_controller_role
         let mut resource = worker.recv::<Loan>().await?;
         let mut records = kit.tap();
         while records.next().is_some() {}
-        for selected in [DecisionArm::Left, DecisionArm::Right, DecisionArm::Left] {
+        for (visit, selected) in [DecisionArm::Left, DecisionArm::Right, DecisionArm::Left]
+            .into_iter()
+            .enumerate()
+        {
             input.set(selected);
             let branch = resource.offer().await?;
             match branch.label() {
@@ -151,6 +163,19 @@ fn delegated_control_records_use_the_holder_actor_and_the_static_controller_role
                 .unwrap();
             assert_eq!(commit.causal_key() >> 8, 1);
             assert_eq!(commit.arg1() >> 24, 9);
+            let resets: Vec<_> = batch
+                .iter()
+                .filter(|record| record.id() == tap::SCOPE_REENTRY)
+                .collect();
+            assert_eq!(resets.is_empty(), visit == 0);
+            for reset in resets {
+                assert_eq!(reset.causal_key(), (1 << 8) | 9);
+                assert_eq!(reset.arg0(), session.raw());
+                assert!(tap::projected(&worker_program).any(|row| {
+                    row.id() == tap::PROJECTED_SCOPE
+                        && u32::from(row.causal_key()) == reset.arg1() >> 16
+                }));
+            }
         }
         worker.send::<Loan>(resource).await?;
         let resource = owner.recv::<Loan>().await?;
@@ -158,6 +183,80 @@ fn delegated_control_records_use_the_holder_actor_and_the_static_controller_role
         Ok::<_, hibana::EndpointError>(())
     });
     assert!(matches!(operation.poll(&mut cx), Poll::Ready(Ok(()))));
+}
+
+#[test]
+fn committed_reentries_distinguish_inner_rolls_from_their_parent() {
+    type Tick = g::Msg<7, ()>;
+    type Tail = g::Msg<8, ()>;
+    let global = g::seq(g::send::<7, 7, Tick>().roll(), g::send::<7, 7, Tail>()).roll();
+    let program = project::<7>(&global);
+    let scopes: Vec<_> = tap::projected(&program)
+        .filter(|row| row.id() == tap::PROJECTED_SCOPE && row.causal_key() >> 13 == 1)
+        .collect();
+    let inner = scopes
+        .iter()
+        .find(|row| row.arg0() == 1 && row.arg1() & 3 == 2)
+        .unwrap()
+        .causal_key();
+    let outer = scopes
+        .iter()
+        .find(|row| row.arg0() == 2 && row.arg1() & 3 == 2)
+        .unwrap()
+        .causal_key();
+    assert_ne!(inner, outer);
+    let mut slab = [0; 8192];
+    let mut storage = SessionKitStorage::uninit();
+    let kit = storage
+        .init()
+        .rendezvous(&mut slab, common::TestTransport::new())
+        .unwrap();
+    let mut endpoint = kit.enter(SessionId::new(95), &program).unwrap();
+    let mut records = kit.tap();
+    let mut captured: Vec<_> = records.by_ref().collect();
+    let mut cx = Context::from_waker(Waker::noop());
+    {
+        let operation = pin!(async {
+            endpoint.send::<Tick>(&()).await?;
+            captured.extend(records.by_ref());
+            endpoint.send::<Tick>(&()).await?;
+            captured.extend(records.by_ref());
+            endpoint.send::<Tail>(&()).await?;
+            captured.extend(records.by_ref());
+            endpoint.send::<Tick>(&()).await?;
+            captured.extend(records.by_ref());
+            endpoint.send::<Tail>(&()).await?;
+            captured.extend(records.by_ref());
+            Ok::<_, hibana::EndpointError>(())
+        });
+        assert!(matches!(operation.poll(&mut cx), Poll::Ready(Ok(()))));
+    }
+    let resets: Vec<_> = captured
+        .iter()
+        .filter(|record| record.id() == tap::SCOPE_REENTRY)
+        .collect();
+    assert_eq!(resets.len(), 2);
+    for (reset, expected) in resets.into_iter().zip([inner, outer]) {
+        assert_eq!(reset.causal_key(), (7 << 8) | 7);
+        assert_eq!(reset.arg0(), 95);
+        assert_eq!(reset.arg1(), u32::from(expected) << 16);
+        let next = captured
+            .iter()
+            .find(|record| record.ts() > reset.ts() && record.id() == tap::ENDPOINT_SEND)
+            .unwrap();
+        assert_eq!(next.arg1() & 0xffff, 0);
+    }
+    let before_rejected = captured.len();
+    {
+        let rejected = pin!(endpoint.send::<Tail>(&()));
+        assert!(matches!(rejected.poll(&mut cx), Poll::Ready(Err(_))));
+    }
+    captured.extend(records.by_ref());
+    assert!(
+        !captured[before_rejected..]
+            .iter()
+            .any(|record| { matches!(record.id(), tap::SCOPE_REENTRY | tap::ENDPOINT_SEND) })
+    );
 }
 
 #[test]
