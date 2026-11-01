@@ -2010,6 +2010,12 @@ unexpected_cfgs = {{ level = "warn", check-cfg = ["cfg(hibana_repo_tests)", "cfg
                     let reason = proven.iter().find_map(|(problem, reason)| {
                         matches_source_violation(verdict, problem, reason).then_some(*reason)
                     }).ok_or_else(|| format!("known illegal shape {case} did not report a source-proven violation {proven:?}: {verdict}"))?;
+                    // One source can violate several rules. Require its
+                    // diagnosed, independently proven rule rather than also
+                    // requiring a different rule to win diagnostic precedence.
+                    negative_sources.retain(|_, (previous, required)| {
+                        previous != global || *required == reason
+                    });
                     if !negative_sources
                         .values()
                         .any(|(previous, required)| previous == global && *required == reason)
@@ -2406,6 +2412,53 @@ unexpected_cfgs = {{ level = "warn", check-cfg = ["cfg(hibana_repo_tests)", "cfg
 #[cfg(test)]
 mod population_tests {
     use super::*;
+
+    #[test]
+    fn multiple_ownership_violations_emit_only_the_diagnosed_source_rule() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .canonicalize()
+            .unwrap();
+        let output = env::temp_dir().join(format!(
+            "hibana-source-rejection-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir(&output).unwrap();
+        let diagnostic = output.join("diagnostics.tsv");
+        fs::write(&diagnostic, "0\trejected:ProjectionDiagnostic { problem: ParallelOwnershipConflict, role: Some(3), scope: None, controller: None, arms: None, first: None, second: None }\n").unwrap();
+        let cases =
+            syntax_cases(4, "530088924298496412096565703640493".parse().unwrap(), 1).unwrap();
+        let source = &cases.cases[0].4;
+        let violations = syntax_violations(source);
+        assert!(
+            violations
+                .iter()
+                .any(|(kind, _)| *kind == "EndpointIsItsOwnCarrier")
+        );
+        assert!(
+            violations
+                .iter()
+                .any(|(kind, _)| *kind == "ParallelOwnershipConflict")
+        );
+        let result = emit_cases(
+            root,
+            output.clone(),
+            cases,
+            Some(&diagnostic.display().to_string()),
+        )
+        .and_then(|()| {
+            fs::read_to_string(output.join("rejected/inventory.tsv")).map_err(Into::into)
+        });
+        fs::remove_dir_all(output).unwrap();
+        assert_eq!(
+            result.unwrap(),
+            "syntax_0\tparallel endpoint delegation conflicts with another use; role=3; help: keep the transfer and dependent resource operations in sequence\n"
+        );
+    }
 
     #[test]
     fn contract_aliases_do_not_inherit_a_different_rejection_for_the_same_source() {
