@@ -166,11 +166,12 @@ def elasticExpandedNormalization : Hibana.EndpointDelegation.Normalization :=
 def elasticPlan : Hibana.SourceOccurrenceCut elasticSource := {{
   original := elasticOriginalNormalization, originalAccepted := by rfl
   expanded := elasticExpanded
-  unfolding := .resumeAlongsideContinuation (.rollOnce (.oneCopy elasticBody))
+  unfolding := .resumeAlongsideContinuation .hole (.rollOnce (.oneCopy elasticBody))
     (.rollOnce (.oneCopy elasticBody)) (.oneCopy elasticContinuation)
   normalized := elasticExpandedNormalization, accepted := by rfl
   sameIssuance := by rfl
   path := elasticExpandedNormalization.paths[2]'(by decide), selected := by decide
+  guarded := by decide
   observed := fun _ => false
 }}
 def elasticPoints : List Hibana.SourcePoint := [

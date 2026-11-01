@@ -194,6 +194,7 @@ def closurePlan : SourceOccurrenceCut closureSource := {
   sameIssuance := by decide
   path := closureNormalized.paths[0]
   selected := by decide
+  guarded := by decide
   observed := fun _ => false
 }
 def closurePoints : List SourcePoint :=

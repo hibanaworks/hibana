@@ -137,6 +137,7 @@ def plan : SourceOccurrenceCut source := {
   normalized := expanded, accepted := (Option.some_get _).symm
   sameIssuance := by decide
   path := expanded.paths[0], selected := by decide
+  guarded := by decide
   observed := fun _ => false
 }
 def points : List SourcePoint :=
