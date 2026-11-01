@@ -151,6 +151,7 @@ run_miri_test \
   hibana_disable_repo_tests_cfg
   run_miri_test selected-owner-reentry -p hibana --test selected_owner_reentry
   run_miri_test overlapping-owner-reentry -p hibana --test overlapping_owner_reentry
+  run_miri_test tap-send-poll -p hibana --test tap_send_poll
 )
 
 (

@@ -582,6 +582,23 @@ scope-kind truncation control. These are observations of progress reset;
 complete history capture, transport-call correspondence and dynamic source
 replay remain separate audit obligations.
 
+`SEND_POLL` records a checked, encoded outgoing candidate immediately before
+each call to `Transport::poll_send`. It includes the actor, logical view,
+session, complete source event and prepared repetition-reset scope, including
+the absent-scope value. A Pending result can already expose a frame, so observing
+only successful completion would miss this boundary. Repeated polls are
+observations of the same outstanding operation; they do not advance progress.
+Local unit operations emit no transport-poll record. The source and prepared
+scope come from the existing checked commit plan; no field, cursor or visit
+counter is added to resident state or wire frames.
+The common actor/key and scope/detail encoding theorems above also apply to
+this record. Real Endpoint tests include receipt and delegated resource use
+before the original sender publishes, rejection before I/O, and reset context
+on repeated sends. `check_send_poll_sensitivity.sh` restores missing or
+completion-only observations and requires both pending-history tests to fail.
+These records identify permitted polling points, not physical frame acceptance
+or a complete source-history refinement.
+
 `TapPort::checkpoint()` reads the existing producer ordinal without advancing
 the reader or adding storage. A captured prefix must contain every ordinal
 from zero up to that independently saved boundary. Tests cover independent

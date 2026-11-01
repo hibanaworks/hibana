@@ -290,3 +290,7 @@ path = "tests/selected_owner_reentry.rs"
 [[test]]
 name = "overlapping_owner_reentry"
 path = "tests/overlapping_owner_reentry.rs"
+
+[[test]]
+name = "tap_send_poll"
+path = "tests/tap_send_poll.rs"

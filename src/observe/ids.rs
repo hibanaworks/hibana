@@ -81,6 +81,23 @@ pub const TRANSPORT_FAULT_CAPACITY: u8 = 3;
 /// A transport operation returned `TransportError::Failed`.
 pub const TRANSPORT_FAULT_FAILED: u8 = 4;
 
+/// A checked Endpoint send is about to enter one transport send poll.
+///
+/// Emitted after source admission and payload encoding, immediately before
+/// `Transport::poll_send`, including polls that subsequently return Pending or
+/// an error. It does not report frame acceptance, progress commit or a new visit.
+/// A resumed future can produce several records for the same operation.
+///
+/// - `causal_key`: Executing actor in the high byte, logical view in the low byte.
+/// - `arg0`: Session identifier (u32).
+/// - `arg1`: Prepared repetition-reset scope in the high 16 bits, source event
+///   in the low 16 bits. Scope `0xffff` means no repetition reset is prepared.
+///   The actual reset, if committed, is recorded by [`SCOPE_REENTRY`].
+///
+/// The compiled source identifies the logical peers, wire lane and payload.
+/// Local unit operations never poll a transport and emit no such record.
+pub const SEND_POLL: u16 = 0x0208;
+
 // ───────────── Lane lifecycle (0x0210-0x021F) ─────────────
 
 /// Session/lane association acquired when the resident association count moves

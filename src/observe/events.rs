@@ -55,6 +55,23 @@ pub(crate) const fn scope_reentry(
     )
 }
 
+#[inline(always)]
+pub(crate) const fn send_poll(
+    actor: u8,
+    view: u8,
+    sid: u32,
+    reset: ScopeId,
+    source: u16,
+) -> TapEvent {
+    TapEvent::new(
+        0,
+        ids::SEND_POLL,
+        TapEvent::make_causal_key(actor, view),
+        sid,
+        (reset.raw() as u32) << 16 | source as u32,
+    )
+}
+
 // ────────────── Misuse detection (0x02FF) ──────────────
 
 // ────────────── Resolver audit (0x0400-0x041F) ──────────────
@@ -91,6 +108,31 @@ pub(crate) const fn raw_event(id: u16) -> TapEvent {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn send_poll_keeps_the_actor_view_prepared_scope_and_complete_source_identity() {
+        for actor in 0..=u8::MAX {
+            let view = actor.wrapping_add(127);
+            for reset in [
+                ScopeId::none(),
+                ScopeId::roll_scope(0),
+                ScopeId::roll_scope(8191),
+            ] {
+                for source in [0, 1, 256, u16::MAX] {
+                    let record = send_poll(actor, view, u32::MAX, reset, source);
+                    assert_eq!(record.id(), ids::SEND_POLL);
+                    assert_eq!(record.causal_key() >> 8, u16::from(actor));
+                    assert_eq!(record.causal_key() as u8, view);
+                    assert_eq!(record.arg0(), u32::MAX);
+                    assert_eq!(record.arg1() >> 16, u32::from(reset.raw()));
+                    assert_eq!(record.arg1() as u16, source);
+                    assert_eq!(TapEvent::from(<[u8; 16]>::from(record)), record);
+                    assert_eq!(record.evidence().kind(), ids::SEND_POLL);
+                    assert_eq!(record.evidence().input()[3], u32::from(record.causal_key()));
+                }
+            }
+        }
+    }
 
     #[test]
     fn scope_reentry_keeps_scope_kind_actor_view_and_full_detail() {

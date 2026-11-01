@@ -299,7 +299,20 @@ where
         let lane_idx = pending.lane_idx();
         let port = self.port_for_lane(lane_idx);
         let lane_wire = pending.lane_wire();
-        let transport_poll = lane_port::poll_send_outgoing(&mut pending.transport, port, cx);
+        let prepared = &crate::invariant_some(pending.commit_plan.as_ref())
+            .proof
+            .progress
+            .delta;
+        let event = crate::invariant_some(prepared.event());
+        let observation = crate::observe::events::send_poll(
+            self.progress.cursor.role(),
+            self.public_header.role(),
+            self.context.sid.raw(),
+            prepared.body_reentry(),
+            event.eff_index().dense_ordinal() as u16,
+        );
+        let transport_poll =
+            lane_port::poll_send_outgoing(&mut pending.transport, port, observation, cx);
         self.reconcile_retirements();
         if let Some(kind) = self.session_fault() {
             lane_port::cancel_send_outgoing(&mut pending.transport, self.port_for_lane(lane_idx));

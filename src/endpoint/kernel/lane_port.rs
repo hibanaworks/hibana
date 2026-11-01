@@ -342,6 +342,7 @@ where
 pub(super) fn poll_send_outgoing<'r, T>(
     pending: &mut PendingSend,
     port: &Port<'r, T>,
+    observation: crate::observe::core::TapEvent,
     cx: &mut Context<'_>,
 ) -> Poll<Result<(), SendError>>
 where
@@ -387,6 +388,7 @@ where
     };
     let transport = port.transport();
     let tx_ptr = port.tx_ptr();
+    crate::observe::core::emit(port.tap(), observation);
     let poll = unsafe {
         // SAFETY: the scoped scratch lease keeps `outgoing` stable for this call,
         // and `Port` owns the lane-local Tx handle. The transport signature cannot
