@@ -41,7 +41,7 @@ use super::{event::TapEvent, ids};
 /// ```
 pub fn projected<const ROLE: u8>(
     program: &RoleProgram<ROLE>,
-) -> impl ExactSizeIterator<Item = TapEvent> + use<ROLE> {
+) -> impl ExactSizeIterator<Item = TapEvent> + Clone + use<ROLE> {
     let image = program.role_image_ref();
     let source = image.program();
     let events = source.columns.atom_count();

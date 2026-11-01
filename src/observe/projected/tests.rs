@@ -133,13 +133,16 @@ fn scope_markers_preserve_equal_bounds_and_mixed_nested_control_structure() {
 fn source_snapshot_preserves_conditional_holders_and_initial_delegated_roles() {
     type Loan = g::Msg<1, Endpoint<'static, 255>>;
     let global = g::seq(
-        g::route(g::send::<0, 1, Loan>(), g::send::<0, 2, Loan>()).resolve::<701>(),
-        g::send::<255, 3, g::Msg<2, ()>>(),
+        g::send::<0, 1, Loan>(),
+        g::seq(
+            g::route(g::send::<1, 2, g::Msg<4, ()>>(), g::send::<1, 2, Loan>()).resolve::<701>(),
+            g::send::<255, 3, g::Msg<2, ()>>(),
+        ),
     );
     let snapshot: Vec<_> = projected(&project::<0>(&global)).collect();
     let header = snapshot[0];
     assert_eq!(header.ts(), 1 | 1 << 16);
-    assert_eq!(header.arg0(), 3 << 16 | 4);
+    assert_eq!(header.arg0(), 4 << 16 | 4);
     assert_eq!(header.arg1(), 1 << 16 | 1);
     assert_eq!(snapshot[1].arg1(), 255);
     let source: Vec<_> = snapshot
@@ -148,14 +151,15 @@ fn source_snapshot_preserves_conditional_holders_and_initial_delegated_roles() {
         .collect();
     assert_eq!(source[0].causal_key() >> 8, 1);
     assert_eq!(source[0].arg1(), 255);
-    assert_eq!(source[2].causal_key() >> 8, 0);
+    assert_eq!(source[2].causal_key() >> 8, 1);
+    assert_eq!(source[3].causal_key() >> 8, 0);
     let bindings: Vec<_> = snapshot
         .iter()
         .filter(|row| row.id() == ids::PROJECTED_BINDING)
         .collect();
-    assert_eq!(bindings.len(), 3);
-    assert_eq!(bindings[2].ts(), 2);
-    assert_eq!((bindings[2].arg0(), bindings[2].arg1()), (256, 3));
+    assert_eq!(bindings.len(), 4);
+    assert_eq!(bindings[3].ts(), 3);
+    assert_eq!((bindings[3].arg0(), bindings[3].arg1()), (256, 3));
     let decision = snapshot
         .iter()
         .find(|row| row.id() == ids::PROJECTED_ACTOR_DECISION)
@@ -167,13 +171,13 @@ fn source_snapshot_preserves_conditional_holders_and_initial_delegated_roles() {
         .find(|row| row.id() == ids::PROJECTED_CHOICE)
         .unwrap();
     assert_eq!(choice.causal_key(), decision.causal_key());
-    assert_eq!((choice.arg0(), choice.arg1()), (0, 702));
+    assert_eq!((choice.arg0(), choice.arg1()), (1, 702));
     let initial = snapshot
         .iter()
         .find(|row| row.id() == ids::PROJECTED_INITIAL_ACTOR)
         .unwrap();
     assert_eq!((initial.arg0(), initial.arg1()), (255, 0));
-    let expected = 2 + 3 + 4 + 1 + 3 + 1 + 1 + snapshot[1].ts() as usize;
+    let expected = 2 + 4 + 4 + 1 + 4 + 1 + 1 + snapshot[1].ts() as usize;
     assert_eq!(snapshot.len(), expected);
 }
 
