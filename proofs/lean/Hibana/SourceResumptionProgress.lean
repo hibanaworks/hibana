@@ -3,46 +3,6 @@ import Hibana.SourceOccurrenceProjection
 namespace Hibana
 open EndpointDelegation
 
-/-- Erased intervals in a finite source expansion. The resumed copy precedes
-the continuation. These are source positions, not runtime epochs,
-an owner table, or bounds imposed on execution. -/
-structure SourceResumption where
-  bodyStart : Nat
-  bodyEnd : Nat
-  tailStart : Nat
-  tailEnd : Nat
-  deriving Repr, DecidableEq
-
-private def SourceUnfolding.copyRanges : {body expanded : Source} →
-    SourceUnfolding (.roll body) expanded → Nat → List (Nat × Nat)
-  | _, expanded, .rollOnce _, start => [(start, start + expanded.eventCount)]
-  | _, .seq earlierExpanded nextExpanded, .rollMore earlier _, start =>
-      earlier.copyRanges start ++
-        [(start + earlierExpanded.eventCount,
-          start + earlierExpanded.eventCount + nextExpanded.eventCount)]
-
-/-- Extract sequential resumption boundaries from the constructors that
-actually introduce them. A plain source par adds none. Recursion offsets use
-expanded positions, retaining distinct copies and branch sites. -/
-def SourceUnfolding.resumptions : {source expanded : Source} →
-    SourceUnfolding source expanded → Nat → List SourceResumption
-  | _, _, .send _, _ => []
-  | _, .seq first _, .seq left right, start
-  | _, .par first _, .par left right, start
-  | _, .route _ first _, .route _ left right, start =>
-      left.resumptions start ++ right.resumptions (start + first.eventCount)
-  | _, _, .rollOnce body, start => body.resumptions start
-  | _, .seq first _, .rollMore earlier next, start =>
-      earlier.resumptions start ++ next.resumptions (start + first.eventCount)
-  | _, .seq first _, .resumeAfterContinuation _ earlier next, start =>
-      earlier.resumptions start ++ next.resumptions (start + first.eventCount)
-  | _, .seq first (.par second tailSource), .resumeAlongsideContinuation _ earlier next tail, start =>
-      let nextStart := start + first.eventCount
-      let tailStart := nextStart + second.eventCount
-      let scopes := next.copyRanges nextStart |>.map fun (bodyStart, bodyEnd) =>
-        { bodyStart, bodyEnd, tailStart, tailEnd := tailStart + tailSource.eventCount }
-      scopes ++ earlier.resumptions start ++ next.resumptions nextStart ++ tail.resumptions tailStart
-
 private def pointEvent : SourcePoint → Nat
   | .accepted event => event
   | .committed action => action.event
@@ -76,35 +36,39 @@ def SourceOccurrenceCut.resumptionReady (plan : SourceOccurrenceCut source)
   (sourceVisitPoints plan.path.bindings).all fun before =>
     !plan.resumptionDepends plan.observed before point || plan.observed before
 
-/-- Prepare immutable resumption tests once for one source point. The returned
-predicate reads the current observation word; source domains, actors and scope
-membership are computed before it is called. This does not change the source
-rule or introduce a second execution state. -/
+/-- Immutable inputs to one resumption check. Storing values instead of a
+partially applied function keeps the source-domain work outside later queries. -/
+structure ResumptionQuery where
+  prior : SourcePoint
+  sameActor : Bool
+  scopes : List (Bool × List (SourcePoint × Bool))
+
+def ResumptionQuery.check (query : ResumptionQuery) (observed : SourcePoint → Bool) : Bool :=
+  !(query.sameActor && query.scopes.any (fun (applies, body) =>
+    applies && body.any (fun (member, inside) => inside && observed member))) || observed query.prior
+
+/-- Prepare immutable resumption inputs once for one source point. Only the
+observations change when the table is queried. This preserves the source rule
+and adds no execution state. -/
 def SourceOccurrenceCut.prepareResumption (plan : SourceOccurrenceCut source)
-    (point : SourcePoint) : (SourcePoint → Bool) → Bool :=
-  let checks : List ((SourcePoint → Bool) → Bool) :=
-    (sourceVisitPoints plan.path.bindings).map fun prior =>
-      match prior, point with
-      | .committed before, .accepted after =>
-          match occurrenceActor? plan (.accepted after) with
-          | none => fun _ => true
-          | some actor =>
-              let sameActor := occurrenceActor? plan (.committed before) == some actor
-              let scopes : List ((SourcePoint → Bool) → Bool) :=
-                (plan.unfolding.resumptions 0).map fun (scope : SourceResumption) =>
-                  let applies := scope.inBody before.event && scope.inTail after
-                  let body := (occurrenceLocalDomain plan actor).map fun member =>
-                    (member, scope.inBody (pointEvent member))
-                  fun (observed : SourcePoint → Bool) =>
-                    applies && body.any fun (member, inside) => inside && observed member
-              fun (observed : SourcePoint → Bool) =>
-                !(sameActor && scopes.any (fun check => check observed)) || observed (.committed before)
-      | _, _ => fun _ => true
-  fun observed => checks.all (fun check => check observed)
+    (point : SourcePoint) : List ResumptionQuery :=
+  (sourceVisitPoints plan.path.bindings).map fun prior =>
+    match prior, point with
+    | .committed before, .accepted after =>
+        match occurrenceActor? plan (.accepted after) with
+        | none => ⟨prior, false, []⟩
+        | some actor =>
+            let sameActor := occurrenceActor? plan (.committed before) == some actor
+            let scopes := (plan.unfolding.resumptions 0).map fun (scope : SourceResumption) =>
+              (scope.inBody before.event && scope.inTail after,
+                (occurrenceLocalDomain plan actor).map fun member =>
+                  (member, scope.inBody (pointEvent member)))
+            ⟨prior, sameActor, scopes⟩
+    | _, _ => ⟨prior, false, []⟩
 
 theorem prepared_resumption_matches_source
     (plan : SourceOccurrenceCut source) (point : SourcePoint) (observed : SourcePoint → Bool) :
-    plan.prepareResumption point observed =
+    ((plan.prepareResumption point).all fun query => query.check observed) =
       ({ plan with observed := observed } : SourceOccurrenceCut source).resumptionReady point := by
   unfold SourceOccurrenceCut.prepareResumption SourceOccurrenceCut.resumptionReady
   simp only [List.all_map]
@@ -113,16 +77,16 @@ theorem prepared_resumption_matches_source
   change _ = (!plan.resumptionDepends observed prior point || observed prior)
   cases point with
   | committed after =>
-      cases prior <;> simp [SourceOccurrenceCut.resumptionDepends]
+      cases prior <;> simp [SourceOccurrenceCut.resumptionDepends, ResumptionQuery.check]
   | accepted after =>
       cases prior with
-      | accepted before => simp [SourceOccurrenceCut.resumptionDepends]
+      | accepted before => simp [SourceOccurrenceCut.resumptionDepends, ResumptionQuery.check]
       | committed before =>
           cases actorAt : occurrenceActor? plan (.accepted after) with
-          | none => simp [SourceOccurrenceCut.resumptionDepends, actorAt]
+          | none => simp [SourceOccurrenceCut.resumptionDepends, ResumptionQuery.check, actorAt]
           | some actor =>
-              simp [SourceOccurrenceCut.resumptionDepends, actorAt, List.any_map]
-              rfl
+              simp [SourceOccurrenceCut.resumptionDepends, ResumptionQuery.check, actorAt,
+                List.any_map, Function.comp_def]
 
 /-- Every added prerequisite is a forward dependency in this same expansion.
 It cannot turn an earlier body or an independent par sibling into a waiter

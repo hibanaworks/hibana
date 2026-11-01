@@ -780,6 +780,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "incomplete probe inventory",
             ),
             (
+                "continuation-missing-prefix",
+                false,
+                "incomplete probe inventory",
+            ),
+            (
                 "continuation-duplicate-probe",
                 false,
                 "incomplete probe inventory",
@@ -809,6 +814,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             };
             let record = text[range.clone()].to_owned();
             match name {
+                "continuation-missing-prefix" => {
+                    let record = json::parse(&record)?;
+                    let prefix = record.get("prefix").ok_or("missing control prefix")?;
+                    let Json::Object(mut fields) = json::parse(&text)? else {
+                        return Err("invalid continuation observation".into());
+                    };
+                    let Some(Json::Array(attempts)) = fields.get_mut("attempts") else {
+                        return Err("missing continuation attempts".into());
+                    };
+                    let before = attempts.len();
+                    attempts.retain(|attempt| attempt.get("prefix") != Some(prefix));
+                    if attempts.is_empty() || attempts.len() == before {
+                        return Err("missing-prefix control did not remove one proper group".into());
+                    }
+                    text = source_json(&Json::Object(fields))?;
+                }
                 "continuation-missing-probe" => {
                     let separator = range
                         .start

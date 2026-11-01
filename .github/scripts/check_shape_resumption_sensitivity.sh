@@ -13,8 +13,10 @@ cat .github/ci-tests/endpoint_conformance.lean .github/ci-tests/protocol_shapes.
 # alternate runtime, application protocol or reduced observation inventory.
 (cd proofs/lean && lake env lean -j1 "${OUTPUT}/current.lean") \
   > "${OUTPUT}/positive.log" 2>&1
+(cd proofs/lean && lake env lean -j1 --run "${OUTPUT}/current.lean" --check-guarded-reentry) \
+  > "${OUTPUT}/guarded-positive.log" 2>&1
 : > "${OUTPUT}/mutants.tsv"
-for defect in resumption context actor; do
+for defect in resumption context actor guarded-context; do
   cp "${OUTPUT}/current.lean" "${OUTPUT}/${defect}.lean"
   if [[ "${defect}" == resumption ]]; then
     perl -0pi -e '
@@ -27,17 +29,28 @@ for defect in resumption context actor; do
       s/inside \+\+ \(shapeRollFocuses left\)\.flatMap fun focus =>/inside ++ ((shapeRollFocuses left).filter (fun focus => match focus.context with | .hole => true | _ => false)).flatMap fun focus =>/ == 1 or die "missing contextual resumption\n";
     ' "${OUTPUT}/${defect}.lean"
     expected='shapeStates parallelRetainedRolls'
-  else
+  elif [[ "${defect}" == actor ]]; then
     perl -0pi -e '
       s/(def shapeOriginalActorsMatch \(plan : SourceOccurrenceCut source\) : Bool :=)\n.*?\n\nstructure ShapePlan/$1\n  true\n\nstructure ShapePlan/s == 1 or die "missing original actor bindings\n";
     ' "${OUTPUT}/${defect}.lean"
     expected='shapeStates returnedRollEndpoint'
+  else
+    perl -0pi -e '
+      s/\| \.roll body => ⟨\.hole, body, rfl⟩ :: \(\(shapeRollFocuses body\)\.map fun focus =>\n      ⟨\.roll focus.context, focus.body, by simp only \[RollContext.plug, focus.source_eq\]⟩\)/| .roll body => [⟨.hole, body, rfl⟩]/ == 1 or die "missing parent-roll context\n";
+      s/(def shapeRollFocuses.*?\n)  \| \.route resolver left right =>.*?\n\ndef shapeAlongsidePlans/$1  | .route _ _ _ => []\n\ndef shapeAlongsidePlans/s == 1 or die "missing route context\n";
+    ' "${OUTPUT}/${defect}.lean"
+    expected='guarded inner-roll regression:'
   fi
   diff -u "${OUTPUT}/current.lean" "${OUTPUT}/${defect}.lean" \
     > "${OUTPUT}/${defect}.patch" || test "$?" == 1
   status=0
-  (cd proofs/lean && lake env lean -j1 "${OUTPUT}/${defect}.lean") \
-    > "${OUTPUT}/${defect}.log" 2>&1 || status=$?
+  if [[ "${defect}" == guarded-context ]]; then
+    (cd proofs/lean && lake env lean -j1 --run "${OUTPUT}/${defect}.lean" --check-guarded-reentry) \
+      > "${OUTPUT}/${defect}.log" 2>&1 || status=$?
+  else
+    (cd proofs/lean && lake env lean -j1 "${OUTPUT}/${defect}.lean") \
+      > "${OUTPUT}/${defect}.log" 2>&1 || status=$?
+  fi
   if [[ "${status}" == 0 ]] || ! grep -Fq "${expected}" "${OUTPUT}/${defect}.log"; then
     echo "The shape checker did not detect the restored ${defect} omission" >&2
     tail -35 "${OUTPUT}/${defect}.log" >&2
@@ -46,5 +59,6 @@ for defect in resumption context actor; do
   printf '%s\t%s\n' "${defect}" "${status}" >> "${OUTPUT}/mutants.tsv"
 done
 shasum -a 256 --check "${OUTPUT}/source.sha256" > "${OUTPUT}/source-check.log"
-rm "${OUTPUT}/current.lean" "${OUTPUT}/resumption.lean" "${OUTPUT}/context.lean" "${OUTPUT}/actor.lean"
-echo 'Shape resumption sensitivity: all three restored checker omissions are rejected'
+rm "${OUTPUT}/current.lean" "${OUTPUT}/resumption.lean" "${OUTPUT}/context.lean" \
+  "${OUTPUT}/actor.lean" "${OUTPUT}/guarded-context.lean"
+echo 'Shape resumption sensitivity: all four restored checker omissions are rejected'

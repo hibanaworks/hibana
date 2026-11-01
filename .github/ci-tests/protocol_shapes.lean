@@ -143,14 +143,14 @@ theorem shapeRowsReady_matches_source_readiness
       SourceOccurrenceCut.ready, occurrenceCut]
 
 def shapeResumptionRows (plan : SourceOccurrenceCut source) :
-    List (SourcePoint × ((SourcePoint → Bool) → Bool)) :=
+    List (SourcePoint × List ResumptionQuery) :=
   (sourceVisitPoints plan.path.bindings).map fun point => (point, plan.prepareResumption point)
 
-def shapeResumptionsReady (rows : List (SourcePoint × ((SourcePoint → Bool) → Bool)))
+def shapeResumptionsReady (rows : List (SourcePoint × List ResumptionQuery))
     (points : List SourcePoint) (point : SourcePoint) : Bool :=
   match rows.lookup point with
   | none => false
-  | some check => check points.contains
+  | some checks => checks.all (fun query => query.check points.contains)
 
 def shapeOriginalActorsMatch (plan : SourceOccurrenceCut source) : Bool :=
   plan.path.bindings.all fun (event, binding) =>
@@ -164,7 +164,7 @@ structure ShapePlan (source : Source) where
   plan : SourceOccurrenceCut source
   dependencies : List (SourcePoint × List SourcePoint)
   dependencies_eq : dependencies = shapeDependencyRows plan
-  resumptions : List (SourcePoint × ((SourcePoint → Bool) → Bool))
+  resumptions : List (SourcePoint × List ResumptionQuery)
   resumptions_eq : resumptions = shapeResumptionRows plan
 
 def ShapePlan.of (plan : SourceOccurrenceCut source) : ShapePlan source :=
@@ -292,21 +292,6 @@ def shapeRepetitions : Source → Nat
       shapeRepetitions left + shapeRepetitions right
   | .roll body => 1 + shapeRepetitions body
 
-def shapeFiniteWords (source : Source) (start : Nat := 0) : List (List Nat) :=
-  match source with
-  | .send message => [if message.sender == message.receiver then [2 * start]
-      else [2 * start, 2 * start + 1]]
-  | .seq left right => (shapeFiniteWords left start).flatMap fun first =>
-      (shapeFiniteWords right (start + left.eventCount)).map (first ++ ·)
-  | .par left right => (shapeFiniteWords left start).flatMap fun first =>
-      (shapeFiniteWords right (start + left.eventCount)).flatMap fun second =>
-        [first ++ second, second ++ first]
-  | .route _ left right => shapeFiniteWords left start ++
-      shapeFiniteWords right (start + left.eventCount)
-  | .roll body =>
-      let words := shapeFiniteWords body start
-      words.flatMap fun first => words.map (first ++ ·)
-
 -- Completed scripts use two visits at each roll. A prefix may leave a roll
 -- after its first visit, including a nested roll in just one outer visit.
 -- Admission therefore uses every one/two-visit cut, not one fixed expansion.
@@ -387,11 +372,12 @@ structure ShapeRollFocus (source : Source) where
   body : Source
   source_eq : context.plug (.roll body) = source
 
--- Keep the guards of enclosing choices and visits in place. Traversing a
--- sequence or parallel composition does not add either kind of guard.
+-- Contexts retain the selected anchor of the last enclosing visit. The source
+-- cut checks that certificate before a guarded resumption becomes a plan.
 def shapeRollFocuses : (source : Source) → List (ShapeRollFocus source)
-  | .send _ | .route _ _ _ => []
-  | .roll body => [⟨.hole, body, rfl⟩]
+  | .send _ => []
+  | .roll body => ⟨.hole, body, rfl⟩ :: ((shapeRollFocuses body).map fun focus =>
+      ⟨.roll focus.context, focus.body, by simp only [RollContext.plug, focus.source_eq]⟩)
   | .seq left right =>
       ((shapeRollFocuses left).map fun focus =>
         ⟨.seqLeft focus.context right, focus.body,
@@ -405,6 +391,13 @@ def shapeRollFocuses : (source : Source) → List (ShapeRollFocus source)
           by simp only [RollContext.plug, focus.source_eq]⟩) ++
       (shapeRollFocuses right).map fun focus =>
         ⟨.parRight left focus.context, focus.body,
+          by simp only [RollContext.plug, focus.source_eq]⟩
+  | .route resolver left right =>
+      ((shapeRollFocuses left).map fun focus =>
+        ⟨.routeLeft resolver focus.context right, focus.body,
+          by simp only [RollContext.plug, focus.source_eq]⟩) ++
+      (shapeRollFocuses right).map fun focus =>
+        ⟨.routeRight resolver left focus.context, focus.body,
           by simp only [RollContext.plug, focus.source_eq]⟩
 
 def shapeAlongsidePlans (focus : ShapeRollFocus left) (right : Source) :
@@ -564,10 +557,34 @@ theorem a_completed_continuation_does_not_close_its_inner_roll :
 #print axioms a_completed_tail_cannot_repeat_without_its_predecessor
 #print axioms a_completed_continuation_does_not_close_its_inner_roll
 
-def shapePrefixes (source : Source) : List (List Nat) :=
-  let words := shapeFiniteWords source
-  ([] :: words.flatMap fun word =>
-      (List.range (word.length + 1)).map (word.take ·)).eraseDups
+private def guardedInnerRoll : Source := .seq
+  (.roll (.route none
+    (.send ⟨⟨0, 0⟩, ⟨0, 1⟩, 0, .wire 0⟩)
+    (.seq
+      (.send ⟨⟨0, 0⟩, ⟨0, 1⟩, 1, .wire 0⟩)
+      (.roll (.send ⟨⟨0, 1⟩, ⟨0, 0⟩, 2, .wire 0⟩)))))
+  (.send ⟨⟨0, 1⟩, ⟨0, 0⟩, 3, .wire 0⟩)
+
+def shapeWordPrefixes (word : List Nat) : List (List Nat) :=
+  (List.range (word.length + 1)).map (word.take ·)
+
+theorem shapeWordPrefixes_contains_empty (word : List Nat) :
+    [] ∈ shapeWordPrefixes word := by
+  exact List.mem_map.mpr ⟨0, by simp, by simp⟩
+
+theorem shapeWordPrefixes_contains_the_complete_word (word : List Nat) :
+    word ∈ shapeWordPrefixes word := by
+  exact List.mem_map.mpr ⟨word.length, List.mem_range.mpr (Nat.lt_succ_self _), by simp⟩
+
+theorem shapeWordPrefixes_has_only_bounded_cuts (word cutWord : List Nat)
+    (present : cutWord ∈ shapeWordPrefixes word) :
+    ∃ cut ≤ word.length, cutWord = word.take cut := by
+  obtain ⟨cut, member, same⟩ := List.mem_map.mp present
+  exact ⟨cut, Nat.le_of_lt_succ (List.mem_range.mp member), same.symm⟩
+
+#print axioms shapeWordPrefixes_contains_empty
+#print axioms shapeWordPrefixes_contains_the_complete_word
+#print axioms shapeWordPrefixes_has_only_bounded_cuts
 
 -- Exhaust every order of the first four public operations for finite sources.
 -- The complete-trace prefixes above also reach deeper positions in each tree.
@@ -712,46 +729,50 @@ def shapeActiveChoices (source : Source) (path : List Selection) (start : Nat) :
     pure (shapeChoiceKey scope (arm == .right) :: child)
   | .roll body => shapeActiveChoices body path start
 
--- Validate the immutable script against the source. Its rank checks that
--- every combination of choices, visit boundaries and parallel orders occurs.
+-- Validate the immutable script against the source. Its rank identifies its
+-- choices, visit boundaries and parallel orders. Its word supplies the exact
+-- public cuts to probe, including every selected parallel schedule.
 def shapeScriptKey (source : Source) (script : Lean.Json) (start origin next : Nat) :
-    Except String (List String × Nat × Nat) := do
+    Except String (List String × Nat × Nat × List Nat) := do
   let .arr fields := script | throw "script node is not an array"
   unless !fields.isEmpty do throw "empty script node"
   let kind : Nat ← Lean.fromJson? fields[0]!
   match source with
-  | .send _ =>
+  | .send message =>
     unless kind == 0 && fields.size == 3 do throw "invalid message script"
     let label : Nat ← Lean.fromJson? fields[1]!
     let occurrence : Nat ← Lean.fromJson? fields[2]!
     unless label == origin && occurrence == next do throw "wrong script message or occurrence"
-    pure ([], 0, next + 1)
+    pure ([], 0, next + 1,
+      if message.sender == message.receiver then [2 * origin] else [2 * origin, 2 * origin + 1])
   | .seq left right | .par left right =>
     let parallel := match source with | .par _ _ => true | _ => false
     unless kind == (if parallel then 2 else 1) && fields.size == (if parallel then 4 else 3) do
       throw "invalid sequential or parallel script"
     let reverse : Bool ← if parallel then Lean.fromJson? fields[3]! else pure false
-    let (first, firstRank, next) ← shapeScriptKey left fields[1]! start origin next
-    let (second, secondRank, next) ← shapeScriptKey right fields[2]!
+    let (first, firstRank, next, firstWord) ← shapeScriptKey left fields[1]! start origin next
+    let (second, secondRank, next, secondWord) ← shapeScriptKey right fields[2]!
       (start + (shapeTwoCopies left).eventCount) (origin + left.eventCount) next
     let rank := firstRank * shapeScriptCount right + secondRank
-    pure (first ++ second, if parallel then 2 * rank + (if reverse then 1 else 0) else rank, next)
+    pure (first ++ second, if parallel then 2 * rank + (if reverse then 1 else 0) else rank, next,
+      if reverse then secondWord ++ firstWord else firstWord ++ secondWord)
   | .route _ left right =>
     unless kind == 3 && fields.size == 3 do throw "invalid choice script"
     let chooseRight : Bool ← Lean.fromJson? fields[2]!
     let split := start + (shapeTwoCopies left).eventCount
     let scope : Scope := ⟨start, split, split + (shapeTwoCopies right).eventCount⟩
-    let (choices, rank, next) ← if chooseRight then
+    let (choices, rank, next, word) ← if chooseRight then
       shapeScriptKey right fields[1]! split (origin + left.eventCount) next
     else shapeScriptKey left fields[1]! start origin next
     pure (shapeChoiceKey scope chooseRight :: choices,
-      if chooseRight then shapeScriptCount left + rank else rank, next)
+      if chooseRight then shapeScriptCount left + rank else rank, next, word)
   | .roll body =>
     unless kind == 4 && fields.size == 3 do throw "invalid repeated script"
-    let (first, firstRank, next) ← shapeScriptKey body fields[1]! start origin next
-    let (second, secondRank, next) ← shapeScriptKey body fields[2]!
+    let (first, firstRank, next, firstWord) ← shapeScriptKey body fields[1]! start origin next
+    let (second, secondRank, next, secondWord) ← shapeScriptKey body fields[2]!
       (start + (shapeTwoCopies body).eventCount) origin next
-    pure (first ++ second, firstRank * shapeScriptCount body + secondRank, next)
+    pure (first ++ second, firstRank * shapeScriptCount body + secondRank, next,
+      firstWord ++ secondWord)
 
 structure ShapeScriptHeader where
   name : Nat
@@ -883,7 +904,7 @@ def shapeCompletedAdvance (prepared : ShapePlan source) (points : List SourcePoi
     | _ => false
 
 def shapeCheckCompleted (source : Source) (name : Nat) (parallelCoverage : Bool)
-    (outputPath : String) : IO (Nat × Nat) := do
+    (outputPath : String) : IO (Nat × Nat × List (List Nat)) := do
   let exhaustiveCount := shapeScriptCount source
   let root := System.FilePath.mk outputPath / ".."
   let scripts ← IO.FS.Handle.mk (root / "scripts" / s!"{name}.jsonl") .read
@@ -904,15 +925,18 @@ def shapeCheckCompleted (source : Source) (name : Nat) (parallelCoverage : Bool)
   let mut parallelRows : Std.HashMap (List String) (List (List Bool)) := {}
   let mut previousRank : Option Nat := none
   let mut calls := 0
+  let mut prefixes : Std.HashMap (List Nat) Unit := {}
   for index in [:count] do
     let script : Lean.Json ← shapeReadLine scripts
-    let (choices, rank, messages) ← match shapeScriptKey source script 0 0 0 with
+    let (choices, rank, messages, word) ← match shapeScriptKey source script 0 0 0 with
       | .ok value => pure value
       | .error error => throw (IO.userError s!"shape {name} script {index}: {error}")
     unless (parallelCoverage || rank == index) &&
         previousRank.all (fun previous => previous < rank) do
       throw (IO.userError s!"shape {name}: missing or duplicate completed script")
     previousRank := some rank
+    for cutWord in shapeWordPrefixes word do
+      prefixes := prefixes.insert cutWord ()
     let key := choices.mergeSort (· ≤ ·)
     let some matching := plans.get? key
       | throw (IO.userError s!"shape {name} script {index}: script has no accepted source path; choices={choices}; source={(plans.toList.take 4).map Prod.fst}")
@@ -963,9 +987,23 @@ def shapeCheckCompleted (source : Source) (name : Nat) (parallelCoverage : Bool)
           | .error error => throw (IO.userError error)
         unless shapeParallelPairsCovered width rows do
           throw (IO.userError s!"shape {name}: missing parallel pair coverage")
-  pure (2 * count, calls)
+  pure (2 * count, calls, prefixes.toList.map Prod.fst)
 
 def main (args : List String) : IO UInt32 := do
+  -- Evaluate the whole bounded plan set natively. The general anchor theorem
+  -- is kernel checked; materializing all these plans in a `by decide` proof
+  -- duplicates the exhaustive search in the proof term.
+  let guardedPlans := (shapePlans guardedInnerRoll).map ShapePlan.of
+  for (word, expected) in [
+      ([0, 1, 2, 3, 4, 5, 6, 7], true),
+      ([0, 1, 2, 3, 4, 5, 6], true),
+      ([2, 3, 4, 5, 0, 1, 6, 7], false),
+      ([0, 1, 0, 1, 6, 7], false)] do
+    unless shapePermits (shapeStates guardedInnerRoll guardedPlans word) [] 2 false == expected do
+      throw (IO.userError s!"guarded inner-roll regression: word={word} expected={expected}")
+  if args == ["--check-guarded-reentry"] then
+    IO.println "Guarded inner-roll regressions: all four source cuts passed"
+    return 0
   let (inputPath, outputPath, weakenRoot) ← match args with
     | [input, output] => pure (input, output, false)
     | [input, output, "--mutant-root-seq-as-par"] => pure (input, output, true)
@@ -1001,20 +1039,22 @@ def main (args : List String) : IO UInt32 := do
       throw (IO.userError s!"shape {input.name}: missing or duplicate resolver assignments")
     -- Check complete execution records before the larger admission inventory.
     -- A malformed execution is rejected without replaying every probe first.
-    let (runs, calls) ← shapeCheckCompleted source input.name input.parallelCoverage outputPath
+    let (runs, calls, plannedPrefixes) ← shapeCheckCompleted source input.name input.parallelCoverage outputPath
     completedRuns := completedRuns + runs
     completedCalls := completedCalls + calls
     let plans := (shapePlans source).map ShapePlan.of
     unless !plans.isEmpty do throw (IO.userError s!"shape {input.name}: no accepted source plan")
     let choices := shapeChoicePatterns source
-    let prefixes := (shapePrefixes source ++ shapeShortPrefixes source plans choices).eraseDups
+    let prefixes := (plannedPrefixes ++ shapeShortPrefixes source plans choices).eraseDups
     unless prefixes.all (fun word => !(shapeStates source plans word).isEmpty) do
       throw (IO.userError s!"shape {input.name}: source prefix has no accepted occurrence execution")
     let output : ShapeOutput ← shapeRead (System.FilePath.mk outputPath / s!"{input.name}.json")
     let actualKeys := output.attempts.toList.map fun a => (a.choice, a.prefix, a.event, a.receive)
-    unless input.name == output.name &&
-        actualKeys.mergeSort shapeKeyLess == (shapeProbeKeys source prefixes choices).mergeSort shapeKeyLess do
-      throw (IO.userError s!"shape {input.name}: incomplete probe inventory")
+    let actualKeys := actualKeys.mergeSort shapeKeyLess
+    let expectedKeys := (shapeProbeKeys source prefixes choices).mergeSort shapeKeyLess
+    unless input.name == output.name && actualKeys == expectedKeys do
+      let different := (actualKeys.zip expectedKeys).find? fun (actual, expected) => actual != expected
+      throw (IO.userError s!"shape {input.name}: incomplete probe inventory; actual={actualKeys.length} expected={expectedKeys.length} first_difference={repr different}")
     for (word, attempts) in shapeAttemptGroups output.attempts.toList do
       let some first := attempts.head?
         | throw (IO.userError "empty prefix group")

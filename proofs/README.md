@@ -396,26 +396,43 @@ a third visit at one site, and one elastic reentry alongside its continuation.
 Each expansion carries a witness from the source occurrence semantics.
 An elastic visit may come from a roll inside sequential or parallel children,
 not just a roll immediately before that continuation. The context preserves
-the original message positions and resources. It does not lift a visit through
-an enclosing choice or roll boundary. Such a lift would need the corresponding
-selection or parent-visit guard.
+the original message positions and resources. Reentry through an enclosing
+choice or roll requires the focused body to be selected in the last enclosing
+visit. The unfolding witness locates that body's expanded range, including
+scopes with identical event bounds. Each accepted source cut carries this
+guard check. A selected earlier visit cannot substitute for an unselected last
+visit. A general theorem checks each active body's selected anchors; native
+regressions evaluate the full bounded plan set for both selected and unselected
+last visits, including a continuation whose receive is still pending.
 Admission also checks `SourceOccurrenceCut.resumptionReady`: once an actor has
 entered a new body visit, its outgoing continuation waits for that visit's
 local body operations. A late incoming continuation can still use an earlier
 completed visit. The shape checker uses this same source rule as the separate
-public-operation conformance checker, rather than only its static dependency
-rows. Regression theorems and actual delegated Endpoint calls distinguish the
+public-operation conformance checker. It stores immutable resumption inputs
+once for each source point; a general equality theorem relates the resulting
+table check to the original rule for every observation history. Regression
+theorems and actual delegated Endpoint calls distinguish the
 unfinished and completed current-body cases.
 Each expanded binding must also belong to the original source's actor
 projection. Merely normalizing an expanded body at its new holder is not
 enough: returning a resource does not give its new holder another actor's
 rolled operations. Reentry becomes possible again when the Endpoint returns
 to the roll's actor. Positive and negative regression theorems cover that
-round trip. Sensitivity checks remove the current-visit query, context traversal
-and original-actor check separately; each restored omission must fail.
+round trip. Sensitivity checks remove the current-visit query, seq/par context
+traversal, original-actor check and guarded route/parent-roll traversal
+separately; each restored omission must fail. The guarded check is an executable
+source regression; the other three omissions fail kernel-checked examples.
 Previously observed choices stay fixed; fresh choices try every resolver
-assignment. The controls also mutate continuation results, missing or duplicate
-probes and resolver inputs for nested repeated trees. These bounded comparisons
+assignment. The continuation inventory is derived from source-validated planned
+scripts, including their selected parallel orders and both visits of each roll.
+Schedule coverage is checked independently against the source: exhaustive
+catalogs keep every script rank, and pair-coverage catalogs keep every required
+choice path and pair of active parallel orders. The checker requires every
+next-operation probe at every prefix of those scripts. It does not require
+probes for unselected schedules or infer its inventory from the observed probe
+records. The controls also mutate continuation results, missing or duplicate
+probes, entire missing prefix groups and resolver inputs for nested repeated
+trees. These bounded comparisons
 do not establish correspondence for arbitrary visit counts or several elastic
 reentries at once. At every nested parallel borrow, including later
 visits, additional probes try each ordinary message outside the borrowed

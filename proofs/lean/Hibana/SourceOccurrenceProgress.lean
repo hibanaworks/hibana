@@ -4,15 +4,17 @@ import Hibana.SourceResourceOrder
 namespace Hibana
 open EndpointDelegation
 
-/-- A roll may remain available through surrounding sequence and parallel
-composition. Choice and enclosing roll boundaries are deliberately absent:
-moving a visit through either would require its own selection or visit guard. -/
+/-- A source context around a retained roll. Reentry through a choice or an
+enclosing roll also requires its selected anchor in the last enclosing visit. -/
 inductive RollContext where
   | hole
   | seqLeft (context : RollContext) (right : Source)
   | seqRight (left : Source) (context : RollContext)
   | parLeft (context : RollContext) (right : Source)
   | parRight (left : Source) (context : RollContext)
+  | routeLeft (resolver : Option Nat) (context : RollContext) (right : Source)
+  | routeRight (resolver : Option Nat) (left : Source) (context : RollContext)
+  | roll (context : RollContext)
 
 def RollContext.plug : RollContext → Source → Source
   | .hole, body => body
@@ -20,33 +22,46 @@ def RollContext.plug : RollContext → Source → Source
   | .seqRight left context, body => .seq left (context.plug body)
   | .parLeft context right, body => .par (context.plug body) right
   | .parRight left context, body => .par left (context.plug body)
+  | .routeLeft resolver context right, body => .route resolver (context.plug body) right
+  | .routeRight resolver left context, body => .route resolver left (context.plug body)
+  | .roll context, body => .roll (context.plug body)
 
 def RollContext.offset : RollContext → Nat
   | .hole => 0
-  | .seqLeft context _ | .parLeft context _ => context.offset
-  | .seqRight left context | .parRight left context => left.eventCount + context.offset
+  | .seqLeft context _ | .parLeft context _ | .routeLeft _ context _ | .roll context => context.offset
+  | .seqRight left context | .parRight left context | .routeRight _ left context =>
+      left.eventCount + context.offset
+
+def RollContext.hasGuards : RollContext → Bool
+  | .hole => false
+  | .seqLeft context _ | .seqRight _ context | .parLeft context _ | .parRight _ context =>
+      context.hasGuards
+  | .routeLeft _ _ _ | .routeRight _ _ _ | .roll _ => true
 
 theorem RollContext.contains_message (context : RollContext) (body : Source) (start : Nat)
     (present : entry ∈ body.messageEntries (start + context.offset)) :
     entry ∈ (context.plug body).messageEntries start := by
   induction context generalizing start with
   | hole => simpa only [RollContext.offset, Nat.add_zero, RollContext.plug] using present
-  | seqLeft context right ih | parLeft context right ih =>
+  | seqLeft context right ih | parLeft context right ih | routeLeft resolver context right ih =>
     exact List.mem_append_left _ (ih start present)
-  | seqRight left context ih | parRight left context ih =>
+  | seqRight left context ih | parRight left context ih | routeRight resolver left context ih =>
     exact List.mem_append_right _ (ih (start + left.eventCount)
       (by simpa only [RollContext.offset, Nat.add_assoc] using present))
+  | roll context ih =>
+    exact ih start present
 
 theorem RollContext.contains_resource (context : RollContext) (body : Source)
     (present : key ∈ body.resources) : key ∈ (context.plug body).resources := by
   induction context with
   | hole => exact present
-  | seqLeft context right ih | parLeft context right ih =>
+  | seqLeft context right ih | parLeft context right ih | routeLeft resolver context right ih =>
     simpa only [RollContext.plug, Source.resources, List.mem_eraseDups, List.mem_append]
       using Or.inl (b := key ∈ right.resources) ih
-  | seqRight left context ih | parRight left context ih =>
+  | seqRight left context ih | parRight left context ih | routeRight resolver left context ih =>
     simpa only [RollContext.plug, Source.resources, List.mem_eraseDups, List.mem_append]
       using Or.inr (a := key ∈ left.resources) ih
+  | roll context ih => exact ih
 
 /-- A finite unfolding of the global source, used only by the logical model.
 Each roll copy may unfold its nested rolls differently. Copies retain their
@@ -180,6 +195,89 @@ theorem source_unfolding_has_one_origin_per_occurrence
   | resumeAlongsideContinuation context earlier next tail left right continuation =>
     simp [SourceUnfolding.occurrences, Source.eventCount, left, right, continuation]
 
+/-- Expanded positions for a retained body, its concurrent continuation and
+any source anchors required by enclosing choices or parent visits. An absent
+anchor rejects an active resumed body; an empty list is unconditional. -/
+structure SourceResumption where
+  bodyStart : Nat
+  bodyEnd : Nat
+  tailStart : Nat
+  tailEnd : Nat
+  anchors : List (Option (Nat × Nat)) := []
+  deriving Repr, DecidableEq
+
+private def SourceUnfolding.copyRanges : {body expanded : Source} →
+    SourceUnfolding (.roll body) expanded → Nat → List (Nat × Nat)
+  | _, expanded, .rollOnce _, start => [(start, start + expanded.eventCount)]
+  | _, .seq earlierExpanded nextExpanded, .rollMore earlier _, start =>
+      earlier.copyRanges start ++
+        [(start + earlierExpanded.eventCount,
+          start + earlierExpanded.eventCount + nextExpanded.eventCount)]
+
+-- Structural witnesses locate the focus in the last enclosing roll copy.
+-- They retain scope nesting even when two rolls have the same event bounds.
+private def RollContext.lastBodyRange : (context : RollContext) →
+    {body expanded : Source} → SourceUnfolding (context.plug (.roll body)) expanded →
+    Option (Nat × Nat)
+  | .hole, _, expanded, .rollOnce _ => some (0, expanded.eventCount)
+  | .hole, _, .seq earlier next, .rollMore _ _ =>
+      some (earlier.eventCount, earlier.eventCount + next.eventCount)
+  | .seqLeft context _, _, _, .seq first _
+  | .parLeft context _, _, _, .par first _
+  | .routeLeft _ context _, _, _, .route _ first _ => context.lastBodyRange first
+  | .seqRight _ context, _, .seq first _, .seq _ second
+  | .parRight _ context, _, .par first _, .par _ second
+  | .routeRight _ _ context, _, .route _ first _, .route _ _ second =>
+      (context.lastBodyRange second).map fun (a, b) => (first.eventCount + a, first.eventCount + b)
+  | .roll context, _, _, .rollOnce body => context.lastBodyRange body
+  | .roll context, _, .seq earlier _, .rollMore _ next =>
+      (context.lastBodyRange next).map fun (a, b) => (earlier.eventCount + a, earlier.eventCount + b)
+  | _, _, _, _ => none
+
+private def RollContext.anchors (context : RollContext)
+    (earlier : SourceUnfolding (context.plug (.roll body)) expanded) (start : Nat) :
+    List (Option (Nat × Nat)) :=
+  if context.hasGuards then
+    [(context.lastBodyRange earlier).map fun (a, b) => (start + a, start + b)]
+  else []
+
+def SourceUnfolding.resumptions : {source expanded : Source} →
+    SourceUnfolding source expanded → Nat → List SourceResumption
+  | _, _, .send _, _ => []
+  | _, .seq first _, .seq left right, start
+  | _, .par first _, .par left right, start
+  | _, .route _ first _, .route _ left right, start =>
+      left.resumptions start ++ right.resumptions (start + first.eventCount)
+  | _, _, .rollOnce body, start => body.resumptions start
+  | _, .seq first _, .rollMore earlier next, start =>
+      earlier.resumptions start ++ next.resumptions (start + first.eventCount)
+  | _, .seq first nextSource, .resumeAfterContinuation context earlier next, start =>
+      let nextStart := start + first.eventCount
+      let nextEnd := nextStart + nextSource.eventCount
+      let own := if context.hasGuards then
+        let anchor := match earlier with
+          | .seq focused _ => context.anchors focused start
+          | _ => [none]
+        [{ bodyStart := nextStart, bodyEnd := nextEnd,
+           tailStart := nextEnd, tailEnd := nextEnd, anchors := anchor }]
+      else []
+      own ++ earlier.resumptions start ++ next.resumptions nextStart
+  | _, .seq first (.par second tailSource), .resumeAlongsideContinuation context earlier next tail, start =>
+      let nextStart := start + first.eventCount
+      let tailStart := nextStart + second.eventCount
+      let scopes := next.copyRanges nextStart |>.map fun (bodyStart, bodyEnd) =>
+        { bodyStart, bodyEnd, tailStart, tailEnd := tailStart + tailSource.eventCount,
+          anchors := context.anchors earlier start }
+      scopes ++ earlier.resumptions start ++ next.resumptions nextStart ++ tail.resumptions tailStart
+
+def SourceUnfolding.guardsCompatible (unfolding : SourceUnfolding source expanded)
+    (bindings : List (Nat × Binding)) : Bool :=
+  (unfolding.resumptions 0).all fun resumed =>
+    !(bindings.any fun (event, _) => resumed.bodyStart ≤ event && event < resumed.bodyEnd) ||
+      resumed.anchors.all fun anchor => match anchor with
+        | none => false
+        | some (a, b) => bindings.any fun (event, _) => a ≤ event && event < b
+
 /-- Executable source dependency, including the distinct acceptance and
 publication boundaries. Message payload bytes do not choose an occurrence. -/
 def sourcePointDepends (source : Source) (bindings : List (Nat × Binding)) :
@@ -248,7 +346,34 @@ structure SourceOccurrenceCut (source : Source) where
   sameIssuance : normalized.issuance = original.issuance
   path : NormalizedPath
   selected : path ∈ normalized.paths
+  guarded : unfolding.guardsCompatible path.bindings = true
   observed : SourcePoint → Bool
+
+/-- A resumed operation in a selected path has a selected anchor for every
+enclosing choice/visit guard. A previous, unselected arm cannot supply it. -/
+theorem an_active_resumption_has_each_selected_anchor
+    (plan : SourceOccurrenceCut source) (resumed : SourceResumption)
+    (present : resumed ∈ plan.unfolding.resumptions 0)
+    (active : (event, binding) ∈ plan.path.bindings)
+    (lower : resumed.bodyStart ≤ event) (upper : event < resumed.bodyEnd)
+    (required : anchor ∈ resumed.anchors) :
+    ∃ first last, anchor = some (first, last) ∧
+      ∃ origin held, (origin, held) ∈ plan.path.bindings ∧ first ≤ origin ∧ origin < last := by
+  have bodySelected : (plan.path.bindings.any fun (position, _) =>
+      resumed.bodyStart ≤ position && position < resumed.bodyEnd) = true :=
+    List.any_eq_true.mpr ⟨(event, binding), active,
+      Bool.and_eq_true_iff.mpr ⟨decide_eq_true lower, decide_eq_true upper⟩⟩
+  have compatible := List.all_eq_true.mp plan.guarded resumed present
+  simp only [bodySelected, Bool.not_true, Bool.false_or] at compatible
+  have selected := List.all_eq_true.mp compatible anchor required
+  cases anchor with
+  | none => contradiction
+  | some range =>
+    obtain ⟨first, last⟩ := range
+    obtain ⟨⟨origin, held⟩, member, inside⟩ := List.any_eq_true.mp selected
+    have bounds := Bool.and_eq_true_iff.mp inside
+    exact ⟨first, last, rfl, origin, held, member,
+      of_decide_eq_true bounds.1, of_decide_eq_true bounds.2⟩
 
 /-- Reconstruct observations from the chronological operation word. -/
 def occurrenceCut (plan : SourceOccurrenceCut source) (points : List SourcePoint) :
@@ -337,6 +462,7 @@ private def pipelineCut : SourceOccurrenceCut (.roll (.send pipelineMessage)) :=
   sameIssuance := rfl
   path := ⟨[], pipelineBindings⟩
   selected := by decide
+  guarded := by decide
   observed := firstSendPublished
 }
 
@@ -379,6 +505,7 @@ private def unevenCut : SourceOccurrenceCut unevenSource := {
   sameIssuance := rfl
   path := ⟨[], unevenBindings⟩
   selected := by decide
+  guarded := by decide
   observed := fun point => point = .accepted 0 || point = .committed ⟨0, .send⟩ ||
     point = .accepted 1 || point = .committed ⟨1, .send⟩
 }
@@ -424,6 +551,7 @@ private def loanCut : SourceOccurrenceCut (.roll loanBody) := {
   sameIssuance := rfl
   path := ⟨[], loanBindings 0 ++ loanBindings 4⟩
   selected := by decide
+  guarded := by decide
   observed := fun point => match point with
     | .accepted event => event < 4
     | .committed id => id.event < 4 && !(id.event == 3 && decide (id.side = .send))
@@ -463,6 +591,7 @@ private def resumedLoanCut : SourceOccurrenceCut loanWithContinuation := {
   sameIssuance := rfl
   path := ⟨[], resumedLoanBindings⟩
   selected := by decide
+  guarded := by decide
   observed := fun point => match point with
     | .accepted event => event < 5
     | .committed id => id.event < 5
@@ -508,6 +637,7 @@ private def exchangePlan : SourceOccurrenceCut exchangeSource := {
   sameIssuance := rfl
   path := ⟨[], exchangeBindings⟩
   selected := by decide
+  guarded := by decide
   observed := fun _ => false
 }
 
@@ -545,6 +675,7 @@ private def exchangeAfterContinuation : SourceOccurrenceCut exchangeSource := {
     (2, ⟨exchangeFinish, 1, 0⟩), (3, ⟨exchangeStart, 0, 1⟩),
     (4, ⟨exchangeAck, 1, 0⟩)]⟩
   selected := by decide
+  guarded := by decide
 }
 
 /-- Every boundary of the queued-continuation schedule is enabled using only
@@ -589,6 +720,7 @@ private def choiceCut : SourceOccurrenceCut (.roll choiceBody) := {
   sameIssuance := rfl
   path := choicePath .left .right
   selected := by decide
+  guarded := by decide
   observed := firstSendPublished
 }
 

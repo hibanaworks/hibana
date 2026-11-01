@@ -7484,6 +7484,38 @@ Hibana.ambiguous_receive_fails_closed : ∀ (before : Hibana.CompactGlobalState)
                                                   (@List.instMembership.{0} Nat) later event))
                                               (And (@Eq.{1} Bool (record.check sample.image choreo session) true)
                                                 (record.step.SourceOrdered sample.image choreo))))))
+@Hibana.an_active_resumption_has_each_selected_anchor : ∀ {source : Hibana.EndpointDelegation.Source} {event : Nat}
+  {binding : Hibana.EndpointDelegation.Binding} {anchor : Option.{0} (Prod.{0, 0} Nat Nat)}
+  (plan : Hibana.SourceOccurrenceCut source) (resumed : Hibana.SourceResumption),
+  @Membership.mem.{0, 0} Hibana.SourceResumption (List.{0} Hibana.SourceResumption)
+      (@List.instMembership.{0} Hibana.SourceResumption)
+      (@Hibana.SourceUnfolding.resumptions source (@Hibana.SourceOccurrenceCut.expanded source plan)
+        (@Hibana.SourceOccurrenceCut.unfolding source plan)
+        (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0))))
+      resumed →
+    @Membership.mem.{0, 0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)
+        (List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding))
+        (@List.instMembership.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding))
+        (@Hibana.SourceOccurrenceCut.path source plan).bindings
+        (@Prod.mk.{0, 0} Nat Hibana.EndpointDelegation.Binding event binding) →
+      @LE.le.{0} Nat instLENat resumed.bodyStart event →
+        @LT.lt.{0} Nat instLTNat event resumed.bodyEnd →
+          @Membership.mem.{0, 0} (Option.{0} (Prod.{0, 0} Nat Nat)) (List.{0} (Option.{0} (Prod.{0, 0} Nat Nat)))
+              (@List.instMembership.{0} (Option.{0} (Prod.{0, 0} Nat Nat))) resumed.anchors anchor →
+            @Exists.{1} Nat fun first =>
+              @Exists.{1} Nat fun last =>
+                And
+                  (@Eq.{1} (Option.{0} (Prod.{0, 0} Nat Nat)) anchor
+                    (@some.{0} (Prod.{0, 0} Nat Nat) (@Prod.mk.{0, 0} Nat Nat first last)))
+                  (@Exists.{1} Nat fun origin =>
+                    @Exists.{1} Hibana.EndpointDelegation.Binding fun held =>
+                      And
+                        (@Membership.mem.{0, 0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)
+                          (List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding))
+                          (@List.instMembership.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding))
+                          (@Hibana.SourceOccurrenceCut.path source plan).bindings
+                          (@Prod.mk.{0, 0} Nat Hibana.EndpointDelegation.Binding origin held))
+                        (And (@LE.le.{0} Nat instLENat first origin) (@LT.lt.{0} Nat instLTNat origin last)))
 @Hibana.an_admitted_fresh_public_operation_has_no_payload_borrow : ∀ {phase : Hibana.PublicOperationPhase}
   {edge : Hibana.PublicOperationEdge},
   Or (@Eq.{1} Hibana.PublicOperationEdge edge Hibana.PublicOperationEdge.beginSend)
@@ -12701,6 +12733,17 @@ Hibana.poisoned_public_operation_remains_faulted : ∀ (edge : Hibana.PublicOper
             (Hibana.observedResourceTag? step.before role)
             (@some.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))) value))
           (other value)
+@Hibana.prepared_resumption_matches_source : ∀ {source : Hibana.EndpointDelegation.Source}
+  (plan : Hibana.SourceOccurrenceCut source) (point : Hibana.SourcePoint) (observed : Hibana.SourcePoint → Bool),
+  @Eq.{1} Bool
+    (@List.all.{0} Hibana.ResumptionQuery (@Hibana.SourceOccurrenceCut.prepareResumption source plan point) fun query =>
+      query.check observed)
+    (@Hibana.SourceOccurrenceCut.resumptionReady source
+      (@Hibana.SourceOccurrenceCut.mk source (@Hibana.SourceOccurrenceCut.original source plan) ⋯
+        (@Hibana.SourceOccurrenceCut.expanded source plan) (@Hibana.SourceOccurrenceCut.unfolding source plan)
+        (@Hibana.SourceOccurrenceCut.normalized source plan) ⋯ ⋯ (@Hibana.SourceOccurrenceCut.path source plan) ⋯ ⋯
+        observed)
+      point)
 @Hibana.prepared_roll_is_source_prefix : ∀ {state : Hibana.CommitState} {roll : Hibana.RollInfo}
   {predecessors : Nat → List.{0} Nat} {first stop candidate : Nat},
   state.PrefixClosed predecessors
