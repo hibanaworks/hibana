@@ -37,7 +37,7 @@ status=0
   bash .github/scripts/check_protocol_shapes.sh --contracts 2 1
 ) > "${OUTPUT}/mutant.log" 2>&1 || status=$?
 if [[ "${status}" == 0 ]] ||
-   ! grep -Fq 'Error: "generated test shape_8 failed:' "${OUTPUT}/mutant.log"; then
+   ! grep -Fq 'Error: "generated test shape_10 failed:' "${OUTPUT}/mutant.log"; then
   echo "Generated cases did not detect the restored send-selection defect" >&2
   tail -50 "${OUTPUT}/mutant.log" >&2
   exit 1
@@ -46,7 +46,7 @@ mkdir -p "${OUTPUT}/mutant-inputs"
 rsync -a --exclude=target \
   "${MUTANT}/target/protocol-shapes/contracts/range-2-count-1/" \
   "${OUTPUT}/mutant-inputs/"
-printf 'mutant_exit=%s\nexpected_failed_case=shape_8\n' "${status}" \
+printf 'mutant_exit=%s\nexpected_failed_case=shape_10\n' "${status}" \
   > "${OUTPUT}/result.txt"
 rm -r -- "${MUTANT}"
-echo "Resolver occurrence sensitivity: current source passes; restored defect fails shape_8"
+echo "Resolver occurrence sensitivity: current source passes; restored defect fails shape_10"

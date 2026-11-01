@@ -1,8 +1,9 @@
-//! Reuse message contracts while preserving observable choice entries.
+//! Reuse message contracts across source occurrences and choice prefixes.
 use super::{Protocol, localside};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub(super) const COUNT: usize = 9;
+pub(super) const COUNT: usize = 12;
+pub(super) const VARIANTS: usize = 4;
 
 /// Source positions whose sends have the same public selector in opposite
 /// parallel arms. The receiver is inferred by send(), so it cannot distinguish
@@ -143,6 +144,28 @@ pub(super) fn protocol(rank: usize) -> Protocol {
         owned,
     };
     let seq = |left, right| Protocol::Seq(Box::new(left), Box::new(right));
+    if rank >= 9 {
+        let body = if rank == 11 {
+            let arm = || {
+                seq(
+                    message(0, 1, true),
+                    seq(
+                        message(3, 0, false),
+                        seq(message(0, 3, false), message(1, 0, true)),
+                    ),
+                )
+            };
+            Protocol::Resolved(Box::new(arm()), Box::new(arm()), 0)
+        } else {
+            let arm = || seq(message(0, 1, false), message(0, 1, false));
+            Protocol::Resolved(Box::new(arm()), Box::new(arm()), 0)
+        };
+        return if rank == 10 {
+            Protocol::Roll(Box::new(body))
+        } else {
+            body
+        };
+    }
     if rank == 8 {
         let resolved = |left, right| Protocol::Resolved(Box::new(left), Box::new(right), 0);
         let inner = resolved(
@@ -268,9 +291,10 @@ fn assign(source: &mut Protocol, protected: &BTreeSet<u8>, contracts: [Option<u8
 }
 
 /// Source identity stays fixed; only the public `g::Msg` label changes.
-/// Branch entries remain distinct because generated localsides dispatch their
-/// alternatives by `offer().label()`. These are three concrete assignments,
-/// not an enumeration of every partition of messages into shared contracts.
+/// The first three assignments keep observable entries distinct. A fourth
+/// shares sequential entry contracts in resolved choices; participants execute
+/// that common operation before observing the remaining alternatives. This
+/// does not enumerate every partition of messages into shared contracts.
 pub(super) fn variants(source: &Protocol) -> Vec<(&'static str, Protocol)> {
     let mut protected = BTreeSet::new();
     choice_entries(source, &mut protected);
@@ -313,6 +337,71 @@ pub(super) fn variants(source: &Protocol) -> Vec<(&'static str, Protocol)> {
             result.push((name, variant));
         }
     }
+    fn shared_entries(source: &Protocol, aliases: &mut BTreeMap<u8, u8>) {
+        match source {
+            Protocol::Message { .. } => {}
+            Protocol::Roll(body) => shared_entries(body, aliases),
+            Protocol::Seq(a, b)
+            | Protocol::Par(a, b)
+            | Protocol::Route(a, b)
+            | Protocol::Resolved(a, b, _) => {
+                if matches!(source, Protocol::Resolved(..))
+                    && let (Some((a, Some(_))), Some((b, Some(_)))) =
+                        (localside::split_first(a), localside::split_first(b))
+                    && let (
+                        Protocol::Message {
+                            from: af,
+                            to: at,
+                            contract,
+                            owned: ao,
+                            ..
+                        },
+                        Protocol::Message {
+                            from: bf,
+                            to: bt,
+                            event,
+                            owned: bo,
+                            ..
+                        },
+                    ) = (a, b)
+                    && (af, at, ao) == (bf, bt, bo)
+                {
+                    aliases.insert(*event, *contract);
+                }
+                shared_entries(a, aliases);
+                shared_entries(b, aliases);
+            }
+        }
+    }
+    fn relabel(source: &mut Protocol, aliases: &BTreeMap<u8, u8>) {
+        match source {
+            Protocol::Message {
+                event, contract, ..
+            } => {
+                if let Some(label) = aliases.get(event) {
+                    *contract = *label;
+                }
+            }
+            Protocol::Roll(body) => relabel(body, aliases),
+            Protocol::Seq(a, b)
+            | Protocol::Par(a, b)
+            | Protocol::Route(a, b)
+            | Protocol::Resolved(a, b, _) => {
+                relabel(a, aliases);
+                relabel(b, aliases);
+            }
+        }
+    }
+    let mut aliases = BTreeMap::new();
+    shared_entries(source, &mut aliases);
+    if !aliases.is_empty() {
+        let mut variant = source.clone();
+        relabel(&mut variant, &aliases);
+        if result.iter().all(|(_, previous)| previous != &variant) {
+            result.push(("shared-entry", variant));
+        }
+    }
+    assert!(result.len() <= VARIANTS);
     result
 }
 
@@ -366,6 +455,58 @@ mod tests {
                 },
             ]
         ));
+    }
+
+    #[test]
+    fn shared_entries_keep_occurrences_and_different_continuations() {
+        for rank in 9..COUNT {
+            let mut source = protocol(rank);
+            super::super::syntax::number(&mut source);
+            let variants = variants(&source);
+            let shared = &variants
+                .iter()
+                .find(|(name, _)| *name == "shared-entry")
+                .unwrap()
+                .1;
+            let body = match shared {
+                Protocol::Roll(body) => body.as_ref(),
+                source => source,
+            };
+            let Protocol::Resolved(a, b, _) = body else {
+                panic!()
+            };
+            let (a, Some(at)) = localside::split_first(a).unwrap() else {
+                panic!()
+            };
+            let (b, Some(bt)) = localside::split_first(b).unwrap() else {
+                panic!()
+            };
+            assert!(localside::same_message(a, b));
+            assert_ne!(a, b, "source occurrences must stay distinct");
+            assert_ne!(
+                at, bt,
+                "the shared entry must not erase either continuation"
+            );
+            let mut original = Vec::new();
+            let mut aliased = Vec::new();
+            source.messages(&mut original);
+            shared.messages(&mut aliased);
+            assert_eq!(original.len(), aliased.len());
+            for (original, aliased) in original.into_iter().zip(aliased) {
+                let Protocol::Message {
+                    event: expected,
+                    owned: payload,
+                    ..
+                } = original
+                else {
+                    unreachable!()
+                };
+                let Protocol::Message { event, owned, .. } = aliased else {
+                    unreachable!()
+                };
+                assert_eq!((event, owned), (expected, payload));
+            }
+        }
     }
 
     #[test]

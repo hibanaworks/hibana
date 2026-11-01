@@ -1779,7 +1779,7 @@ fn contract_cases(mut catalog: CaseSet) -> CaseSet {
             .collect::<BTreeSet<_>>();
         for (variant, (name, source)) in contracts::variants(global).into_iter().enumerate() {
             let case = base
-                .checked_mul(3)
+                .checked_mul(contracts::VARIANTS)
                 .and_then(|id| id.checked_add(variant))
                 .expect("contract case identity overflow");
             if catalog.delegated.contains(base) {
@@ -2488,7 +2488,7 @@ mod population_tests {
     #[test]
     fn contract_aliases_do_not_inherit_a_different_rejection_for_the_same_source() {
         let catalog = contract_cases(template_cases(2, 1, 32));
-        let source = &catalog.cases.iter().find(|case| case.0 == 3652).unwrap().4;
+        let source = &catalog.cases.iter().find(|case| case.0 == 4869).unwrap().4;
         let reasons = catalog
             .negative_sources
             .values()
@@ -2502,14 +2502,14 @@ mod population_tests {
             ])
         );
         assert_eq!(
-            catalog.expected_rejections.get(&3652),
+            catalog.expected_rejections.get(&4869),
             Some(&"ParallelSelector")
         );
         assert_eq!(
-            catalog.expected_rejections.get(&3651),
+            catalog.expected_rejections.get(&4868),
             Some(&"MissingBranchKnowledge")
         );
-        assert!(catalog.negative_sources.contains_key("contracts_3651_0"));
+        assert!(catalog.negative_sources.contains_key("contracts_4868_0"));
     }
 
     #[test]

@@ -28,7 +28,7 @@ status=0
   bash .github/scripts/check_protocol_shapes.sh --contracts 8 1
 ) > "${OUTPUT}/mutant.log" 2>&1 || status=$?
 if [[ "${status}" == 0 ]] ||
-   ! grep -Fq 'Error: "generated test shape_24 failed: exit status: 101"' "${OUTPUT}/mutant.log" ||
+   ! grep -Fq 'Error: "generated test shape_32 failed: exit status: 101"' "${OUTPUT}/mutant.log" ||
    ! grep -Fq 'EndpointError { operation: "send", kind: PhaseInvariant }' "${OUTPUT}/mutant.log"; then
   echo "Generated nested localside did not detect the restored offer defect" >&2
   tail -50 "${OUTPUT}/mutant.log" >&2
@@ -52,6 +52,6 @@ mkdir -p "${OUTPUT}/mutant-inputs"
 rsync -a --exclude=target \
   "${MUTANT}/target/protocol-shapes/contracts/range-8-count-1/" \
   "${OUTPUT}/mutant-inputs/"
-printf 'mutant_exit=%s\nexpected_failed_case=shape_24\nexpected_failure=completed_localside_send_phase_invariant\n' "${status}" > "${OUTPUT}/result.txt"
+printf 'mutant_exit=%s\nexpected_failed_case=shape_32\nexpected_failure=completed_localside_send_phase_invariant\n' "${status}" > "${OUTPUT}/result.txt"
 rm -r -- "${MUTANT}"
 echo "Parked offer sensitivity: current source passes; restored production fails a generated localside"

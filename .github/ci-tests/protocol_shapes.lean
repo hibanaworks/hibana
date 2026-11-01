@@ -635,30 +635,49 @@ theorem shapeWordPrefixes_has_only_bounded_cuts (word cutWord : List Nat)
 -- Exhaust every order of the first four public operations for finite sources.
 -- The complete-trace prefixes above also reach deeper positions in each tree.
 def shapeShortPrefixes (source : Source) (plans : List (ShapePlan source))
-    (choices : List (List Nat)) : List (List Nat) :=
+    (choices : List (List Nat)) : List (List Nat × List (List Nat)) :=
   if shapeRepetitions source != 0 then [] else Id.run do
-    let mut level := [[]]
+    let mut level := [([], [])]
     let mut found := []
     for _ in List.range 4 do
       let mut next := []
-      for word in level do
-        let states := shapeStates source plans word
+      for (word, inputs) in level do
+        let some states := shapeReplayStates source plans word inputs | continue
         for (event, _) in source.messageEntries 0 do
           for receive in [false, true] do
-            if choices.any fun choice =>
-                shapePermits states choice event receive then
-              next := (word ++ [2 * event + if receive then 1 else 0]) :: next
+            for choice in choices do
+              if shapePermits states choice event receive then
+                next := (word ++ [2 * event + if receive then 1 else 0], inputs ++ [choice]) :: next
       level := next.eraseDups
       found := found ++ level
     return found
 
 -- Reject omitted/duplicate probes independently of the observed outcome.
 def shapeProbeKeys (source : Source)
-    (prefixes : List (List Nat)) (choices : List (List Nat)) : List (List Nat × List Nat × Nat × Bool) :=
+    (prefixes : List (List Nat × List (List Nat))) (choices : List (List Nat)) :
+    List (List Nat × List Nat × List (List Nat) × Nat × Bool) :=
   choices.flatMap fun choice =>
-    prefixes.flatMap fun word =>
+    prefixes.flatMap fun (word, inputs) =>
       (source.messageEntries 0).flatMap fun (event, _) =>
-        [(choice, word, event, false), (choice, word, event, true)]
+        [(choice, word, inputs, event, false), (choice, word, inputs, event, true)]
+
+theorem probe_identity_preserves_the_recorded_input_history
+    (choice word : List Nat) (a b : List (List Nat)) (event : Nat) (receive : Bool) :
+    (choice, word, a, event, receive) = (choice, word, b, event, receive) ↔ a = b := by
+  simp
+
+#print axioms probe_identity_preserves_the_recorded_input_history
+
+-- Completed scripts name exact source occurrences. Derive their persistent
+-- resolver input independently from each enclosing source scope.
+def shapeWordInputs (source : Source) (word : List Nat) : List (List Nat) :=
+  (word.foldl (fun (state : List Nat × List (List Nat)) command =>
+    let inputs := (shapeResolvers source 0).foldl (fun inputs (scope, id) =>
+      if scope.start ≤ command / 2 && command / 2 < scope.stop then
+        let without := inputs.filter (· != id)
+        if scope.split ≤ command / 2 then (id :: without).mergeSort (· ≤ ·) else without
+      else inputs) state.1
+    (inputs, state.2 ++ [inputs])) ([], [])).2
 
 private def sameContractSequence : Source := .seq
   (.send ⟨⟨0, 0⟩, ⟨0, 1⟩, 7, .wire 0⟩)
@@ -746,10 +765,11 @@ theorem an_unread_selected_arm_does_not_block_an_independent_receive_alias :
 
 #print axioms an_unread_selected_arm_does_not_block_an_independent_receive_alias
 
-def shapeKeyLess (a b : List Nat × List Nat × Nat × Bool) : Bool :=
+def shapeKeyLess (a b : List Nat × List Nat × List (List Nat) × Nat × Bool) : Bool :=
   decide (a.1 < b.1) || (a.1 == b.1 && (decide (a.2.1 < b.2.1) ||
-    (a.2.1 == b.2.1 && (a.2.2.1 < b.2.2.1 ||
-      (a.2.2.1 == b.2.2.1 && !a.2.2.2 && b.2.2.2)))))
+    (a.2.1 == b.2.1 && (decide (a.2.2.1 < b.2.2.1) ||
+      (a.2.2.1 == b.2.2.1 && (a.2.2.2.1 < b.2.2.2.1 ||
+        (a.2.2.2.1 == b.2.2.2.1 && !a.2.2.2.2 && b.2.2.2.2)))))))
 
 def shapeRead [Lean.FromJson α] (path : System.FilePath) : IO α := do
   let raw ← IO.FS.readFile path
@@ -762,7 +782,7 @@ def shapeGroupStep (attempt : ShapeAttempt)
   match groups with
   | [] => [(attempt.prefix, [attempt])]
   | (word, attempts) :: rest =>
-      if attempt.prefix == word then (word, attempt :: attempts) :: rest
+      if attempt.prefix == word && attempts.head?.all (·.prefixChoices == attempt.prefixChoices) then (word, attempt :: attempts) :: rest
       else (attempt.prefix, [attempt]) :: groups
 
 def shapeAttemptGroups (attempts : List ShapeAttempt) : List (List Nat × List ShapeAttempt) :=
@@ -1144,11 +1164,16 @@ def main (args : List String) : IO UInt32 := do
     let plans := (shapePlans source).map ShapePlan.of
     unless !plans.isEmpty do throw (IO.userError s!"shape {input.name}: no accepted source plan")
     let choices := shapeChoicePatterns source
-    let prefixes := (plannedPrefixes ++ shapeShortPrefixes source plans choices).eraseDups
-    unless prefixes.all (fun word => !(shapeStates source plans word).isEmpty) do
+    let prefixes := ((plannedPrefixes.map fun word => (word, shapeWordInputs source word)) ++
+      shapeShortPrefixes source plans choices).eraseDups
+    unless prefixes.all (fun (word, inputs) => (shapeReplayStates source plans word inputs).isSome) do
       throw (IO.userError s!"shape {input.name}: source prefix has no accepted occurrence execution")
     let output : ShapeOutput ← shapeRead (System.FilePath.mk outputPath / s!"{input.name}.json")
-    let actualKeys := output.attempts.toList.map fun a => (a.choice, a.prefix, a.event, a.receive)
+    unless output.attempts.all (fun a => a.prefix.length == a.prefixChoices.length &&
+        a.prefixChoices.all (fun choice => choice == choice.eraseDups.mergeSort (· ≤ ·) &&
+          choice.all (· < input.resolvers))) do
+      throw (IO.userError s!"shape {input.name}: invalid replayed resolver inputs")
+    let actualKeys := output.attempts.toList.map fun a => (a.choice, a.prefix, a.prefixChoices, a.event, a.receive)
     let actualKeys := actualKeys.mergeSort shapeKeyLess
     let expectedKeys := (shapeProbeKeys source prefixes choices).mergeSort shapeKeyLess
     unless input.name == output.name && actualKeys == expectedKeys do

@@ -28,7 +28,7 @@ status=0
   bash .github/scripts/check_protocol_shapes.sh --contracts 6 2
 ) > "${OUTPUT}/mutant.log" 2>&1 || status=$?
 if [[ "${status}" == 0 ]] ||
-   ! grep -Fq 'Error: "generated test shape_18 failed: exit status: 101"' "${OUTPUT}/mutant.log" ||
+   ! grep -Fq 'Error: "generated test shape_24 failed: exit status: 101"' "${OUTPUT}/mutant.log" ||
    ! grep -Fq 'src/endpoint/kernel/lane_port.rs:' "${OUTPUT}/mutant.log"; then
   echo "Generated parked receive probes did not detect the restored frame repoll" >&2
   tail -50 "${OUTPUT}/mutant.log" >&2
@@ -52,6 +52,6 @@ mkdir -p "${OUTPUT}/mutant-inputs"
 rsync -a --exclude=target \
   "${MUTANT}/target/protocol-shapes/contracts/range-6-count-2/" \
   "${OUTPUT}/mutant-inputs/"
-printf 'mutant_exit=%s\nexpected_failed_case=shape_18\nexpected_failure=retained_frame_repoll_panic\n' "${status}" > "${OUTPUT}/result.txt"
+printf 'mutant_exit=%s\nexpected_failed_case=shape_24\nexpected_failure=retained_frame_repoll_panic\n' "${status}" > "${OUTPUT}/result.txt"
 rm -r -- "${MUTANT}"
 echo "Parked receive sensitivity: current source passes; restored production panics in generated admission probes"

@@ -28,6 +28,57 @@ fn continuation(text: &str, accepted: bool) -> Option<core::ops::Range<usize>> {
     None
 }
 
+// Remove one history only when the same public prefix and next call have
+// different observed answers under two histories. Keep the other history's
+// entire group, reproducing the loss caused by word-only deduplication.
+fn missing_history(text: &str) -> Result<Option<String>, Box<dyn std::error::Error>> {
+    let Json::Object(mut fields) = json::parse(text)? else {
+        return Err("invalid history observation".into());
+    };
+    let Some(Json::Array(attempts)) = fields.get_mut("attempts") else {
+        return Err("missing history attempts".into());
+    };
+    let mut seen = std::collections::BTreeMap::new();
+    let mut remove = None;
+    for attempt in attempts.iter() {
+        let prefix = attempt.get("prefix").ok_or("missing prefix")?;
+        if !matches!(prefix, Json::Array(word) if !word.is_empty()) {
+            continue;
+        }
+        let history = source_json(attempt.get("prefixChoices").ok_or("missing history")?)?;
+        let accepted = source_json(attempt.get("accepted").ok_or("missing admission")?)?;
+        let key = ["prefix", "choice", "event", "receive"]
+            .into_iter()
+            .map(|field| source_json(attempt.get(field).ok_or("missing probe key")?))
+            .collect::<Result<Vec<_>, _>>()?
+            .join(",");
+        if let Some((previous, answer)) = seen.get(&key)
+            && previous != &history
+            && answer != &accepted
+        {
+            remove = Some((source_json(prefix)?, history));
+            break;
+        }
+        seen.insert(key, (history, accepted));
+    }
+    let Some((prefix, history)) = remove else {
+        return Ok(None);
+    };
+    let prefix = json::parse(&prefix)?;
+    let history = json::parse(&history)?;
+    let before = attempts.len();
+    attempts.retain(|attempt| {
+        attempt.get("prefix") != Some(&prefix) || attempt.get("prefixChoices") != Some(&history)
+    });
+    assert!(attempts.len() < before);
+    assert!(
+        attempts
+            .iter()
+            .any(|attempt| attempt.get("prefix") == Some(&prefix))
+    );
+    Ok(Some(source_json(&Json::Object(fields))?))
+}
+
 // Bound successful API calls from the source, independently of observations.
 // A self-role message has one local operation; other messages have two ends.
 fn max_completed_calls(case: &Json) -> Result<usize, String> {
@@ -869,6 +920,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             checked.join(", ")
         );
     }
+    let mut history_control = false;
+    for path in &paths {
+        if let Some(text) = missing_history(&fs::read_to_string(path)?)? {
+            let (input, observations) = single_case(
+                &inventory,
+                &output.join("controls/continuation-missing-history"),
+                path,
+                &text,
+            )?;
+            rejected(
+                &checker,
+                &input,
+                &observations,
+                "incomplete probe inventory",
+            )?;
+            history_control = true;
+            break;
+        }
+    }
+    println!(
+        "Resolver history coverage control: {}",
+        if history_control {
+            "one outcome-distinguishing history removed, other history retained: pass"
+        } else {
+            "inapplicable: no prefix has outcome-distinguishing recorded histories"
+        }
+    );
     println!(
         "Generated shape checker controls: false-admission, false-rejection, missing-case, malformed, unknown-resolver-input: pass"
     );
@@ -878,6 +956,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(test)]
 mod source_bounds {
     use super::*;
+
+    #[test]
+    fn a_missing_history_control_keeps_the_other_answer_to_the_same_call() {
+        let text = r#"{"attempts":[{"prefix":[0],"prefixChoices":[[]],"choice":[],"event":1,"receive":false,"accepted":true},{"prefix":[0],"prefixChoices":[[0]],"choice":[],"event":1,"receive":false,"accepted":false}]}"#;
+        let mutated = missing_history(text).unwrap().unwrap();
+        let record = json::parse(&mutated).unwrap();
+        let Some(Json::Array(attempts)) = record.get("attempts") else {
+            panic!()
+        };
+        assert_eq!(attempts.len(), 1);
+        assert_eq!(attempts[0].get("accepted"), Some(&Json::Bool(true)));
+        assert!(missing_history(&mutated).unwrap().is_none());
+    }
 
     #[test]
     fn local_choices_sequences_and_repetitions_have_different_call_bounds() {

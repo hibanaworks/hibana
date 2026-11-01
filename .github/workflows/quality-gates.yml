@@ -279,7 +279,7 @@ jobs:
             target/debug/protocol-shapes syntax-fuzz "$PWD" "$FUZZ_DEPTH" "$task_seed" "$FUZZ_COUNT" "target/protocol-fuzz-${FUZZ_DEPTH}-${task_seed}"
             # These fixed inputs are shared by all sampled depths.
             if [[ "$FUZZ_DEPTH" == 4 ]]; then
-              bash .github/scripts/check_protocol_shapes.sh --contracts 0 9
+              bash .github/scripts/check_protocol_shapes.sh --contracts 0 12
               bash .github/scripts/check_shape_resumption_sensitivity.sh
               bash .github/scripts/check_prefix_input_sensitivity.sh
               bash .github/scripts/check_resolver_occurrence_sensitivity.sh

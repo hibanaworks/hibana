@@ -128,7 +128,7 @@ enum Outcome {
 
 // Immutable schedule input, generated from the source before any endpoint runs.
 // A nested repeat's visit boundaries cannot be recovered from message labels.
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 enum Script {
     Message(u8, usize),
     Seq(Box<Self>, Box<Self>),
@@ -137,6 +137,24 @@ enum Script {
     Roll([Box<Self>; 2]),
 }
 impl Script {
+    // Reassociate immutable test input in exactly the same way as the source
+    // emitter's sequential-prefix split. Occurrence numbers are unchanged.
+    fn split_first_message(&self) -> (&Self, Option<Self>) {
+        match self {
+            Self::Message(..) => (self, None),
+            Self::Seq(a, b) => {
+                let (first, rest) = a.split_first_message();
+                (
+                    first,
+                    Some(match rest {
+                        Some(rest) => Self::Seq(Box::new(rest), b.clone()),
+                        None => *b.clone(),
+                    }),
+                )
+            }
+            _ => panic!("shared message prefix must be sequential"),
+        }
+    }
     fn from_json(text: &str) -> Result<Self, String> {
         use planned_json::Json;
         fn number(value: &Json) -> Result<usize, String> {
@@ -844,8 +862,11 @@ async fn qualify(programs: Programs, scenario: Scenario<'_>) {
                 separator = ",";
                 if prefix_visits == 1 && actual == Outcome::Accepted {
                     prefixes
-                        .entry(vec![2 * u16::from(message.event) + u16::from(receive)])
-                        .or_insert_with(|| (vec![command], vec![choice.to_vec()]));
+                        .entry((
+                            vec![2 * u16::from(message.event) + u16::from(receive)],
+                            vec![choice.to_vec()],
+                        ))
+                        .or_insert_with(|| vec![command]);
                 }
                 // The independent occurrence-model checker decides whether
                 // this public call was permitted. Syntactic global order is
@@ -904,8 +925,8 @@ async fn qualify(programs: Programs, scenario: Scenario<'_>) {
                         .collect::<Vec<_>>(),
                 );
                 prefixes
-                    .entry(key.clone())
-                    .or_insert_with(|| (commands[..=index].to_vec(), history.clone()));
+                    .entry((key.clone(), history.clone()))
+                    .or_insert_with(|| commands[..=index].to_vec());
             }
         }
     }
@@ -920,9 +941,9 @@ async fn qualify(programs: Programs, scenario: Scenario<'_>) {
         "completed source plans and catalog words differ"
     );
     let mut checked_prefixes = std::collections::BTreeSet::new();
-    while let Some((key, (prefix, history))) = prefixes.pop_first() {
+    while let Some(((key, history), prefix)) = prefixes.pop_first() {
         assert!(
-            checked_prefixes.insert(key.clone()),
+            checked_prefixes.insert((key.clone(), history.clone())),
             "duplicate prefix replay"
         );
         for choice in choices {
@@ -975,10 +996,11 @@ async fn qualify(programs: Programs, scenario: Scenario<'_>) {
                     if prefix_visits == 1 && key.len() < 4 && actual == Outcome::Accepted {
                         let mut next = key.clone();
                         next.push(2 * u16::from(message.event) + u16::from(receive));
+                        let mut next_history = history.clone();
+                        next_history.push(choice.to_vec());
+                        let next = (next, next_history);
                         if !checked_prefixes.contains(&next) {
-                            let mut next_history = history.clone();
-                            next_history.push(choice.to_vec());
-                            prefixes.entry(next).or_insert((commands, next_history));
+                            prefixes.entry(next).or_insert(commands);
                         }
                     }
                 }

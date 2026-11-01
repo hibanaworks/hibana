@@ -488,9 +488,14 @@ message labels in the catalog, scripts and observations. The checker derives
 the requested type from that event and considers every enabled occurrence
 with the same logical endpoint, direction, label and payload type.
 `contract-assignments.tsv` records each concrete assignment.
-Choice entries visible to any potential holder keep their distinct labels,
-so generated branch dispatch remains unambiguous. This does not enumerate
-every possible partition of messages into shared types.
+The first three assignments keep choice entries visible to any potential holder
+distinct. A fourth assignment shares matching sequential entry contracts in
+resolved choices. Generated participants execute the common operation before
+using `offer()` to distinguish the remaining alternatives. Source occurrence
+tags still follow the immutable script; they do not select different public
+operations at that common entry. This does not enumerate every possible
+partition of messages into shared types, shared prefixes through parallel or
+repeated nodes, or an optional continuation after an indistinguishable entry.
 Reused outbound selectors in opposite parallel arms remain in the catalog as
 compile-fail cases. Their witnesses come from source role, label and payload
 kind, independently of the projection diagnostic; the generated build must
@@ -500,12 +505,16 @@ Elastic reentry negatives also use source witnesses: an unguarded global head
 and a matching send in its sequential continuation, including after a parallel
 join. This classifier does not infer additional local heads from logical roles.
 Rejections outside its proven cases still fail the gate as unclassified.
-The fixed `--contracts 0 9` catalog additionally combines repeated contracts
+The fixed `--contracts 0 12` catalog additionally combines repeated contracts
 with opposite directions, independent parallel fragments, a resolver, repetition
 and actual endpoint delegation. It also exercises an unread selected route arm
 beside an independent receive with the other arm's public contract, both with
 and without delegation. The selected frame remains unread while the independent
 receive progresses. It runs in the depth-four fuzz job.
+Its last three sources exercise a shared resolved entry in ordinary traffic,
+inside a roll, and in an actual Endpoint loan followed by resource operations
+and return. Reassociated sequential prefixes retain their original parallel
+and repeated subtrees; the emitter never extracts a message through either.
 The nested resolved-roll case also calls `offer`, drops its successful preview,
 then tries each typed operation from the same replayed prefix and resolver inputs.
 Matching operations may reuse that preview; other operations must still satisfy
@@ -519,15 +528,21 @@ separately and then rebuilding unconstrained states would lose earlier choices.
 Only scopes entered by a call consume that input. Later visits remain free to
 choose differently. A general Lean theorem checks the entry condition, and four
 concrete theorems cover shared entries, changed inputs and future visits. Actual
-Endpoint tests check the same cases. The catalog above still preserves distinct
-choice-entry labels; its shared-entry localside generation is not complete.
+Endpoint tests check the same cases. Short finite prefixes retain every recorded
+input history as well as the public operation word. A word alone can denote
+different selected branches and cannot be used to deduplicate these trials.
+The checker independently enumerates coherent histories, and checks complete
+script prefixes against inputs derived from the source's enclosing scopes.
+A general theorem preserves history in probe identity. A mutation removes one
+history with a different next-call result while retaining the other history's
+entire group; inventory checking must reject it.
 `check_prefix_input_sensitivity.sh` rejects two temporary checker mutations:
 discarding the replayed choices after validation and fixing unentered scopes.
 Both must falsify the corresponding concrete Lean theorem.
 `check_parked_offer_sensitivity.sh` runs all three contract assignments on the
 current source, then restores the old preview-handling production paths in a
 separate checkout. The restored version must reach and fail the generated
-`shape_24` localside with a send `PhaseInvariant`; this occurs before admission
+`shape_32` localside with a send `PhaseInvariant`; this occurs before admission
 probe comparison. It checks that generated inputs are unchanged and retains
 the patch and failure.
 Compiler failures do not count as detecting this defect.

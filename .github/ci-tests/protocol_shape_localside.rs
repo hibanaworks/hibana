@@ -96,7 +96,7 @@ pub(super) fn parallel_parts<'a>(source: &'a Protocol, parts: &mut Vec<&'a Proto
 }
 
 fn parallel_ancestors<'a>(source: &'a Protocol, target: &Protocol) -> Option<Vec<&'a Protocol>> {
-    if core::ptr::eq(source, target) {
+    if source == target {
         return Some(Vec::new());
     }
     match source {
@@ -182,6 +182,32 @@ fn heads<'a>(source: &'a Protocol, out: &mut Vec<&'a Protocol>) {
             heads(b, out);
         }
     }
+}
+
+/// Peel only sequential syntax. Crossing a parallel or repeated node here
+/// would impose an order or consume a visit that the source does not require.
+pub(super) fn split_first(source: &Protocol) -> Option<(&Protocol, Option<Protocol>)> {
+    match source {
+        Protocol::Message { .. } => Some((source, None)),
+        Protocol::Seq(a, b) => {
+            let (first, rest) = split_first(a)?;
+            Some((
+                first,
+                Some(match rest {
+                    Some(rest) => Protocol::Seq(Box::new(rest), b.clone()),
+                    None => *b.clone(),
+                }),
+            ))
+        }
+        _ => None,
+    }
+}
+
+pub(super) fn same_message(a: &Protocol, b: &Protocol) -> bool {
+    matches!((a, b), (
+        Protocol::Message { from: af, to: at, contract: ac, owned: ao, .. },
+        Protocol::Message { from: bf, to: bt, contract: bc, owned: bo, .. },
+    ) if (af, at, ac, ao) == (bf, bt, bc, bo))
 }
 
 struct Emitter<'a> {
@@ -450,7 +476,7 @@ impl Emitter<'_> {
                     let incoming = self
                         .route_owners
                         .iter()
-                        .find_map(|(node, owners)| core::ptr::eq(*node, source).then_some(*owners))
+                        .find_map(|(node, owners)| (*node == source).then_some(*owners))
                         .expect("missing source ownership at choice");
                     if incoming == 1 << actor {
                         return self.emit_route(source, actor, actor, names, primed);
@@ -576,13 +602,50 @@ impl Emitter<'_> {
                 self.emit(body, actor, names, None)
             }
         };
-        let left = arm(a);
-        let right = arm(b);
         if actor == controller {
+            let left = arm(a);
+            let right = arm(b);
             return format!("{{{select}if right{{{right}}}else{{{left}}}}}");
         }
-        let left_entries = first_local(a, actor, before);
-        let right_entries = first_local(b, actor, before);
+        // An identical public operation does not reveal the choice. Execute
+        // it before offering the remaining alternatives. Script selection
+        // chooses occurrence tags only: both emitted calls have the same
+        // logical roles, message contract, direction and payload kind.
+        let mut left_source = *a.clone();
+        let mut right_source = *b.clone();
+        let mut before = before;
+        let mut common = String::new();
+        while let (Some((a, at)), Some((b, bt))) =
+            (split_first(&left_source), split_first(&right_source))
+        {
+            if !same_message(a, b) || at.is_some() != bt.is_some() {
+                break;
+            }
+            let left = self.emit(a, actor, names, None);
+            let right = self.emit(b, actor, names, None);
+            common += &format!(
+                "let (entry,continuation)=script.split_first_message();{{let script=entry;if right{{{right}}}else{{{left}}}}}"
+            );
+            let (Some(at), Some(bt)) = (at, bt) else {
+                return format!("{{{select}{common}assert!(continuation.is_none());}}");
+            };
+            common += "let continuation=continuation.expect(\"shared entry requires a continuation\");let script=&continuation;";
+            if let Protocol::Message {
+                to, owned: true, ..
+            } = a
+            {
+                before = *to;
+            }
+            left_source = at;
+            right_source = bt;
+        }
+        let left = self.emit(&left_source, actor, names, None);
+        let right = self.emit(&right_source, actor, names, None);
+        let left_entries = first_local(&left_source, actor, before);
+        let right_entries = first_local(&right_source, actor, before);
+        if left_entries.is_empty() && right_entries.is_empty() {
+            return format!("{{{select}{common}}}");
+        }
         let mut views = std::collections::BTreeMap::new();
         for (view, label) in left_entries.iter().chain(&right_entries) {
             views.entry(*view).or_insert(*label);
@@ -639,7 +702,7 @@ impl Emitter<'_> {
             }
         }
         format!(
-            "{{{select}{preview}match label{{{branches}_=>panic!(\"unknown received branch\")}}}}"
+            "{{{select}{common}{preview}match label{{{branches}_=>panic!(\"unknown received branch\")}}}}"
         )
     }
 
@@ -1022,5 +1085,32 @@ mod tests {
         assert_eq!(route_owners(&generated.source, 1, &mut choices), 1);
         assert_eq!(choices.len(), 5);
         assert!(choices.iter().all(|(_, owners)| *owners == 2));
+    }
+
+    #[test]
+    fn shared_prefix_splitting_preserves_parallel_and_repeated_children() {
+        let first = message(0, 1, false);
+        let parallel = Protocol::Par(
+            Box::new(message(1, 2, false)),
+            Box::new(message(0, 2, false)),
+        );
+        let repeated = Protocol::Roll(Box::new(message(2, 0, false)));
+        let source = Protocol::Seq(
+            Box::new(Protocol::Seq(
+                Box::new(first.clone()),
+                Box::new(parallel.clone()),
+            )),
+            Box::new(repeated.clone()),
+        );
+        let (head, rest) = split_first(&source).unwrap();
+        assert!(head == &first);
+        assert!(
+            rest == Some(Protocol::Seq(
+                Box::new(parallel.clone()),
+                Box::new(repeated.clone())
+            ))
+        );
+        assert!(split_first(&parallel).is_none());
+        assert!(split_first(&repeated).is_none());
     }
 }
