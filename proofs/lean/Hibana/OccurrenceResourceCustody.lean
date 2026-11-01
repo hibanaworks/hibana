@@ -336,7 +336,7 @@ private theorem an_unfinished_resource_action_excludes_the_same_handoff
     (payload : binding.message.payload = .endpoint resource) :
     SourcePoint.accepted target.event ∉ points := by
   obtain ⟨run, elaborated, solved, mapped⟩ :=
-    accepted_normalized_path_has_its_exact_issuance_derivation plan.accepted plan.selected
+    accepted_expansion_path_has_its_exact_issuance_derivation plan.accepted plan.selected
   obtain ⟨symbolic, member, instantiated⟩ := instantiated_path_binding_has_source_input mapped located
   have messageAt := (instantiated_binding_retains_message_and_actor_references instantiated).1
   have valid : validMessage binding.message = true := by

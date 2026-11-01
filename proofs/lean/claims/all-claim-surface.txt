@@ -5282,6 +5282,14 @@ Hibana.a_pending_payload_requires_its_own_send : ∀ (resource : Nat) (sent : Op
     @Eq.{1} Bool (@Hibana.SourceOccurrenceCut.resumptionReady source (@Hibana.occurrenceCut source plan points) point)
       (@Hibana.SourceOccurrenceCut.resumptionReady source
         (@Hibana.occurrenceCut source plan (@Hibana.occurrenceLocalHistory source plan actor points)) point)
+Hibana.a_retained_loan_can_resume_after_the_owner_preserving_choice : @Eq.{1} Bool
+  ((@Hibana.SourceOccurrenceCut.ready Hibana.source✝
+        (@Hibana.occurrenceCut Hibana.source✝ Hibana.plan✝ Hibana.observedPoints✝)
+        (Hibana.SourcePoint.accepted (@OfNat.ofNat.{0} Nat (nat_lit 5) (instOfNatNat (nat_lit 5))))).and
+    (@Hibana.SourceOccurrenceCut.resumptionReady Hibana.source✝
+      (@Hibana.occurrenceCut Hibana.source✝ Hibana.plan✝ Hibana.observedPoints✝)
+      (Hibana.SourcePoint.accepted (@OfNat.ofNat.{0} Nat (nat_lit 5) (instOfNatNat (nat_lit 5))))))
+  true
 @Hibana.a_retained_publication_preserves_its_source_and_wire : ∀ {entry : Hibana.SourceAcceptance}
   {record : Hibana.ActorCommitRecord} {choreo : Hibana.Choreo} {session : Nat},
   @Eq.{1} Bool (Hibana.retainedSendPublicationCheck entry record choreo session) true →
@@ -6376,6 +6384,40 @@ Hibana.abort_peer_is_well_formed : ∀ (state : Hibana.TransportState), state.ab
           @LT.lt.{0} Nat instLTNat role roleCount →
             Or (@Eq.{1} Nat role controller)
               (@Eq.{1} Bool (Hibana.Choreo.observerPathsMergeable role leftBase rightBase left right) true))
+@Hibana.accepted_expansion_path_has_its_exact_issuance_derivation : ∀
+  {issuance : List.{0} Hibana.EndpointDelegation.Issuance} {source : Hibana.EndpointDelegation.Source}
+  {normalized : Hibana.EndpointDelegation.Normalization} {selected : Hibana.EndpointDelegation.NormalizedPath},
+  @Eq.{1} (Option.{0} Hibana.EndpointDelegation.Normalization)
+      (Hibana.EndpointDelegation.normalizeExpansion issuance source)
+      (@some.{0} Hibana.EndpointDelegation.Normalization normalized) →
+    @Membership.mem.{0, 0} Hibana.EndpointDelegation.NormalizedPath (List.{0} Hibana.EndpointDelegation.NormalizedPath)
+        (@List.instMembership.{0} Hibana.EndpointDelegation.NormalizedPath) normalized.paths selected →
+      @Exists.{1} Hibana.EndpointDelegation.Elaboration fun run =>
+        And
+          (@Eq.{1} (Option.{0} Hibana.EndpointDelegation.Elaboration)
+            (Hibana.EndpointDelegation.elaborate source.resources
+              (Hibana.EndpointDelegation.initialOwners source.resources) selected.selections source
+              (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0))))
+            (@some.{0} Hibana.EndpointDelegation.Elaboration run))
+          (And
+            (@Eq.{1} Bool
+              (@List.all.{0} Hibana.EndpointDelegation.Equation run.equations
+                (Hibana.EndpointDelegation.equationAccepted normalized.issuance))
+              true)
+            (@Eq.{1} (Option.{0} (List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)))
+              (@List.mapM.{0, 0, 0} Option.{0} instMonadOption.{0}
+                (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding)
+                (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)
+                (fun x =>
+                  Hibana.accepted_normalized_path_has_its_exact_issuance_derivation.match_1.{1}
+                    (fun x => Option.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)) x fun event symbolic =>
+                    @bind.{0, 0} Option.{0} (@Monad.toBind.{0, 0} Option.{0} instMonadOption.{0})
+                      Hibana.EndpointDelegation.Binding (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)
+                      (Hibana.EndpointDelegation.instantiateBinding normalized.issuance symbolic) fun binding =>
+                      @some.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)
+                        (@Prod.mk.{0, 0} Nat Hibana.EndpointDelegation.Binding event binding))
+                run.bindings)
+              (@some.{0} (List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)) selected.bindings)))
 @Hibana.accepted_normalized_path_has_a_solved_source_derivation : ∀ {source : Hibana.EndpointDelegation.Source}
   {normalized : Hibana.EndpointDelegation.Normalization} {selected : Hibana.EndpointDelegation.NormalizedPath},
   @Eq.{1} (Option.{0} Hibana.EndpointDelegation.Normalization) (Hibana.EndpointDelegation.normalize source)
@@ -10939,6 +10981,17 @@ Hibana.event_range_membership : ∀ (start length event : Nat),
   Iff (@Membership.mem.{0, 0} Nat (List.{0} Nat) (@List.instMembership.{0} Nat) (Hibana.eventRange start length) event)
     (And (@LE.le.{0} Nat instLENat start event)
       (@LT.lt.{0} Nat instLTNat event (@HAdd.hAdd.{0, 0, 0} Nat Nat Nat (@instHAdd.{0} Nat instAddNat) start length)))
+Hibana.every_observed_prefix_step_is_ready : @Eq.{1} Bool
+  (@List.all.{0} (Prod.{0, 0} Hibana.SourcePoint Nat)
+    (@List.zipIdx.{0} Hibana.SourcePoint Hibana.observedPoints✝
+      (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0))))
+    fun x =>
+    Hibana.every_observed_prefix_step_is_ready.match_1.{1} (fun x => Bool) x fun point index =>
+      @Hibana.SourceOccurrenceCut.ready Hibana.source✝
+        (@Hibana.occurrenceCut Hibana.source✝ Hibana.plan✝
+          (@List.take.{0} Hibana.SourcePoint index Hibana.observedPoints✝))
+        point)
+  true
 Hibana.exact_current_offer_observations_are_key_exact : ∀ (target : Hibana.ActiveOfferKey)
   (observations : List.{0} Hibana.ActiveOfferObservation) (observation : Hibana.ActiveOfferObservation),
   Iff
@@ -12306,6 +12359,15 @@ Hibana.offered_receipt_blocks_second_poll : ∀ (before after : Hibana.Transport
             (@List.nil.{0} View))
           (@Eq.{1} (List.{0} Frame) (@Hibana.EndpointTransfer.Observation.inFlight View Frame state)
             (@List.nil.{0} Frame)))
+Hibana.only_the_owner_preserving_selection_survives : And
+  (@Eq.{1} Nat (@List.length.{0} Hibana.EndpointDelegation.NormalizedPath Hibana.normalized✝.paths)
+    (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1))))
+  (@Eq.{1} (Option.{0} Hibana.RouteArm)
+    (Hibana.EndpointDelegation.chosen? (@Hibana.SourceOccurrenceCut.path Hibana.source✝ Hibana.plan✝).selections
+      { start := @OfNat.ofNat.{0} Nat (nat_lit 3) (instOfNatNat (nat_lit 3)),
+        split := @OfNat.ofNat.{0} Nat (nat_lit 4) (instOfNatNat (nat_lit 4)),
+        stop := @OfNat.ofNat.{0} Nat (nat_lit 5) (instOfNatNat (nat_lit 5)) })
+    (@some.{0} Hibana.RouteArm Hibana.RouteArm.left))
 Hibana.operation_phase_preserves_endpoint_value_identity : ∀ (view : Hibana.ActorViewObservation)
   (phase : Hibana.PublicOperationPhase),
   @Eq.{1} (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))
@@ -16356,6 +16418,9 @@ Hibana.symbolic_owner_prefix_has_initial_or_last_handoff : ∀ (key : Hibana.End
                     (Hibana.EndpointDelegation.ownerAfterBindings key owner bindings) loan.receiver))))
 Hibana.terminal_public_operation_clear_is_exact : ∀ (current : Hibana.PublicOperationPhase),
   @Eq.{1} Hibana.PublicOperationPhase (Hibana.clearPublicOperationTerminal current) Hibana.PublicOperationPhase.idle
+Hibana.the_expanded_tree_is_not_a_valid_all_alternatives_global : @Eq.{1}
+  (Option.{0} Hibana.EndpointDelegation.Normalization) (Hibana.EndpointDelegation.normalize Hibana.expanded✝)
+  (@none.{0} Hibana.EndpointDelegation.Normalization)
 @Hibana.the_measured_boundary_of_a_sending_target_is_its_exact_handoff_or_fault : ∀ {image : Hibana.RustDescriptorImage}
   {choreo : Hibana.Choreo} {data : Hibana.DecodedActorOrder} {path : Hibana.EndpointDelegation.NormalizedPath}
   {key : Hibana.EndpointDelegation.EndpointKey} {target : Hibana.DecodedActorRow}
@@ -16384,6 +16449,23 @@ Hibana.terminal_public_operation_clear_is_exact : ∀ (current : Hibana.PublicOp
             And (@Eq.{1} Bool (sample.check image choreo) true)
               (And (@Eq.{1} Nat sample.view key.role)
                 (@Ne.{1} (Option.{0} Hibana.SessionFault) sample.after.fault (@none.{0} Hibana.SessionFault))))
+Hibana.the_new_receipt_still_requires_its_own_acceptance : @Eq.{1} Bool
+  (@Hibana.SourceOccurrenceCut.ready Hibana.source✝
+    (@Hibana.occurrenceCut Hibana.source✝ Hibana.plan✝ Hibana.observedPoints✝)
+    (Hibana.SourcePoint.committed
+      { event := @OfNat.ofNat.{0} Nat (nat_lit 5) (instOfNatNat (nat_lit 5)),
+        side := Hibana.EndpointDelegation.Side.receive }))
+  false
+Hibana.the_original_global_checks_both_alternatives : @Eq.{1} Nat
+  (@List.length.{0} Hibana.EndpointDelegation.NormalizedPath Hibana.initial✝.paths)
+  (@OfNat.ofNat.{0} Nat (nat_lit 2) (instOfNatNat (nat_lit 2)))
+Hibana.the_selected_expansion_keeps_the_original_initial_issuer : @Eq.{1} (List.{0} Hibana.EndpointDelegation.Issuance)
+  Hibana.normalized✝.issuance Hibana.initial✝.issuance
+Hibana.the_unselected_transfer_cannot_enter_the_same_source_word : @Eq.{1} Bool
+  (@Hibana.SourceOccurrenceCut.ready Hibana.source✝
+    (@Hibana.occurrenceCut Hibana.source✝ Hibana.plan✝ Hibana.observedPoints✝)
+    (Hibana.SourcePoint.accepted (@OfNat.ofNat.{0} Nat (nat_lit 4) (instOfNatNat (nat_lit 4)))))
+  false
 @Hibana.top_level_roll_step_establishes_session_fidelity : ∀ {config next : Hibana.GlobalConfig},
   Hibana.SessionFidelity config →
     @Eq.{1} (Option.{0} Hibana.GlobalConfig) config.topLevelRollStep? (@some.{0} Hibana.GlobalConfig next) →

@@ -280,6 +280,20 @@ def normalize (source : Source) : Option Normalization := do
     some ({ selections, bindings } : NormalizedPath)
   some { issuance := sortIssuance issuance, paths := normalized }
 
+/-- Check a finite execution expansion against the original global's fixed
+issuance. The expansion is a witness for one actual selection, so an invalid
+unselected alternative does not erase its consistent paths. The original
+global is still checked by `normalize`, including all its alternatives. -/
+def normalizeExpansion (issuance : List Issuance) (source : Source) : Option Normalization :=
+  let checked := (paths (source.scopes 0)).filterMap fun selections => do
+    let run ← elaborate source.resources (initialOwners source.resources) selections source 0
+    if !(run.equations.all (equationAccepted issuance)) then none else
+    let bindings ← run.bindings.mapM fun (event, symbolic) => do
+      let binding ← instantiateBinding issuance symbolic
+      some (event, binding)
+    some ({ selections, bindings } : NormalizedPath)
+  if checked.isEmpty then none else some { issuance, paths := checked }
+
 inductive Side where
   | send | receive | local
   deriving Repr, DecidableEq, BEq

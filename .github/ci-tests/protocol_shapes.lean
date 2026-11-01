@@ -496,7 +496,7 @@ def shapePlans : (source : Source) → List (SourceOccurrenceCut source)
   | source =>
       let cuts := shapeBoundedUnfoldings source ++ shapeExtraUnfoldings source ++
         shapeElasticUnfoldings source
-      -- Qualify the whole expansion. Otherwise an incorrectly reassigned
+      -- Check every operation in the selected expansion. An incorrectly reassigned
       -- resource operation could disappear from this actor's prerequisites,
       -- incorrectly releasing its following ordinary send.
       (cuts.flatMap fun cut => checkedPlans source cut.1 cut.2).filter shapeOriginalActorsMatch
@@ -549,6 +549,15 @@ private def returnedRollEndpoint : Source := .seq
     (.seq (.roll (.send ⟨⟨0, 3⟩, ⟨0, 2⟩, 1, .wire 0⟩))
       (.send ⟨⟨0, 1⟩, ⟨0, 0⟩, 2, .endpoint ⟨0, 3⟩⟩))
     (.send ⟨⟨0, 0⟩, ⟨0, 1⟩, 3, .endpoint ⟨0, 3⟩⟩))
+
+private def ownerPreservingContinuation : Source := .seq
+  (.roll (.seq
+    (.send ⟨⟨0, 0⟩, ⟨0, 1⟩, 1, .endpoint ⟨0, 3⟩⟩)
+    (.seq (.send ⟨⟨0, 3⟩, ⟨0, 1⟩, 4, .wire 0⟩)
+      (.send ⟨⟨0, 1⟩, ⟨0, 0⟩, 1, .endpoint ⟨0, 3⟩⟩))))
+  (.route (some 17)
+    (.send ⟨⟨0, 0⟩, ⟨0, 2⟩, 2, .wire 0⟩)
+    (.send ⟨⟨0, 0⟩, ⟨0, 2⟩, 3, .endpoint ⟨0, 3⟩⟩))
 
 theorem a_new_holder_cannot_inherit_another_actors_rolled_operation :
     shapePermits (shapeStates returnedRollEndpoint
@@ -1120,8 +1129,14 @@ def main (args : List String) : IO UInt32 := do
   unless shapePermits (shapeStates movedUnrelatedResource
       ((shapePlans movedUnrelatedResource).map ShapePlan.of) [0, 1, 2, 3, 4, 5]) [] 1 false do
     throw (IO.userError "an unrelated resource transfer blocked a retained roll")
+  let selectedPlans := (shapePlans ownerPreservingContinuation).map ShapePlan.of
+  for (word, expected) in [
+      ([0, 1, 2, 3, 4, 5, 6, 7], true),
+      ([0, 1, 2, 3, 4, 5, 8, 9], false)] do
+    unless shapePermits (shapeStates ownerPreservingContinuation selectedPlans word) [] 0 false == expected do
+      throw (IO.userError s!"selected-expansion regression: word={word} expected={expected}")
   if args == ["--check-guarded-reentry"] then
-    IO.println "Guarded reentry regressions: all eight source cuts passed"
+    IO.println "Guarded reentry regressions: all ten source cuts passed"
     return 0
   let (inputPath, outputPath, weakenRoot) ← match args with
     | [input, output] => pure (input, output, false)

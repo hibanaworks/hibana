@@ -124,7 +124,38 @@ theorem accepted_normalized_path_has_its_exact_issuance_derivation
           (List.mem_flatMap.mpr ⟨(selections, run), runMember, equationMember⟩)
       · simpa only [sorting_issuance_preserves_binding] using bindingsAt
 
-/-- The older existential form follows from the exact normalizer output;
+/-- Each retained expansion path is checked against the supplied initial
+issuance, including its actual ownership equations and every binding. -/
+theorem accepted_expansion_path_has_its_exact_issuance_derivation
+    {issuance : List Issuance} {source : Source}
+    {normalized : Normalization} {selected : NormalizedPath}
+    (accepted : normalizeExpansion issuance source = some normalized)
+    (member : selected ∈ normalized.paths) :
+    ∃ run,
+      elaborate source.resources (initialOwners source.resources) selected.selections source 0 = some run ∧
+      run.equations.all (equationAccepted normalized.issuance) = true ∧
+      (run.bindings.mapM fun (event, symbolic) => do
+        let binding ← instantiateBinding normalized.issuance symbolic
+        some (event, binding)) = some selected.bindings := by
+  unfold normalizeExpansion at accepted
+  dsimp only at accepted
+  split at accepted
+  next empty => simp at accepted
+  next nonempty =>
+    have same := Option.some.inj accepted
+    subst normalized
+    obtain ⟨selections, _, checked⟩ := List.mem_filterMap.mp member
+    obtain ⟨run, sourceAt, remaining⟩ := Option.bind_eq_some_iff.mp checked
+    cases solved : run.equations.all (equationAccepted issuance) with
+    | false => simp [solved] at remaining
+    | true =>
+      simp only [solved, Bool.not_true, Bool.false_eq_true, ite_false] at remaining
+      obtain ⟨bindings, bindingsAt, written⟩ := Option.bind_eq_some_iff.mp remaining
+      have pathSame := Option.some.inj written
+      subst selected
+      exact ⟨run, sourceAt, solved, bindingsAt⟩
+
+/-- The existential form follows from the exact normalizer output;
 there is no independently selected initial issuance. -/
 theorem accepted_normalized_path_has_a_solved_source_derivation
     {source : Source} {normalized : Normalization} {selected : NormalizedPath}

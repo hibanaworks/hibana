@@ -282,3 +282,7 @@ path = "tests/receive_lane_alignment.rs"
 [[bench]]
 name = "roll_cost"
 harness = false
+
+[[test]]
+name = "selected_owner_reentry"
+path = "tests/selected_owner_reentry.rs"

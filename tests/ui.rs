@@ -176,6 +176,7 @@ fn g_compile_fails() {
     compile_fail(&t, "tests/ui/transport-payload-borrow-escape.rs");
     compile_fail(&t, "tests/ui/g-owned-parallel-use.rs");
     compile_fail(&t, "tests/ui/g-owned-second-issuer.rs");
+    compile_fail(&t, "tests/ui/g-owned-unselected-resumption.rs");
     compile_fail(&t, "tests/ui/g-owned-roll-reissue.rs");
     compile_fail(&t, "tests/ui/g-owned-roll-unobserved-handoff.rs");
     compile_fail(&t, "tests/ui/g-owned-roll-temporary-resource-cycle.rs");

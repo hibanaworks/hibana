@@ -505,16 +505,21 @@ Elastic reentry negatives also use source witnesses: an unguarded global head
 and a matching send in its sequential continuation, including after a parallel
 join. This classifier does not infer additional local heads from logical roles.
 Rejections outside its proven cases still fail the gate as unclassified.
-The fixed `--contracts 0 12` catalog additionally combines repeated contracts
+The fixed `--contracts 0 13` catalog additionally combines repeated contracts
 with opposite directions, independent parallel fragments, a resolver, repetition
 and actual endpoint delegation. It also exercises an unread selected route arm
 beside an independent receive with the other arm's public contract, both with
 and without delegation. The selected frame remains unread while the independent
 receive progresses. It runs in the depth-four fuzz job.
-Its last three sources exercise a shared resolved entry in ordinary traffic,
+Three sources exercise a shared resolved entry in ordinary traffic,
 inside a roll, and in an actual Endpoint loan followed by resource operations
 and return. Reassociated sequential prefixes retain their original parallel
 and repeated subtrees; the emitter never extracts a message through either.
+The final source resumes a completed loan after a resolved continuation whose
+selected arm keeps its owner and whose other arm transfers it. The original
+global must normalize for both alternatives. A finite execution expansion is
+checked against that original issuance for its selected path; rejecting the
+unselected alternative of that expansion must not erase the legal execution.
 The nested resolved-roll case also calls `offer`, drops its successful preview,
 then tries each typed operation from the same replayed prefix and resolver inputs.
 Matching operations may reuse that preview; other operations must still satisfy

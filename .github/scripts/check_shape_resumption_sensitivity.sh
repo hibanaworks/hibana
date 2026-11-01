@@ -16,7 +16,7 @@ cat .github/ci-tests/endpoint_conformance.lean .github/ci-tests/protocol_shapes.
 (cd proofs/lean && lake env lean -j1 --run "${OUTPUT}/current.lean" --check-guarded-reentry) \
   > "${OUTPUT}/guarded-positive.log" 2>&1
 : > "${OUTPUT}/mutants.tsv"
-for defect in resumption context actor guarded-context; do
+for defect in resumption context actor guarded-context selected-expansion; do
   cp "${OUTPUT}/current.lean" "${OUTPUT}/${defect}.lean"
   if [[ "${defect}" == resumption ]]; then
     perl -0pi -e '
@@ -36,17 +36,22 @@ for defect in resumption context actor guarded-context; do
     # The entry-owner check also protects the concrete return example. Keep
     # checking this predicate's own general contract when it is made vacuous.
     expected="'shapeOriginalActorsMatch_checks_each_occurrence' depends on axioms: [propext, sorryAx]"
-  else
+  elif [[ "${defect}" == guarded-context ]]; then
     perl -0pi -e '
       s/\| \.roll body => ⟨\.hole, body, rfl⟩ :: \(\(shapeRollFocuses body\)\.map fun focus =>\n      ⟨\.roll focus.context, focus.body, by simp only \[RollContext.plug, focus.source_eq\]⟩\)/| .roll body => [⟨.hole, body, rfl⟩]/ == 1 or die "missing parent-roll context\n";
       s/(def shapeRollFocuses.*?\n)  \| \.route resolver left right =>.*?\n\ndef shapeAlongsidePlans/$1  | .route _ _ _ => []\n\ndef shapeAlongsidePlans/s == 1 or die "missing route context\n";
     ' "${OUTPUT}/${defect}.lean"
     expected='guarded inner-roll regression:'
+  else
+    perl -0pi -e '
+      s/(  \| some original =>\n)(    match expandedAt : normalizeExpansion)/$1    if (normalize expanded).isNone then [] else\n$2/ == 1 or die "missing selected expansion normalization\n";
+    ' "${OUTPUT}/${defect}.lean"
+    expected='selected-expansion regression:'
   fi
   diff -u "${OUTPUT}/current.lean" "${OUTPUT}/${defect}.lean" \
     > "${OUTPUT}/${defect}.patch" || test "$?" == 1
   status=0
-  if [[ "${defect}" == guarded-context ]]; then
+  if [[ "${defect}" == guarded-context || "${defect}" == selected-expansion ]]; then
     (cd proofs/lean && lake env lean -j1 --run "${OUTPUT}/${defect}.lean" --check-guarded-reentry) \
       > "${OUTPUT}/${defect}.log" 2>&1 || status=$?
   else
@@ -96,5 +101,5 @@ shasum -a 256 --check "${OUTPUT}/owner-original.sha256" > "${OUTPUT}/owner-sourc
 rm -r "${owner_copy}"
 shasum -a 256 --check "${OUTPUT}/source.sha256" > "${OUTPUT}/source-check.log"
 rm "${OUTPUT}/current.lean" "${OUTPUT}/resumption.lean" "${OUTPUT}/context.lean" \
-  "${OUTPUT}/actor.lean" "${OUTPUT}/guarded-context.lean"
-echo 'Shape resumption sensitivity: all five restored checker omissions are rejected'
+  "${OUTPUT}/actor.lean" "${OUTPUT}/guarded-context.lean" "${OUTPUT}/selected-expansion.lean"
+echo 'Shape resumption sensitivity: all six restored checker omissions are rejected'

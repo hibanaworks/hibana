@@ -158,7 +158,7 @@ theorem a_recorded_handoff_keeps_earlier_receipts_and_excludes_old_acceptances
     SourcePoint.committed ⟨earlier, .receive⟩ ∈ points ∧
       (occurrenceCut plan points).ready (.accepted earlier) = false := by
   obtain ⟨run, elaborated, solved, mapped⟩ :=
-    accepted_normalized_path_has_its_exact_issuance_derivation plan.accepted plan.selected
+    accepted_expansion_path_has_its_exact_issuance_derivation plan.accepted plan.selected
   have causal := earlier_resource_receipts_causally_precede_a_later_handoff
     elaborated solved mapped later binding sender located payload decoded
     earlier previous previousAt previousPayload less
@@ -362,7 +362,7 @@ theorem an_unfinished_resource_operation_excludes_a_later_accepted_handoff
     (nextDecoded : action? plan.path.bindings ⟨next, .send⟩ = some sender)
     (later : target.event < next) : SourcePoint.accepted next ∉ points := by
   obtain ⟨run, elaborated, solved, mapped⟩ :=
-    accepted_normalized_path_has_its_exact_issuance_derivation plan.accepted plan.selected
+    accepted_expansion_path_has_its_exact_issuance_derivation plan.accepted plan.selected
   have causal := required_resource_operations_causally_precede_a_later_handoff
     elaborated solved mapped next nextBinding sender nextAt nextPayload nextDecoded
     target.event binding target.side action located required decoded later

@@ -82,8 +82,8 @@ inductive SourceUnfolding : Source → Source → Type where
       SourceUnfolding body next →
       SourceUnfolding (.seq (context.plug (.roll body)) continuation) (.seq earlier next)
   /-- A completed body releases both a later copy and its continuation.
-  Neither is ordered after the other. The cut still requires normalization
-  of the whole expansion with the original affine issuance. -/
+  Neither is ordered after the other. The cut still checks its selected
+  expansion path against the original affine issuance. -/
   | resumeAlongsideContinuation (context : RollContext) :
       SourceUnfolding (context.plug (.roll body)) earlier → SourceUnfolding (.roll body) next →
       SourceUnfolding continuation tail →
@@ -354,7 +354,7 @@ structure SourceOccurrenceCut (source : Source) where
   expanded : Source
   unfolding : SourceUnfolding source expanded
   normalized : Normalization
-  accepted : normalize expanded = some normalized
+  accepted : normalizeExpansion original.issuance expanded = some normalized
   sameIssuance : normalized.issuance = original.issuance
   path : NormalizedPath
   selected : path ∈ normalized.paths

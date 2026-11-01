@@ -1249,8 +1249,27 @@ fn rolled_mirrored_nested_resolved_route_reenters_passive_offer_asymmetric_paths
                 );
                 assert_eq!(
                     last_selection.map(|event| event.causal_key() >> 8),
+                    Some(1),
+                    "outer-left reentry route selection must identify the executing controller: {events:?}"
+                );
+                let committed_send = events
+                    .iter()
+                    .rev()
+                    .find(|event| event.id() == tap::ENDPOINT_SEND);
+                assert_eq!(
+                    committed_send.map(|event| event.arg1() >> 24),
+                    Some(1),
+                    "outer-left reentry send must retain its logical view: {events:?}"
+                );
+                assert_eq!(
+                    committed_send.map(|event| (event.arg1() >> 16) & 0xff),
                     Some(0),
-                    "outer-left reentry route selection must publish on the offer lane: {events:?}"
+                    "outer-left reentry send must commit on the offer lane: {events:?}"
+                );
+                assert_eq!(
+                    committed_send.map(|event| event.arg1() & 0xffff),
+                    Some(0),
+                    "outer-left reentry send must identify its actual source event: {events:?}"
                 );
                 assert_eq!(
                     last_selection.map(|event| event.arg1() >> 16),

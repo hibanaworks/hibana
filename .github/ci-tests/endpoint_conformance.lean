@@ -38,18 +38,21 @@ inductive Oracle where
 
 def checkedPlans (source expanded : Source) (unfolding : SourceUnfolding source expanded) :
     List (SourceOccurrenceCut source) :=
-  match originalAt : normalize source, expandedAt : normalize expanded with
-  | some original, some normalized =>
-    if same : normalized.issuance = original.issuance then
-      normalized.paths.attach.filterMap fun path =>
-        if guarded : unfolding.guardsCompatible normalized.issuance path.val.bindings = true then
-          some {
-            original, originalAccepted := originalAt, expanded, unfolding,
-            normalized, accepted := expandedAt, sameIssuance := same,
-            path := path.val, selected := path.property, guarded, observed := fun _ => false }
-        else none
-    else []
-  | _, _ => []
+  match originalAt : normalize source with
+  | some original =>
+    match expandedAt : normalizeExpansion original.issuance expanded with
+    | none => []
+    | some normalized =>
+      if same : normalized.issuance = original.issuance then
+        normalized.paths.attach.filterMap fun path =>
+          if guarded : unfolding.guardsCompatible normalized.issuance path.val.bindings = true then
+            some {
+              original, originalAccepted := originalAt, expanded, unfolding,
+              normalized, accepted := expandedAt, sameIssuance := same,
+              path := path.val, selected := path.property, guarded, observed := fun _ => false }
+          else none
+      else []
+  | none => []
 
 /-- Only bounded instances of the established source unfolding are used.
 The serialized mutant deliberately omits the interleaved continuation case. -/

@@ -149,6 +149,11 @@ run_miri_test \
 
 (
   hibana_disable_repo_tests_cfg
+  run_miri_test selected-owner-reentry -p hibana --test selected_owner_reentry
+)
+
+(
+  hibana_disable_repo_tests_cfg
   run_miri_test public-passive-parallel-target -p hibana --test passive_parallel_target
 )
 

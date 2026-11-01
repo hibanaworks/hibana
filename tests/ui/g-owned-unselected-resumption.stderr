@@ -1,0 +1,60 @@
+error[E0080]: evaluation panicked: owned endpoint has conflicting initial actors; role=3; help: give each transferred Endpoint one initial holder
+ --> src/g/source.rs
+  |
+  |     const EVENTS: EffList<CAPACITY> = ProgramSourceData::<CAPACITY>::emit::<Steps>();
+  |                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `hibana::g::source::SourceEvents::<hibana::g::Seq<hibana::g::Seq<hibana::g::Seq<hibana::g::Send<0, 1, hibana::g::Msg<1, hibana::Endpoint<'_, 3>>>, hibana::g::Seq<hibana::g::Send<3, 1, hibana::g::Msg<4, ()>>, hibana::g::Send<1, 0, hibana::g::Msg<1, hibana::Endpoint<'_, 3>>>>>, hibana::g::Resolve<hibana::g::Route<hibana::g::Send<0, 2, hibana::g::Msg<2, ()>>, hibana::g::Send<0, 2, hibana::g::Msg<3, hibana::Endpoint<'_, 3>>>>, 17>>, hibana::g::Seq<hibana::g::Send<0, 1, hibana::g::Msg<1, hibana::Endpoint<'_, 3>>>, hibana::g::Seq<hibana::g::Send<3, 1, hibana::g::Msg<4, ()>>, hibana::g::Send<1, 0, hibana::g::Msg<1, hibana::Endpoint<'_, 3>>>>>>, 16>::EVENTS` failed inside this call
+  |
+note: inside `g::source::ProgramSourceData::<16>::emit::<Seq<Seq<Seq<hibana::g::Send<0, 1, Msg<1, Endpoint<'_, 3>>>, Seq<hibana::g::Send<3, 1, Msg<4, ()>>, hibana::g::Send<1, 0, Msg<1, Endpoint<'_, 3>>>>>, Resolve<Route<hibana::g::Send<0, 2, Msg<2, ()>>, hibana::g::Send<0, 2, Msg<3, Endpoint<'_, 3>>>>, 17>>, Seq<hibana::g::Send<0, 1, Msg<1, Endpoint<'_, 3>>>, Seq<hibana::g::Send<3, 1, Msg<4, ()>>, hibana::g::Send<1, 0, Msg<1, Endpoint<'_, 3>>>>>>>`
+ --> src/g/source.rs
+  |
+  |               Err(error) => super::diagnostic_message::panic_diagnostic(
+  |  ___________________________^
+  | |                 super::ProjectionDiagnostic::from_ownership_error(*error),
+  | |             ),
+  | |_____________^
+note: inside `g::diagnostic_message::panic_diagnostic`
+ --> $RUST/core/src/panic.rs
+  |
+  |         $crate::panicking::panic_display(&$arg);
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the failure occurred here
+  |
+ ::: src/g/diagnostic_message.rs
+  |
+  |         Ok(message) => panic!("{}", message),
+  |                        --------------------- in this macro invocation
+
+note: erroneous constant encountered
+ --> src/g/source.rs
+  |
+  |         let mut eff = SourceEvents::<Steps, CAPACITY>::EVENTS;
+  |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+note: erroneous constant encountered
+ --> src/g.rs
+  |
+  |         Self::SOURCE.eff_list();
+  |         ^^^^^^^^^^^^
+
+note: erroneous constant encountered
+ --> src/g.rs
+  |
+  |         let source = Self::SOURCE_EFF_LIST;
+  |                      ^^^^^^^^^^^^^^^^^^^^^
+
+note: erroneous constant encountered
+ --> src/g/role_projection.rs
+  |
+  |     if !ProgramProjection::<Steps, CAPACITY>::IMAGE.contains_role(ROLE) {
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+note: erroneous constant encountered
+ --> src/global/role_program/program.rs
+  |
+  |     crate::global::program::bind_projection(program, const { crate::g::project_image::<ROLE, _>() })
+  |                                                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+note: the above error was encountered while instantiating `fn project::<0, Program<Seq<Seq<Seq<hibana::g::Send<0, 1, Msg<1, Endpoint<'_, 3>>>, Seq<hibana::g::Send<3, 1, Msg<4, ()>>, hibana::g::Send<1, 0, Msg<1, Endpoint<'_, 3>>>>>, Resolve<Route<hibana::g::Send<0, 2, Msg<2, ()>>, hibana::g::Send<0, 2, Msg<3, Endpoint<'_, 3>>>>, 17>>, Seq<hibana::g::Send<0, 1, Msg<1, Endpoint<'_, 3>>>, Seq<hibana::g::Send<3, 1, Msg<4, ()>>, hibana::g::Send<1, 0, Msg<1, Endpoint<'_, 3>>>>>>>>`
+  --> tests/ui/g-owned-unselected-resumption.rs:17:13
+   |
+17 |     let _ = project::<0>(&global);
+   |             ^^^^^^^^^^^^^^^^^^^^^

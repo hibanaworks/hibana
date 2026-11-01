@@ -214,7 +214,7 @@ theorem a_ready_occurrence_resource_has_its_initial_owner_or_same_word_receipt
             record.step.event previousEvent .receive = true ∧
           occurrenceCall? calls key = some previousEvent) := by
   obtain ⟨run, elaborated, solved, mapped⟩ :=
-    accepted_normalized_path_has_its_exact_issuance_derivation plan.accepted plan.selected
+    accepted_expansion_path_has_its_exact_issuance_derivation plan.accepted plan.selected
   obtain ⟨⟨event, symbolic⟩, sourceMember, lowered⟩ := successful_option_mapM_has_input
     mapped (target.event, binding) (List.mem_of_find?_eq_some located)
   cases bindingAt : instantiateBinding plan.normalized.issuance symbolic with
