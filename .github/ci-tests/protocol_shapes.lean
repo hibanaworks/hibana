@@ -183,8 +183,11 @@ theorem ShapePlan.ready_matches_source (prepared : ShapePlan source)
   rw [prepared.dependencies_eq, prepared.resumptions_eq]
   by_cases present : point ∈ sourceVisitPoints prepared.plan.path.bindings
   · rw [shapeRowsReady_matches_source_readiness]
+    have observations : points.contains = (fun observed => decide (observed ∈ points)) := by
+      funext observed
+      exact List.contains_eq_mem observed points
     simp [shapeResumptionsReady, shapeResumptionRows, shapeLookupMappedRows, present,
-      prepared_resumption_matches_source, occurrenceCut]
+      prepared_resumption_matches_source, occurrenceCut, observations]
   · simp [shapeRowsReady, shapeDependencyRows, shapeLookupMappedRows, present,
       SourceOccurrenceCut.ready, occurrenceCut]
 
