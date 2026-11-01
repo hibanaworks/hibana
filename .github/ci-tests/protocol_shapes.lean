@@ -102,14 +102,20 @@ def shapeScopeEntered (scope : Scope) (points : List SourcePoint) : Bool :=
 -- A retained body inserted inside a continuation still belongs to its original
 -- source scope. Its position in the expanded tree cannot choose the surrounding
 -- continuation's resolver before a real operation of that scope is admitted.
-def shapeResolverEntered (plan : SourceOccurrenceCut source) (scope : Scope) (id : Nat)
+def shapeResolverEnteredFrom (originals : List (Scope × Nat))
+    (occurrences : List (Nat × Message)) (scope : Scope) (id : Nat)
     (points : List SourcePoint) : Bool :=
   shapeScopeEntered scope (points.filter fun point =>
-    match (plan.unfolding.occurrences 0)[shapePointEvent point]? with
+    match occurrences[shapePointEvent point]? with
     | none => false
     | some (origin, _) =>
-        (shapeResolvers source 0).any fun (original, resolver) =>
+        originals.any fun (original, resolver) =>
           resolver == id && original.start ≤ origin && origin < original.stop)
+
+def shapeResolverEntered (plan : SourceOccurrenceCut source) (scope : Scope) (id : Nat)
+    (points : List SourcePoint) : Bool :=
+  shapeResolverEnteredFrom (shapeResolvers source 0) (plan.unfolding.occurrences 0)
+    scope id points
 
 theorem an_entered_resolver_has_an_operation_in_its_original_source_scope
     (plan : SourceOccurrenceCut source) (scope : Scope) (id : Nat) (points : List SourcePoint)
@@ -118,7 +124,7 @@ theorem an_entered_resolver_has_an_operation_in_its_original_source_scope
       (plan.unfolding.occurrences 0)[shapePointEvent point]? = some (origin, message) ∧
       (original, id) ∈ shapeResolvers source 0 ∧
       original.start ≤ origin ∧ origin < original.stop := by
-  unfold shapeResolverEntered shapeScopeEntered at entered
+  unfold shapeResolverEntered shapeResolverEnteredFrom shapeScopeEntered at entered
   obtain ⟨point, present, _⟩ := List.any_eq_true.mp entered
   obtain ⟨inPoints, selected⟩ := List.mem_filter.mp present
   cases originAt : (plan.unfolding.occurrences 0)[shapePointEvent point]? with
@@ -138,13 +144,20 @@ theorem an_entered_resolver_has_an_operation_in_its_original_source_scope
 
 -- Inputs choose only scopes entered by this call. Future visits stay free;
 -- a scope already entered keeps the selection in this same source plan.
-def shapeEntryChoices (plan : SourceOccurrenceCut source)
+def shapeEntryChoicesFrom (originals resolvers : List (Scope × Nat))
+    (occurrences : List (Nat × Message)) (selections : List Selection)
     (before after : List SourcePoint) (choice : List Nat) : Bool :=
-  (shapeResolvers plan.expanded 0).all fun (scope, id) =>
-    shapeResolverEntered plan scope id before || !shapeResolverEntered plan scope id after ||
-    plan.path.selections.all fun selection =>
+  resolvers.all fun (scope, id) =>
+    shapeResolverEnteredFrom originals occurrences scope id before ||
+    !shapeResolverEnteredFrom originals occurrences scope id after ||
+    selections.all fun selection =>
       selection.scope != scope || selection.arm ==
         if choice.contains id then .right else .left
+
+def shapeEntryChoices (plan : SourceOccurrenceCut source)
+    (before after : List SourcePoint) (choice : List Nat) : Bool :=
+  shapeEntryChoicesFrom (shapeResolvers source 0) (shapeResolvers plan.expanded 0)
+    (plan.unfolding.occurrences 0) plan.path.selections before after choice
 
 theorem a_freshly_entered_resolver_uses_its_recorded_input
     (plan : SourceOccurrenceCut source) (before after : List SourcePoint)
@@ -155,7 +168,10 @@ theorem a_freshly_entered_resolver_uses_its_recorded_input
     (entered : shapeResolverEntered plan scope id after = true)
     (selected : selection ∈ plan.path.selections) (same : selection.scope = scope) :
     (selection.arm == if choice.contains id then .right else .left) = true := by
+  unfold shapeEntryChoices shapeEntryChoicesFrom at checked
   have scopeChecked := List.all_eq_true.mp checked (scope, id) present
+  change (shapeResolverEntered plan scope id before ||
+    !shapeResolverEntered plan scope id after || _) = true at scopeChecked
   simp only [fresh, entered, Bool.not_true, Bool.false_or] at scopeChecked
   have arm := List.all_eq_true.mp scopeChecked selection selected
   have reflexive : (scope != scope) = false := by
@@ -229,9 +245,22 @@ structure ShapePlan (source : Source) where
   dependencies_eq : dependencies = shapeDependencyRows plan
   resumptions : List (SourcePoint × List ResumptionQuery)
   resumptions_eq : resumptions = shapeResumptionRows plan
+  entryChoices : List SourcePoint → List SourcePoint → List Nat → Bool
+  entryChoices_eq : ∀ before after choice,
+    entryChoices before after choice = shapeEntryChoices plan before after choice
 
 def ShapePlan.of (plan : SourceOccurrenceCut source) : ShapePlan source :=
-  ⟨plan, shapeDependencyRows plan, rfl, shapeResumptionRows plan, rfl⟩
+  let originals := shapeResolvers source 0
+  let resolvers := shapeResolvers plan.expanded 0
+  let occurrences := plan.unfolding.occurrences 0
+  ⟨plan, shapeDependencyRows plan, rfl, shapeResumptionRows plan, rfl,
+    shapeEntryChoicesFrom originals resolvers occurrences plan.path.selections,
+    fun _ _ _ => rfl⟩
+
+theorem ShapePlan.entryChoices_matches_source (prepared : ShapePlan source)
+    (before after : List SourcePoint) (choice : List Nat) :
+    prepared.entryChoices before after choice = shapeEntryChoices prepared.plan before after choice :=
+  prepared.entryChoices_eq before after choice
 
 def ShapePlan.ready (prepared : ShapePlan source) (points : List SourcePoint)
     (point : SourcePoint) : Bool :=
@@ -257,6 +286,7 @@ theorem ShapePlan.ready_matches_source (prepared : ShapePlan source)
 #print axioms shapeLookupMappedRows
 #print axioms shapeRowsReady_matches_source_readiness
 #print axioms ShapePlan.ready_matches_source
+#print axioms ShapePlan.entryChoices_matches_source
 
 theorem shapeOriginalActorsMatch_checks_each_occurrence (plan : SourceOccurrenceCut source)
     (checked : shapeOriginalActorsMatch plan = true)
@@ -339,13 +369,13 @@ def shapePermits (states : List (ShapePlan source × List SourcePoint))
     (choice : List Nat) (label : Nat) (receive : Bool) : Bool :=
   states.any fun (plan, points) =>
     (shapeAdvance plan points label receive).any fun after =>
-      shapeEntryChoices plan.plan points after choice
+      plan.entryChoices points after choice
 
 def shapeInputStep (states : List (ShapePlan source × List SourcePoint))
     (command : Nat) (choice : List Nat) : List (ShapePlan source × List SourcePoint) :=
   states.flatMap fun (plan, points) =>
     ((shapeAdvance plan points (command / 2) (command % 2 == 1)).filter fun after =>
-      shapeEntryChoices plan.plan points after choice).map (plan, ·)
+      plan.entryChoices points after choice).map (plan, ·)
 
 -- Resolver inputs belong to a call, not to the source alias used to name it.
 -- Keep one coherent source-plan witness through all the recorded calls.

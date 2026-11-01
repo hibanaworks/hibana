@@ -49,6 +49,7 @@ for defect in resumption context actor guarded-context selected-expansion contin
     expected='continuation-cut regression:'
   elif [[ "${defect}" == resolver-origin ]]; then
     perl -0pi -e '
+      s/shapeResolverEnteredFrom originals occurrences scope id (before|after)/shapeScopeEntered scope $1/g == 2 or die "missing prepared resolver origin checks\n";
       s/shapeResolverEntered plan scope id (before|after)/shapeScopeEntered scope $1/g == 4 or die "missing resolver origin checks\n";
     ' "${OUTPUT}/${defect}.lean"
     expected='continuation-cut regression:'

@@ -538,6 +538,11 @@ These are bounded comparisons, not a proof for arbitrary visit counts.
 Every replayed call uses its recorded resolver input. The checker retains one
 coherent source-plan witness across the whole prefix; validating each call
 separately and then rebuilding unconstrained states would lose earlier choices.
+Each prepared plan retains its immutable source origins and resolver scopes
+once, alongside its dependency and resumption queries. Resolver checks reuse
+those values during replay. A general Lean equality proves that the prepared
+function gives the source rule's result for every pair of histories and every
+resolver input; it does not cache observed admission outcomes.
 Only scopes entered by a call consume that input. Later visits remain free to
 choose differently. A general Lean theorem checks the entry condition, and four
 concrete theorems cover shared entries, changed inputs and future visits. Actual
