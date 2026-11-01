@@ -19,8 +19,8 @@ git ls-files --cached --others --exclude-standard -z |
   rsync -a --from0 --files-from=- ./ "${MUTANT}/"
 git -C "${MUTANT}" add -A
 git -C "${MUTANT}" diff --cached --binary HEAD > "${OUTPUT}/current-source.patch"
-git -C "${MUTANT}" apply --check "${ROOT_DIR}/proofs/checks/runtime/parked-offer/RestoreFault.patch"
-git -C "${MUTANT}" apply "${ROOT_DIR}/proofs/checks/runtime/parked-offer/RestoreFault.patch"
+git -C "${MUTANT}" apply --unidiff-zero --check "${ROOT_DIR}/proofs/checks/runtime/parked-offer/RestoreFault.patch"
+git -C "${MUTANT}" apply --unidiff-zero "${ROOT_DIR}/proofs/checks/runtime/parked-offer/RestoreFault.patch"
 git -C "${MUTANT}" diff --binary > "${OUTPUT}/mutation.patch"
 status=0
 (
