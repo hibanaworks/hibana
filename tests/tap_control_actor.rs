@@ -17,6 +17,77 @@ use hibana::{
 };
 
 #[test]
+fn passive_replies_do_not_claim_a_local_resolver_decision() {
+    type Left = g::Msg<21, ()>;
+    type Right = g::Msg<22, ()>;
+    type Reply = g::Msg<23, ()>;
+    let global = g::route(
+        g::seq(g::send::<0, 1, Left>(), g::send::<1, 0, Reply>()),
+        g::seq(g::send::<0, 1, Right>(), g::send::<1, 0, Reply>()),
+    )
+    .resolve::<77>()
+    .roll();
+    let p0 = project::<0>(&global);
+    let p1 = project::<1>(&global);
+    let input = core::cell::Cell::new(DecisionArm::Left);
+    let captured = core::cell::Cell::new(Vec::new());
+    let observer = |event| {
+        let mut rows = captured.take();
+        rows.push(event);
+        captured.set(rows);
+    };
+    let mut slab = [0; 16 * 1024];
+    let mut storage = SessionKitStorage::uninit();
+    let rv = storage
+        .init()
+        .rendezvous(&mut slab, common::TestTransport::new())
+        .unwrap();
+    rv.observe(&observer);
+    rv.set_resolver(
+        &p0,
+        ResolverRef::<77>::decision_state(&input, |input| Ok(input.get())),
+    )
+    .unwrap();
+    let mut a = rv.enter(SessionId::new(91), &p0).unwrap();
+    let mut b = rv.enter(SessionId::new(91), &p1).unwrap();
+    let mut cx = Context::from_waker(Waker::noop());
+    let operation = pin!(async {
+        for arm in [DecisionArm::Left, DecisionArm::Right] {
+            input.set(arm);
+            let branch = a.offer().await?;
+            match arm {
+                DecisionArm::Left => {
+                    branch.send::<Left>(&()).await?;
+                    b.recv::<Left>().await?;
+                }
+                DecisionArm::Right => {
+                    branch.send::<Right>(&()).await?;
+                    b.recv::<Right>().await?;
+                }
+            }
+            b.send::<Reply>(&()).await?;
+            a.recv::<Reply>().await?;
+        }
+        Ok::<_, hibana::EndpointError>(())
+    });
+    assert!(matches!(operation.poll(&mut cx), Poll::Ready(Ok(()))));
+    let rows = captured.take();
+    let selections: Vec<_> = rows
+        .iter()
+        .filter(|row| row.id() == tap::ROUTE_ARM_SELECTION && row.causal_key() & 0xff == 2)
+        .collect();
+    assert_eq!(
+        selections.len(),
+        2,
+        "only the two fresh controller decisions are resolver selections"
+    );
+    assert!(
+        selections.iter().all(|row| row.causal_key() >> 8 == 0),
+        "a passive reply cannot claim a resolver decision"
+    );
+}
+
+#[test]
 fn repeated_control_records_identify_the_actor_instead_of_its_lane() {
     type Left = g::Msg<7, ()>;
     type Right = g::Msg<8, ()>;

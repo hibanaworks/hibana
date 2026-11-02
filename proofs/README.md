@@ -675,6 +675,11 @@ and later typed operations. Each callback must have one observation before
 the API returns or suspends. `check_resolver_observation_sensitivity.sh`
 separately removes the observation from each resolver invocation path and
 requires these generated executions to fail. Compiler errors do not qualify.
+Resolver-selection observations must also match a prior decision by the same
+actor, session and route site. A participant replying after learning a choice
+does not make another resolver decision. Actual Endpoint tests cover both
+arms across rolled visits; a separate control removes the fresh-controller
+condition and must fail the generated provenance check.
 This connects the Rust observation producers to the audit contract; source
 execution theorems alone do not establish that Rust emitted every required
 record. In particular, a resolver-backed outgoing `offer()` must be recorded

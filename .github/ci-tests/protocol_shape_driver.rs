@@ -330,12 +330,27 @@ async fn replay(
     let [slab0, slab1, slab2, slab3] = &mut slabs;
     let resolver_calls = std::cell::Cell::new(0usize);
     let resolver_audits = std::cell::Cell::new(0usize);
+    let recorded_decisions = std::cell::Cell::new(Vec::new());
     let resolver_input = (decisions, &resolver_calls);
     let capture = |event: hibana::runtime::tap::TapEvent| {
         if event.id() == hibana::runtime::tap::RESOLVER_AUDIT {
             resolver_audits.set(resolver_audits.get() + 1);
             assert_eq!(resolver_audits.get(), resolver_calls.get(),
                 "an audit must describe an actual resolver call, not a later commit");
+            let mut decisions = recorded_decisions.take();
+            decisions.push(event);
+            recorded_decisions.set(decisions);
+        }
+        if event.id() == hibana::runtime::tap::ROUTE_ARM_SELECTION && event.causal_key() & 255 == 2 {
+            let decisions = recorded_decisions.take();
+            let prior = decisions.iter().rev().find(|prior| {
+                prior.arg0() == event.arg0()
+                    && prior.causal_key() >> 8 == event.causal_key() >> 8
+                    && prior.arg1() >> 16 == event.arg1() >> 16
+            });
+            assert!(prior.is_some_and(|prior| u32::from(prior.causal_key() & 255) == event.arg1() & 65535),
+                "a resolver selection must name the actor that actually decided");
+            recorded_decisions.set(decisions);
         }
     };
     let mut storage0 = SessionKitStorage::uninit();
