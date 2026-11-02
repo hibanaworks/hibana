@@ -48,6 +48,7 @@ CARGO_PROFILE_RELEASE_LTO=true CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1 \
 bash ./.github/scripts/check_control_actor_sensitivity.sh
 bash ./.github/scripts/check_scope_reentry_sensitivity.sh
 bash ./.github/scripts/check_send_poll_sensitivity.sh
+bash ./.github/scripts/check_pending_acceptance_sensitivity.sh
 bash ./.github/scripts/check_lean_proofs.sh
 bash proofs/checks/projection/endpoint-delegation/check.sh
 bash ./.github/scripts/check_miri.sh

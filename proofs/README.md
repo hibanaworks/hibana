@@ -414,7 +414,7 @@ visit. A general theorem checks each active body's selected anchor; native
 regressions evaluate the full bounded plan set for both selected and unselected
 last visits, including a continuation whose receive is still pending.
 Admission also checks `SourceOccurrenceCut.resumptionReady`: once an actor has
-entered a new body visit, its outgoing continuation waits for that visit's
+committed an operation in a new body visit, its outgoing continuation waits for that visit's
 local body operations. A late incoming continuation can still use an earlier
 completed visit. The shape checker uses this same source rule as the separate
 public-operation conformance checker. It stores immutable resumption inputs
@@ -422,6 +422,16 @@ once for each source point; a general equality theorem relates the resulting
 table check to the original rule for every observation history. Regression
 theorems and actual delegated Endpoint calls distinguish the
 unfinished and completed current-body cases.
+Physical acceptance alone does not enter the sender's visit: a transport may
+deliver and its peer may receive while the sender's poll remains Pending.
+`PendingAcceptance.lean` checks the source of EPF's actual Endpoint regression,
+where the continuation publishes before that pending sender. It also requires
+the remaining body after a committed entry and permits the continuation after
+that body completes. `check_pending_acceptance_sensitivity.sh` restores each
+opposite error and requires its concrete claim to fail. Generated shape commands
+currently combine acceptance and publication in one completed send; these
+Pending boundaries supplement that schedule domain rather than claiming it
+already enumerates arbitrary partial-poll interleavings.
 Each expanded binding must also belong to the original source's actor
 projection. Merely normalizing an expanded body at its new holder is not
 enough: returning a resource does not give its new holder another actor's

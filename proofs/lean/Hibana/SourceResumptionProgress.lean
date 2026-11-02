@@ -3,18 +3,20 @@ import Hibana.SourceOccurrenceProjection
 namespace Hibana
 open EndpointDelegation
 
-private def pointEvent : SourcePoint → Nat
-  | .accepted event => event
-  | .committed action => action.event
-
 private def SourceResumption.inBody (scope : SourceResumption) (event : Nat) : Bool :=
   scope.body.contains event && scope.tail.all (event < ·)
 
 private def SourceResumption.inTail (scope : SourceResumption) (event : Nat) : Bool :=
   scope.tail.contains event
 
-/-- Outgoing continuations use this actor's current body after it enters that
-body. Incoming old continuations do not acquire a new prerequisite. Reads are
+/-- Transport acceptance can precede sender publication and does not mutate
+the sender's progress. Only this actor's committed operation enters its body. -/
+private def SourceResumption.committedPoint (scope : SourceResumption) : SourcePoint → Bool
+  | .accepted _ => false
+  | .committed action => scope.inBody action.event
+
+/-- Outgoing continuations use this actor's current body after it commits an
+entry. Incoming old continuations do not acquire a new prerequisite. Reads are
 restricted to source points owned by the target actor. The occurrence word is
 proof interpretation, not an additional application progress state. -/
 def SourceOccurrenceCut.resumptionDepends (plan : SourceOccurrenceCut source)
@@ -28,7 +30,7 @@ def SourceOccurrenceCut.resumptionDepends (plan : SourceOccurrenceCut source)
             (plan.unfolding.resumptions 0).any fun scope =>
               scope.inBody before.event && scope.inTail after &&
                 (occurrenceLocalDomain plan actor).any fun point =>
-                  scope.inBody (pointEvent point) && observed point
+                  scope.committedPoint point && observed point
   | _, _ => false
 
 def SourceOccurrenceCut.resumptionReady (plan : SourceOccurrenceCut source)
@@ -62,7 +64,7 @@ def SourceOccurrenceCut.prepareResumption (plan : SourceOccurrenceCut source)
             let scopes := (plan.unfolding.resumptions 0).map fun (scope : SourceResumption) =>
               (scope.inBody before.event && scope.inTail after,
                 (occurrenceLocalDomain plan actor).map fun member =>
-                  (member, scope.inBody (pointEvent member)))
+                  (member, scope.committedPoint member))
             ⟨prior, sameActor, scopes⟩
     | _, _ => ⟨prior, false, []⟩
 

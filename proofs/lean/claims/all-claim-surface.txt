@@ -325,6 +325,47 @@ Hibana.EndpointDelegation.withOwner_same : ∀ (owners : Hibana.EndpointDelegati
       (@Hibana.EndpointTransfer.initial View Frame initialValue) requests state →
     @LE.le.{0} Nat instLENat (@Hibana.EndpointTransfer.Observation.authorityCount View Frame state)
       (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1)))
+Hibana.PendingAcceptance.a_committed_entry_still_waits_for_its_remaining_body : And
+  (@Eq.{1} Bool
+    (@Hibana.SourceOccurrenceCut.ready Hibana.twoStepSource✝
+      (@Hibana.occurrenceCut Hibana.twoStepSource✝ Hibana.twoStepPlan✝ Hibana.publishedEntry✝)
+      (Hibana.SourcePoint.accepted (@OfNat.ofNat.{0} Nat (nat_lit 4) (instOfNatNat (nat_lit 4)))))
+    true)
+  (@Eq.{1} Bool
+    (@Hibana.SourceOccurrenceCut.resumptionReady Hibana.twoStepSource✝
+      (@Hibana.occurrenceCut Hibana.twoStepSource✝ Hibana.twoStepPlan✝ Hibana.publishedEntry✝)
+      (Hibana.SourcePoint.accepted (@OfNat.ofNat.{0} Nat (nat_lit 4) (instOfNatNat (nat_lit 4)))))
+    false)
+Hibana.PendingAcceptance.completing_that_body_enables_the_continuation : have observed :=
+  @HAppend.hAppend.{0, 0, 0} (List.{0} Hibana.SourcePoint) (List.{0} Hibana.SourcePoint) (List.{0} Hibana.SourcePoint)
+    (@instHAppendOfAppend.{0} (List.{0} Hibana.SourcePoint) (@List.instAppend.{0} Hibana.SourcePoint))
+    Hibana.publishedEntry✝
+    (@List.cons.{0} Hibana.SourcePoint
+      (Hibana.SourcePoint.committed
+        { event := @OfNat.ofNat.{0} Nat (nat_lit 3) (instOfNatNat (nat_lit 3)),
+          side := Hibana.EndpointDelegation.Side.local })
+      (@List.nil.{0} Hibana.SourcePoint));
+And
+  (@Eq.{1} Bool
+    (@Hibana.SourceOccurrenceCut.ready Hibana.twoStepSource✝
+      (@Hibana.occurrenceCut Hibana.twoStepSource✝ Hibana.twoStepPlan✝ observed)
+      (Hibana.SourcePoint.accepted (@OfNat.ofNat.{0} Nat (nat_lit 4) (instOfNatNat (nat_lit 4)))))
+    true)
+  (@Eq.{1} Bool
+    (@Hibana.SourceOccurrenceCut.resumptionReady Hibana.twoStepSource✝
+      (@Hibana.occurrenceCut Hibana.twoStepSource✝ Hibana.twoStepPlan✝ observed)
+      (Hibana.SourcePoint.accepted (@OfNat.ofNat.{0} Nat (nat_lit 4) (instOfNatNat (nat_lit 4)))))
+    true)
+Hibana.PendingAcceptance.the_pending_continuation_has_its_source_prerequisites : @Eq.{1} Bool
+  (@Hibana.SourceOccurrenceCut.ready Hibana.source✝
+    (@Hibana.occurrenceCut Hibana.source✝ Hibana.plan✝ Hibana.beforeTail✝)
+    (Hibana.SourcePoint.accepted (@OfNat.ofNat.{0} Nat (nat_lit 2) (instOfNatNat (nat_lit 2)))))
+  true
+Hibana.PendingAcceptance.unpublished_acceptance_does_not_enter_the_senders_roll : @Eq.{1} Bool
+  (@Hibana.SourceOccurrenceCut.resumptionReady Hibana.source✝
+    (@Hibana.occurrenceCut Hibana.source✝ Hibana.plan✝ Hibana.beforeTail✝)
+    (Hibana.SourcePoint.accepted (@OfNat.ofNat.{0} Nat (nat_lit 2) (instOfNatNat (nat_lit 2)))))
+  true
 @Hibana.RollContext.contains_message : ∀ {entry : Prod.{0, 0} Nat Hibana.EndpointDelegation.Message}
   (context : Hibana.RollContext) (body : Hibana.EndpointDelegation.Source) (start : Nat),
   @Membership.mem.{0, 0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Message)

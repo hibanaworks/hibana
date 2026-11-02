@@ -24,6 +24,7 @@ import Hibana.ActorVisitProgress
 import Hibana.SourceOccurrenceProgress
 import Hibana.SelectedExpansion
 import Hibana.SelectedContinuation
+import Hibana.PendingAcceptance
 import Hibana.SourceOccurrenceTrace
 import Hibana.OccurrenceResourceOrigin
 import Hibana.ResourceOccurrenceCausality
