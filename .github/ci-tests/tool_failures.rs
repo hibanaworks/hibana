@@ -330,11 +330,11 @@ fn standalone_proof_logs_preserve_failed_tool_status_and_diagnostics() {
     let lean = root.join("bin/lean");
     fs::write(&lean, "#!/bin/bash\nif [[ $1 == --version ]]; then echo 'Lean (version 4.30.0, test)'; exit 0; fi\nif [[ $PROOF_TEST_EXIT == solver ]]; then cat \"$PROOF_TEST_ROOT/lean-success\"; exit 0; fi\nprintf 'proof stdout diagnostic\\n'\nprintf 'proof stderr diagnostic\\n' >&2\nexit \"$PROOF_TEST_EXIT\"\n").unwrap();
     fs::set_permissions(&lean, fs::Permissions::from_mode(0o755)).unwrap();
-    for family in [
-        "recv-lane-census",
-        "pending-events",
-        "event-admission",
-        "parallel-offer-ingress",
+    for (family, uses_solver) in [
+        ("recv-lane-census", true),
+        ("pending-events", true),
+        ("event-admission", false),
+        ("parallel-offer-ingress", false),
     ] {
         let relative = format!("proofs/checks/runtime/{family}/check.sh");
         fs::create_dir_all(root.join(format!("proofs/checks/runtime/{family}"))).unwrap();
@@ -387,23 +387,30 @@ fn standalone_proof_logs_preserve_failed_tool_status_and_diagnostics() {
         };
         fs::write(root.join("lean-success"), lean_success).unwrap();
         let z3 = root.join("bin/z3");
-        fs::write(&z3, "#!/bin/bash\nprintf 'solver stdout diagnostic\\n'\nprintf 'solver stderr diagnostic\\n' >&2\nexit 23\n").unwrap();
+        let solver_marker = root.join("solver-called");
+        fs::write(&z3, "#!/bin/bash\n: > \"$PROOF_TEST_ROOT/solver-called\"\nprintf 'solver stdout diagnostic\\n'\nprintf 'solver stderr diagnostic\\n' >&2\nexit 23\n").unwrap();
         fs::set_permissions(&z3, fs::Permissions::from_mode(0o755)).unwrap();
         let output = run("solver");
         assert_eq!(
             output.status.code(),
-            Some(23),
+            Some(if uses_solver { 23 } else { 0 }),
             "{family}: {}\n{}",
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
-        assert!(String::from_utf8_lossy(&output.stdout).contains("solver stdout diagnostic"));
-        assert!(String::from_utf8_lossy(&output.stderr).contains("solver stderr diagnostic"));
-        assert!(
-            fs::read_to_string(evidence.join("z3.log"))
-                .unwrap()
-                .contains("solver stdout diagnostic")
-        );
+        assert_eq!(solver_marker.exists(), uses_solver, "{family}");
+        if uses_solver {
+            assert!(String::from_utf8_lossy(&output.stdout).contains("solver stdout diagnostic"));
+            assert!(String::from_utf8_lossy(&output.stderr).contains("solver stderr diagnostic"));
+            assert!(
+                fs::read_to_string(evidence.join("z3.log"))
+                    .unwrap()
+                    .contains("solver stdout diagnostic")
+            );
+            fs::remove_file(solver_marker).unwrap();
+        } else {
+            assert!(!evidence.join("z3.log").exists(), "{family}");
+        }
         fs::remove_file(z3).unwrap();
     }
     fs::remove_dir_all(root).unwrap();
