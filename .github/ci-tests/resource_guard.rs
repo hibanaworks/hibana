@@ -9,6 +9,7 @@ use std::{
     },
     path::PathBuf,
     process::{Child, Command},
+    sync::atomic::{AtomicI32, Ordering},
     thread,
     time::Duration,
 };
@@ -20,6 +21,59 @@ type Result<T> = std::result::Result<T, String>;
 
 unsafe extern "C" {
     fn kill(pid: i32, signal: i32) -> i32;
+    fn getppid() -> i32;
+    fn getpgrp() -> i32;
+    fn setpgid(pid: i32, group: i32) -> i32;
+    fn signal(number: i32, handler: usize) -> usize;
+}
+
+// Actual OS cancellation, unrelated to Hibana's protocol or application state.
+static INTERRUPT: AtomicI32 = AtomicI32::new(0);
+
+extern "C" fn interrupted(number: i32) {
+    INTERRUPT.store(number, Ordering::Relaxed);
+}
+
+fn parent() -> i32 {
+    // SAFETY: getppid has no arguments or memory preconditions.
+    unsafe { getppid() }
+}
+
+fn prepare_guardian() -> Result<()> {
+    let own = i32::try_from(std::process::id()).map_err(|e| e.to_string())?;
+    // A controller's group cancellation must not kill the monitor before it
+    // can collect the workload, whose group is already separate from it.
+    // SAFETY: getpgrp has no preconditions; (0, 0) selects only this process.
+    if unsafe { getpgrp() } != own && unsafe { setpgid(0, 0) } != 0 {
+        return Err(format!(
+            "cannot isolate validation monitor: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    for number in [1, 2, 15] {
+        // POSIX sig_t is a pointer-sized handler. SIG_ERR is all bits set.
+        // The handler only stores a lock-free integer; cleanup runs below in
+        // normal process context, not inside a signal handler.
+        // SAFETY: these catchable signals and the C-ABI handler are valid.
+        if unsafe { signal(number, interrupted as *const () as usize) } == usize::MAX {
+            return Err(format!(
+                "cannot install validation cancellation: {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn cancellation(controller: i32) -> Option<i32> {
+    let number = INTERRUPT.load(Ordering::Relaxed);
+    if number != 0 {
+        Some(128 + number)
+    } else if controller <= 1 || parent() != controller {
+        Some(143)
+    } else {
+        None
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -170,7 +224,7 @@ fn stop(child: &mut Child) -> Result<()> {
     Ok(())
 }
 
-fn run(command: &[String], limit: u64, lock_path: PathBuf) -> Result<i32> {
+fn run(command: &[String], limit: u64, lock_path: PathBuf, controller: i32) -> Result<i32> {
     let lock: File = OpenOptions::new()
         .read(true)
         .write(true)
@@ -181,6 +235,9 @@ fn run(command: &[String], limit: u64, lock_path: PathBuf) -> Result<i32> {
         .map_err(|e| e.to_string())?;
     lock.try_lock()
         .map_err(|e| format!("another local validation is active: {e}"))?;
+    if let Some(status) = cancellation(controller) {
+        return Ok(status);
+    }
     let mut child = Command::new(&command[0])
         .args(&command[1..])
         .env("CARGO_BUILD_JOBS", "1")
@@ -190,6 +247,10 @@ fn run(command: &[String], limit: u64, lock_path: PathBuf) -> Result<i32> {
         .map_err(|e| e.to_string())?;
     let mut maximum = 0;
     let result = loop {
+        if let Some(status) = cancellation(controller) {
+            eprintln!("validation controller cancelled or exited: status={status}");
+            break Ok(status);
+        }
         match child.try_wait() {
             Ok(Some(status)) => {
                 break Ok(status.code().unwrap_or(128 + status.signal().unwrap_or(0)));
@@ -219,6 +280,11 @@ fn run(command: &[String], limit: u64, lock_path: PathBuf) -> Result<i32> {
 }
 
 fn main() {
+    let controller = parent();
+    if let Err(error) = prepare_guardian() {
+        eprintln!("validation memory guard failed: {error}");
+        std::process::exit(2);
+    }
     let mut command = env::args().skip(1).collect::<Vec<_>>();
     if command.first().is_some_and(|arg| arg == "--") {
         command.remove(0);
@@ -228,7 +294,7 @@ fn main() {
         std::process::exit(2);
     }
     let lock = env::temp_dir().join("hibana-local-validation.lock");
-    match run(&command, STOP_BYTES, lock) {
+    match run(&command, STOP_BYTES, lock, controller) {
         Ok(status) => std::process::exit(status),
         Err(error) => {
             eprintln!("validation memory guard failed: {error}");
@@ -308,7 +374,10 @@ mod tests {
     fn command_status_and_single_workload_lock_are_preserved() {
         let path = test_lock();
         let command = ["sh".into(), "-c".into(), "exit 31".into()];
-        assert_eq!(run(&command, 64 * 1024 * 1024, path.clone()).unwrap(), 31);
+        assert_eq!(
+            run(&command, 64 * 1024 * 1024, path.clone(), parent()).unwrap(),
+            31
+        );
         let lock = OpenOptions::new()
             .read(true)
             .write(true)
@@ -316,7 +385,7 @@ mod tests {
             .unwrap();
         lock.lock().unwrap();
         assert!(
-            run(&command, 64 * 1024 * 1024, path.clone())
+            run(&command, 64 * 1024 * 1024, path.clone(), parent())
                 .unwrap_err()
                 .contains("another local validation is active")
         );
@@ -342,13 +411,128 @@ mod tests {
             "children".into(),
             exe,
         ];
-        let result = run(&command, 32 * 1024 * 1024, path.clone());
+        let result = run(&command, 32 * 1024 * 1024, path.clone(), parent());
         let unrelated_still_live = unrelated.try_wait().unwrap().is_none();
         unrelated.kill().unwrap();
         unrelated.wait().unwrap();
         std::fs::remove_file(path).unwrap();
         assert_eq!(result.unwrap(), 137);
         assert!(unrelated_still_live);
+    }
+
+    fn wait_for_pid(path: &std::path::Path) -> i32 {
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while std::time::Instant::now() < deadline {
+            if let Ok(text) = std::fs::read_to_string(path)
+                && let Ok(pid) = text.trim().parse()
+            {
+                return pid;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        panic!("child did not publish its PID: {}", path.display());
+    }
+
+    fn live(pid: i32) -> bool {
+        let output = Command::new("ps")
+            .args(["-o", "stat=", "-p", &pid.to_string()])
+            .output()
+            .unwrap();
+        let state = String::from_utf8(output.stdout).unwrap();
+        !state.trim().is_empty() && !state.trim().starts_with('Z')
+    }
+
+    fn stopped(pid: i32) -> bool {
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while std::time::Instant::now() < deadline {
+            if !live(pid) {
+                return true;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        false
+    }
+
+    #[test]
+    fn monitor_cancellation_collects_the_workload_and_preserves_other_processes() {
+        let file = test_lock();
+        let mut unrelated = Command::new("sleep").arg("30").spawn().unwrap();
+        let mut guard = Command::new(env::current_exe().unwrap())
+            .args([
+                "--ignored",
+                "--exact",
+                "tests::guardian_child",
+                "--test-threads=1",
+            ])
+            .env("HIBANA_GUARD_CHILD_PID", &file)
+            .spawn()
+            .unwrap();
+        let workload = wait_for_pid(&file);
+        // SAFETY: guard.id names our live subprocess; only it receives SIGTERM.
+        unsafe {
+            kill(guard.id() as i32, 15);
+        }
+        let status = guard.wait().unwrap();
+        let collected = stopped(workload);
+        let preserved = unrelated.try_wait().unwrap().is_none();
+        // Cleanup also applies when running the deliberately broken control.
+        unsafe {
+            kill(-workload, 9);
+        }
+        unrelated.kill().unwrap();
+        unrelated.wait().unwrap();
+        std::fs::remove_file(file).unwrap();
+        assert_eq!(status.code(), Some(143));
+        assert!(collected);
+        assert!(preserved);
+    }
+
+    #[test]
+    fn killing_the_controller_group_does_not_leave_an_unmonitored_workload() {
+        let guard_file = test_lock();
+        let child_file = test_lock();
+        let mut wrapper = Command::new("sh").args(["-c",
+            "\"$1\" --ignored --exact tests::guardian_child --test-threads=1 & guard=$!; printf '%s\\n' \"$guard\" > \"$2\"; wait \"$guard\"",
+            "controller"])
+            .arg(env::current_exe().unwrap()).arg(&guard_file)
+            .env("HIBANA_GUARD_CHILD_PID", &child_file).process_group(0).spawn().unwrap();
+        let guard = wait_for_pid(&guard_file);
+        let workload = wait_for_pid(&child_file);
+        // SAFETY: process_group(0) created this private controller group.
+        unsafe {
+            kill(-(wrapper.id() as i32), 9);
+        }
+        wrapper.wait().unwrap();
+        let collected = stopped(workload);
+        let monitor_collected = stopped(guard);
+        // Kill any survivors before asserting, including in the defect control.
+        unsafe {
+            kill(-workload, 9);
+            kill(guard, 9);
+        }
+        std::fs::remove_file(guard_file).unwrap();
+        std::fs::remove_file(child_file).unwrap();
+        assert!(collected);
+        assert!(monitor_collected);
+    }
+
+    #[test]
+    #[ignore = "OS process fixture, run only as a guarded child"]
+    fn guardian_child() {
+        let controller = parent();
+        prepare_guardian().unwrap();
+        let file = env::var("HIBANA_GUARD_CHILD_PID").unwrap();
+        let command = [
+            "sh".into(),
+            "-c".into(),
+            "printf '%s\\n' \"$$\" > \"$1\"; sleep 30 & wait".into(),
+            "workload".into(),
+            file,
+        ];
+        let lock = test_lock();
+        let status = run(&command, 128 * 1024 * 1024, lock.clone(), controller).unwrap();
+        std::fs::remove_file(lock).unwrap();
+        std::process::exit(status);
     }
 
     #[test]
