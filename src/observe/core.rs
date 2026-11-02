@@ -171,18 +171,28 @@ impl Iterator for TapPort<'_> {
 /// Fixed-size runtime evidence ring.
 pub(crate) struct TapRing<'a> {
     ring: RingBuffer<'a>,
+    observer: Cell<Option<&'a dyn Fn(TapEvent)>>,
 }
 
 impl<'a> TapRing<'a> {
     pub(crate) fn from_storage(storage: &'a mut [TapRecord; TAP_EVENTS]) -> Self {
         Self {
             ring: RingBuffer::from_ptr(storage.as_mut_ptr()),
+            observer: Cell::new(None),
         }
     }
 
     /// Append runtime evidence.
     pub(crate) fn push(&self, event: TapEvent) {
+        let ordinal = timestamp(self.ring.head.get(), self.ring.state.get().head_era());
         self.ring.push(event);
+        if let Some(observer) = self.observer.get() {
+            observer(TapRecord::from_event(event).to_event(ordinal));
+        }
+    }
+
+    pub(crate) fn observe(&self, observer: &'a dyn Fn(TapEvent)) {
+        self.observer.set(Some(observer));
     }
 
     pub(crate) fn port(&self) -> TapPort<'_> {

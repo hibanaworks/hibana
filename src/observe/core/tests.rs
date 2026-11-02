@@ -2,6 +2,101 @@ use super::{TAP_EVENTS, TapRing};
 use crate::observe::event::{TapEvent, TapRecord};
 
 #[test]
+fn synchronous_observation_retains_the_prefix_when_the_ring_overwrites() {
+    let captured = core::cell::Cell::new(std::vec::Vec::new());
+    let observer = |event| {
+        let mut rows = captured.take();
+        rows.push(event);
+        captured.set(rows);
+    };
+    let mut storage = [TapRecord::zero(); TAP_EVENTS];
+    let ring = TapRing::from_storage(&mut storage);
+    ring.observe(&observer);
+    let written = 4 * TAP_EVENTS;
+    for ordinal in 0..written {
+        ring.push(TapEvent::new(
+            u32::MAX,
+            7,
+            8,
+            ordinal as u32,
+            !ordinal as u32,
+        ));
+    }
+    let rows = captured.take();
+    assert_eq!(rows.len(), written);
+    assert_eq!(ring.port().checkpoint(), Some(written as u32));
+    for (ordinal, row) in rows.iter().enumerate() {
+        assert_eq!(row.ts(), ordinal as u32);
+        assert_eq!(row.arg0(), ordinal as u32);
+        assert_eq!(row.arg1(), !ordinal as u32);
+    }
+    let retained: std::vec::Vec<_> = ring.port().collect();
+    assert!(retained == rows[written - TAP_EVENTS..]);
+}
+
+struct Immediate;
+
+impl hibana_runtime::Driver for Immediate {
+    fn waker(&self) -> core::task::Waker {
+        core::task::Waker::noop().clone()
+    }
+
+    fn wait(&mut self) {
+        panic!("a local operation needs no external wakeup");
+    }
+}
+
+#[hibana_runtime::main(Immediate)]
+#[test]
+async fn an_unyielding_endpoint_burst_retains_the_complete_capture()
+-> Result<(), core::convert::Infallible> {
+    use crate::{
+        g,
+        runtime::{SessionKitStorage, ids::SessionId, program::project},
+    };
+    let captured = core::cell::Cell::new(std::vec::Vec::new());
+    let observer = |event| {
+        let mut rows = captured.take();
+        rows.push(event);
+        captured.set(rows);
+    };
+    let global = g::send::<0, 0, g::Msg<1, ()>>().roll();
+    let program = project::<0>(&global);
+    let mut slab = std::vec![0; 128 * 1024];
+    let mut storage = SessionKitStorage::uninit();
+    let rv = storage
+        .init()
+        .rendezvous(
+            &mut slab,
+            crate::test_support::transport::TestTransport::new(),
+        )
+        .unwrap();
+    rv.observe(&observer);
+    let mut endpoint = rv.enter(SessionId::new(1), &program).unwrap();
+    for _ in 0..257 {
+        endpoint.send::<g::Msg<1, ()>>(&()).await.unwrap();
+    }
+    drop(endpoint);
+    let checkpoint = rv.tap().checkpoint().unwrap();
+    let rows = captured.take();
+    assert_eq!(rows.len(), checkpoint as usize);
+    assert_eq!(
+        rows.iter()
+            .filter(|row| row.id() == crate::observe::ids::ENDPOINT_SEND)
+            .count(),
+        257
+    );
+    assert!(
+        rows.iter()
+            .enumerate()
+            .all(|(ordinal, row)| row.ts() == ordinal as u32)
+    );
+    let retained: std::vec::Vec<_> = rv.tap().collect();
+    assert!(retained == rows[rows.len() - TAP_EVENTS..]);
+    Ok(())
+}
+
+#[test]
 fn producer_checkpoints_are_independent_of_reader_consumption() {
     let mut storage = [TapRecord::zero(); TAP_EVENTS];
     let ring = TapRing::from_storage(&mut storage);

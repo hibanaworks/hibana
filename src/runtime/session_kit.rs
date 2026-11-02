@@ -141,6 +141,32 @@ where
         self.base.tap_port()
     }
 
+    /// Observe each appended event synchronously, including its producer ordinal.
+    ///
+    /// Install before attaching endpoints to capture the complete prefix. The
+    /// callback borrows caller-owned storage for this rendezvous's lifetime;
+    /// Hibana neither allocates an archive nor waits for an observation reader.
+    /// The bounded diagnostic ring remains available through [`Self::tap`].
+    ///
+    /// The callback runs within the emitting operation. It should only copy or
+    /// queue evidence and must not panic. It grants no protocol authority. A
+    /// recording failure must be retained by the recorder; an incomplete capture
+    /// cannot be certified against the independent [`crate::runtime::tap::TapPort::checkpoint`].
+    ///
+    /// ```compile_fail,E0597
+    /// use hibana::runtime::{RendezvousKit, tap::TapEvent, transport::Transport};
+    /// fn short_recorder<'r, T: Transport + 'r>(rv: &RendezvousKit<'_, 'r, T>) {
+    ///     let count = core::cell::Cell::new(0);
+    ///     let recorder = |_: TapEvent| count.set(count.get() + 1);
+    ///     rv.observe(&recorder);
+    /// }
+    /// ```
+    pub fn observe(&self, observer: &'cfg dyn Fn(crate::runtime::tap::TapEvent)) {
+        crate::invariant_some(self.base.kit.inner.get_local(&self.base.rv))
+            .tap()
+            .observe(observer);
+    }
+
     /// Attach this projected role program as an endpoint for `sid`.
     ///
     /// For a resource Endpoint, first attach its source-assigned initial actor
